@@ -41,7 +41,8 @@ public sealed class FiscalSubmissionWorkerTests
             true));
         var worker = Worker(store, transport);
 
-        Assert.True(await worker.ProcessNextAsync("worker-a"));
+        Assert.True((await worker.ProcessAsync(
+            store.BusinessId, store.DocumentId, "worker-a")).WorkFound);
 
         Assert.True(transport.StoreWasStartedAtCall);
         Assert.Equal(DianOperationCodes.SendTestSet, store.Started!.Operation);
@@ -63,7 +64,8 @@ public sealed class FiscalSubmissionWorkerTests
             Encoding.UTF8.GetBytes("response"),
             true));
 
-        Assert.True(await Worker(store, transport).ProcessNextAsync("worker-a"));
+        Assert.True((await Worker(store, transport).ProcessAsync(
+            store.BusinessId, store.DocumentId, "worker-a")).WorkFound);
 
         Assert.Equal(DianOperationCodes.GetStatusZip, store.Started!.Operation);
         Assert.Equal(FiscalDocumentStatusCodes.DianAccepted, store.Status);
@@ -85,7 +87,8 @@ public sealed class FiscalSubmissionWorkerTests
             [],
             true));
 
-        Assert.True(await Worker(store, transport).ProcessNextAsync("worker-a"));
+        Assert.True((await Worker(store, transport).ProcessAsync(
+            store.BusinessId, store.DocumentId, "worker-a")).WorkFound);
 
         Assert.Equal(FiscalDocumentStatusCodes.PendingDianResult, store.Status);
         Assert.Null(store.NextAttemptAt);
@@ -99,7 +102,8 @@ public sealed class FiscalSubmissionWorkerTests
         var transport = new TestTransport(new DianSubmissionResult(
             DianSubmissionDisposition.Accepted, null, null, null, null, [], true));
 
-        Assert.True(await Worker(store, transport).ProcessNextAsync("worker-a"));
+        Assert.True((await Worker(store, transport).ProcessAsync(
+            store.BusinessId, store.DocumentId, "worker-a")).WorkFound);
 
         Assert.True(store.WasMarkedUnknown);
         Assert.Equal(0, transport.SendCalls + transport.QueryCalls);
@@ -112,7 +116,8 @@ public sealed class FiscalSubmissionWorkerTests
         var transport = new TestTransport(new DianSubmissionResult(
             DianSubmissionDisposition.Accepted, null, null, null, null, [], true));
 
-        Assert.True(await Worker(store, transport).ProcessNextAsync("worker-a"));
+        Assert.True((await Worker(store, transport).ProcessAsync(
+            store.BusinessId, store.DocumentId, "worker-a")).WorkFound);
 
         Assert.Equal(FiscalDocumentStatusCodes.PermanentFailure, store.Status);
         Assert.Equal("MissingTestSetId", store.ErrorCode);
@@ -143,20 +148,28 @@ public sealed class FiscalSubmissionWorkerTests
     {
         private bool acquired;
         public FiscalSubmissionAttempt? Started { get; private set; }
+        public Guid BusinessId => work.BusinessId;
+        public Guid DocumentId => work.DocumentId;
         public DianSubmissionResult? Result { get; private set; }
         public DateTimeOffset? NextAttemptAt { get; private set; }
         public string? Status { get; private set; }
         public string? ErrorCode { get; private set; }
         public bool WasMarkedUnknown { get; private set; }
 
-        public Task<FiscalSubmissionWorkItem?> AcquireNextAsync(
-            string workerId, DateTimeOffset acquiredAt, TimeSpan lease,
+        public Task<FiscalSubmissionWorkItem?> AcquireAsync(
+            Guid businessId, Guid documentId, string workerId, DateTimeOffset acquiredAt, TimeSpan lease,
             CancellationToken cancellationToken)
         {
             if (acquired) return Task.FromResult<FiscalSubmissionWorkItem?>(null);
             acquired = true;
+            if (businessId != work.BusinessId || documentId != work.DocumentId) return Task.FromResult<FiscalSubmissionWorkItem?>(null);
             return Task.FromResult<FiscalSubmissionWorkItem?>(work with { WorkerId = workerId });
         }
+
+        public Task<DateTimeOffset?> GetResumeAtAsync(
+            Guid businessId, Guid documentId, DateTimeOffset checkedAt,
+            TimeSpan lease, CancellationToken cancellationToken) =>
+            Task.FromResult<DateTimeOffset?>(null);
 
         public Task<FiscalSubmissionAttempt> StartAttemptAsync(
             FiscalSubmissionWorkItem item, string operation, byte[]? submissionZip,

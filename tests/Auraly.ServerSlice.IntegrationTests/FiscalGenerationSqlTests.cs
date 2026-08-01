@@ -30,8 +30,10 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         var first = CreateWorker(store, clock);
         var second = CreateWorker(store, clock);
         var results = await Task.WhenAll(
-            first.ProcessNextAsync("worker-one"),
-            second.ProcessNextAsync("worker-two"));
+            first.ProcessAsync(fixture.BusinessId, request.DocumentId, "worker-one"),
+            second.ProcessAsync(
+                fixture.BusinessId,
+                request.DocumentId, "worker-two"));
 
         Assert.Single(results.Where(result => result));
         Assert.Single(results.Where(result => !result));
@@ -58,7 +60,8 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         var generatedAt = new DateTimeOffset(2026, 7, 29, 16, 0, 0, TimeSpan.Zero);
         Assert.True(await CreateWorker(
             new SqlFiscalGenerationWorkStore(connections, ids),
-            new FixedTimeProvider(generatedAt)).ProcessNextAsync("generator"));
+            new FixedTimeProvider(generatedAt)).ProcessAsync(
+                fixture.BusinessId, request.DocumentId, "generator"));
         await QuarantineOtherPendingFiscalWorkAsync(request.DocumentId);
 
         var submissionStore = new SqlFiscalSubmissionWorkStore(connections, ids);
@@ -73,7 +76,8 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         var packages = new FiscalSubmissionPackageBuilder();
         var first = new FiscalSubmissionWorker(
             submissionStore, transport, packages, new FixedTimeProvider(generatedAt.AddSeconds(1)));
-        Assert.True(await first.ProcessNextAsync("submitter-one"));
+        Assert.True((await first.ProcessAsync(
+            fixture.BusinessId, request.DocumentId, "submitter-one")).WorkFound);
         Assert.Equal(FiscalDocumentStatusCodes.PendingDianResult,
             await ScalarStringAsync(
                 "SELECT Status FROM dbo.FiscalDocumentProcesses WHERE DocumentId=@DocumentId",
@@ -81,8 +85,10 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
 
         var second = new FiscalSubmissionWorker(
             submissionStore, transport, packages, new FixedTimeProvider(generatedAt.AddSeconds(10)));
-        Assert.True(await second.ProcessNextAsync("submitter-two"));
-        Assert.False(await second.ProcessNextAsync("submitter-two"));
+        Assert.True((await second.ProcessAsync(
+            fixture.BusinessId, request.DocumentId, "submitter-two")).WorkFound);
+        Assert.False((await second.ProcessAsync(
+            fixture.BusinessId, request.DocumentId, "submitter-two")).WorkFound);
 
         Assert.Equal(FiscalDocumentStatusCodes.DianAccepted,
             await ScalarStringAsync(

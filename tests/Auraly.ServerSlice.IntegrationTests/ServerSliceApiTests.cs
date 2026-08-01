@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Auraly.Application.Fiscal;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
 
@@ -86,6 +87,7 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Fiscal_documents_are_business_scoped_authorized_and_paged()
     {
+        fixture.DrainFiscalSignals();
         var request = fixture.CreateValidRequest(150);
         using (var pos = fixture.CreateClient())
         using (var upload = fixture.CreateUploadMessage(request))
@@ -114,7 +116,12 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         using var retry = fixture.CreateAdminClient(FiscalPermissionCodes.Retry);
         using var retryResponse = await retry.PostAsync(
             $"/api/commerce/v1/fiscal/documents/{request.DocumentId}/retry", null);
-        Assert.Equal(HttpStatusCode.Conflict, retryResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, retryResponse.StatusCode);
+        var signal = Assert.Single(fixture.DrainFiscalSignals()).Signal;
+        Assert.Equal(fixture.BusinessId, signal.BusinessId);
+        Assert.Equal(request.DocumentId, signal.DocumentId);
+        Assert.Equal(FiscalProcessingStage.Generation, signal.Stage);
+        Assert.NotEqual(Guid.Empty, signal.SignalId);
     }
     [Fact]
     public async Task Authentication_permission_and_authenticated_context_are_enforced()

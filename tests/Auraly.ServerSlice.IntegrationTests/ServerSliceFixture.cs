@@ -6,6 +6,7 @@ using System.Security.Claims;
 using System.Text;
 using System.Net.Http.Json;
 using Auraly.Application.DocumentProcessing;
+using Auraly.Application.Fiscal;
 using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Contracts.Authentication;
 using Auraly.Contracts.Authorization;
@@ -134,6 +135,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             builder.ConfigureTestServices(services =>
             {
                 services.AddSingleton<IDocumentProcessingSignalPublisher, TestDocumentProcessingSignalPublisher>();
+                services.AddSingleton<TestFiscalProcessingSignalPublisher>();
+                services.AddSingleton<IFiscalProcessingSignalPublisher>(provider => provider.GetRequiredService<TestFiscalProcessingSignalPublisher>());
                 services.AddSingleton<TestPosSynchronizationPushGateway>();
                 services.AddSingleton<IPosSynchronizationPushGateway>(provider =>
                     provider.GetRequiredService<
@@ -150,6 +153,12 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         (_factory ?? throw new InvalidOperationException(
             "The API fixture is not initialized."))
         .Services.GetRequiredService<TestPosSynchronizationPushGateway>()
+        .Drain();
+
+    internal IReadOnlyCollection<PublishedFiscalSignal> DrainFiscalSignals() =>
+        (_factory ?? throw new InvalidOperationException(
+            "The API fixture is not initialized."))
+        .Services.GetRequiredService<TestFiscalProcessingSignalPublisher>()
         .Drain();
 
     public async Task<PosSynchronizationInvalidation>

@@ -127,6 +127,38 @@ public sealed class ServerSliceArchitectureTests
             $"Server-slice canonical/placeholder violations:{Environment.NewLine}{string.Join(Environment.NewLine, violations)}");
     }
 
+    [Fact]
+    public void Fiscal_processing_is_per_document_and_has_no_polling_timer()
+    {
+        var root = FindRepositoryRoot();
+        var api = Path.Combine(root, "src", "API", "Auraly.Api");
+        Assert.False(File.Exists(Path.Combine(api, "FiscalGenerationHostedService.cs")));
+        Assert.False(File.Exists(Path.Combine(api, "FiscalSubmissionHostedService.cs")));
+        var hosted = File.ReadAllText(Path.Combine(
+            api,
+            "ServiceBusFiscalProcessingHostedService.cs"));
+        Assert.DoesNotContain("PeriodicTimer", hosted, StringComparison.Ordinal);
+        Assert.Contains("CreateSessionProcessor", hosted, StringComparison.Ordinal);
+        Assert.Contains("MaxConcurrentCallsPerSession = 1", hosted, StringComparison.Ordinal);
+
+        var persistence = Path.Combine(
+            root,
+            "src",
+            "Infrastructure",
+            "Auraly.Infrastructure.Persistence");
+        foreach (var file in new[]
+                 {
+                     "SqlFiscalGenerationWorkStore.cs",
+                     "SqlFiscalSubmissionWorkStore.cs"
+                 })
+        {
+            var source = File.ReadAllText(Path.Combine(persistence, file));
+            Assert.DoesNotContain("TOP (1)", source, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("p.DocumentId=@DocumentId", source, StringComparison.Ordinal);
+            Assert.Contains("p.BusinessId=@BusinessId", source, StringComparison.Ordinal);
+        }
+    }
+
     private static bool IsBuildOutput(string path) =>
         path.Contains(
             $"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}",

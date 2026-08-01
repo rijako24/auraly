@@ -16,7 +16,8 @@ public sealed class FiscalGenerationWorkerTests
         var store = new TestStore(work);
         var worker = CreateWorker(store);
 
-        Assert.True(await worker.ProcessNextAsync("worker-a"));
+        Assert.True(await worker.ProcessAsync(
+            work.BusinessId, work.DocumentId, "worker-a"));
 
         var artifacts = Assert.IsType<FiscalGeneratedArtifacts>(store.Completed);
         var xml = Encoding.UTF8.GetString(artifacts.UnsignedXml);
@@ -35,7 +36,8 @@ public sealed class FiscalGenerationWorkerTests
         var store = new TestStore(work);
         var worker = CreateWorker(store);
 
-        Assert.True(await worker.ProcessNextAsync("worker-a"));
+        Assert.False(await worker.ProcessAsync(
+            work.BusinessId, work.DocumentId, "worker-a"));
 
         Assert.Null(store.Completed);
         Assert.Equal(FiscalDocumentStatusCodes.MissingMandatoryFiscalData, store.FinalStatus);
@@ -54,7 +56,8 @@ public sealed class FiscalGenerationWorkerTests
         var store = new TestStore(work);
         var worker = CreateWorker(store);
 
-        Assert.True(await worker.ProcessNextAsync("worker-a"));
+        Assert.False(await worker.ProcessAsync(
+            work.BusinessId, work.DocumentId, "worker-a"));
 
         Assert.Null(store.Completed);
         Assert.Equal(FiscalDocumentStatusCodes.MissingMandatoryFiscalData, store.FinalStatus);
@@ -107,13 +110,19 @@ public sealed class FiscalGenerationWorkerTests
         public FiscalGeneratedArtifacts? Completed { get; private set; }
         public string? FinalStatus { get; private set; }
         public string? ErrorMessage { get; private set; }
-        public Task<FiscalGenerationWorkItem?> AcquireNextAsync(string workerId, DateTimeOffset acquiredAt,
-            TimeSpan lease, CancellationToken cancellationToken)
+        public Task<FiscalGenerationWorkItem?> AcquireAsync(
+            Guid businessId, Guid documentId, string workerId,
+            DateTimeOffset acquiredAt, TimeSpan lease, CancellationToken cancellationToken)
         {
             if (acquired) return Task.FromResult<FiscalGenerationWorkItem?>(null);
+            if (businessId != work.BusinessId || documentId != work.DocumentId) return Task.FromResult<FiscalGenerationWorkItem?>(null);
             acquired = true;
             return Task.FromResult<FiscalGenerationWorkItem?>(work with { WorkerId = workerId });
         }
+        public Task<DateTimeOffset?> GetResumeAtAsync(
+            Guid businessId, Guid documentId, DateTimeOffset checkedAt,
+            TimeSpan lease, CancellationToken cancellationToken) =>
+            Task.FromResult<DateTimeOffset?>(null);
         public Task CompleteAsync(FiscalGenerationWorkItem item, FiscalGeneratedArtifacts artifacts,
             CancellationToken cancellationToken)
         {
