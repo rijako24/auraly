@@ -129,6 +129,19 @@ builder.Services.AddScoped<IAuthenticationSessionStore, SqlAuthenticationSession
 builder.Services.AddScoped<Auraly.Application.Authentication.AuthenticationService>();
 builder.Services.AddScoped<IAuthenticationSessionValidator>(
     services => services.GetRequiredService<Auraly.Application.Authentication.AuthenticationService>());
+builder.Services.Configure<OfflineAuthenticationLeaseSigningOptions>(
+    builder.Configuration.GetSection(OfflineAuthenticationLeaseSigningOptions.SectionName));
+builder.Services.AddSingleton<RsaOfflineAuthenticationLeaseSigner>();
+builder.Services.AddSingleton<IOfflineAuthenticationLeaseSigner>(services =>
+    services.GetRequiredService<RsaOfflineAuthenticationLeaseSigner>());
+builder.Services.AddSingleton<IOfflineAuthenticationLeaseTrustProvider>(services =>
+    services.GetRequiredService<RsaOfflineAuthenticationLeaseSigner>());
+builder.Services.AddScoped<IOfflineAuthenticationLeaseStore,
+    SqlOfflineAuthenticationLeaseStore>();
+builder.Services.AddSingleton(new OfflineAuthenticationLeasePolicy(
+    TimeSpan.FromHours(builder.Configuration.GetValue(
+        "Authentication:OfflineLeaseSigning:DurationHours", 8))));
+builder.Services.AddScoped<OfflineAuthenticationLeaseService>();
 builder.Services.AddScoped<CashSessionService>();
 builder.Services.AddScoped<IPosOfflineIdentityStore, SqlPosOfflineIdentityStore>();
 builder.Services.AddScoped<PosOfflineIdentityService>();
@@ -239,6 +252,14 @@ builder.Services.AddAuthorization(options =>
             PosAuthenticationDefaults.PermissionClaim,
             CommercePermissionCodes.PosIdentitySync);
     });
+    options.AddPolicy("pos.offline.authentication", policy =>
+    {
+        policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
+        policy.RequireAuthenticatedUser();
+        policy.RequireClaim(
+            PosAuthenticationDefaults.PermissionClaim,
+            CommercePermissionCodes.PosIdentitySync);
+    });
     options.AddPolicy("pos.orders", policy =>
     {
         policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
@@ -274,6 +295,7 @@ app.MapOnlineSalesDraftApi();
 app.MapCashApi();
 app.MapWorkSessionApi();
 app.MapPosIdentityApi();
+app.MapOfflineAuthenticationLeaseApi();
 app.MapFiscalApi();
 app.MapOrdersApi();
 app.MapPosOrdersApi();

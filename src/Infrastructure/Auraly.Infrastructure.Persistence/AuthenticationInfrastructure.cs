@@ -213,6 +213,14 @@ public sealed class SqlAuthenticationSessionStore(
         await ExpireStaleSessionAsync(
             connection, transaction, command.User.TenantId, command.User.UserId,
             command.Now, cancellationToken);
+        await ExpireStaleOfflineLeaseAsync(
+            connection, transaction, command.User.TenantId, command.User.UserId,
+            command.Now, cancellationToken);
+        if (await HasActiveOfflineLeaseAsync(
+                connection, transaction, command.User.TenantId,
+                command.User.UserId, cancellationToken))
+            throw new AuthenticationSessionConflictException(
+                "The user owns an active offline session on an enrolled device.");
         if (await HasActiveSessionAsync(
                 connection, transaction, command.User.TenantId,
                 command.User.UserId, cancellationToken))
@@ -554,6 +562,44 @@ public sealed class SqlAuthenticationSessionStore(
         await using var command = new SqlCommand("""
             SELECT AuthenticationSessionId
             FROM dbo.AuthenticationSessions WITH (UPDLOCK,HOLDLOCK)
+            WHERE TenantId=@TenantId AND UserId=@UserId AND Status=N'Active';
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@UserId", userId);
+        return await command.ExecuteScalarAsync(cancellationToken) is Guid;
+    }
+
+    private static async Task ExpireStaleOfflineLeaseAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid tenantId,
+        Guid userId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            UPDATE dbo.OfflineAuthenticationLeases WITH (UPDLOCK,HOLDLOCK)
+            SET Status=N'Expired',EndedAt=@Now,
+                EndReason=N'Expired',UpdatedAt=@Now
+            WHERE TenantId=@TenantId AND UserId=@UserId
+              AND Status=N'Active' AND ExpiresAt<=@Now;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@UserId", userId);
+        command.Parameters.AddWithValue("@Now", now);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task<bool> HasActiveOfflineLeaseAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid tenantId,
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            SELECT LeaseId
+            FROM dbo.OfflineAuthenticationLeases WITH (UPDLOCK,HOLDLOCK)
             WHERE TenantId=@TenantId AND UserId=@UserId AND Status=N'Active';
             """, connection, transaction);
         command.Parameters.AddWithValue("@TenantId", tenantId);
