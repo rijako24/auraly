@@ -76,41 +76,79 @@ builder.Services.AddSingleton<FiscalProcessingCoordinator>();
 builder.Services.AddScoped<ReceivePosSaleService>();
 if (!builder.Environment.IsEnvironment("Testing"))
 {
-    var serviceBusConnection = builder.Configuration[
-        "Auraly:DocumentProcessing:ServiceBus:ConnectionString"];
-    if (string.IsNullOrWhiteSpace(serviceBusConnection))
-        throw new InvalidOperationException(
-            "Auraly:DocumentProcessing:ServiceBus:ConnectionString is required. " +
-            "Auraly never falls back to an in-memory processing transport.");
-    var queueName = builder.Configuration[
-        "Auraly:DocumentProcessing:ServiceBus:QueueName"];
-    if (string.IsNullOrWhiteSpace(queueName))
-        throw new InvalidOperationException(
-            "Auraly:DocumentProcessing:ServiceBus:QueueName is required.");
+    var processingTransport = builder.Configuration[
+        "Auraly:Processing:Transport"] ?? "ServiceBus";
+    if (string.Equals(processingTransport, "RabbitMq", StringComparison.OrdinalIgnoreCase))
+    {
+        var rabbitConnection = builder.Configuration[
+            "Auraly:Processing:RabbitMq:ConnectionString"];
+        var documentQueue = builder.Configuration[
+            "Auraly:DocumentProcessing:RabbitMq:QueueName"];
+        var fiscalQueue = builder.Configuration[
+            "Auraly:Fiscal:RabbitMq:QueueName"];
+        if (string.IsNullOrWhiteSpace(rabbitConnection) ||
+            string.IsNullOrWhiteSpace(documentQueue) ||
+            string.IsNullOrWhiteSpace(fiscalQueue))
+            throw new InvalidOperationException(
+                "RabbitMQ connection and document/fiscal queue names are required.");
 
-    builder.Services.AddSingleton(new DocumentProcessingServiceBusOptions(queueName));
-    builder.Services.AddSingleton(new ServiceBusClient(serviceBusConnection));
-    builder.Services.AddSingleton(sp =>
-        sp.GetRequiredService<ServiceBusClient>().CreateSender(queueName));
-    builder.Services.AddSingleton<IDocumentProcessingSignalPublisher,
-        ServiceBusDocumentProcessingPublisher>();
+        builder.Services.AddSingleton(new RabbitMqProcessingOptions(
+            rabbitConnection, documentQueue, fiscalQueue));
+        builder.Services.AddSingleton<RabbitMqProcessingConnection>();
+        builder.Services.AddSingleton<RabbitMqProcessingTransport>();
+        builder.Services.AddSingleton<IDocumentProcessingSignalPublisher>(provider =>
+            provider.GetRequiredService<RabbitMqProcessingTransport>());
+        builder.Services.AddSingleton<IFiscalProcessingSignalPublisher>(provider =>
+            provider.GetRequiredService<RabbitMqProcessingTransport>());
+        if (builder.Configuration.GetValue("Auraly:Fiscal:Worker:Enabled", true))
+            builder.Services.AddHostedService<RabbitMqFiscalProcessingHostedService>();
+        if (builder.Configuration.GetValue(
+                "Auraly:DocumentProcessing:Worker:Enabled", true))
+            builder.Services.AddHostedService<RabbitMqDocumentProcessingHostedService>();
+    }
+    else if (string.Equals(
+                 processingTransport, "ServiceBus", StringComparison.OrdinalIgnoreCase))
+    {
+        var serviceBusConnection = builder.Configuration[
+            "Auraly:DocumentProcessing:ServiceBus:ConnectionString"];
+        if (string.IsNullOrWhiteSpace(serviceBusConnection))
+            throw new InvalidOperationException(
+                "Auraly:DocumentProcessing:ServiceBus:ConnectionString is required. " +
+                "Auraly never falls back to an in-memory processing transport.");
+        var queueName = builder.Configuration[
+            "Auraly:DocumentProcessing:ServiceBus:QueueName"];
+        if (string.IsNullOrWhiteSpace(queueName))
+            throw new InvalidOperationException(
+                "Auraly:DocumentProcessing:ServiceBus:QueueName is required.");
 
-    var fiscalQueueName = builder.Configuration[
-        "Auraly:Fiscal:ServiceBus:QueueName"];
-    if (string.IsNullOrWhiteSpace(fiscalQueueName))
+        builder.Services.AddSingleton(new DocumentProcessingServiceBusOptions(queueName));
+        builder.Services.AddSingleton(new ServiceBusClient(serviceBusConnection));
+        builder.Services.AddSingleton(provider =>
+            provider.GetRequiredService<ServiceBusClient>().CreateSender(queueName));
+        builder.Services.AddSingleton<IDocumentProcessingSignalPublisher,
+            ServiceBusDocumentProcessingPublisher>();
+
+        var fiscalQueueName = builder.Configuration[
+            "Auraly:Fiscal:ServiceBus:QueueName"];
+        if (string.IsNullOrWhiteSpace(fiscalQueueName))
+            throw new InvalidOperationException(
+                "Auraly:Fiscal:ServiceBus:QueueName is required. " +
+                "Fiscal processing never falls back to SQL polling.");
+        builder.Services.AddSingleton(
+            new FiscalProcessingServiceBusOptions(fiscalQueueName));
+        builder.Services.AddSingleton<IFiscalProcessingSignalPublisher,
+            ServiceBusFiscalProcessingPublisher>();
+        if (builder.Configuration.GetValue("Auraly:Fiscal:Worker:Enabled", true))
+            builder.Services.AddHostedService<FiscalProcessingHostedService>();
+        if (builder.Configuration.GetValue(
+                "Auraly:DocumentProcessing:Worker:Enabled", true))
+            builder.Services.AddHostedService<DocumentProcessingHostedService>();
+    }
+    else
+    {
         throw new InvalidOperationException(
-            "Auraly:Fiscal:ServiceBus:QueueName is required. " +
-            "Fiscal processing never falls back to SQL polling.");
-    builder.Services.AddSingleton(
-        new FiscalProcessingServiceBusOptions(fiscalQueueName));
-    builder.Services.AddSingleton<IFiscalProcessingSignalPublisher,
-        ServiceBusFiscalProcessingPublisher>();
-    if (builder.Configuration.GetValue("Auraly:Fiscal:Worker:Enabled", true))
-        builder.Services.AddHostedService<FiscalProcessingHostedService>();
-
-    if (builder.Configuration.GetValue(
-            "Auraly:DocumentProcessing:Worker:Enabled", true))
-        builder.Services.AddHostedService<DocumentProcessingHostedService>();
+            "Auraly:Processing:Transport must be ServiceBus or RabbitMq.");
+    }
 }
 var webPubSubConnection = builder.Configuration[
     "Auraly:PosSynchronization:WebPubSub:ConnectionString"];

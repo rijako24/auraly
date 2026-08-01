@@ -92,7 +92,20 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public HttpClient CreateClient() =>
         (_factory ?? throw new InvalidOperationException("The API fixture is not initialized."))
         .CreateClient();
+    internal IServiceProvider Services =>
+        (_factory ?? throw new InvalidOperationException(
+            "The API fixture is not initialized.")).Services;
 
+    internal TestDocumentProcessingSignalPublisher DocumentSignals =>
+        Services.GetRequiredService<TestDocumentProcessingSignalPublisher>();
+
+    internal void PauseDocumentProcessing() => DocumentSignals.PauseProcessing();
+
+    internal void ResumeDocumentProcessing() => DocumentSignals.ResumeProcessing();
+
+    internal IReadOnlyCollection<DocumentProcessingSignal> DrainDocumentSignals() =>
+
+        DocumentSignals.Drain();
     public async Task InitializeAsync()
     {
         _databaseName = $"AuralyServerSlice_{Guid.NewGuid():N}";
@@ -134,7 +147,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             });
             builder.ConfigureTestServices(services =>
             {
-                services.AddSingleton<IDocumentProcessingSignalPublisher, TestDocumentProcessingSignalPublisher>();
+                services.AddSingleton<TestDocumentProcessingSignalPublisher>();
+                services.AddSingleton<IDocumentProcessingSignalPublisher>(provider =>
+                    provider.GetRequiredService<TestDocumentProcessingSignalPublisher>());
                 services.AddSingleton<TestFiscalProcessingSignalPublisher>();
                 services.AddSingleton<IFiscalProcessingSignalPublisher>(provider => provider.GetRequiredService<TestFiscalProcessingSignalPublisher>());
                 services.AddSingleton<TestPosSynchronizationPushGateway>();

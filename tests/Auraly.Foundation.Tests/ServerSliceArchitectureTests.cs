@@ -159,6 +159,36 @@ public sealed class ServerSliceArchitectureTests
         }
     }
 
+    [Fact]
+    public void Rabbit_transport_is_durable_ordered_and_has_no_sql_polling()
+    {
+        var root = FindRepositoryRoot();
+        var api = Path.Combine(root, "src", "API", "Auraly.Api");
+        var source = File.ReadAllText(Path.Combine(
+            api, "RabbitMqProcessingTransport.cs"));
+        var composition = File.ReadAllText(Path.Combine(api, "Program.cs"));
+
+        Assert.Contains("RabbitMQ.Client", File.ReadAllText(Path.Combine(
+            api, "Auraly.Api.csproj")), StringComparison.Ordinal);
+        Assert.Contains("publisherConfirmationsEnabled: publisherConfirmations", source);
+        Assert.Contains("publisherConfirmationTrackingEnabled: publisherConfirmations", source);
+        Assert.Contains("Persistent = true", source);
+        Assert.Contains("BasicQosAsync(0, 1, false", source);
+        Assert.Contains("autoAck: false", source);
+        Assert.Contains("MaximumAttempts = 5", source);
+        Assert.Contains("BasicAckAsync", source);
+        Assert.Contains("BasicNackAsync", source);
+        Assert.DoesNotContain("PeriodicTimer", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("SELECT ", source, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("RetryDocumentAsync", source, StringComparison.Ordinal);
+        Assert.Contains("includeScheduledRetries", source, StringComparison.Ordinal);
+        Assert.Contains("\"RabbitMq\"", composition, StringComparison.Ordinal);
+        Assert.Contains(
+            "RabbitMqDocumentProcessingHostedService",
+            composition,
+            StringComparison.Ordinal);
+    }
+
     private static bool IsBuildOutput(string path) =>
         path.Contains(
             $"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}",
