@@ -1,3 +1,4 @@
+using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Catalog;
 
@@ -22,30 +23,49 @@ public interface ICatalogStore
 public sealed class CatalogService(
     ICatalogStore store,
     IAuralyIdGenerator ids,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    IPosSynchronizationOutboxDispatcher synchronization)
 {
-    public Task<ProductDetail> CreateAsync(CatalogUserIdentity user, SaveProductRequest request, CancellationToken ct)
+    public async Task<ProductDetail> CreateAsync(
+        CatalogUserIdentity user,
+        SaveProductRequest request,
+        CancellationToken ct)
     {
         Require(user, CatalogPermissionCodes.Create);
         RequireCapabilities(user, request);
         ValidateScope(user, request);
         Validate(request);
-        return store.CreateAsync(user, ids.NewId(), request, timeProvider.GetUtcNow(), ct);
+        var product = await store.CreateAsync(
+            user, ids.NewId(), request, timeProvider.GetUtcNow(), ct);
+        await synchronization.DispatchPendingAsync(
+            user.TenantId, user.BusinessId, CancellationToken.None);
+        return product;
     }
 
-    public Task<ProductDetail> UpdateAsync(CatalogUserIdentity user, Guid productId, SaveProductRequest request, CancellationToken ct)
+    public async Task<ProductDetail> UpdateAsync(
+        CatalogUserIdentity user,
+        Guid productId,
+        SaveProductRequest request,
+        CancellationToken ct)
     {
         Require(user, CatalogPermissionCodes.Update);
         RequireCapabilities(user, request);
         ValidateScope(user, request);
         Validate(request);
-        return store.UpdateAsync(user, productId, request, timeProvider.GetUtcNow(), ct);
+        var product = await store.UpdateAsync(
+            user, productId, request, timeProvider.GetUtcNow(), ct);
+        await synchronization.DispatchPendingAsync(
+            user.TenantId, user.BusinessId, CancellationToken.None);
+        return product;
     }
 
-    public Task DeactivateAsync(CatalogUserIdentity user, Guid productId, CancellationToken ct)
+    public async Task DeactivateAsync(
+        CatalogUserIdentity user, Guid productId, CancellationToken ct)
     {
         Require(user, CatalogPermissionCodes.Deactivate);
-        return store.DeactivateAsync(user, productId, timeProvider.GetUtcNow(), ct);
+        await store.DeactivateAsync(user, productId, timeProvider.GetUtcNow(), ct);
+        await synchronization.DispatchPendingAsync(
+            user.TenantId, user.BusinessId, CancellationToken.None);
     }
 
     public Task<ProductDetail?> GetAsync(CatalogUserIdentity user, Guid productId, CancellationToken ct)

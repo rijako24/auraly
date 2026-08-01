@@ -124,9 +124,22 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                     P("@Cost", supplier.BaseUnitCost), P("@Now", now)], ct);
             }
 
-            await ExecuteAsync(connection, transaction,
-                "INSERT dbo.CatalogChanges (BusinessId,ProductId,ChangeKind,OccurredAt) VALUES (@BusinessId,@ProductId,N'Upsert',@Now);",
-                [P("@BusinessId", user.BusinessId), P("@ProductId", productId), P("@Now", now)], ct);
+            await ExecuteAsync(connection, transaction, """
+                DECLARE @Change TABLE (CatalogChangeId BIGINT NOT NULL);
+                INSERT dbo.CatalogChanges (BusinessId,ProductId,ChangeKind,OccurredAt)
+                  OUTPUT inserted.CatalogChangeId INTO @Change
+                  VALUES (@BusinessId,@ProductId,N'Upsert',@Now);
+                INSERT dbo.PosSynchronizationOutboxMessages
+                  (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
+                SELECT @NotificationId,@BusinessId,N'Catalog',CatalogChangeId,@Now
+                FROM @Change;
+                """,
+                [
+                    P("@NotificationId", ids.NewId()),
+                    P("@BusinessId", user.BusinessId),
+                    P("@ProductId", productId),
+                    P("@Now", now)
+                ], ct);
             await transaction.CommitAsync(ct);
         }
         catch (SqlException exception) when (exception.Number is 51021 or 51022 or 51023)
@@ -193,16 +206,27 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         await connection.OpenAsync(ct);
         await using var command = connection.CreateCommand();
         command.CommandText = """
+            DECLARE @Change TABLE (CatalogChangeId BIGINT NOT NULL);
             BEGIN TRANSACTION;
             UPDATE dbo.Products SET IsActive=0,UpdatedAt=@Now,UpdatedByUserId=@UserId
               WHERE ProductId=@ProductId AND BusinessId=@BusinessId;
             IF @@ROWCOUNT=0 BEGIN ROLLBACK; THROW 51010,'Product not found.',1; END;
             INSERT dbo.CatalogChanges (BusinessId,ProductId,ChangeKind,OccurredAt)
+              OUTPUT inserted.CatalogChangeId INTO @Change
               VALUES (@BusinessId,@ProductId,N'Tombstone',@Now);
+            INSERT dbo.PosSynchronizationOutboxMessages
+              (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
+            SELECT @NotificationId,@BusinessId,N'Catalog',CatalogChangeId,@Now
+            FROM @Change;
             COMMIT;
             """;
-        command.Parameters.AddRange([P("@Now", now), P("@UserId", user.UserId), P("@ProductId", productId),
-            P("@BusinessId", user.BusinessId)]);
+        command.Parameters.AddRange([
+            P("@NotificationId", ids.NewId()),
+            P("@Now", now),
+            P("@UserId", user.UserId),
+            P("@ProductId", productId),
+            P("@BusinessId", user.BusinessId)
+        ]);
         await command.ExecuteNonQueryAsync(ct);
     }
 

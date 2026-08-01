@@ -1,6 +1,8 @@
 using Auraly.Api;
 using Azure.Messaging.ServiceBus;
+using Azure.Messaging.WebPubSub;
 using System.Text;
+using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Application.Authentication;
 using Auraly.Application.Authorization;
 using Auraly.Application.Catalog;
@@ -100,6 +102,23 @@ if (!builder.Environment.IsEnvironment("Testing"))
             "Auraly:DocumentProcessing:Worker:Enabled", true))
         builder.Services.AddHostedService<DocumentProcessingHostedService>();
 }
+var webPubSubConnection = builder.Configuration[
+    "Auraly:PosSynchronization:WebPubSub:ConnectionString"];
+if (string.IsNullOrWhiteSpace(webPubSubConnection))
+    throw new InvalidOperationException(
+        "Auraly:PosSynchronization:WebPubSub:ConnectionString is required. " +
+        "POS synchronization never falls back to polling.");
+var webPubSubHub = builder.Configuration[
+    "Auraly:PosSynchronization:WebPubSub:Hub"];
+if (string.IsNullOrWhiteSpace(webPubSubHub)) webPubSubHub = "auraly_pos";
+builder.Services.AddSingleton(
+    new WebPubSubServiceClient(webPubSubConnection, webPubSubHub));
+builder.Services.AddSingleton<IPosSynchronizationPushGateway,
+    AzureWebPubSubSynchronizationGateway>();
+builder.Services.AddSingleton<SqlPosSynchronizationOutboxDispatcher>();
+builder.Services.AddSingleton<IPosSynchronizationOutboxDispatcher>(provider =>
+    provider.GetRequiredService<SqlPosSynchronizationOutboxDispatcher>());
+builder.Services.AddHostedService<PosSynchronizationOutboxHostedService>();
 builder.Services.AddScoped<ICatalogStore, SqlCatalogStore>();
 builder.Services.AddScoped<CatalogService>();
 builder.Services.AddScoped<PosCatalogService>();
@@ -260,6 +279,14 @@ builder.Services.AddAuthorization(options =>
             PosAuthenticationDefaults.PermissionClaim,
             CommercePermissionCodes.PosIdentitySync);
     });
+    options.AddPolicy("pos.synchronization", policy =>
+    {
+        policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
+        policy.RequireAuthenticatedUser();
+        policy.RequireClaim(
+            PosAuthenticationDefaults.PermissionClaim,
+            CatalogPermissionCodes.Sync);
+    });
     options.AddPolicy("pos.orders", policy =>
     {
         policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
@@ -296,6 +323,7 @@ app.MapCashApi();
 app.MapWorkSessionApi();
 app.MapPosIdentityApi();
 app.MapOfflineAuthenticationLeaseApi();
+app.MapPosSynchronizationApi();
 app.MapFiscalApi();
 app.MapOrdersApi();
 app.MapPosOrdersApi();
