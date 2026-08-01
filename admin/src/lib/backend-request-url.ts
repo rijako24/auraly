@@ -1,6 +1,7 @@
 import { getBackendUrl } from "./backend-url";
 
 const COMMERCE_PATH_PREFIX = "commerce/";
+const AUTHENTICATION_PATH_PREFIX = "auth/";
 
 export function getBackendRequestUrl(
   path: string,
@@ -13,7 +14,8 @@ export function getBackendRequestUrl(
   if (
     commerceBackend &&
     (normalizedPath === "health" ||
-      normalizedPath.startsWith(COMMERCE_PATH_PREFIX))
+      normalizedPath.startsWith(COMMERCE_PATH_PREFIX) ||
+      normalizedPath.startsWith(AUTHENTICATION_PATH_PREFIX))
   ) {
     const root = commerceBackend.replace(/\/+$/, "");
     const upstreamPath =

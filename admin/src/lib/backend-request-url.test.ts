@@ -20,6 +20,10 @@ describe("getBackendRequestUrl", () => {
       getBackendRequestUrl("commerce/v1/pos/drafts/active"),
       "https://gateway.auraly.test/api/commerce/v1/pos/drafts/active",
     );
+    assert.equal(
+      getBackendRequestUrl("auth/login"),
+      "https://gateway.auraly.test/api/auth/login",
+    );
   });
 
   it("routes Commerce requests to the dedicated Auraly API", () => {
@@ -35,6 +39,20 @@ describe("getBackendRequestUrl", () => {
     );
   });
 
+  it("routes canonical authentication to the dedicated Auraly API", () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://legacy.auraly.test/api";
+    process.env.AURALY_COMMERCE_API_URL = "https://commerce.auraly.test/";
+
+    assert.equal(
+      getBackendRequestUrl("auth/refresh"),
+      "https://commerce.auraly.test/api/auth/refresh",
+    );
+    assert.equal(
+      getBackendRequestUrl("users"),
+      "https://legacy.auraly.test/api/users",
+    );
+  });
+
   it("uses the root health endpoint of the dedicated Auraly API", () => {
     process.env.NEXT_PUBLIC_API_URL = "https://identity.auraly.test/api";
     process.env.AURALY_COMMERCE_API_URL = "http://127.0.0.1:5097";
@@ -42,16 +60,6 @@ describe("getBackendRequestUrl", () => {
     assert.equal(
       getBackendRequestUrl("health"),
       "http://127.0.0.1:5097/health",
-    );
-  });
-
-  it("keeps authentication and existing admin routes on the primary API", () => {
-    process.env.NEXT_PUBLIC_API_URL = "https://identity.auraly.test/api";
-    process.env.AURALY_COMMERCE_API_URL = "https://commerce.auraly.test";
-
-    assert.equal(
-      getBackendRequestUrl("users"),
-      "https://identity.auraly.test/api/users",
     );
   });
 });
