@@ -35,7 +35,10 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             AccountingPermissionCodes.PeriodsManage, AccountingPermissionCodes.Retry,
             SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm,
             PurchasingPermissionCodes.CreateGoodsReceipts,
-            PurchasingPermissionCodes.ConfirmGoodsReceipts);
+            PurchasingPermissionCodes.ConfirmGoodsReceipts,
+            PurchasingPermissionCodes.ReadPurchaseReturns,
+            PurchasingPermissionCodes.CreatePurchaseReturns,
+            PurchasingPermissionCodes.ConfirmPurchaseReturns);
         await ConfigureAsync(accounting);
 
         using (var retry = await accounting.PostAsync($"/api/commerce/v1/accounting/postings/{invoice.DocumentId:D}/retry", null))
@@ -109,6 +112,33 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(1, await CountAsync(
             "AccountingEntries", "SourceDocumentId", receipt.DocumentId));
 
+        var purchaseReturn = new ConfirmPurchaseReturnRequest(
+            Guid.NewGuid(), fixture.BusinessId, receipt.DocumentId,
+            new DateTimeOffset(2026, 8, 1, 9, 30, 0, TimeSpan.FromHours(-5)),
+            "QualityIssue", "Devolucion contable de compra",
+            [new PurchaseReturnLineRequest(1, 2m), new PurchaseReturnLineRequest(2, 1m)]);
+        using (var message = new HttpRequestMessage(
+            HttpMethod.Post, "/api/commerce/v1/purchase-returns/confirm")
+            { Content = JsonContent.Create(purchaseReturn) })
+        {
+            message.Headers.Add("Idempotency-Key", $"accounting-purchase-return-{purchaseReturn.ReturnId:N}");
+            using var response = await accounting.SendAsync(message);
+            Assert.True(response.StatusCode == HttpStatusCode.Accepted,
+                await response.Content.ReadAsStringAsync());
+        }
+        Assert.Equal(AccountingPostingStatuses.Posted,
+            await ScalarAsync<string>(
+                "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",
+                purchaseReturn.ReturnId));
+        await AssertBalancedAsync(purchaseReturn.ReturnId);
+        Assert.Equal(23_800m, await AccountAmountAsync(
+            purchaseReturn.ReturnId, "220505", debit: true));
+        Assert.Equal(10_000m, await AccountAmountAsync(
+            purchaseReturn.ReturnId, "143505", debit: false));
+        Assert.Equal(1_900m, await AccountAmountAsync(
+            purchaseReturn.ReturnId, "240810", debit: false));
+        Assert.Equal(11_900m, await AccountAmountAsync(
+            purchaseReturn.ReturnId, "519595", debit: false));
         var receiptWithoutSettlement = receipt with
         {
             DocumentId = Guid.NewGuid(),
@@ -197,6 +227,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             [AccountingCategories.TransferClearing] = ("111015", "Transferencias por conciliar", "Asset"),
             [AccountingCategories.AccountsReceivable] = ("130505", "Clientes", "Asset"),
             [AccountingCategories.AccountsPayable] = ("220505", "Proveedores", "Liability"),
+            [AccountingCategories.SupplierCreditsReceivable] = ("133595", "Saldos a favor con proveedores", "Asset"),
             [AccountingCategories.InputVat] = ("240810", "IVA descontable", "Asset"),
             [AccountingCategories.PurchasesExpense] = ("519595", "Compras no inventariables", "Expense"),
             [AccountingCategories.SalesRevenue] = ("413595", "Ingresos por ventas", "Revenue"),
