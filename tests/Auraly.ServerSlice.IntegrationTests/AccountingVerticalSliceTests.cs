@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Commerce.Accounting.Contracts;
+using Auraly.Contracts.Purchasing;
 using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
 using Microsoft.Data.SqlClient;
@@ -32,7 +33,9 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         using var accounting = fixture.CreateAdminClient(
             AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
             AccountingPermissionCodes.PeriodsManage, AccountingPermissionCodes.Retry,
-            SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm);
+            SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm,
+            PurchasingPermissionCodes.CreateGoodsReceipts,
+            PurchasingPermissionCodes.ConfirmGoodsReceipts);
         await ConfigureAsync(accounting);
 
         using (var retry = await accounting.PostAsync($"/api/commerce/v1/accounting/postings/{invoice.DocumentId:D}/retry", null))
@@ -55,6 +58,88 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             var entry = await entryResponse.Content.ReadFromJsonAsync<AccountingEntryView>();
             Assert.NotNull(entry); Assert.StartsWith("ASI-", entry.EntryNumber); Assert.Equal(entry.DebitTotal, entry.CreditTotal); Assert.True(entry.Lines.Count >= 3);
         }
+
+        var nonStockProductId = await CreateNonStockProductAsync();
+        var receivedAt = new DateTimeOffset(
+            2026, 8, 1, 9, 0, 0, TimeSpan.FromHours(-5));
+        var receipt = new ConfirmGoodsReceiptRequest(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+            fixture.SupplierId, $"COMP-{Guid.NewGuid():N}",
+            receivedAt.AddDays(-1), receivedAt, true, receivedAt.AddDays(30),
+            "COP", "Compra contable mixta",
+            [
+                new GoodsReceiptLineRequest(
+                    1, fixture.ProductId, "Inventario", 10m, 5_000m, 0m,
+                    "01", 19m, PurchasingTaxTreatments.DeductibleInputVat),
+                new GoodsReceiptLineRequest(
+                    2, nonStockProductId, "Servicio no inventariable", 2m,
+                    10_000m, 0m, "01", 19m,
+                    PurchasingTaxTreatments.CapitalizedCost)
+            ]);
+        var receiptKey = $"accounting-receipt-{receipt.DocumentId:N}";
+        using (var message = CreateGoodsReceiptMessage(receipt, receiptKey))
+        using (var response = await accounting.SendAsync(message))
+            Assert.True(
+                response.StatusCode == HttpStatusCode.Accepted,
+                await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(
+            AccountingPostingStatuses.Posted,
+            await ScalarAsync<string>(
+                "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",
+                receipt.DocumentId));
+        await AssertBalancedAsync(receipt.DocumentId);
+        Assert.Equal(1, await CountAsync(
+            "AccountingEntries", "SourceDocumentId", receipt.DocumentId));
+        Assert.Equal(50_000m, await AccountAmountAsync(
+            receipt.DocumentId, "143505", debit: true));
+        Assert.Equal(9_500m, await AccountAmountAsync(
+            receipt.DocumentId, "240810", debit: true));
+        Assert.Equal(23_800m, await AccountAmountAsync(
+            receipt.DocumentId, "519595", debit: true));
+        Assert.Equal(83_300m, await AccountAmountAsync(
+            receipt.DocumentId, "220505", debit: false));
+        Assert.Equal(83_300m, await ScalarAsync<decimal>(
+            "SELECT OriginalAmount FROM dbo.Payables WHERE SourceDocumentId=@Id",
+            receipt.DocumentId));
+
+        using (var duplicate = CreateGoodsReceiptMessage(receipt, receiptKey))
+        using (var duplicateResponse = await accounting.SendAsync(duplicate))
+            Assert.Equal(HttpStatusCode.Accepted, duplicateResponse.StatusCode);
+        Assert.Equal(1, await CountAsync(
+            "AccountingEntries", "SourceDocumentId", receipt.DocumentId));
+
+        var receiptWithoutSettlement = receipt with
+        {
+            DocumentId = Guid.NewGuid(),
+            SupplierInvoiceNumber = $"SIN-PAGO-{Guid.NewGuid():N}",
+            CreatesPayable = false,
+            DueDate = null,
+            Lines =
+            [
+                new GoodsReceiptLineRequest(
+                    1, fixture.ProductId, "Sin evidencia de pago", 1m, 1_000m,
+                    0m, "00", 0m, PurchasingTaxTreatments.NotApplicable)
+            ]
+        };
+        using (var message = CreateGoodsReceiptMessage(
+            receiptWithoutSettlement,
+            $"accounting-unsettled-{receiptWithoutSettlement.DocumentId:N}"))
+        using (var response = await accounting.SendAsync(message))
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Equal(
+            AccountingPostingStatuses.PendingConfiguration,
+            await ScalarAsync<string>(
+                "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",
+                receiptWithoutSettlement.DocumentId));
+        Assert.Equal(
+            "SettlementSourceMissing",
+            await ScalarAsync<string>(
+                "SELECT LastErrorCode FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",
+                receiptWithoutSettlement.DocumentId));
+        Assert.Equal(0, await CountAsync(
+            "AccountingEntries", "SourceDocumentId",
+            receiptWithoutSettlement.DocumentId));
 
         var returnRequest = new ConfirmSalesReturnRequest(
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, invoice.DocumentId,
@@ -111,6 +196,9 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             [AccountingCategories.CreditCardClearing] = ("111010", "Tarjetas credito por cobrar", "Asset"),
             [AccountingCategories.TransferClearing] = ("111015", "Transferencias por conciliar", "Asset"),
             [AccountingCategories.AccountsReceivable] = ("130505", "Clientes", "Asset"),
+            [AccountingCategories.AccountsPayable] = ("220505", "Proveedores", "Liability"),
+            [AccountingCategories.InputVat] = ("240810", "IVA descontable", "Asset"),
+            [AccountingCategories.PurchasesExpense] = ("519595", "Compras no inventariables", "Expense"),
             [AccountingCategories.SalesRevenue] = ("413595", "Ingresos por ventas", "Revenue"),
             [AccountingCategories.SalesReturns] = ("417595", "Devoluciones en ventas", "ContraRevenue"),
             [AccountingCategories.OutputVat] = ("240805", "IVA generado", "Liability"),
@@ -124,7 +212,9 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             var id = Guid.NewGuid(); ids[item.Key] = id;
             using var response = await client.PostAsJsonAsync("/api/commerce/v1/accounting/accounts",
                 new CreateAccountingAccountRequest(id, fixture.TenantId, item.Value.Code, item.Value.Name, item.Value.Type, true,
-                    item.Key is AccountingCategories.AccountsReceivable or AccountingCategories.CustomerCreditsPayable));
+                    item.Key is AccountingCategories.AccountsReceivable
+                        or AccountingCategories.AccountsPayable
+                        or AccountingCategories.CustomerCreditsPayable));
             Assert.True(response.StatusCode == HttpStatusCode.Created, await response.Content.ReadAsStringAsync());
         }
         var center = Guid.NewGuid();
@@ -165,6 +255,76 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             new PosSaleUblAuthorizationContract(ServerSliceFixture.AuthorizationNumber, new DateOnly(2026, 1, 1), new DateOnly(2028, 12, 31), ServerSliceFixture.Prefix, 1, 10000),
             "auraly-test-software", [new PosSaleUblLineContract(1, "P-E2E", "999", "EA", "IVA", 19m)], "1", "10", DateOnly.FromDateTime(request.FiscalSnapshot.IssuedAt.Date), null)
         };
+    }
+
+    private static HttpRequestMessage CreateGoodsReceiptMessage(
+        ConfirmGoodsReceiptRequest request,
+        string idempotencyKey)
+    {
+        var message = new HttpRequestMessage(
+            HttpMethod.Post, "/api/commerce/v1/goods-receipts/confirm")
+        {
+            Content = JsonContent.Create(request)
+        };
+        message.Headers.Add("Idempotency-Key", idempotencyKey);
+        return message;
+    }
+
+    private async Task<Guid> CreateNonStockProductAsync()
+    {
+        var productId = Guid.NewGuid();
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            INSERT dbo.Products
+              (ProductId,BusinessId,Source,Sku,Name,UnitPrice,Currency,
+               ManageStock,IsActive,CreatedAt)
+            VALUES
+              (@ProductId,@BusinessId,0,@Sku,N'Servicio de compra',
+               10000,N'COP',0,1,SYSUTCDATETIME());
+
+            INSERT dbo.ProductPrices
+              (ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,
+               ValidFrom,IsActive,CreatedAt)
+            VALUES
+              (NEWID(),@BusinessId,@ProductId,10000,N'COP','2026-01-01',1,SYSDATETIMEOFFSET());
+
+            INSERT dbo.SupplierProducts
+              (SupplierProductId,BusinessId,ProductId,SupplierId,
+               SupplierProductCode,IsPrimary,IsActive,CreatedAt)
+            VALUES
+              (NEWID(),@BusinessId,@ProductId,@SupplierId,@Sku,1,1,
+               SYSDATETIMEOFFSET());
+            """, connection);
+        command.Parameters.AddWithValue("@ProductId", productId);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@SupplierId", fixture.SupplierId);
+        command.Parameters.AddWithValue("@Sku", $"NS-{productId:N}");
+        await command.ExecuteNonQueryAsync();
+        return productId;
+    }
+
+    private async Task<decimal> AccountAmountAsync(
+        Guid documentId,
+        string accountCode,
+        bool debit)
+    {
+        Assert.Contains(
+            accountCode,
+            new[] { "143505", "240810", "519595", "220505" });
+        var column = debit ? "Debit" : "Credit";
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand($"""
+            SELECT COALESCE(SUM(l.[{column}]),0)
+            FROM dbo.AccountingEntries e
+            INNER JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+            INNER JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+            WHERE e.SourceDocumentId=@Id AND a.Code=@Code;
+            """, connection);
+        command.Parameters.AddWithValue("@Id", documentId);
+        command.Parameters.AddWithValue("@Code", accountCode);
+        return Convert.ToDecimal(await command.ExecuteScalarAsync());
     }
 
     private async Task<T> ScalarAsync<T>(string sql, Guid id)

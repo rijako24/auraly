@@ -16,7 +16,7 @@ belong to a Business and remain an optional analytical dimension.
 ## Durable flow
 
 ```text
-sale or sales return handler
+sale, sales return or goods receipt handler
   -> operational effects and AccountingPostingJob in the same SQL transaction
   -> DocumentProcessingJob Completed
   -> completion observer before broker ACK
@@ -57,6 +57,23 @@ Sales return / credit note:
 - debit inventory and credit cost of goods sold only for value actually restored
   by the operational return handler.
 
+Goods receipt / purchase:
+
+- debit inventory only with the value recognized by the inventory movement for
+  products that manage stock;
+- debit purchases expense for non-inventoriable concepts;
+- debit input VAT only when the immutable line explicitly uses
+  `DeductibleInputVat`;
+- capitalize purchase VAT into inventory or expense when the line explicitly
+  uses `CapitalizedCost`;
+- credit accounts payable for the immutable receipt total.
+
+A zero-rate line must use `NotApplicable`. A positive-rate line must explicitly
+select deductible or capitalized treatment; the server never infers this from the
+tax rate. A receipt that neither creates a payable nor carries settlement
+evidence becomes `AccountingPendingConfiguration/SettlementSourceMissing`;
+Auraly does not invent a cash or bank credit.
+
 The journal validator rejects zero-sided, double-sided or unbalanced entries.
 Posted entries have a tenant-wide `ASI-0000000001` voucher number, preserve the
 source payload hash and cannot be updated through the API.
@@ -90,7 +107,9 @@ system. The governing scope remains
 Still pending:
 
 - operational and fiscal debit note, then its posting rule;
-- purchases, payables, receipts, payments and inventory-operation postings;
+- supplier payments, payable settlements and other inventory-operation postings;
+- convergence of the current supplier master into Party before supplier and
+  exogenous ledgers are considered complete;
 - manual vouchers, reversals and authorized reopening;
 - account/party/center ledgers beyond the trial balance;
 - tax/withholding engine and regulatory reporting;

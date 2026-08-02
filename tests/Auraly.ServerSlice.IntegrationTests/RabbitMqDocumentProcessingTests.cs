@@ -156,7 +156,7 @@ public sealed class RabbitMqDocumentProcessingTests(ServerSliceFixture fixture)
             received.AddDays(30), "cop", "Entrada procesada por RabbitMQ",
             [new GoodsReceiptLineRequest(
                 1, fixture.ProductId, "Producto RabbitMQ", 1m, unitCost,
-                0m, "01", 19m)]);
+                0m, "01", 19m, PurchasingTaxTreatments.DeductibleInputVat)]);
     }
 
     private static async Task ConfirmAsync(
@@ -326,9 +326,12 @@ public sealed class RabbitMqDocumentProcessingTests(ServerSliceFixture fixture)
             if (main == mainQueues[^1])
                 queues.AddRange(
                 [
-                    $"{main}.retry.2s", $"{main}.retry.5s",
-                    $"{main}.retry.15s", $"{main}.retry.30s",
-                    $"{main}.retry.120s", $"{main}.retry.300s"
+                    $"{main}.retry.2s",
+                    $"{main}.retry.5s",
+                    $"{main}.retry.15s",
+                    $"{main}.retry.30s",
+                    $"{main}.retry.120s",
+                    $"{main}.retry.300s"
                 ]);
             foreach (var queue in queues)
                 await channel.QueueDeleteAsync(

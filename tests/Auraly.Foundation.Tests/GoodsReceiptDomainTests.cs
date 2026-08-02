@@ -12,7 +12,8 @@ public sealed class GoodsReceiptDomainTests
     {
         var productId = Guid.NewGuid();
         var result = GoodsReceiptCalculator.Calculate([
-            (1, productId, " Producto ", 10m, 6_000m, 10_000m, "01", 19m)
+            (1, productId, " Producto ", 10m, 6_000m, 10_000m, "01", 19m,
+                PurchaseTaxTreatment.DeductibleInputVat)
         ]);
 
         var line = Assert.Single(result.Lines);
@@ -23,6 +24,21 @@ public sealed class GoodsReceiptDomainTests
         Assert.Equal(59_500m, result.GrandTotal);
     }
 
+    [Fact]
+
+    public void Receipt_requires_an_explicit_consistent_purchase_tax_treatment()
+    {
+        Assert.Throws<ArgumentException>(() => GoodsReceiptCalculator.Calculate([
+            (1, Guid.NewGuid(), "Sin IVA", 1m, 1_000m, 0m, "00", 0m,
+                PurchaseTaxTreatment.DeductibleInputVat)
+        ]));
+        Assert.Throws<ArgumentException>(() => GoodsReceiptCalculator.Calculate([
+            (1, Guid.NewGuid(), "Con IVA", 1m, 1_000m, 0m, "01", 19m,
+                PurchaseTaxTreatment.NotApplicable)
+        ]));
+    }
+
+
     [Theory]
     [InlineData(0, 1_000, 0, 19)]
     [InlineData(1, -1, 0, 19)]
@@ -31,7 +47,8 @@ public sealed class GoodsReceiptDomainTests
     public void Receipt_rejects_invalid_amounts(decimal quantity, decimal cost, decimal discount, decimal tax)
     {
         Assert.ThrowsAny<ArgumentException>(() => GoodsReceiptCalculator.Calculate([
-            (1, Guid.NewGuid(), "Producto", quantity, cost, discount, "01", tax)
+            (1, Guid.NewGuid(), "Producto", quantity, cost, discount, "01", tax,
+                PurchaseTaxTreatment.DeductibleInputVat)
         ]));
     }
 

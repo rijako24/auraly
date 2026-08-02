@@ -95,6 +95,20 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
         using var message = CreateMessage(wrongBusiness, $"scope-{Guid.NewGuid():N}");
         using var scopedResponse = await allowed.SendAsync(message);
         Assert.Equal(HttpStatusCode.Forbidden, scopedResponse.StatusCode);
+
+
+        var invalidTax = CreateRequest();
+        invalidTax = invalidTax with
+        {
+            Lines =
+            [
+                invalidTax.Lines.Single() with { TaxTreatment = "InferredByServer" }
+            ]
+        };
+        using var invalidMessage = CreateMessage(
+            invalidTax, $"invalid-tax-{Guid.NewGuid():N}");
+        using var invalidResponse = await allowed.SendAsync(invalidMessage);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidResponse.StatusCode);
     }
 
     private ConfirmGoodsReceiptRequest CreateRequest()
@@ -106,7 +120,7 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             received.AddDays(30), "cop", "Entrada E2E",
             [new GoodsReceiptLineRequest(
                 1, fixture.ProductId, "Producto E2E", 10m, 6_000m,
-                10_000m, "01", 19m)]);
+                10_000m, "01", 19m, PurchasingTaxTreatments.DeductibleInputVat)]);
     }
 
     private static HttpRequestMessage CreateMessage(

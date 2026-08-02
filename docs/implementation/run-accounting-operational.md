@@ -37,6 +37,21 @@ dotnet test tests/Auraly.ServerSlice.IntegrationTests/Auraly.ServerSlice.Integra
 5. Query the entry by source document and verify equal debit and credit totals.
 6. Repeat the upload and retry; exactly one entry remains.
 
+## Reproduce a purchase posting
+
+1. Configure an open period and mappings for `Inventory`, `InputVat`,
+   `PurchasesExpense` and `AccountsPayable`.
+2. Confirm a goods receipt through
+   `POST /api/commerce/v1/goods-receipts/confirm`.
+3. Every line must declare `DeductibleInputVat`, `CapitalizedCost` or
+   `NotApplicable`.
+4. Wait for the same document-processing message to complete.
+5. Verify one payable, one accounting entry and equal debit/credit totals.
+6. Repeat the same idempotency key and verify that no effect is duplicated.
+7. Confirm a receipt with `CreatesPayable=false` and no settlement evidence;
+   the operational receipt remains, while accounting records
+   `SettlementSourceMissing` and creates no false journal entry.
+
 ## Operational inspection
 
 ```sql
