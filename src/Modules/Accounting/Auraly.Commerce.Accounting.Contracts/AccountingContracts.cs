@@ -11,6 +11,7 @@ public static class AccountingPermissionCodes
 public static class AccountingCategories
 {
     public const string Cash = "Cash";
+    public const string Bank = "Bank";
     public const string DebitCardClearing = "DebitCardClearing";
     public const string CreditCardClearing = "CreditCardClearing";
     public const string TransferClearing = "TransferClearing";

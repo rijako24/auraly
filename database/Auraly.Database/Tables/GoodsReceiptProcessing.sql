@@ -155,7 +155,7 @@ CREATE TABLE [dbo].[PayableTransactions]
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     CONSTRAINT [PK_PayableTransactions] PRIMARY KEY CLUSTERED ([PayableTransactionId]),
     CONSTRAINT [FK_PayableTransactions_Payables] FOREIGN KEY ([PayableId]) REFERENCES [dbo].[Payables] ([PayableId]),
-    CONSTRAINT [UQ_PayableTransactions_Source_Type] UNIQUE ([SourceDocumentId], [TransactionType]),
+    CONSTRAINT [UQ_PayableTransactions_Payable_Source_Type] UNIQUE ([PayableId], [SourceDocumentId], [TransactionType]),
     CONSTRAINT [CK_PayableTransactions_Amount] CHECK ([Amount] > 0),
     CONSTRAINT [CK_PayableTransactions_Type] CHECK ([TransactionType] IN (N'Opening', N'Payment', N'Credit', N'Adjustment'))
 );

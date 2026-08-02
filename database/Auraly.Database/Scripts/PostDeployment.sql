@@ -55,6 +55,7 @@
 :r .\Seeds\SeedWorkSessionPermissions.sql
 :r .\Seeds\SeedSalesReturnPermissions.sql
 :r .\Seeds\SeedAccountingPermissions.sql
+:r .\Seeds\SeedPayablesPermissions.sql
 :r .\Seeds\SeedBillingPlans.sql
 :r .\Seeds\SeedRadaConcept.sql
 :r .\Seeds\SeedAuraly.sql

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Auraly.Contracts.Payables\Auraly.Contracts.Payables.csproj" />
+    <ProjectReference Include="..\Auraly.Domain.Payables\Auraly.Domain.Payables.csproj" />
+    <ProjectReference Include="..\..\DocumentProcessing\Auraly.Application.DocumentProcessing\Auraly.Application.DocumentProcessing.csproj" />
+  </ItemGroup>
+</Project>
