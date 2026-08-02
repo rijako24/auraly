@@ -163,6 +163,18 @@ class ApiClient {
     return this.handleResponse<T>(response);
   }
 
+  async postIdempotent<T>(path: string, body: unknown, idempotencyKey: string): Promise<T> {
+    const response = await this.fetchWithRetry(this.buildUrl(path), {
+      method: "POST",
+      headers: {
+        ...buildJsonHeaders(),
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify(body),
+    });
+    return this.handleResponse<T>(response);
+  }
+
   async put<T>(path: string, body?: unknown): Promise<T> {
     const response = await this.fetchWithRetry(this.buildUrl(path), {
       method: "PUT",
