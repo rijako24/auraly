@@ -2,9 +2,11 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
+using System.Xml.Linq;
 using Auraly.Application.Fiscal;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Fiscal;
+using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
 using Auraly.Fiscal.Ubl;
 using Auraly.Infrastructure.Persistence;
@@ -148,9 +150,119 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         Assert.Equal(HttpStatusCode.Forbidden, deniedResponse.StatusCode);
     }
 
+    [Fact]
+    public async Task Processed_return_generates_signs_and_submits_credit_note_once()
+    {
+        await using var inventory = await InventoryCheckpoint.CaptureAsync(
+            fixture.ConnectionString, fixture.BusinessId, fixture.WarehouseId, fixture.ProductId);
+        var original = WithUblSnapshot(fixture.CreateValidRequest(903));
+        using var pos = fixture.CreateClient();
+        using (var upload = fixture.CreateUploadMessage(original))
+        using (var uploadResponse = await pos.SendAsync(upload))
+            Assert.Equal(HttpStatusCode.OK, uploadResponse.StatusCode);
+
+        var returnId = Guid.NewGuid();
+        var returnRequest = new ConfirmSalesReturnRequest(
+            returnId, fixture.BusinessId, fixture.WarehouseId, original.DocumentId,
+            new DateTimeOffset(2026, 8, 1, 11, 0, 0, TimeSpan.FromHours(-5)),
+            ReturnEconomicResolutions.Refund, "Cash", "Devolución parcial de bienes",
+            [new ConfirmSalesReturnLineRequest(1, .5m, ReturnInventoryDispositions.Sellable)]);
+        using var user = fixture.CreateAdminClient(
+            SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm);
+        using var returnMessage = new HttpRequestMessage(
+            HttpMethod.Post, "/api/commerce/v1/sales-returns/confirm")
+        {
+            Content = JsonContent.Create(returnRequest)
+        };
+        returnMessage.Headers.Add("Idempotency-Key", $"credit-{returnId:N}");
+        using var returnResponse = await user.SendAsync(returnMessage);
+        Assert.Equal(HttpStatusCode.Accepted, returnResponse.StatusCode);
+        var accepted = await returnResponse.Content.ReadFromJsonAsync<SalesReturnAcceptance>();
+        Assert.NotNull(accepted);
+
+        Assert.Equal(FiscalDocumentStatusCodes.PendingGeneration,
+            await ScalarStringAsync(
+                "SELECT FiscalStatus FROM dbo.SalesReturns WHERE ReturnId=@DocumentId", returnId));
+        Assert.Equal(FiscalDocumentTypeCodes.CreditNote,
+            await ScalarStringAsync(
+                "SELECT FiscalDocumentType FROM dbo.FiscalDocuments WHERE DocumentId=@DocumentId", returnId));
+
+        var connections = new SqlServerConnectionFactory(fixture.ConnectionString);
+        var ids = new TestIds();
+        var generatedAt = new DateTimeOffset(2026, 8, 1, 16, 5, 0, TimeSpan.Zero);
+        var generator = CreateWorker(
+            new SqlFiscalGenerationWorkStore(connections, ids),
+            new FixedTimeProvider(generatedAt));
+        Assert.True(await generator.ProcessAsync(fixture.BusinessId, returnId, "credit-generator"));
+        Assert.False(await generator.ProcessAsync(fixture.BusinessId, returnId, "credit-generator"));
+
+        var unsigned = await ArtifactAsync(returnId, FiscalArtifactTypeCodes.UnsignedXml);
+        var xml = XDocument.Parse(Encoding.UTF8.GetString(unsigned));
+        Assert.Equal("CreditNote", xml.Root!.Name.LocalName);
+        var cude = xml.Root.Elements()
+            .Single(element => element.Name.LocalName == "UUID").Value;
+        Assert.Equal(96, cude.Length);
+        Assert.Equal(cude, await ScalarStringAsync(
+            "SELECT UniqueCode FROM dbo.FiscalDocuments WHERE DocumentId=@DocumentId", returnId));
+        Assert.Contains(original.FiscalSnapshot.FiscalNumber,
+            xml.Descendants().Where(element => element.Name.LocalName == "ID")
+                .Select(element => element.Value));
+        Assert.Contains(original.FiscalSnapshot.Cufe,
+            xml.Descendants().Where(element => element.Name.LocalName == "UUID")
+                .Select(element => element.Value));
+        Assert.Equal(2, await ScalarIntAsync(
+            "SELECT COUNT(*) FROM dbo.FiscalArtifacts WHERE DocumentId=@DocumentId", returnId));
+
+        var transport = new SequenceTransport(new DianSubmissionResult(
+            DianSubmissionDisposition.Accepted, "credit-track-903", "00", "Accepted",
+            Encoding.UTF8.GetBytes("<ApplicationResponse />"),
+            Encoding.UTF8.GetBytes("accepted"), true));
+        var submitter = new FiscalSubmissionWorker(
+            new SqlFiscalSubmissionWorkStore(connections, ids), transport,
+            new FiscalSubmissionPackageBuilder(),
+            new FixedTimeProvider(generatedAt.AddSeconds(1)));
+        Assert.True((await submitter.ProcessAsync(
+            fixture.BusinessId, returnId, "credit-submitter")).WorkFound);
+        Assert.False((await submitter.ProcessAsync(
+            fixture.BusinessId, returnId, "credit-submitter")).WorkFound);
+
+        Assert.Equal(FiscalDocumentStatusCodes.DianAccepted,
+            await ScalarStringAsync(
+                "SELECT FiscalStatus FROM dbo.FiscalDocuments WHERE DocumentId=@DocumentId", returnId));
+        Assert.Equal(FiscalDocumentStatusCodes.DianAccepted,
+            await ScalarStringAsync(
+                "SELECT FiscalStatus FROM dbo.SalesReturns WHERE ReturnId=@DocumentId", returnId));
+        Assert.Equal(1, await ScalarIntAsync(
+            "SELECT COUNT(*) FROM dbo.FiscalTransmissionAttempts WHERE DocumentId=@DocumentId", returnId));
+        Assert.Equal(1, await ScalarIntAsync(
+            "SELECT COUNT(*) FROM dbo.FiscalArtifacts WHERE DocumentId=@DocumentId AND ArtifactType='SubmissionZip'", returnId));
+        Assert.Equal(1, await ScalarIntAsync(
+            "SELECT COUNT(*) FROM dbo.ServerOutboxMessages WHERE DocumentId=@DocumentId AND Type='FiscalDocument.DianAccepted'", returnId));
+        Assert.Equal(1, transport.SendCalls);
+        Assert.Equal(0, transport.QueryCalls);
+
+        using var fiscalUser = fixture.CreateAdminClient(FiscalPermissionCodes.DocumentsRead);
+        using var documentResponse = await fiscalUser.GetAsync(
+            $"/api/commerce/v1/fiscal/documents/{returnId}");
+        Assert.Equal(HttpStatusCode.OK, documentResponse.StatusCode);
+        var document = await documentResponse.Content.ReadFromJsonAsync<FiscalDocumentView>();
+        Assert.NotNull(document);
+        Assert.Equal("SalesReturn", document.SourceDocumentType);
+        Assert.Equal(FiscalDocumentTypeCodes.CreditNote, document.FiscalDocumentType);
+        Assert.Equal("CUDE", document.UniqueCodeType);
+        Assert.Equal(cude, document.UniqueCode);
+        Assert.Null(document.RegisterId);
+        using var pageResponse = await fiscalUser.GetAsync(
+            $"/api/commerce/v1/fiscal/documents?page=1&pageSize=10&uniqueCode={cude}");
+        Assert.Equal(HttpStatusCode.OK, pageResponse.StatusCode);
+        var page = await pageResponse.Content.ReadFromJsonAsync<FiscalDocumentPage>();
+        Assert.NotNull(page);
+        Assert.Contains(page.Items, item => item.DocumentId == returnId);
+    }
+
     private FiscalGenerationWorker CreateWorker(IFiscalGenerationWorkStore store, TimeProvider clock) =>
-        new(store, new TestPin(), new DianInvoiceUblBuilder(), new DianSchemaValidator(),
-            new TestSigner(), clock);
+        new(store, new TestPin(), new DianInvoiceUblBuilder(), new DianCreditNoteUblBuilder(),
+            new DianSchemaValidator(), new TestSigner(), clock);
 
     private PosSaleUploadRequest WithUblSnapshot(PosSaleUploadRequest request)
     {
@@ -283,6 +395,59 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
             if (index >= results.Length)
                 throw new InvalidOperationException("The deterministic DIAN response sequence is exhausted.");
             return Task.FromResult(results[index++]);
+        }
+    }
+
+    private sealed class InventoryCheckpoint(
+        string connectionString,
+        Guid businessId,
+        Guid warehouseId,
+        Guid productId,
+        decimal quantity,
+        decimal averageCost,
+        decimal inventoryValue) : IAsyncDisposable
+    {
+        public static async Task<InventoryCheckpoint> CaptureAsync(
+            string connectionString, Guid businessId, Guid warehouseId, Guid productId)
+        {
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT QuantityOnHand,AverageUnitCost,InventoryValue
+                FROM dbo.InventoryBalances
+                WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId
+                  AND ProductId=@ProductId;
+                """;
+            command.Parameters.AddWithValue("@BusinessId", businessId);
+            command.Parameters.AddWithValue("@WarehouseId", warehouseId);
+            command.Parameters.AddWithValue("@ProductId", productId);
+            await using var reader = await command.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            return new InventoryCheckpoint(
+                connectionString, businessId, warehouseId, productId,
+                reader.GetDecimal(0), reader.GetDecimal(1), reader.GetDecimal(2));
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await using var connection = new SqlConnection(connectionString);
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE dbo.InventoryBalances
+                SET QuantityOnHand=@Quantity,AverageUnitCost=@AverageCost,
+                    InventoryValue=@InventoryValue,UpdatedAt=SYSUTCDATETIME()
+                WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId
+                  AND ProductId=@ProductId;
+                """;
+            command.Parameters.AddWithValue("@Quantity", quantity);
+            command.Parameters.AddWithValue("@AverageCost", averageCost);
+            command.Parameters.AddWithValue("@InventoryValue", inventoryValue);
+            command.Parameters.AddWithValue("@BusinessId", businessId);
+            command.Parameters.AddWithValue("@WarehouseId", warehouseId);
+            command.Parameters.AddWithValue("@ProductId", productId);
+            Assert.Equal(1, await command.ExecuteNonQueryAsync());
         }
     }
 

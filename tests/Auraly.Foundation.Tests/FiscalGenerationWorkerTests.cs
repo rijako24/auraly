@@ -32,7 +32,7 @@ public sealed class FiscalGenerationWorkerTests
     [Fact]
     public async Task Missing_historical_ubl_data_is_explicit_and_never_invented()
     {
-        var work = CreateWork() with { Sale = CreateWork().Sale with { UblSnapshot = null } };
+        var work = CreateWork() with { Sale = CreateWork().Sale! with { UblSnapshot = null } };
         var store = new TestStore(work);
         var worker = CreateWorker(store);
 
@@ -48,7 +48,7 @@ public sealed class FiscalGenerationWorkerTests
     public async Task Ubl_tax_rate_must_match_the_immutable_sale_line()
     {
         var work = CreateWork();
-        var line = work.Sale.Lines.Single();
+        var line = work.Sale!.Lines.Single();
         work = work with
         {
             Sale = work.Sale with { Lines = [line with { TaxRate = 5m }] }
@@ -64,7 +64,7 @@ public sealed class FiscalGenerationWorkerTests
         Assert.Contains("tax rate differs", store.ErrorMessage, StringComparison.OrdinalIgnoreCase);
     }
     private static FiscalGenerationWorker CreateWorker(TestStore store) => new(
-        store, new TestPinProvider(), new DianInvoiceUblBuilder(), new DianSchemaValidator(),
+        store, new TestPinProvider(), new DianInvoiceUblBuilder(), new DianCreditNoteUblBuilder(), new DianSchemaValidator(),
         new PassthroughSigner(), new FixedTimeProvider(new DateTimeOffset(2026, 7, 29, 10, 0, 0, TimeSpan.Zero)));
 
     private static FiscalGenerationWorkItem CreateWork()
@@ -101,7 +101,8 @@ public sealed class FiscalGenerationWorkerTests
             "1.9", "test-generator");
         var authorization = new FiscalAuthorizationWorkConfiguration("18760000001",
             new DateOnly(2026, 1, 1), new DateOnly(2027, 1, 1), "SETP", 1, 1000);
-        return new FiscalGenerationWorkItem(documentId, businessId, "worker-a", sale, issuer, authorization);
+        return new FiscalGenerationWorkItem(documentId, businessId, "worker-a",
+            FiscalDocumentTypeCodes.Invoice, sale.FiscalSnapshot.FiscalNumber, sale, null, issuer, authorization);
     }
 
     private sealed class TestStore(FiscalGenerationWorkItem work) : IFiscalGenerationWorkStore

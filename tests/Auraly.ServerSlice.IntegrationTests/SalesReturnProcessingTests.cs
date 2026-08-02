@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Returns;
+using Auraly.Contracts.Sales;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -11,7 +12,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Return_flows_once_through_api_motor_inventory_and_refund()
     {
-        var original = fixture.CreateValidRequest(9_501);
+        var original = WithUblSnapshot(fixture.CreateValidRequest(9_501));
         using (var pos = fixture.CreateClient())
         using (var upload = fixture.CreateUploadMessage(original))
         using (var response = await pos.SendAsync(upload))
@@ -110,6 +111,30 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
         };
         message.Headers.Add("Idempotency-Key", idempotencyKey);
         return message;
+    }
+
+    private PosSaleUploadRequest WithUblSnapshot(PosSaleUploadRequest request)
+    {
+        var address = new PosSaleUblAddressContract(
+            "11001", "Bogotá", "Bogotá D.C.", "11", "CL 1 2 3");
+        var supplier = new PosSaleUblPartyContract(
+            ServerSliceFixture.SupplierTaxId, "7", "31", "1",
+            "EMISOR HISTORICO", "EMISOR HISTORICO", "R-99-PN", "01", "IVA", address);
+        var customer = new PosSaleUblPartyContract(
+            "222222222", "0", "13", "2", "CLIENTE HISTORICO", "CLIENTE HISTORICO",
+            "R-99-PN", "ZZ", "No aplica", address);
+        return request with
+        {
+            UblSnapshot = new PosSaleUblSnapshotContract(
+                fixture.FiscalIssuerConfigurationId, "COP", "01", supplier, customer,
+                new PosSaleUblAuthorizationContract(
+                    ServerSliceFixture.AuthorizationNumber,
+                    new DateOnly(2026, 1, 1), new DateOnly(2028, 12, 31),
+                    ServerSliceFixture.Prefix, 1, 10000),
+                "auraly-test-software",
+                [new PosSaleUblLineContract(1, "P-E2E", "999", "EA", "IVA", 19m)],
+                "1", "10", DateOnly.FromDateTime(request.FiscalSnapshot.IssuedAt.Date), null)
+        };
     }
 
     private async Task<decimal> QuantityAsync()

@@ -316,6 +316,9 @@ public sealed class RabbitMqDocumentProcessingHostedService(
                     if (string.Equals(
                             signal.DocumentType,
                             Auraly.Contracts.Sales.PosSaleDocumentTypes.Invoice,
+                            StringComparison.Ordinal) ||
+                        string.Equals(signal.DocumentType,
+                            Auraly.Contracts.Returns.SalesReturnDocumentTypes.SalesReturn,
                             StringComparison.Ordinal))
                         await fiscalProcessing.RequestGenerationAsync(
                             signal.BusinessId,

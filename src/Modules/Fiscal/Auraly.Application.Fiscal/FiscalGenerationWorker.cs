@@ -1,5 +1,7 @@
 using Auraly.Contracts.Fiscal;
+using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
+using Auraly.Fiscal.Core;
 using Auraly.Fiscal.Ubl;
 
 namespace Auraly.Application.Fiscal;
@@ -17,11 +19,14 @@ public sealed record FiscalAuthorizationWorkConfiguration(
     long RangeStart, long RangeEnd);
 
 public sealed record FiscalGenerationWorkItem(
-    Guid DocumentId, Guid BusinessId, string WorkerId, PosSaleUploadRequest Sale,
-    FiscalIssuerWorkConfiguration Issuer, FiscalAuthorizationWorkConfiguration Authorization);
+    Guid DocumentId, Guid BusinessId, string WorkerId, string FiscalDocumentType,
+    string FiscalNumber, PosSaleUploadRequest? Sale,
+    SalesReturnCreditNoteSnapshot? CreditNote,
+    FiscalIssuerWorkConfiguration Issuer, FiscalAuthorizationWorkConfiguration? Authorization);
 
 public sealed record FiscalGeneratedArtifacts(
     byte[] UnsignedXml, string UnsignedSha256Hex, byte[] SignedXml, string SignedSha256Hex,
+    string UniqueCode, string QrPayload,
     string CertificateThumbprint, DateTimeOffset GeneratedAt, DateTimeOffset SignedAt,
     string TechnicalAnnexVersion, string GeneratorVersion);
 
@@ -49,6 +54,7 @@ public sealed class FiscalGenerationWorker(
     IFiscalGenerationWorkStore store,
     IFiscalSoftwarePinProvider pins,
     DianInvoiceUblBuilder builder,
+    DianCreditNoteUblBuilder creditNoteBuilder,
     DianSchemaValidator validator,
     IFiscalXmlSigner signer,
     TimeProvider timeProvider)
@@ -69,8 +75,8 @@ public sealed class FiscalGenerationWorker(
         if (work is null) return false;
         try
         {
-            var invoice = await MapAsync(work, cancellationToken);
-            var unsigned = builder.Build(invoice);
+            var generated = await BuildAsync(work, cancellationToken);
+            var unsigned = generated.Document;
             var validation = validator.Validate(unsigned.Xml);
             if (!validation.IsValid)
             {
@@ -88,6 +94,7 @@ public sealed class FiscalGenerationWorker(
                 generatedAt), cancellationToken);
             await store.CompleteAsync(work, new FiscalGeneratedArtifacts(
                 unsigned.Xml, unsigned.Sha256Hex, signed.SignedXml, signed.Sha256Hex,
+                generated.UniqueCode, generated.QrPayload,
                 signed.CertificateThumbprint, generatedAt, signed.SignedAt,
                 work.Issuer.TechnicalAnnexVersion, work.Issuer.GeneratorVersion), cancellationToken);
             return true;
@@ -116,10 +123,11 @@ public sealed class FiscalGenerationWorker(
         string message, CancellationToken cancellationToken) =>
         store.FailAsync(work, status, code, message, timeProvider.GetUtcNow(), cancellationToken);
 
-    private async Task<DianInvoice> MapAsync(FiscalGenerationWorkItem work,
+    private async Task<DianInvoice> MapInvoiceAsync(FiscalGenerationWorkItem work,
         CancellationToken cancellationToken)
     {
-        var sale = work.Sale;
+        var sale = work.Sale
+            ?? throw new FiscalSnapshotDataException("The invoice fiscal payload is missing.");
         var ubl = sale.UblSnapshot
             ?? throw new FiscalSnapshotDataException("The immutable sale has no UBL snapshot.");
         if (ubl.FiscalIssuerConfigurationId != work.Issuer.Id)
@@ -132,7 +140,8 @@ public sealed class FiscalGenerationWorker(
             throw new FiscalSnapshotDataException("UBL line metadata does not match the immutable sale lines.");
         if (work.Issuer.Environment != sale.FiscalSnapshot.Environment)
             throw new FiscalSnapshotDataException("Issuer environment differs from the verified fiscal snapshot.");
-        if (ubl.Authorization.Number != sale.FiscalSnapshot.AuthorizationNumber ||
+        if (work.Authorization is null ||
+            ubl.Authorization.Number != sale.FiscalSnapshot.AuthorizationNumber ||
             ubl.Authorization.Prefix != sale.FiscalSnapshot.Prefix ||
             work.Authorization.Number != ubl.Authorization.Number ||
             work.Authorization.Prefix != ubl.Authorization.Prefix ||
@@ -187,6 +196,92 @@ public sealed class FiscalGenerationWorker(
             sale.FiscalSnapshot.PayableAmount, sale.FiscalSnapshot.QrPayload);
     }
 
+    private async Task<FiscalUblBuildResult> BuildAsync(
+        FiscalGenerationWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        if (work.FiscalDocumentType == FiscalDocumentTypeCodes.Invoice)
+        {
+            var invoice = await MapInvoiceAsync(work, cancellationToken);
+            return new FiscalUblBuildResult(
+                builder.Build(invoice), invoice.Cufe, invoice.QrPayload);
+        }
+        if (work.FiscalDocumentType != FiscalDocumentTypeCodes.CreditNote)
+            throw new FiscalSnapshotDataException(
+                $"Fiscal document type '{work.FiscalDocumentType}' is unsupported.");
+
+        var snapshot = work.CreditNote
+            ?? throw new FiscalSnapshotDataException("The credit-note fiscal payload is missing.");
+        if (snapshot.FiscalIssuerConfigurationId != work.Issuer.Id)
+            throw new FiscalSnapshotDataException(
+                "The credit-note snapshot references another issuer configuration.");
+        if (snapshot.Return.ReturnId != work.DocumentId ||
+            snapshot.Return.BusinessId != work.BusinessId ||
+            snapshot.FiscalNumber != work.FiscalNumber)
+            throw new FiscalSnapshotDataException(
+                "The credit-note snapshot differs from its durable fiscal root.");
+        if (snapshot.Environment != work.Issuer.Environment)
+            throw new FiscalSnapshotDataException(
+                "The credit-note environment differs from its issuer configuration.");
+        if (snapshot.Lines.Count != snapshot.Return.Lines.Count)
+            throw new FiscalSnapshotDataException(
+                "Credit-note line metadata does not match the immutable return.");
+
+        var pin = await pins.ResolveAsync(work.BusinessId,
+            work.Issuer.SoftwarePinSecretReference, cancellationToken);
+        if (string.IsNullOrWhiteSpace(pin))
+            throw new FiscalSnapshotDataException("The software PIN secret could not be resolved.");
+        var metadata = snapshot.Lines.ToDictionary(line => line.LineNumber);
+        var lines = snapshot.Return.Lines.OrderBy(line => line.LineNumber).Select(line =>
+        {
+            if (!metadata.TryGetValue(line.LineNumber, out var item))
+                throw new FiscalSnapshotDataException(
+                    $"Credit-note metadata is missing for line {line.LineNumber}.");
+            return new DianCreditNoteLine(
+                line.LineNumber, item.ProductCode, item.ProductCodeScheme,
+                line.Description, item.UnitCode, line.Quantity, line.UnitPrice,
+                line.DiscountAmount, line.UntaxedAmount,
+                [new DianTax(line.TaxCode, item.TaxName, line.UntaxedAmount,
+                    line.TaxAmount, line.TaxRate)]);
+        }).ToArray();
+        var taxes = lines.SelectMany(line => line.Taxes)
+            .GroupBy(tax => new { tax.Code, tax.Name, tax.Percent })
+            .OrderBy(group => group.Key.Code, StringComparer.Ordinal)
+            .ThenBy(group => group.Key.Percent)
+            .Select(group => new DianTax(group.Key.Code, group.Key.Name,
+                group.Sum(tax => tax.TaxableAmount), group.Sum(tax => tax.Amount),
+                group.Key.Percent)).ToArray();
+        var cude = CudeCalculator.Calculate(new CudeInput(
+            snapshot.FiscalNumber, snapshot.Return.ReturnedAt,
+            snapshot.Return.UntaxedAmount, snapshot.Return.TotalAmount,
+            work.Issuer.SupplierTaxId, snapshot.Return.CustomerIdentification,
+            pin, (FiscalEnvironment)snapshot.Environment,
+            taxes.Select(tax => new FiscalTaxAmount(tax.Code, tax.Amount))),
+            snapshot.QrValidationUrl);
+        var note = new DianCreditNote(
+            snapshot.FiscalNumber, cude.Cude, snapshot.Return.ReturnedAt,
+            snapshot.CurrencyCode, DianCreditNoteCodes.ReferencesInvoiceOperation,
+            snapshot.Return.CorrectionCode, snapshot.Return.ReasonDescription,
+            snapshot.Environment,
+            new DianSoftware(work.Issuer.SupplierTaxId, work.Issuer.SupplierCheckDigit,
+                work.Issuer.SoftwareId, pin),
+            IssuerParty(work.Issuer), Party(snapshot.Customer),
+            new DianInvoiceReference(snapshot.OriginalInvoiceNumber,
+                snapshot.OriginalInvoiceCufe, snapshot.OriginalInvoiceIssuedOn),
+            lines, taxes, snapshot.Return.UntaxedAmount,
+            snapshot.Return.UntaxedAmount,
+            snapshot.Return.TotalAmount,
+            snapshot.Return.Lines.Sum(line => line.DiscountAmount),
+            snapshot.Return.TotalAmount, cude.QrPayload);
+        return new FiscalUblBuildResult(
+            creditNoteBuilder.Build(note), cude.Cude, cude.QrPayload);
+    }
+
+    private static DianParty IssuerParty(FiscalIssuerWorkConfiguration issuer) => new(
+        issuer.SupplierTaxId, issuer.SupplierCheckDigit, issuer.IdentificationTypeCode,
+        "1", issuer.LegalName, issuer.TradeName, issuer.TaxLevelCode,
+        issuer.TaxSchemeId, issuer.TaxSchemeName, Address(issuer.Address), null, null);
+
 
     private static DianParty Party(PosSaleUblPartyContract value) => new(
         value.Identification, value.CheckDigit, value.IdentificationTypeCode,
@@ -199,4 +294,6 @@ public sealed class FiscalGenerationWorker(
         value.AddressLine, value.CountryCode, value.CountryName);
 
     private sealed class FiscalSnapshotDataException(string message) : Exception(message);
+    private sealed record FiscalUblBuildResult(
+        DianUblDocument Document, string UniqueCode, string QrPayload);
 }

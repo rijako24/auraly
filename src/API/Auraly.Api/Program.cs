@@ -59,6 +59,7 @@ builder.Services.AddSingleton<IFiscalXmlSigner, DianXadesSigner>();
 builder.Services.AddSingleton<IDianWcfClientFactory, DianWcfClientFactory>();
 builder.Services.AddScoped<IDianHabilitationTransport, DianHabilitationTransport>();
 builder.Services.AddSingleton<DianInvoiceUblBuilder>();
+builder.Services.AddSingleton<DianCreditNoteUblBuilder>();
 builder.Services.AddSingleton<DianSchemaValidator>();
 builder.Services.AddSingleton<FiscalSubmissionPackageBuilder>();
 builder.Services.AddScoped<FiscalGenerationWorker>();

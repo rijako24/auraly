@@ -114,11 +114,11 @@ public sealed class SqlFiscalGenerationWorkStore(
             IsolationLevel.Serializable, cancellationToken);
         await InsertArtifactAsync(connection, transaction, work.DocumentId,
             FiscalArtifactTypeCodes.UnsignedXml, artifacts.UnsignedXml,
-            artifacts.UnsignedSha256Hex, $"{work.Sale.FiscalSnapshot.FiscalNumber}.xml",
+            artifacts.UnsignedSha256Hex, $"{work.FiscalNumber}.xml",
             artifacts, artifacts.GeneratedAt, cancellationToken);
         await InsertArtifactAsync(connection, transaction, work.DocumentId,
             FiscalArtifactTypeCodes.SignedXml, artifacts.SignedXml,
-            artifacts.SignedSha256Hex, $"{work.Sale.FiscalSnapshot.FiscalNumber}-signed.xml",
+            artifacts.SignedSha256Hex, $"{work.FiscalNumber}-signed.xml",
             artifacts, artifacts.SignedAt, cancellationToken);
         const string sql = """
             UPDATE dbo.FiscalDocumentProcesses
@@ -127,6 +127,12 @@ public sealed class SqlFiscalGenerationWorkStore(
                 LastErrorCode=NULL, LastErrorMessage=NULL, UpdatedAt=@SignedAt
             WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId
               AND LockedBy=@WorkerId AND Status=@PendingGeneration;
+            UPDATE dbo.FiscalDocuments
+            SET UniqueCode=@UniqueCode,FiscalStatus=@Status,UpdatedAt=@SignedAt
+            WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId;
+            UPDATE dbo.SalesReturnFiscalSnapshots
+            SET UniqueCode=@UniqueCode,QrPayload=@QrPayload
+            WHERE DocumentId=@DocumentId AND @FiscalDocumentType=N'CreditNote';
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@Status", FiscalDocumentStatusCodes.PendingSubmission);
@@ -136,8 +142,13 @@ public sealed class SqlFiscalGenerationWorkStore(
         command.Parameters.AddWithValue("@DocumentId", work.DocumentId);
         command.Parameters.AddWithValue("@BusinessId", work.BusinessId);
         command.Parameters.AddWithValue("@WorkerId", work.WorkerId);
-        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
-            throw new InvalidOperationException("The fiscal generation lease is no longer owned by this worker.");
+        command.Parameters.AddWithValue("@UniqueCode", artifacts.UniqueCode);
+        command.Parameters.AddWithValue("@QrPayload", artifacts.QrPayload);
+        command.Parameters.AddWithValue("@FiscalDocumentType", work.FiscalDocumentType);
+        var expectedRows = work.FiscalDocumentType == FiscalDocumentTypeCodes.CreditNote ? 3 : 2;
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != expectedRows)
+            throw new InvalidOperationException(
+                "The fiscal generation lease is no longer owned by this worker.");
         await transaction.CommitAsync(cancellationToken);
     }
 
@@ -150,6 +161,17 @@ public sealed class SqlFiscalGenerationWorkStore(
             SET Status=@Status, LastErrorCode=@ErrorCode, LastErrorMessage=@ErrorMessage,
                 LockedAt=NULL, LockedBy=NULL, NextAttemptAt=NULL, UpdatedAt=@FailedAt
             WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId AND LockedBy=@WorkerId;
+            UPDATE dbo.FiscalDocuments
+            SET FiscalStatus=@Status,UpdatedAt=@FailedAt
+            WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId;
+            UPDATE dbo.SalesDocuments
+            SET FiscalStatus=@Status,UpdatedAt=@FailedAt
+            WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId
+              AND @FiscalDocumentType=N'Invoice';
+            UPDATE dbo.SalesReturns
+            SET FiscalStatus=@Status,UpdatedAt=@FailedAt
+            WHERE ReturnId=@DocumentId AND BusinessId=@BusinessId
+              AND @FiscalDocumentType=N'CreditNote';
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
@@ -161,7 +183,8 @@ public sealed class SqlFiscalGenerationWorkStore(
         command.Parameters.AddWithValue("@DocumentId", work.DocumentId);
         command.Parameters.AddWithValue("@BusinessId", work.BusinessId);
         command.Parameters.AddWithValue("@WorkerId", work.WorkerId);
-        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+        command.Parameters.AddWithValue("@FiscalDocumentType", work.FiscalDocumentType);
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != 3)
             throw new InvalidOperationException("The fiscal generation failure could not release its lease.");
     }
 
@@ -170,7 +193,8 @@ public sealed class SqlFiscalGenerationWorkStore(
         string workerId, CancellationToken cancellationToken)
     {
         const string sql = """
-            SELECT p.BusinessId, s.SnapshotJson,
+            SELECT p.BusinessId,fd.FiscalDocumentType,fd.FiscalNumber,
+                   s.SnapshotJson,credit.SnapshotJson,
                    c.FiscalIssuerConfigurationId, c.SupplierTaxId, c.SupplierCheckDigit,
                    c.LegalName, COALESCE(c.TradeName,c.LegalName), c.TaxLevelCode,
                    c.TaxSchemeId, c.TaxSchemeName, c.IdentificationTypeCode,
@@ -182,15 +206,17 @@ public sealed class SqlFiscalGenerationWorkStore(
                    a.AuthorizationNumber, a.ValidFrom, a.ValidUntil,
                    fs.Prefix, fs.RangeStart, fs.RangeEnd
             FROM dbo.FiscalDocumentProcesses p
-            INNER JOIN dbo.FiscalSnapshots s ON s.DocumentId=p.DocumentId
-            INNER JOIN dbo.SalesDocuments d ON d.DocumentId=p.DocumentId
+            INNER JOIN dbo.FiscalDocuments fd ON fd.DocumentId=p.DocumentId
+            LEFT JOIN dbo.FiscalSnapshots s ON s.DocumentId=p.DocumentId
+            LEFT JOIN dbo.SalesReturnFiscalSnapshots credit ON credit.DocumentId=p.DocumentId
+            LEFT JOIN dbo.SalesDocuments d ON d.DocumentId=p.DocumentId
             INNER JOIN dbo.FiscalIssuerConfigurations c
                 ON c.FiscalIssuerConfigurationId=p.FiscalIssuerConfigurationId
                AND c.BusinessId=p.BusinessId
-            INNER JOIN dbo.FiscalAuthorizations a
+            LEFT JOIN dbo.FiscalAuthorizations a
                 ON a.FiscalAuthorizationId=d.FiscalAuthorizationId
                AND a.BusinessId=p.BusinessId
-            INNER JOIN dbo.FiscalSeries fs
+            LEFT JOIN dbo.FiscalSeries fs
                 ON fs.SeriesId=d.FiscalSeriesId
                AND fs.FiscalAuthorizationId=a.FiscalAuthorizationId
             WHERE p.DocumentId=@DocumentId AND p.LockedBy=@WorkerId;
@@ -202,22 +228,33 @@ public sealed class SqlFiscalGenerationWorkStore(
         if (!await reader.ReadAsync(cancellationToken))
             throw new InvalidOperationException("The acquired fiscal document could not be loaded.");
         var businessId = reader.GetGuid(0);
-        var sale = PosSaleContractSerializer.Deserialize(reader.GetString(1));
+        var documentType = reader.GetString(1);
+        var fiscalNumber = reader.GetString(2);
+        var sale = reader.IsDBNull(3)
+            ? null
+            : PosSaleContractSerializer.Deserialize(reader.GetString(3));
+        var creditNote = reader.IsDBNull(4)
+            ? null
+            : SalesReturnCreditNoteSnapshotSerializer.Deserialize(reader.GetString(4));
         var issuer = new FiscalIssuerWorkConfiguration(
-            reader.GetGuid(2), businessId, reader.GetString(3), reader.GetString(4),
-            reader.GetString(5), reader.GetString(6), reader.GetString(7),
+            reader.GetGuid(5), businessId, reader.GetString(6), reader.GetString(7),
             reader.GetString(8), reader.GetString(9), reader.GetString(10),
-            new PosSaleUblAddressContract(reader.GetString(11), reader.GetString(12),
-                reader.GetString(13), reader.GetString(14), reader.GetString(15),
-                reader.GetString(16), reader.GetString(17)),
-            reader.GetString(18), reader.GetString(19), reader.GetByte(20),
-            reader.GetString(21), reader.GetString(22), reader.GetString(23),
-            reader.GetString(24), reader.GetString(25));
-        var authorization = new FiscalAuthorizationWorkConfiguration(
-            reader.GetString(26), DateOnly.FromDateTime(reader.GetDateTime(27)),
-            DateOnly.FromDateTime(reader.GetDateTime(28)), reader.GetString(29),
-            reader.GetInt64(30), reader.GetInt64(31));
-        return new FiscalGenerationWorkItem(documentId, businessId, workerId, sale, issuer, authorization);
+            reader.GetString(11), reader.GetString(12), reader.GetString(13),
+            new PosSaleUblAddressContract(reader.GetString(14), reader.GetString(15),
+                reader.GetString(16), reader.GetString(17), reader.GetString(18),
+                reader.GetString(19), reader.GetString(20)),
+            reader.GetString(21), reader.GetString(22), reader.GetByte(23),
+            reader.GetString(24), reader.GetString(25), reader.GetString(26),
+            reader.GetString(27), reader.GetString(28));
+        FiscalAuthorizationWorkConfiguration? authorization = null;
+        if (!reader.IsDBNull(29))
+            authorization = new FiscalAuthorizationWorkConfiguration(
+                reader.GetString(29), DateOnly.FromDateTime(reader.GetDateTime(30)),
+                DateOnly.FromDateTime(reader.GetDateTime(31)), reader.GetString(32),
+                reader.GetInt64(33), reader.GetInt64(34));
+        return new FiscalGenerationWorkItem(
+            documentId, businessId, workerId, documentType, fiscalNumber,
+            sale, creditNote, issuer, authorization);
     }
 
     private async Task InsertArtifactAsync(SqlConnection connection, SqlTransaction transaction,
