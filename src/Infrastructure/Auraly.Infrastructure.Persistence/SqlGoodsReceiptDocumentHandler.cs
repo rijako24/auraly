@@ -32,6 +32,9 @@ public sealed class SqlGoodsReceiptDocumentHandler(
             await ProcessLineAsync(session, receipt, line, cancellationToken);
         if (receipt.CreatesPayable)
             await OpenPayableAsync(session, receipt, cancellationToken);
+        await SqlAccountingPostingJobWriter.InsertAsync(
+            session, document, receipt.ReceivedAt, ids, timeProvider,
+            cancellationToken);
         await InsertOutboxAsync(session, receipt, document.Payload, cancellationToken);
         await MarkProcessedAsync(session, receipt, cancellationToken);
     }
@@ -43,8 +46,12 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         CancellationToken cancellationToken)
     {
         var state = await LoadLineStateAsync(session, receipt, line, cancellationToken);
+        var acquisitionAmount = line.NetAmount +
+            (line.TaxTreatment == PurchasingTaxTreatments.CapitalizedCost
+                ? line.TaxAmount
+                : 0m);
         var acquisitionUnitCost = decimal.Round(
-            line.NetAmount / line.Quantity,
+            acquisitionAmount / line.Quantity,
             6,
             MidpointRounding.AwayFromZero);
         if (state.ManageStock)

@@ -15,6 +15,13 @@ public static class PurchasingDocumentTypes
     public const string GoodsReceipt = AuralyDocumentTypes.GoodsReceipt;
 }
 
+public static class PurchasingTaxTreatments
+{
+    public const string DeductibleInputVat = "DeductibleInputVat";
+    public const string CapitalizedCost = "CapitalizedCost";
+    public const string NotApplicable = "NotApplicable";
+}
+
 public sealed record GoodsReceiptLineRequest(
     int LineNumber,
     Guid ProductId,
@@ -23,7 +30,8 @@ public sealed record GoodsReceiptLineRequest(
     decimal UnitCost,
     decimal DiscountAmount,
     string TaxCode,
-    decimal TaxRate);
+    decimal TaxRate,
+    string TaxTreatment);
 
 public sealed record ConfirmGoodsReceiptRequest(
     Guid DocumentId,
@@ -48,6 +56,7 @@ public sealed record GoodsReceiptLineSnapshot(
     decimal DiscountAmount,
     string TaxCode,
     decimal TaxRate,
+    string TaxTreatment,
     decimal NetAmount,
     decimal TaxAmount,
     decimal LineTotal);

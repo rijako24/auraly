@@ -58,13 +58,16 @@ CREATE TABLE [dbo].[GoodsReceiptLines]
     [DiscountAmount] DECIMAL(19,4) NOT NULL,
     [TaxCode] NVARCHAR(32) NOT NULL,
     [TaxRate] DECIMAL(9,6) NOT NULL,
+    [TaxTreatment] NVARCHAR(32) NOT NULL
+        CONSTRAINT [DF_GoodsReceiptLines_TaxTreatment] DEFAULT (N'DeductibleInputVat'),
     [NetAmount] DECIMAL(19,4) NOT NULL,
     [TaxAmount] DECIMAL(19,4) NOT NULL,
     [LineTotal] DECIMAL(19,4) NOT NULL,
     CONSTRAINT [PK_GoodsReceiptLines] PRIMARY KEY CLUSTERED ([GoodsReceiptId], [LineNumber]),
     CONSTRAINT [FK_GoodsReceiptLines_Receipts] FOREIGN KEY ([GoodsReceiptId]) REFERENCES [dbo].[GoodsReceipts] ([GoodsReceiptId]),
     CONSTRAINT [FK_GoodsReceiptLines_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
-    CONSTRAINT [CK_GoodsReceiptLines_Amounts] CHECK ([LineNumber] > 0 AND [Quantity] > 0 AND [UnitCost] >= 0 AND [DiscountAmount] >= 0 AND [TaxRate] BETWEEN 0 AND 100 AND [LineTotal] = [NetAmount] + [TaxAmount])
+    CONSTRAINT [CK_GoodsReceiptLines_Amounts] CHECK ([LineNumber] > 0 AND [Quantity] > 0 AND [UnitCost] >= 0 AND [DiscountAmount] >= 0 AND [TaxRate] BETWEEN 0 AND 100 AND [LineTotal] = [NetAmount] + [TaxAmount]),
+    CONSTRAINT [CK_GoodsReceiptLines_TaxTreatment] CHECK ([TaxTreatment] IN (N'DeductibleInputVat', N'CapitalizedCost', N'NotApplicable'))
 );
 GO
 CREATE INDEX [IX_GoodsReceiptLines_Product] ON [dbo].[GoodsReceiptLines] ([ProductId], [GoodsReceiptId]);

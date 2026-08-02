@@ -21,6 +21,9 @@ public static class AccountingCategories
     public const string Inventory = "Inventory";
     public const string CostOfGoodsSold = "CostOfGoodsSold";
     public const string CustomerCreditsPayable = "CustomerCreditsPayable";
+    public const string AccountsPayable = "AccountsPayable";
+    public const string InputVat = "InputVat";
+    public const string PurchasesExpense = "PurchasesExpense";
 
     public static string ForPaymentMethod(string methodCode) => methodCode switch
     {

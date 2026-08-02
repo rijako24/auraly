@@ -70,7 +70,8 @@ public sealed class SqlGoodsReceiptStore(
                 calculation.Lines.Select(line => new GoodsReceiptLineSnapshot(
                     line.LineNumber, line.ProductId, line.Description, line.Quantity,
                     line.UnitCost, line.DiscountAmount, line.TaxCode, line.TaxRate,
-                    line.NetAmount, line.TaxAmount, line.LineTotal)).ToArray());
+                    line.TaxTreatment.ToString(), line.NetAmount, line.TaxAmount,
+                    line.LineTotal)).ToArray());
             var payloadJson = GoodsReceiptContractSerializer.Serialize(payload);
             var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(payloadJson));
 
@@ -293,8 +294,9 @@ public sealed class SqlGoodsReceiptStore(
         const string sql = """
             INSERT dbo.GoodsReceiptLines
               (GoodsReceiptId,LineNumber,ProductId,DescriptionSnapshot,Quantity,UnitCost,DiscountAmount,
-               TaxCode,TaxRate,NetAmount,TaxAmount,LineTotal)
-            VALUES(@Id,@Line,@ProductId,@Description,@Quantity,@UnitCost,@Discount,@TaxCode,@TaxRate,@Net,@Tax,@Total);
+               TaxCode,TaxRate,TaxTreatment,NetAmount,TaxAmount,LineTotal)
+            VALUES(@Id,@Line,@ProductId,@Description,@Quantity,@UnitCost,@Discount,@TaxCode,
+                   @TaxRate,@TaxTreatment,@Net,@Tax,@Total);
             """;
         foreach (var line in calculation.Lines)
         {
@@ -308,6 +310,7 @@ public sealed class SqlGoodsReceiptStore(
             AddDecimal(command, "@Discount", line.DiscountAmount, 19, 4);
             command.Parameters.AddWithValue("@TaxCode", line.TaxCode);
             AddDecimal(command, "@TaxRate", line.TaxRate, 9, 6);
+            command.Parameters.AddWithValue("@TaxTreatment", line.TaxTreatment.ToString());
             AddDecimal(command, "@Net", line.NetAmount, 19, 4);
             AddDecimal(command, "@Tax", line.TaxAmount, 19, 4);
             AddDecimal(command, "@Total", line.LineTotal, 19, 4);
@@ -341,10 +344,20 @@ public sealed class SqlGoodsReceiptStore(
     private static byte[] HashRequest(ConfirmGoodsReceiptRequest request, GoodsReceiptCalculation calculation) =>
         SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
         {
-            request.DocumentId, request.BusinessId, request.WarehouseId, request.SupplierId,
-            request.SupplierInvoiceNumber, request.SupplierInvoiceDate, request.ReceivedAt,
-            request.CreatesPayable, request.DueDate, Currency = request.CurrencyCode.ToUpperInvariant(),
-            request.Notes, calculation.NetAmount, calculation.TaxAmount, calculation.GrandTotal,
+            request.DocumentId,
+            request.BusinessId,
+            request.WarehouseId,
+            request.SupplierId,
+            request.SupplierInvoiceNumber,
+            request.SupplierInvoiceDate,
+            request.ReceivedAt,
+            request.CreatesPayable,
+            request.DueDate,
+            Currency = request.CurrencyCode.ToUpperInvariant(),
+            request.Notes,
+            calculation.NetAmount,
+            calculation.TaxAmount,
+            calculation.GrandTotal,
             Lines = calculation.Lines
         }));
 

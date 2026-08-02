@@ -54,7 +54,8 @@ public sealed class GoodsReceiptService(
                 line.UnitCost,
                 line.DiscountAmount,
                 line.TaxCode,
-                line.TaxRate)));
+                line.TaxRate,
+                ParseTaxTreatment(line.TaxTreatment))));
         }
         catch (ArgumentException exception)
         {
@@ -84,6 +85,19 @@ public sealed class GoodsReceiptService(
         if (normalized.Length > maximumLength)
             throw new PurchasingValidationException($"The value exceeds {maximumLength} characters.");
         return normalized;
+    }
+
+    private static PurchaseTaxTreatment ParseTaxTreatment(string value)
+    {
+        if (!Enum.TryParse<PurchaseTaxTreatment>(value, false, out var treatment) ||
+            !Enum.IsDefined(treatment))
+        {
+            throw new PurchasingValidationException(
+                $"TaxTreatment must be {PurchasingTaxTreatments.DeductibleInputVat}, " +
+                $"{PurchasingTaxTreatments.CapitalizedCost} or {PurchasingTaxTreatments.NotApplicable}.");
+        }
+
+        return treatment;
     }
 
     private static void Require(PurchasingUserIdentity user, string permission)

@@ -20,7 +20,7 @@ public sealed class SqlAccountingPostingProcessor(
     TimeProvider timeProvider)
 {
     private static readonly HashSet<string> SupportedTypes =
-        ["SalesInvoice", "SalesReturn"];
+        ["SalesInvoice", "SalesReturn", "GoodsReceipt"];
 
     public async Task ProcessAsync(
         Guid documentId,
@@ -64,9 +64,30 @@ public sealed class SqlAccountingPostingProcessor(
                 return;
             }
 
-            var facts = source.DocumentType == "SalesInvoice"
-                ? await LoadInvoiceFactsAsync(connection, transaction, source, cancellationToken)
-                : await LoadReturnFactsAsync(connection, transaction, source, cancellationToken);
+            var factsResult = source.DocumentType switch
+            {
+                "SalesInvoice" => FinancialFactsResult.Ready(
+                    await LoadInvoiceFactsAsync(
+                        connection, transaction, source, cancellationToken)),
+                "SalesReturn" => FinancialFactsResult.Ready(
+                    await LoadReturnFactsAsync(
+                        connection, transaction, source, cancellationToken)),
+                "GoodsReceipt" => await LoadGoodsReceiptFactsAsync(
+                    connection, transaction, source, cancellationToken),
+                _ => throw new InvalidOperationException(
+                    $"Document type '{source.DocumentType}' is not supported for accounting.")
+            };
+            if (factsResult.Facts is null)
+            {
+                await MarkPendingConfigurationAsync(
+                    connection, transaction, source,
+                    factsResult.ErrorCode!, factsResult.ErrorMessage!,
+                    cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                return;
+            }
+
+            var facts = factsResult.Facts;
             var accountIds = await ResolveAccountsAsync(
                 connection, transaction, source, facts.RequiredCategories,
                 cancellationToken);
@@ -112,7 +133,8 @@ public sealed class SqlAccountingPostingProcessor(
             SELECT b.TenantId,p.BusinessId,p.DocumentId,p.DocumentType,
                    p.PayloadHash,
                    CASE WHEN p.DocumentType=N'SalesInvoice' THEN s.IssuedAt
-                        WHEN p.DocumentType=N'SalesReturn' THEN r.ReturnedAt END
+                        WHEN p.DocumentType=N'SalesReturn' THEN r.ReturnedAt
+                        WHEN p.DocumentType=N'GoodsReceipt' THEN g.ReceivedAt END
             FROM dbo.DocumentProcessingPayloads p WITH (UPDLOCK,HOLDLOCK)
             INNER JOIN dbo.DocumentProcessingJobs j WITH (UPDLOCK,HOLDLOCK)
               ON j.DocumentId=p.DocumentId AND j.DocumentType=p.DocumentType
@@ -121,6 +143,8 @@ public sealed class SqlAccountingPostingProcessor(
               ON s.DocumentId=p.DocumentId AND p.DocumentType=N'SalesInvoice'
             LEFT JOIN dbo.SalesReturns r
               ON r.ReturnId=p.DocumentId AND p.DocumentType=N'SalesReturn'
+            LEFT JOIN dbo.GoodsReceipts g
+              ON g.GoodsReceiptId=p.DocumentId AND p.DocumentType=N'GoodsReceipt'
             WHERE p.DocumentId=@DocumentId AND p.DocumentType=@DocumentType
               AND p.BusinessId=@BusinessId AND j.Status=N'Completed';
             """;
@@ -232,8 +256,8 @@ public sealed class SqlAccountingPostingProcessor(
             command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken)) throw new InvalidOperationException("The sale was not found for accounting.");
-            number=reader.GetString(0); untaxed=reader.GetDecimal(1); tax=reader.GetDecimal(2); total=reader.GetDecimal(3);
-            partyId=reader.IsDBNull(4)?null:reader.GetGuid(4);
+            number = reader.GetString(0); untaxed = reader.GetDecimal(1); tax = reader.GetDecimal(2); total = reader.GetDecimal(3);
+            partyId = reader.IsDBNull(4) ? null : reader.GetGuid(4);
         }
         var payments = new List<(string Category, decimal Amount)>();
         await using (var command = new SqlCommand("""
@@ -246,11 +270,11 @@ public sealed class SqlAccountingPostingProcessor(
             while (await reader.ReadAsync(cancellationToken))
                 payments.Add((PaymentCategory(reader.GetString(0)), reader.GetDecimal(1)));
         }
-        var paid=payments.Sum(payment=>payment.Amount);
+        var paid = payments.Sum(payment => payment.Amount);
         if (paid > total) throw new InvalidOperationException("Payments exceed the immutable invoice total.");
-        if (paid < total) payments.Add((AccountingCategories.AccountsReceivable,total-paid));
-        var cost=await InventoryCostAsync(connection,transaction,source.DocumentId,source.DocumentType,cancellationToken);
-        return FinancialFacts.Invoice(number,partyId,untaxed,tax,total,cost,payments);
+        if (paid < total) payments.Add((AccountingCategories.AccountsReceivable, total - paid));
+        var cost = await InventoryCostAsync(connection, transaction, source.DocumentId, source.DocumentType, cancellationToken);
+        return FinancialFacts.Invoice(number, partyId, untaxed, tax, total, cost, payments);
     }
 
     private static async Task<FinancialFacts> LoadReturnFactsAsync(
@@ -273,12 +297,87 @@ public sealed class SqlAccountingPostingProcessor(
             command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken)) throw new InvalidOperationException("The sales return was not found for accounting.");
-            number=reader.GetString(0);untaxed=reader.GetDecimal(1);tax=reader.GetDecimal(2);total=reader.GetDecimal(3);
-            settlementCategory=reader.GetString(4)=="CustomerCredit"?AccountingCategories.CustomerCreditsPayable:PaymentCategory(reader.GetString(5));
-            partyId=reader.IsDBNull(6)?null:reader.GetGuid(6);
+            number = reader.GetString(0); untaxed = reader.GetDecimal(1); tax = reader.GetDecimal(2); total = reader.GetDecimal(3);
+            settlementCategory = reader.GetString(4) == "CustomerCredit" ? AccountingCategories.CustomerCreditsPayable : PaymentCategory(reader.GetString(5));
+            partyId = reader.IsDBNull(6) ? null : reader.GetGuid(6);
         }
-        var cost=await InventoryCostAsync(connection,transaction,source.DocumentId,source.DocumentType,cancellationToken);
-        return FinancialFacts.Return(number,partyId,untaxed,tax,total,cost,settlementCategory);
+        var cost = await InventoryCostAsync(connection, transaction, source.DocumentId, source.DocumentType, cancellationToken);
+        return FinancialFacts.Return(number, partyId, untaxed, tax, total, cost, settlementCategory);
+    }
+
+    private static async Task<FinancialFactsResult> LoadGoodsReceiptFactsAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        SourceEnvelope source,
+        CancellationToken cancellationToken)
+    {
+        string number;
+        string currencyCode;
+        decimal total;
+        bool createsPayable;
+        await using (var command = new SqlCommand("""
+            SELECT DocumentNumber,CurrencyCode,GrandTotal,CreatesPayable
+            FROM dbo.GoodsReceipts
+            WHERE GoodsReceiptId=@DocumentId AND BusinessId=@BusinessId;
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
+            command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                throw new InvalidOperationException(
+                    "The goods receipt was not found for accounting.");
+            number = reader.GetString(0);
+            currencyCode = reader.GetString(1);
+            total = reader.GetDecimal(2);
+            createsPayable = reader.GetBoolean(3);
+        }
+
+        if (!createsPayable)
+            return FinancialFactsResult.Pending(
+                "SettlementSourceMissing",
+                "The goods receipt has no payable and no settlement evidence to credit.");
+        if (!string.Equals(currencyCode, "COP", StringComparison.Ordinal))
+            return FinancialFactsResult.Pending(
+                "ForeignCurrencyUnsupported",
+                $"Currency '{currencyCode}' requires an exchange-rate accounting policy.");
+
+        decimal deductibleVat;
+        decimal acquisitionAmount;
+        await using (var command = new SqlCommand("""
+            SELECT
+              COALESCE(SUM(CASE WHEN TaxTreatment=N'DeductibleInputVat'
+                                THEN TaxAmount ELSE 0 END),0),
+              COALESCE(SUM(NetAmount +
+                    CASE WHEN TaxTreatment=N'CapitalizedCost'
+                         THEN TaxAmount ELSE 0 END),0)
+            FROM dbo.GoodsReceiptLines
+            WHERE GoodsReceiptId=@DocumentId;
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                throw new InvalidOperationException(
+                    "The goods receipt lines were not found for accounting.");
+            deductibleVat = reader.GetDecimal(0);
+            acquisitionAmount = reader.GetDecimal(1);
+        }
+
+        var inventory = await InventoryCostAsync(
+            connection, transaction, source.DocumentId, source.DocumentType,
+            cancellationToken);
+        var expense = decimal.Round(
+            acquisitionAmount - inventory, 4, MidpointRounding.AwayFromZero);
+        var accountedTotal = decimal.Round(
+            inventory + expense + deductibleVat, 4,
+            MidpointRounding.AwayFromZero);
+        if (expense < 0 || accountedTotal != decimal.Round(total, 4))
+            throw new InvalidOperationException(
+                "The immutable goods receipt does not reconcile with its inventory, expense and tax effects.");
+
+        return FinancialFactsResult.Ready(FinancialFacts.Purchase(
+            number, inventory, expense, deductibleVat, total));
     }
 
     private static async Task<decimal> InventoryCostAsync(
@@ -289,8 +388,8 @@ public sealed class SqlAccountingPostingProcessor(
             SELECT COALESCE(ABS(SUM(ValueChange)),0) FROM dbo.InventoryMovements
             WHERE DocumentId=@DocumentId AND DocumentType=@DocumentType;
             """, connection, transaction);
-        command.Parameters.AddWithValue("@DocumentId",documentId);
-        command.Parameters.AddWithValue("@DocumentType",documentType);
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        command.Parameters.AddWithValue("@DocumentType", documentType);
         return Convert.ToDecimal(await command.ExecuteScalarAsync(cancellationToken));
     }
 
@@ -304,15 +403,15 @@ public sealed class SqlAccountingPostingProcessor(
             _ => throw new InvalidOperationException($"Payment method '{methodCode}' has no accounting category.")
         };
 
-    private static async Task<Dictionary<string,Guid>> ResolveAccountsAsync(
+    private static async Task<Dictionary<string, Guid>> ResolveAccountsAsync(
         SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
         IReadOnlySet<string> categories, CancellationToken cancellationToken)
     {
-        var result=new Dictionary<string,Guid>(StringComparer.Ordinal);
-        var occurredOn=DateOnly.FromDateTime(source.OccurredAt.Date).ToDateTime(TimeOnly.MinValue);
-        foreach(var category in categories)
+        var result = new Dictionary<string, Guid>(StringComparer.Ordinal);
+        var occurredOn = DateOnly.FromDateTime(source.OccurredAt.Date).ToDateTime(TimeOnly.MinValue);
+        foreach (var category in categories)
         {
-            await using var command=new SqlCommand("""
+            await using var command = new SqlCommand("""
                 SELECT TOP(1) m.AccountId
                 FROM dbo.AccountingAccountMappings m
                 INNER JOIN dbo.AccountingAccounts a ON a.AccountId=m.AccountId
@@ -323,13 +422,13 @@ public sealed class SqlAccountingPostingProcessor(
                   AND a.IsActive=1 AND a.AllowsPosting=1
                 ORDER BY CASE WHEN m.BusinessId=@BusinessId THEN 0 ELSE 1 END,
                          m.EffectiveFrom DESC;
-                """,connection,transaction);
-            command.Parameters.AddWithValue("@TenantId",source.TenantId);
-            command.Parameters.AddWithValue("@BusinessId",source.BusinessId);
-            command.Parameters.AddWithValue("@Category",category);
-            command.Parameters.AddWithValue("@OccurredOn",occurredOn);
-            var value=await command.ExecuteScalarAsync(cancellationToken);
-            if(value is Guid id) result[category]=id;
+                """, connection, transaction);
+            command.Parameters.AddWithValue("@TenantId", source.TenantId);
+            command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+            command.Parameters.AddWithValue("@Category", category);
+            command.Parameters.AddWithValue("@OccurredOn", occurredOn);
+            var value = await command.ExecuteScalarAsync(cancellationToken);
+            if (value is Guid id) result[category] = id;
         }
         return result;
     }
@@ -339,113 +438,141 @@ public sealed class SqlAccountingPostingProcessor(
         Guid periodId, string description, IReadOnlyList<JournalLine> lines,
         CancellationToken cancellationToken)
     {
-        var now=timeProvider.GetUtcNow();
-        var number=await NextVoucherNumberAsync(connection,transaction,source.TenantId,now,cancellationToken);
-        var entryId=ids.NewId();
-        var debit=decimal.Round(lines.Sum(line=>line.Debit),4);
-        await using(var command=new SqlCommand("""
+        var now = timeProvider.GetUtcNow();
+        var number = await NextVoucherNumberAsync(connection, transaction, source.TenantId, now, cancellationToken);
+        var entryId = ids.NewId();
+        var debit = decimal.Round(lines.Sum(line => line.Debit), 4);
+        await using (var command = new SqlCommand("""
             INSERT dbo.AccountingEntries
             (EntryId,TenantId,BusinessId,PeriodId,SourceDocumentId,SourceDocumentType,
              EntryNumber,OccurredAt,PostedAt,Description,DebitTotal,CreditTotal,
              SourcePayloadHash,RuleVersion)
             VALUES(@EntryId,@TenantId,@BusinessId,@PeriodId,@DocumentId,@DocumentType,
                    @Number,@OccurredAt,@PostedAt,@Description,@Total,@Total,@PayloadHash,1);
-            """,connection,transaction))
+            """, connection, transaction))
         {
-            command.Parameters.AddWithValue("@EntryId",entryId); command.Parameters.AddWithValue("@PeriodId",periodId);
-            AddSource(command,source); command.Parameters.AddWithValue("@Number",number); command.Parameters.AddWithValue("@PostedAt",now);
-            command.Parameters.AddWithValue("@Description",description); AddMoney(command,"@Total",debit);
+            command.Parameters.AddWithValue("@EntryId", entryId); command.Parameters.AddWithValue("@PeriodId", periodId);
+            AddSource(command, source); command.Parameters.AddWithValue("@Number", number); command.Parameters.AddWithValue("@PostedAt", now);
+            command.Parameters.AddWithValue("@Description", description); AddMoney(command, "@Total", debit);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
-        for(var index=0;index<lines.Count;index++)
+        for (var index = 0; index < lines.Count; index++)
         {
-            var line=lines[index];
-            await using var command=new SqlCommand("""
+            var line = lines[index];
+            await using var command = new SqlCommand("""
                 INSERT dbo.AccountingEntryLines
                 (EntryId,LineNumber,AccountId,PartyId,CostCenterId,Description,Debit,Credit)
                 VALUES(@EntryId,@LineNumber,@AccountId,@PartyId,@CostCenterId,@Description,@Debit,@Credit);
-                """,connection,transaction);
-            command.Parameters.AddWithValue("@EntryId",entryId); command.Parameters.AddWithValue("@LineNumber",index+1);
-            command.Parameters.AddWithValue("@AccountId",line.AccountId); command.Parameters.AddWithValue("@PartyId",(object?)line.PartyId??DBNull.Value);
-            command.Parameters.AddWithValue("@CostCenterId",(object?)line.CostCenterId??DBNull.Value); command.Parameters.AddWithValue("@Description",line.Description);
-            AddMoney(command,"@Debit",line.Debit); AddMoney(command,"@Credit",line.Credit);
+                """, connection, transaction);
+            command.Parameters.AddWithValue("@EntryId", entryId); command.Parameters.AddWithValue("@LineNumber", index + 1);
+            command.Parameters.AddWithValue("@AccountId", line.AccountId); command.Parameters.AddWithValue("@PartyId", (object?)line.PartyId ?? DBNull.Value);
+            command.Parameters.AddWithValue("@CostCenterId", (object?)line.CostCenterId ?? DBNull.Value); command.Parameters.AddWithValue("@Description", line.Description);
+            AddMoney(command, "@Debit", line.Debit); AddMoney(command, "@Credit", line.Credit);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
-        await using var complete=new SqlCommand("""
+        await using var complete = new SqlCommand("""
             UPDATE dbo.AccountingPostingJobs SET Status=N'Posted',AttemptCount=AttemptCount+1,
                 LastAttemptAt=@Now,CompletedAt=@Now,LastErrorCode=NULL,LastErrorMessage=NULL
             WHERE SourceDocumentId=@DocumentId AND SourceDocumentType=@DocumentType;
-            """,connection,transaction);
-        complete.Parameters.AddWithValue("@Now",now); complete.Parameters.AddWithValue("@DocumentId",source.DocumentId); complete.Parameters.AddWithValue("@DocumentType",source.DocumentType);
+            """, connection, transaction);
+        complete.Parameters.AddWithValue("@Now", now); complete.Parameters.AddWithValue("@DocumentId", source.DocumentId); complete.Parameters.AddWithValue("@DocumentType", source.DocumentType);
         await complete.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private static async Task<string> NextVoucherNumberAsync(SqlConnection connection,SqlTransaction transaction,Guid tenantId,DateTimeOffset now,CancellationToken token)
+    private static async Task<string> NextVoucherNumberAsync(SqlConnection connection, SqlTransaction transaction, Guid tenantId, DateTimeOffset now, CancellationToken token)
     {
-        await using var command=new SqlCommand("""
+        await using var command = new SqlCommand("""
             IF NOT EXISTS(SELECT 1 FROM dbo.AccountingVoucherCursors WITH(UPDLOCK,HOLDLOCK) WHERE TenantId=@TenantId)
               INSERT dbo.AccountingVoucherCursors(TenantId,LastAssignedNumber,UpdatedAt) VALUES(@TenantId,0,@Now);
             UPDATE dbo.AccountingVoucherCursors SET LastAssignedNumber=LastAssignedNumber+1,UpdatedAt=@Now
               OUTPUT inserted.LastAssignedNumber WHERE TenantId=@TenantId;
-            """,connection,transaction);
-        command.Parameters.AddWithValue("@TenantId",tenantId); command.Parameters.AddWithValue("@Now",now);
-        var value=Convert.ToInt64(await command.ExecuteScalarAsync(token));
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@TenantId", tenantId); command.Parameters.AddWithValue("@Now", now);
+        var value = Convert.ToInt64(await command.ExecuteScalarAsync(token));
         return $"ASI-{value:D10}";
     }
 
-    private static async Task MarkPendingConfigurationAsync(SqlConnection connection,SqlTransaction transaction,SourceEnvelope source,string code,string message,CancellationToken token)
+    private static async Task MarkPendingConfigurationAsync(SqlConnection connection, SqlTransaction transaction, SourceEnvelope source, string code, string message, CancellationToken token)
     {
-        await using var command=new SqlCommand("""
+        await using var command = new SqlCommand("""
             UPDATE dbo.AccountingPostingJobs
             SET Status=N'AccountingPendingConfiguration',AttemptCount=AttemptCount+1,
                 LastAttemptAt=SYSDATETIMEOFFSET(),LastErrorCode=@Code,LastErrorMessage=@Message
             WHERE SourceDocumentId=@DocumentId AND SourceDocumentType=@DocumentType;
-            """,connection,transaction);
-        command.Parameters.AddWithValue("@Code",code); command.Parameters.AddWithValue("@Message",message);
-        command.Parameters.AddWithValue("@DocumentId",source.DocumentId); command.Parameters.AddWithValue("@DocumentType",source.DocumentType);
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@Code", code); command.Parameters.AddWithValue("@Message", message);
+        command.Parameters.AddWithValue("@DocumentId", source.DocumentId); command.Parameters.AddWithValue("@DocumentType", source.DocumentType);
         await command.ExecuteNonQueryAsync(token);
     }
 
-    private static void AddSource(SqlCommand command,SourceEnvelope source)
+    private static void AddSource(SqlCommand command, SourceEnvelope source)
     {
-        command.Parameters.AddWithValue("@TenantId",source.TenantId); command.Parameters.AddWithValue("@BusinessId",source.BusinessId);
-        command.Parameters.AddWithValue("@DocumentId",source.DocumentId); command.Parameters.AddWithValue("@DocumentType",source.DocumentType);
-        command.Parameters.AddWithValue("@PayloadHash",source.PayloadHash); command.Parameters.AddWithValue("@OccurredAt",source.OccurredAt);
+        command.Parameters.AddWithValue("@TenantId", source.TenantId); command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+        command.Parameters.AddWithValue("@DocumentId", source.DocumentId); command.Parameters.AddWithValue("@DocumentType", source.DocumentType);
+        command.Parameters.AddWithValue("@PayloadHash", source.PayloadHash); command.Parameters.AddWithValue("@OccurredAt", source.OccurredAt);
     }
-    private static void AddMoney(SqlCommand command,string name,decimal value){var parameter=command.Parameters.Add(name,SqlDbType.Decimal);parameter.Precision=19;parameter.Scale=4;parameter.Value=value;}
-    private sealed record SourceEnvelope(Guid TenantId,Guid BusinessId,Guid DocumentId,string DocumentType,byte[] PayloadHash,DateTimeOffset OccurredAt);
+    private static void AddMoney(SqlCommand command, string name, decimal value) { var parameter = command.Parameters.Add(name, SqlDbType.Decimal); parameter.Precision = 19; parameter.Scale = 4; parameter.Value = value; }
+    private sealed record SourceEnvelope(Guid TenantId, Guid BusinessId, Guid DocumentId, string DocumentType, byte[] PayloadHash, DateTimeOffset OccurredAt);
 
-    private sealed record FinancialFacts(string Description,Guid? PartyId,decimal Untaxed,decimal Tax,decimal Total,decimal Cost,IReadOnlyList<(string Category,decimal Amount)> Settlements,bool IsReturn)
+    private sealed record FinancialFactsResult(
+        FinancialFacts? Facts,
+        string? ErrorCode,
+        string? ErrorMessage)
+    {
+        public static FinancialFactsResult Ready(FinancialFacts facts) =>
+            new(facts, null, null);
+
+        public static FinancialFactsResult Pending(string code, string message) =>
+            new(null, code, message);
+    }
+
+    private sealed record FinancialFacts(string Description, Guid? PartyId, decimal Untaxed, decimal Tax, decimal Total, decimal Cost, IReadOnlyList<(string Category, decimal Amount)> Settlements, bool IsReturn, bool IsPurchase)
     {
         public IReadOnlySet<string> RequiredCategories
         {
             get
             {
-                var values=new HashSet<string>(Settlements.Select(item=>item.Category),StringComparer.Ordinal)
-                { IsReturn?AccountingCategories.SalesReturns:AccountingCategories.SalesRevenue };
-                if(Tax>0) values.Add(AccountingCategories.OutputVat);
-                if(Cost>0){values.Add(AccountingCategories.Inventory);values.Add(AccountingCategories.CostOfGoodsSold);}
+                var values = new HashSet<string>(Settlements.Select(item => item.Category), StringComparer.Ordinal);
+                if (IsPurchase)
+                {
+                    if (Cost > 0) values.Add(AccountingCategories.Inventory);
+                    if (Untaxed > 0) values.Add(AccountingCategories.PurchasesExpense);
+                    if (Tax > 0) values.Add(AccountingCategories.InputVat);
+                    return values;
+                }
+                values.Add(IsReturn ? AccountingCategories.SalesReturns : AccountingCategories.SalesRevenue);
+                if (Tax > 0) values.Add(AccountingCategories.OutputVat);
+                if (Cost > 0) { values.Add(AccountingCategories.Inventory); values.Add(AccountingCategories.CostOfGoodsSold); }
                 return values;
             }
         }
-        public IEnumerable<JournalLine> BuildLines(IReadOnlyDictionary<string,Guid> accounts,Guid? costCenter)
+        public IEnumerable<JournalLine> BuildLines(IReadOnlyDictionary<string, Guid> accounts, Guid? costCenter)
         {
-            if(!IsReturn)
+            if (IsPurchase)
             {
-                foreach(var settlement in Settlements) yield return new(accounts[settlement.Category],settlement.Amount,0,PartyId,costCenter,Description);
-                yield return new(accounts[AccountingCategories.SalesRevenue],0,Untaxed,PartyId,costCenter,Description);
-                if(Tax>0) yield return new(accounts[AccountingCategories.OutputVat],0,Tax,PartyId,costCenter,Description);
-                if(Cost>0){yield return new(accounts[AccountingCategories.CostOfGoodsSold],Cost,0,PartyId,costCenter,Description);yield return new(accounts[AccountingCategories.Inventory],0,Cost,PartyId,costCenter,Description);}
+                if (Cost > 0) yield return new(accounts[AccountingCategories.Inventory], Cost, 0, PartyId, costCenter, Description);
+                if (Untaxed > 0) yield return new(accounts[AccountingCategories.PurchasesExpense], Untaxed, 0, PartyId, costCenter, Description);
+                if (Tax > 0) yield return new(accounts[AccountingCategories.InputVat], Tax, 0, PartyId, costCenter, Description);
+                foreach (var settlement in Settlements) yield return new(accounts[settlement.Category], 0, settlement.Amount, PartyId, costCenter, Description);
+                yield break;
+            }
+            if (!IsReturn)
+            {
+                foreach (var settlement in Settlements) yield return new(accounts[settlement.Category], settlement.Amount, 0, PartyId, costCenter, Description);
+                yield return new(accounts[AccountingCategories.SalesRevenue], 0, Untaxed, PartyId, costCenter, Description);
+                if (Tax > 0) yield return new(accounts[AccountingCategories.OutputVat], 0, Tax, PartyId, costCenter, Description);
+                if (Cost > 0) { yield return new(accounts[AccountingCategories.CostOfGoodsSold], Cost, 0, PartyId, costCenter, Description); yield return new(accounts[AccountingCategories.Inventory], 0, Cost, PartyId, costCenter, Description); }
             }
             else
             {
-                yield return new(accounts[AccountingCategories.SalesReturns],Untaxed,0,PartyId,costCenter,Description);
-                if(Tax>0) yield return new(accounts[AccountingCategories.OutputVat],Tax,0,PartyId,costCenter,Description);
-                foreach(var settlement in Settlements) yield return new(accounts[settlement.Category],0,settlement.Amount,PartyId,costCenter,Description);
-                if(Cost>0){yield return new(accounts[AccountingCategories.Inventory],Cost,0,PartyId,costCenter,Description);yield return new(accounts[AccountingCategories.CostOfGoodsSold],0,Cost,PartyId,costCenter,Description);}
+                yield return new(accounts[AccountingCategories.SalesReturns], Untaxed, 0, PartyId, costCenter, Description);
+                if (Tax > 0) yield return new(accounts[AccountingCategories.OutputVat], Tax, 0, PartyId, costCenter, Description);
+                foreach (var settlement in Settlements) yield return new(accounts[settlement.Category], 0, settlement.Amount, PartyId, costCenter, Description);
+                if (Cost > 0) { yield return new(accounts[AccountingCategories.Inventory], Cost, 0, PartyId, costCenter, Description); yield return new(accounts[AccountingCategories.CostOfGoodsSold], 0, Cost, PartyId, costCenter, Description); }
             }
         }
-        public static FinancialFacts Invoice(string number,Guid? party,decimal untaxed,decimal tax,decimal total,decimal cost,IReadOnlyList<(string Category,decimal Amount)> settlements)=>new($"Factura de venta {number}",party,untaxed,tax,total,cost,settlements,false);
-        public static FinancialFacts Return(string number,Guid? party,decimal untaxed,decimal tax,decimal total,decimal cost,string settlement)=>new($"Devolucion de venta {number}",party,untaxed,tax,total,cost,[(settlement,total)],true);
+        public static FinancialFacts Invoice(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Factura de venta {number}", party, untaxed, tax, total, cost, settlements, false, false);
+        public static FinancialFacts Return(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, string settlement) => new($"Devolucion de venta {number}", party, untaxed, tax, total, cost, [(settlement, total)], true, false);
+        public static FinancialFacts Purchase(string number, decimal inventory, decimal expense, decimal deductibleVat, decimal total) => new($"Entrada de mercancia {number}", null, expense, deductibleVat, total, inventory, [(AccountingCategories.AccountsPayable, total)], false, true);
     }
 }

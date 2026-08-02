@@ -1,5 +1,12 @@
 namespace Auraly.Domain.Purchasing;
 
+public enum PurchaseTaxTreatment
+{
+    DeductibleInputVat,
+    CapitalizedCost,
+    NotApplicable
+}
+
 public sealed record CalculatedGoodsReceiptLine(
     int LineNumber,
     Guid ProductId,
@@ -9,6 +16,7 @@ public sealed record CalculatedGoodsReceiptLine(
     decimal DiscountAmount,
     string TaxCode,
     decimal TaxRate,
+    PurchaseTaxTreatment TaxTreatment,
     decimal NetAmount,
     decimal TaxAmount,
     decimal LineTotal);
@@ -24,7 +32,7 @@ public static class GoodsReceiptCalculator
     public static GoodsReceiptCalculation Calculate(
         IEnumerable<(int LineNumber, Guid ProductId, string Description,
             decimal Quantity, decimal UnitCost, decimal DiscountAmount,
-            string TaxCode, decimal TaxRate)> source)
+            string TaxCode, decimal TaxRate, PurchaseTaxTreatment TaxTreatment)> source)
     {
         ArgumentNullException.ThrowIfNull(source);
         var input = source.OrderBy(line => line.LineNumber).ToArray();
@@ -44,6 +52,14 @@ public static class GoodsReceiptCalculator
             if (line.DiscountAmount < 0) throw new ArgumentOutOfRangeException(nameof(source), "Discount cannot be negative.");
             if (line.TaxRate is < 0 or > 100) throw new ArgumentOutOfRangeException(nameof(source), "Tax rate must be between zero and one hundred.");
             if (string.IsNullOrWhiteSpace(line.TaxCode)) throw new ArgumentException("A tax code is required on every line.", nameof(source));
+            if (!Enum.IsDefined(line.TaxTreatment))
+                throw new ArgumentException("The purchase tax treatment is not valid.", nameof(source));
+            if (line.TaxRate == 0 && line.TaxTreatment != PurchaseTaxTreatment.NotApplicable)
+                throw new ArgumentException("A zero-rated purchase line must use NotApplicable tax treatment.", nameof(source));
+            if (line.TaxRate > 0 && line.TaxTreatment == PurchaseTaxTreatment.NotApplicable)
+                throw new ArgumentException(
+                    "A taxed purchase line must declare whether VAT is deductible or capitalized.",
+                    nameof(source));
 
             var gross = Money(line.Quantity * line.UnitCost);
             if (line.DiscountAmount > gross)
@@ -60,6 +76,7 @@ public static class GoodsReceiptCalculator
                 discount,
                 line.TaxCode.Trim().ToUpperInvariant(),
                 Rate(line.TaxRate),
+                line.TaxTreatment,
                 net,
                 tax,
                 Money(net + tax)));
