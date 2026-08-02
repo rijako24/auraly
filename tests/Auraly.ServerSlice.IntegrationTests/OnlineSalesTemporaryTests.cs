@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Sales;
+using Auraly.Contracts.WorkSessions;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -22,7 +23,7 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
               FirstName,LastName,IsActive,CreatedAt)
             VALUES(
               @UserId,@TenantId,@Username,@NormalizedUsername,@Email,@NormalizedEmail,
-              N'Caja',N'Espera',1,SYSDATETIMEOFFSET());
+              N'Venta',N'Espera',1,SYSDATETIMEOFFSET());
             INSERT dbo.Parties(
               PartyId,TenantId,PartyType,DisplayName,CompletionStatus,IsActive,
               CreatedBy,CreatedAt)
@@ -46,11 +47,14 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
 
         using var client = fixture.CreateUserClient(
             userId,
-            CommercePermissionCodes.SalesCreate);
+            CommercePermissionCodes.SalesCreate,
+            WorkSessionPermissionCodes.Open);
         client.Timeout = TimeSpan.FromSeconds(15);
+        var workSession = await fixture.OpenWorkSessionAsync(client);
         var context = new OnlineSalesDraftContext(
             fixture.BusinessId,
-            fixture.OnlineRegisterId);
+            fixture.WarehouseId,
+            workSession.WorkSessionId);
 
         using (var productsResponse = await client.PostAsJsonAsync(
                    "/api/commerce/v1/pos/drafts/products/search",
@@ -99,7 +103,8 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
 
         using var restarted = fixture.CreateUserClient(
             userId,
-            CommercePermissionCodes.SalesCreate);
+            CommercePermissionCodes.SalesCreate,
+            WorkSessionPermissionCodes.Open);
         restarted.Timeout = TimeSpan.FromSeconds(15);
         var reopened = await OpenAsync(restarted, context);
         Assert.Equal(next.DraftId, reopened.DraftId);

@@ -17,11 +17,11 @@ public sealed class PosEdgeSchemaUpgradeTests
             Path.GetTempPath(),
             $"auraly-pos-edge-upgrade-{Guid.NewGuid():N}.db");
         var seriesId = Guid.NewGuid();
-        var registerId = new RegisterId(Guid.NewGuid());
+        var deviceId = new DeviceId(Guid.NewGuid());
         var authorizationId = Guid.NewGuid();
         try
         {
-            await CreatePreviousSchemaAsync(databasePath, seriesId, registerId);
+            await CreatePreviousSchemaAsync(databasePath, seriesId, deviceId);
             var userId = new UserId(Guid.NewGuid());
             var permissionSet = new UserPermissionSet(
                 new TenantId(Guid.NewGuid()),
@@ -35,7 +35,7 @@ public sealed class PosEdgeSchemaUpgradeTests
             await store.InitializeAsync();
             await store.ProvisionSeriesAsync(new PosEdgeSeriesProvision(
                 seriesId,
-                registerId,
+                deviceId,
                 "FV01",
                 "18760000001",
                 1,
@@ -80,7 +80,7 @@ public sealed class PosEdgeSchemaUpgradeTests
     private static async Task CreatePreviousSchemaAsync(
         string databasePath,
         Guid seriesId,
-        RegisterId registerId)
+        DeviceId deviceId)
     {
         await using var connection = new SqliteConnection($"Data Source={databasePath}");
         await connection.OpenAsync();
@@ -89,7 +89,7 @@ public sealed class PosEdgeSchemaUpgradeTests
             """
             CREATE TABLE FiscalSeriesCursors (
                 SeriesId TEXT NOT NULL PRIMARY KEY,
-                RegisterId TEXT NOT NULL,
+                DeviceId TEXT NOT NULL,
                 Prefix TEXT NOT NULL,
                 AuthorizationNumber TEXT NOT NULL,
                 NextConsecutive INTEGER NOT NULL,
@@ -97,13 +97,13 @@ public sealed class PosEdgeSchemaUpgradeTests
                 ValidUntil TEXT NOT NULL,
                 IsActive INTEGER NOT NULL
             );
-            CREATE UNIQUE INDEX IX_FiscalSeriesCursors_RegisterId
-                ON FiscalSeriesCursors(RegisterId);
+            CREATE UNIQUE INDEX IX_FiscalSeriesCursors_DeviceId
+                ON FiscalSeriesCursors(DeviceId);
             INSERT INTO FiscalSeriesCursors (
-                SeriesId, RegisterId, Prefix, AuthorizationNumber,
+                SeriesId, DeviceId, Prefix, AuthorizationNumber,
                 NextConsecutive, RangeEnd, ValidUntil, IsActive)
             VALUES (
-                $seriesId, $registerId, 'FV01', '18760000001',
+                $seriesId, $deviceId, 'FV01', '18760000001',
                 7, 100, '2027-07-27', 1);
             CREATE TABLE IssuedSales (
                 DocumentId TEXT NOT NULL PRIMARY KEY,
@@ -130,7 +130,7 @@ public sealed class PosEdgeSchemaUpgradeTests
                 ON Outbox(DocumentId);
             """;
         command.Parameters.AddWithValue("$seriesId", seriesId.ToString("D").ToUpperInvariant());
-        command.Parameters.AddWithValue("$registerId", registerId.Value.ToString("D").ToUpperInvariant());
+        command.Parameters.AddWithValue("$deviceId", deviceId.Value.ToString("D").ToUpperInvariant());
         await command.ExecuteNonQueryAsync();
     }
 

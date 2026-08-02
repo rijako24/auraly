@@ -4,7 +4,7 @@ public static class CommercePermissionCodes
 {
     public const string CatalogRead = "catalog.read";
     public const string CatalogWrite = "catalog.write";
-    public const string PosDevicesEnroll = "pos.devices.enroll";
+    public const string EnrolledDevicesEnroll = "pos.devices.enroll";
     public const string PosIdentitySync = "pos.identity.sync";
     public const string SalesCreate = "sales.create";
     public const string SalesDiscount = "sales.discount";
@@ -17,5 +17,4 @@ public static class CommercePermissionCodes
     public const string CashOpen = "cash.open";
     public const string CashHandoffApprove = "cash.handoff.approve";
     public const string CashClose = "cash.close";
-    public const string SupervisorCredentialsManage = "security.supervisor-credentials.manage";
 }

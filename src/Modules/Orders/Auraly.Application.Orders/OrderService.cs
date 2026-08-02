@@ -7,7 +7,7 @@ public sealed record OrderActor(
     Guid UserId,
     Guid TenantId,
     Guid BusinessId,
-    Guid? RegisterId,
+    Guid? WorkSessionId,
     Guid? DeviceId,
     IReadOnlySet<string> Permissions);
 
@@ -26,14 +26,14 @@ public interface IOrderStore
     Task<OrderClaimSummary> ClaimAsync(
         OrderActor actor,
         Guid orderId,
-        Guid registerId,
+        Guid workSessionId,
         int leaseMinutes,
         CancellationToken cancellationToken);
 
     Task ReleaseClaimAsync(
         OrderActor actor,
         Guid orderId,
-        Guid registerId,
+        Guid workSessionId,
         CancellationToken cancellationToken);
 }
 
@@ -77,11 +77,11 @@ public sealed class OrderService(IOrderStore orders)
         CancellationToken cancellationToken = default)
     {
         Demand(actor, OrderPermissionCodes.Recover);
-        ValidateActorRequest(actor, orderId, request.RegisterId, request.UserId);
+        ValidateActorRequest(actor, orderId, request.WorkSessionId, request.UserId);
         return orders.ClaimAsync(
             actor,
             orderId,
-            request.RegisterId,
+            request.WorkSessionId,
             OrderRules.LeaseMinutes(request.LeaseMinutes),
             cancellationToken);
     }
@@ -93,27 +93,27 @@ public sealed class OrderService(IOrderStore orders)
         CancellationToken cancellationToken = default)
     {
         Demand(actor, OrderPermissionCodes.Recover);
-        ValidateActorRequest(actor, orderId, request.RegisterId, request.UserId);
+        ValidateActorRequest(actor, orderId, request.WorkSessionId, request.UserId);
         return orders.ReleaseClaimAsync(
             actor,
             orderId,
-            request.RegisterId,
+            request.WorkSessionId,
             cancellationToken);
     }
 
     private static void ValidateActorRequest(
         OrderActor actor,
         Guid orderId,
-        Guid registerId,
+        Guid workSessionId,
         Guid userId)
     {
-        if (orderId == Guid.Empty || registerId == Guid.Empty ||
+        if (orderId == Guid.Empty || workSessionId == Guid.Empty ||
             userId == Guid.Empty || userId != actor.UserId)
             throw new OrderValidationException(
-                "Pedido, caja y usuario autenticado son obligatorios.");
-        if (actor.RegisterId is not null && actor.RegisterId != registerId)
+                "Pedido, sesión y usuario autenticado son obligatorios.");
+        if (actor.WorkSessionId is not null && actor.WorkSessionId != workSessionId)
             throw new OrderForbiddenException(
-                "La caja solicitada no coincide con el dispositivo autenticado.");
+                "La sesión solicitada no coincide con el dispositivo autenticado.");
     }
 
     private static void Demand(OrderActor actor, string permission)

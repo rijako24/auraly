@@ -152,7 +152,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         command.CommandText = """
             SELECT SalesDraftId
             FROM dbo.SalesDrafts
-            WHERE BusinessId=@BusinessId AND RegisterId=@RegisterId
+            WHERE BusinessId=@BusinessId AND WorkSessionId=@WorkSessionId
               AND UserId=@UserId AND Status=N'Temporary'
               AND (@Search=N'' OR Name LIKE @Contains OR Reference LIKE @Contains)
             ORDER BY SavedAt DESC,SalesDraftId
@@ -160,7 +160,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             """;
         var search = request.Search?.Trim() ?? string.Empty;
         command.Parameters.AddRange([
-            P("@BusinessId", scope.BusinessId), P("@RegisterId", scope.RegisterId),
+            P("@BusinessId", scope.BusinessId), P("@WorkSessionId", scope.WorkSessionId),
             P("@UserId", user.UserId), P("@Search", search),
             P("@Contains", $"%{search}%"), P("@Skip", request.Skip),
             P("@Take", request.Take)
@@ -252,7 +252,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         DemandTemporaryVersion(temporary, request.ExpectedTemporaryVersion);
         var activeId = await FindActiveAsync(
             connection, transaction, temporary.BusinessId,
-            temporary.RegisterId, user.UserId, cancellationToken)
+            temporary.WorkSessionId, user.UserId, cancellationToken)
             ?? throw new OnlineSalesDraftConcurrencyException(
                 "No existe una venta activa para intercambiar.");
         var active = await ReadActiveStateAsync(
@@ -315,7 +315,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         DemandTemporaryVersion(temporary, request.ExpectedVersion);
         var activeId = await FindActiveAsync(
             connection, transaction, temporary.BusinessId,
-            temporary.RegisterId, user.UserId, cancellationToken)
+            temporary.WorkSessionId, user.UserId, cancellationToken)
             ?? throw new OnlineSalesDraftConcurrencyException(
                 "No existe la venta activa del usuario.");
         var now = time.GetUtcNow();
@@ -352,7 +352,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT d.BusinessId,d.WarehouseId,d.RegisterId,d.Version,d.Status,
+            SELECT d.BusinessId,d.WarehouseId,d.WorkSessionId,d.Version,d.Status,
                    d.CustomerId,w.AllowNegativeStockSales
             FROM dbo.SalesDrafts d WITH (UPDLOCK,HOLDLOCK)
             JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId
@@ -433,15 +433,15 @@ public sealed partial class SqlOnlineSalesDraftStore
         CancellationToken ct) =>
         await ExecuteAsync(connection, transaction, """
             INSERT dbo.SalesDrafts(
-              SalesDraftId,BusinessId,WarehouseId,RegisterId,UserId,
+              SalesDraftId,BusinessId,WarehouseId,WorkSessionId,UserId,
               Status,Version,CreatedAt,UpdatedAt)
             VALUES(
-              @DraftId,@BusinessId,@WarehouseId,@RegisterId,@UserId,
+              @DraftId,@BusinessId,@WarehouseId,@WorkSessionId,@UserId,
               N'Active',1,@Now,@Now);
             """,
             [
                 P("@DraftId", draftId), P("@BusinessId", state.BusinessId),
-                P("@WarehouseId", state.WarehouseId), P("@RegisterId", state.RegisterId), P("@UserId", userId), P("@Now", now)
+                P("@WarehouseId", state.WarehouseId), P("@WorkSessionId", state.WorkSessionId), P("@UserId", userId), P("@Now", now)
             ], ct);
 
     private static string MutationHash(

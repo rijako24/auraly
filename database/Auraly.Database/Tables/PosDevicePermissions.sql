@@ -5,6 +5,6 @@ CREATE TABLE [dbo].[PosDevicePermissions]
     [IsGranted] BIT NOT NULL,
     [GrantedAt] DATETIMEOFFSET(7) NOT NULL,
     CONSTRAINT [PK_PosDevicePermissions] PRIMARY KEY CLUSTERED ([DeviceId], [PermissionCode]),
-    CONSTRAINT [FK_PosDevicePermissions_PosDevices] FOREIGN KEY ([DeviceId]) REFERENCES [dbo].[PosDevices] ([DeviceId])
+    CONSTRAINT [FK_PosDevicePermissions_EnrolledDevices] FOREIGN KEY ([DeviceId]) REFERENCES [dbo].[EnrolledDevices] ([DeviceId])
 );
 

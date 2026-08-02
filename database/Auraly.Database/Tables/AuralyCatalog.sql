@@ -162,6 +162,6 @@ CREATE TABLE [dbo].[CatalogSyncSessions] (
     [HighWaterMark] BIGINT NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [ExpiresAt] DATETIMEOFFSET(7) NOT NULL,
-    CONSTRAINT [FK_CatalogSyncSessions_PosDevices] FOREIGN KEY ([DeviceId]) REFERENCES [dbo].[PosDevices] ([DeviceId])
+    CONSTRAINT [FK_CatalogSyncSessions_EnrolledDevices] FOREIGN KEY ([DeviceId]) REFERENCES [dbo].[EnrolledDevices] ([DeviceId])
 );
 GO

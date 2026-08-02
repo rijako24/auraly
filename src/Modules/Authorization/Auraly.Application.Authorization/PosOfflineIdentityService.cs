@@ -6,7 +6,6 @@ public sealed record PosIdentityDeviceScope(
     Guid DeviceId,
     Guid TenantId,
     Guid BusinessId,
-    Guid RegisterId,
     IReadOnlySet<string> Permissions);
 
 public interface IPosOfflineIdentityStore
@@ -29,7 +28,7 @@ public sealed class PosOfflineIdentityService(IPosOfflineIdentityStore store)
                 $"Permission '{CommercePermissionCodes.PosIdentitySync}' is required.");
 
         if (device.DeviceId == Guid.Empty || device.TenantId == Guid.Empty ||
-            device.BusinessId == Guid.Empty || device.RegisterId == Guid.Empty)
+            device.BusinessId == Guid.Empty)
         {
             throw new PosIdentityForbiddenException(
                 "La identidad del dispositivo POS está incompleta.");

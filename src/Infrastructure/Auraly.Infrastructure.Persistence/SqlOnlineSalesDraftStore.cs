@@ -31,24 +31,24 @@ public sealed partial class SqlOnlineSalesDraftStore(
 
         var draftId = await FindActiveAsync(
             connection, transaction, context.BusinessId,
-            context.RegisterId, user.UserId, cancellationToken);
+            context.WorkSessionId, user.UserId, cancellationToken);
         if (draftId is null)
         {
             draftId = ids.NewId();
             var now = time.GetUtcNow();
             await ExecuteAsync(connection, transaction, """
                 INSERT dbo.SalesDrafts(
-                  SalesDraftId,BusinessId,WarehouseId,RegisterId,UserId,
+                  SalesDraftId,BusinessId,WarehouseId,WorkSessionId,UserId,
                   Status,Version,CreatedAt,UpdatedAt)
                 VALUES(
-                  @DraftId,@BusinessId,@WarehouseId,@RegisterId,@UserId,
+                  @DraftId,@BusinessId,@WarehouseId,@WorkSessionId,@UserId,
                   N'Active',1,@Now,@Now);
                 """,
                 [
                     P("@DraftId", draftId.Value),
                     P("@BusinessId", context.BusinessId),
                     P("@WarehouseId", context.WarehouseId),
-                    P("@RegisterId", context.RegisterId),
+                    P("@WorkSessionId", context.WorkSessionId),
                     P("@UserId", user.UserId),
                     P("@Now", now)
                 ],
@@ -447,15 +447,15 @@ public sealed partial class SqlOnlineSalesDraftStore(
         var nextId = ids.NewId();
         await ExecuteAsync(connection, transaction, """
             INSERT dbo.SalesDrafts(
-              SalesDraftId,BusinessId,WarehouseId,RegisterId,UserId,
+              SalesDraftId,BusinessId,WarehouseId,WorkSessionId,UserId,
               Status,Version,CreatedAt,UpdatedAt)
             VALUES(
-              @NextId,@BusinessId,@WarehouseId,@RegisterId,@UserId,
+              @NextId,@BusinessId,@WarehouseId,@WorkSessionId,@UserId,
               N'Active',1,@Now,@Now);
             """,
             [
                 P("@NextId", nextId), P("@BusinessId", state.BusinessId),
-                P("@WarehouseId", state.WarehouseId), P("@RegisterId", state.RegisterId), P("@UserId", user.UserId),
+                P("@WarehouseId", state.WarehouseId), P("@WorkSessionId", state.WorkSessionId), P("@UserId", user.UserId),
                 P("@Now", now)
             ],
             cancellationToken);
@@ -534,7 +534,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT d.BusinessId,d.WarehouseId,d.RegisterId,d.Version,d.Status,
+            SELECT d.BusinessId,d.WarehouseId,d.WorkSessionId,d.Version,d.Status,
                    d.CustomerId,w.AllowNegativeStockSales
             FROM dbo.SalesDrafts d WITH (UPDLOCK,HOLDLOCK)
             JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId
@@ -634,7 +634,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
             reader.GetDecimal(5), reader.GetString(6));
     }
 
-    private static async Task<ResolvedRegisterContext> ResolveOnlineContextAsync(
+    private static async Task<ResolvedSalesExecutionContext> ResolveOnlineContextAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         OnlineSalesUserIdentity user,
@@ -644,41 +644,45 @@ public sealed partial class SqlOnlineSalesDraftStore(
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT b.BusinessId,b.Name,
-                   r.RegisterId,r.Code,r.Name,w.WarehouseId,w.Code,w.Name,
+            SELECT b.BusinessId,w.WarehouseId,s.WorkSessionId,
                    w.AllowNegativeStockSales
             FROM dbo.Businesses b
-            JOIN dbo.CashRegisters r
-              ON r.BusinessId=b.BusinessId
-             AND r.RegisterId=@RegisterId AND r.IsActive=1
             JOIN dbo.Warehouses w
-              ON w.WarehouseId=r.WarehouseId AND w.BusinessId=r.BusinessId
+              ON w.WarehouseId=@WarehouseId AND w.BusinessId=b.BusinessId
              AND w.IsActive=1
-            WHERE b.TenantId=@TenantId AND b.BusinessId=@BusinessId AND b.IsActive=1
-              AND NOT EXISTS(
-                SELECT 1 FROM dbo.PosDevices d
-                WHERE d.RegisterId=r.RegisterId AND d.IsActive=1);
+            JOIN dbo.WorkSessions s
+              ON s.WorkSessionId=@WorkSessionId
+             AND s.BusinessId=b.BusinessId
+             AND s.WarehouseId=w.WarehouseId
+             AND s.UserId=@UserId
+             AND s.Status=N'Open'
+            WHERE b.TenantId=@TenantId
+              AND b.BusinessId=@BusinessId
+              AND b.IsActive=1;
             """;
         command.Parameters.AddRange([
-            P("@TenantId", user.TenantId), P("@BusinessId", requested.BusinessId),
-            P("@RegisterId", requested.RegisterId)
+            P("@TenantId", user.TenantId),
+            P("@BusinessId", requested.BusinessId),
+            P("@WarehouseId", requested.WarehouseId),
+            P("@WorkSessionId", requested.WorkSessionId),
+            P("@UserId", user.UserId)
         ]);
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct))
             throw new OnlineSalesDraftForbiddenException(
-                "La caja online no pertenece al contexto autenticado o está enrolada como POS Edge.");
+                "La sesión de trabajo no pertenece al usuario, negocio y bodega autenticados.");
         return new(
-            reader.GetGuid(0), reader.GetString(1),
-            reader.GetGuid(2), reader.GetString(3), reader.GetString(4),
-            reader.GetGuid(5), reader.GetString(6), reader.GetString(7),
-            reader.GetBoolean(8));
+            reader.GetGuid(0),
+            reader.GetGuid(1),
+            reader.GetGuid(2),
+            reader.GetBoolean(3));
     }
 
     private static async Task<Guid?> FindActiveAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         Guid businessId,
-        Guid registerId,
+        Guid workSessionId,
         Guid userId,
         CancellationToken ct)
     {
@@ -686,11 +690,11 @@ public sealed partial class SqlOnlineSalesDraftStore(
         command.Transaction = transaction;
         command.CommandText = """
             SELECT SalesDraftId FROM dbo.SalesDrafts WITH (UPDLOCK,HOLDLOCK)
-            WHERE BusinessId=@BusinessId AND RegisterId=@RegisterId
+            WHERE BusinessId=@BusinessId AND WorkSessionId=@WorkSessionId
               AND UserId=@UserId AND Status=N'Active';
             """;
         command.Parameters.AddRange([
-            P("@BusinessId", businessId), P("@RegisterId", registerId), P("@UserId", userId)
+            P("@BusinessId", businessId), P("@WorkSessionId", workSessionId), P("@UserId", userId)
         ]);
         return await command.ExecuteScalarAsync(ct) is Guid value ? value : null;
     }
@@ -974,7 +978,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
         await using var header = connection.CreateCommand();
         header.Transaction = transaction;
         header.CommandText = """
-            SELECT SalesDraftId,BusinessId,WarehouseId,RegisterId,UserId,
+            SELECT SalesDraftId,BusinessId,WarehouseId,WorkSessionId,UserId,
                    CustomerId,SellerId,Status,Name,Reference,Observation,Version,UpdatedAt,
                    SourceOrderId
             FROM dbo.SalesDrafts WHERE SalesDraftId=@DraftId;
@@ -1051,7 +1055,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
     private sealed record DraftState(
         Guid BusinessId,
         Guid WarehouseId,
-        Guid RegisterId,
+        Guid WorkSessionId,
         long Version,
         string Status,
         Guid? CustomerId,
@@ -1074,14 +1078,9 @@ public sealed partial class SqlOnlineSalesDraftStore(
         decimal TaxRate,
         decimal UnitPrice,
         string CurrencyCode);
-    private sealed record ResolvedRegisterContext(
+    private sealed record ResolvedSalesExecutionContext(
         Guid BusinessId,
-        string BusinessName,
-        Guid RegisterId,
-        string RegisterCode,
-        string RegisterName,
         Guid WarehouseId,
-        string WarehouseCode,
-        string WarehouseName,
+        Guid WorkSessionId,
         bool WarehouseAllowsNegativeStockSales);
 }

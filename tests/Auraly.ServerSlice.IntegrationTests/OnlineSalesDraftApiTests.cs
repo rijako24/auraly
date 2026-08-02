@@ -13,7 +13,8 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
     {
         var context = new OnlineSalesDraftContext(
             fixture.BusinessId,
-            fixture.OnlineRegisterId);
+            fixture.WarehouseId,
+            fixture.WorkSessionId);
         Guid draftId;
         Guid lineId;
         using (var firstClient = fixture.CreateAdminClient(
@@ -102,7 +103,8 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
             client,
             new(
                 fixture.BusinessId,
-                fixture.OnlineRegisterId));
+                fixture.WarehouseId,
+                fixture.WorkSessionId));
 
         using var first = Mutation(
             HttpMethod.Post,
@@ -141,7 +143,8 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
             "/api/commerce/v1/pos/drafts/active",
             new OpenOnlineSalesDraftRequest(new(
                 fixture.BusinessId,
-                fixture.OnlineRegisterId)));
+                fixture.WarehouseId,
+                fixture.WorkSessionId)));
         Assert.Equal(HttpStatusCode.Forbidden, permissionResponse.StatusCode);
 
         using var allowed = fixture.CreateAdminClient(
@@ -150,7 +153,8 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
             "/api/commerce/v1/pos/drafts/active",
             new OpenOnlineSalesDraftRequest(new(
                 Guid.NewGuid(),
-                fixture.OnlineRegisterId)));
+                fixture.WarehouseId,
+                fixture.WorkSessionId)));
         Assert.Equal(HttpStatusCode.Forbidden, scopeResponse.StatusCode);
     }
 

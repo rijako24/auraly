@@ -126,9 +126,10 @@ public sealed class OnlineSalesDraftService(
     {
         DemandPermission(user);
         if (request.Context.BusinessId == Guid.Empty ||
-            request.Context.RegisterId == Guid.Empty)
+            request.Context.WarehouseId == Guid.Empty ||
+            request.Context.WorkSessionId == Guid.Empty)
             throw new OnlineSalesDraftValidationException(
-                "Negocio, sede y caja son obligatorios.");
+                "Negocio, bodega y sesión de trabajo son obligatorios.");
         return await drafts.GetOrCreateActiveAsync(
             user, request.Context, cancellationToken);
     }
@@ -352,9 +353,10 @@ public sealed class OnlineSalesDraftService(
     private static void ValidateSearch(SearchOnlineSalesRequest request)
     {
         if (request.Context.BusinessId == Guid.Empty ||
-            request.Context.RegisterId == Guid.Empty)
+            request.Context.WarehouseId == Guid.Empty ||
+            request.Context.WorkSessionId == Guid.Empty)
             throw new OnlineSalesDraftValidationException(
-                "Negocio, sede y caja son obligatorios.");
+                "Negocio, bodega y sesión de trabajo son obligatorios.");
         if (request.Skip < 0 || request.Take is < 1 or > 100)
             throw new OnlineSalesDraftValidationException(
                 "La paginación solicitada no es válida.");

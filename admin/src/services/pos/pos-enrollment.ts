@@ -1,4 +1,4 @@
-import type { OnlineRegisterOption } from "@/services/pos/online-pos-client";
+import type { SalesWorkspaceOption } from "@/services/pos/online-pos-client";
 
 const EDGE_BASE_URL =
   process.env.NEXT_PUBLIC_AURALY_POS_EDGE_URL ?? "http://127.0.0.1:47831";
@@ -7,11 +7,11 @@ export type PosEnrollmentAuthorization = {
   enrollmentSessionId: string;
   redemptionCode: string;
   expiresAt: string;
-  register: OnlineRegisterOption;
+  workspace: Omit<SalesWorkspaceOption, "hasActiveEdgeEnrollment">;
 };
 
 export async function authorizePosEnrollment(
-  option: OnlineRegisterOption,
+  option: SalesWorkspaceOption,
 ): Promise<PosEnrollmentAuthorization> {
   const response = await fetch("/api/commerce/v1/pos/enrollments", {
     method: "POST",
@@ -20,7 +20,7 @@ export async function authorizePosEnrollment(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       businessId: option.businessId,
-      registerId: option.registerId,
+      warehouseId: option.warehouseId,
       deviceName: window.navigator.userAgentData?.platform
         ? `Auraly POS · ${window.navigator.userAgentData.platform}`
         : `Auraly POS · ${window.navigator.platform || "Windows"}`,

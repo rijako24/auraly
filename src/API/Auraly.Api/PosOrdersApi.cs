@@ -14,6 +14,9 @@ public static class PosOrdersApi
         group.MapGet("/", async (
             HttpContext context,
             Guid userId,
+            Guid businessId,
+            Guid warehouseId,
+            Guid workSessionId,
             int? page,
             int? pageSize,
             string? orderNumber,
@@ -28,7 +31,7 @@ public static class PosOrdersApi
             await Handle(async () =>
             {
                 var actor = await actors.ResolveAsync(
-                    context.User.ToPosDeviceIdentity(), userId, ct);
+                    context.User.ToPosDeviceIdentity(), new PosOrderExecutionContext(userId, businessId, warehouseId, workSessionId), ct);
                 return await orders.PageAsync(actor, new OrderPageRequest(
                     page ?? 1,
                     pageSize ?? 50,
@@ -44,13 +47,16 @@ public static class PosOrdersApi
             HttpContext context,
             Guid orderId,
             Guid userId,
+            Guid businessId,
+            Guid warehouseId,
+            Guid workSessionId,
             OrderService orders,
             IPosOrderActorResolver actors,
             CancellationToken ct) =>
             await Handle(async () =>
             {
                 var actor = await actors.ResolveAsync(
-                    context.User.ToPosDeviceIdentity(), userId, ct);
+                    context.User.ToPosDeviceIdentity(), new PosOrderExecutionContext(userId, businessId, warehouseId, workSessionId), ct);
                 return await orders.GetAsync(actor, orderId, ct);
             }));
 
@@ -64,9 +70,9 @@ public static class PosOrdersApi
             await Handle(async () =>
             {
                 var device = context.User.ToPosDeviceIdentity();
-                var actor = await actors.ResolveAsync(device, request.UserId, ct);
+                var actor = await actors.ResolveAsync(device, request.ToExecutionContext(), ct);
                 return await orders.ClaimAsync(actor, orderId, new ClaimOrderRequest(
-                    device.RegisterId, request.UserId, request.LeaseMinutes), ct);
+                    request.WorkSessionId, request.UserId, request.LeaseMinutes), ct);
             }));
 
         group.MapPost("/{orderId:guid}/claim/release", async (
@@ -79,9 +85,9 @@ public static class PosOrdersApi
             await Handle(async () =>
             {
                 var device = context.User.ToPosDeviceIdentity();
-                var actor = await actors.ResolveAsync(device, request.UserId, ct);
+                var actor = await actors.ResolveAsync(device, request.ToExecutionContext(), ct);
                 await orders.ReleaseClaimAsync(actor, orderId,
-                    new ReleaseOrderClaimRequest(device.RegisterId, request.UserId), ct);
+                    new ReleaseOrderClaimRequest(request.WorkSessionId, request.UserId), ct);
                 return new { released = true };
             }));
 
@@ -94,9 +100,10 @@ public static class PosOrdersApi
             await Handle(async () =>
             {
                 var device = context.User.ToPosDeviceIdentity();
-                var actor = await actors.ResolveAsync(device, request.UserId, ct);
+                var actor = await actors.ResolveAsync(device, request.ToExecutionContext(), ct);
                 return await batches.InvoiceAsync(actor, new InvoiceOrdersRequest(
-                    device.RegisterId,
+                    request.WorkSessionId,
+                    request.WarehouseId,
                     request.UserId,
                     request.OrderIds.ToArray(),
                     request.PaymentMethodCode,
@@ -131,10 +138,26 @@ public static class PosOrdersApi
     }
 }
 
-public sealed record PosOrderUserRequest(Guid UserId, int LeaseMinutes = 10);
+public sealed record PosOrderUserRequest(
+    Guid UserId,
+    Guid BusinessId,
+    Guid WarehouseId,
+    Guid WorkSessionId,
+    int LeaseMinutes = 10)
+{
+    public PosOrderExecutionContext ToExecutionContext() =>
+        new(UserId, BusinessId, WarehouseId, WorkSessionId);
+}
 
 public sealed record PosInvoiceOrdersRequest(
     Guid UserId,
+    Guid BusinessId,
+    Guid WarehouseId,
+    Guid WorkSessionId,
     IReadOnlyCollection<Guid> OrderIds,
     string PaymentMethodCode,
-    string? PaymentReference);
+    string? PaymentReference)
+{
+    public PosOrderExecutionContext ToExecutionContext() =>
+        new(UserId, BusinessId, WarehouseId, WorkSessionId);
+}

@@ -20,51 +20,47 @@ public sealed class SqlPosSaleServerStore(
             SELECT COUNT_BIG(1)
             FROM dbo.FiscalSeries s
             INNER JOIN dbo.FiscalAuthorizations a
-                ON a.FiscalAuthorizationId = s.FiscalAuthorizationId
+                ON a.FiscalAuthorizationId=s.FiscalAuthorizationId
             INNER JOIN dbo.Businesses b
-                ON b.BusinessId = s.BusinessId
-            INNER JOIN dbo.AppUsers u
-                ON u.UserId = @SoldByUserId
-            INNER JOIN dbo.DocumentSeries ds
-                ON ds.DocumentSeriesId = @DocumentSeriesId
-            INNER JOIN dbo.CashRegisters r
-                ON r.RegisterId = s.RegisterId
+                ON b.BusinessId=s.BusinessId
             INNER JOIN dbo.Warehouses w
-                ON w.WarehouseId = r.WarehouseId
-            INNER JOIN dbo.PosDevices d
-                ON d.RegisterId = r.RegisterId
-            WHERE s.SeriesId = @SeriesId
-              AND a.FiscalAuthorizationId = @FiscalAuthorizationId
-              AND b.TenantId = @TenantId
-              AND b.IsActive = 1
-              AND u.TenantId = b.TenantId
-              AND u.IsActive = 1
-              AND s.BusinessId = @BusinessId
-              AND r.WarehouseId = @WarehouseId
-              AND r.RegisterId = @RegisterId
-              AND d.DeviceId = @DeviceId
-              AND d.BusinessId = @BusinessId
-              AND d.WarehouseId = @WarehouseId
-              AND ds.BusinessId = @BusinessId
-              AND ds.RegisterId = @RegisterId
-              AND ds.DocumentType = @DocumentType
-              AND ds.Prefix = @DocumentPrefix
-              AND ds.SeriesCode = @DocumentSeriesCode
-              AND ds.SeriesCode = r.Code
+                ON w.WarehouseId=@WarehouseId
+               AND w.BusinessId=b.BusinessId
+            INNER JOIN dbo.AppUsers u
+                ON u.UserId=@SoldByUserId
+               AND u.TenantId=b.TenantId
+            INNER JOIN dbo.DocumentSeries ds
+                ON ds.DocumentSeriesId=@DocumentSeriesId
+               AND ds.BusinessId=b.BusinessId
+            INNER JOIN dbo.EnrolledDevices d
+                ON d.DeviceId=@DeviceId
+               AND d.TenantId=b.TenantId
+            WHERE s.SeriesId=@SeriesId
+              AND s.BusinessId=@BusinessId
+              AND s.DeviceId=@DeviceId
+              AND s.EmitterKind=N'Device'
+              AND a.FiscalAuthorizationId=@FiscalAuthorizationId
+              AND b.TenantId=@TenantId
+              AND b.IsActive=1
+              AND w.IsActive=1
+              AND u.IsActive=1
+              AND d.IsActive=1
+              AND ds.DeviceId=@DeviceId
+              AND ds.DocumentType=@DocumentType
+              AND ds.Prefix=@DocumentPrefix
+              AND ds.SeriesCode=@DocumentSeriesCode
               AND @DocumentConsecutive BETWEEN ds.RangeStart AND ds.RangeEnd
-              AND ds.IsActive = 1
-              AND s.DocumentType = @DocumentType
-              AND s.Prefix = @Prefix
+              AND ds.IsOfflineCapable=1
+              AND ds.IsActive=1
+              AND s.DocumentType=@DocumentType
+              AND s.Prefix=@Prefix
               AND @Consecutive BETWEEN s.RangeStart AND s.RangeEnd
-              AND a.AuthorizationNumber = @AuthorizationNumber
-              AND a.SupplierTaxId = @SupplierTaxId
-              AND a.Environment = @Environment
-              AND CONVERT(date, @IssuedAt) BETWEEN a.ValidFrom AND a.ValidUntil
-              AND s.IsActive = 1
-              AND a.IsActive = 1
-              AND r.IsActive = 1
-              AND w.IsActive = 1
-              AND d.IsActive = 1;
+              AND a.AuthorizationNumber=@AuthorizationNumber
+              AND a.SupplierTaxId=@SupplierTaxId
+              AND a.Environment=@Environment
+              AND CONVERT(date,@IssuedAt) BETWEEN a.ValidFrom AND a.ValidUntil
+              AND s.IsActive=1
+              AND a.IsActive=1;
             """;
 
         var snapshot = request.FiscalSnapshot;
@@ -81,7 +77,6 @@ public sealed class SqlPosSaleServerStore(
         command.Parameters.AddWithValue("@SoldByUserId", request.SoldByUserId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
-        command.Parameters.AddWithValue("@RegisterId", request.RegisterId);
         command.Parameters.AddWithValue("@DeviceId", request.DeviceId);
         command.Parameters.AddWithValue("@DocumentType", snapshot.DocumentType);
         command.Parameters.AddWithValue("@Prefix", snapshot.Prefix);
@@ -94,9 +89,8 @@ public sealed class SqlPosSaleServerStore(
         return count == 1
             ? PosSaleContextValidation.Valid()
             : PosSaleContextValidation.Invalid(
-                "The fiscal series, authorization or register assignment does not match the authenticated POS context.");
+                "The fiscal series, authorization, business, warehouse or device assignment is invalid.");
     }
-
     public async Task<StoredPosSale?> FindAsync(
         Guid businessId,
         Guid documentId,
@@ -300,7 +294,7 @@ public sealed class SqlPosSaleServerStore(
             INSERT INTO dbo.SalesDocuments
             (
                 DocumentId, BusinessId, WarehouseId,
-                RegisterId, DeviceId, SourceMode, DocumentSeriesId, DocumentNumber,
+                DeviceId, WorkSessionId, SourceMode, DocumentSeriesId, DocumentNumber,
                 DocumentPrefix, DocumentSeriesCode, DocumentConsecutive,
                 FiscalSeriesId, FiscalAuthorizationId,
                 DocumentType, IdempotencyKey, PayloadHash, FiscalNumber,
@@ -312,7 +306,7 @@ public sealed class SqlPosSaleServerStore(
             VALUES
             (
                 @DocumentId, @BusinessId, @WarehouseId,
-                @RegisterId, @DeviceId, @SourceMode, @DocumentSeriesId, @DocumentNumber,
+                @DeviceId, @WorkSessionId, @SourceMode, @DocumentSeriesId, @DocumentNumber,
                 @DocumentPrefix, @DocumentSeriesCode, @DocumentConsecutive,
                 @FiscalSeriesId, @FiscalAuthorizationId,
                 @DocumentType, @IdempotencyKey, @PayloadHash, @FiscalNumber,
@@ -328,7 +322,7 @@ public sealed class SqlPosSaleServerStore(
         sqlCommand.Parameters.AddWithValue("@DocumentId", request.DocumentId);
         sqlCommand.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         sqlCommand.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
-        sqlCommand.Parameters.AddWithValue("@RegisterId", request.RegisterId);
+        sqlCommand.Parameters.AddWithValue("@WorkSessionId", request.WorkSessionId);
         sqlCommand.Parameters.AddWithValue("@DeviceId", request.DeviceId == Guid.Empty ? DBNull.Value : request.DeviceId);
         sqlCommand.Parameters.AddWithValue("@SourceMode", request.SourceMode);
         sqlCommand.Parameters.AddWithValue("@DocumentSeriesId", request.DocumentNumber.SeriesId);

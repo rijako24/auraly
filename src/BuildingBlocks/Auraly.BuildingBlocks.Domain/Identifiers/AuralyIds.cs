@@ -15,7 +15,12 @@ public readonly record struct WarehouseId(Guid Value)
     public override string ToString() => Value.ToString("D");
 }
 
-public readonly record struct RegisterId(Guid Value)
+public readonly record struct DeviceId(Guid Value)
+{
+    public override string ToString() => Value.ToString("D");
+}
+
+public readonly record struct WorkSessionId(Guid Value)
 {
     public override string ToString() => Value.ToString("D");
 }

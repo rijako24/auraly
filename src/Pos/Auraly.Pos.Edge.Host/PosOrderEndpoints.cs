@@ -11,14 +11,14 @@ public sealed class PosOrderRecoveryService(
     PosEdgeRuntimeContext runtime)
 {
     public async Task<PosDraft> RecoverAsync(
-        Guid userId,
+        PosLocalUserSession session,
         Guid orderId,
         CancellationToken cancellationToken)
     {
-        await server.ClaimAsync(userId, orderId, cancellationToken);
+        await server.ClaimAsync(session, orderId, cancellationToken);
         try
         {
-            var order = await server.GetAsync(userId, orderId, cancellationToken);
+            var order = await server.GetAsync(session, orderId, cancellationToken);
             var lines = new List<PosDraftLineInput>(order.Lines.Count);
             foreach (var orderLine in order.Lines)
             {
@@ -46,7 +46,7 @@ public sealed class PosOrderRecoveryService(
             }
 
             return await drafts.ImportOrderAsync(
-                runtime.ScopeFor(userId),
+                runtime.ScopeFor(session),
                 order.OrderId,
                 order.CustomerId,
                 lines,
@@ -56,7 +56,7 @@ public sealed class PosOrderRecoveryService(
         {
             try
             {
-                await server.ReleaseAsync(userId, orderId, CancellationToken.None);
+                await server.ReleaseAsync(session, orderId, CancellationToken.None);
             }
             catch (Exception releaseError)
                 when (releaseError is HttpRequestException or PosOrderServerException)
@@ -82,7 +82,7 @@ public static class PosOrderEndpoints
                 ? request.QueryString.Value![1..]
                 : "page=1&pageSize=50";
             return Results.Ok(await server.PageAsync(
-                sessions.Required().UserId, query, ct));
+                sessions.Required(), query, ct));
         });
 
         edge.MapGet("/orders/{orderId:guid}", async (
@@ -91,7 +91,7 @@ public static class PosOrderEndpoints
             PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
             Results.Ok(await server.GetAsync(
-                sessions.Required().UserId, orderId, ct)));
+                sessions.Required(), orderId, ct)));
 
         edge.MapPost("/orders/{orderId:guid}/recover", async (
             Guid orderId,
@@ -99,7 +99,7 @@ public static class PosOrderEndpoints
             PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
             Results.Ok(await recovery.RecoverAsync(
-                sessions.Required().UserId, orderId, ct)));
+                sessions.Required(), orderId, ct)));
 
         edge.MapPost("/orders/invoice", async (
             InvoicePosOrdersRequest request,
@@ -107,7 +107,7 @@ public static class PosOrderEndpoints
             PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
             Results.Ok(await server.InvoiceAsync(
-                sessions.Required().UserId,
+                sessions.Required(),
                 request.OrderIds,
                 request.PaymentMethodCode,
                 request.IdempotencyKey,

@@ -8,7 +8,7 @@ public sealed class FiscalNumberAllocator
 {
     public FiscalNumberAssignment Allocate(
         DocumentSeries series,
-        RegisterId registerId,
+        DeviceId deviceId,
         DateOnly issueDate,
         string authorizationNumber)
     {
@@ -17,7 +17,7 @@ public sealed class FiscalNumberAllocator
             throw new ArgumentException("An authorization number is required.", nameof(authorizationNumber));
         }
 
-        var assigned = series.Consume(registerId, issueDate);
+        var assigned = series.Consume(deviceId, issueDate);
         return new FiscalNumberAssignment(
             assigned.SeriesId,
             assigned.Prefix,

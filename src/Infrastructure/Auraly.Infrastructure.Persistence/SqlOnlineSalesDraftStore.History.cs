@@ -60,7 +60,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             FROM dbo.SalesDocuments d
             JOIN dbo.FiscalSnapshots snapshot
               ON snapshot.DocumentId=d.DocumentId
-            WHERE d.BusinessId=@BusinessId AND d.RegisterId=@RegisterId
+            WHERE d.BusinessId=@BusinessId AND d.WorkSessionId=@WorkSessionId
               AND (@Search=N'' OR d.DocumentNumber LIKE @Contains
                    OR d.FiscalNumber LIKE @Contains
                    OR d.CufeReceived LIKE @Contains
@@ -71,7 +71,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         var search = request.Search?.Trim() ?? string.Empty;
         command.Parameters.AddRange([
             P("@BusinessId", scope.BusinessId),
-            P("@RegisterId", scope.RegisterId),
+            P("@WorkSessionId", scope.WorkSessionId),
             P("@Search", search),
             P("@Contains", $"%{search}%"),
             P("@Skip", request.Skip),
@@ -134,12 +134,12 @@ public sealed partial class SqlOnlineSalesDraftStore
               ON snapshot.DocumentId=document.DocumentId
             WHERE document.DocumentId=@DocumentId
               AND document.BusinessId=@BusinessId
-              AND document.RegisterId=@RegisterId;
+              AND document.WorkSessionId=@WorkSessionId;
             """;
         command.Parameters.AddRange([
             P("@DocumentId", documentId),
             P("@BusinessId", scope.BusinessId),
-            P("@RegisterId", scope.RegisterId)
+            P("@WorkSessionId", scope.WorkSessionId)
         ]);
         StoredOnlineSalesReceipt? result = null;
         await using (var reader =

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Sales;
+using Auraly.Contracts.WorkSessions;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -26,7 +27,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
               IsActive,CreatedAt)
             VALUES(
               @UserId,@TenantId,@Username,@NormalizedUsername,
-              CONCAT(@Username,N'@test.local'),UPPER(CONCAT(@Username,N'@test.local')),N'Caja',N'Online',
+              CONCAT(@Username,N'@test.local'),UPPER(CONCAT(@Username,N'@test.local')),N'Venta',N'Online',
               1,SYSDATETIMEOFFSET());
             INSERT dbo.Parties(
               PartyId,TenantId,PartyType,DisplayName,CompletionStatus,IsActive,
@@ -73,8 +74,10 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
 
         using var client = fixture.CreateUserClient(
             userId,
-            CommercePermissionCodes.SalesCreate);
-        var draft = await OpenAsync(client);
+            CommercePermissionCodes.SalesCreate,
+            WorkSessionPermissionCodes.Open);
+        var workSession = await fixture.OpenWorkSessionAsync(client);
+        var draft = await OpenAsync(client, workSession.WorkSessionId);
 
         var captured = await MutateAsync<OnlineSalesDraft>(
             client,
@@ -130,7 +133,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
               IsActive,CreatedAt)
             VALUES(
               @UserId,@TenantId,@Username,@NormalizedUsername,
-              CONCAT(@Username,N'@test.local'),UPPER(CONCAT(@Username,N'@test.local')),N'Caja',N'Inventario',
+              CONCAT(@Username,N'@test.local'),UPPER(CONCAT(@Username,N'@test.local')),N'Venta',N'Inventario',
               1,SYSDATETIMEOFFSET());
             UPDATE dbo.Warehouses
             SET AllowNegativeStockSales=0
@@ -145,8 +148,10 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
         {
             using var client = fixture.CreateUserClient(
                 userId,
-                CommercePermissionCodes.SalesCreate);
-            var draft = await OpenAsync(client);
+                CommercePermissionCodes.SalesCreate,
+                WorkSessionPermissionCodes.Open);
+            var workSession = await fixture.OpenWorkSessionAsync(client);
+            var draft = await OpenAsync(client, workSession.WorkSessionId);
             using var request = Mutation(
                 HttpMethod.Post,
                 $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/capture",
@@ -168,13 +173,14 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
         }
     }
 
-    private async Task<OnlineSalesDraft> OpenAsync(HttpClient client)
+    private async Task<OnlineSalesDraft> OpenAsync(HttpClient client, Guid workSessionId)
     {
         using var response = await client.PostAsJsonAsync(
             "/api/commerce/v1/pos/drafts/active",
             new OpenOnlineSalesDraftRequest(new(
                 fixture.BusinessId,
-                fixture.OnlineRegisterId)));
+                fixture.WarehouseId,
+                workSessionId)));
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<OnlineSalesDraft>()
             ?? throw new InvalidOperationException("Empty draft response.");

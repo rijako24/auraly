@@ -4,11 +4,13 @@ using Auraly.Contracts.Catalog;
 namespace Auraly.Pos.Edge.Infrastructure;
 
 public sealed record PosDeviceCredentials(Guid DeviceId, string Secret);
+public sealed record PosOperationalScope(Guid BusinessId, Guid WarehouseId);
 
 public sealed class PosCatalogSynchronizer(
     HttpClient httpClient,
     PosCatalogStore store,
-    PosDeviceCredentials credentials) : IPosInventoryAvailabilityClient
+    PosDeviceCredentials credentials,
+    PosOperationalScope scope) : IPosInventoryAvailabilityClient
 {
     public async Task SynchronizeAsync(CancellationToken cancellationToken = default)
     {
@@ -18,7 +20,7 @@ public sealed class PosCatalogSynchronizer(
         {
             var session = await SendAsync<CatalogSyncSessionResponse>(
                 HttpMethod.Post,
-                "api/pos/v1/catalog/sync-sessions",
+                $"api/pos/v1/catalog/sync-sessions?{ScopeQuery}",
                 content: null,
                 cancellationToken);
             await store.BeginBootstrapAsync(session, cancellationToken);
@@ -32,7 +34,7 @@ public sealed class PosCatalogSynchronizer(
             var cursor = status.NextPageCursor;
             while (true)
             {
-                var path = $"api/pos/v1/catalog/sync-sessions/{status.SessionId:D}/pages?pageSize=500";
+                var path = $"api/pos/v1/catalog/sync-sessions/{status.SessionId:D}/pages?{ScopeQuery}&pageSize=500";
                 if (!string.IsNullOrWhiteSpace(cursor))
                     path += $"&cursor={Uri.EscapeDataString(cursor)}";
                 var page = await SendAsync<CatalogBootstrapPage>(
@@ -52,7 +54,7 @@ public sealed class PosCatalogSynchronizer(
 
         var pricing = await SendAsync<PosPricingSnapshot>(
             HttpMethod.Get,
-            "api/pos/v1/pricing/snapshot",
+            $"api/pos/v1/pricing/snapshot?{ScopeQuery}",
             content: null,
             cancellationToken);
         await store.ApplyPricingSnapshotAsync(pricing, cancellationToken);
@@ -61,7 +63,7 @@ public sealed class PosCatalogSynchronizer(
             status = await store.StatusAsync(cancellationToken);
             var page = await SendAsync<CatalogDeltaPage>(
                 HttpMethod.Get,
-                $"api/pos/v1/catalog/changes?cursor={status.Cursor}&pageSize=500",
+                $"api/pos/v1/catalog/changes?{ScopeQuery}&cursor={status.Cursor}&pageSize=500",
                 content: null,
                 cancellationToken);
             await store.ApplyChangesAsync(page, cancellationToken);
@@ -74,9 +76,12 @@ public sealed class PosCatalogSynchronizer(
         CancellationToken cancellationToken = default) =>
         await SendAsync<InventoryAvailabilityResponse>(
             HttpMethod.Post,
-            "api/pos/v1/inventory/availability",
+            $"api/pos/v1/inventory/availability?businessId={scope.BusinessId:D}",
             JsonContent.Create(request),
             cancellationToken);
+
+    private string ScopeQuery =>
+        $"businessId={scope.BusinessId:D}&warehouseId={scope.WarehouseId:D}";
 
     private async Task<T> SendAsync<T>(
         HttpMethod method,

@@ -11,6 +11,7 @@ public sealed record PosLocalLoginRequest(string Username, string Password);
 
 public sealed record PosLocalUserSession(
     Guid SessionId,
+    Guid WorkSessionId,
     Guid UserId,
     string Username,
     string DisplayName,
@@ -62,6 +63,7 @@ public sealed partial class PosLocalIdentityStore(
                 LastSynchronizedAt TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS PosLocalUserSessions(
                 SessionId TEXT NOT NULL PRIMARY KEY,
+                WorkSessionId TEXT NOT NULL,
                 UserId TEXT NOT NULL,
                 TokenHash BLOB NOT NULL UNIQUE,
                 StartedAt TEXT NOT NULL,
@@ -73,6 +75,7 @@ public sealed partial class PosLocalIdentityStore(
                 ON PosLocalUserSessions(EndedAt,ExpiresAt);
             """;
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await UpgradeWorkSessionsAsync(connection, cancellationToken);
     }
 
     public async Task ApplySnapshotAsync(
@@ -180,7 +183,7 @@ public sealed partial class PosLocalIdentityStore(
         if (!await HasValidSnapshotAsync(cancellationToken))
             throw new PosLocalLoginException(
                 "IdentityUnavailable",
-                "La información de acceso local aún no está lista o venció. Conecta la caja con Auraly.");
+                "La información de acceso local aún no está lista o venció. Conecta este dispositivo con Auraly.");
 
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
@@ -215,6 +218,23 @@ public sealed partial class PosLocalIdentityStore(
                 "InvalidCredentials", "Usuario o contraseña incorrectos.");
         }
 
+        var workSessionId = ids.NewId();
+        await using (var previousSession = connection.CreateCommand())
+        {
+            previousSession.Transaction = (SqliteTransaction)transaction;
+            previousSession.CommandText = """
+                SELECT WorkSessionId
+                FROM PosLocalUserSessions
+                WHERE UserId=$userId
+                ORDER BY StartedAt DESC
+                LIMIT 1;
+                """;
+            previousSession.Parameters.AddWithValue("$userId", user.UserId.ToString("D"));
+            var previousWorkSession = await previousSession.ExecuteScalarAsync(cancellationToken);
+            if (previousWorkSession is string value && Guid.TryParse(value, out var existing))
+                workSessionId = existing;
+        }
+
         await using (var close = connection.CreateCommand())
         {
             close.Transaction = (SqliteTransaction)transaction;
@@ -240,10 +260,11 @@ public sealed partial class PosLocalIdentityStore(
             insert.Transaction = (SqliteTransaction)transaction;
             insert.CommandText = """
                 INSERT INTO PosLocalUserSessions(
-                    SessionId,UserId,TokenHash,StartedAt,ExpiresAt)
-                VALUES($session,$user,$hash,$now,$expires);
+                    SessionId,WorkSessionId,UserId,TokenHash,StartedAt,ExpiresAt)
+                VALUES($session,$workSession,$user,$hash,$now,$expires);
                 """;
             insert.Parameters.AddWithValue("$session", sessionId.ToString("D"));
+            insert.Parameters.AddWithValue("$workSession", workSessionId.ToString("D"));
             insert.Parameters.AddWithValue("$user", user.UserId.ToString("D"));
             insert.Parameters.AddWithValue("$hash", TokenHash(token));
             insert.Parameters.AddWithValue("$now", Format(now));
@@ -255,7 +276,7 @@ public sealed partial class PosLocalIdentityStore(
             cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new PosLocalUserSession(
-            sessionId, user.UserId, user.Username, user.DisplayName,
+            sessionId, workSessionId, user.UserId, user.Username, user.DisplayName,
             permissions, expiresAt, token);
     }
 
@@ -268,7 +289,7 @@ public sealed partial class PosLocalIdentityStore(
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT s.SessionId,u.UserId,u.Username,u.DisplayName,s.ExpiresAt
+            SELECT s.SessionId,s.WorkSessionId,u.UserId,u.Username,u.DisplayName,s.ExpiresAt
             FROM PosLocalUserSessions s
             JOIN PosOfflineUsers u ON u.UserId=s.UserId
             WHERE s.TokenHash=$hash AND s.EndedAt IS NULL AND s.ExpiresAt>$now;
@@ -278,15 +299,16 @@ public sealed partial class PosLocalIdentityStore(
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) return null;
         var sessionId = Guid.Parse(reader.GetString(0));
-        var userId = Guid.Parse(reader.GetString(1));
-        var username = reader.GetString(2);
-        var displayName = reader.GetString(3);
-        var expires = DateTimeOffset.Parse(reader.GetString(4));
+        var workSessionId = Guid.Parse(reader.GetString(1));
+        var userId = Guid.Parse(reader.GetString(2));
+        var username = reader.GetString(3);
+        var displayName = reader.GetString(4);
+        var expires = DateTimeOffset.Parse(reader.GetString(5));
         await reader.CloseAsync();
         var permissions = await ReadPermissionsAsync(
             connection, null, userId, cancellationToken);
         return new PosLocalUserSession(
-            sessionId, userId, username, displayName, permissions, expires, null);
+            sessionId, workSessionId, userId, username, displayName, permissions, expires, null);
     }
 
     public async Task LogoutAsync(
@@ -306,6 +328,31 @@ public sealed partial class PosLocalIdentityStore(
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    private static async Task UpgradeWorkSessionsAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "PRAGMA table_info('PosLocalUserSessions');";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                columns.Add(reader.GetString(1));
+        }
+        if (columns.Contains("WorkSessionId")) return;
+
+        await using var upgrade = connection.CreateCommand();
+        upgrade.CommandText = """
+            ALTER TABLE PosLocalUserSessions ADD COLUMN WorkSessionId TEXT NULL;
+            UPDATE PosLocalUserSessions
+            SET WorkSessionId=SessionId
+            WHERE WorkSessionId IS NULL;
+            CREATE UNIQUE INDEX IF NOT EXISTS UX_PosLocalUserSessions_WorkSession
+                ON PosLocalUserSessions(WorkSessionId);
+            """;
+        await upgrade.ExecuteNonQueryAsync(cancellationToken);
+    }
     private static async Task<LocalUser?> ReadUserAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,

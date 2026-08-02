@@ -12,35 +12,19 @@ public sealed class SqlPosDeviceAuthenticator(SqlServerConnectionFactory connect
         CancellationToken cancellationToken = default)
     {
         if (deviceId == Guid.Empty || string.IsNullOrWhiteSpace(secret))
-        {
             return null;
-        }
 
         const string sql = """
-            SELECT b.TenantId,
-                   d.BusinessId,
-                   d.WarehouseId,
-                   d.RegisterId,
+            SELECT d.TenantId,
                    d.CredentialSalt,
                    d.CredentialHash,
                    d.CredentialIterations,
                    p.PermissionCode,
                    p.IsGranted
-            FROM dbo.PosDevices d
-            INNER JOIN dbo.CashRegisters r
-              ON r.RegisterId=d.RegisterId
-             AND r.BusinessId=d.BusinessId
-             AND r.WarehouseId=d.WarehouseId
-            INNER JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId
-            INNER JOIN dbo.Warehouses w
-              ON w.WarehouseId=d.WarehouseId
-             AND w.BusinessId=d.BusinessId
+            FROM dbo.EnrolledDevices d
             LEFT JOIN dbo.PosDevicePermissions p ON p.DeviceId=d.DeviceId
             WHERE d.DeviceId=@DeviceId
-              AND d.IsActive=1
-              AND r.IsActive=1
-              AND w.IsActive=1
-              AND b.IsActive=1;
+              AND d.IsActive=1;
             """;
 
         await using var connection = connections.Create();
@@ -49,38 +33,23 @@ public sealed class SqlPosDeviceAuthenticator(SqlServerConnectionFactory connect
         command.Parameters.AddWithValue("@DeviceId", deviceId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
-        {
             return null;
-        }
 
         var tenantId = reader.GetGuid(0);
-        var businessId = reader.GetGuid(1);
-        var warehouseId = reader.GetGuid(2);
-        var registerId = reader.GetGuid(3);
-        var salt = (byte[])reader[4];
-        var hash = (byte[])reader[5];
-        var iterations = reader.GetInt32(6);
+        var salt = (byte[])reader[1];
+        var hash = (byte[])reader[2];
+        var iterations = reader.GetInt32(3);
         if (!PosDeviceCredentialHasher.Verify(secret, salt, hash, iterations))
-        {
             return null;
-        }
 
         var permissions = new HashSet<string>(StringComparer.Ordinal);
         do
         {
-            if (!reader.IsDBNull(7) && reader.GetBoolean(8))
-            {
-                permissions.Add(reader.GetString(7));
-            }
+            if (!reader.IsDBNull(4) && reader.GetBoolean(5))
+                permissions.Add(reader.GetString(4));
         }
         while (await reader.ReadAsync(cancellationToken));
 
-        return new PosDeviceIdentity(
-            deviceId,
-            tenantId,
-            businessId,
-            warehouseId,
-            registerId,
-            permissions);
+        return new PosDeviceIdentity(deviceId, tenantId, permissions);
     }
 }

@@ -59,7 +59,7 @@ public static class OrdersApi
             OrderService service,
             CancellationToken ct) =>
             await Handle(() => service.ClaimAsync(
-                context.User.ToOrderUserActor(request.RegisterId), orderId, request, ct)));
+                context.User.ToOrderUserActor(request.WorkSessionId), orderId, request, ct)));
 
         group.MapPost("/{orderId:guid}/claim/release", async (
             HttpContext context,
@@ -70,7 +70,7 @@ public static class OrdersApi
             await Handle(async () =>
             {
                 await service.ReleaseClaimAsync(
-                    context.User.ToOrderUserActor(request.RegisterId), orderId, request, ct);
+                    context.User.ToOrderUserActor(request.WorkSessionId), orderId, request, ct);
                 return new { released = true };
             }));
 
@@ -81,7 +81,7 @@ public static class OrdersApi
             OrderRecoveryService service,
             CancellationToken ct) =>
             await Handle(() => service.RecoverAsync(
-                context.User.ToOrderUserActor(request.RegisterId),
+                context.User.ToOrderUserActor(request.WorkSessionId),
                 orderId,
                 request,
                 context.Request.Headers["Idempotency-Key"].ToString(),
@@ -93,7 +93,7 @@ public static class OrdersApi
             OrderBatchService service,
             CancellationToken ct) =>
             await Handle(() => service.InvoiceAsync(
-                context.User.ToOrderUserActor(request.RegisterId),
+                context.User.ToOrderUserActor(request.WorkSessionId),
                 request,
                 context.Request.Headers["Idempotency-Key"].ToString(),
                 ct)));
@@ -147,12 +147,12 @@ public static class OrdersClaimsPrincipalExtensions
 {
     public static OrderActor ToOrderUserActor(
         this ClaimsPrincipal principal,
-        Guid? registerId = null) =>
+        Guid? workSessionId = null) =>
         new(
             RequiredGuid(principal, ClaimTypes.NameIdentifier),
             RequiredGuid(principal, "tenant_id"),
             RequiredGuid(principal, "business_id"),
-            registerId,
+            workSessionId,
             null,
             principal.FindAll("permission")
                 .Select(claim => claim.Value)

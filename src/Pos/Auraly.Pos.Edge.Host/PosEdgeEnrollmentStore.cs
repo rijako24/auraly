@@ -12,7 +12,7 @@ public sealed record LocalPosEnrollmentRequest(
 public sealed record LocalPosEnrollmentResult(
     string Status,
     Guid DeviceId,
-    string RegisterCode,
+    string DeviceSeriesCode,
     bool RestartRequired);
 
 public sealed class PosEdgeEnrollmentStore(
@@ -55,8 +55,9 @@ public sealed class PosEdgeEnrollmentStore(
             ["PosEdge:TenantId"] = package.TenantId.ToString("D"),
             ["PosEdge:BusinessId"] = package.BusinessId.ToString("D"),
             ["PosEdge:WarehouseId"] = package.WarehouseId.ToString("D"),
-            ["PosEdge:RegisterId"] = package.RegisterId.ToString("D"),
-            ["PosEdge:RegisterCode"] = package.RegisterCode,
+            ["PosEdge:BusinessName"] = package.BusinessName,
+            ["PosEdge:WarehouseCode"] = package.WarehouseCode,
+            ["PosEdge:WarehouseName"] = package.WarehouseName,
             ["PosEdge:WarehouseAllowsNegativeStock"] =
                 package.WarehouseAllowsNegativeStock.ToString(),
             ["PosEdge:UserId"] = package.InitialUserId.ToString("D"),
@@ -87,6 +88,10 @@ public sealed class PosEdgeEnrollmentStore(
                 package.FiscalSeries.ValidUntil.ToString("yyyy-MM-dd"),
             ["PosEdge:Documents:SalesInvoice:SeriesId"] =
                 package.DocumentSeries.SeriesId.ToString("D"),
+            ["PosEdge:Documents:SalesInvoice:Prefix"] =
+                package.DocumentSeries.Prefix,
+            ["PosEdge:Documents:SalesInvoice:SeriesCode"] =
+                package.DocumentSeries.SeriesCode,
             ["PosEdge:Documents:SalesInvoice:Padding"] =
                 package.DocumentSeries.Padding.ToString(),
             ["PosEdge:Documents:SalesInvoice:RangeStart"] =
@@ -135,7 +140,7 @@ public sealed class PosEdgeEnrollmentClient(
         return new LocalPosEnrollmentResult(
             "Enrolled",
             package.DeviceId,
-            package.RegisterCode,
+            package.DocumentSeries.SeriesCode,
             RestartRequired: true);
     }
 }

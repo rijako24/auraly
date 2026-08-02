@@ -30,7 +30,7 @@ public sealed class OrderRecoveryService(
         await orders.ClaimAsync(
             actor,
             orderId,
-            new ClaimOrderRequest(request.RegisterId, request.UserId),
+            new ClaimOrderRequest(request.WorkSessionId, request.UserId),
             cancellationToken);
         try
         {
@@ -64,7 +64,7 @@ public sealed class OrderRecoveryService(
             await orders.ReleaseClaimAsync(
                 actor,
                 orderId,
-                new ReleaseOrderClaimRequest(request.RegisterId, request.UserId),
+                new ReleaseOrderClaimRequest(request.WorkSessionId, request.UserId),
                 cancellationToken);
             throw;
         }

@@ -1,5 +1,11 @@
 # Actualización del orden de prevalencia del diseño Auraly Commerce
 
+> **Actualización posterior (2026-08-02):**
+> `decision-sesiones-trabajo-equipos-enrolados-sin-caja.md` ocupa el primer lugar
+> de prevalencia. Elimina `CashRegister`: la operación pertenece a `WorkSession`,
+> sede y bodega; un `DeviceId` opcional aporta capacidad offline. Toda asignación de
+> series, enrolamiento, cierre o permisos descrita aquí como “por caja” se interpreta
+> con esa decisión nueva.
 **Fecha:** 27 de julio de 2026  
 **Motivo:** cerrar las decisiones posteriores sobre nombres, IDs, numeración local,
 Producto, UX POS y aplicación de escritorio.

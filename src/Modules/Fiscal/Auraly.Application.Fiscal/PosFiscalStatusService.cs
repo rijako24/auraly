@@ -22,7 +22,6 @@ public sealed class PosFiscalStatusService(IPosFiscalStatusStore store)
         ArgumentNullException.ThrowIfNull(device);
         if (device.DeviceId == Guid.Empty ||
             device.BusinessId == Guid.Empty ||
-            device.RegisterId == Guid.Empty ||
             !device.Permissions.Contains(FiscalPermissionCodes.PosStatusSync))
             throw new FiscalForbiddenException(
                 $"Permission '{FiscalPermissionCodes.PosStatusSync}' is required.");

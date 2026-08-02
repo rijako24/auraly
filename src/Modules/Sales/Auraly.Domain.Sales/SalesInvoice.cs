@@ -46,21 +46,27 @@ public sealed class SalesInvoice
         TenantId tenantId,
         BusinessId businessId,
         WarehouseId warehouseId,
-        RegisterId registerId)
+        UserId userId,
+        DeviceId? deviceId,
+        WorkSessionId workSessionId)
     {
         if (id.Value == Guid.Empty) throw new ArgumentException("A document ID is required.", nameof(id));
         Id = id;
         TenantId = tenantId;
         BusinessId = businessId;
         WarehouseId = warehouseId;
-        RegisterId = registerId;
+        UserId = userId;
+        DeviceId = deviceId;
+        WorkSessionId = workSessionId;
     }
 
     public DocumentId Id { get; }
     public TenantId TenantId { get; }
     public BusinessId BusinessId { get; }
     public WarehouseId WarehouseId { get; }
-    public RegisterId RegisterId { get; }
+    public UserId UserId { get; }
+    public DeviceId? DeviceId { get; }
+    public WorkSessionId WorkSessionId { get; }
     public SalesInvoiceStatus Status { get; private set; } = SalesInvoiceStatus.Draft;
     public IReadOnlyCollection<SalesInvoiceLine> Lines => _lines;
     public AuralyDocumentNumberAssignment? DocumentNumber { get; private set; }

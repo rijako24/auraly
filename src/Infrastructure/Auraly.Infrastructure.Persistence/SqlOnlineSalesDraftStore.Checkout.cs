@@ -25,12 +25,13 @@ public sealed partial class SqlOnlineSalesDraftStore
             SELECT TOP(2) a.AuthorizationNumber,a.TechnicalKeyVersion,a.Environment
             FROM dbo.SalesDrafts d
             JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId
-            JOIN dbo.CashRegisters r
-              ON r.RegisterId=d.RegisterId AND r.BusinessId=d.BusinessId
-             AND r.WarehouseId=d.WarehouseId
-             AND r.IsActive=1
+            JOIN dbo.WorkSessions ws
+              ON ws.WorkSessionId=d.WorkSessionId AND ws.BusinessId=d.BusinessId
+             AND ws.WarehouseId=d.WarehouseId AND ws.UserId=d.UserId
+             AND ws.Status=N'Open'
             JOIN dbo.FiscalSeries s
-              ON s.BusinessId=d.BusinessId AND s.RegisterId=d.RegisterId
+              ON s.BusinessId=d.BusinessId AND s.DeviceId IS NULL
+             AND s.EmitterKind=N'Server'
              AND s.DocumentType=@DocumentType AND s.IsActive=1
             JOIN dbo.FiscalAuthorizations a
               ON a.FiscalAuthorizationId=s.FiscalAuthorizationId
@@ -39,9 +40,6 @@ public sealed partial class SqlOnlineSalesDraftStore
               AND d.Status IN (N'Active',N'Issuing',N'Consumed')
               AND b.TenantId=@TenantId AND b.IsActive=1
               AND CONVERT(date,@Now) BETWEEN a.ValidFrom AND a.ValidUntil
-              AND NOT EXISTS(
-                SELECT 1 FROM dbo.PosDevices device
-                WHERE device.RegisterId=d.RegisterId AND device.IsActive=1)
             ORDER BY s.SeriesId;
             """;
         command.Parameters.AddRange([
@@ -66,8 +64,8 @@ public sealed partial class SqlOnlineSalesDraftStore
         if (rows.Count != 1)
             throw new OnlineSalesDraftValidationException(
                 rows.Count == 0
-                    ? "La caja no tiene una resolución fiscal activa y vigente."
-                    : "La caja tiene más de una serie fiscal activa.");
+                    ? "La sede no tiene una resolución fiscal activa y vigente."
+                    : "La sede tiene más de una serie fiscal activa.");
 
         await reader.DisposeAsync();
         await using var business = connection.CreateCommand();
@@ -206,8 +204,8 @@ public sealed partial class SqlOnlineSalesDraftStore
             user.TenantId,
             state.BusinessId,
             state.WarehouseId,
-            state.RegisterId,
             Guid.Empty,
+            state.WorkSessionId,
             user.UserId,
             ids.NewId(),
             new PosSaleDocumentNumberContract(
@@ -289,17 +287,17 @@ public sealed partial class SqlOnlineSalesDraftStore
                 "La venta cambió mientras se preparaba la emisión.");
         await ExecuteAsync(connection, transaction, """
             INSERT dbo.SalesDrafts(
-              SalesDraftId,BusinessId,WarehouseId,RegisterId,UserId,
+              SalesDraftId,BusinessId,WarehouseId,WorkSessionId,UserId,
               Status,Version,CreatedAt,UpdatedAt)
             VALUES(
-              @NextDraftId,@BusinessId,@WarehouseId,@RegisterId,@UserId,
+              @NextDraftId,@BusinessId,@WarehouseId,@WorkSessionId,@UserId,
               N'Active',1,@Now,@Now);
             """,
             [
                 P("@NextDraftId", nextDraftId),
                 P("@BusinessId", state.BusinessId),
                 P("@WarehouseId", state.WarehouseId),
-                P("@RegisterId", state.RegisterId),
+                P("@WorkSessionId", state.WorkSessionId),
                 P("@UserId", user.UserId),
                 P("@Now", now)
             ],
@@ -485,7 +483,8 @@ public sealed partial class SqlOnlineSalesDraftStore
               issuer.SoftwareIdentificationCode
             FROM dbo.DocumentSeries ds WITH (UPDLOCK,HOLDLOCK)
             JOIN dbo.FiscalSeries fs WITH (UPDLOCK,HOLDLOCK)
-              ON fs.BusinessId=ds.BusinessId AND fs.RegisterId=ds.RegisterId
+              ON fs.BusinessId=ds.BusinessId AND fs.DeviceId IS NULL
+             AND fs.EmitterKind=N'Server'
              AND fs.DocumentType=ds.DocumentType AND fs.IsActive=1
             JOIN dbo.FiscalAuthorizations a
               ON a.FiscalAuthorizationId=fs.FiscalAuthorizationId
@@ -494,13 +493,13 @@ public sealed partial class SqlOnlineSalesDraftStore
               ON issuer.BusinessId=ds.BusinessId AND issuer.IsActive=1
              AND issuer.Environment=a.Environment
             WHERE ds.BusinessId=@BusinessId
-              AND ds.RegisterId=@RegisterId AND ds.DocumentType=@DocumentType
+              AND ds.DeviceId IS NULL AND ds.SeriesCode=N'00'
+              AND ds.IsOfflineCapable=0 AND ds.DocumentType=@DocumentType
               AND ds.IsActive=1 AND CONVERT(date,@Now) BETWEEN a.ValidFrom AND a.ValidUntil
             ORDER BY ds.DocumentSeriesId,fs.SeriesId;
             """;
         command.Parameters.AddRange([
             P("@BusinessId", state.BusinessId),
-            P("@RegisterId", state.RegisterId),
             P("@DocumentType", PosSaleDocumentTypes.Invoice),
             P("@Now", now)
         ]);
@@ -552,8 +551,8 @@ public sealed partial class SqlOnlineSalesDraftStore
         if (rows.Count != 1)
             throw new OnlineSalesDraftValidationException(
                 rows.Count == 0
-                    ? "La caja no tiene series operativa y fiscal activas."
-                    : "La caja tiene una configuración de numeración ambigua.");
+                    ? "La sede no tiene series operativa y fiscal activas."
+                    : "La sede tiene una configuración de numeración ambigua.");
         return rows[0];
     }
 
@@ -598,7 +597,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             CultureInfo.InvariantCulture);
         if (value > configuration.DocumentRangeEnd)
             throw new OnlineSalesDraftValidationException(
-                "La numeración Auraly de la caja está agotada.");
+                "La numeración Auraly de la sede está agotada.");
         return value;
     }
 
@@ -643,7 +642,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             CultureInfo.InvariantCulture);
         if (value > configuration.FiscalRangeEnd)
             throw new OnlineSalesDraftValidationException(
-                "La numeración DIAN de la caja está agotada.");
+                "La numeración DIAN de la sede está agotada.");
         return value;
     }
 

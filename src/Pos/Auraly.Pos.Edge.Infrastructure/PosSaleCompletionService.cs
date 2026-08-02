@@ -43,7 +43,7 @@ public interface IPosReceiptPrinter
 
 public sealed record CompletePosSaleCommand(
     UserId UserId,
-    RegisterContext Register,
+    SalesExecutionContext Context,
     DateTimeOffset IssuedAt,
     string SupplierTaxId,
     string CustomerIdentification,
@@ -51,7 +51,6 @@ public sealed record CompletePosSaleCommand(
     FiscalEnvironment Environment,
     string QrValidationUrl,
     IReadOnlyCollection<OfflineSalePayment> Payments,
-    Guid DeviceId,
     int PaperWidthMillimeters = 80,
     PosSaleUblSnapshotContract? UblSnapshot = null);
 
@@ -221,7 +220,7 @@ public sealed class PosSaleCompletionService(
             new PosEdgeIssueCommand(
                 command.UserId,
                 identity.DocumentId,
-                command.Register,
+                command.Context,
                 command.IssuedAt,
                 command.SupplierTaxId,
                 command.CustomerIdentification,
@@ -229,7 +228,6 @@ public sealed class PosSaleCompletionService(
                 command.Environment,
                 command.QrValidationUrl,
                 lines,
-                command.DeviceId,
                 command.Payments,
                 command.UblSnapshot,
                 draft.CustomerId,
@@ -267,11 +265,11 @@ public sealed class PosSaleCompletionService(
         await issuance.CompleteAsync(draftId, issued.DocumentId, ct);
         var nextDraft = await drafts.GetOrCreateActiveAsync(draft.Scope, ct);
         var nextDocumentNumber = await sales.PreviewNextDocumentNumberAsync(
-            command.Register.RegisterId,
+            command.Context.DeviceId ?? throw new InvalidOperationException("An Edge sale requires DeviceId."),
             AuralyDocumentTypes.SalesInvoice,
             ct);
         var nextFiscalNumber = await sales.PreviewNextFiscalNumberAsync(
-            command.Register.RegisterId,
+            command.Context.DeviceId ?? throw new InvalidOperationException("An Edge sale requires DeviceId."),
             command.IssuedAt,
             ct);
         return new CompletePosSaleResult(

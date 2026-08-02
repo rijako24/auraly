@@ -18,7 +18,7 @@ public sealed class SqlPosOfflineIdentityStore(
         await connection.OpenAsync(cancellationToken);
         if (!await DeviceMatchesAsync(connection, device, cancellationToken))
             throw new PosIdentityForbiddenException(
-                "El dispositivo no pertenece al negocio, caja y tenant autenticados.");
+                "El dispositivo y el negocio no pertenecen al mismo tenant activo.");
 
         const string sql = """
             SELECT u.UserId,u.Username,
@@ -106,16 +106,15 @@ public sealed class SqlPosOfflineIdentityStore(
     {
         const string sql = """
             SELECT COUNT(1)
-            FROM dbo.PosDevices d
-            JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId AND b.IsActive=1
+            FROM dbo.EnrolledDevices d
+            JOIN dbo.Businesses b ON b.BusinessId=@BusinessId
+              AND b.TenantId=d.TenantId AND b.IsActive=1
             WHERE d.DeviceId=@DeviceId AND d.IsActive=1
-              AND d.BusinessId=@BusinessId AND d.RegisterId=@RegisterId
-              AND b.TenantId=@TenantId;
+              AND d.TenantId=@TenantId;
             """;
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@DeviceId", device.DeviceId);
         command.Parameters.AddWithValue("@BusinessId", device.BusinessId);
-        command.Parameters.AddWithValue("@RegisterId", device.RegisterId);
         command.Parameters.AddWithValue("@TenantId", device.TenantId);
         return Convert.ToInt32(
             await command.ExecuteScalarAsync(cancellationToken)) == 1;

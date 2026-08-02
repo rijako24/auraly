@@ -187,9 +187,9 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
             await using (var series = new SqlCommand("""
                 IF NOT EXISTS(SELECT 1 FROM dbo.DocumentSeries WHERE BusinessId=@BusinessId AND DocumentType=N'PayablePayment' AND IsActive=1)
                   INSERT dbo.DocumentSeries
-                    (DocumentSeriesId,BusinessId,RegisterId,DocumentType,Prefix,SeriesCode,
+                    (DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,
                      Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
-                  VALUES(@SeriesId,@BusinessId,NULL,N'PayablePayment',N'PGP',N'01',8,1,99999999,0,1,SYSDATETIMEOFFSET());
+                  VALUES(@SeriesId,@BusinessId,NULL,N'PayablePayment',N'PGP',N'00',8,1,99999999,0,1,SYSDATETIMEOFFSET());
                 """, connection, transaction))
             {
                 series.Parameters.AddWithValue("@SeriesId", seriesId);

@@ -1,39 +1,43 @@
 namespace Auraly.Contracts.Organization;
 
-public sealed record OnlineRegisterOption(
-    Guid BusinessId, string BusinessName,
-    Guid RegisterId, string RegisterCode, string RegisterName,
-    Guid WarehouseId, string WarehouseCode, string WarehouseName,
+public sealed record SalesWorkspaceOption(
+    Guid BusinessId,
+    string BusinessName,
+    Guid WarehouseId,
+    string WarehouseCode,
+    string WarehouseName,
     bool WarehouseAllowsNegativeStockSales,
     bool HasActiveEdgeEnrollment);
 
-public sealed record OnlineRegisterBootstrap(
+public sealed record SalesWorkspaceBootstrap(
     string TenantName,
     Guid UserId,
     string UserDisplayName,
-    IReadOnlyList<OnlineRegisterOption> Options,
+    IReadOnlyList<SalesWorkspaceOption> Options,
     bool CanEnrollPosDevice);
 
-public sealed record OnlineRegisterSelection(
+public sealed record SalesWorkspaceSelection(
     Guid BusinessId,
-    Guid RegisterId);
+    Guid WarehouseId);
 
-public sealed record OnlineRegisterContext(
-    Guid BusinessId, string BusinessName,
-    Guid RegisterId, string RegisterCode, string RegisterName,
-    Guid WarehouseId, string WarehouseCode, string WarehouseName,
+public sealed record SalesWorkspaceContext(
+    Guid BusinessId,
+    string BusinessName,
+    Guid WarehouseId,
+    string WarehouseCode,
+    string WarehouseName,
     bool WarehouseAllowsNegativeStockSales);
 
 public sealed record CreatePosEnrollmentRequest(
     Guid BusinessId,
-    Guid RegisterId,
+    Guid WarehouseId,
     string DeviceName);
 
 public sealed record PosEnrollmentAuthorization(
     Guid EnrollmentSessionId,
     string RedemptionCode,
     DateTimeOffset ExpiresAt,
-    OnlineRegisterContext Register);
+    SalesWorkspaceContext Workspace);
 
 public sealed record RedeemPosEnrollmentRequest(
     Guid EnrollmentSessionId,
@@ -69,9 +73,9 @@ public sealed record PosEnrollmentPackage(
     Guid TenantId,
     Guid BusinessId,
     Guid WarehouseId,
-    Guid RegisterId,
-    string RegisterCode,
-    string RegisterName,
+    string BusinessName,
+    string WarehouseCode,
+    string WarehouseName,
     bool WarehouseAllowsNegativeStock,
     Guid InitialUserId,
     string InitialUserDisplayName,
@@ -83,7 +87,7 @@ public sealed record PosEnrollmentPackage(
 
 public sealed record PosEnrollmentReceipt(
     Guid DeviceId,
-    Guid RegisterId,
-    string RegisterCode,
-    string RegisterName,
+    Guid BusinessId,
+    Guid WarehouseId,
+    string DeviceName,
     DateTimeOffset EnrolledAt);

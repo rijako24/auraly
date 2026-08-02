@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Sales;
+using Auraly.Contracts.WorkSessions;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -10,12 +11,13 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
 {
     [Fact]
-    public async Task Online_checkout_uses_the_register_series_and_processes_once()
+    public async Task Online_checkout_uses_the_server_series_and_processes_once()
     {
         var userId = await CreateUserAsync("checkout");
         using var client = fixture.CreateUserClient(
             userId,
-            CommercePermissionCodes.SalesCreate);
+            CommercePermissionCodes.SalesCreate,
+            WorkSessionPermissionCodes.Open);
         client.Timeout = TimeSpan.FromSeconds(60);
 
         var draft = await OpenAsync(client);
@@ -32,19 +34,19 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             key);
 
         Assert.False(completed.IsDuplicate);
-        Assert.Equal(fixture.OnlineRegisterId, completed.NextDraft.RegisterId);
+        Assert.Equal(captured.WorkSessionId, completed.NextDraft.WorkSessionId);
         Assert.NotEqual(captured.DraftId, completed.NextDraft.DraftId);
         Assert.Empty(completed.NextDraft.Lines);
         Assert.Equal("Active", completed.NextDraft.Status);
-        Assert.StartsWith("VTA04-", completed.Receipt.DocumentNumber);
+        Assert.StartsWith("VTA00-", completed.Receipt.DocumentNumber);
         Assert.StartsWith(ServerSliceFixture.Prefix, completed.Receipt.FiscalNumber);
         Assert.False(string.IsNullOrWhiteSpace(completed.Receipt.Cufe));
         Assert.False(string.IsNullOrWhiteSpace(completed.Receipt.QrPayload));
         Assert.Equal(captured.PayableAmount, completed.Receipt.PayableAmount);
 
         var persisted = await ReadPersistenceAsync(completed.Receipt.DocumentId);
-        Assert.Equal(fixture.OnlineRegisterId, persisted.RegisterId);
         Assert.Null(persisted.DeviceId);
+        Assert.NotNull(persisted.WorkSessionId);
         Assert.Equal(SaleSourceModes.Online, persisted.SourceMode);
         Assert.Equal(userId, persisted.SoldByUserId);
         Assert.NotNull(persisted.WorkSessionId);
@@ -61,7 +63,8 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
 
         var context = new OnlineSalesDraftContext(
             fixture.BusinessId,
-            fixture.OnlineRegisterId);
+            fixture.WarehouseId,
+            captured.WorkSessionId);
         using (var searchResponse = await client.PostAsJsonAsync(
                    "/api/commerce/v1/pos/drafts/sales/search",
                    new SearchOnlineSalesIssuedSalesRequest(
@@ -100,7 +103,8 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         var qrUrl =
             $"/api/commerce/v1/pos/drafts/sales/{completed.Receipt.DocumentId:D}/qr" +
             $"?businessId={fixture.BusinessId:D}" +
-            $"&registerId={fixture.OnlineRegisterId:D}";
+            $"&warehouseId={fixture.WarehouseId:D}" +
+            $"&workSessionId={captured.WorkSessionId:D}";
         using (var qrResponse = await client.GetAsync(qrUrl))
         {
             qrResponse.EnsureSuccessStatusCode();
@@ -112,7 +116,8 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         using (var wrongRegisterResponse = await client.GetAsync(
                    $"/api/commerce/v1/pos/drafts/sales/{completed.Receipt.DocumentId:D}/qr" +
                    $"?businessId={fixture.BusinessId:D}" +
-                   $"&registerId={Guid.NewGuid():D}"))
+                   $"&warehouseId={fixture.WarehouseId:D}" +
+                   $"&workSessionId={Guid.NewGuid():D}"))
         {
             Assert.Equal(HttpStatusCode.Forbidden, wrongRegisterResponse.StatusCode);
         }
@@ -157,16 +162,18 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Two_online_cashiers_share_one_register_without_number_collisions()
+    public async Task Two_online_users_share_server_series_without_number_collisions()
     {
         var firstUserId = await CreateUserAsync("parallel-a");
         var secondUserId = await CreateUserAsync("parallel-b");
         using var firstClient = fixture.CreateUserClient(
             firstUserId,
-            CommercePermissionCodes.SalesCreate);
+            CommercePermissionCodes.SalesCreate,
+            WorkSessionPermissionCodes.Open);
         using var secondClient = fixture.CreateUserClient(
             secondUserId,
-            CommercePermissionCodes.SalesCreate);
+            CommercePermissionCodes.SalesCreate,
+            WorkSessionPermissionCodes.Open);
         firstClient.Timeout = TimeSpan.FromSeconds(90);
         secondClient.Timeout = TimeSpan.FromSeconds(90);
 
@@ -213,7 +220,7 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             Assert.Equal(2, consecutives.Count);
             Assert.All(
                 consecutives,
-                value => Assert.Equal(fixture.OnlineRegisterId, value.RegisterId));
+                value => Assert.Null(value.DeviceId));
             Assert.Equal(
                 2,
                 consecutives.Select(value => value.DocumentConsecutive)
@@ -240,7 +247,8 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         var userId = await CreateUserAsync("credit");
         using var client = fixture.CreateUserClient(
             userId,
-            CommercePermissionCodes.SalesCreate);
+            CommercePermissionCodes.SalesCreate,
+            WorkSessionPermissionCodes.Open);
         var captured = await CaptureAsync(client, await OpenAsync(client));
         var before = await ReadCursorValuesAsync();
         using var request = Mutation(
@@ -255,22 +263,22 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Active_fiscal_ranges_cannot_overlap_between_registers()
+    public async Task Active_fiscal_ranges_cannot_overlap_between_emitters()
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """
             INSERT dbo.FiscalSeries(
-              SeriesId,BusinessId,RegisterId,FiscalAuthorizationId,
+              SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
               DocumentType,Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)
             VALUES(
-              @SeriesId,@BusinessId,@RegisterId,@FiscalAuthorizationId,
+              @SeriesId,@BusinessId,@DeviceId,N'Device',@FiscalAuthorizationId,
               N'SalesInvoice',@Prefix,6000,7000,1,SYSDATETIMEOFFSET());
             """;
         command.Parameters.AddWithValue("@SeriesId", Guid.NewGuid());
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
-        command.Parameters.AddWithValue("@RegisterId", fixture.RegisterId);
+        command.Parameters.AddWithValue("@DeviceId", fixture.DeniedDeviceId);
         command.Parameters.AddWithValue(
             "@FiscalAuthorizationId",
             fixture.FiscalAuthorizationId);
@@ -296,7 +304,7 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
               FirstName,LastName,IsActive,CreatedAt)
             VALUES(
               @UserId,@TenantId,@Username,UPPER(@Username),@Email,UPPER(@Email),
-              N'Caja',N'Online',1,SYSDATETIMEOFFSET());
+              N'Venta',N'Online',1,SYSDATETIMEOFFSET());
             """,
             new("@UserId", userId),
             new("@TenantId", fixture.TenantId),
@@ -307,11 +315,23 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
 
     private async Task<OnlineSalesDraft> OpenAsync(HttpClient client)
     {
+        using var workSessionResponse = await client.PostAsJsonAsync(
+            "/api/commerce/v1/work-sessions/current",
+            new OpenWorkSessionRequest(
+                fixture.BusinessId,
+                fixture.WarehouseId,
+                null));
+        workSessionResponse.EnsureSuccessStatusCode();
+        var workSession = await workSessionResponse.Content
+            .ReadFromJsonAsync<WorkSessionView>()
+            ?? throw new InvalidOperationException("Empty work session response.");
+
         using var response = await client.PostAsJsonAsync(
             "/api/commerce/v1/pos/drafts/active",
             new OpenOnlineSalesDraftRequest(new(
                 fixture.BusinessId,
-                fixture.OnlineRegisterId)));
+                fixture.WarehouseId,
+                workSession.WorkSessionId)));
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<OnlineSalesDraft>()
             ?? throw new InvalidOperationException("Empty draft response.");
@@ -373,7 +393,7 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT d.RegisterId,d.DeviceId,d.SourceMode,d.SoldByUserId,d.WorkSessionId,
+            SELECT d.DeviceId,d.CreatedByDeviceId,d.SourceMode,d.SoldByUserId,d.WorkSessionId,
                    (SELECT COUNT(*) FROM dbo.SalesDocuments x WHERE x.DocumentId=d.DocumentId),
                    (SELECT COUNT(*) FROM dbo.SalesDocumentLines x WHERE x.DocumentId=d.DocumentId),
                    (SELECT COUNT(*) FROM dbo.SalesPayments x WHERE x.DocumentId=d.DocumentId),
@@ -394,7 +414,7 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         await using var reader = await command.ExecuteReaderAsync();
         Assert.True(await reader.ReadAsync());
         return new(
-            reader.GetGuid(0),
+            reader.IsDBNull(0) ? null : reader.GetGuid(0),
             reader.IsDBNull(1) ? null : reader.GetGuid(1),
             reader.GetString(2),
             reader.GetGuid(3),
@@ -420,7 +440,7 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT RegisterId,DocumentConsecutive,FiscalConsecutive,SoldByUserId
+            SELECT DeviceId,DocumentConsecutive,FiscalConsecutive,SoldByUserId
             FROM dbo.SalesDocuments
             WHERE DocumentId IN (@First,@Second)
             ORDER BY DocumentConsecutive;
@@ -430,7 +450,7 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync())
             rows.Add(new(
-                reader.GetGuid(0),
+                reader.IsDBNull(0) ? null : reader.GetGuid(0),
                 reader.GetInt64(1),
                 reader.GetInt64(2),
                 reader.GetGuid(3)));
@@ -473,8 +493,8 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
     }
 
     private sealed record PersistenceEvidence(
-        Guid RegisterId,
         Guid? DeviceId,
+        Guid? CreatedByDeviceId,
         string SourceMode,
         Guid SoldByUserId,
         Guid? WorkSessionId,
@@ -490,7 +510,7 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         string DraftStatus);
 
     private sealed record ConsecutiveEvidence(
-        Guid RegisterId,
+        Guid? DeviceId,
         long DocumentConsecutive,
         long FiscalConsecutive,
         Guid SoldByUserId);

@@ -36,18 +36,19 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
                   N'Producto pedido POS',N'EA',1,10000,0,10000,SYSUTCDATETIME());
 
                 INSERT dbo.OrderClaims(
-                  OrderClaimId,BusinessId,OrderId,RegisterId,DeviceId,UserId,
+                  OrderClaimId,BusinessId,WarehouseId,OrderId,WorkSessionId,DeviceId,UserId,
                   ClaimedAt,ExpiresAt,ReleasedAt)
                 VALUES(
-                  @ClaimId,@BusinessId,@OrderId,@RegisterId,@DeviceId,@UserId,
+                  @ClaimId,@BusinessId,@WarehouseId,@OrderId,@WorkSessionId,@DeviceId,@UserId,
                   SYSDATETIMEOFFSET(),DATEADD(minute,10,SYSDATETIMEOFFSET()),NULL);
                 """;
             seed.Parameters.AddWithValue("@OrderId", orderId);
             seed.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            seed.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+            seed.Parameters.AddWithValue("@WorkSessionId", fixture.WorkSessionId);
             seed.Parameters.AddWithValue("@ProductId", fixture.ProductId);
             seed.Parameters.AddWithValue("@OrderNumber", $"PED-POS-{orderId:N}");
             seed.Parameters.AddWithValue("@ClaimId", claimId);
-            seed.Parameters.AddWithValue("@RegisterId", fixture.RegisterId);
             seed.Parameters.AddWithValue("@DeviceId", fixture.DeviceId);
             seed.Parameters.AddWithValue("@UserId", fixture.UserId);
             await seed.ExecuteNonQueryAsync();

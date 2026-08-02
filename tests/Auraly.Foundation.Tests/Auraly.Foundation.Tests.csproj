@@ -36,9 +36,9 @@
     <ProjectReference Include="..\..\src\Modules\Fiscal\Auraly.Infrastructure.Fiscal\Auraly.Infrastructure.Fiscal.csproj" />
     <ProjectReference Include="..\..\src\Modules\Parties\Auraly.Domain.Parties\Auraly.Domain.Parties.csproj" />
     <ProjectReference Include="..\..\src\Modules\Parties\Auraly.Application.Parties\Auraly.Application.Parties.csproj" />
-    <ProjectReference Include="..\..\src\Modules\Cash\Auraly.Application.Cash\Auraly.Application.Cash.csproj" />
-    <ProjectReference Include="..\..\src\Modules\Cash\Auraly.Contracts.Cash\Auraly.Contracts.Cash.csproj" />
-    <ProjectReference Include="..\..\src\Modules\Cash\Auraly.Domain.Cash\Auraly.Domain.Cash.csproj" />
+
+
+
     <ProjectReference Include="..\..\src\Modules\Purchasing\Auraly.Domain.Purchasing\Auraly.Domain.Purchasing.csproj" />
     <ProjectReference Include="..\..\src\Modules\Inventory\Auraly.Domain.Inventory\Auraly.Domain.Inventory.csproj" />
     <ProjectReference Include="..\..\src\Modules\Returns\Auraly.Domain.Returns\Auraly.Domain.Returns.csproj" />

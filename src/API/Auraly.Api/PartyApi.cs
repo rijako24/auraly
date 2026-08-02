@@ -100,15 +100,15 @@ public static class PartyApi
         pos.MapPost("/", async (
             HttpContext context, PartyService service, CreateCustomerRequest request, CancellationToken ct) =>
             await Handle(async () => Results.Ok(await service.CreateCustomerAsync(
-                context.User.ToPartyDeviceIdentity(), request, ct))));
+                context.User.ToPartyDeviceIdentity(request.BusinessId), request, ct))));
 
         pos.MapGet("/by-identification", async (
-            HttpContext context, PartyService service, Guid countryId,
+            HttpContext context, PartyService service, Guid businessId, Guid countryId,
             string identificationType, string identification, CancellationToken ct) =>
             await Handle(async () =>
             {
                 var customer = await service.FindCustomerAsync(
-                    context.User.ToPartyDeviceIdentity(), countryId, identificationType, identification, ct);
+                    context.User.ToPartyDeviceIdentity(businessId), countryId, identificationType, identification, ct);
                 return customer is null ? Results.NotFound() : Results.Ok(customer);
             }));
 
@@ -148,11 +148,13 @@ public static class PartyClaimsPrincipalExtensions
                 .Select(claim => claim.Value)
                 .ToHashSet(StringComparer.Ordinal));
 
-    public static PartyActorIdentity ToPartyDeviceIdentity(this ClaimsPrincipal principal) =>
+    public static PartyActorIdentity ToPartyDeviceIdentity(
+        this ClaimsPrincipal principal,
+        Guid businessId) =>
         new(
             RequiredGuid(principal, PosAuthenticationDefaults.DeviceIdClaim),
             RequiredGuid(principal, PosAuthenticationDefaults.TenantIdClaim),
-            RequiredGuid(principal, PosAuthenticationDefaults.BusinessIdClaim),
+            businessId,
             principal.FindAll(PosAuthenticationDefaults.PermissionClaim)
                 .Select(claim => claim.Value)
                 .ToHashSet(StringComparer.Ordinal),

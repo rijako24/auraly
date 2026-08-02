@@ -366,7 +366,7 @@ public sealed class SqlInventoryOperationStore(
             SELECT TOP(1) ds.DocumentSeriesId,ds.Prefix,ds.SeriesCode,ds.Padding,ds.RangeEnd,COALESCE(c.NextConsecutive,ds.RangeStart)
             FROM dbo.DocumentSeries ds WITH(UPDLOCK,HOLDLOCK)
             LEFT JOIN dbo.DocumentSeriesCursors c WITH(UPDLOCK,HOLDLOCK) ON c.DocumentSeriesId=ds.DocumentSeriesId
-            WHERE ds.BusinessId=@BusinessId AND ds.DocumentType=@Type AND ds.RegisterId IS NULL AND ds.IsActive=1 ORDER BY ds.DocumentSeriesId;
+            WHERE ds.BusinessId=@BusinessId AND ds.DocumentType=@Type AND ds.DeviceId IS NULL AND ds.IsActive=1 ORDER BY ds.DocumentSeriesId;
             """;
         Guid seriesId; string prefix; string code; byte padding; long rangeEnd; long consecutive;
         await using (var command = new SqlCommand(selectSql, connection, transaction))

@@ -1,7 +1,8 @@
 namespace Auraly.Contracts.Orders;
 
 public sealed record InvoiceOrdersRequest(
-    Guid RegisterId,
+    Guid WorkSessionId,
+    Guid WarehouseId,
     Guid UserId,
     IReadOnlyList<Guid> OrderIds,
     string PaymentMethodCode,

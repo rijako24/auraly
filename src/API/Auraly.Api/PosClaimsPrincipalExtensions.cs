@@ -11,9 +11,6 @@ public static class PosClaimsPrincipalExtensions
         return new PosDeviceIdentity(
             RequiredGuid(principal, PosAuthenticationDefaults.DeviceIdClaim),
             RequiredGuid(principal, PosAuthenticationDefaults.TenantIdClaim),
-            RequiredGuid(principal, PosAuthenticationDefaults.BusinessIdClaim),
-            RequiredGuid(principal, PosAuthenticationDefaults.WarehouseIdClaim),
-            RequiredGuid(principal, PosAuthenticationDefaults.RegisterIdClaim),
             principal.FindAll(PosAuthenticationDefaults.PermissionClaim)
                 .Select(claim => claim.Value)
                 .ToHashSet(StringComparer.Ordinal));

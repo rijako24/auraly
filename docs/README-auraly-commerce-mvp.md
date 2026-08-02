@@ -1,5 +1,11 @@
 # Auraly Commerce MVP
 
+> **Decisión vigente desde 2026-08-02:** Auraly Commerce eliminó el concepto de
+> caja. El contexto canónico es usuario + sede (`BusinessId`) + bodega + sesión de
+> trabajo; `DeviceId` solo identifica un equipo enrolado para operar offline. La
+> decisión completa está en
+> `decision-sesiones-trabajo-equipos-enrolados-sin-caja.md` y prevalece sobre toda
+> mención histórica a caja, turno, arqueo o serie por caja en este índice.
 > Decisión organizacional vigente: `Tenant` es la empresa, `Business` es la sede y no existe un nivel `Location` en Commerce. Ver `decision-tenant-company-business-branch.md`.: índice de diseño
 
 **Rama de trabajo:** `design/auraly-commerce-mvp`  
@@ -88,6 +94,12 @@ Cuando dos documentos se contradigan, se aplica este orden:
 - `decision-canal-push-servidor-cajas.md`
 - `flujo-conexion-webpubsub-pos.md`
 
+### Sesiones de trabajo y corte sin caja
+
+- `decision-sesiones-trabajo-equipos-enrolados-sin-caja.md`
+- `implementation/work-session-cutover-design.md`
+- `implementation/run-work-session-cutover.md`
+- `implementation/work-session-cutover-evidence.md`
 ## Nota sobre documentos históricos
 
 Algunos documentos registran decisiones intermedias que luego fueron corregidas. No deben implementarse de forma aislada. Este índice y el orden de prevalencia evitan que expresiones antiguas como `CashRegisterSettings.AllowNegativeStockSales` o “existencia local conocida” se interpreten como decisiones vigentes.

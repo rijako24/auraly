@@ -26,13 +26,15 @@ public sealed class PosEdgeDurabilityTests
             var tenantId = new TenantId(Guid.NewGuid());
             var businessId = new BusinessId(Guid.NewGuid());
             var warehouseId = new WarehouseId(Guid.NewGuid());
-            var registerId = new RegisterId(Guid.NewGuid());
+            var deviceId = new DeviceId(Guid.NewGuid());
             var userId = new UserId(Guid.NewGuid());
-            var context = new RegisterContext(
+            var context = new SalesExecutionContext(
                 tenantId,
                 businessId,
                 warehouseId,
-                registerId,
+                userId,
+                deviceId,
+                new WorkSessionId(Guid.NewGuid()),
                 WarehouseAllowsNegativeStockSales: true);
             var permissionSet = new UserPermissionSet(
                 tenantId,
@@ -45,7 +47,7 @@ public sealed class PosEdgeDurabilityTests
             await firstProcess.InitializeAsync();
             await firstProcess.ProvisionDocumentSeriesAsync(new PosEdgeDocumentSeriesProvision(
                 Guid.NewGuid(),
-                registerId,
+                deviceId,
                 AuralyDocumentTypes.SalesInvoice,
                 "VTA",
                 "03",
@@ -54,7 +56,7 @@ public sealed class PosEdgeDurabilityTests
                 99_999_999));
             await firstProcess.ProvisionSeriesAsync(new PosEdgeSeriesProvision(
                 Guid.NewGuid(),
-                registerId,
+                deviceId,
                 "FV01",
                 "18760000001",
                 1,
@@ -134,7 +136,7 @@ public sealed class PosEdgeDurabilityTests
     private static PosEdgeIssueCommand CreateCommand(
         UserId userId,
         DocumentId documentId,
-        RegisterContext context,
+        SalesExecutionContext context,
         DateTimeOffset issuedAt)
     {
         var product = new PosCatalogProduct(

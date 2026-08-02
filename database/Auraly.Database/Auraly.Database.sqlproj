@@ -91,18 +91,18 @@
     <Build Include="Tables\OfflineAuthenticationLeases.sql" />
     <Build Include="Tables\AuditLogs.sql" />
     <Build Include="Tables\Warehouses.sql" />
-    <Build Include="Tables\CashRegisters.sql" />
-    <Build Include="Tables\PosDevices.sql" />
+
+    <Build Include="Tables\EnrolledDevices.sql" />
     <Build Include="Tables\PosDevicePermissions.sql" />
     <Build Include="Tables\PosEnrollmentSessions.sql" />
     <Build Include="Tables\DocumentSeries.sql" />
     <Build Include="Tables\FiscalAuthorizations.sql" />
     <Build Include="Tables\FiscalSeries.sql" />
     <Build Include="Triggers\FiscalSeriesRangeGuard.sql" />
-    <Build Include="Tables\CashSessions.sql" />
+
     <Build Include="Tables\WorkSessions.sql" />
     <Build Include="Tables\WorkSessionClosures.sql" />
-    <Build Include="Tables\SupervisorAuthorizations.sql" />
+    <Build Include="Tables\SupervisorCredentials.sql" />
     <Build Include="Tables\SalesDocuments.sql" />
     <Build Include="Tables\FiscalDocuments.sql" />
     <Build Include="Tables\OrderCommerce.sql" />
@@ -115,7 +115,7 @@
     <Build Include="Tables\SalesPayments.sql" />
     <Build Include="Tables\SalesReturns.sql" />
     <Build Include="Tables\SalesReturnFiscalSnapshots.sql" />
-    <Build Include="Tables\CashOperations.sql" />
+
     <Build Include="Tables\WorkSessionMovements.sql" />
     <Build Include="Tables\FiscalSnapshots.sql" />
     <Build Include="Tables\FiscalIssuerConfigurations.sql" />

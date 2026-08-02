@@ -1,16 +1,16 @@
-import type { OnlineRegisterOption } from "@/services/pos/online-pos-client";
+import type { SalesWorkspaceOption } from "@/services/pos/online-pos-client";
 
-export type OnlineRegisterBootstrap = {
+export type SalesWorkspaceBootstrap = {
   tenantName: string;
   userId: string;
   userDisplayName: string;
-  options: OnlineRegisterOption[];
+  options: SalesWorkspaceOption[];
   canEnrollPosDevice: boolean;
 };
 
-export async function loadOnlineRegisterBootstrap(): Promise<OnlineRegisterBootstrap> {
+export async function loadSalesWorkspaceBootstrap(): Promise<SalesWorkspaceBootstrap> {
   const response = await fetch(
-    "/api/commerce/v1/pos/register-context/bootstrap",
+    "/api/commerce/v1/pos/workspace/bootstrap",
     {
       cache: "no-store",
       credentials: "include",
@@ -32,5 +32,5 @@ export async function loadOnlineRegisterBootstrap(): Promise<OnlineRegisterBoots
     }
     throw new Error(detail);
   }
-  return (await response.json()) as OnlineRegisterBootstrap;
+  return (await response.json()) as SalesWorkspaceBootstrap;
 }

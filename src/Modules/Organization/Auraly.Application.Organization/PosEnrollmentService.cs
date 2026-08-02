@@ -24,14 +24,14 @@ public sealed record PosEnrollmentAuthorizationCommand(
 
 public interface IPosEnrollmentStore
 {
-    Task<OnlineRegisterContext?> ResolveRegisterAsync(
+    Task<SalesWorkspaceContext?> ResolveWorkspaceAsync(
         Guid tenantId,
         CreatePosEnrollmentRequest request,
         CancellationToken cancellationToken);
 
     Task CreateAuthorizationAsync(
         PosEnrollmentAuthorizationCommand command,
-        OnlineRegisterContext register,
+        SalesWorkspaceContext workspace,
         CancellationToken cancellationToken);
 
     Task<PosEnrollmentPackage> RedeemAsync(
@@ -68,23 +68,23 @@ public sealed class PosEnrollmentService(
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(user);
-        if (!user.Permissions.Contains(CommercePermissionCodes.PosDevicesEnroll))
+        if (!user.Permissions.Contains(CommercePermissionCodes.EnrolledDevicesEnroll))
             throw new PosEnrollmentForbiddenException(
-                $"Permission '{CommercePermissionCodes.PosDevicesEnroll}' is required.");
+                $"Permission '{CommercePermissionCodes.EnrolledDevicesEnroll}' is required.");
         if (request.BusinessId == Guid.Empty ||
-            request.RegisterId == Guid.Empty ||
+            request.WarehouseId == Guid.Empty ||
             string.IsNullOrWhiteSpace(request.DeviceName))
             throw new PosEnrollmentValidationException(
-                "Negocio, sede, caja y nombre del equipo son obligatorios.");
+                "La sede, la bodega y el nombre del equipo son obligatorios.");
         var deviceName = request.DeviceName.Trim();
         if (deviceName.Length > 160)
             throw new PosEnrollmentValidationException(
                 "El nombre del equipo no puede superar 160 caracteres.");
 
-        var register = await store.ResolveRegisterAsync(
+        var workspace = await store.ResolveWorkspaceAsync(
             user.TenantId, request with { DeviceName = deviceName }, cancellationToken)
             ?? throw new PosEnrollmentForbiddenException(
-                "La caja no pertenece al tenant autenticado o no coincide con la sede.");
+                "La sede o bodega no pertenece a la empresa autenticada.");
         var codeBytes = RandomNumberGenerator.GetBytes(32);
         var code = Convert.ToBase64String(codeBytes)
             .TrimEnd('=').Replace('+', '-').Replace('/', '_');
@@ -96,9 +96,9 @@ public sealed class PosEnrollmentService(
             now.AddMinutes(10),
             user,
             request with { DeviceName = deviceName });
-        await store.CreateAuthorizationAsync(command, register, cancellationToken);
+        await store.CreateAuthorizationAsync(command, workspace, cancellationToken);
         return new PosEnrollmentAuthorization(
-            command.EnrollmentSessionId, code, command.ExpiresAt, register);
+            command.EnrollmentSessionId, code, command.ExpiresAt, workspace);
     }
 
     public Task<PosEnrollmentPackage> RedeemAsync(

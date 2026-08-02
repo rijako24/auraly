@@ -252,7 +252,8 @@ public sealed class PosDraftStoreTests
             var scope = new PosDraftScope(
                 new BusinessId(Guid.NewGuid()),
                 new WarehouseId(Guid.NewGuid()),
-                new RegisterId(Guid.NewGuid()),
+                new DeviceId(Guid.NewGuid()),
+                new WorkSessionId(Guid.NewGuid()),
                 new UserId(Guid.NewGuid()));
             await test(store, path, scope, ids);
         }

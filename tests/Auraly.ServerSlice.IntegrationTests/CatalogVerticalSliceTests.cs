@@ -156,7 +156,8 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             var sync = new PosCatalogSynchronizer(
                 fixture.CreateClient(),
                 local,
-                new PosDeviceCredentials(fixture.DeviceId, ServerSliceFixture.DeviceSecret));
+                new PosDeviceCredentials(fixture.DeviceId, ServerSliceFixture.DeviceSecret),
+                new PosOperationalScope(fixture.BusinessId, fixture.WarehouseId));
             await sync.SynchronizeAsync();
 
             var captured = await local.CaptureAsync("7701234500012");
@@ -257,7 +258,8 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         var sync = new PosCatalogSynchronizer(
             fixture.CreateClient(),
             new PosCatalogStore($"Data Source={Path.Combine(Path.GetTempPath(), $"unused-{Guid.NewGuid():N}.db")}"),
-            new PosDeviceCredentials(fixture.DeviceId, ServerSliceFixture.DeviceSecret));
+            new PosDeviceCredentials(fixture.DeviceId, ServerSliceFixture.DeviceSecret),
+                new PosOperationalScope(fixture.BusinessId, fixture.WarehouseId));
         var allowed = await sync.CheckAvailabilityAsync(
             new InventoryAvailabilityRequest(created.ProductId, fixture.WarehouseId, 1m, Guid.NewGuid()));
         Assert.False(allowed.ValidationRequired);

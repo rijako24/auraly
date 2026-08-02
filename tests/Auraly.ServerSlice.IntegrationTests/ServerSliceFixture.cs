@@ -12,6 +12,7 @@ using Auraly.Contracts.Authentication;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
+using Auraly.Contracts.WorkSessions;
 using Auraly.Fiscal.Core;
 using Auraly.Infrastructure.Persistence;
 using Auraly.Contracts.Parties;
@@ -69,9 +70,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public Guid TenantId { get; } = Guid.NewGuid();
     public Guid BusinessId { get; } = Guid.NewGuid();
     public Guid WarehouseId { get; } = Guid.NewGuid();
-    public Guid RegisterId { get; } = Guid.NewGuid();
-    public Guid OnlineRegisterId { get; } = Guid.NewGuid();
     public Guid DeviceId { get; } = Guid.NewGuid();
+    public Guid OnlineDeviceId { get; } = Guid.NewGuid();
+    public Guid WorkSessionId { get; } = Guid.NewGuid();
     public Guid DeniedDeviceId { get; } = Guid.NewGuid();
     public Guid UserId { get; } = Guid.NewGuid();
     public Guid PriceChannelId { get; } = Guid.NewGuid();
@@ -250,7 +251,17 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             AuthenticationDefaults.ClientIdHeader, session.ClientId.ToString("D"));
         return client;
     }
-
+    public async Task<WorkSessionView> OpenWorkSessionAsync(
+        HttpClient client,
+        Guid? deviceId = null)
+    {
+        using var response = await client.PostAsJsonAsync(
+            "/api/commerce/v1/work-sessions/current",
+            new OpenWorkSessionRequest(BusinessId, WarehouseId, deviceId));
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<WorkSessionView>()
+            ?? throw new InvalidOperationException("Empty work-session response.");
+    }
     public async Task DisposeAsync()
     {
         _factory?.Dispose();
@@ -312,8 +323,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             TenantId,
             BusinessId,
             WarehouseId,
-            RegisterId,
             DeviceId,
+            WorkSessionId,
             UserId,
             documentId ?? Guid.NewGuid(),
             new PosSaleDocumentNumberContract(
@@ -614,20 +625,21 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             (WarehouseId, BusinessId, Code, Name, AllowNegativeStockSales, IsActive, CreatedAt)
             VALUES (@WarehouseId, @BusinessId, N'B01', N'Bodega E2E', 1, 1, SYSDATETIMEOFFSET());
 
-            INSERT INTO dbo.CashRegisters
-            (RegisterId, BusinessId, WarehouseId, Code, Name, IsActive, CreatedAt)
-            VALUES
-            (@RegisterId, @BusinessId, @WarehouseId, N'03', N'Caja Edge E2E', 1, SYSDATETIMEOFFSET()),
-            (@OnlineRegisterId, @BusinessId, @WarehouseId, N'04', N'Caja web E2E', 1, SYSDATETIMEOFFSET());
-
-            INSERT INTO dbo.PosDevices
-            (DeviceId, BusinessId, WarehouseId, RegisterId, Name,
+            INSERT INTO dbo.EnrolledDevices
+            (DeviceId, TenantId, Name,
              CredentialSalt, CredentialHash, CredentialIterations, IsActive, CreatedAt)
             VALUES
-            (@DeviceId, @BusinessId, @WarehouseId, @RegisterId, N'POS permitido',
+            (@DeviceId, @TenantId, N'POS permitido',
              @AllowedSalt, @AllowedHash, @AllowedIterations, 1, SYSDATETIMEOFFSET()),
-            (@DeniedDeviceId, @BusinessId, @WarehouseId, @RegisterId, N'POS sin permiso',
+            (@DeniedDeviceId, @TenantId, N'POS sin permiso',
              @DeniedSalt, @DeniedHash, @DeniedIterations, 1, SYSDATETIMEOFFSET());
+
+            INSERT INTO dbo.WorkSessions
+            (WorkSessionId, BusinessId, WarehouseId, UserId, DeviceId,
+             OpenedAt, LastActivityAt, Status)
+            VALUES
+            (@WorkSessionId, @BusinessId, @WarehouseId, @UserId, @DeviceId,
+             SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), N'Open');
 
             INSERT INTO dbo.PosDevicePermissions
             (DeviceId, PermissionCode, IsGranted, GrantedAt)
@@ -660,26 +672,26 @@ public sealed class ServerSliceFixture : IAsyncLifetime
              '2026-01-01',1,SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.DocumentSeries
-            (DocumentSeriesId, BusinessId, RegisterId, DocumentType,
+            (DocumentSeriesId, BusinessId, DeviceId, DocumentType,
              Prefix, SeriesCode, Padding, RangeStart, RangeEnd,
              IsOfflineCapable, IsActive, CreatedAt)
             VALUES
-            (@DocumentSeriesId, @BusinessId, @RegisterId, @DocumentType,
+            (@DocumentSeriesId, @BusinessId, @DeviceId, @DocumentType,
              N'VTA', N'03', 8, 1, 99999999, 1, 1, SYSDATETIMEOFFSET()),
-            (@OnlineDocumentSeriesId, @BusinessId, @OnlineRegisterId, @DocumentType,
-             N'VTA', N'04', 8, 1, 99999999, 0, 1, SYSDATETIMEOFFSET()),
+            (@OnlineDocumentSeriesId, @BusinessId, NULL, @DocumentType,
+             N'VTA', N'00', 8, 1, 99999999, 0, 1, SYSDATETIMEOFFSET()),
             (@GoodsReceiptSeriesId, @BusinessId, NULL, N'GoodsReceipt',
-             N'EMC', N'01', 8, 1, 99999999, 0, 1, SYSDATETIMEOFFSET()),
+             N'EMC', N'00', 8, 1, 99999999, 0, 1, SYSDATETIMEOFFSET()),
             (@SalesReturnSeriesId, @BusinessId, NULL, N'SalesReturn',
-             N'DVT', N'01', 8, 1, 99999999, 0, 1, SYSDATETIMEOFFSET());
+             N'DVT', N'00', 8, 1, 99999999, 0, 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.FiscalSeries
-            (SeriesId, BusinessId, RegisterId, FiscalAuthorizationId,
+            (SeriesId, BusinessId, DeviceId, EmitterKind, FiscalAuthorizationId,
              DocumentType, Prefix, RangeStart, RangeEnd, IsActive, CreatedAt)
             VALUES
-            (@SeriesId, @BusinessId, @RegisterId, @FiscalAuthorizationId,
+            (@SeriesId, @BusinessId, @DeviceId, N'Device', @FiscalAuthorizationId,
              @DocumentType, @Prefix, 1, 10000, 1, SYSDATETIMEOFFSET()),
-            (@OnlineSeriesId, @BusinessId, @OnlineRegisterId, @FiscalAuthorizationId,
+            (@OnlineSeriesId, @BusinessId, NULL, N'Server', @FiscalAuthorizationId,
              @DocumentType, @Prefix, 10001, 20000, 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.Products
@@ -715,9 +727,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         command.Parameters.AddWithValue("@UserEmail", $"cashier-{UserId:N}@auraly.test");
         command.Parameters.AddWithValue("@NormalizedUserEmail", $"CASHIER-{UserId:N}@AURALY.TEST");
         command.Parameters.AddWithValue("@WarehouseId", WarehouseId);
-        command.Parameters.AddWithValue("@RegisterId", RegisterId);
         command.Parameters.AddWithValue("@DeviceId", DeviceId);
-        command.Parameters.AddWithValue("@OnlineRegisterId", OnlineRegisterId);
+        command.Parameters.AddWithValue("@WorkSessionId", WorkSessionId);
+        command.Parameters.AddWithValue("@OnlineDeviceId", OnlineDeviceId);
         command.Parameters.AddWithValue("@DeniedDeviceId", DeniedDeviceId);
         command.Parameters.AddWithValue("@AllowedSalt", allowedCredential.Salt);
         command.Parameters.AddWithValue("@AllowedHash", allowedCredential.Hash);

@@ -9,7 +9,7 @@ using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Application.Authentication;
 using Auraly.Application.Authorization;
 using Auraly.Application.Catalog;
-using Auraly.Application.Cash;
+
 using Auraly.Application.DocumentProcessing;
 using Auraly.Application.Fiscal;
 using Auraly.Application.Parties;
@@ -192,8 +192,8 @@ builder.Services.AddScoped<PosCatalogService>();
 builder.Services.AddScoped<IPartyStore, SqlPartyStore>();
 builder.Services.AddScoped<PartyService>();
 builder.Services.AddScoped<GeographyService>();
-builder.Services.AddScoped<IOnlineRegisterDirectory, SqlOnlineRegisterDirectory>();
-builder.Services.AddScoped<OnlineRegisterService>();
+builder.Services.AddScoped<ISalesWorkspaceDirectory, SqlSalesWorkspaceDirectory>();
+builder.Services.AddScoped<SalesWorkspaceService>();
 builder.Services.AddScoped<IPosEnrollmentStore, SqlPosEnrollmentStore>();
 builder.Services.AddScoped<PosEnrollmentService>();
 builder.Services.AddScoped<IOnlineSalesDraftStore, SqlOnlineSalesDraftStore>();
@@ -204,7 +204,7 @@ builder.Services.AddScoped<IOnlineSalesHistoryStore, SqlOnlineSalesDraftStore>()
 builder.Services.AddScoped<OnlineSalesHistoryService>();
 builder.Services.AddScoped<IOnlineSalesOrderImportStore, SqlOnlineSalesDraftStore>();
 builder.Services.AddScoped<OnlineSalesOrderImportService>();
-builder.Services.AddScoped<ICashSessionStore, SqlCashSessionStore>();
+
 builder.Services.AddScoped<IWorkSessionStore, SqlWorkSessionStore>();
 builder.Services.AddScoped<WorkSessionService>();
 builder.Services.Configure<AuthenticationJwtOptions>(
@@ -228,7 +228,7 @@ builder.Services.AddSingleton(new OfflineAuthenticationLeasePolicy(
     TimeSpan.FromHours(builder.Configuration.GetValue(
         "Authentication:OfflineLeaseSigning:DurationHours", 8))));
 builder.Services.AddScoped<OfflineAuthenticationLeaseService>();
-builder.Services.AddScoped<CashSessionService>();
+
 builder.Services.AddScoped<IPosOfflineIdentityStore, SqlPosOfflineIdentityStore>();
 builder.Services.AddScoped<PosOfflineIdentityService>();
 builder.Services.AddScoped<IOrderStore, SqlOrderStore>();
@@ -409,10 +409,10 @@ app.MapAuthenticationApi();
 app.MapCatalogApi();
 app.MapPartyApi();
 app.MapPartyUserAccountApi();
-app.MapOnlineRegisterApi();
+app.MapSalesWorkspaceApi();
 app.MapPosEnrollmentApi();
 app.MapOnlineSalesDraftApi();
-app.MapCashApi();
+
 app.MapWorkSessionApi();
 app.MapPosIdentityApi();
 app.MapOfflineAuthenticationLeaseApi();

@@ -52,13 +52,13 @@ public sealed class PosSaleCompletionServiceTests
         {
             var draft = await fixture.AddLineAsync();
             var before = await fixture.Sales.PreviewNextFiscalNumberAsync(
-                fixture.Scope.RegisterId,
+                fixture.Scope.DeviceId,
                 fixture.IssuedAt);
             Assert.Equal("FV100", before.FullNumber);
             Assert.Equal(
                 "VTA03-00000100",
                 (await fixture.Sales.PreviewNextDocumentNumberAsync(
-                    fixture.Scope.RegisterId, AuralyDocumentTypes.SalesInvoice)).FullNumber);
+                    fixture.Scope.DeviceId, AuralyDocumentTypes.SalesInvoice)).FullNumber);
 
             var result = await fixture.CompleteAsync(draft.DraftId);
 
@@ -99,7 +99,7 @@ public sealed class PosSaleCompletionServiceTests
             Assert.Equal(
                 "FV101",
                 (await fixture.Sales.PreviewNextFiscalNumberAsync(
-                    fixture.Scope.RegisterId,
+                    fixture.Scope.DeviceId,
                     fixture.IssuedAt)).FullNumber);
 
             fixture.Printer.Fail = false;
@@ -127,11 +127,11 @@ public sealed class PosSaleCompletionServiceTests
             Assert.Equal(
                 "VTA03-00000100",
                 (await fixture.Sales.PreviewNextDocumentNumberAsync(
-                    fixture.Scope.RegisterId, AuralyDocumentTypes.SalesInvoice)).FullNumber);
+                    fixture.Scope.DeviceId, AuralyDocumentTypes.SalesInvoice)).FullNumber);
             Assert.Equal(
                 "FV100",
                 (await fixture.Sales.PreviewNextFiscalNumberAsync(
-                    fixture.Scope.RegisterId,
+                    fixture.Scope.DeviceId,
                     fixture.IssuedAt)).FullNumber);
             Assert.Empty(await fixture.Sales.GetPendingOutboxAsync());
             Assert.Equal(PosDraftStatus.Active, (await fixture.Drafts.GetAsync(draft.DraftId))!.Status);
@@ -165,7 +165,7 @@ public sealed class PosSaleCompletionServiceTests
     {
         private Fixture(
             PosDraftScope scope,
-            RegisterContext register,
+            SalesExecutionContext register,
             PosDraftStore drafts,
             PosDraftIssuanceStore issuance,
             PosEdgeSaleStore sales,
@@ -182,7 +182,7 @@ public sealed class PosSaleCompletionServiceTests
         public DateTimeOffset IssuedAt { get; } =
             new(2026, 7, 28, 14, 30, 0, TimeSpan.FromHours(-5));
         public PosDraftScope Scope { get; }
-        public RegisterContext Register { get; }
+        public SalesExecutionContext Register { get; }
         public PosDraftStore Drafts { get; }
         public PosDraftIssuanceStore Issuance { get; }
         public PosEdgeSaleStore Sales { get; }
@@ -194,14 +194,17 @@ public sealed class PosSaleCompletionServiceTests
             var tenantId = new TenantId(Guid.NewGuid());
             var businessId = new BusinessId(Guid.NewGuid());
             var warehouseId = new WarehouseId(Guid.NewGuid());
-            var registerId = new RegisterId(Guid.NewGuid());
+            var deviceId = new DeviceId(Guid.NewGuid());
             var userId = new UserId(Guid.NewGuid());
-            var scope = new PosDraftScope(businessId, warehouseId, registerId, userId);
-            var register = new RegisterContext(
+            var workSessionId = new WorkSessionId(Guid.NewGuid());
+            var scope = new PosDraftScope(businessId, warehouseId, deviceId, workSessionId, userId);
+            var executionContext = new SalesExecutionContext(
                 tenantId,
                 businessId,
                 warehouseId,
-                registerId,
+                userId,
+                deviceId,
+                workSessionId,
                 true);
             var permissions = new UserPermissionSet(
                 tenantId,
@@ -218,7 +221,7 @@ public sealed class PosSaleCompletionServiceTests
             await issuance.InitializeAsync();
             await sales.ProvisionDocumentSeriesAsync(new PosEdgeDocumentSeriesProvision(
                 Guid.NewGuid(),
-                registerId,
+                deviceId,
                 AuralyDocumentTypes.SalesInvoice,
                 "VTA",
                 "03",
@@ -227,13 +230,13 @@ public sealed class PosSaleCompletionServiceTests
                 99_999_999));
             await sales.ProvisionSeriesAsync(new PosEdgeSeriesProvision(
                 Guid.NewGuid(),
-                registerId,
+                deviceId,
                 "FV",
                 "18760000001",
                 100,
                 200,
                 new DateOnly(2027, 7, 28)));
-            return new Fixture(scope, register, drafts, issuance, sales, new RecordingPrinter());
+            return new Fixture(scope, executionContext, drafts, issuance, sales, new RecordingPrinter());
         }
 
         public Task<PosDraft> AddLineAsync() =>
@@ -267,7 +270,6 @@ public sealed class PosSaleCompletionServiceTests
                     FiscalEnvironment.Test,
                     "https://catalogo-vpfe.dian.gov.co/document/searchqr",
                     payments ?? [new OfflineSalePayment("Cash", 11_900m)],
-                    Guid.NewGuid(),
                     80));
     }
 

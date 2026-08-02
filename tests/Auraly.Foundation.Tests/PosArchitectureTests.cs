@@ -61,7 +61,7 @@ public sealed class PosArchitectureTests
         Assert.Contains("disabled={busy}", scanner, StringComparison.Ordinal);
         Assert.DoesNotContain("edgeReady", scanner, StringComparison.Ordinal);
         Assert.Contains(
-            "Los servicios locales de la caja no est\\u00e1n disponibles.",
+            "Los servicios locales del equipo no est\\u00e1n disponibles.",
             page,
             StringComparison.Ordinal);
         Assert.Contains(

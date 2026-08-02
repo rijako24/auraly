@@ -4,7 +4,6 @@ CREATE TABLE [dbo].[PosEnrollmentSessions]
     [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
-    [RegisterId] UNIQUEIDENTIFIER NOT NULL,
     [RequestedByUserId] UNIQUEIDENTIFIER NOT NULL,
     [RequestedByDisplayName] NVARCHAR(200) NOT NULL,
     [DeviceName] NVARCHAR(160) NOT NULL,
@@ -20,24 +19,21 @@ CREATE TABLE [dbo].[PosEnrollmentSessions]
         REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_PosEnrollmentSessions_Warehouses] FOREIGN KEY ([WarehouseId])
         REFERENCES [dbo].[Warehouses] ([WarehouseId]),
-    CONSTRAINT [FK_PosEnrollmentSessions_Registers] FOREIGN KEY ([RegisterId])
-        REFERENCES [dbo].[CashRegisters] ([RegisterId]),
     CONSTRAINT [FK_PosEnrollmentSessions_Users] FOREIGN KEY ([RequestedByUserId])
         REFERENCES [dbo].[AppUsers] ([UserId]),
     CONSTRAINT [FK_PosEnrollmentSessions_Devices] FOREIGN KEY ([DeviceId])
-        REFERENCES [dbo].[PosDevices] ([DeviceId]),
+        REFERENCES [dbo].[EnrolledDevices] ([DeviceId]),
     CONSTRAINT [CK_PosEnrollmentSessions_Expiry] CHECK ([ExpiresAt] > [CreatedAt]),
     CONSTRAINT [CK_PosEnrollmentSessions_Redeemed] CHECK (
         ([RedeemedAt] IS NULL AND [DeviceId] IS NULL) OR
         ([RedeemedAt] IS NOT NULL AND [DeviceId] IS NOT NULL))
 );
-
 GO
 
-CREATE INDEX [IX_PosEnrollmentSessions_Register_Expiry]
-    ON [dbo].[PosEnrollmentSessions] ([RegisterId], [ExpiresAt], [RedeemedAt]);
-
+CREATE INDEX [IX_PosEnrollmentSessions_Business_Expiry]
+    ON [dbo].[PosEnrollmentSessions] ([BusinessId], [ExpiresAt], [RedeemedAt]);
 GO
 
 CREATE UNIQUE INDEX [UX_PosEnrollmentSessions_CodeHash]
     ON [dbo].[PosEnrollmentSessions] ([RedemptionCodeHash]);
+GO

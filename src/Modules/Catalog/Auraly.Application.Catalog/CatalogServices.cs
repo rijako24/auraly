@@ -11,11 +11,11 @@ public interface ICatalogStore
     Task<ProductDetail?> GetAsync(Guid tenantId, Guid businessId, Guid productId, bool includeCosts, CancellationToken ct);
     Task<ProductPage> PageAsync(Guid tenantId, Guid businessId, ProductPageRequest request, bool includeCosts, CancellationToken ct);
     Task DeactivateAsync(CatalogUserIdentity user, Guid productId, DateTimeOffset now, CancellationToken ct);
-    Task<CatalogSyncSessionResponse> StartSyncAsync(Guid deviceId, Guid tenantId, Guid businessId, Guid registerId, DateTimeOffset now, CancellationToken ct);
+    Task<CatalogSyncSessionResponse> StartSyncAsync(Guid deviceId, Guid tenantId, Guid businessId, Guid warehouseId, DateTimeOffset now, CancellationToken ct);
     Task<CatalogBootstrapPage> BootstrapPageAsync(Guid deviceId, Guid sessionId, string? cursor, int pageSize, CancellationToken ct);
     Task<CatalogDeltaPage> ChangesAsync(Guid deviceId, Guid tenantId, Guid businessId, long cursor, int pageSize, CancellationToken ct);
     Task<InventoryAvailabilityResponse> AvailabilityAsync(
-        Guid deviceId, Guid tenantId, Guid businessId, Guid registerId,
+        Guid deviceId, Guid tenantId, Guid businessId,
         InventoryAvailabilityRequest request, CancellationToken ct);
     Task<PosPricingSnapshot> PricingSnapshotAsync(Guid deviceId, Guid tenantId, Guid businessId, CancellationToken ct);
 }

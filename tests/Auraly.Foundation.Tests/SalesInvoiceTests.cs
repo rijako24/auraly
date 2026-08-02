@@ -80,7 +80,9 @@ public sealed class SalesInvoiceTests
             new TenantId(Guid.NewGuid()),
             new BusinessId(Guid.NewGuid()),
             new WarehouseId(Guid.NewGuid()),
-            new RegisterId(Guid.NewGuid()));
+            new UserId(Guid.NewGuid()),
+            new DeviceId(Guid.NewGuid()),
+            new WorkSessionId(Guid.NewGuid()));
 
     private static AuralyDocumentNumberAssignment DocumentNumber() =>
         AuralyDocumentNumberAssignment.Create(

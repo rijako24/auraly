@@ -32,7 +32,7 @@ public sealed class SqlFiscalDocumentStore(SqlServerConnectionFactory connection
               AND (@AuralyNumber IS NULL OR fd.AuralyDocumentNumber = @AuralyNumber)
               AND (@DianNumber IS NULL OR fd.FiscalNumber = @DianNumber)
               AND (@UniqueCode IS NULL OR fd.UniqueCode = @UniqueCode)
-              AND (@RegisterId IS NULL OR sale.RegisterId = @RegisterId)
+              AND (@DeviceId IS NULL OR sale.DeviceId = @DeviceId)
               AND (@IssuedFrom IS NULL OR fd.IssuedAt >= @IssuedFrom)
               AND (@IssuedTo IS NULL OR fd.IssuedAt <= @IssuedTo)
             """;
@@ -117,7 +117,7 @@ public sealed class SqlFiscalDocumentStore(SqlServerConnectionFactory connection
     private const string SelectColumns = """
         SELECT fd.DocumentId,fd.BusinessId,fd.SourceDocumentType,fd.FiscalDocumentType,
                fd.AuralyDocumentNumber,fd.FiscalNumber,fd.UniqueCodeType,fd.UniqueCode,
-               p.Status,sale.RegisterId,fd.IssuedAt,
+               p.Status,sale.DeviceId,fd.IssuedAt,
                p.AttemptCount, p.TrackId, p.LastStatusCode,
                p.LastStatusDescription, p.UpdatedAt
         FROM dbo.FiscalDocuments fd
@@ -132,7 +132,7 @@ public sealed class SqlFiscalDocumentStore(SqlServerConnectionFactory connection
         command.Parameters.AddWithValue("@AuralyNumber", Db(query.AuralyNumber));
         command.Parameters.AddWithValue("@DianNumber", Db(query.DianNumber));
         command.Parameters.AddWithValue("@UniqueCode", Db(query.UniqueCode));
-        command.Parameters.AddWithValue("@RegisterId", (object?)query.RegisterId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@DeviceId", (object?)query.DeviceId ?? DBNull.Value);
         command.Parameters.AddWithValue("@IssuedFrom", (object?)query.IssuedFrom ?? DBNull.Value);
         command.Parameters.AddWithValue("@IssuedTo", (object?)query.IssuedTo ?? DBNull.Value);
     }

@@ -25,7 +25,7 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
             var acceptance = await response.Content.ReadFromJsonAsync<GoodsReceiptAcceptance>();
             Assert.NotNull(acceptance);
-            Assert.StartsWith("EMC01-", acceptance.DocumentNumber);
+            Assert.StartsWith("EMC00-", acceptance.DocumentNumber);
             Assert.False(acceptance.IdempotentReplay);
         }
 

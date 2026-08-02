@@ -179,7 +179,9 @@ export interface PosClient {
   health(): Promise<{
     status: string;
     serverConnected: boolean;
-    registerCode: string;
+    deviceSeriesCode: string;
+    businessName: string;
+    warehouseName: string;
     userDisplayName: string;
     userId: string | null;
   }>;
@@ -250,7 +252,9 @@ export class PosEdgeClient implements PosClient {
     return this.request<{
       status: string;
       serverConnected: boolean;
-      registerCode: string;
+      deviceSeriesCode: string;
+    businessName: string;
+    warehouseName: string;
       userDisplayName: string;
       userId: string | null;
     }>("/edge/v1/health");
@@ -261,7 +265,7 @@ export class PosEdgeClient implements PosClient {
       method: "POST",
       body: JSON.stringify({ username, password }),
     });
-    if (!session.token) throw new PosEdgeError("La caja no devolvió una sesión local.", 500);
+    if (!session.token) throw new PosEdgeError("El servicio local no devolvió una sesión de usuario.", 500);
     this.userSessionToken = session.token;
     window.sessionStorage.setItem("auraly.pos.user-session", session.token);
     return session;

@@ -39,7 +39,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
                 await response.Content.ReadAsStringAsync());
             var accepted = await response.Content.ReadFromJsonAsync<SalesReturnAcceptance>();
             Assert.NotNull(accepted);
-            Assert.StartsWith("DVT01-", accepted.DocumentNumber);
+            Assert.StartsWith("DVT00-", accepted.DocumentNumber);
             Assert.False(accepted.IdempotentReplay);
         }
 

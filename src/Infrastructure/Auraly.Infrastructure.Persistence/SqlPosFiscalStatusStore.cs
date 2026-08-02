@@ -22,7 +22,6 @@ public sealed class SqlPosFiscalStatusStore(
             INNER JOIN dbo.SalesDocuments d ON d.DocumentId=p.DocumentId
             WHERE d.BusinessId=@BusinessId
               AND d.DeviceId=@DeviceId
-              AND d.RegisterId=@RegisterId
               AND p.RowVersion>@Cursor
             ORDER BY p.RowVersion;
             """;
@@ -33,7 +32,6 @@ public sealed class SqlPosFiscalStatusStore(
         command.Parameters.AddWithValue("@Take", pageSize + 1);
         command.Parameters.AddWithValue("@BusinessId", device.BusinessId);
         command.Parameters.AddWithValue("@DeviceId", device.DeviceId);
-        command.Parameters.AddWithValue("@RegisterId", device.RegisterId);
         command.Parameters.Add("@Cursor", SqlDbType.Timestamp, 8).Value = decodedCursor;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var rows = new List<(PosFiscalStatusChange Item, byte[] Cursor)>();

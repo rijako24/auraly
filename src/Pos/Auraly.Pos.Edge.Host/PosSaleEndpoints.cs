@@ -22,9 +22,11 @@ public sealed record CompleteDraftRequest(
     PosSaleUblSnapshotContract? UblSnapshot = null);
 
 internal sealed record PosSaleHostSettings(
-    RegisterContext Register,
-    UserId UserId,
-    Guid DeviceId,
+    TenantId TenantId,
+    BusinessId BusinessId,
+    WarehouseId WarehouseId,
+    DeviceId DeviceId,
+    bool WarehouseAllowsNegativeStock,
     string SupplierTaxId,
     string DefaultCustomerIdentification,
     FiscalTechnicalKey TechnicalKey,
@@ -32,8 +34,17 @@ internal sealed record PosSaleHostSettings(
     string QrValidationUrl,
     int PaperWidthMillimeters,
     PosEdgeDocumentSeriesProvision DocumentSeries,
-    PosEdgeSeriesProvision FiscalSeries,
-    IReadOnlySet<string> Permissions);
+    PosEdgeSeriesProvision FiscalSeries)
+{
+    public SalesExecutionContext ContextFor(PosLocalUserSession session) => new(
+        TenantId,
+        BusinessId,
+        WarehouseId,
+        new UserId(session.UserId),
+        DeviceId,
+        new WorkSessionId(session.WorkSessionId),
+        WarehouseAllowsNegativeStock);
+}
 internal static class PosSaleHostModule
 {
     public static IServiceCollection AddPosSaleCompletion(
@@ -44,16 +55,13 @@ internal static class PosSaleHostModule
         PosDeviceCredentials device)
     {
         var tenantId = new TenantId(RequiredGuid(configuration, "PosEdge:TenantId"));
-        var permissions = ReadPermissions(configuration).ToHashSet(StringComparer.Ordinal);
+        _ = ReadPermissions(configuration);
         var settings = new PosSaleHostSettings(
-            new RegisterContext(
-                tenantId,
-                runtime.Scope.BusinessId,
-                runtime.Scope.WarehouseId,
-                runtime.Scope.RegisterId,
-                runtime.WarehouseAllowsNegativeStock),
-            runtime.Scope.UserId,
-            device.DeviceId,
+            tenantId,
+            runtime.BusinessId,
+            runtime.WarehouseId,
+            runtime.DeviceId,
+            runtime.WarehouseAllowsNegativeStock,
             Required(configuration, "PosEdge:SupplierTaxId"),
             configuration["PosEdge:DefaultCustomerIdentification"] ?? "222222222222",
             new FiscalTechnicalKey(
@@ -68,23 +76,22 @@ internal static class PosSaleHostModule
             RequiredPaperWidth(configuration),
             new PosEdgeDocumentSeriesProvision(
                 RequiredGuid(configuration, "PosEdge:Documents:SalesInvoice:SeriesId"),
-                runtime.Scope.RegisterId,
+                runtime.DeviceId,
                 AuralyDocumentTypes.SalesInvoice,
                 AuralyDocumentTypes.DefaultPrefix(AuralyDocumentTypes.SalesInvoice),
-                Required(configuration, "PosEdge:RegisterCode"),
+                Required(configuration, "PosEdge:Documents:SalesInvoice:SeriesCode"),
                 RequiredInt(configuration, "PosEdge:Documents:SalesInvoice:Padding"),
                 RequiredLong(configuration, "PosEdge:Documents:SalesInvoice:RangeStart"),
                 RequiredLong(configuration, "PosEdge:Documents:SalesInvoice:RangeEnd")),
             new PosEdgeSeriesProvision(
                 RequiredGuid(configuration, "PosEdge:Fiscal:SeriesId"),
-                runtime.Scope.RegisterId,
+                runtime.DeviceId,
                 Required(configuration, "PosEdge:Fiscal:Prefix"),
                 Required(configuration, "PosEdge:Fiscal:AuthorizationNumber"),
                 RequiredLong(configuration, "PosEdge:Fiscal:RangeStart"),
                 RequiredLong(configuration, "PosEdge:Fiscal:RangeEnd"),
                 RequiredDate(configuration, "PosEdge:Fiscal:ValidUntil"),
-                RequiredGuid(configuration, "PosEdge:Fiscal:FiscalAuthorizationId")),
-            permissions);
+                RequiredGuid(configuration, "PosEdge:Fiscal:FiscalAuthorizationId")));
         services.AddSingleton(settings);
         services.AddSingleton(sp => new PosEdgeSaleStore(
             connectionString,
@@ -139,11 +146,11 @@ internal static class PosSaleHostModule
             CancellationToken ct) =>
         {
             var document = await sales.PreviewNextDocumentNumberAsync(
-                settings.Register.RegisterId,
+                settings.DeviceId,
                 AuralyDocumentTypes.SalesInvoice,
                 ct);
             var fiscal = await sales.PreviewNextFiscalNumberAsync(
-                settings.Register.RegisterId,
+                settings.DeviceId,
                 DateTimeOffset.Now,
                 ct);
             return Results.Ok(new { document, fiscal });
@@ -166,11 +173,12 @@ internal static class PosSaleHostModule
                         payment.Amount,
                         payment.Reference))
                     .ToArray();
+                var session = sessions.Required();
                 var result = await completion.CompleteAsync(
                     new DraftId(draftId),
                     new CompletePosSaleCommand(
-                        new UserId(sessions.Required().UserId),
-                        settings.Register,
+                        new UserId(session.UserId),
+                        settings.ContextFor(session),
                         DateTimeOffset.Now,
                         settings.SupplierTaxId,
                         string.IsNullOrWhiteSpace(request.CustomerIdentification)
@@ -180,7 +188,6 @@ internal static class PosSaleHostModule
                         settings.Environment,
                         settings.QrValidationUrl,
                         payments,
-                        settings.DeviceId,
                         settings.PaperWidthMillimeters,
                         request.UblSnapshot),
                     ct);

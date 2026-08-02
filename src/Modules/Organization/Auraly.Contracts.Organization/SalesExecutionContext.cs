@@ -2,9 +2,11 @@ using Auraly.BuildingBlocks.Domain.Identifiers;
 
 namespace Auraly.Contracts.Organization;
 
-public sealed record RegisterContext(
+public sealed record SalesExecutionContext(
     TenantId TenantId,
     BusinessId BusinessId,
     WarehouseId WarehouseId,
-    RegisterId RegisterId,
+    UserId UserId,
+    DeviceId? DeviceId,
+    WorkSessionId WorkSessionId,
     bool WarehouseAllowsNegativeStockSales);

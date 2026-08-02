@@ -8,15 +8,23 @@ using Auraly.Pos.Edge.Infrastructure;
 namespace Auraly.Pos.Edge.Host;
 
 public sealed record PosEdgeRuntimeContext(
-    PosDraftScope Scope,
+    BusinessId BusinessId,
+    WarehouseId WarehouseId,
+    DeviceId DeviceId,
     bool WarehouseAllowsNegativeStock)
 {
-    public PosDraftScope ScopeFor(Guid userId) => new(
-        Scope.BusinessId, Scope.WarehouseId, Scope.RegisterId, new UserId(userId));
+    public PosDraftScope ScopeFor(PosLocalUserSession session) => new(
+        BusinessId,
+        WarehouseId,
+        DeviceId,
+        new WorkSessionId(session.WorkSessionId),
+        new UserId(session.UserId));
 }
 
 public sealed record PosWorkstationIdentity(
-    string RegisterCode,
+    string DeviceSeriesCode,
+    string BusinessName,
+    string WarehouseName,
     string UserDisplayName);
 
 public sealed record CaptureRequest(string Value, Guid? CustomerId);
@@ -79,16 +87,17 @@ public static class PosEdgeHostApplication
             Required(builder.Configuration, "PosEdge:DeviceSecret"));
         var tenantId = RequiredGuid(builder.Configuration, "PosEdge:TenantId");
         var runtime = new PosEdgeRuntimeContext(
-            new PosDraftScope(
-                new BusinessId(RequiredGuid(builder.Configuration, "PosEdge:BusinessId")),
-                new WarehouseId(RequiredGuid(builder.Configuration, "PosEdge:WarehouseId")),
-                new RegisterId(RequiredGuid(builder.Configuration, "PosEdge:RegisterId")),
-                new UserId(RequiredGuid(builder.Configuration, "PosEdge:UserId"))),
+            new BusinessId(RequiredGuid(builder.Configuration, "PosEdge:BusinessId")),
+            new WarehouseId(RequiredGuid(builder.Configuration, "PosEdge:WarehouseId")),
+            new DeviceId(RequiredGuid(builder.Configuration, "PosEdge:DeviceId")),
             builder.Configuration.GetValue<bool>("PosEdge:WarehouseAllowsNegativeStock"));
 
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
         builder.Services.AddSingleton(runtime);
+        builder.Services.AddSingleton(new PosOperationalScope(
+            runtime.BusinessId.Value,
+            runtime.WarehouseId.Value));
         builder.Services.AddSingleton<PosLocalSessionAccessor>();
         builder.Services.AddSingleton(sp => new PosLocalIdentityStore(
             connectionString,
@@ -107,7 +116,9 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton<PosOfflineLeaseClient>();
         builder.Services.AddSingleton<PosEdgeAuthenticationService>();
         builder.Services.AddSingleton(new PosWorkstationIdentity(
-            Required(builder.Configuration, "PosEdge:RegisterCode"),
+            Required(builder.Configuration, "PosEdge:Documents:SalesInvoice:SeriesCode"),
+            Required(builder.Configuration, "PosEdge:BusinessName"),
+            Required(builder.Configuration, "PosEdge:WarehouseName"),
             Required(builder.Configuration, "PosEdge:UserDisplayName")));
         builder.Services.AddSingleton(new PosCatalogStore(connectionString));
         builder.Services.AddSingleton(sp => new PosDraftStore(
@@ -152,7 +163,7 @@ public static class PosEdgeHostApplication
             sp.GetRequiredService<PosSynchronizationSignal>(),
             sp.GetRequiredService<PosServerConnectionState>(),
             tenantId,
-            runtime.Scope.BusinessId.Value));
+            runtime.BusinessId.Value));
         builder.Services.AddHostedService<PosEventDrivenSynchronizationHostedService>();
         var app = builder.Build();
         app.Use(async (context, next) =>
@@ -206,7 +217,7 @@ public static class PosEdgeHostApplication
                     await context.Response.WriteAsJsonAsync(new
                     {
                         code = "LocalLoginRequired",
-                        detail = "Inicia sesión en esta caja para continuar."
+                        detail = "Inicia sesión en este dispositivo para continuar."
                     });
                     return;
                 }
@@ -309,7 +320,9 @@ public static class PosEdgeHostApplication
             {
                 status,
                 serverConnected = server.IsConnected,
-                registerCode = workstation.RegisterCode,
+                deviceSeriesCode = workstation.DeviceSeriesCode,
+                businessName = workstation.BusinessName,
+                warehouseName = workstation.WarehouseName,
                 userDisplayName = user?.DisplayName ?? string.Empty,
                 userId = user?.UserId,
                 permissions = user?.Permissions ?? Array.Empty<string>(),
@@ -323,7 +336,7 @@ public static class PosEdgeHostApplication
             PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
             Results.Ok(await drafts.GetOrCreateActiveAsync(
-                context.ScopeFor(sessions.Required().UserId), ct)));
+                context.ScopeFor(sessions.Required()), ct)));
         edge.MapGet("/catalog/products", async (
             string? search,
             int? skip,
@@ -409,7 +422,7 @@ public static class PosEdgeHostApplication
         {
             var result = await capture.CaptureAsync(
                 request.Value,
-                context.ScopeFor(sessions.Required().UserId),
+                context.ScopeFor(sessions.Required()),
                 request.CustomerId,
                 context.WarehouseAllowsNegativeStock,
                 ids.NewId(),
@@ -511,7 +524,7 @@ public static class PosEdgeHostApplication
 
             await drafts.CancelAsync(new DraftId(draftId), ct);
             return Results.Ok(await drafts.GetOrCreateActiveAsync(
-                context.ScopeFor(user.UserId), ct));
+                context.ScopeFor(user), ct));
         });
         edge.MapPost("/drafts/{draftId:guid}/temporary", async (
             Guid draftId,
@@ -530,7 +543,7 @@ public static class PosEdgeHostApplication
             PosEdgeRuntimeContext context,
             CancellationToken ct) =>
             Results.Ok(await drafts.ListTemporariesAsync(
-                context.Scope.BusinessId,
+                context.BusinessId,
                 new PosTemporaryFilter(Search: search),
                 ct)));
         edge.MapPost("/temporaries/{draftId:guid}/recover", async (
@@ -541,7 +554,7 @@ public static class PosEdgeHostApplication
             CancellationToken ct) =>
             Results.Ok(await drafts.RecoverTemporaryAsync(
                 new DraftId(draftId),
-                context.ScopeFor(sessions.Required().UserId),
+                context.ScopeFor(sessions.Required()),
                 ct)));
         edge.MapDelete("/temporaries/{draftId:guid}", async (
             Guid draftId,
@@ -551,7 +564,7 @@ public static class PosEdgeHostApplication
         {
             await drafts.DeleteTemporaryAsync(
                 new DraftId(draftId),
-                context.Scope.BusinessId,
+                context.BusinessId,
                 ct);
             return Results.NoContent();
         });
@@ -618,7 +631,9 @@ public static class PosEdgeHostApplication
         {
             status = "EnrollmentRequired",
             serverConnected = false,
-            registerCode = "",
+            deviceSeriesCode = "",
+            businessName = "",
+            warehouseName = "",
             userDisplayName = ""
         }));
         edge.MapPost("/enrollment/redeem", async (

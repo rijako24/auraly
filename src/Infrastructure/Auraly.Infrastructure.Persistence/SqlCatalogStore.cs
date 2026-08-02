@@ -231,7 +231,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
     }
 
     public async Task<CatalogSyncSessionResponse> StartSyncAsync(
-        Guid deviceId, Guid tenantId, Guid businessId, Guid registerId, DateTimeOffset now, CancellationToken ct)
+        Guid deviceId, Guid tenantId, Guid businessId, Guid warehouseId, DateTimeOffset now, CancellationToken ct)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
@@ -239,11 +239,14 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         var sessionId = ids.NewId();
         command.CommandText = """
             IF NOT EXISTS (
-              SELECT 1 FROM dbo.PosDevices d
-              JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId
-              WHERE d.DeviceId=@DeviceId AND d.RegisterId=@RegisterId AND d.BusinessId=@BusinessId
-                AND b.TenantId=@TenantId AND d.IsActive=1)
-              THROW 51020,'The device scope is invalid.',1;
+              SELECT 1
+              FROM dbo.EnrolledDevices d
+              JOIN dbo.Businesses b ON b.BusinessId=@BusinessId
+                AND b.TenantId=d.TenantId AND b.IsActive=1
+              JOIN dbo.Warehouses w ON w.WarehouseId=@WarehouseId
+                AND w.BusinessId=b.BusinessId AND w.IsActive=1
+              WHERE d.DeviceId=@DeviceId AND d.TenantId=@TenantId AND d.IsActive=1)
+              THROW 51020,'The device operational scope is invalid.',1;
             DECLARE @High BIGINT=ISNULL((SELECT MAX(CatalogChangeId) FROM dbo.CatalogChanges WHERE BusinessId=@BusinessId),0);
             INSERT dbo.CatalogSyncSessions
               (CatalogSyncSessionId,DeviceId,BusinessId,HighWaterMark,CreatedAt,ExpiresAt)
@@ -255,7 +258,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             SELECT @High,(SELECT COUNT(*) FROM dbo.CatalogSyncSessionProducts WHERE CatalogSyncSessionId=@SessionId),DATEADD(hour,2,@Now);
             """;
         command.Parameters.AddRange([P("@SessionId", sessionId), P("@DeviceId", deviceId), P("@TenantId", tenantId),
-            P("@BusinessId", businessId), P("@RegisterId", registerId), P("@Now", now)]);
+            P("@BusinessId", businessId), P("@WarehouseId", warehouseId), P("@Now", now)]);
         await using var reader = await command.ExecuteReaderAsync(ct);
         await reader.ReadAsync(ct);
         return new CatalogSyncSessionResponse(sessionId, reader.GetInt64(0), reader.GetInt32(1), reader.GetDateTimeOffset(2));
@@ -300,7 +303,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             FROM dbo.CatalogChanges c
             JOIN dbo.Products p ON p.ProductId=c.ProductId
             JOIN dbo.TaxProfiles t ON t.TaxProfileId=p.TaxProfileId
-            JOIN dbo.PosDevices d ON d.DeviceId=@DeviceId AND d.BusinessId=c.BusinessId AND d.IsActive=1
+            JOIN dbo.EnrolledDevices d ON d.DeviceId=@DeviceId AND d.TenantId=@TenantId AND d.IsActive=1
             JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId AND b.TenantId=@TenantId
             JOIN dbo.ProductPrices pr ON pr.ProductId=p.ProductId AND pr.BusinessId=c.BusinessId AND pr.IsActive=1
             LEFT JOIN dbo.ProductScaleConfigurations s ON s.ProductId=p.ProductId AND s.IsActive=1
@@ -323,7 +326,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
     }
 
     public async Task<InventoryAvailabilityResponse> AvailabilityAsync(
-        Guid deviceId, Guid tenantId, Guid businessId, Guid registerId,
+        Guid deviceId, Guid tenantId, Guid businessId,
         InventoryAvailabilityRequest request, CancellationToken ct)
     {
         await using var connection = connections.Create();
@@ -333,16 +336,16 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             SELECT w.AllowNegativeStockSales,
               ISNULL((SELECT SUM(m.QuantityChange) FROM dbo.InventoryMovements m
                 WHERE m.BusinessId=@BusinessId AND m.WarehouseId=w.WarehouseId AND m.ProductId=@ProductId),0)
-            FROM dbo.PosDevices d
-            JOIN dbo.CashRegisters r ON r.RegisterId=d.RegisterId
-            JOIN dbo.Warehouses w ON w.WarehouseId=r.WarehouseId
-            JOIN dbo.Products p ON p.ProductId=@ProductId AND p.BusinessId=@BusinessId
-            JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId AND b.TenantId=@TenantId
-            WHERE d.DeviceId=@DeviceId AND d.BusinessId=@BusinessId
-              AND d.RegisterId=@RegisterId AND w.WarehouseId=@WarehouseId AND d.IsActive=1;
+            FROM dbo.EnrolledDevices d
+            JOIN dbo.Businesses b ON b.BusinessId=@BusinessId
+              AND b.TenantId=d.TenantId AND b.IsActive=1
+            JOIN dbo.Warehouses w ON w.WarehouseId=@WarehouseId
+              AND w.BusinessId=b.BusinessId AND w.IsActive=1
+            JOIN dbo.Products p ON p.ProductId=@ProductId AND p.BusinessId=b.BusinessId
+            WHERE d.DeviceId=@DeviceId AND d.TenantId=@TenantId AND d.IsActive=1;
             """;
         command.Parameters.AddRange([P("@DeviceId", deviceId), P("@TenantId", tenantId), P("@BusinessId", businessId),
-            P("@RegisterId", registerId), P("@WarehouseId", request.WarehouseId), P("@ProductId", request.ProductId)]);
+            P("@WarehouseId", request.WarehouseId), P("@ProductId", request.ProductId)]);
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct)) throw new CatalogForbiddenException("The warehouse is not assigned to this device.");
         var allowsNegative = reader.GetBoolean(0);

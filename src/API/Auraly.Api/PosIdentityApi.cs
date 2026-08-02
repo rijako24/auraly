@@ -12,12 +12,13 @@ public static class PosIdentityApi
                 async (
                     HttpContext context,
                     PosOfflineIdentityService service,
+                    Guid businessId,
                     CancellationToken ct) =>
                 {
                     try
                     {
                         return Results.Ok(await service.SnapshotAsync(
-                            context.User.ToPosIdentityDeviceScope(), ct));
+                            context.User.ToPosIdentityDeviceScope(businessId), ct));
                     }
                     catch (PosIdentityForbiddenException exception)
                     {
@@ -35,12 +36,12 @@ public static class PosIdentityApi
 public static class PosIdentityClaimsExtensions
 {
     public static PosIdentityDeviceScope ToPosIdentityDeviceScope(
-        this ClaimsPrincipal principal) =>
+        this ClaimsPrincipal principal,
+        Guid businessId) =>
         new(
             RequiredGuid(principal, PosAuthenticationDefaults.DeviceIdClaim),
             RequiredGuid(principal, PosAuthenticationDefaults.TenantIdClaim),
-            RequiredGuid(principal, PosAuthenticationDefaults.BusinessIdClaim),
-            RequiredGuid(principal, PosAuthenticationDefaults.RegisterIdClaim),
+            businessId,
             principal.FindAll(PosAuthenticationDefaults.PermissionClaim)
                 .Select(claim => claim.Value)
                 .ToHashSet(StringComparer.Ordinal));

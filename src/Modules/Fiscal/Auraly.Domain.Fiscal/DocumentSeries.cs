@@ -25,7 +25,7 @@ public sealed class DocumentSeries
     public DocumentSeries(
         Guid id,
         BusinessId businessId,
-        RegisterId exclusiveRegisterId,
+        DeviceId exclusiveDeviceId,
         string prefix,
         long rangeStart,
         long rangeEnd,
@@ -34,14 +34,14 @@ public sealed class DocumentSeries
     {
         if (id == Guid.Empty) throw new ArgumentException("A series ID is required.", nameof(id));
         if (businessId.Value == Guid.Empty) throw new ArgumentException("A business ID is required.", nameof(businessId));
-        if (exclusiveRegisterId.Value == Guid.Empty) throw new ArgumentException("An exclusive register is required.", nameof(exclusiveRegisterId));
+        if (exclusiveDeviceId.Value == Guid.Empty) throw new ArgumentException("An exclusive device is required.", nameof(exclusiveDeviceId));
         if (string.IsNullOrWhiteSpace(prefix)) throw new ArgumentException("A prefix is required.", nameof(prefix));
         if (rangeStart <= 0 || rangeEnd < rangeStart) throw new ArgumentOutOfRangeException(nameof(rangeStart));
         if (validUntil < validFrom) throw new ArgumentOutOfRangeException(nameof(validUntil));
 
         Id = id;
         BusinessId = businessId;
-        ExclusiveRegisterId = exclusiveRegisterId;
+        ExclusiveDeviceId = exclusiveDeviceId;
         Prefix = prefix.Trim().ToUpperInvariant();
         RangeStart = rangeStart;
         RangeEnd = rangeEnd;
@@ -53,7 +53,7 @@ public sealed class DocumentSeries
 
     public Guid Id { get; }
     public BusinessId BusinessId { get; }
-    public RegisterId ExclusiveRegisterId { get; }
+    public DeviceId ExclusiveDeviceId { get; }
     public string Prefix { get; }
     public long RangeStart { get; }
     public long RangeEnd { get; }
@@ -77,13 +77,13 @@ public sealed class DocumentSeries
         Status = DocumentSeriesStatus.Active;
     }
 
-    public AssignedDocumentNumber Consume(RegisterId registerId, DateOnly today)
+    public AssignedDocumentNumber Consume(DeviceId deviceId, DateOnly today)
     {
         lock (_gate)
         {
-            if (registerId != ExclusiveRegisterId)
+            if (deviceId != ExclusiveDeviceId)
             {
-                throw new InvalidOperationException("This fiscal series belongs to a different register.");
+                throw new InvalidOperationException("This fiscal series belongs to a different device.");
             }
 
             if (today > ValidUntil)

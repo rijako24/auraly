@@ -11,7 +11,7 @@ public sealed class PosCatalogService(ICatalogStore store, TimeProvider timeProv
             device.DeviceId,
             device.TenantId,
             device.BusinessId,
-            device.RegisterId,
+            device.WarehouseId,
             timeProvider.GetUtcNow(),
             ct);
     }
@@ -54,14 +54,13 @@ public sealed class PosCatalogService(ICatalogStore store, TimeProvider timeProv
     {
         RequireSync(device);
         if (request.WarehouseId != device.WarehouseId)
-            throw new CatalogForbiddenException("The requested warehouse is not assigned to this register.");
+            throw new CatalogForbiddenException("The requested warehouse is not available in this operational context.");
         if (request.ProductId == Guid.Empty || request.OperationId == Guid.Empty || request.Quantity <= 0)
             throw new CatalogValidationException("Product, operation and a positive quantity are required.");
         return store.AvailabilityAsync(
             device.DeviceId,
             device.TenantId,
             device.BusinessId,
-            device.RegisterId,
             request,
             ct);
     }

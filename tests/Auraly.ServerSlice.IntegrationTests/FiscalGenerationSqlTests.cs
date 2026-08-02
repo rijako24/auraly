@@ -117,7 +117,7 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
 
         using var statusRequest = new HttpRequestMessage(
             HttpMethod.Get,
-            "/api/pos/v1/fiscal/statuses?pageSize=200");
+            $"/api/pos/v1/fiscal/statuses?businessId={fixture.BusinessId:D}&pageSize=200");
         statusRequest.Headers.Add("X-Auraly-Device-Id", fixture.DeviceId.ToString("D"));
         statusRequest.Headers.Add("X-Auraly-Device-Secret", ServerSliceFixture.DeviceSecret);
         using var statusResponse = await client.SendAsync(statusRequest);
@@ -130,7 +130,7 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
 
         using var nextRequest = new HttpRequestMessage(
             HttpMethod.Get,
-            $"/api/pos/v1/fiscal/statuses?pageSize=200&cursor={Uri.EscapeDataString(statusPage.NextCursor)}");
+            $"/api/pos/v1/fiscal/statuses?businessId={fixture.BusinessId:D}&pageSize=200&cursor={Uri.EscapeDataString(statusPage.NextCursor)}");
         nextRequest.Headers.Add("X-Auraly-Device-Id", fixture.DeviceId.ToString("D"));
         nextRequest.Headers.Add("X-Auraly-Device-Secret", ServerSliceFixture.DeviceSecret);
         using var nextResponse = await client.SendAsync(nextRequest);
@@ -251,7 +251,7 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         Assert.Equal(FiscalDocumentTypeCodes.CreditNote, document.FiscalDocumentType);
         Assert.Equal("CUDE", document.UniqueCodeType);
         Assert.Equal(cude, document.UniqueCode);
-        Assert.Null(document.RegisterId);
+        Assert.Null(document.DeviceId);
         using var pageResponse = await fiscalUser.GetAsync(
             $"/api/commerce/v1/fiscal/documents?page=1&pageSize=10&uniqueCode={cude}");
         Assert.Equal(HttpStatusCode.OK, pageResponse.StatusCode);

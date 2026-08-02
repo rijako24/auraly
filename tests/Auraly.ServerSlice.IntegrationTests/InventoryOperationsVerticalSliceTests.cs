@@ -128,17 +128,23 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             VALUES(@First,@BusinessId,0,@FirstSku,N'Insumo',0,N'COP',1,1,SYSUTCDATETIME()),
                   (@Second,@BusinessId,0,@SecondSku,N'Salida uno',0,N'COP',1,1,SYSUTCDATETIME()),
                   (@Third,@BusinessId,0,@ThirdSku,N'Salida dos',0,N'COP',1,1,SYSUTCDATETIME());
-            INSERT dbo.DocumentSeries(DocumentSeriesId,BusinessId,RegisterId,DocumentType,Prefix,SeriesCode,Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
-            VALUES(NEWID(),@BusinessId,NULL,N'StockCount',N'CTI',@Series,8,1,99999999,0,1,SYSDATETIMEOFFSET()),
-                  (NEWID(),@BusinessId,NULL,N'InventoryAdjustment',N'AJI',@Series,8,1,99999999,0,1,SYSDATETIMEOFFSET()),
-                  (NEWID(),@BusinessId,NULL,N'WarehouseTransfer',N'TRB',@Series,8,1,99999999,0,1,SYSDATETIMEOFFSET()),
-                  (NEWID(),@BusinessId,NULL,N'ProductConversion',N'CNV',@Series,8,1,99999999,0,1,SYSDATETIMEOFFSET());
+            IF NOT EXISTS(
+                SELECT 1 FROM dbo.DocumentSeries
+                WHERE BusinessId=@BusinessId AND DocumentType=N'StockCount'
+                  AND Prefix=N'CTI' AND SeriesCode=@Series)
+            BEGIN
+                INSERT dbo.DocumentSeries(DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
+                VALUES(NEWID(),@BusinessId,NULL,N'StockCount',N'CTI',@Series,8,1,99999999,0,1,SYSDATETIMEOFFSET()),
+                      (NEWID(),@BusinessId,NULL,N'InventoryAdjustment',N'AJI',@Series,8,1,99999999,0,1,SYSDATETIMEOFFSET()),
+                      (NEWID(),@BusinessId,NULL,N'WarehouseTransfer',N'TRB',@Series,8,1,99999999,0,1,SYSDATETIMEOFFSET()),
+                      (NEWID(),@BusinessId,NULL,N'ProductConversion',N'CNV',@Series,8,1,99999999,0,1,SYSDATETIMEOFFSET());
+            END;
             """;
         await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync();
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@Destination",destination); command.Parameters.AddWithValue("@BusinessId",fixture.BusinessId);
         command.Parameters.AddWithValue("@WarehouseCode",$"W-{destination:N}"[..18]); command.Parameters.AddWithValue("@First",first); command.Parameters.AddWithValue("@Second",second); command.Parameters.AddWithValue("@Third",third);
-        command.Parameters.AddWithValue("@FirstSku",$"I-{first:N}"); command.Parameters.AddWithValue("@SecondSku",$"O-{second:N}"); command.Parameters.AddWithValue("@ThirdSku",$"O-{third:N}"); command.Parameters.AddWithValue("@Series",destination.ToString("N")[..8].ToUpperInvariant());
+        command.Parameters.AddWithValue("@FirstSku",$"I-{first:N}"); command.Parameters.AddWithValue("@SecondSku",$"O-{second:N}"); command.Parameters.AddWithValue("@ThirdSku",$"O-{third:N}"); command.Parameters.AddWithValue("@Series","00");
         await command.ExecuteNonQueryAsync();
     }
 

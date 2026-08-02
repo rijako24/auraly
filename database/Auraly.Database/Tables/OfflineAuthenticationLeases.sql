@@ -24,7 +24,7 @@ CREATE TABLE [dbo].[OfflineAuthenticationLeases]
     CONSTRAINT [FK_OfflineAuthenticationLeases_Users]
         FOREIGN KEY ([UserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
     CONSTRAINT [FK_OfflineAuthenticationLeases_Devices]
-        FOREIGN KEY ([DeviceId]) REFERENCES [dbo].[PosDevices] ([DeviceId]),
+        FOREIGN KEY ([DeviceId]) REFERENCES [dbo].[EnrolledDevices] ([DeviceId]),
     CONSTRAINT [UQ_OfflineAuthenticationLeases_Nonce] UNIQUE ([Nonce]),
     CONSTRAINT [CK_OfflineAuthenticationLeases_Algorithm]
         CHECK ([Algorithm]=N'PS256'),

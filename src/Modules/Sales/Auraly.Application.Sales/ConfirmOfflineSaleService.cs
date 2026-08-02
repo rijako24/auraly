@@ -22,7 +22,7 @@ public sealed record OfflineSaleLine(
 public sealed record ConfirmOfflineSaleCommand(
     UserId UserId,
     DocumentId DocumentId,
-    RegisterContext Register,
+    SalesExecutionContext Context,
     AuralyDocumentNumberAssignment DocumentNumber,
     FiscalNumberAssignment FiscalNumber,
     DateTimeOffset IssuedAt,
@@ -44,7 +44,7 @@ public sealed class ConfirmOfflineSaleService(IPermissionAuthorizer authorizer)
     {
         ArgumentNullException.ThrowIfNull(command);
         authorizer.Demand(
-            command.Register.TenantId,
+            command.Context.TenantId,
             command.UserId,
             CommercePermissionCodes.SalesCreate);
 
@@ -56,17 +56,19 @@ public sealed class ConfirmOfflineSaleService(IPermissionAuthorizer authorizer)
         if (command.Lines.Any(line => line.Discount > 0))
         {
             authorizer.Demand(
-                command.Register.TenantId,
+                command.Context.TenantId,
                 command.UserId,
                 CommercePermissionCodes.SalesDiscount);
         }
 
         var invoice = new SalesInvoice(
             command.DocumentId,
-            command.Register.TenantId,
-            command.Register.BusinessId,
-            command.Register.WarehouseId,
-            command.Register.RegisterId);
+            command.Context.TenantId,
+            command.Context.BusinessId,
+            command.Context.WarehouseId,
+            command.Context.UserId,
+            command.Context.DeviceId,
+            command.Context.WorkSessionId);
 
         foreach (var line in command.Lines)
         {
@@ -117,10 +119,12 @@ public sealed class ConfirmOfflineSaleService(IPermissionAuthorizer authorizer)
         invoice.ConfirmOffline(command.DocumentNumber, snapshot);
 
         var contract = new ConfirmedSale(
-            command.Register.TenantId,
-            command.Register.BusinessId,
-            command.Register.WarehouseId,
-            command.Register.RegisterId,
+            command.Context.TenantId,
+            command.Context.BusinessId,
+            command.Context.WarehouseId,
+            command.Context.UserId,
+            command.Context.DeviceId,
+            command.Context.WorkSessionId,
             command.DocumentId,
             command.DocumentNumber.FullNumber,
             command.FiscalNumber.FullNumber,
@@ -129,7 +133,7 @@ public sealed class ConfirmOfflineSaleService(IPermissionAuthorizer authorizer)
             command.IssuedAt);
         var outbox = new OutboxMessage(
             Guid.NewGuid(),
-            command.Register.TenantId,
+            command.Context.TenantId,
             "sales.invoice.confirmed",
             JsonSerializer.Serialize(contract),
             command.IssuedAt);

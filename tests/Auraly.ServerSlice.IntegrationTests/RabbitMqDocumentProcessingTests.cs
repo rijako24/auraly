@@ -196,9 +196,9 @@ public sealed class RabbitMqDocumentProcessingTests(ServerSliceFixture fixture)
             IF NOT EXISTS(
                 SELECT 1 FROM dbo.DocumentSeries
                 WHERE BusinessId=@BusinessId AND DocumentType=N'InventoryAdjustment'
-                  AND RegisterId IS NULL AND IsActive=1)
+                  AND DeviceId IS NULL AND IsActive=1)
               INSERT dbo.DocumentSeries
-                (DocumentSeriesId,BusinessId,RegisterId,DocumentType,Prefix,SeriesCode,
+                (DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,
                  Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
               VALUES(NEWID(),@BusinessId,NULL,N'InventoryAdjustment',N'AJI',N'RB',
                  8,1,99999999,0,1,SYSDATETIMEOFFSET());

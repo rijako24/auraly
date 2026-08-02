@@ -83,7 +83,6 @@ public sealed record CatalogDeviceIdentity(
     Guid TenantId,
     Guid BusinessId,
     Guid WarehouseId,
-    Guid RegisterId,
     IReadOnlySet<string> Permissions);
 
 public sealed record PosCatalogItem(

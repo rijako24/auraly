@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Orders;
 using Auraly.Contracts.Sales;
+using Auraly.Contracts.WorkSessions;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -68,14 +69,16 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
                 userId,
                 CommercePermissionCodes.SalesCreate,
                 OrderPermissionCodes.Read,
-                OrderPermissionCodes.Recover);
-            var draft = await OpenDraftAsync(client);
+                OrderPermissionCodes.Recover,
+                WorkSessionPermissionCodes.Open);
+            var workSession = await fixture.OpenWorkSessionAsync(client);
+            var draft = await OpenDraftAsync(client, workSession.WorkSessionId);
             using var request = new HttpRequestMessage(
                 HttpMethod.Post,
                 $"/api/commerce/v1/orders/{orderId:D}/recover")
             {
                 Content = JsonContent.Create(new RecoverOrderIntoSaleRequest(
-                    fixture.OnlineRegisterId,
+                    workSession.WorkSessionId,
                     userId,
                     draft.DraftId,
                     draft.Version))
@@ -84,7 +87,7 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             using var response = await client.SendAsync(request);
             response.EnsureSuccessStatusCode();
 
-            var recovered = await OpenDraftAsync(client);
+            var recovered = await OpenDraftAsync(client, workSession.WorkSessionId);
             var line = Assert.Single(recovered.Lines);
             Assert.Equal(2m, line.Quantity);
             Assert.Equal(10_000m, line.UnitPrice);
@@ -154,11 +157,11 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
                 "X-Auraly-Device-Secret", ServerSliceFixture.DeviceSecret);
 
             using var allowed = await client.GetAsync(
-                $"/api/pos/v1/orders?userId={fixture.UserId:D}&page=1&pageSize=50");
+                $"/api/pos/v1/orders?userId={fixture.UserId:D}&businessId={fixture.BusinessId:D}&warehouseId={fixture.WarehouseId:D}&workSessionId={fixture.WorkSessionId:D}&page=1&pageSize=50");
             Assert.Equal(System.Net.HttpStatusCode.OK, allowed.StatusCode);
 
             using var unknownUser = await client.GetAsync(
-                $"/api/pos/v1/orders?userId={Guid.NewGuid():D}&page=1&pageSize=50");
+                $"/api/pos/v1/orders?userId={Guid.NewGuid():D}&businessId={fixture.BusinessId:D}&warehouseId={fixture.WarehouseId:D}&workSessionId={fixture.WorkSessionId:D}&page=1&pageSize=50");
             Assert.Equal(System.Net.HttpStatusCode.Forbidden, unknownUser.StatusCode);
         }
         finally
@@ -172,13 +175,14 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
                 new SqlParameter("@RoleId", roleId));
         }
     }
-    private async Task<OnlineSalesDraft> OpenDraftAsync(HttpClient client)
+    private async Task<OnlineSalesDraft> OpenDraftAsync(HttpClient client, Guid workSessionId)
     {
         using var response = await client.PostAsJsonAsync(
             "/api/commerce/v1/pos/drafts/active",
             new OpenOnlineSalesDraftRequest(new(
                 fixture.BusinessId,
-                fixture.OnlineRegisterId)));
+                fixture.WarehouseId,
+                workSessionId)));
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<OnlineSalesDraft>()
             ?? throw new InvalidOperationException("Empty draft response.");

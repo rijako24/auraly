@@ -18,7 +18,7 @@ CREATE TABLE [dbo].[WorkSessions]
     CONSTRAINT [FK_WorkSessions_Users] FOREIGN KEY ([UserId])
         REFERENCES [dbo].[AppUsers] ([UserId]),
     CONSTRAINT [FK_WorkSessions_Devices] FOREIGN KEY ([DeviceId])
-        REFERENCES [dbo].[PosDevices] ([DeviceId]),
+        REFERENCES [dbo].[EnrolledDevices] ([DeviceId]),
     CONSTRAINT [CK_WorkSessions_Status] CHECK (
         ([Status]=N'Open' AND [ClosedAt] IS NULL)
         OR ([Status]=N'Closed' AND [ClosedAt] IS NOT NULL))

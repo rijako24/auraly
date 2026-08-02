@@ -337,7 +337,7 @@ public sealed class SqlPayablesStore(
             LEFT JOIN dbo.DocumentSeriesCursors c WITH(UPDLOCK,HOLDLOCK)
               ON c.DocumentSeriesId=ds.DocumentSeriesId
             WHERE ds.BusinessId=@BusinessId AND ds.DocumentType=N'PayablePayment'
-              AND ds.RegisterId IS NULL AND ds.IsActive=1
+              AND ds.DeviceId IS NULL AND ds.IsActive=1
             ORDER BY ds.DocumentSeriesId;
             """, connection, transaction);
         select.Parameters.AddWithValue("@BusinessId", businessId);

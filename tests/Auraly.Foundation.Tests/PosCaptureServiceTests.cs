@@ -127,7 +127,8 @@ public sealed class PosCaptureServiceTests
             var scope = new PosDraftScope(
                 new BusinessId(Guid.NewGuid()),
                 new WarehouseId(Guid.NewGuid()),
-                new RegisterId(Guid.NewGuid()),
+                new DeviceId(Guid.NewGuid()),
+                new WorkSessionId(Guid.NewGuid()),
                 new UserId(Guid.NewGuid()));
             await test(service, drafts, scope, productId, customerId, availability);
         }

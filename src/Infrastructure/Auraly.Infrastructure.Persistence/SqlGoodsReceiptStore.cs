@@ -188,7 +188,7 @@ public sealed class SqlGoodsReceiptStore(
             LEFT JOIN dbo.DocumentSeriesCursors c WITH (UPDLOCK,HOLDLOCK)
               ON c.DocumentSeriesId=ds.DocumentSeriesId
             WHERE ds.BusinessId=@BusinessId AND ds.DocumentType=N'GoodsReceipt'
-              AND ds.RegisterId IS NULL AND ds.IsActive=1
+              AND ds.DeviceId IS NULL AND ds.IsActive=1
             ORDER BY ds.DocumentSeriesId;
             """;
         Guid seriesId;

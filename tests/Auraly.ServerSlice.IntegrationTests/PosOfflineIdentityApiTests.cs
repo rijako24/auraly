@@ -18,7 +18,7 @@ public sealed class PosOfflineIdentityApiTests(ServerSliceFixture fixture)
 
         using var client = fixture.CreateClient();
         using var request = new HttpRequestMessage(
-            HttpMethod.Get, "/api/pos/v1/identity/snapshot");
+            HttpMethod.Get, $"/api/pos/v1/identity/snapshot?businessId={fixture.BusinessId:D}");
         request.Headers.Add(
             "X-Auraly-Device-Id", fixture.DeviceId.ToString("D"));
         request.Headers.Add(
@@ -47,7 +47,7 @@ public sealed class PosOfflineIdentityApiTests(ServerSliceFixture fixture)
     {
         using var client = fixture.CreateClient();
         using var request = new HttpRequestMessage(
-            HttpMethod.Get, "/api/pos/v1/identity/snapshot");
+            HttpMethod.Get, $"/api/pos/v1/identity/snapshot?businessId={fixture.BusinessId:D}");
         request.Headers.Add(
             "X-Auraly-Device-Id", fixture.DeniedDeviceId.ToString("D"));
         request.Headers.Add(

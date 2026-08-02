@@ -13,7 +13,8 @@ public sealed class PosSynchronizationApiTests(ServerSliceFixture fixture)
         using var client = fixture.CreateClient();
         using var request = Request(
             fixture.DeviceId,
-            ServerSliceFixture.DeviceSecret);
+            ServerSliceFixture.DeviceSecret,
+            fixture.BusinessId);
         using var response = await client.SendAsync(request);
 
         response.EnsureSuccessStatusCode();
@@ -41,16 +42,17 @@ public sealed class PosSynchronizationApiTests(ServerSliceFixture fixture)
         using var client = fixture.CreateClient();
         using var request = Request(
             fixture.DeniedDeviceId,
-            ServerSliceFixture.DeniedDeviceSecret);
+            ServerSliceFixture.DeniedDeviceSecret,
+            fixture.BusinessId);
         using var response = await client.SendAsync(request);
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
-    private static HttpRequestMessage Request(Guid deviceId, string secret)
+    private static HttpRequestMessage Request(Guid deviceId, string secret, Guid businessId)
     {
         var request = new HttpRequestMessage(
             HttpMethod.Post,
-            "/api/pos/v1/synchronization/negotiate");
+            $"/api/pos/v1/synchronization/negotiate?businessId={businessId:D}");
         request.Headers.Add("X-Auraly-Device-Id", deviceId.ToString("D"));
         request.Headers.Add("X-Auraly-Device-Secret", secret);
         return request;

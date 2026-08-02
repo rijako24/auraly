@@ -3,7 +3,6 @@ CREATE TABLE [dbo].[SalesDocuments]
     [DocumentId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
-    [RegisterId] UNIQUEIDENTIFIER NOT NULL,
     [DeviceId] UNIQUEIDENTIFIER NULL,
     [SourceMode] NVARCHAR(16) NOT NULL CONSTRAINT [DF_SalesDocuments_SourceMode] DEFAULT N'PosEdge',
     [DocumentSeriesId] UNIQUEIDENTIFIER NOT NULL,
@@ -34,24 +33,17 @@ CREATE TABLE [dbo].[SalesDocuments]
     [CreatedByDeviceId] UNIQUEIDENTIFIER NULL,
     [SoldByUserId] UNIQUEIDENTIFIER NULL,
     [WorkSessionId] UNIQUEIDENTIFIER NULL,
-    [CashSessionId] UNIQUEIDENTIFIER NULL,
-    [CashierShiftId] UNIQUEIDENTIFIER NULL,
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [PK_SalesDocuments] PRIMARY KEY CLUSTERED ([DocumentId]),
     CONSTRAINT [FK_SalesDocuments_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_SalesDocuments_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
-    CONSTRAINT [FK_SalesDocuments_CashRegisters] FOREIGN KEY ([RegisterId]) REFERENCES [dbo].[CashRegisters] ([RegisterId]),
-    CONSTRAINT [FK_SalesDocuments_PosDevices] FOREIGN KEY ([DeviceId]) REFERENCES [dbo].[PosDevices] ([DeviceId]),
+    CONSTRAINT [FK_SalesDocuments_EnrolledDevices] FOREIGN KEY ([DeviceId]) REFERENCES [dbo].[EnrolledDevices] ([DeviceId]),
     CONSTRAINT [FK_SalesDocuments_DocumentSeries] FOREIGN KEY ([DocumentSeriesId]) REFERENCES [dbo].[DocumentSeries] ([DocumentSeriesId]),
     CONSTRAINT [FK_SalesDocuments_FiscalSeries] FOREIGN KEY ([FiscalSeriesId]) REFERENCES [dbo].[FiscalSeries] ([SeriesId]),
     CONSTRAINT [FK_SalesDocuments_FiscalAuthorizations] FOREIGN KEY ([FiscalAuthorizationId]) REFERENCES [dbo].[FiscalAuthorizations] ([FiscalAuthorizationId]),
     CONSTRAINT [FK_SalesDocuments_SoldByUser] FOREIGN KEY ([SoldByUserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
     CONSTRAINT [FK_SalesDocuments_WorkSession] FOREIGN KEY ([WorkSessionId])
         REFERENCES [dbo].[WorkSessions] ([WorkSessionId]),
-    CONSTRAINT [FK_SalesDocuments_CashSession] FOREIGN KEY ([CashSessionId]) REFERENCES [dbo].[CashSessions] ([CashSessionId]),
-    CONSTRAINT [FK_SalesDocuments_CashierShift]
-        FOREIGN KEY ([CashSessionId],[CashierShiftId])
-        REFERENCES [dbo].[CashierShifts] ([CashSessionId],[CashierShiftId]),
     CONSTRAINT [UQ_SalesDocuments_Business_Document] UNIQUE ([BusinessId], [DocumentId]),
     CONSTRAINT [UQ_SalesDocuments_Business_Idempotency] UNIQUE ([BusinessId], [IdempotencyKey]),
     CONSTRAINT [FK_SalesDocuments_Customers] FOREIGN KEY ([CustomerId]) REFERENCES [dbo].[Customers] ([CustomerId]),
@@ -78,12 +70,6 @@ GO
 CREATE INDEX [IX_SalesDocuments_Business_Customer_Issued]
     ON [dbo].[SalesDocuments] ([BusinessId], [CustomerId], [IssuedAt])
     WHERE [CustomerId] IS NOT NULL;
-
-GO
-
-CREATE INDEX [IX_SalesDocuments_Register_Cashier_Issued]
-    ON [dbo].[SalesDocuments] ([RegisterId],[CashSessionId],[CashierShiftId],[SoldByUserId],[IssuedAt]);
-
 
 GO
 

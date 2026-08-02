@@ -44,7 +44,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             Guid.NewGuid(),
             Guid.NewGuid(),
             Guid.NewGuid(),
-            Guid.NewGuid(),
+            "Negocio principal",
             "01",
             "Punto principal",
             true,
@@ -448,10 +448,13 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             ["PosEdge:DeviceSecret"] = "test-device-secret",
             ["PosEdge:BusinessId"] = Guid.NewGuid().ToString("D"),
             ["PosEdge:WarehouseId"] = Guid.NewGuid().ToString("D"),
-            ["PosEdge:RegisterId"] = Guid.NewGuid().ToString("D"),
             ["PosEdge:UserId"] = userId.ToString("D"),
             ["PosEdge:UserDisplayName"] = "Cajera de prueba",
-            ["PosEdge:RegisterCode"] = "03",
+            ["PosEdge:DeviceSeriesCode"] = "03",
+            ["PosEdge:BusinessName"] = "Sede de prueba",
+            ["PosEdge:WarehouseName"] = "Bodega de prueba",
+            ["PosEdge:Documents:SalesInvoice:Prefix"] = "VTA",
+            ["PosEdge:Documents:SalesInvoice:SeriesCode"] = "03",
             ["PosEdge:WarehouseAllowsNegativeStock"] = "true",
             ["PosEdge:TenantId"] = tenantId.ToString("D"),
             [$"PosEdge:OfflineLeaseTrust:TrustedPublicKeys:{leaseKeyId}"] =
@@ -546,7 +549,8 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         var loginResponse = await _client.PostAsJsonAsync(
             "/edge/v1/auth/login",
             new PosLocalLoginRequest("cashier", "Cashier-Password-1"));
-        loginResponse.EnsureSuccessStatusCode();
+        if (!loginResponse.IsSuccessStatusCode)
+            throw new InvalidOperationException(await loginResponse.Content.ReadAsStringAsync());
         var localSession = await loginResponse.Content.ReadFromJsonAsync<PosLocalUserSession>();
         _userSessionToken = Assert.IsType<string>(localSession!.Token);
         _client.DefaultRequestHeaders.Add("X-Auraly-User-Session", _userSessionToken);

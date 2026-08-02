@@ -1,7 +1,7 @@
 namespace Auraly.Contracts.Orders;
 
 public sealed record RecoverOrderIntoSaleRequest(
-    Guid RegisterId,
+    Guid WorkSessionId,
     Guid UserId,
     Guid DraftId,
     long ExpectedDraftVersion);

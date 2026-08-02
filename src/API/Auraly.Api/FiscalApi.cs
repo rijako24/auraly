@@ -21,12 +21,12 @@ public static class FiscalApi
             HttpContext context, FiscalDocumentService service, int? page, int? pageSize,
             string? status, string? auralyNumber, string? dianNumber,
             string? uniqueCode, string? cufe,
-            Guid? registerId, DateTimeOffset? issuedFrom, DateTimeOffset? issuedTo,
+            Guid? deviceId, DateTimeOffset? issuedFrom, DateTimeOffset? issuedTo,
             CancellationToken ct) =>
             await Handle(async () => Results.Ok(await service.PageAsync(
                 context.User.ToFiscalUserIdentity(),
                 new FiscalDocumentQuery(page ?? 1, pageSize ?? 50, status, auralyNumber,
-                    dianNumber, uniqueCode ?? cufe, registerId, issuedFrom, issuedTo), ct))));
+                    dianNumber, uniqueCode ?? cufe, deviceId, issuedFrom, issuedTo), ct))));
         group.MapPost("/{documentId:guid}/retry", async (
             HttpContext context, FiscalDocumentService service, Guid documentId, CancellationToken ct) =>
             await Handle(async () =>
@@ -38,6 +38,7 @@ public static class FiscalApi
         endpoints.MapGet("/api/pos/v1/fiscal/statuses", async (
             HttpContext context,
             PosFiscalStatusService service,
+            Guid businessId,
             string? cursor,
             int? pageSize,
             CancellationToken ct) =>
@@ -46,8 +47,7 @@ public static class FiscalApi
                 var identity = context.User.ToPosDeviceIdentity();
                 var device = new PosFiscalDeviceContext(
                     identity.DeviceId,
-                    identity.BusinessId,
-                    identity.RegisterId,
+                    businessId,
                     identity.Permissions);
                 return Results.Ok(await service.PageAsync(
                     device, cursor, pageSize ?? 100, ct));

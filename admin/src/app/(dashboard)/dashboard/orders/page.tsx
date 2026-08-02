@@ -11,10 +11,11 @@ import {
   invoiceCommerceOrders,
 } from "@/services/orders/commerce-orders-client";
 import {
-  loadOnlineRegisterOptions,
-  rememberedOnlineRegisterId,
-  selectOnlineRegister,
-  type OnlineRegisterOption,
+  loadSalesWorkspaceOptions,
+  rememberedSalesWorkspaceKey,
+  salesWorkspaceKey,
+  selectSalesWorkspace,
+  type SalesWorkspaceOption,
 } from "@/services/pos/online-pos-client";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
@@ -23,26 +24,22 @@ export default function OrdersPage() {
   const router = useRouter();
   const user = useAuthStore((state) => state.user);
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
-  const [registers, setRegisters] = useState<OnlineRegisterOption[]>([]);
-  const [registerError, setRegisterError] = useState<string | null>(null);
+  const [workspaces, setWorkspaces] = useState<SalesWorkspaceOption[]>([]);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
-    void loadOnlineRegisterOptions()
+    void loadSalesWorkspaceOptions()
       .then((values) => {
         if (active)
-          setRegisters(
-            values.filter(
-              (option) =>
-                option.businessId === businessId &&
-                !option.hasActiveEdgeEnrollment,
-            ),
-          );
+          setWorkspaces(values.filter((option) => option.businessId === businessId));
       })
       .catch((error) => {
         if (active)
-          setRegisterError(
-            error instanceof Error ? error.message : "No fue posible consultar las cajas.",
+          setWorkspaceError(
+            error instanceof Error
+              ? error.message
+              : "No fue posible consultar las sedes y bodegas disponibles.",
           );
       });
     return () => {
@@ -50,17 +47,20 @@ export default function OrdersPage() {
     };
   }, [businessId]);
 
-  const register = useMemo(() => {
-    const remembered = rememberedOnlineRegisterId();
+  const workspace = useMemo(() => {
+    const remembered = rememberedSalesWorkspaceKey();
     return (
-      registers.find((option) => option.registerId === remembered) ??
-      registers[0] ??
+      workspaces.find(
+        (option) =>
+          salesWorkspaceKey(option.businessId, option.warehouseId) === remembered,
+      ) ??
+      workspaces[0] ??
       null
     );
-  }, [registers]);
+  }, [workspaces]);
 
   if (!businessId)
-    return <PageError message="Selecciona un negocio para consultar sus pedidos." />;
+    return <PageError message="Selecciona una sede para consultar sus pedidos." />;
 
   return (
     <div className="space-y-4">
@@ -71,27 +71,29 @@ export default function OrdersPage() {
           Los mismos pedidos creados por el bot, listos para recuperar o facturar.
         </p>
       </header>
-      {registerError && (
+      {workspaceError && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          {registerError}
+          {workspaceError}
         </div>
       )}
       <OrdersWorkspace
         loadPage={loadCommerceOrders}
         loadDetail={loadCommerceOrder}
         onRecover={
-          register && user
+          workspace && user
             ? async (order) => {
-                await selectOnlineRegister(register);
+                await selectSalesWorkspace(workspace);
                 router.push(`/pos?recoverOrder=${encodeURIComponent(order.orderId)}`);
               }
             : undefined
         }
         onInvoiceSelected={
-          register && user
+          workspace && user
             ? async (orders, paymentMethodCode) => {
+                const context = await selectSalesWorkspace(workspace);
                 const response = await invoiceCommerceOrders({
-                  registerId: register.registerId,
+                  workSessionId: context.workSessionId,
+                  warehouseId: context.warehouseId,
                   userId: user.userId,
                   orderIds: orders.map((order) => order.orderId),
                   paymentMethodCode,
@@ -105,9 +107,9 @@ export default function OrdersPage() {
             : undefined
         }
       />
-      {!register && (
+      {!workspace && (
         <p className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-          Configura una caja online para recuperar o facturar pedidos desde esta vista.
+          Configura una sede y una bodega para recuperar o facturar pedidos desde esta vista.
         </p>
       )}
     </div>

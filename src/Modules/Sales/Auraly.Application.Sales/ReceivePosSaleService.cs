@@ -10,9 +10,6 @@ namespace Auraly.Application.Sales;
 public sealed record PosDeviceIdentity(
     Guid DeviceId,
     Guid TenantId,
-    Guid BusinessId,
-    Guid WarehouseId,
-    Guid RegisterId,
     IReadOnlySet<string> Permissions);
 
 public sealed record PosSaleContextValidation(bool IsValid, string? Reason)
@@ -228,12 +225,9 @@ public sealed class ReceivePosSaleService(
                 "The device cannot register POS sales.");
 
         if (device.DeviceId != request.DeviceId ||
-            device.TenantId != request.TenantId ||
-            device.BusinessId != request.BusinessId ||
-            device.WarehouseId != request.WarehouseId ||
-            device.RegisterId != request.RegisterId)
+            device.TenantId != request.TenantId)
             throw new PosSaleForbiddenException(
-                "The uploaded tenant, business, warehouse, register or device differs from the authenticated context.");
+                "The uploaded tenant or device differs from the authenticated context.");
     }
 
     private static void ValidateDocumentNumber(PosSaleUploadRequest request)

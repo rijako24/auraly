@@ -16,10 +16,11 @@ public sealed partial class SqlCatalogStore
         await using var command = connection.CreateCommand();
         command.CommandText = """
             IF NOT EXISTS (
-              SELECT 1 FROM dbo.PosDevices d
-              JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId
-              WHERE d.DeviceId=@DeviceId AND d.BusinessId=@BusinessId
-                AND b.TenantId=@TenantId AND d.IsActive=1)
+              SELECT 1 FROM dbo.EnrolledDevices d
+              JOIN dbo.Businesses b ON b.BusinessId=@BusinessId
+                AND b.TenantId=d.TenantId AND b.IsActive=1
+              WHERE d.DeviceId=@DeviceId AND d.TenantId=@TenantId
+                AND d.IsActive=1)
               THROW 51020,'The device pricing scope is invalid.',1;
 
             SELECT i.PriceListId,i.ProductId,i.MinimumQuantity,i.Amount,i.CurrencyCode

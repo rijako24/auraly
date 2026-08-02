@@ -13,14 +13,15 @@ public interface IPosFiscalStatusClient
 
 public sealed class HttpPosFiscalStatusClient(
     HttpClient httpClient,
-    PosDeviceCredentials credentials) : IPosFiscalStatusClient
+    PosDeviceCredentials credentials,
+    PosOperationalScope scope) : IPosFiscalStatusClient
 {
     public async Task<PosFiscalStatusPage> GetPageAsync(
         string? cursor,
         int pageSize,
         CancellationToken cancellationToken = default)
     {
-        var path = $"api/pos/v1/fiscal/statuses?pageSize={pageSize}";
+        var path = $"api/pos/v1/fiscal/statuses?businessId={scope.BusinessId:D}&pageSize={pageSize}";
         if (!string.IsNullOrWhiteSpace(cursor))
             path += $"&cursor={Uri.EscapeDataString(cursor)}";
         using var request = new HttpRequestMessage(HttpMethod.Get, path);

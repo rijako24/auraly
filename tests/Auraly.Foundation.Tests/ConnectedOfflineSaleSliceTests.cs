@@ -19,7 +19,7 @@ namespace Auraly.Foundation.Tests;
 public sealed class ConnectedOfflineSaleSliceTests
 {
     [Fact]
-    public void Product_to_register_to_fiscal_snapshot_to_outbox_is_connected()
+    public void Product_to_device_session_to_fiscal_snapshot_to_outbox_is_connected()
     {
         var tenantId = new TenantId(Guid.NewGuid());
         var businessId = new BusinessId(Guid.NewGuid());
@@ -30,12 +30,16 @@ public sealed class ConnectedOfflineSaleSliceTests
             "B01",
             "Principal",
             allowNegativeStockSales: true);
-        var register = new Register(
-            new RegisterId(Guid.NewGuid()),
+        var deviceId = new DeviceId(Guid.NewGuid());
+        var workSessionId = new WorkSessionId(Guid.NewGuid());
+        var executionContext = new Auraly.Contracts.Organization.SalesExecutionContext(
+            tenantId,
             businessId,
             warehouse.Id,
-            "C01");
-        var registerContext = new RegisterContextProjector().Project(tenantId, register, warehouse);
+            userId,
+            deviceId,
+            workSessionId,
+            warehouse.AllowNegativeStockSales);
 
         var product = new Product(
             new ProductId(Guid.NewGuid()),
@@ -50,7 +54,7 @@ public sealed class ConnectedOfflineSaleSliceTests
         var series = new DocumentSeries(
             Guid.NewGuid(),
             businessId,
-            register.Id,
+            deviceId,
             "FV01",
             1,
             100,
@@ -59,7 +63,7 @@ public sealed class ConnectedOfflineSaleSliceTests
         series.Activate(issueDate);
         var fiscalNumber = new FiscalNumberAllocator().Allocate(
             series,
-            register.Id,
+            deviceId,
             issueDate,
             "18760000001");
 
@@ -73,7 +77,7 @@ public sealed class ConnectedOfflineSaleSliceTests
         var result = service.Confirm(new ConfirmOfflineSaleCommand(
             userId,
             new DocumentId(Guid.NewGuid()),
-            registerContext,
+            executionContext,
             AuralyDocumentNumberAssignment.Create(
                 Guid.NewGuid(),
                 AuralyDocumentTypes.SalesInvoice,
@@ -97,7 +101,7 @@ public sealed class ConnectedOfflineSaleSliceTests
         Assert.Equal(22_610m, result.Contract.Total);
         Assert.Equal(OutboxMessageStatus.Pending, result.OutboxMessage.Status);
         Assert.Contains(result.Contract.DocumentId.ToString(), result.OutboxMessage.Payload);
-        Assert.True(registerContext.WarehouseAllowsNegativeStockSales);
+        Assert.True(executionContext.WarehouseAllowsNegativeStockSales);
     }
 
     [Fact]
@@ -120,11 +124,13 @@ public sealed class ConnectedOfflineSaleSliceTests
             false,
             "01",
             19m);
-        var context = new Auraly.Contracts.Organization.RegisterContext(
+        var context = new Auraly.Contracts.Organization.SalesExecutionContext(
             tenantId,
             new BusinessId(Guid.NewGuid()),
             new WarehouseId(Guid.NewGuid()),
-            new RegisterId(Guid.NewGuid()),
+            userId,
+            new DeviceId(Guid.NewGuid()),
+            new WorkSessionId(Guid.NewGuid()),
             true);
 
         Assert.Throws<UnauthorizedAccessException>(() =>

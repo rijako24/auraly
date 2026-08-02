@@ -4,7 +4,9 @@ import { Loader2, LockKeyhole, MonitorSmartphone, UserRound, Wifi, WifiOff } fro
 import { FormEvent, useEffect, useRef, useState } from "react";
 
 type Props = {
-  registerCode: string;
+  deviceSeriesCode: string;
+  businessName: string;
+  warehouseName: string;
   serverConnected: boolean;
   preparing: boolean;
   error: string | null;
@@ -12,7 +14,9 @@ type Props = {
 };
 
 export function PosLocalLogin({
-  registerCode,
+  deviceSeriesCode,
+  businessName,
+  warehouseName,
   serverConnected,
   preparing,
   error,
@@ -64,19 +68,22 @@ export function PosLocalLogin({
         </div>
 
         <p className="mt-8 text-xs font-bold uppercase tracking-[0.2em] text-teal-200">
-          Caja {registerCode || "configurada"}
+          {businessName || "Sede"} · {warehouseName || "Bodega"}
+        </p>
+        <p className="mt-1 text-xs font-semibold text-slate-400">
+          Dispositivo {deviceSeriesCode || "configurado"}
         </p>
         <h1 className="mt-2 text-3xl font-black tracking-tight">¿Quién va a facturar?</h1>
         <p className="mt-2 text-sm leading-6 text-slate-300">
-          Usa la misma contraseña de Auraly. Tu venta en curso se conserva aunque cambie el cajero.
+          Usa la misma contraseña de Auraly. Tu venta en curso se conserva aunque cambie el usuario.
         </p>
 
         {preparing ? (
           <div className="mt-7 rounded-2xl border border-teal-200/15 bg-teal-200/10 p-6 text-center">
             <Loader2 className="mx-auto h-8 w-8 animate-spin text-teal-200" />
-            <p className="mt-3 font-bold">Preparando accesos de la caja</p>
+            <p className="mt-3 font-bold">Preparando acceso local</p>
             <p className="mt-1 text-sm text-slate-300">
-              Estamos descargando usuarios y permisos autorizados para este negocio.
+              Estamos descargando los usuarios y permisos autorizados para esta sede.
             </p>
           </div>
         ) : (

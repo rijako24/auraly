@@ -1,6 +1,7 @@
 export type CommerceOrderClaim = {
   claimId: string;
-  registerId: string;
+  workSessionId: string;
+  deviceId: string | null;
   userId: string;
   expiresAt: string;
   isOwnedByCurrentActor: boolean;
@@ -117,7 +118,7 @@ export function loadCommerceOrder(orderId: string) {
 export function recoverCommerceOrder(
   orderId: string,
   request: {
-    registerId: string;
+    workSessionId: string;
     userId: string;
     draftId: string;
     expectedDraftVersion: number;
@@ -134,7 +135,8 @@ export function recoverCommerceOrder(
 }
 
 export function invoiceCommerceOrders(request: {
-  registerId: string;
+  workSessionId: string;
+  warehouseId: string;
   userId: string;
   orderIds: string[];
   paymentMethodCode: string;

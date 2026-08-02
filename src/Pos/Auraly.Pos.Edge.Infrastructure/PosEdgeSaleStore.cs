@@ -15,7 +15,7 @@ namespace Auraly.Pos.Edge.Infrastructure;
 
 public sealed record PosEdgeSeriesProvision(
     Guid SeriesId,
-    RegisterId RegisterId,
+    DeviceId DeviceId,
     string Prefix,
     string AuthorizationNumber,
     long RangeStart,
@@ -25,7 +25,7 @@ public sealed record PosEdgeSeriesProvision(
 
 public sealed record PosEdgeDocumentSeriesProvision(
     Guid SeriesId,
-    RegisterId RegisterId,
+    DeviceId DeviceId,
     string DocumentType,
     string Prefix,
     string SeriesCode,
@@ -41,7 +41,7 @@ public sealed record OfflineSalePayment(
 public sealed record PosEdgeIssueCommand(
     UserId UserId,
     DocumentId DocumentId,
-    RegisterContext Register,
+    SalesExecutionContext Context,
     DateTimeOffset IssuedAt,
     string SupplierTaxId,
     string CustomerIdentification,
@@ -49,7 +49,6 @@ public sealed record PosEdgeIssueCommand(
     FiscalEnvironment Environment,
     string QrValidationUrl,
     IReadOnlyCollection<OfflineSaleLine> Lines,
-    Guid DeviceId = default,
     IReadOnlyCollection<OfflineSalePayment>? Payments = null,
     PosSaleUblSnapshotContract? UblSnapshot = null,
     Guid? CustomerId = null,
@@ -137,6 +136,7 @@ public sealed class PosEdgeSaleStore
     {
         await using var context = new PosEdgeDbContext(_options);
         await context.Database.EnsureCreatedAsync(cancellationToken);
+        await UpgradeDeviceIdentityAsync(context, cancellationToken);
         await UpgradeDocumentNumberingAsync(context, cancellationToken);
         await UpgradeFiscalSeriesAsync(context, cancellationToken);
         await UpgradeOutboxAsync(context, cancellationToken);
@@ -155,11 +155,11 @@ public sealed class PosEdgeSaleStore
         await using var context = new PosEdgeDbContext(_options);
         var current = await context.FiscalSeriesCursors
             .SingleOrDefaultAsync(
-                row => row.RegisterId == provision.RegisterId.Value,
+                row => row.DeviceId == provision.DeviceId.Value,
                 cancellationToken);
         if (current is not null && current.SeriesId != provision.SeriesId)
         {
-            throw new InvalidOperationException("The register already has another provisioned fiscal series.");
+            throw new InvalidOperationException("The device already has another provisioned fiscal series.");
         }
 
         if (current is null)
@@ -167,7 +167,7 @@ public sealed class PosEdgeSaleStore
             context.FiscalSeriesCursors.Add(new FiscalSeriesCursorRow
             {
                 SeriesId = provision.SeriesId,
-                RegisterId = provision.RegisterId.Value,
+                DeviceId = provision.DeviceId.Value,
                 Prefix = provision.Prefix.Trim().ToUpperInvariant(),
                 AuthorizationNumber = provision.AuthorizationNumber.Trim(),
                 FiscalAuthorizationId = provision.FiscalAuthorizationId == Guid.Empty
@@ -216,13 +216,13 @@ public sealed class PosEdgeSaleStore
 
         await using var context = new PosEdgeDbContext(_options);
         var current = await context.DocumentSeriesCursors.SingleOrDefaultAsync(
-            row => row.RegisterId == provision.RegisterId.Value &&
+            row => row.DeviceId == provision.DeviceId.Value &&
                    row.DocumentType == provision.DocumentType,
             cancellationToken);
         if (current is not null && current.SeriesId != provision.SeriesId)
         {
             throw new InvalidOperationException(
-                "The register already has another provisioned Auraly series for this document type.");
+                "The device already has another provisioned Auraly series for this document type.");
         }
 
         if (current is null)
@@ -230,7 +230,7 @@ public sealed class PosEdgeSaleStore
             context.DocumentSeriesCursors.Add(new DocumentSeriesCursorRow
             {
                 SeriesId = provision.SeriesId,
-                RegisterId = provision.RegisterId.Value,
+                DeviceId = provision.DeviceId.Value,
                 DocumentType = provision.DocumentType,
                 Prefix = expectedPrefix,
                 SeriesCode = provision.SeriesCode.Trim().ToUpperInvariant(),
@@ -244,13 +244,13 @@ public sealed class PosEdgeSaleStore
     }
 
     public async Task<PosDocumentNumberPreview> PreviewNextDocumentNumberAsync(
-        RegisterId registerId,
+        DeviceId deviceId,
         string documentType,
         CancellationToken cancellationToken = default)
     {
         await using var context = new PosEdgeDbContext(_options);
         var cursor = await context.DocumentSeriesCursors.AsNoTracking().SingleAsync(
-            row => row.RegisterId == registerId.Value && row.DocumentType == documentType,
+            row => row.DeviceId == deviceId.Value && row.DocumentType == documentType,
             cancellationToken);
         var assignment = AuralyDocumentNumberAssignment.Create(
             cursor.SeriesId,
@@ -270,14 +270,14 @@ public sealed class PosEdgeSaleStore
     }
 
     public async Task<PosFiscalNumberPreview> PreviewNextFiscalNumberAsync(
-        RegisterId registerId,
+        DeviceId deviceId,
         DateTimeOffset issuedAt,
         CancellationToken cancellationToken = default)
     {
         await using var context = new PosEdgeDbContext(_options);
         var cursor = await context.FiscalSeriesCursors
             .AsNoTracking()
-            .SingleAsync(row => row.RegisterId == registerId.Value, cancellationToken);
+            .SingleAsync(row => row.DeviceId == deviceId.Value, cancellationToken);
         var issueDate = DateOnly.FromDateTime(issuedAt.Date);
         var available = cursor.IsActive &&
                         issueDate <= cursor.ValidUntil &&
@@ -320,11 +320,13 @@ public sealed class PosEdgeSaleStore
                 existingUpload);
         }
 
+        var deviceId = command.Context.DeviceId?.Value
+            ?? throw new InvalidOperationException("An Edge sale requires DeviceId.");
         await using var transaction = await context.Database.BeginTransactionAsync(
             IsolationLevel.Serializable,
             cancellationToken);
         var documentCursor = await context.DocumentSeriesCursors.SingleAsync(
-            row => row.RegisterId == command.Register.RegisterId.Value &&
+            row => row.DeviceId == deviceId &&
                    row.DocumentType == AuralyDocumentTypes.SalesInvoice,
             cancellationToken);
         if (!documentCursor.IsActive || documentCursor.NextConsecutive > documentCursor.RangeEnd)
@@ -343,7 +345,7 @@ public sealed class PosEdgeSaleStore
 
         var cursor = await context.FiscalSeriesCursors
             .SingleAsync(
-                row => row.RegisterId == command.Register.RegisterId.Value,
+                row => row.DeviceId == deviceId,
                 cancellationToken);
         var issueDate = DateOnly.FromDateTime(command.IssuedAt.Date);
         if (!cursor.IsActive || issueDate > cursor.ValidUntil)
@@ -369,7 +371,7 @@ public sealed class PosEdgeSaleStore
         var confirmed = _confirmationService.Confirm(new ConfirmOfflineSaleCommand(
             command.UserId,
             command.DocumentId,
-            command.Register,
+            command.Context,
             documentNumber,
             fiscalNumber,
             command.IssuedAt,
@@ -795,11 +797,11 @@ public sealed class PosEdgeSaleStore
             .OrderBy(tax => tax.Code, StringComparer.Ordinal)
             .ToArray();
         return new PosSaleUploadRequest(
-            command.Register.TenantId.Value,
-            command.Register.BusinessId.Value,
-            command.Register.WarehouseId.Value,
-            command.Register.RegisterId.Value,
-            command.DeviceId,
+            command.Context.TenantId.Value,
+            command.Context.BusinessId.Value,
+            command.Context.WarehouseId.Value,
+            command.Context.DeviceId?.Value ?? throw new InvalidOperationException("An Edge sale requires DeviceId."),
+            command.Context.WorkSessionId.Value,
             command.UserId.Value,
             command.DocumentId.Value,
             new PosSaleDocumentNumberContract(
@@ -882,6 +884,34 @@ public sealed class PosEdgeSaleStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    private static async Task UpgradeDeviceIdentityAsync(
+        PosEdgeDbContext context,
+        CancellationToken cancellationToken)
+    {
+        DbConnection connection = context.Database.GetDbConnection();
+        if (connection.State != ConnectionState.Open)
+            await connection.OpenAsync(cancellationToken);
+
+        foreach (var table in new[] { "DocumentSeriesCursors", "FiscalSeriesCursors" })
+        {
+            var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            await using (var info = connection.CreateCommand())
+            {
+                info.CommandText = $"PRAGMA table_info('{table}');";
+                await using var reader = await info.ExecuteReaderAsync(cancellationToken);
+                while (await reader.ReadAsync(cancellationToken))
+                    columns.Add(reader.GetString(1));
+            }
+
+            var legacyDeviceColumn = "Register" + "Id";
+            if (!columns.Contains(legacyDeviceColumn) || columns.Contains("DeviceId"))
+                continue;
+            await using var rename = connection.CreateCommand();
+            rename.CommandText =
+                $"ALTER TABLE {table} RENAME COLUMN {legacyDeviceColumn} TO DeviceId;";
+            await rename.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
     private static async Task UpgradeDocumentNumberingAsync(
         PosEdgeDbContext context,
         CancellationToken cancellationToken)
@@ -897,7 +927,7 @@ public sealed class PosEdgeSaleStore
             command.CommandText = """
                 CREATE TABLE IF NOT EXISTS DocumentSeriesCursors(
                     SeriesId TEXT NOT NULL PRIMARY KEY,
-                    RegisterId TEXT NOT NULL,
+                    DeviceId TEXT NOT NULL,
                     DocumentType TEXT NOT NULL,
                     Prefix TEXT NOT NULL,
                     SeriesCode TEXT NOT NULL,
@@ -907,8 +937,8 @@ public sealed class PosEdgeSaleStore
                     IsActive INTEGER NOT NULL
                 );
                 CREATE UNIQUE INDEX IF NOT EXISTS
-                    IX_DocumentSeriesCursors_RegisterId_DocumentType
-                    ON DocumentSeriesCursors(RegisterId,DocumentType);
+                    IX_DocumentSeriesCursors_DeviceId_DocumentType
+                    ON DocumentSeriesCursors(DeviceId,DocumentType);
                 """;
             await command.ExecuteNonQueryAsync(cancellationToken);
         }

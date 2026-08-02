@@ -86,9 +86,9 @@ public sealed class OnlineSalesHistoryService(IOnlineSalesHistoryStore history)
     private static void ValidateContext(OnlineSalesDraftContext context)
     {
         if (context.BusinessId == Guid.Empty ||
-            context.RegisterId == Guid.Empty)
+            context.WorkSessionId == Guid.Empty)
             throw new OnlineSalesDraftValidationException(
-                "Negocio, sede y caja son obligatorios.");
+                "La sede y la sesión de trabajo son obligatorias.");
     }
 }
 

@@ -190,10 +190,9 @@ public sealed class SqlOfflineAuthenticationLeaseStore(
     {
         await using var command = new SqlCommand("""
             SELECT d.DeviceId
-            FROM dbo.PosDevices d WITH (UPDLOCK,HOLDLOCK)
-            INNER JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId
-            WHERE d.DeviceId=@DeviceId AND b.TenantId=@TenantId
-              AND d.IsActive=1 AND b.IsActive=1;
+            FROM dbo.EnrolledDevices d WITH (UPDLOCK,HOLDLOCK)
+            WHERE d.DeviceId=@DeviceId AND d.TenantId=@TenantId
+              AND d.IsActive=1;
             """, connection, transaction);
         command.Parameters.AddWithValue("@DeviceId", payload.DeviceId);
         command.Parameters.AddWithValue("@TenantId", payload.TenantId);

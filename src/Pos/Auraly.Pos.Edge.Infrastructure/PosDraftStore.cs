@@ -16,7 +16,8 @@ public static class PosDraftStatus
 public sealed record PosDraftScope(
     BusinessId BusinessId,
     WarehouseId WarehouseId,
-    RegisterId RegisterId,
+    DeviceId DeviceId,
+    WorkSessionId WorkSessionId,
     UserId UserId);
 
 public sealed record PosDraftLineInput(
@@ -87,7 +88,7 @@ public sealed record PosTemporaryFilter(
     DateTimeOffset? From = null,
     DateTimeOffset? To = null,
     Guid? CustomerId = null,
-    RegisterId? RegisterId = null,
+    UserId? UserId = null,
     string? Search = null,
     int Take = 50);
 
@@ -122,6 +123,7 @@ public sealed class PosDraftStore
     {
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
+        await UpgradeScopeAsync(connection, cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = Schema;
         await command.ExecuteNonQueryAsync(cancellationToken);
@@ -476,7 +478,7 @@ public sealed class PosDraftStore
               AND (@From IS NULL OR SavedAt>=@From)
               AND (@To IS NULL OR SavedAt<=@To)
               AND (@CustomerId IS NULL OR CustomerId=@CustomerId)
-              AND (@RegisterId IS NULL OR RegisterId=@RegisterId)
+              AND (@UserId IS NULL OR UserId=@UserId)
               AND (@Search IS NULL OR Name LIKE @Search OR Reference LIKE @Search OR Observation LIKE @Search)
             ORDER BY SavedAt DESC,DraftId
             LIMIT @Take;
@@ -484,7 +486,7 @@ public sealed class PosDraftStore
         command.Parameters.AddRange(
         [
             P("@BusinessId", businessId.Value), P("@From", filter.From), P("@To", filter.To),
-            P("@CustomerId", filter.CustomerId), P("@RegisterId", filter.RegisterId?.Value),
+            P("@CustomerId", filter.CustomerId), P("@UserId", filter.UserId?.Value),
             P("@Search", string.IsNullOrWhiteSpace(filter.Search) ? null : $"%{filter.Search.Trim()}%"),
             P("@Take", filter.Take)
         ]);
@@ -629,16 +631,16 @@ public sealed class PosDraftStore
         var now = Now();
         await ExecuteAsync(connection, transaction, """
             INSERT INTO PosDrafts(
-              DraftId,BusinessId,WarehouseId,RegisterId,UserId,CustomerId,SellerId,
+              DraftId,BusinessId,WarehouseId,DeviceId,WorkSessionId,UserId,CustomerId,SellerId,
               Status,CreatedAt,UpdatedAt)
             VALUES(
-              @DraftId,@BusinessId,@WarehouseId,@RegisterId,@UserId,@CustomerId,@SellerId,
+              @DraftId,@BusinessId,@WarehouseId,@DeviceId,@WorkSessionId,@UserId,@CustomerId,@SellerId,
               'Active',@Now,@Now);
             """,
             [
                 P("@DraftId", draftId.Value), P("@BusinessId", scope.BusinessId.Value),
-                P("@WarehouseId", scope.WarehouseId.Value), P("@RegisterId", scope.RegisterId.Value),
-                P("@UserId", scope.UserId.Value), P("@CustomerId", customerId),
+                P("@WarehouseId", scope.WarehouseId.Value), P("@DeviceId", scope.DeviceId.Value),
+                P("@WorkSessionId", scope.WorkSessionId.Value), P("@UserId", scope.UserId.Value), P("@CustomerId", customerId),
                 P("@SellerId", sellerId), P("@Now", now)
             ],
             ct);
@@ -708,6 +710,56 @@ public sealed class PosDraftStore
                 nameof(input));
     }
 
+    private static async Task UpgradeScopeAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using (var exists = connection.CreateCommand())
+        {
+            exists.CommandText =
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='PosDrafts');";
+            if (Convert.ToInt32(await exists.ExecuteScalarAsync(cancellationToken),
+                    CultureInfo.InvariantCulture) == 0)
+                return;
+        }
+
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using (var info = connection.CreateCommand())
+        {
+            info.CommandText = "PRAGMA table_info('PosDrafts');";
+            await using var reader = await info.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                columns.Add(reader.GetString(1));
+        }
+
+        var legacyDeviceColumn = "Register" + "Id";
+        if (columns.Contains(legacyDeviceColumn) && !columns.Contains("DeviceId"))
+        {
+            await using var rename = connection.CreateCommand();
+            rename.CommandText =
+                $"ALTER TABLE PosDrafts RENAME COLUMN {legacyDeviceColumn} TO DeviceId;";
+            await rename.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!columns.Contains("WorkSessionId"))
+        {
+            await using var add = connection.CreateCommand();
+            add.CommandText = """
+                ALTER TABLE PosDrafts ADD COLUMN WorkSessionId TEXT NULL;
+                UPDATE PosDrafts SET WorkSessionId=DraftId WHERE WorkSessionId IS NULL;
+                UPDATE PosDrafts
+                SET Status='Temporary',
+                    Name=coalesce(Name,'Venta recuperada después de actualización'),
+                    SavedAt=coalesce(SavedAt,UpdatedAt)
+                WHERE Status='Active';
+                """;
+            await add.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using var cleanup = connection.CreateCommand();
+        cleanup.CommandText = "DROP INDEX IF EXISTS UX_PosDrafts_ActiveScope;";
+        await cleanup.ExecuteNonQueryAsync(cancellationToken);
+    }
     private async Task<SqliteConnection> OpenAsync(CancellationToken ct)
     {
         var connection = new SqliteConnection(_connectionString);
@@ -728,13 +780,13 @@ public sealed class PosDraftStore
         command.Transaction = transaction;
         command.CommandText = """
             SELECT DraftId FROM PosDrafts
-            WHERE BusinessId=@BusinessId AND RegisterId=@RegisterId
+            WHERE BusinessId=@BusinessId AND WorkSessionId=@WorkSessionId
               AND UserId=@UserId AND Status='Active'
             LIMIT 1;
             """;
         command.Parameters.AddRange(
         [
-            P("@BusinessId", scope.BusinessId.Value), P("@RegisterId", scope.RegisterId.Value),
+            P("@BusinessId", scope.BusinessId.Value), P("@WorkSessionId", scope.WorkSessionId.Value),
             P("@UserId", scope.UserId.Value)
         ]);
         var value = await command.ExecuteScalarAsync(ct);
@@ -831,7 +883,7 @@ public sealed class PosDraftStore
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT BusinessId,WarehouseId,RegisterId,UserId,CustomerId,SellerId,Status,
+            SELECT BusinessId,WarehouseId,DeviceId,WorkSessionId,UserId,CustomerId,SellerId,Status,
                    Name,Reference,Observation,CreatedAt,UpdatedAt,SourceOrderId
             FROM PosDrafts WHERE DraftId=@DraftId;
             """;
@@ -843,18 +895,19 @@ public sealed class PosDraftStore
             new PosDraftScope(
                 new BusinessId(Guid.Parse(reader.GetString(0))),
                 new WarehouseId(Guid.Parse(reader.GetString(1))),
-                new RegisterId(Guid.Parse(reader.GetString(2))),
-                new UserId(Guid.Parse(reader.GetString(3)))),
-            NullableGuid(reader, 4),
+                new DeviceId(Guid.Parse(reader.GetString(2))),
+                new WorkSessionId(Guid.Parse(reader.GetString(3))),
+                new UserId(Guid.Parse(reader.GetString(4)))),
             NullableGuid(reader, 5),
-            reader.GetString(6),
-            NullableString(reader, 7),
+            NullableGuid(reader, 6),
+            reader.GetString(7),
             NullableString(reader, 8),
             NullableString(reader, 9),
-            DateTimeOffset.Parse(reader.GetString(10), CultureInfo.InvariantCulture),
+            NullableString(reader, 10),
             DateTimeOffset.Parse(reader.GetString(11), CultureInfo.InvariantCulture),
+            DateTimeOffset.Parse(reader.GetString(12), CultureInfo.InvariantCulture),
             [],
-            NullableGuid(reader, 12));
+            NullableGuid(reader, 13));
     }
 
     private static async Task<IReadOnlyList<PosDraftLine>> ReadLinesAsync(
@@ -986,7 +1039,8 @@ public sealed class PosDraftStore
           DraftId TEXT PRIMARY KEY,
           BusinessId TEXT NOT NULL,
           WarehouseId TEXT NOT NULL,
-          RegisterId TEXT NOT NULL,
+          DeviceId TEXT NOT NULL,
+          WorkSessionId TEXT NOT NULL,
           UserId TEXT NOT NULL,
           CustomerId TEXT NULL,
           SellerId TEXT NULL,
@@ -1002,7 +1056,7 @@ public sealed class PosDraftStore
           IssuedAt TEXT NULL,
           SourceOrderId TEXT NULL);
         CREATE UNIQUE INDEX IF NOT EXISTS UX_PosDrafts_ActiveScope
-          ON PosDrafts(BusinessId,RegisterId,UserId) WHERE Status='Active';
+          ON PosDrafts(WorkSessionId) WHERE Status='Active';
         CREATE INDEX IF NOT EXISTS IX_PosDrafts_Temporaries
           ON PosDrafts(BusinessId,Status,SavedAt DESC);
         CREATE TABLE IF NOT EXISTS PosDraftLines(

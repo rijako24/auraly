@@ -83,7 +83,8 @@ public sealed class FiscalSnapshotVerifier(IFiscalTechnicalKeyProvider keyProvid
             request.TenantId == Guid.Empty ||
             request.BusinessId == Guid.Empty ||
             request.WarehouseId == Guid.Empty ||
-            request.RegisterId == Guid.Empty)
+            request.WorkSessionId == Guid.Empty ||
+            request.SoldByUserId == Guid.Empty)
         {
             return "One or more required identifiers are empty.";
         }

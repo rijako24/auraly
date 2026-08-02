@@ -14,7 +14,8 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
         var userId = Guid.NewGuid();
         var firstOrderId = Guid.NewGuid();
         var secondOrderId = Guid.NewGuid();
-        await SeedAsync(userId, firstOrderId, secondOrderId);
+        var workSessionId = Guid.NewGuid();
+        await SeedAsync(userId, workSessionId, firstOrderId, secondOrderId);
 
         using var client = fixture.CreateUserClient(
             userId,
@@ -23,7 +24,8 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
             OrderPermissionCodes.Recover,
             OrderPermissionCodes.Invoice);
         var command = new InvoiceOrdersRequest(
-            fixture.OnlineRegisterId,
+            workSessionId,
+            fixture.WarehouseId,
             userId,
             [firstOrderId, secondOrderId],
             "Cash",
@@ -100,7 +102,8 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
             "/api/commerce/v1/orders/invoice")
         {
             Content = JsonContent.Create(new InvoiceOrdersRequest(
-                fixture.OnlineRegisterId,
+                Guid.NewGuid(),
+                fixture.WarehouseId,
                 userId,
                 [Guid.NewGuid()],
                 "Cash",
@@ -133,6 +136,7 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
 
     private async Task SeedAsync(
         Guid userId,
+        Guid workSessionId,
         Guid firstOrderId,
         Guid secondOrderId)
     {
@@ -147,6 +151,13 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
               @UserId,@TenantId,@Username,UPPER(@Username),
               CONCAT(@Username,N'@test.local'),UPPER(CONCAT(@Username,N'@test.local')),
               N'Lote',N'Pedidos',1,SYSDATETIMEOFFSET());
+
+            INSERT dbo.WorkSessions(
+              WorkSessionId,BusinessId,WarehouseId,UserId,DeviceId,
+              OpenedAt,LastActivityAt,Status)
+            VALUES(
+              @WorkSessionId,@BusinessId,@WarehouseId,@UserId,NULL,
+              SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET(),N'Open');
 
             INSERT dbo.Orders(
               OrderId,BusinessId,Source,FulfillmentMode,Status,
@@ -170,6 +181,8 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
                N'Producto lote',N'EA',2,10000,0,20000,DATEADD(day,-1,SYSUTCDATETIME()));
             """;
         command.Parameters.AddWithValue("@UserId", userId);
+        command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
+        command.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
         command.Parameters.AddWithValue("@Username", $"batch-{userId:N}");
         command.Parameters.AddWithValue("@FirstOrderId", firstOrderId);

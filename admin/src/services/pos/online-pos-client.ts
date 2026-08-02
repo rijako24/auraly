@@ -26,12 +26,9 @@ import {
   PosPrintableReceipt,
 } from "./pos-edge-client";
 
-export type OnlineRegisterOption = {
+export type SalesWorkspaceOption = {
   businessId: string;
   businessName: string;
-  registerId: string;
-  registerCode: string;
-  registerName: string;
   warehouseId: string;
   warehouseCode: string;
   warehouseName: string;
@@ -39,10 +36,10 @@ export type OnlineRegisterOption = {
   hasActiveEdgeEnrollment: boolean;
 };
 
-export type OnlineRegisterContext = Omit<
-  OnlineRegisterOption,
+export type SalesWorkspaceContext = Omit<
+  SalesWorkspaceOption,
   "hasActiveEdgeEnrollment"
->;
+> & { workSessionId: string };
 
 type OnlineDraftLine = {
   lineId: string;
@@ -67,7 +64,7 @@ type OnlineDraft = {
   draftId: string;
   businessId: string;
   warehouseId: string;
-  registerId: string;
+  workSessionId: string;
   userId: string;
   customerId: string | null;
   sellerId: string | null;
@@ -128,42 +125,55 @@ type OnlineCheckoutResponse = {
   isDuplicate: boolean;
 };
 
-const REGISTER_STORAGE_KEY = "auraly.pos.online-register";
+const WORKSPACE_STORAGE_KEY = "auraly.pos.sales-workspace";
 
-export async function loadOnlineRegisterOptions(): Promise<OnlineRegisterOption[]> {
-  return request<OnlineRegisterOption[]>(
-    "/api/commerce/v1/pos/register-context/options",
+export async function loadSalesWorkspaceOptions(): Promise<SalesWorkspaceOption[]> {
+  return request<SalesWorkspaceOption[]>(
+    "/api/commerce/v1/pos/workspace/options",
   );
 }
 
-export async function selectOnlineRegister(
-  option: OnlineRegisterOption,
-): Promise<OnlineRegisterContext> {
-  const selected = await request<OnlineRegisterContext>(
-    "/api/commerce/v1/pos/register-context/select",
+export async function selectSalesWorkspace(
+  option: SalesWorkspaceOption,
+): Promise<SalesWorkspaceContext> {
+  const selected = await request<Omit<SalesWorkspaceContext, "workSessionId">>(
+    "/api/commerce/v1/pos/workspace/select",
     {
       method: "POST",
       body: JSON.stringify({
         businessId: option.businessId,
-        registerId: option.registerId,
+        warehouseId: option.warehouseId,
       }),
     },
   );
-  window.localStorage.setItem(REGISTER_STORAGE_KEY, selected.registerId);
-  return selected;
+  const session = await request<{ workSessionId: string }>(
+    "/api/commerce/v1/work-sessions/current",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        businessId: selected.businessId,
+        warehouseId: selected.warehouseId,
+        deviceId: null,
+      }),
+    },
+  );
+  window.localStorage.setItem(
+    WORKSPACE_STORAGE_KEY,
+    salesWorkspaceKey(selected.businessId, selected.warehouseId),
+  );
+  return { ...selected, workSessionId: session.workSessionId };
 }
-
-export function rememberedOnlineRegisterId(): string | null {
+export function rememberedSalesWorkspaceKey(): string | null {
   try {
-    return window.localStorage.getItem(REGISTER_STORAGE_KEY);
+    return window.localStorage.getItem(WORKSPACE_STORAGE_KEY);
   } catch {
     return null;
   }
 }
 
-export function forgetOnlineRegister(): void {
+export function forgetSalesWorkspace(): void {
   try {
-    window.localStorage.removeItem(REGISTER_STORAGE_KEY);
+    window.localStorage.removeItem(WORKSPACE_STORAGE_KEY);
   } catch {
     // Storage is only a convenience; the server remains authoritative.
   }
@@ -175,7 +185,7 @@ export class OnlinePosClient implements PosClient {
   private activeDraftId: string | null = null;
 
   constructor(
-    private readonly context: OnlineRegisterContext,
+    private readonly context: SalesWorkspaceContext,
     private readonly userId: string,
     private readonly userDisplayName: string,
   ) {}
@@ -185,7 +195,9 @@ export class OnlinePosClient implements PosClient {
     return {
       status: "ok",
       serverConnected: true,
-      registerCode: this.context.registerCode,
+      deviceSeriesCode: "00",
+      businessName: this.context.businessName,
+      warehouseName: this.context.warehouseName,
       userDisplayName: this.userDisplayName,
       userId: this.userId,
     };
@@ -463,7 +475,7 @@ export class OnlinePosClient implements PosClient {
   async recoverOrder(orderId: string) {
     const draft = await this.ensureActive();
     await recoverCommerceOrder(orderId, {
-      registerId: this.context.registerId,
+      workSessionId: this.context.workSessionId,
       userId: this.userId,
       draftId: draft.draftId.value,
       expectedDraftVersion: this.version(draft.draftId.value),
@@ -476,7 +488,8 @@ export class OnlinePosClient implements PosClient {
     paymentMethodCode: string,
   ): Promise<InvoiceOrdersResponse> {
     const response = await invoiceCommerceOrders({
-      registerId: this.context.registerId,
+      workSessionId: this.context.workSessionId,
+      warehouseId: this.context.warehouseId,
       userId: this.userId,
       orderIds,
       paymentMethodCode,
@@ -488,7 +501,8 @@ export class OnlinePosClient implements PosClient {
   private scope() {
     return {
       businessId: this.context.businessId,
-      registerId: this.context.registerId,
+      warehouseId: this.context.warehouseId,
+      workSessionId: this.context.workSessionId,
     };
   }
 
@@ -519,7 +533,7 @@ export class OnlinePosClient implements PosClient {
     const version = this.versions.get(draftId);
     if (version === undefined)
       throw new PosEdgeError(
-        "La versión de la venta no está disponible. Recarga la caja.",
+        "La versión de la venta no está disponible. Recarga el módulo de facturación.",
         409,
       );
     return version;
@@ -562,6 +576,10 @@ function mapCustomer(
   customer: OnlineCustomerPage["items"][number],
 ): PosCustomer {
   return { ...customer, isActive: true };
+}
+
+export function salesWorkspaceKey(businessId: string, warehouseId: string) {
+  return businessId + ":" + warehouseId;
 }
 
 async function request<T>(

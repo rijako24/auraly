@@ -17,7 +17,7 @@ internal sealed class PosEdgeDbContext(DbContextOptions<PosEdgeDbContext> option
         {
             entity.ToTable("DocumentSeriesCursors");
             entity.HasKey(row => row.SeriesId);
-            entity.HasIndex(row => new { row.RegisterId, row.DocumentType }).IsUnique();
+            entity.HasIndex(row => new { row.DeviceId, row.DocumentType }).IsUnique();
             entity.Property(row => row.DocumentType).HasMaxLength(32);
             entity.Property(row => row.Prefix).HasMaxLength(8);
             entity.Property(row => row.SeriesCode).HasMaxLength(16);
@@ -27,7 +27,7 @@ internal sealed class PosEdgeDbContext(DbContextOptions<PosEdgeDbContext> option
         {
             entity.ToTable("FiscalSeriesCursors");
             entity.HasKey(row => row.SeriesId);
-            entity.HasIndex(row => row.RegisterId).IsUnique();
+            entity.HasIndex(row => row.DeviceId).IsUnique();
             entity.Property(row => row.Prefix).HasMaxLength(16);
             entity.Property(row => row.AuthorizationNumber).HasMaxLength(64);
         });
@@ -69,7 +69,7 @@ internal sealed class PosEdgeDbContext(DbContextOptions<PosEdgeDbContext> option
 internal sealed class DocumentSeriesCursorRow
 {
     public Guid SeriesId { get; set; }
-    public Guid RegisterId { get; set; }
+    public Guid DeviceId { get; set; }
     public string DocumentType { get; set; } = string.Empty;
     public string Prefix { get; set; } = string.Empty;
     public string SeriesCode { get; set; } = string.Empty;
@@ -82,7 +82,7 @@ internal sealed class DocumentSeriesCursorRow
 internal sealed class FiscalSeriesCursorRow
 {
     public Guid SeriesId { get; set; }
-    public Guid RegisterId { get; set; }
+    public Guid DeviceId { get; set; }
     public string Prefix { get; set; } = string.Empty;
     public string AuthorizationNumber { get; set; } = string.Empty;
     public Guid FiscalAuthorizationId { get; set; }

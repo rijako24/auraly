@@ -234,9 +234,9 @@ public sealed class SqlWorkSessionStore(
             SELECT b.Name,w.Name,CONCAT(u.FirstName,N' ',u.LastName),
                    CASE WHEN @DeviceId IS NULL OR EXISTS
                    (
-                       SELECT 1 FROM dbo.PosDevices d
-                       WHERE d.DeviceId=@DeviceId AND d.BusinessId=b.BusinessId
-                         AND d.WarehouseId=w.WarehouseId AND d.IsActive=1
+                       SELECT 1 FROM dbo.EnrolledDevices d
+                       WHERE d.DeviceId=@DeviceId AND d.TenantId=b.TenantId
+                         AND d.IsActive=1
                    ) THEN 1 ELSE 0 END
             FROM dbo.AppUsers u
             INNER JOIN dbo.Businesses b
@@ -257,7 +257,7 @@ public sealed class SqlWorkSessionStore(
                 "The business, warehouse or user is outside the authenticated tenant.");
         if (reader.GetInt32(3) != 1)
             throw new WorkSessionForbiddenException(
-                "The enrolled device is not active in the selected business and warehouse.");
+                "The enrolled device is not active in the authenticated tenant.");
         return new ScopeNames(reader.GetString(0), reader.GetString(1), reader.GetString(2).Trim());
     }
 

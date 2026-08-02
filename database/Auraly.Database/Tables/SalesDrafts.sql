@@ -2,7 +2,7 @@ CREATE TABLE [dbo].[SalesDrafts] (
     [SalesDraftId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
-    [RegisterId] UNIQUEIDENTIFIER NOT NULL,
+    [WorkSessionId] UNIQUEIDENTIFIER NOT NULL,
     [UserId] UNIQUEIDENTIFIER NOT NULL,
     [CustomerId] UNIQUEIDENTIFIER NULL,
     [SellerId] UNIQUEIDENTIFIER NULL,
@@ -20,7 +20,7 @@ CREATE TABLE [dbo].[SalesDrafts] (
     CONSTRAINT [PK_SalesDrafts] PRIMARY KEY ([SalesDraftId]),
     CONSTRAINT [FK_SalesDrafts_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_SalesDrafts_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
-    CONSTRAINT [FK_SalesDrafts_CashRegisters] FOREIGN KEY ([RegisterId]) REFERENCES [dbo].[CashRegisters] ([RegisterId]),
+    CONSTRAINT [FK_SalesDrafts_WorkSessions] FOREIGN KEY ([WorkSessionId]) REFERENCES [dbo].[WorkSessions] ([WorkSessionId]),
     CONSTRAINT [FK_SalesDrafts_AppUsers] FOREIGN KEY ([UserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
     CONSTRAINT [FK_SalesDrafts_Orders] FOREIGN KEY ([SourceOrderId]) REFERENCES [dbo].[Orders] ([OrderId]),
     CONSTRAINT [CK_SalesDrafts_Status] CHECK ([Status] IN (N'Active', N'Temporary', N'Issuing', N'Consumed', N'Deleted')),
@@ -28,8 +28,8 @@ CREATE TABLE [dbo].[SalesDrafts] (
 );
 GO
 
-CREATE UNIQUE INDEX [UX_SalesDrafts_ActiveScope]
-    ON [dbo].[SalesDrafts] ([BusinessId], [RegisterId], [UserId])
+CREATE UNIQUE INDEX [UX_SalesDrafts_ActiveWorkSession]
+    ON [dbo].[SalesDrafts] ([WorkSessionId])
     WHERE [Status] = N'Active';
 GO
 

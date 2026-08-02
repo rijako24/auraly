@@ -37,13 +37,14 @@ import {
   readEdgeTokenFromLaunch,
   readEdgeUserSession,
 } from "@/services/pos/pos-edge-client";
-import { loadOnlineRegisterBootstrap } from "@/services/pos/online-pos-bootstrap";
+import { loadSalesWorkspaceBootstrap } from "@/services/pos/online-pos-bootstrap";
 import {
-  forgetOnlineRegister,
+  forgetSalesWorkspace,
   OnlinePosClient,
-  type OnlineRegisterOption,
-  rememberedOnlineRegisterId,
-  selectOnlineRegister,
+  type SalesWorkspaceOption,
+  rememberedSalesWorkspaceKey,
+  selectSalesWorkspace,
+  salesWorkspaceKey,
 } from "@/services/pos/online-pos-client";
 import {
   authorizePosEnrollment,
@@ -75,7 +76,7 @@ export default function PosPage() {
   const quantityInputs = useRef(new Map<string, HTMLInputElement>());
   const skipQuantityBlur = useRef<string | null>(null);
   const [client, setClient] = useState<PosClient | null>(null);
-  const [onlineOptions, setOnlineOptions] = useState<OnlineRegisterOption[]>([]);
+  const [onlineOptions, setOnlineOptions] = useState<SalesWorkspaceOption[]>([]);
   const [onlineTenantName, setOnlineTenantName] = useState("");
   const [onlineUserName, setOnlineUserName] = useState("");
   const [onlineUserId, setOnlineUserId] = useState("");
@@ -92,7 +93,9 @@ export default function PosPage() {
   const [edgeReady, setEdgeReady] = useState(false);
   const [serverConnected, setServerConnected] = useState(false);
   const [workstation, setWorkstation] = useState({
-    registerCode: "—",
+    deviceSeriesCode: "—",
+    businessName: "",
+    warehouseName: "",
     userDisplayName: "—",
     userId: null as string | null,
   });
@@ -157,7 +160,9 @@ export default function PosPage() {
                 setEdgeEnrollmentToken(edgeToken);
                 setServerConnected(health.serverConnected);
                 setWorkstation({
-                  registerCode: health.registerCode,
+                  deviceSeriesCode: health.deviceSeriesCode,
+                  businessName: health.businessName,
+                  warehouseName: health.warehouseName,
                   userDisplayName: health.userDisplayName || "—",
                   userId: health.userId,
                 });
@@ -178,7 +183,7 @@ export default function PosPage() {
             // If the host is absent, the connected web POS remains available.
           }
         }
-        const serverBootstrap = await loadOnlineRegisterBootstrap();
+        const serverBootstrap = await loadSalesWorkspaceBootstrap();
         if (!active) return;
         setEdgeEnrollmentRequired(
           requiresEnrollment && serverBootstrap.canEnrollPosDevice,
@@ -190,13 +195,13 @@ export default function PosPage() {
         setOnlineUserId(serverBootstrap.userId);
         const available = serverBootstrap.options;
         setOnlineOptions(available);
-        const remembered = rememberedOnlineRegisterId();
+        const remembered = rememberedSalesWorkspaceKey();
         const selected = available.find(
-          (option) => option.registerId === remembered,
+          (option) => salesWorkspaceKey(option.businessId, option.warehouseId) === remembered,
         );
         if (selected && !requiresEnrollment) {
           window.localStorage.setItem("selected_business_id", selected.businessId);
-          const context = await selectOnlineRegister(selected);
+          const context = await selectSalesWorkspace(selected);
           if (active) setClient(new OnlinePosClient(context, serverBootstrap.userId, displayName));
         }
       } catch (caught) {
@@ -204,7 +209,7 @@ export default function PosPage() {
         setSetupError(
           caught instanceof Error
             ? caught.message
-            : "No fue posible preparar las cajas disponibles.",
+            : "No fue posible preparar las sedes y bodegas disponibles.",
         );
       } finally {
         if (active) setSetupLoading(false);
@@ -231,7 +236,9 @@ export default function PosPage() {
         if (active) {
           setServerConnected(health.serverConnected);
           setWorkstation({
-            registerCode: health.registerCode,
+            deviceSeriesCode: health.deviceSeriesCode,
+            businessName: health.businessName,
+            warehouseName: health.warehouseName,
             userDisplayName: health.userDisplayName || "—",
             userId: health.userId,
           });
@@ -450,9 +457,9 @@ export default function PosPage() {
       setError(
         client.mode === "online"
           ? "No hay conexi\u00f3n con Auraly. La venta en l\u00ednea requiere conexi\u00f3n con el servidor."
-          : "Los servicios locales de la caja no est\u00e1n disponibles. El c\u00f3digo se conservar\u00e1 para reintentar.",
+          : "Los servicios locales del equipo no est\u00e1n disponibles. El c\u00f3digo se conservar\u00e1 para reintentar.",
       );
-      setMessage(client.mode === "online" ? "Esperando conexi\u00f3n con Auraly" : "Esperando servicios de la caja");
+      setMessage(client.mode === "online" ? "Esperando conexi\u00f3n con Auraly" : "Esperando servicios del equipo");
       focusScanner();
       return false;
     }
@@ -828,13 +835,13 @@ export default function PosPage() {
   }
 
   async function recoverPosOrder(orderId: string) {
-    if (!client) throw new Error("La caja no estÃ¡ disponible.");
+    if (!client) throw new Error("El punto de venta no está disponible.");
     const recovered = await client.recoverOrder(orderId);
     setDraft(recovered);
     setSelectedLineId(recovered.lines[0]?.lineId ?? null);
     setOrdersExpanded(false);
     setSidePanel("temporaries");
-    setMessage("Pedido recuperado Â· " + recovered.lines.length + " lÃ­neas");
+    setMessage("Pedido recuperado \u00b7 " + recovered.lines.length + " l\u00edneas");
     focusScanner();
   }
 
@@ -842,7 +849,7 @@ export default function PosPage() {
     orderIds: string[],
     paymentMethodCode: string,
   ) {
-    if (!client) throw new Error("La caja no estÃ¡ disponible.");
+    if (!client) throw new Error("El punto de venta no está disponible.");
     const result = await client.invoiceOrders(orderIds, paymentMethodCode);
     setMessage(
       result.completedCount +
@@ -876,28 +883,28 @@ export default function PosPage() {
             ? "La factura fue emitida, pero la tirilla no pudo imprimirse. Reintenta sin modificar la venta."
             : status === 503
             ? "La bodega exige validar inventario y no hay conexión"
-            : "No fue posible acceder a los servicios locales de la caja";
+            : "No fue posible acceder a los servicios locales del equipo";
     setError(text);
     setMessage("Revisa la novedad");
   }
 
-  async function activateOnline(option: OnlineRegisterOption) {
+  async function activateOnline(option: SalesWorkspaceOption) {
     setSetupError(null);
     try {
       window.localStorage.setItem("selected_business_id", option.businessId);
-      const context = await selectOnlineRegister(option);
+      const context = await selectSalesWorkspace(option);
       setClient(new OnlinePosClient(context, onlineUserId, onlineUserName));
     } catch (caught) {
       setSetupError(
         caught instanceof Error
           ? caught.message
-          : "No fue posible seleccionar la caja.",
+          : "No fue posible seleccionar la sede y la bodega.",
       );
       throw caught;
     }
   }
 
-  async function enrollOffline(option: OnlineRegisterOption) {
+  async function enrollOffline(option: SalesWorkspaceOption) {
     if (!edgeEnrollmentToken) return;
     setSetupError(null);
     setSetupLoading(true);
@@ -934,7 +941,7 @@ export default function PosPage() {
       setClient(new PosEdgeClient(edgeEnrollmentToken, session.token));
     } catch (caught) {
       setEdgeLoginError(
-        caught instanceof Error ? caught.message : "No fue posible iniciar sesión en esta caja.",
+        caught instanceof Error ? caught.message : "No fue posible iniciar sesión en este dispositivo.",
       );
       throw caught;
     }
@@ -959,9 +966,9 @@ export default function PosPage() {
     }
   }
 
-  function changeOnlineRegister() {
+  function changeOnlineWorkspace() {
     if (client?.mode !== "online" || busy) return;
-    forgetOnlineRegister();
+    forgetSalesWorkspace();
     setClient(null);
     setDraft(null);
     setTemporaries([]);
@@ -975,7 +982,9 @@ export default function PosPage() {
   if (client instanceof PosEdgeClient && edgeLoginState) {
     return (
       <PosLocalLogin
-        registerCode={workstation.registerCode}
+        deviceSeriesCode={workstation.deviceSeriesCode}
+        businessName={workstation.businessName}
+        warehouseName={workstation.warehouseName}
         serverConnected={serverConnected}
         preparing={edgeLoginState === "preparing"}
         error={edgeLoginError}
@@ -1011,15 +1020,15 @@ export default function PosPage() {
           />
         </div>
         <div className="flex min-w-0 items-center gap-3 text-sm">
-          <span className="font-bold tracking-tight">Caja {workstation.registerCode}</span>
+          <span className="min-w-0 truncate font-bold tracking-tight">{workstation.businessName || "Sede"} · {workstation.warehouseName || "Bodega"}</span>
           {client.mode === "online" && (
             <button
               type="button"
-              onClick={changeOnlineRegister}
+              onClick={changeOnlineWorkspace}
               disabled={busy}
-              title="Cambiar caja"
+              title="Cambiar sede y bodega"
               className="grid h-8 w-8 place-items-center rounded-lg border border-white/10 text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
-              aria-label="Cambiar caja"
+              aria-label="Cambiar sede y bodega"
             >
               <Settings2 className="h-4 w-4" />
             </button>
@@ -1274,7 +1283,7 @@ export default function PosPage() {
                 <div className="relative grid h-20 w-20 place-items-center rounded-full border border-teal-200 bg-teal-50 shadow-[0_0_0_12px_rgba(20,184,166,0.05)]">
                   <Barcode className="h-9 w-9 text-teal-700" />
                 </div>
-                <p className="relative mt-6 text-xl font-bold tracking-tight text-slate-900">Caja lista para vender</p>
+                <p className="relative mt-6 text-xl font-bold tracking-tight text-slate-900">Lista para vender</p>
                 <p className="relative mt-1 max-w-md text-sm text-slate-500">
                   Escanea el primer producto o abre la búsqueda. El lector queda preparado para continuar sin usar el mouse.
                 </p>
@@ -1625,7 +1634,7 @@ export default function PosPage() {
             confirmation.kind === "line"
               ? `${confirmation.productName} se retirará de la venta actual.`
               : confirmation.kind === "temporary"
-                ? `${confirmation.name} se eliminará definitivamente de esta caja.`
+                ? `${confirmation.name} se eliminará definitivamente de este dispositivo.`
               : "Se eliminarán todos los productos capturados y se abrirá una venta limpia."
           }
           confirmLabel={

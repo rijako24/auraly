@@ -9,7 +9,6 @@ BEGIN TRANSACTION;
 
 DECLARE @BusinessId UNIQUEIDENTIFIER = 'A0A10000-0000-0000-0000-000000000001';
 DECLARE @WarehouseId UNIQUEIDENTIFIER = 'A0A10001-0000-7000-8000-000000000002';
-DECLARE @RegisterId UNIQUEIDENTIFIER = 'A0A10001-0000-7000-8000-000000000003';
 DECLARE @FiscalAuthorizationId UNIQUEIDENTIFIER = 'A0A10001-0000-7000-8000-000000000004';
 DECLARE @FiscalIssuerConfigurationId UNIQUEIDENTIFIER = 'A0A10001-0000-7000-8000-000000000005';
 DECLARE @DocumentSeriesId UNIQUEIDENTIFIER = 'A0A10001-0000-7000-8000-000000000006';
@@ -45,12 +44,6 @@ IF NOT EXISTS (SELECT 1 FROM dbo.Warehouses WHERE WarehouseId = @WarehouseId)
     VALUES(
         @WarehouseId,@BusinessId,N'PRINCIPAL',N'Bodega principal',
         1,1,@Now);
-
-IF NOT EXISTS (SELECT 1 FROM dbo.CashRegisters WHERE RegisterId = @RegisterId)
-    INSERT dbo.CashRegisters(
-        RegisterId,BusinessId,WarehouseId,Code,Name,IsActive,CreatedAt)
-    VALUES(
-        @RegisterId,@BusinessId,@WarehouseId,N'01',N'Caja 01',1,@Now);
 
 IF NOT EXISTS (
     SELECT 1 FROM dbo.FiscalAuthorizations
@@ -88,19 +81,19 @@ IF NOT EXISTS (
 
 IF NOT EXISTS (SELECT 1 FROM dbo.DocumentSeries WHERE DocumentSeriesId = @DocumentSeriesId)
     INSERT dbo.DocumentSeries(
-        DocumentSeriesId,BusinessId,RegisterId,DocumentType,
+        DocumentSeriesId,BusinessId,DeviceId,DocumentType,
         Prefix,SeriesCode,Padding,RangeStart,RangeEnd,
         IsOfflineCapable,IsActive,CreatedAt)
     VALUES(
-        @DocumentSeriesId,@BusinessId,@RegisterId,N'SalesInvoice',
-        N'VTA',N'01',8,1,99999999,1,1,@Now);
+        @DocumentSeriesId,@BusinessId,NULL,N'SalesInvoice',
+        N'VTA',N'00',8,1,99999999,0,1,@Now);
 
 IF NOT EXISTS (SELECT 1 FROM dbo.FiscalSeries WHERE SeriesId = @FiscalSeriesId)
     INSERT dbo.FiscalSeries(
-        SeriesId,BusinessId,RegisterId,FiscalAuthorizationId,DocumentType,
+        SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,DocumentType,
         Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)
     VALUES(
-        @FiscalSeriesId,@BusinessId,@RegisterId,@FiscalAuthorizationId,N'SalesInvoice',
+        @FiscalSeriesId,@BusinessId,NULL,N'Server',@FiscalAuthorizationId,N'SalesInvoice',
         N'FE',1,99999999,1,@Now);
 
 IF NOT EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId = @TaxProfileId)
@@ -184,14 +177,13 @@ COMMIT TRANSACTION;
 
 SELECT
     b.Name AS BusinessName,
-    r.Name AS RegisterName,
+    N'Servidor online' AS EmitterName,
     w.Name AS WarehouseName,
     p.Name AS ProductName,
     pb.Barcode,
     (SELECT COUNT(*) FROM dbo.Orders o WHERE o.BusinessId=@BusinessId AND o.Source=0) AS BotOrders
 FROM dbo.Businesses b
-JOIN dbo.CashRegisters r ON r.BusinessId=b.BusinessId
-JOIN dbo.Warehouses w ON w.WarehouseId=r.WarehouseId
+JOIN dbo.Warehouses w ON w.BusinessId=b.BusinessId AND w.WarehouseId=@WarehouseId
 JOIN dbo.Products p ON p.BusinessId=b.BusinessId AND p.ProductId=@ProductId
 JOIN dbo.ProductBarcodes pb ON pb.ProductId=p.ProductId AND pb.IsActive=1
-WHERE b.BusinessId=@BusinessId AND r.RegisterId=@RegisterId;
+WHERE b.BusinessId=@BusinessId;

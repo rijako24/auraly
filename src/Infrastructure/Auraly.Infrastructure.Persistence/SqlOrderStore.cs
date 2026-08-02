@@ -75,10 +75,10 @@ public sealed class SqlOrderStore(
         {
             filters.Add("""
                 (claim.OrderClaimId IS NULL
-                 OR (claim.UserId=@ActorUserId AND claim.RegisterId=COALESCE(@ActorRegisterId,claim.RegisterId)))
+                 OR (claim.UserId=@ActorUserId AND claim.WorkSessionId=COALESCE(@ActorWorkSessionId,claim.WorkSessionId)))
                 """);
             parameters.Add(P("@ActorUserId", actor.UserId));
-            parameters.Add(P("@ActorRegisterId", actor.RegisterId));
+            parameters.Add(P("@ActorWorkSessionId", actor.WorkSessionId));
         }
 
         parameters.Add(P("@Now", time.GetUtcNow()));
@@ -92,7 +92,7 @@ public sealed class SqlOrderStore(
               o.CustomerPhoneSnapshot,o.Currency,o.Total,
               (SELECT COUNT_BIG(1) FROM dbo.OrderItems oi WHERE oi.OrderId=o.OrderId) LineCount,
               o.CreatedAt,o.CustomerConfirmed,link.DocumentId,
-              claim.OrderClaimId,claim.RegisterId,claim.UserId,claim.ExpiresAt,
+              claim.OrderClaimId,claim.WorkSessionId,claim.DeviceId,claim.UserId,claim.ExpiresAt,
               COUNT_BIG(1) OVER() TotalRows
             FROM dbo.Orders o
             INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
@@ -100,7 +100,7 @@ public sealed class SqlOrderStore(
               ON pt.PaymentTransactionId=o.PaymentTransactionId
             LEFT JOIN dbo.OrderInvoiceLinks link ON link.OrderId=o.OrderId
             OUTER APPLY (
-              SELECT TOP(1) c.OrderClaimId,c.RegisterId,c.UserId,c.ExpiresAt
+              SELECT TOP(1) c.OrderClaimId,c.WorkSessionId,c.DeviceId,c.UserId,c.ExpiresAt
               FROM dbo.OrderClaims c
               WHERE c.OrderId=o.OrderId AND c.ReleasedAt IS NULL AND c.ExpiresAt>@Now
               ORDER BY c.ClaimedAt DESC
@@ -120,7 +120,7 @@ public sealed class SqlOrderStore(
             var hasInvoice = !reader.IsDBNull(12);
             var storedStatus = reader.GetInt32(2);
             var claim = ReadClaim(reader, 13, actor);
-            total = checked((int)reader.GetInt64(17));
+            total = checked((int)reader.GetInt64(18));
             items.Add(new OrderListItem(
                 reader.GetGuid(0),
                 reader.GetString(1),
@@ -164,14 +164,14 @@ public sealed class SqlOrderStore(
               CASE pt.Status WHEN 2 THEN N'Confirmed' WHEN 3 THEN N'Failed'
                    WHEN 1 THEN N'Pending' ELSE NULL END,
               o.CreatedAt,o.CustomerConfirmed,link.DocumentId,
-              claim.OrderClaimId,claim.RegisterId,claim.UserId,claim.ExpiresAt
+              claim.OrderClaimId,claim.WorkSessionId,claim.DeviceId,claim.UserId,claim.ExpiresAt
             FROM dbo.Orders o
             INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
             LEFT JOIN dbo.PaymentTransactions pt
               ON pt.PaymentTransactionId=o.PaymentTransactionId
             LEFT JOIN dbo.OrderInvoiceLinks link ON link.OrderId=o.OrderId
             OUTER APPLY (
-              SELECT TOP(1) c.OrderClaimId,c.RegisterId,c.UserId,c.ExpiresAt
+              SELECT TOP(1) c.OrderClaimId,c.WorkSessionId,c.DeviceId,c.UserId,c.ExpiresAt
               FROM dbo.OrderClaims c
               WHERE c.OrderId=o.OrderId AND c.ReleasedAt IS NULL AND c.ExpiresAt>@Now
               ORDER BY c.ClaimedAt DESC
@@ -259,7 +259,7 @@ public sealed class SqlOrderStore(
     public async Task<OrderClaimSummary> ClaimAsync(
         OrderActor actor,
         Guid orderId,
-        Guid registerId,
+        Guid workSessionId,
         int leaseMinutes,
         CancellationToken cancellationToken)
     {
@@ -271,7 +271,7 @@ public sealed class SqlOrderStore(
             (SqlTransaction)await connection.BeginTransactionAsync(
                 IsolationLevel.Serializable, cancellationToken);
         await DemandContextAsync(
-            connection, transaction, actor, orderId, registerId, cancellationToken);
+            connection, transaction, actor, orderId, workSessionId, cancellationToken);
 
         await ExecuteAsync(connection, transaction, """
             UPDATE dbo.OrderClaims
@@ -282,7 +282,7 @@ public sealed class SqlOrderStore(
             cancellationToken);
 
         const string lockSql = """
-            SELECT TOP(1) OrderClaimId,RegisterId,UserId,ExpiresAt
+            SELECT TOP(1) OrderClaimId,WorkSessionId,DeviceId,UserId,ExpiresAt
             FROM dbo.OrderClaims WITH(UPDLOCK,HOLDLOCK)
             WHERE OrderId=@OrderId AND ReleasedAt IS NULL;
             """;
@@ -292,12 +292,13 @@ public sealed class SqlOrderStore(
         if (await reader.ReadAsync(cancellationToken))
         {
             var claimId = reader.GetGuid(0);
-            var ownerRegister = reader.GetGuid(1);
-            var ownerUser = reader.GetGuid(2);
+            var ownerWorkSession = reader.GetGuid(1);
+            var ownerDevice = reader.IsDBNull(2) ? (Guid?)null : reader.GetGuid(2);
+            var ownerUser = reader.GetGuid(3);
             await reader.CloseAsync();
-            if (ownerRegister != registerId || ownerUser != actor.UserId)
+            if (ownerWorkSession != workSessionId || ownerUser != actor.UserId)
                 throw new OrderConflictException(
-                    "El pedido está siendo preparado en otra caja.");
+                    "El pedido está siendo preparado en otra sesión.");
             await ExecuteAsync(connection, transaction, """
                 UPDATE dbo.OrderClaims SET ExpiresAt=@ExpiresAt
                 WHERE OrderClaimId=@ClaimId;
@@ -306,35 +307,40 @@ public sealed class SqlOrderStore(
                 cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return new OrderClaimSummary(
-                claimId, registerId, actor.UserId, expires, true);
+                claimId, workSessionId, ownerDevice, actor.UserId, expires, true);
         }
         await reader.CloseAsync();
 
         var id = ids.NewId();
         await ExecuteAsync(connection, transaction, """
             INSERT dbo.OrderClaims(
-              OrderClaimId,BusinessId,OrderId,RegisterId,DeviceId,UserId,
+              OrderClaimId,BusinessId,WarehouseId,OrderId,WorkSessionId,DeviceId,UserId,
               ClaimedAt,ExpiresAt)
-            VALUES(
-              @ClaimId,@BusinessId,@OrderId,@RegisterId,@DeviceId,@UserId,
-              @Now,@ExpiresAt);
+            SELECT
+              @ClaimId,@BusinessId,ws.WarehouseId,@OrderId,@WorkSessionId,@DeviceId,@UserId,
+              @Now,@ExpiresAt
+            FROM dbo.WorkSessions ws
+            WHERE ws.WorkSessionId=@WorkSessionId
+              AND ws.BusinessId=@BusinessId
+              AND ws.UserId=@UserId
+              AND ws.Status=N'Open';
             """,
             [
                 P("@ClaimId", id), P("@BusinessId", actor.BusinessId),
-                P("@OrderId", orderId), P("@RegisterId", registerId),
+                P("@OrderId", orderId), P("@WorkSessionId", workSessionId),
                 P("@DeviceId", actor.DeviceId), P("@UserId", actor.UserId),
                 P("@Now", now), P("@ExpiresAt", expires)
             ],
             cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new OrderClaimSummary(
-            id, registerId, actor.UserId, expires, true);
+            id, workSessionId, actor.DeviceId, actor.UserId, expires, true);
     }
 
     public async Task ReleaseClaimAsync(
         OrderActor actor,
         Guid orderId,
-        Guid registerId,
+        Guid workSessionId,
         CancellationToken cancellationToken)
     {
         await using var connection = connections.Create();
@@ -343,18 +349,18 @@ public sealed class SqlOrderStore(
             UPDATE dbo.OrderClaims
             SET ReleasedAt=@Now
             WHERE OrderId=@OrderId AND BusinessId=@BusinessId
-              AND RegisterId=@RegisterId AND UserId=@UserId
+              AND WorkSessionId=@WorkSessionId AND UserId=@UserId
               AND ReleasedAt IS NULL;
             """,
             [
                 P("@Now", time.GetUtcNow()), P("@OrderId", orderId),
-                P("@BusinessId", actor.BusinessId), P("@RegisterId", registerId),
+                P("@BusinessId", actor.BusinessId), P("@WorkSessionId", workSessionId),
                 P("@UserId", actor.UserId)
             ],
             cancellationToken);
         if (affected == 0)
             throw new OrderConflictException(
-                "No existe una recuperación activa del pedido para esta caja.");
+                "No existe una recuperación activa del pedido para esta sesión.");
     }
 
     private static async Task DemandContextAsync(
@@ -362,7 +368,7 @@ public sealed class SqlOrderStore(
         SqlTransaction transaction,
         OrderActor actor,
         Guid orderId,
-        Guid registerId,
+        Guid workSessionId,
         CancellationToken ct)
     {
         const string sql = """
@@ -370,20 +376,22 @@ public sealed class SqlOrderStore(
                    CASE WHEN link.OrderId IS NULL THEN CAST(0 AS bit) ELSE CAST(1 AS bit) END
             FROM dbo.Orders o
             INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
-            INNER JOIN dbo.CashRegisters r
-              ON r.RegisterId=@RegisterId AND r.BusinessId=o.BusinessId AND r.IsActive=1
+            INNER JOIN dbo.WorkSessions ws
+              ON ws.WorkSessionId=@WorkSessionId AND ws.BusinessId=o.BusinessId
+             AND ws.UserId=@UserId AND ws.Status=N'Open'
             LEFT JOIN dbo.OrderInvoiceLinks link ON link.OrderId=o.OrderId
             WHERE o.OrderId=@OrderId AND o.BusinessId=@BusinessId AND b.TenantId=@TenantId;
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddRange([
-            P("@RegisterId", registerId), P("@OrderId", orderId),
-            P("@BusinessId", actor.BusinessId), P("@TenantId", actor.TenantId)
+            P("@WorkSessionId", workSessionId), P("@OrderId", orderId),
+            P("@BusinessId", actor.BusinessId), P("@TenantId", actor.TenantId),
+            P("@UserId", actor.UserId)
         ]);
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct))
             throw new OrderNotFoundException(
-                "El pedido o la caja no pertenecen a esta sede.");
+                "El pedido o la sesión no pertenecen a esta sede.");
         if (!OrderRules.CanInvoice(
                 reader.GetInt32(0), reader.GetBoolean(1), reader.GetBoolean(2)))
             throw new OrderConflictException(
@@ -432,15 +440,19 @@ public sealed class SqlOrderStore(
     {
         if (reader.IsDBNull(start))
             return null;
-        var registerId = reader.GetGuid(start + 1);
-        var userId = reader.GetGuid(start + 2);
+        var workSessionId = reader.GetGuid(start + 1);
+        var deviceId = reader.IsDBNull(start + 2)
+            ? (Guid?)null
+            : reader.GetGuid(start + 2);
+        var userId = reader.GetGuid(start + 3);
         return new OrderClaimSummary(
             reader.GetGuid(start),
-            registerId,
+            workSessionId,
+            deviceId,
             userId,
-            reader.GetDateTimeOffset(start + 3),
+            reader.GetDateTimeOffset(start + 4),
             userId == actor.UserId &&
-            (actor.RegisterId is null || actor.RegisterId == registerId));
+            (actor.WorkSessionId is null || actor.WorkSessionId == workSessionId));
     }
 
     private static void AddContains(

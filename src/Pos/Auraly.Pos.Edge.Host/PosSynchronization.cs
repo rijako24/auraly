@@ -130,7 +130,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
-            "/api/pos/v1/synchronization/negotiate");
+            $"/api/pos/v1/synchronization/negotiate?businessId={businessId:D}");
         request.Headers.Add(
             "X-Auraly-Device-Id",
             credentials.DeviceId.ToString("D"));

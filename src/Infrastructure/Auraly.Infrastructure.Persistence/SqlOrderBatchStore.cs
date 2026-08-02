@@ -91,18 +91,20 @@ public sealed class SqlOrderBatchStore(
         var now = time.GetUtcNow();
         await ExecuteAsync(connection, transaction, """
             INSERT dbo.OrderInvoiceBatchReceipts(
-              OperationId,BusinessId,RegisterId,UserId,IdempotencyKey,RequestHash,
+              OperationId,BusinessId,WarehouseId,WorkSessionId,DeviceId,UserId,IdempotencyKey,RequestHash,
               Status,RequestedCount,CompletedCount,FailedCount,ResultJson,
               LeaseToken,LeaseExpiresAt,CreatedAt,UpdatedAt)
             VALUES(
-              @OperationId,@BusinessId,@RegisterId,@UserId,@IdempotencyKey,@RequestHash,
+              @OperationId,@BusinessId,@WarehouseId,@WorkSessionId,@DeviceId,@UserId,@IdempotencyKey,@RequestHash,
               N'Processing',@RequestedCount,0,0,NULL,
               @LeaseToken,@LeaseExpiresAt,@Now,@Now);
             """,
             [
                 P("@OperationId", newOperationId),
                 P("@BusinessId", actor.BusinessId),
-                P("@RegisterId", request.RegisterId),
+                P("@WarehouseId", request.WarehouseId),
+                P("@WorkSessionId", request.WorkSessionId),
+                P("@DeviceId", actor.DeviceId),
                 P("@UserId", actor.UserId),
                 P("@IdempotencyKey", idempotencyKey),
                 P("@RequestHash", requestHash),

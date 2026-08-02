@@ -208,7 +208,7 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
             divisionId,
             cityId,
             "55.667.788",
-            "Cliente creado en caja",
+            "Cliente creado en facturación",
             "Principal",
             null);
 
@@ -234,7 +234,7 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Null(created.PriceChannelId);
 
         var found = await pos.GetFromJsonAsync<CustomerDetail>(
-            $"/api/pos/v1/customers/by-identification?countryId={countryId:D}" +
+            $"/api/pos/v1/customers/by-identification?businessId={fixture.BusinessId:D}&countryId={countryId:D}" +
             "&identificationType=CC&identification=55667788");
         Assert.NotNull(found);
         Assert.Equal(created.CustomerId, found.CustomerId);

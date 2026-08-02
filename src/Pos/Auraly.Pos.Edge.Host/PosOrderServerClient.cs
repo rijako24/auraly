@@ -6,54 +6,55 @@ namespace Auraly.Pos.Edge.Host;
 
 public sealed class PosOrderServerClient(
     HttpClient http,
-    PosDeviceCredentials credentials)
+    PosDeviceCredentials credentials,
+    PosEdgeRuntimeContext runtime)
 {
     public Task<OrderPage> PageAsync(
-        Guid userId,
+        PosLocalUserSession session,
         string query,
         CancellationToken cancellationToken) =>
         SendAsync<OrderPage>(
             HttpMethod.Get,
-            $"/api/pos/v1/orders?userId={userId:D}&{query}",
+            $"/api/pos/v1/orders?{ContextQuery(session)}&{query}",
             null,
             null,
             cancellationToken);
 
     public Task<OrderDetail> GetAsync(
-        Guid userId,
+        PosLocalUserSession session,
         Guid orderId,
         CancellationToken cancellationToken) =>
         SendAsync<OrderDetail>(
             HttpMethod.Get,
-            $"/api/pos/v1/orders/{orderId:D}?userId={userId:D}",
+            $"/api/pos/v1/orders/{orderId:D}?{ContextQuery(session)}",
             null,
             null,
             cancellationToken);
 
     public Task<OrderClaimSummary> ClaimAsync(
-        Guid userId,
+        PosLocalUserSession session,
         Guid orderId,
         CancellationToken cancellationToken) =>
         SendAsync<OrderClaimSummary>(
             HttpMethod.Post,
             $"/api/pos/v1/orders/{orderId:D}/claim",
-            JsonContent.Create(new { userId, leaseMinutes = 10 }),
+            JsonContent.Create(ContextBody(session, leaseMinutes: 10)),
             null,
             cancellationToken);
 
     public async Task ReleaseAsync(
-        Guid userId,
+        PosLocalUserSession session,
         Guid orderId,
         CancellationToken cancellationToken) =>
         await SendAsync<object>(
             HttpMethod.Post,
             $"/api/pos/v1/orders/{orderId:D}/claim/release",
-            JsonContent.Create(new { userId }),
+            JsonContent.Create(ContextBody(session)),
             null,
             cancellationToken);
 
     public Task<InvoiceOrdersResponse> InvoiceAsync(
-        Guid userId,
+        PosLocalUserSession session,
         IReadOnlyCollection<Guid> orderIds,
         string paymentMethodCode,
         string idempotencyKey,
@@ -63,13 +64,32 @@ public sealed class PosOrderServerClient(
             "/api/pos/v1/orders/invoice",
             JsonContent.Create(new
             {
-                userId,
+                userId = session.UserId,
+                businessId = runtime.BusinessId.Value,
+                warehouseId = runtime.WarehouseId.Value,
+                workSessionId = session.WorkSessionId,
                 orderIds,
                 paymentMethodCode,
                 paymentReference = (string?)null
             }),
             idempotencyKey,
             cancellationToken);
+
+    private string ContextQuery(PosLocalUserSession session) =>
+        $"userId={session.UserId:D}" +
+        $"&businessId={runtime.BusinessId.Value:D}" +
+        $"&warehouseId={runtime.WarehouseId.Value:D}" +
+        $"&workSessionId={session.WorkSessionId:D}";
+
+    private object ContextBody(PosLocalUserSession session, int leaseMinutes = 10) =>
+        new
+        {
+            userId = session.UserId,
+            businessId = runtime.BusinessId.Value,
+            warehouseId = runtime.WarehouseId.Value,
+            workSessionId = session.WorkSessionId,
+            leaseMinutes
+        };
 
     private async Task<T> SendAsync<T>(
         HttpMethod method,

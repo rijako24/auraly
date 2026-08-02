@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, MapPin, MonitorSmartphone, Warehouse } from "lucide-react";
+import { Building2, Loader2, MonitorSmartphone, Warehouse } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import {
@@ -10,17 +10,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { OnlineRegisterOption } from "@/services/pos/online-pos-client";
+import type { SalesWorkspaceOption } from "@/services/pos/online-pos-client";
 
 type Props = {
-  options: OnlineRegisterOption[];
+  options: SalesWorkspaceOption[];
   loading: boolean;
   error: string | null;
   tenantName: string;
   userDisplayName: string;
-  onSelect: (option: OnlineRegisterOption) => Promise<void>;
+  onSelect: (option: SalesWorkspaceOption) => Promise<void>;
   edgeCapable?: boolean;
-  onEnroll?: (option: OnlineRegisterOption) => Promise<void>;
+  onEnroll?: (option: SalesWorkspaceOption) => Promise<void>;
 };
 
 export function PosOnlineSetup({
@@ -33,7 +33,7 @@ export function PosOnlineSetup({
   edgeCapable = false,
   onEnroll,
 }: Props) {
-  const branches = useMemo(
+  const businesses = useMemo(
     () =>
       Array.from(
         new Map(options.map((option) => [option.businessId, option.businessName])),
@@ -41,15 +41,17 @@ export function PosOnlineSetup({
     [options],
   );
   const [businessId, setBusinessId] = useState("");
-  const [registerId, setRegisterId] = useState("");
+  const [warehouseId, setWarehouseId] = useState("");
   const [selecting, setSelecting] = useState(false);
   const [enrolling, setEnrolling] = useState(false);
 
-  const registers = useMemo(
+  const warehouses = useMemo(
     () => options.filter((option) => option.businessId === businessId),
     [businessId, options],
   );
-  const selected = registers.find((option) => option.registerId === registerId);
+  const selected = warehouses.find(
+    (option) => option.warehouseId === warehouseId,
+  );
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -86,18 +88,19 @@ export function PosOnlineSetup({
               <MonitorSmartphone className="h-6 w-6" />
             </div>
             <p className="mt-8 inline-flex rounded-full border border-teal-200/20 bg-teal-300/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.14em] text-teal-100">
-              Empresa � {tenantName || "Auraly"}
+              Empresa · {tenantName || "Auraly"}
             </p>
             <p className="mt-5 text-xs font-bold uppercase tracking-[0.18em] text-teal-200">
-              {edgeCapable ? "Primera configuración" : "Auraly POS en línea"}
+              {edgeCapable ? "Preparación del equipo" : "Facturación en línea"}
             </p>
             <h1 className="mt-2 text-3xl font-black tracking-tight">
-              {edgeCapable ? "Prepara esta estación" : "Elige dónde vas a facturar"}
+              Elige dónde vas a trabajar
             </h1>
             <p className="mt-3 text-sm leading-6 text-slate-300">
-              Hola, {userDisplayName}. Elige la sede y la caja. La bodega,
-              precios y resolución se obtienen de esa caja. Puedes trabajar en
-              línea o enrolar este equipo para continuar sin conexión.
+              Hola, {userDisplayName}. Selecciona la sede y la bodega que
+              recibirán los movimientos. Si enrolas este equipo, Auraly
+              preparará automáticamente la
+              operación offline.
             </p>
           </section>
 
@@ -106,33 +109,33 @@ export function PosOnlineSetup({
               <div className="grid min-h-64 place-items-center text-center">
                 <div>
                   <Loader2 className="mx-auto h-9 w-9 animate-spin text-teal-300" />
-                  <p className="mt-4 font-semibold">Preparando tus cajas</p>
+                  <p className="mt-4 font-semibold">Preparando facturación</p>
                   <p className="mt-1 text-sm text-slate-400">
-                    Validando sedes, cajas, series y permisos…
+                    Validando sedes, bodegas, series y permisos…
                   </p>
                 </div>
               </div>
             ) : (
               <div className="space-y-4">
                 <SelectField
-                  icon={MapPin}
+                  icon={Building2}
                   label="Sede"
                   value={businessId}
                   onChange={(value) => {
                     setBusinessId(value);
-                    setRegisterId("");
+                    setWarehouseId("");
                   }}
-                  options={branches.map(([value, label]) => ({ value, label }))}
+                  options={businesses.map(([value, label]) => ({ value, label }))}
                 />
                 <SelectField
-                  icon={MonitorSmartphone}
-                  label="Caja"
-                  value={registerId}
+                  icon={Warehouse}
+                  label="Bodega"
+                  value={warehouseId}
                   disabled={!businessId}
-                  onChange={setRegisterId}
-                  options={registers.map((option) => ({
-                    value: option.registerId,
-                    label: `${option.registerName} · ${option.registerCode}`,
+                  onChange={setWarehouseId}
+                  options={warehouses.map((option) => ({
+                    value: option.warehouseId,
+                    label: option.warehouseName + " · " + option.warehouseCode,
                   }))}
                 />
 
@@ -140,9 +143,13 @@ export function PosOnlineSetup({
                   <div className="flex items-center gap-3 rounded-2xl border border-teal-300/20 bg-teal-300/10 p-3 text-sm">
                     <Warehouse className="h-5 w-5 shrink-0 text-teal-200" />
                     <div>
-                      <p className="font-semibold">{selected.warehouseName}</p>
+                      <p className="font-semibold">
+                        {selected.businessName} · {selected.warehouseName}
+                      </p>
                       <p className="text-xs text-slate-300">
-                        Bodega {selected.warehouseCode} · heredada de la caja
+                        {selected.warehouseAllowsNegativeStockSales
+                          ? "Permite confirmar ventas con inventario negativo"
+                          : "Valida disponibilidad antes de agregar cantidades"}
                       </p>
                     </div>
                   </div>
@@ -158,8 +165,8 @@ export function PosOnlineSetup({
                 )}
                 {!options.length && !error && (
                   <p className="rounded-xl border border-amber-300/20 bg-amber-300/10 p-3 text-sm text-amber-100">
-                    No tienes cajas disponibles. Revisa permisos, sede, bodega,
-                    series operativas y resolución fiscal.
+                    No tienes sedes y bodegas habilitadas para facturar. Revisa
+                    permisos, series operativas y resolución fiscal.
                   </p>
                 )}
 
@@ -201,7 +208,7 @@ function SelectField({
   disabled,
   onChange,
 }: {
-  icon: typeof MapPin;
+  icon: typeof Building2;
   label: string;
   value: string;
   options: Array<{ value: string; label: string }>;
@@ -220,15 +227,11 @@ function SelectField({
         onValueChange={onChange}
       >
         <SelectTrigger className="h-12 w-full rounded-xl border-white/15 bg-[#102e33] px-3 text-sm text-white shadow-none focus:border-teal-300 focus:ring-2 focus:ring-teal-300/15 disabled:opacity-40">
-          <SelectValue placeholder={`Selecciona ${label.toLocaleLowerCase("es")}`} />
+          <SelectValue placeholder={"Selecciona " + label.toLocaleLowerCase("es")} />
         </SelectTrigger>
         <SelectContent className="rounded-xl border-slate-200 shadow-2xl">
           {options.map((option) => (
-            <SelectItem
-              key={option.value}
-              value={option.value}
-              className="py-2.5"
-            >
+            <SelectItem key={option.value} value={option.value} className="py-2.5">
               {option.label}
             </SelectItem>
           ))}

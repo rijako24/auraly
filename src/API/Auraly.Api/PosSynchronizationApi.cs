@@ -12,14 +12,13 @@ public static class PosSynchronizationApi
                 "/api/pos/v1/synchronization/negotiate",
                 (HttpContext context,
                     IPosSynchronizationPushGateway gateway,
+                    Guid businessId,
                     CancellationToken cancellationToken) =>
                 {
                     var tenantId = RequiredGuid(
                         context.User,
                         PosAuthenticationDefaults.TenantIdClaim);
-                    var businessId = RequiredGuid(
-                        context.User,
-                        PosAuthenticationDefaults.BusinessIdClaim);
+
                     var deviceId = RequiredGuid(
                         context.User,
                         PosAuthenticationDefaults.DeviceIdClaim);

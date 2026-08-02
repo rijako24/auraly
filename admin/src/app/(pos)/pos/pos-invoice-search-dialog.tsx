@@ -58,7 +58,7 @@ export function PosInvoiceSearchDialog({
           setResults([]);
           setHasMore(false);
           setNextOffset(null);
-          setError("No fue posible consultar las facturas de esta caja.");
+          setError("No fue posible consultar las facturas de esta sede.");
         })
         .finally(() => {
           if (requestVersion.current === version) setLoading(false);

@@ -11,7 +11,7 @@ public sealed partial class SqlPosSaleDocumentHandler
         PosSaleUploadRequest request,
         CancellationToken cancellationToken)
     {
-        Guid? workSessionId = null;
+        var workSessionId = request.WorkSessionId;
         await using (var current = new SqlCommand("""
             SELECT WorkSessionId,BusinessId,WarehouseId,DeviceId
             FROM dbo.WorkSessions WITH (UPDLOCK,HOLDLOCK)
@@ -26,19 +26,19 @@ public sealed partial class SqlPosSaleDocumentHandler
                 var existingWarehouseId = reader.GetGuid(2);
                 var existingDeviceId = reader.IsDBNull(3) ? (Guid?)null : reader.GetGuid(3);
                 var requestedDeviceId = request.DeviceId == Guid.Empty ? (Guid?)null : request.DeviceId;
-                if (existingBusinessId != request.BusinessId ||
+                if (reader.GetGuid(0) != request.WorkSessionId ||
+                    existingBusinessId != request.BusinessId ||
                     existingWarehouseId != request.WarehouseId ||
                     existingDeviceId != requestedDeviceId)
                     throw new InvalidOperationException(
                         "The user already has an open work session in another context.");
-                workSessionId = reader.GetGuid(0);
             }
         }
 
         var now = _timeProvider.GetUtcNow();
-        if (workSessionId is null)
+        if (!await WorkSessionExistsAsync(
+                processing, request.WorkSessionId, cancellationToken))
         {
-            workSessionId = _idGenerator.NewId();
             await using var create = new SqlCommand("""
                 INSERT dbo.WorkSessions
                   (WorkSessionId,BusinessId,WarehouseId,UserId,DeviceId,
@@ -47,7 +47,7 @@ public sealed partial class SqlPosSaleDocumentHandler
                   (@WorkSessionId,@BusinessId,@WarehouseId,@UserId,@DeviceId,
                    @Now,@Now,N'Open');
                 """, processing.Connection, processing.Transaction);
-            AddWorkSessionParameters(create, request, workSessionId.Value, now);
+            AddWorkSessionParameters(create, request, workSessionId, now);
             await create.ExecuteNonQueryAsync(cancellationToken);
         }
         else
@@ -56,7 +56,7 @@ public sealed partial class SqlPosSaleDocumentHandler
                 UPDATE dbo.WorkSessions SET LastActivityAt=@Now
                 WHERE WorkSessionId=@WorkSessionId AND Status=N'Open';
                 """, processing.Connection, processing.Transaction);
-            touch.Parameters.AddWithValue("@WorkSessionId", workSessionId.Value);
+            touch.Parameters.AddWithValue("@WorkSessionId", workSessionId);
             touch.Parameters.AddWithValue("@Now", now);
             if (await touch.ExecuteNonQueryAsync(cancellationToken) != 1)
                 throw new DBConcurrencyException("The work session is no longer open.");
@@ -72,13 +72,25 @@ public sealed partial class SqlPosSaleDocumentHandler
         link.Parameters.AddWithValue("@DocumentId", request.DocumentId);
         link.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         link.Parameters.AddWithValue("@UserId", request.SoldByUserId);
-        link.Parameters.AddWithValue("@WorkSessionId", workSessionId.Value);
+        link.Parameters.AddWithValue("@WorkSessionId", workSessionId);
         if (await link.ExecuteNonQueryAsync(cancellationToken) != 1)
             throw new DBConcurrencyException(
                 "The sale could not be linked to its work session.");
-        return workSessionId.Value;
+        return workSessionId;
     }
 
+    private static async Task<bool> WorkSessionExistsAsync(
+        SqlDocumentProcessingSessionAccessor.Session processing,
+        Guid workSessionId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand(
+            "SELECT COUNT_BIG(1) FROM dbo.WorkSessions WHERE WorkSessionId=@WorkSessionId;",
+            processing.Connection,
+            processing.Transaction);
+        command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
+        return (long)(await command.ExecuteScalarAsync(cancellationToken) ?? 0L) == 1;
+    }
     private async Task InsertWorkSessionMovementAsync(
         SqlDocumentProcessingSessionAccessor.Session processing,
         PosSaleUploadRequest request,

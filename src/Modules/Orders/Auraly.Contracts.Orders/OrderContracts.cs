@@ -24,7 +24,8 @@ public sealed record OrderPageRequest(
 
 public sealed record OrderClaimSummary(
     Guid ClaimId,
-    Guid RegisterId,
+    Guid WorkSessionId,
+    Guid? DeviceId,
     Guid UserId,
     DateTimeOffset ExpiresAt,
     bool IsOwnedByCurrentActor);
@@ -90,10 +91,10 @@ public sealed record OrderDetail(
     IReadOnlyList<OrderLine> Lines);
 
 public sealed record ClaimOrderRequest(
-    Guid RegisterId,
+    Guid WorkSessionId,
     Guid UserId,
     int LeaseMinutes = 10);
 
 public sealed record ReleaseOrderClaimRequest(
-    Guid RegisterId,
+    Guid WorkSessionId,
     Guid UserId);

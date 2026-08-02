@@ -25,11 +25,13 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
         try
         {
             var userId = new UserId(fixture.UserId);
-            var register = new RegisterContext(
+            var register = new SalesExecutionContext(
                 new TenantId(fixture.TenantId),
                 new BusinessId(fixture.BusinessId),
                 new WarehouseId(fixture.WarehouseId),
-                new RegisterId(fixture.RegisterId),
+                userId,
+                new DeviceId(fixture.DeviceId),
+                new WorkSessionId(fixture.WorkSessionId),
                 WarehouseAllowsNegativeStockSales: true);
             var permissions = new UserPermissionSet(
                 register.TenantId,
@@ -43,7 +45,7 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
             await firstProcess.ProvisionDocumentSeriesAsync(
                 new PosEdgeDocumentSeriesProvision(
                     fixture.DocumentSeriesId,
-                    register.RegisterId,
+                    register.DeviceId!.Value,
                     AuralyDocumentTypes.SalesInvoice,
                     "VTA",
                     "03",
@@ -53,7 +55,7 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
             await firstProcess.ProvisionSeriesAsync(
                 new PosEdgeSeriesProvision(
                     fixture.SeriesId,
-                    register.RegisterId,
+                    register.DeviceId!.Value,
                     ServerSliceFixture.Prefix,
                     ServerSliceFixture.AuthorizationNumber,
                     501,
@@ -210,11 +212,11 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
     {
         var userId = new UserId(Guid.NewGuid());
         var store = await CreateStoreOnlyAsync(databasePath, userId);
-        var register = RegisterContext();
+        var register = SalesExecutionContext(userId);
         await store.ProvisionDocumentSeriesAsync(
             new PosEdgeDocumentSeriesProvision(
                 fixture.DocumentSeriesId,
-                register.RegisterId,
+                register.DeviceId!.Value,
                 AuralyDocumentTypes.SalesInvoice,
                 "VTA",
                 "03",
@@ -224,7 +226,7 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
         await store.ProvisionSeriesAsync(
             new PosEdgeSeriesProvision(
                 fixture.SeriesId,
-                register.RegisterId,
+                register.DeviceId!.Value,
                 ServerSliceFixture.Prefix,
                 ServerSliceFixture.AuthorizationNumber,
                 701,
@@ -252,18 +254,20 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
         return store;
     }
 
-    private RegisterContext RegisterContext() =>
+    private SalesExecutionContext SalesExecutionContext(UserId userId) =>
         new(
             new TenantId(fixture.TenantId),
             new BusinessId(fixture.BusinessId),
             new WarehouseId(fixture.WarehouseId),
-            new RegisterId(fixture.RegisterId),
+            userId,
+            new DeviceId(fixture.DeviceId),
+            new WorkSessionId(fixture.WorkSessionId),
             true);
 
     private static PosEdgeIssueCommand CreateCommand(
         UserId userId,
         DocumentId documentId,
-        RegisterContext register,
+        SalesExecutionContext register,
         ServerSliceFixture fixture)
     {
         var product = new PosCatalogProduct(
@@ -288,7 +292,6 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
             FiscalEnvironment.Test,
             ServerSliceFixture.QrValidationUrl,
             [new OfflineSaleLine(product, 1m, 10_000m, 0m, 1_900m)],
-            fixture.DeviceId,
             [new OfflineSalePayment("Cash", 11_900m)]);
     }
 

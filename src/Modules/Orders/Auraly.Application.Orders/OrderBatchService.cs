@@ -94,7 +94,8 @@ public sealed class OrderBatchService(
                     new OpenOnlineSalesDraftRequest(
                         new OnlineSalesDraftContext(
                             actor.BusinessId,
-                            request.RegisterId)),
+                            request.WarehouseId,
+                            request.WorkSessionId)),
                     cancellationToken);
                 if (draft.SourceOrderId is null)
                 {
@@ -105,7 +106,7 @@ public sealed class OrderBatchService(
                         actor,
                         orderId,
                         new RecoverOrderIntoSaleRequest(
-                            request.RegisterId,
+                            request.WorkSessionId,
                             request.UserId,
                             draft.DraftId,
                             draft.Version),
@@ -223,17 +224,18 @@ public sealed class OrderBatchService(
         if (!actor.Permissions.Contains(CommercePermissionCodes.SalesCreate))
             throw new OrderForbiddenException(
                 $"Permission '{CommercePermissionCodes.SalesCreate}' is required.");
-        if (request.RegisterId == Guid.Empty ||
+        if (request.WorkSessionId == Guid.Empty ||
+            request.WarehouseId == Guid.Empty ||
             request.UserId != actor.UserId ||
             request.OrderIds.Count is < 1 or > 50 ||
             request.OrderIds.Any(id => id == Guid.Empty) ||
             !PaymentMethods.Contains(request.PaymentMethodCode) ||
             request.PaymentReference?.Length > 160)
             throw new OrderValidationException(
-                "Caja, usuario, pedidos y medio de pago válidos son obligatorios.");
-        if (actor.RegisterId is not null && actor.RegisterId != request.RegisterId)
+                "Sesión, usuario, pedidos y medio de pago válidos son obligatorios.");
+        if (actor.WorkSessionId is not null && actor.WorkSessionId != request.WorkSessionId)
             throw new OrderForbiddenException(
-                "La caja solicitada no coincide con el dispositivo autenticado.");
+                "La sesión solicitada no coincide con el dispositivo autenticado.");
         if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 100)
             throw new OrderValidationException(
                 "Idempotency-Key es obligatorio y admite máximo 100 caracteres.");
@@ -245,7 +247,8 @@ public sealed class OrderBatchService(
     {
         var value = string.Join(
             "|",
-            request.RegisterId.ToString("D"),
+            request.WorkSessionId.ToString("D"),
+            request.WarehouseId.ToString("D"),
             request.UserId.ToString("D"),
             request.PaymentMethodCode,
             request.PaymentReference ?? string.Empty,

@@ -10,7 +10,7 @@ public sealed record FiscalDocumentView(
     string UniqueCodeType,
     string? UniqueCode,
     string Status,
-    Guid? RegisterId,
+    Guid? DeviceId,
     DateTimeOffset IssuedAt,
     int AttemptCount,
     string? TrackId,
@@ -31,7 +31,7 @@ public sealed record FiscalDocumentQuery(
     string? AuralyNumber,
     string? DianNumber,
     string? UniqueCode,
-    Guid? RegisterId,
+    Guid? DeviceId,
     DateTimeOffset? IssuedFrom,
     DateTimeOffset? IssuedTo);
 
@@ -52,5 +52,4 @@ public sealed record PosFiscalStatusPage(
 public sealed record PosFiscalDeviceContext(
     Guid DeviceId,
     Guid BusinessId,
-    Guid RegisterId,
     IReadOnlySet<string> Permissions);
