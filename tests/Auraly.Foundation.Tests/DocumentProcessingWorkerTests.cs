@@ -57,6 +57,27 @@ public sealed class DocumentProcessingWorkerTests
         Assert.Empty(handler.Completed);
     }
 
+    [Fact]
+    public async Task Completion_observers_run_for_processed_and_replayed_messages()
+    {
+        var document = CreateDocument(); var observer = new RecordingObserver();
+        var processed = new DocumentProcessingWorker(
+            new WorkSource(new(DocumentProcessingWorkState.Ready, document)),
+            new DocumentProcessingEngine(new ReceiptStore(), [new RecordingHandler()]), [observer]);
+        await processed.ProcessOneAsync(CreateSignal(document));
+        var replayed = new DocumentProcessingWorker(
+            new WorkSource(new(DocumentProcessingWorkState.Completed, null)),
+            new DocumentProcessingEngine(new ReceiptStore(), [new RecordingHandler()]), [observer]);
+        await replayed.ProcessOneAsync(CreateSignal(document));
+        Assert.Equal(2, observer.Calls);
+    }
+
+    private sealed class RecordingObserver : IDocumentProcessingCompletionObserver
+    {
+        public int Calls { get; private set; }
+        public Task ObserveAsync(DocumentProcessingSignal signal, CancellationToken cancellationToken) { Calls++; return Task.CompletedTask; }
+    }
+
     private static DocumentProcessingSignal CreateSignal(ConfirmedDocument document) =>
         new(Guid.NewGuid(), document.BusinessId.Value, document.DocumentId.Value, document.DocumentType);
 

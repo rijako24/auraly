@@ -22,6 +22,7 @@
     <ProjectReference Include="..\..\src\Modules\Authorization\Auraly.Domain.Authorization\Auraly.Domain.Authorization.csproj" />
     <ProjectReference Include="..\..\src\Modules\Catalog\Auraly.Domain.Catalog\Auraly.Domain.Catalog.csproj" />
     <ProjectReference Include="..\..\src\Modules\DocumentProcessing\Auraly.Application.DocumentProcessing\Auraly.Application.DocumentProcessing.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Accounting\Auraly.Commerce.Accounting.Domain\Auraly.Commerce.Accounting.Domain.csproj" />
     <ProjectReference Include="..\..\src\Modules\Fiscal\Auraly.Domain.Fiscal\Auraly.Domain.Fiscal.csproj" />
     <ProjectReference Include="..\..\src\Modules\Organization\Auraly.Domain.Organization\Auraly.Domain.Organization.csproj" />
     <ProjectReference Include="..\..\src\Modules\Sales\Auraly.Domain.Sales\Auraly.Domain.Sales.csproj" />
