@@ -55,5 +55,6 @@ dotnet test tests/Auraly.ServerSlice.IntegrationTests/Auraly.ServerSlice.Integra
 # 1 passed
 ```
 
-The Rabbit test verifies durable publication, strict order, exactly-once effects,
-five attempts, dead-letter routing and processing of the following document.
+The Rabbit test sends both goods receipts and a new inventory adjustment through
+the real broker. It verifies durable publication, strict order, exactly-once
+effects, five attempts, dead-letter routing and processing of following documents.

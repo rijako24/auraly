@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Auraly.Api;
 using Auraly.Application.Fiscal;
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.Contracts.Inventory;
 using Auraly.Contracts.Purchasing;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
@@ -112,6 +113,21 @@ public sealed class RabbitMqDocumentProcessingTests(ServerSliceFixture fixture)
             Assert.Equal(0, await CountAsync("Payables", failed.DocumentId));
             Assert.Equal(1, await CountAsync("InventoryMovements", afterFailure.DocumentId));
             Assert.Equal(1, await CountAsync("Payables", afterFailure.DocumentId));
+
+            await SeedInventoryAdjustmentSeriesAsync();
+            var adjustmentId = Guid.NewGuid();
+            using var inventoryClient = fixture.CreateAdminClient(InventoryPermissionCodes.Adjust);
+            await ConfirmAdjustmentAsync(inventoryClient, new ConfirmInventoryAdjustmentRequest(
+                adjustmentId, fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
+                "RABBIT_VERIFICATION", null, "Ajuste procesado por RabbitMQ",
+                [new InventoryAdjustmentLineRequest(1, fixture.ProductId, 1m, 5_000m)]));
+            var inventorySignal = Assert.Single(fixture.DrainDocumentSignals());
+            Assert.Equal(InventoryDocumentTypes.Adjustment, inventorySignal.DocumentType);
+            await transport.PublishAsync(inventorySignal);
+            await WaitUntilAsync(async () =>
+                await ReadInventoryStatusAsync(adjustmentId) == "Processed");
+            Assert.Equal(1, await CountAsync("InventoryMovements", adjustmentId));
+
             await using (var inspection = await connection.CreateChannelAsync(false, default))
             {
                 var dead = await inspection.BasicGetAsync(
@@ -155,6 +171,52 @@ public sealed class RabbitMqDocumentProcessingTests(ServerSliceFixture fixture)
         message.Headers.Add("Idempotency-Key", $"rabbit-{request.DocumentId:N}");
         using var response = await client.SendAsync(message);
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+    }
+
+    private static async Task ConfirmAdjustmentAsync(
+        HttpClient client,
+        ConfirmInventoryAdjustmentRequest request)
+    {
+        using var message = new HttpRequestMessage(
+            HttpMethod.Post, "/api/commerce/v1/inventory-adjustments/confirm")
+        {
+            Content = JsonContent.Create(request)
+        };
+        message.Headers.Add("Idempotency-Key", $"rabbit-inventory-{request.DocumentId:N}");
+        using var response = await client.SendAsync(message);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+    }
+
+    private async Task SeedInventoryAdjustmentSeriesAsync()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            IF NOT EXISTS(
+                SELECT 1 FROM dbo.DocumentSeries
+                WHERE BusinessId=@BusinessId AND DocumentType=N'InventoryAdjustment'
+                  AND RegisterId IS NULL AND IsActive=1)
+              INSERT dbo.DocumentSeries
+                (DocumentSeriesId,BusinessId,RegisterId,DocumentType,Prefix,SeriesCode,
+                 Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
+              VALUES(NEWID(),@BusinessId,NULL,N'InventoryAdjustment',N'AJI',N'RB',
+                 8,1,99999999,0,1,SYSDATETIMEOFFSET());
+            """;
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task<string> ReadInventoryStatusAsync(Guid documentId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            "SELECT Status FROM dbo.InventoryOperations WHERE InventoryOperationId=@Id";
+        command.Parameters.AddWithValue("@Id", documentId);
+        return (string)(await command.ExecuteScalarAsync()
+            ?? throw new InvalidOperationException("The inventory operation was not persisted."));
     }
 
     private async Task<string> ReadStatusAsync(Guid documentId)
