@@ -81,4 +81,22 @@ public sealed class GoodsReceiptDomainTests
         Assert.Equal(10_000m, PriceMargin.CalculateSalePrice(6_000m, 40m));
         Assert.Equal(12_500m, PriceMargin.SuggestedPricePreservingMargin(6_000m, 10_000m, 7_500m));
     }
+
+    [Theory]
+    [InlineData(10_021, 50, "Up", 10_050)]
+    [InlineData(10_021, 50, "Down", 10_000)]
+    [InlineData(10_026, 50, "Nearest", 10_050)]
+    [InlineData(10_024, 50, "Nearest", 10_000)]
+    public void Sale_price_rounding_is_deterministic(
+        decimal value, decimal increment, string mode, decimal expected)
+    {
+        Assert.Equal(expected, PriceMargin.RoundPrice(value, increment, mode));
+    }
+
+    [Fact]
+    public void Sale_price_rounding_rejects_invalid_rules()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => PriceMargin.RoundPrice(100m, 0m, "Up"));
+        Assert.Throws<ArgumentOutOfRangeException>(() => PriceMargin.RoundPrice(100m, 10m, "Other"));
+    }
 }

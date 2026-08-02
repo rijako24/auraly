@@ -178,14 +178,20 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             Assert.Equal(11_500m, channelPrice.Amount);
             Assert.Equal(12_500m, (await local.ResolvePriceAsync(created.ProductId, null, 1m)).Amount);
 
-            var updated = request with
+            var attempted = request with
             {
                 Name = "Coffee updated",
                 Barcodes = [new ProductBarcodeInput("7701234500098", true)],
-                Prices =
-                [
-                    new ProductPriceInput(13_250m)
-                ]
+                Prices = [new ProductPriceInput(13_250m)]
+            };
+            using (var rejected = await admin.PutAsJsonAsync(
+                       $"/api/commerce/v1/products/{created.ProductId:D}",
+                       attempted))
+                Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+
+            var updated = attempted with
+            {
+                Prices = [new ProductPriceInput(12_500m)]
             };
             using var update = await admin.PutAsJsonAsync(
                 $"/api/commerce/v1/products/{created.ProductId:D}",
@@ -201,7 +207,7 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             Assert.Null(await local.CaptureAsync("7701234500012"));
             var changed = await local.CaptureAsync("7701234500098");
             Assert.NotNull(changed);
-            Assert.Equal(13_250m, changed.Product.UnitPrice);
+            Assert.Equal(12_500m, changed.Product.UnitPrice);
 
             using var deactivate = await admin.PostAsync(
                 $"/api/commerce/v1/products/{created.ProductId:D}/deactivate",
