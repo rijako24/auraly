@@ -18,7 +18,14 @@ public sealed class RabbitMqDocumentProcessingTests(ServerSliceFixture fixture)
     public async Task Real_broker_preserves_order_processes_effects_once_and_dead_letters_failures()
     {
         var rabbitConnection = Environment.GetEnvironmentVariable("AURALY_TEST_RABBITMQ");
-        if (string.IsNullOrWhiteSpace(rabbitConnection)) return;
+        if (string.IsNullOrWhiteSpace(rabbitConnection))
+        {
+            Assert.False(
+                string.Equals(Environment.GetEnvironmentVariable("AURALY_REQUIRE_RABBITMQ_TEST"),
+                    "1", StringComparison.Ordinal),
+                "AURALY_TEST_RABBITMQ is required for the explicit RabbitMQ E2E run.");
+            return;
+        }
 
         var suffix = Guid.NewGuid().ToString("N");
         var documentQueue = $"auraly-tests-documents-{suffix}";

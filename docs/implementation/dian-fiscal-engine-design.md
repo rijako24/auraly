@@ -23,7 +23,9 @@ Auraly no reconstruye una factura histórica leyendo maestros actuales. El paylo
 
 La prueba SQL modifica nombres maestros después de recibir la venta y demuestra que el UBL conserva los datos históricos. Si falta un dato obligatorio, el proceso pasa a `MissingMandatoryFiscalData`; el servidor no inventa ni corrige silenciosamente la factura emitida.
 
-La antigua responsabilidad de `SalidaDeMercanciaFolio` no se migra. No hace falta una tabla paralela de folio: `SalesDocuments` conserva número Auraly, número DIAN, prefijos, consecutivos, CUFE recibido/calculado y estado; `FiscalSnapshots` conserva el snapshot exacto, QR, hashes e integridad; `FiscalDocumentProcesses` conserva la evolución fiscal; `FiscalArtifacts` conserva XML, ZIP y respuestas.
+La antigua responsabilidad de `SalidaDeMercanciaFolio` no se migra. No hace falta una tabla paralela de folio: `SalesDocuments` conserva los datos comerciales de la factura; `FiscalDocuments` es la raíz común para factura y nota crédito; `FiscalSnapshots` y `SalesReturnFiscalSnapshots` conservan los snapshots exactos; `FiscalDocumentProcesses` conserva la evolución fiscal; `FiscalArtifacts` conserva XML, ZIP y respuestas.
+
+Las devoluciones procesadas generan una nota crédito que referencia el número y CUFE originales. Su CUDE se calcula durante la generación fiscal, se persiste una sola vez y se usa sin renumerar en todos los reintentos. Facturas y notas crédito comparten workers, leases, artefactos, intentos y estados, pero conservan snapshots tipados distintos.
 
 ## Impuestos y pagos
 

@@ -48,6 +48,7 @@ Comando ejecutado:
 
 ```powershell
 $env:AURALY_TEST_RABBITMQ = 'amqp://<test-user>:<test-password>@127.0.0.1:5672/'
+$env:AURALY_REQUIRE_RABBITMQ_TEST = '1'
 dotnet test tests/Auraly.ServerSlice.IntegrationTests/Auraly.ServerSlice.IntegrationTests.csproj `
   --configuration Release --no-build `
   --filter FullyQualifiedName~RabbitMqDocumentProcessingTests
@@ -62,7 +63,9 @@ Rabbit E2E body: 13 s
 Total including DACPAC deployment: 3.87 min
 ```
 
-La prueba externa solo se ejecuta cuando `AURALY_TEST_RABBITMQ` está definida;
+La prueba externa solo se ejecuta cuando `AURALY_TEST_RABBITMQ` está definida. Para una ejecución explícita se debe definir también `AURALY_REQUIRE_RABBITMQ_TEST=1`; así la prueba falla si la conexión no llegó al proceso y no puede reportar una omisión como aprobada.
+
+Sin modo obligatorio,
 la suite normal no inventa un broker. La prueba arquitectónica siempre comprueba
 la persistencia, publisher confirms, ack manual, `prefetch=1`, dead-letter y
 ausencia de polling.

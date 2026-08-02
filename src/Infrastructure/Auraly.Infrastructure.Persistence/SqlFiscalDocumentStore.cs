@@ -14,7 +14,7 @@ public sealed class SqlFiscalDocumentStore(SqlServerConnectionFactory connection
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand(SelectColumns + " WHERE d.BusinessId = @BusinessId AND d.DocumentId = @DocumentId;", connection);
+        await using var command = new SqlCommand(SelectColumns + " WHERE fd.BusinessId=@BusinessId AND fd.DocumentId=@DocumentId;", connection);
         command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@DocumentId", documentId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -27,18 +27,18 @@ public sealed class SqlFiscalDocumentStore(SqlServerConnectionFactory connection
         CancellationToken cancellationToken)
     {
         const string filters = """
-            WHERE d.BusinessId = @BusinessId
+            WHERE fd.BusinessId = @BusinessId
               AND (@Status IS NULL OR p.Status = @Status)
-              AND (@AuralyNumber IS NULL OR d.DocumentNumber = @AuralyNumber)
-              AND (@DianNumber IS NULL OR d.FiscalNumber = @DianNumber)
-              AND (@Cufe IS NULL OR d.CufeReceived = @Cufe)
-              AND (@RegisterId IS NULL OR d.RegisterId = @RegisterId)
-              AND (@IssuedFrom IS NULL OR d.IssuedAt >= @IssuedFrom)
-              AND (@IssuedTo IS NULL OR d.IssuedAt <= @IssuedTo)
+              AND (@AuralyNumber IS NULL OR fd.AuralyDocumentNumber = @AuralyNumber)
+              AND (@DianNumber IS NULL OR fd.FiscalNumber = @DianNumber)
+              AND (@UniqueCode IS NULL OR fd.UniqueCode = @UniqueCode)
+              AND (@RegisterId IS NULL OR sale.RegisterId = @RegisterId)
+              AND (@IssuedFrom IS NULL OR fd.IssuedAt >= @IssuedFrom)
+              AND (@IssuedTo IS NULL OR fd.IssuedAt <= @IssuedTo)
             """;
         var offset = checked((query.Page - 1) * query.PageSize);
-        var pageSql = SelectColumns + " " + filters + " ORDER BY d.IssuedAt DESC, d.DocumentId DESC OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;";
-        var countSql = "SELECT COUNT_BIG(1) FROM dbo.SalesDocuments d INNER JOIN dbo.FiscalDocumentProcesses p ON p.DocumentId = d.DocumentId " + filters + ";";
+        var pageSql = SelectColumns + " " + filters + " ORDER BY fd.IssuedAt DESC,fd.DocumentId DESC OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;";
+        var countSql = "SELECT COUNT_BIG(1) FROM dbo.FiscalDocuments fd INNER JOIN dbo.FiscalDocumentProcesses p ON p.DocumentId=fd.DocumentId LEFT JOIN dbo.SalesDocuments sale ON sale.DocumentId=fd.DocumentId " + filters + ";";
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         var items = new List<FiscalDocumentView>();
@@ -75,10 +75,10 @@ public sealed class SqlFiscalDocumentStore(SqlServerConnectionFactory connection
                 LastErrorMessage = NULL,
                 UpdatedAt = @RequestedAt
             FROM dbo.FiscalDocumentProcesses p
-            INNER JOIN dbo.SalesDocuments d ON d.DocumentId = p.DocumentId
+            INNER JOIN dbo.FiscalDocuments fd ON fd.DocumentId = p.DocumentId
             WHERE p.DocumentId = @DocumentId
               AND p.BusinessId = @BusinessId
-              AND d.BusinessId = @BusinessId
+              AND fd.BusinessId = @BusinessId
               AND p.Status IN (@SchemaFailed, @SignatureFailed, @RetryScheduled, @PermanentFailure);
             """;
         await using var connection = connections.Create();
@@ -115,12 +115,14 @@ public sealed class SqlFiscalDocumentStore(SqlServerConnectionFactory connection
     }
 
     private const string SelectColumns = """
-        SELECT d.DocumentId, d.BusinessId, d.DocumentNumber, d.FiscalNumber,
-               d.CufeReceived, p.Status, d.RegisterId, d.IssuedAt,
+        SELECT fd.DocumentId,fd.BusinessId,fd.SourceDocumentType,fd.FiscalDocumentType,
+               fd.AuralyDocumentNumber,fd.FiscalNumber,fd.UniqueCodeType,fd.UniqueCode,
+               p.Status,sale.RegisterId,fd.IssuedAt,
                p.AttemptCount, p.TrackId, p.LastStatusCode,
                p.LastStatusDescription, p.UpdatedAt
-        FROM dbo.SalesDocuments d
-        INNER JOIN dbo.FiscalDocumentProcesses p ON p.DocumentId = d.DocumentId
+        FROM dbo.FiscalDocuments fd
+        INNER JOIN dbo.FiscalDocumentProcesses p ON p.DocumentId=fd.DocumentId
+        LEFT JOIN dbo.SalesDocuments sale ON sale.DocumentId=fd.DocumentId
         """;
 
     private static void AddFilters(SqlCommand command, Guid businessId, FiscalDocumentQuery query)
@@ -129,7 +131,7 @@ public sealed class SqlFiscalDocumentStore(SqlServerConnectionFactory connection
         command.Parameters.AddWithValue("@Status", Db(query.Status));
         command.Parameters.AddWithValue("@AuralyNumber", Db(query.AuralyNumber));
         command.Parameters.AddWithValue("@DianNumber", Db(query.DianNumber));
-        command.Parameters.AddWithValue("@Cufe", Db(query.Cufe));
+        command.Parameters.AddWithValue("@UniqueCode", Db(query.UniqueCode));
         command.Parameters.AddWithValue("@RegisterId", (object?)query.RegisterId ?? DBNull.Value);
         command.Parameters.AddWithValue("@IssuedFrom", (object?)query.IssuedFrom ?? DBNull.Value);
         command.Parameters.AddWithValue("@IssuedTo", (object?)query.IssuedTo ?? DBNull.Value);
@@ -139,8 +141,10 @@ public sealed class SqlFiscalDocumentStore(SqlServerConnectionFactory connection
 
     private static FiscalDocumentView Read(SqlDataReader reader) => new(
         reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2), reader.GetString(3),
-        reader.GetString(4), reader.GetString(5), reader.GetGuid(6), reader.GetDateTimeOffset(7),
-        reader.GetInt32(8), reader.IsDBNull(9) ? null : reader.GetString(9),
-        reader.IsDBNull(10) ? null : reader.GetString(10),
-        reader.IsDBNull(11) ? null : reader.GetString(11), reader.GetDateTimeOffset(12));
+        reader.GetString(4), reader.GetString(5), reader.GetString(6),
+        reader.IsDBNull(7) ? null : reader.GetString(7), reader.GetString(8),
+        reader.IsDBNull(9) ? null : reader.GetGuid(9), reader.GetDateTimeOffset(10),
+        reader.GetInt32(11), reader.IsDBNull(12) ? null : reader.GetString(12),
+        reader.IsDBNull(13) ? null : reader.GetString(13),
+        reader.IsDBNull(14) ? null : reader.GetString(14), reader.GetDateTimeOffset(15));
 }

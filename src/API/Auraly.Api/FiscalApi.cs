@@ -19,13 +19,14 @@ public static class FiscalApi
             }));
         group.MapGet("/", async (
             HttpContext context, FiscalDocumentService service, int? page, int? pageSize,
-            string? status, string? auralyNumber, string? dianNumber, string? cufe,
+            string? status, string? auralyNumber, string? dianNumber,
+            string? uniqueCode, string? cufe,
             Guid? registerId, DateTimeOffset? issuedFrom, DateTimeOffset? issuedTo,
             CancellationToken ct) =>
             await Handle(async () => Results.Ok(await service.PageAsync(
                 context.User.ToFiscalUserIdentity(),
                 new FiscalDocumentQuery(page ?? 1, pageSize ?? 50, status, auralyNumber,
-                    dianNumber, cufe, registerId, issuedFrom, issuedTo), ct))));
+                    dianNumber, uniqueCode ?? cufe, registerId, issuedFrom, issuedTo), ct))));
         group.MapPost("/{documentId:guid}/retry", async (
             HttpContext context, FiscalDocumentService service, Guid documentId, CancellationToken ct) =>
             await Handle(async () =>
