@@ -14,6 +14,7 @@ using Auraly.Application.Organization;
 using Auraly.Application.Orders;
 using Auraly.Application.WorkSessions;
 using Auraly.Application.Purchasing;
+using Auraly.Application.Inventory;
 using Auraly.Application.Returns;
 using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Identifiers;
@@ -73,6 +74,11 @@ builder.Services.AddScoped<IDocumentProcessingWorkSource, SqlDocumentProcessingW
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPosSaleDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlGoodsReceiptDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlSalesReturnDocumentHandler>();
+builder.Services.AddScoped<SqlInventoryOperationProcessor>();
+builder.Services.AddScoped<IConfirmedDocumentHandler, SqlStockCountDocumentHandler>();
+builder.Services.AddScoped<IConfirmedDocumentHandler, SqlInventoryAdjustmentDocumentHandler>();
+builder.Services.AddScoped<IConfirmedDocumentHandler, SqlWarehouseTransferDocumentHandler>();
+builder.Services.AddScoped<IConfirmedDocumentHandler, SqlProductConversionDocumentHandler>();
 builder.Services.AddScoped<DocumentProcessingEngine>();
 builder.Services.AddScoped<DocumentProcessingWorker>();
 builder.Services.AddSingleton<FiscalProcessingCoordinator>();
@@ -223,6 +229,8 @@ builder.Services.AddScoped<IOrderBatchStore, SqlOrderBatchStore>();
 builder.Services.AddScoped<OrderBatchService>();
 builder.Services.AddScoped<IGoodsReceiptStore, SqlGoodsReceiptStore>();
 builder.Services.AddScoped<GoodsReceiptService>();
+builder.Services.AddScoped<IInventoryOperationStore, SqlInventoryOperationStore>();
+builder.Services.AddScoped<InventoryOperationService>();
 builder.Services.AddScoped<ISalesReturnStore, SqlSalesReturnStore>();
 builder.Services.AddScoped<SalesReturnService>();
 builder.Services.AddResponseCompression(options => options.EnableForHttps = true);
@@ -296,6 +304,11 @@ builder.Services.AddAuthorization(options =>
         policy.RequireAuthenticatedUser();
     });
     options.AddPolicy("returns.user", policy =>
+    {
+        policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
+        policy.RequireAuthenticatedUser();
+    });
+    options.AddPolicy("inventory.user", policy =>
     {
         policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
         policy.RequireAuthenticatedUser();
@@ -387,6 +400,7 @@ app.MapOrdersApi();
 app.MapPosOrdersApi();
 app.MapPurchasingApi();
 app.MapReturnsApi();
+app.MapInventoryApi();
 app.MapPost(
         "/api/pos/v1/sales",
         async (

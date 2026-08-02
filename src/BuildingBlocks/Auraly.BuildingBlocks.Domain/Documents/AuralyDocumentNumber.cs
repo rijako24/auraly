@@ -10,6 +10,7 @@ public static class AuralyDocumentTypes
     public const string Purchase = "Purchase";
     public const string PurchaseReturn = "PurchaseReturn";
     public const string WarehouseTransfer = "WarehouseTransfer";
+    public const string StockCount = "StockCount";
     public const string InventoryEntry = "InventoryEntry";
     public const string InventoryExit = "InventoryExit";
     public const string InventoryAdjustment = "InventoryAdjustment";
@@ -32,6 +33,7 @@ public static class AuralyDocumentTypes
         Purchase => "CMP",
         PurchaseReturn => "DCP",
         WarehouseTransfer => "TRB",
+        StockCount => "CTI",
         InventoryEntry => "EIN",
         InventoryExit => "SIN",
         InventoryAdjustment => "AJI",
