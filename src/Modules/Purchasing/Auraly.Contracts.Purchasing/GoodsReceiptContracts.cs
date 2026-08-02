@@ -8,11 +8,15 @@ public static class PurchasingPermissionCodes
     public const string ReadGoodsReceipts = "purchasing.goods-receipts.read";
     public const string CreateGoodsReceipts = "purchasing.goods-receipts.create";
     public const string ConfirmGoodsReceipts = "purchasing.goods-receipts.confirm";
+    public const string ReadPurchaseReturns = "purchasing.purchase-returns.read";
+    public const string CreatePurchaseReturns = "purchasing.purchase-returns.create";
+    public const string ConfirmPurchaseReturns = "purchasing.purchase-returns.confirm";
 }
 
 public static class PurchasingDocumentTypes
 {
     public const string GoodsReceipt = AuralyDocumentTypes.GoodsReceipt;
+    public const string PurchaseReturn = AuralyDocumentTypes.PurchaseReturn;
 }
 
 public static class PurchasingTaxTreatments
@@ -162,4 +166,64 @@ public static class GoodsReceiptContractSerializer
     public static GoodsReceiptDocumentPayload Deserialize(string payload) =>
         JsonSerializer.Deserialize<GoodsReceiptDocumentPayload>(payload, Options)
         ?? throw new InvalidOperationException("The goods receipt payload is invalid.");
+}
+
+public sealed record PurchaseReturnLineRequest(int OriginalLineNumber, decimal Quantity);
+
+public sealed record ConfirmPurchaseReturnRequest(
+    Guid ReturnId, Guid BusinessId, Guid OriginalGoodsReceiptId,
+    DateTimeOffset ReturnedAt, string ReasonCode, string? Notes,
+    IReadOnlyCollection<PurchaseReturnLineRequest> Lines);
+
+public sealed record PurchaseReturnLineSnapshot(
+    int LineNumber, int OriginalLineNumber, Guid ProductId, string Description,
+    decimal Quantity, decimal UnitCost, decimal DiscountAmount, string TaxCode,
+    decimal TaxRate, string TaxTreatment, decimal NetAmount, decimal TaxAmount,
+    decimal LineTotal, decimal RecognizedUnitCost);
+
+public sealed record PurchaseReturnDocumentPayload(
+    Guid TenantId, Guid BusinessId, Guid ReturnId, Guid OriginalGoodsReceiptId,
+    Guid WarehouseId, Guid SupplierId, Guid ConfirmedByUserId,
+    string DocumentNumber, Guid DocumentSeriesId, string DocumentPrefix,
+    string DocumentSeriesCode, long DocumentConsecutive, DateTimeOffset ReturnedAt,
+    string ReasonCode, string? Notes, string CurrencyCode, decimal NetAmount,
+    decimal TaxAmount, decimal TotalAmount, IReadOnlyList<PurchaseReturnLineSnapshot> Lines);
+
+public sealed record PurchaseReturnAcceptance(
+    Guid ReturnId, Guid MovementId, string DocumentNumber, string Status,
+    long ProcessingSequence, bool IdempotentReplay);
+
+public sealed record ReturnableGoodsReceiptLine(
+    int OriginalLineNumber, Guid ProductId, string Description,
+    decimal ReceivedQuantity, decimal ReturnedQuantity, decimal AvailableQuantity,
+    decimal UnitCost, decimal NetAmount, decimal TaxAmount, decimal LineTotal);
+
+public sealed record ReturnableGoodsReceipt(
+    Guid GoodsReceiptId, string DocumentNumber, Guid WarehouseId, string WarehouseName,
+    Guid SupplierId, string SupplierName, string? SupplierInvoiceNumber,
+    DateTimeOffset ReceivedAt, string CurrencyCode, decimal GrandTotal,
+    IReadOnlyList<ReturnableGoodsReceiptLine> Lines);
+
+public sealed record ReturnableGoodsReceiptListItem(
+    Guid GoodsReceiptId, string DocumentNumber, string SupplierName, string WarehouseName,
+    string? SupplierInvoiceNumber, DateTimeOffset ReceivedAt, decimal GrandTotal,
+    decimal ReturnedTotal, bool HasAvailableQuantity);
+
+public sealed record ReturnableGoodsReceiptPage(
+    IReadOnlyList<ReturnableGoodsReceiptListItem> Items, int Page, int PageSize,
+    int TotalCount, int TotalPages);
+
+public static class PurchaseReturnContractSerializer
+{
+    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = false
+    };
+
+    public static string Serialize(PurchaseReturnDocumentPayload payload) =>
+        JsonSerializer.Serialize(payload, Options);
+
+    public static PurchaseReturnDocumentPayload Deserialize(string payload) =>
+        JsonSerializer.Deserialize<PurchaseReturnDocumentPayload>(payload, Options)
+        ?? throw new InvalidOperationException("The purchase return payload is invalid.");
 }

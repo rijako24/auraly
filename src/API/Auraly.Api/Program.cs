@@ -81,6 +81,7 @@ builder.Services.AddScoped<IDocumentProcessingJobStore, SqlDocumentProcessingJob
 builder.Services.AddScoped<IDocumentProcessingWorkSource, SqlDocumentProcessingWorkSource>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPosSaleDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlGoodsReceiptDocumentHandler>();
+builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPurchaseReturnDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPayablePaymentDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlSalesReturnDocumentHandler>();
 builder.Services.AddScoped<SqlInventoryOperationProcessor>();
@@ -244,6 +245,8 @@ builder.Services.AddScoped<IGoodsReceiptStore, SqlGoodsReceiptStore>();
 builder.Services.AddScoped<IGoodsReceiptWorkspaceStore, SqlGoodsReceiptWorkspaceStore>();
 builder.Services.AddScoped<GoodsReceiptWorkspaceService>();
 builder.Services.AddScoped<GoodsReceiptService>();
+builder.Services.AddScoped<IPurchaseReturnStore, SqlPurchaseReturnStore>();
+builder.Services.AddScoped<PurchaseReturnService>();
 builder.Services.AddScoped<IPayablesStore, SqlPayablesStore>();
 builder.Services.AddScoped<PayablesService>();
 builder.Services.AddScoped<IPricingStore, SqlPricingStore>();

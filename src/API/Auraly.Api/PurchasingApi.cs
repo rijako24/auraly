@@ -97,6 +97,55 @@ public static class PurchasingApi
                     }))
             .RequireAuthorization("purchasing.user");
 
+        endpoints.MapGet(
+                "/api/commerce/v1/purchase-returns/receipts",
+                (HttpContext context, string? search, int? page, int? pageSize,
+                    PurchaseReturnService service, CancellationToken cancellationToken) =>
+                    ExecuteAsync(() => service.ListReturnableReceiptsAsync(
+                        context.User.ToPurchasingIdentity(), search, page ?? 1,
+                        pageSize ?? 25, cancellationToken)))
+            .RequireAuthorization("purchasing.user");
+
+        endpoints.MapGet(
+                "/api/commerce/v1/purchase-returns/receipts/{goodsReceiptId:guid}",
+                (HttpContext context, Guid goodsReceiptId, PurchaseReturnService service,
+                    CancellationToken cancellationToken) =>
+                    ExecuteAsync(() => service.GetReturnableReceiptAsync(
+                        context.User.ToPurchasingIdentity(), goodsReceiptId,
+                        cancellationToken)))
+            .RequireAuthorization("purchasing.user");
+
+        endpoints.MapPost(
+                "/api/commerce/v1/purchase-returns/confirm",
+                async (HttpContext context, ConfirmPurchaseReturnRequest request,
+                    PurchaseReturnService service, CancellationToken cancellationToken) =>
+                {
+                    try
+                    {
+                        var key = context.Request.Headers["Idempotency-Key"].ToString();
+                        var result = await service.ConfirmAsync(
+                            context.User.ToPurchasingIdentity(), key, request,
+                            cancellationToken);
+                        return Results.Accepted(
+                            $"/api/commerce/v1/purchase-returns/{result.ReturnId:D}", result);
+                    }
+                    catch (PurchasingForbiddenException exception)
+                    {
+                        return Results.Problem(exception.Message,
+                            statusCode: StatusCodes.Status403Forbidden);
+                    }
+                    catch (PurchasingValidationException exception)
+                    {
+                        return Results.Problem(exception.Message,
+                            statusCode: StatusCodes.Status400BadRequest);
+                    }
+                    catch (PurchasingConflictException exception)
+                    {
+                        return Results.Problem(exception.Message,
+                            statusCode: StatusCodes.Status409Conflict);
+                    }
+                })
+            .RequireAuthorization("purchasing.user");
         return endpoints;
     }
     private static async Task<IResult> ExecuteAsync<T>(Func<Task<T>> action)

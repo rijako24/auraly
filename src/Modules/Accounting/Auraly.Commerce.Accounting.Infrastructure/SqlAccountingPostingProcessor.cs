@@ -20,7 +20,7 @@ public sealed class SqlAccountingPostingProcessor(
     TimeProvider timeProvider)
 {
     private static readonly HashSet<string> SupportedTypes =
-        ["SalesInvoice", "SalesReturn", "GoodsReceipt", "PayablePayment"];
+        ["SalesInvoice", "SalesReturn", "GoodsReceipt", "PurchaseReturn", "PayablePayment"];
 
     public async Task ProcessAsync(
         Guid documentId,
@@ -73,6 +73,8 @@ public sealed class SqlAccountingPostingProcessor(
                     await LoadReturnFactsAsync(
                         connection, transaction, source, cancellationToken)),
                 "GoodsReceipt" => await LoadGoodsReceiptFactsAsync(
+                    connection, transaction, source, cancellationToken),
+                "PurchaseReturn" => await LoadPurchaseReturnFactsAsync(
                     connection, transaction, source, cancellationToken),
                 "PayablePayment" => FinancialFactsResult.Ready(
                     await LoadPayablePaymentFactsAsync(
@@ -138,6 +140,7 @@ public sealed class SqlAccountingPostingProcessor(
                    CASE WHEN p.DocumentType=N'SalesInvoice' THEN s.IssuedAt
                         WHEN p.DocumentType=N'SalesReturn' THEN r.ReturnedAt
                         WHEN p.DocumentType=N'GoodsReceipt' THEN g.ReceivedAt
+                        WHEN p.DocumentType=N'PurchaseReturn' THEN pr.ReturnedAt
                         WHEN p.DocumentType=N'PayablePayment' THEN pp.PaidAt END
             FROM dbo.DocumentProcessingPayloads p WITH (UPDLOCK,HOLDLOCK)
             INNER JOIN dbo.DocumentProcessingJobs j WITH (UPDLOCK,HOLDLOCK)
@@ -149,6 +152,8 @@ public sealed class SqlAccountingPostingProcessor(
               ON r.ReturnId=p.DocumentId AND p.DocumentType=N'SalesReturn'
             LEFT JOIN dbo.GoodsReceipts g
               ON g.GoodsReceiptId=p.DocumentId AND p.DocumentType=N'GoodsReceipt'
+            LEFT JOIN dbo.PurchaseReturns pr
+              ON pr.PurchaseReturnId=p.DocumentId AND p.DocumentType=N'PurchaseReturn'
             LEFT JOIN dbo.SupplierPayments pp
               ON pp.PaymentId=p.DocumentId AND p.DocumentType=N'PayablePayment'
             WHERE p.DocumentId=@DocumentId AND p.DocumentType=@DocumentType
@@ -386,6 +391,62 @@ public sealed class SqlAccountingPostingProcessor(
             number, inventory, expense, deductibleVat, total));
     }
 
+    private static async Task<FinancialFactsResult> LoadPurchaseReturnFactsAsync(
+        SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
+        CancellationToken cancellationToken)
+    {
+        string number; string currency; decimal total; decimal payableCredit;
+        decimal supplierCredit;
+        await using (var command = new SqlCommand("""
+            SELECT r.DocumentNumber,r.CurrencyCode,r.TotalAmount,
+                   e.PayableCreditAmount,e.SupplierCreditAmount
+            FROM dbo.PurchaseReturns r
+            INNER JOIN dbo.PurchaseReturnFinancialEffects e
+              ON e.PurchaseReturnId=r.PurchaseReturnId
+            WHERE r.PurchaseReturnId=@DocumentId AND r.BusinessId=@BusinessId;
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
+            command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                throw new InvalidOperationException(
+                    "The purchase return financial effects were not found for accounting.");
+            number=reader.GetString(0); currency=reader.GetString(1);
+            total=reader.GetDecimal(2); payableCredit=reader.GetDecimal(3);
+            supplierCredit=reader.GetDecimal(4);
+        }
+        if (currency != "COP")
+            return FinancialFactsResult.Pending("ForeignCurrencyUnsupported",
+                $"Currency '{currency}' requires an exchange-rate accounting policy.");
+        decimal deductibleVat; decimal acquisitionAmount;
+        await using (var command = new SqlCommand("""
+            SELECT COALESCE(SUM(CASE WHEN TaxTreatment=N'DeductibleInputVat'
+                       THEN TaxAmount ELSE 0 END),0),
+                   COALESCE(SUM(NetAmount+CASE WHEN TaxTreatment=N'CapitalizedCost'
+                       THEN TaxAmount ELSE 0 END),0)
+            FROM dbo.PurchaseReturnLines WHERE PurchaseReturnId=@DocumentId;
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
+            await using var reader=await command.ExecuteReaderAsync(cancellationToken);
+            await reader.ReadAsync(cancellationToken);
+            deductibleVat=reader.GetDecimal(0); acquisitionAmount=reader.GetDecimal(1);
+        }
+        var inventory=decimal.Abs(await InventoryCostAsync(connection,transaction,
+            source.DocumentId,source.DocumentType,cancellationToken));
+        var expense=decimal.Round(acquisitionAmount-inventory,4,
+            MidpointRounding.AwayFromZero);
+        if(expense<0 || decimal.Round(inventory+expense+deductibleVat,4)!=total ||
+           decimal.Round(payableCredit+supplierCredit,4)!=total)
+            throw new InvalidOperationException(
+                "The purchase return does not reconcile with its inventory, tax and financial effects.");
+        var settlements=new List<(string Category,decimal Amount)>();
+        if(payableCredit>0)settlements.Add((AccountingCategories.AccountsPayable,payableCredit));
+        if(supplierCredit>0)settlements.Add((AccountingCategories.SupplierCreditsReceivable,supplierCredit));
+        return FinancialFactsResult.Ready(FinancialFacts.PurchaseReturn(
+            number,inventory,expense,deductibleVat,total,settlements));
+    }
     private static async Task<FinancialFacts> LoadPayablePaymentFactsAsync(
         SqlConnection connection,
         SqlTransaction transaction,
@@ -601,13 +662,24 @@ public sealed class SqlAccountingPostingProcessor(
             }
             if (IsPurchase)
             {
-                if (Cost > 0) yield return new(accounts[AccountingCategories.Inventory], Cost, 0, PartyId, costCenter, Description);
-                if (Untaxed > 0) yield return new(accounts[AccountingCategories.PurchasesExpense], Untaxed, 0, PartyId, costCenter, Description);
-                if (Tax > 0) yield return new(accounts[AccountingCategories.InputVat], Tax, 0, PartyId, costCenter, Description);
-                foreach (var settlement in Settlements) yield return new(accounts[settlement.Category], 0, settlement.Amount, PartyId, costCenter, Description);
+                if (IsReturn)
+                {
+                    foreach (var settlement in Settlements)
+                        yield return new(accounts[settlement.Category], settlement.Amount, 0, PartyId, costCenter, Description);
+                    if (Cost > 0) yield return new(accounts[AccountingCategories.Inventory], 0, Cost, PartyId, costCenter, Description);
+                    if (Untaxed > 0) yield return new(accounts[AccountingCategories.PurchasesExpense], 0, Untaxed, PartyId, costCenter, Description);
+                    if (Tax > 0) yield return new(accounts[AccountingCategories.InputVat], 0, Tax, PartyId, costCenter, Description);
+                }
+                else
+                {
+                    if (Cost > 0) yield return new(accounts[AccountingCategories.Inventory], Cost, 0, PartyId, costCenter, Description);
+                    if (Untaxed > 0) yield return new(accounts[AccountingCategories.PurchasesExpense], Untaxed, 0, PartyId, costCenter, Description);
+                    if (Tax > 0) yield return new(accounts[AccountingCategories.InputVat], Tax, 0, PartyId, costCenter, Description);
+                    foreach (var settlement in Settlements)
+                        yield return new(accounts[settlement.Category], 0, settlement.Amount, PartyId, costCenter, Description);
+                }
                 yield break;
-            }
-            if (!IsReturn)
+            }            if (!IsReturn)
             {
                 foreach (var settlement in Settlements) yield return new(accounts[settlement.Category], settlement.Amount, 0, PartyId, costCenter, Description);
                 yield return new(accounts[AccountingCategories.SalesRevenue], 0, Untaxed, PartyId, costCenter, Description);
@@ -625,6 +697,7 @@ public sealed class SqlAccountingPostingProcessor(
         public static FinancialFacts Invoice(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Factura de venta {number}", party, untaxed, tax, total, cost, settlements, false, false, false);
         public static FinancialFacts Return(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, string settlement) => new($"Devolucion de venta {number}", party, untaxed, tax, total, cost, [(settlement, total)], true, false, false);
         public static FinancialFacts Purchase(string number, decimal inventory, decimal expense, decimal deductibleVat, decimal total) => new($"Entrada de mercancia {number}", null, expense, deductibleVat, total, inventory, [(AccountingCategories.AccountsPayable, total)], false, true, false);
+        public static FinancialFacts PurchaseReturn(string number, decimal inventory, decimal expense, decimal deductibleVat, decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Devolucion de compra {number}", null, expense, deductibleVat, total, inventory, settlements, true, true, false);
         public static FinancialFacts PayablePayment(string number, decimal total, string settlement) => new($"Pago a proveedor {number}", null, 0, 0, total, 0, [(settlement, total)], false, false, true);
     }
 }

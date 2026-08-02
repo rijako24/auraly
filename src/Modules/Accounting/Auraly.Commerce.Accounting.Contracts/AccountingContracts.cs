@@ -23,6 +23,7 @@ public static class AccountingCategories
     public const string CostOfGoodsSold = "CostOfGoodsSold";
     public const string CustomerCreditsPayable = "CustomerCreditsPayable";
     public const string AccountsPayable = "AccountsPayable";
+    public const string SupplierCreditsReceivable = "SupplierCreditsReceivable";
     public const string InputVat = "InputVat";
     public const string PurchasesExpense = "PurchasesExpense";
 
