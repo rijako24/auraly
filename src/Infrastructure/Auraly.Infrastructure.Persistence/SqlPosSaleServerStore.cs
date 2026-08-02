@@ -175,6 +175,12 @@ public sealed class SqlPosSaleServerStore(
                 fiscalStatus,
                 processingStatus,
                 cancellationToken);
+            await InsertFiscalDocumentAsync(
+                connection,
+                transaction,
+                command,
+                fiscalStatus,
+                cancellationToken);
             await InsertSnapshotAsync(
                 connection,
                 transaction,
@@ -250,6 +256,36 @@ public sealed class SqlPosSaleServerStore(
                 await Task.Delay(TimeSpan.FromMilliseconds(25 * (attempt + 1)), cancellationToken);
         }
         throw new InvalidOperationException("The received sale was not persisted after bounded contention retries.");
+    }
+
+    private static async Task InsertFiscalDocumentAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        StorePosSaleReceptionCommand command,
+        string fiscalStatus,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            INSERT dbo.FiscalDocuments
+              (DocumentId,BusinessId,SourceDocumentType,FiscalDocumentType,
+               AuralyDocumentNumber,FiscalNumber,UniqueCodeType,UniqueCode,
+               IssuedAt,FiscalStatus,CreatedAt,UpdatedAt)
+            VALUES
+              (@DocumentId,@BusinessId,N'SalesInvoice',N'Invoice',
+               @AuralyNumber,@FiscalNumber,N'CUFE',@UniqueCode,
+               @IssuedAt,@FiscalStatus,@CreatedAt,@CreatedAt);
+            """;
+        var request = command.Request;
+        await using var sqlCommand = new SqlCommand(sql, connection, transaction);
+        sqlCommand.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+        sqlCommand.Parameters.AddWithValue("@BusinessId", request.BusinessId);
+        sqlCommand.Parameters.AddWithValue("@AuralyNumber", request.DocumentNumber.FullNumber);
+        sqlCommand.Parameters.AddWithValue("@FiscalNumber", request.FiscalSnapshot.FiscalNumber);
+        sqlCommand.Parameters.AddWithValue("@UniqueCode", request.FiscalSnapshot.Cufe);
+        sqlCommand.Parameters.AddWithValue("@IssuedAt", request.FiscalSnapshot.IssuedAt);
+        sqlCommand.Parameters.AddWithValue("@FiscalStatus", fiscalStatus);
+        sqlCommand.Parameters.AddWithValue("@CreatedAt", command.ReceivedAt);
+        await sqlCommand.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task InsertDocumentAsync(

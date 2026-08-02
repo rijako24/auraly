@@ -13,7 +13,7 @@ CREATE TABLE [dbo].[FiscalSnapshots]
     [ConflictReason] NVARCHAR(1000) NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     CONSTRAINT [PK_FiscalSnapshots] PRIMARY KEY CLUSTERED ([DocumentId]),
-    CONSTRAINT [FK_FiscalSnapshots_SalesDocuments] FOREIGN KEY ([DocumentId]) REFERENCES [dbo].[SalesDocuments] ([DocumentId]),
+    CONSTRAINT [FK_FiscalSnapshots_FiscalDocuments] FOREIGN KEY ([DocumentId]) REFERENCES [dbo].[FiscalDocuments] ([DocumentId]),
     CONSTRAINT [CK_FiscalSnapshots_Environment] CHECK ([Environment] IN (1, 2))
 );
 

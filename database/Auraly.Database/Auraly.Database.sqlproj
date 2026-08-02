@@ -104,6 +104,7 @@
     <Build Include="Tables\WorkSessionClosures.sql" />
     <Build Include="Tables\SupervisorAuthorizations.sql" />
     <Build Include="Tables\SalesDocuments.sql" />
+    <Build Include="Tables\FiscalDocuments.sql" />
     <Build Include="Tables\OrderCommerce.sql" />
     <Build Include="Tables\SalesDrafts.sql" />
     <Build Include="Tables\SalesDraftLines.sql" />
@@ -113,6 +114,7 @@
     <Build Include="Tables\SalesDocumentTaxSummaries.sql" />
     <Build Include="Tables\SalesPayments.sql" />
     <Build Include="Tables\SalesReturns.sql" />
+    <Build Include="Tables\SalesReturnFiscalSnapshots.sql" />
     <Build Include="Tables\CashOperations.sql" />
     <Build Include="Tables\WorkSessionMovements.sql" />
     <Build Include="Tables\FiscalSnapshots.sql" />

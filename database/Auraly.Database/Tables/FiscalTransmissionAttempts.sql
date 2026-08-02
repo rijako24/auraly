@@ -15,7 +15,7 @@ CREATE TABLE [dbo].[FiscalTransmissionAttempts]
     [RequestArtifactId] UNIQUEIDENTIFIER NULL,
     [ResponseArtifactId] UNIQUEIDENTIFIER NULL,
     CONSTRAINT [PK_FiscalTransmissionAttempts] PRIMARY KEY CLUSTERED ([FiscalTransmissionAttemptId]),
-    CONSTRAINT [FK_FiscalTransmissionAttempts_SalesDocuments] FOREIGN KEY ([DocumentId]) REFERENCES [dbo].[SalesDocuments] ([DocumentId]),
+    CONSTRAINT [FK_FiscalTransmissionAttempts_FiscalDocuments] FOREIGN KEY ([DocumentId]) REFERENCES [dbo].[FiscalDocuments] ([DocumentId]),
     CONSTRAINT [FK_FiscalTransmissionAttempts_RequestArtifact] FOREIGN KEY ([RequestArtifactId]) REFERENCES [dbo].[FiscalArtifacts] ([FiscalArtifactId]),
     CONSTRAINT [FK_FiscalTransmissionAttempts_ResponseArtifact] FOREIGN KEY ([ResponseArtifactId]) REFERENCES [dbo].[FiscalArtifacts] ([FiscalArtifactId]),
     CONSTRAINT [UQ_FiscalTransmissionAttempts_Document_Number] UNIQUE ([DocumentId], [AttemptNumber]),

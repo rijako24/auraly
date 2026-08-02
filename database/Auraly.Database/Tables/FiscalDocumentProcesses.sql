@@ -22,7 +22,7 @@ CREATE TABLE [dbo].[FiscalDocumentProcesses]
     [UpdatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [PK_FiscalDocumentProcesses] PRIMARY KEY CLUSTERED ([DocumentId]),
-    CONSTRAINT [FK_FiscalDocumentProcesses_SalesDocuments] FOREIGN KEY ([DocumentId]) REFERENCES [dbo].[SalesDocuments] ([DocumentId]),
+    CONSTRAINT [FK_FiscalDocumentProcesses_FiscalDocuments] FOREIGN KEY ([DocumentId]) REFERENCES [dbo].[FiscalDocuments] ([DocumentId]),
     CONSTRAINT [FK_FiscalDocumentProcesses_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_FiscalDocumentProcesses_Configuration] FOREIGN KEY ([FiscalIssuerConfigurationId]) REFERENCES [dbo].[FiscalIssuerConfigurations] ([FiscalIssuerConfigurationId]),
     CONSTRAINT [CK_FiscalDocumentProcesses_AttemptCount] CHECK ([AttemptCount] >= 0)

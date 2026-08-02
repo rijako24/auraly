@@ -11,6 +11,7 @@ Pre-Deployment Script Template
 */
 
 :r .\Migrations\20260730_CollapseOrganizationScope.sql
+:r .\Migrations\20260801_CreateFiscalDocumentRoot.sql
 
 -- Scripts de pre-despliegue
 -- Aquí puedes agregar validaciones, limpieza, etc.

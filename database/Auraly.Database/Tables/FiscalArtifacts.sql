@@ -12,7 +12,7 @@ CREATE TABLE [dbo].[FiscalArtifacts]
     [GeneratorVersion] NVARCHAR(64) NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     CONSTRAINT [PK_FiscalArtifacts] PRIMARY KEY CLUSTERED ([FiscalArtifactId]),
-    CONSTRAINT [FK_FiscalArtifacts_SalesDocuments] FOREIGN KEY ([DocumentId]) REFERENCES [dbo].[SalesDocuments] ([DocumentId]),
+    CONSTRAINT [FK_FiscalArtifacts_FiscalDocuments] FOREIGN KEY ([DocumentId]) REFERENCES [dbo].[FiscalDocuments] ([DocumentId]),
     CONSTRAINT [UQ_FiscalArtifacts_Document_Type_Version] UNIQUE ([DocumentId], [ArtifactType], [ArtifactVersion]),
     CONSTRAINT [CK_FiscalArtifacts_Version] CHECK ([ArtifactVersion] > 0),
     CONSTRAINT [CK_FiscalArtifacts_Content] CHECK (DATALENGTH([Content]) > 0)

@@ -22,6 +22,7 @@ CREATE TABLE [dbo].[SalesReturns]
     [TaxAmount] DECIMAL(19,4) NOT NULL,
     [TotalAmount] DECIMAL(19,4) NOT NULL,
     [Status] NVARCHAR(24) NOT NULL,
+    [FiscalStatus] NVARCHAR(48) NULL,
     [CreatedByUserId] UNIQUEIDENTIFIER NOT NULL,
     [AcceptedAt] DATETIMEOFFSET(7) NOT NULL,
     [ProcessedAt] DATETIMEOFFSET(7) NULL,
