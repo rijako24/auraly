@@ -61,6 +61,7 @@ if ($UseIntegratedSecurity) {
 
 # Buscar SqlPackage.exe
 $sqlPackagePaths = @(
+    "$env:USERPROFILE\.dotnet\tools\sqlpackage.exe",
     "C:\Program Files\Microsoft SQL Server\160\DAC\bin\SqlPackage.exe",
     "C:\Program Files (x86)\Microsoft SQL Server\160\DAC\bin\SqlPackage.exe",
     "C:\Program Files\Microsoft SQL Server\150\DAC\bin\SqlPackage.exe",
@@ -94,11 +95,15 @@ $sqlPackageArgs = @(
     "/p:DoNotAlterChangeDataCaptureObjects=True",
     "/p:DoNotAlterReplicatedObjects=True",
     "/p:DropObjectsNotInSource=False",
-    "/p:BlockOnPossibleDataLoss=True",
-    "/p:DoNotDropObjectTypes=Users;Logins;RoleMembership;Permissions"
+    "/p:BlockOnPossibleDataLoss=True"
 )
 
 & $sqlPackagePath $sqlPackageArgs
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "`nLa primera publicación no completó el plan. Reintentando una vez para permitir que DacFx reanalice un predespliegue durable..." -ForegroundColor Yellow
+    & $sqlPackagePath $sqlPackageArgs
+}
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "`nBase de datos publicada correctamente!" -ForegroundColor Green

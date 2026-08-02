@@ -37,10 +37,11 @@ DACPAC con `CreateNewDatabase=False`, `DropObjectsNotInSource=True` y
 `BlockOnPossibleDataLoss=True`.
 
 En el primer intento DacFx puede detenerse después de que el predespliegue haya
-transformado correctamente el modelo histórico. No se debe editar datos ni ejecutar
-scripts manuales: se repite exactamente el mismo comando. La migración detecta que el
-corte ya fue aplicado, no vuelve a transformar datos y DacFx completa el modelo al
-recalcular el plan sobre el esquema nuevo.
+transformado correctamente el modelo histórico. `Publish.ps1` y `Publish-Both.ps1`
+realizan automáticamente un único segundo intento. La migración detecta que el corte
+ya fue aplicado, no vuelve a transformar datos y DacFx completa el modelo al recalcular
+el plan sobre el esquema nuevo. Si se usa `SqlPackage` directamente, se debe repetir
+exactamente el mismo comando; nunca editar datos entre ambos intentos.
 
 Después se debe comprobar:
 

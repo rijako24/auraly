@@ -44,6 +44,14 @@ comprobó que:
 - `SupervisorCredentials` permanece disponible.
 - Una repetición del predespliegue no intenta recompilar ni ejecutar el modelo anterior.
 
+Adicionalmente se ejecuto `Publish.ps1` completo contra otra base temporal creada con
+el DACPAC del commit base. El primer plan transformo el modelo historico y el segundo
+plan, lanzado automaticamente por el script, completo la publicacion. Se verifico que
+el dispositivo y su serie conservaran sus identificadores y relaciones. Durante esta
+prueba se elimino la combinacion incompatible de `DoNotDropObjectTypes` con
+`DropObjectsNotInSource=False` y se agrego la ruta de la herramienta .NET global a la
+busqueda de `SqlPackage`.
+
 ## Cobertura funcional conectada
 
 - Selección segura de sede y bodega para venta online.

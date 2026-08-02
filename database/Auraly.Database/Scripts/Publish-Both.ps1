@@ -63,6 +63,7 @@ if (-not (Test-Path $dacpacPath)) {
 
 # Buscar SqlPackage
 $sqlPackagePaths = @(
+    "$env:USERPROFILE\.dotnet\tools\sqlpackage.exe",
     "C:\Program Files\Microsoft SQL Server\160\DAC\bin\SqlPackage.exe",
     "C:\Program Files\Microsoft SQL Server\150\DAC\bin\SqlPackage.exe",
     "C:\Program Files\Microsoft SQL Server\140\DAC\bin\SqlPackage.exe"
@@ -87,10 +88,13 @@ function Publish-Database {
         "/p:DropObjectsNotInSource=False",
         "/p:BlockOnPossibleDataLoss=True",
         "/p:DoNotAlterChangeDataCaptureObjects=True",
-        "/p:DoNotAlterReplicatedObjects=True",
-        "/p:DoNotDropObjectTypes=Users;Logins;RoleMembership;Permissions"
+        "/p:DoNotAlterReplicatedObjects=True"
     )
     & $sqlPackagePath $args
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  Primer intento incompleto; reintentando una vez con un plan DacFx nuevo..." -ForegroundColor Yellow
+        & $sqlPackagePath $args
+    }
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  Publicado correctamente en $TargetName" -ForegroundColor Green
         return $true
