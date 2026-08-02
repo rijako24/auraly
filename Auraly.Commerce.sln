@@ -175,6 +175,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Commerce.Accounting.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Commerce.Accounting.Infrastructure", "src\Modules\Accounting\Auraly.Commerce.Accounting.Infrastructure\Auraly.Commerce.Accounting.Infrastructure.csproj", "{A4444444-4444-4444-8444-444444444444}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Contracts.Pricing", "src\Modules\Pricing\Auraly.Contracts.Pricing\Auraly.Contracts.Pricing.csproj", "{34A7A0A6-A030-4A22-8E2E-A65020B837B3}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Application.Pricing", "src\Modules\Pricing\Auraly.Application.Pricing\Auraly.Application.Pricing.csproj", "{FEE04602-017A-4E35-B532-345722C0A143}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Infrastructure.Pricing", "src\Modules\Pricing\Auraly.Infrastructure.Pricing\Auraly.Infrastructure.Pricing.csproj", "{24684274-236A-414B-8F4B-FD175951A011}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -420,6 +426,18 @@ Global
 		{A4444444-4444-4444-8444-444444444444}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A4444444-4444-4444-8444-444444444444}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A4444444-4444-4444-8444-444444444444}.Release|Any CPU.Build.0 = Release|Any CPU
+		{34A7A0A6-A030-4A22-8E2E-A65020B837B3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{34A7A0A6-A030-4A22-8E2E-A65020B837B3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{34A7A0A6-A030-4A22-8E2E-A65020B837B3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{34A7A0A6-A030-4A22-8E2E-A65020B837B3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FEE04602-017A-4E35-B532-345722C0A143}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FEE04602-017A-4E35-B532-345722C0A143}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FEE04602-017A-4E35-B532-345722C0A143}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FEE04602-017A-4E35-B532-345722C0A143}.Release|Any CPU.Build.0 = Release|Any CPU
+		{24684274-236A-414B-8F4B-FD175951A011}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{24684274-236A-414B-8F4B-FD175951A011}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{24684274-236A-414B-8F4B-FD175951A011}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{24684274-236A-414B-8F4B-FD175951A011}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{E3ECCBF0-6B36-4460-A25E-4FFBE9837688} = {AA52BDD3-C36B-499D-9049-BB721311A642}
@@ -500,5 +518,8 @@ Global
 		{89ACD77D-F1B4-4D1A-B10A-B7E95B278430} = {793444F5-DA49-48DF-9366-68F9A0796299}
 		{57C6155A-AB62-435A-852A-0F3B36D16301} = {89ACD77D-F1B4-4D1A-B10A-B7E95B278430}
 		{D26BDCD2-3E7E-4A06-BA9B-7BCBD8C157CD} = {89ACD77D-F1B4-4D1A-B10A-B7E95B278430}
+		{34A7A0A6-A030-4A22-8E2E-A65020B837B3} = {D6A3A3C4-D0DF-41AA-AB88-9ACE89D048F8}
+		{FEE04602-017A-4E35-B532-345722C0A143} = {D6A3A3C4-D0DF-41AA-AB88-9ACE89D048F8}
+		{24684274-236A-414B-8F4B-FD175951A011} = {D6A3A3C4-D0DF-41AA-AB88-9ACE89D048F8}
 	EndGlobalSection
 EndGlobal

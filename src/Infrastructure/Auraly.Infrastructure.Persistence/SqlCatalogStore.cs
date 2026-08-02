@@ -30,6 +30,8 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         try
         {
+            if (!create)
+                await EnsurePriceUnchangedAsync(connection, transaction, user.BusinessId, productId, request.Prices.Single().Amount, ct);
             await ExecuteAsync(connection, transaction, """
                 IF NOT EXISTS (
                   SELECT 1 FROM dbo.TaxProfiles t JOIN dbo.Businesses b ON b.BusinessId=t.BusinessId
@@ -53,7 +55,6 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                   IF @@ROWCOUNT=0 THROW 51010, 'Product was not found in the authenticated scope.', 1;
                   DELETE FROM dbo.ProductBarcodes WHERE ProductId=@ProductId;
                   DELETE FROM dbo.ProductIdentifiers WHERE ProductId=@ProductId;
-                  UPDATE dbo.ProductPrices SET IsActive=0, ValidUntil=@Now WHERE ProductId=@ProductId AND IsActive=1;
                   DELETE c FROM dbo.SupplierCostAgreements c JOIN dbo.SupplierProducts sp ON sp.SupplierProductId=c.SupplierProductId WHERE sp.ProductId=@ProductId;
                   DELETE FROM dbo.SupplierProducts WHERE ProductId=@ProductId;
                   DELETE FROM dbo.ProductScaleConfigurations WHERE ProductId=@ProductId;
@@ -78,6 +79,8 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                     P("@BusinessId", user.BusinessId), P("@ProductId", productId), P("@Type", identifier.Type.Trim()),
                     P("@Value", identifier.Value.Trim()), P("@Now", now)], ct);
             }
+            if (create)
+            {
             foreach (var price in request.Prices)
             {
                 await ExecuteAsync(connection, transaction, """
@@ -86,6 +89,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                     VALUES (@Id,@BusinessId,@ProductId,@Amount,@Currency,@Now,1,@Now);
                     """, [P("@Id", ids.NewId()), P("@BusinessId", user.BusinessId), P("@ProductId", productId),
                     P("@Amount", price.Amount), P("@Currency", price.CurrencyCode.ToUpperInvariant()), P("@Now", now)], ct);
+            }
             }
 
             if (request.Scale is not null)
@@ -426,6 +430,26 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct)) throw new CatalogForbiddenException("The catalog sync session is invalid or expired.");
         return reader.GetInt64(0);
+    }
+
+    private static async Task EnsurePriceUnchangedAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid businessId,
+        Guid productId, decimal requestedPrice, CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT Amount FROM dbo.ProductPrices WITH(UPDLOCK,HOLDLOCK)
+            WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND IsActive=1;
+            """;
+        command.Parameters.AddRange([
+            P("@BusinessId", businessId), P("@ProductId", productId)]);
+        var current = await command.ExecuteScalarAsync(ct);
+        if (current is null || current is DBNull)
+            throw new CatalogValidationException("The product has no active base price.");
+        if (Convert.ToDecimal(current) != requestedPrice)
+            throw new CatalogValidationException(
+                "Sale prices must be changed from Products > Prices and profitability.");
     }
 
     private static SqlParameter[] ProductParameters(CatalogUserIdentity user, Guid id, SaveProductRequest r, DateTimeOffset now) =>

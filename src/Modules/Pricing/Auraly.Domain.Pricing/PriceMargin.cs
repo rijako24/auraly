@@ -27,6 +27,21 @@ public static class PriceMargin
             ? Money(currentSalePrice)
             : CalculateSalePrice(newCost, margin.Value);
     }
+    public static decimal RoundPrice(decimal value, decimal increment, string mode)
+    {
+        if (value < 0) throw new ArgumentOutOfRangeException(nameof(value));
+        if (increment <= 0) throw new ArgumentOutOfRangeException(nameof(increment));
+        var units = value / increment;
+        var roundedUnits = mode switch
+        {
+            "Nearest" => decimal.Round(units, 0, MidpointRounding.AwayFromZero),
+            "Up" => decimal.Ceiling(units),
+            "Down" => decimal.Floor(units),
+            _ => throw new ArgumentOutOfRangeException(nameof(mode))
+        };
+        return Money(roundedUnits * increment);
+    }
+
 
     private static decimal Money(decimal value) => decimal.Round(value, 4, MidpointRounding.AwayFromZero);
     private static decimal Percent(decimal value) => decimal.Round(value, 6, MidpointRounding.AwayFromZero);

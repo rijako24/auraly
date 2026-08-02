@@ -18,6 +18,7 @@ using Auraly.Application.Orders;
 using Auraly.Application.WorkSessions;
 using Auraly.Application.Purchasing;
 using Auraly.Application.Payables;
+using Auraly.Application.Pricing;
 using Auraly.Application.Inventory;
 using Auraly.Application.Returns;
 using Auraly.Application.Sales;
@@ -33,6 +34,7 @@ using Auraly.Contracts.Sales;
 using Auraly.Fiscal.Ubl;
 using Auraly.Infrastructure.Fiscal;
 using Auraly.Infrastructure.Persistence;
+using Auraly.Infrastructure.Pricing;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
@@ -49,6 +51,7 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
 builder.Services.AddSingleton(new SqlServerConnectionFactory(connectionString));
 builder.Services.AddSingleton(new AccountingSqlConnectionFactory(connectionString));
+builder.Services.AddSingleton(new PricingSqlConnectionFactory(connectionString));
 builder.Services.AddSingleton<IFiscalTechnicalKeyProvider, ConfigurationFiscalTechnicalKeyProvider>();
 builder.Services.AddScoped<IFiscalSnapshotVerifier, FiscalSnapshotVerifier>();
 builder.Services.AddScoped<IFiscalDocumentStore, SqlFiscalDocumentStore>();
@@ -241,6 +244,8 @@ builder.Services.AddScoped<IGoodsReceiptStore, SqlGoodsReceiptStore>();
 builder.Services.AddScoped<GoodsReceiptService>();
 builder.Services.AddScoped<IPayablesStore, SqlPayablesStore>();
 builder.Services.AddScoped<PayablesService>();
+builder.Services.AddScoped<IPricingStore, SqlPricingStore>();
+builder.Services.AddScoped<PricingService>();
 builder.Services.AddScoped<IInventoryOperationStore, SqlInventoryOperationStore>();
 builder.Services.AddScoped<InventoryOperationService>();
 builder.Services.AddScoped<ISalesReturnStore, SqlSalesReturnStore>();
@@ -321,6 +326,11 @@ builder.Services.AddAuthorization(options =>
         policy.RequireAuthenticatedUser();
     });
     options.AddPolicy("returns.user", policy =>
+    {
+        policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
+        policy.RequireAuthenticatedUser();
+    });
+    options.AddPolicy("pricing.user", policy =>
     {
         policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
         policy.RequireAuthenticatedUser();
@@ -424,6 +434,7 @@ app.MapPurchasingApi();
 app.MapPayablesApi();
 app.MapReturnsApi();
 app.MapInventoryApi();
+app.MapPricingApi();
 app.MapAccountingApi();
 app.MapPost(
         "/api/pos/v1/sales",

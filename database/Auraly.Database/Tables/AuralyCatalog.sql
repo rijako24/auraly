@@ -77,6 +77,15 @@ CREATE TABLE [dbo].[ProductPrices] (
     [ProductId] UNIQUEIDENTIFIER NOT NULL,
     [Amount] DECIMAL(19,4) NOT NULL,
     [CurrencyCode] CHAR(3) NOT NULL,
+    [CostBasisType] NVARCHAR(32) NULL,
+    [CostBasisAmount] DECIMAL(19,6) NULL,
+    [TargetMarginPercent] DECIMAL(9,6) NULL,
+    [EffectiveMarginPercent] DECIMAL(9,6) NULL,
+    [InputMode] NVARCHAR(16) NULL,
+    [RoundingIncrement] DECIMAL(19,4) NULL,
+    [RoundingMode] NVARCHAR(16) NULL,
+    [PublishedByUserId] UNIQUEIDENTIFIER NULL,
+    [PublishedAt] DATETIMEOFFSET(7) NULL,
     [ValidFrom] DATETIMEOFFSET(7) NOT NULL,
     [ValidUntil] DATETIMEOFFSET(7) NULL,
     [IsActive] BIT NOT NULL,
@@ -84,6 +93,10 @@ CREATE TABLE [dbo].[ProductPrices] (
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [FK_ProductPrices_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
     CONSTRAINT [CK_ProductPrices_Amount] CHECK ([Amount] >= 0),
+    CONSTRAINT [CK_ProductPrices_CostBasis] CHECK ([CostBasisAmount] IS NULL OR [CostBasisAmount] >= 0),
+    CONSTRAINT [CK_ProductPrices_Margin] CHECK ([TargetMarginPercent] IS NULL OR [TargetMarginPercent] BETWEEN 0 AND 99.999999),
+    CONSTRAINT [CK_ProductPrices_InputMode] CHECK ([InputMode] IS NULL OR [InputMode] IN (N'Margin',N'SalePrice')),
+    CONSTRAINT [CK_ProductPrices_Rounding] CHECK (([RoundingIncrement] IS NULL AND [RoundingMode] IS NULL) OR ([RoundingIncrement] > 0 AND [RoundingMode] IN (N'Nearest',N'Up',N'Down'))),
     CONSTRAINT [CK_ProductPrices_Validity] CHECK ([ValidUntil] IS NULL OR [ValidUntil] > [ValidFrom])
 );
 GO

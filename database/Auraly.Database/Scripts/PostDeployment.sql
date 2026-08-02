@@ -60,6 +60,7 @@
 :r .\Seeds\SeedAuraly.sql
 :r .\Seeds\SeedInmobiliariaDemo.sql
 :r .\Seeds\SeedLuisPetitBarber.sql
+:r .\Seeds\SeedPricingPermissions.sql
 :r .\Seeds\SeedGoogleCalendarIntegrations.sql
 :r .\Seeds\SeedBackgroundJobs.sql
 :r .\Seeds\SeedSolorzanoBusinessIdentity.sql

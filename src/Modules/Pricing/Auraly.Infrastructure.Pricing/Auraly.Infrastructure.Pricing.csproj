@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Auraly.Contracts.Pricing\Auraly.Contracts.Pricing.csproj" />
+    <ProjectReference Include="..\Auraly.Domain.Pricing\Auraly.Domain.Pricing.csproj" />
+    <ProjectReference Include="..\Auraly.Application.Pricing\Auraly.Application.Pricing.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
+  </ItemGroup>
+</Project>

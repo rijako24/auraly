@@ -174,6 +174,10 @@ CREATE TABLE [dbo].[PriceRevisionProposals]
     [CurrentMarginPercent] DECIMAL(9,6) NULL,
     [TargetMarginPercent] DECIMAL(9,6) NULL,
     [SuggestedSalePrice] DECIMAL(19,4) NOT NULL,
+    [RoundedSuggestedSalePrice] DECIMAL(19,4) NULL,
+    [EffectiveMarginAfterRounding] DECIMAL(9,6) NULL,
+    [RejectReason] NVARCHAR(500) NULL,
+    [LastInputMode] NVARCHAR(16) NULL,
     [Status] NVARCHAR(24) NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [ReviewedByUserId] UNIQUEIDENTIFIER NULL,
@@ -185,6 +189,8 @@ CREATE TABLE [dbo].[PriceRevisionProposals]
     CONSTRAINT [FK_PriceRevisionProposals_ReceiptLine] FOREIGN KEY ([SourceDocumentId], [SourceLineNumber]) REFERENCES [dbo].[GoodsReceiptLines] ([GoodsReceiptId], [LineNumber]),
     CONSTRAINT [UQ_PriceRevisionProposals_Source] UNIQUE ([SourceDocumentId], [SourceLineNumber]),
     CONSTRAINT [CK_PriceRevisionProposals_Values] CHECK ([ObservedUnitCost] >= 0 AND [CurrentSalePrice] >= 0 AND [SuggestedSalePrice] >= 0 AND ([CurrentMarginPercent] IS NULL OR [CurrentMarginPercent] < 100) AND ([TargetMarginPercent] IS NULL OR [TargetMarginPercent] BETWEEN 0 AND 99.999999)),
+    CONSTRAINT [CK_PriceRevisionProposals_Rounded] CHECK ([RoundedSuggestedSalePrice] IS NULL OR [RoundedSuggestedSalePrice] >= 0),
+    CONSTRAINT [CK_PriceRevisionProposals_InputMode] CHECK ([LastInputMode] IS NULL OR [LastInputMode] IN (N'Margin',N'SalePrice')),
     CONSTRAINT [CK_PriceRevisionProposals_Status] CHECK ([Status] IN (N'PendingReview', N'Approved', N'Published', N'Rejected', N'Superseded'))
 );
 GO
