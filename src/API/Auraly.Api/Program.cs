@@ -241,6 +241,8 @@ builder.Services.AddScoped<OrderRecoveryService>();
 builder.Services.AddScoped<IOrderBatchStore, SqlOrderBatchStore>();
 builder.Services.AddScoped<OrderBatchService>();
 builder.Services.AddScoped<IGoodsReceiptStore, SqlGoodsReceiptStore>();
+builder.Services.AddScoped<IGoodsReceiptWorkspaceStore, SqlGoodsReceiptWorkspaceStore>();
+builder.Services.AddScoped<GoodsReceiptWorkspaceService>();
 builder.Services.AddScoped<GoodsReceiptService>();
 builder.Services.AddScoped<IPayablesStore, SqlPayablesStore>();
 builder.Services.AddScoped<PayablesService>();

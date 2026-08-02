@@ -40,6 +40,9 @@ public sealed class SqlGoodsReceiptStore(
                 return replay;
             }
 
+            await ValidateDraftConcurrencyAsync(
+                connection, transaction, user.BusinessId, request.DocumentId,
+                request.DraftConcurrencyToken, cancellationToken);
             await ValidateScopeAsync(connection, transaction, user, request, cancellationToken);
             var number = await AllocateNumberAsync(connection, transaction, user.BusinessId, cancellationToken);
             var now = timeProvider.GetUtcNow();
@@ -83,6 +86,8 @@ public sealed class SqlGoodsReceiptStore(
             await InsertJobAsync(
                 connection, transaction, user.BusinessId, request.DocumentId, movementId,
                 sequence, payloadJson, payloadHash, now, cancellationToken);
+            await DeleteDraftIfPresentAsync(
+                connection, transaction, user.BusinessId, request.DocumentId, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return new GoodsReceiptAcceptance(
                 request.DocumentId, movementId, number.FullNumber, "Accepted", sequence, false);
@@ -341,6 +346,54 @@ public sealed class SqlGoodsReceiptStore(
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    private static async Task DeleteDraftIfPresentAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid businessId,
+        Guid documentId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand(
+            "DELETE dbo.GoodsReceiptDrafts WHERE GoodsReceiptDraftId=@Id AND BusinessId=@BusinessId;",
+            connection, transaction);
+        command.Parameters.AddWithValue("@Id", documentId);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task ValidateDraftConcurrencyAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid businessId,
+        Guid documentId,
+        string? concurrencyToken,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT RowVersion
+            FROM dbo.GoodsReceiptDrafts WITH (UPDLOCK,HOLDLOCK)
+            WHERE GoodsReceiptDraftId=@DocumentId AND BusinessId=@BusinessId;
+            """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        var stored = (byte[]?)await command.ExecuteScalarAsync(cancellationToken);
+        if (stored is null)
+        {
+            if (concurrencyToken is not null)
+                throw new PurchasingConflictException("The draft no longer exists.");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(concurrencyToken))
+            throw new PurchasingConflictException("DraftConcurrencyToken is required for a saved draft.");
+        byte[] expected;
+        try { expected = Convert.FromBase64String(concurrencyToken); }
+        catch (FormatException exception)
+        { throw new PurchasingValidationException("DraftConcurrencyToken is invalid.", exception); }
+        if (!stored.AsSpan().SequenceEqual(expected))
+            throw new PurchasingConflictException("The draft changed in another session.");
+    }
     private static byte[] HashRequest(ConfirmGoodsReceiptRequest request, GoodsReceiptCalculation calculation) =>
         SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
         {

@@ -45,7 +45,8 @@ public sealed record ConfirmGoodsReceiptRequest(
     DateTimeOffset? DueDate,
     string CurrencyCode,
     string? Notes,
-    IReadOnlyCollection<GoodsReceiptLineRequest> Lines);
+    IReadOnlyCollection<GoodsReceiptLineRequest> Lines,
+    string? DraftConcurrencyToken = null);
 
 public sealed record GoodsReceiptLineSnapshot(
     int LineNumber,
@@ -92,6 +93,55 @@ public sealed record GoodsReceiptAcceptance(
     string Status,
     long ProcessingSequence,
     bool IdempotentReplay);
+
+public sealed record SaveGoodsReceiptDraftRequest(
+    Guid DraftId,
+    Guid BusinessId,
+    Guid? WarehouseId,
+    Guid? SupplierId,
+    string? SupplierInvoiceNumber,
+    DateTimeOffset? SupplierInvoiceDate,
+    DateTimeOffset ReceivedAt,
+    bool CreatesPayable,
+    DateTimeOffset? DueDate,
+    string CurrencyCode,
+    string? Notes,
+    IReadOnlyCollection<GoodsReceiptLineRequest> Lines,
+    string? ConcurrencyToken);
+
+public sealed record GoodsReceiptDraft(
+    Guid DraftId, Guid BusinessId, Guid? WarehouseId, Guid? SupplierId,
+    string? SupplierInvoiceNumber, DateTimeOffset? SupplierInvoiceDate,
+    DateTimeOffset ReceivedAt, bool CreatesPayable, DateTimeOffset? DueDate,
+    string CurrencyCode, string? Notes, decimal NetAmount, decimal TaxAmount,
+    decimal GrandTotal, IReadOnlyList<GoodsReceiptLineSnapshot> Lines,
+    DateTimeOffset UpdatedAt, string ConcurrencyToken);
+
+public sealed record GoodsReceiptListItem(
+    Guid DocumentId, string? DocumentNumber, string Status,
+    Guid? WarehouseId, string? WarehouseName, Guid? SupplierId, string? SupplierName,
+    string? SupplierInvoiceNumber, DateTimeOffset ReceivedAt,
+    decimal GrandTotal, DateTimeOffset UpdatedAt);
+
+public sealed record GoodsReceiptPage(
+    IReadOnlyList<GoodsReceiptListItem> Items, int Page, int PageSize,
+    int TotalCount, int TotalPages);
+
+public sealed record GoodsReceiptWorkspaceOptions(
+    IReadOnlyList<GoodsReceiptWarehouseOption> Warehouses,
+    IReadOnlyList<GoodsReceiptSupplierOption> Suppliers);
+
+public sealed record GoodsReceiptWarehouseOption(Guid WarehouseId, string Code, string Name);
+public sealed record GoodsReceiptSupplierOption(Guid SupplierId, string Identification, string Name);
+
+public sealed record GoodsReceiptProductOption(
+    Guid ProductId, string ProductCode, string? Reference, string Name,
+    string? SupplierProductCode, decimal? LatestUnitCost,
+    string TaxCode, decimal TaxRate, IReadOnlyList<string> Barcodes);
+
+public sealed record GoodsReceiptProductPage(
+    IReadOnlyList<GoodsReceiptProductOption> Items, int Page, int PageSize,
+    int TotalCount, int TotalPages);
 
 public sealed record PurchasingUserIdentity(
     Guid UserId,
