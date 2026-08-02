@@ -35,11 +35,19 @@ public interface IDocumentProcessingWorkSource
         CancellationToken cancellationToken);
 }
 
+public interface IDocumentProcessingCompletionObserver
+{
+    Task ObserveAsync(
+        DocumentProcessingSignal signal,
+        CancellationToken cancellationToken);
+}
+
 public sealed class DocumentProcessingMessageException(string message) : Exception(message);
 
 public sealed class DocumentProcessingWorker(
     IDocumentProcessingWorkSource workSource,
-    DocumentProcessingEngine engine)
+    DocumentProcessingEngine engine,
+    IEnumerable<IDocumentProcessingCompletionObserver>? completionObservers = null)
 {
     public async Task<DocumentProcessingResult> ProcessOneAsync(
         DocumentProcessingSignal signal,
@@ -48,7 +56,10 @@ public sealed class DocumentProcessingWorker(
         ArgumentNullException.ThrowIfNull(signal);
         var work = await workSource.LoadAsync(signal, cancellationToken);
         if (work.State == DocumentProcessingWorkState.Completed)
+        {
+            await ObserveCompletionAsync(signal, cancellationToken);
             return DocumentProcessingResult.AlreadyProcessed;
+        }
         if (work.State != DocumentProcessingWorkState.Ready || work.Document is null)
             throw new DocumentProcessingMessageException(
                 work.Reason ?? "The movement is missing or cannot be processed in sequence.");
@@ -57,6 +68,16 @@ public sealed class DocumentProcessingWorker(
         if (result == DocumentProcessingResult.Busy)
             throw new DocumentProcessingMessageException(
                 "The movement is already leased by another consumer.");
+        await ObserveCompletionAsync(signal, cancellationToken);
         return result;
+    }
+
+    private async Task ObserveCompletionAsync(
+        DocumentProcessingSignal signal,
+        CancellationToken cancellationToken)
+    {
+        if (completionObservers is null) return;
+        foreach (var observer in completionObservers)
+            await observer.ObserveAsync(signal, cancellationToken);
     }
 }

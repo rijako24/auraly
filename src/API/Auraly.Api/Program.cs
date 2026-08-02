@@ -2,6 +2,9 @@ using Auraly.Api;
 using Azure.Messaging.ServiceBus;
 using Azure.Messaging.WebPubSub;
 using System.Text;
+using Auraly.Commerce.Accounting.Application;
+using Auraly.Commerce.Accounting.Infrastructure;
+using Auraly.Commerce.Accounting.Contracts;
 using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Application.Authentication;
 using Auraly.Application.Authorization;
@@ -44,6 +47,7 @@ if (string.IsNullOrWhiteSpace(connectionString))
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
 builder.Services.AddSingleton(new SqlServerConnectionFactory(connectionString));
+builder.Services.AddSingleton(new AccountingSqlConnectionFactory(connectionString));
 builder.Services.AddSingleton<IFiscalTechnicalKeyProvider, ConfigurationFiscalTechnicalKeyProvider>();
 builder.Services.AddScoped<IFiscalSnapshotVerifier, FiscalSnapshotVerifier>();
 builder.Services.AddScoped<IFiscalDocumentStore, SqlFiscalDocumentStore>();
@@ -81,6 +85,10 @@ builder.Services.AddScoped<IConfirmedDocumentHandler, SqlWarehouseTransferDocume
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlProductConversionDocumentHandler>();
 builder.Services.AddScoped<DocumentProcessingEngine>();
 builder.Services.AddScoped<DocumentProcessingWorker>();
+builder.Services.AddScoped<SqlAccountingPostingProcessor>();
+builder.Services.AddScoped<IDocumentProcessingCompletionObserver, SqlAccountingCompletionObserver>();
+builder.Services.AddScoped<IAccountingStore, SqlAccountingStore>();
+builder.Services.AddScoped<AccountingService>();
 builder.Services.AddSingleton<FiscalProcessingCoordinator>();
 builder.Services.AddScoped<ReceivePosSaleService>();
 if (!builder.Environment.IsEnvironment("Testing"))
@@ -313,6 +321,11 @@ builder.Services.AddAuthorization(options =>
         policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
         policy.RequireAuthenticatedUser();
     });
+    options.AddPolicy("accounting.user", policy =>
+    {
+        policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
+        policy.RequireAuthenticatedUser();
+    });
     options.AddPolicy("pos.catalog.sync", policy =>
     {
         policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
@@ -401,6 +414,7 @@ app.MapPosOrdersApi();
 app.MapPurchasingApi();
 app.MapReturnsApi();
 app.MapInventoryApi();
+app.MapAccountingApi();
 app.MapPost(
         "/api/pos/v1/sales",
         async (

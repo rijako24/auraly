@@ -129,6 +129,7 @@
     <Build Include="Tables\InventoryOperations.sql" />
     <Build Include="Tables\InventoryMovements.sql" />
     <Build Include="Tables\InventoryBalances.sql" />
+    <Build Include="Tables\Accounting.sql" />
     <Build Include="Tables\PosSynchronizationOutboxMessages.sql" />
     <Build Include="Tables\ServerOutboxMessages.sql" />
   </ItemGroup>
