@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using System.Text;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.BuildingBlocks.Infrastructure.Identifiers;
@@ -136,6 +136,7 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton(credentials);
         builder.Services.AddSingleton<PosCatalogSynchronizer>();
         builder.Services.AddSingleton<PosIdentitySynchronizer>();
+        builder.Services.AddSingleton<PosCustomerServerClient>();
         builder.Services.AddSingleton<PosOrderServerClient>();
         builder.Services.AddSingleton<PosOrderRecoveryService>();
         builder.Services.AddSingleton<IPosInventoryAvailabilityClient>(
@@ -217,7 +218,7 @@ public static class PosEdgeHostApplication
                     await context.Response.WriteAsJsonAsync(new
                     {
                         code = "LocalLoginRequired",
-                        detail = "Inicia sesión en este dispositivo para continuar."
+                        detail = "Inicia sesiÃ³n en este dispositivo para continuar."
                     });
                     return;
                 }
@@ -249,7 +250,7 @@ public static class PosEdgeHostApplication
                 await context.Response.WriteAsJsonAsync(new
                 {
                     code = "IssuedPendingPrint",
-                    detail = "La factura ya fue emitida y está pendiente de imprimir la tirilla. Presiona F1 para reintentar la impresión."
+                    detail = "La factura ya fue emitida y estÃ¡ pendiente de imprimir la tirilla. Presiona F1 para reintentar la impresiÃ³n."
         });
             }
             finally
@@ -381,6 +382,21 @@ public static class PosEdgeHostApplication
                 nextOffset = hasMore ? offset + pageSize : (int?)null
             });
         });
+        edge.MapGet("/customers/geography/countries", async (
+            PosCustomerServerClient server,
+            CancellationToken ct) => Results.Ok(await server.CountriesAsync(ct)));
+        edge.MapGet("/customers/geography/countries/{countryId:guid}/divisions", async (
+            Guid countryId,
+            PosCustomerServerClient server,
+            CancellationToken ct) => Results.Ok(await server.DivisionsAsync(countryId, ct)));
+        edge.MapGet("/customers/geography/divisions/{divisionId:guid}/cities", async (
+            Guid divisionId,
+            PosCustomerServerClient server,
+            CancellationToken ct) => Results.Ok(await server.CitiesAsync(divisionId, ct)));
+        edge.MapPost("/customers", async (
+            PosCreateCustomerInput request,
+            PosCustomerServerClient server,
+            CancellationToken ct) => Results.Ok(await server.CreateAsync(request, ct)));
         edge.MapGet("/customers/{customerId:guid}", async (
             Guid customerId,
             PosCatalogStore catalog,

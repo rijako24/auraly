@@ -1,4 +1,4 @@
-import {
+﻿import {
   invoiceCommerceOrders,
   loadCommerceOrder,
   loadCommerceOrders,
@@ -14,6 +14,10 @@ import {
   PosClient,
   PosCompleteSaleResult,
   PosCustomer,
+  PosCreateCustomerInput,
+  PosCountry,
+  PosAdministrativeDivision,
+  PosCity,
   PosCustomerSearchPage,
   PosCustomerSelection,
   PosDraft,
@@ -222,6 +226,50 @@ export class OnlinePosClient implements PosClient {
     } satisfies PosCustomerSearchPage;
   }
 
+  async customerCountries() {
+    return request<PosCountry[]>("/api/commerce/v1/masters/geography/countries");
+  }
+
+  async customerDivisions(countryId: string) {
+    return request<PosAdministrativeDivision[]>(`/api/commerce/v1/masters/geography/countries/${countryId}/divisions`);
+  }
+
+  async customerCities(divisionId: string) {
+    return request<PosCity[]>(`/api/commerce/v1/masters/geography/divisions/${divisionId}/cities`);
+  }
+
+  async createCustomer(input: PosCreateCustomerInput) {
+    const created = await request<{
+      customerId: string; identification: string; displayName: string;
+      priceListId: string | null; priceChannelId: string | null; isActive: boolean;
+    }>("/api/commerce/v1/customers", this.post({
+      operationId: crypto.randomUUID(),
+      businessId: this.context.businessId,
+      party: {
+        partyType: input.partyType,
+        identificationCountryId: input.identificationCountryId,
+        identificationTypeCode: input.identificationTypeCode,
+        identification: input.identification,
+        verificationDigit: input.verificationDigit,
+        displayName: input.displayName,
+        legalName: input.legalName,
+        firstName: input.firstName,
+        lastName: input.lastName,
+        email: input.email,
+        phone: input.phone,
+      },
+      primarySite: input.primarySite,
+      pricing: null,
+    }));
+    return {
+      customerId: created.customerId,
+      identification: created.identification,
+      name: created.displayName,
+      priceListId: created.priceListId,
+      priceChannelId: created.priceChannelId,
+      isActive: created.isActive,
+    } satisfies PosCustomer;
+  }
   async customer(customerId: string) {
     const customer = await request<OnlineCustomerPage["items"][number]>(
       "/api/commerce/v1/pos/drafts/customers/get",
@@ -453,7 +501,7 @@ export class OnlinePosClient implements PosClient {
       );
       if (!preview)
         throw new PosEdgeError(
-          "El navegador bloqueó la vista previa de impresión.",
+          "El navegador bloqueÃ³ la vista previa de impresiÃ³n.",
           409,
         );
       await renderReceipt(preview, receipt, this.qrImageUrl(documentId));
@@ -533,7 +581,7 @@ export class OnlinePosClient implements PosClient {
     const version = this.versions.get(draftId);
     if (version === undefined)
       throw new PosEdgeError(
-        "La versión de la venta no está disponible. Recarga el módulo de facturación.",
+        "La versiÃ³n de la venta no estÃ¡ disponible. Recarga el mÃ³dulo de facturaciÃ³n.",
         409,
       );
     return version;
@@ -642,7 +690,7 @@ async function renderReceipt(
       (line) => `
         <section class="line">
           <strong>${escapeHtml(line.description)}</strong>
-          <div><span>${line.quantity} × ${currency.format(line.unitPrice)}</span><b>${currency.format(line.total)}</b></div>
+          <div><span>${line.quantity} Ã— ${currency.format(line.unitPrice)}</span><b>${currency.format(line.total)}</b></div>
           ${line.discount > 0 ? `<small>Descuento: ${currency.format(line.discount)}</small>` : ""}
           ${line.tax > 0 ? `<small>IVA: ${currency.format(line.tax)}</small>` : ""}
         </section>`,
@@ -681,14 +729,14 @@ async function renderReceipt(
 <body>
   <header>
     <h1>Auraly</h1>
-    <h2>FACTURA ELECTRÓNICA DE VENTA</h2>
+    <h2>FACTURA ELECTRÃ“NICA DE VENTA</h2>
     <div>${new Date(receipt.issuedAt).toLocaleString("es-CO")}</div>
   </header>
   <section class="meta">
     <div><span>Documento Auraly</span><b>${escapeHtml(receipt.documentNumber)}</b></div>
-    <div><span>Número DIAN</span><b>${escapeHtml(receipt.fiscalNumber)}</b></div>
+    <div><span>NÃºmero DIAN</span><b>${escapeHtml(receipt.fiscalNumber)}</b></div>
     <div><span>Adquirente</span><b>${escapeHtml(receipt.customerName)}</b></div>
-    <div><span>Identificación</span><b>${escapeHtml(receipt.customerIdentification)}</b></div>
+    <div><span>IdentificaciÃ³n</span><b>${escapeHtml(receipt.customerIdentification)}</b></div>
   </section>
   ${lines}
   <section class="totals">
@@ -698,8 +746,8 @@ async function renderReceipt(
   </section>
   <section class="payments">${payments}</section>
   <div class="cufe"><strong>CUFE</strong><br>${escapeHtml(receipt.cufe)}</div>
-  <img class="qr" src="${escapeHtml(qrImageUrl)}" alt="Código QR DIAN">
-  <footer>Representación gráfica</footer>
+  <img class="qr" src="${escapeHtml(qrImageUrl)}" alt="CÃ³digo QR DIAN">
+  <footer>RepresentaciÃ³n grÃ¡fica</footer>
 </body>
 </html>`);
   preview.document.close();

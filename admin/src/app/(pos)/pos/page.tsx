@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import {
   AlertTriangle,
@@ -27,6 +27,7 @@ import { OrdersWorkspace } from "@/components/orders/orders-workspace";
 import {
   PosCatalogProduct,
   PosCustomer,
+  type PosCreateCustomerInput,
   PosDraft,
   PosDocumentNumberPreview,
   PosIssuedSaleSummary,
@@ -93,10 +94,10 @@ export default function PosPage() {
   const [edgeReady, setEdgeReady] = useState(false);
   const [serverConnected, setServerConnected] = useState(false);
   const [workstation, setWorkstation] = useState({
-    deviceSeriesCode: "—",
+    deviceSeriesCode: "â€”",
     businessName: "",
     warehouseName: "",
-    userDisplayName: "—",
+    userDisplayName: "â€”",
     userId: null as string | null,
   });
   const [message, setMessage] = useState("Esperando producto");
@@ -163,7 +164,7 @@ export default function PosPage() {
                   deviceSeriesCode: health.deviceSeriesCode,
                   businessName: health.businessName,
                   warehouseName: health.warehouseName,
-                  userDisplayName: health.userDisplayName || "—",
+                  userDisplayName: health.userDisplayName || "â€”",
                   userId: health.userId,
                 });
                 setEdgeLoginState(
@@ -239,7 +240,7 @@ export default function PosPage() {
             deviceSeriesCode: health.deviceSeriesCode,
             businessName: health.businessName,
             warehouseName: health.warehouseName,
-            userDisplayName: health.userDisplayName || "—",
+            userDisplayName: health.userDisplayName || "â€”",
             userId: health.userId,
           });
         }
@@ -259,7 +260,7 @@ export default function PosPage() {
           if (active) {
             setEdgeReady(false);
             setEdgeLoginState(null);
-            setMessage("Sincronizando catálogo inicial…");
+            setMessage("Sincronizando catÃ¡logo inicialâ€¦");
           }
           return;
         }
@@ -770,7 +771,7 @@ export default function PosPage() {
       setPaymentOpen(false);
       const issuedLabel =
         result.printPreviewOpened === false
-          ? "emitida. El navegador bloqueó la vista previa; puedes reimprimirla con F6"
+          ? "emitida. El navegador bloqueÃ³ la vista previa; puedes reimprimirla con F6"
           : "emitida e impresa";
       setMessage(
         settlement.change > 0
@@ -807,6 +808,28 @@ export default function PosPage() {
     [client],
   );
 
+  const customerCountries = useCallback(
+    () => client?.customerCountries() ?? Promise.resolve([]),
+    [client],
+  );
+
+  const customerDivisions = useCallback(
+    (countryId: string) => client?.customerDivisions(countryId) ?? Promise.resolve([]),
+    [client],
+  );
+
+  const customerCities = useCallback(
+    (divisionId: string) => client?.customerCities(divisionId) ?? Promise.resolve([]),
+    [client],
+  );
+
+  const createCustomer = useCallback(
+    (input: PosCreateCustomerInput) => {
+      if (!client) return Promise.reject(new Error("El punto de venta no está disponible."));
+      return client.createCustomer(input);
+    },
+    [client],
+  );
   const searchIssuedSales = useCallback(
     (term: string, skip: number) =>
       client?.searchIssuedSales(term, skip, 50) ??
@@ -827,7 +850,7 @@ export default function PosPage() {
   function openOrders() {
     if (!serverConnected) {
       setError(null);
-      setMessage("Los pedidos se consultan en línea. Auraly Server no está disponible.");
+      setMessage("Los pedidos se consultan en lÃ­nea. Auraly Server no estÃ¡ disponible.");
       focusScanner();
       return;
     }
@@ -835,7 +858,7 @@ export default function PosPage() {
   }
 
   async function recoverPosOrder(orderId: string) {
-    if (!client) throw new Error("El punto de venta no está disponible.");
+    if (!client) throw new Error("El punto de venta no estÃ¡ disponible.");
     const recovered = await client.recoverOrder(orderId);
     setDraft(recovered);
     setSelectedLineId(recovered.lines[0]?.lineId ?? null);
@@ -849,7 +872,7 @@ export default function PosPage() {
     orderIds: string[],
     paymentMethodCode: string,
   ) {
-    if (!client) throw new Error("El punto de venta no está disponible.");
+    if (!client) throw new Error("El punto de venta no estÃ¡ disponible.");
     const result = await client.invoiceOrders(orderIds, paymentMethodCode);
     setMessage(
       result.completedCount +
@@ -876,13 +899,13 @@ export default function PosPage() {
       caught.message.includes("pendiente de imprimir")
         ? caught.message
         : status === 404
-        ? "Producto no encontrado en el catálogo local"
+        ? "Producto no encontrado en el catÃ¡logo local"
         : status === 409
-          ? "La cantidad solicitada no está disponible"
+          ? "La cantidad solicitada no estÃ¡ disponible"
           : status === 503 && caught instanceof PosEdgeError && caught.message.includes("tirilla")
             ? "La factura fue emitida, pero la tirilla no pudo imprimirse. Reintenta sin modificar la venta."
             : status === 503
-            ? "La bodega exige validar inventario y no hay conexión"
+            ? "La bodega exige validar inventario y no hay conexiÃ³n"
             : "No fue posible acceder a los servicios locales del equipo";
     setError(text);
     setMessage("Revisa la novedad");
@@ -912,14 +935,14 @@ export default function PosPage() {
       const authorization = await authorizePosEnrollment(option);
       await redeemPosEnrollment(edgeEnrollmentToken, authorization);
       setSetupError(
-        "Configuración protegida. Auraly POS está reiniciando e iniciará la sincronización automática.",
+        "ConfiguraciÃ³n protegida. Auraly POS estÃ¡ reiniciando e iniciarÃ¡ la sincronizaciÃ³n automÃ¡tica.",
       );
       window.setTimeout(() => window.location.reload(), 2_500);
     } catch (caught) {
       setSetupError(
         caught instanceof Error
           ? caught.message
-          : "No fue posible enrolar esta estación.",
+          : "No fue posible enrolar esta estaciÃ³n.",
       );
       throw caught;
     } finally {
@@ -941,7 +964,7 @@ export default function PosPage() {
       setClient(new PosEdgeClient(edgeEnrollmentToken, session.token));
     } catch (caught) {
       setEdgeLoginError(
-        caught instanceof Error ? caught.message : "No fue posible iniciar sesión en este dispositivo.",
+        caught instanceof Error ? caught.message : "No fue posible iniciar sesiÃ³n en este dispositivo.",
       );
       throw caught;
     }
@@ -1015,12 +1038,12 @@ export default function PosPage() {
           <PosExitMenuButton />
           <StatusChip
             ok={serverConnected}
-            label={serverConnected ? "Conectado con Auraly" : "Modo sin conexión"}
+            label={serverConnected ? "Conectado con Auraly" : "Modo sin conexiÃ³n"}
             network
           />
         </div>
         <div className="flex min-w-0 items-center gap-3 text-sm">
-          <span className="min-w-0 truncate font-bold tracking-tight">{workstation.businessName || "Sede"} · {workstation.warehouseName || "Bodega"}</span>
+          <span className="min-w-0 truncate font-bold tracking-tight">{workstation.businessName || "Sede"} Â· {workstation.warehouseName || "Bodega"}</span>
           {client.mode === "online" && (
             <button
               type="button"
@@ -1040,7 +1063,7 @@ export default function PosPage() {
               disabled={busy}
               title="Cambiar cajero"
               className="grid h-8 w-8 place-items-center rounded-lg border border-white/10 text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
-              aria-label="Cerrar sesión del cajero"
+              aria-label="Cerrar sesiÃ³n del cajero"
             >
               <LogOut className="h-4 w-4" />
             </button>
@@ -1065,7 +1088,7 @@ export default function PosPage() {
             >
               <span className="flex items-center gap-2">
                 <Barcode className="h-5 w-5 text-teal-700" />
-                Escanea o escribe un código
+                Escanea o escribe un cÃ³digo
               </span>
               <span className="text-xs font-normal text-slate-500">Enter para agregar</span>
             </label>
@@ -1085,7 +1108,7 @@ export default function PosPage() {
                 autoComplete="off"
                 inputMode="text"
                 className="h-14 min-w-0 flex-1 rounded-xl border-2 border-teal-700/25 bg-slate-50 px-4 text-xl font-semibold tracking-wide outline-none transition focus:border-teal-600 focus:bg-white focus:ring-4 focus:ring-teal-600/10 disabled:opacity-50"
-                placeholder="Código de barras, interno o referencia"
+                placeholder="CÃ³digo de barras, interno o referencia"
                 aria-describedby="capture-state"
               />
               <button
@@ -1184,19 +1207,19 @@ export default function PosPage() {
                           {line.description}
                         </p>
                         <p className="mt-1 text-xs font-medium text-slate-500">
-                          {line.productCode} · {line.unitCode} · {priceLabel(line.priceSource)}
+                          {line.productCode} Â· {line.unitCode} Â· {priceLabel(line.priceSource)}
                         </p>
                         <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] font-semibold tabular-nums">
                           {line.discount > 0 && (
                             <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-800">
-                              Descuento −{money.format(line.discount)}
+                              Descuento âˆ’{money.format(line.discount)}
                             </span>
                           )}
                           <span
                             className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-sky-800"
                             title={`Impuesto ${line.taxCode}`}
                           >
-                            IVA {line.taxRate}% · {money.format(line.tax)}
+                            IVA {line.taxRate}% Â· {money.format(line.tax)}
                           </span>
                         </div>
                       </td>
@@ -1285,13 +1308,13 @@ export default function PosPage() {
                 </div>
                 <p className="relative mt-6 text-xl font-bold tracking-tight text-slate-900">Lista para vender</p>
                 <p className="relative mt-1 max-w-md text-sm text-slate-500">
-                  Escanea el primer producto o abre la búsqueda. El lector queda preparado para continuar sin usar el mouse.
+                  Escanea el primer producto o abre la bÃºsqueda. El lector queda preparado para continuar sin usar el mouse.
                 </p>
                 <div className="relative mt-5 flex flex-wrap items-center justify-center gap-2 text-xs font-semibold">
                   <span className="rounded-full border border-teal-200 bg-white px-3 py-1.5 text-teal-800">Lector activo</span>
-                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-700">Buscar producto · F2</span>
+                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-700">Buscar producto Â· F2</span>
                   <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-700">
-                    Próxima {nextNumber?.isAvailable
+                    PrÃ³xima {nextNumber?.isAvailable
                       ? nextNumber.fullNumber
                       : client.mode === "online"
                         ? "al emitir"
@@ -1318,7 +1341,7 @@ export default function PosPage() {
                   </p>
                 )}
                 <p className="mt-0.5 text-xs text-auraly-secondary">
-                  Próxima: {nextNumber?.isAvailable
+                  PrÃ³xima: {nextNumber?.isAvailable
                     ? nextNumber.fullNumber
                     : client.mode === "online"
                       ? "se asigna al emitir"
@@ -1326,7 +1349,7 @@ export default function PosPage() {
                 </p>
               </div>
               <span className="rounded-lg bg-white/10 px-2 py-1 text-xs">
-                {draft?.lines.length ?? 0} líneas
+                {draft?.lines.length ?? 0} lÃ­neas
               </span>
             </div>
             <button
@@ -1401,10 +1424,10 @@ export default function PosPage() {
                 <button type="button" disabled={busy} onClick={() => void reprintLastSale()}
                   className="mx-auto flex h-9 items-center justify-center gap-2 rounded-xl border border-emerald-700/25 bg-white px-4 text-sm font-bold text-emerald-900 hover:bg-emerald-100 disabled:opacity-50">
                   <Printer className="h-4 w-4" />
-                  Reimprimir última factura
+                  Reimprimir Ãºltima factura
                 </button>
                 <p className="mt-1 text-center text-xs text-emerald-700">
-                  El cambio se ocultará al agregar el primer producto.
+                  El cambio se ocultarÃ¡ al agregar el primer producto.
                 </p>
               </div>
             </section>
@@ -1457,7 +1480,7 @@ export default function PosPage() {
               <div className="min-h-0 flex-1 overflow-auto">
                 <div className="mb-3">
                   <p className="font-semibold text-slate-900">Ventas en espera</p>
-                  <p className="text-xs text-slate-500">Pausadas para continuar después</p>
+                  <p className="text-xs text-slate-500">Pausadas para continuar despuÃ©s</p>
                 </div>
                 <div className="space-y-2">
                   {temporaries.map((temporary) => (
@@ -1469,7 +1492,7 @@ export default function PosPage() {
                         <div className="min-w-0">
                           <p className="truncate font-medium">{temporary.name}</p>
                           <p className="mt-0.5 text-xs text-slate-500">
-                            {temporary.reference || "Sin referencia"} · {temporary.lines.length} líneas
+                            {temporary.reference || "Sin referencia"} Â· {temporary.lines.length} lÃ­neas
                           </p>
                         </div>
                         <p className="font-semibold tabular-nums">{money.format(temporary.payableAmount)}</p>
@@ -1570,6 +1593,11 @@ export default function PosPage() {
       {customerSearchOpen && client && (
         <PosCustomerSearchDialog
           busy={busy}
+          connected={serverConnected}
+          onCountries={customerCountries}
+          onDivisions={customerDivisions}
+          onCities={customerCities}
+          onCreate={createCustomer}
           onSearch={searchCustomers}
           onSelect={selectCustomer}
           onCancel={() => {
@@ -1625,20 +1653,20 @@ export default function PosPage() {
         <PosConfirmDialog
           title={
             confirmation.kind === "line"
-              ? "¿Eliminar este producto?"
+              ? "Â¿Eliminar este producto?"
               : confirmation.kind === "temporary"
-                ? "¿Eliminar esta venta en espera?"
-              : "¿Reiniciar toda la venta?"
+                ? "Â¿Eliminar esta venta en espera?"
+              : "Â¿Reiniciar toda la venta?"
           }
           description={
             confirmation.kind === "line"
-              ? `${confirmation.productName} se retirará de la venta actual.`
+              ? `${confirmation.productName} se retirarÃ¡ de la venta actual.`
               : confirmation.kind === "temporary"
-                ? `${confirmation.name} se eliminará definitivamente de este dispositivo.`
-              : "Se eliminarán todos los productos capturados y se abrirá una venta limpia."
+                ? `${confirmation.name} se eliminarÃ¡ definitivamente de este dispositivo.`
+              : "Se eliminarÃ¡n todos los productos capturados y se abrirÃ¡ una venta limpia."
           }
           confirmLabel={
-            confirmation.kind === "sale" ? "Sí, reiniciar" : "Sí, eliminar"
+            confirmation.kind === "sale" ? "SÃ­, reiniciar" : "SÃ­, eliminar"
           }
           busy={busy}
           onConfirm={confirmDestructiveAction}

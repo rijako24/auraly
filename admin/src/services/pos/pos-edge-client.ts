@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   CommerceOrderDetail,
   CommerceOrderFilters,
   CommerceOrderPage,
@@ -43,6 +43,27 @@ export type PosCustomerSearchPage = {
   nextOffset: number | null;
 };
 
+export type PosCountry = { countryId: string; code: string; name: string; isActive: boolean };
+export type PosAdministrativeDivision = { administrativeDivisionId: string; countryId: string; code: string; name: string; divisionType: string; isActive: boolean };
+export type PosCity = { cityId: string; administrativeDivisionId: string; code: string; name: string; isActive: boolean };
+export type PosCreateCustomerInput = {
+  partyType: "NaturalPerson" | "Organization";
+  identificationCountryId: string;
+  identificationTypeCode: string;
+  identification: string;
+  verificationDigit: string | null;
+  displayName: string;
+  legalName: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  email: string | null;
+  phone: string | null;
+  primarySite: {
+    code: string; name: string; countryId: string; administrativeDivisionId: string;
+    cityId: string; addressLine: string; neighborhood: string | null; postalCode: string | null;
+    email: string | null; phone: string | null; isPrimary: boolean;
+  };
+};
 export type PosCustomerSelection = { draft: PosDraft; customer: PosCustomer | null };
 
 export type PosIssuedSaleSummary = {
@@ -188,6 +209,10 @@ export interface PosClient {
   searchProducts(search?: string, skip?: number, take?: number): Promise<PosCatalogSearchPage>;
   searchCustomers(search?: string, skip?: number, take?: number): Promise<PosCustomerSearchPage>;
   customer(customerId: string): Promise<PosCustomer>;
+  customerCountries(): Promise<PosCountry[]>;
+  customerDivisions(countryId: string): Promise<PosAdministrativeDivision[]>;
+  customerCities(divisionId: string): Promise<PosCity[]>;
+  createCustomer(input: PosCreateCustomerInput): Promise<PosCustomer>;
   activeDraft(): Promise<PosDraft>;
   nextNumbers(): Promise<PosNextNumbers | null>;
   capture(value: string, customerId: string | null): Promise<PosCaptureResult>;
@@ -265,7 +290,7 @@ export class PosEdgeClient implements PosClient {
       method: "POST",
       body: JSON.stringify({ username, password }),
     });
-    if (!session.token) throw new PosEdgeError("El servicio local no devolvió una sesión de usuario.", 500);
+    if (!session.token) throw new PosEdgeError("El servicio local no devolviÃ³ una sesiÃ³n de usuario.", 500);
     this.userSessionToken = session.token;
     window.sessionStorage.setItem("auraly.pos.user-session", session.token);
     return session;
@@ -299,6 +324,24 @@ export class PosEdgeClient implements PosClient {
     return this.request<PosCustomerSearchPage>(`/edge/v1/customers?${query}`);
   }
 
+  customerCountries() {
+    return this.request<PosCountry[]>("/edge/v1/customers/geography/countries");
+  }
+
+  customerDivisions(countryId: string) {
+    return this.request<PosAdministrativeDivision[]>(`/edge/v1/customers/geography/countries/${countryId}/divisions`);
+  }
+
+  customerCities(divisionId: string) {
+    return this.request<PosCity[]>(`/edge/v1/customers/geography/divisions/${divisionId}/cities`);
+  }
+
+  createCustomer(input: PosCreateCustomerInput) {
+    return this.request<PosCustomer>("/edge/v1/customers", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
   customer(customerId: string) {
     return this.request<PosCustomer>(`/edge/v1/customers/${customerId}`);
   }
