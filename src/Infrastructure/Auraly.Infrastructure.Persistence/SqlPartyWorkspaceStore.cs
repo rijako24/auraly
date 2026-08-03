@@ -1,0 +1,342 @@
+﻿using Auraly.Application.Parties;
+using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.Contracts.Parties;
+using Microsoft.Data.SqlClient;
+
+namespace Auraly.Infrastructure.Persistence;
+
+public sealed class SqlPartyWorkspaceStore(
+    SqlServerConnectionFactory connections,
+    IAuralyIdGenerator ids) : IPartyWorkspaceStore
+{
+    public async Task<PartyWorkspacePage> PageAsync(
+        PartyActorIdentity actor, int page, PartyWorkspaceQuery query, CancellationToken ct)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        var offset = (page - 1) * query.PageSize;
+        const string scope = """
+            FROM dbo.Parties p
+            WHERE p.TenantId=@TenantId
+              AND (EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId)
+                   OR EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId))
+              AND (@Search IS NULL OR p.DisplayName LIKE N'%'+@Search+N'%' OR p.Identification LIKE N'%'+@Search+N'%' OR p.NormalizedIdentification LIKE N'%'+@Search+N'%'
+                   OR EXISTS(SELECT 1 FROM dbo.PartyContacts pc WHERE pc.PartyId=p.PartyId AND pc.IsActive=1 AND pc.Value LIKE N'%'+@Search+N'%'))
+              AND (@Role IS NULL
+                   OR @Role=N'Customer' AND EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId)
+                   OR @Role=N'Supplier' AND EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId))
+              AND (@IsActive IS NULL OR @IsActive=CASE WHEN
+                   EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId AND c.IsActive=1)
+                   OR EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId AND s.IsActive=1)
+                   THEN 1 ELSE 0 END)
+              AND (@Incomplete IS NULL OR @Incomplete=CASE WHEN p.CompletionStatus=N'Incomplete' THEN 1 ELSE 0 END)
+            """;
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            SELECT COUNT_BIG(1) {scope};
+            SELECT p.PartyId,p.PartyType,p.IdentificationTypeCode,p.Identification,p.VerificationDigit,
+                   COALESCE(p.DisplayName,p.LegalName,N'Sin nombre'),p.LegalName,p.FirstName,p.LastName,
+                   (SELECT TOP(1) Value FROM dbo.PartyContacts pc WHERE pc.PartyId=p.PartyId AND pc.ContactType=N'Email' AND pc.IsActive=1 ORDER BY pc.IsPrimary DESC,pc.CreatedAt),
+                   (SELECT TOP(1) Value FROM dbo.PartyContacts pc WHERE pc.PartyId=p.PartyId AND pc.ContactType=N'Phone' AND pc.IsActive=1 ORDER BY pc.IsPrimary DESC,pc.CreatedAt),
+                   CASE WHEN EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId) THEN 1 ELSE 0 END,
+                   CASE WHEN EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId) THEN 1 ELSE 0 END,
+                   site.Name,site.CityName,
+                   CASE WHEN EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId AND c.IsActive=1)
+                          OR EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId AND s.IsActive=1)
+                        THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END,
+                   p.CompletionStatus,p.RowVersion
+            FROM dbo.Parties p
+            OUTER APPLY(SELECT TOP(1) ps.Name,ci.Name CityName
+                        FROM dbo.PartySites ps JOIN dbo.Cities ci ON ci.CityId=ps.CityId
+                        WHERE ps.PartyId=p.PartyId AND ps.IsActive=1
+                        ORDER BY ps.IsPrimary DESC,ps.CreatedAt) site
+            WHERE p.TenantId=@TenantId
+              AND (EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId)
+                   OR EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId))
+              AND (@Search IS NULL OR p.DisplayName LIKE N'%'+@Search+N'%' OR p.Identification LIKE N'%'+@Search+N'%' OR p.NormalizedIdentification LIKE N'%'+@Search+N'%'
+                   OR EXISTS(SELECT 1 FROM dbo.PartyContacts pc WHERE pc.PartyId=p.PartyId AND pc.IsActive=1 AND pc.Value LIKE N'%'+@Search+N'%'))
+              AND (@Role IS NULL
+                   OR @Role=N'Customer' AND EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId)
+                   OR @Role=N'Supplier' AND EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId))
+              AND (@IsActive IS NULL OR @IsActive=CASE WHEN
+                   EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId AND c.IsActive=1)
+                   OR EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId AND s.IsActive=1)
+                   THEN 1 ELSE 0 END)
+              AND (@Incomplete IS NULL OR @Incomplete=CASE WHEN p.CompletionStatus=N'Incomplete' THEN 1 ELSE 0 END)
+            ORDER BY p.DisplayName,p.PartyId
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            """;
+        command.Parameters.AddRange([
+            P("@TenantId",actor.TenantId),P("@BusinessId",actor.BusinessId),P("@Search",Empty(query.Search)),
+            P("@Role",Empty(query.Role)),P("@IsActive",query.IsActive),P("@Incomplete",query.IsIncomplete),
+            P("@Offset",offset),P("@PageSize",query.PageSize)]);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        await reader.ReadAsync(ct);
+        var total = checked((int)reader.GetInt64(0));
+        await reader.NextResultAsync(ct);
+        var items = new List<PartyWorkspaceItem>();
+        while (await reader.ReadAsync(ct)) items.Add(Read(reader));
+        return new PartyWorkspacePage(items,page,query.PageSize,total,(int)Math.Ceiling(total/(double)query.PageSize));
+    }
+
+    public async Task<SupplierAcceptance> CreateSupplierAsync(
+        PartyActorIdentity actor, Guid partyId, Guid supplierId, Guid siteId,
+        CreateSupplierRequest request, string normalizedIdentification,
+        DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var transaction=(SqlTransaction)await connection.BeginTransactionAsync(System.Data.IsolationLevel.Serializable,ct);
+        try
+        {
+            await using var receipt=connection.CreateCommand();
+            receipt.Transaction=transaction;
+            receipt.CommandText="""
+                SELECT r.SupplierId,s.PartyId,p.NormalizedIdentification
+                FROM dbo.SupplierCreationReceipts r
+                JOIN dbo.Suppliers s ON s.SupplierId=r.SupplierId
+                JOIN dbo.Parties p ON p.PartyId=s.PartyId
+                WHERE r.BusinessId=@BusinessId AND r.OperationId=@OperationId;
+                """;
+            receipt.Parameters.AddRange([P("@BusinessId",actor.BusinessId),P("@OperationId",request.OperationId)]);
+            await using(var existingReader=await receipt.ExecuteReaderAsync(ct))
+            {
+                if(await existingReader.ReadAsync(ct))
+                {
+                    if(!string.Equals(existingReader.GetString(2),normalizedIdentification,StringComparison.Ordinal))
+                        throw new PartyConflictException("The operation ID was already used for another supplier.");
+                    var accepted=new SupplierAcceptance(existingReader.GetGuid(0),existingReader.GetGuid(1),true);
+                    await existingReader.CloseAsync(); await transaction.CommitAsync(ct); return accepted;
+                }
+            }
+
+            await ValidateScopeAsync(connection,transaction,actor,request.PrimarySite,ct);
+            var resolvedPartyId=await FindPartyIdAsync(connection,transaction,actor.TenantId,request.Party,normalizedIdentification,ct) ?? partyId;
+            if(resolvedPartyId==partyId)
+            {
+                await ExecuteAsync(connection,transaction,"""
+                    INSERT dbo.Parties(PartyId,TenantId,PartyType,IdentificationCountryId,IdentificationTypeCode,
+                      Identification,NormalizedIdentification,VerificationDigit,DisplayName,LegalName,FirstName,LastName,
+                      CompletionStatus,IsActive,CreatedBy,CreatedAt)
+                    VALUES(@PartyId,@TenantId,@PartyType,@CountryId,@IdentificationType,@Identification,@Normalized,
+                      @Digit,@DisplayName,@LegalName,@FirstName,@LastName,N'Complete',1,@ActorId,@Now);
+                    """,[
+                    P("@PartyId",partyId),P("@TenantId",actor.TenantId),P("@PartyType",request.Party.PartyType),
+                    P("@CountryId",request.Party.IdentificationCountryId),P("@IdentificationType",request.Party.IdentificationTypeCode.Trim().ToUpperInvariant()),
+                    P("@Identification",request.Party.Identification.Trim()),P("@Normalized",normalizedIdentification),
+                    P("@Digit",Empty(request.Party.VerificationDigit)),P("@DisplayName",request.Party.DisplayName.Trim()),
+                    P("@LegalName",Empty(request.Party.LegalName)),P("@FirstName",Empty(request.Party.FirstName)),P("@LastName",Empty(request.Party.LastName)),
+                    P("@ActorId",actor.ActorId),P("@Now",now)],ct);
+                await AddContactAsync(connection,transaction,resolvedPartyId,"Email",request.Party.Email,now,ct);
+                await AddContactAsync(connection,transaction,resolvedPartyId,"Phone",request.Party.Phone,now,ct);
+            }
+
+            var resolvedSupplierId=await FindSupplierIdAsync(connection,transaction,resolvedPartyId,actor.BusinessId,ct) ?? supplierId;
+            if(resolvedSupplierId==supplierId)
+            {
+                await ExecuteAsync(connection,transaction,"""
+                    INSERT dbo.Suppliers(SupplierId,BusinessId,PartyId,Identification,Name,IsActive,CreatedAt)
+                    VALUES(@SupplierId,@BusinessId,@PartyId,@Identification,@Name,1,@Now);
+                    """,[P("@SupplierId",supplierId),P("@BusinessId",actor.BusinessId),P("@PartyId",resolvedPartyId),
+                    P("@Identification",request.Party.Identification.Trim()),P("@Name",request.Party.DisplayName.Trim()),P("@Now",now)],ct);
+                await InsertSiteAsync(connection,transaction,actor,resolvedPartyId,siteId,request.PrimarySite,now,ct);
+            }
+            await ExecuteAsync(connection,transaction,"""
+                INSERT dbo.SupplierCreationReceipts(BusinessId,OperationId,SupplierId,CreatedAt)
+                VALUES(@BusinessId,@OperationId,@SupplierId,@Now);
+                """,[P("@BusinessId",actor.BusinessId),P("@OperationId",request.OperationId),P("@SupplierId",resolvedSupplierId),P("@Now",now)],ct);
+            await transaction.CommitAsync(ct);
+            return new SupplierAcceptance(resolvedSupplierId,resolvedPartyId,false);
+        }
+        catch(SqlException ex) when(ex.Number is 2601 or 2627)
+        { await transaction.RollbackAsync(ct); throw new PartyConflictException("The supplier identity or site is already in use."); }
+        catch { await transaction.RollbackAsync(ct); throw; }
+    }
+
+    public async Task<PartyWorkspaceItem> UpdateAsync(
+        PartyActorIdentity actor, Guid partyId, UpdatePartyRequest request, byte[] rowVersion,
+        DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection=connections.Create(); await connection.OpenAsync(ct);
+        await using var transaction=(SqlTransaction)await connection.BeginTransactionAsync(ct);
+        try
+        {
+            await RequirePartyAsync(connection,transaction,actor,partyId,ct);
+            await using var update=connection.CreateCommand(); update.Transaction=transaction;
+            update.CommandText="""
+                UPDATE dbo.Parties SET PartyType=@PartyType,DisplayName=@DisplayName,LegalName=@LegalName,
+                  FirstName=@FirstName,LastName=@LastName,VerificationDigit=@Digit,UpdatedBy=@ActorId,UpdatedAt=@Now
+                WHERE PartyId=@PartyId AND TenantId=@TenantId AND RowVersion=@RowVersion;
+                IF @@ROWCOUNT=0 THROW 51062,'The Party changed after it was loaded.',1;
+                UPDATE dbo.Suppliers SET Name=@DisplayName
+                WHERE PartyId=@PartyId AND BusinessId=@BusinessId;
+                """;
+            update.Parameters.AddRange([P("@PartyId",partyId),P("@TenantId",actor.TenantId),P("@BusinessId",actor.BusinessId),
+                P("@PartyType",request.PartyType),P("@DisplayName",request.DisplayName.Trim()),P("@LegalName",Empty(request.LegalName)),
+                P("@FirstName",Empty(request.FirstName)),P("@LastName",Empty(request.LastName)),P("@Digit",Empty(request.VerificationDigit)),
+                P("@ActorId",actor.ActorId),P("@Now",now),P("@RowVersion",rowVersion)]);
+            await update.ExecuteNonQueryAsync(ct);
+            await ReplacePrimaryContactAsync(connection,transaction,partyId,"Email",request.Email,now,ct);
+            await ReplacePrimaryContactAsync(connection,transaction,partyId,"Phone",request.Phone,now,ct);
+            await EnqueueCustomerChangeAsync(connection,transaction,actor.BusinessId,partyId,now,ct);
+            await transaction.CommitAsync(ct);
+            return await RequiredItemAsync(actor,partyId,ct);
+        }
+        catch(SqlException ex) when(ex.Number==51062)
+        { await transaction.RollbackAsync(ct); throw new PartyConflictException(ex.Message); }
+        catch { await transaction.RollbackAsync(ct); throw; }
+    }
+
+    public async Task<PartyWorkspaceItem> SetStatusAsync(
+        PartyActorIdentity actor, Guid partyId, SetPartyBusinessStatusRequest request,
+        byte[] rowVersion, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection=connections.Create(); await connection.OpenAsync(ct);
+        await using var transaction=(SqlTransaction)await connection.BeginTransactionAsync(ct);
+        try
+        {
+            await RequirePartyAsync(connection,transaction,actor,partyId,ct);
+            await using var command=connection.CreateCommand(); command.Transaction=transaction;
+            command.CommandText="""
+                IF NOT EXISTS(SELECT 1 FROM dbo.Parties WHERE PartyId=@PartyId AND TenantId=@TenantId AND RowVersion=@RowVersion)
+                  THROW 51062,'The Party changed after it was loaded.',1;
+                UPDATE dbo.Customers SET IsActive=@Active,UpdatedBy=@ActorId,UpdatedAt=@Now
+                WHERE PartyId=@PartyId AND BusinessId=@BusinessId;
+                UPDATE dbo.Suppliers SET IsActive=@Active WHERE PartyId=@PartyId AND BusinessId=@BusinessId;
+                UPDATE dbo.Parties SET UpdatedBy=@ActorId,UpdatedAt=@Now WHERE PartyId=@PartyId;
+                """;
+            command.Parameters.AddRange([P("@PartyId",partyId),P("@TenantId",actor.TenantId),P("@BusinessId",actor.BusinessId),
+                P("@Active",request.IsActive),P("@ActorId",actor.ActorId),P("@Now",now),P("@RowVersion",rowVersion)]);
+            await command.ExecuteNonQueryAsync(ct);
+            await EnqueueCustomerChangeAsync(connection,transaction,actor.BusinessId,partyId,now,ct);
+            await transaction.CommitAsync(ct);
+            return await RequiredItemAsync(actor,partyId,ct);
+        }
+        catch(SqlException ex) when(ex.Number==51062)
+        { await transaction.RollbackAsync(ct); throw new PartyConflictException(ex.Message); }
+        catch { await transaction.RollbackAsync(ct); throw; }
+    }
+
+    private async Task<PartyWorkspaceItem> RequiredItemAsync(PartyActorIdentity actor,Guid partyId,CancellationToken ct)
+    {
+        await using var connection=connections.Create(); await connection.OpenAsync(ct);
+        await using var command=connection.CreateCommand();
+        command.CommandText="""
+            SELECT p.PartyId,p.PartyType,p.IdentificationTypeCode,p.Identification,p.VerificationDigit,
+                   COALESCE(p.DisplayName,p.LegalName,N'Sin nombre'),p.LegalName,p.FirstName,p.LastName,
+                   (SELECT TOP(1) Value FROM dbo.PartyContacts pc WHERE pc.PartyId=p.PartyId AND pc.ContactType=N'Email' AND pc.IsActive=1 ORDER BY pc.IsPrimary DESC,pc.CreatedAt),
+                   (SELECT TOP(1) Value FROM dbo.PartyContacts pc WHERE pc.PartyId=p.PartyId AND pc.ContactType=N'Phone' AND pc.IsActive=1 ORDER BY pc.IsPrimary DESC,pc.CreatedAt),
+                   CASE WHEN EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId) THEN 1 ELSE 0 END,
+                   CASE WHEN EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId) THEN 1 ELSE 0 END,
+                   site.Name,site.CityName,
+                   CASE WHEN EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId AND c.IsActive=1)
+                          OR EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId AND s.IsActive=1)
+                        THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END,
+                   p.CompletionStatus,p.RowVersion
+            FROM dbo.Parties p
+            OUTER APPLY(SELECT TOP(1) ps.Name,ci.Name CityName FROM dbo.PartySites ps
+                        JOIN dbo.Cities ci ON ci.CityId=ps.CityId WHERE ps.PartyId=p.PartyId AND ps.IsActive=1
+                        ORDER BY ps.IsPrimary DESC,ps.CreatedAt) site
+            WHERE p.PartyId=@PartyId AND p.TenantId=@TenantId
+              AND (EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId)
+                   OR EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId));
+            """;
+        command.Parameters.AddRange([P("@PartyId",partyId),P("@TenantId",actor.TenantId),P("@BusinessId",actor.BusinessId)]);
+        await using var reader=await command.ExecuteReaderAsync(ct);
+        return await reader.ReadAsync(ct)?Read(reader):throw new PartyForbiddenException("Party is outside the authenticated business.");
+    }
+
+    private static PartyWorkspaceItem Read(SqlDataReader r)
+    {
+        var roles=new List<string>(2); if(Convert.ToBoolean(r.GetValue(11)))roles.Add("Customer"); if(Convert.ToBoolean(r.GetValue(12)))roles.Add("Supplier");
+        return new PartyWorkspaceItem(r.GetGuid(0),r.GetString(1),S(r,2),S(r,3),S(r,4),r.GetString(5),S(r,6),S(r,7),S(r,8),
+            S(r,9),S(r,10),roles,S(r,13),S(r,14),r.GetBoolean(15),r.GetString(16),Convert.ToBase64String((byte[])r[17]));
+    }
+
+    private static async Task ValidateScopeAsync(SqlConnection c,SqlTransaction t,PartyActorIdentity a,PartySiteInput s,CancellationToken ct)
+    {
+        await using var command=c.CreateCommand(); command.Transaction=t;
+        command.CommandText="""
+            IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId AND IsActive=1)
+              THROW 51060,'Business is outside the authenticated tenant.',1;
+            IF NOT EXISTS(SELECT 1 FROM dbo.Cities ci JOIN dbo.AdministrativeDivisions d ON d.AdministrativeDivisionId=ci.AdministrativeDivisionId
+              WHERE ci.CityId=@CityId AND d.AdministrativeDivisionId=@DivisionId AND d.CountryId=@CountryId AND ci.IsActive=1 AND d.IsActive=1)
+              THROW 51061,'The geographic hierarchy is invalid or inactive.',1;
+            """;
+        command.Parameters.AddRange([P("@BusinessId",a.BusinessId),P("@TenantId",a.TenantId),P("@CityId",s.CityId),P("@DivisionId",s.AdministrativeDivisionId),P("@CountryId",s.CountryId)]);
+        try{await command.ExecuteNonQueryAsync(ct);}catch(SqlException ex) when(ex.Number==51060){throw new PartyForbiddenException(ex.Message);}catch(SqlException ex) when(ex.Number==51061){throw new PartyValidationException(ex.Message);}
+    }
+
+    private static async Task RequirePartyAsync(SqlConnection c,SqlTransaction t,PartyActorIdentity a,Guid id,CancellationToken ct)
+    {
+        await using var command=c.CreateCommand();command.Transaction=t;command.CommandText="""
+            IF NOT EXISTS(SELECT 1 FROM dbo.Parties p WHERE p.PartyId=@PartyId AND p.TenantId=@TenantId AND
+              (EXISTS(SELECT 1 FROM dbo.Customers x WHERE x.PartyId=p.PartyId AND x.BusinessId=@BusinessId)
+               OR EXISTS(SELECT 1 FROM dbo.Suppliers x WHERE x.PartyId=p.PartyId AND x.BusinessId=@BusinessId)))
+              THROW 51060,'Party is outside the authenticated business.',1;
+            """;command.Parameters.AddRange([P("@PartyId",id),P("@TenantId",a.TenantId),P("@BusinessId",a.BusinessId)]);
+        try{await command.ExecuteNonQueryAsync(ct);}catch(SqlException ex) when(ex.Number==51060){throw new PartyForbiddenException(ex.Message);}
+    }
+
+    private static async Task<Guid?> FindPartyIdAsync(SqlConnection c,SqlTransaction t,Guid tenant,PartyInput p,string normalized,CancellationToken ct)
+    { await using var x=c.CreateCommand();x.Transaction=t;x.CommandText="SELECT PartyId FROM dbo.Parties WITH(UPDLOCK,HOLDLOCK) WHERE TenantId=@Tenant AND IdentificationCountryId=@Country AND IdentificationTypeCode=@Type AND NormalizedIdentification=@Normalized";x.Parameters.AddRange([P("@Tenant",tenant),P("@Country",p.IdentificationCountryId),P("@Type",p.IdentificationTypeCode.Trim().ToUpperInvariant()),P("@Normalized",normalized)]);return await x.ExecuteScalarAsync(ct) as Guid?; }
+    private static async Task<Guid?> FindSupplierIdAsync(SqlConnection c,SqlTransaction t,Guid party,Guid business,CancellationToken ct)
+    { await using var x=c.CreateCommand();x.Transaction=t;x.CommandText="SELECT SupplierId FROM dbo.Suppliers WITH(UPDLOCK,HOLDLOCK) WHERE PartyId=@Party AND BusinessId=@Business";x.Parameters.AddRange([P("@Party",party),P("@Business",business)]);return await x.ExecuteScalarAsync(ct) as Guid?; }
+
+    private async Task EnqueueCustomerChangeAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid businessId,
+        Guid partyId, DateTimeOffset now, CancellationToken ct)
+    {
+        await ExecuteAsync(connection,transaction,"""
+            IF EXISTS(SELECT 1 FROM dbo.Customers WHERE BusinessId=@BusinessId AND PartyId=@PartyId)
+            BEGIN
+              DECLARE @Cursor BIGINT;
+              SELECT @Cursor=ISNULL(MAX(AvailableThroughCursor),0)+1
+              FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
+              WHERE BusinessId=@BusinessId AND Stream=N'Customers';
+              INSERT dbo.PosSynchronizationOutboxMessages
+                (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
+              VALUES(@NotificationId,@BusinessId,N'Customers',@Cursor,@Now);
+            END
+            """,[P("@NotificationId",ids.NewId()),P("@BusinessId",businessId),P("@PartyId",partyId),P("@Now",now)],ct);
+    }
+    private async Task AddContactAsync(SqlConnection c,SqlTransaction t,Guid party,string type,string? value,DateTimeOffset now,CancellationToken ct)
+    { if(string.IsNullOrWhiteSpace(value))return;var v=value.Trim();await ExecuteAsync(c,t,"INSERT dbo.PartyContacts(PartyContactId,PartyId,ContactType,Value,NormalizedValue,IsPrimary,IsActive,CreatedAt) VALUES(@Id,@Party,@Type,@Value,@Normalized,1,1,@Now)", [P("@Id",ids.NewId()),P("@Party",party),P("@Type",type),P("@Value",v),P("@Normalized",NormalizeContact(type,v)),P("@Now",now)],ct); }
+    private async Task ReplacePrimaryContactAsync(SqlConnection c,SqlTransaction t,Guid party,string type,string? value,DateTimeOffset now,CancellationToken ct)
+    {
+        await ExecuteAsync(c,t,"UPDATE dbo.PartyContacts SET IsPrimary=0 WHERE PartyId=@Party AND ContactType=@Type",[P("@Party",party),P("@Type",type)],ct);
+        if(string.IsNullOrWhiteSpace(value)) return;
+        var normalized=NormalizeContact(type,value.Trim());
+        await ExecuteAsync(c,t,"""
+            IF EXISTS(SELECT 1 FROM dbo.PartyContacts WHERE PartyId=@Party AND ContactType=@Type AND NormalizedValue=@Normalized)
+              UPDATE dbo.PartyContacts SET Value=@Value,IsPrimary=1,IsActive=1
+              WHERE PartyId=@Party AND ContactType=@Type AND NormalizedValue=@Normalized;
+            ELSE
+              INSERT dbo.PartyContacts(PartyContactId,PartyId,ContactType,Value,NormalizedValue,IsPrimary,IsActive,CreatedAt)
+              VALUES(@Id,@Party,@Type,@Value,@Normalized,1,1,@Now);
+            """,[P("@Id",ids.NewId()),P("@Party",party),P("@Type",type),P("@Value",value.Trim()),P("@Normalized",normalized),P("@Now",now)],ct);
+    }
+    private static Task InsertSiteAsync(SqlConnection c,SqlTransaction t,PartyActorIdentity a,Guid party,Guid id,PartySiteInput s,DateTimeOffset now,CancellationToken ct)=>ExecuteAsync(c,t,"""
+        IF NOT EXISTS(SELECT 1 FROM dbo.PartySites WHERE PartyId=@Party AND Code=@Code)
+        INSERT dbo.PartySites(PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,AddressLine,Neighborhood,PostalCode,Email,Phone,IsPrimary,IsActive,CreatedBy,CreatedAt)
+        VALUES(@Id,@Party,@Code,@Name,@Country,@Division,@City,@Address,@Neighborhood,@Postal,@Email,@Phone,
+          CASE WHEN EXISTS(SELECT 1 FROM dbo.PartySites WHERE PartyId=@Party AND IsPrimary=1 AND IsActive=1) THEN 0 ELSE @Primary END,1,@Actor,@Now)
+        """,[P("@Id",id),P("@Party",party),P("@Code",s.Code.Trim().ToUpperInvariant()),P("@Name",s.Name.Trim()),P("@Country",s.CountryId),P("@Division",s.AdministrativeDivisionId),P("@City",s.CityId),P("@Address",s.AddressLine.Trim()),P("@Neighborhood",Empty(s.Neighborhood)),P("@Postal",Empty(s.PostalCode)),P("@Email",Empty(s.Email)),P("@Phone",Empty(s.Phone)),P("@Primary",s.IsPrimary),P("@Actor",a.ActorId),P("@Now",now)],ct);
+    private static async Task ExecuteAsync(SqlConnection c,SqlTransaction t,string sql,SqlParameter[] ps,CancellationToken ct){await using var x=c.CreateCommand();x.Transaction=t;x.CommandText=sql;x.Parameters.AddRange(ps);await x.ExecuteNonQueryAsync(ct);}
+    private static SqlParameter P(string n,object? v)=>new(n,v??DBNull.Value);
+    private static string? Empty(string? v)=>string.IsNullOrWhiteSpace(v)?null:v.Trim();
+    private static string? S(SqlDataReader r,int i)=>r.IsDBNull(i)?null:r.GetString(i);
+    private static string NormalizeContact(string type,string value)=>type=="Email"?value.ToUpperInvariant():string.Concat(value.Where(char.IsDigit));
+}
+
+
+
+
+
+
+
+
+
+
+
+

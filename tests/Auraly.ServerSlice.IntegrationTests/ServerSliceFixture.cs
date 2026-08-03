@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
@@ -81,6 +81,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public Guid DocumentSeriesId { get; } = Guid.NewGuid();
     public Guid SeriesId { get; } = Guid.NewGuid();
     public Guid SupplierId { get; } = Guid.NewGuid();
+    public Guid SupplierPartyId { get; } = Guid.NewGuid();
     public Guid GoodsReceiptSeriesId { get; } = Guid.NewGuid();
     public Guid PurchaseReturnSeriesId { get; } = Guid.NewGuid();
     public Guid OnlineDocumentSeriesId { get; } = Guid.NewGuid();
@@ -666,7 +667,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             VALUES
             (@FiscalIssuerConfigurationId,@BusinessId,1,@SupplierTaxId,N'7',
              N'EMISOR MAESTRO',N'EMISOR MAESTRO',N'R-99-PN',N'01',N'IVA',N'31',
-             N'CL 1 2 3',N'11001',N'Bogotá',N'11',N'Bogotá D.C.',N'CO',N'Colombia',
+             N'CL 1 2 3',N'11001',N'BogotÃ¡',N'11',N'BogotÃ¡ D.C.',N'CO',N'Colombia',
              N'auraly-test-software',N'env://AURALY_TEST_SOFTWARE_PIN',2,
              '11111111-1111-1111-1111-111111111111',N'Test',N'Test',N'TEST',
              N'https://vpfe-hab.dian.gov.co/WcfDianCustomerServices.svc',N'1.9',N'Auraly.Tests',
@@ -707,10 +708,15 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             VALUES
               (NEWID(),@BusinessId,@ProductId,10000,N'COP','2026-01-01',1,SYSDATETIMEOFFSET());
 
-            INSERT INTO dbo.Suppliers
-              (SupplierId,BusinessId,Identification,Name,IsActive,CreatedAt)
+            INSERT dbo.Parties
+              (PartyId,TenantId,PartyType,DisplayName,LegalName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
             VALUES
-              (@GoodsSupplierId,@BusinessId,N'900999001',N'Proveedor E2E',1,SYSDATETIMEOFFSET());
+              (@GoodsSupplierPartyId,@TenantId,N'Organization',N'Proveedor E2E',N'Proveedor E2E',N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
+
+            INSERT INTO dbo.Suppliers
+              (SupplierId,BusinessId,PartyId,Identification,Name,IsActive,CreatedAt)
+            VALUES
+              (@GoodsSupplierId,@BusinessId,@GoodsSupplierPartyId,N'900999001',N'Proveedor E2E',1,SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.SupplierProducts
               (SupplierProductId,BusinessId,ProductId,SupplierId,SupplierProductCode,IsPrimary,IsActive,CreatedAt)
@@ -759,6 +765,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         command.Parameters.AddWithValue("@PurchaseReturnSeriesId", PurchaseReturnSeriesId);
         command.Parameters.AddWithValue("@SalesReturnSeriesId", SalesReturnSeriesId);
         command.Parameters.AddWithValue("@GoodsSupplierId", SupplierId);
+        command.Parameters.AddWithValue("@GoodsSupplierPartyId", SupplierPartyId);
         command.Parameters.AddWithValue("@Prefix", Prefix);
         command.Parameters.AddWithValue("@ProductId", ProductId);
         await command.ExecuteNonQueryAsync();

@@ -1,3 +1,4 @@
+﻿using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Parties;
 using Auraly.Domain.Parties;
@@ -38,7 +39,7 @@ public interface IPartyStore
         PartyActorIdentity actor, Guid id, SaveCityRequest request, DateTimeOffset now, CancellationToken ct);
 }
 
-public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, TimeProvider time)
+public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, TimeProvider time, IPosSynchronizationOutboxDispatcher synchronization)
 {
     public Task<CustomerDetail> CreateCustomerAsync(
         PartyActorIdentity actor, CreateCustomerRequest request, CancellationToken ct)
@@ -60,10 +61,17 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
             normalized = PartyIdentityNormalizer.Normalize(
                 request.Party.IdentificationTypeCode,
                 request.Party.Identification));
-        return store.CreateCustomerAsync(
-            actor, ids.NewId(), ids.NewId(), ids.NewId(), request, normalized, time.GetUtcNow(), ct);
+        return CreateAndNotifyAsync(actor, request, normalized, ct);
     }
 
+    private async Task<CustomerDetail> CreateAndNotifyAsync(
+        PartyActorIdentity actor, CreateCustomerRequest request, string normalized, CancellationToken ct)
+    {
+        var customer = await store.CreateCustomerAsync(
+            actor, ids.NewId(), ids.NewId(), ids.NewId(), request, normalized, time.GetUtcNow(), ct);
+        await synchronization.DispatchPendingAsync(actor.TenantId, actor.BusinessId, CancellationToken.None);
+        return customer;
+    }
     public Task<CustomerDetail?> FindCustomerAsync(
         PartyActorIdentity actor, Guid countryId, string type, string identification, CancellationToken ct)
     {

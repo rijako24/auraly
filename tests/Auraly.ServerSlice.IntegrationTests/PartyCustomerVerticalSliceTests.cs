@@ -208,7 +208,7 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
             divisionId,
             cityId,
             "55.667.788",
-            "Cliente creado en facturación",
+            "Cliente creado en facturaciÃ³n",
             "Principal",
             null);
 
@@ -223,6 +223,9 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         using var pos = fixture.CreateClient();
         pos.DefaultRequestHeaders.Add("X-Auraly-Device-Id", fixture.DeviceId.ToString("D"));
         pos.DefaultRequestHeaders.Add("X-Auraly-Device-Secret", ServerSliceFixture.DeviceSecret);
+        var countries = await pos.GetFromJsonAsync<IReadOnlyCollection<CountryItem>>(
+            $"/api/pos/v1/customers/geography/countries?businessId={fixture.BusinessId:D}");
+        Assert.Contains(countries!, item => item.CountryId == countryId);
         using var createdResponse = await pos.PostAsJsonAsync(
             "/api/pos/v1/customers",
             request);
@@ -263,6 +266,126 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(HttpStatusCode.Forbidden, wrongBusinessResponse.StatusCode);
     }
 
+    [Fact]
+    public async Task Customer_and_supplier_roles_share_one_party_and_workspace_is_concurrent_safe()
+    {
+        var synchronizationMessagesBefore = await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages WHERE BusinessId=@BusinessId AND Stream=N'Customers';",
+            new SqlParameter("@BusinessId", fixture.BusinessId));
+        using var admin = fixture.CreateAdminClient(
+            PartyPermissionCodes.GeographyRead,
+            PartyPermissionCodes.GeographyManage,
+            PartyPermissionCodes.CustomerRead,
+            PartyPermissionCodes.CustomerCreate,
+            PartyWorkspacePermissionCodes.Read,
+            PartyWorkspacePermissionCodes.Update,
+            PartyWorkspacePermissionCodes.Deactivate,
+            PartyWorkspacePermissionCodes.SupplierRead,
+            PartyWorkspacePermissionCodes.SupplierCreate);
+
+        var country = await PostAndReadAsync<SaveCountryRequest, CountryItem>(
+            admin, "/api/commerce/v1/masters/geography/countries",
+            new SaveCountryRequest("PW", "Party workspace country"));
+        var division = await PostAndReadAsync<SaveAdministrativeDivisionRequest, AdministrativeDivisionItem>(
+            admin, "/api/commerce/v1/masters/geography/divisions",
+            new SaveAdministrativeDivisionRequest(country.CountryId, "PWD", "Party workspace division"));
+        var city = await PostAndReadAsync<SaveCityRequest, CityItem>(
+            admin, "/api/commerce/v1/masters/geography/cities",
+            new SaveCityRequest(division.AdministrativeDivisionId, "PWC", "Party workspace city"));
+
+        var customerRequest = CustomerRequest(
+            Guid.NewGuid(), fixture.BusinessId, country.CountryId,
+            division.AdministrativeDivisionId, city.CityId,
+            "901.777.333-1", "Comercial unificada", "Principal", null) with
+        {
+            Party = new PartyInput(
+                PartyTypes.Organization, country.CountryId, "NIT", "901.777.333-1", "4",
+                "Comercial unificada", "Comercial unificada S.A.S.", null, null,
+                "compras@unificada.test", "3007773311")
+        };
+        using var customerResponse = await admin.PostAsJsonAsync(
+            "/api/commerce/v1/customers", customerRequest);
+        Assert.Equal(HttpStatusCode.Created, customerResponse.StatusCode);
+        var customer = await customerResponse.Content.ReadFromJsonAsync<CustomerDetail>();
+        Assert.NotNull(customer);
+
+        var supplierRequest = new CreateSupplierRequest(
+            Guid.NewGuid(), fixture.BusinessId, customerRequest.Party, customerRequest.PrimarySite);
+        using var supplierResponse = await admin.PostAsJsonAsync(
+            "/api/commerce/v1/suppliers", supplierRequest);
+        Assert.Equal(HttpStatusCode.Created, supplierResponse.StatusCode);
+        var supplier = await supplierResponse.Content.ReadFromJsonAsync<SupplierAcceptance>();
+        Assert.NotNull(supplier);
+        Assert.Equal(customer.PartyId, supplier.PartyId);
+        Assert.False(supplier.IdempotentReplay);
+
+        using var replayResponse = await admin.PostAsJsonAsync(
+            "/api/commerce/v1/suppliers", supplierRequest);
+        Assert.Equal(HttpStatusCode.Created, replayResponse.StatusCode);
+        var replay = await replayResponse.Content.ReadFromJsonAsync<SupplierAcceptance>();
+        Assert.NotNull(replay);
+        Assert.Equal(supplier.SupplierId, replay.SupplierId);
+        Assert.True(replay.IdempotentReplay);
+
+        var page = await admin.GetFromJsonAsync<PartyWorkspacePage>(
+            "/api/commerce/v1/parties?page=1&pageSize=10&search=9017773331");
+        Assert.NotNull(page);
+        Assert.Equal(1, page.Page);
+        Assert.Equal(10, page.PageSize);
+        var item = Assert.Single(page.Items.Where(value => value.PartyId == customer.PartyId));
+        Assert.Equal(new[] { "Customer", "Supplier" }, item.Roles.OrderBy(value => value).ToArray());
+        Assert.Equal("4", item.VerificationDigit);
+
+        var update = new UpdatePartyRequest(
+            PartyTypes.Organization, "Comercial unificada renovada",
+            "Comercial unificada S.A.S.", null, null, "4",
+            "compras@unificada.test", "3007773311", item.RowVersion);
+        using var updateResponse = await admin.PutAsJsonAsync(
+            $"/api/commerce/v1/parties/{item.PartyId:D}", update);
+        Assert.Equal(HttpStatusCode.OK, updateResponse.StatusCode);
+        var updated = await updateResponse.Content.ReadFromJsonAsync<PartyWorkspaceItem>();
+        Assert.NotNull(updated);
+        Assert.Equal("Comercial unificada renovada", updated.DisplayName);
+        Assert.Equal("4", updated.VerificationDigit);
+
+        using var staleResponse = await admin.PutAsJsonAsync(
+            $"/api/commerce/v1/parties/{item.PartyId:D}", update);
+        Assert.Equal(HttpStatusCode.Conflict, staleResponse.StatusCode);
+
+        using var inactiveResponse = await admin.PostAsJsonAsync(
+            $"/api/commerce/v1/parties/{item.PartyId:D}/status",
+            new SetPartyBusinessStatusRequest(false, updated.RowVersion));
+        Assert.Equal(HttpStatusCode.OK, inactiveResponse.StatusCode);
+        var inactive = await inactiveResponse.Content.ReadFromJsonAsync<PartyWorkspaceItem>();
+        Assert.NotNull(inactive);
+        Assert.False(inactive.IsActive);
+
+        using var denied = fixture.CreateAdminClient(PartyWorkspacePermissionCodes.Read);
+        using var deniedResponse = await denied.PostAsJsonAsync(
+            "/api/commerce/v1/suppliers", supplierRequest with { OperationId = Guid.NewGuid() });
+        Assert.Equal(HttpStatusCode.Forbidden, deniedResponse.StatusCode);
+
+        using var wrongBusiness = await admin.PostAsJsonAsync(
+            "/api/commerce/v1/suppliers",
+            supplierRequest with { OperationId = Guid.NewGuid(), BusinessId = Guid.NewGuid() });
+        Assert.Equal(HttpStatusCode.Forbidden, wrongBusiness.StatusCode);
+
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.Parties WHERE PartyId=@PartyId;",
+            new SqlParameter("@PartyId", customer.PartyId)));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.Customers WHERE PartyId=@PartyId AND BusinessId=@BusinessId;",
+            new SqlParameter("@PartyId", customer.PartyId), new SqlParameter("@BusinessId", fixture.BusinessId)));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.Suppliers WHERE PartyId=@PartyId AND BusinessId=@BusinessId;",
+            new SqlParameter("@PartyId", customer.PartyId), new SqlParameter("@BusinessId", fixture.BusinessId)));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.PartySites WHERE PartyId=@PartyId AND Code=N'PRINCIPAL';",
+            new SqlParameter("@PartyId", customer.PartyId)));
+        Assert.True(await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages WHERE BusinessId=@BusinessId AND Stream=N'Customers';",
+            new SqlParameter("@BusinessId", fixture.BusinessId)) >= synchronizationMessagesBefore + 3);
+    }
     private static CreateCustomerRequest CustomerRequest(
         Guid operationId,
         Guid businessId,

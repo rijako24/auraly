@@ -1,4 +1,4 @@
-using Auraly.Api;
+﻿using Auraly.Api;
 using Azure.Messaging.ServiceBus;
 using Azure.Messaging.WebPubSub;
 using System.Text;
@@ -194,6 +194,8 @@ builder.Services.AddScoped<ICatalogStore, SqlCatalogStore>();
 builder.Services.AddScoped<CatalogService>();
 builder.Services.AddScoped<PosCatalogService>();
 builder.Services.AddScoped<IPartyStore, SqlPartyStore>();
+builder.Services.AddScoped<IPartyWorkspaceStore, SqlPartyWorkspaceStore>();
+builder.Services.AddScoped<PartyWorkspaceService>();
 builder.Services.AddScoped<PartyService>();
 builder.Services.AddScoped<GeographyService>();
 builder.Services.AddScoped<ISalesWorkspaceDirectory, SqlSalesWorkspaceDirectory>();
@@ -423,6 +425,7 @@ app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }));
 app.MapAuthenticationApi();
 app.MapCatalogApi();
 app.MapPartyApi();
+app.MapPartyWorkspaceApi();
 app.MapPartyUserAccountApi();
 app.MapSalesWorkspaceApi();
 app.MapPosEnrollmentApi();
@@ -493,4 +496,3 @@ app.MapPost(
 app.Run();
 
 public partial class Program;
-

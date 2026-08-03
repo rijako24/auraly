@@ -1,4 +1,4 @@
-CREATE TABLE [dbo].[TaxProfiles] (
+﻿CREATE TABLE [dbo].[TaxProfiles] (
     [TaxProfileId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [Code] NVARCHAR(32) NOT NULL,
@@ -107,14 +107,19 @@ GO
 CREATE TABLE [dbo].[Suppliers] (
     [SupplierId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [PartyId] UNIQUEIDENTIFIER NULL,
     [Identification] NVARCHAR(40) NOT NULL,
     [Name] NVARCHAR(200) NOT NULL,
     [IsActive] BIT NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [FK_Suppliers_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
+    CONSTRAINT [FK_Suppliers_Parties] FOREIGN KEY ([PartyId]) REFERENCES [dbo].[Parties] ([PartyId]),
     CONSTRAINT [UQ_Suppliers_Business_Identification] UNIQUE ([BusinessId], [Identification])
 );
+GO
+CREATE UNIQUE INDEX [UX_Suppliers_Business_Party]
+    ON [dbo].[Suppliers] ([BusinessId], [PartyId]) WHERE [PartyId] IS NOT NULL;
 GO
 
 CREATE TABLE [dbo].[SupplierProducts] (

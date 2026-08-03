@@ -1,4 +1,4 @@
-using Auraly.Application.Parties;
+﻿using Auraly.Application.Parties;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Parties;
 using Microsoft.Data.SqlClient;
@@ -92,6 +92,17 @@ public sealed partial class SqlPartyStore(
                 if (request.Pricing is not null)
                     await InsertPricingAsync(
                         connection, transaction, actor, resolvedCustomerId, request.Pricing, now, ct);
+                await ExecuteAsync(connection, transaction, """
+                    DECLARE @Cursor BIGINT;
+                    SELECT @Cursor=ISNULL(MAX(AvailableThroughCursor),0)+1
+                    FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
+                    WHERE BusinessId=@BusinessId AND Stream=N'Customers';
+                    INSERT dbo.PosSynchronizationOutboxMessages
+                      (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
+                    VALUES(@NotificationId,@BusinessId,N'Customers',@Cursor,@Now);
+                    """,
+                    [P("@NotificationId", ids.NewId()), P("@BusinessId", actor.BusinessId), P("@Now", now)],
+                    ct);
             }
 
             await ExecuteAsync(connection, transaction, """

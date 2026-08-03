@@ -1,4 +1,4 @@
--- =============================================================================
+﻿-- =============================================================================
 -- PostDeployment.sql
 --
 -- Hook SSDT que se ejecuta despues de publicar el dacpac.
@@ -44,6 +44,7 @@
 :r .\Migrations\MigrateRemoveOrderAssignmentState.sql
 :r .\Migrations\MigrateBusinessTimeZone.sql
 :r .\Migrations\AlterConversationContextsValueToMax.sql
+:r .\Migrations\MigrateSuppliersToParties.sql
 :r .\Seeds\SeedAdminUser.sql
 :r .\Seeds\SeedAgentPermissions.sql
 :r .\Seeds\SeedSqlAppLoginPermissions.sql
@@ -56,6 +57,7 @@
 :r .\Seeds\SeedAccountingPermissions.sql
 :r .\Seeds\SeedPayablesPermissions.sql
 :r .\Seeds\SeedPurchasingPermissions.sql
+:r .\Seeds\SeedPartyWorkspacePermissions.sql
 :r .\Seeds\SeedBillingPlans.sql
 :r .\Seeds\SeedRadaConcept.sql
 :r .\Seeds\SeedAuraly.sql

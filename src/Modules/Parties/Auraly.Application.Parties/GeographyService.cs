@@ -1,4 +1,4 @@
-using Auraly.BuildingBlocks.Domain.Identifiers;
+﻿using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Parties;
 using Auraly.Domain.Parties;
 
@@ -9,21 +9,21 @@ public sealed class GeographyService(IPartyStore store, IAuralyIdGenerator ids, 
     public Task<IReadOnlyCollection<CountryItem>> CountriesAsync(
         PartyActorIdentity actor, bool includeInactive, CancellationToken ct)
     {
-        PartyService.Require(actor, PartyPermissionCodes.GeographyRead);
+        PartyService.Require(actor, actor.IsDevice ? PartyPermissionCodes.PosCustomerCreate : PartyPermissionCodes.GeographyRead);
         return store.CountriesAsync(includeInactive, ct);
     }
 
     public Task<IReadOnlyCollection<AdministrativeDivisionItem>> DivisionsAsync(
         PartyActorIdentity actor, Guid countryId, bool includeInactive, CancellationToken ct)
     {
-        PartyService.Require(actor, PartyPermissionCodes.GeographyRead);
+        PartyService.Require(actor, actor.IsDevice ? PartyPermissionCodes.PosCustomerCreate : PartyPermissionCodes.GeographyRead);
         return store.DivisionsAsync(countryId, includeInactive, ct);
     }
 
     public Task<IReadOnlyCollection<CityItem>> CitiesAsync(
         PartyActorIdentity actor, Guid divisionId, bool includeInactive, CancellationToken ct)
     {
-        PartyService.Require(actor, PartyPermissionCodes.GeographyRead);
+        PartyService.Require(actor, actor.IsDevice ? PartyPermissionCodes.PosCustomerCreate : PartyPermissionCodes.GeographyRead);
         return store.CitiesAsync(divisionId, includeInactive, ct);
     }
 

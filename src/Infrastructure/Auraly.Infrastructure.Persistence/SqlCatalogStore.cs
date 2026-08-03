@@ -1,4 +1,4 @@
-using System.Data;
+﻿using System.Data;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -113,17 +113,22 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                     IF EXISTS (SELECT 1 FROM dbo.Suppliers WHERE SupplierId=@SupplierId AND BusinessId<>@BusinessId)
                       THROW 51023, 'The supplier is outside the authenticated scope.', 1;
                     IF NOT EXISTS (SELECT 1 FROM dbo.Suppliers WHERE SupplierId=@SupplierId)
-                      INSERT dbo.Suppliers (SupplierId,BusinessId,Identification,Name,IsActive,CreatedAt)
-                      VALUES (@SupplierId,@BusinessId,@Identification,@Name,1,@Now);
+                    BEGIN
+                      INSERT dbo.Parties
+                        (PartyId,TenantId,PartyType,DisplayName,LegalName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
+                      VALUES (@PartyId,@TenantId,N'Organization',@Name,@Name,N'Incomplete',1,@UserId,@Now);
+                      INSERT dbo.Suppliers (SupplierId,BusinessId,PartyId,Identification,Name,IsActive,CreatedAt)
+                      VALUES (@SupplierId,@BusinessId,@PartyId,@Identification,@Name,1,@Now);
+                    END
                     INSERT dbo.SupplierProducts
                       (SupplierProductId,BusinessId,ProductId,SupplierId,SupplierProductCode,IsPrimary,IsActive,CreatedAt)
                     VALUES (@SupplierProductId,@BusinessId,@ProductId,@SupplierId,@Code,@Primary,1,@Now);
                     INSERT dbo.SupplierCostAgreements
                       (SupplierCostAgreementId,SupplierProductId,BaseUnitCost,CurrencyCode,ValidFrom,IsActive,CreatedAt)
                     VALUES (@CostId,@SupplierProductId,@Cost,N'COP',@Now,1,@Now);
-                    """, [P("@SupplierId", supplierId), P("@SupplierProductId", ids.NewId()),
+                    """, [P("@SupplierId", supplierId), P("@PartyId", ids.NewId()), P("@SupplierProductId", ids.NewId()),
                     P("@CostId", ids.NewId()),
-                    P("@BusinessId", user.BusinessId), P("@ProductId", productId), P("@Identification", supplier.Identification),
+                    P("@BusinessId", user.BusinessId), P("@TenantId", user.TenantId), P("@UserId", user.UserId), P("@ProductId", productId), P("@Identification", supplier.Identification),
                     P("@Name", supplier.Name), P("@Code", supplier.SupplierProductCode), P("@Primary", supplier.IsPrimary),
                     P("@Cost", supplier.BaseUnitCost), P("@Now", now)], ct);
             }

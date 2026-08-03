@@ -1,4 +1,4 @@
-using System.Security.Claims;
+﻿using System.Security.Claims;
 using Auraly.Application.Parties;
 using Auraly.Contracts.Parties;
 
@@ -97,6 +97,20 @@ public static class PartyApi
         var pos = endpoints.MapGroup("/api/pos/v1/customers")
             .RequireAuthorization("pos.customer.create");
 
+        pos.MapGet("/geography/countries", async (
+            HttpContext context, GeographyService service, Guid businessId, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.CountriesAsync(
+                context.User.ToPartyDeviceIdentity(businessId), false, ct))));
+
+        pos.MapGet("/geography/countries/{countryId:guid}/divisions", async (
+            HttpContext context, GeographyService service, Guid businessId, Guid countryId, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.DivisionsAsync(
+                context.User.ToPartyDeviceIdentity(businessId), countryId, false, ct))));
+
+        pos.MapGet("/geography/divisions/{divisionId:guid}/cities", async (
+            HttpContext context, GeographyService service, Guid businessId, Guid divisionId, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.CitiesAsync(
+                context.User.ToPartyDeviceIdentity(businessId), divisionId, false, ct))));
         pos.MapPost("/", async (
             HttpContext context, PartyService service, CreateCustomerRequest request, CancellationToken ct) =>
             await Handle(async () => Results.Ok(await service.CreateCustomerAsync(
