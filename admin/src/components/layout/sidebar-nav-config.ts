@@ -1,4 +1,4 @@
-import type { LucideIcon } from "lucide-react";
+﻿import type { LucideIcon } from "lucide-react";
 import {
   BadgePercent,
   BarChart3,
@@ -6,6 +6,8 @@ import {
   Calendar,
   CalendarDays,
   CreditCard,
+  ContactRound,
+  Library,
   FileSearch,
   Gem,
   Landmark,
@@ -48,6 +50,7 @@ export const navigation: NavEntry[] = [
   { type: "separator", label: "Negocio" },
   { name: "Servicios", href: "/dashboard/services", icon: Package, permission: "services.read" },
   { name: "Productos", href: "/dashboard/products", icon: Package, permission: "products.read" },
+  { name: "Terceros", href: "/dashboard/parties", icon: ContactRound, permission: "parties.read" },
   { name: "Precios y rentabilidad", href: "/dashboard/products/pricing", icon: TrendingUp, permission: "pricing.read" },
   { name: "Promociones", href: "/dashboard/promotions", icon: BadgePercent, permission: "promotions.read" },
   { name: "Empleados", href: "/dashboard/employees", icon: Users, permission: "employees.read" },
@@ -74,6 +77,6 @@ export const navigation: NavEntry[] = [
   { name: "Roles", href: "/dashboard/roles", icon: Shield, permission: "roles.read" },
   { name: "Auditoria", href: "/dashboard/audit-logs", icon: FileSearch, permission: "audit_logs.read" },
   { type: "separator", label: "Configuracion" },
+  { name: "Maestros", href: "/dashboard/settings/masters", icon: Library, permission: "masters.geography.read" },
   { name: "Configuracion", href: "/dashboard/settings", icon: Settings, permission: "business_config.read" },
 ];
-
