@@ -301,10 +301,17 @@ public sealed class SqlAccountingPostingProcessor(
         CancellationToken cancellationToken)
     {
         string number; decimal untaxed; decimal tax; decimal total;
-        string settlementCategory; Guid? partyId;
+        string resolution; string? refundMethod; Guid? partyId;
+        decimal receivableApplication; decimal customerCredit;
         await using (var command = new SqlCommand("""
                 SELECT r.DocumentNumber,r.UntaxedAmount,r.TaxAmount,r.TotalAmount,
-                       r.EconomicResolution,r.RefundMethodCode,c.PartyId
+                       r.EconomicResolution,r.RefundMethodCode,c.PartyId,
+                       COALESCE((SELECT SUM(a.Amount)
+                         FROM dbo.SalesReturnReceivableApplications a
+                         WHERE a.ReturnId=r.ReturnId),0),
+                       COALESCE((SELECT SUM(cc.OriginalAmount)
+                         FROM dbo.CustomerCredits cc
+                         WHERE cc.SourceReturnId=r.ReturnId),0)
                 FROM dbo.SalesReturns r
                 LEFT JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
                 WHERE r.ReturnId=@DocumentId AND r.BusinessId=@BusinessId;
@@ -313,13 +320,28 @@ public sealed class SqlAccountingPostingProcessor(
             command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
             command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            if (!await reader.ReadAsync(cancellationToken)) throw new InvalidOperationException("The sales return was not found for accounting.");
-            number = reader.GetString(0); untaxed = reader.GetDecimal(1); tax = reader.GetDecimal(2); total = reader.GetDecimal(3);
-            settlementCategory = reader.GetString(4) == "CustomerCredit" ? AccountingCategories.CustomerCreditsPayable : PaymentCategory(reader.GetString(5));
-            partyId = reader.IsDBNull(6) ? null : reader.GetGuid(6);
+            if (!await reader.ReadAsync(cancellationToken))
+                throw new InvalidOperationException("The sales return was not found for accounting.");
+            number=reader.GetString(0); untaxed=reader.GetDecimal(1); tax=reader.GetDecimal(2);
+            total=reader.GetDecimal(3); resolution=reader.GetString(4);
+            refundMethod=reader.IsDBNull(5)?null:reader.GetString(5);
+            partyId=reader.IsDBNull(6)?null:reader.GetGuid(6);
+            receivableApplication=reader.GetDecimal(7); customerCredit=reader.GetDecimal(8);
         }
+        var settlements = new List<(string Category, decimal Amount)>();
+        if (resolution == "Refund")
+            settlements.Add((PaymentCategory(refundMethod!), total));
+        else
+        {
+            if (receivableApplication > 0)
+                settlements.Add((AccountingCategories.AccountsReceivable, receivableApplication));
+            if (customerCredit > 0)
+                settlements.Add((AccountingCategories.CustomerCreditsPayable, customerCredit));
+        }
+        if (decimal.Round(settlements.Sum(item => item.Amount),4) != decimal.Round(total,4))
+            throw new InvalidOperationException("The sales return settlement does not reconcile with its total.");
         var cost = await InventoryCostAsync(connection, transaction, source.DocumentId, source.DocumentType, cancellationToken);
-        return FinancialFacts.Return(number, partyId, untaxed, tax, total, cost, settlementCategory);
+        return FinancialFacts.Return(number, partyId, untaxed, tax, total, cost, settlements);
     }
 
     private static async Task<FinancialFactsResult> LoadGoodsReceiptFactsAsync(
@@ -749,7 +771,7 @@ public sealed class SqlAccountingPostingProcessor(
             }
         }
         public static FinancialFacts Invoice(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Factura de venta {number}", party, untaxed, tax, total, cost, settlements, false, false, false, false);
-        public static FinancialFacts Return(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, string settlement) => new($"Devolucion de venta {number}", party, untaxed, tax, total, cost, [(settlement, total)], true, false, false, false);
+        public static FinancialFacts Return(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Devolucion de venta {number}", party, untaxed, tax, total, cost, settlements, true, false, false, false);
         public static FinancialFacts Purchase(string number, decimal inventory, decimal expense, decimal deductibleVat, decimal total) => new($"Entrada de mercancia {number}", null, expense, deductibleVat, total, inventory, [(AccountingCategories.AccountsPayable, total)], false, true, false, false);
         public static FinancialFacts PurchaseReturn(string number, decimal inventory, decimal expense, decimal deductibleVat, decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Devolucion de compra {number}", null, expense, deductibleVat, total, inventory, settlements, true, true, false, false);
         public static FinancialFacts PayablePayment(string number, decimal total, string settlement) => new($"Pago a proveedor {number}", null, 0, 0, total, 0, [(settlement, total)], false, false, true, false);

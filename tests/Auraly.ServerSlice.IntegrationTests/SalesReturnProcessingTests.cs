@@ -28,10 +28,12 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             new DateTimeOffset(2026, 8, 1, 9, 30, 0, TimeSpan.FromHours(-5)),
             ReturnEconomicResolutions.Refund, "Cash", "Cliente devuelve parcialmente",
             [new ConfirmSalesReturnLineRequest(
-                1, .5m, ReturnInventoryDispositions.Sellable)]);
+                1, .5m, ReturnInventoryDispositions.Sellable)],
+            fixture.WorkSessionId, 1);
         const string idempotencyKey = "sales-return-e2e-001";
         using var user = fixture.CreateAdminClient(
-            SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm);
+            SalesReturnPermissionCodes.Read, SalesReturnPermissionCodes.Create,
+            SalesReturnPermissionCodes.Confirm);
         using (var message = Message(request, idempotencyKey))
         using (var response = await user.SendAsync(message))
         {
@@ -58,6 +60,49 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
         Assert.Equal(1, await CountAsync("InventoryMovements", "DocumentId", request.ReturnId));
         Assert.Equal(1, await CountAsync("SalesReturnSettlements", "ReturnId", request.ReturnId));
         Assert.Equal(1, await CountAsync("ServerOutboxMessages", "DocumentId", request.ReturnId));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.WorkSessionMovements WHERE SourceKey=CONCAT(N'sales-return:',REPLACE(CONVERT(nvarchar(36),@Id),N'-',N''))",
+            request.ReturnId));
+        Assert.Equal(-5_950m, await ScalarAsync<decimal>(
+            "SELECT Amount FROM dbo.WorkSessionMovements WHERE SourceKey=CONCAT(N'sales-return:',REPLACE(CONVERT(nvarchar(36),@Id),N'-',N''))",
+            request.ReturnId));
+
+        using (var listResponse = await user.GetAsync(
+                   "/api/commerce/v1/sales-returns?page=1&pageSize=20&search=DVT00"))
+        {
+            listResponse.EnsureSuccessStatusCode();
+            var page = await listResponse.Content.ReadFromJsonAsync<SalesReturnPage>();
+            Assert.NotNull(page);
+            Assert.Contains(page.Items, item => item.ReturnId == request.ReturnId);
+        }
+        using (var detailResponse = await user.GetAsync(
+                   $"/api/commerce/v1/sales-returns/{request.ReturnId:D}"))
+        {
+            detailResponse.EnsureSuccessStatusCode();
+            var detail = await detailResponse.Content.ReadFromJsonAsync<SalesReturnDetail>();
+            Assert.NotNull(detail);
+            Assert.Equal(SalesReturnReasonCodes.Other, detail.ReasonCode);
+            Assert.Single(detail.Lines);
+        }
+
+        using (var salesResponse = await user.GetAsync(
+                   $"/api/commerce/v1/sales-returns/sales?page=1&pageSize=20&search={Uri.EscapeDataString(original.DocumentNumber.FullNumber)}&withAvailableQuantity=true"))
+        {
+            salesResponse.EnsureSuccessStatusCode();
+            var page = await salesResponse.Content.ReadFromJsonAsync<ReturnableSalePage>();
+            Assert.NotNull(page);
+            Assert.Contains(page.Items, item => item.DocumentId == original.DocumentId);
+        }
+        using (var saleResponse = await user.GetAsync(
+                   $"/api/commerce/v1/sales-returns/sales/{original.DocumentId:D}"))
+        {
+            saleResponse.EnsureSuccessStatusCode();
+            var sale = await saleResponse.Content.ReadFromJsonAsync<ReturnableSale>();
+            Assert.NotNull(sale);
+            Assert.Equal(.5m, Assert.Single(sale.Lines).AvailableQuantity);
+            Assert.Equal(5_950m, Assert.Single(sale.Payments).AvailableAmount);
+        }
+
 
         using (var replayMessage = Message(request, idempotencyKey))
         using (var replayResponse = await user.SendAsync(replayMessage))
@@ -69,6 +114,31 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
         }
         Assert.Equal(afterSale + .5m, await QuantityAsync());
         Assert.Equal(1, await CountAsync("InventoryMovements", "DocumentId", request.ReturnId));
+
+        var firstConcurrent = request with { ReturnId = Guid.NewGuid() };
+        var secondConcurrent = request with { ReturnId = Guid.NewGuid() };
+        using var firstConcurrentMessage = Message(
+            firstConcurrent, $"concurrent-{firstConcurrent.ReturnId:N}");
+        using var secondConcurrentMessage = Message(
+            secondConcurrent, $"concurrent-{secondConcurrent.ReturnId:N}");
+        var concurrentResponses = await Task.WhenAll(
+            user.SendAsync(firstConcurrentMessage),
+            user.SendAsync(secondConcurrentMessage));
+        try
+        {
+            Assert.Single(concurrentResponses.Where(
+                response => response.StatusCode == HttpStatusCode.Accepted));
+            Assert.Single(concurrentResponses.Where(
+                response => response.StatusCode == HttpStatusCode.Conflict));
+        }
+        finally
+        {
+            foreach (var response in concurrentResponses) response.Dispose();
+        }
+        Assert.Equal(2, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.SalesReturnLines WHERE OriginalDocumentId=@Id",
+            original.DocumentId));
+
 
         var excessive = request with
         {
@@ -92,6 +162,9 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
         using (var deniedMessage = Message(request, $"denied-{Guid.NewGuid():N}"))
         using (var deniedResponse = await denied.SendAsync(deniedMessage))
             Assert.Equal(HttpStatusCode.Forbidden, deniedResponse.StatusCode);
+        using (var deniedRead = await denied.GetAsync(
+                   "/api/commerce/v1/sales-returns?page=1&pageSize=20"))
+            Assert.Equal(HttpStatusCode.Forbidden, deniedRead.StatusCode);
 
         using var allowed = fixture.CreateAdminClient(
             SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm);

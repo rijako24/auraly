@@ -166,7 +166,8 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
             returnId, fixture.BusinessId, fixture.WarehouseId, original.DocumentId,
             new DateTimeOffset(2026, 8, 1, 11, 0, 0, TimeSpan.FromHours(-5)),
             ReturnEconomicResolutions.Refund, "Cash", "Devolución parcial de bienes",
-            [new ConfirmSalesReturnLineRequest(1, .5m, ReturnInventoryDispositions.Sellable)]);
+            [new ConfirmSalesReturnLineRequest(1, .5m, ReturnInventoryDispositions.Sellable)],
+            fixture.WorkSessionId, 1);
         using var user = fixture.CreateAdminClient(
             SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm);
         using var returnMessage = new HttpRequestMessage(

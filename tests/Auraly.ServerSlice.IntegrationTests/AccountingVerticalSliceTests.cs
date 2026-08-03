@@ -175,7 +175,8 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, invoice.DocumentId,
             new DateTimeOffset(2026, 8, 1, 10, 0, 0, TimeSpan.FromHours(-5)),
             ReturnEconomicResolutions.Refund, "Cash", "Devolucion contable",
-            [new ConfirmSalesReturnLineRequest(1, .5m, ReturnInventoryDispositions.Sellable)]);
+            [new ConfirmSalesReturnLineRequest(1, .5m, ReturnInventoryDispositions.Sellable)],
+            fixture.WorkSessionId, 1);
         using (var message = new HttpRequestMessage(HttpMethod.Post, "/api/commerce/v1/sales-returns/confirm")
         { Content = JsonContent.Create(returnRequest) })
         {

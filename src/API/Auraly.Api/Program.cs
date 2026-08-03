@@ -278,6 +278,8 @@ builder.Services.AddScoped<IInventoryOperationStore, SqlInventoryOperationStore>
 builder.Services.AddScoped<InventoryOperationService>();
 builder.Services.AddScoped<ISalesReturnStore, SqlSalesReturnStore>();
 builder.Services.AddScoped<SalesReturnService>();
+builder.Services.AddScoped<ISalesReturnQueryStore, SqlSalesReturnQueryStore>();
+builder.Services.AddScoped<SalesReturnQueryService>();
 builder.Services.AddResponseCompression(options => options.EnableForHttps = true);
 
 var jwtIssuer = builder.Configuration["Authentication:Jwt:Issuer"];
@@ -469,6 +471,7 @@ app.MapPurchasingApi();
 app.MapReceivablesApi();
 app.MapPayablesApi();
 app.MapReturnsApi();
+app.MapSalesReturnQueryApi();
 app.MapInventoryApi();
 app.MapPricingApi();
 app.MapAccountingApi();

@@ -47,7 +47,11 @@ public sealed record ConfirmSalesReturnRequest(
     string EconomicResolution,
     string? RefundMethodCode,
     string ReasonDescription,
-    IReadOnlyCollection<ConfirmSalesReturnLineRequest> Lines);
+    IReadOnlyCollection<ConfirmSalesReturnLineRequest> Lines,
+    Guid? WorkSessionId = null,
+    int? OriginalPaymentNumber = null,
+    string ReasonCode = SalesReturnReasonCodes.Other,
+    string? Notes = null);
 
 public sealed record SalesReturnLineSnapshot(
     int LineNumber,
@@ -87,7 +91,11 @@ public sealed record SalesReturnDocumentPayload(
     decimal UntaxedAmount,
     decimal TaxAmount,
     decimal TotalAmount,
-    IReadOnlyList<SalesReturnLineSnapshot> Lines);
+    IReadOnlyList<SalesReturnLineSnapshot> Lines,
+    Guid? WorkSessionId = null,
+    int? OriginalPaymentNumber = null,
+    string ReasonCode = SalesReturnReasonCodes.Other,
+    string? Notes = null);
 
 public sealed record SalesReturnAcceptance(
     Guid ReturnId,

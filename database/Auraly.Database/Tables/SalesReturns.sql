@@ -3,6 +3,7 @@ CREATE TABLE [dbo].[SalesReturns]
     [ReturnId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
+    [WorkSessionId] UNIQUEIDENTIFIER NULL,
     [OriginalDocumentId] UNIQUEIDENTIFIER NOT NULL,
     [DocumentSeriesId] UNIQUEIDENTIFIER NOT NULL,
     [DocumentNumber] NVARCHAR(64) NOT NULL,
@@ -14,8 +15,11 @@ CREATE TABLE [dbo].[SalesReturns]
     [ReturnedAt] DATETIMEOFFSET(7) NOT NULL,
     [EconomicResolution] NVARCHAR(24) NOT NULL,
     [RefundMethodCode] NVARCHAR(32) NULL,
+    [OriginalPaymentNumber] INT NULL,
     [CorrectionCode] NVARCHAR(4) NOT NULL,
+    [ReasonCode] NVARCHAR(32) NOT NULL CONSTRAINT [DF_SalesReturns_ReasonCode] DEFAULT N'Other',
     [ReasonDescription] NVARCHAR(300) NOT NULL,
+    [Notes] NVARCHAR(1000) NULL,
     [CustomerId] UNIQUEIDENTIFIER NULL,
     [CustomerIdentification] NVARCHAR(64) NOT NULL,
     [UntaxedAmount] DECIMAL(19,4) NOT NULL,
@@ -31,16 +35,22 @@ CREATE TABLE [dbo].[SalesReturns]
     CONSTRAINT [UQ_SalesReturns_Return_Original] UNIQUE ([ReturnId],[OriginalDocumentId]),
     CONSTRAINT [FK_SalesReturns_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_SalesReturns_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
+    CONSTRAINT [FK_SalesReturns_WorkSessions] FOREIGN KEY ([WorkSessionId]) REFERENCES [dbo].[WorkSessions] ([WorkSessionId]),
     CONSTRAINT [FK_SalesReturns_OriginalDocument] FOREIGN KEY ([OriginalDocumentId]) REFERENCES [dbo].[SalesDocuments] ([DocumentId]),
+    CONSTRAINT [FK_SalesReturns_OriginalPayment] FOREIGN KEY ([OriginalDocumentId],[OriginalPaymentNumber]) REFERENCES [dbo].[SalesPayments] ([DocumentId],[PaymentNumber]),
     CONSTRAINT [FK_SalesReturns_DocumentSeries] FOREIGN KEY ([DocumentSeriesId]) REFERENCES [dbo].[DocumentSeries] ([DocumentSeriesId]),
     CONSTRAINT [FK_SalesReturns_Customers] FOREIGN KEY ([CustomerId]) REFERENCES [dbo].[Customers] ([CustomerId]),
     CONSTRAINT [FK_SalesReturns_CreatedBy] FOREIGN KEY ([CreatedByUserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
     CONSTRAINT [UQ_SalesReturns_Business_Idempotency] UNIQUE ([BusinessId],[IdempotencyKey]),
     CONSTRAINT [UQ_SalesReturns_Number] UNIQUE ([BusinessId],[DocumentPrefix],[DocumentSeriesCode],[DocumentConsecutive]),
     CONSTRAINT [CK_SalesReturns_Resolution] CHECK
-      (([EconomicResolution]=N'Refund' AND [RefundMethodCode] IS NOT NULL) OR
-       ([EconomicResolution]=N'CustomerCredit' AND [RefundMethodCode] IS NULL)),
+      (([EconomicResolution]=N'Refund' AND [RefundMethodCode]=N'Cash'
+          AND [OriginalPaymentNumber] IS NOT NULL AND [WorkSessionId] IS NOT NULL) OR
+       ([EconomicResolution]=N'CustomerCredit' AND [RefundMethodCode] IS NULL
+          AND [OriginalPaymentNumber] IS NULL)),
     CONSTRAINT [CK_SalesReturns_Correction] CHECK ([CorrectionCode]=N'1'),
+    CONSTRAINT [CK_SalesReturns_Reason] CHECK ([ReasonCode] IN
+      (N'CustomerChangedMind',N'WrongProduct',N'QualityIssue',N'Damaged',N'BillingCorrection',N'Other')),
     CONSTRAINT [CK_SalesReturns_Amounts] CHECK
       ([UntaxedAmount]>=0 AND [TaxAmount]>=0 AND [TotalAmount]>0),
     CONSTRAINT [CK_SalesReturns_Status] CHECK ([Status] IN (N'Accepted',N'Processed'))
@@ -118,14 +128,20 @@ CREATE TABLE [dbo].[SalesReturnSettlements]
     [SettlementNumber] INT NOT NULL,
     [SettlementType] NVARCHAR(24) NOT NULL,
     [MethodCode] NVARCHAR(32) NULL,
+    [OriginalDocumentId] UNIQUEIDENTIFIER NOT NULL,
+    [OriginalPaymentNumber] INT NULL,
     [Amount] DECIMAL(19,4) NOT NULL,
     [Reference] NVARCHAR(160) NULL,
     [OccurredAt] DATETIMEOFFSET(7) NOT NULL,
     CONSTRAINT [PK_SalesReturnSettlements] PRIMARY KEY CLUSTERED ([ReturnId],[SettlementNumber]),
     CONSTRAINT [FK_SalesReturnSettlements_Return] FOREIGN KEY ([ReturnId]) REFERENCES [dbo].[SalesReturns] ([ReturnId]),
+    CONSTRAINT [FK_SalesReturnSettlements_ReturnOriginal] FOREIGN KEY ([ReturnId],[OriginalDocumentId])
+      REFERENCES [dbo].[SalesReturns] ([ReturnId],[OriginalDocumentId]),
+    CONSTRAINT [FK_SalesReturnSettlements_OriginalPayment] FOREIGN KEY ([OriginalDocumentId],[OriginalPaymentNumber])
+      REFERENCES [dbo].[SalesPayments] ([DocumentId],[PaymentNumber]),
     CONSTRAINT [CK_SalesReturnSettlements_Type] CHECK
-      (([SettlementType]=N'Refund' AND [MethodCode] IS NOT NULL) OR
-       ([SettlementType]=N'CustomerCredit' AND [MethodCode] IS NULL)),
+      (([SettlementType]=N'Refund' AND [MethodCode]=N'Cash' AND [OriginalPaymentNumber] IS NOT NULL) OR
+       ([SettlementType]=N'CustomerCredit' AND [MethodCode] IS NULL AND [OriginalPaymentNumber] IS NULL)),
     CONSTRAINT [CK_SalesReturnSettlements_Amount] CHECK ([Amount]>0)
 );
 GO

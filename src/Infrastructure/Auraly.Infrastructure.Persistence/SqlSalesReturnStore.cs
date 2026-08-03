@@ -75,6 +75,9 @@ public sealed class SqlSalesReturnStore(
                 throw new SalesReturnValidationException(
                     "Customer credit requires an identified customer on the original sale.");
 
+            if (request.EconomicResolution == ReturnEconomicResolutions.Refund)
+                await ValidateCashRefundAsync(
+                    connection, transaction, user, request, total, cancellationToken);
             var number = await AllocateNumberAsync(
                 connection, transaction, user.BusinessId, cancellationToken);
             var now = timeProvider.GetUtcNow();
@@ -86,7 +89,8 @@ public sealed class SqlSalesReturnStore(
                 number.Prefix, number.SeriesCode, number.Consecutive, request.ReturnedAt,
                 request.EconomicResolution, request.RefundMethodCode, "1",
                 request.ReasonDescription, original.CustomerId, original.CustomerIdentification,
-                untaxed, tax, total, lines);
+                untaxed, tax, total, lines, request.WorkSessionId,
+                request.OriginalPaymentNumber, request.ReasonCode, request.Notes);
             var payloadJson = SalesReturnContractSerializer.Serialize(payload);
             var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(payloadJson));
             var movementId = ids.NewId();
@@ -225,6 +229,49 @@ public sealed class SqlSalesReturnStore(
             reader.GetDecimal(13), reader.GetDecimal(14), reader.GetDecimal(15));
     }
 
+    private static async Task ValidateCashRefundAsync(
+        SqlConnection connection, SqlTransaction transaction, SalesReturnUserIdentity user,
+        ConfirmSalesReturnRequest request, decimal requestedAmount,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT p.Amount,
+                   COALESCE((SELECT SUM(r.TotalAmount)
+                     FROM dbo.SalesReturns r WITH(UPDLOCK,HOLDLOCK)
+                     WHERE r.OriginalDocumentId=p.DocumentId
+                       AND r.OriginalPaymentNumber=p.PaymentNumber
+                       AND r.EconomicResolution=N'Refund'),0)
+            FROM dbo.SalesPayments p WITH(UPDLOCK,HOLDLOCK)
+            INNER JOIN dbo.SalesDocuments d WITH(UPDLOCK,HOLDLOCK)
+              ON d.DocumentId=p.DocumentId AND d.BusinessId=@BusinessId
+            INNER JOIN dbo.WorkSessions ws WITH(UPDLOCK,HOLDLOCK)
+              ON ws.WorkSessionId=@WorkSessionId AND ws.BusinessId=@BusinessId
+             AND ws.WarehouseId=@WarehouseId AND ws.UserId=@UserId AND ws.Status=N'Open'
+            WHERE p.DocumentId=@DocumentId AND p.PaymentNumber=@PaymentNumber
+              AND p.MethodCode=N'Cash';
+            """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        command.Parameters.AddWithValue("@UserId", user.UserId);
+        command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
+        command.Parameters.AddWithValue("@WorkSessionId", request.WorkSessionId!.Value);
+        command.Parameters.AddWithValue("@DocumentId", request.OriginalDocumentId);
+        command.Parameters.AddWithValue("@PaymentNumber", request.OriginalPaymentNumber!.Value);
+        decimal originalAmount;
+        decimal reservedAmount;
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            if (!await reader.ReadAsync(cancellationToken))
+                throw new SalesReturnValidationException(
+                    "The original cash payment or active work session was not found.");
+            originalAmount = reader.GetDecimal(0);
+            reservedAmount = reader.GetDecimal(1);
+        }
+        if (requestedAmount > originalAmount - reservedAmount)
+            throw new SalesReturnConflictException(
+                "The return exceeds the cash amount still available for refund.");
+    }
+
     private static async Task<AuralyDocumentNumberAssignment> AllocateNumberAsync(
         SqlConnection connection, SqlTransaction transaction, Guid businessId,
         CancellationToken cancellationToken)
@@ -291,18 +338,20 @@ public sealed class SqlSalesReturnStore(
     {
         await using var command = new SqlCommand("""
             INSERT dbo.SalesReturns
-              (ReturnId,BusinessId,WarehouseId,OriginalDocumentId,DocumentSeriesId,DocumentNumber,
+              (ReturnId,BusinessId,WarehouseId,WorkSessionId,OriginalDocumentId,DocumentSeriesId,DocumentNumber,
                DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,IdempotencyKey,PayloadHash,
-               ReturnedAt,EconomicResolution,RefundMethodCode,CorrectionCode,ReasonDescription,
+               ReturnedAt,EconomicResolution,RefundMethodCode,OriginalPaymentNumber,CorrectionCode,
+               ReasonCode,ReasonDescription,Notes,
                CustomerId,CustomerIdentification,UntaxedAmount,TaxAmount,TotalAmount,Status,
                CreatedByUserId,AcceptedAt)
-            VALUES(@Id,@BusinessId,@WarehouseId,@OriginalId,@SeriesId,@Number,@Prefix,@SeriesCode,
-               @Consecutive,@Key,@Hash,@ReturnedAt,@Resolution,@Method,N'1',@Reason,@CustomerId,
+            VALUES(@Id,@BusinessId,@WarehouseId,@WorkSessionId,@OriginalId,@SeriesId,@Number,@Prefix,@SeriesCode,
+               @Consecutive,@Key,@Hash,@ReturnedAt,@Resolution,@Method,@PaymentNumber,N'1',@ReasonCode,@Reason,@Notes,@CustomerId,
                @CustomerIdentification,@Untaxed,@Tax,@Total,N'Accepted',@UserId,@Now);
             """, connection, transaction);
         command.Parameters.AddWithValue("@Id", request.ReturnId);
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
+        command.Parameters.AddWithValue("@WorkSessionId", (object?)request.WorkSessionId ?? DBNull.Value);
         command.Parameters.AddWithValue("@OriginalId", request.OriginalDocumentId);
         command.Parameters.AddWithValue("@SeriesId", number.SeriesId);
         command.Parameters.AddWithValue("@Number", number.FullNumber);
@@ -314,6 +363,9 @@ public sealed class SqlSalesReturnStore(
         command.Parameters.AddWithValue("@ReturnedAt", request.ReturnedAt);
         command.Parameters.AddWithValue("@Resolution", request.EconomicResolution);
         command.Parameters.AddWithValue("@Method", (object?)request.RefundMethodCode ?? DBNull.Value);
+        command.Parameters.AddWithValue("@PaymentNumber", (object?)request.OriginalPaymentNumber ?? DBNull.Value);
+        command.Parameters.AddWithValue("@ReasonCode", request.ReasonCode);
+        command.Parameters.AddWithValue("@Notes", (object?)request.Notes ?? DBNull.Value);
         command.Parameters.AddWithValue("@Reason", request.ReasonDescription);
         command.Parameters.AddWithValue("@CustomerId", (object?)original.CustomerId ?? DBNull.Value);
         command.Parameters.AddWithValue("@CustomerIdentification", original.CustomerIdentification);

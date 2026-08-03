@@ -5,6 +5,7 @@ using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Receivables;
 using Auraly.Contracts.Sales;
+using Auraly.Contracts.Returns;
 using Auraly.Contracts.WorkSessions;
 using Microsoft.Data.SqlClient;
 
@@ -153,6 +154,79 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             "SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id",
             receivable.ReceivableId));
     }
+
+    [Fact]
+    public async Task Customer_credit_return_reduces_receivable_and_creates_only_the_excess_credit()
+    {
+        var (customerId, userId) = await ConfigureAsync();
+        using var client = fixture.CreateUserClient(userId,
+            CommercePermissionCodes.SalesCreate,
+            WorkSessionPermissionCodes.Open,
+            ReceivablesPermissionCodes.ManageCredit,
+            SalesReturnPermissionCodes.Read,
+            ReceivablesPermissionCodes.RegisterPayment,
+            SalesReturnPermissionCodes.Create,
+            SalesReturnPermissionCodes.Confirm);
+        using (var profile = await client.PutAsJsonAsync(
+                   $"/api/commerce/v1/customers/{customerId:D}/credit",
+                   new UpdateCustomerCreditProfileRequest(
+                       fixture.BusinessId, 500_000m, 30, true)))
+            profile.EnsureSuccessStatusCode();
+
+        var workSession = await fixture.OpenWorkSessionAsync(client);
+        var draft = await CaptureAsync(client,
+            await OpenDraftAsync(client, workSession.WorkSessionId));
+        var selection = await SelectCustomerAsync(client, draft, customerId);
+        var checkout = await CompleteAsync(client, selection.Draft,
+            new CompleteOnlineSalesDraftRequest(
+                selection.Draft.Version, [],
+                new OnlineSalesCreditTerms(
+                    selection.Draft.PayableAmount, DateTimeOffset.UtcNow.AddDays(30))),
+            $"return-credit-sale-{Guid.NewGuid():N}");
+        var receivable = await ReadReceivableAsync(checkout.Receipt.DocumentId);
+
+        var paidBeforeReturn = decimal.Round(receivable.OriginalAmount * .25m, 4);
+        var payment = new ConfirmCustomerPaymentRequest(
+            Guid.NewGuid(), fixture.BusinessId, customerId, workSession.WorkSessionId,
+            DateTimeOffset.UtcNow, "COP", CustomerPaymentMethods.Cash, null,
+            "Abono anterior a devolucion",
+            [new CustomerPaymentAllocationRequest(receivable.ReceivableId, paidBeforeReturn)]);
+        using (var response = await SendAsync(client,
+                   "/api/commerce/v1/receivable-payments/confirm", payment,
+                   $"pre-return-payment-{payment.PaymentId:N}"))
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+
+
+        var request = new ConfirmSalesReturnRequest(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+            checkout.Receipt.DocumentId, DateTimeOffset.UtcNow,
+            ReturnEconomicResolutions.CustomerCredit, null,
+            "Devolucion total aplicada a cartera",
+            [new ConfirmSalesReturnLineRequest(
+                1, 1m, ReturnInventoryDispositions.Sellable)],
+            null, null, SalesReturnReasonCodes.CustomerChangedMind);
+        using (var response = await SendAsync(client,
+                   "/api/commerce/v1/sales-returns/confirm", request,
+                   $"receivable-return-{request.ReturnId:N}"))
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+
+        var applied = await ScalarAsync<decimal>(
+            "SELECT Amount FROM dbo.SalesReturnReceivableApplications WHERE ReturnId=@Id",
+            request.ReturnId);
+        Assert.Equal(receivable.OriginalAmount - paidBeforeReturn, applied);
+        Assert.Equal(0m, await ScalarAsync<decimal>(
+            "SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id",
+            receivable.ReceivableId));
+        Assert.Equal("Paid", await ScalarAsync<string>(
+            "SELECT Status FROM dbo.Receivables WHERE ReceivableId=@Id", receivable.ReceivableId));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.ReceivableTransactions WHERE TransactionType=N'Reversal' AND SourceDocumentId=@Id",
+            request.ReturnId));
+        Assert.Equal(paidBeforeReturn, await ScalarAsync<decimal>(
+            "SELECT OriginalAmount FROM dbo.CustomerCredits WHERE SourceReturnId=@Id",
+            request.ReturnId));
+    }
+
 
     [Fact]
     public async Task Receivables_endpoints_enforce_permissions_and_business_scope()

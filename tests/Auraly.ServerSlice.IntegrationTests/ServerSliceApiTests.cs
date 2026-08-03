@@ -103,7 +103,8 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         Assert.Equal(FiscalDocumentStatusCodes.PendingGeneration, document.Status);
 
         using var pageResponse = await allowed.GetAsync(
-            $"/api/commerce/v1/fiscal/documents?page=1&pageSize=10&status={FiscalDocumentStatusCodes.PendingGeneration}");
+            $"/api/commerce/v1/fiscal/documents?page=1&pageSize=10&status={FiscalDocumentStatusCodes.PendingGeneration}" +
+            $"&auralyNumber={Uri.EscapeDataString(request.DocumentNumber.FullNumber)}");
         Assert.Equal(HttpStatusCode.OK, pageResponse.StatusCode);
         var page = await pageResponse.Content.ReadFromJsonAsync<FiscalDocumentPage>();
         Assert.NotNull(page);
