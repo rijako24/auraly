@@ -71,14 +71,13 @@ Permisos:
 - `parties.external-customers.read`
 - `parties.external-customers.reconcile`
 
-## Alcance pendiente deliberado
+## Automatización posterior
 
-Los adaptadores actuales siguen creando o actualizando
-`ExternalCommerceCustomers` con estado `Pending`. En esta rebanada el consumidor
-real es la API y la vista administrativa, tanto individual como masiva. TodavÃ­a
-no se conectÃ³ el productor automÃ¡tico del bot a un evento de reconciliaciÃ³n.
+La automatización del productor quedó implementada en la rebanada siguiente.
+El diseño vigente está en
+docs/implementation/external-customer-events-design.md.
 
-La siguiente extensiÃ³n debe publicar ese evento desde la transacciÃ³n que actualiza
-el registro externo y consumirlo mediante el transporte durable existente, sin
-sondear la tabla. No se dejÃ³ una interfaz vacÃ­a para afirmar que esa automatizaciÃ³n
-ya funciona.
+Los adaptadores escriben una outbox en la misma transacción del registro externo,
+el dispatcher publica por Service Bus o RabbitMQ y Auraly consume con recibos
+idempotentes. No existe polling ni trigger SQL. La vista y API de esta rebanada
+permanecen como herramientas de revisión y resolución de conflictos.

@@ -79,10 +79,11 @@ y `Customers`, ambos podían tener cursor 1. La aserción ahora incluye
 `Stream = 'Catalog'`; la funcionalidad de producción no cambió y las 93 pruebas
 completas pasan juntas.
 
-## Limitación declarada
+## Automatizaci�n posterior
 
-La reconciliación está operativa desde la API y la vista administrativa. El
-adaptador del bot todavía no publica automáticamente una señal de conciliación al
-actualizar `ExternalCommerceCustomers`. Por tanto, no se afirma automatización de
-extremo a extremo desde el productor. El próximo paso debe conectar ese evento
-durable sin polling ni trigger SQL.
+La limitaci�n aqu� registrada fue cerrada por la rebanada de eventos externos.
+Consultar:
+
+- docs/implementation/external-customer-events-design.md;
+- docs/implementation/external-customer-events-evidence.md;
+- docs/implementation/run-external-customer-events.md.
