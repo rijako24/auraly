@@ -24,6 +24,7 @@ import {
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { OrdersWorkspace } from "@/components/orders/orders-workspace";
+import { SalesReturnWorkspace } from "@/components/returns/sales-return-workspace";
 import {
   PosCatalogProduct,
   PosCustomer,
@@ -100,6 +101,7 @@ export default function PosPage() {
     userDisplayName: "â€”",
     userId: null as string | null,
   });
+  const [returnsOpen, setReturnsOpen] = useState(false);
   const [message, setMessage] = useState("Esperando producto");
   const [error, setError] = useState<string | null>(null);
   const [temporaryOpen, setTemporaryOpen] = useState(false);
@@ -323,7 +325,23 @@ export default function PosPage() {
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
-      if (invoiceSearchOpen) return;
+      if (invoiceSearchOpen || returnsOpen) return;
+      if (
+        event.ctrlKey &&
+        event.key === "F6" &&
+        client?.mode === "online" &&
+        serverConnected &&
+        !busy &&
+        !temporaryOpen &&
+        !productSearchOpen &&
+        !customerSearchOpen &&
+        !discountOpen &&
+        !paymentOpen &&
+        !confirmation
+      ) {
+        event.preventDefault();
+        setReturnsOpen(true);
+      } else
       if (
         event.key === "F6" &&
         !busy &&
@@ -435,11 +453,14 @@ export default function PosPage() {
     return () => window.removeEventListener("keydown", handleShortcut);
   }, [
     busy,
+    client,
+    returnsOpen,
     confirmation,
     customerSearchOpen,
     discountOpen,
     invoiceSearchOpen,
     draft?.lines.length,
+    serverConnected,
     hasSelectedLine,
     paymentOpen,
     productSearchOpen,
@@ -1147,13 +1168,22 @@ export default function PosPage() {
             <p className="hidden pl-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 sm:block">
               Acciones de captura
             </p>
-            <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:w-auto sm:grid-cols-4">
+            <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:w-auto xl:grid-cols-5">
               <button type="button" disabled={!edgeReady || busy}
                 onClick={() => setInvoiceSearchOpen(true)}
                 className="flex h-11 items-center justify-center gap-2 rounded-xl border border-teal-200 bg-teal-50 px-3 text-sm font-semibold text-teal-900 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
                 <Printer className="h-4 w-4" />
                 Facturas
                 <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">F6</span>
+              </button>
+              <button type="button"
+                disabled={client?.mode !== "online" || !serverConnected || busy}
+                onClick={() => setReturnsOpen(true)}
+                title={client?.mode === "online" ? "Abrir devoluciones" : "Disponible en facturaci?n online"}
+                className="flex h-11 items-center justify-center gap-2 rounded-xl border border-teal-200 bg-white px-3 text-sm font-semibold text-teal-900 transition hover:bg-teal-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
+                <RotateCcw className="h-4 w-4" />
+                Devoluciones
+                <span className="rounded bg-teal-50 px-1.5 py-0.5 text-[10px]">Ctrl+F6</span>
               </button>
               <button type="button" disabled={!hasSelectedLine || busy}
                 onClick={() => setDiscountOpen(true)}
@@ -1574,6 +1604,20 @@ export default function PosPage() {
                 invoicePosOrders(orders.map((order) => order.orderId), method)
               }
             />
+          </main>
+        </div>
+      )}
+
+      {returnsOpen && client?.mode === "online" && serverConnected && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-slate-50">
+          <header className="flex h-16 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6">
+            <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-700">Auraly Commerce</p><h2 className="text-xl font-bold text-slate-950">Devoluciones de venta</h2></div>
+            <button type="button" onClick={() => { setReturnsOpen(false); focusScanner(); }}
+              className="grid h-11 w-11 place-items-center rounded-xl border border-slate-200 text-slate-600 transition hover:bg-slate-100"
+              aria-label="Cerrar devoluciones"><X className="h-5 w-5" /></button>
+          </header>
+          <main className="min-h-0 flex-1 overflow-auto p-5">
+            <SalesReturnWorkspace embedded />
           </main>
         </div>
       )}

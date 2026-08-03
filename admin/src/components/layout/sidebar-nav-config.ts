@@ -58,6 +58,7 @@ export const navigation: NavEntry[] = [
   { type: "separator", label: "Operaciones" },
   { name: "Entradas de mercanc?a", href: "/dashboard/purchasing/goods-receipts", icon: PackagePlus, permission: "purchasing.goods-receipts.read" },
   { name: "Devoluciones a proveedores", href: "/dashboard/purchasing/purchase-returns", icon: Undo2, permission: "purchasing.purchase-returns.read" },
+  { name: "Devoluciones de venta", href: "/dashboard/sales-returns", icon: Undo2, permission: "sales.returns.read" },
   { name: "Reservaciones", href: "/dashboard/reservations", icon: CalendarDays, permission: "reservations.read" },
   { name: "Calendario", href: "/dashboard/reservations/calendar", icon: Calendar, permission: "reservations.read" },
   { name: "Agente IA", href: "/dashboard/agents", icon: Sparkles, permission: "agents.read" },
