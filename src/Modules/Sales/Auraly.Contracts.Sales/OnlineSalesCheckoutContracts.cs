@@ -5,9 +5,14 @@ public sealed record OnlineSalesPayment(
     decimal Amount,
     string? Reference);
 
+public sealed record OnlineSalesCreditTerms(
+    decimal Amount,
+    DateTimeOffset DueDate);
+
 public sealed record CompleteOnlineSalesDraftRequest(
     long ExpectedVersion,
-    IReadOnlyList<OnlineSalesPayment> Payments);
+    IReadOnlyList<OnlineSalesPayment> Payments,
+    OnlineSalesCreditTerms? Credit = null);
 
 public sealed record OnlineSalesReceiptLine(
     string ProductCode,

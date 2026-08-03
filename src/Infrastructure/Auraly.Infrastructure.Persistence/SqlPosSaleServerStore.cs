@@ -299,7 +299,7 @@ public sealed class SqlPosSaleServerStore(
                 FiscalSeriesId, FiscalAuthorizationId,
                 DocumentType, IdempotencyKey, PayloadHash, FiscalNumber,
                 FiscalPrefix, FiscalConsecutive, IssuedAt, CustomerIdentification, CustomerId,
-                UntaxedAmount, TaxAmount, PayableAmount, CufeReceived,
+                UntaxedAmount, TaxAmount, PayableAmount, CreditAmount, CreditDueDate, CufeReceived,
                 CufeCalculated, FiscalStatus, ProcessingStatus, ReceivedAt,
                 CreatedByDeviceId, SoldByUserId
             )
@@ -311,7 +311,7 @@ public sealed class SqlPosSaleServerStore(
                 @FiscalSeriesId, @FiscalAuthorizationId,
                 @DocumentType, @IdempotencyKey, @PayloadHash, @FiscalNumber,
                 @FiscalPrefix, @FiscalConsecutive, @IssuedAt, @CustomerIdentification, @CustomerId,
-                @UntaxedAmount, @TaxAmount, @PayableAmount, @CufeReceived,
+                @UntaxedAmount, @TaxAmount, @PayableAmount, @CreditAmount, @CreditDueDate, @CufeReceived,
                 @CufeCalculated, @FiscalStatus, @ProcessingStatus, @ReceivedAt,
                 @DeviceId, @SoldByUserId
             );
@@ -345,6 +345,8 @@ public sealed class SqlPosSaleServerStore(
         sqlCommand.Parameters.AddWithValue("@CustomerId", (object?)request.CustomerId ?? DBNull.Value);
         AddDecimal(sqlCommand, "@TaxAmount", snapshot.TaxAmount, 19, 4);
         AddDecimal(sqlCommand, "@PayableAmount", snapshot.PayableAmount, 19, 4);
+        AddDecimal(sqlCommand, "@CreditAmount", request.Credit?.Amount ?? 0m, 19, 4);
+        sqlCommand.Parameters.AddWithValue("@CreditDueDate", (object?)request.Credit?.DueDate ?? DBNull.Value);
         sqlCommand.Parameters.AddWithValue("@CufeReceived", snapshot.Cufe);
         sqlCommand.Parameters.AddWithValue(
             "@CufeCalculated",

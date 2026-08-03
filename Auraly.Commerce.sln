@@ -181,6 +181,14 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Application.Pricing"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Infrastructure.Pricing", "src\Modules\Pricing\Auraly.Infrastructure.Pricing\Auraly.Infrastructure.Pricing.csproj", "{24684274-236A-414B-8F4B-FD175951A011}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Receivables", "Receivables", "{79DAD712-00A0-458B-A3C4-3E5CFE26B44F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Domain.Receivables", "src\Modules\Receivables\Auraly.Domain.Receivables\Auraly.Domain.Receivables.csproj", "{DA171150-2C6A-4AD4-BD61-13869685799B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Contracts.Receivables", "src\Modules\Receivables\Auraly.Contracts.Receivables\Auraly.Contracts.Receivables.csproj", "{C7AE1284-0169-417C-A228-350347B9A762}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Application.Receivables", "src\Modules\Receivables\Auraly.Application.Receivables\Auraly.Application.Receivables.csproj", "{20E7CAE7-9F43-4D02-9947-A71597F158B4}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -438,6 +446,18 @@ Global
 		{24684274-236A-414B-8F4B-FD175951A011}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{24684274-236A-414B-8F4B-FD175951A011}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{24684274-236A-414B-8F4B-FD175951A011}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DA171150-2C6A-4AD4-BD61-13869685799B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DA171150-2C6A-4AD4-BD61-13869685799B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DA171150-2C6A-4AD4-BD61-13869685799B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DA171150-2C6A-4AD4-BD61-13869685799B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C7AE1284-0169-417C-A228-350347B9A762}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C7AE1284-0169-417C-A228-350347B9A762}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C7AE1284-0169-417C-A228-350347B9A762}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C7AE1284-0169-417C-A228-350347B9A762}.Release|Any CPU.Build.0 = Release|Any CPU
+		{20E7CAE7-9F43-4D02-9947-A71597F158B4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{20E7CAE7-9F43-4D02-9947-A71597F158B4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{20E7CAE7-9F43-4D02-9947-A71597F158B4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{20E7CAE7-9F43-4D02-9947-A71597F158B4}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{E3ECCBF0-6B36-4460-A25E-4FFBE9837688} = {AA52BDD3-C36B-499D-9049-BB721311A642}
@@ -521,5 +541,8 @@ Global
 		{34A7A0A6-A030-4A22-8E2E-A65020B837B3} = {D6A3A3C4-D0DF-41AA-AB88-9ACE89D048F8}
 		{FEE04602-017A-4E35-B532-345722C0A143} = {D6A3A3C4-D0DF-41AA-AB88-9ACE89D048F8}
 		{24684274-236A-414B-8F4B-FD175951A011} = {D6A3A3C4-D0DF-41AA-AB88-9ACE89D048F8}
+		{DA171150-2C6A-4AD4-BD61-13869685799B} = {79DAD712-00A0-458B-A3C4-3E5CFE26B44F}
+		{C7AE1284-0169-417C-A228-350347B9A762} = {79DAD712-00A0-458B-A3C4-3E5CFE26B44F}
+		{20E7CAE7-9F43-4D02-9947-A71597F158B4} = {79DAD712-00A0-458B-A3C4-3E5CFE26B44F}
 	EndGlobalSection
 EndGlobal

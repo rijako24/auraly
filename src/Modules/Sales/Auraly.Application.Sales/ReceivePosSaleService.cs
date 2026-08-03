@@ -144,6 +144,7 @@ public sealed class ReceivePosSaleService(
         CancellationToken cancellationToken)
     {
         ValidateDocumentNumber(request);
+        ValidateSettlement(request);
         var snapshotJson = PosSaleContractSerializer.Serialize(request);
         var payloadHash = PosSaleContractSerializer.Hash(request);
         var existing = await store.FindAsync(
@@ -228,6 +229,27 @@ public sealed class ReceivePosSaleService(
             device.TenantId != request.TenantId)
             throw new PosSaleForbiddenException(
                 "The uploaded tenant or device differs from the authenticated context.");
+    }
+
+    private static void ValidateSettlement(PosSaleUploadRequest request)
+    {
+        var paid = request.Payments.Sum(payment => payment.Amount);
+        var credit = request.Credit?.Amount ?? 0m;
+        if (request.Payments.Any(payment => payment.Amount <= 0) ||
+            request.Payments.Select(payment => payment.PaymentNumber).Distinct().Count() != request.Payments.Count ||
+            paid + credit != request.Lines.Sum(line => line.LineTotal))
+            throw new PosSaleInvalidException(
+                "Actual payments plus financed balance must equal the invoice total.");
+        if (request.Credit is null) return;
+        if (request.Credit.CustomerId == Guid.Empty || request.CustomerId != request.Credit.CustomerId)
+            throw new PosSaleInvalidException(
+                "A credit sale requires the selected customer as debtor.");
+        if (request.Credit.Amount <= 0 || request.Credit.DueDate < request.FiscalSnapshot.IssuedAt)
+            throw new PosSaleInvalidException("The financed balance and due date are invalid.");
+        if (request.UblSnapshot is null || request.UblSnapshot.PaymentFormCode != "2" ||
+            request.UblSnapshot.DueDate != DateOnly.FromDateTime(request.Credit.DueDate.Date))
+            throw new PosSaleInvalidException(
+                "The immutable UBL snapshot must identify the credit terms.");
     }
 
     private static void ValidateDocumentNumber(PosSaleUploadRequest request)

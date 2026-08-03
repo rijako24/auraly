@@ -129,6 +129,11 @@ public sealed record PosSaleUblSnapshotContract(
     DateOnly DueDate,
     string? PaymentReference);
 
+public sealed record PosSaleCreditContract(
+    Guid CustomerId,
+    decimal Amount,
+    DateTimeOffset DueDate);
+
 public sealed record PosSaleUploadRequest(
     Guid TenantId,
     Guid BusinessId,
@@ -144,7 +149,8 @@ public sealed record PosSaleUploadRequest(
     PosSaleUblSnapshotContract? UblSnapshot = null,
     Guid? CustomerId = null,
     string SourceMode = SaleSourceModes.PosEdge,
-    Guid? SourceOrderId = null);
+    Guid? SourceOrderId = null,
+    PosSaleCreditContract? Credit = null);
 
 public sealed record PosSaleUploadResponse(
     Guid ReceiptId,

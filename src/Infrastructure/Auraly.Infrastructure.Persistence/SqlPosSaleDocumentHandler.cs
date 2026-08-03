@@ -56,6 +56,8 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                 session, request, payment, workSessionId, cancellationToken);
         }
 
+        await InsertReceivableAsync(session, request, cancellationToken);
+
         await SqlAccountingPostingJobWriter.InsertAsync(
             session, document, request.FiscalSnapshot.IssuedAt, _idGenerator, _timeProvider,
             cancellationToken);

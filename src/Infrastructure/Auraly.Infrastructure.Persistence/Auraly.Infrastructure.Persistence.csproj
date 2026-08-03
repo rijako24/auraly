@@ -52,6 +52,9 @@
     <ProjectReference Include="..\..\Modules\Pricing\Auraly.Domain.Pricing\Auraly.Domain.Pricing.csproj" />
     <ProjectReference Include="..\..\Modules\WorkSessions\Auraly.Application.WorkSessions\Auraly.Application.WorkSessions.csproj" />
     <ProjectReference Include="..\..\Modules\WorkSessions\Auraly.Contracts.WorkSessions\Auraly.Contracts.WorkSessions.csproj" />
+    <ProjectReference Include="..\..\Modules\Receivables\Auraly.Contracts.Receivables\Auraly.Contracts.Receivables.csproj" />
+    <ProjectReference Include="..\..\Modules\Receivables\Auraly.Application.Receivables\Auraly.Application.Receivables.csproj" />
+    <ProjectReference Include="..\..\Modules\Receivables\Auraly.Domain.Receivables\Auraly.Domain.Receivables.csproj" />
   </ItemGroup>
 </Project>
 

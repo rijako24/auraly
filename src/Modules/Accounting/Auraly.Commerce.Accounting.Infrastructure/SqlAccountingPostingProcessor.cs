@@ -20,7 +20,7 @@ public sealed class SqlAccountingPostingProcessor(
     TimeProvider timeProvider)
 {
     private static readonly HashSet<string> SupportedTypes =
-        ["SalesInvoice", "SalesReturn", "GoodsReceipt", "PurchaseReturn", "PayablePayment"];
+        ["SalesInvoice", "SalesReturn", "GoodsReceipt", "PurchaseReturn", "PayablePayment", "ReceivablePayment"];
 
     public async Task ProcessAsync(
         Guid documentId,
@@ -78,6 +78,9 @@ public sealed class SqlAccountingPostingProcessor(
                     connection, transaction, source, cancellationToken),
                 "PayablePayment" => FinancialFactsResult.Ready(
                     await LoadPayablePaymentFactsAsync(
+                        connection, transaction, source, cancellationToken)),
+                "ReceivablePayment" => FinancialFactsResult.Ready(
+                    await LoadReceivablePaymentFactsAsync(
                         connection, transaction, source, cancellationToken)),
                 _ => throw new InvalidOperationException(
                     $"Document type '{source.DocumentType}' is not supported for accounting.")
@@ -141,7 +144,8 @@ public sealed class SqlAccountingPostingProcessor(
                         WHEN p.DocumentType=N'SalesReturn' THEN r.ReturnedAt
                         WHEN p.DocumentType=N'GoodsReceipt' THEN g.ReceivedAt
                         WHEN p.DocumentType=N'PurchaseReturn' THEN pr.ReturnedAt
-                        WHEN p.DocumentType=N'PayablePayment' THEN pp.PaidAt END
+                        WHEN p.DocumentType=N'PayablePayment' THEN pp.PaidAt
+                        WHEN p.DocumentType=N'ReceivablePayment' THEN cp.PaidAt END
             FROM dbo.DocumentProcessingPayloads p WITH (UPDLOCK,HOLDLOCK)
             INNER JOIN dbo.DocumentProcessingJobs j WITH (UPDLOCK,HOLDLOCK)
               ON j.DocumentId=p.DocumentId AND j.DocumentType=p.DocumentType
@@ -156,6 +160,8 @@ public sealed class SqlAccountingPostingProcessor(
               ON pr.PurchaseReturnId=p.DocumentId AND p.DocumentType=N'PurchaseReturn'
             LEFT JOIN dbo.SupplierPayments pp
               ON pp.PaymentId=p.DocumentId AND p.DocumentType=N'PayablePayment'
+            LEFT JOIN dbo.CustomerPayments cp
+              ON cp.PaymentId=p.DocumentId AND p.DocumentType=N'ReceivablePayment'
             WHERE p.DocumentId=@DocumentId AND p.DocumentType=@DocumentType
               AND p.BusinessId=@BusinessId AND j.Status=N'Completed';
             """;
@@ -480,6 +486,40 @@ public sealed class SqlAccountingPostingProcessor(
         return FinancialFacts.PayablePayment(number, amount, settlement);
     }
 
+    private static async Task<FinancialFacts> LoadReceivablePaymentFactsAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        SourceEnvelope source,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            SELECT c.PartyId,p.DocumentNumber,p.CurrencyCode,p.TotalAmount,p.PaymentMethod
+            FROM dbo.CustomerPayments p
+            INNER JOIN dbo.Customers c ON c.CustomerId=p.CustomerId
+            WHERE p.PaymentId=@DocumentId AND p.BusinessId=@BusinessId AND p.Status=N'Processed';
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
+        command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            throw new InvalidOperationException(
+                "The processed customer receipt was not found for accounting.");
+        var partyId = reader.GetGuid(0);
+        var number = reader.GetString(1);
+        if (reader.GetString(2) != "COP")
+            throw new InvalidOperationException("Customer receipt accounting currently requires COP.");
+        var amount = reader.GetDecimal(3);
+        var settlement = reader.GetString(4) switch
+        {
+            "Cash" => AccountingCategories.Cash,
+            "BankTransfer" => AccountingCategories.Bank,
+            "DebitCard" => AccountingCategories.DebitCardClearing,
+            "CreditCard" => AccountingCategories.CreditCardClearing,
+            var method => throw new InvalidOperationException($"Customer receipt method '{method}' has no accounting category.")
+        };
+        return FinancialFacts.ReceivablePayment(number, partyId, amount, settlement);
+    }
+
     private static async Task<decimal> InventoryCostAsync(
         SqlConnection connection, SqlTransaction transaction, Guid documentId,
         string documentType, CancellationToken cancellationToken)
@@ -626,7 +666,7 @@ public sealed class SqlAccountingPostingProcessor(
             new(null, code, message);
     }
 
-    private sealed record FinancialFacts(string Description, Guid? PartyId, decimal Untaxed, decimal Tax, decimal Total, decimal Cost, IReadOnlyList<(string Category, decimal Amount)> Settlements, bool IsReturn, bool IsPurchase, bool IsPayablePayment)
+    private sealed record FinancialFacts(string Description, Guid? PartyId, decimal Untaxed, decimal Tax, decimal Total, decimal Cost, IReadOnlyList<(string Category, decimal Amount)> Settlements, bool IsReturn, bool IsPurchase, bool IsPayablePayment, bool IsReceivablePayment)
     {
         public IReadOnlySet<string> RequiredCategories
         {
@@ -636,6 +676,11 @@ public sealed class SqlAccountingPostingProcessor(
                 if (IsPayablePayment)
                 {
                     values.Add(AccountingCategories.AccountsPayable);
+                    return values;
+                }
+                if (IsReceivablePayment)
+                {
+                    values.Add(AccountingCategories.AccountsReceivable);
                     return values;
                 }
                 if (IsPurchase)
@@ -660,6 +705,14 @@ public sealed class SqlAccountingPostingProcessor(
                     yield return new(accounts[settlement.Category], 0, settlement.Amount, PartyId, costCenter, Description);
                 yield break;
             }
+            if (IsReceivablePayment)
+            {
+                foreach (var settlement in Settlements)
+                    yield return new(accounts[settlement.Category], settlement.Amount, 0, PartyId, costCenter, Description);
+                yield return new(accounts[AccountingCategories.AccountsReceivable], 0, Total, PartyId, costCenter, Description);
+                yield break;
+            }
+
             if (IsPurchase)
             {
                 if (IsReturn)
@@ -679,7 +732,8 @@ public sealed class SqlAccountingPostingProcessor(
                         yield return new(accounts[settlement.Category], 0, settlement.Amount, PartyId, costCenter, Description);
                 }
                 yield break;
-            }            if (!IsReturn)
+            }
+            if (!IsReturn)
             {
                 foreach (var settlement in Settlements) yield return new(accounts[settlement.Category], settlement.Amount, 0, PartyId, costCenter, Description);
                 yield return new(accounts[AccountingCategories.SalesRevenue], 0, Untaxed, PartyId, costCenter, Description);
@@ -694,10 +748,11 @@ public sealed class SqlAccountingPostingProcessor(
                 if (Cost > 0) { yield return new(accounts[AccountingCategories.Inventory], Cost, 0, PartyId, costCenter, Description); yield return new(accounts[AccountingCategories.CostOfGoodsSold], 0, Cost, PartyId, costCenter, Description); }
             }
         }
-        public static FinancialFacts Invoice(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Factura de venta {number}", party, untaxed, tax, total, cost, settlements, false, false, false);
-        public static FinancialFacts Return(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, string settlement) => new($"Devolucion de venta {number}", party, untaxed, tax, total, cost, [(settlement, total)], true, false, false);
-        public static FinancialFacts Purchase(string number, decimal inventory, decimal expense, decimal deductibleVat, decimal total) => new($"Entrada de mercancia {number}", null, expense, deductibleVat, total, inventory, [(AccountingCategories.AccountsPayable, total)], false, true, false);
-        public static FinancialFacts PurchaseReturn(string number, decimal inventory, decimal expense, decimal deductibleVat, decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Devolucion de compra {number}", null, expense, deductibleVat, total, inventory, settlements, true, true, false);
-        public static FinancialFacts PayablePayment(string number, decimal total, string settlement) => new($"Pago a proveedor {number}", null, 0, 0, total, 0, [(settlement, total)], false, false, true);
+        public static FinancialFacts Invoice(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Factura de venta {number}", party, untaxed, tax, total, cost, settlements, false, false, false, false);
+        public static FinancialFacts Return(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, string settlement) => new($"Devolucion de venta {number}", party, untaxed, tax, total, cost, [(settlement, total)], true, false, false, false);
+        public static FinancialFacts Purchase(string number, decimal inventory, decimal expense, decimal deductibleVat, decimal total) => new($"Entrada de mercancia {number}", null, expense, deductibleVat, total, inventory, [(AccountingCategories.AccountsPayable, total)], false, true, false, false);
+        public static FinancialFacts PurchaseReturn(string number, decimal inventory, decimal expense, decimal deductibleVat, decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Devolucion de compra {number}", null, expense, deductibleVat, total, inventory, settlements, true, true, false, false);
+        public static FinancialFacts PayablePayment(string number, decimal total, string settlement) => new($"Pago a proveedor {number}", null, 0, 0, total, 0, [(settlement, total)], false, false, true, false);
+        public static FinancialFacts ReceivablePayment(string number, Guid partyId, decimal total, string settlement) => new($"Recaudo de cartera {number}", partyId, 0, 0, total, 0, [(settlement, total)], false, false, false, true);
     }
 }

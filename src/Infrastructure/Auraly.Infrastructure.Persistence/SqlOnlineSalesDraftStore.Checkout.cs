@@ -124,9 +124,12 @@ public sealed partial class SqlOnlineSalesDraftStore
         if (draft.Lines.Count == 0)
             throw new OnlineSalesDraftValidationException(
                 "La venta debe tener al menos un producto.");
-        if (request.Payments.Sum(payment => payment.Amount) != draft.PayableAmount)
+        if (request.Payments.Sum(payment => payment.Amount) + (request.Credit?.Amount ?? 0m) != draft.PayableAmount)
             throw new OnlineSalesDraftValidationException(
-                "Los medios de pago deben ser iguales al total de la venta.");
+                "Los pagos reales y el saldo financiado deben ser iguales al total de la venta.");
+
+        await ValidateCreditAsync(connection, transaction, state.BusinessId,
+            state.CustomerId, request.Credit, cancellationToken);
 
         var now = time.GetUtcNow();
         var configuration = await ReadCheckoutConfigurationAsync(
@@ -261,13 +264,15 @@ public sealed partial class SqlOnlineSalesDraftStore
                         line.UnitCode,
                         TaxName(line.TaxCode),
                         line.TaxRate)).ToArray(),
-                "1",
-                PaymentMeansCode(payments[0].MethodCode),
-                DateOnly.FromDateTime(now.Date),
+                request.Credit is null ? "1" : "2",
+                payments.Length == 0 ? "ZZZ" : PaymentMeansCode(payments[0].MethodCode),
+                DateOnly.FromDateTime((request.Credit?.DueDate ?? now).Date),
                 payments.Select(payment => payment.Reference)
                     .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))),
             state.CustomerId,
-            SaleSourceModes.Online);
+            SaleSourceModes.Online,
+            Credit: request.Credit is null || state.CustomerId is null ? null :
+                new PosSaleCreditContract(state.CustomerId.Value, request.Credit.Amount, request.Credit.DueDate));
 
         var nextDraftId = ids.NewId();
         var acquired = await ExecuteAsync(connection, transaction, """
@@ -794,6 +799,10 @@ public sealed partial class SqlOnlineSalesDraftStore
                 .Append(':')
                 .Append(payment.Reference?.Trim());
         }
+        if (request.Credit is not null)
+            value.Append("|credit:").Append(request.Credit.Amount.ToString(CultureInfo.InvariantCulture))
+                .Append(':').Append(request.Credit.DueDate.ToString("O", CultureInfo.InvariantCulture));
+
         return Convert.ToHexString(
             SHA256.HashData(Encoding.UTF8.GetBytes(value.ToString())));
     }

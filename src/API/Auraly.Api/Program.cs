@@ -18,6 +18,7 @@ using Auraly.Application.Orders;
 using Auraly.Application.WorkSessions;
 using Auraly.Application.Purchasing;
 using Auraly.Application.Payables;
+using Auraly.Application.Receivables;
 using Auraly.Application.Pricing;
 using Auraly.Application.Inventory;
 using Auraly.Application.Returns;
@@ -83,6 +84,7 @@ builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPosSaleDocumentHandler>
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlGoodsReceiptDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPurchaseReturnDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPayablePaymentDocumentHandler>();
+builder.Services.AddScoped<IConfirmedDocumentHandler, SqlReceivablePaymentDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlSalesReturnDocumentHandler>();
 builder.Services.AddScoped<SqlInventoryOperationProcessor>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlStockCountDocumentHandler>();
@@ -268,6 +270,8 @@ builder.Services.AddScoped<IPurchaseReturnStore, SqlPurchaseReturnStore>();
 builder.Services.AddScoped<PurchaseReturnService>();
 builder.Services.AddScoped<IPayablesStore, SqlPayablesStore>();
 builder.Services.AddScoped<PayablesService>();
+builder.Services.AddScoped<IReceivablesStore, SqlReceivablesStore>();
+builder.Services.AddScoped<ReceivablesService>();
 builder.Services.AddScoped<IPricingStore, SqlPricingStore>();
 builder.Services.AddScoped<PricingService>();
 builder.Services.AddScoped<IInventoryOperationStore, SqlInventoryOperationStore>();
@@ -350,6 +354,11 @@ builder.Services.AddAuthorization(options =>
         policy.RequireAuthenticatedUser();
     });
     options.AddPolicy("returns.user", policy =>
+    {
+        policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
+        policy.RequireAuthenticatedUser();
+    });
+    options.AddPolicy("receivables.user", policy =>
     {
         policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
         policy.RequireAuthenticatedUser();
@@ -457,6 +466,7 @@ app.MapFiscalApi();
 app.MapOrdersApi();
 app.MapPosOrdersApi();
 app.MapPurchasingApi();
+app.MapReceivablesApi();
 app.MapPayablesApi();
 app.MapReturnsApi();
 app.MapInventoryApi();

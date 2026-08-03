@@ -131,6 +131,7 @@
     <Build Include="Tables\PurchaseReturns.sql" />
     <Build Include="Tables\Pricing.sql" />
     <Build Include="Tables\PayablePayments.sql" />
+    <Build Include="Tables\Receivables.sql" />
     <Build Include="Tables\InventoryOperations.sql" />
     <Build Include="Tables\InventoryMovements.sql" />
     <Build Include="Tables\InventoryBalances.sql" />

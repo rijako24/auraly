@@ -24,6 +24,8 @@ CREATE TABLE [dbo].[SalesDocuments]
     [UntaxedAmount] DECIMAL(19, 4) NOT NULL,
     [TaxAmount] DECIMAL(19, 4) NOT NULL,
     [PayableAmount] DECIMAL(19, 4) NOT NULL,
+    [CreditAmount] DECIMAL(19, 4) NOT NULL CONSTRAINT [DF_SalesDocuments_CreditAmount] DEFAULT 0,
+    [CreditDueDate] DATETIMEOFFSET(7) NULL,
     [CufeReceived] NVARCHAR(96) NOT NULL,
     [CufeCalculated] NVARCHAR(96) NULL,
     [FiscalStatus] NVARCHAR(40) NOT NULL,
@@ -51,7 +53,8 @@ CREATE TABLE [dbo].[SalesDocuments]
         UNIQUE ([BusinessId], [DocumentType], [DocumentPrefix], [DocumentSeriesCode], [DocumentConsecutive]),
     CONSTRAINT [UQ_SalesDocuments_FiscalNumber]
         UNIQUE ([BusinessId], [DocumentType], [FiscalAuthorizationId], [FiscalPrefix], [FiscalConsecutive]),
-    CONSTRAINT [CK_SalesDocuments_Amounts] CHECK ([UntaxedAmount] >= 0 AND [TaxAmount] >= 0 AND [PayableAmount] >= 0),
+    CONSTRAINT [CK_SalesDocuments_Amounts] CHECK ([UntaxedAmount] >= 0 AND [TaxAmount] >= 0 AND [PayableAmount] >= 0 AND [CreditAmount] BETWEEN 0 AND [PayableAmount]),
+    CONSTRAINT [CK_SalesDocuments_CreditTerms] CHECK (([CreditAmount] = 0 AND [CreditDueDate] IS NULL) OR ([CreditAmount] > 0 AND [CreditDueDate] IS NOT NULL AND [CustomerId] IS NOT NULL)),
     CONSTRAINT [CK_SalesDocuments_SourceMode] CHECK ([SourceMode] IN (N'PosEdge', N'Online'))
 );
 

@@ -104,9 +104,10 @@ public sealed class OnlineSalesCheckoutService(
         if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 100)
             throw new OnlineSalesDraftValidationException(
                 "Idempotency-Key es obligatorio y admite máximo 100 caracteres.");
-        if (request.Payments.Count is < 1 or > 10)
+        if (request.Payments.Count > 10 ||
+            (request.Payments.Count == 0 && request.Credit is null))
             throw new OnlineSalesDraftValidationException(
-                "La venta requiere entre uno y diez medios de pago.");
+                "La venta requiere pagos reales, saldo a cr?dito o ambos.");
         if (request.Payments.Any(payment =>
                 !PaymentMethods.Contains(payment.MethodCode) ||
                 payment.Amount <= 0 ||
@@ -116,5 +117,10 @@ public sealed class OnlineSalesCheckoutService(
         if (request.Payments.Count(payment => payment.MethodCode == "Cash") > 1)
             throw new OnlineSalesDraftValidationException(
                 "La venta admite una sola línea de efectivo.");
+        if (request.Credit is not null &&
+            (request.Credit.Amount <= 0 || request.Credit.DueDate == default))
+            throw new OnlineSalesDraftValidationException(
+                "El valor y vencimiento del cr?dito no son v?lidos.");
+
     }
 }

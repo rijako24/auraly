@@ -101,9 +101,9 @@ public sealed class FiscalSnapshotVerifier(IFiscalTechnicalKeyProvider keyProvid
             return "A sale requires at least one line.";
         }
 
-        if (request.Payments.Count == 0)
+        if (request.Payments.Count == 0 && request.Credit is null)
         {
-            return "A sale requires at least one payment.";
+            return "A sale requires a real payment or a financed balance.";
         }
 
         if (!string.Equals(snapshot.DocumentType, PosSaleDocumentTypes.Invoice, StringComparison.Ordinal))
@@ -172,10 +172,13 @@ public sealed class FiscalSnapshotVerifier(IFiscalTechnicalKeyProvider keyProvid
             return "Document totals do not match its lines.";
         }
 
-        if (request.Payments.Sum(payment => payment.Amount) != snapshot.PayableAmount ||
-            request.Payments.Any(payment => payment.PaymentNumber <= 0 || payment.Amount <= 0))
+        var financedAmount = request.Credit?.Amount ?? 0m;
+        if (request.Payments.Sum(payment => payment.Amount) + financedAmount !=
+                snapshot.PayableAmount ||
+            request.Payments.Any(payment => payment.PaymentNumber <= 0 || payment.Amount <= 0) ||
+            request.Credit is { Amount: <= 0m })
         {
-            return "Payments do not match the payable amount.";
+            return "Actual payments plus financed balance do not match the payable amount.";
         }
 
         var lineTaxes = request.Lines
