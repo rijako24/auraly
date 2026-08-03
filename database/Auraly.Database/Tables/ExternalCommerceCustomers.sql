@@ -10,6 +10,7 @@ CREATE TABLE [dbo].[ExternalCommerceCustomers] (
     [ReconciliationError] NVARCHAR(500) NULL,
     [ReconciledAt] DATETIME2 NULL,
     [ReconciledBy] UNIQUEIDENTIFIER NULL,
+    [ReconciliationOrigin] NVARCHAR(16) NULL,
     [Name] NVARCHAR(250) NULL,
     [PhoneNormalized] NVARCHAR(50) NOT NULL,
     [Phone] NVARCHAR(50) NULL,
@@ -29,6 +30,7 @@ CREATE TABLE [dbo].[ExternalCommerceCustomers] (
         FOREIGN KEY ([ReconciledBy]) REFERENCES [dbo].[AppUsers] ([UserId]),
     CONSTRAINT [CK_ExternalCommerceCustomers_ReconciliationStatus]
         CHECK ([ReconciliationStatus] IN (N'Pending', N'Linked', N'Conflict')),
+    CONSTRAINT [CK_ExternalCommerceCustomers_ReconciliationOrigin] CHECK ([ReconciliationOrigin] IS NULL OR [ReconciliationOrigin] IN (N'Manual', N'Integration')),
     CONSTRAINT [CK_ExternalCommerceCustomers_Link] CHECK (
         ([PartyId] IS NULL AND [CustomerId] IS NULL) OR ([PartyId] IS NOT NULL AND [CustomerId] IS NOT NULL))
 );

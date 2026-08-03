@@ -109,14 +109,20 @@ if (!builder.Environment.IsEnvironment("Testing"))
             "Auraly:DocumentProcessing:RabbitMq:QueueName"];
         var fiscalQueue = builder.Configuration[
             "Auraly:Fiscal:RabbitMq:QueueName"];
+        var externalCustomerQueue = builder.Configuration[
+            "Auraly:ExternalCustomerReconciliation:QueueName"] ??
+            "auraly-external-customer-reconciliation";
         if (string.IsNullOrWhiteSpace(rabbitConnection) ||
             string.IsNullOrWhiteSpace(documentQueue) ||
-            string.IsNullOrWhiteSpace(fiscalQueue))
+            string.IsNullOrWhiteSpace(fiscalQueue) ||
+            string.IsNullOrWhiteSpace(externalCustomerQueue))
             throw new InvalidOperationException(
-                "RabbitMQ connection and document/fiscal queue names are required.");
+                "RabbitMQ connection and document/fiscal/external-customer queue names are required.");
 
         builder.Services.AddSingleton(new RabbitMqProcessingOptions(
             rabbitConnection, documentQueue, fiscalQueue));
+        builder.Services.AddSingleton(
+            new ExternalCustomerReconciliationRabbitMqOptions(externalCustomerQueue));
         builder.Services.AddSingleton<RabbitMqProcessingConnection>();
         builder.Services.AddSingleton<RabbitMqProcessingTransport>();
         builder.Services.AddSingleton<IDocumentProcessingSignalPublisher>(provider =>
@@ -128,6 +134,7 @@ if (!builder.Environment.IsEnvironment("Testing"))
         if (builder.Configuration.GetValue(
                 "Auraly:DocumentProcessing:Worker:Enabled", true))
             builder.Services.AddHostedService<RabbitMqDocumentProcessingHostedService>();
+        builder.Services.AddHostedService<ExternalCustomerReconciliationRabbitMqHostedService>();
     }
     else if (string.Equals(
                  processingTransport, "ServiceBus", StringComparison.OrdinalIgnoreCase))
@@ -157,8 +164,14 @@ if (!builder.Environment.IsEnvironment("Testing"))
             throw new InvalidOperationException(
                 "Auraly:Fiscal:ServiceBus:QueueName is required. " +
                 "Fiscal processing never falls back to SQL polling.");
+        var externalCustomerQueueName = builder.Configuration[
+            "Auraly:ExternalCustomerReconciliation:QueueName"] ??
+            "auraly-external-customer-reconciliation";
         builder.Services.AddSingleton(
             new FiscalProcessingServiceBusOptions(fiscalQueueName));
+        builder.Services.AddSingleton(
+            new ExternalCustomerReconciliationServiceBusOptions(
+                externalCustomerQueueName));
         builder.Services.AddSingleton<IFiscalProcessingSignalPublisher,
             ServiceBusFiscalProcessingPublisher>();
         if (builder.Configuration.GetValue("Auraly:Fiscal:Worker:Enabled", true))
@@ -166,6 +179,7 @@ if (!builder.Environment.IsEnvironment("Testing"))
         if (builder.Configuration.GetValue(
                 "Auraly:DocumentProcessing:Worker:Enabled", true))
             builder.Services.AddHostedService<DocumentProcessingHostedService>();
+        builder.Services.AddHostedService<ExternalCustomerReconciliationServiceBusHostedService>();
     }
     else
     {
@@ -197,6 +211,7 @@ builder.Services.AddScoped<IPartyStore, SqlPartyStore>();
 builder.Services.AddScoped<IPartyWorkspaceStore, SqlPartyWorkspaceStore>();
 builder.Services.AddScoped<IExternalCustomerReconciliationStore, SqlExternalCustomerReconciliationStore>();
 builder.Services.AddScoped<ExternalCustomerReconciliationService>();
+builder.Services.AddScoped<ExternalCustomerReconciliationSystemService>();
 builder.Services.AddScoped<PartyWorkspaceService>();
 builder.Services.AddScoped<PartyService>();
 builder.Services.AddScoped<GeographyService>();

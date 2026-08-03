@@ -42,6 +42,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<IntegrationConnection> IntegrationConnections { get; set; }
     public DbSet<IntegrationChannelWarehouse> IntegrationChannelWarehouses { get; set; }
     public DbSet<ExternalCommerceCustomer> ExternalCommerceCustomers { get; set; }
+    public DbSet<ExternalCustomerReconciliationOutboxMessage> ExternalCustomerReconciliationOutboxMessages { get; set; }
     public DbSet<ProductCategory> ProductCategories { get; set; }
     public DbSet<ReservationIntegrationEvent> ReservationIntegrationEvents { get; set; }
     public DbSet<Product> Products { get; set; }
@@ -572,6 +573,9 @@ public class ApplicationDbContext : DbContext
             entity.HasKey(customer => customer.ExternalCommerceCustomerId);
             entity.Property(customer => customer.ExternalAccountId).IsRequired().HasMaxLength(150);
             entity.Property(customer => customer.ExternalCustomerId).IsRequired().HasMaxLength(150);
+            entity.Property(customer => customer.ReconciliationStatus).IsRequired().HasMaxLength(16);
+            entity.Property(customer => customer.ReconciliationError).HasMaxLength(500);
+            entity.Property(customer => customer.ReconciliationOrigin).HasMaxLength(16);
             entity.Property(customer => customer.Name).HasMaxLength(250);
             entity.Property(customer => customer.PhoneNormalized).IsRequired().HasMaxLength(50);
             entity.Property(customer => customer.Phone).HasMaxLength(50);
@@ -592,6 +596,29 @@ public class ApplicationDbContext : DbContext
                 customer.IntegrationConnectionId,
                 customer.PhoneNormalized,
                 customer.IsActive
+            });
+        });
+
+        modelBuilder.Entity<ExternalCustomerReconciliationOutboxMessage>(entity =>
+        {
+            entity.HasKey(message => message.MessageId);
+            entity.Property(message => message.LastError).HasMaxLength(1000);
+            entity.Property(message => message.RowVersion).IsRowVersion();
+            entity.HasOne(message => message.ExternalCommerceCustomer).WithMany()
+                .HasForeignKey(message => message.ExternalCommerceCustomerId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(message => message.Business).WithMany()
+                .HasForeignKey(message => message.BusinessId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(message => message.ExternalCommerceCustomerId)
+                .IsUnique()
+                .HasFilter("[PublishedAt] IS NULL");
+            entity.HasIndex(message => new
+            {
+                message.PublishedAt,
+                message.AvailableAt,
+                message.LeaseExpiresAt,
+                message.OccurredAt
             });
         });
 

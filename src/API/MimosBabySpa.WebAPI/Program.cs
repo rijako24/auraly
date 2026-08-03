@@ -119,6 +119,7 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(connectionString));
 
 builder.Services.AddMemoryCache();
+builder.Services.AddExternalCustomerReconciliationMessaging(builder.Configuration);
 
 builder.Services.AddScoped<ICorrelationIdProvider, CorrelationIdProvider>();
 

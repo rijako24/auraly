@@ -18,13 +18,30 @@ public interface IExternalCustomerReconciliationStore
         CancellationToken cancellationToken);
 
     Task<ExternalCustomerReconciliationResult> ReconcileAsync(
-        PartyActorIdentity actor,
+        ExternalCustomerReconciliationExecution execution,
         Guid externalCommerceCustomerId,
         Guid newPartyId,
         Guid newCustomerId,
         Guid newContactId,
         Guid notificationId,
         DateTimeOffset now,
+        CancellationToken cancellationToken);
+
+    Task<ExternalCustomerReconciliationExecution> ResolveIntegrationExecutionAsync(
+        Guid businessId,
+        Guid externalCommerceCustomerId,
+        CancellationToken cancellationToken);
+
+    Task<ExternalCustomerReconciliationReceipt?> ReceiptStatusAsync(
+        Guid messageId,
+        CancellationToken cancellationToken);
+
+    Task RecordReceiptAsync(
+        Guid messageId,
+        Guid externalCommerceCustomerId,
+        Guid businessId,
+        string resultStatus,
+        DateTimeOffset processedAt,
         CancellationToken cancellationToken);
 }
 
@@ -65,7 +82,11 @@ public sealed class ExternalCustomerReconciliationService(
         if (externalCommerceCustomerId == Guid.Empty)
             throw new PartyValidationException("ExternalCommerceCustomerId is required.");
         var result = await store.ReconcileAsync(
-            actor,
+            new ExternalCustomerReconciliationExecution(
+                actor.TenantId,
+                actor.BusinessId,
+                actor.ActorId,
+                "Manual"),
             externalCommerceCustomerId,
             ids.NewId(),
             ids.NewId(),

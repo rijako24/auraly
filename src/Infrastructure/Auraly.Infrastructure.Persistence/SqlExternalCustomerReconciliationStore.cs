@@ -99,7 +99,7 @@ public sealed class SqlExternalCustomerReconciliationStore(
     }
 
     public async Task<ExternalCustomerReconciliationResult> ReconcileAsync(
-        PartyActorIdentity actor,
+        ExternalCustomerReconciliationExecution execution,
         Guid externalCommerceCustomerId,
         Guid newPartyId,
         Guid newCustomerId,
@@ -118,7 +118,7 @@ public sealed class SqlExternalCustomerReconciliationStore(
             var source = await LoadSourceAsync(
                 connection,
                 transaction,
-                actor,
+                execution,
                 externalCommerceCustomerId,
                 cancellationToken);
             if (source.Status == ExternalCustomerReconciliationStatuses.Linked &&
@@ -138,7 +138,7 @@ public sealed class SqlExternalCustomerReconciliationStore(
                 return await ConflictAsync(
                     connection,
                     transaction,
-                    actor,
+                    execution,
                     source,
                     "The external customer is inactive.",
                     now,
@@ -149,14 +149,14 @@ public sealed class SqlExternalCustomerReconciliationStore(
                 : await CandidatePartyIdsAsync(
                     connection,
                     transaction,
-                    actor.TenantId,
+                    execution.TenantId,
                     source.PhoneNormalized,
                     cancellationToken);
             if (candidates.Count > 1)
                 return await ConflictAsync(
                     connection,
                     transaction,
-                    actor,
+                    execution,
                     source,
                     "The phone matches more than one Party. Manual identity review is required.",
                     now,
@@ -172,9 +172,9 @@ public sealed class SqlExternalCustomerReconciliationStore(
                       (@PartyId,@TenantId,N'NaturalPerson',@DisplayName,N'Incomplete',1,@ActorId,@Now);
                     """, [
                     P("@PartyId", partyId),
-                    P("@TenantId", actor.TenantId),
+                    P("@TenantId", execution.TenantId),
                     P("@DisplayName", DisplayName(source)),
-                    P("@ActorId", actor.ActorId),
+                    P("@ActorId", execution.ActorId),
                     P("@Now", now)
                 ], cancellationToken);
                 if (!string.IsNullOrWhiteSpace(source.PhoneNormalized))
@@ -194,7 +194,7 @@ public sealed class SqlExternalCustomerReconciliationStore(
             var customerId = await CustomerIdAsync(
                 connection,
                 transaction,
-                actor.BusinessId,
+                execution.BusinessId,
                 partyId,
                 cancellationToken);
             if (customerId is null)
@@ -207,8 +207,8 @@ public sealed class SqlExternalCustomerReconciliationStore(
                     """, [
                     P("@CustomerId", customerId),
                     P("@PartyId", partyId),
-                    P("@BusinessId", actor.BusinessId),
-                    P("@ActorId", actor.ActorId),
+                    P("@BusinessId", execution.BusinessId),
+                    P("@ActorId", execution.ActorId),
                     P("@Now", now)
                 ], cancellationToken);
             }
@@ -216,7 +216,8 @@ public sealed class SqlExternalCustomerReconciliationStore(
             await ExecuteAsync(connection, transaction, """
                 UPDATE dbo.ExternalCommerceCustomers
                 SET PartyId=@PartyId,CustomerId=@CustomerId,ReconciliationStatus=N'Linked',
-                    ReconciliationError=NULL,ReconciledAt=@Now,ReconciledBy=@ActorId,UpdatedAt=@Now
+                    ReconciliationError=NULL,ReconciledAt=@Now,ReconciledBy=@ActorId,
+                    ReconciliationOrigin=@Origin,UpdatedAt=@Now
                 WHERE ExternalCommerceCustomerId=@ExternalId AND BusinessId=@BusinessId;
 
                 DECLARE @Cursor BIGINT;
@@ -230,8 +231,9 @@ public sealed class SqlExternalCustomerReconciliationStore(
                 P("@PartyId", partyId),
                 P("@CustomerId", customerId),
                 P("@ExternalId", externalCommerceCustomerId),
-                P("@BusinessId", actor.BusinessId),
-                P("@ActorId", actor.ActorId),
+                P("@BusinessId", execution.BusinessId),
+                P("@ActorId", execution.ActorId),
+                P("@Origin", execution.Origin),
                 P("@NotificationId", notificationId),
                 P("@Now", now)
             ], cancellationToken);
@@ -251,10 +253,113 @@ public sealed class SqlExternalCustomerReconciliationStore(
         }
     }
 
+    public async Task<ExternalCustomerReconciliationExecution> ResolveIntegrationExecutionAsync(
+        Guid businessId,
+        Guid externalCommerceCustomerId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT b.TenantId
+            FROM dbo.ExternalCommerceCustomers e
+            JOIN dbo.Businesses b ON b.BusinessId=e.BusinessId
+            WHERE e.ExternalCommerceCustomerId=@ExternalId AND e.BusinessId=@BusinessId;
+            """;
+        command.Parameters.AddRange([
+            P("@ExternalId", externalCommerceCustomerId),
+            P("@BusinessId", businessId)
+        ]);
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        if (value is not Guid tenantId)
+            throw new InvalidOperationException(
+                "The external customer does not belong to the signaled business.");
+        return new ExternalCustomerReconciliationExecution(
+            tenantId,
+            businessId,
+            null,
+            "Integration");
+    }
+
+    public async Task<ExternalCustomerReconciliationReceipt?> ReceiptStatusAsync(
+        Guid messageId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT ExternalCommerceCustomerId,BusinessId,ResultStatus
+            FROM dbo.ExternalCustomerReconciliationReceipts
+            WHERE MessageId=@MessageId;
+            """;
+        command.Parameters.Add(P("@MessageId", messageId));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new ExternalCustomerReconciliationReceipt(
+                reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2))
+            : null;
+    }
+
+    public async Task RecordReceiptAsync(
+        Guid messageId,
+        Guid externalCommerceCustomerId,
+        Guid businessId,
+        string resultStatus,
+        DateTimeOffset processedAt,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            System.Data.IsolationLevel.Serializable,
+            cancellationToken);
+        try
+        {
+            await using var lookup = connection.CreateCommand();
+            lookup.Transaction = transaction;
+            lookup.CommandText = """
+                SELECT ExternalCommerceCustomerId,BusinessId
+                FROM dbo.ExternalCustomerReconciliationReceipts WITH(UPDLOCK,HOLDLOCK)
+                WHERE MessageId=@MessageId;
+                """;
+            lookup.Parameters.Add(P("@MessageId", messageId));
+            await using var reader = await lookup.ExecuteReaderAsync(cancellationToken);
+            if (await reader.ReadAsync(cancellationToken))
+            {
+                if (reader.GetGuid(0) != externalCommerceCustomerId ||
+                    reader.GetGuid(1) != businessId)
+                    throw new InvalidOperationException(
+                        "The reconciliation message ID belongs to another source.");
+                await reader.DisposeAsync();
+                await transaction.CommitAsync(cancellationToken);
+                return;
+            }
+            await reader.DisposeAsync();
+            await ExecuteAsync(connection, transaction, """
+                INSERT dbo.ExternalCustomerReconciliationReceipts
+                  (MessageId,ExternalCommerceCustomerId,BusinessId,ResultStatus,ProcessedAt)
+                VALUES(@MessageId,@ExternalId,@BusinessId,@Status,@ProcessedAt);
+                """, [
+                P("@MessageId", messageId),
+                P("@ExternalId", externalCommerceCustomerId),
+                P("@BusinessId", businessId),
+                P("@Status", resultStatus),
+                P("@ProcessedAt", processedAt)
+            ], cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
+    }
     private static async Task<Source> LoadSourceAsync(
         SqlConnection connection,
         SqlTransaction transaction,
-        PartyActorIdentity actor,
+        ExternalCustomerReconciliationExecution execution,
         Guid id,
         CancellationToken cancellationToken)
     {
@@ -269,8 +374,8 @@ public sealed class SqlExternalCustomerReconciliationStore(
             """;
         command.Parameters.AddRange([
             P("@Id", id),
-            P("@BusinessId", actor.BusinessId),
-            P("@TenantId", actor.TenantId)
+            P("@BusinessId", execution.BusinessId),
+            P("@TenantId", execution.TenantId)
         ]);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
@@ -330,7 +435,7 @@ public sealed class SqlExternalCustomerReconciliationStore(
     private static async Task<ExternalCustomerReconciliationResult> ConflictAsync(
         SqlConnection connection,
         SqlTransaction transaction,
-        PartyActorIdentity actor,
+        ExternalCustomerReconciliationExecution execution,
         Source source,
         string error,
         DateTimeOffset now,
@@ -339,14 +444,16 @@ public sealed class SqlExternalCustomerReconciliationStore(
         await ExecuteAsync(connection, transaction, """
             UPDATE dbo.ExternalCommerceCustomers
             SET PartyId=NULL,CustomerId=NULL,ReconciliationStatus=N'Conflict',
-                ReconciliationError=@Error,ReconciledAt=@Now,ReconciledBy=@ActorId,UpdatedAt=@Now
+                ReconciliationError=@Error,ReconciledAt=@Now,ReconciledBy=@ActorId,
+                ReconciliationOrigin=@Origin,UpdatedAt=@Now
             WHERE ExternalCommerceCustomerId=@Id AND BusinessId=@BusinessId;
             """, [
             P("@Error", error),
             P("@Now", now),
-            P("@ActorId", actor.ActorId),
+            P("@ActorId", execution.ActorId),
+            P("@Origin", execution.Origin),
             P("@Id", source.Id),
-            P("@BusinessId", actor.BusinessId)
+            P("@BusinessId", execution.BusinessId)
         ], cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new ExternalCustomerReconciliationResult(

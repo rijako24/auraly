@@ -1,11 +1,16 @@
+using Auraly.BuildingBlocks.Domain.Identifiers;
 using MimosBabySpa.Domain.Repositories;
 using MimosBabySpa.Infrastructure.Data;
+using MimosBabySpa.Infrastructure.Commerce;
 
 namespace MimosBabySpa.Infrastructure.Repositories;
 
 public class UnitOfWork : IUnitOfWork
 {
     private readonly ApplicationDbContext _context;
+    private readonly ExternalCustomerReconciliationCommitState _reconciliationState;
+    private readonly ExternalCustomerReconciliationOutboxSignal _reconciliationSignal;
+    private readonly IAuralyIdGenerator _ids;
     private IConversationRepository? _conversations;
     private IMessageRepository? _messages;
     private ILeadRepository? _leads;
@@ -67,9 +72,16 @@ public class UnitOfWork : IUnitOfWork
     private IAgentTemplateRepository? _agentTemplates;
     private IBusinessInboundContactRepository? _businessInboundContacts;
 
-    public UnitOfWork(ApplicationDbContext context)
+    public UnitOfWork(
+        ApplicationDbContext context,
+        ExternalCustomerReconciliationCommitState reconciliationState,
+        ExternalCustomerReconciliationOutboxSignal reconciliationSignal,
+        IAuralyIdGenerator ids)
     {
         _context = context;
+        _reconciliationState = reconciliationState;
+        _reconciliationSignal = reconciliationSignal;
+        _ids = ids;
     }
 
     public IConversationRepository Conversations =>
@@ -146,7 +158,10 @@ public class UnitOfWork : IUnitOfWork
         _integrationConnections ??= new IntegrationConnectionRepository(_context);
 
     public IExternalCommerceCustomerRepository ExternalCommerceCustomers =>
-        _externalCommerceCustomers ??= new ExternalCommerceCustomerRepository(_context);
+        _externalCommerceCustomers ??= new ExternalCommerceCustomerRepository(
+            _context,
+            _reconciliationState,
+            _ids);
 
     public IReservationIntegrationEventRepository ReservationIntegrationEvents =>
         _reservationIntegrationEvents ??= new ReservationIntegrationEventRepository(_context);
@@ -252,7 +267,10 @@ public class UnitOfWork : IUnitOfWork
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
-        return await _context.SaveChangesAsync(cancellationToken);
+        var changes = await _context.SaveChangesAsync(cancellationToken);
+        if (_context.Database.CurrentTransaction is null)
+            NotifyCommittedReconciliationMessages();
+        return changes;
     }
 
     public async Task ExecuteInTransactionAsync(Func<Task> action, CancellationToken cancellationToken = default)
@@ -262,9 +280,11 @@ public class UnitOfWork : IUnitOfWork
         {
             await action();
             await transaction.CommitAsync(cancellationToken);
+            NotifyCommittedReconciliationMessages();
         }
         catch
         {
+            _reconciliationState.ConsumeCommitted();
             await transaction.RollbackAsync(cancellationToken);
             throw;
         }
@@ -277,13 +297,21 @@ public class UnitOfWork : IUnitOfWork
         {
             var result = await action();
             await transaction.CommitAsync(cancellationToken);
+            NotifyCommittedReconciliationMessages();
             return result;
         }
         catch
         {
+            _reconciliationState.ConsumeCommitted();
             await transaction.RollbackAsync(cancellationToken);
             throw;
         }
+    }
+
+    private void NotifyCommittedReconciliationMessages()
+    {
+        if (_reconciliationState.ConsumeCommitted())
+            _reconciliationSignal.Notify();
     }
 
     public void Dispose()

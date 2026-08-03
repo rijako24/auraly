@@ -7,6 +7,13 @@ public sealed class ExternalCommerceCustomer
     public Guid IntegrationConnectionId { get; set; }
     public string ExternalAccountId { get; set; } = string.Empty;
     public string ExternalCustomerId { get; set; } = string.Empty;
+    public Guid? PartyId { get; set; }
+    public Guid? CustomerId { get; set; }
+    public string ReconciliationStatus { get; set; } = "Pending";
+    public string? ReconciliationError { get; set; }
+    public DateTime? ReconciledAt { get; set; }
+    public Guid? ReconciledBy { get; set; }
+    public string? ReconciliationOrigin { get; set; }
     public string? Name { get; set; }
     public string PhoneNormalized { get; set; } = string.Empty;
     public string? Phone { get; set; }
