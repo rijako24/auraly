@@ -153,7 +153,7 @@ public sealed class PayablesRabbitMqIntegrationTests(ServerSliceFixture fixture)
               INSERT dbo.DocumentSeries
                 (DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,
                  Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
-              VALUES(NEWID(),@BusinessId,NULL,N'PayablePayment',N'PGP',N'RB',
+              VALUES(NEWID(),@BusinessId,NULL,N'PayablePayment',N'PGP',N'00',
                  8,1,99999999,0,1,SYSDATETIMEOFFSET());
             """;
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
