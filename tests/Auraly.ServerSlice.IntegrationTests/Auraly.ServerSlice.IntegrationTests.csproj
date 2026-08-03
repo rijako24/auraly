@@ -43,6 +43,7 @@
     <ProjectReference Include="..\..\src\Modules\Returns\Auraly.Contracts.Returns\Auraly.Contracts.Returns.csproj" />
     <ProjectReference Include="..\..\src\Modules\Returns\Auraly.Application.Returns\Auraly.Application.Returns.csproj" />
     <ProjectReference Include="..\..\src\Modules\WorkSessions\Auraly.Contracts.WorkSessions\Auraly.Contracts.WorkSessions.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Receivables\Auraly.Contracts.Receivables\Auraly.Contracts.Receivables.csproj" />
   </ItemGroup>
 </Project>
 
