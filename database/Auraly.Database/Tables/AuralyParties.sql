@@ -113,6 +113,10 @@ CREATE UNIQUE INDEX [UX_PartyContacts_Primary]
     ON [dbo].[PartyContacts] ([PartyId], [ContactType])
     WHERE [IsPrimary] = 1 AND [IsActive] = 1;
 GO
+CREATE INDEX [IX_PartyContacts_Type_Normalized_Active]
+    ON [dbo].[PartyContacts] ([ContactType], [NormalizedValue], [IsActive])
+    INCLUDE ([PartyId]);
+GO
 
 CREATE TABLE [dbo].[Customers] (
     [CustomerId] UNIQUEIDENTIFIER NOT NULL,

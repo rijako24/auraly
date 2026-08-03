@@ -1,9 +1,11 @@
-﻿SET NOCOUNT ON;
+SET NOCOUNT ON;
 DECLARE @PartyPermissions TABLE([Module] NVARCHAR(50),[Action] NVARCHAR(50),[Resource] NVARCHAR(100),[Description] NVARCHAR(500));
 INSERT @PartyPermissions VALUES
 (N'Parties',N'Read',N'parties.read',N'Consultar el maestro unificado de terceros'),
 (N'Parties',N'Update',N'parties.update',N'Editar identidad y contactos de terceros'),
 (N'Parties',N'Deactivate',N'parties.deactivate',N'Activar o desactivar roles comerciales del tercero'),
+(N'Parties',N'ReadExternal',N'parties.external-customers.read',N'Consultar clientes extraídos pendientes de reconciliación'),
+(N'Parties',N'ReconcileExternal',N'parties.external-customers.reconcile',N'Reconciliar clientes externos con Party y Customer'),
 (N'Customers',N'Read',N'customers.read',N'Consultar clientes'),
 (N'Customers',N'Create',N'customers.create',N'Crear clientes'),
 (N'Customers',N'ManageSites',N'parties.sites.manage',N'Administrar sedes de terceros'),

@@ -108,7 +108,7 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.PricePublicationAudits WHERE ProductId=@Product", productId));
         Assert.Equal(1, await ScalarAsync<int>(
-            "SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages WHERE BusinessId=@Business AND AvailableThroughCursor=@Cursor",
+            "SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages WHERE BusinessId=@Business AND Stream=N'Catalog' AND AvailableThroughCursor=@Cursor",
             productId, new SqlParameter("@Cursor", publication.CatalogCursor)));
 
         using var replay = await pricing.PostAsJsonAsync(
