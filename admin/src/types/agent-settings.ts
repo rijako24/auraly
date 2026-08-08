@@ -145,7 +145,7 @@ export interface AgentSettings {
   commerce?: AgentCommerceSettings; operatingHours?: AgentOperatingHoursSettings;
 }
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
-  model: "gpt-4.1-mini", temperature: 0.2, historyWindowSize: 20, extractorHistoryWindowSize: 2, persona: "", policies: "", conversationOpening: { enabled: false, guidance: "", allowQuestions: true }, failureResponses: { llmUnavailable: "Lo siento, estoy experimentando problemas temporales. Por favor, intenta de nuevo en un momento." }, conversationFollowUp: { enabled: false, delayMinutes: 120, guidance: "Retoma brevemente la conversacion desde la pregunta pendiente, sin repetir toda la respuesta.", respectOperatingHours: true }, flows: [],
+  model: "gpt-5-mini", temperature: 0.2, historyWindowSize: 20, extractorHistoryWindowSize: 2, persona: "", policies: "", conversationOpening: { enabled: false, guidance: "", allowQuestions: true }, failureResponses: { llmUnavailable: "Lo siento, estoy experimentando problemas temporales. Por favor, intenta de nuevo en un momento." }, conversationFollowUp: { enabled: false, delayMinutes: 120, guidance: "Retoma brevemente la conversacion desde la pregunta pendiente, sin repetir toda la respuesta.", respectOperatingHours: true }, flows: [],
   globalActions: [], factSchema: [], templates: {}, messageSequences: {}, webhooks: { wompi: {} }, notifications: {},
   reservationAutomations: {}, interactiveActions: {}, reservationManagement: {}, escalations: { human: { contacts: [] }, external: { enabled: false, events: {} } },
   checkout: { currency: "COP", modes: {} }, commerce: { provider: "Local" },

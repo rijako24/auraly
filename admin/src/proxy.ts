@@ -4,7 +4,7 @@ import { AUTH_COOKIE_NAMES } from "@/lib/auth-cookies";
 
 const PUBLIC_PATHS = ["/login", "/register", "/forgot-password"];
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (
