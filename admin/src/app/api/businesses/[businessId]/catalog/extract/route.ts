@@ -4,13 +4,14 @@ import { getBackendUrl } from "@/lib/backend-url";
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { businessId: string } }
+  { params }: { params: Promise<{ businessId: string }> }
 ) {
+  const { businessId } = await params;
   const accessToken = request.cookies.get(AUTH_COOKIE_NAMES.accessToken)?.value;
-  const businessHeader = request.headers.get("X-Business-Id") ?? params.businessId;
+  const businessHeader = request.headers.get("X-Business-Id") ?? businessId;
   const formData = await request.formData();
 
-  const url = `${getBackendUrl()}/businesses/${params.businessId}/catalog/extract`;
+  const url = `${getBackendUrl()}/businesses/${businessId}/catalog/extract`;
 
   try {
     const res = await fetch(url, {
