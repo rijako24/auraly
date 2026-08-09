@@ -1,0 +1,48 @@
+name: Deploy Auraly Admin
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "admin/**"
+      - ".github/workflows/azure-static-web-apps-auraly.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auraly-admin-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy_dev:
+    runs-on: ubuntu-latest
+    name: Deploy DEV
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and deploy DEV
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_AURALY_DEV }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: upload
+          app_location: ./admin
+          api_location: ""
+          output_location: ""
+
+  deploy_prod:
+    runs-on: ubuntu-latest
+    name: Deploy PROD
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and deploy PROD
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_AURALY_PROD }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: upload
+          app_location: ./admin
+          api_location: ""
+          output_location: ""
