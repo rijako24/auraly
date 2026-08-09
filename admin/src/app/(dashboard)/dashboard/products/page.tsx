@@ -6,6 +6,7 @@ import { Pencil, Power, Search } from "lucide-react";
 import { toast } from "sonner";
 
 import { ProductLearningSection } from "@/components/products/product-learning-section";
+import { ProductOffersSection } from "@/components/products/product-offers-section";
 import { ProductRecognitionSections } from "@/components/products/product-recognition-sections";
 import { DataTable } from "@/components/tables/data-table";
 import { Badge } from "@/components/ui/badge";
@@ -411,6 +412,8 @@ export default function ProductsPage() {
                   </p>
                 </div>
               </section>
+
+              <ProductOffersSection productId={selectedProduct.productId} />
 
               <ProductRecognitionSections
                 aliases={configurationQuery.data?.aliases ?? []}

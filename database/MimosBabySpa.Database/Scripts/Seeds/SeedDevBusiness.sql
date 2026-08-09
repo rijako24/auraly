@@ -38,7 +38,7 @@ DECLARE @AttachmentId2 UNIQUEIDENTIFIER = '9b2fd590-a2cb-5d8d-a687-493efd0b66a2'
 
 -- Hash BCrypt para "Admin123!" (work factor 12)
 
-DECLARE @PasswordHash NVARCHAR(500) = N'$2a$12$.lNc5ybjDXuH3fevIkTyb.L.OpvHnO4oZ2/kyx.HtUtRJ5cpCKtPi';
+DECLARE @PasswordHash NVARCHAR(500) = NULLIF(N'$(BootstrapAdminPasswordHash)', N'');
 
 
 
@@ -182,7 +182,11 @@ DECLARE @AdminEmail NVARCHAR(256) = N'admin2222@mimosbabyspa.com';
 
 
 
-IF NOT EXISTS (SELECT 1 FROM [dbo].[AppUsers] WHERE [TenantId] = @TenantId AND [NormalizedUsername] = UPPER(@AdminUsername))
+IF @PasswordHash IS NULL
+
+    PRINT N'Usuario admin dev no creado: suministre BootstrapAdminPasswordHash de forma segura.';
+
+ELSE IF NOT EXISTS (SELECT 1 FROM [dbo].[AppUsers] WHERE [TenantId] = @TenantId AND [NormalizedUsername] = UPPER(@AdminUsername))
 
 BEGIN
 
@@ -196,7 +200,7 @@ BEGIN
 
     VALUES (NEWID(), @AdminUserId, @AdminRoleId, @BusinessId, GETUTCDATE());
 
-    PRINT N'Usuario admin creado: ' + @AdminUsername + N' / Admin123! (asignado al negocio 22222222)';
+    PRINT N'Usuario admin dev creado y asignado al negocio 22222222.';
 
 END
 

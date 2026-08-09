@@ -20,6 +20,7 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
     private readonly IConversationFactsService _conversationFacts;
     private readonly IMessageService _messageService;
     private readonly ILogger<WhatsAppWebhookParserService> _logger;
+    private readonly IInboundDocumentTextExtractor? _documentTextExtractor;
 
     public WhatsAppWebhookParserService(
         IWhatsAppService whatsAppService,
@@ -30,7 +31,8 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
         IConversationService conversationService,
         IConversationFactsService conversationFacts,
         IMessageService messageService,
-        ILogger<WhatsAppWebhookParserService> logger)
+        ILogger<WhatsAppWebhookParserService> logger,
+        IInboundDocumentTextExtractor? documentTextExtractor = null)
     {
         _whatsAppService = whatsAppService;
         _aiService = aiService;
@@ -41,6 +43,7 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
         _conversationService = conversationService;
         _conversationFacts = conversationFacts;
         _messageService = messageService;
+        _documentTextExtractor = documentTextExtractor;
     }
 
     public async Task<IEnumerable<IncomingMessage>> ExtractAllMessagesFromEntryAsync(Entry entry, Guid businessId)
@@ -109,6 +112,14 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
                         InteractivePayload = message.Button.Payload,
                         RecipientPhoneNumberId = recipientPhoneNumberId
                     });
+                }
+                else if ((message.Type == "image" && message.Image != null)
+                         || (message.Type == "document" && message.Document != null))
+                {
+                    var inbound = await ExtractInboundMediaAsync(
+                        message, businessId, customerName, recipientPhoneNumberId);
+                    if (inbound is not null)
+                        result.Add(inbound);
                 }
                 // Mensaje de voz (voice) o audio - transcribir
                 else if ((message.Type == "voice" && message.Voice != null) ||
@@ -215,6 +226,66 @@ public class WhatsAppWebhookParserService : IWhatsAppWebhookParserService
         }
 
         return result;
+    }
+
+    private async Task<IncomingMessage?> ExtractInboundMediaAsync(
+        Message message,
+        Guid businessId,
+        string? customerName,
+        string? recipientPhoneNumberId)
+    {
+        var mediaId = message.Image?.Id ?? message.Document?.Id ?? string.Empty;
+        var mimeType = message.Image?.MimeType ?? message.Document?.MimeType;
+        var fileName = message.Document?.FileName;
+        var caption = message.Image?.Caption ?? message.Document?.Caption;
+
+        if (_documentTextExtractor is null
+            || string.IsNullOrWhiteSpace(mediaId)
+            || !_documentTextExtractor.Supports(fileName, mimeType))
+        {
+            _logger.LogInformation(
+                "Se ignora medio no compatible de {UserNumber}: {MimeType} {FileName}",
+                message.From, mimeType, fileName);
+            return null;
+        }
+
+        try
+        {
+            using var mediaStream = await _whatsAppService.DownloadMediaAsync(businessId, mediaId);
+            var extracted = await _documentTextExtractor.ExtractTextAsync(
+                mediaStream, fileName, mimeType);
+            if (string.IsNullOrWhiteSpace(extracted))
+                return null;
+
+            var body = new StringBuilder();
+            body.AppendLine("Documento recibido por WhatsApp. Texto extraido:");
+            if (!string.IsNullOrWhiteSpace(caption))
+                body.AppendLine($"Indicacion del remitente: {caption.Trim()}");
+            body.Append(extracted);
+
+            var facts = message.Facts
+                        ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            facts["system.inbound_media_type"] = message.Type;
+            return new IncomingMessage
+            {
+                UserNumber = message.From,
+                MessageText = body.ToString(),
+                CustomerName = customerName,
+                ProviderMessageId = message.Id,
+                ReplyToProviderMessageId = message.Context?.Id,
+                Facts = facts,
+                RecipientPhoneNumberId = recipientPhoneNumberId
+            };
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(
+                exception,
+                "No se pudo extraer texto del medio {MediaId} enviado por {UserNumber}",
+                mediaId,
+                message.From);
+            return null;
+        }
     }
 
     private static bool TryResolveInteractiveReply(

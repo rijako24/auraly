@@ -30,4 +30,6 @@ public class Product
     public virtual IntegrationConnection? IntegrationConnection { get; set; }
     public virtual ICollection<ProductAlias> Aliases { get; set; } = new List<ProductAlias>();
     public virtual ICollection<ProductSearchTerm> SearchTerms { get; set; } = new List<ProductSearchTerm>();
+    public virtual ICollection<ProductOffer> Offers { get; set; } = new List<ProductOffer>();
+    public virtual ICollection<ProductImage> Images { get; set; } = new List<ProductImage>();
 }

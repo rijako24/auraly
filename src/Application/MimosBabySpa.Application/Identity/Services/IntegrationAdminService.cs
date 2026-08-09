@@ -240,6 +240,12 @@ public class IntegrationAdminService : IIntegrationAdminService
         CancellationToken ct = default)
     {
         await EnsureBusinessBelongsToTenantAsync(tenantId, businessId, ct);
+        var baseUrl = request.BaseUrl?.Trim() ?? string.Empty;
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var parsedBaseUrl)
+            || (!parsedBaseUrl.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+                && !parsedBaseUrl.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
+            throw new DomainValidationException("BaseUrl", "Mantis requiere una URL base HTTP o HTTPS valida.");
+
         var connection = await GetOrCreateCommerceAsync(
             businessId, CommerceProvider.Mantis, "Mantis Commerce", ct);
         var settings = ReadJson(connection.SettingsJson);
@@ -252,9 +258,7 @@ public class IntegrationAdminService : IIntegrationAdminService
         connection.Name = "Mantis Commerce";
         connection.SettingsJson = Serialize(new
         {
-            baseUrl = string.IsNullOrWhiteSpace(request.BaseUrl)
-                ? "http://93.189.95.109:8080/MantisFiccCasalinsPruWeb/rest/"
-                : request.BaseUrl.Trim(),
+            baseUrl,
             requestTimeoutSeconds = request.RequestTimeoutSeconds <= 0 ? 30 : request.RequestTimeoutSeconds,
             currency = string.IsNullOrWhiteSpace(request.Currency) ? "COP" : request.Currency.Trim(),
             genericCustomer = new
@@ -544,7 +548,7 @@ public class IntegrationAdminService : IIntegrationAdminService
         return new MantisIntegrationDto(
             connection is not null,
             connection?.IsEnabled ?? false,
-            Get(settings, "baseUrl", "http://93.189.95.109:8080/MantisFiccCasalinsPruWeb/rest/"),
+            Get(settings, "baseUrl", string.Empty),
             GetInt(settings, "requestTimeoutSeconds", 30),
             Get(settings, "currency", "COP"),
             Has(secrets, "authorizationToken") || Has(settings, "authorizationToken"),

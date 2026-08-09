@@ -49,9 +49,18 @@ public sealed class ChatMessage
 {
     public ChatRole Role { get; init; }
     public string? Content { get; init; }
+    public byte[]? ImageBytes { get; init; }
+    public string? ImageMimeType { get; init; }
 
     public static ChatMessage System(string content) => new() { Role = ChatRole.System, Content = content };
     public static ChatMessage User(string content) => new() { Role = ChatRole.User, Content = content };
+    public static ChatMessage UserWithImage(string content, byte[] imageBytes, string imageMimeType) => new()
+    {
+        Role = ChatRole.User,
+        Content = content,
+        ImageBytes = imageBytes,
+        ImageMimeType = imageMimeType
+    };
     public static ChatMessage Assistant(string content) => new() { Role = ChatRole.Assistant, Content = content };
 }
 

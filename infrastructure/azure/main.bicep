@@ -1,0 +1,613 @@
+targetScope = 'resourceGroup'
+
+@allowed([
+  'dev'
+  'prod'
+])
+param environment string
+param location string = resourceGroup().location
+param webLocation string = 'centralus'
+param sqlLocation string = 'westus2'
+
+@secure()
+param sqlAdministratorPassword string
+param sqlAdministratorLogin string = 'auralyadmin'
+param sqlEntraAdministratorLogin string
+param sqlEntraAdministratorObjectId string
+
+@description('Shared Azure OpenAI/Foundry endpoint. No AI resource is created by this template.')
+param sharedOpenAiEndpoint string
+param sharedOpenAiResourceGroupName string
+param sharedOpenAiAccountName string
+param textModelDeploymentName string = 'gpt-4.1-mini'
+param audioModelDeploymentName string = 'whisper'
+
+@secure()
+param jwtSecret string
+@secure()
+param whatsAppVerifyToken string
+param whatsAppApiBaseUrl string = 'https://graph.facebook.com/v25.0/'
+
+param releaseVersion string
+param maximumFunctionInstances int = 20
+param seedAppConfiguration bool = false
+
+var suffix = toLower(take(uniqueString(subscription().id, environment), 8))
+var compactEnvironment = environment == 'prod' ? 'prod' : 'dev'
+var tags = {
+  application: 'auraly'
+  environment: compactEnvironment
+  managedBy: 'bicep'
+  release: releaseVersion
+}
+
+var storageName = 'stauraly${compactEnvironment}${suffix}'
+var sqlServerName = 'sql-auraly-${compactEnvironment}-${suffix}'
+var databaseName = 'auraly-${compactEnvironment}'
+var identityName = 'id-auraly-${compactEnvironment}'
+var appConfigurationName = 'cfg-auraly-${compactEnvironment}-${suffix}'
+var serviceBusName = 'sb-auraly-${compactEnvironment}-${suffix}'
+var functionName = 'func-auraly-${compactEnvironment}-${suffix}'
+var apiName = 'api-auraly-${compactEnvironment}-${suffix}'
+var adminName = 'admin-auraly-${compactEnvironment}-${suffix}'
+
+var blobDataOwnerRoleId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')
+var queueDataContributorRoleId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  '974c5e8b-45b9-4653-ba55-5f855dd0fb88')
+var tableDataContributorRoleId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3')
+var appConfigurationReaderRoleId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  '516239f1-63e1-4d78-a4de-a74fb236a071')
+var appConfigurationOwnerRoleId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  '5ae67dd6-50cb-40e7-96ff-dc2bfa4b606b')
+var serviceBusSenderRoleId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  '69a216fc-b8fb-44d8-bc22-1f3c2cd27a39')
+var serviceBusReceiverRoleId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  '4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0')
+
+resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: identityName
+  location: location
+  tags: tags
+}
+
+@description('Grants this environment access to the one shared Azure OpenAI account.')
+module sharedOpenAiAccess './modules/shared-openai-access.bicep' = {
+  name: 'shared-openai-access-${compactEnvironment}'
+  scope: resourceGroup(sharedOpenAiResourceGroupName)
+  params: {
+    accountName: sharedOpenAiAccountName
+    principalId: identity.properties.principalId
+    identityResourceId: identity.id
+  }
+}
+
+resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: storageName
+  location: location
+  tags: tags
+  sku: {
+    name: 'Standard_LRS'
+  }
+  kind: 'StorageV2'
+  properties: {
+    allowBlobPublicAccess: false
+    allowSharedKeyAccess: false
+    defaultToOAuthAuthentication: true
+    minimumTlsVersion: 'TLS1_2'
+    supportsHttpsTrafficOnly: true
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
+}
+
+resource deploymentContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobService
+  name: 'function-releases'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
+resource storageBlobRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storage.id, identity.id, blobDataOwnerRoleId)
+  scope: storage
+  properties: {
+    roleDefinitionId: blobDataOwnerRoleId
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource storageQueueRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storage.id, identity.id, queueDataContributorRoleId)
+  scope: storage
+  properties: {
+    roleDefinitionId: queueDataContributorRoleId
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource storageTableRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storage.id, identity.id, tableDataContributorRoleId)
+  scope: storage
+  properties: {
+    roleDefinitionId: tableDataContributorRoleId
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
+  name: 'log-auraly-${compactEnvironment}'
+  location: location
+  tags: tags
+  properties: {
+    retentionInDays: 30
+    features: {
+      enableLogAccessUsingOnlyResourcePermissions: true
+    }
+    workspaceCapping: {
+      dailyQuotaGb: json('0.1')
+    }
+  }
+}
+
+resource applicationInsights 'Microsoft.Insights/components@2020-02-02' = {
+  name: 'appi-auraly-${compactEnvironment}'
+  location: location
+  kind: 'web'
+  tags: tags
+  properties: {
+    Application_Type: 'web'
+    WorkspaceResourceId: workspace.id
+    DisableLocalAuth: false
+    IngestionMode: 'LogAnalytics'
+    RetentionInDays: 30
+  }
+}
+
+resource appConfiguration 'Microsoft.AppConfiguration/configurationStores@2024-06-01' = {
+  name: appConfigurationName
+  location: location
+  tags: tags
+  sku: {
+    name: 'free'
+  }
+  properties: {
+    createMode: 'Default'
+    disableLocalAuth: !seedAppConfiguration
+    publicNetworkAccess: 'Enabled'
+    dataPlaneProxy: {
+      authenticationMode: seedAppConfiguration ? 'Local' : 'Pass-through'
+      privateLinkDelegation: 'Disabled'
+    }
+  }
+}
+
+resource appConfigurationRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(appConfiguration.id, identity.id, appConfigurationReaderRoleId)
+  scope: appConfiguration
+  properties: {
+    roleDefinitionId: appConfigurationReaderRoleId
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource appConfigurationDeploymentOwnerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(appConfiguration.id, sqlEntraAdministratorObjectId, appConfigurationOwnerRoleId)
+  scope: appConfiguration
+  properties: {
+    roleDefinitionId: appConfigurationOwnerRoleId
+    principalId: sqlEntraAdministratorObjectId
+    principalType: 'User'
+  }
+}
+
+resource serviceBus 'Microsoft.ServiceBus/namespaces@2024-01-01' = {
+  name: serviceBusName
+  location: location
+  tags: tags
+  sku: {
+    name: 'Standard'
+    tier: 'Standard'
+  }
+  properties: {
+    disableLocalAuth: true
+    minimumTlsVersion: '1.2'
+    publicNetworkAccess: 'Enabled'
+    zoneRedundant: false
+  }
+}
+
+resource inboundQueue 'Microsoft.ServiceBus/namespaces/queues@2024-01-01' = {
+  parent: serviceBus
+  name: 'whatsapp-inbound-debounce'
+  properties: {
+    deadLetteringOnMessageExpiration: true
+    defaultMessageTimeToLive: 'P1D'
+    duplicateDetectionHistoryTimeWindow: 'PT10M'
+    enableBatchedOperations: true
+    lockDuration: 'PT5M'
+    maxDeliveryCount: 10
+    requiresDuplicateDetection: true
+    requiresSession: true
+  }
+}
+
+resource campaignQueue 'Microsoft.ServiceBus/namespaces/queues@2024-01-01' = {
+  parent: serviceBus
+  name: 'campaign-dispatch'
+  properties: {
+    deadLetteringOnMessageExpiration: true
+    defaultMessageTimeToLive: 'P7D'
+    duplicateDetectionHistoryTimeWindow: 'PT10M'
+    enableBatchedOperations: true
+    lockDuration: 'PT5M'
+    maxDeliveryCount: 10
+    requiresDuplicateDetection: true
+    requiresSession: true
+  }
+}
+
+resource serviceBusSenderRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(serviceBus.id, identity.id, serviceBusSenderRoleId)
+  scope: serviceBus
+  properties: {
+    roleDefinitionId: serviceBusSenderRoleId
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource serviceBusReceiverRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(serviceBus.id, identity.id, serviceBusReceiverRoleId)
+  scope: serviceBus
+  properties: {
+    roleDefinitionId: serviceBusReceiverRoleId
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' = {
+  name: sqlServerName
+  location: sqlLocation
+  tags: tags
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {
+    administratorLogin: sqlAdministratorLogin
+    administratorLoginPassword: sqlAdministratorPassword
+    administrators: {
+      administratorType: 'ActiveDirectory'
+      azureADOnlyAuthentication: false
+      login: sqlEntraAdministratorLogin
+      principalType: 'User'
+      sid: sqlEntraAdministratorObjectId
+      tenantId: subscription().tenantId
+    }
+    minimalTlsVersion: '1.2'
+    publicNetworkAccess: 'Enabled'
+    restrictOutboundNetworkAccess: 'Disabled'
+  }
+}
+
+resource database 'Microsoft.Sql/servers/databases@2023-08-01-preview' = {
+  parent: sqlServer
+  name: databaseName
+  location: sqlLocation
+  tags: tags
+  sku: {
+    name: 'Basic'
+    tier: 'Basic'
+    capacity: 5
+  }
+  properties: {
+    maxSizeBytes: 2147483648
+    readScale: 'Disabled'
+    requestedBackupStorageRedundancy: 'Local'
+    zoneRedundant: false
+  }
+}
+
+resource functionPlan 'Microsoft.Web/serverfarms@2024-04-01' = {
+  name: 'plan-func-auraly-${compactEnvironment}'
+  location: location
+  tags: tags
+  kind: 'functionapp'
+  sku: {
+    name: 'FC1'
+    tier: 'FlexConsumption'
+  }
+  properties: {
+    reserved: true
+  }
+}
+
+resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
+  name: functionName
+  location: location
+  tags: tags
+  kind: 'functionapp,linux'
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${identity.id}': {}
+    }
+  }
+  properties: {
+    serverFarmId: functionPlan.id
+    httpsOnly: true
+    clientAffinityEnabled: false
+    publicNetworkAccess: 'Enabled'
+    siteConfig: {
+      ftpsState: 'Disabled'
+      minTlsVersion: '1.2'
+      http20Enabled: true
+    }
+    functionAppConfig: {
+      deployment: {
+        storage: {
+          type: 'blobContainer'
+          value: '${storage.properties.primaryEndpoints.blob}${deploymentContainer.name}'
+          authentication: {
+            type: 'UserAssignedIdentity'
+            userAssignedIdentityResourceId: identity.id
+          }
+        }
+      }
+      scaleAndConcurrency: {
+        maximumInstanceCount: maximumFunctionInstances
+        instanceMemoryMB: 2048
+        alwaysReady: []
+      }
+      runtime: {
+        name: 'dotnet-isolated'
+        version: '8.0'
+      }
+    }
+  }
+  dependsOn: [
+    storageBlobRole
+    storageQueueRole
+    storageTableRole
+  ]
+}
+
+resource functionSettings 'Microsoft.Web/sites/config@2024-04-01' = {
+  parent: functionApp
+  name: 'appsettings'
+  properties: {
+    FUNCTIONS_EXTENSION_VERSION: '~4'
+    AZURE_FUNCTIONS_ENVIRONMENT: environment == 'prod' ? 'Production' : 'Development'
+    AzureWebJobsStorage__accountName: storage.name
+    AzureWebJobsStorage__credential: 'managedidentity'
+    AzureWebJobsStorage__clientId: identity.properties.clientId
+    ServiceBusConnection__fullyQualifiedNamespace: '${serviceBus.name}.servicebus.windows.net'
+    ServiceBusConnection__clientId: identity.properties.clientId
+    AppConfiguration__Endpoint: appConfiguration.properties.endpoint
+    AZURE_CLIENT_ID: identity.properties.clientId
+    APPLICATIONINSIGHTS_CONNECTION_STRING: applicationInsights.properties.ConnectionString
+    ApplicationInsightsAgent_EXTENSION_VERSION: '~3'
+    Release__Version: releaseVersion
+    AURALY_ENVIRONMENT: compactEnvironment
+    WhatsApp__Webhook__ApiBaseUrl: whatsAppApiBaseUrl
+    WhatsApp__Webhook__VerifyToken: whatsAppVerifyToken
+  }
+}
+
+resource apiPlan 'Microsoft.Web/serverfarms@2024-04-01' = {
+  name: 'plan-api-auraly-${compactEnvironment}'
+  location: webLocation
+  tags: tags
+  kind: 'linux'
+  sku: {
+    name: environment == 'dev' ? 'F1' : 'B1'
+    tier: environment == 'dev' ? 'Free' : 'Basic'
+    capacity: 1
+  }
+  properties: {
+    reserved: true
+  }
+}
+
+resource apiApp 'Microsoft.Web/sites@2024-04-01' = {
+  name: apiName
+  location: webLocation
+  tags: tags
+  kind: 'app,linux'
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${identity.id}': {}
+    }
+  }
+  properties: {
+    serverFarmId: apiPlan.id
+    httpsOnly: true
+    clientAffinityEnabled: false
+    publicNetworkAccess: 'Enabled'
+    siteConfig: {
+      alwaysOn: environment == 'prod'
+      ftpsState: 'Disabled'
+      http20Enabled: true
+      linuxFxVersion: 'DOTNETCORE|8.0'
+      minTlsVersion: '1.2'
+      appSettings: [
+        {
+          name: 'ASPNETCORE_ENVIRONMENT'
+          value: environment == 'prod' ? 'Production' : 'Development'
+        }
+        {
+          name: 'AzureWebJobsStorage__accountName'
+          value: storage.name
+        }
+        {
+          name: 'AzureWebJobsStorage__clientId'
+          value: identity.properties.clientId
+        }
+        {
+          name: 'ServiceBusConnection__fullyQualifiedNamespace'
+          value: '${serviceBus.name}.servicebus.windows.net'
+        }
+        {
+          name: 'ServiceBusConnection__clientId'
+          value: identity.properties.clientId
+        }
+        {
+          name: 'AppConfiguration__Endpoint'
+          value: appConfiguration.properties.endpoint
+        }
+        {
+          name: 'AZURE_CLIENT_ID'
+          value: identity.properties.clientId
+        }
+        {
+          name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+          value: applicationInsights.properties.ConnectionString
+        }
+        {
+          name: 'Auraly__Environment'
+          value: compactEnvironment
+        }
+        {
+          name: 'Jwt__Secret'
+          value: jwtSecret
+        }
+        {
+          name: 'Jwt__Issuer'
+          value: 'auraly-${compactEnvironment}'
+        }
+        {
+          name: 'Jwt__Audience'
+          value: 'auraly-admin-${compactEnvironment}'
+        }
+        {
+          name: 'WhatsApp__Webhook__ApiBaseUrl'
+          value: whatsAppApiBaseUrl
+        }
+        {
+          name: 'WhatsApp__Webhook__VerifyToken'
+          value: whatsAppVerifyToken
+        }
+        {
+          name: 'Release__Version'
+          value: releaseVersion
+        }
+      ]
+    }
+  }
+}
+
+resource staticAdmin 'Microsoft.Web/staticSites@2023-12-01' = {
+  name: adminName
+  location: location
+  tags: tags
+  sku: {
+    name: 'Free'
+    tier: 'Free'
+  }
+  properties: {
+    allowConfigFileUpdates: true
+    enterpriseGradeCdnStatus: 'Disabled'
+  }
+}
+
+resource environmentConfig 'Microsoft.AppConfiguration/configurationStores/keyValues@2024-06-01' = if (seedAppConfiguration) {
+  parent: appConfiguration
+  name: 'Auraly:Environment'
+  properties: {
+    value: compactEnvironment
+    contentType: 'text/plain'
+  }
+  dependsOn: [
+    appConfigurationDeploymentOwnerRole
+  ]
+}
+
+resource sqlConfig 'Microsoft.AppConfiguration/configurationStores/keyValues@2024-06-01' = if (seedAppConfiguration) {
+  parent: appConfiguration
+  name: 'ConnectionStrings:DefaultConnection'
+  properties: {
+    value: 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Initial Catalog=${database.name};Authentication=Active Directory Managed Identity;User Id=${identity.properties.clientId};Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;'
+    contentType: 'text/plain'
+  }
+  dependsOn: [
+    appConfigurationDeploymentOwnerRole
+  ]
+}
+
+resource openAiEndpointConfig 'Microsoft.AppConfiguration/configurationStores/keyValues@2024-06-01' = if (seedAppConfiguration) {
+  parent: appConfiguration
+  name: 'OpenAI:TextModel:Endpoint'
+  properties: {
+    value: sharedOpenAiEndpoint
+    contentType: 'text/plain'
+  }
+  dependsOn: [
+    appConfigurationDeploymentOwnerRole
+  ]
+}
+
+resource openAiTextDeploymentConfig 'Microsoft.AppConfiguration/configurationStores/keyValues@2024-06-01' = if (seedAppConfiguration) {
+  parent: appConfiguration
+  name: 'OpenAI:TextModel:DeploymentName'
+  properties: {
+    value: textModelDeploymentName
+    contentType: 'text/plain'
+  }
+  dependsOn: [
+    appConfigurationDeploymentOwnerRole
+  ]
+}
+
+resource openAiAudioEndpointConfig 'Microsoft.AppConfiguration/configurationStores/keyValues@2024-06-01' = if (seedAppConfiguration) {
+  parent: appConfiguration
+  name: 'OpenAI:AudioModel:Endpoint'
+  properties: {
+    value: sharedOpenAiEndpoint
+    contentType: 'text/plain'
+  }
+  dependsOn: [
+    appConfigurationDeploymentOwnerRole
+  ]
+}
+
+resource openAiAudioDeploymentConfig 'Microsoft.AppConfiguration/configurationStores/keyValues@2024-06-01' = if (seedAppConfiguration) {
+  parent: appConfiguration
+  name: 'OpenAI:AudioModel:DeploymentName'
+  properties: {
+    value: audioModelDeploymentName
+    contentType: 'text/plain'
+  }
+  dependsOn: [
+    appConfigurationDeploymentOwnerRole
+  ]
+}
+
+output functionAppName string = functionApp.name
+output apiAppName string = apiApp.name
+output staticAdminName string = staticAdmin.name
+output sqlServerName string = sqlServer.name
+output databaseName string = database.name
+output serviceBusName string = serviceBus.name
+output appConfigurationName string = appConfiguration.name
+output managedIdentityName string = identity.name
+output managedIdentityClientId string = identity.properties.clientId
+output managedIdentityPrincipalId string = identity.properties.principalId

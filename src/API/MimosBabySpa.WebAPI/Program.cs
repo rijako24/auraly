@@ -4,6 +4,8 @@ using Azure;
 
 using Azure.AI.OpenAI;
 
+using Azure.Identity;
+
 using Azure.Storage.Blobs;
 
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -99,6 +101,15 @@ using MimosBabySpa.WebAPI.Configuration;
 using MimosBabySpa.WebAPI.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
+var appConfigurationEndpoint = builder.Configuration["AppConfiguration:Endpoint"];
+if (!string.IsNullOrWhiteSpace(appConfigurationEndpoint))
+{
+    builder.Configuration.AddAzureAppConfiguration(options =>
+        options.Connect(
+            new Uri(appConfigurationEndpoint),
+            AzureManagedClientFactory.CreateCredential(
+                builder.Configuration, "AppConfiguration:ManagedIdentityClientId")));
+}
 
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
 
@@ -110,11 +121,20 @@ builder.Services.AddScoped<ICorrelationIdProvider, CorrelationIdProvider>();
 
 builder.Services.AddScoped<ITenantContext, TenantContext>();
 
-builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection(JwtSettings.SectionName));
+var jwtSection = builder.Configuration.GetRequiredSection(JwtSettings.SectionName);
+var jwtSettings = jwtSection.Get<JwtSettings>()
+    ?? throw new InvalidOperationException("Jwt configuration is required.");
 
+if (string.IsNullOrWhiteSpace(jwtSettings.Secret)
+    || string.IsNullOrWhiteSpace(jwtSettings.Issuer)
+    || string.IsNullOrWhiteSpace(jwtSettings.Audience))
+{
+    throw new InvalidOperationException(
+        "Jwt:Secret, Jwt:Issuer and Jwt:Audience must be configured.");
+}
+
+builder.Services.Configure<JwtSettings>(jwtSection);
 builder.Services.Configure<DemoRequestOptions>(builder.Configuration.GetSection(DemoRequestOptions.SectionName));
-
-var jwtSettings = builder.Configuration.GetSection(JwtSettings.SectionName).Get<JwtSettings>()!;
 
 builder.Services.AddAuthentication(options =>
 
@@ -344,19 +364,8 @@ builder.Services.AddSingleton(sp =>
 
 {
 
-    var configuration = sp.GetRequiredService<IConfiguration>();
-
-    var connectionString = configuration.GetConnectionString("AzureStorage")
-
-        ?? configuration["AzureStorage:ConnectionString"]
-
-        ?? configuration["AzureWebJobsStorage"];
-
-    if (string.IsNullOrWhiteSpace(connectionString))
-
-        connectionString = "UseDevelopmentStorage=true";
-
-    return new BlobServiceClient(connectionString);
+    return AzureManagedClientFactory.CreateBlobServiceClient(
+        sp.GetRequiredService<IConfiguration>());
 
 });
 
@@ -399,6 +408,7 @@ builder.Services.AddScoped<IBusinessAdminService, BusinessAdminService>();
 builder.Services.AddScoped<IServiceAdminService, ServiceAdminService>();
 
 builder.Services.AddScoped<IProductAdminService, ProductAdminService>();
+builder.Services.AddScoped<IProductOfferAdminService, ProductOfferAdminService>();
 builder.Services.AddScoped<IProductAliasAdminService, ProductAliasAdminService>();
 builder.Services.AddScoped<IProductCatalogAdminService, ProductCatalogAdminService>();
 
@@ -427,6 +437,7 @@ builder.Services.AddHttpClient<MimosBabySpa.Application.Identity.Interfaces.IWha
 builder.Services.AddScoped<ICatalogImportAdminService, CatalogImportAdminService>();
 
 builder.Services.AddScoped<ICatalogDocumentTextExtractor, CatalogDocumentTextExtractor>();
+builder.Services.AddScoped<IInboundDocumentTextExtractor, InboundDocumentTextExtractor>();
 
 builder.Services.AddScoped<ICatalogDraftParser, CatalogDraftAiParser>();
 
@@ -438,11 +449,14 @@ builder.Services.AddSingleton<AzureOpenAIClient>(sp =>
 
     var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<OpenAITextModelOptions>>().Value;
 
-    if (string.IsNullOrWhiteSpace(options.Endpoint) || string.IsNullOrWhiteSpace(options.ApiKey))
+    if (string.IsNullOrWhiteSpace(options.Endpoint))
 
-        throw new InvalidOperationException("OpenAI:TextModel:Endpoint y ApiKey deben estar configurados en WebAPI.");
+        throw new InvalidOperationException("OpenAI:TextModel:Endpoint debe estar configurado en WebAPI.");
 
-    return new AzureOpenAIClient(new Uri(options.Endpoint), new System.ClientModel.ApiKeyCredential(options.ApiKey));
+    return AzureManagedClientFactory.CreateAzureOpenAIClient(
+        builder.Configuration,
+        options.Endpoint,
+        options.ApiKey);
 
 });
 
@@ -488,6 +502,8 @@ builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOper
 
 builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.SearchProductsOperation>();
 
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.SearchProductOffersOperation>();
+
 builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.SearchRecipesOperation>();
 
 builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.ApplyOrderChangesOperation>();
@@ -510,6 +526,7 @@ builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOper
 
 builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.GetOrderDraftOperation>();
 builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Conversation.GetKnownFactsOperation>();
+builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Conversation.CompleteConversationRequestOperation>();
 builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Checkout.ListPaymentMethodsOperation>();
 
 builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Escalation.RequestHumanEscalationOperation>();

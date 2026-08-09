@@ -98,6 +98,12 @@ public sealed class AzureOpenAIChatClient : IChatClient
     private static SdkChatMessage ToSdkMessage(Application.LLM.ChatMessage message) => message.Role switch
     {
         Application.LLM.ChatRole.System => new SystemChatMessage(message.Content ?? string.Empty),
+        Application.LLM.ChatRole.User when message.ImageBytes is not null
+            && !string.IsNullOrWhiteSpace(message.ImageMimeType) =>
+            new UserChatMessage(
+                ChatMessageContentPart.CreateTextPart(message.Content ?? string.Empty),
+                ChatMessageContentPart.CreateImagePart(
+                    BinaryData.FromBytes(message.ImageBytes), message.ImageMimeType)),
         Application.LLM.ChatRole.User => new UserChatMessage(message.Content ?? string.Empty),
         Application.LLM.ChatRole.Assistant => new AssistantChatMessage(message.Content ?? string.Empty),
         _ => throw new ArgumentOutOfRangeException(nameof(message), $"Unknown role: {message.Role}")

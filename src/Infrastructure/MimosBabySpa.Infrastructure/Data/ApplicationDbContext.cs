@@ -45,6 +45,8 @@ public class ApplicationDbContext : DbContext
     public DbSet<ProductCategory> ProductCategories { get; set; }
     public DbSet<ReservationIntegrationEvent> ReservationIntegrationEvents { get; set; }
     public DbSet<Product> Products { get; set; }
+    public DbSet<ProductOffer> ProductOffers { get; set; }
+    public DbSet<ProductImage> ProductImages { get; set; }
     public DbSet<ProductAlias> ProductAliases { get; set; }
     public DbSet<ProductSearchTerm> ProductSearchTerms { get; set; }
     public DbSet<CartMutationReceipt> CartMutationReceipts { get; set; }
@@ -595,6 +597,7 @@ public class ApplicationDbContext : DbContext
             });
         });
 
+        ProductOfferModelConfiguration.Configure(modelBuilder);
         ProductSearchModelConfiguration.Configure(modelBuilder);
         modelBuilder.Entity<ProductRecommendationRule>(entity =>
         {

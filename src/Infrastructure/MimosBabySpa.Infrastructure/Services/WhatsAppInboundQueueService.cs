@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using Microsoft.Extensions.Configuration;
+using MimosBabySpa.Infrastructure.Configuration;
 using MimosBabySpa.Application.Services;
 
 namespace MimosBabySpa.Infrastructure.Services;
@@ -56,11 +57,7 @@ public sealed class WhatsAppInboundQueueService : IWhatsAppInboundQueueService, 
         if (_sender is not null)
             return _sender;
 
-        var connectionString = _configuration["ServiceBusConnection"]
-            ?? _configuration.GetConnectionString("ServiceBus")
-            ?? throw new InvalidOperationException("ServiceBusConnection debe estar configurado.");
-
-        _client = new ServiceBusClient(connectionString);
+        _client = AzureManagedClientFactory.CreateServiceBusClient(_configuration);
         _sender = _client.CreateSender(DefaultQueueName);
         return _sender;
     }

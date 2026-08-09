@@ -28,6 +28,8 @@ using Azure.Storage.Blobs;
 
 using Azure.AI.OpenAI;
 
+using Azure.Identity;
+
 using Microsoft.Extensions.Options;
 
 using MimosBabySpa.Application.BusinessRules;
@@ -71,6 +73,20 @@ using MimosBabySpa.Infrastructure.LLM;
 var host = new HostBuilder()
 
     .ConfigureFunctionsWorkerDefaults()
+
+    .ConfigureAppConfiguration((_, configuration) =>
+    {
+        var bootstrap = configuration.Build();
+        var endpoint = bootstrap["AppConfiguration:Endpoint"];
+        if (!string.IsNullOrWhiteSpace(endpoint))
+        {
+            configuration.AddAzureAppConfiguration(options =>
+                options.Connect(
+                    new Uri(endpoint),
+                    AzureManagedClientFactory.CreateCredential(
+                        bootstrap, "AppConfiguration:ManagedIdentityClientId")));
+        }
+    })
 
     .ConfigureServices((context, services) =>
 
@@ -203,15 +219,18 @@ services.AddScoped<ServiceSelectionResolver>();
 
             var options = sp.GetRequiredService<IOptions<OpenAITextModelOptions>>().Value;
 
-            if (string.IsNullOrEmpty(options.Endpoint) || string.IsNullOrEmpty(options.ApiKey))
+            if (string.IsNullOrWhiteSpace(options.Endpoint))
 
-                throw new InvalidOperationException("OpenAI:TextModel:Endpoint y ApiKey deben estar configurados");
+                throw new InvalidOperationException("OpenAI:TextModel:Endpoint debe estar configurado");
 
             if (string.IsNullOrEmpty(options.DeploymentName))
 
                 throw new InvalidOperationException("OpenAI:TextModel:DeploymentName debe estar configurado");
 
-            return new AzureOpenAIClient(new Uri(options.Endpoint), new System.ClientModel.ApiKeyCredential(options.ApiKey));
+            return AzureManagedClientFactory.CreateAzureOpenAIClient(
+                configuration,
+                options.Endpoint,
+                options.ApiKey);
 
         });
 
@@ -221,15 +240,18 @@ services.AddScoped<ServiceSelectionResolver>();
 
             var options = sp.GetRequiredService<IOptions<OpenAIAudioModelOptions>>().Value;
 
-            if (string.IsNullOrEmpty(options.Endpoint) || string.IsNullOrEmpty(options.ApiKey))
+            if (string.IsNullOrWhiteSpace(options.Endpoint))
 
-                throw new InvalidOperationException("OpenAI:AudioModel:Endpoint y ApiKey deben estar configurados");
+                throw new InvalidOperationException("OpenAI:AudioModel:Endpoint debe estar configurado");
 
             if (string.IsNullOrEmpty(options.DeploymentName))
 
                 throw new InvalidOperationException("OpenAI:AudioModel:DeploymentName debe estar configurado");
 
-            return new AzureOpenAIClient(new Uri(options.Endpoint), new System.ClientModel.ApiKeyCredential(options.ApiKey));
+            return AzureManagedClientFactory.CreateAzureOpenAIClient(
+                configuration,
+                options.Endpoint,
+                options.ApiKey);
 
         });
 
@@ -348,6 +370,11 @@ services.AddScoped<IExternalEscalationService, ExternalEscalationService>();
 
         // -- DETERMINISTIC AGENT ENGINE -------------------------------------
 
+        services.AddScoped<MimosBabySpa.Application.Identity.Interfaces.ICatalogDocumentTextExtractor,
+            MimosBabySpa.Infrastructure.Catalog.CatalogDocumentTextExtractor>();
+        services.AddScoped<IInboundDocumentTextExtractor,
+            MimosBabySpa.Infrastructure.Catalog.InboundDocumentTextExtractor>();
+
         services.AddScoped<IChatClient>(sp =>
 
         {
@@ -392,6 +419,8 @@ services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, M
 
 services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.SearchProductsOperation>();
 
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.SearchProductOffersOperation>();
+
 services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.SearchRecipesOperation>();
 
 services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.ApplyOrderChangesOperation>();
@@ -414,6 +443,7 @@ services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, M
 
 services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.GetOrderDraftOperation>();
 services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Conversation.GetKnownFactsOperation>();
+services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Conversation.CompleteConversationRequestOperation>();
 services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Checkout.ListPaymentMethodsOperation>();
 
 services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Escalation.RequestHumanEscalationOperation>();
@@ -501,13 +531,8 @@ services.AddScoped<MimosBabySpa.Application.Agents.Operations.IOperationPresenta
 
         {
 
-            var config = sp.GetRequiredService<IConfiguration>();
-
-            var connectionString = config["AzureWebJobsStorage"]
-
-                ?? throw new InvalidOperationException("AzureWebJobsStorage debe estar configurado");
-
-            return new BlobServiceClient(connectionString);
+            return AzureManagedClientFactory.CreateBlobServiceClient(
+                sp.GetRequiredService<IConfiguration>());
 
         });
 

@@ -171,6 +171,7 @@ public sealed class DeterministicTurnEffectProcessor : IDeterministicTurnEffectP
     private readonly IEventNotificationDispatcher _notifications;
     private readonly IMessageSequenceResolver _sequences;
     private readonly IRequestContextService _requestContext;
+    private readonly IMediaUrlResolver? _mediaUrls;
 
     public DeterministicTurnEffectProcessor(
         IEnumerable<IOperationEventContextResolver> contextResolvers,
@@ -182,6 +183,17 @@ public sealed class DeterministicTurnEffectProcessor : IDeterministicTurnEffectP
         _notifications = notifications;
         _sequences = sequences;
         _requestContext = requestContext;
+    }
+
+    public DeterministicTurnEffectProcessor(
+        IEnumerable<IOperationEventContextResolver> contextResolvers,
+        IEventNotificationDispatcher notifications,
+        IMessageSequenceResolver sequences,
+        IRequestContextService requestContext,
+        IMediaUrlResolver mediaUrls)
+        : this(contextResolvers, notifications, sequences, requestContext)
+    {
+        _mediaUrls = mediaUrls;
     }
 
     public async Task<DeterministicTurnEffectResult> ProcessAsync(
@@ -227,6 +239,23 @@ public sealed class DeterministicTurnEffectProcessor : IDeterministicTurnEffectP
         }
 
         var outbound = new List<OutboundMessage>();
+        if (_mediaUrls is not null)
+        {
+            foreach (var media in request.TurnResult.OperationEffects
+                         .OfType<OutboundMediaOperationEffect>())
+            {
+                var mediaUrl = await _mediaUrls.ResolveAsync(
+                    request.BusinessId,
+                    media.MediaReference,
+                    cancellationToken);
+                if (!string.IsNullOrWhiteSpace(mediaUrl))
+                    outbound.Add(new OutboundMessage(
+                        media.Caption,
+                        mediaUrl,
+                        media.MediaType,
+                        media.Filename));
+            }
+        }
         foreach (var sequenceName in request.TurnResult.Sequences.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var messages = await _sequences.ResolveAsync(

@@ -11,7 +11,8 @@ public sealed class ConversationFollowUpDefinitions
 
     /// <summary>Renderer-only guidance for the follow-up message.</summary>
     public string Guidance { get; init; } =
-        "Retoma brevemente la conversación desde la pregunta pendiente, sin repetir toda la respuesta.";
+        "Retoma con empatía y sin presionar. Reconoce que la persona puede estar ocupada, "
+        + "ofrece seguir disponible y vuelve brevemente a la pregunta pendiente sin repetir toda la respuesta.";
 
     /// <summary>Optional deterministic fallback when contextual rendering is unavailable.</summary>
     public string? FallbackSequence { get; init; }

@@ -1,0 +1,10 @@
+using './main.bicep'
+
+param environment = 'prod'
+param location = 'eastus2'
+param releaseVersion = 'set-by-release'
+param sharedOpenAiEndpoint = 'set-at-deploy-time'
+param sharedOpenAiResourceGroupName = 'set-at-deploy-time'
+param sharedOpenAiAccountName = 'set-at-deploy-time'
+param sqlEntraAdministratorLogin = 'set-at-deploy-time'
+param sqlEntraAdministratorObjectId = '00000000-0000-0000-0000-000000000000'

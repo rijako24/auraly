@@ -1,0 +1,227 @@
+{
+    "business":  {
+                     "name":  "Digital Shop",
+                     "locale":  "es-CO",
+                     "timezone":  "America/Bogota",
+                     "channels":  [
+                                      "whatsapp"
+                                  ]
+                 },
+    "objectives":  [
+                       "Orientar al cliente sobre iPhone nuevos y usados con precios e imagenes autoritativas",
+                       "Vender accesorios cargados en el catalogo sin preguntar nuevo o usado",
+                       "Recomendar de forma controlada el cargador activo como complemento del iPhone",
+                       "Dirigir las consultas de servicio tecnico al local",
+                       "Responder ubicacion y horario para compras o visitas sin confundirlos con servicio tecnico",
+                       "Convertir una consulta informada en una visita al local para finalizar la venta",
+                       "Comparar tecnicamente dos modelos iPhone distintos y recomendar uno con evidencia del catalogo"
+                   ],
+    "processes":  [
+                      {
+                          "id":  "iphone_sales",
+                          "type":  "primary",
+                          "goal":  "Identificar modelo y condicion, mostrar la oferta vigente y cerrar con invitacion al local",
+                          "routing_guidance":  "Atender consultas comerciales de celulares, principalmente iPhone.",
+                          "steps":  [
+                                        {
+                                            "id":  "discover",
+                                            "goal":  "Capturar el modelo solicitado y preguntar si lo quiere nuevo o usado cuando falte la condicion",
+                                            "accepts_facts":  [
+                                                                  "device_model",
+                                                                  "product_condition"
+                                                              ],
+                                            "requires_facts":  [
+                                                                   "device_model",
+                                                                   "product_condition"
+                                                               ],
+                                            "signals":  [
+                                                            "technical_service_requested"
+                                                        ],
+                                            "actions":  [
+
+                                                        ],
+                                            "success_to":  "quote",
+                                            "exceptions":  [
+                                                               "modelo ambiguo",
+                                                               "condicion faltante"
+                                                           ]
+                                        },
+                                        {
+                                            "id":  "quote",
+                                            "goal":  "Consultar una oferta vigente y mostrar precio, capacidad, imagen y politica de bateria",
+                                            "accepts_facts":  [
+                                                                  "device_model",
+                                                                  "product_condition"
+                                                              ],
+                                            "requires_facts":  [
+                                                                   "device_model",
+                                                                   "product_condition"
+                                                               ],
+                                            "signals":  [
+                                                            "store_visit_confirmed",
+                                                            "technical_service_requested"
+                                                        ],
+                                            "actions":  [
+                                                            {
+                                                                "capability":  "consultar ofertas de producto",
+                                                                "side_effect":  false,
+                                                                "confirmation":  "not_required",
+                                                                "authority":  "catalogo local de productos y ofertas"
+                                                            }
+                                                        ],
+                                            "success_to":  "visit",
+                                            "exceptions":  [
+                                                               "oferta no encontrada",
+                                                               "precio desactualizado",
+                                                               "imagen no disponible"
+                                                           ]
+                                        },
+                                        {
+                                            "id":  "visit",
+                                            "goal":  "Invitar al cliente al local para revisar el equipo y terminar la venta",
+                                            "accepts_facts":  [
+                                                                  "device_model",
+                                                                  "product_condition"
+                                                              ],
+                                            "requires_facts":  [
+
+                                                               ],
+                                            "signals":  [
+                                                            "store_visit_confirmed",
+                                                            "technical_service_requested"
+                                                        ],
+                                            "actions":  [
+                                                            {
+                                                                "capability":  "cerrar solicitud comercial",
+                                                                "side_effect":  true,
+                                                                "confirmation":  "verbal",
+                                                                "authority":  "cliente"
+                                                            }
+                                                        ],
+                                            "success_to":  "complete",
+                                            "exceptions":  [
+
+                                                           ]
+                                        }
+                                    ]
+                      }
+                  ],
+    "data":  [
+                 {
+                     "key":  "device_model",
+                     "type":  "string",
+                     "source":  "user",
+                     "scope":  "request",
+                     "role":  "product_query",
+                     "authority":  "cliente, canonicalizado por catalogo"
+                 },
+                 {
+                     "key":  "product_condition",
+                     "type":  "string",
+                     "source":  "user",
+                     "scope":  "request",
+                     "role":  "product_condition",
+                     "authority":  "cliente"
+                 },
+                 {
+                     "key":  "storage_gb",
+                     "type":  "integer",
+                     "source":  "user",
+                     "scope":  "request",
+                     "role":  "product_capacity",
+                     "authority":  "cliente"
+                 },
+                 {
+                     "key":  "quoted_offer",
+                     "type":  "json",
+                     "source":  "system",
+                     "scope":  "ephemeral",
+                     "role":  "authoritative_quote",
+                     "authority":  "catalogo local de ofertas",
+                     "dependsOn":  [
+                                       "device_model",
+                                       "product_condition"
+                                   ]
+                 }
+             ],
+    "integrations":  [
+                         {
+                             "name":  "catalogo local",
+                             "authority_for":  [
+                                                   "identidad de producto",
+                                                   "condicion",
+                                                   "capacidad",
+                                                   "precio",
+                                                   "imagen",
+                                                   "bateria minima",
+                                                   "accesorios",
+                                                   "especificaciones tecnicas por modelo"
+                                               ],
+                             "read_operations":  [
+                                                     "commerce.search_product_offers",
+                                                     "commerce.search_products"
+                                                 ],
+                             "side_effect_operations":  [
+                                                            "catalog price-list import"
+                                                        ]
+                         }
+                     ],
+    "cross_cutting":  [
+                          "La apertura es breve y termina con la unica pregunta amplia: en que puedo ayudarte el dia de hoy",
+                          "Cada respuesta usa maximo dos parrafos cortos y como maximo una pregunta indispensable",
+                          "La informacion de catalogo se muestra automaticamente sin pedir permiso",
+                          "Los unicos telefonos vendidos son iPhone; una consulta general muestra directamente todos los modelos iPhone activos",
+                          "Por cada producto distinto consultado se envia automaticamente una imagen principal activa cuando el catalogo la tiene; si no existe, se responde sin inventarla",
+                          "Las imagenes configuradas son renders reales del modelo, en PNG compatible y alojadas en el contenedor blob del negocio",
+                          "Una pregunta puntual por colores muestra solo los colores autoritativos y no repite la cotizacion completa",
+                          "Catalina recomienda solo cuando aporta valor y formula cada recomendacion desde el producto, el estado, el precio y el historial, sin frases prefabricadas",
+                          "Al cambiar del primer iPhone cotizado a un segundo modelo distinto, hace una sola comparacion automatica con caracteristicas principales y recomendacion honesta",
+                          "Un tercer modelo distinto o posterior se presenta individualmente; solo se compara otra vez cuando el cliente lo pide expresamente",
+                          "Cada telefono presentado incluye precio, imagen y un detalle breve de sus caracteristicas principales",
+                          "Las fichas comerciales muestran solo pantalla y tamaño, camara y autonomia; omiten el chip por no ser un dato prioritario para esta venta",
+                          "La recomendacion de cargador usa ProductRecommendationRules y muestra unicamente el complemento activo devuelto por el catalogo",
+                          "Nuevo y usado se presentan en lineas separadas para que la respuesta corta seleccione una opcion canonica",
+                          "Si el cliente cambia entre nuevo y usado para el mismo modelo, se muestra directamente la nueva condicion solicitada; ambas se comparan solo si lo pide",
+                          "Servicio tecnico siempre invita a acercarse al local con direccion y horario",
+                          "Una consulta general de ubicacion u horario usa store_location_requested y nunca technical_service_requested",
+                          "La direccion se muestra solo cuando el cliente pide ubicacion o expresa intencion de compra o visita; no se incluye en cotizaciones ni comparaciones",
+                          "El cliente puede corregir modelo o condicion y recibe una cotizacion nueva",
+                          "Nunca afirmar inventario, precio, color o salud de bateria fuera de la oferta vigente",
+                          "La garantia de un equipo nuevo es directamente con la marca, sin inventar duracion ni cobertura",
+                          "Una comparacion entre dos modelos distintos usa las fichas tecnicas de ambos, resume hasta tres diferencias principales y nunca se convierte en nuevo contra usado",
+                          "La comparacion termina con una recomendacion honesta de cual es tecnicamente mejor y cuando el otro solo conviene por precio, tamaño o ahorro",
+                          "La condicion nuevo o usado solo gobierna precios y estado comercial; no reemplaza la identidad de ninguno de los modelos comparados",
+                          "La pregunta de condicion se formula con palabras naturales del contexto, explica brevemente ambas opciones y no usa un texto fijo",
+                          "Si modelo y condicion nuevo o usado llegan juntos, consulta la oferta de inmediato; solo pregunta la condicion cuando el cliente dio el modelo sin ella",
+                          "La condicion pertenece al modelo: al cambiar a otro iPhone sin decir nuevo o usado, invalida la condicion anterior y vuelve a preguntarla; si el nuevo modelo y su condicion llegan juntos, conserva ambos y consulta de inmediato"
+                      ],
+    "checkout":  {
+                     "mode":  "in_store_only",
+                     "payments_collected_by_bot":  false,
+                     "completion_message":  "Perfecto, te esperamos en el local para revisar el equipo y terminar la compra."
+                 },
+    "operating_hours":  {
+                            "monday_friday":  "08:00-12:00, 14:00-18:00",
+                            "saturday":  "08:00-12:00",
+                            "sunday":  "closed"
+                        },
+    "escalations":  [
+
+                    ],
+    "exact_messages":  [
+                           "¿En qué puedo ayudarte el día de hoy?",
+                           "Los equipos usados disponibles tienen batería superior al 90%.",
+                           "Para servicio técnico, acércate al local y con gusto revisamos tu equipo.",
+                           "Perfecto, te esperamos en el local para revisar el equipo y terminar la compra."
+                       ],
+    "assumptions":  [
+                        "La moneda es COP y la zona horaria es America/Bogota.",
+                        "El bot no recibe pagos ni crea pedidos; la venta termina presencialmente.",
+                        "La direccion real es Cra. 12 #16B-06, barrio Loperena, Valledupar; el horario real es lunes a viernes de 8:00 a. m. a 12:00 m. y de 2:00 p. m. a 6:00 p. m., y sabados de 8:00 a. m. a 12:00 m.",
+                        "Los precios iniciales son referencias de mercado fechadas y el equipo de operaciones debe reemplazarlos con la lista propia.",
+                        "La politica de bateria solicitada para usados es superior al 90%, aunque algunas fuentes externas anuncien umbrales menores."
+                    ],
+    "open_questions":  [
+
+                       ]
+}
