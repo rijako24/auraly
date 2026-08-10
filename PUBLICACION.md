@@ -1,5 +1,8 @@
 # Publicacion de Talkio AI
 
+> [!WARNING]
+> Documento legado para `RG-TALKIOAI-DEV`. No usar para desplegar los ambientes Auraly nuevos y no borrar sus recursos. La guía vigente es [infrastructure/azure/README.md](infrastructure/azure/README.md).
+
 Guia operativa para publicar la base de datos y la Azure Function sin redescubrir comandos.
 
 ## Contexto
