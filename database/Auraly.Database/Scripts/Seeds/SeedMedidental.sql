@@ -910,8 +910,17 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
             "cart.product_not_found": {
               "response": {
                 "mode": "ask_clarification",
-                "guidance": "Indica que ese producto no se encontro y pide una descripcion o referencia mas precisa."
-              }
+                "guidance": "Indica las referencias que no tuvieron coincidencia segura y solicita datos mas precisos; no afirmes que el carrito cambio."
+              },
+              "effects": [
+                {
+                  "type": "presentation.add",
+                  "template": "cart_not_found",
+                  "dataPath": "error.context",
+                  "mode": "Exclusive",
+                  "priority": "Required"
+                }
+              ]
             },
             "cart.product_ambiguous": {
               "response": {
@@ -960,10 +969,57 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                 "mode": "ask_clarification",
                 "guidance": "No se aplico ningun cambio. Pregunta cual direccion debe usarse para entregar todo el unico pedido."
               }
+            },
+            "cart.partially_applied": {
+              "response": {
+                "mode": "ask_clarification",
+                "guidance": "Da un resultado explicito para cada referencia del lote usando la presentacion deterministica: agregada, sin existencia, ambigua, sugerida, cantidad insuficiente o no encontrada. No omitas referencias ni las mezcles entre categorias."
+              },
+              "effects": [
+                {
+                  "type": "presentation.add",
+                  "template": "cart_partial",
+                  "dataPath": "error.context",
+                  "mode": "Exclusive",
+                  "priority": "Required"
+                }
+              ]
+            },
+            "cart.product_suggestion": {
+              "response": {
+                "mode": "ask_clarification",
+                "guidance": "Presenta la sugerencia devuelta y pide confirmacion explicita antes de agregarla."
+              },
+              "effects": [
+                {
+                  "type": "presentation.add",
+                  "template": "product_ambiguity",
+                  "dataPath": "error.context",
+                  "mode": "Exclusive",
+                  "priority": "Required"
+                }
+              ]
+            },
+            "cart.product_unavailable": {
+              "response": {
+                "mode": "ask_clarification",
+                "guidance": "Indica que la referencia identificada no esta disponible y solicita otra opcion; no afirmes que fue agregada."
+              },
+              "effects": [
+                {
+                  "type": "presentation.add",
+                  "template": "cart_product_unavailable",
+                  "dataPath": "error.context",
+                  "mode": "Exclusive",
+                  "priority": "Required"
+                }
+              ]
             }
           },
           "execution": {
-            "idempotency": "none"
+            "idempotency": "input_version",
+            "timeoutSeconds": 240,
+            "maxAttempts": 1
           }
         }
       ]
@@ -1049,30 +1105,116 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
       "conversationGuidance": "Responde las consultas de mercancia comprable exclusivamente con resultados autoritativos del catalogo. Para una exploracion abierta, presenta las categorias retornadas y ayuda al cliente a elegir una o pedir un producto concreto. Para resultados paginados, conserva el contexto de la consulta activa. Nunca inventes disponibilidad, categorias, nombres ni precios.",
       "signal": {
         "type": "catalog_query",
-        "description": "Emite esta senal cuando el cliente quiere explorar o buscar mercancia comprable. Asigna mode=categories a una exploracion abierta, mode=search a un producto, necesidad o categoria concreta, y mode=continue cuando pide la pagina siguiente del conjunto activo; una continuacion conserva queries vacio. Puede coexistir con order_changes. No la emitas para recuperar datos de entrega, direccion, recogida, pago, identidad, perfil, cliente u orden.",
+        "description": "Emite esta senal cuando el cliente quiere explorar el catalogo, buscar un objetivo comercial concreto o continuar los resultados activos. Clasifica intent antes de extraer target. Los sustantivos genericos que solo nombran el catalogo completo no son objetivos de busqueda. Puede coexistir con order_changes. No la emitas para recuperar datos de entrega, direccion, recogida, pago, identidad, perfil, cliente u orden.",
         "valueSchema": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "queries": {
-              "type": "array",
-              "items": {
-                "type": "string"
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "intent": {
+                  "description": "Exploracion abierta que no restringe el catalogo a un objetivo concreto.",
+                  "type": "string",
+                  "enum": [
+                    "explore_catalog"
+                  ]
+                },
+                "target": {
+                  "description": "Debe ser null porque una exploracion abierta no tiene un objetivo que restrinja el catalogo.",
+                  "type": "null"
+                },
+                "additional_targets": {
+                  "description": "Debe permanecer vacio cuando intent es explore_catalog.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
               },
-              "minItems": 0
+              "required": [
+                "intent",
+                "target",
+                "additional_targets"
+              ]
             },
-            "mode": {
-              "type": "string",
-              "enum": [
-                "categories",
-                "search",
-                "continue"
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "intent": {
+                  "description": "Busqueda restringida por significado a uno o mas objetivos concretos.",
+                  "type": "string",
+                  "enum": [
+                    "search_target"
+                  ]
+                },
+                "target": {
+                  "description": "Objetivo principal que restringe el catalogo. Nunca uses como text un sustantivo generico que solo significa catalogo completo.",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "product",
+                        "category",
+                        "brand_or_model",
+                        "need_use_or_attribute"
+                      ]
+                    },
+                    "text": {
+                      "description": "Frase minima del cliente que restringe el catalogo al objetivo buscado.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "text"
+                  ]
+                },
+                "additional_targets": {
+                  "description": "Otros objetivos concretos independientes expresados por el cliente; no repitas target.text.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "intent",
+                "target",
+                "additional_targets"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "intent": {
+                  "description": "Peticion de la pagina siguiente del conjunto de resultados activo.",
+                  "type": "string",
+                  "enum": [
+                    "continue_results"
+                  ]
+                },
+                "target": {
+                  "description": "Debe ser null porque la continuacion reutiliza el cursor activo.",
+                  "type": "null"
+                },
+                "additional_targets": {
+                  "description": "Debe permanecer vacio cuando intent es continue_results.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "intent",
+                "target",
+                "additional_targets"
               ]
             }
-          },
-          "required": [
-            "queries",
-            "mode"
           ]
         }
       },
@@ -1086,8 +1228,9 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
           "trigger": "on_signal",
           "signal": "catalog_query",
           "arguments": {
-            "queries": "{{signal.catalog_query.value.queries}}",
-            "mode": "{{signal.catalog_query.value.mode}}",
+            "query": "{{signal.catalog_query.value.target.text}}",
+            "queries": "{{signal.catalog_query.value.additional_targets}}",
+            "mode": "{{signal.catalog_query.value.intent}}",
             "limit": 10
           },
           "onOutcome": {
@@ -1473,7 +1616,10 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "recipe_results": "Buena idea. Puedes inspirarte con estas preparaciones:\r\n\r\n*Ideas para preparar*\r\n{{#each results}}\r\n- {{Title}}\r\n  {{Url}}\r\n{{/each}}",
     "cart_snapshot": "Listo, Doc. Así va su pedido:\r\n\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\n¿Desea agregar algo más? Cuando haya terminado de elegir, indíqueme que eso es todo.",
     "product_ambiguity": "Doc, encontré varias opciones para {{product_text}}:\r\n\r\n{{#each product_options}}\r\n- {{Name}}: ${{UnitPrice}} {{Currency}}\r\n{{/each}}\r\n\r\n¿Cuál prefiere? El resto de su pedido queda igual.",
-    "insufficient_stock": "Doc, de {{product_text}} no alcanza la cantidad solicitada.\r\n\r\n- Solicitó: {{requested_quantity}}\r\n- Hay disponibles: {{available_quantity}}\r\n\r\nPuede pedir hasta {{maximum_command_quantity}}. ¿Con cuántas unidades lo dejamos?"
+    "insufficient_stock": "Doc, de {{product_text}} no alcanza la cantidad solicitada.\r\n\r\n- Solicitó: {{requested_quantity}}\r\n- Hay disponibles: {{available_quantity}}\r\n\r\nPuede pedir hasta {{maximum_command_quantity}}. ¿Con cuántas unidades lo dejamos?",
+    "cart_partial": "Doc, así quedó cada producto que solicitó:\r\n{{#if applied_items}}\r\n*Agregados*\r\n{{#each applied_items}}\r\n- {{name}} — cantidad: {{quantity}}\r\n{{/each}}\r\n{{/if}}\r\n{{#if unavailable_items}}\r\n*Sin existencia*\r\n{{#each unavailable_items}}\r\n- {{description}}\r\n{{/each}}\r\n{{/if}}\r\n{{#if insufficient_stock_items}}\r\n*Existencia insuficiente*\r\n{{#each insufficient_stock_items}}\r\n- {{product_text}}: solicitaste {{requested_quantity}} y hay {{available_quantity}}; puedes pedir hasta {{maximum_command_quantity}}\r\n{{/each}}\r\n{{/if}}\r\n{{#if ambiguous_groups}}\r\n*Necesito que elijas*\r\n{{#each ambiguous_groups}}\r\nPara {{product_text}}, necesito que me confirmes una de estas opciones:\r\n{{options_text}}\r\n{{/each}}\r\n{{/if}}\r\n{{#if suggested_options}}\r\n*Necesito confirmar*\r\n{{#each suggested_options}}\r\n- Para {{product_text}}: ¿te refieres a {{name}} — {{availability_text}}?\r\n{{/each}}\r\n{{/if}}\r\n{{#if not_found_items}}\r\n*No encontrados*\r\n{{#each not_found_items}}\r\n- {{product_text}}\r\n{{/each}}\r\n{{/if}}\r\n*Total actual del pedido: ${{total}} {{currency}}*\r\n\r\nIndícame las elecciones o una referencia más precisa para los pendientes.",
+    "cart_not_found": "Doc, no pude identificar con seguridad estas referencias:\r\n{{#each issues}}\r\n- {{ProductText}}\r\n{{/each}}\r\n\r\nCompártame la marca, presentación, código o un nombre más preciso y la busco de nuevo.",
+    "cart_product_unavailable": "Doc, encontré \"{{product_text}}\", pero en este momento no está disponible para agregarla.\r\n\r\nSu pedido quedó igual. Si desea, buscamos otra marca, presentación o producto."
   },
   "flows": [
     {
@@ -1484,7 +1630,11 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         {
           "id": "product_selection",
           "name": "Productos, catalogo y recomendaciones",
-          "leadQualification": { "band": "exploring", "priority": 10, "label": "Explorando productos" },
+          "leadQualification": {
+            "band": "exploring",
+            "priority": 10,
+            "label": "Explorando productos"
+          },
           "goal": "Recibir pedidos abiertos, resolver productos reales del catalogo, recomendar de forma controlada y construir el carrito hasta que el cliente finalice.",
           "response": {},
           "advanceWhenFacts": [
@@ -1650,7 +1800,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                     }
                   ],
                   "response": {
-                    "guidance": "Presenta mÃ¡ximo dos ideas devueltas y luego muestra Ãºnicamente ingredientes encontrados en el catÃ¡logo oficial."
+                    "guidance": "Presenta máximo dos ideas devueltas y luego muestra únicamente ingredientes encontrados en el catálogo oficial."
                   }
                 }
               }
@@ -1667,7 +1817,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               },
               "arguments": {
                 "queries": "{{fact.system.recipe_catalog_queries}}",
-                "mode": "search",
+                "mode": "search_target",
                 "limit": 10
               },
               "onOutcome": {
@@ -1703,7 +1853,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                     }
                   ],
                   "response": {
-                    "guidance": "Muestra solo productos reales devueltos por catÃ¡logo, con presentaciÃ³n y precio cuando estÃ©n disponibles."
+                    "guidance": "Muestra solo productos reales devueltos por catálogo, con presentación y precio cuando estén disponibles."
                   }
                 }
               }
@@ -1719,7 +1869,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               "onOutcome": {
                 "cart.applied": {
                   "response": {
-                    "guidance": "Confirma brevemente los cambios aplicados y continÃºa segÃºn el objetivo de la etapa."
+                    "guidance": "Confirma brevemente los cambios aplicados y continúa según el objetivo de la etapa."
                   },
                   "effects": [
                     {
@@ -1739,13 +1889,22 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                 "cart.product_not_found": {
                   "response": {
                     "mode": "ask_clarification",
-                    "guidance": "Indica que ese producto no se encontrÃ³ y pide una descripciÃ³n o referencia mÃ¡s precisa."
-                  }
+                    "guidance": "Indica las referencias que no tuvieron coincidencia segura y solicita datos mas precisos; no afirmes que el carrito cambio."
+                  },
+                  "effects": [
+                    {
+                      "type": "presentation.add",
+                      "template": "cart_not_found",
+                      "dataPath": "error.context",
+                      "mode": "Exclusive",
+                      "priority": "Required"
+                    }
+                  ]
                 },
                 "cart.product_ambiguous": {
                   "response": {
                     "mode": "ask_clarification",
-                    "guidance": "Presenta Ãºnicamente los candidatos devueltos y pregunta cuÃ¡l referencia desea."
+                    "guidance": "Presenta únicamente los candidatos devueltos y pregunta cuál referencia desea."
                   },
                   "effects": [
                     {
@@ -1775,21 +1934,71 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                 "cart.item_not_found_or_ambiguous": {
                   "response": {
                     "mode": "ask_clarification",
-                    "guidance": "Aclara cuÃ¡l producto existente del pedido desea modificar."
+                    "guidance": "Aclara cuál producto existente del pedido desea modificar."
                   }
                 },
                 "cart.conflicting_commands": {
                   "response": {
                     "mode": "ask_clarification",
-                    "guidance": "Pide aclarar el cambio final para el producto repetido; no se aplicÃ³ ningÃºn cambio del lote."
+                    "guidance": "Pide aclarar el cambio final para el producto repetido; no se aplicó ningún cambio del lote."
                   }
                 },
                 "cart.multiple_destinations": {
                   "response": {
                     "mode": "ask_clarification",
-                    "guidance": "No se aplicÃ³ ningÃºn cambio. Pregunta cuÃ¡l direcciÃ³n debe usarse para entregar todo el Ãºnico pedido."
+                    "guidance": "No se aplicó ningún cambio. Pregunta cuál dirección debe usarse para entregar todo el único pedido."
                   }
+                },
+                "cart.partially_applied": {
+                  "response": {
+                    "mode": "ask_clarification",
+                    "guidance": "Da un resultado explicito para cada referencia del lote usando la presentacion deterministica: agregada, sin existencia, ambigua, sugerida, cantidad insuficiente o no encontrada. No omitas referencias ni las mezcles entre categorias."
+                  },
+                  "effects": [
+                    {
+                      "type": "presentation.add",
+                      "template": "cart_partial",
+                      "dataPath": "error.context",
+                      "mode": "Exclusive",
+                      "priority": "Required"
+                    }
+                  ]
+                },
+                "cart.product_suggestion": {
+                  "response": {
+                    "mode": "ask_clarification",
+                    "guidance": "Presenta la sugerencia devuelta y pide confirmacion explicita antes de agregarla."
+                  },
+                  "effects": [
+                    {
+                      "type": "presentation.add",
+                      "template": "product_ambiguity",
+                      "dataPath": "error.context",
+                      "mode": "Exclusive",
+                      "priority": "Required"
+                    }
+                  ]
+                },
+                "cart.product_unavailable": {
+                  "response": {
+                    "mode": "ask_clarification",
+                    "guidance": "Indica que la referencia identificada no esta disponible y solicita otra opcion; no afirmes que fue agregada."
+                  },
+                  "effects": [
+                    {
+                      "type": "presentation.add",
+                      "template": "cart_product_unavailable",
+                      "dataPath": "error.context",
+                      "mode": "Exclusive",
+                      "priority": "Required"
+                    }
+                  ]
                 }
+              },
+              "execution": {
+                "idempotency": "input_version",
+                "timeoutSeconds": 240,
+                "maxAttempts": 1
               }
             }
           ],
@@ -1798,7 +2007,11 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         {
           "id": "customer_identity",
           "name": "Identificacion del cliente",
-          "leadQualification": { "band": "interested", "priority": 30, "label": "Identificación iniciada" },
+          "leadQualification": {
+            "band": "interested",
+            "priority": 30,
+            "label": "Identificación iniciada"
+          },
           "goal": "Obtener el nombre de la persona u odontologo que realiza el pedido y conservar por separado el establecimiento cuando el cliente lo informe.",
           "response": {},
           "advanceWhenFacts": [
@@ -1814,7 +2027,11 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         {
           "id": "order_data",
           "name": "Entrega",
-          "leadQualification": { "band": "high_intent", "priority": 55, "label": "Datos de entrega" },
+          "leadQualification": {
+            "band": "high_intent",
+            "priority": 55,
+            "label": "Datos de entrega"
+          },
           "goal": "Definir recogida o domicilio y obtener solo los datos faltantes requeridos por el checkout.",
           "response": {},
           "advanceWhenFacts": [
@@ -1862,7 +2079,11 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         {
           "id": "summary",
           "name": "Resumen final del pedido",
-          "leadQualification": { "band": "ready", "priority": 75, "label": "Pedido listo para confirmar" },
+          "leadQualification": {
+            "band": "ready",
+            "priority": 75,
+            "label": "Pedido listo para confirmar"
+          },
           "goal": "Preparar y mostrar el resumen oficial con entrega, pago y total final del motor.",
           "response": {},
           "advanceWhenFacts": [
@@ -1939,7 +2160,8 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                       "fact": "order_checkout_presented",
                       "value": true
                     }
-                  ]
+                  ],
+                  "response": {}
                 },
                 "order_draft_missing": {
                   "response": {
@@ -2009,7 +2231,12 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
         {
           "id": "order_confirmation",
           "name": "Confirmacion del pedido",
-          "leadQualification": { "band": "converted", "priority": 100, "label": "Pedido confirmado", "conversionOnRequestCompleted": true },
+          "leadQualification": {
+            "band": "converted",
+            "priority": 100,
+            "label": "Pedido confirmado",
+            "conversionOnRequestCompleted": true
+          },
           "goal": "Crear el pedido despues de confirmacion del cliente.",
           "response": {},
           "advanceWhenFacts": [
@@ -2083,102 +2310,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     }
   ]
 }';
-DECLARE @PartialCartOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Da un resultado explicito para cada referencia del lote usando la presentacion deterministica: agregada, sin existencia, ambigua, sugerida, cantidad insuficiente o no encontrada. No omitas referencias ni las mezcles entre categorias."},"effects":[{"type":"presentation.add","template":"cart_partial","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
-DECLARE @ProductSuggestionOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Presenta la sugerencia devuelta y pide confirmacion explicita antes de agregarla."},"effects":[{"type":"presentation.add","template":"product_ambiguity","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
-DECLARE @ProductUnavailableOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Indica que la referencia identificada no esta disponible y solicita otra opcion; no afirmes que fue agregada."},"effects":[{"type":"presentation.add","template":"cart_product_unavailable","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
-DECLARE @ProductNotFoundOutcome NVARCHAR(MAX) = N'{"response":{"mode":"ask_clarification","guidance":"Indica las referencias que no tuvieron coincidencia segura y solicita datos mas precisos; no afirmes que el carrito cambio."},"effects":[{"type":"presentation.add","template":"cart_not_found","dataPath":"error.context","mode":"Exclusive","priority":"Required"}]}';
 
-SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_partial',
-    N'Doc, así quedó cada producto que solicitó:\r\n{{#if applied_items}}\r\n*Agregados*\r\n{{#each applied_items}}\r\n- {{name}} — cantidad: {{quantity}}\r\n{{/each}}\r\n{{/if}}\r\n{{#if unavailable_items}}\r\n*Sin existencia*\r\n{{#each unavailable_items}}\r\n- {{product_text}}{{#if recognized_name}} ({{recognized_name}}){{/if}}\r\n{{/each}}\r\n{{/if}}\r\n{{#if insufficient_stock_items}}\r\n*Existencia insuficiente*\r\n{{#each insufficient_stock_items}}\r\n- {{product_text}}: solicitaste {{requested_quantity}} y hay {{available_quantity}}; puedes pedir hasta {{maximum_command_quantity}}\r\n{{/each}}\r\n{{/if}}\r\n{{#if ambiguous_options}}\r\n*Necesito que elijas*\r\n{{#each ambiguous_options}}\r\n- Para {{product_text}}: {{name}} — ${{unit_price}} {{currency}}\r\n{{/each}}\r\n{{/if}}\r\n{{#if suggested_options}}\r\n*Necesito confirmar*\r\n{{#each suggested_options}}\r\n- Para {{product_text}}: ¿te refieres a {{name}} — ${{unit_price}} {{currency}}?\r\n{{/each}}\r\n{{/if}}\r\n{{#if not_found_items}}\r\n*No encontrados*\r\n{{#each not_found_items}}\r\n- {{product_text}}\r\n{{/each}}\r\n{{/if}}\r\n*Pedido actual*\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\nIndícame las elecciones o una referencia más precisa para los pendientes.');
-
-SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_partial',
-    REPLACE(JSON_VALUE(@SettingsJson, '$.templates.cart_partial'),
-        N'— ${{unit_price}} {{currency}}', N'— {{availability_text}}'));
-
-SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_partial',
-    REPLACE(JSON_VALUE(@SettingsJson, '$.templates.cart_partial'),
-        N'{{product_text}}{{#if recognized_name}} ({{recognized_name}}){{/if}}', N'{{description}}'));
-
-SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_partial',
-    REPLACE(JSON_VALUE(@SettingsJson, '$.templates.cart_partial'),
-        N'{{#if ambiguous_options}}\r\n*Necesito que elijas*\r\n{{#each ambiguous_options}}\r\n- Para {{product_text}}: {{name}} — {{availability_text}}\r\n{{/each}}\r\n{{/if}}',
-        N'{{#if ambiguous_groups}}\r\n*Necesito que elijas*\r\n{{#each ambiguous_groups}}\r\nPara {{product_text}}, necesito que me confirmes una de estas opciones:\r\n{{options_text}}\r\n{{/each}}\r\n{{/if}}'));
-
-SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_partial',
-    REPLACE(JSON_VALUE(@SettingsJson, '$.templates.cart_partial'),
-        N'*Pedido actual*\r\n{{#each items}}\r\n- {{name}} x{{quantity}}: ${{line_total}}\r\n{{/each}}\r\n\r\n*Total: ${{total}} {{currency}}*\r\n\r\n',
-        N'*Total actual del pedido: ${{total}} {{currency}}*\r\n\r\n'));
-
-SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_not_found',
-    N'Doc, no pude identificar con seguridad estas referencias:\r\n{{#each issues}}\r\n- {{ProductText}}\r\n{{/each}}\r\n\r\nCompártame la marca, presentación, código o un nombre más preciso y la busco de nuevo.');
-
-SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.templates.cart_product_unavailable',
-    N'Doc, encontré "{{product_text}}", pero en este momento no está disponible para agregarla.\r\n\r\nSu pedido quedó igual. Si desea, buscamos otra marca, presentación o producto.');
-
-IF JSON_VALUE(@SettingsJson, '$.globalActions[1].actions[0].operation') <> 'commerce.apply_order_changes'
-    THROW 51000, 'SeedMedidental: ruta global de carrito inesperada.', 1;
-IF JSON_VALUE(@SettingsJson, '$.flows[0].stages[0].actions[2].operation') <> 'commerce.apply_order_changes'
-    THROW 51000, 'SeedMedidental: ruta product_selection de carrito inesperada.', 1;
-
-DECLARE @CartExecutionPaths TABLE (Path NVARCHAR(400) NOT NULL);
-INSERT INTO @CartExecutionPaths (Path) VALUES
-    (N'$.globalActions[1].actions[0].execution'),
-    (N'$.flows[0].stages[0].actions[2].execution');
-
-DECLARE @CartExecutionPath NVARCHAR(400);
-DECLARE CartExecutionCursor CURSOR LOCAL FAST_FORWARD FOR SELECT Path FROM @CartExecutionPaths;
-OPEN CartExecutionCursor;
-FETCH NEXT FROM CartExecutionCursor INTO @CartExecutionPath;
-WHILE @@FETCH_STATUS = 0
-BEGIN
-    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartExecutionPath,
-        JSON_QUERY(N'{"idempotency":"input_version","timeoutSeconds":240,"maxAttempts":1}'));
-    FETCH NEXT FROM CartExecutionCursor INTO @CartExecutionPath;
-END;
-CLOSE CartExecutionCursor;
-DEALLOCATE CartExecutionCursor;
-
-DECLARE @CartOutcomePaths TABLE (Path NVARCHAR(400) NOT NULL);
-INSERT INTO @CartOutcomePaths (Path) VALUES
-    (N'$.globalActions[1].actions[0].onOutcome'),
-    (N'$.flows[0].stages[0].actions[2].onOutcome');
-
-DECLARE @CartOutcomePath NVARCHAR(400);
-DECLARE CartOutcomeCursor CURSOR LOCAL FAST_FORWARD FOR SELECT Path FROM @CartOutcomePaths;
-OPEN CartOutcomeCursor;
-FETCH NEXT FROM CartOutcomeCursor INTO @CartOutcomePath;
-WHILE @@FETCH_STATUS = 0
-BEGIN
-    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.partially_applied"', JSON_QUERY(@PartialCartOutcome));
-    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.product_suggestion"', JSON_QUERY(@ProductSuggestionOutcome));
-    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.product_unavailable"', JSON_QUERY(@ProductUnavailableOutcome));
-    SET @SettingsJson = JSON_MODIFY(@SettingsJson, @CartOutcomePath + N'."cart.product_not_found"', JSON_QUERY(@ProductNotFoundOutcome));
-    FETCH NEXT FROM CartOutcomeCursor INTO @CartOutcomePath;
-END
-CLOSE CartOutcomeCursor;
-DEALLOCATE CartOutcomeCursor;
-
--- Retoma solo respuestas que dejan una pregunta, eleccion o confirmacion pendiente.
-IF JSON_VALUE(@SettingsJson, '$.globalActions[2].id') <> 'known_fact_lookup'
-    THROW 51000, 'SeedMedidental: ruta global de facts conocidos inesperada.', 1;
-IF JSON_VALUE(@SettingsJson, '$.globalActions[3].id') <> 'catalog_lookup'
-    THROW 51000, 'SeedMedidental: ruta global de catalogo inesperada.', 1;
-
-
-
--- La transferencia manual queda esperando al equipo, no al cliente.
-SET @SettingsJson = JSON_MODIFY(@SettingsJson, '$.flows[0].stages[4].actions[0].onOutcome."order.checkout_pending_manual_payment".response', JSON_QUERY(N'{}'));
-
-DECLARE @FollowUpCartOutcomePath NVARCHAR(400);
-DECLARE FollowUpCartOutcomeCursor CURSOR LOCAL FAST_FORWARD FOR SELECT Path FROM @CartOutcomePaths;
-OPEN FollowUpCartOutcomeCursor;
-FETCH NEXT FROM FollowUpCartOutcomeCursor INTO @FollowUpCartOutcomePath;
-WHILE @@FETCH_STATUS = 0
-BEGIN
-    FETCH NEXT FROM FollowUpCartOutcomeCursor INTO @FollowUpCartOutcomePath;
-END
-CLOSE FollowUpCartOutcomeCursor;
-DEALLOCATE FollowUpCartOutcomeCursor;
 IF ISJSON(@SettingsJson) <> 1
 BEGIN
     THROW 51000, 'SeedMedidental: SettingsJson invalido.', 1;

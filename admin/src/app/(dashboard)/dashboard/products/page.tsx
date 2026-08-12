@@ -13,6 +13,7 @@ import { ProductMerchandisingEditor, type ProductMerchandisingEditorHandle } fro
 import { ProductSupplierEditor, type ProductSupplierEditorHandle } from "@/components/products/product-supplier-editor";
 import { ProductTaxEditor, type ProductTaxEditorHandle } from "@/components/products/product-tax-editor";
 import { ProductRecognitionSections, type ProductRecognitionSectionsHandle } from "@/components/products/product-recognition-sections";
+import { ProductOffersSection } from "@/components/products/product-offers-section";
 import { DataTable } from "@/components/tables/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -446,7 +447,11 @@ export default function ProductsPage() {
                     <ProductTaxEditor ref={taxEditorRef} embedded productId={selectedProduct.productId} onSalesTaxRateChange={setEditingSalesTaxRate} />
                     <ProductPricingEditor ref={pricingEditorRef} embedded productId={selectedProduct.productId} productName={selectedProduct.name} salesTaxRateOverride={editingSalesTaxRate} />
                   </div>
-                </ProductFormSection>                <details id="product-recognition" className="group scroll-mt-5 rounded-xl border bg-muted/10">
+                </ProductFormSection>
+
+                <ProductOffersSection productId={selectedProduct.productId} />
+
+                <details id="product-recognition" className="group scroll-mt-5 rounded-xl border bg-muted/10">
                   <summary className="cursor-pointer list-none p-5 font-semibold">Reconocimiento, alias y aprendizaje <span className="ml-2 text-xs font-normal text-muted-foreground">Información avanzada</span></summary>
                   <div className="space-y-5 border-t p-5"><ProductRecognitionSections ref={recognitionEditorRef} productId={selectedProduct.productId} editable aliases={configurationQuery.data?.aliases ?? []} searchTerms={configurationQuery.data?.searchTerms ?? []} isLoading={configurationQuery.isLoading} isError={configurationQuery.isError} /><ProductLearningSection aliases={configurationQuery.data?.aliases ?? []} isLoading={configurationQuery.isLoading} isError={configurationQuery.isError} isPending={reviewAlias.isPending || promoteAlias.isPending} onReview={handleReviewLearning} onPromote={handlePromoteLearning} /></div>
                 </details>

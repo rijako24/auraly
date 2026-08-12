@@ -757,7 +757,7 @@ export default function PosPage() {
     setSensitiveApprovalError(null);
     try {
       if (client?.mode === "online") {
-        let approval = sensitiveApproval.approval;
+        const approval = sensitiveApproval.approval;
         if (!approval) throw new Error("La solicitud de aprobación no está disponible.");
         await posApprovalClient.authorizeLocally(approval.approvalRequestId, secret);
         await sensitiveApproval.execute({

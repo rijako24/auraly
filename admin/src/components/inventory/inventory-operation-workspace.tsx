@@ -585,7 +585,7 @@ function InventoryProductPicker({
       <div className="mt-2 flex gap-2">
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-          <Input id="inventory-product-search" data-testid="inventory-product-search" className="pl-9" disabled={disabled} value={search} onFocus={() => setOpen(true)} onChange={(event) => { setSearch(event.target.value); setOpen(true); }} onKeyDown={keyDown} autoComplete="off" aria-autocomplete="list" aria-expanded={open} aria-controls="inventory-product-results" placeholder="Código interno, código de barras, referencia o nombre" />
+          <Input id="inventory-product-search" data-testid="inventory-product-search" className="pl-9" disabled={disabled} value={search} onFocus={() => setOpen(Boolean(search.trim()))} onChange={(event) => { setSearch(event.target.value); setOpen(true); }} onKeyDown={keyDown} autoComplete="off" aria-autocomplete="list" aria-expanded={open} aria-controls="inventory-product-results" placeholder="Código interno, código de barras, referencia o nombre" />
         </div>
         <Button type="button" disabled={disabled || query.isFetching || products.length === 0} onMouseDown={(event) => event.preventDefault()} onClick={() => void chooseActive()}>
           {query.isFetching && !query.isFetchingNextPage ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />} Agregar

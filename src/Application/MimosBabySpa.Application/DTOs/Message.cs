@@ -19,6 +19,12 @@ public class Message
     [JsonPropertyName("voice")]
     public VoiceMessage? Voice { get; set; }
 
+    [JsonPropertyName("image")]
+    public ImageMessage? Image { get; set; }
+
+    [JsonPropertyName("document")]
+    public DocumentMessage? Document { get; set; }
+
     [JsonPropertyName("interactive")]
     public InteractiveMessage? Interactive { get; set; }
 
@@ -33,6 +39,33 @@ public class Message
 
     [JsonPropertyName("type")]
     public string Type { get; set; } = string.Empty;
+}
+
+public class ImageMessage
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("mime_type")]
+    public string MimeType { get; set; } = "image/jpeg";
+
+    [JsonPropertyName("caption")]
+    public string? Caption { get; set; }
+}
+
+public class DocumentMessage
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("mime_type")]
+    public string MimeType { get; set; } = "application/octet-stream";
+
+    [JsonPropertyName("filename")]
+    public string FileName { get; set; } = string.Empty;
+
+    [JsonPropertyName("caption")]
+    public string? Caption { get; set; }
 }
 
 public class InteractiveMessage

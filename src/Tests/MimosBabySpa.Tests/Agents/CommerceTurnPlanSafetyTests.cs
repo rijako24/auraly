@@ -20,7 +20,8 @@ public sealed class CommerceTurnPlanSafetyTests
         normalized.Signals.Should().ContainSingle();
         var signal = normalized.Signals[0];
         signal.Type.Should().Be("catalog_query");
-        signal.Value.GetProperty("queries")[0].GetString().Should().Be("pechuga");
+        signal.Value.GetProperty("intent").GetString().Should().Be("search_target");
+        signal.Value.GetProperty("target").GetProperty("text").GetString().Should().Be("pechuga");
         signal.Evidence.Should().Be("tienes pechuga");
     }
 
@@ -64,6 +65,104 @@ public sealed class CommerceTurnPlanSafetyTests
     }
 
     [Fact]
+    public void ExplicitCartMutation_WinsOverRedundantCatalogReadForTheSameTarget()
+    {
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(
+                OrderChanges("producto alfa", 2, "agrega 2 unidades de producto alfa"),
+                CatalogQuery("producto alfa", null)),
+            Context("Agrega 2 unidades de producto alfa"));
+
+        normalized.Signals.Should().ContainSingle(
+            "the cart operation resolves catalog identity itself, so a redundant read must not suppress the purchase");
+        var mutation = normalized.Signals.Single();
+        mutation.Type.Should().Be("order_changes");
+        mutation.Value.GetArrayLength().Should().Be(1);
+        mutation.Value[0].GetProperty("productText").GetString().Should().Be("producto alfa");
+        mutation.Value[0].GetProperty("quantity").GetDecimal().Should().Be(2);
+    }
+
+    [Fact]
+    public void CatalogQuestionWithQuantity_DropsInventedCartMutation()
+    {
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(
+                OrderChanges("producto alfa", 2, "tienes 2 unidades de producto alfa"),
+                CatalogQuery("producto alfa", null)),
+            Context("¿Tienes 2 unidades de producto alfa?"));
+
+        normalized.Signals.Should().ContainSingle();
+        normalized.Signals.Single().Type.Should().Be("catalog_query",
+            "a quantity inside an availability question does not authorize a cart mutation");
+    }
+
+    [Fact]
+    public void CatalogQuestionWithQuantity_RecoversCatalogReadWhenPlannerOnlyEmitsMutation()
+    {
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(OrderChanges("producto alfa", 2, "tienes 2 unidades de producto alfa")),
+            Context("¿Tienes 2 unidades de producto alfa?"));
+
+        normalized.Signals.Should().ContainSingle();
+        var catalog = normalized.Signals.Single();
+        catalog.Type.Should().Be("catalog_query");
+        catalog.Value.GetProperty("intent").GetString().Should().Be("search_target");
+        catalog.Value.GetProperty("target").GetProperty("text").GetString()
+            .Should().Be("producto alfa");
+    }
+
+    [Fact]
+    public void CartMutationAndCatalogReadForDifferentTargets_AreBothPreserved()
+    {
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(
+                OrderChanges("producto alfa", 2, "agrega 2 unidades de producto alfa"),
+                CatalogQuery("producto beta", null)),
+            Context("Agrega 2 unidades de producto alfa y ¿qué opciones de producto beta tienes?"));
+
+        normalized.Signals.Should().HaveCount(2);
+        normalized.Signals.Should().ContainSingle(signal => signal.Type == "order_changes");
+        normalized.Signals.Should().ContainSingle(signal => signal.Type == "catalog_query");
+        normalized.Signals.Single(signal => signal.Type == "order_changes")
+            .Value[0].GetProperty("productText").GetString().Should().Be("producto alfa");
+        normalized.Signals.Single(signal => signal.Type == "catalog_query")
+            .Value.GetProperty("target").GetProperty("text").GetString().Should().Be("producto beta");
+    }
+
+    [Fact]
+    public void ExplicitCartMutation_RemovesOnlyItsTargetFromMultiTargetCatalogRead()
+    {
+        var catalog = new PlannedSignal
+        {
+            Type = "catalog_query",
+            Value = JsonSerializer.SerializeToElement(new
+            {
+                intent = "search_target",
+                target = new { kind = "product", text = "producto alfa" },
+                additional_targets = new[] { "producto beta", "producto gamma" },
+                replacement_reference = (string?)null
+            }),
+            Evidence = "producto alfa, producto beta y producto gamma",
+            Confidence = 0.95
+        };
+
+        var normalized = CommerceTurnPlanSafety.Normalize(
+            Plan(
+                OrderChanges("producto alfa", 2, "agrega 2 unidades de producto alfa"),
+                catalog),
+            Context(
+                "Agrega 2 unidades de producto alfa y muéstrame producto beta y producto gamma"));
+
+        normalized.Signals.Should().HaveCount(2);
+        normalized.Signals.Should().ContainSingle(signal => signal.Type == "order_changes");
+        var retainedCatalog = normalized.Signals.Single(signal => signal.Type == "catalog_query").Value;
+        retainedCatalog.GetProperty("target").GetProperty("text").GetString()
+            .Should().Be("producto beta");
+        retainedCatalog.GetProperty("additional_targets").EnumerateArray()
+            .Select(item => item.GetString()).Should().Equal("producto gamma");
+    }
+
+    [Fact]
     public void CartMutationAndOpenCategoryRequest_ArePreservedAsIndependentIntents()
     {
         var categories = new PlannedSignal
@@ -71,8 +170,9 @@ public sealed class CommerceTurnPlanSafetyTests
             Type = "catalog_query",
             Value = JsonSerializer.SerializeToElement(new
             {
-                mode = "categories",
-                queries = Array.Empty<string>(),
+                intent = "explore_catalog",
+                target = (object?)null,
+                additional_targets = Array.Empty<string>(),
                 replacement_reference = (string?)null
             }),
             Evidence = "que otros productos tienes",
@@ -86,7 +186,7 @@ public sealed class CommerceTurnPlanSafetyTests
         normalized.Signals.Should().HaveCount(2);
         normalized.Signals.Should().ContainSingle(signal => signal.Type == "order_changes");
         normalized.Signals.Single(signal => signal.Type == "catalog_query")
-            .Value.GetProperty("mode").GetString().Should().Be("categories");
+            .Value.GetProperty("intent").GetString().Should().Be("explore_catalog");
     }
 
     [Fact]
@@ -277,8 +377,9 @@ public sealed class CommerceTurnPlanSafetyTests
 
         normalized.Signals.Should().ContainSingle(signal => signal.Type == "catalog_query");
         normalized.Signals.Should().NotContain(signal => signal.Type == "order_changes");
-        normalized.Signals[0].Value.GetProperty("mode").GetString().Should().Be("search");
-        normalized.Signals[0].Value.GetProperty("queries")[0].GetString().Should().Be(message);
+        normalized.Signals[0].Value.GetProperty("intent").GetString().Should().Be("search_target");
+        normalized.Signals[0].Value.GetProperty("target")
+            .GetProperty("text").GetString().Should().Be(message);
     }
 
     [Fact]
@@ -546,8 +647,9 @@ public sealed class CommerceTurnPlanSafetyTests
         Type = "catalog_query",
         Value = JsonSerializer.SerializeToElement(new
         {
-            mode = "search",
-            queries = new[] { query },
+            intent = "search_target",
+            target = new { kind = "product", text = query },
+            additional_targets = Array.Empty<string>(),
             replacement_reference = replacementReference
         }),
         Evidence = query,

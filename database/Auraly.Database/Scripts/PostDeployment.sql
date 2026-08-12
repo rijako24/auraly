@@ -82,6 +82,8 @@
 :r .\Seeds\SeedSolorzanoDomicilioAgent.sql
 :r .\Seeds\SeedCJDistribuciones.sql
 GO
+:r .\Seeds\SeedDigitalShop.sql
+GO
 :r .\Seeds\SeedAndinaSantander.sql
 GO
 :r .\Seeds\SeedAndinaProductCategories.sql
@@ -98,6 +100,10 @@ GO
 GO
 :r .\Migrations\MigrateCJWhatsAppToMedidental.sql
 GO
+:r .\Migrations\MigrateMedidentalWhatsAppToDigitalShop.sql
+GO
+:r .\Migrations\RenameDigitalShopAgentCatalina.sql
+GO
 :r .\Migrations\BackfillConversationAgents.sql
 GO
 :r .\Migrations\MigrateAuditAgentTemplates.sql
@@ -111,6 +117,8 @@ GO
 :r .\Seeds\SeedPosSupervisionPermissions.sql
 :r .\Seeds\SeedOrderPermissions.sql
 :r .\Seeds\SeedSolorzanoAgentConfiguration.sql
+GO
+:r .\Migrations\MigrateAgentBotType.sql
 GO
 
 PRINT 'Post-deployment scripts executed successfully.';

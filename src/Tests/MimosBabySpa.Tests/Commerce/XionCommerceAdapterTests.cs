@@ -224,7 +224,7 @@ public sealed class XionCommerceAdapterTests
 
         var result = await adapter.SearchProductsAsync(
             new ProductSearchRequest(
-                "jamon", null, 2, Page: 2, Mode: ProductCatalogQueryMode.Search),
+                "jamon", null, 2, Page: 2, Mode: ProductCatalogQueryMode.SearchTarget),
             context);
 
         result.Products.Select(product => product.Name)
@@ -256,7 +256,7 @@ public sealed class XionCommerceAdapterTests
 
         var result = await adapter.SearchProductsAsync(
             new ProductSearchRequest(
-                "jamon", null, 2, Mode: ProductCatalogQueryMode.Search),
+                "jamon", null, 2, Mode: ProductCatalogQueryMode.SearchTarget),
             context);
 
         result.Products.Should().ContainSingle();

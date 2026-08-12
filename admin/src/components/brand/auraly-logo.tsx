@@ -18,7 +18,7 @@ export function AuralyLogo({
   return (
     <span className={cn("flex items-center gap-2.5", className)} aria-label="AURALY">
       <Image
-        src="/brand/auraly-mark.png?v=2"
+        src="/brand/auraly-mark.png"
         width={40}
         height={32}
         alt=""

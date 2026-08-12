@@ -154,7 +154,7 @@ Los nombres de productos y las formas concretas de hablar no estan quemados en e
 | `interactiveActions` | Boton `scope:outcome:sourceId` a operacion determinista. | `{}` |
 | `reservationManagement` | Politica de cambios sobre reservas existentes. | Vacio |
 | `checkout` | Moneda, modos, metodos de pago, shipping y bindings. | COP/modos vacios |
-| `commerce` | Proveedor y protecciones conversacionales de productos/carrito. | Desactivado/Local |
+| `commerce` | Proveedor y protecciones internas de productos/carrito. Su activacion no pertenece a SettingsJson. | Inactivo/Local |
 | `operatingHours` | Admision determinista fuera de horario. | Desactivado |
 
 No estan soportadas actualmente como raices `maxToolIterations`, `consecutiveErrorEscalationThreshold`, `enabledTools`, `defaultFlow`, `flow` ni `guards`. Tampoco se soportan las estructuras legacy `allowedActions`, `entryActions`, `afterTool`, `skipWhen`, `autoSetOnSkip`, `variants`, `onSuccess` u `onProblem` dentro de stages. Si una necesidad exige una propiedad nueva, primero debe agregarse al contrato C#, al compilador, al admin y a pruebas; no debe inventarse en un seed.
@@ -361,6 +361,7 @@ Reglas:
 - Catalogos cambiantes no se modelan con `options`; se consultan por operacion.
 - Facts derivados declaran todas sus dependencias.
 - Cambiar carrito, servicio, fecha, hora, add-ons, fulfillment o pago debe limpiar confirmaciones y calculos dependientes.
+- El wizard administrativo muestra solo datos de cliente editables: facts de origen `user`, no efimeros y no booleanos. Los booleanos representan checkpoints internos como confirmacion, finalizacion o validaciones; se conservan en `SettingsJson` y no se exponen como campos configurables. Una pregunta administrativa de si/no se modela como dato de texto con opciones canonicas.
 
 ## Templates Y Presentaciones
 
@@ -438,13 +439,17 @@ Precio, promociones, total, deposito y shipping salen de servicios. Cualquier de
 
 | Propiedad | Responsabilidad |
 | --- | --- |
-| `enabled` | Activa comercio. |
+| `enabled` | Campo legacy aceptado para compatibilidad. El runtime ignora su valor. |
 | `provider` | `Local`, `Siigo`, `CustomHttp`, `Mantis` u otro enum soportado. |
 | `offerMemoryMaxSnapshots` | Ofertas recientes recordadas. Default `8`. |
 | `offerMemoryMaxProducts` | Productos maximos recordados. Default `100`. |
 | `conversation.*` | Protecciones de lenguaje contextual. |
 | `pendingCart.*` | Politica de pendientes, descarte y correcciones. |
 | `matching.*` | Umbrales genericos de similitud. |
+
+El carrito es una capacidad interna y no aparece en el editor del bot. La fuente de verdad es `Agents.BotType`, persistido con el enum `AgentBotType`: `Reservation`, `Order`, `Delivery` o `PaymentValidator`. El runtime activa comercio unicamente para `Order`; los otros tipos no usan carrito. No existe un interruptor administrativo para encenderlo o apagarlo.
+
+El tipo se elige antes de crear el borrador y tambien determina los pasos visibles del wizard. Los agentes operativos de domicilios y validacion de pagos omiten catalogo, retomas y checkout; las automatizaciones de reserva solo aparecen para `Reservation`.
 
 ### Protecciones conversacionales
 

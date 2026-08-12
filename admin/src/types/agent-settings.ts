@@ -49,6 +49,17 @@ export interface FactSchemaEntry {
   scope?: "customer" | "request" | "ephemeral"; retentionDays?: number; expireOnBusinessDayChange?: boolean;
   dependsOn?: string[]; valueSource?: string;
 }
+/**
+ * Facts editable as information requested from the customer.
+ * Boolean facts are engine checkpoints (confirmation, finalization, validations),
+ * so the admin wizard preserves them without presenting them as form fields.
+ */
+export function isAdminCustomerFact(fact: FactSchemaEntry): boolean {
+  return (fact.source ?? "user") === "user"
+    && fact.scope !== "ephemeral"
+    && (fact.type ?? "string").toLowerCase() !== "boolean";
+}
+
 export interface AgentHumanEscalationSettings { contacts?: string[]; }
 export interface ExternalEscalationContact { businessInboundContactId?: string; priority?: number; pickupAddress?: string; }
 export interface ExternalEscalationEvent {
@@ -137,7 +148,7 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   model: "gpt-4.1-mini", temperature: 0.2, historyWindowSize: 20, extractorHistoryWindowSize: 2, persona: "", policies: "", conversationOpening: { enabled: false, guidance: "", allowQuestions: true }, failureResponses: { llmUnavailable: "Lo siento, estoy experimentando problemas temporales. Por favor, intenta de nuevo en un momento." }, conversationFollowUp: { enabled: false, delayMinutes: 120, guidance: "Retoma brevemente la conversacion desde la pregunta pendiente, sin repetir toda la respuesta.", respectOperatingHours: true }, flows: [],
   globalActions: [], factSchema: [], templates: {}, messageSequences: {}, webhooks: { wompi: {} }, notifications: {},
   reservationAutomations: {}, interactiveActions: {}, reservationManagement: {}, escalations: { human: { contacts: [] }, external: { enabled: false, events: {} } },
-  checkout: { currency: "COP", modes: {} }, commerce: { enabled: false, provider: "Local" },
+  checkout: { currency: "COP", modes: {} }, commerce: { provider: "Local" },
   operatingHours: { enforce: false, outsideHours: {} },
 };
 export function parseAgentSettingsFromAgent(agent: { settings?: unknown; settingsJson?: string | null }): AgentSettings {
@@ -152,6 +163,10 @@ export function parseAgentSettings(raw: unknown): AgentSettings {
     ...DEFAULT_AGENT_SETTINGS, ...s, flows: s.flows ?? [], globalActions: s.globalActions ?? [], factSchema: s.factSchema ?? [],
     templates: s.templates ?? {}, messageSequences: s.messageSequences ?? {}, webhooks: s.webhooks ?? { wompi: {} },
     notifications: s.notifications ?? {}, reservationAutomations: s.reservationAutomations ?? {}, interactiveActions: s.interactiveActions ?? {}, reservationManagement: s.reservationManagement ?? {},
+    conversationOpening: {
+      ...DEFAULT_AGENT_SETTINGS.conversationOpening,
+      ...s.conversationOpening,
+    },
     conversationFollowUp: {
       ...DEFAULT_AGENT_SETTINGS.conversationFollowUp,
       ...s.conversationFollowUp,

@@ -54,7 +54,7 @@ function RouteWorkspace({open,routeId,permissions,onCreated,onClose}:{open:boole
   const options=useRouteOptions(),detail=useRouteDetail(routeId),create=useCreateRoute(),update=useUpdateRoute(),status=useSetRouteStatus();
   const [tab,setTab]=useState("general"),[code,setCode]=useState(""),[name,setName]=useState(""),[seller,setSeller]=useState(""),[zone,setZone]=useState("none"),[notes,setNotes]=useState("");
   const [schedule,setSchedule]=useState<Record<number,{selected:boolean;runOrder:string;time:string}>>(()=>Object.fromEntries(days.map(day=>[day.id,{selected:day.id<=5,runOrder:"1",time:""}])));
-  const loaded=useRef<string>();
+  const loaded=useRef<string | undefined>(undefined);
   useEffect(()=>{if(!open)setTab("general")},[open]);
   useEffect(()=>{
     const value=detail.data;if(!value||loaded.current===value.rowVersion)return;loaded.current=value.rowVersion;

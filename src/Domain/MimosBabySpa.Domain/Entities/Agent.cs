@@ -1,3 +1,5 @@
+using MimosBabySpa.Domain.Enums;
+
 namespace MimosBabySpa.Domain.Entities;
 
 public class Agent
@@ -6,6 +8,7 @@ public class Agent
     public Guid BusinessId { get; set; }
     public Guid AgentTypeId { get; set; }
     public Guid? AgentTemplateId { get; set; }
+    public AgentBotType BotType { get; set; } = AgentBotType.Reservation;
     public string Name { get; set; } = string.Empty;
     public string? Description { get; set; }
     public string Kind { get; set; } = "customer";

@@ -24,7 +24,7 @@ DECLARE @AdminRoleId UNIQUEIDENTIFIER;
 
 -- Hash BCrypt para "Admin123!" (work factor 12)
 
-DECLARE @PasswordHash NVARCHAR(500) = N'$2a$12$.lNc5ybjDXuH3fevIkTyb.L.OpvHnO4oZ2/kyx.HtUtRJ5cpCKtPi';
+DECLARE @PasswordHash NVARCHAR(500) = NULLIF(N'$(BootstrapAdminPasswordHash)', N'');
 
 
 
@@ -222,7 +222,11 @@ END
 
 -- 5. Usuario admin
 
-IF NOT EXISTS (SELECT 1 FROM [dbo].[AppUsers] WHERE [NormalizedUsername] = N'ADMIN')
+IF @PasswordHash IS NULL
+
+    PRINT N'Usuario admin no creado: suministre BootstrapAdminPasswordHash de forma segura.';
+
+ELSE IF NOT EXISTS (SELECT 1 FROM [dbo].[AppUsers] WHERE [NormalizedUsername] = N'ADMIN')
 
 BEGIN
 
@@ -236,7 +240,7 @@ BEGIN
 
     VALUES (NEWID(), @AdminUserId, @AdminRoleId, NULL, GETUTCDATE());
 
-    PRINT N'Usuario creado: admin / Admin123!';
+    PRINT N'Usuario administrador inicial creado.';
 
 END
 

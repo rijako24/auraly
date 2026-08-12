@@ -278,6 +278,7 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
         CancellationToken ct)
     {
         var changed = 0;
+        var categories = new Dictionary<string, ProductCategory>(StringComparer.OrdinalIgnoreCase);
         foreach (var reference in references)
         {
             var externalId = Clean(reference.ExternalProductId) ?? Clean(reference.Sku);
@@ -294,7 +295,7 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
                 .Where(value => !string.IsNullOrWhiteSpace(value))
                 .Select(value => value!.Trim())
                 .Distinct(StringComparer.OrdinalIgnoreCase));
-            var productCategory = await ResolveProductCategoryAsync(connection, reference, ct);
+            var productCategory = await ResolveProductCategoryAsync(connection, reference, categories, ct);
             var categoryName = productCategory?.Name ?? Clean(reference.CategoryName);
             var existing = await _unitOfWork.Products.GetByExternalIdAsync(
                 connection.BusinessId,
@@ -368,10 +369,16 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
     private async Task<ProductCategory?> ResolveProductCategoryAsync(
         IntegrationConnection connection,
         ProductReference reference,
+        IDictionary<string, ProductCategory> categories,
         CancellationToken ct)
     {
         var externalId = Clean(reference.ExternalCategoryId);
         var name = Clean(reference.CategoryName);
+        var cacheKey = externalId is not null
+            ? $"id:{externalId}"
+            : name is not null ? $"name:{name}" : null;
+        if (cacheKey is not null && categories.TryGetValue(cacheKey, out var cached))
+            return cached;
         ProductCategory? category = null;
         if (externalId is not null)
             category = await _unitOfWork.ProductCategories.GetByExternalIdAsync(
@@ -398,6 +405,8 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
                 CreatedAt = now
             };
             await _unitOfWork.ProductCategories.CreateAsync(category, ct);
+            if (cacheKey is not null)
+                categories[cacheKey] = category;
             return category;
         }
 
@@ -407,6 +416,8 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
         category.LastSyncedAt = DateTime.UtcNow;
         category.UpdatedAt = DateTime.UtcNow;
         await _unitOfWork.ProductCategories.UpdateAsync(category, ct);
+        if (cacheKey is not null)
+            categories[cacheKey] = category;
         return category;
 
     }

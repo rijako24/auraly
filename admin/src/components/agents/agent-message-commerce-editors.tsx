@@ -61,26 +61,13 @@ function CheckoutModeEditor({ name, value, onRename, onChange, onRemove }: { nam
 }
 
 export function CheckoutCommerceEditor({ value, onChange }: { value: AgentSettings; onChange: (partial: Partial<AgentSettings>) => void }) {
-  const commerce = value.commerce ?? { enabled: false, provider: "Local" as const }; const checkout = value.checkout ?? { currency: "COP", modes: {} }; const modes = Object.entries(checkout.modes ?? {});
+  const checkout = value.checkout ?? { currency: "COP", modes: {} }; const modes = Object.entries(checkout.modes ?? {});
   const updateModes = (nextModes: Record<string, CheckoutModeDefinition>) => onChange({ checkout: { ...checkout, modes: nextModes } });
-  const paymentMethodCount = modes.reduce((total, [, mode]) => total + Object.keys(mode.paymentMethods ?? {}).length, 0);
   return <div className="space-y-4">
-    <Card>
-      <CardHeader><CardTitle className="text-base">Carrito</CardTitle><CardDescription>El carrito ya conserva búsqueda, cambios de cantidad, productos pendientes y revisión del pedido.</CardDescription></CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid gap-3 sm:grid-cols-3">
-          <label className="flex items-center gap-2 rounded-md border p-3 text-sm"><Checkbox checked={commerce.enabled === true} onCheckedChange={(checked) => onChange({ commerce: { ...commerce, enabled: checked === true } })} />Carrito habilitado</label>
-          <div className="space-y-1"><Label>Catálogo</Label><ConfigurationSelect value={commerce.provider ?? "Local"} onChange={(provider) => onChange({ commerce: { ...commerce, provider: provider as NonNullable<AgentSettings["commerce"]>["provider"] } })} options={[{ value: "Local", label: "Catálogo local" }, { value: "Siigo", label: "Siigo" }, { value: "CustomHttp", label: "Integración HTTP" }, { value: "Mantis", label: "Mantis" }]} /></div>
-          <div className="space-y-1"><Label>Moneda</Label><Input value={checkout.currency ?? "COP"} onChange={(event) => onChange({ checkout: { ...checkout, currency: event.target.value.toUpperCase() } })} /></div>
-        </div>
-        <div className="rounded-lg border border-primary/15 bg-primary/5 px-4 py-3 text-sm text-muted-foreground">
-          Configurado con {paymentMethodCount} {paymentMethodCount === 1 ? "método de pago" : "métodos de pago"}. La lógica interna del carrito se mantiene sin cambios.
-        </div>
-      </CardContent>
-    </Card>
     <Card>
       <CardHeader><CardTitle className="text-base">Entrega y pagos</CardTitle><CardDescription>Estas son las decisiones comerciales que sí puedes ajustar.</CardDescription></CardHeader>
       <CardContent className="space-y-4">
+        <div className="max-w-xs space-y-1"><Label>Moneda</Label><Input value={checkout.currency ?? "COP"} onChange={(event) => onChange({ checkout: { ...checkout, currency: event.target.value.toUpperCase() } })} /></div>
         {modes.map(([name, mode], index) => <CheckoutModeEditor key={index} name={name} value={mode} onRename={(nextName) => updateModes(Object.fromEntries(modes.map(([key, item], current) => [current === index ? nextName : key, item])))} onChange={(nextMode) => updateModes(Object.fromEntries(modes.map(([key, item], current) => [key, current === index ? nextMode : item])))} onRemove={() => updateModes(Object.fromEntries(modes.filter((_, current) => current !== index)))} />)}
         <ConfigurationDisclosure title="Añadir otro tipo de checkout" description="Solo es necesario para pedidos, reservas o inscripciones adicionales.">
           <Button type="button" size="sm" variant="outline" onClick={() => updateModes({ ...(checkout.modes ?? {}), [`mode_${modes.length + 1}`]: { paymentMethods: {} } })}><Plus className="mr-1 h-4 w-4" />Añadir tipo</Button>

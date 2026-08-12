@@ -12,12 +12,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import type { Agent, BusinessInboundContact } from "@/types/entities";
-import type { AgentSettings } from "@/types/agent-settings";
+import { isAdminCustomerFact, type AgentSettings } from "@/types/agent-settings";
+import { AgentBotType } from "@/types/agent-bot-type";
 
 const STEPS = [
   { id: "catalog", title: "Catalogo", description: "Importar servicios desde PDF o documento" },
   { id: "identity", title: "Rol e identidad", description: "Persona y modelo del agente" },
-  { id: "policies", title: "Politicas", description: "Reglas operativas" },
+  { id: "policies", title: "Politicas", description: "Reglas operativas y saludo inicial" },
   { id: "facts", title: "Datos (facts)", description: "Que informacion rastrea el agente" },
   { id: "flow", title: "Flujo", description: "Etapas del motor conversacional" },
   { id: "followUp", title: "Retomas", description: "Cuando y que conversacion debe retomar el bot" },
@@ -31,6 +32,35 @@ const STEPS = [
 ] as const;
 
 type StepId = (typeof STEPS)[number]["id"];
+
+function stepsFor(botType: AgentBotType) {
+  if (botType === AgentBotType.Delivery || botType === AgentBotType.PaymentValidator) {
+    return STEPS.filter((step) => !["catalog", "followUp", "checkout"].includes(step.id));
+  }
+
+  const applicableSteps = botType === AgentBotType.Order
+    ? STEPS.filter((step) => step.id !== "catalog")
+    : STEPS;
+
+  return applicableSteps.map((step) => {
+    if (step.id === "catalog") {
+      return {
+        ...step,
+        title: "Servicios",
+        description: "Importar el catalogo de servicios reservables",
+      };
+    }
+
+    if (step.id === "checkout") {
+      return {
+        ...step,
+        title: botType === AgentBotType.Order ? "Entrega y pagos" : "Pagos de reserva",
+      };
+    }
+
+    return step;
+  });
+}
 
 interface AgentSetupWizardProps {
   agent: Agent;
@@ -58,10 +88,11 @@ export function AgentSetupWizard({
   const [stepIndex, setStepIndex] = useState(0);
   const [catalogDone, setCatalogDone] = useState(false);
 
-  const current = STEPS[stepIndex];
-  const progress = ((stepIndex + 1) / STEPS.length) * 100;
+  const steps = stepsFor(agent.botType);
+  const current = steps[stepIndex];
+  const progress = ((stepIndex + 1) / steps.length) * 100;
 
-  const goNext = () => setStepIndex((i) => Math.min(i + 1, STEPS.length - 1));
+  const goNext = () => setStepIndex((i) => Math.min(i + 1, steps.length - 1));
   const goPrev = () => setStepIndex((i) => Math.max(i - 1, 0));
 
   const handleSave = async () => {
@@ -111,7 +142,11 @@ export function AgentSetupWizard({
               </p>
               <p>
                 <span className="text-muted-foreground">Facts:</span>{" "}
-                {settings.factSchema?.filter((fact) => (fact.source ?? "user") === "user").length ?? 0}
+                {settings.factSchema?.filter(isAdminCustomerFact).length ?? 0}
+              </p>
+              <p>
+                <span className="text-muted-foreground">Saludo inicial:</span>{" "}
+                {settings.conversationOpening?.enabled ? "Activo" : "Desactivado"}
               </p>
               <p>
                 <span className="text-muted-foreground">Retomas:</span>{" "}
@@ -140,6 +175,7 @@ export function AgentSetupWizard({
             value={settings}
             onChange={onSettingsChange}
             availableInboundContacts={availableInboundContacts}
+            botType={agent.botType}
             section={current.id as AgentEditorSection}
           />
         );
@@ -151,7 +187,7 @@ export function AgentSetupWizard({
       <div className="space-y-2">
         <div className="flex items-center justify-between text-sm">
           <span className="font-medium">
-            Paso {stepIndex + 1} de {STEPS.length}: {current.title}
+            Paso {stepIndex + 1} de {steps.length}: {current.title}
           </span>
           <span className="text-muted-foreground">{Math.round(progress)}%</span>
         </div>
@@ -160,7 +196,7 @@ export function AgentSetupWizard({
       </div>
 
       <div className="flex flex-wrap gap-1">
-        {STEPS.map((s, i) => (
+        {steps.map((s, i) => (
           <button
             key={s.id}
             type="button"
@@ -185,7 +221,7 @@ export function AgentSetupWizard({
                 <ArrowLeft className="mr-1 h-4 w-4" />
                 Anterior
               </Button>
-              {stepIndex < STEPS.length - 1 ? (
+              {stepIndex < steps.length - 1 ? (
                 <Button type="button" onClick={goNext}>
                   Siguiente
                   <ArrowRight className="ml-1 h-4 w-4" />

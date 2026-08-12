@@ -40,4 +40,13 @@ public interface IProductRepository
     Task UpdateCategoryNameAsync(Guid businessId, Guid productCategoryId, string categoryName, CancellationToken ct = default);
     Task<Product> CreateAsync(Product product, CancellationToken ct = default);
     Task<Product> UpdateAsync(Product product, CancellationToken ct = default);
+    Task<IReadOnlyList<ProductOffer>> SearchOffersAsync(Guid businessId, string productQuery, string condition, CancellationToken ct = default);
+    Task<IReadOnlyList<ProductOffer>> GetOffersAsync(Guid businessId, Guid productId, CancellationToken ct = default);
+    Task<ProductOffer?> GetOfferByIdAsync(Guid businessId, Guid productOfferId, CancellationToken ct = default);
+    Task<ProductOffer> CreateOfferAsync(ProductOffer offer, CancellationToken ct = default);
+    Task<ProductOffer> UpdateOfferAsync(ProductOffer offer, CancellationToken ct = default);
+    Task<IReadOnlyList<ProductImage>> GetImagesAsync(Guid businessId, Guid productId, CancellationToken ct = default);
+    Task<ProductImage?> GetImageByIdAsync(Guid businessId, Guid productImageId, CancellationToken ct = default);
+    Task<ProductImage> CreateImageAsync(ProductImage image, CancellationToken ct = default);
+    Task DeleteImageAsync(ProductImage image, CancellationToken ct = default);
 }

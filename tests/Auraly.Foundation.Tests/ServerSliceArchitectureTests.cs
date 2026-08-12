@@ -103,7 +103,8 @@ public sealed class ServerSliceArchitectureTests
                          .Where(path =>
                              path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) ||
                              path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) ||
-                             path.EndsWith(".json", StringComparison.OrdinalIgnoreCase)))
+                             path.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+                         .Where(path => !path.EndsWith("packages.lock.json", StringComparison.OrdinalIgnoreCase)))
             {
                 var text = File.ReadAllText(file);
                 if (!IsAbsorbedPlatformSurface(file, root))

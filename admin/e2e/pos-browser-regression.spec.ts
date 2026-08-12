@@ -13,8 +13,29 @@ async function login(page: Page) {
 }
 
 async function selectDemoTenant(page: Page) {
-  const demoTenantId = "3131fd90-0620-477e-99e9-b4a779002976";
-  const demoBusinessId = "22222222-2222-2222-2222-222222222222";
+  const demoTenantId = await page.evaluate(async () => {
+    const response = await fetch("/api/execution-context/tenants", {
+      credentials: "include",
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error("No se pudieron consultar los tenants autorizados.");
+    const tenants = await response.json() as Array<{ tenantId: string; name: string }>;
+    const tenant = tenants.find((item) => item.name === "Mimos Baby Spa 2222");
+    if (!tenant) throw new Error("El tenant demo no está autorizado para el usuario E2E.");
+    return tenant.tenantId;
+  });
+  const demoBusinessId = await page.evaluate(async (tenantId) => {
+    const response = await fetch("/api/execution-context/businesses", {
+      credentials: "include",
+      cache: "no-store",
+      headers: { "X-Tenant-Id": tenantId },
+    });
+    if (!response.ok) throw new Error("No se pudieron consultar las sedes autorizadas.");
+    const businesses = await response.json() as Array<{ businessId: string; name: string }>;
+    const business = businesses.find((item) => item.name === "Mimos Baby Spa Principal");
+    if (!business) throw new Error("La sede demo no está autorizada para el usuario E2E.");
+    return business.businessId;
+  }, demoTenantId);
 
   // The dashboard URL becomes visible before its execution-context queries finish.
   // Open the selector only after its authorized tenant query populated the menu.

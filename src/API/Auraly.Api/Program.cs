@@ -44,6 +44,7 @@ using Microsoft.IdentityModel.Tokens;
 
 
 var builder = WebApplication.CreateBuilder(args);
+builder.AddAuralyPlatformConfiguration();
 var connectionString = builder.Configuration.GetConnectionString("Auraly");
 if (string.IsNullOrWhiteSpace(connectionString))
 {

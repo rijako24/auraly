@@ -112,6 +112,10 @@ public sealed class TurnPlanningStructuredContextTests
         chat.Messages[0].Content.Should().Contain("structuredContext");
         chat.Messages[0].Content.Should().Contain("PECHUGA MAC POLLO");
         chat.Messages[0].Content.Should().Contain("\"quantity\":2");
+        chat.Messages[0].Content.Should()
+            .Contain("Generic contrastive examples")
+            .And.Contain("producto X")
+            .And.Contain("categoría Y");
     }
 
     private static OrderSnapshot Snapshot(params OrderItemSnapshot[] items) => new(

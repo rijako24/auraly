@@ -35,7 +35,7 @@ public sealed class ContextualCatalogSearchTests
         var (operationContext, _) = CatalogContext("pieza de mano");
 
         var outcome = await new SearchProductsOperation(commerce).ExecuteAsync(
-            JsonSerializer.SerializeToElement(new { mode = "search", queries = new[] { query } }),
+            JsonSerializer.SerializeToElement(new { mode = "search_target", queries = new[] { query } }),
             operationContext);
 
         outcome.Code.Should().Be("products.found");
@@ -64,7 +64,7 @@ public sealed class ContextualCatalogSearchTests
         var (operationContext, _) = CatalogContext("pieza de mano");
 
         var outcome = await new SearchProductsOperation(commerce).ExecuteAsync(
-            JsonSerializer.SerializeToElement(new { mode = "search", queries = new[] { "guantes" } }),
+            JsonSerializer.SerializeToElement(new { mode = "search_target", queries = new[] { "guantes" } }),
             operationContext);
 
         outcome.Code.Should().Be("products.found");
@@ -85,7 +85,7 @@ public sealed class ContextualCatalogSearchTests
         session.ConversationState.LastBotMessage = "Conversacion cerrada.";
 
         var outcome = await new SearchProductsOperation(commerce).ExecuteAsync(
-            JsonSerializer.SerializeToElement(new { mode = "search", queries = new[] { "acero" } }),
+            JsonSerializer.SerializeToElement(new { mode = "search_target", queries = new[] { "acero" } }),
             operationContext);
 
         outcome.Data.GetProperty("search_terms")[0].GetString().Should().Be("acero");

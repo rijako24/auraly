@@ -5,7 +5,7 @@ namespace MimosBabySpa.Infrastructure.Commerce;
 
 internal sealed class MantisSettings
 {
-    public string BaseUrl { get; init; } = "http://93.189.95.109:8080/MantisFiccCasalinsPruWeb/rest/";
+    public string BaseUrl { get; init; } = string.Empty;
     public string AuthorizationToken { get; init; } = string.Empty;
     public int RequestTimeoutSeconds { get; init; } = 30;
     public string Currency { get; init; } = "COP";
@@ -27,9 +27,15 @@ internal sealed class MantisSettings
             "warehouse",
             GetString(catalog, "warehouse", GetString(order, "warehouse", string.Empty)));
 
+        var baseUrl = GetString(settings, "baseUrl").Trim();
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var parsedBaseUrl)
+            || (!parsedBaseUrl.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+                && !parsedBaseUrl.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException("Mantis integration requires an absolute HTTP or HTTPS baseUrl.");
+
         return new MantisSettings
         {
-            BaseUrl = GetString(settings, "baseUrl", "http://93.189.95.109:8080/MantisFiccCasalinsPruWeb/rest/"),
+            BaseUrl = baseUrl,
             AuthorizationToken = GetString(secrets, "authorizationToken", GetString(settings, "authorizationToken")),
             RequestTimeoutSeconds = GetInt(settings, "requestTimeoutSeconds", 30),
             Currency = GetString(settings, "currency", "COP"),

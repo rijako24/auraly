@@ -40,7 +40,7 @@ public sealed class SearchProductsOperation : IAgentOperation
             "family": { "type": "string" },
             "subcategory": { "type": "string" },
             "product_class": { "type": "string" },
-            "mode": { "description": "Typed catalog intent: list categories, search concrete products, or continue the previous result set.", "type": "string", "enum": ["categories", "search", "continue"] },
+            "mode": { "description": "Semantic catalog intent: explore the full catalog, search concrete targets, or continue the active result set.", "type": "string", "enum": ["explore_catalog", "search_target", "continue_results"] },
             "limit": { "type": "integer", "minimum": 1, "maximum": 50 },
             "page": { "type": "integer", "minimum": 1 },
             "include_stock": { "type": "boolean" },
@@ -69,9 +69,9 @@ public sealed class SearchProductsOperation : IAgentOperation
         var ctx = context.Session
             ?? throw new InvalidOperationException("commerce.search_products requires a conversation session.");
         var mode = ReadMode(arguments);
-        if (mode == ProductCatalogQueryMode.Categories)
+        if (mode == ProductCatalogQueryMode.ExploreCatalog)
             return await ExecuteCategoriesAsync(ctx, arguments, cancellationToken);
-        if (mode == ProductCatalogQueryMode.Continue)
+        if (mode == ProductCatalogQueryMode.ContinueResults)
             return await ExecuteContinuationAsync(ctx, context, cancellationToken);
 
         var query = OperationJsonHelper.TryGetString(arguments, "query", out var q) ? q : null;
@@ -299,7 +299,7 @@ public sealed class SearchProductsOperation : IAgentOperation
         {
             var categoryArguments = JsonSerializer.SerializeToElement(new
             {
-                mode = "categories",
+                mode = "explore_catalog",
                 page = cursor.NextPage,
                 limit = cursor.PageSize
             });
@@ -308,7 +308,7 @@ public sealed class SearchProductsOperation : IAgentOperation
 
         var productArguments = JsonSerializer.SerializeToElement(new
         {
-            mode = "search",
+            mode = "search_target",
             queries = cursor.Queries,
             category = cursor.Category,
             family = cursor.Family,
@@ -328,9 +328,9 @@ public sealed class SearchProductsOperation : IAgentOperation
             throw new InvalidOperationException("commerce.search_products requires an explicit catalog mode.");
         return rawMode.Trim().ToLowerInvariant() switch
         {
-            "categories" => ProductCatalogQueryMode.Categories,
-            "search" => ProductCatalogQueryMode.Search,
-            "continue" => ProductCatalogQueryMode.Continue,
+            "explore_catalog" => ProductCatalogQueryMode.ExploreCatalog,
+            "search_target" => ProductCatalogQueryMode.SearchTarget,
+            "continue_results" => ProductCatalogQueryMode.ContinueResults,
             _ => throw new InvalidOperationException($"Unsupported catalog mode '{rawMode}'.")
         };
     }
@@ -595,14 +595,14 @@ public sealed class SearchProductsOperation : IAgentOperation
     private static IReadOnlyList<string> ReadQueries(JsonElement arguments, string? query)
     {
         var values = new List<string>();
+        if (!string.IsNullOrWhiteSpace(query))
+            values.Add(query.Trim());
+
         if (arguments.ValueKind == JsonValueKind.Object
             && arguments.TryGetProperty("queries", out var queriesElement))
         {
             AddQueries(values, queriesElement);
         }
-
-        if (values.Count == 0 && !string.IsNullOrWhiteSpace(query))
-            values.Add(query.Trim());
 
         return values
             .Where(value => !string.IsNullOrWhiteSpace(value))

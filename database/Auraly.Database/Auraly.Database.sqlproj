@@ -9,6 +9,12 @@
     <ModelCollation>1033, CI</ModelCollation>
   </PropertyGroup>
   <ItemGroup>
+    <SqlCmdVariable Include="BootstrapAdminPasswordHash">
+      <DefaultValue></DefaultValue>
+      <Value>$(SqlCmdVar__BootstrapAdminPasswordHash)</Value>
+    </SqlCmdVariable>
+  </ItemGroup>
+  <ItemGroup>
     <Build Remove="Scripts\**\*.sql" />
     <None Include="Scripts\Seeds\*.sql" />
   </ItemGroup>
@@ -48,6 +54,8 @@
     <Build Include="Tables\AuralyPosPricing.sql" />
     <Build Include="Tables\SalesRoutes.sql" />
     <Build Include="Tables\AuralyCatalogSyncSnapshot.sql" />
+    <Build Include="Tables\ProductOffers.sql" />
+    <Build Include="Tables\ProductImages.sql" />
     <Build Include="Tables\ExternalCommerceCustomers.sql" />
     <Build Include="Tables\CartMutationReceipts.sql" />
     <Build Include="Tables\ProductAliases.sql" />

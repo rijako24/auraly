@@ -87,6 +87,7 @@ export default function AgentConfigPage() {
         <div className="min-w-0">
           <AgentSettingsEditor
             value={settings}
+            botType={agent.botType}
             availableInboundContacts={inboundContacts ?? []}
             onChange={(next) => {
               setSettings(next);

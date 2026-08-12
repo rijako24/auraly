@@ -2,9 +2,9 @@ namespace MimosBabySpa.Application.Commerce;
 
 public enum ProductCatalogQueryMode
 {
-    Search = 0,
-    Categories = 1,
-    Continue = 2
+    SearchTarget = 0,
+    ExploreCatalog = 1,
+    ContinueResults = 2
 }
 
 public sealed record ProductLookupRequest(
@@ -23,7 +23,7 @@ public sealed record ProductSearchRequest(
     string? Subcategory = null,
     string? ProductClass = null,
     int Page = 1,
-    ProductCatalogQueryMode Mode = ProductCatalogQueryMode.Search);
+    ProductCatalogQueryMode Mode = ProductCatalogQueryMode.SearchTarget);
 
 public sealed record ProductReference(
     Guid? ProductId,

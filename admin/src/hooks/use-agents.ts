@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { agentsApi, type BusinessInboundContactPayload } from "@/services/api/agents";
 import { useBusinessContextStore } from "@/stores/business-context-store";
+import type { AgentBotType } from "@/types/agent-bot-type";
 import type { AgentSettings } from "@/types/agent-settings";
 
 export const agentKeys = {
@@ -29,7 +30,7 @@ export function useCreateAgent() {
   const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
 
   return useMutation({
-    mutationFn: (payload: { name: string; description?: string }) =>
+    mutationFn: (payload: { name: string; description?: string; botType: AgentBotType }) =>
       agentsApi.create(businessId!, payload),
     onSuccess: (data) => {
       queryClient.setQueryData(agentKeys.detail(data.agentId), data);

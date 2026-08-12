@@ -497,14 +497,88 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     "enabled": true,
     "provider": "Local",
     "conversation": {
-      "contextualConfirmationPhrases": ["si", "si esa", "si es esa", "si ese", "si es ese", "si esta", "si es esta", "si este", "si es este", "si correcto", "si correcta", "confirmo", "correcto", "correcta", "esa", "ese", "esta", "este", "esa misma", "ese mismo", "la primera", "el primero"],
-      "candidateSelectionPhrases": ["esta", "esa", "primera", "primero", "segunda", "segundo", "tercera", "tercero", "ultima", "ultimo"],
-      "clauseSeparators": ["y", "e", "tambien", "ademas"],
-      "additionalRequestPhrases": ["otra", "otro", "adicional", "adicionales", "mas", "nuevamente", "tambien agrega", "tambien agregame", "tambien anade"],
-      "quantityWords": {"un":1, "una":1, "uno":1, "dos":2, "tres":3, "cuatro":4, "cinco":5, "seis":6, "siete":7, "ocho":8, "nueve":9, "diez":10, "once":11, "doce":12, "trece":13, "catorce":14, "quince":15, "dieciseis":16, "diecisiete":17, "dieciocho":18, "diecinueve":19, "veinte":20}
+      "contextualConfirmationPhrases": [
+        "si",
+        "si esa",
+        "si es esa",
+        "si ese",
+        "si es ese",
+        "si esta",
+        "si es esta",
+        "si este",
+        "si es este",
+        "si correcto",
+        "si correcta",
+        "confirmo",
+        "correcto",
+        "correcta",
+        "esa",
+        "ese",
+        "esta",
+        "este",
+        "esa misma",
+        "ese mismo",
+        "la primera",
+        "el primero"
+      ],
+      "candidateSelectionPhrases": [
+        "esta",
+        "esa",
+        "primera",
+        "primero",
+        "segunda",
+        "segundo",
+        "tercera",
+        "tercero",
+        "ultima",
+        "ultimo"
+      ],
+      "clauseSeparators": [
+        "y",
+        "e",
+        "tambien",
+        "ademas"
+      ],
+      "additionalRequestPhrases": [
+        "otra",
+        "otro",
+        "adicional",
+        "adicionales",
+        "mas",
+        "nuevamente",
+        "tambien agrega",
+        "tambien agregame",
+        "tambien anade"
+      ],
+      "quantityWords": {
+        "un": 1,
+        "una": 1,
+        "uno": 1,
+        "dos": 2,
+        "tres": 3,
+        "cuatro": 4,
+        "cinco": 5,
+        "seis": 6,
+        "siete": 7,
+        "ocho": 8,
+        "nueve": 9,
+        "diez": 10,
+        "once": 11,
+        "doce": 12,
+        "trece": 13,
+        "catorce": 14,
+        "quince": 15,
+        "dieciseis": 16,
+        "diecisiete": 17,
+        "dieciocho": 18,
+        "diecinueve": 19,
+        "veinte": 20
+      }
     },
     "pendingCart": {
-      "discardOnFinalizeIssueCodes": ["product_unavailable"]
+      "discardOnFinalizeIssueCodes": [
+        "product_unavailable"
+      ]
     },
     "matching": {
       "exactNameDominanceMinimumMatches": 2,
@@ -1004,8 +1078,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
     }
   },
   "webhooks": {
-    "wompi": {
-    }
+    "wompi": {}
   },
   "escalations": {
     "human": {
@@ -1159,7 +1232,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               "operation": "commerce.search_products",
               "arguments": {
                 "query": "{{user.message}}",
-                "mode": "search",
+                "mode": "search_target",
                 "limit": 10
               },
               "onOutcome": {
@@ -1173,7 +1246,7 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
               "signal": "product_search",
               "arguments": {
                 "query": "{{signal.product_search.value}}",
-                "mode": "search"
+                "mode": "search_target"
               },
               "onOutcome": {
                 "products.found": {}
@@ -1288,15 +1361,6 @@ DECLARE @SettingsJson NVARCHAR(MAX) = N'{
                   ]
                 },
                 "order.checkout_pending_manual_payment": {
-                  "effects": [
-                    {
-                      "type": "fact.set",
-                      "fact": "order_checkout_presented",
-                      "value": true
-                    }
-                  ]
-                },
-                "order.checkout_ready": {
                   "effects": [
                     {
                       "type": "fact.set",

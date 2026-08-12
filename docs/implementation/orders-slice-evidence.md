@@ -35,9 +35,9 @@ La integración SQL usa una base temporal creada desde el DACPAC, no EF InMemory
 
 La impresión automática de múltiples facturas desde un lote administrativo, rutas y devoluciones quedan fuera de esta rebanada y deben implementarse como flujos conectados posteriores.
 
-## Incidencias corregidas durante la verificaciÃ³n
+## Incidencias corregidas durante la verificación
 
-- Se aislaron los datos tributarios de las pruebas SQL para evitar dependencia del orden de ejecuciÃ³n.
-- Se actualizaron los constructores histÃ³ricos de `OrderSnapshot` para eliminar el argumento `TaxTotal` en vez de conservar una sobrecarga legacy.
-- Se corrigieron las pruebas que aÃºn buscaban semillas en `database/MimosBabySpa.Database`; ahora usan `database/Auraly.Database`.
-- Se verificÃ³ explÃ­citamente que `SourceOrderId` llegue a la outbox SQLite y al vÃ­nculo Ãºnico del servidor.
+- Se aislaron los datos tributarios de las pruebas SQL para evitar dependencia del orden de ejecución.
+- Se actualizaron los constructores históricos de `OrderSnapshot` para eliminar el argumento `TaxTotal` en vez de conservar una sobrecarga legacy.
+- Se corrigieron las pruebas que aún buscaban semillas en `database/MimosBabySpa.Database`; ahora usan `database/Auraly.Database`.
+- Se verificó explícitamente que `SourceOrderId` llegue a la outbox SQLite y al vínculo único del servidor.

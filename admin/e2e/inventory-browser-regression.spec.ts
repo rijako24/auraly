@@ -171,6 +171,16 @@ test.describe.serial("inventario completo desde navegador", () => {
   });
 
   test("averia retira unidades y conserva trazabilidad", async ({ page }) => {
+    // Make the scenario repeatable even when the E2E database already contains
+    // previous inventory runs: the same browser flow first guarantees one unit
+    // in the warehouse that will receive the damage operation.
+    await beginOperation(page, /^Ajuste/);
+    await chooseFirst(page, page.locator("main"), "Bodega");
+    await addProduct(page, "Producto regres", "1", 0);
+    await page.getByLabel(/Costo de/).fill("12000");
+    await page.getByRole("button", { name: /Confirmar ajuste/ }).click();
+    await waitForProcessed(page);
+
     await beginOperation(page, /Aver.a/);
     await chooseFirst(page, page.locator("main"), "Bodega");
     await addProduct(page, "Producto regres", "1", 0);

@@ -65,11 +65,39 @@ public sealed class MigratedSeedConfigurationTests
                 $"{diagnostic.Path}:{diagnostic.Code}:{diagnostic.Message}")));
     }
 
+    [Fact]
+    public void AgentSettingsSeeds_KeepTheCompleteConfigurationInsideTheJsonDeclaration()
+    {
+        var seedDirectory = Path.Combine(
+            FindSolutionRoot(),
+            "database",
+            "Auraly.Database",
+            "Scripts",
+            "Seeds");
+        var settingsSeeds = Directory.GetFiles(seedDirectory, "*.sql")
+            .Select(path => new { Path = path, Sql = File.ReadAllText(path) })
+            .Where(seed => seed.Sql.Contains(
+                "DECLARE @SettingsJson NVARCHAR(MAX) = N'{",
+                StringComparison.Ordinal))
+            .ToList();
+
+        settingsSeeds.Should().NotBeEmpty();
+        foreach (var seed in settingsSeeds)
+        {
+            Regex.IsMatch(
+                    seed.Sql,
+                    @"JSON_MODIFY\s*\(\s*@SettingsJson\b",
+                    RegexOptions.IgnoreCase)
+                .Should().BeFalse(
+                    $"{Path.GetFileName(seed.Path)} must expose its final ordered configuration directly in @SettingsJson");
+        }
+    }
+
     [Theory]
     [InlineData("SeedAndinaSantander.sql")]
     [InlineData("SeedCJDistribuciones.sql")]
     [InlineData("SeedMedidental.sql")]
-    public void CommerceCatalogSignals_DeclareExplicitTypedCatalogModes(string seedFile)
+    public void CommerceCatalogSignals_UseSemanticIntentAndTargetContract(string seedFile)
     {
         var root = FindSolutionRoot();
         var path = Path.Combine(
@@ -91,24 +119,31 @@ public sealed class MigratedSeedConfigurationTests
         var catalog = config.GlobalActions.Should().ContainSingle(action =>
             action.Signal.Type == "catalog_query").Subject;
         var schema = catalog.Signal.ValueSchema;
-        schema.GetProperty("properties").GetProperty("mode")
-            .GetProperty("enum").EnumerateArray().Select(value => value.GetString())
-            .Should().BeEquivalentTo("categories", "search", "continue");
-        schema.GetProperty("properties").GetProperty("queries")
-            .GetProperty("minItems").GetInt32().Should().Be(0);
-        schema.GetProperty("required").EnumerateArray()
-            .Select(value => value.GetString()).Should().Contain("mode");
+        var branches = schema.GetProperty("anyOf").EnumerateArray().ToList();
+        branches.Select(branch => branch
+                .GetProperty("properties")
+                .GetProperty("intent")
+                .GetProperty("enum")[0]
+                .GetString())
+            .Should().Equal("explore_catalog", "search_target", "continue_results");
+        branches[0].GetProperty("properties").GetProperty("target")
+            .GetProperty("type").GetString().Should().Be("null");
+        branches[1].GetProperty("properties").GetProperty("target")
+            .GetProperty("required").EnumerateArray()
+            .Select(value => value.GetString())
+            .Should().Equal("kind", "text");
+        branches[2].GetProperty("properties").GetProperty("target")
+            .GetProperty("type").GetString().Should().Be("null");
         catalog.ConversationGuidance.Should().NotContain("mode=")
             .And.Contain("resultados autoritativos");
-        catalog.Signal.Description.Should().Contain("mode=categories")
-            .And.Contain("mode=search")
-            .And.Contain("mode=continue")
+        catalog.Signal.Description.Should()
+            .Contain("Clasifica intent antes de extraer target")
             .And.Contain("Puede coexistir con order_changes");
         var action = catalog.Actions.Should().ContainSingle(candidate =>
             candidate.Operation == "commerce.search_products").Subject;
         action.Arguments.Should().ContainKey("mode");
         action.Arguments["mode"].ValueKind.Should().Be(JsonValueKind.String);
-        action.Arguments["mode"].GetString().Should().Be("{{signal.catalog_query.value.mode}}");
+        action.Arguments["mode"].GetString().Should().Be("{{signal.catalog_query.value.intent}}");
     }
 
     [Fact]
@@ -489,10 +524,10 @@ public sealed class MigratedSeedConfigurationTests
             action.Operation == "conversation.reset_request");
         restart.ConversationGuidance.Should().Contain("No lo detectes por un saludo solo");
 
-        seedSql.Should().Contain("\"id\":\"cart_review_request\"")
-            .And.Contain("\"operation\":\"commerce.get_order_draft\"")
-            .And.Contain("$.templates.cart_changes_applied")
-            .And.Contain("$.templates.cart_on_request")
+        settingsJson.Should().Contain("\"id\": \"cart_review_request\"")
+            .And.Contain("\"operation\": \"commerce.get_order_draft\"")
+            .And.Contain("\"template\": \"cart_changes_applied\"")
+            .And.Contain("\"template\": \"cart_on_request\"")
             .And.Contain("replacement_reference")
             .And.Contain("{{#if removed}}");
         var catalogLookup = config.GlobalActions.Should().ContainSingle(action =>
@@ -514,7 +549,9 @@ public sealed class MigratedSeedConfigurationTests
         var globalCartAction = cartMutation.Actions.Should().ContainSingle(action =>
             action.Operation == "commerce.apply_order_changes"
             && action.Signal == "order_changes").Subject;
-        globalCartAction.Execution.Idempotency.Should().Be(StageActionIdempotency.None);
+        globalCartAction.Execution.Idempotency.Should().Be(StageActionIdempotency.InputVersion);
+        globalCartAction.Execution.TimeoutSeconds.Should().Be(240);
+        globalCartAction.Execution.MaxAttempts.Should().Be(1);
         globalCartAction.OnOutcome["cart.applied"].Effects.Should().Contain(effect =>
             effect.Type == StageEffectTypes.ClearFacts
             && effect.Facts.Contains("order_finalized")
@@ -524,12 +561,14 @@ public sealed class MigratedSeedConfigurationTests
             .Select(stage => stage.Id)
             .Should().BeEquivalentTo(["product_selection"],
                 "product selection owns cart changes until the customer advances directly to delivery");
-        seedSql.Should()
-            .Contain("(N'$.globalActions[1].actions[0].execution')")
-            .And.Contain("(N'$.flows[0].stages[2].actions[2].execution')")
-            .And.Contain(
-                "JSON_QUERY(N'{\"idempotency\":\"input_version\",\"timeoutSeconds\":240,\"maxAttempts\":1}')",
-                "all CJ cart mutation owners must receive the long-running external batch policy");
+        var stageCartAction = config.Flows.SelectMany(flow => flow.Stages)
+            .Single(stage => stage.Id == "product_selection")
+            .Actions.Should().ContainSingle(action =>
+                action.Operation == "commerce.apply_order_changes"
+                && action.Signal == "order_changes").Subject;
+        stageCartAction.Execution.Idempotency.Should().Be(StageActionIdempotency.InputVersion);
+        stageCartAction.Execution.TimeoutSeconds.Should().Be(240);
+        stageCartAction.Execution.MaxAttempts.Should().Be(1);
 
         var createOrder = config.Flows
             .SelectMany(flow => flow.Stages)
@@ -902,15 +941,19 @@ public sealed class MigratedSeedConfigurationTests
             "{\"type\":\"object\",\"required\":[\"commands\"]}",
             [
                 "cart.applied",
+                "cart.partially_applied",
                 "cart.no_changes",
                 "cart.pending_cancelled",
                 "cart.conflicting_commands",
                 "cart.multiple_destinations",
                 "cart.product_not_found",
+                "cart.product_suggestion",
                 "cart.product_ambiguous",
+                "cart.product_unavailable",
                 "cart.item_not_found_or_ambiguous",
                 "cart.insufficient_stock",
-                "cart.invalid_input"
+                "cart.invalid_input",
+                "cart.needs_clarification"
             ],
             [],
             [],
