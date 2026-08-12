@@ -1,10 +1,7 @@
-import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { extname, join } from "node:path";
-import { promisify } from "node:util";
+import { opendir, readFile } from "node:fs/promises";
+import { extname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const execFileAsync = promisify(execFile);
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const allowed = new Set([".ts", ".tsx", ".js", ".jsx", ".json", ".css", ".md"]);
 const markers = [
@@ -15,22 +12,32 @@ const markers = [
   String.fromCodePoint(0x00f0, 0x0178),
 ];
 
-const { stdout } = await execFileAsync(
-  "git",
-  ["ls-files", "--cached", "--others", "--exclude-standard", "--", "src", "e2e"],
-  { cwd: projectRoot },
-);
-const files = stdout
-  .split(String.fromCodePoint(10))
-  .map((file) => file.replace(String.fromCodePoint(13), ""))
-  .filter(Boolean)
-  .filter((file) => allowed.has(extname(file)));
+async function collectFiles(directory) {
+  const files = [];
+  const entries = await opendir(directory);
+  for await (const entry of entries) {
+    const absolutePath = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...(await collectFiles(absolutePath)));
+    } else if (entry.isFile() && allowed.has(extname(entry.name))) {
+      files.push(absolutePath);
+    }
+  }
+  return files;
+}
+
+const roots = ["src", "e2e"];
+const files = (
+  await Promise.all(roots.map((root) => collectFiles(join(projectRoot, root))))
+).flat();
 
 const failures = (
   await Promise.all(
-    files.map(async (file) => {
-      const content = await readFile(join(projectRoot, file), "utf8");
-      return markers.some((marker) => content.includes(marker)) ? file : null;
+    files.map(async (absolutePath) => {
+      const source = await readFile(absolutePath, "utf8");
+      return markers.some((marker) => source.includes(marker))
+        ? relative(projectRoot, absolutePath)
+        : null;
     }),
   )
 ).filter(Boolean);
