@@ -4,6 +4,10 @@ namespace MimosBabySpa.Domain.Repositories;
 
 public interface IProductCategoryRepository
 {
+    Task<ProductCategory?> GetByIdAsync(Guid businessId, Guid productCategoryId, CancellationToken ct = default);
+
+    Task<IReadOnlyList<ProductCategory>> ListAsync(Guid businessId, bool includeInactive, CancellationToken ct = default);
+
     Task<ProductCategory?> GetByExternalIdAsync(
         Guid businessId,
         Guid integrationConnectionId,

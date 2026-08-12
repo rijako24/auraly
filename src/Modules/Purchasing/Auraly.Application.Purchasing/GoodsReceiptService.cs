@@ -43,10 +43,11 @@ public sealed class GoodsReceiptService(
         var currency = request.CurrencyCode.Trim().ToUpperInvariant();
         if (currency.Length != 3) throw new PurchasingValidationException("CurrencyCode must contain three characters.");
 
+        var normalizedLines = GoodsReceiptLineNormalizer.Normalize(request.Lines);
         GoodsReceiptCalculation calculation;
         try
         {
-            calculation = GoodsReceiptCalculator.Calculate(request.Lines.Select(line => (
+            calculation = GoodsReceiptCalculator.Calculate(normalizedLines.Select(line => (
                 line.LineNumber,
                 line.ProductId,
                 line.Description,
@@ -66,7 +67,8 @@ public sealed class GoodsReceiptService(
         {
             CurrencyCode = currency,
             SupplierInvoiceNumber = Normalize(request.SupplierInvoiceNumber, 80),
-            Notes = Normalize(request.Notes, 1000)
+            Notes = Normalize(request.Notes, 1000),
+            Lines = normalizedLines
         }, calculation, cancellationToken);
         await signalPublisher.PublishAsync(
             new DocumentProcessingSignal(

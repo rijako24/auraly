@@ -6,8 +6,7 @@ using System.Text.Json;
 namespace Auraly.Desktop;
 
 internal sealed record DesktopConfiguration(
-    string IdentityApiUrl,
-    string CommerceApiUrl,
+    string ApiUrl,
     int WebPort = 47830,
     int EdgePort = 47831);
 
@@ -53,9 +52,13 @@ internal static class Program
             await WaitUntilReadyAsync($"{edgeOrigin}/edge/v1/health", TimeSpan.FromSeconds(45), Shutdown.Token);
 
             var enrollment = Path.Combine(data, "enrollment.protected");
-            var target = File.Exists(enrollment)
-                ? $"{webOrigin}/pos#edgeToken={Uri.EscapeDataString(sessionToken)}"
-                : $"{webOrigin}/login?redirect={Uri.EscapeDataString($"/pos#edgeToken={sessionToken}")}";
+            var startupModePath = Path.Combine(data, "startup-mode");
+            var enrolled = File.Exists(enrollment);
+            var startupMode = LoadStartupMode(startupModePath, enrolled);
+            var tokenFragment = Uri.EscapeDataString(sessionToken);
+            var target = enrolled && startupMode == "enrolled"
+                ? $"{webOrigin}/pos#edgeToken={tokenFragment}"
+                : $"{webOrigin}/login#edgeToken={tokenFragment}";
             using var browser = LaunchApplicationWindow(target, data);
 
             while (!Shutdown.IsCancellationRequested && !browser.HasExited)
@@ -93,6 +96,15 @@ internal static class Program
         }
     }
 
+    internal static string LoadStartupMode(string path, bool enrolled)
+    {
+        if (!File.Exists(path)) return enrolled ? "enrolled" : "online";
+        var mode = File.ReadAllText(path).Trim().ToLowerInvariant();
+        return mode is "online" or "enrolled"
+            ? mode
+            : enrolled ? "enrolled" : "online";
+    }
+
     private static DesktopConfiguration LoadConfiguration(string root)
     {
         var path = Path.Combine(root, "desktopsettings.json");
@@ -100,11 +112,10 @@ internal static class Program
             File.ReadAllText(path),
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
         if (value is null ||
-            !Uri.TryCreate(value.IdentityApiUrl, UriKind.Absolute, out _) ||
-            !Uri.TryCreate(value.CommerceApiUrl, UriKind.Absolute, out _))
+            !Uri.TryCreate(value.ApiUrl, UriKind.Absolute, out _))
         {
             throw new InvalidOperationException(
-                "desktopsettings.json must contain valid IdentityApiUrl and CommerceApiUrl.");
+                "desktopsettings.json must contain a valid ApiUrl.");
         }
 
         return value;
@@ -126,10 +137,11 @@ internal static class Program
         };
         info.ArgumentList.Add(Path.Combine(root, "web", "server.js"));
         info.Environment["NODE_ENV"] = "production";
+        info.Environment["AURALY_DESKTOP_LOCAL"] = "true";
         info.Environment["HOSTNAME"] = "127.0.0.1";
         info.Environment["PORT"] = configuration.WebPort.ToString();
-        info.Environment["NEXT_PUBLIC_API_URL"] = configuration.IdentityApiUrl.TrimEnd('/');
-        info.Environment["AURALY_COMMERCE_API_URL"] = configuration.CommerceApiUrl.TrimEnd('/');
+        info.Environment["NEXT_PUBLIC_API_URL"] =
+            $"{configuration.ApiUrl.TrimEnd('/')}/api";
         return StartLogged(info, "web", origin);
     }
 
@@ -153,11 +165,13 @@ internal static class Program
         info.Environment["PosEdge__Url"] = edgeOrigin;
         info.Environment["PosEdge__SessionToken"] = sessionToken;
         info.Environment["PosEdge__AllowedOrigin"] = webOrigin;
-        info.Environment["PosEdge__ServerUrl"] = configuration.CommerceApiUrl.TrimEnd('/');
+        info.Environment["PosEdge__ServerUrl"] = configuration.ApiUrl.TrimEnd('/');
         info.Environment["PosEdge__DatabasePath"] = Path.Combine(data, "auraly-pos.db");
         info.Environment["PosEdge__SecretKeyDirectory"] = Path.Combine(data, "keys");
         info.Environment["PosEdge__EnrollmentPackagePath"] =
             Path.Combine(data, "enrollment.protected");
+        info.Environment["PosEdge__StartupModePath"] =
+            Path.Combine(data, "startup-mode");
         return StartLogged(info, "edge", edgeOrigin);
     }
 

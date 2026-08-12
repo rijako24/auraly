@@ -2,6 +2,7 @@ import { apiClient } from "@/services/api/client";
 import type { SalesWorkspaceOption } from "@/services/pos/online-pos-client";
 
 export type SalesWorkspaceBootstrap = {
+  tenantId: string;
   tenantName: string;
   userId: string;
   userDisplayName: string;

@@ -1,12 +1,17 @@
 "use client";
 
 import { LayoutGrid } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 export function PosExitMenuButton() {
+  const router = useRouter();
+
   return (
     <button
       type="button"
-      onClick={() => window.location.assign("/dashboard")}
+      onMouseEnter={() => router.prefetch("/dashboard")}
+      onFocus={() => router.prefetch("/dashboard")}
+      onClick={() => router.push("/dashboard")}
       title="Salir de facturación y abrir el menú"
       className="flex h-8 items-center gap-2 rounded-lg border border-white/10 px-2.5 text-xs font-semibold text-auraly-secondary transition hover:bg-white/10 hover:text-white"
     >

@@ -17,7 +17,13 @@ export async function authorizePosEnrollment(
     method: "POST",
     cache: "no-store",
     credentials: "include",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(window.localStorage.getItem("selected_tenant_id")
+        ? { "X-Tenant-Id": window.localStorage.getItem("selected_tenant_id")! }
+        : {}),
+      "X-Business-Id": option.businessId,
+    },
     body: JSON.stringify({
       businessId: option.businessId,
       warehouseId: option.warehouseId,

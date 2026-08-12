@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ArrowLeft, CheckCircle2, Link2, RefreshCw, Search, TriangleAlert } from "lucide-react";
@@ -34,7 +34,7 @@ export default function ExternalCustomerImportsPage() {
   const reconcilePending = useReconcilePendingExternalCustomers();
   const canReconcile = permissions.has("parties.external-customers.reconcile");
 
-  const reconcileOne = async (item: ExternalCustomerReconciliationItem) => {
+  const reconcileOne = useCallback(async (item: ExternalCustomerReconciliationItem) => {
     try {
       const result = await reconcile.mutateAsync(item.externalCommerceCustomerId);
       if (result.status === "Conflict") toast.error(result.error ?? "La identidad requiere revisión.");
@@ -42,7 +42,7 @@ export default function ExternalCustomerImportsPage() {
     } catch {
       toast.error("No fue posible reconciliar el cliente externo.");
     }
-  };
+  }, [reconcile]);
 
   const columns = useMemo<ColumnDef<ExternalCustomerReconciliationItem>[]>(() => [
     {
@@ -91,7 +91,7 @@ export default function ExternalCustomerImportsPage() {
         {row.original.status === "Conflict" ? "Reintentar" : "Relacionar"}
       </Button>,
     },
-  ], [canReconcile, reconcile.isPending]);
+  ], [canReconcile, reconcile.isPending, reconcileOne]);
 
   const processPending = async () => {
     try {

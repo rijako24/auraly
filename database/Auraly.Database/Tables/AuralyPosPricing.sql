@@ -74,13 +74,21 @@ GO
 CREATE TABLE [dbo].[CommerceSellers] (
     [SellerId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [PartyId] UNIQUEIDENTIFIER NOT NULL,
     [Code] NVARCHAR(32) NOT NULL,
-    [Name] NVARCHAR(160) NOT NULL,
+    [DefaultCommissionPercent] DECIMAL(9,6) NULL,
+    [CommissionBasis] NVARCHAR(24) NOT NULL,
+    [CommissionTrigger] NVARCHAR(16) NOT NULL,
     [IsActive] BIT NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [PK_CommerceSellers] PRIMARY KEY ([SellerId]),
     CONSTRAINT [FK_CommerceSellers_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
-    CONSTRAINT [UQ_CommerceSellers_Business_Code] UNIQUE ([BusinessId], [Code])
+    CONSTRAINT [FK_CommerceSellers_Parties] FOREIGN KEY ([PartyId]) REFERENCES [dbo].[Parties] ([PartyId]),
+    CONSTRAINT [UQ_CommerceSellers_Business_Code] UNIQUE ([BusinessId], [Code]),
+    CONSTRAINT [UQ_CommerceSellers_Business_Party] UNIQUE ([BusinessId], [PartyId]),
+    CONSTRAINT [CK_CommerceSellers_Commission] CHECK ([DefaultCommissionPercent] IS NULL OR [DefaultCommissionPercent] BETWEEN 0 AND 100),
+    CONSTRAINT [CK_CommerceSellers_Basis] CHECK ([CommissionBasis] IN (N'SaleBeforeTax',N'SaleAfterTax',N'GrossMargin')),
+    CONSTRAINT [CK_CommerceSellers_Trigger] CHECK ([CommissionTrigger] IN (N'Sale',N'Collection'))
 );
 GO

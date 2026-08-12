@@ -70,11 +70,15 @@ public sealed class SqlGoodsReceiptStore(
                 calculation.NetAmount,
                 calculation.TaxAmount,
                 calculation.GrandTotal,
-                calculation.Lines.Select(line => new GoodsReceiptLineSnapshot(
-                    line.LineNumber, line.ProductId, line.Description, line.Quantity,
-                    line.UnitCost, line.DiscountAmount, line.TaxCode, line.TaxRate,
-                    line.TaxTreatment.ToString(), line.NetAmount, line.TaxAmount,
-                    line.LineTotal)).ToArray());
+                calculation.Lines.Select(line =>
+                {
+                    var source = request.Lines.Single(item => item.LineNumber == line.LineNumber);
+                    return new GoodsReceiptLineSnapshot(
+                        line.LineNumber, line.ProductId, line.Description, line.Quantity,
+                        line.UnitCost, line.DiscountAmount, line.TaxCode, line.TaxRate,
+                        line.TaxTreatment.ToString(), line.NetAmount, line.TaxAmount, line.LineTotal,
+                        source.PresentationName, source.PresentationQuantity, source.UnitsPerPresentation);
+                }).ToArray());
             var payloadJson = GoodsReceiptContractSerializer.Serialize(payload);
             var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(payloadJson));
 
@@ -82,7 +86,7 @@ public sealed class SqlGoodsReceiptStore(
             await InsertReceiptAsync(
                 connection, transaction, user, request, calculation, number,
                 idempotencyKey, requestHash, now, cancellationToken);
-            await InsertLinesAsync(connection, transaction, request.DocumentId, calculation, cancellationToken);
+            await InsertLinesAsync(connection, transaction, request.DocumentId, request.Lines, calculation, cancellationToken);
             await InsertJobAsync(
                 connection, transaction, user.BusinessId, request.DocumentId, movementId,
                 sequence, payloadJson, payloadHash, now, cancellationToken);
@@ -293,18 +297,19 @@ public sealed class SqlGoodsReceiptStore(
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private static async Task InsertLinesAsync(SqlConnection connection, SqlTransaction transaction,
-        Guid documentId, GoodsReceiptCalculation calculation, CancellationToken cancellationToken)
+    private static async Task InsertLinesAsync(SqlConnection connection, SqlTransaction transaction, Guid documentId,
+        IReadOnlyCollection<GoodsReceiptLineRequest> requestLines, GoodsReceiptCalculation calculation, CancellationToken cancellationToken)
     {
         const string sql = """
             INSERT dbo.GoodsReceiptLines
               (GoodsReceiptId,LineNumber,ProductId,DescriptionSnapshot,Quantity,UnitCost,DiscountAmount,
-               TaxCode,TaxRate,TaxTreatment,NetAmount,TaxAmount,LineTotal)
+               TaxCode,TaxRate,TaxTreatment,NetAmount,TaxAmount,LineTotal,PresentationNameSnapshot,PresentationQuantity,UnitsPerPresentation)
             VALUES(@Id,@Line,@ProductId,@Description,@Quantity,@UnitCost,@Discount,@TaxCode,
-                   @TaxRate,@TaxTreatment,@Net,@Tax,@Total);
+                   @TaxRate,@TaxTreatment,@Net,@Tax,@Total,@PresentationName,@PresentationQuantity,@UnitsPerPresentation);
             """;
         foreach (var line in calculation.Lines)
         {
+            var source = requestLines.Single(item => item.LineNumber == line.LineNumber);
             await using var command = new SqlCommand(sql, connection, transaction);
             command.Parameters.AddWithValue("@Id", documentId);
             command.Parameters.AddWithValue("@Line", line.LineNumber);
@@ -319,6 +324,9 @@ public sealed class SqlGoodsReceiptStore(
             AddDecimal(command, "@Net", line.NetAmount, 19, 4);
             AddDecimal(command, "@Tax", line.TaxAmount, 19, 4);
             AddDecimal(command, "@Total", line.LineTotal, 19, 4);
+            command.Parameters.AddWithValue("@PresentationName", source.PresentationName);
+            AddDecimal(command, "@PresentationQuantity", source.PresentationQuantity, 19, 6);
+            AddDecimal(command, "@UnitsPerPresentation", source.UnitsPerPresentation, 19, 6);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
     }

@@ -6,7 +6,8 @@ namespace Auraly.Application.Purchasing;
 public interface IGoodsReceiptWorkspaceStore
 {
     Task<GoodsReceiptWorkspaceOptions> GetOptionsAsync(PurchasingUserIdentity user, CancellationToken cancellationToken);
-    Task<GoodsReceiptProductPage> FindProductsAsync(PurchasingUserIdentity user, Guid supplierId, string? search, int page, int pageSize, CancellationToken cancellationToken);
+    Task<GoodsReceiptProductPage> FindProductsAsync(PurchasingUserIdentity user, Guid supplierId, string? search, bool includeUnassociated, int page, int pageSize, CancellationToken cancellationToken);
+    Task<GoodsReceiptProductOption> AssociateProductAsync(PurchasingUserIdentity user, AssociateGoodsReceiptProductRequest request, CancellationToken cancellationToken);
     Task<GoodsReceiptPage> ListAsync(PurchasingUserIdentity user, string? search, string? status, int page, int pageSize, CancellationToken cancellationToken);
     Task<GoodsReceiptDraft?> GetDraftAsync(PurchasingUserIdentity user, Guid draftId, CancellationToken cancellationToken);
     Task<GoodsReceiptDraft> SaveDraftAsync(PurchasingUserIdentity user, SaveGoodsReceiptDraftRequest request, GoodsReceiptCalculation? calculation, CancellationToken cancellationToken);
@@ -24,12 +25,30 @@ public sealed class GoodsReceiptWorkspaceService(IGoodsReceiptWorkspaceStore sto
 
     public Task<GoodsReceiptProductPage> FindProductsAsync(
         PurchasingUserIdentity user, Guid supplierId, string? search,
-        int page, int pageSize, CancellationToken cancellationToken = default)
+        bool includeUnassociated, int page, int pageSize, CancellationToken cancellationToken = default)
     {
         Require(user, PurchasingPermissionCodes.ReadGoodsReceipts);
         if (supplierId == Guid.Empty) throw new PurchasingValidationException("SupplierId is required.");
         ValidatePage(page, pageSize);
-        return store.FindProductsAsync(user, supplierId, Normalize(search, 160), page, pageSize, cancellationToken);
+        return store.FindProductsAsync(user, supplierId, Normalize(search, 160), includeUnassociated, page, pageSize, cancellationToken);
+    }
+
+    public Task<GoodsReceiptProductOption> AssociateProductAsync(
+        PurchasingUserIdentity user, AssociateGoodsReceiptProductRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        Require(user, "catalog.costs.manage");
+        if (request.SupplierId == Guid.Empty) throw new PurchasingValidationException("SupplierId is required.");
+        if (request.ProductId == Guid.Empty) throw new PurchasingValidationException("ProductId is required.");
+        var presentation = Normalize(request.PurchasePresentationName, 80)
+            ?? throw new PurchasingValidationException("PurchasePresentationName is required.");
+        if (request.UnitsPerPresentation <= 0)
+            throw new PurchasingValidationException("UnitsPerPresentation must be greater than zero.");
+        return store.AssociateProductAsync(user, request with
+        {
+            SupplierProductCode = Normalize(request.SupplierProductCode, 80),
+            PurchasePresentationName = presentation
+        }, cancellationToken);
     }
 
     public Task<GoodsReceiptPage> ListAsync(
@@ -70,13 +89,14 @@ public sealed class GoodsReceiptWorkspaceService(IGoodsReceiptWorkspaceStore sto
         if (currency.Length != 3) throw new PurchasingValidationException("CurrencyCode must contain three characters.");
 
         GoodsReceiptCalculation? calculation = null;
-        if (request.Lines.Count > 0)
+        var normalizedLines = GoodsReceiptLineNormalizer.Normalize(request.Lines);
+        if (normalizedLines.Length > 0)
         {
             if (request.SupplierId is null)
                 throw new PurchasingValidationException("A supplier is required before adding products.");
             try
             {
-                calculation = GoodsReceiptCalculator.Calculate(request.Lines.Select(line => (
+                calculation = GoodsReceiptCalculator.Calculate(normalizedLines.Select(line => (
                     line.LineNumber, line.ProductId, line.Description, line.Quantity,
                     line.UnitCost, line.DiscountAmount, line.TaxCode, line.TaxRate,
                     ParseTaxTreatment(line.TaxTreatment))));
@@ -91,7 +111,8 @@ public sealed class GoodsReceiptWorkspaceService(IGoodsReceiptWorkspaceStore sto
         {
             CurrencyCode = currency,
             SupplierInvoiceNumber = Normalize(request.SupplierInvoiceNumber, 80),
-            Notes = Normalize(request.Notes, 1000)
+            Notes = Normalize(request.Notes, 1000),
+            Lines = normalizedLines
         }, calculation, cancellationToken);
     }
 

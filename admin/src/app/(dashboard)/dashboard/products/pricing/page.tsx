@@ -1,35 +1,32 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import {
-  ArrowRight, Calculator, PackageCheck, Search, Send,
-  TrendingUp, XCircle,
-} from "lucide-react";
+import { PackageCheck, Search, Send, TrendingUp, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Dialog, DialogContent, DialogDescription, DialogFooter,
-  DialogHeader, DialogTitle,
-} from "@/components/ui/dialog";
+import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { usePriceProposals, usePublishPrices, useRejectPrice } from "@/hooks/use-pricing";
 import {
-  useCalculatePrice, usePriceProposals, usePublishPrices,
-  useRejectPrice, useReviewPrice,
-} from "@/hooks/use-pricing";
+  buildPricePublicationItem,
+  changeDraftMargin,
+  changeDraftSalePrice,
+  createPricePublicationDraft,
+  type PricePublicationDraft,
+} from "@/lib/pricing-publication-draft";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
+import { goodsReceiptsApi } from "@/services/api/goods-receipts";
+import type { PriceProposalStatus, PriceRevisionListItem } from "@/services/api/pricing";
 import { useAuthStore } from "@/stores/auth-store";
-import type {
-  PriceInputMode, PriceProposalStatus, PriceRevisionListItem,
-  PricingRoundingMode, PublishPriceItem,
-} from "@/services/api/pricing";
 
 const statuses: Record<PriceProposalStatus, string> = {
   PendingReview: "Pendiente",
@@ -40,6 +37,8 @@ const statuses: Record<PriceProposalStatus, string> = {
 };
 
 export default function PricingPage() {
+  const searchParams = useSearchParams();
+  const sourceDocumentId = searchParams.get("sourceDocumentId") ?? undefined;
   const permissions = useAuthStore((state) => new Set(state.user?.permissions ?? []));
   const canReview = permissions.has("pricing.proposals.review");
   const canPublish = permissions.has("pricing.prices.publish");
@@ -47,30 +46,166 @@ export default function PricingPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState<PriceProposalStatus | "all">("PendingReview");
-  const [selected, setSelected] = useState<PriceRevisionListItem>();
-
+  const [status, setStatus] = useState<PriceProposalStatus | "all">("all");
+  const [supplierId, setSupplierId] = useState("all");
+  const [drafts, setDrafts] = useState<Record<string, PricePublicationDraft>>({});
+  const draftsRef = useRef(drafts);
+  draftsRef.current = drafts;
+  const receiptOptions = useQuery({
+    queryKey: ["goods-receipt-options"],
+    queryFn: goodsReceiptsApi.options,
+  });
   const query = usePriceProposals({
-    page, pageSize, search: search.trim() || undefined,
+    page,
+    pageSize,
+    search: search.trim() || undefined,
     status: status === "all" ? undefined : status,
+    supplierId: supplierId === "all" ? undefined : supplierId,
+    sourceDocumentId,
   });
   const publish = usePublishPrices();
+  const reject = useRejectPrice();
+
+  useEffect(() => {
+    const rows = query.data?.items ?? [];
+    if (!rows.length) return;
+    setDrafts((current) => {
+      const next = { ...current };
+      for (const row of rows) {
+        const existing = next[row.proposalId];
+        if (!existing || existing.concurrencyToken !== row.concurrencyToken)
+          next[row.proposalId] = createPricePublicationDraft(row);
+      }
+      return next;
+    });
+  }, [query.data?.items]);
+
+  const draftFor = useCallback((row: PriceRevisionListItem) =>
+    draftsRef.current[row.proposalId] ?? createPricePublicationDraft(row), []);
+
+  const updateMargin = useCallback((row: PriceRevisionListItem, margin: number | null) => {
+    setDrafts((current) => {
+      const draft = current[row.proposalId] ?? createPricePublicationDraft(row);
+      try {
+        return { ...current, [row.proposalId]: changeDraftMargin(row, draft, margin) };
+      } catch {
+        return { ...current, [row.proposalId]: { ...draft, margin, salePrice: null } };
+      }
+    });
+  }, []);
+
+  const updateSalePrice = useCallback((row: PriceRevisionListItem, salePrice: number | null) => {
+    setDrafts((current) => {
+      const draft = current[row.proposalId] ?? createPricePublicationDraft(row);
+      try {
+        return { ...current, [row.proposalId]: changeDraftSalePrice(row, draft, salePrice) };
+      } catch {
+        return { ...current, [row.proposalId]: { ...draft, salePrice } };
+      }
+    });
+  }, []);
+
+  const navigatePricingGrid = useCallback((
+    event: KeyboardEvent<HTMLInputElement>,
+    row: PriceRevisionListItem,
+    field: "margin" | "price",
+  ) => {
+    const rows = query.data?.items ?? [];
+    const index = rows.findIndex((item) => item.proposalId === row.proposalId);
+    let targetIndex = index;
+    let targetField = field;
+    if (event.key === "ArrowDown") targetIndex = Math.min(rows.length - 1, index + 1);
+    else if (event.key === "ArrowUp") targetIndex = Math.max(0, index - 1);
+    else if (event.key === "ArrowLeft") targetField = "margin";
+    else if (event.key === "ArrowRight") targetField = "price";
+    else if (event.key === "Enter") {
+      if (field === "margin") targetField = "price";
+      else {
+        targetIndex = Math.min(rows.length - 1, index + 1);
+        targetField = "margin";
+      }
+    } else return;
+    event.preventDefault();
+    const target = rows[targetIndex];
+    if (!target) return;
+    // Moving focus blurs the current formatted input, which commits its draft and
+    // re-renders the row. Defer until that React commit has completed so focus is
+    // applied to the current DOM node instead of the element being replaced.
+    const focusTarget = () => {
+      const input = document.getElementById(
+        `pricing-${targetField}-${target.proposalId}`,
+      ) as HTMLInputElement | null;
+      input?.focus();
+      input?.select();
+    };
+    window.setTimeout(() => {
+      // The first focus commits the field being left. That commit can replace the
+      // row, so resolve and focus the target once more after React has painted.
+      focusTarget();
+      window.requestAnimationFrame(focusTarget);
+    }, 0);
+  }, [query.data?.items]);
+
+  const rejectRows = useCallback(async (rows: PriceRevisionListItem[]) => {
+    const candidates = rows.filter(isPublishable);
+    if (!candidates.length) {
+      toast.info("La selección no contiene precios pendientes.");
+      return;
+    }
+    try {
+      for (const row of candidates) {
+        await reject.mutateAsync({
+          proposalId: row.proposalId,
+          concurrencyToken: row.concurrencyToken,
+          reason: "Descartada desde la lista de precios",
+        });
+      }
+      toast.success(candidates.length === 1 ? "Propuesta descartada." : "Propuestas descartadas.");
+    } catch {
+      toast.error("No fue posible descartar toda la selección.");
+    }
+  }, [reject]);
+
+  const publishRows = useCallback(async (rows: PriceRevisionListItem[]) => {
+    const candidates = rows.filter(isPublishable);
+    if (!candidates.length) {
+      toast.info("La selección no contiene precios pendientes.");
+      return;
+    }
+    try {
+      const items = candidates.map((row) =>
+        buildPricePublicationItem(row, drafts[row.proposalId] ?? createPricePublicationDraft(row)));
+      await publish.mutateAsync(items);
+      toast.success(candidates.length === 1
+        ? "Precio publicado y notificado al punto de venta."
+        : `${candidates.length} precios publicados en una sola operación.`);
+    } catch (error) {
+      toast.error(error instanceof Error
+        ? error.message
+        : "No fue posible publicar. Actualiza la lista y vuelve a intentar.");
+    }
+  }, [drafts, publish]);
 
   const columns = useMemo<ColumnDef<PriceRevisionListItem>[]>(() => [
     {
       accessorKey: "productName",
       header: "Producto",
-      cell: ({ row }) => <div>
+      cell: ({ row }) => <div className="min-w-52">
         <p className="font-semibold">{row.original.productName}</p>
         <p className="text-xs text-muted-foreground">
-          {row.original.productCode} - {row.original.supplierName}
+          {row.original.productCode} · {row.original.origin === "Product"
+            ? "Preparado desde producto"
+            : row.original.supplierName}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          IVA de venta {formatPercent(row.original.salesTaxRate)} · {formatDateTime(row.original.createdAt)}
         </p>
       </div>,
     },
     {
       accessorKey: "observedUnitCost",
-      header: "Costo observado",
-      cell: ({ row }) => <div>
+      header: "Costo base",
+      cell: ({ row }) => <div className="min-w-28">
         <p className="font-medium">{formatCurrency(row.original.observedUnitCost)}</p>
         {row.original.previousObservedUnitCost !== null && <p className="text-xs text-muted-foreground">
           Antes {formatCurrency(row.original.previousObservedUnitCost)}
@@ -79,18 +214,51 @@ export default function PricingPage() {
     },
     {
       accessorKey: "currentSalePrice",
-      header: "Precio actual",
-      cell: ({ row }) => formatCurrency(row.original.currentSalePrice),
+      header: "Precio público actual",
+      cell: ({ row }) => <div className="min-w-28">
+        <p className="font-medium">{formatCurrency(row.original.currentSalePrice)}</p>
+        <p className="text-xs text-muted-foreground">Publicado hoy</p>
+      </div>,
     },
     {
-      id: "proposal",
-      header: "Propuesta",
-      cell: ({ row }) => <div>
-        <p className="font-semibold text-primary">{formatCurrency(row.original.suggestedSalePrice)}</p>
-        <p className="text-xs text-muted-foreground">
-          Margen {formatPercent(row.original.effectiveMarginAfterRounding ?? row.original.targetMarginPercent)}
-        </p>
-      </div>,
+      id: "margin",
+      header: "Margen preparado",
+      cell: ({ row }) => {
+        const draft = draftFor(row.original);
+        return <div className="min-w-32">
+          <FormattedNumberInput
+            id={`pricing-margin-${row.original.proposalId}`}
+            kind="percent"
+            commitMode="blur"
+            value={draft.margin ?? ""}
+            disabled={!canPublish || !isPublishable(row.original)}
+            onValueChange={(value) => updateMargin(row.original, value)}
+            onKeyDown={(event) => navigatePricingGrid(event, row.original, "margin")}
+            className="h-10 bg-background text-right font-medium"
+          />
+          <p className="mt-1 text-xs text-muted-foreground">Sobre precio antes de IVA</p>
+        </div>;
+      },
+    },
+    {
+      id: "preparedSalePrice",
+      header: "Precio a publicar",
+      cell: ({ row }) => {
+        const draft = draftFor(row.original);
+        return <div className="min-w-40">
+          <FormattedNumberInput
+            id={`pricing-price-${row.original.proposalId}`}
+            kind="currency"
+            commitMode="blur"
+            value={draft.salePrice ?? ""}
+            disabled={!canPublish || !isPublishable(row.original)}
+            onValueChange={(value) => updateSalePrice(row.original, value)}
+            onKeyDown={(event) => navigatePricingGrid(event, row.original, "price")}
+            className="h-10 border-primary/40 bg-primary/5 text-right font-semibold text-primary"
+          />
+          <p className="mt-1 text-xs text-muted-foreground">Valor final con IVA incluido</p>
+        </div>;
+      },
     },
     {
       accessorKey: "status",
@@ -101,33 +269,39 @@ export default function PricingPage() {
       }>{statuses[row.original.status]}</Badge>,
     },
     {
-      accessorKey: "createdAt",
-      header: "Detectada",
-      cell: ({ row }) => formatDateTime(row.original.createdAt),
+      id: "actions",
+      header: "",
+      cell: ({ row }) => canReview && isPublishable(row.original) ? <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        disabled={reject.isPending}
+        onClick={() => void rejectRows([row.original])}
+        aria-label={`Descartar propuesta de ${row.original.productName}`}
+      >
+        <XCircle className="mr-2 h-4 w-4" />
+        Descartar
+      </Button> : null,
     },
-  ], []);
+  ], [canPublish, canReview, draftFor, navigatePricingGrid, reject.isPending, rejectRows, updateMargin, updateSalePrice]);
 
-  const publishRows = async (rows: PriceRevisionListItem[]) => {
-    const candidates = rows.filter((row) =>
-      row.status === "PendingReview" || row.status === "Approved");
-    if (!candidates.length) return;
-    try {
-      await publish.mutateAsync(candidates.map((row) => ({
-        proposalId: row.proposalId,
-        inputMode: "SalePrice" as const,
-        targetMarginPercent: null,
-        salePrice: row.suggestedSalePrice,
-        roundingIncrement: 1,
-        roundingMode: "Nearest" as const,
-        concurrencyToken: row.concurrencyToken,
-      })));
-      toast.success(candidates.length === 1
-        ? "El precio fue publicado y se notifico al POS."
-        : `${candidates.length} precios fueron publicados y notificados.`);
-    } catch {
-      toast.error("No fue posible publicar. Actualiza las propuestas y vuelve a intentar.");
-    }
-  };
+  const bulkActions = useMemo(() => {
+    const actions = [] as Array<{
+      label: string;
+      onClick: (rows: PriceRevisionListItem[]) => void;
+      variant?: "default" | "destructive";
+    }>;
+    if (canPublish && canBulk) actions.push({
+      label: publish.isPending ? "Publicando..." : "Publicar selección",
+      onClick: (rows) => void publishRows(rows),
+    });
+    if (canReview) actions.push({
+      label: "Descartar selección",
+      onClick: (rows) => void rejectRows(rows),
+      variant: "destructive",
+    });
+    return actions;
+  }, [canBulk, canPublish, canReview, publish.isPending, publishRows, rejectRows]);
 
   return <div className="space-y-6">
     <header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
@@ -135,34 +309,35 @@ export default function PricingPage() {
         <p className="text-sm font-medium text-primary">Productos</p>
         <h1 className="text-3xl font-semibold tracking-tight">Precios y rentabilidad</h1>
         <p className="mt-1 max-w-3xl text-muted-foreground">
-          Revisa cambios de costo, conserva el margen que necesitas y publica el precio
-          vendido solo cuando estes listo.
+          Ajusta margen o precio directamente en la lista, selecciona los productos y publícalos juntos.
+          El precio preparado nunca se recalcula al publicar.
         </p>
       </div>
       <div className="rounded-2xl border bg-card px-5 py-3 text-sm shadow-sm">
-        <p className="text-muted-foreground">Regla activa</p>
-        <p className="font-semibold">La entrada propone; nunca cambia el precio sola</p>
+        <p className="text-muted-foreground">Flujo de publicación</p>
+        <p className="font-semibold">Editar en grilla → seleccionar → publicar</p>
       </div>
     </header>
 
     <section className="grid gap-3 md:grid-cols-3">
-      <Summary icon={PackageCheck} label="Pendientes encontradas"
-        value={String(query.data?.totalCount ?? 0)} />
-      <Summary icon={TrendingUp} label="Flujo de margen"
-        value="Costo | margen | precio" />
-      <Summary icon={Send} label="Sincronizacion"
-        value="Push por cursor, sin polling" />
+      <Summary icon={PackageCheck} label="Propuestas encontradas" value={String(query.data?.totalCount ?? 0)} />
+      <Summary icon={TrendingUp} label="Cálculo reactivo" value="Costo + margen + IVA" />
+      <Summary icon={Send} label="Publicación" value="Masiva y en una operación" />
     </section>
 
-    <section className="grid gap-3 rounded-2xl border bg-card p-4 md:grid-cols-[minmax(0,1fr)_14rem]">
+    <section className="grid gap-3 rounded-2xl border bg-card p-4 md:grid-cols-[minmax(0,1fr)_14rem_16rem]">
       <div className="relative">
         <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-        <Input className="pl-9" value={search}
+        <Input
+          className="pl-9"
+          value={search}
           onChange={(event) => { setSearch(event.target.value); setPage(1); }}
-          placeholder="Producto, codigo o proveedor" />
+          placeholder="Producto, código o proveedor"
+        />
       </div>
       <Select value={status} onValueChange={(value) => {
-        setStatus(value as PriceProposalStatus | "all"); setPage(1);
+        setStatus(value as PriceProposalStatus | "all");
+        setPage(1);
       }}>
         <SelectTrigger><SelectValue /></SelectTrigger>
         <SelectContent>
@@ -171,220 +346,54 @@ export default function PricingPage() {
             <SelectItem key={value} value={value}>{label}</SelectItem>)}
         </SelectContent>
       </Select>
+      <Select value={supplierId} onValueChange={(value) => {
+        setSupplierId(value);
+        setPage(1);
+      }}>
+        <SelectTrigger><SelectValue placeholder="Todos los proveedores" /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">Todos los proveedores</SelectItem>
+          {(receiptOptions.data?.suppliers ?? []).map((supplier) =>
+            <SelectItem key={supplier.supplierId} value={supplier.supplierId}>{supplier.name}</SelectItem>)}
+        </SelectContent>
+      </Select>
     </section>
 
     {query.isError ? <div className="rounded-2xl border border-destructive/30 p-8 text-center">
       No se pudieron cargar las propuestas.
       <Button variant="link" onClick={() => query.refetch()}>Reintentar</Button>
-    </div> : <DataTable columns={columns} data={query.data?.items ?? []}
-      isLoading={query.isLoading} page={query.data?.page} pageSize={query.data?.pageSize}
-      pageCount={query.data?.totalPages} totalItems={query.data?.totalCount}
+    </div> : <DataTable
+      columns={columns}
+      data={query.data?.items ?? []}
+      isLoading={query.isLoading}
+      page={query.data?.page}
+      pageSize={query.data?.pageSize}
+      pageCount={query.data?.totalPages}
+      totalItems={query.data?.totalCount}
       onPaginationChange={(nextPage, nextSize) => { setPage(nextPage); setPageSize(nextSize); }}
-      onRowClick={setSelected} enableRowSelection={canBulk}
-      bulkActions={canBulk ? [{
-        label: "Publicar seleccionados",
-        onClick: publishRows,
-      }] : undefined} />}
-
-    <PriceEditor open={!!selected} proposal={selected}
-      canReview={canReview} canPublish={canPublish}
-      onClose={() => setSelected(undefined)} />
+      enableRowSelection={bulkActions.length > 0}
+      bulkActions={bulkActions}
+    />}
   </div>;
 }
 
-function PriceEditor({
-  open, proposal, canReview, canPublish, onClose,
-}: {
-  open: boolean;
-  proposal?: PriceRevisionListItem;
-  canReview: boolean;
-  canPublish: boolean;
-  onClose: () => void;
-}) {
-  const [inputMode, setInputMode] = useState<PriceInputMode>("Margin");
-  const [margin, setMargin] = useState("");
-  const [salePrice, setSalePrice] = useState("");
-  const [increment, setIncrement] = useState("50");
-  const [roundingMode, setRoundingMode] = useState<PricingRoundingMode>("Up");
-  const calculate = useCalculatePrice();
-  const review = useReviewPrice();
-  const reject = useRejectPrice();
-  const publish = usePublishPrices();
-
-  useEffect(() => {
-    if (!proposal) return;
-    setMargin(String(proposal.targetMarginPercent ?? proposal.currentMarginPercent ?? ""));
-    setSalePrice(String(proposal.suggestedSalePrice));
-  }, [proposal]);
-
-
-  const command = (): PublishPriceItem | null => {
-    if (!proposal) return null;
-    return {
-      proposalId: proposal.proposalId,
-      inputMode,
-      targetMarginPercent: inputMode === "Margin" ? numberOrNull(margin) : null,
-      salePrice: inputMode === "SalePrice" ? numberOrNull(salePrice) : null,
-      roundingIncrement: Number(increment),
-      roundingMode,
-      concurrencyToken: proposal.concurrencyToken,
-    };
-  };
-
-  const preview = async () => {
-    const value = command();
-    if (!value || !proposal) return;
-    try {
-      await calculate.mutateAsync({
-        costBasisAmount: proposal.observedUnitCost,
-        inputMode: value.inputMode,
-        targetMarginPercent: value.targetMarginPercent,
-        salePrice: value.salePrice,
-        roundingIncrement: value.roundingIncrement,
-        roundingMode: value.roundingMode,
-      });
-    } catch {
-      toast.error("Revisa margen, precio y redondeo.");
-    }
-  };
-
-  const save = async () => {
-    const value = command(); if (!value) return;
-    try {
-      await review.mutateAsync(value);
-      toast.success("Propuesta guardada sin cambiar el precio vendido.");
-      onClose();
-    } catch { toast.error("La propuesta cambio o contiene valores invalidos."); }
-  };
-
-  const publishNow = async () => {
-    const value = command(); if (!value) return;
-    try {
-      await publish.mutateAsync([value]);
-      toast.success("Precio publicado. Los equipos activos recibiran el cambio.");
-      onClose();
-    } catch { toast.error("No fue posible publicar el precio."); }
-  };
-
-  const rejectNow = async () => {
-    if (!proposal) return;
-    try {
-      await reject.mutateAsync({
-        proposalId: proposal.proposalId,
-        concurrencyToken: proposal.concurrencyToken,
-      });
-      toast.success("Propuesta rechazada; el precio actual se conserva.");
-      onClose();
-    } catch { toast.error("No fue posible rechazar la propuesta."); }
-  };
-
-  return <Dialog open={open} onOpenChange={(value) => !value && onClose()}>
-    <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-3xl">
-      <DialogHeader>
-        <DialogTitle>{proposal?.productName ?? "Revisar precio"}</DialogTitle>
-        <DialogDescription>
-          {proposal ? `${proposal.productCode} - Costo observado por ${proposal.supplierName}` : ""}
-        </DialogDescription>
-      </DialogHeader>
-      {proposal && <div className="space-y-5">
-        <div className="grid gap-3 rounded-2xl bg-muted/40 p-4 sm:grid-cols-3">
-          <Metric label="Costo base" value={formatCurrency(proposal.observedUnitCost)} />
-          <Metric label="Precio actual" value={formatCurrency(proposal.currentSalePrice)} />
-          <Metric label="Margen actual" value={formatPercent(proposal.currentMarginPercent)} />
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label>Quiero definir</Label>
-            <Select value={inputMode} onValueChange={(value) => setInputMode(value as PriceInputMode)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="Margin">Margen sobre venta</SelectItem>
-                <SelectItem value="SalePrice">Precio de venta</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          {inputMode === "Margin" ? <div className="space-y-2">
-            <Label htmlFor="pricing-margin">Margen objetivo %</Label>
-            <Input id="pricing-margin" inputMode="decimal" value={margin}
-              onChange={(event) => setMargin(event.target.value)} />
-          </div> : <div className="space-y-2">
-            <Label htmlFor="pricing-sale">Precio de venta</Label>
-            <Input id="pricing-sale" inputMode="decimal" value={salePrice}
-              onChange={(event) => setSalePrice(event.target.value)} />
-          </div>}
-          <div className="space-y-2">
-            <Label htmlFor="pricing-increment">Redondear a multiplos de</Label>
-            <Input id="pricing-increment" inputMode="decimal" value={increment}
-              onChange={(event) => setIncrement(event.target.value)} />
-          </div>
-          <div className="space-y-2">
-            <Label>Direccion del redondeo</Label>
-            <Select value={roundingMode}
-              onValueChange={(value) => setRoundingMode(value as PricingRoundingMode)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="Up">Hacia arriba</SelectItem>
-                <SelectItem value="Nearest">Al mas cercano</SelectItem>
-                <SelectItem value="Down">Hacia abajo</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-
-        <Button variant="outline" onClick={preview} disabled={calculate.isPending}>
-          <Calculator className="mr-2 h-4 w-4" />
-          {calculate.isPending ? "Calculando..." : "Calcular resultado"}
-        </Button>
-
-        {calculate.data && <div className="grid items-center gap-3 rounded-2xl border border-primary/20 bg-primary/5 p-5 sm:grid-cols-[1fr_auto_1fr]">
-          <Metric label="Precio sin redondear" value={formatCurrency(calculate.data.unroundedSalePrice)} />
-          <ArrowRight className="hidden h-5 w-5 text-primary sm:block" />
-          <div>
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Precio a publicar</p>
-            <p className="text-2xl font-semibold text-primary">{formatCurrency(calculate.data.roundedSalePrice)}</p>
-            <p className="text-sm text-muted-foreground">Margen efectivo {formatPercent(calculate.data.effectiveMarginPercent)}</p>
-          </div>
-        </div>}
-      </div>}
-      <DialogFooter className="gap-2 sm:justify-between">
-        <div>{canReview && proposal?.status !== "Published" &&
-          <Button variant="ghost" className="text-destructive" onClick={rejectNow}>
-            <XCircle className="mr-2 h-4 w-4" /> Rechazar
-          </Button>}</div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={onClose}>Cerrar</Button>
-          {canReview && <Button variant="secondary" onClick={save}>Guardar propuesta</Button>}
-          {canPublish && <Button onClick={publishNow}>
-            <Send className="mr-2 h-4 w-4" /> Publicar precio
-          </Button>}
-        </div>
-      </DialogFooter>
-    </DialogContent>
-  </Dialog>;
+function isPublishable(row: PriceRevisionListItem) {
+  return row.status === "PendingReview" || row.status === "Approved";
 }
 
 function Summary({ icon: Icon, label, value }: {
-  icon: typeof PackageCheck; label: string; value: string;
+  icon: typeof PackageCheck;
+  label: string;
+  value: string;
 }) {
-  return <Card><CardContent className="flex items-center gap-4 p-5">
-    <div className="rounded-xl bg-primary/10 p-3 text-primary"><Icon className="h-5 w-5" /></div>
-    <div><p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="mt-1 font-semibold">{value}</p></div>
+  return <Card><CardContent className="flex items-center gap-3 p-4">
+    <span className="rounded-xl bg-primary/10 p-2 text-primary"><Icon className="h-5 w-5" /></span>
+    <div><p className="text-xs text-muted-foreground">{label}</p><p className="font-semibold">{value}</p></div>
   </CardContent></Card>;
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
-  return <div><p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
-    <p className="mt-1 text-lg font-semibold">{value}</p></div>;
-}
-
-function formatPercent(value: number | null | undefined) {
-  return value === null || value === undefined ? "No calculable" :
-    `${new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 }).format(value)} %`;
-}
-
-function numberOrNull(value: string) {
-  const parsed = Number(value.replace(",", "."));
-  return Number.isFinite(parsed) ? parsed : null;
+function formatPercent(value: number | null) {
+  return value === null ? "Sin definir" : `${new Intl.NumberFormat("es-CO", {
+    maximumFractionDigits: 4,
+  }).format(value)} %`;
 }

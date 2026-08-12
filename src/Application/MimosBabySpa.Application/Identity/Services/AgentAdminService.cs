@@ -22,7 +22,7 @@ public sealed class AgentAdminService : IAgentAdminService
     private readonly IUnitOfWork _unitOfWork;
     private readonly IAuditService _auditService;
     private readonly ICorrelationIdProvider _correlationIdProvider;
-    private readonly IAgentConfigProvider _configProvider;
+    private readonly MimosBabySpa.Application.Services.AgentConfigProviderAccessor _configProvider;
     private readonly ILogger<AgentAdminService> _logger;
 
     public AgentAdminService(
@@ -30,7 +30,7 @@ public sealed class AgentAdminService : IAgentAdminService
         IUnitOfWork unitOfWork,
         IAuditService auditService,
         ICorrelationIdProvider correlationIdProvider,
-        IAgentConfigProvider configProvider,
+        MimosBabySpa.Application.Services.AgentConfigProviderAccessor configProvider,
         ILogger<AgentAdminService> logger)
     {
         _agentRepository = agentRepository;
@@ -246,19 +246,19 @@ public sealed class AgentAdminService : IAgentAdminService
         agent.UpdatedAt = DateTime.UtcNow;
 
         await _agentRepository.UpdateAsync(agent, ct);
-        _configProvider.Invalidate(agentId);
+        _configProvider().Invalidate(agentId);
 
         if (agent.IsActive)
         {
             try
             {
-                await _configProvider.GetConfigForAdminAsync(agentId, ct);
+                await _configProvider().GetConfigForAdminAsync(agentId, ct);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 agent.SettingsJson = oldJson;
                 await _agentRepository.UpdateAsync(agent, ct);
-                _configProvider.Invalidate(agentId);
+                _configProvider().Invalidate(agentId);
                 throw new DomainValidationException(
                     "Settings",
                     $"La configuracion no es valida y no fue aplicada: {exception.Message}");
@@ -295,7 +295,7 @@ public sealed class AgentAdminService : IAgentAdminService
         {
             try
             {
-                await _configProvider.GetConfigForAdminAsync(agentId, ct);
+                await _configProvider().GetConfigForAdminAsync(agentId, ct);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
@@ -308,7 +308,7 @@ public sealed class AgentAdminService : IAgentAdminService
         var oldState = new { agent.IsActive };
         agent.IsActive = request.IsActive;
         await _agentRepository.UpdateAsync(agent, ct);
-        _configProvider.Invalidate(agentId);
+        _configProvider().Invalidate(agentId);
 
         var dto = MapToDto(agent);
         await _auditService.LogAsync("UpdateStatus", nameof(Agent), agentId.ToString(), oldState, new { agent.IsActive }, ct);

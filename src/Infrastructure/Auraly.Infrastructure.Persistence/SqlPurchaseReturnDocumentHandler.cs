@@ -38,6 +38,13 @@ public sealed class SqlPurchaseReturnDocumentHandler(
     {
         const string sql="""
             DECLARE @ManageStock BIT;
+            DECLARE @InventoryFactor DECIMAL(19,6)=1;
+            SELECT @ProductId=l.ParentProductId,@InventoryFactor=l.InventoryFactor
+            FROM dbo.ProductLinks l WITH(UPDLOCK,HOLDLOCK)
+            WHERE l.BusinessId=@BusinessId AND l.ChildProductId=@ProductId AND l.SharesInventory=1 AND l.IsActive=1;
+            SET @Quantity=CAST(@Quantity*@InventoryFactor AS DECIMAL(19,6));
+
+            SET @RecognizedCost=CAST(@RecognizedCost/@InventoryFactor AS DECIMAL(19,6));
             DECLARE @QuantityBefore DECIMAL(19,6);
             DECLARE @AverageBefore DECIMAL(19,6);
             DECLARE @ValueBefore DECIMAL(19,4);

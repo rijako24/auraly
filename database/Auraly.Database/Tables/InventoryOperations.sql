@@ -14,6 +14,7 @@ CREATE TABLE [dbo].[InventoryOperations]
     [PayloadHash] BINARY(32) NULL,
     [OccurredAt] DATETIMEOFFSET(7) NOT NULL,
     [ReasonCode] NVARCHAR(40) NOT NULL,
+    [ReasonDescription] NVARCHAR(120) NOT NULL CONSTRAINT [DF_InventoryOperations_ReasonDescription] DEFAULT (N''),
     [ConversionType] NVARCHAR(16) NULL,
     [CostCenterId] UNIQUEIDENTIFIER NULL,
     [BaseInventorySequence] BIGINT NULL,
@@ -30,7 +31,7 @@ CREATE TABLE [dbo].[InventoryOperations]
     CONSTRAINT [FK_InventoryOperations_Warehouse] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
     CONSTRAINT [FK_InventoryOperations_DestinationWarehouse] FOREIGN KEY ([DestinationWarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
     CONSTRAINT [FK_InventoryOperations_DocumentSeries] FOREIGN KEY ([DocumentSeriesId]) REFERENCES [dbo].[DocumentSeries] ([DocumentSeriesId]),
-    CONSTRAINT [CK_InventoryOperations_Type] CHECK ([DocumentType] IN (N'StockCount',N'InventoryAdjustment',N'WarehouseTransfer',N'ProductConversion')),
+    CONSTRAINT [CK_InventoryOperations_Type] CHECK ([DocumentType] IN (N'StockCount',N'InventoryAdjustment',N'WarehouseTransfer',N'ProductConversion',N'Damage')),
     CONSTRAINT [CK_InventoryOperations_Status] CHECK ([Status] IN (N'Draft',N'Accepted',N'Processed')),
     CONSTRAINT [CK_InventoryOperations_Transfer] CHECK (([DocumentType]=N'WarehouseTransfer' AND [DestinationWarehouseId] IS NOT NULL AND [DestinationWarehouseId]<>[WarehouseId]) OR ([DocumentType]<>N'WarehouseTransfer' AND [DestinationWarehouseId] IS NULL)),
     CONSTRAINT [CK_InventoryOperations_CountBase] CHECK (([DocumentType]=N'StockCount' AND [BaseInventorySequence] IS NOT NULL) OR ([DocumentType]<>N'StockCount' AND [BaseInventorySequence] IS NULL)),
@@ -66,7 +67,7 @@ CREATE TABLE [dbo].[InventoryOperationLines]
     CONSTRAINT [FK_InventoryOperationLines_Operation] FOREIGN KEY ([InventoryOperationId]) REFERENCES [dbo].[InventoryOperations] ([InventoryOperationId]),
     CONSTRAINT [FK_InventoryOperationLines_Product] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
     CONSTRAINT [CK_InventoryOperationLines_Line] CHECK ([LineNumber]>0),
-    CONSTRAINT [CK_InventoryOperationLines_Direction] CHECK ([Direction] IN (N'COUNT',N'ADJUSTMENT',N'TRANSFER',N'INPUT',N'OUTPUT')),
+    CONSTRAINT [CK_InventoryOperationLines_Direction] CHECK ([Direction] IN (N'COUNT',N'ADJUSTMENT',N'TRANSFER',N'INPUT',N'OUTPUT',N'DAMAGE')),
     CONSTRAINT [CK_InventoryOperationLines_Cost] CHECK ([ExplicitUnitCost] IS NULL OR [ExplicitUnitCost]>=0),
     CONSTRAINT [CK_InventoryOperationLines_Weight] CHECK ([AllocationWeight] IS NULL OR [AllocationWeight]>0)
 );

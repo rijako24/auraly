@@ -99,15 +99,17 @@ public static class OnlineSalesReceiptMapper
         string fiscalStatus)
     {
         ArgumentNullException.ThrowIfNull(request);
+        var snapshot = request.CommercialSnapshot;
         var productCodes = request.UblSnapshot?.Lines
             .ToDictionary(line => line.LineNumber, line => line.ProductCode)
             ?? [];
         return new OnlineSalesReceipt(
             request.DocumentId,
+            snapshot.DocumentType,
             request.DocumentNumber.FullNumber,
-            request.FiscalSnapshot.FiscalNumber,
-            request.FiscalSnapshot.IssuedAt,
-            request.FiscalSnapshot.CustomerIdentification,
+            request.FiscalSnapshot?.FiscalNumber,
+            snapshot.IssuedAt,
+            snapshot.CustomerIdentification,
             request.Lines.Select(line => new OnlineSalesReceiptLine(
                 productCodes.GetValueOrDefault(line.LineNumber, string.Empty),
                 line.Description,
@@ -120,11 +122,11 @@ public static class OnlineSalesReceiptMapper
                 payment.MethodCode,
                 payment.Amount,
                 payment.Reference)).ToArray(),
-            request.FiscalSnapshot.UntaxedAmount,
-            request.FiscalSnapshot.TaxAmount,
-            request.FiscalSnapshot.PayableAmount,
-            request.FiscalSnapshot.Cufe,
-            request.FiscalSnapshot.QrPayload,
+            snapshot.UntaxedAmount,
+            snapshot.TaxAmount,
+            snapshot.PayableAmount,
+            request.FiscalSnapshot?.Cufe,
+            request.FiscalSnapshot?.QrPayload,
             fiscalStatus,
             request.UblSnapshot?.Customer.RegistrationName ?? "Consumidor final");
     }

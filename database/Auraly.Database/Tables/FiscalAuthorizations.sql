@@ -9,13 +9,21 @@ CREATE TABLE [dbo].[FiscalAuthorizations]
     [TechnicalKeyVersion] NVARCHAR(64) NOT NULL CONSTRAINT [DF_FiscalAuthorizations_TechnicalKeyVersion] DEFAULT N'v1',
     [ValidFrom] DATE NOT NULL,
     [ValidUntil] DATE NOT NULL,
+    [AuthorizedRangeStart] BIGINT NULL,
+    [AuthorizedRangeEnd] BIGINT NULL,
+    [InitialConsecutive] BIGINT NULL,
     [IsActive] BIT NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     CONSTRAINT [PK_FiscalAuthorizations] PRIMARY KEY CLUSTERED ([FiscalAuthorizationId]),
     CONSTRAINT [FK_FiscalAuthorizations_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [UQ_FiscalAuthorizations_Business_Number] UNIQUE ([BusinessId], [AuthorizationNumber]),
     CONSTRAINT [CK_FiscalAuthorizations_Environment] CHECK ([Environment] IN (1, 2)),
-    CONSTRAINT [CK_FiscalAuthorizations_Validity] CHECK ([ValidUntil] >= [ValidFrom])
+    CONSTRAINT [CK_FiscalAuthorizations_Validity] CHECK ([ValidUntil] >= [ValidFrom]),
+    CONSTRAINT [CK_FiscalAuthorizations_Range] CHECK (
+        ([AuthorizedRangeStart] IS NULL AND [AuthorizedRangeEnd] IS NULL AND [InitialConsecutive] IS NULL)
+        OR ([AuthorizedRangeStart] > 0
+            AND [AuthorizedRangeEnd] >= [AuthorizedRangeStart]
+            AND [InitialConsecutive] BETWEEN [AuthorizedRangeStart] AND [AuthorizedRangeEnd]))
 );
 
 GO

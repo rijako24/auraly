@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import {
   AlertTriangle,
@@ -23,10 +23,12 @@ import {
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
+import { authApi } from "@/services/api/auth";
 import { OrdersWorkspace } from "@/components/orders/orders-workspace";
 import { SalesReturnWorkspace } from "@/components/returns/sales-return-workspace";
 import {
   PosCatalogProduct,
+  type PosSaleDocumentType,
   PosCustomer,
   type PosCreateCustomerInput,
   PosDraft,
@@ -36,12 +38,15 @@ import {
   PosEdgeClient,
   PosEdgeError,
   type PosClient,
+  type PosSensitiveAuthorization,
   readEdgeTokenFromLaunch,
   readEdgeUserSession,
 } from "@/services/pos/pos-edge-client";
 import { loadSalesWorkspaceBootstrap } from "@/services/pos/online-pos-bootstrap";
 import {
   forgetSalesWorkspace,
+  recalledOnlinePosClient,
+  rememberOnlinePosClient,
   OnlinePosClient,
   type SalesWorkspaceOption,
   rememberedSalesWorkspaceKey,
@@ -54,6 +59,7 @@ import {
 } from "@/services/pos/pos-enrollment";
 import { PosConfirmDialog } from "./pos-confirm-dialog";
 import { PosCustomerSearchDialog } from "./pos-customer-search-dialog";
+import { PosDocumentTypeDialog } from "./pos-document-type-dialog";
 import { PosDiscountDialog } from "./pos-discount-dialog";
 import { PosExitMenuButton } from "./pos-exit-menu-button";
 import { PosInvoiceSearchDialog } from "./pos-invoice-search-dialog";
@@ -65,6 +71,13 @@ import {
   type PosPaymentSettlement,
 } from "./pos-payment-settlement";
 import { PosProductSearchDialog } from "./pos-product-search-dialog";
+import { PosSupervisorApprovalDialog } from "./pos-supervisor-approval-dialog";
+import {
+  posApprovalClient,
+  type PosApprovalRequest,
+} from "@/services/pos/pos-approval-client";
+import { calculateRetailUnitPrice } from "./pos-retail-price";
+import { useAuthStore } from "@/stores/auth-store";
 
 
 const money = new Intl.NumberFormat("es-CO", {
@@ -73,17 +86,37 @@ const money = new Intl.NumberFormat("es-CO", {
   maximumFractionDigits: 0,
 });
 
+function describeWorkspaceBootstrapError(caught: unknown): string {
+  if (typeof caught === "object" && caught !== null) {
+    const failure = caught as { message?: unknown; statusCode?: unknown };
+    const message = typeof failure.message === "string" ? failure.message.trim() : "";
+    const statusCode = typeof failure.statusCode === "number" ? failure.statusCode : undefined;
+
+    if (statusCode === 401)
+      return "Tu sesión ya no es válida para Punto de venta. Inicia sesión nuevamente.";
+    if (statusCode === 403)
+      return "Tu usuario no tiene permiso para facturar en esta empresa.";
+    if (message) return message;
+  }
+
+  if (caught instanceof Error && caught.message.trim()) return caught.message;
+  return "No fue posible preparar las sedes y bodegas disponibles.";
+}
+
 export default function PosPage() {
   const scanner = useRef<HTMLInputElement>(null);
   const quantityInputs = useRef(new Map<string, HTMLInputElement>());
+  const lineRows = useRef(new Map<string, HTMLTableRowElement>());
   const skipQuantityBlur = useRef<string | null>(null);
   const [client, setClient] = useState<PosClient | null>(null);
+  const [workspaceChanging, setWorkspaceChanging] = useState(false);
   const [onlineOptions, setOnlineOptions] = useState<SalesWorkspaceOption[]>([]);
   const [onlineTenantName, setOnlineTenantName] = useState("");
   const [onlineUserName, setOnlineUserName] = useState("");
   const [onlineUserId, setOnlineUserId] = useState("");
   const [edgeEnrollmentToken, setEdgeEnrollmentToken] = useState<string | null>(null);
   const [edgeEnrollmentRequired, setEdgeEnrollmentRequired] = useState(false);
+  const [canEnrollOffline, setCanEnrollOffline] = useState(false);
   const [edgeLoginState, setEdgeLoginState] = useState<"preparing" | "required" | null>(null);
   const [edgeLoginError, setEdgeLoginError] = useState<string | null>(null);
   const [setupLoading, setSetupLoading] = useState(true);
@@ -91,15 +124,23 @@ export default function PosPage() {
   const [draft, setDraft] = useState<PosDraft | null>(null);
   const [temporaries, setTemporaries] = useState<PosDraft[]>([]);
   const [scan, setScan] = useState("");
+  const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [edgeReady, setEdgeReady] = useState(false);
   const [serverConnected, setServerConnected] = useState(false);
+  const [synchronization, setSynchronization] = useState({
+    inProgress: false,
+    lastAt: null as string | null,
+    failed: false,
+  });
   const [workstation, setWorkstation] = useState({
-    deviceSeriesCode: "â€”",
+    deviceSeriesCode: "\u2014",
     businessName: "",
     warehouseName: "",
-    userDisplayName: "â€”",
+    userDisplayName: "\u2014",
     userId: null as string | null,
+    workSessionId: null as string | null,
+    deviceId: null as string | null,
   });
   const [returnsOpen, setReturnsOpen] = useState(false);
   const [message, setMessage] = useState("Esperando producto");
@@ -111,7 +152,10 @@ export default function PosPage() {
   const [customerSearchOpen, setCustomerSearchOpen] = useState(false);
   const [discountOpen, setDiscountOpen] = useState(false);
   const [invoiceSearchOpen, setInvoiceSearchOpen] = useState(false);
+  const [documentTypeOpen, setDocumentTypeOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<PosCustomer | null>(null);
+  const [documentType, setDocumentType] = useState<PosSaleDocumentType>("SalesInvoice");
+
   const [sidePanel, setSidePanel] = useState<"temporaries" | "orders">("temporaries");
   const [ordersExpanded, setOrdersExpanded] = useState(false);
   const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
@@ -121,6 +165,12 @@ export default function PosPage() {
     | { kind: "sale" }
     | null
   >(null);
+  const [sensitiveApproval, setSensitiveApproval] = useState<{
+    approval: PosApprovalRequest | null;
+    operationId: string;
+    execute: (authorization: PosSensitiveAuthorization) => Promise<void>;
+  } | null>(null);
+  const [sensitiveApprovalError, setSensitiveApprovalError] = useState<string | null>(null);
   const [lastSettlement, setLastSettlement] = useState<{
     documentId: string;
     documentNumber: string;
@@ -133,10 +183,32 @@ export default function PosPage() {
     selectedLineId && draft?.lines.some((line) => line.lineId === selectedLineId),
   );
   const showCashChange = lastSettlement ? shouldShowCashChange(lastSettlement) : false;
+  // Online sales read the authoritative server and do not depend on POS Edge hydration.
+  // Enrolled/offline workstations still require the local durable service to be ready.
+  const salesReady = client?.mode === "online" ? serverConnected : edgeReady;
 
+  const revealLine = useCallback((lineId: string | null) => {
+    if (!lineId) return;
+    window.requestAnimationFrame(() =>
+      window.requestAnimationFrame(() =>
+        lineRows.current.get(lineId)?.scrollIntoView({
+          block: "end",
+          behavior: "smooth",
+        }),
+      ),
+    );
+  }, []);
   const focusScanner = useCallback(() => {
     window.requestAnimationFrame(() => scanner.current?.focus());
   }, []);
+
+  useEffect(() => {
+    setQuantityDrafts(
+      Object.fromEntries(
+        (draft?.lines ?? []).map((line) => [line.lineId, String(line.quantity)]),
+      ),
+    );
+  }, [draft]);
 
   const refreshTemporaries = useCallback(async () => {
     if (!client) return;
@@ -153,22 +225,37 @@ export default function PosPage() {
       setSetupError(null);
       try {
         const edgeToken = readEdgeTokenFromLaunch();
+        const cachedOnlineClient = recalledOnlinePosClient();
+        let edgeStartupMode: "online" | "enrolled" = "online";
         let requiresEnrollment = false;
+
         if (edgeToken) {
+          if (active) setEdgeEnrollmentToken(edgeToken);
           try {
             const edgeClient = new PosEdgeClient(edgeToken, readEdgeUserSession());
             const health = await edgeClient.health();
-            if (health.status !== "EnrollmentRequired") {
+            edgeStartupMode = health.startupMode;
+            requiresEnrollment = health.status === "EnrollmentRequired";
+            if (active) {
+              setSynchronization({
+                inProgress: health.synchronizationInProgress,
+                lastAt: health.lastSynchronizationAt,
+                failed: health.lastSynchronizationFailed,
+              });
+              setServerConnected(health.serverConnected);
+              setWorkstation({
+                deviceSeriesCode: health.deviceSeriesCode,
+                businessName: health.businessName,
+                warehouseName: health.warehouseName,
+                userDisplayName: health.userDisplayName || "\u2014",
+                userId: health.userId,
+                workSessionId: health.workSessionId ?? null,
+                deviceId: health.deviceId ?? null,
+              });
+            }
+
+            if (!requiresEnrollment && edgeStartupMode === "enrolled") {
               if (active) {
-                setEdgeEnrollmentToken(edgeToken);
-                setServerConnected(health.serverConnected);
-                setWorkstation({
-                  deviceSeriesCode: health.deviceSeriesCode,
-                  businessName: health.businessName,
-                  warehouseName: health.warehouseName,
-                  userDisplayName: health.userDisplayName || "â€”",
-                  userId: health.userId,
-                });
                 setEdgeLoginState(
                   health.status === "IdentitySynchronizing"
                     ? "preparing"
@@ -180,19 +267,24 @@ export default function PosPage() {
               }
               return;
             }
-            requiresEnrollment = true;
-            if (active) setEdgeEnrollmentToken(edgeToken);
           } catch {
-            // If the host is absent, the connected web POS remains available.
+            // The installed app remains usable online when the local service is restarting.
           }
         }
+
+        if (cachedOnlineClient) {
+          if (active) {
+            setClient(cachedOnlineClient);
+            setSetupLoading(false);
+          }
+        }
+
         const serverBootstrap = await loadSalesWorkspaceBootstrap();
         if (!active) return;
-        setEdgeEnrollmentRequired(
-          requiresEnrollment && serverBootstrap.canEnrollPosDevice,
-        );
-        const displayName =
-          serverBootstrap.userDisplayName.trim() || "Cajero";
+        setEdgeEnrollmentRequired(Boolean(edgeToken));
+        setCanEnrollOffline(serverBootstrap.canEnrollPosDevice);
+        const displayName = serverBootstrap.userDisplayName.trim() || "Cajero";
+        window.localStorage.setItem("selected_tenant_id", serverBootstrap.tenantId);
         setOnlineTenantName(serverBootstrap.tenantName.trim());
         setOnlineUserName(displayName);
         setOnlineUserId(serverBootstrap.userId);
@@ -202,18 +294,22 @@ export default function PosPage() {
         const selected = available.find(
           (option) => salesWorkspaceKey(option.businessId, option.warehouseId) === remembered,
         );
-        if (selected && !requiresEnrollment) {
+        if (selected && edgeStartupMode === "online") {
           window.localStorage.setItem("selected_business_id", selected.businessId);
           const context = await selectSalesWorkspace(selected);
-          if (active) setClient(new OnlinePosClient(context, serverBootstrap.userId, displayName));
+          if (active) {
+            const onlineClient = new OnlinePosClient(
+              context,
+              serverBootstrap.userId,
+              displayName,
+            );
+            rememberOnlinePosClient(onlineClient);
+            setClient(onlineClient);
+          }
         }
       } catch (caught) {
         if (!active) return;
-        setSetupError(
-          caught instanceof Error
-            ? caught.message
-            : "No fue posible preparar las sedes y bodegas disponibles.",
-        );
+        setSetupError(describeWorkspaceBootstrapError(caught));
       } finally {
         if (active) setSetupLoading(false);
       }
@@ -237,13 +333,20 @@ export default function PosPage() {
       try {
         const health = await client.health();
         if (active) {
+          setSynchronization({
+            inProgress: health.synchronizationInProgress,
+            lastAt: health.lastSynchronizationAt,
+            failed: health.lastSynchronizationFailed,
+          });
           setServerConnected(health.serverConnected);
           setWorkstation({
             deviceSeriesCode: health.deviceSeriesCode,
             businessName: health.businessName,
             warehouseName: health.warehouseName,
-            userDisplayName: health.userDisplayName || "â€”",
+            userDisplayName: health.userDisplayName || "\u2014",
             userId: health.userId,
+            workSessionId: health.workSessionId ?? null,
+            deviceId: health.deviceId ?? null,
           });
         }
         if (
@@ -262,7 +365,7 @@ export default function PosPage() {
           if (active) {
             setEdgeReady(false);
             setEdgeLoginState(null);
-            setMessage("Sincronizando catÃ¡logo inicialâ€¦");
+            setMessage("Sincronizando catálogo inicial…");
           }
           return;
         }
@@ -271,7 +374,7 @@ export default function PosPage() {
           const [current, pending, numbers] = await Promise.all([
             client.activeDraft(),
             client.temporaries(),
-            client.nextNumbers(),
+            client.nextNumbers(documentType),
           ]);
           if (!active) return;
           setDraft(current);
@@ -301,9 +404,9 @@ export default function PosPage() {
     };
 
     void connect();
-    const interval =
-      client.mode === "edge"
-        ? window.setInterval(() => void connect(), 3_000)
+    const stopLiveState =
+      client instanceof PosEdgeClient
+        ? client.watchLocalState(() => void connect())
         : null;
     const handleOnline = () => void connect();
     const handleOffline = () => {
@@ -316,16 +419,26 @@ export default function PosPage() {
     window.addEventListener("offline", handleOffline);
     return () => {
       active = false;
-      if (interval !== null) window.clearInterval(interval);
+      stopLiveState?.();
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
-  }, [client, focusScanner]);
+  }, [client, documentType, focusScanner]);
 
 
+  const requestRemoveLine = useCallback((lineId: string) => {
+    const line = draft?.lines.find((candidate) => candidate.lineId === lineId);
+    if (!line || busy) return;
+    setConfirmation({ kind: "line", lineId, productName: line.description });
+  }, [busy, draft]);
+
+  const requestCancelSale = useCallback(() => {
+    if (!draft?.lines.length || busy) return;
+    setConfirmation({ kind: "sale" });
+  }, [busy, draft]);
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
-      if (invoiceSearchOpen || returnsOpen) return;
+      if (invoiceSearchOpen || returnsOpen || documentTypeOpen) return;
       if (
         event.ctrlKey &&
         event.key === "F6" &&
@@ -458,12 +571,15 @@ export default function PosPage() {
     confirmation,
     customerSearchOpen,
     discountOpen,
+    documentTypeOpen,
     invoiceSearchOpen,
-    draft?.lines.length,
+    draft,
     serverConnected,
     hasSelectedLine,
     paymentOpen,
     productSearchOpen,
+    requestCancelSale,
+    requestRemoveLine,
     selectedLineId,
     temporaryOpen,
   ]);
@@ -475,7 +591,7 @@ export default function PosPage() {
 
   async function captureValue(value: string): Promise<boolean> {
     if (!client || !value || busy) return false;
-    if (!edgeReady) {
+    if (!salesReady) {
       setError(
         client.mode === "online"
           ? "No hay conexi\u00f3n con Auraly. La venta en l\u00ednea requiere conexi\u00f3n con el servidor."
@@ -493,10 +609,16 @@ export default function PosPage() {
       if (result.status === "Added" && result.draft) {
         setDraft(result.draft);
         setSelectedLineId(result.draft.lines.at(-1)?.lineId ?? null);
+        revealLine(result.draft.lines.at(-1)?.lineId ?? null);
         setMessage(`${result.draft.lines.at(-1)?.description ?? "Producto"} agregado`);
         if (startsNewSale) setLastSettlement(null);
         setScan("");
         return true;
+      }
+      if (result.status === "NotFound") {
+        setScan("");
+        setError(`No encontramos un producto con el código "${value}".`);
+        setMessage("Producto no encontrado");
       }
       return false;
     } catch (caught) {
@@ -522,6 +644,11 @@ export default function PosPage() {
       setMessage("Cantidad actualizada");
     } catch (caught) {
       showError(caught);
+      const confirmed = draft.lines.find((line) => line.lineId === lineId);
+      if (confirmed)
+        setQuantityDrafts((current) => ({
+          ...current, [lineId]: String(confirmed.quantity),
+        }));
     } finally {
       setBusy(false);
       if (focusAfter) focusScanner();
@@ -544,8 +671,9 @@ export default function PosPage() {
     if (currentLine && Number.isFinite(value) && value > 0 && value !== currentLine.quantity) {
       await changeQuantity(lineId, value, false);
     } else if (currentLine && (!Number.isFinite(value) || value <= 0)) {
-      const input = quantityInputs.current.get(lineId);
-      if (input) input.value = String(currentLine.quantity);
+      setQuantityDrafts((current) => ({
+        ...current, [lineId]: String(currentLine.quantity),
+      }));
     }
 
     window.requestAnimationFrame(() => {
@@ -567,14 +695,106 @@ export default function PosPage() {
     });
   }
 
+  function isApprovalRequired(caught: unknown) {
+    return caught instanceof PosEdgeError &&
+      (caught.code === "ApprovalRequired" || caught.status === 428 ||
+        caught.message.toLocaleLowerCase("es").includes("requiere aprobaci"));
+  }
+
+  async function executeSensitive(
+    permissionResource: string,
+    lineId: string | null,
+    context: Record<string, unknown>,
+    execute: (authorization: PosSensitiveAuthorization) => Promise<void>,
+  ) {
+    const operationId = crypto.randomUUID();
+    try {
+      await execute({ operationId });
+    } catch (caught) {
+      if (!isApprovalRequired(caught)) throw caught;
+      let approval: PosApprovalRequest | null = null;
+      const activeClient = client;
+      if (serverConnected && activeClient) {
+        const businessId = window.localStorage.getItem("selected_business_id");
+        if (!businessId || !draft)
+          throw new Error("No fue posible identificar el negocio de esta venta.");
+        approval = await activeClient.createApproval({
+          businessId,
+          deviceId: activeClient.mode === "edge" ? workstation.deviceId : null,
+          workSessionId: activeClient.mode === "edge" ? workstation.workSessionId : null,
+          draftId: draft.draftId.value,
+          lineId,
+          permissionResource,
+          contextJson: JSON.stringify(context),
+        });
+      }
+      setSensitiveApprovalError(null);
+      setSensitiveApproval({ approval, operationId, execute });
+    }
+  }
+
+  async function completeRemoteApproval(approvalRequestId: string) {
+    if (!sensitiveApproval) return;
+    setBusy(true);
+    setSensitiveApprovalError(null);
+    try {
+      await sensitiveApproval.execute({
+        operationId: sensitiveApproval.operationId,
+        approvalRequestId,
+      });
+      setSensitiveApproval(null);
+    } catch (caught) {
+      setSensitiveApprovalError(caught instanceof Error ? caught.message : "No fue posible aplicar la acción autorizada.");
+    } finally {
+      setBusy(false);
+      focusScanner();
+    }
+  }
+
+  async function completeLocalApproval(secret: string) {
+    if (!sensitiveApproval) return;
+    setBusy(true);
+    setSensitiveApprovalError(null);
+    try {
+      if (client?.mode === "online") {
+        let approval = sensitiveApproval.approval;
+        if (!approval) throw new Error("La solicitud de aprobación no está disponible.");
+        await posApprovalClient.authorizeLocally(approval.approvalRequestId, secret);
+        await sensitiveApproval.execute({
+          operationId: sensitiveApproval.operationId,
+          approvalRequestId: approval.approvalRequestId,
+        });
+      } else {
+        await sensitiveApproval.execute({
+          operationId: sensitiveApproval.operationId,
+          supervisorSecret: secret,
+        });
+      }
+      setSensitiveApproval(null);
+    } catch (caught) {
+      setSensitiveApprovalError(caught instanceof Error ? caught.message : "La credencial no pudo autorizar la acción.");
+    } finally {
+      setBusy(false);
+      focusScanner();
+    }
+  }
+
   async function removeLine(lineId: string) {
     if (!client || !draft) return;
     setBusy(true);
     try {
-      const updated = await client.removeLine(draft.draftId.value, lineId);
-      setDraft(updated);
-      setSelectedLineId(updated.lines.at(-1)?.lineId ?? null);
-      setMessage("Producto retirado");
+      const line = draft.lines.find((candidate) => candidate.lineId === lineId);
+      await executeSensitive(
+        "sales.lines.remove",
+        lineId,
+        { action: "RemoveLine", product: line?.description, quantity: line?.quantity },
+        async (authorization) => {
+          const updated = await client.removeLine(draft.draftId.value, lineId, authorization);
+          setDraft(updated);
+          setSelectedLineId(updated.lines.at(-1)?.lineId ?? null);
+          setMessage("Producto retirado");
+        },
+      );
     } catch (caught) {
       showError(caught);
     } finally {
@@ -583,28 +803,24 @@ export default function PosPage() {
     }
   }
 
-  function requestRemoveLine(lineId: string) {
-    const line = draft?.lines.find((candidate) => candidate.lineId === lineId);
-    if (!line || busy) return;
-    setConfirmation({ kind: "line", lineId, productName: line.description });
-  }
-
-  function requestCancelSale() {
-    if (!draft?.lines.length || busy) return;
-    setConfirmation({ kind: "sale" });
-  }
-
   async function cancelSale() {
     if (!client || !draft?.lines.length || busy) return;
     setBusy(true);
     setError(null);
     try {
-      const next = await client.cancelDraft(draft.draftId.value);
-      setDraft(next);
-      setSelectedLineId(null);
-      setSelectedCustomer(null);
-      setScan("");
-      setMessage("Venta reiniciada. Nueva venta lista.");
+      await executeSensitive(
+        "sales.drafts.restart",
+        null,
+        { action: "RestartSale", lineCount: draft.lines.length, total: draft.payableAmount },
+        async (authorization) => {
+          const next = await client.cancelDraft(draft.draftId.value, authorization);
+          setDraft(next);
+          setSelectedLineId(null);
+          setSelectedCustomer(null);
+          setScan("");
+          setMessage("Venta reiniciada. Nueva venta lista.");
+        },
+      );
     } catch (caught) {
       showError(caught);
     } finally {
@@ -618,9 +834,18 @@ export default function PosPage() {
     setBusy(true);
     setError(null);
     try {
-      setDraft(await client.setDiscount(draft.draftId.value, selectedLineId, discount));
-      setDiscountOpen(false);
-      setMessage(discount > 0 ? "Descuento aplicado" : "Descuento retirado");
+      const line = draft.lines.find((candidate) => candidate.lineId === selectedLineId);
+      await executeSensitive(
+        "sales.discount",
+        selectedLineId,
+        { action: "Discount", product: line?.description, discount },
+        async (authorization) => {
+          setDraft(await client.setDiscount(
+            draft.draftId.value, selectedLineId, discount, authorization));
+          setDiscountOpen(false);
+          setMessage(discount > 0 ? "Descuento aplicado" : "Descuento retirado");
+        },
+      );
     } catch (caught) {
       showError(caught);
     } finally {
@@ -709,6 +934,10 @@ export default function PosPage() {
         "",
       );
       setDraft(await client.activeDraft());
+      setSelectedCustomer(null);
+      setSelectedLineId(null);
+      setScan("");
+      setLastSettlement(null);
       await refreshTemporaries();
       setTemporaryOpen(false);
       setTemporaryName("");
@@ -763,6 +992,34 @@ export default function PosPage() {
     setError(null);
     setPaymentOpen(true);
   }
+  async function changeDocumentType(value: PosSaleDocumentType) {
+    if (!client || busy || draft?.lines.length) return;
+    if (value === documentType) {
+      setDocumentTypeOpen(false);
+      focusScanner();
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      const numbers = await client.nextNumbers(value);
+      setDocumentType(value);
+      setNextNumber(numbers?.document ?? null);
+      setDocumentTypeOpen(false);
+      setMessage(
+        value === "SalesInvoice"
+          ? "Factura electrónica seleccionada"
+          : "Comprobante de venta seleccionado",
+      );
+    } catch (caught) {
+      showError(caught);
+    } finally {
+      setBusy(false);
+      focusScanner();
+    }
+  }
+
 
   async function completeSale(
     payments: PosPaymentInput[],
@@ -776,6 +1033,7 @@ export default function PosPage() {
         draft.draftId.value,
         selectedCustomer?.identification ?? null,
         payments,
+        documentType,
       );
       setDraft(result.nextDraft);
       setNextNumber(result.nextDocumentNumber);
@@ -792,12 +1050,14 @@ export default function PosPage() {
       setPaymentOpen(false);
       const issuedLabel =
         result.printPreviewOpened === false
-          ? "emitida. El navegador bloqueÃ³ la vista previa; puedes reimprimirla con F6"
+          ? "emitida. El navegador bloqueó la vista previa; puedes reimprimirla con F6"
           : "emitida e impresa";
       setMessage(
         settlement.change > 0
           ? `${result.issuedSale.documentNumber} ${issuedLabel}. Entregar ${money.format(settlement.change)} de cambio. Nueva venta lista.`
-          : `${result.issuedSale.documentNumber} ${issuedLabel} (DIAN ${result.issuedSale.fiscalNumber}). Pago registrado. Nueva venta lista.`,
+          : documentType === "SalesInvoice"
+            ? `${result.issuedSale.documentNumber} ${issuedLabel} (DIAN ${result.issuedSale.fiscalNumber}). Pago registrado. Nueva venta lista.`
+            : `${result.issuedSale.documentNumber} ${issuedLabel}. Pago registrado. Nueva venta lista.`,
       );
     } catch (caught) {
       showError(caught);
@@ -863,15 +1123,64 @@ export default function PosPage() {
   );
 
   async function selectSearchProduct(product: PosCatalogProduct) {
-    const added = await captureValue(product.productCode);
-    if (added) setProductSearchOpen(false);
+    setProductSearchOpen(false);
+    const added = await captureSelectedProduct(product);
+    if (!added) setProductSearchOpen(true);
     return added;
   }
 
+  async function synchronizeNow() {
+    if (!client || client.mode !== "edge" || synchronization.inProgress) return;
+    setSynchronization((current) => ({ ...current, inProgress: true, failed: false }));
+    try {
+      await client.synchronizeNow();
+      setMessage("Auraly está actualizando los datos de esta estación.");
+    } catch {
+      setSynchronization((current) => ({ ...current, inProgress: false, failed: true }));
+      setMessage("No fue posible iniciar la actualización. Puedes seguir facturando con los datos locales.");
+    }
+  }
+
+  const synchronizationTitle = synchronization.inProgress
+    ? "Sincronizando datos locales"
+    : synchronization.failed
+      ? "La última sincronización falló. Haz clic para reintentar."
+      : synchronization.lastAt
+        ? `Última sincronización: ${new Date(synchronization.lastAt).toLocaleString("es-CO")}`
+        : "Sincronización local pendiente";
+
+  async function captureSelectedProduct(
+    product: PosCatalogProduct,
+  ): Promise<boolean> {
+    if (!client || busy) return false;
+    setBusy(true);
+    setError(null);
+    try {
+      const startsNewSale = !draft?.lines.length;
+      const result = await client.captureSelectedProduct(
+        product,
+        draft?.customerId ?? null,
+      );
+      if (result.status !== "Added" || !result.draft) return false;
+      setDraft(result.draft);
+      setSelectedLineId(result.draft.lines.at(-1)?.lineId ?? null);
+        revealLine(result.draft.lines.at(-1)?.lineId ?? null);
+      setMessage(`${result.draft.lines.at(-1)?.description ?? product.name} agregado`);
+      if (startsNewSale) setLastSettlement(null);
+      setScan("");
+      return true;
+    } catch (caught) {
+      showError(caught);
+      return false;
+    } finally {
+      setBusy(false);
+      focusScanner();
+    }
+  }
   function openOrders() {
     if (!serverConnected) {
       setError(null);
-      setMessage("Los pedidos se consultan en lÃ­nea. Auraly Server no estÃ¡ disponible.");
+      setMessage("Los pedidos se consultan en línea. Auraly Server no está disponible.");
       focusScanner();
       return;
     }
@@ -879,7 +1188,7 @@ export default function PosPage() {
   }
 
   async function recoverPosOrder(orderId: string) {
-    if (!client) throw new Error("El punto de venta no estÃ¡ disponible.");
+    if (!client) throw new Error("El punto de venta no está disponible.");
     const recovered = await client.recoverOrder(orderId);
     setDraft(recovered);
     setSelectedLineId(recovered.lines[0]?.lineId ?? null);
@@ -893,7 +1202,7 @@ export default function PosPage() {
     orderIds: string[],
     paymentMethodCode: string,
   ) {
-    if (!client) throw new Error("El punto de venta no estÃ¡ disponible.");
+    if (!client) throw new Error("El punto de venta no está disponible.");
     const result = await client.invoiceOrders(orderIds, paymentMethodCode);
     setMessage(
       result.completedCount +
@@ -907,12 +1216,15 @@ export default function PosPage() {
 
   function showError(caught: unknown) {
     const status = caught instanceof PosEdgeError ? caught.status : 0;
-    if (!(caught instanceof PosEdgeError) && client?.mode === "online") {
+    const onlineTransportFailure = client?.mode === "online" && caught instanceof TypeError;
+    if (onlineTransportFailure) {
       setEdgeReady(false);
       setServerConnected(false);
     }
     const text =
-      client?.mode === "online" && caught instanceof PosEdgeError
+      onlineTransportFailure
+        ? "No hay conexi\\u00f3n con Auraly. La venta en l\\u00ednea requiere conexi\\u00f3n con el servidor."
+        : client?.mode === "online" && caught instanceof PosEdgeError
         ? caught.message
         :
       status === 409 &&
@@ -920,13 +1232,13 @@ export default function PosPage() {
       caught.message.includes("pendiente de imprimir")
         ? caught.message
         : status === 404
-        ? "Producto no encontrado en el catÃ¡logo local"
+        ? "Producto no encontrado en el catálogo local"
         : status === 409
-          ? "La cantidad solicitada no estÃ¡ disponible"
+          ? "La cantidad solicitada no está disponible"
           : status === 503 && caught instanceof PosEdgeError && caught.message.includes("tirilla")
             ? "La factura fue emitida, pero la tirilla no pudo imprimirse. Reintenta sin modificar la venta."
             : status === 503
-            ? "La bodega exige validar inventario y no hay conexiÃ³n"
+            ? "La bodega exige validar inventario y no hay conexión"
             : "No fue posible acceder a los servicios locales del equipo";
     setError(text);
     setMessage("Revisa la novedad");
@@ -934,10 +1246,43 @@ export default function PosPage() {
 
   async function activateOnline(option: SalesWorkspaceOption) {
     setSetupError(null);
+    const requestedWorkspace = salesWorkspaceKey(option.businessId, option.warehouseId);
+    if (
+      workspaceChanging &&
+      client?.mode === "online" &&
+      rememberedSalesWorkspaceKey() === requestedWorkspace
+    ) {
+      setWorkspaceChanging(false);
+      focusScanner();
+      return;
+    }
     try {
       window.localStorage.setItem("selected_business_id", option.businessId);
       const context = await selectSalesWorkspace(option);
-      setClient(new OnlinePosClient(context, onlineUserId, onlineUserName));
+      if (edgeEnrollmentToken) {
+        await new PosEdgeClient(edgeEnrollmentToken).setStartupMode("online");
+      }
+      const onlineClient = new OnlinePosClient(context, onlineUserId, onlineUserName);
+      rememberOnlinePosClient(onlineClient);
+      setDraft(null);
+      setTemporaries([]);
+      setSelectedCustomer(null);
+      setSelectedLineId(null);
+      setNextNumber(null);
+      setLastSettlement(null);
+      setScan("");
+      setWorkstation({
+        deviceSeriesCode: "\u2014",
+        businessName: context.businessName,
+        warehouseName: context.warehouseName,
+        userDisplayName: onlineUserName || "—",
+        userId: onlineUserId || null,
+        workSessionId: null,
+        deviceId: null,
+      });
+      setServerConnected(true);
+      setClient(onlineClient);
+      setWorkspaceChanging(false);
     } catch (caught) {
       setSetupError(
         caught instanceof Error
@@ -956,14 +1301,14 @@ export default function PosPage() {
       const authorization = await authorizePosEnrollment(option);
       await redeemPosEnrollment(edgeEnrollmentToken, authorization);
       setSetupError(
-        "ConfiguraciÃ³n protegida. Auraly POS estÃ¡ reiniciando e iniciarÃ¡ la sincronizaciÃ³n automÃ¡tica.",
+        "Equipo enrolado. Estamos descargando usuarios, permisos y catálogo para habilitar el acceso local.",
       );
       window.setTimeout(() => window.location.reload(), 2_500);
     } catch (caught) {
       setSetupError(
         caught instanceof Error
           ? caught.message
-          : "No fue posible enrolar esta estaciÃ³n.",
+          : "No fue posible enrolar esta estación.",
       );
       throw caught;
     } finally {
@@ -983,10 +1328,41 @@ export default function PosPage() {
       }));
       setEdgeLoginState(null);
       setClient(new PosEdgeClient(edgeEnrollmentToken, session.token));
+
+      if (serverConnected) {
+        try {
+          const onlineSession = await authApi.login({ username, password });
+          useAuthStore.getState().setAuth(onlineSession.user);
+        } catch {
+          // Local authentication remains valid when the server cannot create a web session.
+        }
+      }
     } catch (caught) {
       setEdgeLoginError(
-        caught instanceof Error ? caught.message : "No fue posible iniciar sesiÃ³n en este dispositivo.",
+        caught instanceof Error ? caught.message : "No fue posible iniciar sesión en este dispositivo.",
       );
+      throw caught;
+    }
+  }
+
+  async function loginOnlineFromLocal(username: string, password: string) {
+    if (!edgeEnrollmentToken || !serverConnected) {
+      setEdgeLoginError("Necesitas conexión con Auraly para entrar en línea.");
+      return;
+    }
+    setEdgeLoginError(null);
+    try {
+      const onlineSession = await authApi.login({ username, password });
+      useAuthStore.getState().setAuth(onlineSession.user);
+      await new PosEdgeClient(edgeEnrollmentToken).setStartupMode("online");
+      forgetSalesWorkspace();
+      window.location.assign("/dashboard");
+    } catch (caught) {
+      const message =
+        typeof caught === "object" && caught !== null && "message" in caught
+          ? String(caught.message)
+          : "No fue posible iniciar sesión en línea.";
+      setEdgeLoginError(message);
       throw caught;
     }
   }
@@ -1010,17 +1386,46 @@ export default function PosPage() {
     }
   }
 
-  function changeOnlineWorkspace() {
+function changeOnlineWorkspace() {
     if (client?.mode !== "online" || busy) return;
-    forgetSalesWorkspace();
-    setClient(null);
-    setDraft(null);
-    setTemporaries([]);
-    setSelectedCustomer(null);
-    setSelectedLineId(null);
-    setNextNumber(null);
-    setEdgeReady(false);
-    setServerConnected(false);
+    setSetupError(null);
+    setWorkspaceChanging(true);
+  }
+
+  async function switchExecutionMode(mode: "online" | "enrolled") {
+    if (busy || !edgeEnrollmentToken) return;
+    if (mode === "online" && !serverConnected) {
+      setError("Para entrar en línea necesitas conexión con Auraly.");
+      return;
+    }
+    try {
+      await new PosEdgeClient(
+        edgeEnrollmentToken,
+        readEdgeUserSession(),
+      ).setStartupMode(mode);
+      if (mode === "online") {
+        forgetSalesWorkspace();
+        window.location.assign("/dashboard");
+      } else {
+        window.location.reload();
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "No fue posible cambiar el modo de trabajo.");
+    }
+  }
+
+  async function reconfigureEdge() {
+    if (busy || !serverConnected || !edgeEnrollmentToken) return;
+    try {
+      await new PosEdgeClient(
+        edgeEnrollmentToken,
+        readEdgeUserSession(),
+      ).setStartupMode("online");
+      forgetSalesWorkspace();
+      window.location.assign("/pos");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "No fue posible abrir la configuración.");
+    }
   }
 
   if (client instanceof PosEdgeClient && edgeLoginState) {
@@ -1033,11 +1438,12 @@ export default function PosPage() {
         preparing={edgeLoginState === "preparing"}
         error={edgeLoginError}
         onLogin={loginLocal}
+        onOnlineLogin={loginOnlineFromLocal}
       />
     );
   }
 
-  if (!client) {
+  if (!client || workspaceChanging) {
     return (
       <PosOnlineSetup
         options={onlineOptions}
@@ -1046,7 +1452,9 @@ export default function PosPage() {
         tenantName={onlineTenantName || "Auraly"}
         userDisplayName={onlineUserName || "usuario"}
         onSelect={activateOnline}
-        edgeCapable={edgeEnrollmentRequired}
+                onCancel={workspaceChanging ? () => setWorkspaceChanging(false) : undefined}
+edgeCapable={edgeEnrollmentRequired}
+        canEnrollOffline={canEnrollOffline}
         onEnroll={enrollOffline}
       />
     );
@@ -1059,32 +1467,104 @@ export default function PosPage() {
           <PosExitMenuButton />
           <StatusChip
             ok={serverConnected}
-            label={serverConnected ? "Conectado con Auraly" : "Modo sin conexiÃ³n"}
+            label={serverConnected ? "Conectado con Auraly" : "Modo sin conexión"}
             network
           />
+          {client.mode === "edge" && (
+            <button
+              type="button"
+              onClick={() => void synchronizeNow()}
+              disabled={synchronization.inProgress}
+              title={synchronizationTitle}
+              aria-label={synchronizationTitle}
+              className={`flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition ${synchronization.failed ? "border-amber-300/40 text-amber-200" : "border-white/10 text-auraly-secondary hover:bg-white/10 hover:text-white"}`}
+            >
+              <RotateCcw className={`h-3.5 w-3.5 ${synchronization.inProgress ? "animate-spin" : ""}`} />
+              <span>{synchronization.inProgress ? "Sincronizando" : synchronization.failed ? "Reintentar sync" : "Datos al día"}</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setDocumentTypeOpen(true)}
+            disabled={busy || Boolean(draft?.lines.length)}
+            title={
+              draft?.lines.length
+                ? "Finaliza o reinicia la venta para cambiar el tipo de documento"
+                : "Cambiar tipo de documento"
+            }
+            aria-label={`Tipo de documento: ${
+              documentType === "SalesInvoice"
+                ? "Factura electrónica"
+                : "Comprobante de venta"
+            }. Cambiar tipo de documento`}
+            className="flex h-9 items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 text-xs font-semibold text-auraly-text outline-none transition hover:border-auraly-accent/60 hover:bg-white/10 focus:ring-2 focus:ring-auraly-accent/35 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <ClipboardList className="h-4 w-4 text-auraly-light" />
+            <span className="hidden sm:inline">
+              {documentType === "SalesInvoice"
+                ? "Factura electrónica"
+                : "Comprobante de venta"}
+            </span>
+          </button>
         </div>
         <div className="flex min-w-0 items-center gap-3 text-sm">
-          <span className="min-w-0 truncate font-bold tracking-tight">{workstation.businessName || "Sede"} Â· {workstation.warehouseName || "Bodega"}</span>
+          <span className="min-w-0 truncate font-bold tracking-tight">{workstation.businessName || "Sede"} · {workstation.warehouseName || "Bodega"}</span>
           {client.mode === "online" && (
             <button
               type="button"
               onClick={changeOnlineWorkspace}
               disabled={busy}
               title="Cambiar sede y bodega"
-              className="grid h-8 w-8 place-items-center rounded-lg border border-white/10 text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
+              className="flex h-8 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-xs font-semibold text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
               aria-label="Cambiar sede y bodega"
             >
               <Settings2 className="h-4 w-4" />
+              <span className="hidden lg:inline">Cambiar ubicación</span>
+            </button>
+          )}
+          {client.mode === "online" && edgeEnrollmentToken && (
+            <button
+              type="button"
+              onClick={() => void switchExecutionMode("enrolled")}
+              disabled={busy}
+              title="Trabajar con el POS preparado para desconexión"
+              className="flex h-8 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-xs font-semibold text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
+            >
+              <WifiOff className="h-4 w-4" />
+              <span className="hidden lg:inline">Modo offline</span>
             </button>
           )}
           {client.mode === "edge" && (
+            <button
+              type="button"
+              onClick={() => void switchExecutionMode("online")}
+              disabled={busy || !serverConnected}
+              title="Cambiar a facturación en línea"
+              className="flex h-8 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-xs font-semibold text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
+            >
+              <Wifi className="h-4 w-4" />
+              <span className="hidden lg:inline">Modo online</span>
+            </button>
+          )}
+          {client.mode === "edge" && serverConnected && (
+            <button
+              type="button"
+              onClick={() => void reconfigureEdge()}
+              disabled={busy}
+              title="Cambiar sede, bodega o volver a enrolar el equipo"
+              className="flex h-8 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-xs font-semibold text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
+            >
+              <Settings2 className="h-4 w-4" />
+              <span className="hidden lg:inline">Configurar equipo</span>
+            </button>
+          )}          {client.mode === "edge" && (
             <button
               type="button"
               onClick={() => void logoutLocal()}
               disabled={busy}
               title="Cambiar cajero"
               className="grid h-8 w-8 place-items-center rounded-lg border border-white/10 text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
-              aria-label="Cerrar sesiÃ³n del cajero"
+              aria-label="Cerrar sesión del cajero"
             >
               <LogOut className="h-4 w-4" />
             </button>
@@ -1109,7 +1589,7 @@ export default function PosPage() {
             >
               <span className="flex items-center gap-2">
                 <Barcode className="h-5 w-5 text-teal-700" />
-                Escanea o escribe un cÃ³digo
+                Escanea o escribe un código
               </span>
               <span className="text-xs font-normal text-slate-500">Enter para agregar</span>
             </label>
@@ -1120,21 +1600,21 @@ export default function PosPage() {
                 value={scan}
                 onChange={(event) => setScan(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Tab" && draft?.lines.length) {
+                  if ((event.key === "ArrowDown" || event.key === "Tab") && draft?.lines.length) {
                     event.preventDefault();
                     focusFirstQuantity();
                   }
                 }}
-                disabled={busy}
+                disabled={busy || !salesReady}
                 autoComplete="off"
                 inputMode="text"
                 className="h-14 min-w-0 flex-1 rounded-xl border-2 border-teal-700/25 bg-slate-50 px-4 text-xl font-semibold tracking-wide outline-none transition focus:border-teal-600 focus:bg-white focus:ring-4 focus:ring-teal-600/10 disabled:opacity-50"
-                placeholder="CÃ³digo de barras, interno o referencia"
+                placeholder="Código de barras, interno o referencia"
                 aria-describedby="capture-state"
               />
               <button
                 type="submit"
-                disabled={!scan.trim() || busy}
+                disabled={!scan.trim() || busy || !salesReady}
                 className="min-w-28 rounded-xl bg-teal-700 px-5 font-semibold text-white transition hover:bg-teal-800 focus:outline-none focus:ring-4 focus:ring-teal-600/20 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {busy ? <Loader2 className="mx-auto animate-spin" /> : "Agregar"}
@@ -1142,7 +1622,7 @@ export default function PosPage() {
               <button
                 type="button"
                 onClick={() => setProductSearchOpen(true)}
-                disabled={busy || !edgeReady}
+                disabled={busy || !salesReady}
                 className="flex min-w-28 items-center justify-center gap-2 rounded-xl border border-teal-700/25 bg-white px-4 font-semibold text-teal-800 transition hover:bg-teal-50 focus:outline-none focus:ring-4 focus:ring-teal-600/15 disabled:opacity-45"
               >
                 <Search className="h-4 w-4" />
@@ -1169,7 +1649,7 @@ export default function PosPage() {
               Acciones de captura
             </p>
             <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:w-auto xl:grid-cols-5">
-              <button type="button" disabled={!edgeReady || busy}
+              <button type="button" disabled={!salesReady || busy}
                 onClick={() => setInvoiceSearchOpen(true)}
                 className="flex h-11 items-center justify-center gap-2 rounded-xl border border-teal-200 bg-teal-50 px-3 text-sm font-semibold text-teal-900 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
                 <Printer className="h-4 w-4" />
@@ -1216,7 +1696,7 @@ export default function PosPage() {
                   <tr>
                     <th className="px-4 py-3">Producto</th>
                     <th className="w-28 px-3 py-3 text-right">Cantidad</th>
-                    <th className="w-36 px-3 py-3 text-right">Precio unitario</th>
+                    <th className="w-36 whitespace-nowrap px-3 py-3 text-right" title="Precio de venta con IVA incluido">Precio venta</th>
                     <th className="w-36 px-3 py-3 text-right">Total</th>
                     <th className="w-16 px-3 py-3" aria-label="Acciones" />
                   </tr>
@@ -1225,7 +1705,20 @@ export default function PosPage() {
                   {draft?.lines.map((line) => (
                     <tr
                       key={line.lineId}
-                      onClick={() => setSelectedLineId(line.lineId)}
+                      ref={(element) => {
+                        if (element) {
+                          lineRows.current.set(line.lineId, element);
+                        } else {
+                          lineRows.current.delete(line.lineId);
+                        }
+                      }}
+                      onClick={() => {
+                        setSelectedLineId(line.lineId);
+                        window.requestAnimationFrame(() => {
+                          quantityInputs.current.get(line.lineId)?.focus();
+                          quantityInputs.current.get(line.lineId)?.select();
+                        });
+                      }}
                       className={`border-t border-slate-100 transition ${
                         selectedLineId === line.lineId
                           ? "bg-teal-50 ring-2 ring-inset ring-teal-600/25"
@@ -1237,25 +1730,24 @@ export default function PosPage() {
                           {line.description}
                         </p>
                         <p className="mt-1 text-xs font-medium text-slate-500">
-                          {line.productCode} Â· {line.unitCode} Â· {priceLabel(line.priceSource)}
+                          {line.productCode} · {line.unitCode} · {priceLabel(line.priceSource)}
                         </p>
                         <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] font-semibold tabular-nums">
                           {line.discount > 0 && (
                             <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-800">
-                              Descuento âˆ’{money.format(line.discount)}
+                              Descuento -{money.format(line.discount)}
                             </span>
                           )}
                           <span
                             className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-sky-800"
                             title={`Impuesto ${line.taxCode}`}
                           >
-                            IVA {line.taxRate}% Â· {money.format(line.tax)}
+                            IVA {line.taxRate}% · {money.format(line.tax)}
                           </span>
                         </div>
                       </td>
                       <td className="px-3 py-2 text-right">
                         <input
-                          key={`${line.lineId}-${line.quantity}`}
                           ref={(element) => {
                             if (element) {
                               quantityInputs.current.set(line.lineId, element);
@@ -1266,22 +1758,27 @@ export default function PosPage() {
                           type="number"
                           min="0.001"
                           step="0.001"
-                          defaultValue={line.quantity}
+                          value={quantityDrafts[line.lineId] ?? String(line.quantity)}
+                          onChange={(event) =>
+                            setQuantityDrafts((current) => ({
+                              ...current, [line.lineId]: event.target.value,
+                            }))}
                           onFocus={() => setSelectedLineId(line.lineId)}
                           onKeyDown={(event) => {
-                            if (event.key === "Enter") {
+                            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                               event.preventDefault();
-                              skipQuantityBlur.current = line.lineId;
-                              const quantity = event.currentTarget.valueAsNumber;
-                              void (async () => {
-                                if (!Number.isFinite(quantity) || quantity <= 0) {
-                                  const input = quantityInputs.current.get(line.lineId);
-                                  if (input) input.value = String(line.quantity);
-                                } else if (quantity !== line.quantity) {
-                                  await changeQuantity(line.lineId, quantity, false);
-                                }
-                                focusScanner();
-                              })();
+                              void navigateFromQuantity(
+                                line.lineId,
+                                event.currentTarget.valueAsNumber,
+                                event.key === "ArrowUp",
+                              );
+                            } else if (event.key === "Enter") {
+                              event.preventDefault();
+                              void navigateFromQuantity(
+                                line.lineId,
+                                event.currentTarget.valueAsNumber,
+                                false,
+                              );
                             } else if (event.key === "Tab") {
                               event.preventDefault();
                               void navigateFromQuantity(
@@ -1298,7 +1795,9 @@ export default function PosPage() {
                             }
                             const quantity = event.currentTarget.valueAsNumber;
                             if (!Number.isFinite(quantity) || quantity <= 0) {
-                              event.currentTarget.value = String(line.quantity);
+                              setQuantityDrafts((current) => ({
+                                ...current, [line.lineId]: String(line.quantity),
+                              }));
                               focusScanner();
                             } else if (quantity !== line.quantity) {
                               void changeQuantity(line.lineId, quantity);
@@ -1311,7 +1810,7 @@ export default function PosPage() {
                         />
                       </td>
                       <td className="px-3 py-3 text-right font-medium tabular-nums text-slate-700">
-                        {money.format(line.unitPrice)}
+                        {money.format(calculateRetailUnitPrice(line.unitPrice, line.taxRate))}
                       </td>
                       <td className="px-3 py-3 text-right text-base font-bold tabular-nums text-slate-950">
                         {money.format(line.total)}
@@ -1338,13 +1837,13 @@ export default function PosPage() {
                 </div>
                 <p className="relative mt-6 text-xl font-bold tracking-tight text-slate-900">Lista para vender</p>
                 <p className="relative mt-1 max-w-md text-sm text-slate-500">
-                  Escanea el primer producto o abre la bÃºsqueda. El lector queda preparado para continuar sin usar el mouse.
+                  Escanea el primer producto o abre la búsqueda. El lector queda preparado para continuar sin usar el mouse.
                 </p>
                 <div className="relative mt-5 flex flex-wrap items-center justify-center gap-2 text-xs font-semibold">
                   <span className="rounded-full border border-teal-200 bg-white px-3 py-1.5 text-teal-800">Lector activo</span>
-                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-700">Buscar producto Â· F2</span>
+                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-700">Buscar producto · F2</span>
                   <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-700">
-                    PrÃ³xima {nextNumber?.isAvailable
+                    Próxima {nextNumber?.isAvailable
                       ? nextNumber.fullNumber
                       : client.mode === "online"
                         ? "al emitir"
@@ -1371,7 +1870,7 @@ export default function PosPage() {
                   </p>
                 )}
                 <p className="mt-0.5 text-xs text-auraly-secondary">
-                  PrÃ³xima: {nextNumber?.isAvailable
+                  Próxima: {nextNumber?.isAvailable
                     ? nextNumber.fullNumber
                     : client.mode === "online"
                       ? "se asigna al emitir"
@@ -1379,12 +1878,44 @@ export default function PosPage() {
                 </p>
               </div>
               <span className="rounded-lg bg-white/10 px-2 py-1 text-xs">
-                {draft?.lines.length ?? 0} lÃ­neas
+                {draft?.lines.length ?? 0} líneas
               </span>
+            <fieldset className="hidden" disabled={busy || Boolean(draft?.lines.length)}>
+              <legend className="mb-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-auraly-secondary">
+                Tipo de documento
+              </legend>
+              <div className="grid grid-cols-2 gap-1 rounded-xl bg-white/10 p-1">
+                {([
+                  ["SalesInvoice", "Factura electrónica"],
+                  ["SalesReceipt", "Comprobante de venta"],
+                ] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={async () => {
+                      setDocumentType(value);
+                      try {
+                        const numbers = await client?.nextNumbers(value);
+                        setNextNumber(numbers?.document ?? null);
+                      } catch {
+                        setNextNumber(null);
+                      }
+                    }}
+                    className={`min-h-9 rounded-lg px-2 text-xs font-semibold transition ${
+                      documentType === value
+                        ? "bg-auraly-accent text-auraly-background shadow-sm"
+                        : "text-auraly-text hover:bg-white/10"
+                    } disabled:cursor-not-allowed disabled:opacity-55`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
             </div>
             <button
               type="button"
-              disabled={!edgeReady || busy}
+              disabled={!salesReady || busy}
               onClick={() => setCustomerSearchOpen(true)}
               className="mb-3 flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-auraly-accent/40 bg-white/5 text-sm font-semibold transition hover:bg-white/10 disabled:opacity-40"
             >
@@ -1454,10 +1985,10 @@ export default function PosPage() {
                 <button type="button" disabled={busy} onClick={() => void reprintLastSale()}
                   className="mx-auto flex h-9 items-center justify-center gap-2 rounded-xl border border-emerald-700/25 bg-white px-4 text-sm font-bold text-emerald-900 hover:bg-emerald-100 disabled:opacity-50">
                   <Printer className="h-4 w-4" />
-                  Reimprimir Ãºltima factura
+                  Reimprimir última factura
                 </button>
                 <p className="mt-1 text-center text-xs text-emerald-700">
-                  El cambio se ocultarÃ¡ al agregar el primer producto.
+                  El cambio se ocultará al agregar el primer producto.
                 </p>
               </div>
             </section>
@@ -1510,7 +2041,7 @@ export default function PosPage() {
               <div className="min-h-0 flex-1 overflow-auto">
                 <div className="mb-3">
                   <p className="font-semibold text-slate-900">Ventas en espera</p>
-                  <p className="text-xs text-slate-500">Pausadas para continuar despuÃ©s</p>
+                  <p className="text-xs text-slate-500">Pausadas para continuar después</p>
                 </div>
                 <div className="space-y-2">
                   {temporaries.map((temporary) => (
@@ -1522,7 +2053,7 @@ export default function PosPage() {
                         <div className="min-w-0">
                           <p className="truncate font-medium">{temporary.name}</p>
                           <p className="mt-0.5 text-xs text-slate-500">
-                            {temporary.reference || "Sin referencia"} Â· {temporary.lines.length} lÃ­neas
+                            {temporary.reference || "Sin referencia"} · {temporary.lines.length} líneas
                           </p>
                         </div>
                         <p className="font-semibold tabular-nums">{money.format(temporary.payableAmount)}</p>
@@ -1666,10 +2197,23 @@ export default function PosPage() {
       {invoiceSearchOpen && client && (
         <PosInvoiceSearchDialog
           busy={busy}
+
           onSearch={searchIssuedSales}
           onReprint={reprintSale}
           onCancel={() => {
             setInvoiceSearchOpen(false);
+            focusScanner();
+          }}
+        />
+      )}
+
+      {documentTypeOpen && (
+        <PosDocumentTypeDialog
+          value={documentType}
+          busy={busy}
+          onSelect={changeDocumentType}
+          onCancel={() => {
+            setDocumentTypeOpen(false);
             focusScanner();
           }}
         />
@@ -1693,24 +2237,40 @@ export default function PosPage() {
         ) : null;
       })()}
 
+      {sensitiveApproval && (
+        <PosSupervisorApprovalDialog
+          approval={sensitiveApproval.approval}
+          allowRemote={serverConnected && Boolean(sensitiveApproval.approval)}
+          busy={busy}
+          error={sensitiveApprovalError}
+          onRemoteApproved={completeRemoteApproval}
+          onLocalSecret={completeLocalApproval}
+          onCancel={() => {
+            setSensitiveApproval(null);
+            setSensitiveApprovalError(null);
+            focusScanner();
+          }}
+        />
+      )}
+
       {confirmation && (
         <PosConfirmDialog
           title={
             confirmation.kind === "line"
-              ? "Â¿Eliminar este producto?"
+              ? "¿Eliminar este producto?"
               : confirmation.kind === "temporary"
-                ? "Â¿Eliminar esta venta en espera?"
-              : "Â¿Reiniciar toda la venta?"
+                ? "¿Eliminar esta venta en espera?"
+              : "¿Reiniciar toda la venta?"
           }
           description={
             confirmation.kind === "line"
-              ? `${confirmation.productName} se retirarÃ¡ de la venta actual.`
+              ? `${confirmation.productName} se retirará de la venta actual.`
               : confirmation.kind === "temporary"
-                ? `${confirmation.name} se eliminarÃ¡ definitivamente de este dispositivo.`
-              : "Se eliminarÃ¡n todos los productos capturados y se abrirÃ¡ una venta limpia."
+                ? `${confirmation.name} se eliminará definitivamente de este dispositivo.`
+              : "Se eliminarán todos los productos capturados y se abrirá una venta limpia."
           }
           confirmLabel={
-            confirmation.kind === "sale" ? "SÃ­, reiniciar" : "SÃ­, eliminar"
+            confirmation.kind === "sale" ? "Sí, reiniciar" : "Sí, eliminar"
           }
           busy={busy}
           onConfirm={confirmDestructiveAction}

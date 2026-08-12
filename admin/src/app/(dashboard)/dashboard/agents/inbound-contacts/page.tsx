@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useCallback, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Edit, MoreHorizontal, Plus, PowerOff, RotateCcw } from "lucide-react";
 
@@ -114,7 +114,7 @@ export default function InboundContactsPage() {
   const deleteContact = useDeleteBusinessInboundContact();
 
   const contacts = contactsQuery.data ?? [];
-  const agents = agentsQuery.data ?? [];
+  const agents = useMemo(() => agentsQuery.data ?? [], [agentsQuery.data]);
   const inboundAgents = useMemo(
     () => agents.filter((agent) => agent.kind !== "customer"),
     [agents]
@@ -166,7 +166,7 @@ export default function InboundContactsPage() {
     }
   };
 
-  const toggleActive = async (contact: BusinessInboundContact) => {
+  const toggleActive = useCallback(async (contact: BusinessInboundContact) => {
     if (contact.isActive) {
       await deleteContact.mutateAsync(contact.businessInboundContactId);
       return;
@@ -176,7 +176,7 @@ export default function InboundContactsPage() {
       contactId: contact.businessInboundContactId,
       payload: { isActive: true },
     });
-  };
+  }, [deleteContact, updateContact]);
 
   const columns: ColumnDef<BusinessInboundContact>[] = useMemo(
     () => [
@@ -254,7 +254,7 @@ export default function InboundContactsPage() {
         },
       },
     ],
-    [deleteContact, updateContact]
+    [toggleActive]
   );
 
   if (!selectedBusinessId) {

@@ -39,6 +39,9 @@ CREATE TABLE [dbo].[GoodsReceiptDraftLines]
     [ProductId] UNIQUEIDENTIFIER NOT NULL,
     [DescriptionSnapshot] NVARCHAR(250) NOT NULL,
     [Quantity] DECIMAL(19,6) NOT NULL,
+    [PresentationNameSnapshot] NVARCHAR(80) NOT NULL CONSTRAINT [DF_GoodsReceiptDraftLines_PresentationName] DEFAULT N'Unidad',
+    [PresentationQuantity] DECIMAL(19,6) NOT NULL CONSTRAINT [DF_GoodsReceiptDraftLines_PresentationQuantity] DEFAULT 1,
+    [UnitsPerPresentation] DECIMAL(19,6) NOT NULL CONSTRAINT [DF_GoodsReceiptDraftLines_UnitsPerPresentation] DEFAULT 1,
     [UnitCost] DECIMAL(19,6) NOT NULL,
     [DiscountAmount] DECIMAL(19,4) NOT NULL,
     [TaxCode] NVARCHAR(32) NOT NULL,
@@ -54,6 +57,7 @@ CREATE TABLE [dbo].[GoodsReceiptDraftLines]
     CONSTRAINT [CK_GoodsReceiptDraftLines_Costs] CHECK ([UnitCost] >= 0 AND [DiscountAmount] >= 0),
     CONSTRAINT [CK_GoodsReceiptDraftLines_Tax] CHECK ([TaxRate] BETWEEN 0 AND 100),
     CONSTRAINT [CK_GoodsReceiptDraftLines_Treatment] CHECK ([TaxTreatment] IN (N'DeductibleInputVat',N'CapitalizedCost',N'NotApplicable')),
+    CONSTRAINT [CK_GoodsReceiptDraftLines_Presentation] CHECK ([PresentationQuantity] > 0 AND [UnitsPerPresentation] > 0 AND [Quantity] = [PresentationQuantity] * [UnitsPerPresentation]),
     CONSTRAINT [CK_GoodsReceiptDraftLines_Amounts] CHECK ([NetAmount] >= 0 AND [TaxAmount] >= 0 AND [LineTotal] = [NetAmount] + [TaxAmount])
 );
 GO

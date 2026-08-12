@@ -6,10 +6,25 @@ import type {
   RegisterRequest,
 } from "@/types/api";
 
+export interface AcceptTenantInvitationRequest {
+  token: string;
+  password: string;
+  passwordConfirmation: string;
+}
+
+export interface AcceptTenantInvitationResult {
+  tenantId: string;
+  userId: string;
+  email: string;
+  status: string;
+}
+
 export const authApi = {
   login: (data: LoginRequest) =>
     apiClient.post<AuthBffResponse>("/auth/login", data),
   register: (data: RegisterRequest) =>
     apiClient.post<AuthBffResponse>("/auth/register", data),
+  acceptInvitation: (data: AcceptTenantInvitationRequest) =>
+    apiClient.post<AcceptTenantInvitationResult>("/auth/invitations/accept", data),
   me: () => apiClient.get<AuthUser>("/auth/me"),
 };

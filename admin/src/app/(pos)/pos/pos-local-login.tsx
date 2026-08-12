@@ -11,6 +11,7 @@ type Props = {
   preparing: boolean;
   error: string | null;
   onLogin: (username: string, password: string) => Promise<void>;
+  onOnlineLogin?: (username: string, password: string) => Promise<void>;
 };
 
 export function PosLocalLogin({
@@ -21,11 +22,13 @@ export function PosLocalLogin({
   preparing,
   error,
   onLogin,
+  onOnlineLogin,
 }: Props) {
   const usernameRef = useRef<HTMLInputElement>(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [onlineSubmitting, setOnlineSubmitting] = useState(false);
 
   useEffect(() => {
     if (!preparing) usernameRef.current?.focus();
@@ -40,6 +43,16 @@ export function PosLocalLogin({
       setPassword("");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function submitOnline() {
+    if (!onOnlineLogin || !serverConnected || submitting || onlineSubmitting || !username.trim() || !password) return;
+    setOnlineSubmitting(true);
+    try {
+      await onOnlineLogin(username.trim(), password);
+    } finally {
+      setOnlineSubmitting(false);
     }
   }
 
@@ -129,6 +142,17 @@ export function PosLocalLogin({
               {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
               Entrar a facturación
             </button>
+            {serverConnected && onOnlineLogin && (
+              <button
+                type="button"
+                onClick={() => void submitOnline()}
+                disabled={submitting || onlineSubmitting || !username.trim() || !password}
+                className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-teal-200/25 bg-teal-200/5 text-sm font-bold text-teal-100 transition hover:bg-teal-200/15 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {onlineSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wifi className="h-4 w-4" />}
+                Entrar en línea con estos datos
+              </button>
+            )}
           </div>
         )}
       </form>

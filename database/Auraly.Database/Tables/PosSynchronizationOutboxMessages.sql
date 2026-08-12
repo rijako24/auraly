@@ -18,7 +18,7 @@ CREATE TABLE [dbo].[PosSynchronizationOutboxMessages]
         UNIQUE ([BusinessId], [Stream], [AvailableThroughCursor]),
     CONSTRAINT [CK_PosSynchronizationOutboxMessages_Stream]
         CHECK ([Stream] IN
-            (N'Catalog', N'Customers', N'Security', N'FiscalStatus')),
+            (N'Catalog', N'Customers', N'Security', N'FiscalStatus', N'Approvals')),
     CONSTRAINT [CK_PosSynchronizationOutboxMessages_Cursor]
         CHECK ([AvailableThroughCursor] >= 0)
 );
@@ -27,3 +27,4 @@ GO
 CREATE INDEX [IX_PosSynchronizationOutboxMessages_Pending]
     ON [dbo].[PosSynchronizationOutboxMessages]
         ([BusinessId], [Stream], [PublishedAt], [AvailableThroughCursor]);
+GO

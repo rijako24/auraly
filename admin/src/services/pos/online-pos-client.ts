@@ -1,4 +1,4 @@
-﻿import {
+import {
   invoiceCommerceOrders,
   loadCommerceOrder,
   loadCommerceOrders,
@@ -18,6 +18,7 @@ import {
   PosCountry,
   PosAdministrativeDivision,
   PosCity,
+  PosSaleDocumentType,
   PosCustomerSearchPage,
   PosCustomerSelection,
   PosDraft,
@@ -28,7 +29,12 @@ import {
   PosNextNumbers,
   PosPaymentInput,
   PosPrintableReceipt,
+  PosSensitiveAuthorization,
+  PosApprovalCreateInput,
+  PosApprovalSummary,
 } from "./pos-edge-client";
+import { posApprovalClient } from "./pos-approval-client";
+import { calculateReceiptRetailUnitPrice } from "@/app/(pos)/pos/pos-retail-price";
 
 export type SalesWorkspaceOption = {
   businessId: string;
@@ -131,6 +137,18 @@ type OnlineCheckoutResponse = {
 
 const WORKSPACE_STORAGE_KEY = "auraly.pos.sales-workspace";
 
+// Survives client-side navigation only. The server remains authoritative for
+// authorization, workspace and every POS operation.
+let activeOnlinePosClient: OnlinePosClient | null = null;
+
+export function rememberOnlinePosClient(client: OnlinePosClient): void {
+  activeOnlinePosClient = client;
+}
+
+export function recalledOnlinePosClient(): OnlinePosClient | null {
+  return activeOnlinePosClient;
+}
+
 export async function loadSalesWorkspaceOptions(): Promise<SalesWorkspaceOption[]> {
   return request<SalesWorkspaceOption[]>(
     "/api/commerce/v1/pos/workspace/options",
@@ -176,6 +194,7 @@ export function rememberedSalesWorkspaceKey(): string | null {
 }
 
 export function forgetSalesWorkspace(): void {
+  activeOnlinePosClient = null;
   try {
     window.localStorage.removeItem(WORKSPACE_STORAGE_KEY);
   } catch {
@@ -204,7 +223,14 @@ export class OnlinePosClient implements PosClient {
       warehouseName: this.context.warehouseName,
       userDisplayName: this.userDisplayName,
       userId: this.userId,
+      synchronizationInProgress: false,
+      lastSynchronizationAt: null,
+      lastSynchronizationFailed: false,
+      catalogUpdatedAt: null,
     };
+  }
+  async synchronizeNow() {
+    // Online mode reads authoritative server data and has no local catalog to synchronize.
   }
 
   async searchProducts(search = "", skip = 0, take = 50) {
@@ -278,6 +304,10 @@ export class OnlinePosClient implements PosClient {
     return mapCustomer(customer);
   }
 
+  createApproval(input: PosApprovalCreateInput): Promise<PosApprovalSummary> {
+    return posApprovalClient.create(input);
+  }
+
   async activeDraft() {
     const draft = await request<OnlineDraft>(
       "/api/commerce/v1/pos/drafts/active",
@@ -286,17 +316,28 @@ export class OnlinePosClient implements PosClient {
     return this.mapDraft(draft);
   }
 
-  async nextNumbers(): Promise<PosNextNumbers | null> {
+  async nextNumbers(_documentType?: PosSaleDocumentType): Promise<PosNextNumbers | null> {
     return null;
   }
 
   async capture(value: string, _customerId: string | null) {
+    return this.addProduct(value);
+  }
+
+  async captureSelectedProduct(
+    product: PosCatalogProduct,
+    _customerId: string | null,
+  ) {
+    return this.addProduct(product.productId);
+  }
+
+  private async addProduct(selector: string) {
     const draft = await this.ensureActive();
     try {
       const updated = await request<OnlineDraft>(
-        `/api/commerce/v1/pos/drafts/${draft.draftId.value}/capture`,
+        `/api/commerce/v1/pos/drafts/${draft.draftId.value}/items`,
         this.mutation({
-          value,
+          selector,
           quantity: 1,
           expectedVersion: this.version(draft.draftId.value),
         }),
@@ -330,13 +371,15 @@ export class OnlinePosClient implements PosClient {
     } satisfies PosCaptureResult;
   }
 
-  async setDiscount(draftId: string, lineId: string, discount: number) {
+  async setDiscount(draftId: string, lineId: string, discount: number, authorization?: PosSensitiveAuthorization) {
     return this.mapDraft(
       await request<OnlineDraft>(
         `/api/commerce/v1/pos/drafts/${draftId}/lines/${lineId}/discount`,
         this.mutation(
           { discount, expectedVersion: this.version(draftId) },
           "PUT",
+          authorization?.operationId,
+          authorization?.approvalRequestId,
         ),
       ),
     );
@@ -356,20 +399,30 @@ export class OnlinePosClient implements PosClient {
     } satisfies PosCustomerSelection;
   }
 
-  async removeLine(draftId: string, lineId: string) {
+  async removeLine(draftId: string, lineId: string, authorization?: PosSensitiveAuthorization) {
     return this.mapDraft(
       await request<OnlineDraft>(
         `/api/commerce/v1/pos/drafts/${draftId}/lines/${lineId}/remove`,
-        this.mutation({ expectedVersion: this.version(draftId) }),
+        this.mutation(
+          { expectedVersion: this.version(draftId) },
+          "POST",
+          authorization?.operationId,
+          authorization?.approvalRequestId,
+        ),
       ),
     );
   }
 
-  async cancelDraft(draftId: string) {
+  async cancelDraft(draftId: string, authorization?: PosSensitiveAuthorization) {
     return this.mapDraft(
       await request<OnlineDraft>(
         `/api/commerce/v1/pos/drafts/${draftId}/reset`,
-        this.mutation({ expectedVersion: this.version(draftId) }),
+        this.mutation(
+          { expectedVersion: this.version(draftId) },
+          "POST",
+          authorization?.operationId,
+          authorization?.approvalRequestId,
+        ),
       ),
     );
   }
@@ -428,6 +481,7 @@ export class OnlinePosClient implements PosClient {
     draftId: string,
     _customerIdentification: string | null,
     payments: PosPaymentInput[],
+    documentType: PosSaleDocumentType,
   ) {
     const preview = openPrintPreview();
     try {
@@ -435,7 +489,7 @@ export class OnlinePosClient implements PosClient {
         `/api/commerce/v1/pos/drafts/${draftId}/complete`,
         this.mutation({
           expectedVersion: this.version(draftId),
-          payments,
+          payments, documentType,
         }, "POST", `online-sale-${draftId}`),
       );
       const nextDraft = this.mapDraft(result.nextDraft);
@@ -443,7 +497,9 @@ export class OnlinePosClient implements PosClient {
         await renderReceipt(
           preview,
           result.receipt,
-          this.qrImageUrl(result.receipt.documentId),
+          result.receipt.documentType === "SalesInvoice"
+            ? this.qrImageUrl(result.receipt.documentId)
+            : null,
         );
       return {
         issuedSale: {
@@ -501,7 +557,7 @@ export class OnlinePosClient implements PosClient {
       );
       if (!preview)
         throw new PosEdgeError(
-          "El navegador bloqueÃ³ la vista previa de impresiÃ³n.",
+          "El navegador bloqueó la vista previa de impresión.",
           409,
         );
       await renderReceipt(preview, receipt, this.qrImageUrl(documentId));
@@ -562,11 +618,17 @@ export class OnlinePosClient implements PosClient {
     body: unknown,
     method = "POST",
     idempotencyKey = crypto.randomUUID(),
+    approvalRequestId?: string,
   ): RequestInit {
     return {
       method,
       body: JSON.stringify(body),
-      headers: { "Idempotency-Key": idempotencyKey },
+      headers: {
+        "Idempotency-Key": idempotencyKey,
+        ...(approvalRequestId
+          ? { "X-Auraly-Approval-Id": approvalRequestId }
+          : {}),
+      },
     };
   }
 
@@ -581,7 +643,7 @@ export class OnlinePosClient implements PosClient {
     const version = this.versions.get(draftId);
     if (version === undefined)
       throw new PosEdgeError(
-        "La versiÃ³n de la venta no estÃ¡ disponible. Recarga el mÃ³dulo de facturaciÃ³n.",
+        "La versión de la venta no está disponible. Recarga el módulo de facturación.",
         409,
       );
     return version;
@@ -634,6 +696,10 @@ async function request<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<T> {
+  const tenantId =
+    typeof window === "undefined"
+      ? null
+      : window.localStorage.getItem("selected_tenant_id");
   const businessId =
     typeof window === "undefined"
       ? null
@@ -644,6 +710,7 @@ async function request<T>(
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
+      ...(tenantId ? { "X-Tenant-Id": tenantId } : {}),
       ...(businessId ? { "X-Business-Id": businessId } : {}),
       ...init.headers,
     },
@@ -656,10 +723,13 @@ async function request<T>(
         detail?: string;
         message?: string;
         title?: string;
+        code?: string;
       };
       detail =
         problem.detail || problem.message || problem.title || detail;
-    } catch {
+      throw new PosEdgeError(detail, response.status, problem.code || problem.title);
+    } catch (parsed) {
+      if (parsed instanceof PosEdgeError) throw parsed;
       // Preserve the server text when the response is not JSON.
     }
     throw new PosEdgeError(detail, response.status);
@@ -678,7 +748,7 @@ function openPrintPreview(): Window | null {
 async function renderReceipt(
   preview: Window,
   receipt: PosPrintableReceipt,
-  qrImageUrl: string,
+  qrImageUrl: string | null,
 ) {
   const currency = new Intl.NumberFormat("es-CO", {
     style: "currency",
@@ -690,7 +760,7 @@ async function renderReceipt(
       (line) => `
         <section class="line">
           <strong>${escapeHtml(line.description)}</strong>
-          <div><span>${line.quantity} Ã— ${currency.format(line.unitPrice)}</span><b>${currency.format(line.total)}</b></div>
+          <div><span>${line.quantity} × ${currency.format(calculateReceiptRetailUnitPrice(line.unitPrice, line.quantity, line.discount, line.tax))}</span><b>${currency.format(line.total)}</b></div>
           ${line.discount > 0 ? `<small>Descuento: ${currency.format(line.discount)}</small>` : ""}
           ${line.tax > 0 ? `<small>IVA: ${currency.format(line.tax)}</small>` : ""}
         </section>`,
@@ -702,6 +772,18 @@ async function renderReceipt(
         `<div><span>${escapeHtml(payment.methodCode)}</span><b>${currency.format(payment.amount)}</b></div>`,
     )
     .join("");
+  const isFiscal = receipt.documentType === "SalesInvoice";
+  const fiscalMeta = isFiscal
+    ? `<div><span>Número DIAN</span><b>${escapeHtml(receipt.fiscalNumber)}</b></div>`
+    : "";
+  const fiscalArtifacts = isFiscal
+    ? `<div class="cufe"><strong>CUFE</strong><br>${escapeHtml(receipt.cufe)}</div>
+       <img class="qr" src="${escapeHtml(qrImageUrl)}" alt="Código QR DIAN">
+       <footer>Representación gráfica</footer>`
+    : `<footer>Comprobante de venta</footer>`;
+  const documentTitle = isFiscal
+    ? "FACTURA ELECTRÓNICA DE VENTA"
+    : "COMPROBANTE DE VENTA";
   preview.document.open();
   preview.document.write(`<!doctype html>
 <html lang="es">
@@ -729,14 +811,14 @@ async function renderReceipt(
 <body>
   <header>
     <h1>Auraly</h1>
-    <h2>FACTURA ELECTRÃ“NICA DE VENTA</h2>
+    <h2>${documentTitle}</h2>
     <div>${new Date(receipt.issuedAt).toLocaleString("es-CO")}</div>
   </header>
   <section class="meta">
     <div><span>Documento Auraly</span><b>${escapeHtml(receipt.documentNumber)}</b></div>
-    <div><span>NÃºmero DIAN</span><b>${escapeHtml(receipt.fiscalNumber)}</b></div>
+    ${fiscalMeta}
     <div><span>Adquirente</span><b>${escapeHtml(receipt.customerName)}</b></div>
-    <div><span>IdentificaciÃ³n</span><b>${escapeHtml(receipt.customerIdentification)}</b></div>
+    <div><span>Identificación</span><b>${escapeHtml(receipt.customerIdentification)}</b></div>
   </section>
   ${lines}
   <section class="totals">
@@ -745,9 +827,7 @@ async function renderReceipt(
     <div class="total"><strong>Total</strong><strong>${currency.format(receipt.payableAmount)}</strong></div>
   </section>
   <section class="payments">${payments}</section>
-  <div class="cufe"><strong>CUFE</strong><br>${escapeHtml(receipt.cufe)}</div>
-  <img class="qr" src="${escapeHtml(qrImageUrl)}" alt="CÃ³digo QR DIAN">
-  <footer>RepresentaciÃ³n grÃ¡fica</footer>
+  ${fiscalArtifacts}
 </body>
 </html>`);
   preview.document.close();
@@ -763,8 +843,8 @@ async function renderReceipt(
   preview.print();
 }
 
-function escapeHtml(value: string) {
-  return value
+function escapeHtml(value: string | null) {
+  return (value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")

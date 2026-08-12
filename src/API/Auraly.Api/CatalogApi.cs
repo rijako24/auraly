@@ -38,6 +38,20 @@ public static class CatalogApi
                 new ProductPageRequest(pageSize ?? 50, afterProductCode, productCode, reference, barcode, name, isActive, supplierId, minimumPrice, maximumPrice, sortDescending ?? false),
                 ct))));
 
+        administration.MapGet("/{productId:guid}/tax-configuration", async (
+            HttpContext context, CatalogService service, Guid productId, CancellationToken ct) =>
+            await Handle(async () =>
+            {
+                var result = await service.GetProductTaxConfigurationAsync(
+                    context.User.ToCatalogUserIdentity(), productId, ct);
+                return result is null ? Results.NotFound() : Results.Ok(result);
+            }));
+
+        administration.MapPut("/{productId:guid}/tax-configuration", async (
+            HttpContext context, CatalogService service, Guid productId,
+            SaveProductTaxConfigurationRequest request, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.SaveProductTaxConfigurationAsync(
+                context.User.ToCatalogUserIdentity(), productId, request, ct))));
         administration.MapPost("/{productId:guid}/deactivate", async (
             HttpContext context, CatalogService service, Guid productId, CancellationToken ct) =>
             await Handle(async () =>
@@ -46,6 +60,39 @@ public static class CatalogApi
                 return Results.NoContent();
             }));
 
+        administration.MapPatch("/{productId:guid}/status", async (
+            HttpContext context, CatalogService service, Guid productId,
+            SetProductStatusRequest request, CancellationToken ct) =>
+            await Handle(async () =>
+            {
+                await service.SetStatusAsync(
+                    context.User.ToCatalogUserIdentity(), productId, request.IsActive, ct);
+                return Results.NoContent();
+            }));
+        var taxes = endpoints.MapGroup("/api/commerce/v1/tax-profiles")
+            .RequireAuthorization("catalog.user");
+
+        taxes.MapGet("/", async (
+            HttpContext context, CatalogService service, bool? includeInactive,
+            CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.ListTaxProfilesAsync(
+                context.User.ToCatalogUserIdentity(), includeInactive ?? false, ct))));
+
+        taxes.MapPost("/", async (
+            HttpContext context, CatalogService service, SaveTaxProfileRequest request,
+            CancellationToken ct) =>
+            await Handle(async () =>
+            {
+                var result = await service.SaveTaxProfileAsync(
+                    context.User.ToCatalogUserIdentity(), null, request, ct);
+                return Results.Created($"/api/commerce/v1/tax-profiles/{result.TaxProfileId}", result);
+            }));
+
+        taxes.MapPut("/{taxProfileId:guid}", async (
+            HttpContext context, CatalogService service, Guid taxProfileId,
+            SaveTaxProfileRequest request, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.SaveTaxProfileAsync(
+                context.User.ToCatalogUserIdentity(), taxProfileId, request, ct))));
         var pos = endpoints.MapGroup("/api/pos/v1")
             .RequireAuthorization("pos.catalog.sync");
 

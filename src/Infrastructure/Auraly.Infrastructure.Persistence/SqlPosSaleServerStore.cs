@@ -16,6 +16,9 @@ public sealed class SqlPosSaleServerStore(
         PosSaleUploadRequest request,
         CancellationToken cancellationToken)
     {
+        if (request.FiscalSnapshot is null)
+            return await ValidateCommercialContextAsync(request, cancellationToken);
+
         const string sql = """
             SELECT COUNT_BIG(1)
             FROM dbo.FiscalSeries s
@@ -91,6 +94,43 @@ public sealed class SqlPosSaleServerStore(
             : PosSaleContextValidation.Invalid(
                 "The fiscal series, authorization, business, warehouse or device assignment is invalid.");
     }
+
+    private async Task<PosSaleContextValidation> ValidateCommercialContextAsync(
+        PosSaleUploadRequest request,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT COUNT_BIG(1)
+            FROM dbo.DocumentSeries ds
+            JOIN dbo.Businesses b ON b.BusinessId=ds.BusinessId
+            JOIN dbo.Warehouses w ON w.WarehouseId=@WarehouseId AND w.BusinessId=b.BusinessId
+            JOIN dbo.AppUsers u ON u.UserId=@SoldByUserId AND u.TenantId=b.TenantId
+            JOIN dbo.EnrolledDevices d ON d.DeviceId=@DeviceId AND d.TenantId=b.TenantId
+            WHERE ds.DocumentSeriesId=@DocumentSeriesId
+              AND ds.BusinessId=@BusinessId AND b.TenantId=@TenantId
+              AND ds.DeviceId=@DeviceId AND ds.DocumentType=@DocumentType
+              AND ds.Prefix=@Prefix AND ds.SeriesCode=@SeriesCode
+              AND @Consecutive BETWEEN ds.RangeStart AND ds.RangeEnd
+              AND ds.IsOfflineCapable=1 AND ds.IsActive=1
+              AND b.IsActive=1 AND w.IsActive=1 AND u.IsActive=1 AND d.IsActive=1;
+            """;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@DocumentSeriesId", request.DocumentNumber.SeriesId);
+        command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
+        command.Parameters.AddWithValue("@TenantId", request.TenantId);
+        command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
+        command.Parameters.AddWithValue("@SoldByUserId", request.SoldByUserId);
+        command.Parameters.AddWithValue("@DeviceId", request.DeviceId);
+        command.Parameters.AddWithValue("@DocumentType", request.CommercialSnapshot.DocumentType);
+        command.Parameters.AddWithValue("@Prefix", request.DocumentNumber.Prefix);
+        command.Parameters.AddWithValue("@SeriesCode", request.DocumentNumber.SeriesCode);
+        command.Parameters.AddWithValue("@Consecutive", request.DocumentNumber.Consecutive);
+        var count = (long)(await command.ExecuteScalarAsync(cancellationToken) ?? 0L);
+        return count == 1 ? PosSaleContextValidation.Valid() : PosSaleContextValidation.Invalid(
+            "The business, warehouse, device or commercial series assignment is invalid.");
+    }
     public async Task<StoredPosSale?> FindAsync(
         Guid businessId,
         Guid documentId,
@@ -158,8 +198,9 @@ public sealed class SqlPosSaleServerStore(
                 return existing;
             }
 
+            var isFiscal = request.FiscalSnapshot is not null;
             var processingStatus = command.Verification.IsVerified ? "Received" : "Blocked";
-            var fiscalStatus = command.Verification.IsVerified
+            string? fiscalStatus = !isFiscal ? null : command.Verification.IsVerified
                 ? PosSaleRemoteStatuses.FiscalVerified
                 : PosSaleRemoteStatuses.FiscalIntegrityConflict;
             await InsertDocumentAsync(
@@ -169,26 +210,21 @@ public sealed class SqlPosSaleServerStore(
                 fiscalStatus,
                 processingStatus,
                 cancellationToken);
-            await InsertFiscalDocumentAsync(
-                connection,
-                transaction,
-                command,
-                fiscalStatus,
-                cancellationToken);
-            await InsertSnapshotAsync(
-                connection,
-                transaction,
-                command,
-                fiscalStatus,
-                cancellationToken);
-            await InsertFiscalProcessAsync(
-                connection,
-                transaction,
-                command,
-                command.Verification.IsVerified
-                    ? FiscalDocumentStatusCodes.PendingGeneration
-                    : FiscalDocumentStatusCodes.FiscalIntegrityConflict,
-                cancellationToken);
+            if (isFiscal)
+            {
+                await InsertFiscalDocumentAsync(
+                    connection, transaction, command,
+                    fiscalStatus!, cancellationToken);
+                await InsertSnapshotAsync(
+                    connection, transaction, command,
+                    fiscalStatus!, cancellationToken);
+                await InsertFiscalProcessAsync(
+                    connection, transaction, command,
+                    command.Verification.IsVerified
+                        ? FiscalDocumentStatusCodes.PendingGeneration
+                        : FiscalDocumentStatusCodes.FiscalIntegrityConflict,
+                    cancellationToken);
+            }
 
             if (command.Verification.IsVerified)
             {
@@ -270,13 +306,15 @@ public sealed class SqlPosSaleServerStore(
                @IssuedAt,@FiscalStatus,@CreatedAt,@CreatedAt);
             """;
         var request = command.Request;
+        var fiscal = request.FiscalSnapshot
+            ?? throw new InvalidOperationException("A fiscal document requires its fiscal snapshot.");
         await using var sqlCommand = new SqlCommand(sql, connection, transaction);
         sqlCommand.Parameters.AddWithValue("@DocumentId", request.DocumentId);
         sqlCommand.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         sqlCommand.Parameters.AddWithValue("@AuralyNumber", request.DocumentNumber.FullNumber);
-        sqlCommand.Parameters.AddWithValue("@FiscalNumber", request.FiscalSnapshot.FiscalNumber);
-        sqlCommand.Parameters.AddWithValue("@UniqueCode", request.FiscalSnapshot.Cufe);
-        sqlCommand.Parameters.AddWithValue("@IssuedAt", request.FiscalSnapshot.IssuedAt);
+        sqlCommand.Parameters.AddWithValue("@FiscalNumber", fiscal.FiscalNumber);
+        sqlCommand.Parameters.AddWithValue("@UniqueCode", fiscal.Cufe);
+        sqlCommand.Parameters.AddWithValue("@IssuedAt", fiscal.IssuedAt);
         sqlCommand.Parameters.AddWithValue("@FiscalStatus", fiscalStatus);
         sqlCommand.Parameters.AddWithValue("@CreatedAt", command.ReceivedAt);
         await sqlCommand.ExecuteNonQueryAsync(cancellationToken);
@@ -286,7 +324,7 @@ public sealed class SqlPosSaleServerStore(
         SqlConnection connection,
         SqlTransaction transaction,
         StorePosSaleReceptionCommand command,
-        string fiscalStatus,
+        string? fiscalStatus,
         string processingStatus,
         CancellationToken cancellationToken)
     {
@@ -317,7 +355,8 @@ public sealed class SqlPosSaleServerStore(
             );
             """;
         var request = command.Request;
-        var snapshot = request.FiscalSnapshot;
+        var commercial = request.CommercialSnapshot;
+        var fiscal = request.FiscalSnapshot;
         await using var sqlCommand = new SqlCommand(sql, connection, transaction);
         sqlCommand.Parameters.AddWithValue("@DocumentId", request.DocumentId);
         sqlCommand.Parameters.AddWithValue("@BusinessId", request.BusinessId);
@@ -331,27 +370,27 @@ public sealed class SqlPosSaleServerStore(
         sqlCommand.Parameters.AddWithValue("@DocumentPrefix", request.DocumentNumber.Prefix);
         sqlCommand.Parameters.AddWithValue("@DocumentSeriesCode", request.DocumentNumber.SeriesCode);
         sqlCommand.Parameters.AddWithValue("@DocumentConsecutive", request.DocumentNumber.Consecutive);
-        sqlCommand.Parameters.AddWithValue("@FiscalSeriesId", snapshot.SeriesId);
-        sqlCommand.Parameters.AddWithValue("@FiscalAuthorizationId", snapshot.FiscalAuthorizationId);
-        sqlCommand.Parameters.AddWithValue("@DocumentType", snapshot.DocumentType);
+        sqlCommand.Parameters.AddWithValue("@FiscalSeriesId", (object?)fiscal?.SeriesId ?? DBNull.Value);
+        sqlCommand.Parameters.AddWithValue("@FiscalAuthorizationId", (object?)fiscal?.FiscalAuthorizationId ?? DBNull.Value);
+        sqlCommand.Parameters.AddWithValue("@DocumentType", commercial.DocumentType);
         sqlCommand.Parameters.AddWithValue("@IdempotencyKey", command.IdempotencyKey);
         sqlCommand.Parameters.Add("@PayloadHash", SqlDbType.Binary, 32).Value = command.PayloadHash;
-        sqlCommand.Parameters.AddWithValue("@FiscalNumber", snapshot.FiscalNumber);
-        sqlCommand.Parameters.AddWithValue("@FiscalPrefix", snapshot.Prefix);
-        sqlCommand.Parameters.AddWithValue("@FiscalConsecutive", snapshot.Consecutive);
-        sqlCommand.Parameters.AddWithValue("@IssuedAt", snapshot.IssuedAt);
-        sqlCommand.Parameters.AddWithValue("@CustomerIdentification", snapshot.CustomerIdentification);
-        AddDecimal(sqlCommand, "@UntaxedAmount", snapshot.UntaxedAmount, 19, 4);
+        sqlCommand.Parameters.AddWithValue("@FiscalNumber", (object?)fiscal?.FiscalNumber ?? DBNull.Value);
+        sqlCommand.Parameters.AddWithValue("@FiscalPrefix", (object?)fiscal?.Prefix ?? DBNull.Value);
+        sqlCommand.Parameters.AddWithValue("@FiscalConsecutive", (object?)fiscal?.Consecutive ?? DBNull.Value);
+        sqlCommand.Parameters.AddWithValue("@IssuedAt", commercial.IssuedAt);
+        sqlCommand.Parameters.AddWithValue("@CustomerIdentification", commercial.CustomerIdentification);
+        AddDecimal(sqlCommand, "@UntaxedAmount", commercial.UntaxedAmount, 19, 4);
         sqlCommand.Parameters.AddWithValue("@CustomerId", (object?)request.CustomerId ?? DBNull.Value);
-        AddDecimal(sqlCommand, "@TaxAmount", snapshot.TaxAmount, 19, 4);
-        AddDecimal(sqlCommand, "@PayableAmount", snapshot.PayableAmount, 19, 4);
+        AddDecimal(sqlCommand, "@TaxAmount", commercial.TaxAmount, 19, 4);
+        AddDecimal(sqlCommand, "@PayableAmount", commercial.PayableAmount, 19, 4);
         AddDecimal(sqlCommand, "@CreditAmount", request.Credit?.Amount ?? 0m, 19, 4);
         sqlCommand.Parameters.AddWithValue("@CreditDueDate", (object?)request.Credit?.DueDate ?? DBNull.Value);
-        sqlCommand.Parameters.AddWithValue("@CufeReceived", snapshot.Cufe);
+        sqlCommand.Parameters.AddWithValue("@CufeReceived", (object?)fiscal?.Cufe ?? DBNull.Value);
         sqlCommand.Parameters.AddWithValue(
             "@CufeCalculated",
             (object?)command.Verification.CufeCalculated ?? DBNull.Value);
-        sqlCommand.Parameters.AddWithValue("@FiscalStatus", fiscalStatus);
+        sqlCommand.Parameters.AddWithValue("@FiscalStatus", (object?)fiscalStatus ?? DBNull.Value);
         sqlCommand.Parameters.AddWithValue("@ProcessingStatus", processingStatus);
         sqlCommand.Parameters.AddWithValue("@ReceivedAt", command.ReceivedAt);
         await sqlCommand.ExecuteNonQueryAsync(cancellationToken);
@@ -378,7 +417,8 @@ public sealed class SqlPosSaleServerStore(
                 @IntegrityStatus, @VerifiedAt, @ConflictReason, @CreatedAt
             );
             """;
-        var snapshot = command.Request.FiscalSnapshot;
+        var snapshot = command.Request.FiscalSnapshot
+            ?? throw new InvalidOperationException("A fiscal document requires its fiscal snapshot.");
         await using var sqlCommand = new SqlCommand(sql, connection, transaction);
         sqlCommand.Parameters.AddWithValue("@DocumentId", command.Request.DocumentId);
         sqlCommand.Parameters.AddWithValue("@SnapshotJson", command.SnapshotJson);
@@ -474,7 +514,7 @@ public sealed class SqlPosSaleServerStore(
         sqlCommand.Parameters.AddWithValue("@DocumentId", command.Request.DocumentId);
         sqlCommand.Parameters.AddWithValue(
             "@DocumentType",
-            command.Request.FiscalSnapshot.DocumentType);
+            command.Request.CommercialSnapshot.DocumentType);
         sqlCommand.Parameters.AddWithValue("@PayloadJson", command.SnapshotJson);
         sqlCommand.Parameters.Add("@PayloadHash", SqlDbType.Binary, 32).Value = command.PayloadHash;
         sqlCommand.Parameters.AddWithValue("@CreatedAt", command.ReceivedAt);
@@ -542,7 +582,7 @@ public sealed class SqlPosSaleServerStore(
                    COALESCE(s.ConflictReason,j.LastError)
             FROM dbo.SalesDocuments d
             INNER JOIN dbo.Businesses b ON b.BusinessId = d.BusinessId
-            INNER JOIN dbo.FiscalSnapshots s ON s.DocumentId = d.DocumentId
+            LEFT JOIN dbo.FiscalSnapshots s ON s.DocumentId = d.DocumentId
             LEFT JOIN dbo.DocumentProcessingJobs j
                 ON j.DocumentId=d.DocumentId
                AND j.DocumentType=d.DocumentType
@@ -566,9 +606,9 @@ public sealed class SqlPosSaleServerStore(
             reader.GetGuid(2),
             reader.GetString(3),
             (byte[])reader[4],
-            reader.GetString(5),
+            reader.IsDBNull(5) ? null : reader.GetString(5),
             reader.GetString(6),
-            reader.GetString(7),
+            reader.IsDBNull(7) ? null : reader.GetString(7),
             reader.IsDBNull(8) ? null : reader.GetString(8),
             reader.IsDBNull(9) ? null : reader.GetGuid(9),
             reader.GetDateTimeOffset(10),

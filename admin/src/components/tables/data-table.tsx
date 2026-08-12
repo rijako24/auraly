@@ -337,6 +337,14 @@ export function DataTable<TData, TValue>({
                       onClick={() => onRowClick?.(row.original)}
                       onKeyDown={(event) => {
                         if (event.target !== event.currentTarget) return;
+                        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                          event.preventDefault();
+                          const sibling = event.key === "ArrowDown"
+                            ? event.currentTarget.nextElementSibling
+                            : event.currentTarget.previousElementSibling;
+                          if (sibling instanceof HTMLElement) sibling.focus();
+                          return;
+                        }
                         if (onRowClick && (event.key === "Enter" || event.key === " ")) {
                           event.preventDefault();
                           onRowClick(row.original);

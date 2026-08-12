@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Sdk Name="Microsoft.Build.Sql" Version="0.1.10-preview" />
   <PropertyGroup>
@@ -17,6 +17,7 @@
     <Build Include="Tables\Permissions.sql" />
     <Build Include="Tables\SystemConfigurations.sql" />
     <Build Include="Tables\Businesses.sql" />
+    <Build Include="Tables\TenantProvisioning.sql" />
     <Build Include="Tables\SubscriptionPlans.sql" />
     <Build Include="Tables\UsageCostRates.sql" />
     <Build Include="Tables\AppUsers.sql" />
@@ -39,11 +40,13 @@
     <Build Include="Tables\IntegrationConnections.sql" />
     <Build Include="Tables\IntegrationChannelWarehouses.sql" />
     <Build Include="Tables\ProductCategories.sql" />
+    <Build Include="Tables\ProductMerchandising.sql" />
     <Build Include="Tables\Products.sql" />
     <Build Include="Tables\AuralyCatalog.sql" />
     <Build Include="Tables\AuralyParties.sql" />
     <Build Include="Tables\PartyWorkspace.sql" />
     <Build Include="Tables\AuralyPosPricing.sql" />
+    <Build Include="Tables\SalesRoutes.sql" />
     <Build Include="Tables\AuralyCatalogSyncSnapshot.sql" />
     <Build Include="Tables\ExternalCommerceCustomers.sql" />
     <Build Include="Tables\CartMutationReceipts.sql" />
@@ -98,12 +101,15 @@
     <Build Include="Tables\PosEnrollmentSessions.sql" />
     <Build Include="Tables\DocumentSeries.sql" />
     <Build Include="Tables\FiscalAuthorizations.sql" />
+    <Build Include="Tables\SalesInvoiceNumberingConfigurations.sql" />
+    <Build Include="Tables\FiscalTechnicalKeySecrets.sql" />
     <Build Include="Tables\FiscalSeries.sql" />
     <Build Include="Triggers\FiscalSeriesRangeGuard.sql" />
 
     <Build Include="Tables\WorkSessions.sql" />
     <Build Include="Tables\WorkSessionClosures.sql" />
     <Build Include="Tables\SupervisorCredentials.sql" />
+    <Build Include="Tables\PosApprovalRequests.sql" />
     <Build Include="Tables\SalesDocuments.sql" />
     <Build Include="Tables\FiscalDocuments.sql" />
     <Build Include="Tables\OrderCommerce.sql" />
@@ -133,6 +139,7 @@
     <Build Include="Tables\Pricing.sql" />
     <Build Include="Tables\PayablePayments.sql" />
     <Build Include="Tables\Receivables.sql" />
+    <Build Include="Tables\InventoryReasons.sql" />
     <Build Include="Tables\InventoryOperations.sql" />
     <Build Include="Tables\InventoryMovements.sql" />
     <Build Include="Tables\InventoryBalances.sql" />

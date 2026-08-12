@@ -5,23 +5,20 @@ import { authApi } from "@/services/api/auth";
 import { useAuthStore } from "@/stores/auth-store";
 
 /**
- * Syncs auth store with server when user has cookies but store is empty
- * (e.g. after refresh with cleared localStorage, or new tab with existing session).
+ * Revalidates the persisted browser projection against the authoritative
+ * server session whenever the application shell is mounted.
  */
 export function AuthSyncProvider({ children }: { children: ReactNode }) {
-  const user = useAuthStore((s) => s.user);
+  const clearAuth = useAuthStore((s) => s.clearAuth);
   const setAuth = useAuthStore((s) => s.setAuth);
 
   useEffect(() => {
-    if (user) return;
 
     authApi
       .me()
       .then((data) => setAuth(data))
-      .catch(() => {
-        /* 401 handled by api client redirect */
-      });
-  }, [user, setAuth]);
+      .catch(clearAuth);
+  }, [clearAuth, setAuth]);
 
   return <>{children}</>;
 }

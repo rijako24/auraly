@@ -24,9 +24,9 @@ public sealed record StoredPosSale(
     Guid TenantId,
     string IdempotencyKey,
     byte[] PayloadHash,
-    string FiscalStatus,
+    string? FiscalStatus,
     string ProcessingStatus,
-    string CufeReceived,
+    string? CufeReceived,
     string? CufeCalculated,
     Guid? ReceiptId,
     DateTimeOffset ReceivedAt,
@@ -162,12 +162,14 @@ public sealed class ReceivePosSaleService(
         var context = validateDeviceContext
             ? await store.ValidateContextAsync(request, cancellationToken)
             : PosSaleContextValidation.Valid();
-        var verification = await fiscalVerifier.VerifyAsync(request, cancellationToken);
+        var verification = request.FiscalSnapshot is null
+            ? new FiscalSnapshotVerificationResult(true, string.Empty, null, null)
+            : await fiscalVerifier.VerifyAsync(request, cancellationToken);
         if (!context.IsValid && verification.IsVerified)
         {
             verification = new FiscalSnapshotVerificationResult(
                 false,
-                request.FiscalSnapshot.Cufe,
+                request.FiscalSnapshot?.Cufe ?? string.Empty,
                 verification.CufeCalculated,
                 context.Reason ??
                 "The fiscal series or authorization differs from server configuration.");
@@ -194,7 +196,7 @@ public sealed class ReceivePosSaleService(
                     "The accepted sale has no durable processing movement."),
                 request.BusinessId,
                 request.DocumentId,
-                PosSaleDocumentTypes.Invoice),
+                request.CommercialSnapshot.DocumentType),
             cancellationToken);
 
         var completed = await store.FindAsync(
@@ -244,10 +246,11 @@ public sealed class ReceivePosSaleService(
         if (request.Credit.CustomerId == Guid.Empty || request.CustomerId != request.Credit.CustomerId)
             throw new PosSaleInvalidException(
                 "A credit sale requires the selected customer as debtor.");
-        if (request.Credit.Amount <= 0 || request.Credit.DueDate < request.FiscalSnapshot.IssuedAt)
+        if (request.Credit.Amount <= 0 || request.Credit.DueDate < request.CommercialSnapshot.IssuedAt)
             throw new PosSaleInvalidException("The financed balance and due date are invalid.");
-        if (request.UblSnapshot is null || request.UblSnapshot.PaymentFormCode != "2" ||
-            request.UblSnapshot.DueDate != DateOnly.FromDateTime(request.Credit.DueDate.Date))
+        if (request.FiscalSnapshot is not null &&
+            (request.UblSnapshot is null || request.UblSnapshot.PaymentFormCode != "2" ||
+             request.UblSnapshot.DueDate != DateOnly.FromDateTime(request.Credit.DueDate.Date)))
             throw new PosSaleInvalidException(
                 "The immutable UBL snapshot must identify the credit terms.");
     }
@@ -255,10 +258,11 @@ public sealed class ReceivePosSaleService(
     private static void ValidateDocumentNumber(PosSaleUploadRequest request)
     {
         var number = request.DocumentNumber;
-        if (!string.Equals(
-                number.DocumentType,
-                request.FiscalSnapshot.DocumentType,
-                StringComparison.Ordinal))
+        if (!string.Equals(number.DocumentType, request.CommercialSnapshot.DocumentType,
+                StringComparison.Ordinal) ||
+            (request.FiscalSnapshot is not null && !string.Equals(
+                number.DocumentType, request.FiscalSnapshot.DocumentType,
+                StringComparison.Ordinal)))
             throw new PosSaleInvalidException(
                 "The Auraly document type and fiscal document type must match.");
 
@@ -311,11 +315,13 @@ public sealed class ReceivePosSaleService(
         new(
             sale.ReceiptId ?? Guid.Empty,
             sale.DocumentId,
-            sale.FiscalStatus == PosSaleRemoteStatuses.FiscalIntegrityConflict
-                ? PosSaleRemoteStatuses.FiscalIntegrityConflict
-                : isDuplicate
-                    ? PosSaleRemoteStatuses.AlreadyProcessed
-                    : PosSaleRemoteStatuses.FiscalVerified,
+            sale.FiscalStatus is null
+                ? isDuplicate ? PosSaleRemoteStatuses.AlreadyProcessed : PosSaleRemoteStatuses.CommercialAccepted
+                : sale.FiscalStatus == PosSaleRemoteStatuses.FiscalIntegrityConflict
+                    ? PosSaleRemoteStatuses.FiscalIntegrityConflict
+                    : isDuplicate
+                        ? PosSaleRemoteStatuses.AlreadyProcessed
+                        : PosSaleRemoteStatuses.FiscalVerified,
             sale.CufeReceived,
             sale.CufeCalculated,
             isDuplicate,

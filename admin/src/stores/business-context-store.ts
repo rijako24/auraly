@@ -1,19 +1,28 @@
 import { create } from "zustand";
+import { resolveAuthorizedSelection } from "@/lib/execution-context-selection";
 import type { Business } from "@/types/entities";
 
+export type BusinessContextOption = Pick<
+  Business,
+  "businessId" | "tenantId" | "name"
+>;
+
 interface BusinessContextState {
-  businesses: Business[];
+  businesses: BusinessContextOption[];
   selectedBusinessId: string | null;
   isLoaded: boolean;
-  setBusinesses: (businesses: Business[]) => void;
+  setBusinesses: (businesses: BusinessContextOption[]) => void;
   selectBusiness: (businessId: string) => void;
+  clearForTenantChange: () => void;
   reset: () => void;
 }
+
+const STORAGE_KEY = "selected_business_id";
 
 function loadPersistedBusinessId(): string | null {
   if (typeof window === "undefined") return null;
   try {
-    return localStorage.getItem("selected_business_id");
+    return localStorage.getItem(STORAGE_KEY);
   } catch {
     return null;
   }
@@ -22,10 +31,10 @@ function loadPersistedBusinessId(): string | null {
 function persistBusinessId(id: string | null) {
   if (typeof window === "undefined") return;
   try {
-    if (id) localStorage.setItem("selected_business_id", id);
-    else localStorage.removeItem("selected_business_id");
+    if (id) localStorage.setItem(STORAGE_KEY, id);
+    else localStorage.removeItem(STORAGE_KEY);
   } catch {
-    /* noop */
+    /* Browser storage is optional; server authorization remains authoritative. */
   }
 }
 
@@ -36,35 +45,26 @@ export const useBusinessContextStore = create<BusinessContextState>()(
     isLoaded: false,
 
     setBusinesses: (businesses) => {
-      const current = get().selectedBusinessId;
-      const validSelection =
-        current != null &&
-        businesses.some((b) => b.businessId === current);
-
-      const nextId = validSelection
-        ? current
-        : businesses[0]?.businessId ?? null;
-
+      const nextId = resolveAuthorizedSelection(
+        businesses.map((business) => business.businessId),
+        get().selectedBusinessId,
+      );
       persistBusinessId(nextId);
-      set({
-        businesses,
-        isLoaded: true,
-        selectedBusinessId: nextId,
-      });
+      set({ businesses, isLoaded: true, selectedBusinessId: nextId });
     },
 
     selectBusiness: (businessId) => {
+      if (!get().businesses.some((business) => business.businessId === businessId)) return;
       persistBusinessId(businessId);
       set({ selectedBusinessId: businessId });
     },
 
-    reset: () => {
+    clearForTenantChange: () => {
       persistBusinessId(null);
-      set({
-        businesses: [],
-        selectedBusinessId: null,
-        isLoaded: false,
-      });
+      set({ businesses: [], selectedBusinessId: null, isLoaded: false });
     },
-  })
+
+    reset: () =>
+      set({ businesses: [], selectedBusinessId: loadPersistedBusinessId(), isLoaded: false }),
+  }),
 );

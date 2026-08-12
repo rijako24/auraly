@@ -18,6 +18,7 @@ public static class SalesWorkspaceApi
             {
                 var identity = context.User.ToSalesWorkspaceUserIdentity();
                 return Results.Ok(new SalesWorkspaceBootstrap(
+                    identity.TenantId,
                     await service.TenantNameAsync(identity, ct),
                     identity.UserId,
                     context.User.PosUserDisplayName(),

@@ -19,6 +19,7 @@ CREATE TABLE [dbo].[Orders] (
     [Currency] NVARCHAR(10) NOT NULL DEFAULT N'COP',
     [Subtotal] DECIMAL(18, 2) NOT NULL DEFAULT 0,
     [DiscountTotal] DECIMAL(18, 2) NOT NULL DEFAULT 0,
+    [TaxTotal] DECIMAL(18, 2) NOT NULL DEFAULT 0,
 
     [Total] DECIMAL(18, 2) NOT NULL DEFAULT 0,
     [CustomerConfirmed] BIT NOT NULL DEFAULT 0,

@@ -1,4 +1,4 @@
-﻿-- =============================================================================
+-- =============================================================================
 -- PostDeployment.sql
 --
 -- Hook SSDT que se ejecuta despues de publicar el dacpac.
@@ -45,8 +45,13 @@
 :r .\Migrations\MigrateBusinessTimeZone.sql
 :r .\Migrations\AlterConversationContextsValueToMax.sql
 :r .\Migrations\MigrateSuppliersToParties.sql
+:r .\Migrations\MigrateProductsToCanonicalPrices.sql
+:r .\Migrations\BackfillPreparedProductPrices.sql
+:r .\Migrations\MigratePricePublicationAuditOrigins.sql
+:r .\Seeds\SeedAuralyGeography.sql
 :r .\Seeds\SeedAdminUser.sql
 :r .\Seeds\SeedAgentPermissions.sql
+:r .\Seeds\SeedCatalogPermissions.sql
 :r .\Seeds\SeedSqlAppLoginPermissions.sql
 :r .\Seeds\SeedDevBusiness.sql
 :r .\Seeds\SeedServiceCategoriesForNewBusinesses.sql
@@ -58,6 +63,7 @@
 :r .\Seeds\SeedPayablesPermissions.sql
 :r .\Seeds\SeedReceivablesPermissions.sql
 :r .\Seeds\SeedPurchasingPermissions.sql
+:r .\Seeds\SeedFiscalConfigurationPermissions.sql
 :r .\Seeds\SeedPartyWorkspacePermissions.sql
 :r .\Seeds\SeedBillingPlans.sql
 :r .\Seeds\SeedRadaConcept.sql
@@ -102,8 +108,16 @@ GO
 :r .\Seeds\CleanupDefaultTestServices.sql
 :r .\Seeds\SeedPosEnrollmentPermission.sql
 :r .\Seeds\SeedPosIdentityPermission.sql
+:r .\Seeds\SeedPosSupervisionPermissions.sql
 :r .\Seeds\SeedOrderPermissions.sql
 :r .\Seeds\SeedSolorzanoAgentConfiguration.sql
 GO
 
 PRINT 'Post-deployment scripts executed successfully.';
+
+:r .\Seeds\SeedInventoryPermissions.sql
+:r .\Seeds\SeedInventoryReasons.sql
+:r .\Seeds\SeedInventoryDocumentSeries.sql
+:r .\Seeds\SeedRoutePermissions.sql
+:r .\Seeds\SeedSalesReceiptDocumentSeries.sql
+:r .\Seeds\SeedProductMerchandisingMasters.sql

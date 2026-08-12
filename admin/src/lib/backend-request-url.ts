@@ -1,29 +1,19 @@
 import { getBackendUrl } from "./backend-url";
 
-const COMMERCE_PATH_PREFIX = "commerce/";
-const AUTHENTICATION_PATH_PREFIX = "auth/";
-
 export function getBackendRequestUrl(
   path: string,
   searchParams = "",
 ): string {
   const normalizedPath = path.replace(/^\/+/, "");
-  const commerceBackend = process.env.AURALY_COMMERCE_API_URL?.trim();
   const suffix = searchParams ? `?${searchParams}` : "";
+  const backend = getBackendUrl().replace(/\/+$/, "");
 
-  if (
-    commerceBackend &&
-    (normalizedPath === "health" ||
-      normalizedPath.startsWith(COMMERCE_PATH_PREFIX) ||
-      normalizedPath.startsWith(AUTHENTICATION_PATH_PREFIX))
-  ) {
-    const root = commerceBackend.replace(/\/+$/, "");
-    const upstreamPath =
-      normalizedPath === "health"
-        ? "health"
-        : `api/${normalizedPath}`;
-    return `${root}/${upstreamPath}${suffix}`;
+  if (normalizedPath === "health") {
+    const root = backend.replace(/\/api$/i, "");
+    return `${root}/health${suffix}`;
   }
 
-  return `${getBackendUrl()}/${normalizedPath}${suffix}`;
+  const isModuleVersioned = /^(commerce|pos)\/v\d+(?:\/|$)/i.test(normalizedPath);
+  const versionedPath = isModuleVersioned ? normalizedPath : `v1/${normalizedPath}`;
+  return `${backend}/${versionedPath}${suffix}`;
 }

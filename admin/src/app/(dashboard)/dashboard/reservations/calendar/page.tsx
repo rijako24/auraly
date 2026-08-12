@@ -68,7 +68,7 @@ export default function ReservationsCalendarPage() {
     pageSize: 500,
     ...range,
   });
-  const reservations = data?.items ?? [];
+  const reservations = useMemo(() => data?.items ?? [], [data?.items]);
 
   const { days, startOffset } = useMemo(() => {
     const year = currentDate.getFullYear();

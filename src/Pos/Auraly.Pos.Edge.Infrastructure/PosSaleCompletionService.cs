@@ -24,7 +24,7 @@ public sealed record PosReceipt(
     Guid PrintJobId,
     DocumentId DocumentId,
     string DocumentNumber,
-    string FiscalNumber,
+    string? FiscalNumber,
     DateTimeOffset IssuedAt,
     string CustomerIdentification,
     IReadOnlyCollection<PosReceiptLine> Lines,
@@ -32,9 +32,10 @@ public sealed record PosReceipt(
     decimal UntaxedAmount,
     decimal TaxAmount,
     decimal PayableAmount,
-    string Cufe,
-    string QrPayload,
-    int PaperWidthMillimeters);
+    string? Cufe,
+    string? QrPayload,
+    int PaperWidthMillimeters,
+    string DocumentType = PosSaleDocumentTypes.Invoice);
 
 public interface IPosReceiptPrinter
 {
@@ -52,13 +53,14 @@ public sealed record CompletePosSaleCommand(
     string QrValidationUrl,
     IReadOnlyCollection<OfflineSalePayment> Payments,
     int PaperWidthMillimeters = 80,
-    PosSaleUblSnapshotContract? UblSnapshot = null);
+    PosSaleUblSnapshotContract? UblSnapshot = null,
+    string DocumentType = PosSaleDocumentTypes.Invoice);
 
 public sealed record CompletePosSaleResult(
     PosEdgeIssueResult IssuedSale,
     PosDraft NextDraft,
     PosDocumentNumberPreview NextDocumentNumber,
-    PosFiscalNumberPreview NextFiscalNumber);
+    PosFiscalNumberPreview? NextFiscalNumber);
 
 public sealed class PosDraftIssuanceStore(
     string connectionString,
@@ -213,8 +215,8 @@ public sealed class PosSaleCompletionService(
                 line.TaxCode,
                 line.TaxRate),
             line.Quantity,
-            line.UnitPrice,
-            line.Discount,
+            ExclusiveFromPublished(line.UnitPrice, line.TaxRate),
+            ExclusiveFromPublished(line.Discount, line.TaxRate),
             line.Tax)).ToArray();
         var issued = await sales.IssueAsync(
             new PosEdgeIssueCommand(
@@ -231,7 +233,8 @@ public sealed class PosSaleCompletionService(
                 command.Payments,
                 command.UblSnapshot,
                 draft.CustomerId,
-                draft.SourceOrderId),
+                draft.SourceOrderId,
+                command.DocumentType),
             ct);
         await issuance.MarkIssuedAsync(draftId, issued.DocumentId, ct);
         var immutable = issued.Upload;
@@ -240,8 +243,8 @@ public sealed class PosSaleCompletionService(
             issued.DocumentId,
             issued.DocumentNumber,
             issued.FiscalNumber,
-            immutable.FiscalSnapshot.IssuedAt,
-            immutable.FiscalSnapshot.CustomerIdentification,
+            immutable.CommercialSnapshot.IssuedAt,
+            immutable.CommercialSnapshot.CustomerIdentification,
             immutable.Lines.Select(line => new PosReceiptLine(
                 draft.Lines.First(source => source.ProductId.Value == line.ProductId).ProductCode,
                 line.Description,
@@ -254,30 +257,39 @@ public sealed class PosSaleCompletionService(
                 payment.MethodCode,
                 payment.Amount,
                 payment.Reference)).ToArray(),
-            immutable.FiscalSnapshot.UntaxedAmount,
-            immutable.FiscalSnapshot.TaxAmount,
-            immutable.FiscalSnapshot.PayableAmount,
+            immutable.CommercialSnapshot.UntaxedAmount,
+            immutable.CommercialSnapshot.TaxAmount,
+            immutable.CommercialSnapshot.PayableAmount,
             issued.Cufe,
             issued.QrPayload,
-            command.PaperWidthMillimeters);
+            command.PaperWidthMillimeters,
+            immutable.CommercialSnapshot.DocumentType);
 
         await printer.PrintAsync(payload, ct);
         await issuance.CompleteAsync(draftId, issued.DocumentId, ct);
         var nextDraft = await drafts.GetOrCreateActiveAsync(draft.Scope, ct);
         var nextDocumentNumber = await sales.PreviewNextDocumentNumberAsync(
             command.Context.DeviceId ?? throw new InvalidOperationException("An Edge sale requires DeviceId."),
-            AuralyDocumentTypes.SalesInvoice,
+            command.DocumentType,
             ct);
-        var nextFiscalNumber = await sales.PreviewNextFiscalNumberAsync(
-            command.Context.DeviceId ?? throw new InvalidOperationException("An Edge sale requires DeviceId."),
-            command.IssuedAt,
-            ct);
+        var nextFiscalNumber = PosSaleDocumentTypes.IsFiscal(command.DocumentType)
+            ? await sales.PreviewNextFiscalNumberAsync(
+                command.Context.DeviceId ?? throw new InvalidOperationException("An Edge sale requires DeviceId."),
+                command.IssuedAt,
+                ct)
+            : null;
         return new CompletePosSaleResult(
             issued,
             nextDraft,
             nextDocumentNumber,
             nextFiscalNumber);
     }
+    private static decimal ExclusiveFromPublished(decimal amount, decimal taxRate) =>
+        taxRate == 0m
+            ? amount
+            : decimal.Round(amount / (1m + taxRate / 100m), 6,
+                MidpointRounding.AwayFromZero);
+
 
     public async Task ReprintAsync(
         DocumentId documentId,
@@ -295,9 +307,9 @@ public sealed class PosSaleCompletionService(
             Guid.NewGuid(),
             documentId,
             immutable.DocumentNumber.FullNumber,
-            immutable.FiscalSnapshot.FiscalNumber,
-            immutable.FiscalSnapshot.IssuedAt,
-            immutable.FiscalSnapshot.CustomerIdentification,
+            immutable.FiscalSnapshot?.FiscalNumber,
+            immutable.CommercialSnapshot.IssuedAt,
+            immutable.CommercialSnapshot.CustomerIdentification,
             immutable.Lines.Select(line => new PosReceiptLine(
                 metadata is not null && metadata.TryGetValue(line.LineNumber, out var item)
                     ? item.ProductCode
@@ -312,12 +324,13 @@ public sealed class PosSaleCompletionService(
                 payment.MethodCode,
                 payment.Amount,
                 payment.Reference)).ToArray(),
-            immutable.FiscalSnapshot.UntaxedAmount,
-            immutable.FiscalSnapshot.TaxAmount,
-            immutable.FiscalSnapshot.PayableAmount,
-            immutable.FiscalSnapshot.Cufe,
-            immutable.FiscalSnapshot.QrPayload,
-            paperWidthMillimeters);
+            immutable.CommercialSnapshot.UntaxedAmount,
+            immutable.CommercialSnapshot.TaxAmount,
+            immutable.CommercialSnapshot.PayableAmount,
+            immutable.FiscalSnapshot?.Cufe,
+            immutable.FiscalSnapshot?.QrPayload,
+            paperWidthMillimeters,
+            immutable.CommercialSnapshot.DocumentType);
 
         await printer.PrintAsync(payload, ct);
         await sales.RecordReprintAsync(

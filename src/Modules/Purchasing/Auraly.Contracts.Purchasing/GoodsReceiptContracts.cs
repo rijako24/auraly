@@ -35,7 +35,10 @@ public sealed record GoodsReceiptLineRequest(
     decimal DiscountAmount,
     string TaxCode,
     decimal TaxRate,
-    string TaxTreatment);
+    string TaxTreatment,
+    string PresentationName = "Unidad",
+    decimal PresentationQuantity = 1,
+    decimal UnitsPerPresentation = 1);
 
 public sealed record ConfirmGoodsReceiptRequest(
     Guid DocumentId,
@@ -64,7 +67,10 @@ public sealed record GoodsReceiptLineSnapshot(
     string TaxTreatment,
     decimal NetAmount,
     decimal TaxAmount,
-    decimal LineTotal);
+    decimal LineTotal,
+    string PresentationName = "Unidad",
+    decimal PresentationQuantity = 1,
+    decimal UnitsPerPresentation = 1);
 
 public sealed record GoodsReceiptDocumentPayload(
     Guid TenantId,
@@ -141,7 +147,13 @@ public sealed record GoodsReceiptSupplierOption(Guid SupplierId, string Identifi
 public sealed record GoodsReceiptProductOption(
     Guid ProductId, string ProductCode, string? Reference, string Name,
     string? SupplierProductCode, decimal? LatestUnitCost,
-    string TaxCode, decimal TaxRate, IReadOnlyList<string> Barcodes);
+    string TaxCode, decimal TaxRate, string TaxTreatment, IReadOnlyList<string> Barcodes, string BaseUnitCode,
+    bool IsAssociated, string PurchasePresentationName = "Unidad",
+    decimal UnitsPerPresentation = 1, bool IsPrimary = false);
+
+public sealed record AssociateGoodsReceiptProductRequest(
+    Guid SupplierId, Guid ProductId, string? SupplierProductCode, bool IsPrimary,
+    string PurchasePresentationName = "Unidad", decimal UnitsPerPresentation = 1);
 
 public sealed record GoodsReceiptProductPage(
     IReadOnlyList<GoodsReceiptProductOption> Items, int Page, int PageSize,

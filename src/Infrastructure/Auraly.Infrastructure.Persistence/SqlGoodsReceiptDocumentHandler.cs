@@ -30,7 +30,7 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         var session = sessions.Current;
         foreach (var line in receipt.Lines.OrderBy(line => line.LineNumber))
             await ProcessLineAsync(session, receipt, line, cancellationToken);
-        if (receipt.CreatesPayable)
+        if (receipt.CreatesPayable && receipt.GrandTotal > 0)
             await OpenPayableAsync(session, receipt, cancellationToken);
         await SqlAccountingPostingJobWriter.InsertAsync(
             session, document, receipt.ReceivedAt, ids, timeProvider,
@@ -45,7 +45,9 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         GoodsReceiptLineSnapshot line,
         CancellationToken cancellationToken)
     {
-        var state = await LoadLineStateAsync(session, receipt, line, cancellationToken);
+        var inventoryTarget = await SqlProductLinkResolution.ResolveInventoryAsync(session, receipt.BusinessId, line.ProductId, cancellationToken);
+        var inventoryLine = line with { ProductId = inventoryTarget.ProductId, Quantity = line.Quantity * inventoryTarget.Factor };
+        var state = await LoadLineStateAsync(session, receipt, line, inventoryTarget.ProductId, cancellationToken);
         var acquisitionAmount = line.NetAmount +
             (line.TaxTreatment == PurchasingTaxTreatments.CapitalizedCost
                 ? line.TaxAmount
@@ -54,37 +56,50 @@ public sealed class SqlGoodsReceiptDocumentHandler(
             acquisitionAmount / line.Quantity,
             6,
             MidpointRounding.AwayFromZero);
+        var priceFormationCost = acquisitionUnitCost;
         if (state.ManageStock)
+        {
+            var projectedValuation = WeightedAverageCost.ApplyReceipt(
+                state.QuantityOnHand, state.InventoryValue, inventoryLine.Quantity,
+                acquisitionUnitCost / inventoryTarget.Factor);
             await ApplyInventoryReceiptAsync(
-                session, receipt, line, acquisitionUnitCost, state, cancellationToken);
+                session, receipt, inventoryLine, acquisitionUnitCost / inventoryTarget.Factor, state, cancellationToken);
+            if (state.PriceFormationCostBasis == "WeightedAverageCost")
+                priceFormationCost = projectedValuation.AverageUnitCostAfter * inventoryTarget.Factor;
+        }
         await RecordSupplierCostAsync(
             session, receipt, line, acquisitionUnitCost, state.PreviousObservedUnitCost,
             cancellationToken);
         await CreatePriceProposalAsync(
-            session, receipt, line, acquisitionUnitCost, state, cancellationToken);
+            session, receipt, line, priceFormationCost, state, cancellationToken);
     }
 
     private static async Task<ReceiptLineState> LoadLineStateAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
         GoodsReceiptDocumentPayload receipt,
         GoodsReceiptLineSnapshot line,
+        Guid inventoryProductId,
         CancellationToken cancellationToken)
     {
         const string sql = """
-            SELECT p.ManageStock,pp.Amount,lc.LatestUnitCost,
-                   ib.QuantityOnHand,ib.AverageUnitCost,ib.InventoryValue
+            SELECT inventoryProduct.ManageStock,pp.Amount,lc.LatestUnitCost,
+                   ib.QuantityOnHand,ib.AverageUnitCost,ib.InventoryValue,
+                   COALESCE(tax.Rate,0),w.PriceFormationCostBasis
             FROM dbo.Products p WITH (UPDLOCK,HOLDLOCK)
             INNER JOIN dbo.Warehouses w WITH (UPDLOCK,HOLDLOCK)
               ON w.WarehouseId=@WarehouseId AND w.BusinessId=@BusinessId
             INNER JOIN dbo.SupplierProducts sp WITH (UPDLOCK,HOLDLOCK)
               ON sp.ProductId=p.ProductId AND sp.SupplierId=@SupplierId
              AND sp.BusinessId=@BusinessId AND sp.IsActive=1
+            INNER JOIN dbo.Products inventoryProduct WITH (UPDLOCK,HOLDLOCK)
+              ON inventoryProduct.ProductId=@InventoryProductId AND inventoryProduct.BusinessId=p.BusinessId
+            LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=p.TaxProfileId AND tax.BusinessId=p.BusinessId
             INNER JOIN dbo.ProductPrices pp WITH (UPDLOCK,HOLDLOCK)
               ON pp.ProductId=p.ProductId AND pp.BusinessId=@BusinessId AND pp.IsActive=1
             LEFT JOIN dbo.SupplierProductLatestCosts lc WITH (UPDLOCK,HOLDLOCK)
               ON lc.BusinessId=@BusinessId AND lc.SupplierId=@SupplierId AND lc.ProductId=p.ProductId
             LEFT JOIN dbo.InventoryBalances ib WITH (UPDLOCK,HOLDLOCK)
-              ON ib.BusinessId=@BusinessId AND ib.WarehouseId=@WarehouseId AND ib.ProductId=p.ProductId
+              ON ib.BusinessId=@BusinessId AND ib.WarehouseId=@WarehouseId AND ib.ProductId=inventoryProduct.ProductId
             WHERE p.ProductId=@ProductId AND p.BusinessId=@BusinessId;
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
@@ -92,6 +107,7 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         command.Parameters.AddWithValue("@WarehouseId", receipt.WarehouseId);
         command.Parameters.AddWithValue("@SupplierId", receipt.SupplierId);
         command.Parameters.AddWithValue("@ProductId", line.ProductId);
+        command.Parameters.AddWithValue("@InventoryProductId", inventoryProductId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
             throw new InvalidOperationException(
@@ -103,7 +119,8 @@ public sealed class SqlGoodsReceiptDocumentHandler(
             reader.IsDBNull(3) ? 0 : reader.GetDecimal(3),
             reader.IsDBNull(4) ? 0 : reader.GetDecimal(4),
             reader.IsDBNull(5) ? 0 : reader.GetDecimal(5),
-            !reader.IsDBNull(3));
+            !reader.IsDBNull(3),
+            reader.GetDecimal(6),reader.GetString(7));
     }
 
     private async Task ApplyInventoryReceiptAsync(
@@ -232,16 +249,19 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         ReceiptLineState state,
         CancellationToken cancellationToken)
     {
-        var currentMargin = PriceMargin.CalculateMarginPercent(observedCost, state.CurrentSalePrice);
+        var currentMargin = observedCost <= 0
+            ? null
+            : PriceMargin.CalculateMarginPercentFromGross(
+                observedCost, state.CurrentSalePrice, state.SalesTaxRate);
         decimal? targetMargin = null;
         var suggested = state.CurrentSalePrice;
-        if (state.PreviousObservedUnitCost is not null)
+        if (state.PreviousObservedUnitCost is > 0)
         {
-            targetMargin = PriceMargin.CalculateMarginPercent(
+            targetMargin = PriceMargin.CalculateMarginPercentFromGross(
                 state.PreviousObservedUnitCost.Value,
-                state.CurrentSalePrice);
-            if (targetMargin is >= 0)
-                suggested = PriceMargin.CalculateSalePrice(observedCost, targetMargin.Value);
+                state.CurrentSalePrice, state.SalesTaxRate);
+            if (targetMargin is >= 0 and < 100)
+                suggested = PriceMargin.CalculateGrossSalePrice(observedCost, targetMargin.Value, state.SalesTaxRate);
         }
         const string sql = """
             INSERT dbo.PriceRevisionProposals
@@ -378,5 +398,7 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         decimal QuantityOnHand,
         decimal AverageUnitCost,
         decimal InventoryValue,
-        bool HasInventoryBalance);
+        bool HasInventoryBalance,
+        decimal SalesTaxRate,
+        string PriceFormationCostBasis);
 }

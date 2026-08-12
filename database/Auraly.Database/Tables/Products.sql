@@ -5,7 +5,10 @@ CREATE TABLE [dbo].[Products] (
     [Reference] NVARCHAR(120) NULL,
     [BaseUnitCode] NVARCHAR(24) NULL,
     [TaxProfileId] UNIQUEIDENTIFIER NULL,
+    [PurchaseTaxProfileId] UNIQUEIDENTIFIER NULL,
+    [PurchaseTaxTreatment] NVARCHAR(32) NOT NULL CONSTRAINT [DF_Products_PurchaseTaxTreatment] DEFAULT N'DeductibleInputVat',
     [ProductCategoryId] UNIQUEIDENTIFIER NULL,
+    [ProductBrandId] UNIQUEIDENTIFIER NULL,
     [IntegrationConnectionId] UNIQUEIDENTIFIER NULL,
     [ExternalProductId] NVARCHAR(300) NULL,
     [Source] INT NOT NULL DEFAULT 0,
@@ -16,6 +19,7 @@ CREATE TABLE [dbo].[Products] (
     [UnitPrice] DECIMAL(18, 2) NOT NULL DEFAULT 0,
     [Currency] NVARCHAR(10) NOT NULL DEFAULT N'COP',
     [ManageStock] BIT NOT NULL DEFAULT 0,
+    [AllowsFractionalSale] BIT NOT NULL CONSTRAINT [DF_Products_AllowsFractionalSale] DEFAULT 0,
     [IsWeighable] BIT NOT NULL CONSTRAINT [DF_Products_IsWeighable] DEFAULT 0,
     [StockQuantity] DECIMAL(18, 2) NULL,
     [IsActive] BIT NOT NULL DEFAULT 1,
@@ -28,6 +32,8 @@ CREATE TABLE [dbo].[Products] (
     [UpdatedByUserId] UNIQUEIDENTIFIER NULL,
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [FK_Products_TaxProfiles] FOREIGN KEY ([TaxProfileId]) REFERENCES [dbo].[TaxProfiles] ([TaxProfileId]),
+    CONSTRAINT [FK_Products_PurchaseTaxProfiles] FOREIGN KEY ([PurchaseTaxProfileId]) REFERENCES [dbo].[TaxProfiles] ([TaxProfileId]),
+    CONSTRAINT [CK_Products_PurchaseTaxTreatment] CHECK ([PurchaseTaxTreatment] IN (N'DeductibleInputVat',N'CapitalizedCost',N'NotApplicable')),
     CONSTRAINT [FK_Products_Businesses] FOREIGN KEY ([BusinessId])
         REFERENCES [dbo].[Businesses] ([BusinessId])
         ON DELETE NO ACTION,
@@ -37,7 +43,11 @@ CREATE TABLE [dbo].[Products] (
     CONSTRAINT [FK_Products_ProductCategories] FOREIGN KEY ([ProductCategoryId])
         REFERENCES [dbo].[ProductCategories] ([ProductCategoryId])
         ON DELETE NO ACTION,
+    CONSTRAINT [FK_Products_ProductBrands] FOREIGN KEY ([ProductBrandId])
+        REFERENCES [dbo].[ProductBrands] ([ProductBrandId])
+        ON DELETE NO ACTION,
     CONSTRAINT [CK_Products_Source] CHECK ([Source] IN (0, 1)),
+    CONSTRAINT [CK_Products_WeighableFractional] CHECK ([IsWeighable] = 0 OR [AllowsFractionalSale] = 1),
     CONSTRAINT [CK_Products_CanonicalFields] CHECK (
         [ProductCode] IS NULL OR
         ([BaseUnitCode] IS NOT NULL AND [TaxProfileId] IS NOT NULL))

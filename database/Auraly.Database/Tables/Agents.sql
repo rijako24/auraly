@@ -8,8 +8,10 @@ CREATE TABLE [dbo].[Agents] (
     [Kind]                  NVARCHAR(50)     NOT NULL DEFAULT N'customer',
     [IsActive]              BIT              NOT NULL DEFAULT 1,
     [SettingsJson]          NVARCHAR(MAX)    NULL,
+    [SystemPromptMarkdown]  NVARCHAR(MAX)    NULL,
     [Model]                 NVARCHAR(100)    NULL,
     [Temperature]           DECIMAL(3,2)     NULL,
+    [MaxToolIterations]      INT              NULL,
     [CreatedAt]             DATETIME2        NOT NULL DEFAULT GETUTCDATE(),
     [UpdatedAt]             DATETIME2        NULL,
     CONSTRAINT [FK_Agents_Businesses] FOREIGN KEY ([BusinessId])

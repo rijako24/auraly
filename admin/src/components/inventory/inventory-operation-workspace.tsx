@@ -1,0 +1,614 @@
+"use client";
+
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type UIEvent,
+} from "react";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import {
+  ArrowLeftRight,
+  Check,
+  ClipboardCheck,
+  Loader2,
+  PackageX,
+  Plus,
+  RefreshCw,
+  Scale,
+  Search,
+  Trash2,
+} from "lucide-react";
+import { toast } from "sonner";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  inventoryApi,
+  type InventoryAcceptance,
+  type InventoryProductItem,
+} from "@/services/api/inventory";
+
+export type WarehouseOption = { id: string; name: string };
+type OperationKind = "count" | "adjustment" | "transfer" | "conversion" | "damage";
+type Direction = "INPUT" | "OUTPUT";
+type Line = {
+  productId: string;
+  productCode: string;
+  productName: string;
+  unitCode: string;
+  stock: number;
+  quantity: string;
+  cost: string;
+  direction: Direction;
+  systemQuantity: number | null;
+};
+
+const PRODUCT_PAGE_SIZE = 50;
+const operationDocumentTypes: Record<OperationKind, string> = {
+  count: "StockCount",
+  adjustment: "InventoryAdjustment",
+  transfer: "WarehouseTransfer",
+  conversion: "ProductConversion",
+  damage: "Damage",
+};
+const operationOptions: Array<{
+  id: OperationKind;
+  label: string;
+  description: string;
+  icon: typeof Scale;
+  permission: string;
+}> = [
+  {
+    id: "count",
+    label: "Conteo físico",
+    description: "Compara el conteo real con el saldo del sistema.",
+    icon: ClipboardCheck,
+    permission: "inventory.counts.confirm",
+  },
+  {
+    id: "adjustment",
+    label: "Ajuste",
+    description: "Registra una entrada o salida justificada.",
+    icon: Scale,
+    permission: "inventory.adjustments.confirm",
+  },
+  {
+    id: "transfer",
+    label: "Traslado",
+    description: "Mueve existencias entre bodegas.",
+    icon: ArrowLeftRight,
+    permission: "inventory.transfers.confirm",
+  },
+  {
+    id: "conversion",
+    label: "Conversión",
+    description: "Transforma presentaciones conservando su valor.",
+    icon: RefreshCw,
+    permission: "inventory.conversions.confirm",
+  },
+  {
+    id: "damage",
+    label: "Avería",
+    description: "Retira unidades dañadas o no vendibles.",
+    icon: PackageX,
+    permission: "inventory.damages.confirm",
+  },
+];
+
+export function InventoryOperationWorkspace({
+  businessId,
+  warehouses,
+  permissions,
+}: {
+  businessId: string;
+  warehouses: WarehouseOption[];
+  permissions: Set<string>;
+}) {
+  const queryClient = useQueryClient();
+  const [kind, setKind] = useState<OperationKind>("count");
+  const [warehouseId, setWarehouseId] = useState("");
+  const [destinationId, setDestinationId] = useState("");
+  const [reason, setReason] = useState("");
+  const [notes, setNotes] = useState("");
+  const [lines, setLines] = useState<Line[]>([]);
+  const [countDocumentId, setCountDocumentId] = useState<string | null>(null);
+  const [conversionType, setConversionType] = useState<"SPLIT" | "MERGE">("SPLIT");
+
+  const selected = operationOptions.find((option) => option.id === kind)!;
+  const allowed = permissions.has(selected.permission);
+  const reasonsQuery = useQuery({
+    queryKey: ["inventory-reasons", businessId, operationDocumentTypes[kind]],
+    queryFn: () => inventoryApi.reasons({ operationType: operationDocumentTypes[kind] }),
+    enabled: Boolean(businessId),
+  });
+  const reasons = useMemo(() => reasonsQuery.data ?? [], [reasonsQuery.data]);
+  const selectedProductIds = useMemo(
+    () => new Set(lines.map((line) => line.productId)),
+    [lines],
+  );
+  const initialWarehouseId = warehouses.length === 1 ? warehouses[0].id : "";
+  const warehouseIdsKey = warehouses.map((warehouse) => warehouse.id).join("|");
+
+  useEffect(() => {
+    setWarehouseId(initialWarehouseId);
+    setDestinationId("");
+    setLines([]);
+    setCountDocumentId(null);
+  }, [businessId, initialWarehouseId, warehouseIdsKey]);
+
+  useEffect(() => {
+    setReason("");
+    setLines([]);
+    setCountDocumentId(null);
+  }, [kind]);
+
+  useEffect(() => {
+    if (!reasons.length) return;
+    setReason((current) => reasons.some((item) => item.code === current) ? current : reasons[0].code);
+  }, [reasons]);
+
+  function focusQuantity(index: number) {
+    window.requestAnimationFrame(() => {
+      const input = document.querySelector<HTMLInputElement>(
+        `[data-inventory-row="${index}"]`,
+      );
+      input?.focus();
+      input?.select();
+      input?.scrollIntoView({ block: "nearest" });
+    });
+  }
+
+  function focusSearch() {
+    window.requestAnimationFrame(() =>
+      document.querySelector<HTMLInputElement>("#inventory-product-search")?.focus(),
+    );
+  }
+
+  function addProduct(product: InventoryProductItem) {
+    if (countDocumentId) return;
+    const existing = lines.findIndex((line) => line.productId === product.productId);
+    if (existing >= 0) {
+      focusQuantity(existing);
+      return;
+    }
+
+    const nextIndex = lines.length;
+    setLines((current) => [
+      ...current,
+      {
+        productId: product.productId,
+        productCode: product.productCode,
+        productName: product.productName,
+        unitCode: product.unitCode,
+        stock: product.quantityOnHand,
+        quantity: "",
+        cost: "",
+        direction: kind === "conversion" && current.length > 0 ? "OUTPUT" : "INPUT",
+        systemQuantity: null,
+      },
+    ]);
+    window.requestAnimationFrame(() =>
+      window.requestAnimationFrame(() => focusQuantity(nextIndex)),
+    );
+  }
+
+  function gridKey(event: KeyboardEvent<HTMLInputElement>, index: number) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      focusQuantity(Math.min(index + 1, lines.length - 1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      focusQuantity(Math.max(index - 1, 0));
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      if (index < lines.length - 1) focusQuantity(index + 1);
+      else focusSearch();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      focusSearch();
+    }
+  }
+
+  function update(index: number, patch: Partial<Line>) {
+    setLines((current) =>
+      current.map((line, currentIndex) =>
+        currentIndex === index ? { ...line, ...patch } : line,
+      ),
+    );
+  }
+
+  function clear() {
+    setLines([]);
+    setCountDocumentId(null);
+    setNotes("");
+    focusSearch();
+  }
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const now = new Date().toISOString();
+      if (kind === "count" && !countDocumentId) {
+        const documentId = crypto.randomUUID();
+        const draft = await inventoryApi.startCount({
+          documentId,
+          businessId,
+          warehouseId,
+          occurredAt: now,
+          reasonCode: reason.trim(),
+          notes: notes.trim() || null,
+          productIds: lines.map((line) => line.productId),
+        });
+        setCountDocumentId(documentId);
+        setLines((current) =>
+          current.map((line) => ({
+            ...line,
+            systemQuantity:
+              draft.lines.find((candidate) => candidate.productId === line.productId)
+                ?.systemQuantityAtBase ?? 0,
+            quantity: "",
+          })),
+        );
+        return null;
+      }
+
+      let result: InventoryAcceptance;
+      if (kind === "count") {
+        result = await inventoryApi.confirmCount(countDocumentId!, {
+          businessId,
+          lines: lines.map((line, index) => ({
+            lineNumber: index + 1,
+            productId: line.productId,
+            countedQuantity: Number(line.quantity),
+          })),
+        });
+      } else if (kind === "adjustment") {
+        result = await inventoryApi.confirmAdjustment({
+          documentId: crypto.randomUUID(),
+          businessId,
+          warehouseId,
+          occurredAt: now,
+          reasonCode: reason.trim(),
+          costCenterId: null,
+          notes: notes.trim() || null,
+          lines: lines.map((line, index) => ({
+            lineNumber: index + 1,
+            productId: line.productId,
+            quantityChange: Number(line.quantity),
+            explicitUnitCost:
+              Number(line.quantity) > 0 && line.cost !== "" ? Number(line.cost) : null,
+          })),
+        });
+      } else if (kind === "transfer") {
+        result = await inventoryApi.confirmTransfer({
+          documentId: crypto.randomUUID(),
+          businessId,
+          sourceWarehouseId: warehouseId,
+          destinationWarehouseId: destinationId,
+          occurredAt: now,
+          reasonCode: reason.trim(),
+          notes: notes.trim() || null,
+          lines: lines.map((line, index) => ({
+            lineNumber: index + 1,
+            productId: line.productId,
+            quantity: Number(line.quantity),
+          })),
+        });
+      } else if (kind === "conversion") {
+        result = await inventoryApi.confirmConversion({
+          documentId: crypto.randomUUID(),
+          businessId,
+          warehouseId,
+          occurredAt: now,
+          conversionType,
+          reasonCode: reason.trim(),
+          costCenterId: null,
+          notes: notes.trim() || null,
+          lines: lines.map((line, index) => ({
+            lineNumber: index + 1,
+            direction: line.direction,
+            productId: line.productId,
+            quantity: Number(line.quantity),
+            allocationWeight: null,
+          })),
+        });
+      } else {
+        result = await inventoryApi.confirmDamage({
+          documentId: crypto.randomUUID(),
+          businessId,
+          warehouseId,
+          occurredAt: now,
+          reasonCode: reason.trim(),
+          costCenterId: null,
+          notes: notes.trim() || null,
+          lines: lines.map((line, index) => ({
+            lineNumber: index + 1,
+            productId: line.productId,
+            quantity: Number(line.quantity),
+          })),
+        });
+      }
+      return result;
+    },
+    onSuccess: async (result) => {
+      if (!result) {
+        toast.success("Conteo preparado. Ingresa las cantidades encontradas.");
+        focusQuantity(0);
+        return;
+      }
+      toast.success(`${result.documentNumber} fue enviado al motor`);
+      clear();
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["inventory-balances"] }),
+        queryClient.invalidateQueries({ queryKey: ["inventory-movements"] }),
+        queryClient.invalidateQueries({ queryKey: ["inventory-operations"] }),
+        queryClient.invalidateQueries({ queryKey: ["inventory-operation-products"] }),
+      ]);
+    },
+    onError: (error: { message?: string }) =>
+      toast.error(error.message ?? "No fue posible confirmar la operación"),
+  });
+
+  const quantitiesValid =
+    lines.length > 0 &&
+    lines.every((line) => {
+      const value = Number(line.quantity);
+      return (
+        line.quantity !== "" &&
+        Number.isFinite(value) &&
+        (kind === "adjustment" ? value !== 0 : value >= 0) &&
+        (kind === "count" || value > 0)
+      );
+    });
+  const conversionValid =
+    kind !== "conversion" ||
+    (lines.some((line) => line.direction === "INPUT") &&
+      lines.some((line) => line.direction === "OUTPUT") &&
+      (conversionType === "SPLIT"
+        ? lines.filter((line) => line.direction === "INPUT").length === 1
+        : lines.filter((line) => line.direction === "OUTPUT").length === 1));
+  const ready =
+    allowed &&
+    Boolean(warehouseId) &&
+    Boolean(reason.trim()) &&
+    lines.length > 0 &&
+    ((kind === "count" && !countDocumentId) || (quantitiesValid && conversionValid)) &&
+    (kind !== "transfer" ||
+      (Boolean(destinationId) && destinationId !== warehouseId));
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 md:grid-cols-5">
+        {operationOptions.map((option) => {
+          const Icon = option.icon;
+          const enabled = permissions.has(option.permission);
+          return (
+            <button
+              key={option.id}
+              type="button"
+              disabled={!enabled || mutation.isPending}
+              onClick={() => setKind(option.id)}
+              className={`rounded-xl border p-4 text-left transition ${
+                kind === option.id
+                  ? "border-emerald-500 bg-emerald-50 ring-1 ring-emerald-400"
+                  : "bg-card hover:border-emerald-300"
+              } disabled:cursor-not-allowed disabled:opacity-45`}
+            >
+              <Icon className="mb-3 h-5 w-5 text-emerald-700" />
+              <strong className="block text-sm">{option.label}</strong>
+              <span className="mt-1 block text-xs text-muted-foreground">
+                {option.description}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <Card>
+        <CardHeader><CardTitle>{selected.label}</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-3">
+            <Field label={kind === "transfer" ? "Bodega de origen" : "Bodega"}>
+              <Select
+                value={warehouseId}
+                disabled={mutation.isPending || Boolean(countDocumentId)}
+                onValueChange={(value) => {
+                  setWarehouseId(value);
+                  setLines([]);
+                  setCountDocumentId(null);
+                }}
+              >
+                <SelectTrigger><SelectValue placeholder="Selecciona una bodega" /></SelectTrigger>
+                <SelectContent>
+                  {warehouses.map((warehouse) => (
+                    <SelectItem key={warehouse.id} value={warehouse.id}>{warehouse.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            {kind === "transfer" && (
+              <Field label="Bodega de destino">
+                <Select value={destinationId} onValueChange={setDestinationId}>
+                  <SelectTrigger><SelectValue placeholder="Selecciona el destino" /></SelectTrigger>
+                  <SelectContent>
+                    {warehouses.filter((warehouse) => warehouse.id !== warehouseId).map((warehouse) => (
+                      <SelectItem key={warehouse.id} value={warehouse.id}>{warehouse.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
+            {kind === "conversion" && (
+              <Field label="Tipo de conversión">
+                <Select value={conversionType} onValueChange={(value) => setConversionType(value as "SPLIT" | "MERGE")}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="SPLIT">Un producto en varias salidas</SelectItem>
+                    <SelectItem value="MERGE">Varios productos en una salida</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
+            <Field label="Motivo">
+              <Select value={reason} disabled={mutation.isPending || Boolean(countDocumentId) || reasonsQuery.isLoading || reasons.length === 0} onValueChange={setReason}>
+                <SelectTrigger data-testid="inventory-reason-select"><SelectValue placeholder={reasonsQuery.isLoading ? "Cargando motivos..." : "Selecciona un motivo"} /></SelectTrigger>
+                <SelectContent>
+                  {reasons.map((item) => <SelectItem key={item.inventoryReasonId} value={item.code}>{item.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              {reasonsQuery.isError && <p className="text-xs text-red-700">No fue posible cargar los motivos.</p>}
+            </Field>
+          </div>
+
+          {!countDocumentId && (
+            <InventoryProductPicker
+              businessId={businessId}
+              warehouseId={warehouseId}
+              selectedProductIds={selectedProductIds}
+              disabled={!warehouseId || mutation.isPending}
+              onSelect={addProduct}
+            />
+          )}
+
+          <CaptureGrid
+            kind={kind}
+            prepared={Boolean(countDocumentId)}
+            lines={lines}
+            update={update}
+            remove={(index) => {
+              setLines((current) => current.filter((_, currentIndex) => currentIndex !== index));
+              window.requestAnimationFrame(() => focusQuantity(Math.min(index, lines.length - 2)));
+            }}
+            onKey={gridKey}
+          />
+
+          <Field label="Observaciones">
+            <Textarea value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={1000} />
+          </Field>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button disabled={!ready || mutation.isPending} onClick={() => mutation.mutate()}>
+              {mutation.isPending
+                ? "Procesando…"
+                : kind === "count" && !countDocumentId
+                  ? "Preparar conteo"
+                  : `Confirmar ${selected.label.toLowerCase()}`}
+            </Button>
+            <Button type="button" variant="outline" disabled={mutation.isPending || lines.length === 0} onClick={clear}>Limpiar</Button>
+            {!allowed && <span className="text-sm text-amber-700">No tienes permiso para confirmar esta operación.</span>}
+            {countDocumentId && <span className="text-sm text-muted-foreground">El saldo base quedó congelado; confirma el conteo para aplicar las diferencias.</span>}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function InventoryProductPicker({
+  businessId,
+  warehouseId,
+  selectedProductIds,
+  disabled,
+  onSelect,
+}: {
+  businessId: string;
+  warehouseId: string;
+  selectedProductIds: ReadonlySet<string>;
+  disabled: boolean;
+  onSelect: (product: InventoryProductItem) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const query = useInfiniteQuery({
+    queryKey: ["inventory-operation-products", businessId, warehouseId, search.trim()],
+    queryFn: ({ pageParam }) => inventoryApi.products({ warehouseId, search: search.trim() || undefined, page: pageParam, pageSize: PRODUCT_PAGE_SIZE }),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) => lastPage.page < lastPage.totalPages ? lastPage.page + 1 : undefined,
+    enabled: Boolean(warehouseId) && open && !disabled,
+  });
+  const products = useMemo(() => query.data?.pages.flatMap((page) => page.items) ?? [], [query.data]);
+  const totalCount = query.data?.pages[0]?.totalCount ?? 0;
+
+  useEffect(() => { setActiveIndex(0); listRef.current?.scrollTo({ top: 0 }); }, [search, warehouseId]);
+  useEffect(() => { if (activeIndex >= products.length) setActiveIndex(Math.max(0, products.length - 1)); }, [activeIndex, products.length]);
+
+  function choose(product: InventoryProductItem) { onSelect(product); setSearch(""); setOpen(false); }
+  async function chooseActive() {
+    let product: InventoryProductItem | undefined = products[activeIndex];
+    if (!product && !query.isFetching) {
+      const refreshed = await query.refetch();
+      product = refreshed.data?.pages.flatMap((page) => page.items)[0];
+    }
+    if (product) choose(product);
+  }
+  async function moveDown() {
+    if (activeIndex < products.length - 1) { setActiveIndex((current) => current + 1); return; }
+    if (!query.hasNextPage || query.isFetchingNextPage) return;
+    const previousLength = products.length;
+    const next = await query.fetchNextPage();
+    const nextLength = next.data?.pages.flatMap((page) => page.items).length ?? previousLength;
+    if (nextLength > previousLength) setActiveIndex(previousLength);
+  }
+  function keyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "ArrowDown") { event.preventDefault(); setOpen(true); void moveDown(); }
+    else if (event.key === "ArrowUp") { event.preventDefault(); setActiveIndex((current) => Math.max(0, current - 1)); }
+    else if (event.key === "Enter") { event.preventDefault(); void chooseActive(); }
+    else if (event.key === "Escape") { event.preventDefault(); setOpen(false); }
+  }
+  function scroll(event: UIEvent<HTMLDivElement>) {
+    const target = event.currentTarget;
+    if (target.scrollHeight - target.scrollTop - target.clientHeight < 80 && query.hasNextPage && !query.isFetchingNextPage) void query.fetchNextPage();
+  }
+
+  return (
+    <div className="relative">
+      <Label htmlFor="inventory-product-search">Agregar productos</Label>
+      <div className="mt-2 flex gap-2">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+          <Input id="inventory-product-search" data-testid="inventory-product-search" className="pl-9" disabled={disabled} value={search} onFocus={() => setOpen(true)} onChange={(event) => { setSearch(event.target.value); setOpen(true); }} onKeyDown={keyDown} autoComplete="off" aria-autocomplete="list" aria-expanded={open} aria-controls="inventory-product-results" placeholder="Código interno, código de barras, referencia o nombre" />
+        </div>
+        <Button type="button" disabled={disabled || query.isFetching || products.length === 0} onMouseDown={(event) => event.preventDefault()} onClick={() => void chooseActive()}>
+          {query.isFetching && !query.isFetchingNextPage ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />} Agregar
+        </Button>
+      </div>
+      {open && warehouseId && (
+        <div id="inventory-product-results" ref={listRef} role="listbox" onScroll={scroll} className="absolute z-30 mt-1 max-h-72 w-full overflow-auto rounded-xl border bg-popover p-1 shadow-xl">
+          {query.isLoading ? <p className="flex items-center gap-2 p-4 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Buscando productos…</p>
+          : query.isError ? <div className="p-4 text-sm text-red-700"><p>No fue posible cargar los productos.</p><Button className="mt-3" size="sm" variant="outline" onClick={() => void query.refetch()}>Reintentar</Button></div>
+          : products.length === 0 ? <p className="p-4 text-sm text-muted-foreground">No se encontraron productos.</p>
+          : <><div className="px-3 py-2 text-xs text-muted-foreground">{products.length.toLocaleString("es-CO")} de {totalCount.toLocaleString("es-CO")} productos</div>
+            {products.map((product, index) => <button key={product.productId} type="button" role="option" aria-selected={activeIndex === index} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActiveIndex(index)} onClick={() => choose(product)} className={`flex w-full items-center justify-between gap-4 rounded-lg px-3 py-2.5 text-left text-sm ${activeIndex === index ? "bg-emerald-50 text-emerald-950" : "hover:bg-muted"}`}><span className="min-w-0"><strong className="block truncate">{product.productName}</strong><small className="block truncate text-muted-foreground">{product.productCode}{product.reference ? ` · ${product.reference}` : ""}</small></span><span className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">Saldo {product.quantityOnHand}{selectedProductIds.has(product.productId) && <Check className="h-4 w-4 text-emerald-700" aria-label="Agregado" />}</span></button>)}
+            {query.hasNextPage && <Button type="button" variant="ghost" className="mt-1 w-full" disabled={query.isFetchingNextPage} onMouseDown={(event) => event.preventDefault()} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Cargar 50 más</Button>}</>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CaptureGrid({ kind, prepared, lines, update, remove, onKey }: { kind: OperationKind; prepared: boolean; lines: Line[]; update: (index: number, patch: Partial<Line>) => void; remove: (index: number) => void; onKey: (event: KeyboardEvent<HTMLInputElement>, index: number) => void }) {
+  return <div className="overflow-x-auto rounded-xl border"><table className="w-full min-w-[760px] text-sm"><thead className="bg-muted/60"><tr><th className="px-3 py-3 text-left">Producto</th>{kind === "conversion" && <th className="px-3 py-3 text-left">Movimiento</th>}<th className="px-3 py-3 text-right">Saldo</th>{prepared && <th className="px-3 py-3 text-right">Saldo base</th>}<th className="px-3 py-3 text-left">{kind === "count" ? "Cantidad contada" : kind === "adjustment" ? "Cantidad (+ / −)" : "Cantidad"}</th>{kind === "adjustment" && <th className="px-3 py-3 text-left">Costo entrada</th>}<th className="w-14" /></tr></thead><tbody>{lines.length === 0 ? <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">Selecciona una bodega y agrega los productos de la operación.</td></tr> : lines.map((line, index) => <tr key={line.productId} className="border-t focus-within:bg-emerald-50/60"><td className="px-3 py-2"><strong>{line.productName}</strong><span className="block text-xs text-muted-foreground">{line.productCode} · {line.unitCode}</span></td>{kind === "conversion" && <td className="px-3 py-2"><Select value={line.direction} onValueChange={(value) => update(index, { direction: value as Direction })}><SelectTrigger className="w-32"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="INPUT">Consume</SelectItem><SelectItem value="OUTPUT">Produce</SelectItem></SelectContent></Select></td>}<td className="px-3 py-2 text-right tabular-nums">{line.stock}</td>{prepared && <td className="px-3 py-2 text-right tabular-nums">{line.systemQuantity ?? 0}</td>}<td className="px-3 py-2"><Input data-inventory-row={index} data-testid={`inventory-quantity-${index}`} className="w-36 text-right tabular-nums" inputMode="decimal" value={line.quantity} onChange={(event) => update(index, { quantity: event.target.value })} onKeyDown={(event) => onKey(event, index)} aria-label={`Cantidad de ${line.productName}`} /></td>{kind === "adjustment" && <td className="px-3 py-2"><Input className="w-36 text-right tabular-nums" inputMode="decimal" disabled={Number(line.quantity) <= 0} value={line.cost} onChange={(event) => update(index, { cost: event.target.value })} aria-label={`Costo de ${line.productName}`} /></td>}<td className="px-2 py-2"><Button type="button" size="icon" variant="ghost" disabled={prepared} onClick={() => remove(index)} aria-label={`Eliminar ${line.productName}`}><Trash2 className="h-4 w-4" /></Button></td></tr>)}</tbody></table></div>;
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return <div className="space-y-2"><Label>{label}</Label>{children}</div>;
+}

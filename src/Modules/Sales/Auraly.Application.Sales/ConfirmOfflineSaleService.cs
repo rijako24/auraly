@@ -19,6 +19,12 @@ public sealed record OfflineSaleLine(
     decimal Discount,
     decimal TaxAmount);
 
+public sealed record PrepareOfflineSaleCommand(
+    UserId UserId,
+    DocumentId DocumentId,
+    SalesExecutionContext Context,
+    IReadOnlyCollection<OfflineSaleLine> Lines);
+
 public sealed record ConfirmOfflineSaleCommand(
     UserId UserId,
     DocumentId DocumentId,
@@ -43,49 +49,8 @@ public sealed class ConfirmOfflineSaleService(IPermissionAuthorizer authorizer)
     public ConfirmedOfflineSale Confirm(ConfirmOfflineSaleCommand command)
     {
         ArgumentNullException.ThrowIfNull(command);
-        authorizer.Demand(
-            command.Context.TenantId,
-            command.UserId,
-            CommercePermissionCodes.SalesCreate);
-
-        if (command.Lines.Count == 0)
-        {
-            throw new InvalidOperationException("An offline sale requires at least one line.");
-        }
-
-        if (command.Lines.Any(line => line.Discount > 0))
-        {
-            authorizer.Demand(
-                command.Context.TenantId,
-                command.UserId,
-                CommercePermissionCodes.SalesDiscount);
-        }
-
-        var invoice = new SalesInvoice(
-            command.DocumentId,
-            command.Context.TenantId,
-            command.Context.BusinessId,
-            command.Context.WarehouseId,
-            command.Context.UserId,
-            command.Context.DeviceId,
-            command.Context.WorkSessionId);
-
-        foreach (var line in command.Lines)
-        {
-            if (!line.Product.IsActive)
-            {
-                throw new InvalidOperationException(
-                    $"Product '{line.Product.ProductCode}' is not available for sale.");
-            }
-
-            invoice.AddLine(new SalesInvoiceLine(
-                line.Product.ProductId,
-                line.Product.Name,
-                line.Quantity,
-                line.UnitPrice,
-                line.Discount,
-                line.TaxAmount));
-        }
+        var invoice = Prepare(new PrepareOfflineSaleCommand(
+            command.UserId, command.DocumentId, command.Context, command.Lines));
 
         var taxes = command.Lines
             .GroupBy(line => line.Product.TaxCode, StringComparer.Ordinal)
@@ -139,5 +104,53 @@ public sealed class ConfirmOfflineSaleService(IPermissionAuthorizer authorizer)
             command.IssuedAt);
 
         return new ConfirmedOfflineSale(invoice, contract, outbox);
+    }
+
+    public SalesInvoice Prepare(PrepareOfflineSaleCommand command)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        authorizer.Demand(
+            command.Context.TenantId,
+            command.UserId,
+            CommercePermissionCodes.SalesCreate);
+
+        if (command.Lines.Count == 0)
+            throw new InvalidOperationException("An offline sale requires at least one line.");
+
+        if (command.Lines.Any(line => line.Discount > 0))
+        {
+            authorizer.Demand(
+                command.Context.TenantId,
+                command.UserId,
+                CommercePermissionCodes.SalesDiscount);
+        }
+
+        var invoice = new SalesInvoice(
+            command.DocumentId,
+            command.Context.TenantId,
+            command.Context.BusinessId,
+            command.Context.WarehouseId,
+            command.Context.UserId,
+            command.Context.DeviceId,
+            command.Context.WorkSessionId);
+
+        foreach (var line in command.Lines)
+        {
+            if (!line.Product.IsActive)
+            {
+                throw new InvalidOperationException(
+                    $"Product '{line.Product.ProductCode}' is not available for sale.");
+            }
+
+            invoice.AddLine(new SalesInvoiceLine(
+                line.Product.ProductId,
+                line.Product.Name,
+                line.Quantity,
+                line.UnitPrice,
+                line.Discount,
+                line.TaxAmount));
+        }
+
+        return invoice;
     }
 }

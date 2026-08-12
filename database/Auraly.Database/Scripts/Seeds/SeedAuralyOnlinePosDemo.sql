@@ -118,6 +118,16 @@ IF NOT EXISTS (SELECT 1 FROM dbo.CatalogChanges WHERE BusinessId=@BusinessId AND
     INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
     VALUES(@BusinessId,@ProductId,N'Upsert',@Now);
 
+-- Keep the deterministic demo labels healthy when the seed is applied over an older
+-- local database that contained incorrectly decoded text.
+UPDATE dbo.Products
+SET Name=N'Producto Auraly de demostración',UpdatedAt=SYSUTCDATETIME()
+WHERE ProductId=@ProductId AND BusinessId=@BusinessId;
+UPDATE dbo.OrderItems
+SET ProductNameSnapshot=N'Producto Auraly de demostración'
+WHERE BusinessId=@BusinessId AND ProductId=@ProductId
+  AND OrderId IN (@OrderOneId,@OrderTwoId);
+
 IF NOT EXISTS (SELECT 1 FROM dbo.Orders WHERE OrderId=@OrderOneId)
 BEGIN
     INSERT dbo.Orders(

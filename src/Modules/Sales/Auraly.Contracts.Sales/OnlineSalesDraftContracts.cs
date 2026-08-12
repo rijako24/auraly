@@ -7,13 +7,8 @@ public sealed record OnlineSalesDraftContext(
 
 public sealed record OpenOnlineSalesDraftRequest(OnlineSalesDraftContext Context);
 
-public sealed record AddOnlineSalesDraftProductRequest(
-    Guid ProductId,
-    decimal Quantity,
-    long ExpectedVersion);
-
-public sealed record CaptureOnlineSalesDraftProductRequest(
-    string Value,
+public sealed record AddOnlineSalesDraftItemRequest(
+    string Selector,
     decimal Quantity,
     long ExpectedVersion);
 

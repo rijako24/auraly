@@ -414,26 +414,28 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
         if (item.OrderDraftId != draft.OrderDraftId)
             throw new InvalidOperationException("Order item does not belong to the active draft.");
 
+        var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ctx.ChannelPhone, ctx.CommerceCustomer, ctx.RecipientPhoneNumberId, ct);
+        var adapter = _adapterFactory.Resolve(adapterContext.Provider);
+        var lookup = new AddOrderItemRequest(
+            item.ProductId,
+            item.ExternalProductId,
+            item.Sku,
+            item.ProductNameSnapshot,
+            quantity,
+            null);
+        var product = await adapter.GetProductAsync(lookup, adapterContext, ct);
+        if (product is null && adapter is not IAuthoritativeCommercePricingAdapter)
+            product = await FindCachedProductAsync(lookup, adapterContext, ct);
+        if (product is null)
+            throw new InvalidOperationException("Product not found or it does not have a published price.");
+        if (!_availability.IsSellable(product))
+            throw new InvalidOperationException("Product inactive.");
         if (quantity > item.Quantity)
-        {
-            var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, ctx.ChannelPhone, ctx.CommerceCustomer, ctx.RecipientPhoneNumberId, ct);
-            var adapter = _adapterFactory.Resolve(adapterContext.Provider);
-            var lookup = new AddOrderItemRequest(
-                item.ProductId,
-                item.ExternalProductId,
-                item.Sku,
-                item.ProductNameSnapshot,
-                quantity,
-                item.UnitPrice);
-            var product = await adapter.GetProductAsync(lookup, adapterContext, ct)
-                ?? await FindCachedProductAsync(lookup, adapterContext, ct)
-                ?? throw new InvalidOperationException("Product not found.");
-            if (!_availability.IsSellable(product))
-                throw new InvalidOperationException("Product inactive.");
             EnsureRequestedQuantityFitsStock(product, quantity, 0m);
-        }
 
         item.Quantity = quantity;
+        if (adapter is IAuthoritativeCommercePricingAdapter)
+            item.UnitPrice = product.UnitPrice;
         item.LineTotal = quantity * item.UnitPrice;
         item.UpdatedAt = DateTime.UtcNow;
         await _unitOfWork.OrderDraftItems.UpdateAsync(item, ct);
@@ -448,7 +450,26 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
     public async Task<OrderSnapshot> GetDraftAsync(AgentConversationContext ctx, CancellationToken ct = default)
     {
         var draft = await GetActiveDraftAsync(ctx, ct);
-        return draft is null ? EmptyDraftSnapshot() : await BuildSnapshotAsync(draft, ct);
+        if (draft is null)
+            return EmptyDraftSnapshot();
+
+        var adapterContext = await BuildContextAsync(
+            ctx.BusinessId,
+            ctx.AgentId,
+            ctx.ConversationId,
+            ctx.Config,
+            ctx.ChannelPhone,
+            ctx.CommerceCustomer,
+            ctx.RecipientPhoneNumberId,
+            ct);
+        var items = await _unitOfWork.OrderDraftItems.GetByDraftIdAsync(
+            draft.BusinessId,
+            draft.OrderDraftId,
+            ct);
+        if (await EnsureOrderProductsSellableAsync(draft, items, adapterContext, ct))
+            await _unitOfWork.SaveChangesAsync(ct);
+
+        return await BuildSnapshotAsync(draft, ct);
     }
 
     public async Task<int> DiscardDraftsAsync(
@@ -534,7 +555,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
         if (product is null && !string.IsNullOrWhiteSpace(request.Name))
             product = await FindCachedProductByNameAsync(ctx.BusinessId, request.Name, ct);
 
-        return product is null
+        return product is null || !product.HasPublishedPrice
             ? null
             : new ProductReference(
                 product.ProductId,
@@ -847,7 +868,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
         if (draftItems.Count == 0)
             throw new InvalidOperationException("Order has no items.");
 
-        await EnsureOrderProductsSellableAsync(draft.BusinessId, draftItems, adapterContext, ct);
+        _ = await EnsureOrderProductsSellableAsync(draft, draftItems, adapterContext, ct);
 
         var order = new Order
         {
@@ -909,20 +930,18 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
         return order;
     }
 
-    private async Task EnsureOrderProductsSellableAsync(
-        Guid businessId,
+    private async Task<bool> EnsureOrderProductsSellableAsync(
+        OrderDraft draft,
         IReadOnlyList<OrderDraftItem> items,
         CommerceAdapterContext adapterContext,
         CancellationToken ct)
     {
-        var unavailable = await _availability.FindUnavailableDraftItemsAsync(businessId, items, ct);
+        var unavailable = await _availability.FindUnavailableDraftItemsAsync(draft.BusinessId, items, ct);
         if (unavailable.Count > 0)
             throw new InvalidOperationException("Product inactive.");
 
-        if (adapterContext.Provider == CommerceProvider.Local)
-            return;
-
         var adapter = _adapterFactory.Resolve(adapterContext.Provider);
+        var priceChanged = false;
         foreach (var item in items)
         {
             var live = await adapter.GetProductAsync(
@@ -935,7 +954,9 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
                     null),
                 adapterContext,
                 ct);
-            if (live is null || !_availability.IsSellable(live))
+            if (live is null)
+                throw new InvalidOperationException("Product not found or it does not have a published price.");
+            if (!_availability.IsSellable(live))
                 throw new InvalidOperationException("Product inactive.");
             if (live.StockQuantity.HasValue && item.Quantity > live.StockQuantity.Value)
             {
@@ -945,7 +966,20 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
                     live.StockQuantity.Value,
                     0m);
             }
+
+            if (adapter is not IAuthoritativeCommercePricingAdapter || item.UnitPrice == live.UnitPrice)
+                continue;
+
+            item.UnitPrice = live.UnitPrice;
+            item.LineTotal = item.Quantity * live.UnitPrice;
+            item.UpdatedAt = DateTime.UtcNow;
+            await _unitOfWork.OrderDraftItems.UpdateAsync(item, ct);
+            priceChanged = true;
         }
+
+        if (priceChanged)
+            await RecalculateAsync(draft, ct);
+        return priceChanged;
     }
 
     private async Task SyncExternalOrderIfNeededAsync(Order order, CommerceAdapterContext adapterContext, CancellationToken ct)

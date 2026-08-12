@@ -14,6 +14,8 @@ export function usePriceProposals(params: {
   pageSize: number;
   search?: string;
   status?: PriceProposalStatus;
+  supplierId?: string;
+  sourceDocumentId?: string;
 }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   return useQuery({
@@ -24,7 +26,7 @@ export function usePriceProposals(params: {
   });
 }
 
-function usePricingMutation<T>(mutationFn: (value: T) => Promise<unknown>) {
+function usePricingMutation<T, TResult>(mutationFn: (value: T) => Promise<TResult>) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const client = useQueryClient();
   return useMutation({
@@ -49,3 +51,18 @@ export const useRejectPrice = () =>
 
 export const usePublishPrices = () =>
   usePricingMutation((items: PublishPriceItem[]) => pricingApi.publish(items));
+export function useProductPricingContext(productId?: string) {
+  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
+  return useQuery({
+    queryKey: ["product-pricing", businessId, productId],
+    queryFn: () => pricingApi.getProductContext(productId!),
+    enabled: !!businessId && !!productId,
+  });
+}
+
+export function useSavePreparedProductPrice() {
+  return usePricingMutation(({ productId, request }: {
+    productId: string;
+    request: import("@/services/api/pricing").PublishProductPriceRequest;
+  }) => pricingApi.savePreparedProduct(productId, request));
+}

@@ -10,8 +10,12 @@
     <PackageReference Include="QRCoder" Version="1.8.0" />
     <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.19.0" />
     <PackageReference Include="RabbitMQ.Client" Version="7.2.1" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.12" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\Application\MimosBabySpa.Application\MimosBabySpa.Application.csproj" />
+    <ProjectReference Include="..\..\Infrastructure\MimosBabySpa.Infrastructure\MimosBabySpa.Infrastructure.csproj" />
     <ProjectReference Include="..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
     <ProjectReference Include="..\..\BuildingBlocks\Auraly.BuildingBlocks.Infrastructure\Auraly.BuildingBlocks.Infrastructure.csproj" />
     <ProjectReference Include="..\..\Infrastructure\Auraly.Infrastructure.Persistence\Auraly.Infrastructure.Persistence.csproj" />
@@ -49,6 +53,10 @@
     <ProjectReference Include="..\..\Modules\Pricing\Auraly.Contracts.Pricing\Auraly.Contracts.Pricing.csproj" />
     <ProjectReference Include="..\..\Modules\Pricing\Auraly.Application.Pricing\Auraly.Application.Pricing.csproj" />
     <ProjectReference Include="..\..\Modules\Pricing\Auraly.Infrastructure.Pricing\Auraly.Infrastructure.Pricing.csproj" />
+    <ProjectReference Include="..\..\Modules\Routes\Auraly.Contracts.Routes\Auraly.Contracts.Routes.csproj" />
+    <ProjectReference Include="..\..\Modules\Routes\Auraly.Domain.Routes\Auraly.Domain.Routes.csproj" />
+    <ProjectReference Include="..\..\Modules\Routes\Auraly.Application.Routes\Auraly.Application.Routes.csproj" />
+    <ProjectReference Include="..\..\Modules\Routes\Auraly.Infrastructure.Routes\Auraly.Infrastructure.Routes.csproj" />
     <ProjectReference Include="..\..\Modules\Returns\Auraly.Contracts.Returns\Auraly.Contracts.Returns.csproj" />
     <ProjectReference Include="..\..\Modules\Returns\Auraly.Application.Returns\Auraly.Application.Returns.csproj" />
     <ProjectReference Include="..\..\Modules\Receivables\Auraly.Contracts.Receivables\Auraly.Contracts.Receivables.csproj" />

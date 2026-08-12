@@ -1,0 +1,126 @@
+namespace Auraly.Contracts.Fiscal;
+
+public sealed record FiscalResolutionConfiguration(
+    Guid BusinessId,
+    Guid? FiscalAuthorizationId,
+    string? AuthorizationNumber,
+    string? SupplierTaxId,
+    int Environment,
+    string? QrValidationUrl,
+    string? TechnicalKeyVersion,
+    DateOnly? ValidFrom,
+    DateOnly? ValidUntil,
+    string? Prefix,
+    long? RangeStart,
+    long? RangeEnd,
+    long? InitialConsecutive,
+    long? NextConsecutive,
+    bool CanSetInitialConsecutive,
+    bool HasActiveAuthorization,
+    bool HasOnlineSeries,
+    bool HasOfflineSeriesAvailable,
+    bool HasTechnicalKey,
+    bool IsReadyForOnlineSales,
+    bool IsReadyForEnrollment);
+
+public sealed record SalesInvoiceNumberingConfiguration(
+    Guid BusinessId,
+    long? InitialConsecutive,
+    long? NextConsecutive,
+    bool CanSetInitialConsecutive,
+    bool HasIssuedInvoices);
+
+public sealed record SaveSalesInvoiceNumberingConfiguration(
+    long InitialConsecutive);
+public sealed record SaveFiscalResolutionConfiguration(
+    string AuthorizationNumber,
+    string SupplierTaxId,
+    int Environment,
+    string QrValidationUrl,
+    string TechnicalKeyVersion,
+    string? TechnicalKey,
+    DateOnly ValidFrom,
+    DateOnly ValidUntil,
+    string Prefix,
+    long RangeStart,
+    long RangeEnd,
+    long InitialConsecutive,
+    bool PrepareOnlineSeries,
+    bool PrepareOfflineSeries);
+
+public interface IFiscalTechnicalKeySecretWriter
+{
+    Task SaveAsync(
+        Guid tenantId,
+        Guid businessId,
+        Guid fiscalAuthorizationId,
+        string authorizationNumber,
+        string version,
+        int environment,
+        string supplierTaxId,
+        string qrValidationUrl,
+        string technicalKey,
+        CancellationToken cancellationToken);
+}
+
+public sealed record FiscalIssuerConnectionConfiguration(
+    Guid BusinessId,
+    Guid? FiscalIssuerConfigurationId,
+    int? Version,
+    string? SupplierTaxId,
+    string? SupplierCheckDigit,
+    string? LegalName,
+    string? TradeName,
+    string? TaxLevelCode,
+    string? TaxSchemeId,
+    string? TaxSchemeName,
+    string? IdentificationTypeCode,
+    string? AddressLine,
+    string? CityCode,
+    string? CityName,
+    string? DepartmentCode,
+    string? DepartmentName,
+    string? PostalZone,
+    string? SoftwareIdentificationCode,
+    string? SoftwarePinSecretReference,
+    int? Environment,
+    Guid? TestSetId,
+    string? CertificateProvider,
+    string? CertificateKeyReference,
+    string? CertificateThumbprint,
+    string? DianEndpoint,
+    string? TechnicalAnnexVersion,
+    string? GeneratorVersion,
+    DateTimeOffset? ValidFrom,
+    DateTimeOffset? ValidTo,
+    bool IsConfigured,
+    bool IsReadyForHabilitation,
+    IReadOnlyList<string> MissingRequirements);
+
+public sealed record SaveFiscalIssuerConnectionConfiguration(
+    string SupplierTaxId,
+    string SupplierCheckDigit,
+    string LegalName,
+    string? TradeName,
+    string TaxLevelCode,
+    string TaxSchemeId,
+    string TaxSchemeName,
+    string IdentificationTypeCode,
+    string AddressLine,
+    string CityCode,
+    string CityName,
+    string DepartmentCode,
+    string DepartmentName,
+    string? PostalZone,
+    string SoftwareIdentificationCode,
+    string SoftwarePinSecretReference,
+    int Environment,
+    Guid? TestSetId,
+    string CertificateProvider,
+    string CertificateKeyReference,
+    string CertificateThumbprint,
+    string DianEndpoint,
+    string TechnicalAnnexVersion,
+    string GeneratorVersion,
+    DateTimeOffset ValidFrom,
+    DateTimeOffset? ValidTo);

@@ -10,14 +10,14 @@ CREATE TABLE [dbo].[SalesDocuments]
     [DocumentPrefix] NVARCHAR(8) NOT NULL,
     [DocumentSeriesCode] NVARCHAR(16) NOT NULL,
     [DocumentConsecutive] BIGINT NOT NULL,
-    [FiscalSeriesId] UNIQUEIDENTIFIER NOT NULL,
-    [FiscalAuthorizationId] UNIQUEIDENTIFIER NOT NULL,
+    [FiscalSeriesId] UNIQUEIDENTIFIER NULL,
+    [FiscalAuthorizationId] UNIQUEIDENTIFIER NULL,
     [DocumentType] NVARCHAR(32) NOT NULL,
     [IdempotencyKey] NVARCHAR(128) NOT NULL,
     [PayloadHash] BINARY(32) NOT NULL,
-    [FiscalNumber] NVARCHAR(64) NOT NULL,
-    [FiscalPrefix] NVARCHAR(16) NOT NULL,
-    [FiscalConsecutive] BIGINT NOT NULL,
+    [FiscalNumber] NVARCHAR(64) NULL,
+    [FiscalPrefix] NVARCHAR(16) NULL,
+    [FiscalConsecutive] BIGINT NULL,
     [IssuedAt] DATETIMEOFFSET(7) NOT NULL,
     [CustomerIdentification] NVARCHAR(64) NOT NULL,
     [CustomerId] UNIQUEIDENTIFIER NULL,
@@ -26,9 +26,9 @@ CREATE TABLE [dbo].[SalesDocuments]
     [PayableAmount] DECIMAL(19, 4) NOT NULL,
     [CreditAmount] DECIMAL(19, 4) NOT NULL CONSTRAINT [DF_SalesDocuments_CreditAmount] DEFAULT 0,
     [CreditDueDate] DATETIMEOFFSET(7) NULL,
-    [CufeReceived] NVARCHAR(96) NOT NULL,
+    [CufeReceived] NVARCHAR(96) NULL,
     [CufeCalculated] NVARCHAR(96) NULL,
-    [FiscalStatus] NVARCHAR(40) NOT NULL,
+    [FiscalStatus] NVARCHAR(40) NULL,
     [ProcessingStatus] NVARCHAR(32) NOT NULL,
     [ReceivedAt] DATETIMEOFFSET(7) NOT NULL,
     [ProcessedAt] DATETIMEOFFSET(7) NULL,
@@ -51,8 +51,11 @@ CREATE TABLE [dbo].[SalesDocuments]
     CONSTRAINT [FK_SalesDocuments_Customers] FOREIGN KEY ([CustomerId]) REFERENCES [dbo].[Customers] ([CustomerId]),
     CONSTRAINT [UQ_SalesDocuments_AuralyNumber]
         UNIQUE ([BusinessId], [DocumentType], [DocumentPrefix], [DocumentSeriesCode], [DocumentConsecutive]),
-    CONSTRAINT [UQ_SalesDocuments_FiscalNumber]
-        UNIQUE ([BusinessId], [DocumentType], [FiscalAuthorizationId], [FiscalPrefix], [FiscalConsecutive]),
+    CONSTRAINT [CK_SalesDocuments_DocumentType] CHECK ([DocumentType] IN (N'SalesInvoice',N'SalesReceipt')),
+    CONSTRAINT [CK_SalesDocuments_FiscalShape] CHECK (
+      ([DocumentType]=N'SalesInvoice' AND [FiscalSeriesId] IS NOT NULL AND [FiscalAuthorizationId] IS NOT NULL AND [FiscalNumber] IS NOT NULL AND [FiscalPrefix] IS NOT NULL AND [FiscalConsecutive] IS NOT NULL AND [CufeReceived] IS NOT NULL AND [FiscalStatus] IS NOT NULL)
+      OR
+      ([DocumentType]=N'SalesReceipt' AND [FiscalSeriesId] IS NULL AND [FiscalAuthorizationId] IS NULL AND [FiscalNumber] IS NULL AND [FiscalPrefix] IS NULL AND [FiscalConsecutive] IS NULL AND [CufeReceived] IS NULL AND [CufeCalculated] IS NULL AND [FiscalStatus] IS NULL)),
     CONSTRAINT [CK_SalesDocuments_Amounts] CHECK ([UntaxedAmount] >= 0 AND [TaxAmount] >= 0 AND [PayableAmount] >= 0 AND [CreditAmount] BETWEEN 0 AND [PayableAmount]),
     CONSTRAINT [CK_SalesDocuments_CreditTerms] CHECK (([CreditAmount] = 0 AND [CreditDueDate] IS NULL) OR ([CreditAmount] > 0 AND [CreditDueDate] IS NOT NULL AND [CustomerId] IS NOT NULL)),
     CONSTRAINT [CK_SalesDocuments_SourceMode] CHECK ([SourceMode] IN (N'PosEdge', N'Online'))
@@ -69,6 +72,11 @@ CREATE INDEX [IX_SalesDocuments_Business_Status_Received]
     ON [dbo].[SalesDocuments] ([BusinessId], [ProcessingStatus], [ReceivedAt]);
 
 GO
+CREATE UNIQUE INDEX [UX_SalesDocuments_FiscalNumber]
+    ON [dbo].[SalesDocuments] ([BusinessId],[DocumentType],[FiscalAuthorizationId],[FiscalPrefix],[FiscalConsecutive])
+    WHERE [FiscalAuthorizationId] IS NOT NULL;
+GO
+
 
 CREATE INDEX [IX_SalesDocuments_Business_Customer_Issued]
     ON [dbo].[SalesDocuments] ([BusinessId], [CustomerId], [IssuedAt])

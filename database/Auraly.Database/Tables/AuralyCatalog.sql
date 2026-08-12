@@ -1,7 +1,8 @@
-﻿CREATE TABLE [dbo].[TaxProfiles] (
+CREATE TABLE [dbo].[TaxProfiles] (
     [TaxProfileId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [Code] NVARCHAR(32) NOT NULL,
+    [DianTaxCode] NVARCHAR(8) NOT NULL CONSTRAINT [DF_TaxProfiles_DianTaxCode] DEFAULT N'01',
     [Name] NVARCHAR(120) NOT NULL,
     [Rate] DECIMAL(9,6) NOT NULL,
     [IsActive] BIT NOT NULL,
@@ -76,6 +77,7 @@ CREATE TABLE [dbo].[ProductPrices] (
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [ProductId] UNIQUEIDENTIFIER NOT NULL,
     [Amount] DECIMAL(19,4) NOT NULL,
+    [PreparedAmount] DECIMAL(19,4) NOT NULL CONSTRAINT [DF_ProductPrices_PreparedAmount] DEFAULT (0),
     [CurrencyCode] CHAR(3) NOT NULL,
     [CostBasisType] NVARCHAR(32) NULL,
     [CostBasisAmount] DECIMAL(19,6) NULL,
@@ -93,6 +95,7 @@ CREATE TABLE [dbo].[ProductPrices] (
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [FK_ProductPrices_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
     CONSTRAINT [CK_ProductPrices_Amount] CHECK ([Amount] >= 0),
+    CONSTRAINT [CK_ProductPrices_PreparedAmount] CHECK ([PreparedAmount] >= 0),
     CONSTRAINT [CK_ProductPrices_CostBasis] CHECK ([CostBasisAmount] IS NULL OR [CostBasisAmount] >= 0),
     CONSTRAINT [CK_ProductPrices_Margin] CHECK ([TargetMarginPercent] IS NULL OR [TargetMarginPercent] BETWEEN 0 AND 99.999999),
     CONSTRAINT [CK_ProductPrices_InputMode] CHECK ([InputMode] IS NULL OR [InputMode] IN (N'Margin',N'SalePrice')),
@@ -128,12 +131,15 @@ CREATE TABLE [dbo].[SupplierProducts] (
     [ProductId] UNIQUEIDENTIFIER NOT NULL,
     [SupplierId] UNIQUEIDENTIFIER NOT NULL,
     [SupplierProductCode] NVARCHAR(120) NULL,
+    [PurchasePresentationName] NVARCHAR(80) NOT NULL CONSTRAINT [DF_SupplierProducts_PurchasePresentationName] DEFAULT N'Unidad',
+    [UnitsPerPresentation] DECIMAL(19,6) NOT NULL CONSTRAINT [DF_SupplierProducts_UnitsPerPresentation] DEFAULT 1,
     [IsPrimary] BIT NOT NULL,
     [IsActive] BIT NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     CONSTRAINT [FK_SupplierProducts_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
     CONSTRAINT [FK_SupplierProducts_Suppliers] FOREIGN KEY ([SupplierId]) REFERENCES [dbo].[Suppliers] ([SupplierId]),
-    CONSTRAINT [UQ_SupplierProducts_Business_Product_Supplier] UNIQUE ([BusinessId], [ProductId], [SupplierId])
+    CONSTRAINT [UQ_SupplierProducts_Business_Product_Supplier] UNIQUE ([BusinessId], [ProductId], [SupplierId]),
+    CONSTRAINT [CK_SupplierProducts_UnitsPerPresentation] CHECK ([UnitsPerPresentation] > 0)
 );
 GO
 CREATE UNIQUE INDEX [UX_SupplierProducts_Primary] ON [dbo].[SupplierProducts] ([BusinessId], [ProductId])

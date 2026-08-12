@@ -5,14 +5,19 @@ using Auraly.Domain.Pricing;
 namespace Auraly.Application.Pricing;
 
 public sealed record PriceProposalSource(
-    Guid ProposalId, Guid ProductId, decimal ObservedUnitCost,
-    string Status, byte[] RowVersion);
+    Guid ProposalId, Guid ProductId, decimal? ObservedUnitCost,
+    decimal SalesTaxRate, string Status, byte[] RowVersion, bool IsManual);
 
 public sealed record PreparedPricePublication(
-    Guid ProposalId, Guid ProductId, decimal CostBasisAmount,
+    Guid ProposalId, Guid ProductId, decimal? CostBasisAmount,
     string InputMode, decimal? TargetMarginPercent, decimal SalePrice,
     decimal? EffectiveMarginPercent, decimal RoundingIncrement,
-    string RoundingMode, byte[] ExpectedRowVersion);
+    string RoundingMode, byte[] ExpectedRowVersion, bool IsManual);
+
+public sealed record PreparedDirectProductPricePublication(
+    Guid ProductId, decimal? CostBasisAmount, string? CostBasisType, string InputMode,
+    decimal? TargetMarginPercent, decimal SalePrice, decimal? EffectiveMarginPercent,
+    decimal RoundingIncrement, string RoundingMode);
 
 public interface IPricingStore
 {
@@ -21,6 +26,8 @@ public interface IPricingStore
     Task ReviewAsync(PricingUserIdentity user, Guid proposalId, PriceCalculationResult calculation, byte[] expectedRowVersion, CancellationToken ct);
     Task RejectAsync(PricingUserIdentity user, Guid proposalId, byte[] expectedRowVersion, string? reason, CancellationToken ct);
     Task<PublishPricesResult> PublishAsync(PricingUserIdentity user, IReadOnlyList<PreparedPricePublication> values, DateTimeOffset now, CancellationToken ct);
+    Task<ProductPricingContext?> GetProductContextAsync(PricingUserIdentity user, Guid productId, CancellationToken ct);
+    Task<PreparedProductPrice> SavePreparedProductAsync(PricingUserIdentity user, PreparedDirectProductPricePublication value, DateTimeOffset now, CancellationToken ct);
     Task<IReadOnlyList<ProductPriceHistoryItem>> HistoryAsync(PricingUserIdentity user, Guid productId, CancellationToken ct);
 }
 
@@ -53,9 +60,9 @@ public sealed class PricingService(
         Require(user, PricingPermissionCodes.ReadCostBasis);
         var source = await RequiredProposalAsync(user, proposalId, ct);
         EnsureReviewable(source);
-        var calculation = CalculateCore(new(
-            source.ObservedUnitCost, request.InputMode, request.TargetMarginPercent,
-            request.SalePrice, request.RoundingIncrement, request.RoundingMode));
+        var calculation = CalculateForSource(source, request.InputMode,
+            request.TargetMarginPercent, request.SalePrice,
+            request.RoundingIncrement, request.RoundingMode);
         await store.ReviewAsync(user, proposalId, calculation, DecodeToken(request.ConcurrencyToken), ct);
     }
 
@@ -85,14 +92,14 @@ public sealed class PricingService(
             var expected = DecodeToken(item.ConcurrencyToken);
             if (!source.RowVersion.AsSpan().SequenceEqual(expected))
                 throw new PricingConflictException("The proposal changed before publication.");
-            var result = CalculateCore(new(
-                source.ObservedUnitCost, item.InputMode, item.TargetMarginPercent,
-                item.SalePrice, item.RoundingIncrement, item.RoundingMode));
+            var result = CalculateForSource(source, item.InputMode,
+                item.TargetMarginPercent, item.SalePrice,
+                item.RoundingIncrement, item.RoundingMode);
             prepared.Add(new(
                 source.ProposalId, source.ProductId, source.ObservedUnitCost,
                 result.InputMode, result.TargetMarginPercent, result.RoundedSalePrice,
                 result.EffectiveMarginPercent, result.RoundingIncrement,
-                result.RoundingMode, expected));
+                result.RoundingMode, expected, source.IsManual));
         }
 
         var published = await store.PublishAsync(user, prepared, timeProvider.GetUtcNow(), ct);
@@ -100,6 +107,51 @@ public sealed class PricingService(
         return published;
     }
 
+    public async Task<ProductPricingContext> GetProductContextAsync(PricingUserIdentity user, Guid productId, CancellationToken ct)
+    {
+        Require(user, PricingPermissionCodes.Read);
+        Require(user, PricingPermissionCodes.ReadCostBasis);
+        return await store.GetProductContextAsync(user, productId, ct)
+            ?? throw new PricingNotFoundException("Product was not found.");
+    }
+
+    public async Task<PreparedProductPrice> SavePreparedProductAsync(
+        PricingUserIdentity user, Guid productId, PublishProductPriceRequest request, CancellationToken ct)
+    {
+        Require(user, PricingPermissionCodes.PreparePrices);
+        Require(user, PricingPermissionCodes.ReadCostBasis);
+        var context = await store.GetProductContextAsync(user, productId, ct)
+            ?? throw new PricingNotFoundException("Product was not found.");
+        if (request.CostBasisAmount is <= 0m)
+            throw new PricingValidationException("The manual cost must be greater than zero.");
+
+        var costBasis = request.CostBasisAmount ?? context.CostBasisAmount;
+        if (costBasis is null && request.InputMode == PriceInputModes.Margin)
+            throw new PricingValidationException("A cost is required to calculate a margin.");
+
+        var costBasisType = request.CostBasisAmount.HasValue
+            ? "Manual"
+            : context.CostBasisOrigin;
+        var calculation = CalculateCore(new(
+            costBasis ?? 0m,
+            request.InputMode,
+            request.TargetMarginPercent,
+            request.SalePrice,
+            request.RoundingIncrement,
+            request.RoundingMode,
+            context.SalesTaxRate));
+        var prepared = await store.SavePreparedProductAsync(user, new(
+            productId,
+            costBasis,
+            costBasisType,
+            calculation.InputMode,
+            costBasis is null ? null : calculation.TargetMarginPercent,
+            calculation.RoundedSalePrice,
+            costBasis is null ? null : calculation.EffectiveMarginPercent,
+            calculation.RoundingIncrement,
+            calculation.RoundingMode), timeProvider.GetUtcNow(), ct);
+        return prepared;
+    }
     public Task<IReadOnlyList<ProductPriceHistoryItem>> HistoryAsync(PricingUserIdentity user, Guid productId, CancellationToken ct)
     {
         Require(user, PricingPermissionCodes.ReadHistory);
@@ -109,6 +161,7 @@ public sealed class PricingService(
     private static PriceCalculationResult CalculateCore(PriceCalculationRequest request)
     {
         if (request.CostBasisAmount < 0) throw new PricingValidationException("Cost basis cannot be negative.");
+        if (request.SalesTaxRate is < 0 or > 100) throw new PricingValidationException("SalesTaxRate is invalid.");
         if (!PriceInputModes.IsSupported(request.InputMode)) throw new PricingValidationException("InputMode is invalid.");
         if (!PricingRoundingModes.IsSupported(request.RoundingMode)) throw new PricingValidationException("RoundingMode is invalid.");
         if (request.RoundingIncrement <= 0) throw new PricingValidationException("RoundingIncrement must be positive.");
@@ -120,17 +173,17 @@ public sealed class PricingService(
             {
                 if (request.TargetMarginPercent is null) throw new PricingValidationException("TargetMarginPercent is required.");
                 target = request.TargetMarginPercent;
-                raw = PriceMargin.CalculateSalePrice(request.CostBasisAmount, target.Value);
+                raw = PriceMargin.CalculateGrossSalePrice(request.CostBasisAmount, target.Value, request.SalesTaxRate);
             }
             else
             {
                 if (request.SalePrice is null || request.SalePrice < 0) throw new PricingValidationException("SalePrice is required.");
                 raw = request.SalePrice.Value;
-                target = PriceMargin.CalculateMarginPercent(request.CostBasisAmount, raw);
+                target = PriceMargin.CalculateMarginPercentFromGross(request.CostBasisAmount, raw, request.SalesTaxRate);
             }
             var rounded = PriceMargin.RoundPrice(raw, request.RoundingIncrement, request.RoundingMode);
             return new(request.CostBasisAmount, request.InputMode, target, raw, rounded,
-                PriceMargin.CalculateMarginPercent(request.CostBasisAmount, rounded),
+                PriceMargin.CalculateMarginPercentFromGross(request.CostBasisAmount, rounded, request.SalesTaxRate),
                 request.RoundingIncrement, request.RoundingMode);
         }
         catch (ArgumentOutOfRangeException exception)
@@ -139,6 +192,27 @@ public sealed class PricingService(
         }
     }
 
+    private static PriceCalculationResult CalculateForSource(
+        PriceProposalSource source, string inputMode, decimal? targetMarginPercent,
+        decimal? salePrice, decimal roundingIncrement, string roundingMode)
+    {
+        if (source.ObservedUnitCost is not null)
+            return CalculateCore(new(source.ObservedUnitCost.Value, inputMode,
+                targetMarginPercent, salePrice, roundingIncrement, roundingMode,
+                source.SalesTaxRate));
+
+        if (inputMode != PriceInputModes.SalePrice || salePrice is null)
+            throw new PricingValidationException(
+                "A product without a cost basis must define its sale price directly.");
+        if (salePrice < 0)
+            throw new PricingValidationException("SalePrice is required.");
+        if (!PricingRoundingModes.IsSupported(roundingMode) || roundingIncrement <= 0)
+            throw new PricingValidationException("The rounding configuration is invalid.");
+
+        var rounded = PriceMargin.RoundPrice(salePrice.Value, roundingIncrement, roundingMode);
+        return new(0m, PriceInputModes.SalePrice, null, salePrice.Value, rounded,
+            null, roundingIncrement, roundingMode);
+    }
     private async Task<PriceProposalSource> RequiredProposalAsync(PricingUserIdentity user, Guid proposalId, CancellationToken ct) =>
         await store.GetProposalAsync(user, proposalId, ct) ?? throw new PricingNotFoundException("Price proposal was not found.");
 

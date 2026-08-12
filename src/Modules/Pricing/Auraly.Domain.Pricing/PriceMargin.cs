@@ -17,6 +17,20 @@ public static class PriceMargin
         return Money(cost / (100m - marginPercent) * 100m);
     }
 
+    public static decimal CalculateGrossSalePrice(decimal cost, decimal marginPercent, decimal salesTaxRate)
+    {
+        ValidateTaxRate(salesTaxRate);
+        var netSalePrice = CalculateSalePrice(cost, marginPercent);
+        return Money(netSalePrice * (1m + salesTaxRate / 100m));
+    }
+
+    public static decimal? CalculateMarginPercentFromGross(decimal cost, decimal grossSalePrice, decimal salesTaxRate)
+    {
+        ValidateTaxRate(salesTaxRate);
+        if (grossSalePrice < 0) throw new ArgumentOutOfRangeException(nameof(grossSalePrice));
+        var netSalePrice = grossSalePrice / (1m + salesTaxRate / 100m);
+        return CalculateMarginPercent(cost, netSalePrice);
+    }
     public static decimal SuggestedPricePreservingMargin(
         decimal previousCost,
         decimal currentSalePrice,
@@ -42,6 +56,12 @@ public static class PriceMargin
         return Money(roundedUnits * increment);
     }
 
+
+    private static void ValidateTaxRate(decimal salesTaxRate)
+    {
+        if (salesTaxRate is < 0 or > 100)
+            throw new ArgumentOutOfRangeException(nameof(salesTaxRate));
+    }
 
     private static decimal Money(decimal value) => decimal.Round(value, 4, MidpointRounding.AwayFromZero);
     private static decimal Percent(decimal value) => decimal.Round(value, 6, MidpointRounding.AwayFromZero);

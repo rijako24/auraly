@@ -11,6 +11,7 @@ CREATE TABLE [dbo].[OrderDraftItems] (
     [Quantity] DECIMAL(18, 2) NOT NULL,
     [UnitPrice] DECIMAL(18, 2) NOT NULL,
     [DiscountAmount] DECIMAL(18, 2) NOT NULL DEFAULT 0,
+    [TaxAmount] DECIMAL(18, 2) NOT NULL DEFAULT 0,
 
     [LineTotal] DECIMAL(18, 2) NOT NULL,
     [RawPayloadJson] NVARCHAR(MAX) NULL,

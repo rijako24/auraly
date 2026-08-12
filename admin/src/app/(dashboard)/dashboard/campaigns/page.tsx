@@ -296,7 +296,7 @@ export default function CampaignsPage() {
   });
   const templatesQuery = useWhatsAppTemplates();
   const createCampaign = useCreateCampaign();
-  const campaigns = data?.items ?? [];
+  const campaigns = useMemo(() => data?.items ?? [], [data?.items]);
   const templates = templatesQuery.data ?? [];
 
   const importedRecipients = useMemo(() => parseImportedRecipients(importText), [importText]);

@@ -1,6 +1,6 @@
 "use client";
 
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   goodsReceiptsApi, type GoodsReceiptStatus, type SaveGoodsReceiptDraftRequest,
 } from "@/services/api/goods-receipts";
@@ -27,13 +27,30 @@ export function useGoodsReceipts(params: {
   });
 }
 
-export function useGoodsReceiptProducts(supplierId?: string, search?: string) {
+export function useGoodsReceiptProducts(
+  supplierId?: string, search?: string, includeUnassociated = false,
+) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
-  return useQuery({
-    queryKey: ["goods-receipt-products", businessId, supplierId, search],
-    queryFn: () => goodsReceiptsApi.products(supplierId!, search?.trim() || undefined),
+  return useInfiniteQuery({
+    queryKey: ["goods-receipt-products", businessId, supplierId, search, includeUnassociated],
+    queryFn: ({ pageParam }) => goodsReceiptsApi.products(
+      supplierId!, search?.trim() || undefined, includeUnassociated, pageParam, 50,
+    ),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) =>
+      lastPage.page < lastPage.totalPages ? lastPage.page + 1 : undefined,
     enabled: !!businessId && !!supplierId,
-    placeholderData: keepPreviousData,
+  });
+}
+
+export function useAssociateGoodsReceiptProduct() {
+  const client = useQueryClient();
+  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
+  return useMutation({
+    mutationFn: goodsReceiptsApi.associateProduct,
+    onSuccess: () => client.invalidateQueries({
+      queryKey: ["goods-receipt-products", businessId],
+    }),
   });
 }
 

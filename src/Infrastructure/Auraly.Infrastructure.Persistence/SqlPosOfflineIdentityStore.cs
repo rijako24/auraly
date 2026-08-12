@@ -25,8 +25,12 @@ public sealed class SqlPosOfflineIdentityStore(
                    LTRIM(RTRIM(CONCAT(u.FirstName,N' ',u.LastName))) AS DisplayName,
                    u.PosOfflinePasswordSalt,u.PosOfflinePasswordHash,
                    u.PosOfflinePasswordIterations,u.PosOfflinePasswordChangedAt,
+                   credential.SecretSalt,credential.SecretHash,
+                   credential.SecretIterations,credential.CreatedAt,
                    p.Resource
             FROM dbo.AppUsers u
+            LEFT JOIN dbo.SupervisorCredentials credential
+              ON credential.UserId=u.UserId AND credential.IsActive=1
             JOIN dbo.UserRoles ur ON ur.UserId=u.UserId
                 AND (ur.BusinessId IS NULL OR ur.BusinessId=@BusinessId)
             JOIN dbo.AppRoles r ON r.RoleId=ur.RoleId AND r.IsActive=1
@@ -76,10 +80,17 @@ public sealed class SqlPosOfflineIdentityStore(
                         (byte[])reader[3],
                         (byte[])reader[4],
                         reader.GetInt32(5),
-                        reader.GetFieldValue<DateTimeOffset>(6)));
+                        reader.GetFieldValue<DateTimeOffset>(6)),
+                    reader.IsDBNull(7)
+                        ? null
+                        : new PosOfflineSupervisorCredentialVerifier(
+                            (byte[])reader[7],
+                            (byte[])reader[8],
+                            reader.GetInt32(9),
+                            reader.GetFieldValue<DateTimeOffset>(10)));
                 users.Add(userId, user);
             }
-            user.Permissions.Add(reader.GetString(7));
+            user.Permissions.Add(reader.GetString(11));
         }
 
         var projections = users.Values
@@ -88,7 +99,8 @@ public sealed class SqlPosOfflineIdentityStore(
                 user.Username,
                 user.DisplayName,
                 user.Permissions.Order(StringComparer.Ordinal).ToArray(),
-                user.Verifier))
+                user.Verifier,
+                user.SupervisorCredential))
             .OrderBy(user => user.Username, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var now = timeProvider.GetUtcNow();
@@ -134,6 +146,16 @@ public sealed class SqlPosOfflineIdentityStore(
                 .Append(Convert.ToBase64String(user.PasswordVerifier.Hash)).Append('|')
                 .Append(user.PasswordVerifier.Iterations).Append('|')
                 .Append(user.PasswordVerifier.ChangedAt.ToUniversalTime().Ticks)
+                .Append('|');
+            if (user.SupervisorCredential is not null)
+            {
+                canonical
+                    .Append(Convert.ToBase64String(user.SupervisorCredential.Salt)).Append('|')
+                    .Append(Convert.ToBase64String(user.SupervisorCredential.Hash)).Append('|')
+                    .Append(user.SupervisorCredential.Iterations).Append('|')
+                    .Append(user.SupervisorCredential.ChangedAt.ToUniversalTime().Ticks);
+            }
+            canonical
                 .Append('|')
                 .AppendJoin(',', user.Permissions)
                 .AppendLine();
@@ -147,7 +169,8 @@ public sealed class SqlPosOfflineIdentityStore(
         Guid UserId,
         string Username,
         string DisplayName,
-        PosOfflinePasswordVerifier Verifier)
+        PosOfflinePasswordVerifier Verifier,
+        PosOfflineSupervisorCredentialVerifier? SupervisorCredential)
     {
         public HashSet<string> Permissions { get; } =
             new(StringComparer.Ordinal);

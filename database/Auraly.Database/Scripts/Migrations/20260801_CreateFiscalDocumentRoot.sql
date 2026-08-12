@@ -42,7 +42,10 @@ BEGIN
          d.DocumentNumber,d.FiscalNumber,N'CUFE',d.CufeReceived,
          d.IssuedAt,d.FiscalStatus,d.ReceivedAt,d.ReceivedAt
   FROM dbo.SalesDocuments d
-  WHERE NOT EXISTS
+  WHERE d.DocumentType=N'SalesInvoice'
+    AND d.FiscalNumber IS NOT NULL
+    AND d.FiscalStatus IS NOT NULL
+    AND NOT EXISTS
     (SELECT 1 FROM dbo.FiscalDocuments f WHERE f.DocumentId=d.DocumentId);
 END;
 GO

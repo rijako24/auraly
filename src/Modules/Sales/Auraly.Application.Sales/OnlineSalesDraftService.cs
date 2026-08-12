@@ -18,16 +18,7 @@ public interface IOnlineSalesDraftStore
     Task<OnlineSalesDraft> AddProductAsync(
         OnlineSalesUserIdentity user,
         Guid draftId,
-        Guid productId,
-        decimal quantity,
-        long expectedVersion,
-        string idempotencyKey,
-        CancellationToken cancellationToken);
-
-    Task<OnlineSalesDraft> CaptureAsync(
-        OnlineSalesUserIdentity user,
-        Guid draftId,
-        string value,
+        string selector,
         decimal quantity,
         long expectedVersion,
         string idempotencyKey,
@@ -137,17 +128,19 @@ public sealed class OnlineSalesDraftService(
     public async Task<OnlineSalesDraft> AddProductAsync(
         OnlineSalesUserIdentity user,
         Guid draftId,
-        AddOnlineSalesDraftProductRequest request,
+        AddOnlineSalesDraftItemRequest request,
         string idempotencyKey,
         CancellationToken cancellationToken = default)
     {
         DemandPermission(user);
         ValidateMutation(draftId, request.ExpectedVersion, idempotencyKey);
-        if (request.ProductId == Guid.Empty || request.Quantity <= 0)
+        var selector = request.Selector?.Trim();
+        if (request.Quantity <= 0 || string.IsNullOrWhiteSpace(selector) ||
+            selector.Length > 160)
             throw new OnlineSalesDraftValidationException(
-                "Producto y cantidad positiva son obligatorios.");
+                "Selector de producto y cantidad positiva son obligatorios.");
         return await drafts.AddProductAsync(
-            user, draftId, request.ProductId, request.Quantity,
+            user, draftId, selector, request.Quantity,
             request.ExpectedVersion, idempotencyKey, cancellationToken);
     }
 
@@ -166,24 +159,6 @@ public sealed class OnlineSalesDraftService(
                 "Línea y cantidad positiva son obligatorias.");
         return await drafts.ChangeQuantityAsync(
             user, draftId, lineId, request.Quantity,
-            request.ExpectedVersion, idempotencyKey, cancellationToken);
-    }
-
-    public async Task<OnlineSalesDraft> CaptureAsync(
-        OnlineSalesUserIdentity user,
-        Guid draftId,
-        CaptureOnlineSalesDraftProductRequest request,
-        string idempotencyKey,
-        CancellationToken cancellationToken = default)
-    {
-        DemandPermission(user);
-        ValidateMutation(draftId, request.ExpectedVersion, idempotencyKey);
-        if (string.IsNullOrWhiteSpace(request.Value) || request.Value.Length > 120 ||
-            request.Quantity <= 0)
-            throw new OnlineSalesDraftValidationException(
-                "Código o referencia y cantidad positiva son obligatorios.");
-        return await drafts.CaptureAsync(
-            user, draftId, request.Value.Trim(), request.Quantity,
             request.ExpectedVersion, idempotencyKey, cancellationToken);
     }
 

@@ -1,4 +1,4 @@
-﻿using Auraly.BuildingBlocks.Application.Synchronization;
+using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Parties;
 using Auraly.Domain.Parties;
@@ -9,6 +9,11 @@ public interface IPartyWorkspaceStore
 {
     Task<PartyWorkspacePage> PageAsync(
         PartyActorIdentity actor, int page, PartyWorkspaceQuery query, CancellationToken ct);
+    Task<PartyWorkspaceDetail?> FindIdentityAsync(
+        PartyActorIdentity actor, Guid countryId, string identificationType,
+        string normalizedIdentification, CancellationToken ct);
+    Task<PartyWorkspaceDetail?> GetDetailAsync(
+        PartyActorIdentity actor, Guid partyId, CancellationToken ct);
     Task<SupplierAcceptance> CreateSupplierAsync(
         PartyActorIdentity actor, Guid partyId, Guid supplierId, Guid siteId,
         CreateSupplierRequest request, string normalizedIdentification,
@@ -34,9 +39,52 @@ public sealed class PartyWorkspaceService(
         if (page < 1 || query.PageSize is < 1 or > 100)
             throw new PartyValidationException("Page and PageSize are outside the allowed range.");
         var role = query.Role?.Trim();
-        if (role is not null && role is not ("Customer" or "Supplier"))
-            throw new PartyValidationException("Role must be Customer or Supplier.");
+        if (role is not null && role is not ("Customer" or "Supplier" or "Seller" or "Carrier"))
+            throw new PartyValidationException("Role must be Customer, Supplier, Seller or Carrier.");
         return store.PageAsync(actor, page, query with { Search = query.Search?.Trim(), Role = role }, ct);
+    }
+
+    public async Task<PartyIdentityLookupResult> FindIdentityAsync(
+        PartyActorIdentity actor,
+        Guid countryId,
+        string identificationTypeCode,
+        string identification,
+        string requestedRole,
+        CancellationToken ct)
+    {
+        Require(actor,
+            PartyWorkspacePermissionCodes.Read,
+            PartyPermissionCodes.CustomerCreate,
+            PartyWorkspacePermissionCodes.SupplierCreate,
+            PartyWorkspacePermissionCodes.SellerCreate,
+            PartyWorkspacePermissionCodes.CarrierCreate);
+        if (countryId == Guid.Empty)
+            throw new PartyValidationException("Identification country is required.");
+        var role = requestedRole?.Trim();
+        if (role is not ("Customer" or "Supplier" or "Seller" or "Carrier"))
+            throw new PartyValidationException("Requested role is invalid.");
+        if (string.IsNullOrWhiteSpace(identificationTypeCode))
+            throw new PartyValidationException("Identification type is required.");
+        var type = identificationTypeCode.Trim().ToUpperInvariant();
+        var normalized = Translate(() =>
+            PartyIdentityNormalizer.Normalize(type, identification));
+        var party = await store.FindIdentityAsync(
+            actor, countryId, type, normalized, ct);
+        return new PartyIdentityLookupResult(
+            party is not null,
+            party?.Roles.Contains(role) == true,
+            party);
+    }
+
+    public async Task<PartyWorkspaceDetail> GetDetailAsync(
+        PartyActorIdentity actor, Guid partyId, CancellationToken ct)
+    {
+        Require(actor, PartyWorkspacePermissionCodes.Read);
+        if (partyId == Guid.Empty)
+            throw new PartyValidationException("PartyId is required.");
+        return await store.GetDetailAsync(actor, partyId, ct)
+            ?? throw new PartyForbiddenException(
+                "Party is outside the authenticated business.");
     }
 
     public Task<SupplierAcceptance> CreateSupplierAsync(

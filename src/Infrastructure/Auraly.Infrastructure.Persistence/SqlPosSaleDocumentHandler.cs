@@ -56,11 +56,13 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                 session, request, payment, workSessionId, cancellationToken);
         }
 
-        await InsertReceivableAsync(session, request, cancellationToken);
-
-        await SqlAccountingPostingJobWriter.InsertAsync(
-            session, document, request.FiscalSnapshot.IssuedAt, _idGenerator, _timeProvider,
-            cancellationToken);
+        if (request.CommercialSnapshot.DocumentType == PosSaleDocumentTypes.Invoice)
+        {
+            await InsertReceivableAsync(session, request, cancellationToken);
+            await SqlAccountingPostingJobWriter.InsertAsync(
+                session, document, request.CommercialSnapshot.IssuedAt, _idGenerator, _timeProvider,
+                cancellationToken);
+        }
         await InsertOutboxAsync(session, request, document.Payload, cancellationToken);
         await MarkDocumentProcessedAsync(session, request, cancellationToken);
     }
@@ -145,6 +147,12 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
     {
         const string sql = """
             DECLARE @ManageStock BIT;
+            DECLARE @InventoryFactor DECIMAL(19,6)=1;
+            SELECT @ProductId=l.ParentProductId,@InventoryFactor=l.InventoryFactor
+            FROM dbo.ProductLinks l WITH(UPDLOCK,HOLDLOCK)
+            WHERE l.BusinessId=@BusinessId AND l.ChildProductId=@ProductId AND l.SharesInventory=1 AND l.IsActive=1;
+            SET @QuantityChange=CAST(@QuantityChange*@InventoryFactor AS DECIMAL(19,6));
+
             SELECT @ManageStock = p.ManageStock
             FROM dbo.Products p WITH (UPDLOCK, HOLDLOCK)
             INNER JOIN dbo.Warehouses w WITH (UPDLOCK, HOLDLOCK)
@@ -233,12 +241,12 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
-        command.Parameters.AddWithValue("@DocumentType", PosSaleDocumentTypes.Invoice);
+        command.Parameters.AddWithValue("@DocumentType", request.CommercialSnapshot.DocumentType);
         command.Parameters.AddWithValue("@LineNumber", line.LineNumber);
         command.Parameters.AddWithValue("@ProductId", line.ProductId);
         AddDecimal(command, "@QuantityChange", -line.Quantity, 19, 6);
         command.Parameters.AddWithValue("@ProcessingSequence", session.ProcessingSequence);
-        command.Parameters.AddWithValue("@OccurredAt", request.FiscalSnapshot.IssuedAt);
+        command.Parameters.AddWithValue("@OccurredAt", request.CommercialSnapshot.IssuedAt);
         command.Parameters.AddWithValue("@PostedAt", _timeProvider.GetUtcNow());
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -298,7 +306,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         command.Parameters.AddWithValue("@MethodCode", payment.MethodCode);
         AddDecimal(command, "@Amount", payment.Amount, 19, 4);
         command.Parameters.AddWithValue("@Reference", (object?)payment.Reference ?? DBNull.Value);
-        command.Parameters.AddWithValue("@RegisteredAt", request.FiscalSnapshot.IssuedAt);
+        command.Parameters.AddWithValue("@RegisteredAt", request.CommercialSnapshot.IssuedAt);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -321,8 +329,8 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@MessageId", _idGenerator.NewId());
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
-        command.Parameters.AddWithValue("@DocumentType", PosSaleDocumentTypes.Invoice);
-        command.Parameters.AddWithValue("@Type", "sales.invoice.processed");
+        command.Parameters.AddWithValue("@DocumentType", request.CommercialSnapshot.DocumentType);
+        command.Parameters.AddWithValue("@Type", "sales.document.processed");
         command.Parameters.AddWithValue("@Payload", payload);
         command.Parameters.AddWithValue("@OccurredAt", _timeProvider.GetUtcNow());
         await command.ExecuteNonQueryAsync(cancellationToken);
@@ -339,7 +347,8 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                 ProcessedAt = @ProcessedAt
             WHERE DocumentId = @DocumentId
               AND BusinessId = @BusinessId
-              AND FiscalStatus = 'FiscalVerified'
+              AND ((DocumentType = 'SalesInvoice' AND FiscalStatus = 'FiscalVerified')
+                   OR (DocumentType = 'SalesReceipt' AND FiscalStatus IS NULL))
               AND ProcessingStatus IN ('Received', 'Failed');
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
@@ -364,5 +373,14 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         parameter.Scale = scale;
         parameter.Value = value;
     }
+
+}
+public sealed class SqlSalesReceiptDocumentHandler(
+    SqlPosSaleDocumentHandler sales) : IConfirmedDocumentHandler
+{
+    public string DocumentType => PosSaleDocumentTypes.Receipt;
+
+    public Task HandleAsync(ConfirmedDocument document, CancellationToken cancellationToken) =>
+        sales.HandleAsync(document, cancellationToken);
 }
 

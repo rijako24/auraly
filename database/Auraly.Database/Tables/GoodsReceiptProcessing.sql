@@ -53,6 +53,9 @@ CREATE TABLE [dbo].[GoodsReceiptLines]
     [LineNumber] INT NOT NULL,
     [ProductId] UNIQUEIDENTIFIER NOT NULL,
     [DescriptionSnapshot] NVARCHAR(250) NOT NULL,
+    [PresentationNameSnapshot] NVARCHAR(80) NOT NULL CONSTRAINT [DF_GoodsReceiptLines_PresentationName] DEFAULT N'Unidad',
+    [PresentationQuantity] DECIMAL(19,6) NOT NULL CONSTRAINT [DF_GoodsReceiptLines_PresentationQuantity] DEFAULT 1,
+    [UnitsPerPresentation] DECIMAL(19,6) NOT NULL CONSTRAINT [DF_GoodsReceiptLines_UnitsPerPresentation] DEFAULT 1,
     [Quantity] DECIMAL(19,6) NOT NULL,
     [UnitCost] DECIMAL(19,6) NOT NULL,
     [DiscountAmount] DECIMAL(19,4) NOT NULL,
@@ -66,7 +69,7 @@ CREATE TABLE [dbo].[GoodsReceiptLines]
     CONSTRAINT [PK_GoodsReceiptLines] PRIMARY KEY CLUSTERED ([GoodsReceiptId], [LineNumber]),
     CONSTRAINT [FK_GoodsReceiptLines_Receipts] FOREIGN KEY ([GoodsReceiptId]) REFERENCES [dbo].[GoodsReceipts] ([GoodsReceiptId]),
     CONSTRAINT [FK_GoodsReceiptLines_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
-    CONSTRAINT [CK_GoodsReceiptLines_Amounts] CHECK ([LineNumber] > 0 AND [Quantity] > 0 AND [UnitCost] >= 0 AND [DiscountAmount] >= 0 AND [TaxRate] BETWEEN 0 AND 100 AND [LineTotal] = [NetAmount] + [TaxAmount]),
+    CONSTRAINT [CK_GoodsReceiptLines_Amounts] CHECK ([LineNumber] > 0 AND [Quantity] > 0 AND [PresentationQuantity] > 0 AND [UnitsPerPresentation] > 0 AND [Quantity] = [PresentationQuantity] * [UnitsPerPresentation] AND [UnitCost] >= 0 AND [DiscountAmount] >= 0 AND [TaxRate] BETWEEN 0 AND 100 AND [LineTotal] = [NetAmount] + [TaxAmount]),
     CONSTRAINT [CK_GoodsReceiptLines_TaxTreatment] CHECK ([TaxTreatment] IN (N'DeductibleInputVat', N'CapitalizedCost', N'NotApplicable'))
 );
 GO

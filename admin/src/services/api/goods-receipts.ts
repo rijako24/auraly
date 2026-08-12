@@ -13,6 +13,12 @@ export interface GoodsReceiptLine {
   taxCode: string;
   taxRate: number;
   taxTreatment: PurchaseTaxTreatment;
+  presentationName: string;
+  baseUnitCode?: string;
+  preferredPresentationName?: string;
+  preferredUnitsPerPresentation?: number;
+  presentationQuantity: number;
+  unitsPerPresentation: number;
 }
 
 export interface GoodsReceiptLineSnapshot extends GoodsReceiptLine {
@@ -93,7 +99,13 @@ export interface GoodsReceiptProduct {
   latestUnitCost: number | null;
   taxCode: string;
   taxRate: number;
+  taxTreatment: PurchaseTaxTreatment;
   barcodes: string[];
+  baseUnitCode: string;
+  isAssociated: boolean;
+  purchasePresentationName: string;
+  unitsPerPresentation: number;
+  isPrimary: boolean;
 }
 
 export interface GoodsReceiptProductPage {
@@ -115,10 +127,16 @@ export interface GoodsReceiptAcceptance {
 
 export const goodsReceiptsApi = {
   options: () => apiClient.get<GoodsReceiptOptions>("/commerce/v1/goods-receipts/options"),
-  products: (supplierId: string, search?: string, page = 1, pageSize = 50) =>
+  products: (supplierId: string, search?: string, includeUnassociated = false, page = 1, pageSize = 50) =>
     apiClient.get<GoodsReceiptProductPage>("/commerce/v1/goods-receipts/products", {
-      supplierId, search, page, pageSize,
+      supplierId, search, includeUnassociated, page, pageSize,
     }),
+  associateProduct: (request: {
+    supplierId: string; productId: string; supplierProductCode: string | null; isPrimary: boolean;
+    purchasePresentationName: string; unitsPerPresentation: number;
+  }) => apiClient.post<GoodsReceiptProduct>(
+    "/commerce/v1/goods-receipts/supplier-products", request,
+  ),
   list: (params: { search?: string; status?: GoodsReceiptStatus; page: number; pageSize: number }) =>
     apiClient.get<GoodsReceiptPage>("/commerce/v1/goods-receipts", withPagedDefaults(params)),
   getDraft: (draftId: string) =>

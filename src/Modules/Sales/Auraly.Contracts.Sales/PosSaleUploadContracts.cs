@@ -9,6 +9,10 @@ namespace Auraly.Contracts.Sales;
 public static class PosSaleDocumentTypes
 {
     public const string Invoice = AuralyDocumentTypes.SalesInvoice;
+    public const string Receipt = AuralyDocumentTypes.SalesReceipt;
+
+    public static bool IsSupported(string value) => value is Invoice or Receipt;
+    public static bool IsFiscal(string value) => value == Invoice;
 }
 
 public static class PosSaleRemoteStatuses
@@ -16,6 +20,7 @@ public static class PosSaleRemoteStatuses
     public const string FiscalVerified = "FiscalVerified";
     public const string FiscalIntegrityConflict = "FiscalIntegrityConflict";
     public const string AlreadyProcessed = "AlreadyProcessed";
+    public const string CommercialAccepted = "CommercialAccepted";
 }
 
 public static class SaleSourceModes
@@ -73,6 +78,15 @@ public sealed record PosSaleFiscalSnapshotContract(
     decimal PayableAmount,
     string Cufe,
     string QrPayload);
+
+public sealed record PosSaleCommercialSnapshotContract(
+    string DocumentType,
+    DateTimeOffset IssuedAt,
+    string CustomerIdentification,
+    IReadOnlyList<PosSaleTaxContract> Taxes,
+    decimal UntaxedAmount,
+    decimal TaxAmount,
+    decimal PayableAmount);
 
 public sealed record PosSaleUblAddressContract(
     string MunicipalityCode,
@@ -143,7 +157,8 @@ public sealed record PosSaleUploadRequest(
     Guid SoldByUserId,
     Guid DocumentId,
     PosSaleDocumentNumberContract DocumentNumber,
-    PosSaleFiscalSnapshotContract FiscalSnapshot,
+    PosSaleCommercialSnapshotContract CommercialSnapshot,
+    PosSaleFiscalSnapshotContract? FiscalSnapshot,
     IReadOnlyList<PosSaleLineContract> Lines,
     IReadOnlyList<PosSalePaymentContract> Payments,
     PosSaleUblSnapshotContract? UblSnapshot = null,
@@ -156,7 +171,7 @@ public sealed record PosSaleUploadResponse(
     Guid ReceiptId,
     Guid DocumentId,
     string Status,
-    string CufeReceived,
+    string? CufeReceived,
     string? CufeCalculated,
     bool IsDuplicate,
     DateTimeOffset ReceivedAt,

@@ -10,6 +10,7 @@ using Auraly.Contracts.Organization;
 using Auraly.Contracts.Sales;
 using Auraly.Fiscal.Core;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Data.Sqlite;
 
 namespace Auraly.Pos.Edge.Infrastructure;
 
@@ -52,7 +53,8 @@ public sealed record PosEdgeIssueCommand(
     IReadOnlyCollection<OfflineSalePayment>? Payments = null,
     PosSaleUblSnapshotContract? UblSnapshot = null,
     Guid? CustomerId = null,
-    Guid? SourceOrderId = null);
+    Guid? SourceOrderId = null,
+    string DocumentType = PosSaleDocumentTypes.Invoice);
 
 public sealed record PosFiscalNumberPreview(
     Guid SeriesId,
@@ -73,9 +75,9 @@ public sealed record PosDocumentNumberPreview(
 public sealed record PosEdgeIssueResult(
     DocumentId DocumentId,
     string DocumentNumber,
-    string FiscalNumber,
-    string Cufe,
-    string QrPayload,
+    string? FiscalNumber,
+    string? Cufe,
+    string? QrPayload,
     decimal Total,
     Guid OutboxMessageId,
     bool WasAlreadyIssued,
@@ -153,13 +155,26 @@ public sealed class PosEdgeSaleStore
         }
 
         await using var context = new PosEdgeDbContext(_options);
+        var deviceIdText = provision.DeviceId.Value.ToString("D");
+        var seriesIdText = provision.SeriesId.ToString("D");
         var current = await context.FiscalSeriesCursors
-            .SingleOrDefaultAsync(
-                row => row.DeviceId == provision.DeviceId.Value,
-                cancellationToken);
+            .FromSqlInterpolated($"SELECT * FROM FiscalSeriesCursors WHERE lower(DeviceId) = lower({deviceIdText})")
+            .SingleOrDefaultAsync(cancellationToken);
         if (current is not null && current.SeriesId != provision.SeriesId)
         {
             throw new InvalidOperationException("The device already has another provisioned fiscal series.");
+        }
+
+        if (current is null)
+        {
+            current = await context.FiscalSeriesCursors
+                .FromSqlInterpolated($"SELECT * FROM FiscalSeriesCursors WHERE lower(SeriesId) = lower({seriesIdText})")
+                .SingleOrDefaultAsync(cancellationToken);
+            if (current is not null)
+            {
+                current.DeviceId = provision.DeviceId.Value;
+                await context.SaveChangesAsync(cancellationToken);
+            }
         }
 
         if (current is null)
@@ -215,14 +230,30 @@ public sealed class PosEdgeSaleStore
         }
 
         await using var context = new PosEdgeDbContext(_options);
-        var current = await context.DocumentSeriesCursors.SingleOrDefaultAsync(
-            row => row.DeviceId == provision.DeviceId.Value &&
-                   row.DocumentType == provision.DocumentType,
-            cancellationToken);
+        var deviceIdText = provision.DeviceId.Value.ToString("D");
+        var seriesIdText = provision.SeriesId.ToString("D");
+        var current = await context.DocumentSeriesCursors
+            .FromSqlInterpolated($"SELECT * FROM DocumentSeriesCursors WHERE lower(DeviceId) = lower({deviceIdText}) AND DocumentType = {provision.DocumentType}")
+            .SingleOrDefaultAsync(cancellationToken);
         if (current is not null && current.SeriesId != provision.SeriesId)
         {
             throw new InvalidOperationException(
                 "The device already has another provisioned Auraly series for this document type.");
+        }
+
+        if (current is null)
+        {
+            current = await context.DocumentSeriesCursors
+                .FromSqlInterpolated($"SELECT * FROM DocumentSeriesCursors WHERE lower(SeriesId) = lower({seriesIdText})")
+                .SingleOrDefaultAsync(cancellationToken);
+            if (current is not null)
+            {
+                if (!string.Equals(current.DocumentType, provision.DocumentType, StringComparison.Ordinal))
+                    throw new InvalidOperationException(
+                        "The provisioned Auraly series belongs to another document type.");
+                current.DeviceId = provision.DeviceId.Value;
+                await context.SaveChangesAsync(cancellationToken);
+            }
         }
 
         if (current is null)
@@ -239,9 +270,30 @@ public sealed class PosEdgeSaleStore
                 RangeEnd = provision.RangeEnd,
                 IsActive = true
             });
-            await context.SaveChangesAsync(cancellationToken);
+            try
+            {
+                await context.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException exception) when (IsSqliteUniqueConstraint(exception))
+            {
+                // Two desktop processes can race while the launcher restarts Edge.
+                // Keep the durable row created by the winner instead of crashing.
+                context.ChangeTracker.Clear();
+                var durable = await context.DocumentSeriesCursors
+                    .FromSqlInterpolated($"SELECT * FROM DocumentSeriesCursors WHERE lower(SeriesId) = lower({seriesIdText})")
+                    .SingleOrDefaultAsync(cancellationToken);
+                if (durable is null ||
+                    !string.Equals(durable.DocumentType, provision.DocumentType, StringComparison.Ordinal) ||
+                    durable.DeviceId != provision.DeviceId.Value)
+                {
+                    throw;
+                }
+            }
         }
     }
+
+    private static bool IsSqliteUniqueConstraint(DbUpdateException exception) =>
+        exception.InnerException is SqliteException { SqliteErrorCode: 19 };
 
     public async Task<PosDocumentNumberPreview> PreviewNextDocumentNumberAsync(
         DeviceId deviceId,
@@ -311,9 +363,9 @@ public sealed class PosEdgeSaleStore
             return new PosEdgeIssueResult(
                 command.DocumentId,
                 existing.DocumentNumber,
-                existing.FiscalNumber,
-                existing.Cufe,
-                existingUpload.FiscalSnapshot.QrPayload,
+                string.IsNullOrEmpty(existing.FiscalNumber) ? null : existing.FiscalNumber,
+                string.IsNullOrEmpty(existing.Cufe) ? null : existing.Cufe,
+                existingUpload.FiscalSnapshot?.QrPayload,
                 existing.Total,
                 existingOutbox.MessageId,
                 WasAlreadyIssued: true,
@@ -327,7 +379,7 @@ public sealed class PosEdgeSaleStore
             cancellationToken);
         var documentCursor = await context.DocumentSeriesCursors.SingleAsync(
             row => row.DeviceId == deviceId &&
-                   row.DocumentType == AuralyDocumentTypes.SalesInvoice,
+                   row.DocumentType == command.DocumentType,
             cancellationToken);
         if (!documentCursor.IsActive || documentCursor.NextConsecutive > documentCursor.RangeEnd)
         {
@@ -343,72 +395,90 @@ public sealed class PosEdgeSaleStore
             documentCursor.Padding);
         documentCursor.NextConsecutive++;
 
-        var cursor = await context.FiscalSeriesCursors
-            .SingleAsync(
+        if (!PosSaleDocumentTypes.IsSupported(command.DocumentType))
+            throw new InvalidOperationException("The sale document type is not supported.");
+
+        var isFiscal = PosSaleDocumentTypes.IsFiscal(command.DocumentType);
+        FiscalNumberAssignment? fiscalNumber = null;
+        ImmutableFiscalSnapshot? snapshot = null;
+        Guid? fiscalAuthorizationId = null;
+        SalesInvoice invoice;
+        Guid outboxMessageId;
+        string outboxType;
+        if (isFiscal)
+        {
+            var cursor = await context.FiscalSeriesCursors.SingleAsync(
                 row => row.DeviceId == deviceId,
                 cancellationToken);
-        var issueDate = DateOnly.FromDateTime(command.IssuedAt.Date);
-        if (!cursor.IsActive || issueDate > cursor.ValidUntil)
-        {
-            throw new InvalidOperationException("The fiscal series is inactive or expired.");
+            var issueDate = DateOnly.FromDateTime(command.IssuedAt.Date);
+            if (!cursor.IsActive || issueDate > cursor.ValidUntil)
+                throw new InvalidOperationException("The fiscal series is inactive or expired.");
+            if (cursor.NextConsecutive > cursor.RangeEnd)
+                throw new InvalidOperationException("The fiscal series is exhausted.");
+
+            ValidateUblSnapshot(command, cursor);
+            var consecutive = cursor.NextConsecutive++;
+            fiscalNumber = new FiscalNumberAssignment(
+                cursor.SeriesId,
+                cursor.Prefix,
+                consecutive,
+                $"{cursor.Prefix}{consecutive}",
+                cursor.AuthorizationNumber);
+            var confirmed = _confirmationService.Confirm(new ConfirmOfflineSaleCommand(
+                command.UserId,
+                command.DocumentId,
+                command.Context,
+                documentNumber,
+                fiscalNumber,
+                command.IssuedAt,
+                command.SupplierTaxId,
+                command.CustomerIdentification,
+                command.TechnicalKey,
+                command.Environment,
+                command.QrValidationUrl,
+                command.Lines));
+            invoice = confirmed.Invoice;
+            snapshot = invoice.FiscalSnapshot
+                ?? throw new InvalidOperationException("The sale was not fiscally frozen.");
+            fiscalAuthorizationId = cursor.FiscalAuthorizationId;
+            outboxMessageId = confirmed.OutboxMessage.Id;
+            outboxType = confirmed.OutboxMessage.Type;
         }
-
-        if (cursor.NextConsecutive > cursor.RangeEnd)
+        else
         {
-            throw new InvalidOperationException("The fiscal series is exhausted.");
+            invoice = _confirmationService.Prepare(new PrepareOfflineSaleCommand(
+                command.UserId, command.DocumentId, command.Context, command.Lines));
+            outboxMessageId = Guid.NewGuid();
+            outboxType = "sales.receipt.confirmed";
         }
-
-        ValidateUblSnapshot(command, cursor);
-
-        var consecutive = cursor.NextConsecutive;
-        cursor.NextConsecutive++;
-        var fiscalNumber = new FiscalNumberAssignment(
-            cursor.SeriesId,
-            cursor.Prefix,
-            consecutive,
-            $"{cursor.Prefix}{consecutive}",
-            cursor.AuthorizationNumber);
-        var confirmed = _confirmationService.Confirm(new ConfirmOfflineSaleCommand(
-            command.UserId,
-            command.DocumentId,
-            command.Context,
-            documentNumber,
-            fiscalNumber,
-            command.IssuedAt,
-            command.SupplierTaxId,
-            command.CustomerIdentification,
-            command.TechnicalKey,
-            command.Environment,
-            command.QrValidationUrl,
-            command.Lines));
-        var snapshot = confirmed.Invoice.FiscalSnapshot
-            ?? throw new InvalidOperationException("The sale was not fiscally frozen.");
         var upload = BuildUploadContract(
             command,
-            confirmed,
+            invoice,
             snapshot,
             documentNumber,
             fiscalNumber,
-            cursor.FiscalAuthorizationId);
+            fiscalAuthorizationId);
         var payload = PosSaleContractSerializer.Serialize(upload);
 
         context.IssuedSales.Add(new IssuedSaleRow
         {
             DocumentId = command.DocumentId.Value,
             DocumentNumber = documentNumber.FullNumber,
-            FiscalNumber = fiscalNumber.FullNumber,
-            Cufe = snapshot.Cufe,
-            Total = confirmed.Invoice.PayableAmount,
+            FiscalNumber = fiscalNumber?.FullNumber ?? string.Empty,
+            Cufe = snapshot?.Cufe ?? string.Empty,
+            Total = invoice.PayableAmount,
             IssuedAt = command.IssuedAt,
             FiscalSnapshotJson = payload,
-            RemoteFiscalStatus = FiscalDocumentStatusCodes.LocallyIssuedPendingSync,
+            RemoteFiscalStatus = isFiscal
+                ? FiscalDocumentStatusCodes.LocallyIssuedPendingSync
+                : PosSaleRemoteStatuses.CommercialAccepted,
             RemoteFiscalUpdatedAt = command.IssuedAt
         });
         context.Outbox.Add(new PosOutboxRow
         {
-            MessageId = confirmed.OutboxMessage.Id,
+            MessageId = outboxMessageId,
             DocumentId = command.DocumentId.Value,
-            Type = confirmed.OutboxMessage.Type,
+            Type = outboxType,
             Payload = payload,
             Status = PosOutboxStatus.Pending,
             CreatedAt = command.IssuedAt
@@ -420,11 +490,11 @@ public sealed class PosEdgeSaleStore
         return new PosEdgeIssueResult(
             command.DocumentId,
             documentNumber.FullNumber,
-            fiscalNumber.FullNumber,
-            snapshot.Cufe,
-            snapshot.QrPayload,
-            confirmed.Invoice.PayableAmount,
-            confirmed.OutboxMessage.Id,
+            fiscalNumber?.FullNumber,
+            snapshot?.Cufe,
+            snapshot?.QrPayload,
+            invoice.PayableAmount,
+            outboxMessageId,
             WasAlreadyIssued: false,
             upload);
     }
@@ -696,7 +766,7 @@ public sealed class PosEdgeSaleStore
                 row.FiscalNumber,
                 row.IssuedAt,
                 row.Total,
-                snapshot.FiscalSnapshot.CustomerIdentification,
+                snapshot.CommercialSnapshot.CustomerIdentification,
                 snapshot.UblSnapshot?.Customer.RegistrationName ?? "Consumidor final",
                 row.RemoteFiscalStatus);
         }).ToArray();
@@ -749,11 +819,11 @@ public sealed class PosEdgeSaleStore
 
     private static PosSaleUploadRequest BuildUploadContract(
         PosEdgeIssueCommand command,
-        ConfirmedOfflineSale confirmed,
-        ImmutableFiscalSnapshot snapshot,
+        SalesInvoice invoice,
+        ImmutableFiscalSnapshot? snapshot,
         AuralyDocumentNumberAssignment documentNumber,
-        FiscalNumberAssignment fiscalNumber,
-        Guid fiscalAuthorizationId)
+        FiscalNumberAssignment? fiscalNumber,
+        Guid? fiscalAuthorizationId)
     {
         var lines = command.Lines
             .Select((line, index) => new PosSaleLineContract(
@@ -783,8 +853,8 @@ public sealed class PosEdgeSaleStore
                     payment.Amount,
                     payment.Reference))
                 .ToArray()
-            : [new PosSalePaymentContract(1, "Cash", confirmed.Invoice.PayableAmount, null)];
-        if (payments.Sum(payment => payment.Amount) != confirmed.Invoice.PayableAmount)
+            : [new PosSalePaymentContract(1, "Cash", invoice.PayableAmount, null)];
+        if (payments.Sum(payment => payment.Amount) != invoice.PayableAmount)
         {
             throw new InvalidOperationException("Payments must equal the payable amount.");
         }
@@ -812,28 +882,38 @@ public sealed class PosEdgeSaleStore
                 documentNumber.Consecutive,
                 documentNumber.Padding,
                 documentNumber.FullNumber),
-            new PosSaleFiscalSnapshotContract(
-                fiscalNumber.SeriesId,
-                fiscalAuthorizationId,
-                fiscalNumber.AuthorizationNumber,
-                PosSaleDocumentTypes.Invoice,
-                snapshot.FiscalNumber,
-                snapshot.Prefix,
-                snapshot.Consecutive,
-                snapshot.IssuedAt,
-                command.SupplierTaxId,
-                snapshot.CustomerIdentification,
-                (int)command.Environment,
-                command.TechnicalKey.Version,
+            new PosSaleCommercialSnapshotContract(
+                command.DocumentType,
+                command.IssuedAt,
+                command.CustomerIdentification,
                 taxes,
-                snapshot.UntaxedAmount,
-                snapshot.TaxAmount,
-                snapshot.PayableAmount,
-                snapshot.Cufe,
-                snapshot.QrPayload),
+                invoice.UntaxedAmount,
+                invoice.TaxAmount,
+                invoice.PayableAmount),
+            snapshot is null || fiscalNumber is null || fiscalAuthorizationId is null
+                ? null
+                : new PosSaleFiscalSnapshotContract(
+                    fiscalNumber.SeriesId,
+                    fiscalAuthorizationId.Value,
+                    fiscalNumber.AuthorizationNumber,
+                    PosSaleDocumentTypes.Invoice,
+                    snapshot.FiscalNumber,
+                    snapshot.Prefix,
+                    snapshot.Consecutive,
+                    snapshot.IssuedAt,
+                    command.SupplierTaxId,
+                    snapshot.CustomerIdentification,
+                    (int)command.Environment,
+                    command.TechnicalKey.Version,
+                    taxes,
+                    snapshot.UntaxedAmount,
+                    snapshot.TaxAmount,
+                    snapshot.PayableAmount,
+                    snapshot.Cufe,
+                    snapshot.QrPayload),
             lines,
             payments,
-            command.UblSnapshot,
+            snapshot is null ? null : command.UblSnapshot,
             command.CustomerId,
             SourceOrderId: command.SourceOrderId);
     }

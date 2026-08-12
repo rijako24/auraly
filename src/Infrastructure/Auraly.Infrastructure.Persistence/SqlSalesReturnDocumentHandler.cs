@@ -49,6 +49,13 @@ public sealed class SqlSalesReturnDocumentHandler(
         if (line.InventoryDisposition != ReturnInventoryDispositions.Sellable) return;
         const string sql = """
             DECLARE @ManageStock BIT;
+            DECLARE @InventoryFactor DECIMAL(19,6)=1;
+            SELECT @ProductId=l.ParentProductId,@InventoryFactor=l.InventoryFactor
+            FROM dbo.ProductLinks l WITH(UPDLOCK,HOLDLOCK)
+            WHERE l.BusinessId=@BusinessId AND l.ChildProductId=@ProductId AND l.SharesInventory=1 AND l.IsActive=1;
+            SET @Quantity=CAST(@Quantity*@InventoryFactor AS DECIMAL(19,6));
+
+            SET @RecognizedUnitCost=CAST(@RecognizedUnitCost/@InventoryFactor AS DECIMAL(19,6));
             DECLARE @QuantityBefore DECIMAL(19,6);
             DECLARE @AverageCost DECIMAL(19,6);
             DECLARE @ValueBefore DECIMAL(19,4);
@@ -318,6 +325,9 @@ public sealed class SqlSalesReturnDocumentHandler(
             ?? throw new InvalidOperationException(
                 "The original invoice has no immutable UBL metadata for its credit note.");
         var originalMetadata = originalUbl.Lines.ToDictionary(line => line.LineNumber);
+        var originalFiscal = original.FiscalSnapshot
+            ?? throw new InvalidOperationException(
+                "The original document is not an electronic invoice.");
         var lineMetadata = value.Lines.Select(line =>
         {
             if (!originalMetadata.TryGetValue(line.OriginalLineNumber, out var metadata))
@@ -330,8 +340,8 @@ public sealed class SqlSalesReturnDocumentHandler(
         var snapshot = new SalesReturnCreditNoteSnapshot(
             value, issuerConfigurationId, value.DocumentNumber, originalUbl.CurrencyCode,
             environment, qrValidationUrl, originalUbl.Customer,
-            original.FiscalSnapshot.FiscalNumber, original.FiscalSnapshot.Cufe,
-            DateOnly.FromDateTime(original.FiscalSnapshot.IssuedAt.Date), lineMetadata);
+            originalFiscal.FiscalNumber, originalFiscal.Cufe,
+            DateOnly.FromDateTime(originalFiscal.IssuedAt.Date), lineMetadata);
         var snapshotJson = SalesReturnCreditNoteSnapshotSerializer.Serialize(snapshot);
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(snapshotJson));
         var now = DateTimeOffset.UtcNow;

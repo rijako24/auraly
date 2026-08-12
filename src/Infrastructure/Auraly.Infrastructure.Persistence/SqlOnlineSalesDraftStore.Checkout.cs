@@ -87,7 +87,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         };
     }
 
-    public async Task<PreparedOnlineSalesCheckout> PrepareAsync(
+    private async Task<PreparedOnlineSalesCheckout> PrepareInvoiceAsync(
         OnlineSalesUserIdentity user,
         Guid draftId,
         CompleteOnlineSalesDraftRequest request,
@@ -219,6 +219,14 @@ public sealed partial class SqlOnlineSalesDraftStore
                 documentNumber.Consecutive,
                 documentNumber.Padding,
                 documentNumber.FullNumber),
+            new PosSaleCommercialSnapshotContract(
+                PosSaleDocumentTypes.Invoice,
+                now,
+                customer.Identification,
+                taxes,
+                draft.UntaxedAmount,
+                draft.TaxAmount,
+                draft.PayableAmount),
             new PosSaleFiscalSnapshotContract(
                 configuration.FiscalSeriesId,
                 configuration.FiscalAuthorizationId,
@@ -789,7 +797,8 @@ public sealed partial class SqlOnlineSalesDraftStore
         var value = new StringBuilder()
             .Append(draftId.ToString("D"))
             .Append('|')
-            .Append(request.ExpectedVersion.ToString(CultureInfo.InvariantCulture));
+            .Append(request.ExpectedVersion.ToString(CultureInfo.InvariantCulture))
+            .Append('|').Append(request.DocumentType);
         foreach (var payment in request.Payments)
         {
             value.Append('|')

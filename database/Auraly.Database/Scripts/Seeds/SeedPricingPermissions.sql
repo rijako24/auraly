@@ -7,6 +7,7 @@ INSERT @PricingPermissions VALUES
     (N'Read',N'pricing.read',N'Consultar propuestas y precios publicados'),
     (N'ReadCostBasis',N'pricing.cost-basis.read',N'Consultar costos usados para fijar precios'),
     (N'Review',N'pricing.proposals.review',N'Revisar y rechazar propuestas de precio'),
+    (N'Prepare',N'pricing.prices.prepare',N'Preparar costos, margen y precio antes de publicar'),
     (N'Publish',N'pricing.prices.publish',N'Publicar precios de venta'),
     (N'BulkPublish',N'pricing.bulk-publish',N'Publicar varios precios en una operacion'),
     (N'ManageRounding',N'pricing.rounding.manage',N'Configurar reglas de redondeo'),

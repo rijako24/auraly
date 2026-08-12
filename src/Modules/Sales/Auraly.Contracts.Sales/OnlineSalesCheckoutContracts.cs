@@ -12,7 +12,8 @@ public sealed record OnlineSalesCreditTerms(
 public sealed record CompleteOnlineSalesDraftRequest(
     long ExpectedVersion,
     IReadOnlyList<OnlineSalesPayment> Payments,
-    OnlineSalesCreditTerms? Credit = null);
+    OnlineSalesCreditTerms? Credit = null,
+    string DocumentType = PosSaleDocumentTypes.Invoice);
 
 public sealed record OnlineSalesReceiptLine(
     string ProductCode,
@@ -25,8 +26,9 @@ public sealed record OnlineSalesReceiptLine(
 
 public sealed record OnlineSalesReceipt(
     Guid DocumentId,
+    string DocumentType,
     string DocumentNumber,
-    string FiscalNumber,
+    string? FiscalNumber,
     DateTimeOffset IssuedAt,
     string CustomerIdentification,
     IReadOnlyList<OnlineSalesReceiptLine> Lines,
@@ -34,9 +36,9 @@ public sealed record OnlineSalesReceipt(
     decimal UntaxedAmount,
     decimal TaxAmount,
     decimal PayableAmount,
-    string Cufe,
-    string QrPayload,
-    string FiscalStatus,
+    string? Cufe,
+    string? QrPayload,
+    string? FiscalStatus,
     string CustomerName);
 
 public sealed record CompleteOnlineSalesDraftResponse(

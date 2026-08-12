@@ -3,7 +3,7 @@ CREATE TABLE [dbo].[AuditLogs] (
     [UserId] UNIQUEIDENTIFIER NULL,
     [TenantId] UNIQUEIDENTIFIER NULL,
     [BusinessId] UNIQUEIDENTIFIER NULL,
-    [Action] NVARCHAR(100) NOT NULL,
+    [Action] NVARCHAR(300) NOT NULL,
     [EntityType] NVARCHAR(100) NOT NULL,
     [EntityId] NVARCHAR(100) NULL,
     [OldValues] NVARCHAR(MAX) NULL,

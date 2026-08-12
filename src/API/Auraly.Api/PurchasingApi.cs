@@ -45,11 +45,21 @@ public static class PurchasingApi
 
         endpoints.MapGet(
                 "/api/commerce/v1/goods-receipts/products",
-                (HttpContext context, Guid supplierId, string? search, int? page, int? pageSize,
-                    GoodsReceiptWorkspaceService service, CancellationToken cancellationToken) =>
+                (HttpContext context, Guid supplierId, string? search, bool? includeUnassociated,
+                    int? page, int? pageSize, GoodsReceiptWorkspaceService service,
+                    CancellationToken cancellationToken) =>
                     ExecuteAsync(() => service.FindProductsAsync(
                         context.User.ToPurchasingIdentity(), supplierId, search,
-                        page ?? 1, pageSize ?? 50, cancellationToken)))
+                        includeUnassociated ?? false, page ?? 1, pageSize ?? 50,
+                        cancellationToken)))
+            .RequireAuthorization("purchasing.user");
+
+        endpoints.MapPost(
+                "/api/commerce/v1/goods-receipts/supplier-products",
+                (HttpContext context, AssociateGoodsReceiptProductRequest request,
+                    GoodsReceiptWorkspaceService service, CancellationToken cancellationToken) =>
+                    ExecuteAsync(() => service.AssociateProductAsync(
+                        context.User.ToPurchasingIdentity(), request, cancellationToken)))
             .RequireAuthorization("purchasing.user");
 
         endpoints.MapGet(

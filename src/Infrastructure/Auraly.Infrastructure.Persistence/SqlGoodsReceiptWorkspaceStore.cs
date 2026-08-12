@@ -1,6 +1,7 @@
 using System.Data;
 using System.Text.Json;
 using Auraly.Application.Purchasing;
+using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Purchasing;
 using Auraly.Domain.Purchasing;
 using Microsoft.Data.SqlClient;
@@ -9,7 +10,8 @@ namespace Auraly.Infrastructure.Persistence;
 
 public sealed class SqlGoodsReceiptWorkspaceStore(
     SqlServerConnectionFactory connections,
-    TimeProvider timeProvider) : IGoodsReceiptWorkspaceStore
+    TimeProvider timeProvider,
+    IAuralyIdGenerator ids) : IGoodsReceiptWorkspaceStore
 {
     public async Task<GoodsReceiptWorkspaceOptions> GetOptionsAsync(
         PurchasingUserIdentity user, CancellationToken cancellationToken)
@@ -41,7 +43,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
 
     public async Task<GoodsReceiptProductPage> FindProductsAsync(
         PurchasingUserIdentity user, Guid supplierId, string? search,
-        int page, int pageSize, CancellationToken cancellationToken)
+        bool includeUnassociated, int page, int pageSize, CancellationToken cancellationToken)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
@@ -52,9 +54,15 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
               THROW 51120,'The supplier is outside the authenticated business.',1;
 
             SELECT COUNT(*)
-            FROM dbo.SupplierProducts sp
-            INNER JOIN dbo.Products p ON p.ProductId=sp.ProductId AND p.BusinessId=@BusinessId AND p.IsActive=1
-            WHERE sp.BusinessId=@BusinessId AND sp.SupplierId=@SupplierId AND sp.IsActive=1
+            FROM dbo.Products p
+            LEFT JOIN dbo.SupplierProducts sp
+              ON sp.ProductId=p.ProductId AND sp.BusinessId=@BusinessId
+             AND sp.SupplierId=@SupplierId AND sp.IsActive=1
+            WHERE p.BusinessId=@BusinessId AND p.IsActive=1
+              AND NOT EXISTS(SELECT 1 FROM dbo.ProductLinks link
+                             WHERE link.BusinessId=p.BusinessId AND link.ChildProductId=p.ProductId
+                               AND link.SharesInventory=1 AND link.IsActive=1)
+              AND (@IncludeUnassociated=1 OR sp.SupplierProductId IS NOT NULL)
               AND (@Search IS NULL OR p.ProductCode LIKE N'%'+@Search+N'%'
                    OR p.Reference LIKE N'%'+@Search+N'%' OR p.Name LIKE N'%'+@Search+N'%'
                    OR sp.SupplierProductCode LIKE N'%'+@Search+N'%'
@@ -65,30 +73,45 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             SELECT p.ProductId,COALESCE(p.ProductCode,N''),p.Reference,p.Name,
                    sp.SupplierProductCode,latest.LatestUnitCost,
                    COALESCE(tp.Code,N'00'),COALESCE(tp.Rate,0),
-                   COALESCE(b.Barcodes,N'')
-            FROM dbo.SupplierProducts sp
-            INNER JOIN dbo.Products p ON p.ProductId=sp.ProductId AND p.BusinessId=@BusinessId AND p.IsActive=1
-            LEFT JOIN dbo.TaxProfiles tp ON tp.TaxProfileId=p.TaxProfileId AND tp.BusinessId=@BusinessId
+                   COALESCE(p.PurchaseTaxTreatment,N'DeductibleInputVat'),
+                   COALESCE(b.Barcodes,N''),
+                   COALESCE(p.BaseUnitCode,N'EA'),
+                   CONVERT(BIT,CASE WHEN sp.SupplierProductId IS NULL THEN 0 ELSE 1 END),
+                   COALESCE(sp.PurchasePresentationName,N'Unidad'),COALESCE(sp.UnitsPerPresentation,1),
+                   COALESCE(sp.IsPrimary,CONVERT(BIT,0))
+            FROM dbo.Products p
+            LEFT JOIN dbo.SupplierProducts sp
+              ON sp.ProductId=p.ProductId AND sp.BusinessId=@BusinessId
+             AND sp.SupplierId=@SupplierId AND sp.IsActive=1
+            LEFT JOIN dbo.TaxProfiles tp
+              ON tp.TaxProfileId=COALESCE(p.PurchaseTaxProfileId,p.TaxProfileId)
+             AND tp.BusinessId=@BusinessId
             LEFT JOIN dbo.SupplierProductLatestCosts latest
-              ON latest.BusinessId=@BusinessId AND latest.SupplierId=@SupplierId AND latest.ProductId=p.ProductId
+              ON latest.BusinessId=@BusinessId AND latest.SupplierId=@SupplierId
+             AND latest.ProductId=p.ProductId
             OUTER APPLY (
               SELECT STRING_AGG(CONVERT(NVARCHAR(MAX),pb.Barcode),N'|') AS Barcodes
               FROM dbo.ProductBarcodes pb
               WHERE pb.ProductId=p.ProductId AND pb.BusinessId=@BusinessId AND pb.IsActive=1
             ) b
-            WHERE sp.BusinessId=@BusinessId AND sp.SupplierId=@SupplierId AND sp.IsActive=1
+            WHERE p.BusinessId=@BusinessId AND p.IsActive=1
+              AND NOT EXISTS(SELECT 1 FROM dbo.ProductLinks link
+                             WHERE link.BusinessId=p.BusinessId AND link.ChildProductId=p.ProductId
+                               AND link.SharesInventory=1 AND link.IsActive=1)
+              AND (@IncludeUnassociated=1 OR sp.SupplierProductId IS NOT NULL)
               AND (@Search IS NULL OR p.ProductCode LIKE N'%'+@Search+N'%'
                    OR p.Reference LIKE N'%'+@Search+N'%' OR p.Name LIKE N'%'+@Search+N'%'
                    OR sp.SupplierProductCode LIKE N'%'+@Search+N'%'
                    OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes pb
                               WHERE pb.ProductId=p.ProductId AND pb.BusinessId=@BusinessId
                                 AND pb.IsActive=1 AND pb.Barcode LIKE N'%'+@Search+N'%'))
-            ORDER BY p.Name,p.ProductId
+            ORDER BY CASE WHEN sp.SupplierProductId IS NULL THEN 1 ELSE 0 END,p.Name,p.ProductId
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             """;
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@SupplierId", supplierId);
+        command.Parameters.AddWithValue("@IncludeUnassociated", includeUnassociated);
         command.Parameters.AddWithValue("@Search", (object?)search ?? DBNull.Value);
         command.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
         command.Parameters.AddWithValue("@PageSize", pageSize);
@@ -100,14 +123,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             await reader.NextResultAsync(cancellationToken);
             var items = new List<GoodsReceiptProductOption>();
             while (await reader.ReadAsync(cancellationToken))
-            {
-                var barcodes = reader.GetString(8).Split('|', StringSplitOptions.RemoveEmptyEntries);
-                items.Add(new(
-                    reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2),
-                    reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4),
-                    reader.IsDBNull(5) ? null : reader.GetDecimal(5), reader.GetString(6),
-                    reader.GetDecimal(7), barcodes));
-            }
+                items.Add(ReadProduct(reader));
             return new(items, page, pageSize, total, (int)Math.Ceiling(total / (double)pageSize));
         }
         catch (SqlException exception) when (exception.Number == 51120)
@@ -116,6 +132,107 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         }
     }
 
+    public async Task<GoodsReceiptProductOption> AssociateProductAsync(
+        PurchasingUserIdentity user, AssociateGoodsReceiptProductRequest request,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        try
+        {
+            const string sql = """
+                IF NOT EXISTS (SELECT 1 FROM dbo.Suppliers
+                               WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1)
+                  THROW 51120,'The supplier is outside the authenticated business.',1;
+                IF NOT EXISTS (SELECT 1 FROM dbo.Products
+                               WHERE ProductId=@ProductId AND BusinessId=@BusinessId AND IsActive=1)
+                  THROW 51125,'The product is outside the authenticated business.',1;
+                IF EXISTS (SELECT 1 FROM dbo.ProductLinks
+                           WHERE BusinessId=@BusinessId AND ChildProductId=@ProductId
+                             AND SharesInventory=1 AND IsActive=1)
+                  THROW 51125,'Linked inventory products must be received through their root product.',1;
+
+                IF @IsPrimary=1
+                  UPDATE dbo.SupplierProducts SET IsPrimary=0
+                  WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND IsActive=1;
+
+                IF EXISTS (SELECT 1 FROM dbo.SupplierProducts WITH (UPDLOCK,HOLDLOCK)
+                           WHERE BusinessId=@BusinessId AND SupplierId=@SupplierId AND ProductId=@ProductId)
+                  UPDATE dbo.SupplierProducts
+                  SET SupplierProductCode=COALESCE(@SupplierProductCode,SupplierProductCode),
+                      PurchasePresentationName=@PresentationName,UnitsPerPresentation=@UnitsPerPresentation,
+                      IsPrimary=@IsPrimary,IsActive=1
+                  WHERE BusinessId=@BusinessId AND SupplierId=@SupplierId AND ProductId=@ProductId;
+                ELSE
+                  INSERT dbo.SupplierProducts
+                    (SupplierProductId,BusinessId,ProductId,SupplierId,SupplierProductCode,PurchasePresentationName,UnitsPerPresentation,IsPrimary,IsActive,CreatedAt)
+                  VALUES
+                    (@SupplierProductId,@BusinessId,@ProductId,@SupplierId,@SupplierProductCode,@PresentationName,@UnitsPerPresentation,@IsPrimary,1,@Now);
+
+                SELECT p.ProductId,COALESCE(p.ProductCode,N''),p.Reference,p.Name,
+                       sp.SupplierProductCode,latest.LatestUnitCost,
+                       COALESCE(tp.Code,N'00'),COALESCE(tp.Rate,0),
+                       COALESCE(p.PurchaseTaxTreatment,N'DeductibleInputVat'),
+                       COALESCE(b.Barcodes,N''),COALESCE(p.BaseUnitCode,N'EA'),CONVERT(BIT,1),
+                       sp.PurchasePresentationName,sp.UnitsPerPresentation,sp.IsPrimary
+                FROM dbo.Products p
+                INNER JOIN dbo.SupplierProducts sp
+                  ON sp.ProductId=p.ProductId AND sp.BusinessId=@BusinessId
+                 AND sp.SupplierId=@SupplierId AND sp.IsActive=1
+                LEFT JOIN dbo.TaxProfiles tp
+                  ON tp.TaxProfileId=COALESCE(p.PurchaseTaxProfileId,p.TaxProfileId)
+                 AND tp.BusinessId=@BusinessId
+                LEFT JOIN dbo.SupplierProductLatestCosts latest
+                  ON latest.BusinessId=@BusinessId AND latest.SupplierId=@SupplierId
+                 AND latest.ProductId=p.ProductId
+                OUTER APPLY (
+                  SELECT STRING_AGG(CONVERT(NVARCHAR(MAX),pb.Barcode),N'|') AS Barcodes
+                  FROM dbo.ProductBarcodes pb
+                  WHERE pb.ProductId=p.ProductId AND pb.BusinessId=@BusinessId AND pb.IsActive=1
+                ) b
+                WHERE p.ProductId=@ProductId AND p.BusinessId=@BusinessId;
+                """;
+            await using var command = new SqlCommand(sql, connection, transaction);
+            command.Parameters.AddWithValue("@SupplierProductId", ids.NewId());
+            command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+            command.Parameters.AddWithValue("@SupplierId", request.SupplierId);
+            command.Parameters.AddWithValue("@ProductId", request.ProductId);
+            command.Parameters.AddWithValue("@SupplierProductCode", (object?)request.SupplierProductCode ?? DBNull.Value);
+            command.Parameters.AddWithValue("@IsPrimary", request.IsPrimary);
+            command.Parameters.AddWithValue("@PresentationName", request.PurchasePresentationName.Trim());
+            command.Parameters.AddWithValue("@UnitsPerPresentation", request.UnitsPerPresentation);
+            command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                throw new PurchasingValidationException("The associated product could not be read.");
+            var product = ReadProduct(reader);
+            await reader.CloseAsync();
+            await transaction.CommitAsync(cancellationToken);
+            return product;
+        }
+        catch (SqlException exception) when (exception.Number is 51120 or 51125)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw new PurchasingValidationException(exception.Message);
+        }
+        catch (SqlException exception) when (exception.Number is 2601 or 2627)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw new PurchasingConflictException("The product is already associated with this supplier.");
+        }
+    }
+
+    private static GoodsReceiptProductOption ReadProduct(SqlDataReader reader)
+    {
+        var barcodes = reader.GetString(9).Split('|', StringSplitOptions.RemoveEmptyEntries);
+        return new(
+            reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2),
+            reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4),
+            reader.IsDBNull(5) ? null : reader.GetDecimal(5), reader.GetString(6),
+            reader.GetDecimal(7), reader.GetString(8), barcodes, reader.GetString(10), reader.GetBoolean(11),
+            reader.GetString(12), reader.GetDecimal(13), reader.GetBoolean(14));
+    }
     public async Task<GoodsReceiptPage> ListAsync(
         PurchasingUserIdentity user, string? search, string? status,
         int page, int pageSize, CancellationToken cancellationToken)
@@ -229,7 +346,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                 await UpdateDraftAsync(connection, transaction, user, request, calculation, existingToken, now, cancellationToken);
                 await DeleteLinesAsync(connection, transaction, request.DraftId, cancellationToken);
             }
-            await InsertLinesAsync(connection, transaction, request.DraftId, calculation, cancellationToken);
+            await InsertLinesAsync(connection, transaction, request.DraftId, request.Lines, calculation, cancellationToken);
             var saved = await LoadDraftAsync(connection, transaction, user.BusinessId, request.DraftId, cancellationToken)
                 ?? throw new InvalidOperationException("The saved draft could not be loaded.");
             await transaction.CommitAsync(cancellationToken);
@@ -383,19 +500,20 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
     }
 
     private static async Task InsertLinesAsync(
-        SqlConnection connection, SqlTransaction transaction, Guid draftId,
+        SqlConnection connection, SqlTransaction transaction, Guid draftId, IReadOnlyCollection<GoodsReceiptLineRequest> requestLines,
         GoodsReceiptCalculation? calculation, CancellationToken cancellationToken)
     {
         if (calculation is null) return;
         const string sql = """
             INSERT dbo.GoodsReceiptDraftLines
               (GoodsReceiptDraftId,LineNumber,ProductId,DescriptionSnapshot,Quantity,UnitCost,
-               DiscountAmount,TaxCode,TaxRate,TaxTreatment,NetAmount,TaxAmount,LineTotal)
+               DiscountAmount,TaxCode,TaxRate,TaxTreatment,NetAmount,TaxAmount,LineTotal,PresentationNameSnapshot,PresentationQuantity,UnitsPerPresentation)
             VALUES(@Id,@Line,@ProductId,@Description,@Quantity,@UnitCost,@Discount,@TaxCode,
-                   @TaxRate,@TaxTreatment,@Net,@Tax,@Total);
+                   @TaxRate,@TaxTreatment,@Net,@Tax,@Total,@PresentationName,@PresentationQuantity,@UnitsPerPresentation);
             """;
         foreach (var line in calculation.Lines)
         {
+            var source = requestLines.Single(item => item.LineNumber == line.LineNumber);
             await using var command = new SqlCommand(sql, connection, transaction);
             command.Parameters.AddWithValue("@Id", draftId);
             command.Parameters.AddWithValue("@Line", line.LineNumber);
@@ -410,6 +528,9 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             AddDecimal(command, "@Net", line.NetAmount, 19, 4);
             AddDecimal(command, "@Tax", line.TaxAmount, 19, 4);
             AddDecimal(command, "@Total", line.LineTotal, 19, 4);
+            command.Parameters.AddWithValue("@PresentationName", source.PresentationName);
+            AddDecimal(command, "@PresentationQuantity", source.PresentationQuantity, 19, 6);
+            AddDecimal(command, "@UnitsPerPresentation", source.UnitsPerPresentation, 19, 6);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
     }
@@ -425,7 +546,8 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             FROM dbo.GoodsReceiptDrafts
             WHERE GoodsReceiptDraftId=@Id AND BusinessId=@BusinessId;
             SELECT LineNumber,ProductId,DescriptionSnapshot,Quantity,UnitCost,DiscountAmount,
-                   TaxCode,TaxRate,TaxTreatment,NetAmount,TaxAmount,LineTotal
+                   TaxCode,TaxRate,TaxTreatment,NetAmount,TaxAmount,LineTotal,
+                   PresentationNameSnapshot,PresentationQuantity,UnitsPerPresentation
             FROM dbo.GoodsReceiptDraftLines
             WHERE GoodsReceiptDraftId=@Id ORDER BY LineNumber;
             """;
@@ -453,7 +575,8 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             lines.Add(new(
                 reader.GetInt32(0), reader.GetGuid(1), reader.GetString(2), reader.GetDecimal(3),
                 reader.GetDecimal(4), reader.GetDecimal(5), reader.GetString(6), reader.GetDecimal(7),
-                reader.GetString(8), reader.GetDecimal(9), reader.GetDecimal(10), reader.GetDecimal(11)));
+                reader.GetString(8), reader.GetDecimal(9), reader.GetDecimal(10), reader.GetDecimal(11),
+                reader.GetString(12), reader.GetDecimal(13), reader.GetDecimal(14)));
         return new(header.Id, header.Business, header.Warehouse, header.Supplier, header.Invoice,
             header.InvoiceDate, header.Received, header.Payable, header.Due, header.Currency,
             header.Notes, header.Net, header.Tax, header.Total, lines, header.Updated, header.Token);

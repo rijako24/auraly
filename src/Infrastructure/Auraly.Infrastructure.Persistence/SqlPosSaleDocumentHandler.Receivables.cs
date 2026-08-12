@@ -68,7 +68,7 @@ public sealed partial class SqlPosSaleDocumentHandler
         var amount = command.Parameters.Add("@Amount", SqlDbType.Decimal);
         amount.Precision = 19; amount.Scale = 4; amount.Value = request.Credit.Amount;
         command.Parameters.AddWithValue("@DueDate", request.Credit.DueDate);
-        command.Parameters.AddWithValue("@IssuedAt", request.FiscalSnapshot.IssuedAt);
+        command.Parameters.AddWithValue("@IssuedAt", request.CommercialSnapshot.IssuedAt);
         command.Parameters.AddWithValue("@Now", now);
         if (await command.ExecuteNonQueryAsync(cancellationToken) != 2)
             throw new DBConcurrencyException("The receivable was not opened atomically with the sale.");

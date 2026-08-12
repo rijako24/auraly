@@ -23,7 +23,7 @@ public interface IOnlineSalesCheckoutStore
         Guid draftId,
         CompleteOnlineSalesDraftRequest request,
         string idempotencyKey,
-        FiscalVerificationMaterial fiscalMaterial,
+        FiscalVerificationMaterial? fiscalMaterial,
         CancellationToken cancellationToken);
 
     Task MarkResultAsync(
@@ -56,12 +56,16 @@ public sealed class OnlineSalesCheckoutService(
     {
         DemandPermission(user);
         Validate(draftId, request, idempotencyKey);
-        var keyContext = await checkouts.ResolveFiscalKeyContextAsync(
+        FiscalVerificationMaterial? material = null;
+        if (PosSaleDocumentTypes.IsFiscal(request.DocumentType))
+        {
+            var keyContext = await checkouts.ResolveFiscalKeyContextAsync(
             user, draftId, cancellationToken);
-        var material = await technicalKeys.ResolveAsync(
+        material = await technicalKeys.ResolveAsync(
             keyContext.Reference, cancellationToken)
             ?? throw new OnlineSalesDraftValidationException(
                 "La clave técnica de la resolución fiscal activa no está disponible.");
+        }
         var prepared = await checkouts.PrepareAsync(
             user, draftId, request, idempotencyKey.Trim(),
             material, cancellationToken);
@@ -98,6 +102,10 @@ public sealed class OnlineSalesCheckoutService(
         string idempotencyKey)
     {
         ArgumentNullException.ThrowIfNull(request);
+        if (!PosSaleDocumentTypes.IsSupported(request.DocumentType))
+            throw new OnlineSalesDraftValidationException(
+                "El tipo de documento de venta no es valido.");
+
         if (draftId == Guid.Empty || request.ExpectedVersion < 1)
             throw new OnlineSalesDraftValidationException(
                 "Borrador y versión esperada son obligatorios.");

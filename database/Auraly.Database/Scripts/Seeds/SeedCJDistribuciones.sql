@@ -11,6 +11,7 @@ SET NOCOUNT ON;
 
 DECLARE @TenantId UNIQUEIDENTIFIER = 'C1D15A00-0000-0000-0000-000000000001';
 DECLARE @BusinessId UNIQUEIDENTIFIER = 'C1D15A00-0000-0000-0000-000000000010';
+DECLARE @WarehouseId UNIQUEIDENTIFIER = 'C1D15A00-0000-7000-8000-000000000011';
 DECLARE @AgentId UNIQUEIDENTIFIER = 'C1D15A00-0000-0000-0000-000000000020';
 DECLARE @MantisCommerceConnectionId UNIQUEIDENTIFIER = 'C1D15A00-0000-0000-0000-000000000030';
 DECLARE @AgentTypeId UNIQUEIDENTIFIER;
@@ -64,6 +65,23 @@ BEGIN
         IsActive = 1,
         UpdatedAt = GETUTCDATE()
     WHERE BusinessId = @BusinessId;
+END
+
+IF NOT EXISTS (SELECT 1 FROM dbo.Warehouses WHERE WarehouseId = @WarehouseId)
+BEGIN
+    INSERT dbo.Warehouses
+        (WarehouseId, BusinessId, Code, [Name], AllowNegativeStockSales, IsActive, CreatedAt)
+    VALUES
+        (@WarehouseId, @BusinessId, N'PRINCIPAL', N'Bodega principal', 1, 1, SYSDATETIMEOFFSET());
+END
+ELSE
+BEGIN
+    UPDATE dbo.Warehouses
+    SET BusinessId = @BusinessId,
+        Code = N'PRINCIPAL',
+        [Name] = N'Bodega principal',
+        IsActive = 1
+    WHERE WarehouseId = @WarehouseId;
 END
 
 MERGE dbo.IntegrationConnections AS target

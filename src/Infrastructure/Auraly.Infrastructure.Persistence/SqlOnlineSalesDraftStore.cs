@@ -64,14 +64,14 @@ public sealed partial class SqlOnlineSalesDraftStore(
     public async Task<OnlineSalesDraft> AddProductAsync(
         OnlineSalesUserIdentity user,
         Guid draftId,
-        Guid productId,
+        string selector,
         decimal quantity,
         long expectedVersion,
         string idempotencyKey,
         CancellationToken cancellationToken)
     {
         const string operation = "AddProduct";
-        var hash = Hash($"{operation}|{draftId:D}|{productId:D}|{Invariant(quantity)}");
+        var hash = Hash($"{operation}|{draftId:D}|{selector}|{Invariant(quantity)}");
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var transaction =
@@ -89,6 +89,9 @@ public sealed partial class SqlOnlineSalesDraftStore(
         }
 
         DemandActiveVersion(state, expectedVersion);
+        var productId = await ResolveProductIdAsync(
+            connection, transaction, state.BusinessId,
+            selector, cancellationToken);
         var product = await ReadProductAsync(
             connection, transaction, state.BusinessId,
             productId, cancellationToken);
@@ -123,7 +126,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
                     P("@Description", product.Name), P("@UnitCode", product.UnitCode),
                     P("@TaxCode", product.TaxCode), P("@TaxRate", product.TaxRate),
                     P("@Quantity", quantity), P("@BaseUnitPrice", product.UnitPrice),
-                    P("@UnitPrice", price.Amount), P("@CurrencyCode", price.CurrencyCode),
+                    P("@UnitPrice", TaxExclusive(price.Amount, product.TaxRate)), P("@CurrencyCode", price.CurrencyCode),
                     P("@PriceSource", price.Source), P("@PriceListId", price.PriceListId),
                     P("@PriceChannelId", price.PriceChannelId)
                 ],
@@ -141,7 +144,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 """,
                 [
                     P("@TotalQuantity", totalQuantity), P("@BaseUnitPrice", product.UnitPrice),
-                    P("@UnitPrice", price.Amount), P("@CurrencyCode", price.CurrencyCode),
+                    P("@UnitPrice", TaxExclusive(price.Amount, product.TaxRate)), P("@CurrencyCode", price.CurrencyCode),
                     P("@PriceSource", price.Source), P("@PriceListId", price.PriceListId),
                     P("@PriceChannelId", price.PriceChannelId),
                     P("@LineId", existing.LineId), P("@DraftId", draftId)
@@ -158,24 +161,6 @@ public sealed partial class SqlOnlineSalesDraftStore(
             connection, transaction, draftId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return result;
-    }
-
-    public async Task<OnlineSalesDraft> CaptureAsync(
-        OnlineSalesUserIdentity user,
-        Guid draftId,
-        string value,
-        decimal quantity,
-        long expectedVersion,
-        string idempotencyKey,
-        CancellationToken cancellationToken)
-    {
-        await using var connection = connections.Create();
-        await connection.OpenAsync(cancellationToken);
-        var productId = await ResolveProductIdAsync(
-            connection, user, draftId, value, cancellationToken);
-        return await AddProductAsync(
-            user, draftId, productId, quantity, expectedVersion,
-            idempotencyKey, cancellationToken);
     }
 
     public async Task<OnlineSalesDraft> ChangeQuantityAsync(
@@ -223,7 +208,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
             WHERE SalesDraftId=@DraftId AND SalesDraftLineId=@LineId;
             """,
             [
-                P("@Quantity", quantity), P("@UnitPrice", price.Amount),
+                P("@Quantity", quantity), P("@UnitPrice", TaxExclusive(price.Amount, line.TaxRate)),
                 P("@CurrencyCode", price.CurrencyCode), P("@PriceSource", price.Source),
                 P("@PriceListId", price.PriceListId),
                 P("@PriceChannelId", price.PriceChannelId),
@@ -388,7 +373,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 WHERE SalesDraftId=@DraftId AND SalesDraftLineId=@LineId;
                 """,
                 [
-                    P("@UnitPrice", price.Amount), P("@CurrencyCode", price.CurrencyCode),
+                    P("@UnitPrice", TaxExclusive(price.Amount, line.TaxRate)), P("@CurrencyCode", price.CurrencyCode),
                     P("@PriceSource", price.Source), P("@PriceListId", price.PriceListId),
                     P("@PriceChannelId", price.PriceChannelId),
                     P("@DraftId", draftId), P("@LineId", line.LineId)
@@ -606,12 +591,12 @@ public sealed partial class SqlOnlineSalesDraftStore(
             SELECT COALESCE(NULLIF(p.ProductCode,N''),NULLIF(p.Sku,N''),N''),
                    p.Name,COALESCE(NULLIF(p.BaseUnitCode,N''),N'EA'),
                    COALESCE(t.Code,N'01'),COALESCE(t.Rate,0),
-                   COALESCE(price.Amount,p.UnitPrice),
-                   COALESCE(price.CurrencyCode,NULLIF(p.Currency,N''),N'COP')
+                   price.Amount,
+                   price.CurrencyCode
             FROM dbo.Products p
             LEFT JOIN dbo.TaxProfiles t
               ON t.TaxProfileId=p.TaxProfileId AND t.BusinessId=p.BusinessId AND t.IsActive=1
-            OUTER APPLY (
+            CROSS APPLY (
               SELECT TOP(1) pp.Amount,pp.CurrencyCode
               FROM dbo.ProductPrices pp
               WHERE pp.BusinessId=p.BusinessId AND pp.ProductId=p.ProductId
@@ -720,44 +705,48 @@ public sealed partial class SqlOnlineSalesDraftStore(
 
     private static async Task<Guid> ResolveProductIdAsync(
         SqlConnection connection,
-        OnlineSalesUserIdentity user,
-        Guid draftId,
-        string value,
+        SqlTransaction transaction,
+        Guid businessId,
+        string selector,
         CancellationToken ct)
     {
         await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             SELECT TOP(2) p.ProductId,
               CASE
+                WHEN p.ProductId=TRY_CONVERT(uniqueidentifier,@Selector) THEN 0
                 WHEN EXISTS (
                   SELECT 1 FROM dbo.ProductBarcodes b
                   WHERE b.ProductId=p.ProductId AND b.BusinessId=p.BusinessId
-                    AND b.IsActive=1 AND b.Barcode=@Value) THEN 0
-                WHEN p.ProductCode=@Value THEN 1
-                WHEN p.Sku=@Value THEN 2
-                WHEN p.Reference=@Value THEN 3
-                ELSE 3
+                    AND b.IsActive=1 AND b.Barcode=@Selector) THEN 1
+                WHEN p.ProductCode=@Selector THEN 2
+                WHEN p.Sku=@Selector THEN 3
+                WHEN p.Reference=@Selector THEN 4
+                WHEN EXISTS (
+                  SELECT 1 FROM dbo.ProductIdentifiers i
+                  WHERE i.ProductId=p.ProductId AND i.BusinessId=p.BusinessId
+                    AND i.IsActive=1 AND i.Value=@Selector) THEN 5
+                ELSE 6
               END AS MatchRank
-            FROM dbo.SalesDrafts d
-            JOIN dbo.Businesses business
-              ON business.BusinessId=d.BusinessId AND business.TenantId=@TenantId
-            JOIN dbo.Products p ON p.BusinessId=d.BusinessId AND p.IsActive=1
-            WHERE d.SalesDraftId=@DraftId AND d.UserId=@UserId AND d.Status=N'Active'
+            FROM dbo.Products p
+            WHERE p.BusinessId=@BusinessId AND p.IsActive=1
               AND (
-                p.ProductCode=@Value OR p.Sku=@Value OR p.Reference=@Value OR
+                p.ProductId=TRY_CONVERT(uniqueidentifier,@Selector) OR
+                p.ProductCode=@Selector OR p.Sku=@Selector OR
+                p.Reference=@Selector OR p.Name=@Selector OR
                 EXISTS (
                   SELECT 1 FROM dbo.ProductBarcodes b
                   WHERE b.ProductId=p.ProductId AND b.BusinessId=p.BusinessId
-                    AND b.IsActive=1 AND b.Barcode=@Value) OR
+                    AND b.IsActive=1 AND b.Barcode=@Selector) OR
                 EXISTS (
                   SELECT 1 FROM dbo.ProductIdentifiers i
                   WHERE i.ProductId=p.ProductId AND i.BusinessId=p.BusinessId
-                    AND i.IsActive=1 AND i.Value=@Value))
+                    AND i.IsActive=1 AND i.Value=@Selector))
             ORDER BY MatchRank,p.ProductId;
             """;
         command.Parameters.AddRange([
-            P("@TenantId", user.TenantId), P("@UserId", user.UserId),
-            P("@DraftId", draftId), P("@Value", value)
+            P("@BusinessId", businessId), P("@Selector", selector)
         ]);
         var matches = new List<(Guid ProductId, int Rank)>(2);
         await using var reader = await command.ExecuteReaderAsync(ct);
@@ -765,10 +754,10 @@ public sealed partial class SqlOnlineSalesDraftStore(
             matches.Add((reader.GetGuid(0), reader.GetInt32(1)));
         if (matches.Count == 0)
             throw new OnlineSalesDraftValidationException(
-                "No se encontró un producto vendible con ese código o referencia.");
+                "No se encontró un producto vendible con ese identificador.");
         if (matches.Count > 1 && matches[0].Rank == matches[1].Rank)
             throw new OnlineSalesDraftValidationException(
-                "El código o referencia identifica más de un producto.");
+                "El identificador coincide con más de un producto; selecciónalo en el buscador.");
         return matches[0].ProductId;
     }
 
@@ -782,7 +771,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT SalesDraftLineId,ProductId,Quantity,BaseUnitPrice,CurrencyCode
+            SELECT SalesDraftLineId,ProductId,Quantity,BaseUnitPrice,CurrencyCode,TaxRate
             FROM dbo.SalesDraftLines WITH (UPDLOCK,HOLDLOCK)
             WHERE SalesDraftId=@DraftId AND SalesDraftLineId=@LineId;
             """;
@@ -793,7 +782,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 "La línea no pertenece al borrador activo.");
         return new(
             reader.GetGuid(0), reader.GetGuid(1), reader.GetDecimal(2),
-            reader.GetDecimal(3), reader.GetString(4));
+            reader.GetDecimal(3), reader.GetString(4), reader.GetDecimal(5));
     }
 
     private static async Task<IReadOnlyList<DraftLineProduct>> ReadLineProductsAsync(
@@ -805,7 +794,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT SalesDraftLineId,ProductId,Quantity,BaseUnitPrice,CurrencyCode
+            SELECT SalesDraftLineId,ProductId,Quantity,BaseUnitPrice,CurrencyCode,TaxRate
             FROM dbo.SalesDraftLines WITH (UPDLOCK,HOLDLOCK)
             WHERE SalesDraftId=@DraftId ORDER BY Position,SalesDraftLineId;
             """;
@@ -815,7 +804,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
         while (await reader.ReadAsync(ct))
             result.Add(new(
                 reader.GetGuid(0), reader.GetGuid(1), reader.GetDecimal(2),
-                reader.GetDecimal(3), reader.GetString(4)));
+                reader.GetDecimal(3), reader.GetString(4), reader.GetDecimal(5)));
         return result;
     }
 
@@ -953,17 +942,23 @@ public sealed partial class SqlOnlineSalesDraftStore(
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT COALESCE(SUM(QuantityChange),0)
-            FROM dbo.InventoryMovements WITH (UPDLOCK,HOLDLOCK)
-            WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId
-              AND ProductId=@ProductId;
+            SELECT COALESCE(SUM(m.QuantityChange),0) / COALESCE(NULLIF(link.InventoryFactor,0),1)
+            FROM dbo.Products p
+            LEFT JOIN dbo.ProductLinks link
+              ON link.BusinessId=p.BusinessId AND link.ChildProductId=p.ProductId
+             AND link.SharesInventory=1 AND link.IsActive=1
+            LEFT JOIN dbo.InventoryMovements m WITH (UPDLOCK,HOLDLOCK)
+              ON m.BusinessId=p.BusinessId AND m.WarehouseId=@WarehouseId
+             AND m.ProductId=COALESCE(link.ParentProductId,p.ProductId)
+            WHERE p.BusinessId=@BusinessId AND p.ProductId=@ProductId
+            GROUP BY link.InventoryFactor;
             """;
         command.Parameters.AddRange([
             P("@BusinessId", state.BusinessId), P("@WarehouseId", state.WarehouseId),
             P("@ProductId", productId)
         ]);
-        var available = Convert.ToDecimal(
-            await command.ExecuteScalarAsync(ct), CultureInfo.InvariantCulture);
+        var scalar = await command.ExecuteScalarAsync(ct);
+        var available = scalar is null or DBNull ? 0m : Convert.ToDecimal(scalar, CultureInfo.InvariantCulture);
         if (available < requestedQuantity)
             throw new OnlineSalesDraftValidationException(
                 $"Inventario insuficiente. Disponible: {Invariant(available)}.");
@@ -1051,6 +1046,9 @@ public sealed partial class SqlOnlineSalesDraftStore(
         value.ToString(CultureInfo.InvariantCulture);
     private static string Hash(string value) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+    private static decimal TaxExclusive(decimal grossPrice, decimal taxRate) =>
+        decimal.Round(grossPrice / (1m + taxRate / 100m), 6,
+            MidpointRounding.AwayFromZero);
 
     private sealed record DraftState(
         Guid BusinessId,
@@ -1066,7 +1064,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
         Guid ProductId,
         decimal Quantity,
         decimal BaseUnitPrice,
-        string CurrencyCode);
+        string CurrencyCode,
+        decimal TaxRate);
     private sealed record ResolvedPrice(
         decimal Amount, string CurrencyCode, string Source,
         Guid? PriceListId, Guid? PriceChannelId);

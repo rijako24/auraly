@@ -9,12 +9,17 @@ export const AUTH_COOKIE_NAMES = {
   clientId: "auraly_auth_client",
 } as const;
 
-const isProduction = process.env.NODE_ENV === "production";
+export function shouldUseSecureAuthCookies(
+  nodeEnvironment = process.env.NODE_ENV,
+  desktopLocal = process.env.AURALY_DESKTOP_LOCAL,
+): boolean {
+  return nodeEnvironment === "production" && desktopLocal !== "true";
+}
 
 export function getAuthCookieOptions(maxAgeSeconds: number) {
   return {
     httpOnly: true,
-    secure: isProduction,
+    secure: shouldUseSecureAuthCookies(),
     sameSite: "lax" as const,
     path: "/",
     maxAge: maxAgeSeconds,

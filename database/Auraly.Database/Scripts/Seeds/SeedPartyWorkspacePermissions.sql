@@ -4,7 +4,7 @@ INSERT @PartyPermissions VALUES
 (N'Parties',N'Read',N'parties.read',N'Consultar el maestro unificado de terceros'),
 (N'Parties',N'Update',N'parties.update',N'Editar identidad y contactos de terceros'),
 (N'Parties',N'Deactivate',N'parties.deactivate',N'Activar o desactivar roles comerciales del tercero'),
-(N'Parties',N'ReadExternal',N'parties.external-customers.read',N'Consultar clientes extraídos pendientes de reconciliación'),
+(N'Parties',N'ReadExternal',N'parties.external-customers.read',N'Consultar clientes extraÃ­dos pendientes de reconciliaciÃ³n'),
 (N'Parties',N'ReconcileExternal',N'parties.external-customers.reconcile',N'Reconciliar clientes externos con Party y Customer'),
 (N'Customers',N'Read',N'customers.read',N'Consultar clientes'),
 (N'Customers',N'Create',N'customers.create',N'Crear clientes'),
@@ -12,8 +12,10 @@ INSERT @PartyPermissions VALUES
 (N'Customers',N'ManagePricing',N'customers.pricing.manage',N'Administrar lista o canal del cliente'),
 (N'Suppliers',N'Read',N'suppliers.read',N'Consultar proveedores'),
 (N'Suppliers',N'Create',N'suppliers.create',N'Crear proveedores como rol de Party'),
-(N'Masters',N'Read',N'masters.geography.read',N'Consultar maestros geográficos'),
-(N'Masters',N'Manage',N'masters.geography.manage',N'Administrar maestros geográficos'),
+(N'Sellers',N'Create',N'sellers.create',N'Crear vendedores como rol de Party'),
+(N'Carriers',N'Create',N'carriers.create',N'Crear transportadores como rol de Party'),
+(N'Masters',N'Read',N'masters.geography.read',N'Consultar maestros geogrÃ¡ficos'),
+(N'Masters',N'Manage',N'masters.geography.manage',N'Administrar maestros geogrÃ¡ficos'),
 (N'Security',N'LinkParty',N'security.users.link-party',N'Enlazar una cuenta de usuario con Party');
 INSERT dbo.Permissions(PermissionId,Module,Action,Resource,Description,CreatedAt)
 SELECT NEWID(),p.Module,p.Action,p.Resource,p.Description,SYSUTCDATETIME() FROM @PartyPermissions p

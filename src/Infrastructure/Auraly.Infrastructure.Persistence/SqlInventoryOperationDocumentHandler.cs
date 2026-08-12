@@ -19,6 +19,23 @@ public sealed class SqlInventoryOperationProcessor(
         if (operation.DocumentId != document.DocumentId.Value || operation.BusinessId != document.BusinessId.Value || operation.TenantId != document.TenantId.Value || operation.DocumentType != document.DocumentType)
             throw new InvalidOperationException("The inventory operation envelope does not match its payload.");
         var session = sessions.Current;
+        var normalizedLines = new List<InventoryOperationLineSnapshot>(operation.Lines.Count);
+        foreach (var line in operation.Lines)
+        {
+            var target = await SqlProductLinkResolution.ResolveInventoryAsync(
+                session, operation.BusinessId, line.ProductId, cancellationToken);
+            normalizedLines.Add(line with
+            {
+                ProductId = target.ProductId,
+                Quantity = line.Quantity * target.Factor,
+                SystemQuantityAtBase = line.SystemQuantityAtBase * target.Factor,
+                ExplicitUnitCost = line.ExplicitUnitCost / target.Factor
+            });
+        }
+        operation = operation with { Lines = normalizedLines };
+        if (operation.DocumentType == InventoryDocumentTypes.StockCount &&
+            operation.Lines.GroupBy(line => line.ProductId).Any(group => group.Count() > 1))
+            throw new InvalidOperationException("A stock count cannot contain two presentations of the same inventory product.");
         var balances = await LockBalancesAsync(session, operation, cancellationToken);
         var totalValueChange = operation.DocumentType switch
         {
@@ -26,6 +43,7 @@ public sealed class SqlInventoryOperationProcessor(
             InventoryDocumentTypes.Adjustment => await ProcessAdjustmentAsync(session, operation, balances, cancellationToken),
             InventoryDocumentTypes.Transfer => await ProcessTransferAsync(session, operation, balances, cancellationToken),
             InventoryDocumentTypes.Conversion => await ProcessConversionAsync(session, operation, balances, cancellationToken),
+            InventoryDocumentTypes.Damage => await ProcessDamageAsync(session, operation, balances, cancellationToken),
             _ => throw new InvalidOperationException($"Unsupported inventory operation '{operation.DocumentType}'.")
         };
         await InsertOutboxAsync(session, operation, document.Payload, cancellationToken);
@@ -84,6 +102,15 @@ public sealed class SqlInventoryOperationProcessor(
         var total = 0m;
         foreach (var line in operation.Lines.OrderBy(line => line.LineNumber))
             total += await ApplyAsync(session, operation, line, operation.WarehouseId, line.Quantity, line.ExplicitUnitCost, "InventoryAdjustment", balances, cancellationToken);
+        return InventoryOperationRules.Money(total);
+    }
+
+    private async Task<decimal> ProcessDamageAsync(SqlDocumentProcessingSessionAccessor.Session session,
+        InventoryOperationDocumentPayload operation, Dictionary<(Guid, Guid), BalanceState> balances, CancellationToken cancellationToken)
+    {
+        var total = 0m;
+        foreach (var line in operation.Lines.OrderBy(line => line.LineNumber))
+            total += await ApplyAsync(session, operation, line, operation.WarehouseId, -line.Quantity, null, "InventoryDamage", balances, cancellationToken);
         return InventoryOperationRules.Money(total);
     }
 
@@ -220,3 +247,5 @@ public sealed class SqlStockCountDocumentHandler(SqlInventoryOperationProcessor 
 public sealed class SqlInventoryAdjustmentDocumentHandler(SqlInventoryOperationProcessor processor) : IConfirmedDocumentHandler { public string DocumentType=>InventoryDocumentTypes.Adjustment; public Task HandleAsync(ConfirmedDocument document,CancellationToken cancellationToken)=>processor.HandleAsync(document,cancellationToken); }
 public sealed class SqlWarehouseTransferDocumentHandler(SqlInventoryOperationProcessor processor) : IConfirmedDocumentHandler { public string DocumentType=>InventoryDocumentTypes.Transfer; public Task HandleAsync(ConfirmedDocument document,CancellationToken cancellationToken)=>processor.HandleAsync(document,cancellationToken); }
 public sealed class SqlProductConversionDocumentHandler(SqlInventoryOperationProcessor processor) : IConfirmedDocumentHandler { public string DocumentType=>InventoryDocumentTypes.Conversion; public Task HandleAsync(ConfirmedDocument document,CancellationToken cancellationToken)=>processor.HandleAsync(document,cancellationToken); }
+
+public sealed class SqlInventoryDamageDocumentHandler(SqlInventoryOperationProcessor processor) : IConfirmedDocumentHandler { public string DocumentType=>InventoryDocumentTypes.Damage; public Task HandleAsync(ConfirmedDocument document,CancellationToken cancellationToken)=>processor.HandleAsync(document,cancellationToken); }

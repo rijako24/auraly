@@ -98,6 +98,18 @@ public sealed class PosEdgeEnrollmentStore(
                 package.DocumentSeries.RangeStart.ToString(),
             ["PosEdge:Documents:SalesInvoice:RangeEnd"] =
                 package.DocumentSeries.RangeEnd.ToString(),
+            ["PosEdge:Documents:SalesReceipt:SeriesId"] =
+                package.ReceiptDocumentSeries.SeriesId.ToString("D"),
+            ["PosEdge:Documents:SalesReceipt:Prefix"] =
+                package.ReceiptDocumentSeries.Prefix,
+            ["PosEdge:Documents:SalesReceipt:SeriesCode"] =
+                package.ReceiptDocumentSeries.SeriesCode,
+            ["PosEdge:Documents:SalesReceipt:Padding"] =
+                package.ReceiptDocumentSeries.Padding.ToString(),
+            ["PosEdge:Documents:SalesReceipt:RangeStart"] =
+                package.ReceiptDocumentSeries.RangeStart.ToString(),
+            ["PosEdge:Documents:SalesReceipt:RangeEnd"] =
+                package.ReceiptDocumentSeries.RangeEnd.ToString(),
             ["PosEdge:PaperWidthMillimeters"] = "80",
             ["PosEdge:PrinterMode"] = "BrowserPreview",
             ["PosEdge:ReceiptOutputDirectory"] =
@@ -117,7 +129,8 @@ public sealed class PosEdgeEnrollmentStore(
 
 public sealed class PosEdgeEnrollmentClient(
     HttpClient httpClient,
-    PosEdgeEnrollmentStore store)
+    PosEdgeEnrollmentStore store,
+    PosStartupModeStore startupMode)
 {
     public async Task<LocalPosEnrollmentResult> RedeemAsync(
         LocalPosEnrollmentRequest request,
@@ -129,7 +142,8 @@ public sealed class PosEdgeEnrollmentClient(
             new RedeemPosEnrollmentRequest(
                 request.EnrollmentSessionId,
                 request.RedemptionCode,
-                installationId),
+                installationId,
+                store.Load()?.DeviceId),
             cancellationToken);
         response.EnsureSuccessStatusCode();
         var package = await response.Content.ReadFromJsonAsync<PosEnrollmentPackage>(
@@ -137,6 +151,7 @@ public sealed class PosEdgeEnrollmentClient(
             ?? throw new InvalidDataException(
                 "The Auraly server returned an empty enrollment package.");
         store.Save(package);
+        startupMode.Save(PosStartupModes.Enrolled);
         return new LocalPosEnrollmentResult(
             "Enrolled",
             package.DeviceId,

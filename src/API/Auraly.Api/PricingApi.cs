@@ -48,6 +48,16 @@ public static class PricingApi
             await ExecuteAsync(() => service.PublishAsync(
                 context.User.ToPricingIdentity(), request, ct), Results.Ok));
 
+        group.MapGet("/products/{productId:guid}/context", async (
+            HttpContext context, Guid productId, PricingService service, CancellationToken ct) =>
+            await ExecuteAsync(() => service.GetProductContextAsync(
+                context.User.ToPricingIdentity(), productId, ct), Results.Ok));
+
+        group.MapPut("/products/{productId:guid}/prepared-price", async (
+            HttpContext context, Guid productId, PublishProductPriceRequest request,
+            PricingService service, CancellationToken ct) =>
+            await ExecuteAsync(() => service.SavePreparedProductAsync(
+                context.User.ToPricingIdentity(), productId, request, ct), Results.Ok));
         group.MapGet("/products/{productId:guid}/history", async (
             HttpContext context, Guid productId, PricingService service, CancellationToken ct) =>
             await ExecuteAsync(() => service.HistoryAsync(

@@ -49,7 +49,9 @@ public sealed class PosSynchronizationWork(
     PosCatalogSynchronizer catalog,
     PosEdgeOutboxUploader uploader,
     PosFiscalStatusSynchronizer fiscalStatuses,
-    PosEdgeAuthenticationService authentication)
+    PosEdgeAuthenticationService authentication,
+    PosUiStateSignal uiState,
+    PosSynchronizationState state)
 {
     public async Task ExecuteAsync(
         PosSynchronizationTrigger trigger,
@@ -58,7 +60,21 @@ public sealed class PosSynchronizationWork(
         if (trigger.HasFlag(PosSynchronizationTrigger.Security))
             await identities.SynchronizeAsync(cancellationToken);
         if (trigger.HasFlag(PosSynchronizationTrigger.Catalog))
-            await catalog.SynchronizeAsync(cancellationToken);
+        {
+            state.Begin();
+            uiState.Publish();
+            try
+            {
+                await catalog.SynchronizeAsync(cancellationToken);
+                state.Succeeded();
+            }
+            catch
+            {
+                state.Failed();
+                throw;
+            }
+            finally { uiState.Publish(); }
+        }
         if (trigger.HasFlag(PosSynchronizationTrigger.LocalOutbox))
         {
             while (await uploader.UploadNextAsync(cancellationToken))
@@ -73,6 +89,8 @@ public sealed class PosSynchronizationWork(
         }
         if (trigger.HasFlag(PosSynchronizationTrigger.FiscalStatus))
             await fiscalStatuses.SynchronizeAsync(cancellationToken);
+
+        uiState.Publish();
     }
 }
 
@@ -86,6 +104,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
     private readonly PosDeviceCredentials credentials;
     private readonly PosSynchronizationSignal signal;
     private readonly PosServerConnectionState connectionState;
+    private readonly PosUiStateSignal uiState;
     private readonly Guid tenantId;
     private readonly Guid businessId;
     private readonly WebPubSubClient client;
@@ -95,6 +114,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
         PosDeviceCredentials credentials,
         PosSynchronizationSignal signal,
         PosServerConnectionState connectionState,
+        PosUiStateSignal uiState,
         Guid tenantId,
         Guid businessId)
     {
@@ -102,6 +122,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
         this.credentials = credentials;
         this.signal = signal;
         this.connectionState = connectionState;
+        this.uiState = uiState;
         this.tenantId = tenantId;
         this.businessId = businessId;
         var credential = new WebPubSubClientCredential(NegotiateAsync);
@@ -150,6 +171,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
     private Task OnConnectedAsync(WebPubSubConnectedEventArgs _)
     {
         connectionState.MarkConnected();
+        uiState.Publish();
         signal.Signal(PosSynchronizationTrigger.All);
         return Task.CompletedTask;
     }
@@ -157,6 +179,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
     private Task OnDisconnectedAsync(WebPubSubDisconnectedEventArgs _)
     {
         connectionState.MarkDisconnected();
+        uiState.Publish();
         return Task.CompletedTask;
     }
 
@@ -201,7 +224,9 @@ internal sealed class PosEventDrivenSynchronizationHostedService(
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await ConnectAsync(stoppingToken);
+        // Initial identity/catalog sync must not wait for the push channel.
+        // A temporary Web PubSub outage must not leave the POS login empty.
+        _ = ConnectAsync(stoppingToken);
         signal.Signal(PosSynchronizationTrigger.All);
         var failedAttempts = 0;
         while (!stoppingToken.IsCancellationRequested)

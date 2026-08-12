@@ -5,6 +5,7 @@ public static class PricingPermissionCodes
     public const string Read = "pricing.read";
     public const string ReadCostBasis = "pricing.cost-basis.read";
     public const string ReviewProposals = "pricing.proposals.review";
+    public const string PreparePrices = "pricing.prices.prepare";
     public const string PublishPrices = "pricing.prices.publish";
     public const string BulkPublish = "pricing.bulk-publish";
     public const string ManageRounding = "pricing.rounding.manage";
@@ -38,7 +39,8 @@ public sealed record PriceCalculationRequest(
     decimal? TargetMarginPercent,
     decimal? SalePrice,
     decimal RoundingIncrement = 1m,
-    string RoundingMode = PricingRoundingModes.Nearest);
+    string RoundingMode = PricingRoundingModes.Nearest,
+    decimal SalesTaxRate = 0m);
 
 public sealed record PriceCalculationResult(
     decimal CostBasisAmount,
@@ -72,10 +74,12 @@ public sealed record PriceRevisionListItem(
     decimal? CurrentMarginPercent,
     decimal? TargetMarginPercent,
     decimal SuggestedSalePrice,
+    decimal SalesTaxRate,
     decimal? EffectiveMarginAfterRounding,
     string Status,
     DateTimeOffset CreatedAt,
-    string ConcurrencyToken);
+    string ConcurrencyToken,
+    string Origin);
 
 public sealed record PriceRevisionPage(
     IReadOnlyList<PriceRevisionListItem> Items,
@@ -105,6 +109,35 @@ public sealed record PublishPriceItem(
     string ConcurrencyToken);
 
 public sealed record PublishPricesRequest(IReadOnlyList<PublishPriceItem> Items);
+
+public sealed record ProductPricingContext(
+    Guid ProductId,
+    string ProductName,
+    decimal PreparedSalePrice,
+    decimal PublicSalePrice,
+    decimal? CostBasisAmount,
+    string? CostBasisOrigin,
+    decimal? CurrentMarginPercent,
+    decimal SalesTaxRate,
+    decimal RoundingIncrement,
+    string RoundingMode);
+
+public sealed record PublishProductPriceRequest(
+    string InputMode,
+    decimal? TargetMarginPercent,
+    decimal? SalePrice,
+    decimal RoundingIncrement = 1m,
+    string RoundingMode = PricingRoundingModes.Nearest,
+    decimal? CostBasisAmount = null);
+
+public sealed record PreparedProductPrice(
+    Guid ProductPriceId,
+    Guid ProductId,
+    decimal PreparedAmount,
+    decimal PublicAmount,
+    decimal? CostBasisAmount,
+    decimal? EffectiveMarginPercent,
+    DateTimeOffset SavedAt);
 public sealed record RejectPriceProposalRequest(string ConcurrencyToken, string? Reason);
 
 public sealed record PublishedPrice(

@@ -11,6 +11,25 @@ public sealed class ProductCategoryRepository : IProductCategoryRepository
 
     public ProductCategoryRepository(ApplicationDbContext context) => _context = context;
 
+    public Task<ProductCategory?> GetByIdAsync(
+        Guid businessId,
+        Guid productCategoryId,
+        CancellationToken ct = default) =>
+        _context.ProductCategories.FirstOrDefaultAsync(category =>
+            category.BusinessId == businessId
+            && category.ProductCategoryId == productCategoryId,
+            ct);
+
+    public async Task<IReadOnlyList<ProductCategory>> ListAsync(
+        Guid businessId,
+        bool includeInactive,
+        CancellationToken ct = default) =>
+        await _context.ProductCategories.AsNoTracking()
+            .Where(category => category.BusinessId == businessId
+                && (includeInactive || category.IsActive))
+            .OrderBy(category => category.DisplayOrder)
+            .ThenBy(category => category.Name)
+            .ToListAsync(ct);
     public Task<ProductCategory?> GetByExternalIdAsync(
         Guid businessId,
         Guid integrationConnectionId,

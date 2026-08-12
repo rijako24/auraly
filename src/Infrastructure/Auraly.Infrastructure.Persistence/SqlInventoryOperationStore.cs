@@ -23,6 +23,7 @@ public sealed class SqlInventoryOperationStore(
         try
         {
             await ValidateScopeAsync(connection, transaction, user, request.WarehouseId, null, request.ProductIds, cancellationToken);
+            var reasonDescription = await LoadActiveReasonAsync(connection, transaction, user.BusinessId, InventoryDocumentTypes.StockCount, request.ReasonCode, cancellationToken);
             var baseSequence = await ReadBaseSequenceAsync(connection, transaction, request.BusinessId, cancellationToken);
             var products = await LoadProductsAsync(connection, transaction, request.BusinessId, request.WarehouseId, request.ProductIds, cancellationToken);
             var lines = products.OrderBy(product => product.Code, StringComparer.Ordinal).Select((product, index) =>
@@ -30,9 +31,9 @@ public sealed class SqlInventoryOperationStore(
             var now = timeProvider.GetUtcNow();
             const string insert = """
                 INSERT dbo.InventoryOperations
-                  (InventoryOperationId,BusinessId,DocumentType,WarehouseId,OccurredAt,ReasonCode,
+                  (InventoryOperationId,BusinessId,DocumentType,WarehouseId,OccurredAt,ReasonCode,ReasonDescription,
                    BaseInventorySequence,Notes,Status,CreatedAt)
-                VALUES(@Id,@BusinessId,N'StockCount',@WarehouseId,@OccurredAt,@Reason,@BaseSequence,@Notes,N'Draft',@Now);
+                VALUES(@Id,@BusinessId,N'StockCount',@WarehouseId,@OccurredAt,@Reason,@ReasonDescription,@BaseSequence,@Notes,N'Draft',@Now);
                 """;
             await using (var command = new SqlCommand(insert, connection, transaction))
             {
@@ -41,6 +42,7 @@ public sealed class SqlInventoryOperationStore(
                 command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
                 command.Parameters.AddWithValue("@OccurredAt", request.OccurredAt);
                 command.Parameters.AddWithValue("@Reason", request.ReasonCode);
+                command.Parameters.AddWithValue("@ReasonDescription", reasonDescription);
                 command.Parameters.AddWithValue("@BaseSequence", baseSequence);
                 command.Parameters.AddWithValue("@Notes", (object?)request.Notes ?? DBNull.Value);
                 command.Parameters.AddWithValue("@Now", now);
@@ -102,6 +104,11 @@ public sealed class SqlInventoryOperationStore(
             request.SourceWarehouseId, request.DestinationWarehouseId, request.OccurredAt, request.ReasonCode, null, null, null, request.Notes,
             request.Lines.Select(line => new LineInput(line.LineNumber, "TRANSFER", line.ProductId, line.Quantity, null, null, null)).ToArray(), request, cancellationToken);
 
+    public Task<InventoryOperationAcceptance> ConfirmDamageAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmInventoryDamageRequest request, CancellationToken cancellationToken) =>
+        AcceptNewAsync(user, idempotencyKey, request.DocumentId, InventoryDocumentTypes.Damage,
+            request.WarehouseId, null, request.OccurredAt, request.ReasonCode, null, request.CostCenterId, null, request.Notes,
+            request.Lines.Select(line => new LineInput(line.LineNumber, "DAMAGE", line.ProductId, line.Quantity, null, null, null)).ToArray(), request, cancellationToken);
+
     public Task<InventoryOperationAcceptance> ConfirmConversionAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmProductConversionRequest request, CancellationToken cancellationToken) =>
         AcceptNewAsync(user, idempotencyKey, request.DocumentId, InventoryDocumentTypes.Conversion,
             request.WarehouseId, null, request.OccurredAt, request.ReasonCode, request.ConversionType, request.CostCenterId, null, request.Notes,
@@ -122,6 +129,7 @@ public sealed class SqlInventoryOperationStore(
             var replay = await TryReplayAsync(connection, transaction, user.BusinessId, documentId, idempotencyKey, requestHash, cancellationToken);
             if (replay is not null) { await transaction.CommitAsync(cancellationToken); return replay; }
             await ValidateScopeAsync(connection, transaction, user, warehouseId, destinationWarehouseId, inputLines.Select(line => line.ProductId), cancellationToken);
+            var reasonDescription = await LoadActiveReasonAsync(connection, transaction, user.BusinessId, documentType, reasonCode, cancellationToken);
             var products = (await LoadProductsAsync(connection, transaction, user.BusinessId, warehouseId, inputLines.Select(line => line.ProductId), cancellationToken)).ToDictionary(product => product.Id);
             var lines = inputLines.Select(line => new InventoryOperationLineSnapshot(
                 line.LineNumber, line.Direction, line.ProductId, products[line.ProductId].Code,
@@ -131,8 +139,8 @@ public sealed class SqlInventoryOperationStore(
             const string insert = """
                 INSERT dbo.InventoryOperations
                   (InventoryOperationId,BusinessId,DocumentType,WarehouseId,DestinationWarehouseId,
-                   OccurredAt,ReasonCode,ConversionType,CostCenterId,BaseInventorySequence,Notes,Status,CreatedAt)
-                VALUES(@Id,@BusinessId,@Type,@WarehouseId,@Destination,@OccurredAt,@Reason,@ConversionType,
+                   OccurredAt,ReasonCode,ReasonDescription,ConversionType,CostCenterId,BaseInventorySequence,Notes,Status,CreatedAt)
+                VALUES(@Id,@BusinessId,@Type,@WarehouseId,@Destination,@OccurredAt,@Reason,@ReasonDescription,@ConversionType,
                    @CostCenterId,@BaseSequence,@Notes,N'Draft',@Now);
                 """;
             await using (var command = new SqlCommand(insert, connection, transaction))
@@ -144,6 +152,7 @@ public sealed class SqlInventoryOperationStore(
                 command.Parameters.AddWithValue("@Destination", (object?)destinationWarehouseId ?? DBNull.Value);
                 command.Parameters.AddWithValue("@OccurredAt", occurredAt);
                 command.Parameters.AddWithValue("@Reason", reasonCode);
+                command.Parameters.AddWithValue("@ReasonDescription", reasonDescription);
                 command.Parameters.AddWithValue("@ConversionType", (object?)conversionType ?? DBNull.Value);
                 command.Parameters.AddWithValue("@CostCenterId", (object?)costCenterId ?? DBNull.Value);
                 command.Parameters.AddWithValue("@BaseSequence", (object?)baseSequence ?? DBNull.Value);
@@ -265,16 +274,33 @@ public sealed class SqlInventoryOperationStore(
         catch (SqlException exception) when (exception.Number is >= 51200 and <= 51203) { throw new InventoryValidationException(exception.Message); }
     }
 
+    private static async Task<string> LoadActiveReasonAsync(SqlConnection connection, SqlTransaction transaction, Guid businessId, string operationType, string reasonCode, CancellationToken cancellationToken)
+    {
+        const string sql = "SELECT Name FROM dbo.InventoryReasons WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@BusinessId AND OperationType=@OperationType AND Code=@Code AND IsActive=1;";
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@OperationType", operationType);
+        command.Parameters.AddWithValue("@Code", reasonCode);
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        return value as string ?? throw new InventoryValidationException("Select an active reason compatible with the inventory operation.");
+    }
+
     private static async Task<IReadOnlyList<ProductState>> LoadProductsAsync(SqlConnection connection, SqlTransaction transaction,
         Guid businessId, Guid warehouseId, IEnumerable<Guid> productIds, CancellationToken cancellationToken)
     {
         const string sql = """
-            SELECT p.ProductId,COALESCE(p.ProductCode,p.Sku),p.Name,COALESCE(b.QuantityOnHand,0)
+            SELECT p.ProductId,COALESCE(p.ProductCode,p.Sku),p.Name,
+                   COALESCE(b.QuantityOnHand / NULLIF(CASE WHEN link.ProductLinkId IS NULL THEN 1 ELSE link.InventoryFactor END,0),0)
             FROM dbo.Products p WITH (UPDLOCK,HOLDLOCK)
+            LEFT JOIN dbo.ProductLinks link WITH (UPDLOCK,HOLDLOCK)
+              ON link.BusinessId=p.BusinessId AND link.ChildProductId=p.ProductId
+             AND link.SharesInventory=1 AND link.IsActive=1
+            INNER JOIN dbo.Products inventoryProduct WITH (UPDLOCK,HOLDLOCK)
+              ON inventoryProduct.ProductId=COALESCE(link.ParentProductId,p.ProductId) AND inventoryProduct.BusinessId=p.BusinessId
             LEFT JOIN dbo.InventoryBalances b WITH (UPDLOCK,HOLDLOCK)
-              ON b.BusinessId=p.BusinessId AND b.WarehouseId=@WarehouseId AND b.ProductId=p.ProductId
+              ON b.BusinessId=p.BusinessId AND b.WarehouseId=@WarehouseId AND b.ProductId=inventoryProduct.ProductId
             INNER JOIN OPENJSON(@Products) WITH(ProductId UNIQUEIDENTIFIER '$') x ON x.ProductId=p.ProductId
-            WHERE p.BusinessId=@BusinessId AND p.IsActive=1 AND p.ManageStock=1;
+            WHERE p.BusinessId=@BusinessId AND p.IsActive=1 AND inventoryProduct.ManageStock=1;
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", businessId);

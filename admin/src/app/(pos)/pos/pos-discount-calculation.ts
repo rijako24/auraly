@@ -31,13 +31,14 @@ export function calculatePosDiscount(
   );
   if (discount > gross) return null;
 
-  const net = roundMoney(gross - discount);
-  const tax = roundMoney(net * taxRate / 100);
+  const total = roundMoney(gross - discount);
+  const net = taxRate === 0 ? total : roundMoney(total / (1 + taxRate / 100));
+  const tax = roundMoney(total - net);
   return {
     discount,
     percentage: gross === 0 ? 0 : roundMoney(discount * 100 / gross),
     net,
     tax,
-    total: roundMoney(net + tax),
+    total,
   };
 }

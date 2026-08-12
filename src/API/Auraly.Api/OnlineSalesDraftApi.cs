@@ -1,5 +1,7 @@
 using System.Security.Claims;
+using Auraly.Application.Authorization;
 using Auraly.Application.Sales;
+using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Sales;
 using QRCoder;
 
@@ -84,7 +86,7 @@ public static class OnlineSalesDraftApi
                         workSessionId),
                     documentId,
                     ct);
-                if (receipt is null)
+                if (receipt is null || string.IsNullOrWhiteSpace(receipt.QrPayload))
                     return Results.NotFound();
                 using var data = QRCodeGenerator.GenerateQrCode(
                     receipt.QrPayload,
@@ -100,7 +102,16 @@ public static class OnlineSalesDraftApi
                     svg,
                     "image/svg+xml; charset=utf-8");
             }
-            catch (OnlineSalesDraftForbiddenException exception)
+            catch (PosApprovalException exception)
+        {
+            var statusCode = exception.Code is "Forbidden" or "SelfApprovalForbidden"
+                ? StatusCodes.Status403Forbidden
+                : exception.Code is "InvalidApproval" or "AlreadyDecidedOrExpired"
+                    ? StatusCodes.Status409Conflict
+                    : StatusCodes.Status400BadRequest;
+            return Results.Problem(exception.Message, statusCode: statusCode, title: exception.Code);
+        }
+        catch (OnlineSalesDraftForbiddenException exception)
             {
                 return Results.Problem(
                     exception.Message,
@@ -122,23 +133,13 @@ public static class OnlineSalesDraftApi
             await Handle(() => service.ListTemporariesAsync(
                 context.User.ToOnlineSalesUserIdentity(), request, ct)));
 
-        group.MapPost("/{draftId:guid}/lines", async (
+group.MapPost("/{draftId:guid}/items", async (
             HttpContext context,
             Guid draftId,
-            AddOnlineSalesDraftProductRequest request,
+            AddOnlineSalesDraftItemRequest request,
             OnlineSalesDraftService service,
             CancellationToken ct) =>
             await Handle(() => service.AddProductAsync(
-                context.User.ToOnlineSalesUserIdentity(),
-                draftId, request, IdempotencyKey(context), ct)));
-
-        group.MapPost("/{draftId:guid}/capture", async (
-            HttpContext context,
-            Guid draftId,
-            CaptureOnlineSalesDraftProductRequest request,
-            OnlineSalesDraftService service,
-            CancellationToken ct) =>
-            await Handle(() => service.CaptureAsync(
                 context.User.ToOnlineSalesUserIdentity(),
                 draftId, request, IdempotencyKey(context), ct)));
 
@@ -159,10 +160,18 @@ public static class OnlineSalesDraftApi
             Guid lineId,
             SetOnlineSalesDraftDiscountRequest request,
             OnlineSalesDraftService service,
+            PosApprovalService approvals,
             CancellationToken ct) =>
-            await Handle(() => service.SetDiscountAsync(
-                context.User.ToOnlineSalesUserIdentity(),
-                draftId, lineId, request, IdempotencyKey(context), ct)));
+            await Handle(() => ExecuteSensitiveAsync(
+                context,
+                approvals,
+                draftId,
+                lineId,
+                CommercePermissionCodes.SalesDiscount,
+                () => service.SetDiscountAsync(
+                    context.User.ToOnlineSalesUserIdentity(),
+                    draftId, lineId, request, IdempotencyKey(context), ct),
+                ct)));
 
         group.MapPost("/{draftId:guid}/lines/{lineId:guid}/remove", async (
             HttpContext context,
@@ -170,10 +179,18 @@ public static class OnlineSalesDraftApi
             Guid lineId,
             RemoveOnlineSalesDraftLineRequest request,
             OnlineSalesDraftService service,
+            PosApprovalService approvals,
             CancellationToken ct) =>
-            await Handle(() => service.RemoveLineAsync(
-                context.User.ToOnlineSalesUserIdentity(),
-                draftId, lineId, request, IdempotencyKey(context), ct)));
+            await Handle(() => ExecuteSensitiveAsync(
+                context,
+                approvals,
+                draftId,
+                lineId,
+                CommercePermissionCodes.SalesRemoveLine,
+                () => service.RemoveLineAsync(
+                    context.User.ToOnlineSalesUserIdentity(),
+                    draftId, lineId, request, IdempotencyKey(context), ct),
+                ct)));
 
         group.MapPut("/{draftId:guid}/customer", async (
             HttpContext context,
@@ -234,10 +251,18 @@ public static class OnlineSalesDraftApi
             Guid draftId,
             ResetOnlineSalesDraftRequest request,
             OnlineSalesDraftService service,
+            PosApprovalService approvals,
             CancellationToken ct) =>
-            await Handle(() => service.ResetAsync(
-                context.User.ToOnlineSalesUserIdentity(),
-                draftId, request, IdempotencyKey(context), ct)));
+            await Handle(() => ExecuteSensitiveAsync(
+                context,
+                approvals,
+                draftId,
+                null,
+                CommercePermissionCodes.SalesRestartDraft,
+                () => service.ResetAsync(
+                    context.User.ToOnlineSalesUserIdentity(),
+                    draftId, request, IdempotencyKey(context), ct),
+                ct)));
 
         return endpoints;
     }
@@ -245,10 +270,49 @@ public static class OnlineSalesDraftApi
     private static string IdempotencyKey(HttpContext context) =>
         context.Request.Headers["Idempotency-Key"].ToString();
 
+    private static async Task<T> ExecuteSensitiveAsync<T>(
+        HttpContext context,
+        PosApprovalService approvals,
+        Guid draftId,
+        Guid? lineId,
+        string permission,
+        Func<Task<T>> action,
+        CancellationToken cancellationToken)
+    {
+        var idempotencyKey = IdempotencyKey(context);
+        if (!Guid.TryParse(idempotencyKey, out var operationId) || operationId == Guid.Empty)
+            throw new OnlineSalesDraftValidationException(
+                "Idempotency-Key must be a non-empty UUID for sensitive POS actions.");
+        var approvalHeader = context.Request.Headers["X-Auraly-Approval-Id"].ToString();
+        var approvalId = Guid.TryParse(approvalHeader, out var parsedApprovalId)
+            ? parsedApprovalId
+            : Guid.Empty;
+        var identity = context.User.ToPosApprovalIdentity();
+        return await approvals.ExecuteSensitiveAsync(
+            identity,
+            approvalId,
+            identity.BusinessId,
+            draftId,
+            lineId,
+            permission,
+            operationId,
+            action,
+            cancellationToken);
+    }
+
     private static async Task<IResult> Handle<T>(
         Func<Task<T>> action)
     {
         try { return Results.Ok(await action()); }
+        catch (PosApprovalException exception)
+        {
+            var statusCode = exception.Code is "Forbidden" or "SelfApprovalForbidden"
+                ? StatusCodes.Status403Forbidden
+                : exception.Code is "InvalidApproval" or "AlreadyDecidedOrExpired"
+                    ? StatusCodes.Status409Conflict
+                    : StatusCodes.Status400BadRequest;
+            return Results.Problem(exception.Message, statusCode: statusCode, title: exception.Code);
+        }
         catch (OnlineSalesDraftForbiddenException exception)
         {
             return Results.Problem(
@@ -307,6 +371,15 @@ public static class OnlineSalesDraftApi
         {
             var result = await action();
             return result is null ? Results.NotFound() : Results.Ok(result);
+        }
+        catch (PosApprovalException exception)
+        {
+            var statusCode = exception.Code is "Forbidden" or "SelfApprovalForbidden"
+                ? StatusCodes.Status403Forbidden
+                : exception.Code is "InvalidApproval" or "AlreadyDecidedOrExpired"
+                    ? StatusCodes.Status409Conflict
+                    : StatusCodes.Status400BadRequest;
+            return Results.Problem(exception.Message, statusCode: statusCode, title: exception.Code);
         }
         catch (OnlineSalesDraftForbiddenException exception)
         {

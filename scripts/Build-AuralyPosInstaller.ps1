@@ -1,12 +1,20 @@
 param(
-    [string]$IdentityApiUrl = "http://127.0.0.1:5057/api",
-    [string]$CommerceApiUrl = "http://127.0.0.1:5097",
-    [string]$Configuration = "Release"
+    [string]$ApiUrl = "http://127.0.0.1:5097",
+    [string]$Configuration = "Release",
+    [string]$ArtifactPath = ""
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$artifacts = Join-Path $root "artifacts\auraly-pos"
+$artifacts = if ([string]::IsNullOrWhiteSpace($ArtifactPath)) {
+    Join-Path $root "artifacts\auraly-pos"
+}
+elseif ([IO.Path]::IsPathRooted($ArtifactPath)) {
+    $ArtifactPath
+}
+else {
+    Join-Path $root $ArtifactPath
+}
 $payload = Join-Path $artifacts "payload"
 $edge = Join-Path $payload "edge"
 $web = Join-Path $payload "web"
@@ -62,8 +70,7 @@ Copy-Item -LiteralPath (Join-Path $root "admin\public") `
     -Destination (Join-Path $web "public") -Recurse -Force
 
 $desktopSettings = @{
-    identityApiUrl = $IdentityApiUrl
-    commerceApiUrl = $CommerceApiUrl
+    apiUrl = $ApiUrl
     webPort = 47830
     edgePort = 47831
 } | ConvertTo-Json
@@ -112,6 +119,20 @@ if (Test-Path -LiteralPath $install) {
 New-Item -ItemType Directory -Force -Path $install | Out-Null
 Expand-Archive -LiteralPath (Join-Path $PSScriptRoot "payload.zip") `
     -DestinationPath $install -Force
+$databaseDirectory = Join-Path $env:LOCALAPPDATA "Auraly\PosEdge"
+New-Item -ItemType Directory -Force -Path $databaseDirectory | Out-Null
+$databasePath = Join-Path $databaseDirectory "auraly-pos.db"
+$startupModePath = Join-Path $databaseDirectory "startup-mode"
+if (-not (Test-Path -LiteralPath $startupModePath)) {
+    $existingEnrollmentPath = Join-Path $databaseDirectory "enrollment.protected"
+    $initialStartupMode = if (Test-Path -LiteralPath $existingEnrollmentPath) { "enrolled" } else { "online" }
+    [IO.File]::WriteAllText($startupModePath, $initialStartupMode, [Text.Encoding]::ASCII)
+}
+$edgeHost = Join-Path $install "edge\Auraly.Pos.Edge.Host.exe"
+$storageProcess = Start-Process -FilePath $edgeHost -ArgumentList @("--initialize-storage", "--database-path", $databasePath) -Wait -PassThru -NoNewWindow
+if ($storageProcess.ExitCode -ne 0) {
+    throw "Auraly POS could not initialize its local SQLite store."
+}
 
 $desktop = [Environment]::GetFolderPath("DesktopDirectory")
 $shortcut = Join-Path $desktop "Auraly POS.lnk"

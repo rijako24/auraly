@@ -19,7 +19,8 @@ public sealed record CompletePaymentRequest(
 public sealed record CompleteDraftRequest(
     string? CustomerIdentification,
     IReadOnlyCollection<CompletePaymentRequest> Payments,
-    PosSaleUblSnapshotContract? UblSnapshot = null);
+    PosSaleUblSnapshotContract? UblSnapshot = null,
+    string DocumentType = PosSaleDocumentTypes.Invoice);
 
 internal sealed record PosSaleHostSettings(
     TenantId TenantId,
@@ -34,6 +35,7 @@ internal sealed record PosSaleHostSettings(
     string QrValidationUrl,
     int PaperWidthMillimeters,
     PosEdgeDocumentSeriesProvision DocumentSeries,
+    PosEdgeDocumentSeriesProvision ReceiptDocumentSeries,
     PosEdgeSeriesProvision FiscalSeries)
 {
     public SalesExecutionContext ContextFor(PosLocalUserSession session) => new(
@@ -83,6 +85,15 @@ internal static class PosSaleHostModule
                 RequiredInt(configuration, "PosEdge:Documents:SalesInvoice:Padding"),
                 RequiredLong(configuration, "PosEdge:Documents:SalesInvoice:RangeStart"),
                 RequiredLong(configuration, "PosEdge:Documents:SalesInvoice:RangeEnd")),
+            new PosEdgeDocumentSeriesProvision(
+                RequiredGuid(configuration, "PosEdge:Documents:SalesReceipt:SeriesId"),
+                runtime.DeviceId,
+                AuralyDocumentTypes.SalesReceipt,
+                AuralyDocumentTypes.DefaultPrefix(AuralyDocumentTypes.SalesReceipt),
+                Required(configuration, "PosEdge:Documents:SalesReceipt:SeriesCode"),
+                RequiredInt(configuration, "PosEdge:Documents:SalesReceipt:Padding"),
+                RequiredLong(configuration, "PosEdge:Documents:SalesReceipt:RangeStart"),
+                RequiredLong(configuration, "PosEdge:Documents:SalesReceipt:RangeEnd")),
             new PosEdgeSeriesProvision(
                 RequiredGuid(configuration, "PosEdge:Fiscal:SeriesId"),
                 runtime.DeviceId,
@@ -140,19 +151,23 @@ internal static class PosSaleHostModule
     public static RouteGroupBuilder MapPosSaleCompletion(this RouteGroupBuilder edge)
     {
         edge.MapGet("/sales/next-number", async (
+            string? documentType,
             PosEdgeSaleStore sales,
             PosSaleHostSettings settings,
             PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
         {
+            var selectedType = PosSaleDocumentTypes.IsSupported(documentType ?? string.Empty)
+                ? documentType!
+                : PosSaleDocumentTypes.Invoice;
             var document = await sales.PreviewNextDocumentNumberAsync(
                 settings.DeviceId,
-                AuralyDocumentTypes.SalesInvoice,
+                selectedType,
                 ct);
-            var fiscal = await sales.PreviewNextFiscalNumberAsync(
-                settings.DeviceId,
-                DateTimeOffset.Now,
-                ct);
+            var fiscal = PosSaleDocumentTypes.IsFiscal(selectedType)
+                ? await sales.PreviewNextFiscalNumberAsync(
+                    settings.DeviceId, DateTimeOffset.Now, ct)
+                : null;
             return Results.Ok(new { document, fiscal });
         });
 
@@ -189,7 +204,8 @@ internal static class PosSaleHostModule
                         settings.QrValidationUrl,
                         payments,
                         settings.PaperWidthMillimeters,
-                        request.UblSnapshot),
+                        request.UblSnapshot,
+                        request.DocumentType),
                     ct);
                 synchronization.Signal(PosSynchronizationTrigger.LocalOutbox);
                 return Results.Ok(result);
@@ -316,6 +332,7 @@ internal sealed class PosSaleStorageInitializer(
         await issuance.InitializeAsync(cancellationToken);
         await sales.ProvisionDocumentSeriesAsync(settings.DocumentSeries, cancellationToken);
         await sales.ProvisionSeriesAsync(settings.FiscalSeries, cancellationToken);
+        await sales.ProvisionDocumentSeriesAsync(settings.ReceiptDocumentSeries, cancellationToken);
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;

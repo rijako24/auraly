@@ -10,6 +10,7 @@ public sealed record SalesWorkspaceOption(
     bool HasActiveEdgeEnrollment);
 
 public sealed record SalesWorkspaceBootstrap(
+    Guid TenantId,
     string TenantName,
     Guid UserId,
     string UserDisplayName,
@@ -42,7 +43,8 @@ public sealed record PosEnrollmentAuthorization(
 public sealed record RedeemPosEnrollmentRequest(
     Guid EnrollmentSessionId,
     string RedemptionCode,
-    string InstallationId);
+    string InstallationId,
+    Guid? ExistingDeviceId = null);
 
 public sealed record PosEnrollmentDocumentSeries(
     Guid SeriesId,
@@ -82,6 +84,7 @@ public sealed record PosEnrollmentPackage(
     IReadOnlyList<string> Permissions,
     PosEnrollmentDocumentSeries DocumentSeries,
     PosEnrollmentFiscalSeries FiscalSeries,
+    PosEnrollmentDocumentSeries ReceiptDocumentSeries,
     IReadOnlyDictionary<string, string>? OfflineLeaseTrustedPublicKeys,
     DateTimeOffset EnrolledAt);
 

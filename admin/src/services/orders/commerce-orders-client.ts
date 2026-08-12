@@ -156,6 +156,10 @@ async function orderRequest<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<T> {
+  const tenantId =
+    typeof window === "undefined"
+      ? null
+      : window.localStorage.getItem("selected_tenant_id");
   const businessId =
     typeof window === "undefined"
       ? null
@@ -166,6 +170,7 @@ async function orderRequest<T>(
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
+      ...(tenantId ? { "X-Tenant-Id": tenantId } : {}),
       ...(businessId ? { "X-Business-Id": businessId } : {}),
       ...init.headers,
     },

@@ -1,4 +1,4 @@
-﻿using System.Data;
+using System.Data;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -25,6 +25,8 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         CatalogUserIdentity user, Guid productId, SaveProductRequest request,
         DateTimeOffset now, bool create, CancellationToken ct)
     {
+        if (create)
+            request = request with { ProductCode = InternalCode("PRD", productId) };
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, ct);
@@ -36,29 +38,57 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                 IF NOT EXISTS (
                   SELECT 1 FROM dbo.TaxProfiles t JOIN dbo.Businesses b ON b.BusinessId=t.BusinessId
                   WHERE t.TaxProfileId=@TaxProfileId AND t.BusinessId=@BusinessId AND b.TenantId=@TenantId AND t.IsActive=1)
-                  THROW 51021, 'The tax profile is outside the authenticated scope or inactive.', 1;
+                  THROW 51021, 'The sales VAT profile is outside the authenticated scope or inactive.', 1;
+                IF NOT EXISTS (
+                  SELECT 1 FROM dbo.TaxProfiles t
+                  WHERE t.TaxProfileId=@PurchaseTaxProfileId AND t.BusinessId=@BusinessId AND t.IsActive=1)
+                  THROW 51021, 'The purchase VAT profile is outside the authenticated scope or inactive.', 1;
+                IF EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@PurchaseTaxProfileId AND BusinessId=@BusinessId AND Rate=0) AND @PurchaseTaxTreatment<>N'NotApplicable'
+                  THROW 51024, 'A zero-rated purchase VAT profile must use NotApplicable treatment.', 1;
+                IF EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@PurchaseTaxProfileId AND BusinessId=@BusinessId AND Rate>0) AND @PurchaseTaxTreatment=N'NotApplicable'
+                  THROW 51024, 'A positive purchase VAT profile must use DeductibleInputVat or CapitalizedCost treatment.', 1;
+                IF NOT EXISTS (SELECT 1 FROM dbo.ProductUnits WHERE BusinessId=@BusinessId AND Code=@BaseUnitCode AND IsActive=1)
+                  THROW 51021, 'The product unit is outside the authenticated scope or inactive.', 1;
+                IF @ProductCategoryId IS NOT NULL AND NOT EXISTS (SELECT 1 FROM dbo.ProductCategories WHERE BusinessId=@BusinessId AND ProductCategoryId=@ProductCategoryId AND IsActive=1)
+                  THROW 51021, 'The product category is outside the authenticated scope or inactive.', 1;
+                IF @ProductBrandId IS NOT NULL AND NOT EXISTS (SELECT 1 FROM dbo.ProductBrands WHERE BusinessId=@BusinessId AND ProductBrandId=@ProductBrandId AND IsActive=1)
+                  THROW 51021, 'The product brand is outside the authenticated scope or inactive.', 1;
+                IF @ParentProductId IS NOT NULL AND NOT EXISTS (SELECT 1 FROM dbo.Products WHERE BusinessId=@BusinessId AND ProductId=@ParentProductId AND IsActive=1)
+                  THROW 51021, 'The linked parent product is outside the authenticated scope or inactive.', 1;
+                IF @ParentProductId=@ProductId
+                  THROW 51022, 'A product cannot be linked to itself.', 1;
+                IF @ParentProductId IS NOT NULL AND EXISTS (SELECT 1 FROM dbo.ProductLinks WHERE BusinessId=@BusinessId AND ChildProductId=@ParentProductId AND IsActive=1)
+                  THROW 51022, 'Linked product chains are not allowed.', 1;
                 """, ProductParameters(user, productId, request, now), ct);
             await ExecuteAsync(connection, transaction, create
                 ? """
                   INSERT dbo.Products
-                    (ProductId,BusinessId,ProductCode,Reference,Sku,Name,Description,BaseUnitCode,TaxProfileId,
-                     ManageStock,IsWeighable,IsActive,Source,UnitPrice,Currency,CreatedAt,UpdatedAt,CreatedByUserId,UpdatedByUserId)
+                    (ProductId,BusinessId,ProductCode,Reference,Sku,Name,Description,ProductCategoryId,CategoryName,ProductBrandId,BaseUnitCode,TaxProfileId,
+                     PurchaseTaxProfileId,PurchaseTaxTreatment,ManageStock,AllowsFractionalSale,IsWeighable,IsActive,Source,UnitPrice,Currency,CreatedAt,UpdatedAt,CreatedByUserId,UpdatedByUserId)
                   VALUES
-                    (@ProductId,@BusinessId,@ProductCode,@Reference,@Reference,@Name,@Description,@BaseUnitCode,@TaxProfileId,
-                     @ManageInventory,@IsWeighable,1,0,0,N'COP',@Now,NULL,@UserId,NULL);
+                    (@ProductId,@BusinessId,@ProductCode,@Reference,@Reference,@Name,@Description,@ProductCategoryId,(SELECT Name FROM dbo.ProductCategories WHERE ProductCategoryId=@ProductCategoryId),@ProductBrandId,@BaseUnitCode,@TaxProfileId,
+                     @PurchaseTaxProfileId,@PurchaseTaxTreatment,@ManageInventory,@AllowsFractionalSale,@IsWeighable,1,0,0,N'COP',@Now,NULL,@UserId,NULL);
                   """
                 : """
                   UPDATE dbo.Products SET ProductCode=@ProductCode,Reference=@Reference,Sku=@Reference,Name=@Name,
-                    Description=@Description,BaseUnitCode=@BaseUnitCode,TaxProfileId=@TaxProfileId,
-                    ManageStock=@ManageInventory,IsWeighable=@IsWeighable,UpdatedAt=@Now,UpdatedByUserId=@UserId
+                    Description=@Description,ProductCategoryId=@ProductCategoryId,CategoryName=(SELECT Name FROM dbo.ProductCategories WHERE ProductCategoryId=@ProductCategoryId),ProductBrandId=@ProductBrandId,BaseUnitCode=@BaseUnitCode,TaxProfileId=@TaxProfileId,
+                    PurchaseTaxProfileId=@PurchaseTaxProfileId,PurchaseTaxTreatment=@PurchaseTaxTreatment,ManageStock=@ManageInventory,AllowsFractionalSale=@AllowsFractionalSale,IsWeighable=@IsWeighable,UpdatedAt=@Now,UpdatedByUserId=@UserId
                   WHERE ProductId=@ProductId AND BusinessId=@BusinessId;
                   IF @@ROWCOUNT=0 THROW 51010, 'Product was not found in the authenticated scope.', 1;
                   DELETE FROM dbo.ProductBarcodes WHERE ProductId=@ProductId;
                   DELETE FROM dbo.ProductIdentifiers WHERE ProductId=@ProductId;
-                  DELETE c FROM dbo.SupplierCostAgreements c JOIN dbo.SupplierProducts sp ON sp.SupplierProductId=c.SupplierProductId WHERE sp.ProductId=@ProductId;
-                  DELETE FROM dbo.SupplierProducts WHERE ProductId=@ProductId;
                   DELETE FROM dbo.ProductScaleConfigurations WHERE ProductId=@ProductId;
                   """, ProductParameters(user, productId, request, now), ct);
+            await ExecuteAsync(connection, transaction, """
+                UPDATE dbo.ProductLinks SET IsActive=0,UpdatedAt=@Now WHERE BusinessId=@BusinessId AND ChildProductId=@ProductId AND IsActive=1;
+                IF @ParentProductId IS NOT NULL
+                  INSERT dbo.ProductLinks(ProductLinkId,BusinessId,ChildProductId,ParentProductId,InventoryFactor,PriceFactor,SharesInventory,SharesPrice,IsActive,CreatedAt)
+                  VALUES(@ProductLinkId,@BusinessId,@ProductId,@ParentProductId,@InventoryFactor,@PriceFactor,@SharesInventory,@SharesPrice,1,@Now);
+                """, [P("@ProductLinkId", ids.NewId()), P("@BusinessId", user.BusinessId), P("@ProductId", productId), P("@ParentProductId", request.Link?.ParentProductId),
+                P("@InventoryFactor", request.Link is { SharesInventory: true } ? request.Link.InventoryFactor : null), P("@PriceFactor", request.Link is { SharesPrice: true } ? request.Link.PriceFactor : null),
+                P("@SharesInventory", request.Link?.SharesInventory ?? false), P("@SharesPrice", request.Link?.SharesPrice ?? false), P("@Now", now)], ct);
+
+
             foreach (var barcode in request.Barcodes.DistinctBy(value => value.Value, StringComparer.OrdinalIgnoreCase))
             {
                 await ExecuteAsync(connection, transaction, """
@@ -85,8 +115,8 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             {
                 await ExecuteAsync(connection, transaction, """
                     INSERT dbo.ProductPrices
-                      (ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
-                    VALUES (@Id,@BusinessId,@ProductId,@Amount,@Currency,@Now,1,@Now);
+                      (ProductPriceId,BusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
+                    VALUES (@Id,@BusinessId,@ProductId,0,@Amount,@Currency,@Now,1,@Now);
                     """, [P("@Id", ids.NewId()), P("@BusinessId", user.BusinessId), P("@ProductId", productId),
                     P("@Amount", price.Amount), P("@Currency", price.CurrencyCode.ToUpperInvariant()), P("@Now", now)], ct);
             }
@@ -120,16 +150,42 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                       INSERT dbo.Suppliers (SupplierId,BusinessId,PartyId,Identification,Name,IsActive,CreatedAt)
                       VALUES (@SupplierId,@BusinessId,@PartyId,@Identification,@Name,1,@Now);
                     END
-                    INSERT dbo.SupplierProducts
-                      (SupplierProductId,BusinessId,ProductId,SupplierId,SupplierProductCode,IsPrimary,IsActive,CreatedAt)
-                    VALUES (@SupplierProductId,@BusinessId,@ProductId,@SupplierId,@Code,@Primary,1,@Now);
-                    INSERT dbo.SupplierCostAgreements
-                      (SupplierCostAgreementId,SupplierProductId,BaseUnitCost,CurrencyCode,ValidFrom,IsActive,CreatedAt)
-                    VALUES (@CostId,@SupplierProductId,@Cost,N'COP',@Now,1,@Now);
+
+                    IF @Primary=1
+                      UPDATE dbo.SupplierProducts SET IsPrimary=0
+                      WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND IsActive=1;
+
+                    DECLARE @CurrentSupplierProductId UNIQUEIDENTIFIER=(
+                      SELECT SupplierProductId FROM dbo.SupplierProducts WITH (UPDLOCK,HOLDLOCK)
+                      WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND SupplierId=@SupplierId);
+                    IF @CurrentSupplierProductId IS NULL
+                    BEGIN
+                      SET @CurrentSupplierProductId=@SupplierProductId;
+                      INSERT dbo.SupplierProducts
+                        (SupplierProductId,BusinessId,ProductId,SupplierId,SupplierProductCode,PurchasePresentationName,UnitsPerPresentation,IsPrimary,IsActive,CreatedAt)
+                      VALUES (@CurrentSupplierProductId,@BusinessId,@ProductId,@SupplierId,@Code,@PresentationName,@UnitsPerPresentation,@Primary,1,@Now);
+                    END
+                    ELSE
+                      UPDATE dbo.SupplierProducts
+                      SET SupplierProductCode=@Code,PurchasePresentationName=@PresentationName,UnitsPerPresentation=@UnitsPerPresentation,IsPrimary=@Primary,IsActive=1
+                      WHERE SupplierProductId=@CurrentSupplierProductId;
+
+                    IF NOT EXISTS (
+                      SELECT 1 FROM dbo.SupplierCostAgreements WITH (UPDLOCK,HOLDLOCK)
+                      WHERE SupplierProductId=@CurrentSupplierProductId AND IsActive=1 AND BaseUnitCost=@Cost)
+                    BEGIN
+                      UPDATE dbo.SupplierCostAgreements
+                      SET IsActive=0,ValidUntil=@Now
+                      WHERE SupplierProductId=@CurrentSupplierProductId AND IsActive=1;
+                      INSERT dbo.SupplierCostAgreements
+                        (SupplierCostAgreementId,SupplierProductId,BaseUnitCost,CurrencyCode,ValidFrom,IsActive,CreatedAt)
+                      VALUES (@CostId,@CurrentSupplierProductId,@Cost,N'COP',@Now,1,@Now);
+                    END
                     """, [P("@SupplierId", supplierId), P("@PartyId", ids.NewId()), P("@SupplierProductId", ids.NewId()),
                     P("@CostId", ids.NewId()),
                     P("@BusinessId", user.BusinessId), P("@TenantId", user.TenantId), P("@UserId", user.UserId), P("@ProductId", productId), P("@Identification", supplier.Identification),
                     P("@Name", supplier.Name), P("@Code", supplier.SupplierProductCode), P("@Primary", supplier.IsPrimary),
+                    P("@PresentationName", supplier.PurchasePresentationName.Trim()), P("@UnitsPerPresentation", supplier.UnitsPerPresentation),
                     P("@Cost", supplier.BaseUnitCost), P("@Now", now)], ct);
             }
 
@@ -150,6 +206,11 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                     P("@Now", now)
                 ], ct);
             await transaction.CommitAsync(ct);
+        }
+        catch (SqlException exception) when (exception.Number == 51024)
+        {
+            await transaction.RollbackAsync(ct);
+            throw new CatalogValidationException(exception.Message);
         }
         catch (SqlException exception) when (exception.Number is 51021 or 51022 or 51023)
         {
@@ -187,8 +248,8 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         var direction = request.SortDescending ? "DESC" : "ASC";
         command.CommandText = ProductSelect + " " + $"""
             WHERE b.TenantId=@TenantId AND p.BusinessId=@BusinessId
-              AND (@After IS NULL OR p.ProductCode{comparator}@After)
-              AND (@Code IS NULL OR p.ProductCode LIKE @Code+'%')
+              AND (@After IS NULL OR COALESCE(p.ProductCode,p.Sku){comparator}@After)
+              AND (@Code IS NULL OR COALESCE(p.ProductCode,p.Sku) LIKE @Code+'%')
               AND (@Reference IS NULL OR p.Reference LIKE @Reference+'%')
               AND (@Name IS NULL OR p.Name LIKE '%'+@Name+'%')
               AND (@Active IS NULL OR p.IsActive=@Active)
@@ -197,7 +258,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
               AND EXISTS (SELECT 1 FROM dbo.ProductPrices fp WHERE fp.ProductId=p.ProductId AND fp.IsActive=1
                 AND (@MinimumPrice IS NULL OR fp.Amount>=@MinimumPrice)
                 AND (@MaximumPrice IS NULL OR fp.Amount<=@MaximumPrice))
-            ORDER BY p.ProductCode {direction},p.ProductId {direction} OFFSET 0 ROWS FETCH NEXT @Take ROWS ONLY;
+            ORDER BY COALESCE(p.ProductCode,p.Sku) {direction},p.ProductId {direction} OFFSET 0 ROWS FETCH NEXT @Take ROWS ONLY;
             """;
         command.Parameters.AddRange([P("@TenantId", tenantId), P("@BusinessId", businessId), P("@After", request.AfterProductCode),
             P("@Code", request.ProductCode), P("@Reference", request.Reference), P("@Name", request.Name),
@@ -209,7 +270,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         return new ProductPage(items, items.Count == request.PageSize ? items[^1].ProductCode : null);
     }
 
-    public async Task DeactivateAsync(CatalogUserIdentity user, Guid productId, DateTimeOffset now, CancellationToken ct)
+    public async Task SetStatusAsync(CatalogUserIdentity user, Guid productId, bool isActive, DateTimeOffset now, CancellationToken ct)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
@@ -217,12 +278,12 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         command.CommandText = """
             DECLARE @Change TABLE (CatalogChangeId BIGINT NOT NULL);
             BEGIN TRANSACTION;
-            UPDATE dbo.Products SET IsActive=0,UpdatedAt=@Now,UpdatedByUserId=@UserId
+            UPDATE dbo.Products SET IsActive=@IsActive,UpdatedAt=@Now,UpdatedByUserId=@UserId
               WHERE ProductId=@ProductId AND BusinessId=@BusinessId;
             IF @@ROWCOUNT=0 BEGIN ROLLBACK; THROW 51010,'Product not found.',1; END;
             INSERT dbo.CatalogChanges (BusinessId,ProductId,ChangeKind,OccurredAt)
               OUTPUT inserted.CatalogChangeId INTO @Change
-              VALUES (@BusinessId,@ProductId,N'Tombstone',@Now);
+              VALUES (@BusinessId,@ProductId,CASE WHEN @IsActive=1 THEN N'Upsert' ELSE N'Tombstone' END,@Now);
             INSERT dbo.PosSynchronizationOutboxMessages
               (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
             SELECT @NotificationId,@BusinessId,N'Catalog',CatalogChangeId,@Now
@@ -233,6 +294,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             P("@NotificationId", ids.NewId()),
             P("@Now", now),
             P("@UserId", user.UserId),
+            P("@IsActive", isActive),
             P("@ProductId", productId),
             P("@BusinessId", user.BusinessId)
         ]);
@@ -305,7 +367,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT TOP (@Take) c.CatalogChangeId,c.ChangeKind,p.ProductId,p.ProductCode,p.Reference,p.Name,p.BaseUnitCode,
-              t.Code,t.Rate,pr.Amount,pr.CurrencyCode,p.IsActive,
+              t.DianTaxCode,t.Rate,pr.Amount,pr.CurrencyCode,p.IsActive,
               COALESCE((SELECT Barcode AS [Value] FROM dbo.ProductBarcodes b WHERE b.ProductId=p.ProductId AND b.IsActive=1 FOR JSON PATH),N'[]'),
               COALESCE((SELECT IdentifierType AS [Type],Value FROM dbo.ProductIdentifiers i WHERE i.ProductId=p.ProductId AND i.IsActive=1 FOR JSON PATH),N'[]'),
               s.ScaleCode,s.BarcodePrefix,s.EmbeddedValueType,s.ValueStart,s.ValueLength,s.DecimalPlaces
@@ -344,13 +406,17 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         command.CommandText = """
             SELECT w.AllowNegativeStockSales,
               ISNULL((SELECT SUM(m.QuantityChange) FROM dbo.InventoryMovements m
-                WHERE m.BusinessId=@BusinessId AND m.WarehouseId=w.WarehouseId AND m.ProductId=@ProductId),0)
+                WHERE m.BusinessId=@BusinessId AND m.WarehouseId=w.WarehouseId
+                  AND m.ProductId=COALESCE(link.ParentProductId,p.ProductId)),0) / COALESCE(NULLIF(link.InventoryFactor,0),1)
             FROM dbo.EnrolledDevices d
             JOIN dbo.Businesses b ON b.BusinessId=@BusinessId
               AND b.TenantId=d.TenantId AND b.IsActive=1
             JOIN dbo.Warehouses w ON w.WarehouseId=@WarehouseId
               AND w.BusinessId=b.BusinessId AND w.IsActive=1
             JOIN dbo.Products p ON p.ProductId=@ProductId AND p.BusinessId=b.BusinessId
+            LEFT JOIN dbo.ProductLinks link
+              ON link.BusinessId=p.BusinessId AND link.ChildProductId=p.ProductId
+             AND link.SharesInventory=1 AND link.IsActive=1
             WHERE d.DeviceId=@DeviceId AND d.TenantId=@TenantId AND d.IsActive=1;
             """;
         command.Parameters.AddRange([P("@DeviceId", deviceId), P("@TenantId", tenantId), P("@BusinessId", businessId),
@@ -365,23 +431,52 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
     }
 
     private const string ProductSelect = """
-        SELECT p.ProductId,p.BusinessId,p.ProductCode,p.Reference,p.Name,p.IsActive,
+        SELECT p.ProductId,p.BusinessId,COALESCE(p.ProductCode,p.Sku),p.Reference,p.Name,p.IsActive,
           (SELECT Barcode AS [Value] FROM dbo.ProductBarcodes b WHERE b.ProductId=p.ProductId AND b.IsActive=1 FOR JSON PATH),
           (SELECT Amount,CurrencyCode FROM dbo.ProductPrices x WHERE x.ProductId=p.ProductId AND x.IsActive=1 FOR JSON PATH),
-          (SELECT s.SupplierId,s.Identification,s.Name,sp.SupplierProductCode,c.BaseUnitCost,sp.IsPrimary
+          (SELECT s.SupplierId,s.Identification,s.Name,sp.SupplierProductCode,c.BaseUnitCost,sp.IsPrimary,sp.PurchasePresentationName,sp.UnitsPerPresentation
              FROM dbo.SupplierProducts sp JOIN dbo.Suppliers s ON s.SupplierId=sp.SupplierId
              JOIN dbo.SupplierCostAgreements c ON c.SupplierProductId=sp.SupplierProductId AND c.IsActive=1
-             WHERE sp.ProductId=p.ProductId AND sp.IsActive=1 FOR JSON PATH)
+             WHERE sp.ProductId=p.ProductId AND sp.IsActive=1 FOR JSON PATH),
+          p.TaxProfileId,p.PurchaseTaxProfileId,p.PurchaseTaxTreatment,p.Description,p.BaseUnitCode,p.ManageStock,p.IsWeighable
         FROM dbo.Products p
         JOIN dbo.Businesses b ON b.BusinessId=p.BusinessId
         """;
 
-    private static ProductDetail ReadProduct(SqlDataReader reader, bool includeCosts) =>
-        new(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2),
-            reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetString(4), reader.GetBoolean(5),
-            JsonSerializer.Deserialize<BarcodeJson[]>(reader.GetString(6))!.Select(value => value.Value).ToArray(),
-            JsonSerializer.Deserialize<ProductPriceInput[]>(reader.GetString(7))!,
-            includeCosts ? JsonSerializer.Deserialize<SupplierCostInput[]>(reader.GetString(8)) : null);
+    private static ProductDetail ReadProduct(SqlDataReader reader, bool includeCosts)
+    {
+        var barcodes = reader.IsDBNull(6)
+            ? []
+            : (JsonSerializer.Deserialize<BarcodeJson[]>(reader.GetString(6)) ?? [])
+                .Select(value => value.Value)
+                .ToArray();
+        var prices = reader.IsDBNull(7)
+            ? []
+            : JsonSerializer.Deserialize<ProductPriceInput[]>(reader.GetString(7)) ?? [];
+        var supplierCosts = !includeCosts
+            ? null
+            : reader.IsDBNull(8)
+                ? []
+                : JsonSerializer.Deserialize<SupplierCostInput[]>(reader.GetString(8)) ?? [];
+
+        return new ProductDetail(
+            reader.GetGuid(0),
+            reader.GetGuid(1),
+            reader.IsDBNull(2) ? string.Empty : reader.GetString(2),
+            reader.IsDBNull(3) ? null : reader.GetString(3),
+            reader.GetString(4),
+            reader.GetBoolean(5),
+            barcodes,
+            prices,
+            supplierCosts,
+            reader.IsDBNull(9) ? Guid.Empty : reader.GetGuid(9),
+            reader.IsDBNull(10) ? Guid.Empty : reader.GetGuid(10),
+            reader.GetString(11),
+            reader.IsDBNull(12) ? null : reader.GetString(12),
+            reader.IsDBNull(13) ? "EA" : reader.GetString(13),
+            reader.GetBoolean(14),
+            reader.GetBoolean(15));
+    }
 
     private async Task<List<PosCatalogItem>> PosItemsAsync(
         SqlConnection connection, string predicate, SqlParameter[] parameters, int take,
@@ -389,7 +484,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
     {
         await using var command = connection.CreateCommand();
         command.CommandText = $"""
-            SELECT TOP (@Take) p.ProductId,p.ProductCode,p.Reference,p.Name,p.BaseUnitCode,t.Code,t.Rate,
+            SELECT TOP (@Take) p.ProductId,p.ProductCode,p.Reference,p.Name,p.BaseUnitCode,t.DianTaxCode,t.Rate,
               pr.Amount,pr.CurrencyCode,p.IsActive,
               (SELECT Barcode AS [Value] FROM dbo.ProductBarcodes b WHERE b.ProductId=p.ProductId AND b.IsActive=1 FOR JSON PATH),
               (SELECT IdentifierType AS [Type],Value FROM dbo.ProductIdentifiers i WHERE i.ProductId=p.ProductId AND i.IsActive=1 FOR JSON PATH),
@@ -457,10 +552,15 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                 "Sale prices must be changed from Products > Prices and profitability.");
     }
 
+    private static string InternalCode(string prefix, Guid id) =>
+        $"{prefix}-{id.ToString("N")[^12..].ToUpperInvariant()}";
     private static SqlParameter[] ProductParameters(CatalogUserIdentity user, Guid id, SaveProductRequest r, DateTimeOffset now) =>
         [P("@ProductId", id), P("@TenantId", user.TenantId), P("@BusinessId", user.BusinessId), P("@ProductCode", r.ProductCode.Trim()),
          P("@Reference", r.Reference), P("@Name", r.Name.Trim()), P("@Description", r.Description), P("@BaseUnitCode", r.BaseUnitCode.Trim()),
-         P("@TaxProfileId", r.TaxProfileId), P("@ManageInventory", r.ManageInventory), P("@IsWeighable", r.IsWeighable),
+         P("@TaxProfileId", r.TaxProfileId), P("@PurchaseTaxProfileId", r.PurchaseTaxProfileId == Guid.Empty ? r.TaxProfileId : r.PurchaseTaxProfileId),
+         P("@PurchaseTaxTreatment", r.PurchaseTaxTreatment), P("@ManageInventory", r.ManageInventory), P("@IsWeighable", r.IsWeighable),
+         P("@ProductCategoryId", r.ProductCategoryId), P("@ProductBrandId", r.ProductBrandId), P("@AllowsFractionalSale", r.AllowsFractionalSale),
+         P("@ParentProductId", r.Link?.ParentProductId),
          P("@Now", now), P("@UserId", user.UserId)];
 
     private static async Task ExecuteAsync(SqlConnection connection, SqlTransaction transaction, string sql, SqlParameter[] parameters, CancellationToken ct)

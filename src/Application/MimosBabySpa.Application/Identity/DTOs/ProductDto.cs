@@ -28,3 +28,26 @@ public record UpdateProductRequest(
     string? CategoryName,
     decimal UnitPrice,
     string Currency);
+
+public sealed record ProductCategoryAdminDto(
+    Guid ProductCategoryId,
+    Guid? ParentProductCategoryId,
+    string Name,
+    int DisplayOrder,
+    bool IsActive,
+    bool IsBrowsable,
+    int Depth,
+    string Path);
+
+public sealed record CreateProductCategoryRequest(
+    Guid? ParentProductCategoryId,
+    string Name,
+    int DisplayOrder,
+    bool IsBrowsable = true);
+
+public sealed record UpdateProductCategoryRequest(
+    Guid? ParentProductCategoryId,
+    string Name,
+    int DisplayOrder,
+    bool IsActive,
+    bool IsBrowsable);

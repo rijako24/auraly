@@ -1,6 +1,7 @@
 CREATE TABLE [dbo].[ProductCategories] (
     [ProductCategoryId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [ParentProductCategoryId] UNIQUEIDENTIFIER NULL,
     [IntegrationConnectionId] UNIQUEIDENTIFIER NULL,
     [ExternalCategoryId] NVARCHAR(150) NULL,
     [Name] NVARCHAR(150) NOT NULL,
@@ -10,6 +11,8 @@ CREATE TABLE [dbo].[ProductCategories] (
     [LastSyncedAt] DATETIME2 NULL,
     [CreatedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     [UpdatedAt] DATETIME2 NULL,
+    CONSTRAINT [FK_ProductCategories_Parent] FOREIGN KEY ([ParentProductCategoryId])
+        REFERENCES [dbo].[ProductCategories] ([ProductCategoryId]),
     CONSTRAINT [FK_ProductCategories_Businesses] FOREIGN KEY ([BusinessId])
         REFERENCES [dbo].[Businesses] ([BusinessId])
         ON DELETE NO ACTION,
@@ -18,6 +21,10 @@ CREATE TABLE [dbo].[ProductCategories] (
         ON DELETE NO ACTION
 );
 
+GO
+
+CREATE INDEX [IX_ProductCategories_Parent]
+    ON [dbo].[ProductCategories] ([BusinessId], [ParentProductCategoryId], [DisplayOrder], [Name]);
 GO
 
 CREATE INDEX [IX_ProductCategories_BusinessId]

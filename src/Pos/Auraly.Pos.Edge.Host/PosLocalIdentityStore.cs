@@ -48,6 +48,7 @@ public sealed partial class PosLocalIdentityStore(
                 NormalizedUsername TEXT NOT NULL UNIQUE,
                 DisplayName TEXT NOT NULL,
                 ProtectedPasswordVerifier TEXT NOT NULL,
+                ProtectedSupervisorCredential TEXT NULL,
                 FailedCount INTEGER NOT NULL DEFAULT 0,
                 LockedUntil TEXT NULL);
             CREATE TABLE IF NOT EXISTS PosOfflineUserPermissions(
@@ -73,9 +74,25 @@ public sealed partial class PosLocalIdentityStore(
                 FOREIGN KEY(UserId) REFERENCES PosOfflineUsers(UserId));
             CREATE INDEX IF NOT EXISTS IX_PosLocalUserSessions_Active
                 ON PosLocalUserSessions(EndedAt,ExpiresAt);
+            CREATE TABLE IF NOT EXISTS PosLocalApprovalAudits(
+                AuthorizationId TEXT NOT NULL PRIMARY KEY,
+                RequestedByUserId TEXT NOT NULL,
+                AuthorizedByUserId TEXT NOT NULL,
+                PermissionResource TEXT NOT NULL,
+                DraftId TEXT NOT NULL,
+                LineId TEXT NULL,
+                AuthorizationMethod TEXT NOT NULL,
+                Status TEXT NOT NULL,
+                AuthorizedAt TEXT NOT NULL,
+                CompletedAt TEXT NULL,
+                FOREIGN KEY(RequestedByUserId) REFERENCES PosOfflineUsers(UserId),
+                FOREIGN KEY(AuthorizedByUserId) REFERENCES PosOfflineUsers(UserId));
+            CREATE INDEX IF NOT EXISTS IX_PosLocalApprovalAudits_Draft
+                ON PosLocalApprovalAudits(DraftId,AuthorizedAt);
             """;
         await command.ExecuteNonQueryAsync(cancellationToken);
         await UpgradeWorkSessionsAsync(connection, cancellationToken);
+        await UpgradeSupervisorCredentialsAsync(connection, cancellationToken);
     }
 
     public async Task ApplySnapshotAsync(
@@ -101,18 +118,25 @@ public sealed partial class PosLocalIdentityStore(
             var protectedVerifier = PosEdgeProtectedSecret.ProtectIdentityVerifier(
                 keyDirectory,
                 JsonSerializer.Serialize(user.PasswordVerifier));
+            var protectedSupervisorCredential = user.SupervisorCredential is null
+                ? null
+                : PosEdgeProtectedSecret.ProtectIdentityVerifier(
+                    keyDirectory,
+                    JsonSerializer.Serialize(user.SupervisorCredential));
             await using var userCommand = connection.CreateCommand();
             userCommand.Transaction = (SqliteTransaction)transaction;
             userCommand.CommandText = """
                 INSERT INTO PosOfflineUsers(
                     UserId,Username,NormalizedUsername,DisplayName,
-                    ProtectedPasswordVerifier,FailedCount,LockedUntil)
-                VALUES($id,$username,$normalized,$display,$verifier,0,NULL)
+                    ProtectedPasswordVerifier,ProtectedSupervisorCredential,
+                    FailedCount,LockedUntil)
+                VALUES($id,$username,$normalized,$display,$verifier,$supervisor,0,NULL)
                 ON CONFLICT(UserId) DO UPDATE SET
                     Username=excluded.Username,
                     NormalizedUsername=excluded.NormalizedUsername,
                     DisplayName=excluded.DisplayName,
-                    ProtectedPasswordVerifier=excluded.ProtectedPasswordVerifier;
+                    ProtectedPasswordVerifier=excluded.ProtectedPasswordVerifier,
+                    ProtectedSupervisorCredential=excluded.ProtectedSupervisorCredential;
                 """;
             userCommand.Parameters.AddWithValue("$id", user.UserId.ToString("D"));
             userCommand.Parameters.AddWithValue("$username", user.Username);
@@ -120,6 +144,8 @@ public sealed partial class PosLocalIdentityStore(
                 "$normalized", Normalize(user.Username));
             userCommand.Parameters.AddWithValue("$display", user.DisplayName);
             userCommand.Parameters.AddWithValue("$verifier", protectedVerifier);
+            userCommand.Parameters.AddWithValue(
+                "$supervisor", (object?)protectedSupervisorCredential ?? DBNull.Value);
             await userCommand.ExecuteNonQueryAsync(cancellationToken);
 
             foreach (var permission in user.Permissions.Distinct(StringComparer.Ordinal))
@@ -353,6 +379,25 @@ public sealed partial class PosLocalIdentityStore(
             """;
         await upgrade.ExecuteNonQueryAsync(cancellationToken);
     }
+    private static async Task UpgradeSupervisorCredentialsAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "PRAGMA table_info('PosOfflineUsers');";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                columns.Add(reader.GetString(1));
+        }
+        if (columns.Contains("ProtectedSupervisorCredential")) return;
+        await using var upgrade = connection.CreateCommand();
+        upgrade.CommandText =
+            "ALTER TABLE PosOfflineUsers ADD COLUMN ProtectedSupervisorCredential TEXT NULL;";
+        await upgrade.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private static async Task<LocalUser?> ReadUserAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,

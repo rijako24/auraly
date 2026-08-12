@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Text;
+using Auraly.Contracts.Sales;
 using QRCoder;
 
 namespace Auraly.Pos.Edge.Infrastructure;
@@ -45,16 +46,21 @@ public sealed class HtmlReceiptPreviewRenderer
                 nameof(receipt),
                 "Receipt width must be 58 or 80 mm.");
 
-        using var qrData = QRCodeGenerator.GenerateQrCode(
-            receipt.QrPayload,
-            QRCodeGenerator.ECCLevel.Q);
-        using var qr = new SvgQRCode(qrData);
-        var qrSvg = qr.GetGraphic(
-            pixelsPerModule: 4,
-            darkColorHex: "#061f22",
-            lightColorHex: "#ffffff",
-            drawQuietZones: true,
-            sizingMode: SvgQRCode.SizingMode.ViewBoxAttribute);
+        var isFiscal = PosSaleDocumentTypes.IsFiscal(receipt.DocumentType);
+        var qrSvg = string.Empty;
+        if (isFiscal)
+        {
+            using var qrData = QRCodeGenerator.GenerateQrCode(
+                receipt.QrPayload!, QRCodeGenerator.ECCLevel.Q);
+            using var qr = new SvgQRCode(qrData);
+            qrSvg = qr.GetGraphic(
+                pixelsPerModule: 4, darkColorHex: "#061f22", lightColorHex: "#ffffff",
+                drawQuietZones: true, sizingMode: SvgQRCode.SizingMode.ViewBoxAttribute);
+        }
+        var fiscalNumber = isFiscal ? Pair("Número DIAN", Encode(receipt.FiscalNumber!)) : string.Empty;
+        var fiscalFooter = isFiscal
+            ? $"<div class=\"cufe\"><strong>CUFE</strong><br>{Encode(receipt.Cufe!)}</div><div class=\"qr\">{qrSvg}</div><p class=\"center muted\">Representación gráfica</p>"
+            : string.Empty;
 
         var lines = string.Join(
             Environment.NewLine,
@@ -127,12 +133,12 @@ public sealed class HtmlReceiptPreviewRenderer
               <main class="receipt">
                 <header class="center">
                   <div class="brand">Auraly</div>
-                  <div class="title">Factura electrónica de venta</div>
+                  <div class="title">{{(isFiscal ? "Factura electrónica de venta" : "Comprobante de venta")}}</div>
                   <div class="muted">{{Encode(receipt.IssuedAt.ToString("yyyy-MM-dd HH:mm:ss zzz", CultureInfo.InvariantCulture))}}</div>
                 </header>
                 <hr class="rule">
                 {{Pair("Documento Auraly", Encode(receipt.DocumentNumber))}}
-                {{Pair("Número DIAN", Encode(receipt.FiscalNumber))}}
+                {{fiscalNumber}}
                 <div class="pair"><span>Adquirente</span><strong>{{Encode(receipt.CustomerIdentification)}}</strong></div>
                 <hr class="rule">
                 {{lines}}
@@ -143,9 +149,7 @@ public sealed class HtmlReceiptPreviewRenderer
                 <hr class="rule">
                 {{payments}}
                 <hr class="rule">
-                <div class="cufe"><strong>CUFE</strong><br>{{Encode(receipt.Cufe)}}</div>
-                <div class="qr">{{qrSvg}}</div>
-                <p class="center muted">Representación gráfica</p>
+                {{fiscalFooter}}
               </main>
               <script>
                 window.addEventListener("load", () => window.setTimeout(() => window.print(), 250));

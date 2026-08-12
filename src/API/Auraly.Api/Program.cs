@@ -21,6 +21,7 @@ using Auraly.Application.Payables;
 using Auraly.Application.Receivables;
 using Auraly.Application.Pricing;
 using Auraly.Application.Inventory;
+using Auraly.Application.Routes;
 using Auraly.Application.Returns;
 using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Identifiers;
@@ -36,9 +37,11 @@ using Auraly.Fiscal.Ubl;
 using Auraly.Infrastructure.Fiscal;
 using Auraly.Infrastructure.Persistence;
 using Auraly.Infrastructure.Pricing;
+using Auraly.Infrastructure.Routes;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+
 
 var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("Auraly");
@@ -48,12 +51,49 @@ if (string.IsNullOrWhiteSpace(connectionString))
         "ConnectionStrings:Auraly must point to the SQL Server database owned by Auraly.Database.");
 }
 
+if (!builder.Environment.IsEnvironment("Testing"))
+{
+    var fiscalSecretProtectionKey = builder.Configuration[
+        "Auraly:Fiscal:SecretProtectionKey"];
+    try
+    {
+        if (string.IsNullOrWhiteSpace(fiscalSecretProtectionKey) ||
+            Convert.FromBase64String(fiscalSecretProtectionKey).Length != 32)
+            throw new FormatException();
+    }
+    catch (FormatException)
+    {
+        throw new InvalidOperationException(
+            "Auraly:Fiscal:SecretProtectionKey must be supplied as a Base64-encoded 256-bit key.");
+    }
+}
+
+builder.AddAuralyPlatformApi(
+    configureAuthentication: false,
+    configureExternalCustomerMessaging: !builder.Environment.IsEnvironment("Testing"));
+
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
 builder.Services.AddSingleton(new SqlServerConnectionFactory(connectionString));
+builder.Services.AddScoped<SqlExecutionContextDirectory>();
+builder.Services.AddScoped<IExecutionAccessResolver>(services =>
+    services.GetRequiredService<SqlExecutionContextDirectory>());
+builder.Services.AddScoped<IAuralyExecutionContextAccessor, AuralyExecutionContextAccessorAdapter>();
 builder.Services.AddSingleton(new AccountingSqlConnectionFactory(connectionString));
 builder.Services.AddSingleton(new PricingSqlConnectionFactory(connectionString));
-builder.Services.AddSingleton<IFiscalTechnicalKeyProvider, ConfigurationFiscalTechnicalKeyProvider>();
+builder.Services.AddSingleton(new RoutesSqlConnectionFactory(connectionString));
+builder.Services.AddSingleton<ConfigurationFiscalTechnicalKeyProvider>();
+builder.Services.AddSingleton<SqlProtectedFiscalTechnicalKeyStore>();
+builder.Services.AddSingleton<IFiscalTechnicalKeySecretWriter>(sp =>
+    sp.GetRequiredService<SqlProtectedFiscalTechnicalKeyStore>());
+builder.Services.AddSingleton<IFiscalTechnicalKeyProvider, CompositeFiscalTechnicalKeyProvider>();
+builder.Services.AddScoped<IFiscalConfigurationStore, SqlFiscalConfigurationStore>();
+builder.Services.AddScoped<FiscalConfigurationService>();
+builder.Services.AddScoped<IFiscalIssuerConnectionStore, SqlFiscalIssuerConnectionStore>();
+builder.Services.AddScoped<FiscalIssuerConnectionService>();
+builder.Services.AddScoped<ISalesInvoiceNumberingConfigurationStore,
+    SqlSalesInvoiceNumberingConfigurationStore>();
+builder.Services.AddScoped<SalesInvoiceNumberingConfigurationService>();
 builder.Services.AddScoped<IFiscalSnapshotVerifier, FiscalSnapshotVerifier>();
 builder.Services.AddScoped<IFiscalDocumentStore, SqlFiscalDocumentStore>();
 builder.Services.AddScoped<FiscalDocumentService>();
@@ -80,7 +120,9 @@ builder.Services.AddScoped<IPosSaleCustomerResolver, SqlPosSaleCustomerResolver>
 builder.Services.AddScoped<SqlDocumentProcessingSessionAccessor>();
 builder.Services.AddScoped<IDocumentProcessingJobStore, SqlDocumentProcessingJobStore>();
 builder.Services.AddScoped<IDocumentProcessingWorkSource, SqlDocumentProcessingWorkSource>();
-builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPosSaleDocumentHandler>();
+builder.Services.AddScoped<SqlPosSaleDocumentHandler>();
+builder.Services.AddScoped<IConfirmedDocumentHandler>(services => services.GetRequiredService<SqlPosSaleDocumentHandler>());
+builder.Services.AddScoped<IConfirmedDocumentHandler, SqlSalesReceiptDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlGoodsReceiptDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPurchaseReturnDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPayablePaymentDocumentHandler>();
@@ -88,6 +130,7 @@ builder.Services.AddScoped<IConfirmedDocumentHandler, SqlReceivablePaymentDocume
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlSalesReturnDocumentHandler>();
 builder.Services.AddScoped<SqlInventoryOperationProcessor>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlStockCountDocumentHandler>();
+builder.Services.AddScoped<IConfirmedDocumentHandler, SqlInventoryDamageDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlInventoryAdjustmentDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlWarehouseTransferDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlProductConversionDocumentHandler>();
@@ -136,7 +179,9 @@ if (!builder.Environment.IsEnvironment("Testing"))
         if (builder.Configuration.GetValue(
                 "Auraly:DocumentProcessing:Worker:Enabled", true))
             builder.Services.AddHostedService<RabbitMqDocumentProcessingHostedService>();
-        builder.Services.AddHostedService<ExternalCustomerReconciliationRabbitMqHostedService>();
+        if (builder.Configuration.GetValue(
+                "Auraly:ExternalCustomerReconciliation:Worker:Enabled", true))
+            builder.Services.AddHostedService<ExternalCustomerReconciliationRabbitMqHostedService>();
     }
     else if (string.Equals(
                  processingTransport, "ServiceBus", StringComparison.OrdinalIgnoreCase))
@@ -205,22 +250,30 @@ builder.Services.AddSingleton<IPosSynchronizationPushGateway,
 builder.Services.AddSingleton<SqlPosSynchronizationOutboxDispatcher>();
 builder.Services.AddSingleton<IPosSynchronizationOutboxDispatcher>(provider =>
     provider.GetRequiredService<SqlPosSynchronizationOutboxDispatcher>());
-builder.Services.AddHostedService<PosSynchronizationOutboxHostedService>();
+if (builder.Configuration.GetValue(
+        "Auraly:PosSynchronization:Worker:Enabled", true))
+    builder.Services.AddHostedService<PosSynchronizationOutboxHostedService>();
 builder.Services.AddScoped<ICatalogStore, SqlCatalogStore>();
+builder.Services.AddScoped<IProductMerchandisingStore, SqlProductMerchandisingStore>();
+builder.Services.AddScoped<ProductMerchandisingService>();
 builder.Services.AddScoped<CatalogService>();
 builder.Services.AddScoped<PosCatalogService>();
 builder.Services.AddScoped<IPartyStore, SqlPartyStore>();
 builder.Services.AddScoped<IPartyWorkspaceStore, SqlPartyWorkspaceStore>();
+builder.Services.AddScoped<ICommercialPartyRoleStore, SqlCommercialPartyRoleStore>();
 builder.Services.AddScoped<IExternalCustomerReconciliationStore, SqlExternalCustomerReconciliationStore>();
 builder.Services.AddScoped<ExternalCustomerReconciliationService>();
 builder.Services.AddScoped<ExternalCustomerReconciliationSystemService>();
 builder.Services.AddScoped<PartyWorkspaceService>();
+builder.Services.AddScoped<CommercialPartyRoleService>();
 builder.Services.AddScoped<PartyService>();
 builder.Services.AddScoped<GeographyService>();
 builder.Services.AddScoped<ISalesWorkspaceDirectory, SqlSalesWorkspaceDirectory>();
 builder.Services.AddScoped<SalesWorkspaceService>();
 builder.Services.AddScoped<IPosEnrollmentStore, SqlPosEnrollmentStore>();
 builder.Services.AddScoped<PosEnrollmentService>();
+builder.Services.AddScoped<IPosApprovalStore, SqlPosApprovalStore>();
+builder.Services.AddScoped<PosApprovalService>();
 builder.Services.AddScoped<IOnlineSalesDraftStore, SqlOnlineSalesDraftStore>();
 builder.Services.AddScoped<OnlineSalesDraftService>();
 builder.Services.AddScoped<IOnlineSalesCheckoutStore, SqlOnlineSalesDraftStore>();
@@ -275,7 +328,11 @@ builder.Services.AddScoped<ReceivablesService>();
 builder.Services.AddScoped<IPricingStore, SqlPricingStore>();
 builder.Services.AddScoped<PricingService>();
 builder.Services.AddScoped<IInventoryOperationStore, SqlInventoryOperationStore>();
+builder.Services.AddScoped<IInventoryQueryStore, SqlInventoryQueryStore>();
+builder.Services.AddScoped<InventoryQueryService>();
 builder.Services.AddScoped<InventoryOperationService>();
+builder.Services.AddScoped<IRouteStore, SqlRouteStore>();
+builder.Services.AddScoped<RouteService>();
 builder.Services.AddScoped<ISalesReturnStore, SqlSalesReturnStore>();
 builder.Services.AddScoped<SalesReturnService>();
 builder.Services.AddScoped<ISalesReturnQueryStore, SqlSalesReturnQueryStore>();
@@ -292,8 +349,21 @@ if (string.IsNullOrWhiteSpace(jwtIssuer) || string.IsNullOrWhiteSpace(jwtAudienc
 var validationKey = Encoding.UTF8.GetBytes(jwtSigningKey);
 builder.Services.AddScoped<AuthenticationSessionJwtBearerEvents>();
 
+const string adaptiveAuthenticationScheme = "Auraly.Adaptive";
 builder.Services
-    .AddAuthentication(PosAuthenticationDefaults.Scheme)
+    .AddAuthentication(options =>
+    {
+        options.DefaultScheme = adaptiveAuthenticationScheme;
+        options.DefaultAuthenticateScheme = adaptiveAuthenticationScheme;
+        options.DefaultChallengeScheme = adaptiveAuthenticationScheme;
+    })
+    .AddPolicyScheme(adaptiveAuthenticationScheme, adaptiveAuthenticationScheme, options =>
+    {
+        options.ForwardDefaultSelector = context =>
+            context.Request.Headers.ContainsKey("X-Auraly-Device-Id")
+                ? PosAuthenticationDefaults.Scheme
+                : JwtBearerDefaults.AuthenticationScheme;
+    })
     .AddScheme<AuthenticationSchemeOptions, PosDeviceAuthenticationHandler>(
         PosAuthenticationDefaults.Scheme,
         _ => { })
@@ -375,6 +445,11 @@ builder.Services.AddAuthorization(options =>
         policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
         policy.RequireAuthenticatedUser();
     });
+    options.AddPolicy("routes.user", policy =>
+    {
+        policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
+        policy.RequireAuthenticatedUser();
+    });
     options.AddPolicy("accounting.user", policy =>
     {
         policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
@@ -433,6 +508,14 @@ builder.Services.AddAuthorization(options =>
             PosAuthenticationDefaults.PermissionClaim,
             CommercePermissionCodes.PosIdentitySync);
     });
+    options.AddPolicy("pos.approvals.consume", policy =>
+    {
+        policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
+        policy.RequireAuthenticatedUser();
+        policy.RequireClaim(
+            PosAuthenticationDefaults.PermissionClaim,
+            CommercePermissionCodes.SalesCreate);
+    });
     options.AddPolicy(
         "pos.sales.upload",
         policy =>
@@ -446,18 +529,25 @@ builder.Services.AddAuthorization(options =>
 });
 var app = builder.Build();
 app.UseResponseCompression();
+app.UseAuralyPlatformBeforeAuthentication();
 app.UseAuthentication();
+app.UseAuralyExecutionContext();
 app.UseAuthorization();
+app.UseAuralyPlatformAudit();
 
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }));
+app.MapControllers();
 app.MapAuthenticationApi();
+app.MapExecutionContextApi();
 app.MapCatalogApi();
+app.MapProductMerchandisingApi();
 app.MapPartyApi();
 app.MapPartyWorkspaceApi();
 app.MapExternalCustomerReconciliationApi();
 app.MapPartyUserAccountApi();
 app.MapSalesWorkspaceApi();
 app.MapPosEnrollmentApi();
+app.MapPosApprovalApi();
 app.MapOnlineSalesDraftApi();
 
 app.MapWorkSessionApi();
@@ -465,6 +555,7 @@ app.MapPosIdentityApi();
 app.MapOfflineAuthenticationLeaseApi();
 app.MapPosSynchronizationApi();
 app.MapFiscalApi();
+app.MapFiscalConfigurationApi();
 app.MapOrdersApi();
 app.MapPosOrdersApi();
 app.MapPurchasingApi();
@@ -473,6 +564,7 @@ app.MapPayablesApi();
 app.MapReturnsApi();
 app.MapSalesReturnQueryApi();
 app.MapInventoryApi();
+app.MapRoutesApi();
 app.MapPricingApi();
 app.MapAccountingApi();
 app.MapPost(
@@ -524,6 +616,7 @@ app.MapPost(
         })
     .RequireAuthorization("pos.sales.upload");
 
+await app.SeedAuralyPlatformPermissionsAsync();
 app.Run();
 
 public partial class Program;

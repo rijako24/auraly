@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
+using Auraly.Contracts.Sales;
 
 namespace Auraly.Pos.Edge.Infrastructure;
 
@@ -26,9 +27,10 @@ public sealed class EscPosReceiptRenderer
         Write(stream, Initialize);
         Write(stream, AlignCenter);
         WriteLine(stream, "AURALY");
-        WriteLine(stream, "FACTURA ELECTRONICA DE VENTA");
+        var isFiscal = PosSaleDocumentTypes.IsFiscal(receipt.DocumentType);
+        WriteLine(stream, isFiscal ? "FACTURA ELECTRONICA DE VENTA" : "COMPROBANTE DE VENTA");
         WriteLine(stream, $"DOCUMENTO AURALY: {receipt.DocumentNumber}");
-        WriteLine(stream, $"NUMERO DIAN: {receipt.FiscalNumber}");
+        if (isFiscal) WriteLine(stream, $"NUMERO DIAN: {receipt.FiscalNumber}");
         WriteLine(stream, receipt.IssuedAt.ToString("yyyy-MM-dd HH:mm:ss zzz", CultureInfo.InvariantCulture));
         WriteLine(stream, $"ADQUIRENTE: {receipt.CustomerIdentification}");
         WriteLine(stream, new string('-', columns));
@@ -51,11 +53,14 @@ public sealed class EscPosReceiptRenderer
         foreach (var payment in receipt.Payments)
             WriteLine(stream, Pair(payment.MethodCode.ToUpperInvariant(), Money(payment.Amount), columns));
         WriteLine(stream, new string('-', columns));
-        WriteWrapped(stream, $"CUFE: {receipt.Cufe}", columns);
-        Write(stream, AlignCenter);
-        WriteQr(stream, receipt.QrPayload);
-        WriteLine(stream, string.Empty);
-        WriteLine(stream, "Representacion grafica");
+        if (isFiscal)
+        {
+            WriteWrapped(stream, $"CUFE: {receipt.Cufe}", columns);
+            Write(stream, AlignCenter);
+            WriteQr(stream, receipt.QrPayload!);
+            WriteLine(stream, string.Empty);
+            WriteLine(stream, "Representacion grafica");
+        }
         WriteLine(stream, string.Empty);
         WriteLine(stream, string.Empty);
         Write(stream, Cut);

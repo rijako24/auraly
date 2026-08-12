@@ -1,10 +1,11 @@
-﻿import type {
+import type {
   CommerceOrderDetail,
   CommerceOrderFilters,
   CommerceOrderPage,
   InvoiceOrdersResponse,
 } from "@/services/orders/commerce-orders-client";
 
+export type PosSaleDocumentType = "SalesInvoice" | "SalesReceipt";
 const EDGE_BASE_URL =
   process.env.NEXT_PUBLIC_AURALY_POS_EDGE_URL ?? "http://127.0.0.1:47831";
 
@@ -104,6 +105,46 @@ export type PosDraftLine = {
   total: number;
 };
 
+
+
+function sensitiveHeaders(authorization?: PosSensitiveAuthorization): Record<string, string> | undefined {
+  if (!authorization) return undefined;
+  return {
+    ...(authorization.supervisorSecret ? { "X-Auraly-Supervisor-Secret": authorization.supervisorSecret } : {}),
+    ...(authorization.approvalRequestId ? { "X-Auraly-Approval-Id": authorization.approvalRequestId } : {}),
+    ...(authorization.operationId ? { "X-Auraly-Operation-Id": authorization.operationId } : {}),
+  };
+}
+
+export type PosApprovalCreateInput = {
+  businessId: string;
+  deviceId?: string | null;
+  workSessionId?: string | null;
+  draftId: string;
+  lineId?: string | null;
+  permissionResource: string;
+  contextJson: string;
+};
+
+export type PosApprovalSummary = {
+  approvalRequestId: string;
+  businessId: string;
+  draftId: string;
+  lineId: string | null;
+  permissionResource: string;
+  contextJson: string;
+  status: "Pending" | "Approved" | "Rejected" | "Expired" | "Reserved" | "Consumed";
+  requestedByName: string;
+  expiresAt: string;
+  decidedByName: string | null;
+};
+
+export type PosSensitiveAuthorization = {
+  approvalRequestId?: string;
+  supervisorSecret?: string;
+  operationId?: string;
+};
+
 export type PosDraft = {
   draftId: DraftId;
   customerId: string | null;
@@ -162,8 +203,9 @@ export type PosReceiptLine = {
 
 export type PosPrintableReceipt = {
   documentId: string;
+  documentType: PosSaleDocumentType;
   documentNumber: string;
-  fiscalNumber: string;
+  fiscalNumber: string | null;
   issuedAt: string;
   customerIdentification: string;
   customerName: string;
@@ -172,8 +214,8 @@ export type PosPrintableReceipt = {
   untaxedAmount: number;
   taxAmount: number;
   payableAmount: number;
-  cufe: string;
-  qrPayload: string;
+  cufe: string | null;
+  qrPayload: string | null;
   fiscalStatus: string;
 };
 
@@ -181,9 +223,9 @@ export type PosCompleteSaleResult = {
   issuedSale: {
     documentId: { value: string };
     documentNumber: string;
-    fiscalNumber: string;
-    cufe: string;
-    qrPayload: string;
+    fiscalNumber: string | null;
+    cufe: string | null;
+    qrPayload: string | null;
     total: number;
     outboxMessageId: string;
     wasAlreadyIssued: boolean;
@@ -205,7 +247,14 @@ export interface PosClient {
     warehouseName: string;
     userDisplayName: string;
     userId: string | null;
+    workSessionId?: string | null;
+    deviceId?: string | null;
+    synchronizationInProgress: boolean;
+    lastSynchronizationAt: string | null;
+    lastSynchronizationFailed: boolean;
+    catalogUpdatedAt: string | null;
   }>;
+  synchronizeNow(): Promise<void>;
   searchProducts(search?: string, skip?: number, take?: number): Promise<PosCatalogSearchPage>;
   searchCustomers(search?: string, skip?: number, take?: number): Promise<PosCustomerSearchPage>;
   customer(customerId: string): Promise<PosCustomer>;
@@ -213,14 +262,19 @@ export interface PosClient {
   customerDivisions(countryId: string): Promise<PosAdministrativeDivision[]>;
   customerCities(divisionId: string): Promise<PosCity[]>;
   createCustomer(input: PosCreateCustomerInput): Promise<PosCustomer>;
+  createApproval(input: PosApprovalCreateInput): Promise<PosApprovalSummary>;
   activeDraft(): Promise<PosDraft>;
-  nextNumbers(): Promise<PosNextNumbers | null>;
+  nextNumbers(documentType?: PosSaleDocumentType): Promise<PosNextNumbers | null>;
   capture(value: string, customerId: string | null): Promise<PosCaptureResult>;
+  captureSelectedProduct(
+    product: PosCatalogProduct,
+    customerId: string | null,
+  ): Promise<PosCaptureResult>;
   changeQuantity(draftId: string, lineId: string, quantity: number): Promise<PosCaptureResult>;
-  setDiscount(draftId: string, lineId: string, discount: number): Promise<PosDraft>;
+  setDiscount(draftId: string, lineId: string, discount: number, authorization?: PosSensitiveAuthorization): Promise<PosDraft>;
   selectCustomer(draftId: string, customerId: string | null): Promise<PosCustomerSelection>;
-  removeLine(draftId: string, lineId: string): Promise<PosDraft>;
-  cancelDraft(draftId: string): Promise<PosDraft>;
+  removeLine(draftId: string, lineId: string, authorization?: PosSensitiveAuthorization): Promise<PosDraft>;
+  cancelDraft(draftId: string, authorization?: PosSensitiveAuthorization): Promise<PosDraft>;
   saveTemporary(
     draftId: string,
     name: string,
@@ -234,6 +288,7 @@ export interface PosClient {
     draftId: string,
     customerIdentification: string | null,
     payments: PosPaymentInput[],
+    documentType: PosSaleDocumentType,
   ): Promise<PosCompleteSaleResult>;
   searchIssuedSales(search?: string, skip?: number, take?: number): Promise<PosIssuedSaleSearchPage>;
   reprint(documentId: string): Promise<void>;
@@ -250,6 +305,7 @@ export class PosEdgeError extends Error {
   constructor(
     message: string,
     public readonly status: number,
+    public readonly code?: string,
   ) {
     super(message);
   }
@@ -276,13 +332,68 @@ export class PosEdgeClient implements PosClient {
   health() {
     return this.request<{
       status: string;
+      startupMode: "online" | "enrolled";
       serverConnected: boolean;
       deviceSeriesCode: string;
     businessName: string;
     warehouseName: string;
       userDisplayName: string;
       userId: string | null;
+      workSessionId: string | null;
+      deviceId: string;
+      synchronizationInProgress: boolean;
+      lastSynchronizationAt: string | null;
+      lastSynchronizationFailed: boolean;
+      catalogUpdatedAt: string | null;
     }>("/edge/v1/health");
+  }
+
+
+  synchronizeNow() {
+    return this.requestVoid("/edge/v1/synchronization/refresh", { method: "POST" });
+  }
+  setStartupMode(mode: "online" | "enrolled") {
+    return this.requestVoid("/edge/v1/configuration/startup-mode", {
+      method: "PUT",
+      body: JSON.stringify({ mode }),
+    });
+  }
+
+  watchLocalState(onStateChanged: () => void): () => void {
+    const controller = new AbortController();
+    const listen = async () => {
+      try {
+        const response = await fetch(`${EDGE_BASE_URL}/edge/v1/events`, {
+          headers: {
+            "X-Auraly-Edge-Session": this.sessionToken,
+            ...(this.userSessionToken
+              ? { "X-Auraly-User-Session": this.userSessionToken }
+              : {}),
+          },
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body) return;
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let pending = "";
+        while (!controller.signal.aborted) {
+          const next = await reader.read();
+          if (next.done) break;
+          pending += decoder.decode(next.value, { stream: true });
+          let boundary = pending.indexOf("\n\n");
+          while (boundary >= 0) {
+            pending = pending.slice(boundary + 2);
+            onStateChanged();
+            boundary = pending.indexOf("\n\n");
+          }
+        }
+      } catch {
+        // The loopback host can be stopped while the application stays open.
+      }
+    };
+    void listen();
+    return () => controller.abort();
   }
 
   async login(username: string, password: string) {
@@ -290,7 +401,7 @@ export class PosEdgeClient implements PosClient {
       method: "POST",
       body: JSON.stringify({ username, password }),
     });
-    if (!session.token) throw new PosEdgeError("El servicio local no devolviÃ³ una sesiÃ³n de usuario.", 500);
+    if (!session.token) throw new PosEdgeError("El servicio local no devolvió una sesión de usuario.", 500);
     this.userSessionToken = session.token;
     window.sessionStorage.setItem("auraly.pos.user-session", session.token);
     return session;
@@ -346,12 +457,21 @@ export class PosEdgeClient implements PosClient {
     return this.request<PosCustomer>(`/edge/v1/customers/${customerId}`);
   }
 
+  createApproval(input: PosApprovalCreateInput) {
+    return this.request<PosApprovalSummary>("/edge/v1/approvals", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
   activeDraft() {
     return this.request<PosDraft>("/edge/v1/drafts/active");
   }
 
-  nextNumbers() {
-    return this.request<PosNextNumbers>("/edge/v1/sales/next-number");
+  nextNumbers(documentType: PosSaleDocumentType = "SalesInvoice") {
+    return this.request<PosNextNumbers>(
+      `/edge/v1/sales/next-number?documentType=${encodeURIComponent(documentType)}`,
+    );
   }
 
   capture(value: string, customerId: string | null) {
@@ -359,6 +479,13 @@ export class PosEdgeClient implements PosClient {
       method: "POST",
       body: JSON.stringify({ value, customerId }),
     });
+  }
+
+  captureSelectedProduct(
+    product: PosCatalogProduct,
+    customerId: string | null,
+  ) {
+    return this.capture(product.productCode, customerId);
   }
 
   changeQuantity(draftId: string, lineId: string, quantity: number) {
@@ -371,12 +498,13 @@ export class PosEdgeClient implements PosClient {
     );
   }
 
-  setDiscount(draftId: string, lineId: string, discount: number) {
+  setDiscount(draftId: string, lineId: string, discount: number, authorization?: PosSensitiveAuthorization) {
     return this.request<PosDraft>(
       `/edge/v1/drafts/${draftId}/lines/${lineId}/discount`,
       {
         method: "PUT",
         body: JSON.stringify({ discount }),
+        headers: sensitiveHeaders(authorization),
       },
     );
   }
@@ -391,17 +519,23 @@ export class PosEdgeClient implements PosClient {
     );
   }
 
-  removeLine(draftId: string, lineId: string) {
+  removeLine(draftId: string, lineId: string, authorization?: PosSensitiveAuthorization) {
     return this.request<PosDraft>(
       `/edge/v1/drafts/${draftId}/lines/${lineId}`,
-      { method: "DELETE" },
+      {
+        method: "DELETE",
+        headers: sensitiveHeaders(authorization),
+      },
     );
   }
 
-  cancelDraft(draftId: string) {
+  cancelDraft(draftId: string, authorization?: PosSensitiveAuthorization) {
     return this.request<PosDraft>(
       `/edge/v1/drafts/${draftId}`,
-      { method: "DELETE" },
+      {
+        method: "DELETE",
+        headers: sensitiveHeaders(authorization),
+      },
     );
   }
 
@@ -437,12 +571,13 @@ export class PosEdgeClient implements PosClient {
     draftId: string,
     customerIdentification: string | null,
     payments: PosPaymentInput[],
+    documentType: PosSaleDocumentType,
   ) {
     return this.request<PosCompleteSaleResult>(
       `/edge/v1/drafts/${draftId}/complete`,
       {
         method: "POST",
-        body: JSON.stringify({ customerIdentification, payments }),
+        body: JSON.stringify({ customerIdentification, payments, documentType }),
       },
     );
   }
@@ -507,9 +642,11 @@ export class PosEdgeClient implements PosClient {
       const raw = await response.text();
       let detail = raw || response.statusText;
       try {
-        const problem = JSON.parse(raw) as { detail?: string; title?: string };
+        const problem = JSON.parse(raw) as { detail?: string; title?: string; code?: string };
         detail = problem.detail || problem.title || detail;
-      } catch {
+        throw new PosEdgeError(detail, response.status, problem.code || problem.title);
+      } catch (parsed) {
+        if (parsed instanceof PosEdgeError) throw parsed;
         // The local host may intentionally return plain text for simple failures.
       }
       throw new PosEdgeError(detail, response.status);

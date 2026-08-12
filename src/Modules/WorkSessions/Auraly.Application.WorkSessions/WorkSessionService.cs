@@ -20,6 +20,12 @@ public interface IWorkSessionStore
         CloseWorkSessionRequest request,
         CancellationToken cancellationToken);
 
+    Task<WorkSessionClosureView?> CloseForAuthenticationAsync(
+        Guid userId,
+        Guid authenticationSessionId,
+        string reason,
+        CancellationToken cancellationToken);
+
     Task<WorkSessionClosureView?> GetClosureAsync(
         WorkSessionIdentity identity,
         Guid workSessionId,
@@ -78,7 +84,24 @@ public sealed class WorkSessionService(IWorkSessionStore store)
             cancellationToken);
     }
 
-    public async Task<WorkSessionClosureView?> CloseForLogoutAsync(
+    public Task<WorkSessionClosureView?> CloseForLoginAsync(
+        Guid userId,
+        Guid tenantId,
+        Guid authenticationSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        if (userId == Guid.Empty || tenantId == Guid.Empty ||
+            authenticationSessionId == Guid.Empty)
+            throw new WorkSessionValidationException(
+                "The login context is incomplete.");
+        return store.CloseForAuthenticationAsync(
+            userId,
+            authenticationSessionId,
+            "login-replacement",
+            cancellationToken);
+    }
+
+    public Task<WorkSessionClosureView?> CloseForLogoutAsync(
         Guid userId,
         Guid tenantId,
         Guid authenticationSessionId,
@@ -88,18 +111,10 @@ public sealed class WorkSessionService(IWorkSessionStore store)
             authenticationSessionId == Guid.Empty)
             throw new WorkSessionValidationException(
                 "The logout context is incomplete.");
-        var identity = new WorkSessionIdentity(
+        return store.CloseForAuthenticationAsync(
             userId,
-            tenantId,
-            new HashSet<string>(StringComparer.Ordinal));
-        var current = await store.CurrentAsync(identity, cancellationToken);
-        if (current is null)
-            return null;
-        return await store.CloseAsync(
-            identity,
-            current.WorkSessionId,
-            $"logout:{authenticationSessionId:N}",
-            new CloseWorkSessionRequest(null, null),
+            authenticationSessionId,
+            "logout",
             cancellationToken);
     }
 

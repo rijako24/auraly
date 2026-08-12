@@ -1,4 +1,4 @@
-﻿using Auraly.Application.Parties;
+using Auraly.Application.Parties;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Parties;
 using Microsoft.Data.SqlClient;
@@ -74,7 +74,9 @@ public sealed partial class SqlPartyStore(
 
             var existingCustomerId = await CustomerIdAsync(
                 connection, transaction, resolvedPartyId, actor.BusinessId, ct);
-            var resolvedCustomerId = existingCustomerId ?? customerId;
+            if (existingCustomerId is not null)
+                throw new PartyConflictException("The Party already has the Customer role in this business.");
+            var resolvedCustomerId = customerId;
             if (existingCustomerId is null)
             {
                 await ExecuteAsync(connection, transaction, """
@@ -120,12 +122,9 @@ public sealed partial class SqlPartyStore(
         catch (SqlException exception) when (exception.Number is 2601 or 2627)
         {
             await transaction.RollbackAsync(ct);
-            var existing = await FindCustomerAsync(
-                actor.TenantId, actor.BusinessId, request.Party.IdentificationCountryId,
-                request.Party.IdentificationTypeCode.Trim().ToUpperInvariant(),
-                normalizedIdentification, ct);
-            return existing ?? throw new PartyConflictException(
-                "The identity, site code or pricing assignment is already in use.");
+            throw new PartyConflictException(
+                "The Party already has the Customer role in this business, " +
+                "or another unique Party value is already in use.");
         }
         catch
         {
@@ -308,7 +307,26 @@ public sealed partial class SqlPartyStore(
     public Task<IReadOnlyCollection<CountryItem>> CountriesAsync(
         bool includeInactive, CancellationToken ct) =>
         QueryAsync(
-            "SELECT CountryId,Code,Name,IsActive FROM dbo.Countries WHERE @IncludeInactive=1 OR IsActive=1 ORDER BY Name;",
+            """
+            WITH RankedCountries AS
+            (
+                SELECT country.CountryId,country.Code,country.Name,country.IsActive,
+                       ROW_NUMBER() OVER
+                       (
+                           PARTITION BY UPPER(LTRIM(RTRIM(country.Name)))
+                           ORDER BY
+                             CASE WHEN EXISTS(SELECT 1 FROM dbo.Parties party WHERE party.IdentificationCountryId=country.CountryId)
+                                    OR EXISTS(SELECT 1 FROM dbo.PartySites site WHERE site.CountryId=country.CountryId)
+                                  THEN 0 ELSE 1 END,
+                             CASE WHEN country.Code LIKE '[A-Z][A-Z]' THEN 0 ELSE 1 END,
+                             country.Code
+                       ) AS Position
+                FROM dbo.Countries country
+                WHERE @IncludeInactive=1 OR country.IsActive=1
+            )
+            SELECT CountryId,Code,Name,IsActive
+            FROM RankedCountries WHERE Position=1 ORDER BY Name;
+            """,
             [P("@IncludeInactive", includeInactive)],
             reader => new CountryItem(reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetBoolean(3)),
             ct);

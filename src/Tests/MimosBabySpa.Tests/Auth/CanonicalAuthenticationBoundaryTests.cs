@@ -7,8 +7,8 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
-using MimosBabySpa.WebAPI.Authorization;
-using MimosBabySpa.WebAPI.Controllers;
+using Auraly.Api.Authorization;
+using Auraly.Api.Controllers;
 using Xunit;
 
 namespace MimosBabySpa.Tests.Auth;

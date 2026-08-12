@@ -84,9 +84,9 @@ public sealed class JwtAuthenticationTokenIssuer : IAuthenticationTokenIssuer
             new("username", user.Username),
             new("full_name", $"{user.FirstName} {user.LastName}".Trim())
         };
-        claims.AddRange(user.Roles.Select(role => new Claim(ClaimTypes.Role, role)));
-        claims.AddRange(user.Permissions.Select(
-            permission => new Claim(AuthenticationDefaults.PermissionClaim, permission)));
+        // Keep browser access tokens below cookie limits. Roles and permissions are
+        // resolved from SQL for the selected tenant/business by ExecutionContextMiddleware.
+        // The login response still carries them for immediate menu rendering.
         var token = new JwtSecurityToken(
             _options.Issuer,
             _options.Audience,
@@ -216,17 +216,15 @@ public sealed class SqlAuthenticationSessionStore(
         await ExpireStaleOfflineLeaseAsync(
             connection, transaction, command.User.TenantId, command.User.UserId,
             command.Now, cancellationToken);
-        if (await HasActiveOfflineLeaseAsync(
-                connection, transaction, command.User.TenantId,
-                command.User.UserId, cancellationToken))
-            throw new AuthenticationSessionConflictException(
-                "The user owns an active offline session on an enrolled device.");
-        if (await HasActiveSessionAsync(
-                connection, transaction, command.User.TenantId,
-                command.User.UserId, cancellationToken))
-            throw new AuthenticationSessionConflictException(
-                "The user already has an active session on another client.");
-
+        // A new successful login takes over the user's previous session. This is
+        // intentional for POS and browser recovery: the previous token and lease
+        // are revoked immediately and remain auditable.
+        await RevokeActiveOfflineLeaseAsync(
+            connection, transaction, command.User.TenantId,
+            command.User.UserId, command.Now, cancellationToken);
+        await RevokeActiveSessionsAsync(
+            connection, transaction, command.User.TenantId,
+            command.User.UserId, command.Now, cancellationToken);
         await RecordSuccessfulLoginAsync(connection, transaction, command, cancellationToken);
         var identity = new AuthenticationSessionIdentity(
             ids.NewId(), command.User.UserId, command.User.TenantId, command.ClientId);
@@ -552,23 +550,26 @@ public sealed class SqlAuthenticationSessionStore(
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private static async Task<bool> HasActiveSessionAsync(
+    private static async Task RevokeActiveSessionsAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         Guid tenantId,
         Guid userId,
+        DateTimeOffset now,
         CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
-            SELECT AuthenticationSessionId
-            FROM dbo.AuthenticationSessions WITH (UPDLOCK,HOLDLOCK)
+            UPDATE dbo.AuthenticationSessions WITH (UPDLOCK,HOLDLOCK)
+            SET Status=N'Revoked',RevokedAt=@Now,
+                RevocationReason=N'ReplacedByNewLogin',
+                LastSeenAt=@Now,UpdatedAt=@Now
             WHERE TenantId=@TenantId AND UserId=@UserId AND Status=N'Active';
             """, connection, transaction);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@UserId", userId);
-        return await command.ExecuteScalarAsync(cancellationToken) is Guid;
+        command.Parameters.AddWithValue("@Now", now);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
-
     private static async Task ExpireStaleOfflineLeaseAsync(
         SqlConnection connection,
         SqlTransaction transaction,
@@ -590,23 +591,25 @@ public sealed class SqlAuthenticationSessionStore(
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private static async Task<bool> HasActiveOfflineLeaseAsync(
+    private static async Task RevokeActiveOfflineLeaseAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         Guid tenantId,
         Guid userId,
+        DateTimeOffset now,
         CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
-            SELECT LeaseId
-            FROM dbo.OfflineAuthenticationLeases WITH (UPDLOCK,HOLDLOCK)
+            UPDATE dbo.OfflineAuthenticationLeases WITH (UPDLOCK,HOLDLOCK)
+            SET Status=N'Revoked',EndedAt=@Now,
+                EndReason=N'ReplacedByOnlineLogin',UpdatedAt=@Now
             WHERE TenantId=@TenantId AND UserId=@UserId AND Status=N'Active';
             """, connection, transaction);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@UserId", userId);
-        return await command.ExecuteScalarAsync(cancellationToken) is Guid;
+        command.Parameters.AddWithValue("@Now", now);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
-
     private static async Task RecordSuccessfulLoginAsync(
         SqlConnection connection,
         SqlTransaction transaction,

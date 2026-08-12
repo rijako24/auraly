@@ -17,12 +17,14 @@ export interface PriceRevisionListItem {
   observedUnitCost: number;
   currentSalePrice: number;
   currentMarginPercent: number | null;
+  salesTaxRate: number;
   targetMarginPercent: number | null;
   suggestedSalePrice: number;
   effectiveMarginAfterRounding: number | null;
   status: PriceProposalStatus;
   createdAt: string;
   concurrencyToken: string;
+  origin: "GoodsReceipt" | "Product";
 }
 
 export interface PriceRevisionPage {
@@ -40,6 +42,7 @@ export interface PriceCalculationRequest {
   salePrice: number | null;
   roundingIncrement: number;
   roundingMode: PricingRoundingMode;
+  salesTaxRate?: number;
 }
 
 export interface PriceCalculationResult extends PriceCalculationRequest {
@@ -58,6 +61,37 @@ export interface PublishPriceItem {
   concurrencyToken: string;
 }
 
+export interface ProductPricingContext {
+  productId: string;
+  productName: string;
+  preparedSalePrice: number;
+  publicSalePrice: number;
+  costBasisAmount: number | null;
+  costBasisOrigin: string | null;
+  currentMarginPercent: number | null;
+  salesTaxRate: number;
+  roundingIncrement: number;
+  roundingMode: PricingRoundingMode;
+}
+
+export interface PublishProductPriceRequest {
+  inputMode: PriceInputMode;
+  targetMarginPercent: number | null;
+  salePrice: number | null;
+  roundingIncrement: number;
+  roundingMode: PricingRoundingMode;
+  costBasisAmount: number | null;
+}
+
+export interface PreparedProductPrice {
+  productPriceId: string;
+  productId: string;
+  preparedAmount: number;
+  publicAmount: number;
+  costBasisAmount: number | null;
+  effectiveMarginPercent: number | null;
+  savedAt: string;
+}
 export interface PublishPricesResult {
   items: Array<{
     productPriceId: string;
@@ -91,4 +125,8 @@ export const pricingApi = {
     }),
   publish: (items: PublishPriceItem[]) =>
     apiClient.post<PublishPricesResult>("/commerce/v1/pricing/publish", { items }),
+  getProductContext: (productId: string) =>
+    apiClient.get<ProductPricingContext>(`/commerce/v1/pricing/products/${productId}/context`),
+  savePreparedProduct: (productId: string, request: PublishProductPriceRequest) =>
+    apiClient.put<PreparedProductPrice>(`/commerce/v1/pricing/products/${productId}/prepared-price`, request),
 };

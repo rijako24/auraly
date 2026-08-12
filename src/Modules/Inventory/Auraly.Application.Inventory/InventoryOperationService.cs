@@ -10,6 +10,7 @@ public interface IInventoryOperationStore
     Task<InventoryOperationAcceptance> ConfirmAdjustmentAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmInventoryAdjustmentRequest request, CancellationToken cancellationToken);
     Task<InventoryOperationAcceptance> ConfirmTransferAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmWarehouseTransferRequest request, CancellationToken cancellationToken);
     Task<InventoryOperationAcceptance> ConfirmConversionAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmProductConversionRequest request, CancellationToken cancellationToken);
+    Task<InventoryOperationAcceptance> ConfirmDamageAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmInventoryDamageRequest request, CancellationToken cancellationToken);
 }
 
 public sealed class InventoryOperationService(
@@ -70,6 +71,21 @@ public sealed class InventoryOperationService(
             throw new InventoryValidationException("Transfer quantities must be positive.");
         var normalized = request with { ReasonCode = request.ReasonCode.Trim().ToUpperInvariant(), Notes = Notes(request.Notes) };
         return await PublishAsync(await store.ConfirmTransferAsync(user, idempotencyKey.Trim(), normalized, cancellationToken), request.BusinessId, cancellationToken);
+    }
+
+    public async Task<InventoryOperationAcceptance> ConfirmDamageAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmInventoryDamageRequest request, CancellationToken cancellationToken = default)
+    {
+        ValidateIdentity(user, request.BusinessId, InventoryPermissionCodes.Damage);
+        Required(request.DocumentId, nameof(request.DocumentId));
+        Required(request.WarehouseId, nameof(request.WarehouseId));
+        Required(request.OccurredAt, nameof(request.OccurredAt));
+        ValidateKey(idempotencyKey);
+        ValidateReason(request.ReasonCode);
+        ValidateLines(request.Lines.Select(line => (line.LineNumber, line.ProductId)));
+        if (request.Lines.Any(line => line.Quantity <= 0))
+            throw new InventoryValidationException("Damage quantities must be positive.");
+        var normalized = request with { ReasonCode = request.ReasonCode.Trim().ToUpperInvariant(), Notes = Notes(request.Notes) };
+        return await PublishAsync(await store.ConfirmDamageAsync(user, idempotencyKey.Trim(), normalized, cancellationToken), request.BusinessId, cancellationToken);
     }
 
     public async Task<InventoryOperationAcceptance> ConfirmConversionAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmProductConversionRequest request, CancellationToken cancellationToken = default)

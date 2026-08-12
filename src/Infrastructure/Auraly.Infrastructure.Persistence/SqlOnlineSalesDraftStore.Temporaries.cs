@@ -29,13 +29,13 @@ public sealed partial class SqlOnlineSalesDraftStore
                    p.Reference,p.Name,
                    COALESCE(NULLIF(p.BaseUnitCode,N''),N'EA'),
                    COALESCE(t.Code,N'01'),COALESCE(t.Rate,0),
-                   COALESCE(price.Amount,p.UnitPrice),
-                   COALESCE(price.CurrencyCode,NULLIF(p.Currency,N''),N'COP'),
+                   price.Amount,
+                   price.CurrencyCode,
                    p.IsActive
             FROM dbo.Products p
             LEFT JOIN dbo.TaxProfiles t
               ON t.TaxProfileId=p.TaxProfileId AND t.BusinessId=p.BusinessId AND t.IsActive=1
-            OUTER APPLY (
+            CROSS APPLY (
               SELECT TOP(1) pp.Amount,pp.CurrencyCode
               FROM dbo.ProductPrices pp
               WHERE pp.BusinessId=p.BusinessId AND pp.ProductId=p.ProductId

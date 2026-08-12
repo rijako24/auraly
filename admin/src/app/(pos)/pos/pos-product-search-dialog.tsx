@@ -1,7 +1,7 @@
 "use client";
 
 import { Loader2, PackageSearch, Search, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import type {
   PosCatalogProduct,
@@ -37,6 +37,7 @@ export function PosProductSearchDialog({
   const [error, setError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const requestVersion = useRef(0);
+  const resultElements = useRef(new Map<number, HTMLButtonElement>());
 
   useEffect(() => {
     const version = ++requestVersion.current;
@@ -49,6 +50,7 @@ export function PosProductSearchDialog({
           if (requestVersion.current !== version) return;
           setResults(page.items);
           setSelected(0);
+          window.requestAnimationFrame(() => resultElements.current.get(0)?.focus());
           setHasMore(page.hasMore);
           setNextOffset(page.nextOffset);
         })
@@ -99,10 +101,51 @@ export function PosProductSearchDialog({
     }
   }, [busy, hasMore, loading, loadingMore, nextOffset, onSearch, term]);
 
+  function moveSelection(direction: -1 | 1) {
+    if (!results.length) return;
+    const target = Math.max(
+      0,
+      Math.min(results.length - 1, selected + direction),
+    );
+    setSelected(target);
+    window.requestAnimationFrame(() => {
+      const element = resultElements.current.get(target);
+      element?.focus();
+      element?.scrollIntoView({ block: "nearest" });
+    });
+    if (direction > 0 && target >= results.length - 2)
+      void loadMore();
+  }
+
   async function choose(product: PosCatalogProduct) {
     if (busy) return;
     const added = await onSelect(product);
     if (!added) input.current?.focus();
+  }
+
+  function handleListNavigation(event: ReactKeyboardEvent) {
+    if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      event.preventDefault();
+      setTerm((current) => current + event.key);
+      input.current?.focus();
+      return;
+    }
+    if (event.key === "Backspace") {
+      event.preventDefault();
+      setTerm((current) => current.slice(0, -1));
+      input.current?.focus();
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      moveSelection(1);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      moveSelection(-1);
+    } else if (event.key === "Enter" && results[selected]) {
+      event.preventDefault();
+      void choose(results[selected]);
+    }
   }
 
   return (
@@ -141,25 +184,41 @@ export function PosProductSearchDialog({
               value={term}
               onChange={(event) => setTerm(event.target.value)}
               onKeyDown={(event) => {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  moveSelection(1);
+                  return;
+                }
+                if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  moveSelection(-1);
+                  return;
+                }
                 if (event.key === "Enter" && results[selected]) {
                   event.preventDefault();
                   void choose(results[selected]);
                 }
               }}
               className="h-14 w-full rounded-xl border-2 border-teal-700/25 bg-slate-50 pl-12 pr-12 text-lg font-medium outline-none focus:border-teal-600 focus:bg-white focus:ring-4 focus:ring-teal-600/10"
-              placeholder="Escribe para filtrar o usa Tab para recorrer el catálogo"
+              placeholder="Escribe para filtrar; usa flechas para recorrer"
               aria-label="Buscar producto"
+              role="combobox"
+              aria-controls="pos-product-results"
+              aria-expanded={true}
+              aria-activedescendant={results[selected] ? `pos-product-${results[selected].productId}` : undefined}
             />
             {loading && (
               <Loader2 className="absolute right-4 top-1/2 h-5 w-5 -translate-y-1/2 animate-spin text-teal-700" />
             )}
           </label>
           <p className="mt-2 text-xs text-slate-500">
-            Tab y Shift+Tab navegan; Enter agrega el producto enfocado; Esc vuelve al lector.
+            Flechas recorren; Tab entra al listado; Enter agrega; Esc vuelve al lector.
           </p>
         </div>
 
         <div
+          id="pos-product-results"
+          role="listbox"
           className="min-h-64 flex-1 overflow-auto px-5 pb-5"
           onScroll={(event) => {
             const list = event.currentTarget;
@@ -172,12 +231,20 @@ export function PosProductSearchDialog({
             <button
               key={product.productId}
               type="button"
+              id={`pos-product-${product.productId}`}
+              ref={(element) => {
+                if (element) resultElements.current.set(index, element);
+                else resultElements.current.delete(index);
+              }}
+              aria-selected={selected === index}
+              role="option"
               onFocus={() => {
                 setSelected(index);
                 if (index === results.length - 1) void loadMore();
               }}
               onMouseEnter={() => setSelected(index)}
               onClick={() => void choose(product)}
+              onKeyDown={handleListNavigation}
               disabled={busy}
               className={`grid w-full grid-cols-[minmax(0,1fr)_130px] items-center gap-4 border-b border-slate-100 px-3 py-3 text-left outline-none transition sm:grid-cols-[minmax(0,1fr)_150px_130px] ${
                 selected === index ? "bg-teal-50 ring-2 ring-inset ring-teal-600/25" : "hover:bg-slate-50"

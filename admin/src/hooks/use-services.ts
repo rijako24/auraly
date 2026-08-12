@@ -22,7 +22,7 @@ export function useServices(params?: Partial<PagedRequest>) {
   return useQuery({
     queryKey: serviceKeys.list(businessId, params),
     queryFn: () =>
-      servicesApi.list({ ...params, businessId: businessId! }),
+      servicesApi.listByBusiness(businessId!, params),
     enabled: !!businessId,
   });
 }
@@ -40,7 +40,7 @@ export function useServiceCategories(params?: Partial<PagedRequest> & { business
 
   return useQuery({
     queryKey: serviceKeys.categories(businessId, params),
-    queryFn: () => servicesApi.listCategories({ ...params, businessId: businessId! }),
+    queryFn: () => servicesApi.listCategoriesByBusiness(businessId!, params),
     enabled: !!businessId,
   });
 }

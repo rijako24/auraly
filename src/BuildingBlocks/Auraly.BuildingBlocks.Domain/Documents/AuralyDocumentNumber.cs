@@ -3,6 +3,7 @@ namespace Auraly.BuildingBlocks.Domain.Documents;
 public static class AuralyDocumentTypes
 {
     public const string SalesInvoice = "SalesInvoice";
+    public const string SalesReceipt = "SalesReceipt";
     public const string SalesOrder = "SalesOrder";
     public const string SalesReturn = "SalesReturn";
     public const string GoodsReceipt = "GoodsReceipt";
@@ -26,6 +27,7 @@ public static class AuralyDocumentTypes
     public static string DefaultPrefix(string documentType) => documentType switch
     {
         SalesInvoice => "VTA",
+        SalesReceipt => "CVI",
         SalesOrder => "PED",
         SalesReturn => "DVT",
         GoodsReceipt => "EMC",

@@ -6,7 +6,9 @@ interface AuthState {
   user: AuthUser | null;
   isAuthenticated: boolean;
   setAuth: (user: AuthUser) => void;
+  setExecutionAccess: (roles: string[], permissions: string[]) => void;
   logout: () => Promise<void>;
+  clearAuth: () => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -17,6 +19,11 @@ export const useAuthStore = create<AuthState>()(
       setAuth: (user) => {
         set({ user, isAuthenticated: true });
       },
+      setExecutionAccess: (roles, permissions) =>
+        set((state) => ({
+          user: state.user ? { ...state.user, roles, permissions } : null,
+        })),
+      clearAuth: () => set({ user: null, isAuthenticated: false }),
       logout: async () => {
         try {
           await fetch("/api/auth/logout", {

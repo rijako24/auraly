@@ -6,12 +6,19 @@ public sealed record PosOfflinePasswordVerifier(
     int Iterations,
     DateTimeOffset ChangedAt);
 
+public sealed record PosOfflineSupervisorCredentialVerifier(
+    byte[] Salt,
+    byte[] Hash,
+    int Iterations,
+    DateTimeOffset ChangedAt);
+
 public sealed record PosOfflineUserProjection(
     Guid UserId,
     string Username,
     string DisplayName,
     IReadOnlyList<string> Permissions,
-    PosOfflinePasswordVerifier PasswordVerifier);
+    PosOfflinePasswordVerifier PasswordVerifier,
+    PosOfflineSupervisorCredentialVerifier? SupervisorCredential = null);
 
 public sealed record PosOfflineIdentitySnapshot(
     string Revision,

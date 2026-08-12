@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Domain.Enums;
 using MimosBabySpa.Domain.Models;
+using MimosBabySpa.Infrastructure.Data.ReadModels;
 namespace MimosBabySpa.Infrastructure.Data;
 
 public class ApplicationDbContext : DbContext
@@ -46,6 +47,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<ProductCategory> ProductCategories { get; set; }
     public DbSet<ReservationIntegrationEvent> ReservationIntegrationEvents { get; set; }
     public DbSet<Product> Products { get; set; }
+    public DbSet<PublishedProductPriceRow> PublishedProductPrices { get; set; }
     public DbSet<ProductAlias> ProductAliases { get; set; }
     public DbSet<ProductSearchTerm> ProductSearchTerms { get; set; }
     public DbSet<CartMutationReceipt> CartMutationReceipts { get; set; }
@@ -511,6 +513,10 @@ public class ApplicationDbContext : DbContext
             entity.HasOne(category => category.Business).WithMany()
                 .HasForeignKey(category => category.BusinessId)
                 .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(category => category.Parent).WithMany(category => category.Children)
+                .HasForeignKey(category => category.ParentProductCategoryId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
             entity.HasOne(category => category.IntegrationConnection).WithMany()
                 .HasForeignKey(category => category.IntegrationConnectionId)
                 .OnDelete(DeleteBehavior.Restrict)
@@ -568,6 +574,24 @@ public class ApplicationDbContext : DbContext
                 .HasFilter("[IntegrationConnectionId] IS NOT NULL AND [ExternalProductId] IS NOT NULL");
         });
 
+        modelBuilder.Entity<PublishedProductPriceRow>(entity =>
+        {
+            entity.ToTable("ProductPrices");
+            entity.HasKey(price => price.ProductPriceId);
+            entity.Property(price => price.Amount).HasPrecision(19, 4);
+            entity.Property(price => price.CurrencyCode).HasMaxLength(3).IsFixedLength();
+            entity.Property(price => price.ValidFrom).HasColumnType("datetimeoffset");
+            entity.Property(price => price.ValidUntil).HasColumnType("datetimeoffset");
+            entity.Property(price => price.CreatedAt).HasColumnType("datetimeoffset");
+            entity.HasIndex(price => new { price.BusinessId, price.ProductId, price.IsActive });
+            // ProductPrices is a dependent of the existing product master. This
+            // relationship makes EF preserve the SQL foreign-key insert order when
+            // a legacy caller still creates both records in one unit of work.
+            entity.HasOne<Product>()
+                .WithMany()
+                .HasForeignKey(price => price.ProductId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
         modelBuilder.Entity<ExternalCommerceCustomer>(entity =>
         {
             entity.HasKey(customer => customer.ExternalCommerceCustomerId);
@@ -1446,7 +1470,7 @@ public class ApplicationDbContext : DbContext
         modelBuilder.Entity<AuditLog>(entity =>
         {
             entity.HasKey(e => e.AuditLogId);
-            entity.Property(e => e.Action).IsRequired().HasMaxLength(100);
+            entity.Property(e => e.Action).IsRequired().HasMaxLength(300);
             entity.Property(e => e.EntityType).IsRequired().HasMaxLength(100);
             entity.Property(e => e.EntityId).HasMaxLength(100);
             entity.Property(e => e.OldValues).HasColumnType("NVARCHAR(MAX)");

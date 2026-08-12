@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using Auraly.Application.Authentication;
 using Auraly.Application.Organization;
+using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Organization;
@@ -92,13 +93,25 @@ public sealed class SqlPosEnrollmentStore(
         await connection.OpenAsync(cancellationToken);
         await using var transaction =
             (SqlTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        var existing = request.ExistingDeviceId is { } existingDeviceId
+            ? await ReadExistingDeviceAsync(
+                connection, transaction, existingDeviceId, cancellationToken)
+            : null;
+        if (request.ExistingDeviceId.HasValue && existing is null)
+            throw new PosEnrollmentValidationException(
+                "El equipo indicado no está enrolado o su serie operativa ya no está activa.");
         var data = await ReadProvisioningAsync(
-            connection, transaction, request.EnrollmentSessionId, cancellationToken);
+            connection, transaction, request.EnrollmentSessionId,
+            existing?.DeviceId, cancellationToken);
         var now = timeProvider.GetUtcNow();
         if (data is null || data.RedeemedAt is not null || data.ExpiresAt <= now ||
             !FixedEquals(data.CodeHash, redemptionCodeHash))
             throw new PosEnrollmentValidationException(
                 "El código de enrolamiento es inválido, expiró o ya fue utilizado.");
+        if (existing is not null &&
+            (existing.TenantId != data.TenantId || existing.BusinessId != data.BusinessId))
+            throw new PosEnrollmentConflictException(
+                "Este equipo ya está asociado a otra sede. Conserva su identidad actual para no invalidar facturas offline pendientes.");
 
         var material = await technicalKeys.ResolveAsync(
             new FiscalKeyReference(
@@ -112,15 +125,37 @@ public sealed class SqlPosEnrollmentStore(
             throw new PosEnrollmentValidationException(
                 "La configuración fiscal segura no coincide con la resolución asignada.");
 
-        var seriesCode = await AllocateSeriesCodeAsync(
-            connection, transaction, data.BusinessId, cancellationToken);
-        var deviceId = idGenerator.NewId();
-        var documentSeriesId = idGenerator.NewId();
+        var deviceId = existing?.DeviceId ?? idGenerator.NewId();
+        var documentSeriesId = existing?.DocumentSeriesId ?? idGenerator.NewId();
         var deviceSecret = Convert.ToBase64String(RandomNumberGenerator.GetBytes(48));
         var credential = PosDeviceCredentialHasher.Create(deviceSecret);
-        await InsertDeviceAndSeriesAsync(
-            connection, transaction, data, deviceId, documentSeriesId, seriesCode,
-            credential, devicePermissions, request.InstallationId, now, cancellationToken);
+        var documentSeries = existing is null
+            ? new PosEnrollmentDocumentSeries(
+                documentSeriesId, "SalesInvoice", "VTA",
+                await AllocateSeriesCodeAsync(
+                    connection, transaction, data.BusinessId, cancellationToken),
+                8, 1, 99_999_999)
+            : new PosEnrollmentDocumentSeries(
+                existing.DocumentSeriesId, existing.DocumentType, existing.Prefix,
+                existing.SeriesCode, existing.Padding, existing.RangeStart,
+                existing.RangeEnd);
+
+        if (existing is null)
+        {
+            await InsertDeviceAndSeriesAsync(
+                connection, transaction, data, deviceId, documentSeriesId,
+                documentSeries.SeriesCode, credential, devicePermissions,
+                request.InstallationId, now, cancellationToken);
+        }
+        else
+        {
+            await UpdateExistingDeviceAsync(
+                connection, transaction, data, existing, credential,
+                devicePermissions, request.InstallationId, now, cancellationToken);
+        }
+        var receiptDocumentSeries = await EnsureReceiptDocumentSeriesAsync(
+            connection, transaction, data.BusinessId, deviceId,
+            documentSeries.SeriesCode, idGenerator.NewId(), now, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
         return new PosEnrollmentPackage(
@@ -129,23 +164,98 @@ public sealed class SqlPosEnrollmentStore(
             data.WarehouseName, data.AllowNegativeStock,
             data.UserId, data.UserDisplayName,
             devicePermissions.Order(StringComparer.Ordinal).ToArray(),
-            new PosEnrollmentDocumentSeries(
-                documentSeriesId, "SalesInvoice", "VTA", seriesCode,
-                8, 1, 99_999_999),
+            documentSeries,
             new PosEnrollmentFiscalSeries(
                 data.FiscalSeriesId, data.FiscalAuthorizationId, data.FiscalPrefix,
                 data.AuthorizationNumber, data.FiscalRangeStart, data.FiscalRangeEnd,
                 data.ValidUntil, data.Environment, data.SupplierTaxId,
                 new string(material.TechnicalKey.Reveal()), data.TechnicalKeyVersion,
                 data.QrValidationUrl),
+            receiptDocumentSeries,
             offlineLeaseTrust.TrustedPublicKeys,
             now);
     }
 
+    private static async Task<ExistingDevice?> ReadExistingDeviceAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid deviceId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT d.DeviceId,d.TenantId,ds.BusinessId,ds.DocumentSeriesId,
+                   ds.DocumentType,ds.Prefix,ds.SeriesCode,ds.Padding,
+                   ds.RangeStart,ds.RangeEnd
+            FROM dbo.EnrolledDevices d WITH (UPDLOCK,HOLDLOCK)
+            JOIN dbo.DocumentSeries ds WITH (UPDLOCK,HOLDLOCK)
+              ON ds.DeviceId=d.DeviceId AND ds.DocumentType=N'SalesInvoice'
+             AND ds.IsActive=1
+            WHERE d.DeviceId=@DeviceId AND d.IsActive=1;
+            """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        Add(command, "@DeviceId", deviceId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        return new ExistingDevice(
+            reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
+            reader.GetGuid(3), reader.GetString(4), reader.GetString(5),
+            reader.GetString(6), reader.GetByte(7), reader.GetInt64(8),
+            reader.GetInt64(9));
+    }
+
+    private static async Task UpdateExistingDeviceAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Provisioning data,
+        ExistingDevice existing,
+        PosDeviceCredential credential,
+        IReadOnlyCollection<string> permissions,
+        string installationId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            UPDATE dbo.EnrolledDevices
+            SET Name=@Name,CredentialSalt=@Salt,CredentialHash=@Hash,
+                CredentialIterations=@Iterations,IsActive=1,LastSeenAt=@Now
+            WHERE DeviceId=@DeviceId AND TenantId=@TenantId;
+            IF @@ROWCOUNT<>1 THROW 51003,'The existing POS device is not valid for this tenant.',1;
+            DELETE FROM dbo.PosDevicePermissions WHERE DeviceId=@DeviceId;
+            UPDATE dbo.PosEnrollmentSessions
+            SET RedeemedAt=@Now,DeviceId=@DeviceId
+            WHERE EnrollmentSessionId=@SessionId AND RedeemedAt IS NULL;
+            IF @@ROWCOUNT<>1 THROW 51002,'The enrollment session was already redeemed.',1;
+            """;
+        await using (var command = new SqlCommand(sql, connection, transaction))
+        {
+            Add(command, "@DeviceId", existing.DeviceId);
+            Add(command, "@TenantId", data.TenantId);
+            Add(command, "@Name", installationId);
+            Add(command, "@Salt", credential.Salt);
+            Add(command, "@Hash", credential.Hash);
+            Add(command, "@Iterations", credential.Iterations);
+            Add(command, "@Now", now);
+            Add(command, "@SessionId", data.SessionId);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        foreach (var permission in permissions)
+        {
+            await using var permissionCommand = new SqlCommand("""
+                INSERT dbo.PosDevicePermissions
+                  (DeviceId,PermissionCode,IsGranted,GrantedAt)
+                VALUES (@DeviceId,@Permission,1,@Now);
+                """, connection, transaction);
+            Add(permissionCommand, "@DeviceId", existing.DeviceId);
+            Add(permissionCommand, "@Permission", permission);
+            Add(permissionCommand, "@Now", now);
+            await permissionCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
     private static async Task<Provisioning?> ReadProvisioningAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         Guid sessionId,
+        Guid? existingDeviceId,
         CancellationToken cancellationToken)
     {
         const string sql = """
@@ -161,7 +271,9 @@ public sealed class SqlPosEnrollmentStore(
             JOIN dbo.Warehouses w ON w.WarehouseId=e.WarehouseId AND w.IsActive=1
             JOIN dbo.FiscalSeries fs WITH (UPDLOCK,HOLDLOCK)
               ON fs.BusinessId=e.BusinessId AND fs.DocumentType=N'SalesInvoice'
-             AND fs.EmitterKind=N'Device' AND fs.DeviceId IS NULL AND fs.IsActive=1
+             AND fs.EmitterKind=N'Device' AND fs.IsActive=1
+             AND ((@ExistingDeviceId IS NULL AND fs.DeviceId IS NULL)
+               OR (@ExistingDeviceId IS NOT NULL AND fs.DeviceId=@ExistingDeviceId))
             JOIN dbo.FiscalAuthorizations fa
               ON fa.FiscalAuthorizationId=fs.FiscalAuthorizationId
              AND fa.BusinessId=e.BusinessId AND fa.IsActive=1
@@ -170,6 +282,7 @@ public sealed class SqlPosEnrollmentStore(
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         Add(command, "@SessionId", sessionId);
+        Add(command, "@ExistingDeviceId", (object?)existingDeviceId ?? DBNull.Value);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) return null;
         return new Provisioning(
@@ -280,6 +393,54 @@ public sealed class SqlPosEnrollmentStore(
         }
     }
 
+    private static async Task<PosEnrollmentDocumentSeries> EnsureReceiptDocumentSeriesAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid businessId,
+        Guid deviceId,
+        string seriesCode,
+        Guid newSeriesId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT DocumentSeriesId,Prefix,SeriesCode,Padding,RangeStart,RangeEnd
+            FROM dbo.DocumentSeries WITH (UPDLOCK,HOLDLOCK)
+            WHERE BusinessId=@BusinessId AND DeviceId=@DeviceId
+              AND DocumentType=N'SalesReceipt' AND IsActive=1;
+            """;
+        await using (var read = new SqlCommand(sql, connection, transaction))
+        {
+            Add(read, "@BusinessId", businessId);
+            Add(read, "@DeviceId", deviceId);
+            await using var reader = await read.ExecuteReaderAsync(cancellationToken);
+            if (await reader.ReadAsync(cancellationToken))
+                return new PosEnrollmentDocumentSeries(
+                    reader.GetGuid(0), AuralyDocumentTypes.SalesReceipt,
+                    reader.GetString(1), reader.GetString(2), reader.GetByte(3),
+                    reader.GetInt64(4), reader.GetInt64(5));
+        }
+
+        await using var insert = new SqlCommand("""
+            INSERT dbo.DocumentSeries
+              (DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,
+               Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
+            VALUES
+              (@SeriesId,@BusinessId,@DeviceId,N'SalesReceipt',N'CVI',@SeriesCode,
+               8,1,99999999,1,1,@Now);
+            INSERT dbo.DocumentSeriesCursors(DocumentSeriesId,NextConsecutive,UpdatedAt)
+            VALUES(@SeriesId,1,@Now);
+            """, connection, transaction);
+        Add(insert, "@SeriesId", newSeriesId);
+        Add(insert, "@BusinessId", businessId);
+        Add(insert, "@DeviceId", deviceId);
+        Add(insert, "@SeriesCode", seriesCode);
+        Add(insert, "@Now", now);
+        await insert.ExecuteNonQueryAsync(cancellationToken);
+        return new PosEnrollmentDocumentSeries(
+            newSeriesId, AuralyDocumentTypes.SalesReceipt, "CVI", seriesCode, 8, 1, 99_999_999);
+    }
+
     private static bool FixedEquals(byte[] left, byte[] right) =>
         left.Length == right.Length && CryptographicOperations.FixedTimeEquals(left, right);
 
@@ -292,6 +453,17 @@ public sealed class SqlPosEnrollmentStore(
     private static void Add(SqlCommand command, string name, object value) =>
         command.Parameters.AddWithValue(name, value);
 
+    private sealed record ExistingDevice(
+        Guid DeviceId,
+        Guid TenantId,
+        Guid BusinessId,
+        Guid DocumentSeriesId,
+        string DocumentType,
+        string Prefix,
+        string SeriesCode,
+        byte Padding,
+        long RangeStart,
+        long RangeEnd);
     private sealed record Provisioning(
         Guid SessionId,
         Guid TenantId,

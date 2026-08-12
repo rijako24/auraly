@@ -13,7 +13,8 @@ public sealed record PosCatalogStatus(
     Guid? SessionId,
     long HighWaterMark,
     long Cursor,
-    string? NextPageCursor);
+    string? NextPageCursor,
+    DateTimeOffset UpdatedAt);
 
 public sealed record CapturedCatalogProduct(
     PosCatalogItem Product,
@@ -38,7 +39,7 @@ public sealed partial class PosCatalogStore(string connectionString)
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Status,SessionId,HighWaterMark,Cursor,NextPageCursor
+            SELECT Status,SessionId,HighWaterMark,Cursor,NextPageCursor,UpdatedAt
             FROM PosCatalogState WHERE StateId=1;
             """;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -49,7 +50,8 @@ public sealed partial class PosCatalogStore(string connectionString)
             reader.IsDBNull(1) ? null : Guid.Parse(reader.GetString(1)),
             reader.GetInt64(2),
             reader.GetInt64(3),
-            reader.IsDBNull(4) ? null : reader.GetString(4));
+            reader.IsDBNull(4) ? null : reader.GetString(4),
+            DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture));
     }
 
     public async Task BeginBootstrapAsync(
@@ -383,7 +385,7 @@ public sealed partial class PosCatalogStore(string connectionString)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = (SqliteTransaction)transaction;
-        command.CommandText = "SELECT Status,SessionId,HighWaterMark,Cursor,NextPageCursor FROM PosCatalogState WHERE StateId=1;";
+        command.CommandText = "SELECT Status,SessionId,HighWaterMark,Cursor,NextPageCursor,UpdatedAt FROM PosCatalogState WHERE StateId=1;";
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct)) throw new InvalidOperationException("POS catalog state is missing.");
         return new PosCatalogStatus(
@@ -391,7 +393,8 @@ public sealed partial class PosCatalogStore(string connectionString)
             reader.IsDBNull(1) ? null : Guid.Parse(reader.GetString(1)),
             reader.GetInt64(2),
             reader.GetInt64(3),
-            reader.IsDBNull(4) ? null : reader.GetString(4));
+            reader.IsDBNull(4) ? null : reader.GetString(4),
+            DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture));
     }
 
     private static async Task ExecuteAsync(

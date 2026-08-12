@@ -1,242 +1,51 @@
 "use client";
-
-import { Building2, Loader2, MonitorSmartphone, Warehouse } from "lucide-react";
-import { useMemo, useState } from "react";
-
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { ArrowLeft, Building2, CheckCircle2, FileKey2, Loader2, MonitorSmartphone, Warehouse } from "lucide-react";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { FiscalResolutionForm } from "@/components/fiscal/fiscal-resolution-form";
+import { InvoiceNumberingCard } from "@/components/fiscal/invoice-numbering-card";
+import { fiscalConfigurationApi, type FiscalResolutionConfiguration, type SaveFiscalResolutionConfiguration } from "@/services/api/fiscal-configuration";
 import type { SalesWorkspaceOption } from "@/services/pos/online-pos-client";
+import { resolvePosWorkspaceSelection } from "@/services/pos/pos-workspace-selection";
 
-type Props = {
-  options: SalesWorkspaceOption[];
-  loading: boolean;
-  error: string | null;
-  tenantName: string;
-  userDisplayName: string;
-  onSelect: (option: SalesWorkspaceOption) => Promise<void>;
-  edgeCapable?: boolean;
-  onEnroll?: (option: SalesWorkspaceOption) => Promise<void>;
-};
+type Props={options:SalesWorkspaceOption[];loading:boolean;error:string|null;tenantName:string;userDisplayName:string;onSelect:(option:SalesWorkspaceOption)=>Promise<void>;onCancel?:()=>void;edgeCapable?:boolean;canEnrollOffline?:boolean;onEnroll?:(option:SalesWorkspaceOption)=>Promise<void>};
 
-export function PosOnlineSetup({
-  options,
-  loading,
-  error,
-  tenantName,
-  userDisplayName,
-  onSelect,
-  edgeCapable = false,
-  onEnroll,
-}: Props) {
-  const businesses = useMemo(
-    () =>
-      Array.from(
-        new Map(options.map((option) => [option.businessId, option.businessName])),
-      ),
-    [options],
-  );
-  const [businessId, setBusinessId] = useState("");
-  const [warehouseId, setWarehouseId] = useState("");
-  const [selecting, setSelecting] = useState(false);
-  const [enrolling, setEnrolling] = useState(false);
-
-  const warehouses = useMemo(
-    () => options.filter((option) => option.businessId === businessId),
-    [businessId, options],
-  );
-  const selected = warehouses.find(
-    (option) => option.warehouseId === warehouseId,
-  );
-
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
-    if (!selected || selecting || enrolling) return;
-    setSelecting(true);
-    try {
-      await onSelect(selected);
-    } finally {
-      setSelecting(false);
-    }
-  }
-
-  async function enroll() {
-    if (!selected || !onEnroll || selecting || enrolling) return;
-    setEnrolling(true);
-    try {
-      await onEnroll(selected);
-    } finally {
-      setEnrolling(false);
-    }
-  }
-
-  return (
-    <main className="relative grid min-h-screen place-items-center overflow-hidden bg-[#071a1d] p-5 text-white">
-      <div className="absolute -left-40 -top-40 h-[34rem] w-[34rem] rounded-full bg-teal-400/10 blur-3xl" />
-      <div className="absolute -bottom-48 -right-32 h-[38rem] w-[38rem] rounded-full bg-cyan-300/10 blur-3xl" />
-      <form
-        onSubmit={submit}
-        className="relative w-full max-w-3xl overflow-hidden rounded-[2rem] border border-white/10 bg-[#0b2428]/95 shadow-2xl"
-      >
-        <div className="grid gap-0 md:grid-cols-[0.85fr_1.4fr]">
-          <section className="border-b border-white/10 bg-gradient-to-br from-teal-400/20 to-transparent p-7 md:border-b-0 md:border-r">
-            <div className="grid h-12 w-12 place-items-center rounded-2xl bg-teal-300 text-[#071a1d]">
-              <MonitorSmartphone className="h-6 w-6" />
-            </div>
-            <p className="mt-8 inline-flex rounded-full border border-teal-200/20 bg-teal-300/10 px-3 py-1 text-xs font-bold uppercase tracking-[0.14em] text-teal-100">
-              Empresa · {tenantName || "Auraly"}
-            </p>
-            <p className="mt-5 text-xs font-bold uppercase tracking-[0.18em] text-teal-200">
-              {edgeCapable ? "Preparación del equipo" : "Facturación en línea"}
-            </p>
-            <h1 className="mt-2 text-3xl font-black tracking-tight">
-              Elige dónde vas a trabajar
-            </h1>
-            <p className="mt-3 text-sm leading-6 text-slate-300">
-              Hola, {userDisplayName}. Selecciona la sede y la bodega que
-              recibirán los movimientos. Si enrolas este equipo, Auraly
-              preparará automáticamente la
-              operación offline.
-            </p>
-          </section>
-
-          <section className="p-7">
-            {loading ? (
-              <div className="grid min-h-64 place-items-center text-center">
-                <div>
-                  <Loader2 className="mx-auto h-9 w-9 animate-spin text-teal-300" />
-                  <p className="mt-4 font-semibold">Preparando facturación</p>
-                  <p className="mt-1 text-sm text-slate-400">
-                    Validando sedes, bodegas, series y permisos…
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <SelectField
-                  icon={Building2}
-                  label="Sede"
-                  value={businessId}
-                  onChange={(value) => {
-                    setBusinessId(value);
-                    setWarehouseId("");
-                  }}
-                  options={businesses.map(([value, label]) => ({ value, label }))}
-                />
-                <SelectField
-                  icon={Warehouse}
-                  label="Bodega"
-                  value={warehouseId}
-                  disabled={!businessId}
-                  onChange={setWarehouseId}
-                  options={warehouses.map((option) => ({
-                    value: option.warehouseId,
-                    label: option.warehouseName + " · " + option.warehouseCode,
-                  }))}
-                />
-
-                {selected && (
-                  <div className="flex items-center gap-3 rounded-2xl border border-teal-300/20 bg-teal-300/10 p-3 text-sm">
-                    <Warehouse className="h-5 w-5 shrink-0 text-teal-200" />
-                    <div>
-                      <p className="font-semibold">
-                        {selected.businessName} · {selected.warehouseName}
-                      </p>
-                      <p className="text-xs text-slate-300">
-                        {selected.warehouseAllowsNegativeStockSales
-                          ? "Permite confirmar ventas con inventario negativo"
-                          : "Valida disponibilidad antes de agregar cantidades"}
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                {error && (
-                  <p
-                    role="alert"
-                    className="rounded-xl border border-red-300/20 bg-red-400/10 p-3 text-sm text-red-100"
-                  >
-                    {error}
-                  </p>
-                )}
-                {!options.length && !error && (
-                  <p className="rounded-xl border border-amber-300/20 bg-amber-300/10 p-3 text-sm text-amber-100">
-                    No tienes sedes y bodegas habilitadas para facturar. Revisa
-                    permisos, series operativas y resolución fiscal.
-                  </p>
-                )}
-
-                <div className={edgeCapable ? "grid gap-2 sm:grid-cols-2" : ""}>
-                  <button
-                    type="submit"
-                    disabled={!selected || selecting || enrolling}
-                    className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-teal-300 font-bold text-[#071a1d] transition hover:bg-teal-200 disabled:cursor-not-allowed disabled:opacity-35"
-                  >
-                    {selecting && <Loader2 className="h-4 w-4 animate-spin" />}
-                    Trabajar en línea
-                  </button>
-                  {edgeCapable && (
-                    <button
-                      type="button"
-                      disabled={!selected || selecting || enrolling}
-                      onClick={() => void enroll()}
-                      className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-teal-200/30 bg-teal-200/10 font-bold text-teal-100 transition hover:bg-teal-200/20 disabled:cursor-not-allowed disabled:opacity-35"
-                    >
-                      {enrolling && <Loader2 className="h-4 w-4 animate-spin" />}
-                      Preparar modo offline
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-          </section>
-        </div>
-      </form>
-    </main>
-  );
+export function PosOnlineSetup({options,loading,error,tenantName,userDisplayName,onSelect,onCancel,edgeCapable=false,canEnrollOffline=false,onEnroll}:Props){
+ const businesses=useMemo(()=>Array.from(new Map(options.map(o=>[o.businessId,o.businessName]))),[options]);
+ const [businessId,setBusinessId]=useState(""); const [warehouseId,setWarehouseId]=useState("");
+ const [busy,setBusy]=useState<"online"|"offline"|null>(null); const [fiscal,setFiscal]=useState<FiscalResolutionConfiguration|null>(null); const [fiscalLoading,setFiscalLoading]=useState(false); const [fiscalSaving,setFiscalSaving]=useState(false); const [fiscalError,setFiscalError]=useState<string|null>(null);
+ const warehouses=useMemo(()=>options.filter(o=>o.businessId===businessId),[businessId,options]);
+ const selected=useMemo(()=>warehouses.find(o=>o.warehouseId===warehouseId),[warehouseId,warehouses]);
+ useEffect(()=>{const value=resolvePosWorkspaceSelection(options,businessId,warehouseId);if(value.businessId!==businessId)setBusinessId(value.businessId);if(value.warehouseId!==warehouseId)setWarehouseId(value.warehouseId)},[options,businessId,warehouseId]);
+ useEffect(()=>{if(!selected){setFiscal(null);return}let active=true;setFiscalLoading(true);setFiscalError(null);fiscalConfigurationApi.get(selected.businessId).then(v=>active&&setFiscal(v)).catch((e:any)=>active&&setFiscalError(e?.message||"No fue posible verificar la resolución fiscal.")).finally(()=>active&&setFiscalLoading(false));return()=>{active=false}},[selected]);
+ const saveFiscal=async(request:SaveFiscalResolutionConfiguration)=>{if(!selected)return;setFiscalSaving(true);setFiscalError(null);try{setFiscal(await fiscalConfigurationApi.save(selected.businessId,request))}catch(e:any){setFiscalError(e?.message||"No fue posible guardar la resolución.")}finally{setFiscalSaving(false)}};
+ const choose=async()=>{
+  if(!selected)return;
+  const mode=edgeCapable?"offline":"online";
+  setBusy(mode);
+  setFiscalError(null);
+  try{
+   const [latestFiscal,numbering]=await Promise.all([
+    fiscalConfigurationApi.get(selected.businessId),
+    fiscalConfigurationApi.getNumbering(selected.businessId),
+   ]);
+   setFiscal(latestFiscal);
+   if(numbering.initialConsecutive===null){
+    setFiscalError("Define el primer consecutivo para esta sede antes de abrir ventas.");
+    return;
+   }
+   const ready=edgeCapable?latestFiscal.isReadyForEnrollment:latestFiscal.isReadyForOnlineSales;
+   if(!ready){
+    setFiscalError("La numeración, resolución o serie fiscal de esta sede todavía no está completa.");
+    return;
+   }
+   if(edgeCapable)await onEnroll?.(selected);else await onSelect(selected);
+  }catch(e:unknown){
+   setFiscalError(e instanceof Error?e.message:"No fue posible cargar la configuración de esta ubicación.");
+  }finally{setBusy(null)}
+ };
+ return <main className="relative min-h-screen overflow-auto bg-[#071a1d] p-5 text-white">{onCancel?<button type="button" onClick={onCancel} className="fixed left-5 top-5 z-20 inline-flex h-10 items-center gap-2 rounded-xl border border-white/15 bg-[#0b2428] px-3 text-sm font-semibold"><ArrowLeft className="h-4 w-4"/>Volver al punto de venta</button>:<Link href="/dashboard" className="fixed left-5 top-5 z-20 inline-flex h-10 items-center gap-2 rounded-xl border border-white/15 bg-[#0b2428] px-3 text-sm font-semibold"><ArrowLeft className="h-4 w-4"/>Volver al panel</Link>}<div className="mx-auto flex min-h-[calc(100vh-2.5rem)] max-w-5xl items-center py-16"><section className="grid w-full overflow-hidden rounded-[2rem] border border-white/10 bg-[#0b2428] shadow-2xl md:grid-cols-[.75fr_1.45fr]"><aside className="bg-gradient-to-br from-teal-400/20 to-transparent p-8"><span className="grid h-12 w-12 place-items-center rounded-2xl bg-teal-300 text-[#071a1d]"><MonitorSmartphone/></span><p className="mt-8 text-xs font-bold uppercase tracking-[.15em] text-teal-200">{tenantName||"Auraly"}</p><h1 className="mt-3 text-3xl font-black">Prepara tu espacio de venta</h1><p className="mt-4 text-sm leading-6 text-slate-300">Hola, {userDisplayName}. Primero confirma la sede y la bodega. Auraly verificará después la resolución fiscal y solo pedirá lo que falte.</p><ol className="mt-8 space-y-3 text-sm"><Step number="1" text="Sede y bodega" active/><Step number="2" text="Numeración" active={!!selected}/><Step number="3" text="Resolución fiscal" active={!!selected}/><Step number="4" text="Acceso a ventas" active={!!fiscal?.isReadyForOnlineSales}/></ol></aside><div className="p-7 md:p-9">{loading?<Loading/>:<div className="space-y-5"><OptionGroup title="Sede" icon={Building2} items={businesses.map(([id,name])=>({id,name}))} selected={businessId} onSelect={id=>{setBusinessId(id);setWarehouseId("")}}/><OptionGroup title="Bodega" icon={Warehouse} items={warehouses.map(o=>({id:o.warehouseId,name:`${o.warehouseName} · ${o.warehouseCode}`}))} selected={warehouseId} onSelect={setWarehouseId} disabled={!businessId}/>{selected&&<div className="rounded-xl border border-teal-300/20 bg-teal-300/10 p-3 text-sm"><b>{selected.businessName}</b> · {selected.warehouseName}<p className="mt-1 text-xs text-slate-300">{selected.warehouseAllowsNegativeStockSales?"Permite inventario negativo":"Valida disponibilidad al capturar cantidades"}</p></div>}{selected&&<InvoiceNumberingCard key={selected.businessId} businessId={selected.businessId} onChanged={()=>void fiscalConfigurationApi.get(selected.businessId).then(setFiscal)}/>}{selected&&fiscalLoading&&<Loading text="Verificando resolución fiscal…"/>}{selected&&!fiscalLoading&&fiscal&&!fiscal.isReadyForOnlineSales&&<div className="rounded-2xl border border-amber-300/25 bg-white p-5 text-slate-950"><div className="mb-5 flex gap-3"><span className="rounded-xl bg-amber-100 p-2 text-amber-700"><FileKey2/></span><div><p className="font-bold">Completa la resolución de esta sede</p><p className="text-sm text-slate-600">Se guarda para futuras aperturas y también podrás editarla desde Maestros.</p></div></div><FiscalResolutionForm value={fiscal} saving={fiscalSaving} onSave={saveFiscal}/></div>}{fiscal?.isReadyForOnlineSales&&<div className="flex items-center gap-2 rounded-xl border border-emerald-300/20 bg-emerald-300/10 p-3 text-sm text-emerald-100"><CheckCircle2 className="h-5 w-5"/>Resolución {fiscal.authorizationNumber} lista.</div>}{(error||fiscalError)&&<p className="rounded-xl border border-red-300/20 bg-red-400/10 p-3 text-sm text-red-100">{error||fiscalError} {fiscalError&&<Link href="/dashboard/settings/masters" className="font-bold underline">Abrir Maestros</Link>}</p>}{!options.length&&!error&&<p className="rounded-xl border border-amber-300/20 bg-amber-300/10 p-4 text-sm text-amber-100">No hay sedes con una bodega activa para este usuario. Configura la organización o revisa sus permisos.</p>}<button onClick={()=>void choose()} disabled={!selected||!(edgeCapable?fiscal?.isReadyForEnrollment:fiscal?.isReadyForOnlineSales)||!!busy|| (edgeCapable&&!canEnrollOffline)} className="h-12 w-full rounded-xl bg-teal-300 font-bold text-[#071a1d] disabled:opacity-35">{busy?(edgeCapable?"Preparando caja…":"Abriendo…"):(edgeCapable?(canEnrollOffline?"Activar caja offline":"Sin permiso de enrolamiento"):"Continuar en línea")}</button></div>}</div></section></div></main>;
 }
-
-function SelectField({
-  icon: Icon,
-  label,
-  value,
-  options,
-  disabled,
-  onChange,
-}: {
-  icon: typeof Building2;
-  label: string;
-  value: string;
-  options: Array<{ value: string; label: string }>;
-  disabled?: boolean;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div>
-      <span className="mb-1.5 flex items-center gap-2 text-sm font-semibold text-slate-200">
-        <Icon className="h-4 w-4 text-teal-200" />
-        {label}
-      </span>
-      <Select
-        value={value || undefined}
-        disabled={disabled}
-        onValueChange={onChange}
-      >
-        <SelectTrigger className="h-12 w-full rounded-xl border-white/15 bg-[#102e33] px-3 text-sm text-white shadow-none focus:border-teal-300 focus:ring-2 focus:ring-teal-300/15 disabled:opacity-40">
-          <SelectValue placeholder={"Selecciona " + label.toLocaleLowerCase("es")} />
-        </SelectTrigger>
-        <SelectContent className="rounded-xl border-slate-200 shadow-2xl">
-          {options.map((option) => (
-            <SelectItem key={option.value} value={option.value} className="py-2.5">
-              {option.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  );
-}
+function Loading({text="Cargando sedes y bodegas…"}:{text?:string}){return <div className="flex min-h-24 items-center justify-center gap-3 text-sm text-slate-300"><Loader2 className="h-6 w-6 animate-spin text-teal-300"/>{text}</div>}
+function Step({number,text,active}:{number:string;text:string;active:boolean}){return <li className={`flex items-center gap-3 ${active?"text-white":"text-slate-500"}`}><span className={`grid h-7 w-7 place-items-center rounded-full ${active?"bg-teal-300 text-[#071a1d]":"bg-white/10"}`}>{number}</span>{text}</li>}
+function OptionGroup({title,icon:Icon,items,selected,onSelect,disabled=false}:{title:string;icon:typeof Building2;items:{id:string;name:string}[];selected:string;onSelect:(id:string)=>void;disabled?:boolean}){return <fieldset disabled={disabled}><legend className="mb-2 flex items-center gap-2 text-sm font-semibold"><Icon className="h-4 w-4 text-teal-200"/>{title}</legend>{items.length===1?<button type="button" onClick={()=>onSelect(items[0].id)} className="flex h-12 w-full items-center justify-between rounded-xl border border-teal-300/30 bg-[#102e33] px-4 text-left"><b>{items[0].name}</b><span className="rounded-full bg-teal-300/15 px-2 py-1 text-xs text-teal-100">Detectada</span></button>:<div className="grid gap-2 sm:grid-cols-2">{items.map(item=><button type="button" key={item.id} onClick={()=>onSelect(item.id)} className={`min-h-12 rounded-xl border px-4 text-left text-sm font-semibold ${selected===item.id?"border-teal-300 bg-teal-300/15":"border-white/15 bg-[#102e33]"}`}>{item.name}</button>)}</div>}</fieldset>}

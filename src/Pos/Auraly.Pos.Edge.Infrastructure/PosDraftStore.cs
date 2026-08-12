@@ -57,9 +57,9 @@ public sealed record PosDraftLine(
     int Position)
 {
     public decimal Gross => Round(Quantity * UnitPrice);
-    public decimal Net => Round(Gross - Discount);
-    public decimal Tax => Round(Net * TaxRate / 100m);
-    public decimal Total => Net + Tax;
+    public decimal Total => Round(Gross - Discount);
+    public decimal Net => TaxRate == 0 ? Total : Round(Total / (1m + TaxRate / 100m));
+    public decimal Tax => Total - Net;
 
     private static decimal Round(decimal value) =>
         decimal.Round(value, 2, MidpointRounding.ToEven);

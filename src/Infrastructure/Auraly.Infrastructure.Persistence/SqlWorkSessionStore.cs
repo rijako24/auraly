@@ -211,6 +211,44 @@ public sealed class SqlWorkSessionStore(
         }
     }
 
+    public async Task<WorkSessionClosureView?> CloseForAuthenticationAsync(
+        Guid userId,
+        Guid authenticationSessionId,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        Guid workSessionId;
+        Guid tenantId;
+        await using (var connection = connections.Create())
+        {
+            await connection.OpenAsync(cancellationToken);
+            await using var command = new SqlCommand(
+                """
+                SELECT TOP(1) ws.WorkSessionId,b.TenantId
+                FROM dbo.WorkSessions ws
+                JOIN dbo.Businesses b ON b.BusinessId=ws.BusinessId
+                WHERE ws.UserId=@UserId AND ws.Status=N'Open'
+                ORDER BY ws.OpenedAt DESC;
+                """, connection);
+            command.Parameters.AddWithValue("@UserId", userId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                return null;
+            workSessionId = reader.GetGuid(0);
+            tenantId = reader.GetGuid(1);
+        }
+
+        return await CloseAsync(
+            new WorkSessionIdentity(
+                userId,
+                tenantId,
+                new HashSet<string>(StringComparer.Ordinal)),
+            workSessionId,
+            $"{reason}:{authenticationSessionId:N}",
+            new CloseWorkSessionRequest(null, null),
+            cancellationToken);
+    }
+
     public async Task<WorkSessionClosureView?> GetClosureAsync(
         WorkSessionIdentity identity,
         Guid workSessionId,
@@ -240,10 +278,10 @@ public sealed class SqlWorkSessionStore(
                    ) THEN 1 ELSE 0 END
             FROM dbo.AppUsers u
             INNER JOIN dbo.Businesses b
-              ON b.TenantId=u.TenantId AND b.BusinessId=@BusinessId AND b.IsActive=1
+              ON b.BusinessId=@BusinessId AND b.TenantId=@TenantId AND b.IsActive=1
             INNER JOIN dbo.Warehouses w
               ON w.BusinessId=b.BusinessId AND w.WarehouseId=@WarehouseId AND w.IsActive=1
-            WHERE u.UserId=@UserId AND u.TenantId=@TenantId AND u.IsActive=1;
+            WHERE u.UserId=@UserId AND u.IsActive=1;
             """, connection, transaction);
         command.Parameters.AddWithValue("@UserId", identity.UserId);
         command.Parameters.AddWithValue("@TenantId", identity.TenantId);
@@ -277,7 +315,7 @@ public sealed class SqlWorkSessionStore(
             INNER JOIN dbo.Businesses b ON b.BusinessId=s.BusinessId
             INNER JOIN dbo.Warehouses w ON w.WarehouseId=s.WarehouseId
             INNER JOIN dbo.AppUsers u ON u.UserId=s.UserId
-            WHERE s.UserId=@UserId AND u.TenantId=@TenantId AND s.Status=N'Open';
+            WHERE s.UserId=@UserId AND b.TenantId=@TenantId AND s.Status=N'Open';
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@UserId", identity.UserId);
@@ -302,7 +340,7 @@ public sealed class SqlWorkSessionStore(
             INNER JOIN dbo.Warehouses w ON w.WarehouseId=s.WarehouseId
             INNER JOIN dbo.AppUsers u ON u.UserId=s.UserId
             WHERE s.WorkSessionId=@WorkSessionId AND s.UserId=@UserId
-              AND u.TenantId=@TenantId;
+              AND b.TenantId=@TenantId;
             """, connection, transaction);
         command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
         command.Parameters.AddWithValue("@UserId", identity.UserId);
@@ -422,9 +460,9 @@ public sealed class SqlWorkSessionStore(
             SELECT c.IdempotencyKey,c.ReceiptSnapshotJson,c.ReceiptHash
             FROM dbo.WorkSessionClosures c
             INNER JOIN dbo.WorkSessions s ON s.WorkSessionId=c.WorkSessionId
-            INNER JOIN dbo.AppUsers u ON u.UserId=s.UserId
+            INNER JOIN dbo.Businesses b ON b.BusinessId=s.BusinessId
             WHERE c.WorkSessionId=@WorkSessionId AND s.UserId=@UserId
-              AND u.TenantId=@TenantId;
+              AND b.TenantId=@TenantId;
             """, connection, transaction);
         command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
         command.Parameters.AddWithValue("@UserId", identity.UserId);

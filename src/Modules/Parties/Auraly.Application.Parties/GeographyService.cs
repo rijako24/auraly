@@ -31,7 +31,7 @@ public sealed class GeographyService(IPartyStore store, IAuralyIdGenerator ids, 
         PartyActorIdentity actor, SaveCountryRequest request, CancellationToken ct)
     {
         PartyService.Require(actor, PartyPermissionCodes.GeographyManage);
-        Validate(request.Code, request.Name);
+        ValidateCountry(request.Code, request.Name);
         return store.CreateCountryAsync(actor, ids.NewId(), request, time.GetUtcNow(), ct);
     }
 
@@ -52,6 +52,15 @@ public sealed class GeographyService(IPartyStore store, IAuralyIdGenerator ids, 
         if (request.AdministrativeDivisionId == Guid.Empty)
             throw new PartyValidationException("Administrative division is required.");
         return store.CreateCityAsync(actor, ids.NewId(), request, time.GetUtcNow(), ct);
+    }
+
+    private static void ValidateCountry(string code, string name)
+    {
+        var normalizedCode = code?.Trim().ToUpperInvariant() ?? string.Empty;
+        if (normalizedCode.Length != 2 || normalizedCode.Any(character => character is < 'A' or > 'Z'))
+            throw new PartyValidationException("Country code must use the two-letter ISO format, for example CO or VE.");
+
+        Validate(normalizedCode, name);
     }
 
     private static void Validate(string code, string name)

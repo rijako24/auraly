@@ -114,14 +114,14 @@ public sealed partial class SqlPosSaleDocumentHandler
         command.Parameters.AddWithValue("@PaymentNumber", payment.PaymentNumber);
         command.Parameters.Add(new SqlParameter("@BusinessDate", SqlDbType.Date)
         {
-            Value = request.FiscalSnapshot.IssuedAt.Date
+            Value = request.CommercialSnapshot.IssuedAt.Date
         });
         command.Parameters.AddWithValue("@Method", payment.MethodCode);
         AddDecimal(command, "@Amount", payment.Amount, 19, 4);
         command.Parameters.AddWithValue("@Reference", (object?)payment.Reference ?? DBNull.Value);
         command.Parameters.AddWithValue(
             "@SourceKey", $"sale:{request.DocumentId:D}:{payment.PaymentNumber}");
-        command.Parameters.AddWithValue("@OccurredAt", request.FiscalSnapshot.IssuedAt);
+        command.Parameters.AddWithValue("@OccurredAt", request.CommercialSnapshot.IssuedAt);
         command.Parameters.AddWithValue("@UserId", request.SoldByUserId);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

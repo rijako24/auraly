@@ -21,7 +21,9 @@ public sealed record SupplierCostInput(
     string Name,
     string? SupplierProductCode,
     decimal BaseUnitCost,
-    bool IsPrimary = true);
+    bool IsPrimary = true,
+    string PurchasePresentationName = "Unidad",
+    decimal UnitsPerPresentation = 1);
 public sealed record ScaleConfigurationInput(
     string ScaleCode,
     string BarcodePrefix,
@@ -44,7 +46,13 @@ public sealed record SaveProductRequest(
     IReadOnlyCollection<ProductIdentifierInput> Identifiers,
     IReadOnlyCollection<ProductPriceInput> Prices,
     IReadOnlyCollection<SupplierCostInput> Suppliers,
-    ScaleConfigurationInput? Scale);
+    ScaleConfigurationInput? Scale,
+    Guid PurchaseTaxProfileId = default,
+    string PurchaseTaxTreatment = "DeductibleInputVat",
+    Guid? ProductCategoryId = null,
+    Guid? ProductBrandId = null,
+    bool AllowsFractionalSale = false,
+    ProductLinkInput? Link = null);
 
 public sealed record ProductDetail(
     Guid ProductId,
@@ -55,7 +63,14 @@ public sealed record ProductDetail(
     bool IsActive,
     IReadOnlyCollection<string> Barcodes,
     IReadOnlyCollection<ProductPriceInput> Prices,
-    IReadOnlyCollection<SupplierCostInput>? Suppliers);
+    IReadOnlyCollection<SupplierCostInput>? Suppliers,
+    Guid SalesTaxProfileId = default,
+    Guid PurchaseTaxProfileId = default,
+    string PurchaseTaxTreatment = "DeductibleInputVat",
+    string? Description = null,
+    string BaseUnitCode = "EA",
+    bool ManageInventory = true,
+    bool IsWeighable = false);
 
 public sealed record ProductPageRequest(
     int PageSize = 50,
@@ -126,3 +141,19 @@ public sealed record InventoryAvailabilityResponse(
     bool ValidationRequired,
     bool IsAvailable,
     string Status);
+
+public sealed record TaxProfileSummary(
+    Guid TaxProfileId, Guid BusinessId, string Code, string DianTaxCode, string Name,
+    decimal Rate, bool IsActive);
+
+public sealed record SaveTaxProfileRequest(
+    Guid BusinessId, string Code, string Name, decimal Rate, bool IsActive = true,
+    string DianTaxCode = "01");
+public sealed record ProductTaxConfiguration(
+    Guid ProductId, Guid SalesTaxProfileId, Guid PurchaseTaxProfileId,
+    string PurchaseTaxTreatment);
+
+public sealed record SaveProductTaxConfigurationRequest(
+    Guid SalesTaxProfileId, Guid PurchaseTaxProfileId, string PurchaseTaxTreatment);
+
+public sealed record SetProductStatusRequest(bool IsActive);

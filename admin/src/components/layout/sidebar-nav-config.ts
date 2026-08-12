@@ -1,4 +1,4 @@
-﻿import type { LucideIcon } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import {
   BadgePercent,
   BarChart3,
@@ -17,6 +17,7 @@ import {
   Megaphone,
   Radio,
   ReceiptText,
+  Route,
   Package,
   PackagePlus,
   Settings,
@@ -51,14 +52,16 @@ export const navigation: NavEntry[] = [
   { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3, permission: "dashboard.read" },
   { type: "separator", label: "Negocio" },
   { name: "Servicios", href: "/dashboard/services", icon: Package, permission: "services.read" },
-  { name: "Productos", href: "/dashboard/products", icon: Package, permission: "products.read" },
+  { name: "Productos", href: "/dashboard/products", icon: Package, permission: "catalog.read" },
   { name: "Terceros", href: "/dashboard/parties", icon: ContactRound, permission: "parties.read" },
+  { name: "Rutas comerciales", href: "/dashboard/routes", icon: Route, permission: "routes.read" },
   { name: "Precios y rentabilidad", href: "/dashboard/products/pricing", icon: TrendingUp, permission: "pricing.read" },
   { name: "Promociones", href: "/dashboard/promotions", icon: BadgePercent, permission: "promotions.read" },
   { name: "Empleados", href: "/dashboard/employees", icon: Users, permission: "employees.read" },
   { type: "separator", label: "Operaciones" },
-  { name: "Facturaci?n", href: "/pos", icon: ReceiptText, permission: "sales.create" },
-  { name: "Entradas de mercanc?a", href: "/dashboard/purchasing/goods-receipts", icon: PackagePlus, permission: "purchasing.goods-receipts.read" },
+  { name: "Punto de venta", href: "/pos", icon: ReceiptText, permission: "sales.create" },
+  { name: "Inventario", href: "/dashboard/inventory", icon: Package, permission: "inventory.read" },
+  { name: "Recepción de mercancía", href: "/dashboard/purchasing/goods-receipts", icon: PackagePlus, permission: "purchasing.goods-receipts.read" },
   { name: "Devoluciones a proveedores", href: "/dashboard/purchasing/purchase-returns", icon: Undo2, permission: "purchasing.purchase-returns.read" },
   { name: "Devoluciones de venta", href: "/dashboard/sales-returns", icon: Undo2, permission: "sales.returns.read" },
   { name: "Reservaciones", href: "/dashboard/reservations", icon: CalendarDays, permission: "reservations.read" },
