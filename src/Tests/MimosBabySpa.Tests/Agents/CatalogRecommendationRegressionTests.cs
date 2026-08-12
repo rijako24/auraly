@@ -73,7 +73,7 @@ public sealed class CatalogRecommendationRegressionTests
         var seed = File.ReadAllText(Path.Combine(
             FindSolutionRoot(),
             "database",
-            "MimosBabySpa.Database",
+            "Auraly.Database",
             "Scripts",
             "Seeds",
             "SeedCJDistribuciones.sql"));

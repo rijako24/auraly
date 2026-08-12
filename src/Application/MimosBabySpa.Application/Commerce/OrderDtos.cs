@@ -36,7 +36,6 @@ public sealed record OrderSnapshot(
     string Currency,
     decimal Subtotal,
     decimal DiscountTotal,
-    decimal TaxTotal,
     decimal Total,
     IReadOnlyList<OrderItemSnapshot> Items,
     Guid? PaymentTransactionId = null,

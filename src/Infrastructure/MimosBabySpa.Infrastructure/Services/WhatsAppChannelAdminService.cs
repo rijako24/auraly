@@ -17,6 +17,7 @@ public sealed class WhatsAppChannelAdminService : IWhatsAppChannelAdminService
     private readonly ApplicationDbContext _db;
     private readonly IAuditService _auditService;
     private readonly HttpClient _httpClient;
+    private readonly string? _apiBaseUrl;
 
     public WhatsAppChannelAdminService(ApplicationDbContext db, IAuditService auditService,
         HttpClient httpClient, IOptions<WhatsAppWebhookOptions> options)
@@ -24,7 +25,11 @@ public sealed class WhatsAppChannelAdminService : IWhatsAppChannelAdminService
         _db = db;
         _auditService = auditService;
         _httpClient = httpClient;
-        _httpClient.BaseAddress = new Uri(options.Value.ApiBaseUrl.TrimEnd('/') + "/");
+        _apiBaseUrl = string.IsNullOrWhiteSpace(options.Value.ApiBaseUrl)
+            ? null
+            : options.Value.ApiBaseUrl.TrimEnd('/') + "/";
+        if (_apiBaseUrl is not null)
+            _httpClient.BaseAddress = new Uri(_apiBaseUrl, UriKind.Absolute);
     }
 
     public async Task<IReadOnlyList<WhatsAppChannelDto>> GetByBusinessAsync(Guid tenantId, bool allTenants, Guid businessId, CancellationToken ct = default)
@@ -87,6 +92,9 @@ public sealed class WhatsAppChannelAdminService : IWhatsAppChannelAdminService
 
     public async Task<WhatsAppChannelConnectionStatusDto> ValidateAsync(Guid tenantId, bool allTenants, Guid businessId, Guid channelId, CancellationToken ct = default)
     {
+        if (_apiBaseUrl is null)
+            throw new DomainValidationException("WhatsApp",
+                "Configura la URL oficial de Meta antes de validar el canal.");
         await EnsureBusinessScopeAsync(tenantId, allTenants, businessId, ct);
         var channel = await GetChannelAsync(businessId, channelId, ct);
         try

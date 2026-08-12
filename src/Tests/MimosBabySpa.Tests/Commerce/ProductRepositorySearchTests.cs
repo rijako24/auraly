@@ -2,6 +2,7 @@ using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using MimosBabySpa.Domain.Entities;
 using MimosBabySpa.Infrastructure.Data;
+using MimosBabySpa.Infrastructure.Data.ReadModels;
 using MimosBabySpa.Infrastructure.Repositories;
 using Xunit;
 
@@ -16,6 +17,7 @@ public sealed class ProductRepositorySearchTests
         var businessId = Guid.NewGuid();
         var jamon = Product(businessId, "JAMON CUNIT X 500GR", "CF17", active: true);
         context.Products.Add(jamon);
+        Publish(context, jamon, 10m);
         await context.SaveChangesAsync();
 
         var result = await new ProductRepository(context).SearchByIndexTermsAsync(
@@ -32,6 +34,8 @@ public sealed class ProductRepositorySearchTests
         var inactiveExternal = Product(businessId, "TOCINETA IMPORTADA", "EXT-1", active: false);
         var activeLocal = Product(businessId, "Tocineta ahumada 500 g", "LOCAL-1", active: true);
         context.Products.AddRange(inactiveExternal, activeLocal);
+        Publish(context, inactiveExternal, 10m);
+        Publish(context, activeLocal, 10m);
         context.ProductSearchTerms.Add(new ProductSearchTerm
         {
             BusinessId = businessId,
@@ -57,6 +61,8 @@ public sealed class ProductRepositorySearchTests
         var keywordProduct = Product(businessId, "PRESENTACION ESPECIAL", "KEY-1", active: true);
         var nativeProduct = Product(businessId, "Papa a la francesa 2.5 kg", "PAPA-1", active: true);
         context.Products.AddRange(keywordProduct, nativeProduct);
+        Publish(context, keywordProduct, 10m);
+        Publish(context, nativeProduct, 10m);
         context.ProductSearchTerms.Add(new ProductSearchTerm
         {
             BusinessId = businessId,
@@ -83,6 +89,7 @@ public sealed class ProductRepositorySearchTests
         product.CategoryName = "VINAGRES";
         product.Description = "UNIDAD PRODUCTO GENERAL VARIOS";
         context.Products.Add(product);
+        Publish(context, product, 10m);
         await context.SaveChangesAsync();
 
         var repository = new ProductRepository(context);
@@ -113,4 +120,55 @@ public sealed class ProductRepositorySearchTests
         Currency = "COP",
         IsActive = active
     };
+
+    [Fact]
+    public async Task SearchAsync_DoesNotExposeLegacyUnitPriceWithoutPublishedPrice()
+    {
+        await using var context = CreateContext();
+        var businessId = Guid.NewGuid();
+        var product = Product(businessId, "PRODUCTO SIN PUBLICAR", "NO-PUBLICADO", active: true);
+        product.UnitPrice = 98765m;
+        context.Products.Add(product);
+        await context.SaveChangesAsync();
+
+        var result = await new ProductRepository(context).SearchAsync(
+            businessId, null, null, 10);
+
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task SearchAsync_UsesOnlyTheCanonicalPublishedPrice()
+    {
+        await using var context = CreateContext();
+        var businessId = Guid.NewGuid();
+        var product = Product(businessId, "PRODUCTO PUBLICADO", "PUBLICADO", active: true);
+        product.UnitPrice = 111m;
+        context.Products.Add(product);
+        Publish(context, product, 25900m);
+        await context.SaveChangesAsync();
+
+        var result = await new ProductRepository(context).SearchAsync(
+            businessId, null, null, 10);
+
+        result.Should().ContainSingle();
+        result[0].UnitPrice.Should().Be(25900m);
+        result[0].HasPublishedPrice.Should().BeTrue();
+    }
+
+    private static void Publish(ApplicationDbContext context, Product product, decimal amount)
+    {
+        var now = DateTimeOffset.UtcNow;
+        context.PublishedProductPrices.Add(new PublishedProductPriceRow
+        {
+            ProductPriceId = Guid.NewGuid(),
+            BusinessId = product.BusinessId,
+            ProductId = product.ProductId,
+            Amount = amount,
+            CurrencyCode = "COP",
+            ValidFrom = now.AddMinutes(-1),
+            IsActive = true,
+            CreatedAt = now
+        });
+    }
 }

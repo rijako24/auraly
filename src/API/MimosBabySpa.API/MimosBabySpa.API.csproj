@@ -30,6 +30,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\Application\MimosBabySpa.Application\MimosBabySpa.Application.csproj" />
     <ProjectReference Include="..\..\Infrastructure\MimosBabySpa.Infrastructure\MimosBabySpa.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\Auraly.BuildingBlocks.Infrastructure\Auraly.BuildingBlocks.Infrastructure.csproj" />
   </ItemGroup>
   <ItemGroup>
     <None Update="host.json">

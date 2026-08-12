@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="8.0.4" />
+    <PackageReference Include="System.ServiceModel.Http" Version="8.1.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Fiscal\Auraly.Fiscal.Ubl\Auraly.Fiscal.Ubl.csproj" />
+    <ProjectReference Include="..\Auraly.Contracts.Fiscal\Auraly.Contracts.Fiscal.csproj" />
+    <ProjectReference Include="..\Auraly.Application.Fiscal\Auraly.Application.Fiscal.csproj" />
+    <ProjectReference Include="..\Auraly.Application.Fiscal\Auraly.Application.Fiscal.csproj" />
+  </ItemGroup>
+
+</Project>

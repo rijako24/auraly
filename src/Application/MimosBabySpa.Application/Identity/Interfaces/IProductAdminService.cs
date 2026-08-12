@@ -26,6 +26,12 @@ public interface IProductAdminService
         UpdateProductRequest request,
         CancellationToken ct = default);
 
+    Task<IReadOnlyList<ProductCategoryAdminDto>> GetCategoriesAsync(Guid tenantId, Guid businessId, bool includeInactive = false, CancellationToken ct = default);
+
+    Task<ProductCategoryAdminDto> CreateCategoryAsync(Guid tenantId, Guid businessId, CreateProductCategoryRequest request, CancellationToken ct = default);
+
+    Task<ProductCategoryAdminDto> UpdateCategoryAsync(Guid tenantId, Guid businessId, Guid productCategoryId, UpdateProductCategoryRequest request, CancellationToken ct = default);
+
     Task<IReadOnlyList<string>> GetSearchTermsAsync(
         Guid tenantId,
         Guid businessId,

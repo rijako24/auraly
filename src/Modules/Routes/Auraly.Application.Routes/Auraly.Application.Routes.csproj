@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Auraly.Contracts.Routes\Auraly.Contracts.Routes.csproj" />
+    <ProjectReference Include="..\Auraly.Domain.Routes\Auraly.Domain.Routes.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
+  </ItemGroup>
+</Project>

@@ -4,7 +4,7 @@ using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Application.Commerce;
 
-public sealed class LocalCommerceAdapter : ICommerceAdapter
+public sealed class LocalCommerceAdapter : ICommerceAdapter, IAuthoritativeCommercePricingAdapter
 {
     private static readonly string Source = CommerceProvider.Local.ToString().ToLowerInvariant();
     private readonly IUnitOfWork _unitOfWork;
@@ -64,7 +64,7 @@ public sealed class LocalCommerceAdapter : ICommerceAdapter
             product = matches.FirstOrDefault(p => string.Equals(p.Name, request.Name, StringComparison.OrdinalIgnoreCase));
         }
 
-        return product is null ? null : Map(product);
+        return product is null || !product.HasPublishedPrice ? null : Map(product);
     }
 
     public Task<CreateExternalOrderResult> CreateOrderAsync(Order order, IReadOnlyList<OrderItem> items, CommerceAdapterContext ctx, CancellationToken ct = default)

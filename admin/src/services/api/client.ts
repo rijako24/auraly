@@ -1,18 +1,20 @@
 import type { ApiError } from "@/types/api";
+import { buildLoginRedirect } from "@/lib/login-redirect";
+import { shouldIncludeExecutionContext } from "@/lib/api-execution-context";
 
 const API_BASE = "/api";
+const SELECTED_TENANT_STORAGE_KEY = "selected_tenant_id";
 const SELECTED_BUSINESS_STORAGE_KEY = "selected_business_id";
 
-let isRefreshing = false;
-let refreshSubscribers: Array<() => void> = [];
+let activeRefresh: Promise<boolean> | null = null;
 
-function onTokenRefreshed() {
-  refreshSubscribers.forEach((cb) => cb());
-  refreshSubscribers = [];
-}
-
-function addRefreshSubscriber(cb: () => void) {
-  refreshSubscribers.push(cb);
+function getSelectedTenantId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return localStorage.getItem(SELECTED_TENANT_STORAGE_KEY);
+  } catch {
+    return null;
+  }
 }
 
 function getSelectedBusinessId(): string | null {
@@ -24,12 +26,16 @@ function getSelectedBusinessId(): string | null {
   }
 }
 
-function buildJsonHeaders(): HeadersInit {
+function buildJsonHeaders(includeExecutionContext = true): HeadersInit {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  const businessId = getSelectedBusinessId();
-  if (businessId) headers["X-Business-Id"] = businessId;
+  if (includeExecutionContext) {
+    const tenantId = getSelectedTenantId();
+    if (tenantId) headers["X-Tenant-Id"] = tenantId;
+    const businessId = getSelectedBusinessId();
+    if (businessId) headers["X-Business-Id"] = businessId;
+  }
   return headers;
 }
 
@@ -63,7 +69,7 @@ class ApiClient {
       };
       try {
         const body = await response.json();
-        error.message = body.message || body.title || "An error occurred";
+        error.message = body.detail || body.message || body.title || "An error occurred";
         error.errors = body.errors;
       } catch {
         error.message = response.statusText;
@@ -79,7 +85,7 @@ class ApiClient {
       const res = await fetch(`${API_BASE}/auth/refresh`, {
         method: "POST",
         credentials: "include",
-        headers: buildJsonHeaders(),
+        headers: buildJsonHeaders(false),
       });
       return res.ok;
     } catch {
@@ -98,25 +104,17 @@ class ApiClient {
 
     if (response.status !== 401) return response;
 
-    const isAuthPath = url.includes("/auth/login") || url.includes("/auth/refresh") || url.includes("/auth/register");
+    const isAuthPath =
+      url.includes("/auth/login") ||
+      url.includes("/auth/refresh") ||
+      url.includes("/auth/register") ||
+      url.includes("/auth/invitations/accept");
     if (isAuthPath) return response;
 
-    if (isRefreshing) {
-      return new Promise<Response>((resolve) => {
-        addRefreshSubscriber(() => {
-          resolve(
-            fetch(url, {
-              ...options,
-              credentials: "include",
-            })
-          );
-        });
-      });
-    }
-
-    isRefreshing = true;
-    const refreshed = await this.refreshSession();
-    isRefreshing = false;
+    activeRefresh ??= this.refreshSession().finally(() => {
+      activeRefresh = null;
+    });
+    const refreshed = await activeRefresh;
 
     if (!refreshed) {
       if (typeof window !== "undefined") {
@@ -125,13 +123,13 @@ class ApiClient {
         } catch {
           /* ignore */
         }
-        window.location.href = "/login";
+        const destination = buildLoginRedirect(
+          window.location.pathname, window.location.search);
+        if (window.location.pathname + window.location.search !== destination)
+          window.location.assign(destination);
       }
-      return new Promise<Response>(() => {});
+      return response;
     }
-
-    onTokenRefreshed();
-
     return fetch(url, {
       ...options,
       credentials: "include",
@@ -145,7 +143,7 @@ class ApiClient {
     const url = this.buildUrl(path, params);
     const response = await this.fetchWithRetry(url, {
       method: "GET",
-      headers: buildJsonHeaders(),
+      headers: buildJsonHeaders(shouldIncludeExecutionContext(path)),
     });
     return this.handleResponse<T>(response);
   }
@@ -153,8 +151,20 @@ class ApiClient {
   async post<T>(path: string, body?: unknown): Promise<T> {
     const response = await this.fetchWithRetry(this.buildUrl(path), {
       method: "POST",
-      headers: buildJsonHeaders(),
+      headers: buildJsonHeaders(shouldIncludeExecutionContext(path)),
       body: body ? JSON.stringify(body) : undefined,
+    });
+    return this.handleResponse<T>(response);
+  }
+
+  async postIdempotent<T>(path: string, body: unknown, idempotencyKey: string): Promise<T> {
+    const response = await this.fetchWithRetry(this.buildUrl(path), {
+      method: "POST",
+      headers: {
+        ...buildJsonHeaders(shouldIncludeExecutionContext(path)),
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify(body),
     });
     return this.handleResponse<T>(response);
   }
@@ -162,7 +172,7 @@ class ApiClient {
   async put<T>(path: string, body?: unknown): Promise<T> {
     const response = await this.fetchWithRetry(this.buildUrl(path), {
       method: "PUT",
-      headers: buildJsonHeaders(),
+      headers: buildJsonHeaders(shouldIncludeExecutionContext(path)),
       body: body ? JSON.stringify(body) : undefined,
     });
     return this.handleResponse<T>(response);
@@ -171,7 +181,7 @@ class ApiClient {
   async patch<T>(path: string, body?: unknown): Promise<T> {
     const response = await this.fetchWithRetry(this.buildUrl(path), {
       method: "PATCH",
-      headers: buildJsonHeaders(),
+      headers: buildJsonHeaders(shouldIncludeExecutionContext(path)),
       body: body ? JSON.stringify(body) : undefined,
     });
     return this.handleResponse<T>(response);
@@ -180,7 +190,7 @@ class ApiClient {
   async delete<T = void>(path: string): Promise<T> {
     const response = await this.fetchWithRetry(this.buildUrl(path), {
       method: "DELETE",
-      headers: buildJsonHeaders(),
+      headers: buildJsonHeaders(shouldIncludeExecutionContext(path)),
     });
     return this.handleResponse<T>(response);
   }

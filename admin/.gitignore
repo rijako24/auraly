@@ -3,6 +3,7 @@
 /.pnp
 .pnp.js
 
+/.pos-test-dist/
 # testing
 /coverage
 

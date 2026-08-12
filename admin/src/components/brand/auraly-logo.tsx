@@ -1,5 +1,7 @@
 "use client";
 
+import Image from "next/image";
+
 import { cn } from "@/lib/utils";
 
 type AuralyLogoProps = {
@@ -15,8 +17,10 @@ export function AuralyLogo({
 }: AuralyLogoProps) {
   return (
     <span className={cn("flex items-center gap-2.5", className)} aria-label="AURALY">
-      <img
-        src="/brand/auraly-mark.png?v=2"
+      <Image
+        src="/brand/auraly-mark.png"
+        width={40}
+        height={32}
         alt=""
         aria-hidden="true"
         className={cn("h-8 w-10 shrink-0 object-contain", markClassName)}

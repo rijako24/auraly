@@ -75,7 +75,7 @@ export default function LeadsPage() {
     pageSize,
     search: search || undefined,
   });
-  const leads = data?.items ?? [];
+  const leads = useMemo(() => data?.items ?? [], [data?.items]);
 
   const stats = useMemo(() => ({
     total: data?.totalCount ?? leads.length,

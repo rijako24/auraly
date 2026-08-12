@@ -112,7 +112,6 @@ public class OrderAdminService : IOrderAdminService
             order.Currency,
             order.Subtotal,
             order.DiscountTotal,
-            order.TaxTotal,
             order.Total,
             order.CustomerConfirmed,
             order.ExternalOrderId,
@@ -137,7 +136,6 @@ public class OrderAdminService : IOrderAdminService
             item.Quantity,
             item.UnitPrice,
             item.DiscountAmount,
-            item.TaxAmount,
             item.LineTotal,
             item.CreatedAt,
             item.UpdatedAt);

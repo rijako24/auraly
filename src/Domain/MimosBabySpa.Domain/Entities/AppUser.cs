@@ -9,6 +9,10 @@ public class AppUser
     public string Email { get; set; } = string.Empty;
     public string NormalizedEmail { get; set; } = string.Empty;
     public string? PasswordHash { get; set; }
+    public byte[]? PosOfflinePasswordSalt { get; set; }
+    public byte[]? PosOfflinePasswordHash { get; set; }
+    public int? PosOfflinePasswordIterations { get; set; }
+    public DateTimeOffset? PosOfflinePasswordChangedAt { get; set; }
     public string FirstName { get; set; } = string.Empty;
     public string LastName { get; set; } = string.Empty;
     public string? PhoneNumber { get; set; }

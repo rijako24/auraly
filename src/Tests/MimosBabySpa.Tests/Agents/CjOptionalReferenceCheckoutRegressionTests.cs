@@ -162,7 +162,7 @@ public sealed class CjOptionalReferenceCheckoutRegressionTests
         var path = Path.Combine(
             FindSolutionRoot(),
             "database",
-            "MimosBabySpa.Database",
+            "Auraly.Database",
             "Scripts",
             "Seeds",
             "SeedCJDistribuciones.sql");

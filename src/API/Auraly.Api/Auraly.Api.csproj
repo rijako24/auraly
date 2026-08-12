@@ -1,0 +1,67 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Azure.Identity" Version="1.17.2" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.AzureAppConfiguration" Version="8.5.0" />
+    <PackageReference Include="Azure.Messaging.WebPubSub" Version="1.6.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.12" />
+    <PackageReference Include="QRCoder" Version="1.8.0" />
+    <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.19.0" />
+    <PackageReference Include="RabbitMQ.Client" Version="7.2.1" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.12" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Application\MimosBabySpa.Application\MimosBabySpa.Application.csproj" />
+    <ProjectReference Include="..\..\Infrastructure\MimosBabySpa.Infrastructure\MimosBabySpa.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\Auraly.BuildingBlocks.Infrastructure\Auraly.BuildingBlocks.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Infrastructure\Auraly.Infrastructure.Persistence\Auraly.Infrastructure.Persistence.csproj" />
+    <ProjectReference Include="..\..\Modules\Authentication\Auraly.Application.Authentication\Auraly.Application.Authentication.csproj" />
+    <ProjectReference Include="..\..\Modules\Authentication\Auraly.Contracts.Authentication\Auraly.Contracts.Authentication.csproj" />
+    <ProjectReference Include="..\..\Modules\Catalog\Auraly.Application.Catalog\Auraly.Application.Catalog.csproj" />
+    <ProjectReference Include="..\..\Modules\Catalog\Auraly.Contracts.Catalog\Auraly.Contracts.Catalog.csproj" />
+    <ProjectReference Include="..\..\Modules\Authorization\Auraly.Application.Authorization\Auraly.Application.Authorization.csproj" />
+    <ProjectReference Include="..\..\Modules\Authorization\Auraly.Contracts.Authorization\Auraly.Contracts.Authorization.csproj" />
+    <ProjectReference Include="..\..\Modules\DocumentProcessing\Auraly.Application.DocumentProcessing\Auraly.Application.DocumentProcessing.csproj" />
+    <ProjectReference Include="..\..\Modules\Accounting\Auraly.Commerce.Accounting.Contracts\Auraly.Commerce.Accounting.Contracts.csproj" />
+    <ProjectReference Include="..\..\Modules\Accounting\Auraly.Commerce.Accounting.Application\Auraly.Commerce.Accounting.Application.csproj" />
+    <ProjectReference Include="..\..\Modules\Accounting\Auraly.Commerce.Accounting.Infrastructure\Auraly.Commerce.Accounting.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Modules\Fiscal\Auraly.Application.Fiscal\Auraly.Application.Fiscal.csproj" />
+    <ProjectReference Include="..\..\Modules\Fiscal\Auraly.Contracts.Fiscal\Auraly.Contracts.Fiscal.csproj" />
+    <ProjectReference Include="..\..\Modules\Fiscal\Auraly.Infrastructure.Fiscal\Auraly.Infrastructure.Fiscal.csproj" />
+    <ProjectReference Include="..\..\Modules\Sales\Auraly.Application.Sales\Auraly.Application.Sales.csproj" />
+    <ProjectReference Include="..\..\Modules\Sales\Auraly.Contracts.Sales\Auraly.Contracts.Sales.csproj" />
+    <ProjectReference Include="..\..\Modules\Parties\Auraly.Application.Parties\Auraly.Application.Parties.csproj" />
+    <ProjectReference Include="..\..\Modules\Parties\Auraly.Contracts.Parties\Auraly.Contracts.Parties.csproj" />
+    <ProjectReference Include="..\..\Modules\Organization\Auraly.Application.Organization\Auraly.Application.Organization.csproj" />
+    <ProjectReference Include="..\..\Modules\Organization\Auraly.Contracts.Organization\Auraly.Contracts.Organization.csproj" />
+
+
+    <ProjectReference Include="..\..\Modules\WorkSessions\Auraly.Application.WorkSessions\Auraly.Application.WorkSessions.csproj" />
+    <ProjectReference Include="..\..\Modules\WorkSessions\Auraly.Contracts.WorkSessions\Auraly.Contracts.WorkSessions.csproj" />
+    <ProjectReference Include="..\..\Modules\Orders\Auraly.Application.Orders\Auraly.Application.Orders.csproj" />
+    <ProjectReference Include="..\..\Modules\Orders\Auraly.Contracts.Orders\Auraly.Contracts.Orders.csproj" />
+    <ProjectReference Include="..\..\Modules\Inventory\Auraly.Contracts.Inventory\Auraly.Contracts.Inventory.csproj" />
+    <ProjectReference Include="..\..\Modules\Inventory\Auraly.Application.Inventory\Auraly.Application.Inventory.csproj" />
+    <ProjectReference Include="..\..\Modules\Purchasing\Auraly.Contracts.Purchasing\Auraly.Contracts.Purchasing.csproj" />
+    <ProjectReference Include="..\..\Modules\Purchasing\Auraly.Application.Purchasing\Auraly.Application.Purchasing.csproj" />
+    <ProjectReference Include="..\..\Modules\Payables\Auraly.Contracts.Payables\Auraly.Contracts.Payables.csproj" />
+    <ProjectReference Include="..\..\Modules\Payables\Auraly.Application.Payables\Auraly.Application.Payables.csproj" />
+    <ProjectReference Include="..\..\Modules\Pricing\Auraly.Contracts.Pricing\Auraly.Contracts.Pricing.csproj" />
+    <ProjectReference Include="..\..\Modules\Pricing\Auraly.Application.Pricing\Auraly.Application.Pricing.csproj" />
+    <ProjectReference Include="..\..\Modules\Pricing\Auraly.Infrastructure.Pricing\Auraly.Infrastructure.Pricing.csproj" />
+    <ProjectReference Include="..\..\Modules\Routes\Auraly.Contracts.Routes\Auraly.Contracts.Routes.csproj" />
+    <ProjectReference Include="..\..\Modules\Routes\Auraly.Domain.Routes\Auraly.Domain.Routes.csproj" />
+    <ProjectReference Include="..\..\Modules\Routes\Auraly.Application.Routes\Auraly.Application.Routes.csproj" />
+    <ProjectReference Include="..\..\Modules\Routes\Auraly.Infrastructure.Routes\Auraly.Infrastructure.Routes.csproj" />
+    <ProjectReference Include="..\..\Modules\Returns\Auraly.Contracts.Returns\Auraly.Contracts.Returns.csproj" />
+    <ProjectReference Include="..\..\Modules\Returns\Auraly.Application.Returns\Auraly.Application.Returns.csproj" />
+    <ProjectReference Include="..\..\Modules\Receivables\Auraly.Contracts.Receivables\Auraly.Contracts.Receivables.csproj" />
+    <ProjectReference Include="..\..\Modules\Receivables\Auraly.Application.Receivables\Auraly.Application.Receivables.csproj" />
+  </ItemGroup>
+</Project>

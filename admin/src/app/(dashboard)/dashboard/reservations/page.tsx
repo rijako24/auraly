@@ -25,7 +25,7 @@ export default function ReservationsPage() {
   const [startDate, setStartDate] = useState(todayInputValue);
   const [endDate, setEndDate] = useState(todayInputValue);
   const { data, isLoading, isError, refetch } = useReservations({ startDate: `${startDate}T00:00:00`, endDate: `${endDate}T23:59:59`, page: 1, pageSize: 100 });
-  const reservations = data?.items ?? [];
+  const reservations = useMemo(() => data?.items ?? [], [data?.items]);
 
   const stats = useMemo(() => ({
     total: reservations.length,

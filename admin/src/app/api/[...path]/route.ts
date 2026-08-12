@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { AUTH_COOKIE_NAMES } from "@/lib/auth-cookies";
-import { getBackendUrl } from "@/lib/backend-url";
+import { buildBackendProxyHeaders } from "@/lib/backend-proxy-headers";
+import { getBackendRequestUrl } from "@/lib/backend-request-url";
 
 export async function GET(
   request: NextRequest,
@@ -49,17 +50,10 @@ async function proxy(
 ) {
   const path = pathSegments.join("/");
   const searchParams = request.nextUrl.searchParams.toString();
-  const backendUrl = getBackendUrl();
-  const url = `${backendUrl}/${path}${searchParams ? `?${searchParams}` : ""}`;
+  const url = getBackendRequestUrl(path, searchParams);
 
   const accessToken = request.cookies.get(AUTH_COOKIE_NAMES.accessToken)?.value;
-  const businessId = request.headers.get("X-Business-Id");
-
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(accessToken && { Authorization: `Bearer ${accessToken}` }),
-    ...(businessId && { "X-Business-Id": businessId }),
-  };
+  const headers = buildBackendProxyHeaders(request.headers, accessToken);
 
   let body: string | undefined;
   if (method !== "GET") {

@@ -1,8 +1,13 @@
 "use client";
 
-import { Loader2, SearchCheck, Tags } from "lucide-react";
+import { Loader2, Plus, SearchCheck, Tags } from "lucide-react";
+import { forwardRef, useCallback, useImperativeHandle, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { useAddProductAlias } from "@/hooks/use-products";
+import { toast } from "sonner";
 import {
   ProductAliasKind,
   ProductAliasResolutionMode,
@@ -73,19 +78,40 @@ function ConfiguredAliasCard({ alias }: { alias: ProductAlias }) {
   );
 }
 
+export interface ProductRecognitionSectionsHandle { save: () => Promise<void> }
+
 interface ProductRecognitionSectionsProps {
   aliases: ProductAlias[];
   searchTerms: string[];
   isLoading: boolean;
   isError: boolean;
+  productId?: string;
+  editable?: boolean;
 }
 
-export function ProductRecognitionSections({
+export const ProductRecognitionSections = forwardRef<ProductRecognitionSectionsHandle, ProductRecognitionSectionsProps>(function ProductRecognitionSections({
   aliases,
   searchTerms,
   isLoading,
   isError,
-}: ProductRecognitionSectionsProps) {
+  productId,
+  editable = false,
+}, ref) {
+  const addAlias = useAddProductAlias();
+  const [alias, setAlias] = useState("");
+  const submitAlias = useCallback(async () => {
+    const value = alias.trim();
+    if (!productId || !value) return;
+    try {
+      const result = await addAlias.mutateAsync({ productId, alias: value });
+      if (result.errors.length) throw new Error(result.errors[0].message);
+      setAlias("");
+      toast.success("Alias agregado al producto.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No fue posible agregar el alias.");
+    }
+  }, [addAlias, alias, productId]);
+  useImperativeHandle(ref, () => ({ save: submitAlias }), [submitAlias]);
   const configuredAliases = aliases.filter((alias) => alias.source !== ProductAliasSource.Learned);
 
   return (
@@ -98,6 +124,7 @@ export function ProductRecognitionSections({
             <p className="text-xs text-muted-foreground">Expresiones manuales o importadas reconocidas como este producto.</p>
           </div>
         </div>
+        {editable && productId && <div className="rounded-xl border bg-muted/20 p-3"><p className="mb-2 text-xs text-muted-foreground">Escribe un alias. Se guardará junto con el producto.</p><Input value={alias} onChange={(event) => setAlias(event.target.value)} placeholder="Nueva forma de encontrar este producto" /></div>}
         {isLoading ? (
           <div className="flex items-center gap-2 rounded-xl border p-4 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" /> Cargando configuración...
@@ -125,6 +152,7 @@ export function ProductRecognitionSections({
             </p>
           </div>
         </div>
+
         {isLoading ? (
           <div className="h-16 animate-pulse rounded-xl border bg-muted/30" />
         ) : isError ? (
@@ -141,4 +169,4 @@ export function ProductRecognitionSections({
       </section>
     </>
   );
-}
+});

@@ -11,7 +11,7 @@ export async function POST(
   const businessHeader = request.headers.get("X-Business-Id") ?? businessId;
   const formData = await request.formData();
 
-  const url = `${getBackendUrl()}/businesses/${businessId}/catalog/extract`;
+  const url = `${getBackendUrl()}/v1/businesses/${businessId}/catalog/extract`;
 
   try {
     const res = await fetch(url, {

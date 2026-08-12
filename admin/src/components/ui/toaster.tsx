@@ -14,7 +14,7 @@ const Toaster = ({ className, toastOptions, ...props }: ToasterProps) => {
         ...toastOptions,
         classNames: {
           toast:
-            "group toast group-[.toaster]:bg-background group-[.toaster]:text-foreground group-[.toaster]:border-border group-[.toaster]:shadow-lg",
+            "pointer-events-none group toast group-[.toaster]:bg-background group-[.toaster]:text-foreground group-[.toaster]:border-border group-[.toaster]:shadow-lg [&_[data-button]]:pointer-events-auto [&_[data-close-button]]:pointer-events-auto",
           description: "group-[.toast]:text-muted-foreground",
           actionButton:
             "group-[.toast]:bg-primary group-[.toast]:text-primary-foreground",

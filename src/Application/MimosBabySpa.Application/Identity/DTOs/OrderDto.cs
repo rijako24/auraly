@@ -19,7 +19,6 @@ public record OrderDto(
     string Currency,
     decimal Subtotal,
     decimal DiscountTotal,
-    decimal TaxTotal,
     decimal Total,
     bool CustomerConfirmed,
     string? ExternalOrderId,
@@ -43,7 +42,6 @@ public record OrderItemDto(
     decimal Quantity,
     decimal UnitPrice,
     decimal DiscountAmount,
-    decimal TaxAmount,
     decimal LineTotal,
     DateTime CreatedAt,
     DateTime? UpdatedAt);

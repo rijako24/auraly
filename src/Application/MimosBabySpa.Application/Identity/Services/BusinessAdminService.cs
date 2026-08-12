@@ -14,17 +14,20 @@ public class BusinessAdminService : IBusinessAdminService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IAuditService _auditService;
+    private readonly IBusinessDefaultsProvisioner _defaultsProvisioner;
     private readonly ICorrelationIdProvider _correlationIdProvider;
     private readonly ILogger<BusinessAdminService> _logger;
 
     public BusinessAdminService(
         IUnitOfWork unitOfWork,
         IAuditService auditService,
+        IBusinessDefaultsProvisioner defaultsProvisioner,
         ICorrelationIdProvider correlationIdProvider,
         ILogger<BusinessAdminService> logger)
     {
         _unitOfWork = unitOfWork;
         _auditService = auditService;
+        _defaultsProvisioner = defaultsProvisioner;
         _correlationIdProvider = correlationIdProvider;
         _logger = logger;
     }
@@ -79,8 +82,16 @@ public class BusinessAdminService : IBusinessAdminService
             CreatedAt = DateTime.UtcNow
         };
 
-        await _unitOfWork.Businesses.CreateAsync(business);
-        await _unitOfWork.SaveChangesAsync(ct);
+        await _unitOfWork.ExecuteInTransactionAsync(async () =>
+        {
+            await _unitOfWork.Businesses.CreateAsync(business);
+            await _unitOfWork.SaveChangesAsync(ct);
+            await _defaultsProvisioner.ProvisionWarehousesAsync(
+                tenantId,
+                business.BusinessId,
+                "LatestReceiptCost",
+                ct);
+        }, ct);
 
         await _auditService.LogAsync("Create", "Business", business.BusinessId.ToString(), null, business, ct);
 

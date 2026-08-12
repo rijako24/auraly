@@ -11,8 +11,8 @@ export const servicesApi = {
     ),
   listByBusiness: (businessId: string, params?: Partial<PagedRequest>) =>
     apiClient.get<PagedResponse<Service>>(
-      `/businesses/${businessId}/services`,
-      withPagedDefaults(params)
+      "/services",
+      withPagedDefaults({ ...params, businessId })
     ),
   getById: (id: string) => apiClient.get<Service>(`/services/${id}`),
   create: (data: Partial<Service>) =>
@@ -32,8 +32,8 @@ export const servicesApi = {
     params?: Partial<PagedRequest>
   ) =>
     apiClient.get<PagedResponse<ServiceCategory>>(
-      `/businesses/${businessId}/service-categories`,
-      withPagedDefaults(params)
+      "/service-categories",
+      withPagedDefaults({ ...params, businessId })
     ),
   getCategoryById: (id: string) =>
     apiClient.get<ServiceCategory>(`/service-categories/${id}`),

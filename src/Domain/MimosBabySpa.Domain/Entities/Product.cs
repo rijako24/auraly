@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations.Schema;
 using MimosBabySpa.Domain.Enums;
 
 namespace MimosBabySpa.Domain.Entities;
@@ -15,6 +16,10 @@ public class Product
     public string? Description { get; set; }
     public string? CategoryName { get; set; }
     public decimal UnitPrice { get; set; }
+
+    /// <summary>Set by the canonical ProductPrices reader; never persisted on Products.</summary>
+    [NotMapped]
+    public bool HasPublishedPrice { get; set; }
     public string Currency { get; set; } = "COP";
     public bool ManageStock { get; set; }
     public decimal? StockQuantity { get; set; }

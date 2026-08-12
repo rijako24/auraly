@@ -1,3 +1,5 @@
+using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.BuildingBlocks.Infrastructure.Identifiers;
 using Microsoft.Azure.Functions.Worker;
 
 using Microsoft.EntityFrameworkCore;
@@ -101,6 +103,9 @@ var host = new HostBuilder()
             options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
 
         services.AddMemoryCache();
+        services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
+        services.AddExternalCustomerReconciliationMessaging(configuration);
 
         // Repositories
 

@@ -1,3 +1,4 @@
+using Auraly.Contracts.Authorization;
 using Microsoft.Extensions.Logging;
 using MimosBabySpa.Application.Auth.Interfaces;
 using MimosBabySpa.Application.Common.DTOs;
@@ -58,6 +59,8 @@ public class UserService : IUserService
         if (await _unitOfWork.AppUsers.ExistsWithEmailAsync(normalizedEmail, ct: ct))
             throw new ConflictException($"El email '{request.Email}' ya está registrado.");
 
+        var offlinePassword = PosOfflinePasswordHasher.Hash(
+            request.Password, DateTimeOffset.UtcNow);
         var user = new AppUser
         {
             UserId = Guid.NewGuid(),
@@ -67,6 +70,10 @@ public class UserService : IUserService
             Email = request.Email,
             NormalizedEmail = normalizedEmail,
             PasswordHash = _passwordHasher.Hash(request.Password),
+            PosOfflinePasswordSalt = offlinePassword.Salt,
+            PosOfflinePasswordHash = offlinePassword.Hash,
+            PosOfflinePasswordIterations = offlinePassword.Iterations,
+            PosOfflinePasswordChangedAt = offlinePassword.ChangedAt,
             FirstName = request.FirstName,
             LastName = request.LastName,
             PhoneNumber = request.PhoneNumber,

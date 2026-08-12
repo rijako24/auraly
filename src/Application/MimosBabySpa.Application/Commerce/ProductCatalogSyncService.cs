@@ -317,8 +317,6 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
                     Description = Clean(identityDescription),
                     ProductCategoryId = productCategory?.ProductCategoryId,
                     CategoryName = categoryName,
-                    UnitPrice = 0m,
-                    Currency = Clean(reference.Currency) ?? "COP",
                     ManageStock = false,
                     StockQuantity = null,
                     SearchIndexVersion = CurrentSearchIndexVersion,
@@ -336,14 +334,11 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
             var sku = Clean(reference.Sku) ?? externalId;
             var name = reference.Name.Trim();
             var description = Clean(identityDescription);
-            var currency = Clean(reference.Currency) ?? existing.Currency;
             var identityChanged = !EqualsText(existing.Sku, sku)
                 || !EqualsText(existing.Name, name)
                 || !EqualsText(existing.Description, description)
                 || existing.ProductCategoryId != productCategory?.ProductCategoryId
                 || !EqualsText(existing.CategoryName, categoryName)
-                || !EqualsText(existing.Currency, currency)
-                || existing.UnitPrice != 0m
                 || existing.ManageStock
                 || existing.StockQuantity.HasValue
                 || existing.IsActive != reference.IsActive
@@ -357,8 +352,6 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
             existing.Description = description;
             existing.ProductCategoryId = productCategory?.ProductCategoryId;
             existing.CategoryName = categoryName;
-            existing.UnitPrice = 0m;
-            existing.Currency = currency;
             existing.ManageStock = false;
             existing.StockQuantity = null;
             existing.IsActive = reference.IsActive;
@@ -518,4 +511,3 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
     }
 
 }
-

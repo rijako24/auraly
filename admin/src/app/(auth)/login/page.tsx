@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { User, Lock, Eye, EyeOff, AlertCircle } from "lucide-react";
 import { authApi } from "@/services/api/auth";
 import { useAuthStore } from "@/stores/auth-store";
+import { readEdgeTokenFromLaunch } from "@/services/pos/pos-edge-client";
 import type { ApiError } from "@/types/api";
 
 function LoginForm() {
@@ -27,7 +28,13 @@ function LoginForm() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isHydrated, setIsHydrated] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setIsHydrated(true);
+    readEdgeTokenFromLaunch();
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -79,7 +86,7 @@ function LoginForm() {
                 onChange={(e) => setUsername(e.target.value)}
                 required
                 autoComplete="username"
-                disabled={isLoading}
+                disabled={!isHydrated || isLoading}
               />
             </div>
           </div>
@@ -97,7 +104,7 @@ function LoginForm() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 autoComplete="current-password"
-                disabled={isLoading}
+                disabled={!isHydrated || isLoading}
               />
               <button
                 type="button"
@@ -122,7 +129,7 @@ function LoginForm() {
             </Link>
           </div>
 
-          <Button type="submit" className="w-full bg-[#151515] text-white hover:bg-black" disabled={isLoading}>
+          <Button type="submit" className="w-full bg-[#151515] text-white hover:bg-black" disabled={!isHydrated || isLoading}>
             {isLoading ? "Iniciando sesión..." : "Iniciar sesión"}
           </Button>
         </form>

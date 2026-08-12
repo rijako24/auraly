@@ -286,8 +286,7 @@ public sealed class XionCommerceAdapterTests
         {
             OrderId = Guid.NewGuid(),
             CustomerNameSnapshot = "Cliente",
-            Total = 19500,
-            TaxTotal = 0
+            Total = 19500
         };
         var item = new OrderItem
         {

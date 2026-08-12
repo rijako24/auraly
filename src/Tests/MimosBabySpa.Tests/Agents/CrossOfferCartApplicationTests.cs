@@ -85,6 +85,6 @@ public sealed class CrossOfferCartApplicationTests
         }
 
         private static OrderSnapshot Snapshot() =>
-            new(Guid.Empty, OrderStatus.Draft, "COP", 0, 0, 0, 0, []);
+            new(Guid.Empty, OrderStatus.Draft, "COP", 0, 0, 0, []);
     }
 }

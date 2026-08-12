@@ -976,7 +976,6 @@ public sealed class CjCompleteOrderFlowRegressionTests
                 "COP",
                 total,
                 0,
-                0,
                 total,
                 _items.ToList());
         }
@@ -1386,7 +1385,7 @@ public sealed class CjCompleteOrderFlowRegressionTests
         var path = Path.Combine(
             FindSolutionRoot(),
             "database",
-            "MimosBabySpa.Database",
+            "Auraly.Database",
             "Scripts",
             "Seeds",
             "SeedCJDistribuciones.sql");

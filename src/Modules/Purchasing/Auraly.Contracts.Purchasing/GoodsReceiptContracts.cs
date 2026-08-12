@@ -1,0 +1,241 @@
+using System.Text.Json;
+using Auraly.BuildingBlocks.Domain.Documents;
+
+namespace Auraly.Contracts.Purchasing;
+
+public static class PurchasingPermissionCodes
+{
+    public const string ReadGoodsReceipts = "purchasing.goods-receipts.read";
+    public const string CreateGoodsReceipts = "purchasing.goods-receipts.create";
+    public const string ConfirmGoodsReceipts = "purchasing.goods-receipts.confirm";
+    public const string ReadPurchaseReturns = "purchasing.purchase-returns.read";
+    public const string CreatePurchaseReturns = "purchasing.purchase-returns.create";
+    public const string ConfirmPurchaseReturns = "purchasing.purchase-returns.confirm";
+}
+
+public static class PurchasingDocumentTypes
+{
+    public const string GoodsReceipt = AuralyDocumentTypes.GoodsReceipt;
+    public const string PurchaseReturn = AuralyDocumentTypes.PurchaseReturn;
+}
+
+public static class PurchasingTaxTreatments
+{
+    public const string DeductibleInputVat = "DeductibleInputVat";
+    public const string CapitalizedCost = "CapitalizedCost";
+    public const string NotApplicable = "NotApplicable";
+}
+
+public sealed record GoodsReceiptLineRequest(
+    int LineNumber,
+    Guid ProductId,
+    string Description,
+    decimal Quantity,
+    decimal UnitCost,
+    decimal DiscountAmount,
+    string TaxCode,
+    decimal TaxRate,
+    string TaxTreatment,
+    string PresentationName = "Unidad",
+    decimal PresentationQuantity = 1,
+    decimal UnitsPerPresentation = 1);
+
+public sealed record ConfirmGoodsReceiptRequest(
+    Guid DocumentId,
+    Guid BusinessId,
+    Guid WarehouseId,
+    Guid SupplierId,
+    string? SupplierInvoiceNumber,
+    DateTimeOffset? SupplierInvoiceDate,
+    DateTimeOffset ReceivedAt,
+    bool CreatesPayable,
+    DateTimeOffset? DueDate,
+    string CurrencyCode,
+    string? Notes,
+    IReadOnlyCollection<GoodsReceiptLineRequest> Lines,
+    string? DraftConcurrencyToken = null);
+
+public sealed record GoodsReceiptLineSnapshot(
+    int LineNumber,
+    Guid ProductId,
+    string Description,
+    decimal Quantity,
+    decimal UnitCost,
+    decimal DiscountAmount,
+    string TaxCode,
+    decimal TaxRate,
+    string TaxTreatment,
+    decimal NetAmount,
+    decimal TaxAmount,
+    decimal LineTotal,
+    string PresentationName = "Unidad",
+    decimal PresentationQuantity = 1,
+    decimal UnitsPerPresentation = 1);
+
+public sealed record GoodsReceiptDocumentPayload(
+    Guid TenantId,
+    Guid BusinessId,
+    Guid DocumentId,
+    Guid WarehouseId,
+    Guid SupplierId,
+    Guid ConfirmedByUserId,
+    string DocumentNumber,
+    Guid DocumentSeriesId,
+    string DocumentPrefix,
+    string DocumentSeriesCode,
+    long DocumentConsecutive,
+    string? SupplierInvoiceNumber,
+    DateTimeOffset? SupplierInvoiceDate,
+    DateTimeOffset ReceivedAt,
+    bool CreatesPayable,
+    DateTimeOffset? DueDate,
+    string CurrencyCode,
+    string? Notes,
+    decimal NetAmount,
+    decimal TaxAmount,
+    decimal GrandTotal,
+    IReadOnlyList<GoodsReceiptLineSnapshot> Lines);
+
+public sealed record GoodsReceiptAcceptance(
+    Guid DocumentId,
+    Guid MovementId,
+    string DocumentNumber,
+    string Status,
+    long ProcessingSequence,
+    bool IdempotentReplay);
+
+public sealed record SaveGoodsReceiptDraftRequest(
+    Guid DraftId,
+    Guid BusinessId,
+    Guid? WarehouseId,
+    Guid? SupplierId,
+    string? SupplierInvoiceNumber,
+    DateTimeOffset? SupplierInvoiceDate,
+    DateTimeOffset ReceivedAt,
+    bool CreatesPayable,
+    DateTimeOffset? DueDate,
+    string CurrencyCode,
+    string? Notes,
+    IReadOnlyCollection<GoodsReceiptLineRequest> Lines,
+    string? ConcurrencyToken);
+
+public sealed record GoodsReceiptDraft(
+    Guid DraftId, Guid BusinessId, Guid? WarehouseId, Guid? SupplierId,
+    string? SupplierInvoiceNumber, DateTimeOffset? SupplierInvoiceDate,
+    DateTimeOffset ReceivedAt, bool CreatesPayable, DateTimeOffset? DueDate,
+    string CurrencyCode, string? Notes, decimal NetAmount, decimal TaxAmount,
+    decimal GrandTotal, IReadOnlyList<GoodsReceiptLineSnapshot> Lines,
+    DateTimeOffset UpdatedAt, string ConcurrencyToken);
+
+public sealed record GoodsReceiptListItem(
+    Guid DocumentId, string? DocumentNumber, string Status,
+    Guid? WarehouseId, string? WarehouseName, Guid? SupplierId, string? SupplierName,
+    string? SupplierInvoiceNumber, DateTimeOffset ReceivedAt,
+    decimal GrandTotal, DateTimeOffset UpdatedAt);
+
+public sealed record GoodsReceiptPage(
+    IReadOnlyList<GoodsReceiptListItem> Items, int Page, int PageSize,
+    int TotalCount, int TotalPages);
+
+public sealed record GoodsReceiptWorkspaceOptions(
+    IReadOnlyList<GoodsReceiptWarehouseOption> Warehouses,
+    IReadOnlyList<GoodsReceiptSupplierOption> Suppliers);
+
+public sealed record GoodsReceiptWarehouseOption(Guid WarehouseId, string Code, string Name);
+public sealed record GoodsReceiptSupplierOption(Guid SupplierId, string Identification, string Name);
+
+public sealed record GoodsReceiptProductOption(
+    Guid ProductId, string ProductCode, string? Reference, string Name,
+    string? SupplierProductCode, decimal? LatestUnitCost,
+    string TaxCode, decimal TaxRate, string TaxTreatment, IReadOnlyList<string> Barcodes, string BaseUnitCode,
+    bool IsAssociated, string PurchasePresentationName = "Unidad",
+    decimal UnitsPerPresentation = 1, bool IsPrimary = false);
+
+public sealed record AssociateGoodsReceiptProductRequest(
+    Guid SupplierId, Guid ProductId, string? SupplierProductCode, bool IsPrimary,
+    string PurchasePresentationName = "Unidad", decimal UnitsPerPresentation = 1);
+
+public sealed record GoodsReceiptProductPage(
+    IReadOnlyList<GoodsReceiptProductOption> Items, int Page, int PageSize,
+    int TotalCount, int TotalPages);
+
+public sealed record PurchasingUserIdentity(
+    Guid UserId,
+    Guid TenantId,
+    Guid BusinessId,
+    IReadOnlySet<string> Permissions);
+
+public static class GoodsReceiptContractSerializer
+{
+    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = false
+    };
+
+    public static string Serialize(GoodsReceiptDocumentPayload payload) =>
+        JsonSerializer.Serialize(payload, Options);
+
+    public static GoodsReceiptDocumentPayload Deserialize(string payload) =>
+        JsonSerializer.Deserialize<GoodsReceiptDocumentPayload>(payload, Options)
+        ?? throw new InvalidOperationException("The goods receipt payload is invalid.");
+}
+
+public sealed record PurchaseReturnLineRequest(int OriginalLineNumber, decimal Quantity);
+
+public sealed record ConfirmPurchaseReturnRequest(
+    Guid ReturnId, Guid BusinessId, Guid OriginalGoodsReceiptId,
+    DateTimeOffset ReturnedAt, string ReasonCode, string? Notes,
+    IReadOnlyCollection<PurchaseReturnLineRequest> Lines);
+
+public sealed record PurchaseReturnLineSnapshot(
+    int LineNumber, int OriginalLineNumber, Guid ProductId, string Description,
+    decimal Quantity, decimal UnitCost, decimal DiscountAmount, string TaxCode,
+    decimal TaxRate, string TaxTreatment, decimal NetAmount, decimal TaxAmount,
+    decimal LineTotal, decimal RecognizedUnitCost);
+
+public sealed record PurchaseReturnDocumentPayload(
+    Guid TenantId, Guid BusinessId, Guid ReturnId, Guid OriginalGoodsReceiptId,
+    Guid WarehouseId, Guid SupplierId, Guid ConfirmedByUserId,
+    string DocumentNumber, Guid DocumentSeriesId, string DocumentPrefix,
+    string DocumentSeriesCode, long DocumentConsecutive, DateTimeOffset ReturnedAt,
+    string ReasonCode, string? Notes, string CurrencyCode, decimal NetAmount,
+    decimal TaxAmount, decimal TotalAmount, IReadOnlyList<PurchaseReturnLineSnapshot> Lines);
+
+public sealed record PurchaseReturnAcceptance(
+    Guid ReturnId, Guid MovementId, string DocumentNumber, string Status,
+    long ProcessingSequence, bool IdempotentReplay);
+
+public sealed record ReturnableGoodsReceiptLine(
+    int OriginalLineNumber, Guid ProductId, string Description,
+    decimal ReceivedQuantity, decimal ReturnedQuantity, decimal AvailableQuantity,
+    decimal UnitCost, decimal NetAmount, decimal TaxAmount, decimal LineTotal);
+
+public sealed record ReturnableGoodsReceipt(
+    Guid GoodsReceiptId, string DocumentNumber, Guid WarehouseId, string WarehouseName,
+    Guid SupplierId, string SupplierName, string? SupplierInvoiceNumber,
+    DateTimeOffset ReceivedAt, string CurrencyCode, decimal GrandTotal,
+    IReadOnlyList<ReturnableGoodsReceiptLine> Lines);
+
+public sealed record ReturnableGoodsReceiptListItem(
+    Guid GoodsReceiptId, string DocumentNumber, string SupplierName, string WarehouseName,
+    string? SupplierInvoiceNumber, DateTimeOffset ReceivedAt, decimal GrandTotal,
+    decimal ReturnedTotal, bool HasAvailableQuantity);
+
+public sealed record ReturnableGoodsReceiptPage(
+    IReadOnlyList<ReturnableGoodsReceiptListItem> Items, int Page, int PageSize,
+    int TotalCount, int TotalPages);
+
+public static class PurchaseReturnContractSerializer
+{
+    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = false
+    };
+
+    public static string Serialize(PurchaseReturnDocumentPayload payload) =>
+        JsonSerializer.Serialize(payload, Options);
+
+    public static PurchaseReturnDocumentPayload Deserialize(string payload) =>
+        JsonSerializer.Deserialize<PurchaseReturnDocumentPayload>(payload, Options)
+        ?? throw new InvalidOperationException("The purchase return payload is invalid.");
+}

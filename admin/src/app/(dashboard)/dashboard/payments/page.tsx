@@ -50,7 +50,7 @@ export default function PaymentsPage() {
     pageSize,
     search: search || undefined,
   });
-  const payments = data?.items ?? [];
+  const payments = useMemo(() => data?.items ?? [], [data?.items]);
 
   const { totalRevenue, confirmedCount, pendingCount, failedCount } = useMemo(() => {
     const confirmed = payments.filter((p) => p.status === PaymentTransactionStatus.Confirmed);

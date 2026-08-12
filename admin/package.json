@@ -6,10 +6,16 @@
     "node": ">=20.19.0 <21"
   },
   "scripts": {
+    "check:encoding": "node scripts/check-text-encoding.mjs",
+    "prebuild": "npm run check:encoding",
     "dev": "next dev",
+    "dev:pos": "next dev --hostname 127.0.0.1 --port 47830",
+    "test:pos": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/app/(pos)/pos/pos-payment-settlement.test.js\" \".pos-test-dist/app/(pos)/pos/pos-money-input.test.js\" \".pos-test-dist/app/(pos)/pos/pos-discount-calculation.test.js\" \".pos-test-dist/app/(pos)/pos/pos-retail-price.test.js\" \".pos-test-dist/components/returns/sales-return-calculation.test.js\" \".pos-test-dist/lib/auth-client.test.js\" \".pos-test-dist/lib/auth-cookies.test.js\" \".pos-test-dist/lib/backend-proxy-headers.test.js\" \".pos-test-dist/lib/backend-request-url.test.js\" \".pos-test-dist/lib/login-redirect.test.js\" \".pos-test-dist/lib/execution-context-selection.test.js\" \".pos-test-dist/lib/api-execution-context.test.js\" \".pos-test-dist/lib/product-pricing-calculator.test.js\" \".pos-test-dist/lib/fiscal-resolution-form-state.test.js\" \".pos-test-dist/lib/goods-receipt-calculator.test.js\" \".pos-test-dist/services/pos/pos-workspace-selection.test.js\"",
     "build": "next build",
-    "start": "next start",
-    "lint": "eslint ."
+    "postbuild": "node scripts/prepare-standalone.mjs",
+    "start": "node .next/standalone/server.js",
+    "lint": "eslint .",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
@@ -53,6 +59,7 @@
     "zustand": "^4.5.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/typography": "^0.5.15",
     "@types/node": "^20.11.0",
     "@types/react": "19.2.18",

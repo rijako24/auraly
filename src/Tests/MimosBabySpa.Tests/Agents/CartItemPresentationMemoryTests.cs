@@ -106,5 +106,5 @@ public sealed class CartItemPresentationMemoryTests
     };
 
     private static OrderSnapshot Snapshot(params OrderItemSnapshot[] items) =>
-        new(Guid.NewGuid(), OrderStatus.Draft, "COP", 20m, 0m, 0m, 20m, items);
+        new(Guid.NewGuid(), OrderStatus.Draft, "COP", 20m, 0m, 20m, items);
 }

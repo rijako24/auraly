@@ -8,6 +8,15 @@ on:
       - "admin/**"
       - ".github/workflows/azure-static-web-apps-auraly.yml"
   workflow_dispatch:
+    inputs:
+      environment:
+        description: "Ambiente que se publicará manualmente"
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - prod
 
 permissions:
   contents: read
@@ -18,6 +27,7 @@ concurrency:
 
 jobs:
   deploy_dev:
+    if: github.event_name == 'push' || inputs.environment == 'dev'
     runs-on: ubuntu-latest
     name: Deploy DEV
     steps:
@@ -33,6 +43,7 @@ jobs:
           output_location: ""
 
   deploy_prod:
+    if: github.event_name == 'workflow_dispatch' && inputs.environment == 'prod'
     runs-on: ubuntu-latest
     name: Deploy PROD
     steps:

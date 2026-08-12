@@ -1005,7 +1005,6 @@ public sealed class ApplyOrderChangesOperationTests
                 "COP",
                 items.Sum(item => item.LineTotal),
                 0m,
-                0m,
                 items.Sum(item => item.LineTotal),
                 items);
     }
@@ -1030,7 +1029,7 @@ public sealed class ApplyOrderChangesOperationTests
         }
 
         private static OrderSnapshot Snapshot() =>
-            new(Guid.Empty, OrderStatus.Draft, "COP", 0, 0, 0, 0, []);
+            new(Guid.Empty, OrderStatus.Draft, "COP", 0, 0, 0, []);
     }
 
     private sealed class IdempotentStubStore : ICartMutationStore
@@ -1062,7 +1061,7 @@ public sealed class ApplyOrderChangesOperationTests
         }
 
         private static OrderSnapshot Snapshot() =>
-            new(Guid.Empty, OrderStatus.Draft, "COP", 0, 0, 0, 0, []);
+            new(Guid.Empty, OrderStatus.Draft, "COP", 0, 0, 0, []);
     }
 
     private sealed class InMemoryFactsService : IConversationFactsService

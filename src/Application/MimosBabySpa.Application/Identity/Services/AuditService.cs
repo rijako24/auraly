@@ -34,7 +34,7 @@ public class AuditService : IAuditService
             UserId = _tenantContext.UserId,
             TenantId = _tenantContext.TenantId,
             BusinessId = _tenantContext.BusinessId,
-            Action = action,
+            Action = action.Length <= 300 ? action : action[..300],
             EntityType = entityType,
             EntityId = entityId,
             OldValues = oldValues is not null ? JsonSerializer.Serialize(oldValues) : null,

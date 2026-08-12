@@ -21,39 +21,39 @@ public sealed partial class ProductRepository : IProductRepository
         bool includeInactive = false)
     {
         limit = Math.Clamp(limit, 1, 50);
-        var products = _context.Products
-            .AsNoTracking()
-            .Where(p => p.BusinessId == businessId);
-
+        var now = DateTimeOffset.UtcNow;
+        var products = _context.Products.AsNoTracking().Where(product =>
+            product.BusinessId == businessId
+            && _context.PublishedProductPrices.Any(price =>
+                price.BusinessId == businessId
+                && price.ProductId == product.ProductId
+                && price.IsActive
+                && price.ValidFrom <= now
+                && (price.ValidUntil == null || price.ValidUntil > now)));
         if (!includeInactive)
-            products = products.Where(p => p.IsActive);
-
+            products = products.Where(product => product.IsActive);
         if (!string.IsNullOrWhiteSpace(category))
         {
             foreach (var term in CatalogSearchText.GetSearchTerms(category))
             {
                 var searchTerm = term;
-                products = products.Where(p => p.CategoryName != null && p.CategoryName.Contains(searchTerm));
+                products = products.Where(product => product.CategoryName != null && product.CategoryName.Contains(searchTerm));
             }
         }
-
         if (!string.IsNullOrWhiteSpace(query))
         {
             foreach (var term in CatalogSearchText.GetSearchTerms(query))
             {
                 var searchTerm = term;
-                products = products.Where(p =>
-                    p.Name.Contains(searchTerm) ||
-                    (p.Sku != null && p.Sku.Contains(searchTerm)) ||
-                    (p.Description != null && p.Description.Contains(searchTerm)) ||
-                    (p.CategoryName != null && p.CategoryName.Contains(searchTerm)));
+                products = products.Where(product => product.Name.Contains(searchTerm)
+                    || product.Sku != null && product.Sku.Contains(searchTerm)
+                    || product.Description != null && product.Description.Contains(searchTerm)
+                    || product.CategoryName != null && product.CategoryName.Contains(searchTerm));
             }
         }
-
-        return await products
-            .OrderBy(p => p.Name)
-            .Take(limit)
-            .ToListAsync(ct);
+        var items = await products.OrderBy(product => product.Name).Take(limit).ToListAsync(ct);
+        await ApplyPublishedPricesAsync(items, businessId, ct);
+        return items.Where(product => product.HasPublishedPrice).ToList();
     }
 
     public async Task<(IReadOnlyList<Product> Items, int TotalCount)> SearchPageAsync(
@@ -67,45 +67,42 @@ public sealed partial class ProductRepository : IProductRepository
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 50);
-        var products = _context.Products
-            .AsNoTracking()
-            .Where(product => product.BusinessId == businessId);
-
+        var now = DateTimeOffset.UtcNow;
+        var products = _context.Products.AsNoTracking().Where(product =>
+            product.BusinessId == businessId
+            && _context.PublishedProductPrices.Any(price =>
+                price.BusinessId == businessId
+                && price.ProductId == product.ProductId
+                && price.IsActive
+                && price.ValidFrom <= now
+                && (price.ValidUntil == null || price.ValidUntil > now)));
         if (!includeInactive)
             products = products.Where(product => product.IsActive);
-
         if (!string.IsNullOrWhiteSpace(category))
         {
             foreach (var term in CatalogSearchText.GetSearchTerms(category))
             {
                 var searchTerm = term;
-                products = products.Where(product =>
-                    product.CategoryName != null && product.CategoryName.Contains(searchTerm));
+                products = products.Where(product => product.CategoryName != null && product.CategoryName.Contains(searchTerm));
             }
         }
-
         if (!string.IsNullOrWhiteSpace(query))
         {
             foreach (var term in CatalogSearchText.GetSearchTerms(query))
             {
                 var searchTerm = term;
-                products = products.Where(product =>
-                    product.Name.Contains(searchTerm)
+                products = products.Where(product => product.Name.Contains(searchTerm)
                     || product.Sku != null && product.Sku.Contains(searchTerm)
                     || product.Description != null && product.Description.Contains(searchTerm)
                     || product.CategoryName != null && product.CategoryName.Contains(searchTerm));
             }
         }
-
         var totalCount = await products.CountAsync(ct);
-        var items = await products
-            .OrderBy(product => product.Name)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .ToListAsync(ct);
-        return (items, totalCount);
-
+        var items = await products.OrderBy(product => product.Name).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+        await ApplyPublishedPricesAsync(items, businessId, ct);
+        return (items.Where(product => product.HasPublishedPrice).ToList(), totalCount);
     }
+
     public async Task<(IReadOnlyList<Product> Items, int TotalCount)> GetPagedByBusinessIdAsync(
         Guid businessId,
         int page,
@@ -116,55 +113,76 @@ public sealed partial class ProductRepository : IProductRepository
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 100);
-        var query = _context.Products
-            .AsNoTracking()
-            .Where(p => p.BusinessId == businessId);
-
+        var query = _context.Products.AsNoTracking().Where(product => product.BusinessId == businessId);
         if (!includeInactive)
-            query = query.Where(p => p.IsActive);
-
+            query = query.Where(product => product.IsActive);
         if (!string.IsNullOrWhiteSpace(search))
         {
             foreach (var term in CatalogSearchText.GetSearchTerms(search))
             {
                 var searchTerm = term;
-                query = query.Where(p =>
-                    p.Name.Contains(searchTerm) ||
-                    (p.Sku != null && p.Sku.Contains(searchTerm)) ||
-                    (p.Description != null && p.Description.Contains(searchTerm)) ||
-                    (p.CategoryName != null && p.CategoryName.Contains(searchTerm)));
+                query = query.Where(product => EF.Functions.Collate(product.Name, "Latin1_General_100_CI_AI").Contains(searchTerm)
+                    || product.Sku != null && EF.Functions.Collate(product.Sku, "Latin1_General_100_CI_AI").Contains(searchTerm)
+                    || product.Description != null && EF.Functions.Collate(product.Description, "Latin1_General_100_CI_AI").Contains(searchTerm)
+                    || product.CategoryName != null && EF.Functions.Collate(product.CategoryName, "Latin1_General_100_CI_AI").Contains(searchTerm));
             }
         }
-
         var totalCount = await query.CountAsync(ct);
-        var items = await query
-            .OrderBy(p => p.Name)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .ToListAsync(ct);
-
+        var items = await query.OrderBy(product => product.Name).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+        await ApplyPublishedPricesAsync(items, businessId, ct);
         return (items, totalCount);
     }
 
-    public Task<Product?> GetByIdAsync(Guid businessId, Guid productId, CancellationToken ct = default) =>
-        _context.Products.FirstOrDefaultAsync(p => p.BusinessId == businessId && p.ProductId == productId, ct);
+    public async Task<Product?> GetByIdAsync(Guid businessId, Guid productId, CancellationToken ct = default)
+    {
+        var product = await _context.Products.AsNoTracking().FirstOrDefaultAsync(product => product.BusinessId == businessId && product.ProductId == productId, ct);
+        if (product is not null)
+            await ApplyPublishedPricesAsync([product], businessId, ct);
+        return product;
+    }
 
-    public Task<Product?> GetByExternalIdAsync(Guid businessId, Guid integrationConnectionId, string externalProductId, CancellationToken ct = default) =>
-        _context.Products.FirstOrDefaultAsync(p =>
-            p.BusinessId == businessId &&
-            p.IntegrationConnectionId == integrationConnectionId &&
-            p.ExternalProductId == externalProductId,
-            ct);
+    public async Task<Product?> GetByExternalIdAsync(Guid businessId, Guid integrationConnectionId, string externalProductId, CancellationToken ct = default)
+    {
+        var product = await _context.Products.AsNoTracking().FirstOrDefaultAsync(product =>
+            product.BusinessId == businessId && product.IntegrationConnectionId == integrationConnectionId && product.ExternalProductId == externalProductId, ct);
+        if (product is not null)
+            await ApplyPublishedPricesAsync([product], businessId, ct);
+        return product;
+    }
 
     public Task<Product> CreateAsync(Product product, CancellationToken ct = default)
     {
+        var amount = product.UnitPrice;
+        var currency = product.Currency;
+        product.UnitPrice = 0m;
+        product.Currency = "COP";
         _context.Products.Add(product);
+        AddInitialPublishedPrice(product, amount, currency, DateTimeOffset.UtcNow);
         return Task.FromResult(product);
     }
 
-    public Task<Product> UpdateAsync(Product product, CancellationToken ct = default)
+    public async Task UpdateCategoryNameAsync(
+        Guid businessId,
+        Guid productCategoryId,
+        string categoryName,
+        CancellationToken ct = default)
     {
+        var products = await _context.Products
+            .Where(product => product.BusinessId == businessId
+                && product.ProductCategoryId == productCategoryId)
+            .ToListAsync(ct);
+        foreach (var product in products)
+        {
+            product.CategoryName = categoryName;
+            product.UpdatedAt = DateTime.UtcNow;
+        }
+    }
+    public async Task<Product> UpdateAsync(Product product, CancellationToken ct = default)
+    {
+        await ReplacePublishedPriceIfChangedAsync(product, DateTimeOffset.UtcNow, ct);
         _context.Products.Update(product);
-        return Task.FromResult(product);
+        _context.Entry(product).Property(item => item.UnitPrice).IsModified = false;
+        _context.Entry(product).Property(item => item.Currency).IsModified = false;
+        return product;
     }
 }

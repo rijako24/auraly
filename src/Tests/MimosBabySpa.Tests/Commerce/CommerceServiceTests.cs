@@ -14,7 +14,7 @@ namespace MimosBabySpa.Tests.Commerce;
 public class CommerceServiceTests
 {
     [Fact]
-    public async Task AddItemAsync_WhenProductAlreadyExists_AddsQuantityToExistingLine()
+    public async Task AddItemAsync_AuthoritativeCatalogIgnoresRequestedPriceAndAddsQuantity()
     {
         var businessId = Guid.NewGuid();
         var conversationId = Guid.NewGuid();
@@ -47,6 +47,7 @@ public class CommerceServiceTests
         var integrationConnections = new Mock<IIntegrationConnectionRepository>();
         var adapterFactory = new Mock<ICommerceAdapterFactory>();
         var adapter = new Mock<ICommerceAdapter>();
+        adapter.As<IAuthoritativeCommercePricingAdapter>();
         var promotions = new Mock<IPromotionPricingService>();
         var availability = new Mock<IProductCatalogAvailabilityService>();
         availability.Setup(a => a.IsSellable(It.IsAny<ProductReference>()))
@@ -101,10 +102,11 @@ public class CommerceServiceTests
 
         var snapshot = await service.AddItemAsync(
             ctx,
-            new AddOrderItemRequest(productId, null, null, null, 3m, null),
+            new AddOrderItemRequest(productId, null, null, null, 3m, 1m),
             CancellationToken.None);
 
         existingItem.Quantity.Should().Be(5m);
+        existingItem.UnitPrice.Should().Be(60000m);
         snapshot.Items.Should().ContainSingle();
         snapshot.Items[0].Quantity.Should().Be(5m);
         snapshot.Total.Should().Be(300000m);
@@ -283,5 +285,116 @@ public class CommerceServiceTests
 
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("Product inactive.");
+    }
+
+    [Fact]
+    public async Task CreateOrderAsync_RefreshesThePublishedPriceBeforeConfirmation()
+    {
+        var businessId = Guid.NewGuid();
+        var conversationId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var draft = new OrderDraft
+        {
+            OrderDraftId = Guid.NewGuid(),
+            BusinessId = businessId,
+            ConversationId = conversationId,
+            Currency = "COP",
+            Subtotal = 10000m,
+            Total = 10000m
+        };
+        var draftItem = new OrderDraftItem
+        {
+            OrderDraftItemId = Guid.NewGuid(),
+            OrderDraftId = draft.OrderDraftId,
+            BusinessId = businessId,
+            ProductId = productId,
+            Sku = "PUBLICADO",
+            ProductNameSnapshot = "Producto publicado",
+            Quantity = 1m,
+            UnitPrice = 10000m,
+            LineTotal = 10000m
+        };
+        var persistedItems = new List<OrderItem>();
+        Order? persistedOrder = null;
+
+        var unitOfWork = new Mock<IUnitOfWork>();
+        var drafts = new Mock<IOrderDraftRepository>();
+        var draftItems = new Mock<IOrderDraftItemRepository>();
+        var orders = new Mock<IOrderRepository>();
+        var orderItems = new Mock<IOrderItemRepository>();
+        var connections = new Mock<IIntegrationConnectionRepository>();
+        var adapterFactory = new Mock<ICommerceAdapterFactory>();
+        var adapter = new Mock<ICommerceAdapter>();
+        adapter.As<IAuthoritativeCommercePricingAdapter>();
+        var promotions = new Mock<IPromotionPricingService>();
+        var availability = new Mock<IProductCatalogAvailabilityService>();
+
+        unitOfWork.SetupGet(value => value.OrderDrafts).Returns(drafts.Object);
+        unitOfWork.SetupGet(value => value.OrderDraftItems).Returns(draftItems.Object);
+        unitOfWork.SetupGet(value => value.Orders).Returns(orders.Object);
+        unitOfWork.SetupGet(value => value.OrderItems).Returns(orderItems.Object);
+        unitOfWork.SetupGet(value => value.IntegrationConnections).Returns(connections.Object);
+        unitOfWork.Setup(value => value.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
+        connections.Setup(value => value.GetCommerceConnectionAsync(
+                businessId, CommerceProvider.Local, CommerceCapability.CatalogAndOrders, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IntegrationConnection?)null);
+        drafts.Setup(value => value.GetActiveDraftsByConversationAsync(
+                businessId, conversationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([draft]);
+        drafts.Setup(value => value.DeleteAsync(draft, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        drafts.Setup(value => value.UpdateAsync(draft, It.IsAny<CancellationToken>())).ReturnsAsync(draft);
+        draftItems.Setup(value => value.GetByDraftIdAsync(
+                businessId, draft.OrderDraftId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([draftItem]);
+        draftItems.Setup(value => value.UpdateAsync(draftItem, It.IsAny<CancellationToken>())).ReturnsAsync(draftItem);
+        orders.Setup(value => value.CreateAsync(It.IsAny<Order>(), It.IsAny<CancellationToken>()))
+            .Callback<Order, CancellationToken>((order, _) => persistedOrder = order)
+            .ReturnsAsync((Order order, CancellationToken _) => order);
+        orderItems.Setup(value => value.CreateAsync(It.IsAny<OrderItem>(), It.IsAny<CancellationToken>()))
+            .Callback<OrderItem, CancellationToken>((item, _) => persistedItems.Add(item))
+            .ReturnsAsync((OrderItem item, CancellationToken _) => item);
+        orderItems.Setup(value => value.GetByOrderIdAsync(
+                businessId, It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => persistedItems);
+        adapterFactory.Setup(value => value.Resolve(CommerceProvider.Local)).Returns(adapter.Object);
+        adapter.SetupGet(value => value.Provider).Returns(CommerceProvider.Local);
+        adapter.Setup(value => value.GetProductAsync(
+                It.IsAny<AddOrderItemRequest>(), It.IsAny<CommerceAdapterContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProductReference(
+                productId, null, "PUBLICADO", "Producto publicado", null, null, 25000m, "COP", null));
+        availability.Setup(value => value.FindUnavailableDraftItemsAsync(
+                businessId, It.IsAny<IReadOnlyList<OrderDraftItem>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        availability.Setup(value => value.IsSellable(It.IsAny<ProductReference>())).Returns(true);
+        promotions.Setup(value => value.EvaluateAsync(
+                businessId, It.IsAny<IReadOnlyList<PromotionPricingItem>>(), It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .Returns<Guid, IReadOnlyList<PromotionPricingItem>, DateTime?, CancellationToken>((_, items, _, _) =>
+                Task.FromResult(PromotionPricingResult.Empty(items)));
+
+        var service = new CommerceService(
+            unitOfWork.Object,
+            adapterFactory.Object,
+            promotions.Object,
+            availability.Object);
+        var context = new AgentConversationContext
+        {
+            BusinessId = businessId,
+            ConversationId = conversationId,
+            Conversation = new Conversation
+            {
+                ConversationId = conversationId,
+                BusinessId = businessId
+            }
+        };
+
+        var snapshot = await service.CreateOrderAsync(
+            context,
+            new CreateOrderRequest(true, null, null, null, null, null, null));
+
+        snapshot.Total.Should().Be(25000m);
+        snapshot.Items.Should().ContainSingle().Which.UnitPrice.Should().Be(25000m);
+        persistedOrder.Should().NotBeNull();
+        persistedOrder!.Total.Should().Be(25000m);
+        persistedItems.Should().ContainSingle().Which.UnitPrice.Should().Be(25000m);
     }
 }

@@ -17,7 +17,7 @@ public sealed class DigitalShopConfigurationTests
         var sql = File.ReadAllText(Path.Combine(
             FindSolutionRoot(),
             "database",
-            "MimosBabySpa.Database",
+            "Auraly.Database",
             "Scripts",
             "Seeds",
             "SeedDigitalShop.sql"));

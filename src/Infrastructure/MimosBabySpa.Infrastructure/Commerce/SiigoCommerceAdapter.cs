@@ -9,7 +9,7 @@ using MimosBabySpa.Domain.Repositories;
 
 namespace MimosBabySpa.Infrastructure.Commerce;
 
-public sealed class SiigoCommerceAdapter : ICommerceAdapter
+public sealed class SiigoCommerceAdapter : ICommerceAdapter, IAuthoritativeCommercePricingAdapter
 {
     private readonly HttpClient _httpClient;
     private readonly IUnitOfWork _unitOfWork;

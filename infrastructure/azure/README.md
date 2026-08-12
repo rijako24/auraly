@@ -232,7 +232,7 @@ El plan DEV es F1 y puede suspenderse al agotar su cuota diaria; esto no indica 
 
 ### 4. Admin DEV
 
-El workflow `.github/workflows/azure-static-web-apps-auraly.yml` despliega DEV y PROD desde `main` cuando cambia `admin/**`, o manualmente mediante `workflow_dispatch`. Requiere los secretos de GitHub:
+El workflow `.github/workflows/azure-static-web-apps-auraly.yml` despliega únicamente DEV desde `main` cuando cambia `admin/**`. Una publicación de PROD requiere `workflow_dispatch` explícito con `environment=prod`. Requiere los secretos de GitHub:
 
 - `AZURE_STATIC_WEB_APPS_API_TOKEN_AURALY_DEV`
 - `AZURE_STATIC_WEB_APPS_API_TOKEN_AURALY_PROD`
@@ -244,7 +244,7 @@ gh workflow run azure-static-web-apps-auraly.yml --ref main
 gh run list --workflow azure-static-web-apps-auraly.yml --limit 5
 ```
 
-El workflow actual despliega ambos Admin en paralelo. No usarlo como mecanismo de promoción selectiva de PROD; para separar la promoción se debe modificar primero el workflow.
+Para ejecutar DEV manualmente usa `gh workflow run azure-static-web-apps-auraly.yml --ref main -f environment=dev`. PROD solo se publica con `-f environment=prod`, después de aprobar exactamente el mismo release validado en DEV.
 
 ## Desplegar PROD
 

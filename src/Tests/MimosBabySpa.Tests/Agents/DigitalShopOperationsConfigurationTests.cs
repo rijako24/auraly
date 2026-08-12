@@ -17,7 +17,7 @@ public sealed class DigitalShopOperationsConfigurationTests
     public void OperationsAgent_AcceptsTextPdfAndImagePriceLists()
     {
         var sql = File.ReadAllText(Path.Combine(
-            FindSolutionRoot(), "database", "MimosBabySpa.Database", "Scripts", "Seeds",
+            FindSolutionRoot(), "database", "Auraly.Database", "Scripts", "Seeds",
             "SeedDigitalShop.sql"));
         var match = Regex.Match(
             sql,
@@ -51,7 +51,7 @@ public sealed class DigitalShopOperationsConfigurationTests
     public void CustomerAgent_UsesStructuredGreetingAndAutomaticSalesActions()
     {
         var sql = File.ReadAllText(Path.Combine(
-            FindSolutionRoot(), "database", "MimosBabySpa.Database", "Scripts", "Seeds",
+            FindSolutionRoot(), "database", "Auraly.Database", "Scripts", "Seeds",
             "SeedDigitalShop.sql"));
         var match = Regex.Match(
             sql,

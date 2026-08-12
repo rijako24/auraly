@@ -89,7 +89,6 @@ export function AutoForm<TSchema extends z.ZodObject<z.ZodRawShape>>({
   type FormValues = z.infer<TSchema>;
 
   // Dynamic form: react-hook-form generics are too strict for runtime schema introspection
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const form = useForm<any>({
     resolver: zodResolver(schema),
     defaultValues: defaultValues ?? {},
