@@ -15,8 +15,8 @@ Guia operativa para publicar la base de datos y la Azure Function sin redescubri
 - SQL local: `.\LOCAL`
 - Base local: `talkioai`
 - SqlPackage local: `C:\Users\richa\.dotnet\tools\sqlpackage.exe`
-- Proyecto BD: `database\MimosBabySpa.Database\MimosBabySpa.Database.sqlproj`
-- DACPAC: `database\MimosBabySpa.Database\bin\Debug\MimosBabySpa.Database.dacpac`
+- Proyecto BD: `database\Auraly.Database\Auraly.Database.sqlproj`
+- DACPAC: `database\Auraly.Database\bin\Debug\Auraly.Database.dacpac`
 - Proyecto Function: `src\API\MimosBabySpa.API\MimosBabySpa.API.csproj`
 - Publish profile: `az-talkioai-dev - Zip Deploy`
 
@@ -25,7 +25,7 @@ Guia operativa para publicar la base de datos y la Azure Function sin redescubri
 Compilar DACPAC:
 
 ```powershell
-dotnet build database\MimosBabySpa.Database\MimosBabySpa.Database.sqlproj
+dotnet build database\Auraly.Database\Auraly.Database.sqlproj
 ```
 
 Publicar contra la base local:
@@ -33,7 +33,7 @@ Publicar contra la base local:
 ```powershell
 & 'C:\Users\richa\.dotnet\tools\sqlpackage.exe' `
   /Action:Publish `
-  /SourceFile:'database\MimosBabySpa.Database\bin\Debug\MimosBabySpa.Database.dacpac' `
+  /SourceFile:'database\Auraly.Database\bin\Debug\Auraly.Database.dacpac' `
   /TargetConnectionString:'Server=.\LOCAL;Database=talkioai;User Id=admin;Password=masterkey;TrustServerCertificate=True;' `
   /p:BackupDatabaseBeforeChanges=False `
   /p:DoNotAlterChangeDataCaptureObjects=True `
@@ -50,7 +50,7 @@ Resultado esperado: `Successfully published database.`
 La cadena Azure se toma desde la Function App, seccion `ConnectionStrings`, nombre `DefaultConnection`. No imprimirla en consola.
 
 ```powershell
-dotnet build database\MimosBabySpa.Database\MimosBabySpa.Database.sqlproj
+dotnet build database\Auraly.Database\Auraly.Database.sqlproj
 
 $app = Get-AzWebApp -ResourceGroupName RG-TALKIOAI-DEV -Name az-talkioai-dev
 $target = ($app.SiteConfig.ConnectionStrings | Where-Object { $_.Name -eq 'DefaultConnection' }).ConnectionString
@@ -58,7 +58,7 @@ if ([string]::IsNullOrWhiteSpace($target)) { throw 'No se encontro DefaultConnec
 
 & 'C:\Users\richa\.dotnet\tools\sqlpackage.exe' `
   /Action:Publish `
-  /SourceFile:'database\MimosBabySpa.Database\bin\Debug\MimosBabySpa.Database.dacpac' `
+  /SourceFile:'database\Auraly.Database\bin\Debug\Auraly.Database.dacpac' `
   /TargetConnectionString:$target `
   /p:BackupDatabaseBeforeChanges=False `
   /p:DoNotAlterChangeDataCaptureObjects=True `

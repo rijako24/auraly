@@ -15,6 +15,10 @@ public sealed class FiscalSnapshotVerifier(IFiscalTechnicalKeyProvider keyProvid
     {
         ArgumentNullException.ThrowIfNull(request);
         var snapshot = request.FiscalSnapshot;
+        if (snapshot is null)
+        {
+            return Conflict(string.Empty, null, "The fiscal snapshot is required.");
+        }
 
         var structuralConflict = ValidateStructure(request);
         if (structuralConflict is not null)
@@ -79,6 +83,11 @@ public sealed class FiscalSnapshotVerifier(IFiscalTechnicalKeyProvider keyProvid
     private static string? ValidateStructure(PosSaleUploadRequest request)
     {
         var snapshot = request.FiscalSnapshot;
+        if (snapshot is null)
+        {
+            return "The fiscal snapshot is required.";
+        }
+
         if (request.DocumentId == Guid.Empty ||
             request.TenantId == Guid.Empty ||
             request.BusinessId == Guid.Empty ||
