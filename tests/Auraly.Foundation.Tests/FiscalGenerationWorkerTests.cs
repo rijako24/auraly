@@ -83,7 +83,11 @@ public sealed class FiscalGenerationWorkerTests
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), documentId,
             new PosSaleDocumentNumberContract(Guid.NewGuid(), PosSaleDocumentTypes.Invoice,
                 "VTA", "01", 1, 8, "VTA01-00000001"),
-            new PosSaleFiscalSnapshotContract(Guid.NewGuid(), Guid.NewGuid(), "18760000001",
+            new PosSaleCommercialSnapshotContract(PosSaleDocumentTypes.Invoice, issued,
+                "222222222", [new PosSaleTaxContract("01", 1900m)],
+                10000m, 1900m, 11900m),
+            new PosSaleFiscalSnapshotContract(
+                Guid.NewGuid(), Guid.NewGuid(), "18760000001",
                 PosSaleDocumentTypes.Invoice, "SETP1", "SETP", 1, issued, "900123456",
                 "222222222", 2, "v1", [new PosSaleTaxContract("01", 1900m)],
                 10000m, 1900m, 11900m, new string('a', 96), "https://example.test/qr"),
@@ -102,7 +106,7 @@ public sealed class FiscalGenerationWorkerTests
         var authorization = new FiscalAuthorizationWorkConfiguration("18760000001",
             new DateOnly(2026, 1, 1), new DateOnly(2027, 1, 1), "SETP", 1, 1000);
         return new FiscalGenerationWorkItem(documentId, businessId, "worker-a",
-            FiscalDocumentTypeCodes.Invoice, sale.FiscalSnapshot.FiscalNumber, sale, null, issuer, authorization);
+            FiscalDocumentTypeCodes.Invoice, sale.FiscalSnapshot!.FiscalNumber, sale, null, issuer, authorization);
     }
 
     private sealed class TestStore(FiscalGenerationWorkItem work) : IFiscalGenerationWorkStore

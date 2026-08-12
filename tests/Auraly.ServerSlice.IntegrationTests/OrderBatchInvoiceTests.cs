@@ -70,10 +70,10 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
                WHERE DocumentId IN (
                  SELECT DocumentId FROM dbo.OrderInvoiceLinks
                  WHERE OrderId IN (@FirstOrderId,@SecondOrderId))),
-              (SELECT COUNT(*) FROM sys.columns
-               WHERE object_id=OBJECT_ID(N'dbo.Orders') AND name=N'TaxTotal'),
-              (SELECT COUNT(*) FROM sys.columns
-               WHERE object_id=OBJECT_ID(N'dbo.OrderItems') AND name=N'TaxAmount');
+              (SELECT COUNT(*) FROM dbo.Orders
+               WHERE OrderId IN (@FirstOrderId,@SecondOrderId) AND TaxTotal<>0),
+              (SELECT COUNT(*) FROM dbo.OrderItems
+               WHERE OrderId IN (@FirstOrderId,@SecondOrderId) AND TaxAmount<>0);
             """;
         verify.Parameters.AddWithValue("@FirstOrderId", firstOrderId);
         verify.Parameters.AddWithValue("@SecondOrderId", secondOrderId);

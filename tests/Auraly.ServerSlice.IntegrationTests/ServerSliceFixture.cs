@@ -1,10 +1,12 @@
-﻿using System.Diagnostics;
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Security.Claims;
 using System.Text;
 using System.Net.Http.Json;
+using Auraly.Api;
 using Auraly.Application.DocumentProcessing;
 using Auraly.Application.Fiscal;
 using Auraly.BuildingBlocks.Application.Synchronization;
@@ -17,11 +19,13 @@ using Auraly.Fiscal.Core;
 using Auraly.Infrastructure.Persistence;
 using Auraly.Contracts.Parties;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.IdentityModel.Tokens;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -75,6 +79,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public Guid WorkSessionId { get; } = Guid.NewGuid();
     public Guid DeniedDeviceId { get; } = Guid.NewGuid();
     public Guid UserId { get; } = Guid.NewGuid();
+    public Guid RoleId { get; } = Guid.NewGuid();
     public Guid PriceChannelId { get; } = Guid.NewGuid();
     public Guid TaxProfileId { get; } = Guid.NewGuid();
     public Guid ProductId { get; } = Guid.NewGuid();
@@ -85,6 +90,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public Guid GoodsReceiptSeriesId { get; } = Guid.NewGuid();
     public Guid PurchaseReturnSeriesId { get; } = Guid.NewGuid();
     public Guid OnlineDocumentSeriesId { get; } = Guid.NewGuid();
+    public Guid OnlineSalesReceiptSeriesId { get; } = Guid.NewGuid();
     public Guid SalesReturnSeriesId { get; } = Guid.NewGuid();
     public Guid OnlineSeriesId { get; } = Guid.NewGuid();
     public Guid FiscalAuthorizationId { get; } = Guid.NewGuid();
@@ -151,6 +157,10 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             });
             builder.ConfigureTestServices(services =>
             {
+                services.AddHttpContextAccessor();
+                services.AddSingleton<TestExecutionAccessRegistry>();
+                services.RemoveAll<IExecutionAccessResolver>();
+                services.AddScoped<IExecutionAccessResolver, TestExecutionAccessResolver>();
                 services.AddSingleton<TestDocumentProcessingSignalPublisher>();
                 services.AddSingleton<IDocumentProcessingSignalPublisher>(provider =>
                     provider.GetRequiredService<TestDocumentProcessingSignalPublisher>());
@@ -201,6 +211,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public HttpClient CreateAdminClient(params string[] permissions)
     {
         var session = EnsureAuthenticationSession(UserId);
+        var executionAccessId = RegisterExecutionPermissions(permissions);
         var claims = new List<Claim>
         {
             new(JwtRegisteredClaimNames.Sub, UserId.ToString("D")),
@@ -211,6 +222,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                 session.AuthenticationSessionId.ToString("D")),
             new("full_name", "Cajero de pruebas")
         };
+        claims.Add(new Claim(TestExecutionAccessResolver.AccessProfileClaim, executionAccessId.ToString("D")));
         claims.AddRange(permissions.Select(permission => new Claim("permission", permission)));
         var token = new JwtSecurityToken(
             JwtIssuer, JwtAudience, claims, expires: DateTime.UtcNow.AddMinutes(10),
@@ -221,21 +233,25 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", new JwtSecurityTokenHandler().WriteToken(token));
         client.DefaultRequestHeaders.Add(
             AuthenticationDefaults.ClientIdHeader, session.ClientId.ToString("D"));
+        client.DefaultRequestHeaders.Add("X-Business-Id", BusinessId.ToString("D"));
         return client;
     }
-
-    public HttpClient CreateUserClient(Guid userId, params string[] permissions)
+    public HttpClient CreateAdminClientWithBusinessHeader(
+        Guid businessId,
+        params string[] permissions)
     {
-        var session = EnsureAuthenticationSession(userId);
+        var session = EnsureAuthenticationSession(UserId);
+        var executionAccessId = RegisterExecutionPermissions(permissions);
         var claims = new List<Claim>
         {
-            new(JwtRegisteredClaimNames.Sub, userId.ToString("D")),
-            new(ClaimTypes.NameIdentifier, userId.ToString("D")),
+            new(JwtRegisteredClaimNames.Sub, UserId.ToString("D")),
+            new(ClaimTypes.NameIdentifier, UserId.ToString("D")),
             new("tenant_id", TenantId.ToString("D")),
-            new("business_id", BusinessId.ToString("D")),
             new(AuthenticationDefaults.SessionIdClaim,
-                session.AuthenticationSessionId.ToString("D"))
+                session.AuthenticationSessionId.ToString("D")),
+            new("full_name", "Cajero de pruebas")
         };
+        claims.Add(new Claim(TestExecutionAccessResolver.AccessProfileClaim, executionAccessId.ToString("D")));
         claims.AddRange(permissions.Select(
             permission => new Claim("permission", permission)));
         var token = new JwtSecurityToken(
@@ -251,6 +267,40 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             "Bearer", new JwtSecurityTokenHandler().WriteToken(token));
         client.DefaultRequestHeaders.Add(
             AuthenticationDefaults.ClientIdHeader, session.ClientId.ToString("D"));
+        client.DefaultRequestHeaders.Add("X-Business-Id", businessId.ToString("D"));
+        return client;
+    }
+
+    public HttpClient CreateUserClient(Guid userId, params string[] permissions)
+    {
+        var session = EnsureAuthenticationSession(userId);
+        var executionAccessId = RegisterExecutionPermissions(permissions);
+        var claims = new List<Claim>
+        {
+            new(JwtRegisteredClaimNames.Sub, userId.ToString("D")),
+            new(ClaimTypes.NameIdentifier, userId.ToString("D")),
+            new("tenant_id", TenantId.ToString("D")),
+            new("business_id", BusinessId.ToString("D")),
+            new(AuthenticationDefaults.SessionIdClaim,
+                session.AuthenticationSessionId.ToString("D"))
+        };
+        claims.Add(new Claim(TestExecutionAccessResolver.AccessProfileClaim, executionAccessId.ToString("D")));
+        claims.AddRange(permissions.Select(
+            permission => new Claim("permission", permission)));
+        var token = new JwtSecurityToken(
+            JwtIssuer,
+            JwtAudience,
+            claims,
+            expires: DateTime.UtcNow.AddMinutes(10),
+            signingCredentials: new SigningCredentials(
+                new SymmetricSecurityKey(Encoding.UTF8.GetBytes(JwtSigningKey)),
+                SecurityAlgorithms.HmacSha256));
+        var client = CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+            "Bearer", new JwtSecurityTokenHandler().WriteToken(token));
+        client.DefaultRequestHeaders.Add(
+            AuthenticationDefaults.ClientIdHeader, session.ClientId.ToString("D"));
+        client.DefaultRequestHeaders.Add("X-Business-Id", BusinessId.ToString("D"));
         return client;
     }
     public async Task<WorkSessionView> OpenWorkSessionAsync(
@@ -337,6 +387,14 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                 consecutive,
                 8,
                 $"VTA03-{consecutive:D8}"),
+            new PosSaleCommercialSnapshotContract(
+                PosSaleDocumentTypes.Invoice,
+                issuedAt,
+                "222222222",
+                [new PosSaleTaxContract("01", tax)],
+                untaxed,
+                tax,
+                payable),
             new PosSaleFiscalSnapshotContract(
                 SeriesId,
                 FiscalAuthorizationId,
@@ -387,7 +445,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         const decimal payable = 34_300m;
         var calculated = CufeCalculator.Calculate(
             new CufeInput(
-                request.FiscalSnapshot.FiscalNumber,
+                request.FiscalSnapshot!.FiscalNumber,
                 request.FiscalSnapshot.IssuedAt,
                 untaxed,
                 payable,
@@ -514,12 +572,30 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
+    private Guid RegisterExecutionPermissions(IReadOnlyCollection<string> permissions)
+    {
+        var accessProfileId = Guid.NewGuid();
+        (_factory ?? throw new InvalidOperationException(
+            "The API fixture is not initialized."))
+            .Services.GetRequiredService<TestExecutionAccessRegistry>()
+            .Register(accessProfileId, permissions);
+        return accessProfileId;
+    }
     private TestAuthenticationSession EnsureAuthenticationSession(Guid userId)
     {
         lock (_authenticationSessionLock)
         {
             if (_authenticationSessions.TryGetValue(userId, out var existing))
-                return existing;
+            {
+                using var inspection = new SqlConnection(ConnectionString);
+                inspection.Open();
+                using var status = inspection.CreateCommand();
+                status.CommandText = "SELECT Status FROM dbo.AuthenticationSessions WHERE AuthenticationSessionId=@SessionId";
+                status.Parameters.AddWithValue("@SessionId", existing.AuthenticationSessionId);
+                if (string.Equals(status.ExecuteScalar() as string, "Active", StringComparison.Ordinal))
+                    return existing;
+                _authenticationSessions.Remove(userId);
+            }
             var session = new TestAuthenticationSession(Guid.NewGuid(), Guid.NewGuid());
             var now = DateTimeOffset.UtcNow;
             using var connection = new SqlConnection(ConnectionString);
@@ -535,6 +611,11 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                       (@UserId,@TenantId,CONCAT(N'test-',@UserId),UPPER(CONCAT(N'test-',@UserId)),
                        CONCAT(@UserId,N'@test.local'),UPPER(CONCAT(@UserId,N'@test.local')),N'Test',N'User',1,SYSUTCDATETIME());
                 END;
+                IF NOT EXISTS(
+                    SELECT 1 FROM dbo.UserRoles
+                    WHERE UserId=@UserId AND BusinessId=@BusinessId)
+                  INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt)
+                  VALUES(NEWID(),@UserId,@RoleId,@BusinessId,SYSUTCDATETIME());
                 INSERT dbo.AuthenticationSessions
                   (AuthenticationSessionId,TenantId,UserId,ClientId,
                    ClientDescription,RefreshTokenHash,IssuedAt,ExpiresAt,
@@ -546,6 +627,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             command.Parameters.AddWithValue("@SessionId", session.AuthenticationSessionId);
             command.Parameters.AddWithValue("@TenantId", TenantId);
             command.Parameters.AddWithValue("@UserId", userId);
+            command.Parameters.AddWithValue("@RoleId", RoleId);
+            command.Parameters.AddWithValue("@BusinessId", BusinessId);
             command.Parameters.AddWithValue("@ClientId", session.ClientId);
             command.Parameters.Add("@Hash", System.Data.SqlDbType.VarBinary, 32).Value =
                 SHA256.HashData(session.AuthenticationSessionId.ToByteArray());
@@ -623,9 +706,50 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             VALUES
               (@UserId,@TenantId,@Username,@NormalizedUsername,@UserEmail,@NormalizedUserEmail,
                N'Cajero',N'E2E',1,SYSUTCDATETIME());
+
+            INSERT dbo.AppRoles
+              (RoleId,TenantId,Name,NormalizedName,Description,IsActive,IsSystemRole,CreatedAt)
+            VALUES
+              (@RoleId,@TenantId,N'Integration user',N'INTEGRATION USER',N'Integration test role',1,0,SYSUTCDATETIME());
+            INSERT dbo.UserRoles
+              (UserRoleId,UserId,RoleId,BusinessId,AssignedAt)
+            VALUES
+              (NEWID(),@UserId,@RoleId,@BusinessId,SYSUTCDATETIME());
+
             INSERT INTO dbo.Warehouses
             (WarehouseId, BusinessId, Code, Name, AllowNegativeStockSales, IsActive, CreatedAt)
             VALUES (@WarehouseId, @BusinessId, N'B01', N'Bodega E2E', 1, 1, SYSDATETIMEOFFSET());
+
+            DECLARE @Reasons TABLE(
+                OperationType nvarchar(64),Code nvarchar(40),Name nvarchar(120),DisplayOrder int);
+            INSERT @Reasons VALUES
+              (N'StockCount',N'PHYSICAL_COUNT',N'Conteo físico programado',10),
+              (N'StockCount',N'INVENTORY_VERIFICATION',N'Verificación de existencias',20),
+              (N'InventoryAdjustment',N'MANUAL_ADJUSTMENT',N'Corrección de saldo',10),
+              (N'InventoryAdjustment',N'INITIAL_BALANCE',N'Saldo inicial',20),
+              (N'InventoryAdjustment',N'FOUND_SURPLUS',N'Sobrante identificado',30),
+              (N'InventoryAdjustment',N'FOUND_SHORTAGE',N'Faltante identificado',40),
+              (N'WarehouseTransfer',N'WAREHOUSE_TRANSFER',N'Reabastecimiento entre bodegas',10),
+              (N'WarehouseTransfer',N'STOCK_REDISTRIBUTION',N'Redistribución de existencias',20),
+              (N'ProductConversion',N'PRESENTATION_CHANGE',N'Cambio de presentación',10),
+              (N'Damage',N'DAMAGE',N'Producto averiado',10),
+              (N'Damage',N'EXPIRED',N'Producto vencido',20),
+              (N'Damage',N'NOT_SALEABLE',N'Producto no vendible',30);
+            INSERT dbo.InventoryReasons(
+                InventoryReasonId,BusinessId,OperationType,Code,Name,
+                IsSystem,IsActive,DisplayOrder,CreatedAt,UpdatedAt)
+            SELECT NEWID(),@BusinessId,r.OperationType,r.Code,r.Name,
+                   1,1,r.DisplayOrder,SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET()
+            FROM @Reasons r;
+
+            INSERT dbo.ProductUnits(
+                ProductUnitId,BusinessId,Code,Name,Symbol,
+                AllowsFractionalQuantity,DecimalPlaces,IsActive,CreatedAt)
+            VALUES
+              (NEWID(),@BusinessId,N'EA',N'Unidad',N'und',0,0,1,SYSDATETIMEOFFSET()),
+              (NEWID(),@BusinessId,N'KG',N'Kilogramo',N'kg',1,3,1,SYSDATETIMEOFFSET()),
+              (NEWID(),@BusinessId,N'M',N'Metro',N'm',1,3,1,SYSDATETIMEOFFSET()),
+              (NEWID(),@BusinessId,N'L',N'Litro',N'L',1,3,1,SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.EnrolledDevices
             (DeviceId, TenantId, Name,
@@ -667,7 +791,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             VALUES
             (@FiscalIssuerConfigurationId,@BusinessId,1,@SupplierTaxId,N'7',
              N'EMISOR MAESTRO',N'EMISOR MAESTRO',N'R-99-PN',N'01',N'IVA',N'31',
-             N'CL 1 2 3',N'11001',N'BogotÃ¡',N'11',N'BogotÃ¡ D.C.',N'CO',N'Colombia',
+             N'CL 1 2 3',N'11001',N'Bogotá',N'11',N'Bogotá D.C.',N'CO',N'Colombia',
              N'auraly-test-software',N'env://AURALY_TEST_SOFTWARE_PIN',2,
              '11111111-1111-1111-1111-111111111111',N'Test',N'Test',N'TEST',
              N'https://vpfe-hab.dian.gov.co/WcfDianCustomerServices.svc',N'1.9',N'Auraly.Tests',
@@ -682,6 +806,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
              N'VTA', N'03', 8, 1, 99999999, 1, 1, SYSDATETIMEOFFSET()),
             (@OnlineDocumentSeriesId, @BusinessId, NULL, @DocumentType,
              N'VTA', N'00', 8, 1, 99999999, 0, 1, SYSDATETIMEOFFSET()),
+            (@OnlineSalesReceiptSeriesId, @BusinessId, NULL, N'SalesReceipt',
+             N'CVI', N'00', 8, 1, 99999999, 0, 1, SYSDATETIMEOFFSET()),
             (@GoodsReceiptSeriesId, @BusinessId, NULL, N'GoodsReceipt',
              N'EMC', N'00', 8, 1, 99999999, 0, 1, SYSDATETIMEOFFSET()),
             (@PurchaseReturnSeriesId, @BusinessId, NULL, N'PurchaseReturn',
@@ -731,6 +857,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         command.Parameters.AddWithValue("@BusinessId", BusinessId);
         command.Parameters.AddWithValue("@BusinessEmail", $"e2e-{BusinessId:N}@auraly.test");
         command.Parameters.AddWithValue("@UserId", UserId);
+        command.Parameters.AddWithValue("@RoleId", RoleId);
         command.Parameters.AddWithValue("@Username", $"cashier-{UserId:N}");
         command.Parameters.AddWithValue("@NormalizedUsername", $"CASHIER-{UserId:N}".ToUpperInvariant());
         command.Parameters.AddWithValue("@UserEmail", $"cashier-{UserId:N}@auraly.test");
@@ -759,6 +886,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         command.Parameters.AddWithValue("@DocumentSeriesId", DocumentSeriesId);
         command.Parameters.AddWithValue("@SeriesId", SeriesId);
         command.Parameters.AddWithValue("@OnlineDocumentSeriesId", OnlineDocumentSeriesId);
+        command.Parameters.AddWithValue("@OnlineSalesReceiptSeriesId", OnlineSalesReceiptSeriesId);
         command.Parameters.AddWithValue("@OnlineSeriesId", OnlineSeriesId);
         command.Parameters.AddWithValue("@DocumentType", PosSaleDocumentTypes.Invoice);
         command.Parameters.AddWithValue("@GoodsReceiptSeriesId", GoodsReceiptSeriesId);
@@ -793,8 +921,6 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         {
             StartInfo = new ProcessStartInfo(sqlPackage)
             {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             }
@@ -806,15 +932,11 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         process.StartInfo.ArgumentList.Add("/p:DropObjectsNotInSource=False");
         process.StartInfo.ArgumentList.Add("/p:BlockOnPossibleDataLoss=True");
         process.Start();
-        var standardOutput = process.StandardOutput.ReadToEndAsync();
-        var standardError = process.StandardError.ReadToEndAsync();
         await process.WaitForExitAsync();
-        var output = await standardOutput;
-        var error = await standardError;
         if (process.ExitCode != 0)
         {
             throw new InvalidOperationException(
-                $"SqlPackage failed with exit code {process.ExitCode}.{Environment.NewLine}{output}{Environment.NewLine}{error}");
+                $"SqlPackage failed with exit code {process.ExitCode} while deploying the isolated SQL Server test database.");
         }
     }
 
@@ -862,3 +984,41 @@ public sealed class ServerSliceFixture : IAsyncLifetime
 
 internal sealed record TestAuthenticationSession(
     Guid AuthenticationSessionId, Guid ClientId);
+
+internal sealed class TestExecutionAccessRegistry
+{
+    private readonly ConcurrentDictionary<Guid, IReadOnlyList<string>> permissions = new();
+
+    public void Register(Guid accessProfileId, IEnumerable<string> values) =>
+        permissions[accessProfileId] = values.Distinct(StringComparer.Ordinal).ToArray();
+
+    public bool TryGet(Guid accessProfileId, out IReadOnlyList<string> values) =>
+        permissions.TryGetValue(accessProfileId, out values!);
+}
+
+internal sealed class TestExecutionAccessResolver(
+    SqlExecutionContextDirectory sql,
+    TestExecutionAccessRegistry registry,
+    IHttpContextAccessor httpContextAccessor) : IExecutionAccessResolver
+{
+    public const string AccessProfileClaim = "test_execution_access_id";
+
+    public async Task<ResolvedExecutionAccess> ResolveAccessAsync(
+        Guid userId,
+        Guid tenantId,
+        Guid? businessId,
+        CancellationToken cancellationToken)
+    {
+        var access = await sql.ResolveAccessAsync(
+            userId, tenantId, businessId, cancellationToken);
+        if (!access.IsAllowed)
+            return access;
+
+        var profileValue = httpContextAccessor.HttpContext?.User
+            .FindFirst(AccessProfileClaim)?.Value;
+        return Guid.TryParse(profileValue, out var accessProfileId) &&
+               registry.TryGet(accessProfileId, out var profilePermissions)
+            ? access with { Permissions = profilePermissions }
+            : access;
+    }
+}

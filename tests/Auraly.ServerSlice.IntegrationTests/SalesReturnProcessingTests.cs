@@ -49,7 +49,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
         Assert.Equal("Processed", await ScalarAsync<string>(
             "SELECT Status FROM dbo.SalesReturns WHERE ReturnId=@Id", request.ReturnId));
         Assert.Equal(afterSale + .5m, await QuantityAsync());
-        Assert.Equal(valueAfterSale + (.5m * recognizedCost), await InventoryValueAsync());
+        Assert.Equal(decimal.Round(valueAfterSale + (.5m * recognizedCost), 4, MidpointRounding.AwayFromZero), await InventoryValueAsync());
         Assert.Equal(5_000m, await ScalarAsync<decimal>(
             "SELECT TaxableAmount FROM dbo.SalesReturnTaxSummaries WHERE ReturnId=@Id", request.ReturnId));
         Assert.Equal(950m, await ScalarAsync<decimal>(
@@ -206,7 +206,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
                     ServerSliceFixture.Prefix, 1, 10000),
                 "auraly-test-software",
                 [new PosSaleUblLineContract(1, "P-E2E", "999", "EA", "IVA", 19m)],
-                "1", "10", DateOnly.FromDateTime(request.FiscalSnapshot.IssuedAt.Date), null)
+                "1", "10", DateOnly.FromDateTime(request.FiscalSnapshot!.IssuedAt.Date), null)
         };
     }
 

@@ -81,6 +81,55 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Zero_value_credit_receipt_processes_inventory_without_opening_an_empty_payable()
+    {
+        var request = CreateRequest();
+        request = request with
+        {
+            DocumentId = Guid.NewGuid(),
+            Lines = [request.Lines.Single() with { UnitCost = 0m, DiscountAmount = 0m }]
+        };
+        using var client = fixture.CreateAdminClient(
+            PurchasingPermissionCodes.CreateGoodsReceipts,
+            PurchasingPermissionCodes.ConfirmGoodsReceipts);
+        using var message = CreateMessage(request, $"zero-value-{request.DocumentId:N}");
+        using var response = await client.SendAsync(message);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+
+        var job = await ReadJobAsync(request.DocumentId);
+        Assert.Equal("Completed", job.Status);
+        Assert.Equal(1, await CountAsync("InventoryMovements", request.DocumentId));
+        Assert.Equal(0, await CountAsync("Payables", request.DocumentId));
+    }
+
+    [Fact]
+    public async Task Positive_cost_after_a_zero_cost_receipt_does_not_block_the_business_sequence()
+    {
+        var zeroCost = CreateRequest() with
+        {
+            DocumentId = Guid.NewGuid(),
+            Lines = [CreateRequest().Lines.Single() with { UnitCost = 0m, DiscountAmount = 0m }]
+        };
+        var positiveCost = CreateRequest() with { DocumentId = Guid.NewGuid() };
+        using var client = fixture.CreateAdminClient(
+            PurchasingPermissionCodes.CreateGoodsReceipts,
+            PurchasingPermissionCodes.ConfirmGoodsReceipts);
+
+        using (var message = CreateMessage(zeroCost, $"zero-before-positive-{zeroCost.DocumentId:N}"))
+        using (var response = await client.SendAsync(message))
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+
+        using (var message = CreateMessage(positiveCost, $"positive-after-zero-{positiveCost.DocumentId:N}"))
+        using (var response = await client.SendAsync(message))
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+
+        Assert.Equal("Completed", (await ReadJobAsync(zeroCost.DocumentId)).Status);
+        Assert.Equal("Completed", (await ReadJobAsync(positiveCost.DocumentId)).Status);
+        Assert.Equal(1, await CountAsync("InventoryMovements", positiveCost.DocumentId));
+        Assert.Equal(1, await CountAsync("PriceRevisionProposals", positiveCost.DocumentId));
+    }
+
+    [Fact]
     public async Task Receipt_requires_both_backend_permissions_and_authenticated_business()
     {
         using var client = fixture.CreateAdminClient(PurchasingPermissionCodes.CreateGoodsReceipts);

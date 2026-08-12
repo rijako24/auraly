@@ -202,7 +202,7 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         var receipt = await response.Content.ReadFromJsonAsync<PosSaleUploadResponse>();
         Assert.NotNull(receipt);
         Assert.Equal(PosSaleRemoteStatuses.FiscalIntegrityConflict, receipt.Status);
-        Assert.Equal(original.FiscalSnapshot.Cufe, receipt.CufeReceived);
+        Assert.Equal(original.FiscalSnapshot!.Cufe, receipt.CufeReceived);
         Assert.Equal(1, await fixture.CountAsync("SalesDocuments", original.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("FiscalSnapshots", original.DocumentId));
         Assert.Equal(0, await fixture.CountAsync("SalesPayments", original.DocumentId));
@@ -214,7 +214,7 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
 
     private static PosSaleUploadRequest Mutate(PosSaleUploadRequest request, string mutation)
     {
-        var snapshot = request.FiscalSnapshot;
+        var snapshot = request.FiscalSnapshot ?? throw new InvalidOperationException("The mutation requires a fiscal invoice snapshot.");
         var line = request.Lines.Single();
         return mutation switch
         {

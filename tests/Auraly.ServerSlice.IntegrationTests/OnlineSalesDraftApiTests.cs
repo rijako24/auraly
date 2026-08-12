@@ -26,9 +26,8 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
 
             using var add = Mutation(
                 HttpMethod.Post,
-                $"/api/commerce/v1/pos/drafts/{opened.DraftId:D}/lines",
-                new AddOnlineSalesDraftProductRequest(
-                    fixture.ProductId, 1m, opened.Version),
+                $"/api/commerce/v1/pos/drafts/{opened.DraftId:D}/items",
+                new AddOnlineSalesDraftItemRequest(fixture.ProductId.ToString("D"), 1m, opened.Version),
                 "add-product-once");
             using var addedResponse = await firstClient.SendAsync(add);
             addedResponse.EnsureSuccessStatusCode();
@@ -44,9 +43,8 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
 
             using var duplicate = Mutation(
                 HttpMethod.Post,
-                $"/api/commerce/v1/pos/drafts/{opened.DraftId:D}/lines",
-                new AddOnlineSalesDraftProductRequest(
-                    fixture.ProductId, 1m, opened.Version),
+                $"/api/commerce/v1/pos/drafts/{opened.DraftId:D}/items",
+                new AddOnlineSalesDraftItemRequest(fixture.ProductId.ToString("D"), 1m, opened.Version),
                 "add-product-once");
             using var duplicateResponse = await firstClient.SendAsync(duplicate);
             duplicateResponse.EnsureSuccessStatusCode();
@@ -58,7 +56,8 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
         }
 
         using var reopenedClient = fixture.CreateAdminClient(
-            CommercePermissionCodes.SalesCreate);
+            CommercePermissionCodes.SalesCreate,
+            CommercePermissionCodes.SalesRestartDraft);
         var recovered = await OpenAsync(reopenedClient, context);
         Assert.Equal(draftId, recovered.DraftId);
         Assert.Equal(1m, Assert.Single(recovered.Lines).Quantity);
@@ -80,7 +79,7 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
             HttpMethod.Post,
             $"/api/commerce/v1/pos/drafts/{draftId:D}/reset",
             new ResetOnlineSalesDraftRequest(changed.Version),
-            "reset-draft");
+            Guid.NewGuid().ToString("D"));
         using var resetResponse = await reopenedClient.SendAsync(reset);
         resetResponse.EnsureSuccessStatusCode();
         var next = await resetResponse.Content
@@ -108,15 +107,13 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
 
         using var first = Mutation(
             HttpMethod.Post,
-            $"/api/commerce/v1/pos/drafts/{opened.DraftId:D}/lines",
-            new AddOnlineSalesDraftProductRequest(
-                fixture.ProductId, 1m, opened.Version),
+            $"/api/commerce/v1/pos/drafts/{opened.DraftId:D}/items",
+            new AddOnlineSalesDraftItemRequest(fixture.ProductId.ToString("D"), 1m, opened.Version),
             $"tab-a-{Guid.NewGuid():N}");
         using var second = Mutation(
             HttpMethod.Post,
-            $"/api/commerce/v1/pos/drafts/{opened.DraftId:D}/lines",
-            new AddOnlineSalesDraftProductRequest(
-                fixture.ProductId, 2m, opened.Version),
+            $"/api/commerce/v1/pos/drafts/{opened.DraftId:D}/items",
+            new AddOnlineSalesDraftItemRequest(fixture.ProductId.ToString("D"), 2m, opened.Version),
             $"tab-b-{Guid.NewGuid():N}");
 
         var responses = await Task.WhenAll(

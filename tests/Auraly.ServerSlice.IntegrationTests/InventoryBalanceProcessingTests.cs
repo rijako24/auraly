@@ -26,7 +26,7 @@ public sealed class InventoryBalanceProcessingTests(ServerSliceFixture fixture)
                 Assert.Equal(quantityBefore, movement.QuantityBefore);
                 Assert.Equal(quantityBefore - first.Lines[0].Quantity, movement.QuantityAfter);
                 Assert.Equal(averageCostBefore, movement.RecognizedUnitCost);
-                Assert.Equal(-first.Lines[0].Quantity * averageCostBefore, movement.ValueChange);
+                Assert.Equal(decimal.Round(-first.Lines[0].Quantity * averageCostBefore, 4, MidpointRounding.AwayFromZero), movement.ValueChange);
             },
             movement =>
             {
@@ -36,7 +36,7 @@ public sealed class InventoryBalanceProcessingTests(ServerSliceFixture fixture)
                     movement.QuantityAfter);
                 Assert.True(movement.ProcessingSequence > movements[0].ProcessingSequence);
                 Assert.Equal(averageCostBefore, movement.RecognizedUnitCost);
-                Assert.Equal(-second.Lines[0].Quantity * averageCostBefore, movement.ValueChange);
+                Assert.Equal(decimal.Round(-second.Lines[0].Quantity * averageCostBefore, 4, MidpointRounding.AwayFromZero), movement.ValueChange);
             });
 
         var quantityAfter = await ReadBalanceQuantityAsync();

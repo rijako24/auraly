@@ -1,5 +1,6 @@
 using Auraly.Application.Authorization;
 using Auraly.Application.Sales;
+using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Authorization;
 using Auraly.Domain.Authorization;
@@ -77,6 +78,91 @@ public sealed class PosEdgeSchemaUpgradeTests
         }
     }
 
+    [Fact]
+    public async Task Provisioning_the_same_durable_series_after_device_identity_refresh_preserves_local_cursors()
+    {
+        var databasePath = Path.Combine(
+            Path.GetTempPath(),
+            $"auraly-pos-edge-series-refresh-{Guid.NewGuid():N}.db");
+        var previousDevice = new DeviceId(Guid.NewGuid());
+        var refreshedDevice = new DeviceId(Guid.NewGuid());
+        var documentSeriesId = Guid.NewGuid();
+        var fiscalSeriesId = Guid.NewGuid();
+        var authorizationId = Guid.NewGuid();
+        try
+        {
+            var userId = new UserId(Guid.NewGuid());
+            var permissions = new UserPermissionSet(
+                new TenantId(Guid.NewGuid()),
+                userId,
+                [CommercePermissionCodes.SalesCreate]);
+            var authorization = new PermissionAuthorizer(new FixedPermissionProvider(permissions));
+            var firstStore = new PosEdgeSaleStore(
+                $"Data Source={databasePath}",
+                new ConfirmOfflineSaleService(authorization));
+            await firstStore.InitializeAsync();
+            await firstStore.ProvisionDocumentSeriesAsync(new PosEdgeDocumentSeriesProvision(
+                documentSeriesId,
+                previousDevice,
+                AuralyDocumentTypes.SalesInvoice,
+                AuralyDocumentTypes.DefaultPrefix(AuralyDocumentTypes.SalesInvoice),
+                "01",
+                AuralyDocumentNumberAssignment.CanonicalPadding,
+                1,
+                100));
+            await firstStore.ProvisionSeriesAsync(new PosEdgeSeriesProvision(
+                fiscalSeriesId,
+                previousDevice,
+                "FE",
+                "18760000001",
+                1,
+                100,
+                new DateOnly(2027, 7, 27),
+                authorizationId));
+
+            var restartedStore = new PosEdgeSaleStore(
+                $"Data Source={databasePath}",
+                new ConfirmOfflineSaleService(authorization));
+            await restartedStore.InitializeAsync();
+            await restartedStore.ProvisionDocumentSeriesAsync(new PosEdgeDocumentSeriesProvision(
+                documentSeriesId,
+                refreshedDevice,
+                AuralyDocumentTypes.SalesInvoice,
+                AuralyDocumentTypes.DefaultPrefix(AuralyDocumentTypes.SalesInvoice),
+                "01",
+                AuralyDocumentNumberAssignment.CanonicalPadding,
+                1,
+                100));
+            await restartedStore.ProvisionSeriesAsync(new PosEdgeSeriesProvision(
+                fiscalSeriesId,
+                refreshedDevice,
+                "FE",
+                "18760000001",
+                1,
+                100,
+                new DateOnly(2027, 7, 27),
+                authorizationId));
+
+            var document = await restartedStore.PreviewNextDocumentNumberAsync(
+                refreshedDevice,
+                AuralyDocumentTypes.SalesInvoice);
+            var fiscal = await restartedStore.PreviewNextFiscalNumberAsync(
+                refreshedDevice,
+                DateTimeOffset.UtcNow);
+
+            Assert.Equal(documentSeriesId, document.SeriesId);
+            Assert.Equal(1, document.Consecutive);
+            Assert.Equal(fiscalSeriesId, fiscal.SeriesId);
+            Assert.Equal(1, fiscal.Consecutive);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            DeleteIfPresent(databasePath);
+            DeleteIfPresent($"{databasePath}-wal");
+            DeleteIfPresent($"{databasePath}-shm");
+        }
+    }
     private static async Task CreatePreviousSchemaAsync(
         string databasePath,
         Guid seriesId,

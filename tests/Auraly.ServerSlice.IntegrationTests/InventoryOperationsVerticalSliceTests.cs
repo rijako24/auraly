@@ -40,7 +40,7 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         }
 
         await ConfirmAdjustmentAsync(client, new(Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
-            occurred.AddMinutes(2), "FOUND_STOCK", null, null,
+            occurred.AddMinutes(2), "FOUND_SURPLUS", null, null,
             [new(1, source, 5m, 5m)]));
         Assert.Equal(25m, (await BalanceAsync(fixture.WarehouseId, source)).Quantity);
 
@@ -58,7 +58,7 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
 
         var transferId = Guid.NewGuid();
         var transfer = new ConfirmWarehouseTransferRequest(transferId, fixture.BusinessId,
-            fixture.WarehouseId, destination, occurred.AddMinutes(3), "REPLENISHMENT", null,
+            fixture.WarehouseId, destination, occurred.AddMinutes(3), "WAREHOUSE_TRANSFER", null,
             [new(1, source, 3m)]);
         var transferKey = $"transfer-{transferId:N}";
         var firstTransfer = await SendAsync<ConfirmWarehouseTransferRequest>(client,
@@ -75,7 +75,7 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         await SendAsync<ConfirmProductConversionRequest>(client,
             "/api/commerce/v1/product-conversions/confirm",
             new(conversionId, fixture.BusinessId, fixture.WarehouseId, occurred.AddMinutes(4),
-                "SPLIT", "CHANGE_PRESENTATION", null, "Conversión E2E",
+                "SPLIT", "PRESENTATION_CHANGE", null, "Conversión E2E",
                 [new(1,"INPUT",source,4m,null), new(2,"OUTPUT",outputOne,2m,60m), new(3,"OUTPUT",outputTwo,1m,40m)]),
             $"conversion-{conversionId:N}");
         Assert.Equal((16m, 5m, 80m), await BalanceAsync(fixture.WarehouseId, source));
@@ -88,6 +88,39 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.Equal("Completed", await JobStatusAsync(conversionId));
     }
 
+    [Fact]
+    public async Task Damage_updates_inventory_once_and_queries_respect_cost_permission()
+    {
+        var product = Guid.NewGuid();
+        await SeedAsync(product, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        using var client = fixture.CreateAdminClient(InventoryPermissionCodes.Adjust, InventoryPermissionCodes.Damage, InventoryPermissionCodes.Read, InventoryPermissionCodes.ReadCosts);
+        await ConfirmAdjustmentAsync(client, new(Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow, "INITIAL_BALANCE", null, null, [new(1, product, 10m, 5m)]));
+        var damageId = Guid.NewGuid();
+        var request = new ConfirmInventoryDamageRequest(damageId, fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow, "DAMAGE", null, "Empaque destruido", [new(1, product, 3m)]);
+        var key = $"damage-{damageId:N}";
+        var accepted = await SendAsync(client, "/api/commerce/v1/inventory-damages/confirm", request, key);
+        var replay = await SendAsync(client, "/api/commerce/v1/inventory-damages/confirm", request, key);
+        Assert.False(accepted.IdempotentReplay); Assert.True(replay.IdempotentReplay);
+        Assert.Equal((7m,5m,35m), await BalanceAsync(fixture.WarehouseId, product));
+        Assert.Equal(-3m, await ScalarAsync<decimal>("SELECT QuantityChange FROM dbo.InventoryMovements WHERE DocumentId=@Id AND MovementType=N'InventoryDamage'", damageId));
+        Assert.Equal(1, await CountAsync("InventoryMovements", damageId)); Assert.Equal(1, await CountAsync("ServerOutboxMessages", damageId));
+        var balances = await client.GetFromJsonAsync<InventoryBalancePage>($"/api/commerce/v1/inventory/balances?warehouseId={fixture.WarehouseId:D}&search=Insumo&page=1&pageSize=20");
+        var row = Assert.Single(balances!.Items.Where(x => x.ProductId == product)); Assert.Equal(5m,row.AverageUnitCost); Assert.Equal(35m,row.InventoryValue);
+        var products = await client.GetFromJsonAsync<InventoryProductPage>($"/api/commerce/v1/inventory/products?warehouseId={fixture.WarehouseId:D}&search=Insumo&page=1&pageSize=20");
+        var productRow = Assert.Single(products!.Items.Where(x => x.ProductId == product)); Assert.Equal(7m, productRow.QuantityOnHand); Assert.Equal(5m, productRow.AverageUnitCost);
+        foreach (var search in new[] { $"I-{product:N}", $"REF-{product:N}", $"BAR-{product:N}" })
+        {
+            var result = await client.GetFromJsonAsync<InventoryProductPage>($"/api/commerce/v1/inventory/products?warehouseId={fixture.WarehouseId:D}&search={search}&page=1&pageSize=20");
+            Assert.Contains(result!.Items, item => item.ProductId == product);
+        }
+        var movements = await client.GetFromJsonAsync<InventoryMovementPage>($"/api/commerce/v1/inventory/movements?productId={product:D}&page=1&pageSize=20");
+        Assert.Contains(movements!.Items,x=>x.DocumentId==damageId&&x.MovementType=="InventoryDamage");
+        using var restricted = fixture.CreateAdminClient(InventoryPermissionCodes.Read);
+        var hidden = await restricted.GetFromJsonAsync<InventoryBalancePage>($"/api/commerce/v1/inventory/balances?warehouseId={fixture.WarehouseId:D}&search=Insumo&page=1&pageSize=20");
+        var hiddenRow = Assert.Single(hidden!.Items.Where(x => x.ProductId == product)); Assert.Null(hiddenRow.AverageUnitCost); Assert.Null(hiddenRow.InventoryValue);
+        var hiddenProducts = await restricted.GetFromJsonAsync<InventoryProductPage>($"/api/commerce/v1/inventory/products?warehouseId={fixture.WarehouseId:D}&search=Insumo&page=1&pageSize=20");
+        Assert.Null(Assert.Single(hiddenProducts!.Items.Where(x => x.ProductId == product)).AverageUnitCost);
+    }
     [Fact]
     public async Task Inventory_endpoints_enforce_permission_and_transaction_rolls_back_an_impossible_conversion()
     {
@@ -105,12 +138,12 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         await ConfirmAdjustmentAsync(client, request);
         var before = await BalanceAsync(fixture.WarehouseId, source);
         var conversionId = Guid.NewGuid();
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            SendAsync<ConfirmProductConversionRequest>(client, "/api/commerce/v1/product-conversions/confirm",
-                new(conversionId, fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
-                    "SPLIT", "CHANGE_PRESENTATION", null, null,
-                    [new(1,"INPUT",source,99m,null),new(2,"OUTPUT",output,1m,null)]),
-                $"impossible-{conversionId:N}"));
+        await SendAsync<ConfirmProductConversionRequest>(client,
+            "/api/commerce/v1/product-conversions/confirm",
+            new(conversionId, fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
+                "SPLIT", "PRESENTATION_CHANGE", null, null,
+                [new(1,"INPUT",source,99m,null),new(2,"OUTPUT",output,1m,null)]),
+            $"impossible-{conversionId:N}");
         Assert.Equal(before, await BalanceAsync(fixture.WarehouseId, source));
         Assert.Equal(0, await CountAsync("InventoryMovements", conversionId));
         Assert.Equal(0, await CountAsync("ServerOutboxMessages", conversionId));
@@ -124,10 +157,15 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         const string sql = """
             INSERT dbo.Warehouses(WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,IsActive,CreatedAt)
             VALUES(@Destination,@BusinessId,@WarehouseCode,N'Bodega destino',0,1,SYSDATETIMEOFFSET());
-            INSERT dbo.Products(ProductId,BusinessId,Source,Sku,Name,UnitPrice,Currency,ManageStock,IsActive,CreatedAt)
-            VALUES(@First,@BusinessId,0,@FirstSku,N'Insumo',0,N'COP',1,1,SYSUTCDATETIME()),
-                  (@Second,@BusinessId,0,@SecondSku,N'Salida uno',0,N'COP',1,1,SYSUTCDATETIME()),
-                  (@Third,@BusinessId,0,@ThirdSku,N'Salida dos',0,N'COP',1,1,SYSUTCDATETIME());
+            INSERT dbo.TaxProfiles(
+                TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
+            VALUES(@TaxProfileId,@BusinessId,@TaxCode,N'IVA de prueba',19,1,SYSDATETIMEOFFSET());
+            INSERT dbo.Products(ProductId,BusinessId,ProductCode,Reference,BaseUnitCode,TaxProfileId,Source,Sku,Name,UnitPrice,Currency,ManageStock,IsActive,CreatedAt)
+            VALUES(@First,@BusinessId,@FirstSku,@FirstReference,N'EA',@TaxProfileId,0,@FirstSku,N'Insumo',0,N'COP',1,1,SYSUTCDATETIME()),
+                  (@Second,@BusinessId,NULL,NULL,N'EA',@TaxProfileId,0,@SecondSku,N'Salida uno',0,N'COP',1,1,SYSUTCDATETIME()),
+                  (@Third,@BusinessId,NULL,NULL,N'EA',@TaxProfileId,0,@ThirdSku,N'Salida dos',0,N'COP',1,1,SYSUTCDATETIME());
+            INSERT dbo.ProductBarcodes(ProductBarcodeId,BusinessId,ProductId,Barcode,IsPrimary,IsActive,CreatedAt)
+            VALUES(NEWID(),@BusinessId,@First,@FirstBarcode,1,1,SYSUTCDATETIME());
             IF NOT EXISTS(
                 SELECT 1 FROM dbo.DocumentSeries
                 WHERE BusinessId=@BusinessId AND DocumentType=N'StockCount'
@@ -138,13 +176,16 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
                       (NEWID(),@BusinessId,NULL,N'InventoryAdjustment',N'AJI',@Series,8,1,99999999,0,1,SYSDATETIMEOFFSET()),
                       (NEWID(),@BusinessId,NULL,N'WarehouseTransfer',N'TRB',@Series,8,1,99999999,0,1,SYSDATETIMEOFFSET()),
                       (NEWID(),@BusinessId,NULL,N'ProductConversion',N'CNV',@Series,8,1,99999999,0,1,SYSDATETIMEOFFSET());
+                IF NOT EXISTS(SELECT 1 FROM dbo.DocumentSeries WHERE BusinessId=@BusinessId AND DocumentType=N'Damage' AND IsActive=1)
+                  INSERT dbo.DocumentSeries(DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
+                  VALUES(NEWID(),@BusinessId,NULL,N'Damage',N'AVE',@Series,8,1,99999999,0,1,SYSDATETIMEOFFSET());
             END;
             """;
         await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync();
         await using var command = new SqlCommand(sql, connection);
-        command.Parameters.AddWithValue("@Destination",destination); command.Parameters.AddWithValue("@BusinessId",fixture.BusinessId);
+        command.Parameters.AddWithValue("@Destination",destination); command.Parameters.AddWithValue("@BusinessId",fixture.BusinessId); command.Parameters.AddWithValue("@TaxProfileId",Guid.NewGuid()); command.Parameters.AddWithValue("@TaxCode",$"IVA-{first:N}"[..32]);
         command.Parameters.AddWithValue("@WarehouseCode",$"W-{destination:N}"[..18]); command.Parameters.AddWithValue("@First",first); command.Parameters.AddWithValue("@Second",second); command.Parameters.AddWithValue("@Third",third);
-        command.Parameters.AddWithValue("@FirstSku",$"I-{first:N}"); command.Parameters.AddWithValue("@SecondSku",$"O-{second:N}"); command.Parameters.AddWithValue("@ThirdSku",$"O-{third:N}"); command.Parameters.AddWithValue("@Series","00");
+        command.Parameters.AddWithValue("@FirstSku",$"I-{first:N}"); command.Parameters.AddWithValue("@FirstReference",$"REF-{first:N}"); command.Parameters.AddWithValue("@FirstBarcode",$"BAR-{first:N}"); command.Parameters.AddWithValue("@SecondSku",$"O-{second:N}"); command.Parameters.AddWithValue("@ThirdSku",$"O-{third:N}"); command.Parameters.AddWithValue("@Series","00");
         await command.ExecuteNonQueryAsync();
     }
 
@@ -154,7 +195,9 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
     private static async Task<InventoryOperationAcceptance> SendAsync<T>(HttpClient client, string url, T request, string key)
     {
         using var message = CreateMessage(url, request, key); using var response = await client.SendAsync(message);
-        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var responseBody = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.Accepted,
+            $"Expected Accepted, received {response.StatusCode}: {responseBody}");
         return await response.Content.ReadFromJsonAsync<InventoryOperationAcceptance>() ?? throw new InvalidOperationException("Acceptance missing.");
     }
     private static HttpRequestMessage CreateMessage<T>(string url,T request,string key){var message=new HttpRequestMessage(HttpMethod.Post,url){Content=JsonContent.Create(request)};message.Headers.Add("Idempotency-Key",key);return message;}

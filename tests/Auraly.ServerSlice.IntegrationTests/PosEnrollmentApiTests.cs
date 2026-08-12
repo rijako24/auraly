@@ -78,6 +78,76 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Reenrollment_preserves_device_series_and_local_numbering_identity()
+    {
+        var fiscalSeriesId = Guid.NewGuid();
+        await SeedAvailableDeviceFiscalSeriesAsync(fiscalSeriesId);
+        using var client = fixture.CreateAdminClient(
+            CommercePermissionCodes.EnrolledDevicesEnroll);
+
+        using var firstAuthorizationResponse = await client.PostAsJsonAsync(
+            "/api/commerce/v1/pos/enrollments",
+            new CreatePosEnrollmentRequest(
+                fixture.BusinessId, fixture.WarehouseId, "Equipo reconfigurable"));
+        firstAuthorizationResponse.EnsureSuccessStatusCode();
+        var firstAuthorization = await firstAuthorizationResponse.Content
+            .ReadFromJsonAsync<PosEnrollmentAuthorization>();
+        Assert.NotNull(firstAuthorization);
+        using var firstRedeemResponse = await client.PostAsJsonAsync(
+            "/api/pos/v1/enrollments/redeem",
+            new RedeemPosEnrollmentRequest(
+                firstAuthorization.EnrollmentSessionId,
+                firstAuthorization.RedemptionCode,
+                "WORKSTATION-REENROLL"));
+        firstRedeemResponse.EnsureSuccessStatusCode();
+        var firstPackage = await firstRedeemResponse.Content
+            .ReadFromJsonAsync<PosEnrollmentPackage>();
+        Assert.NotNull(firstPackage);
+
+        using var secondAuthorizationResponse = await client.PostAsJsonAsync(
+            "/api/commerce/v1/pos/enrollments",
+            new CreatePosEnrollmentRequest(
+                fixture.BusinessId, fixture.WarehouseId, "Equipo reconfigurable"));
+        secondAuthorizationResponse.EnsureSuccessStatusCode();
+        var secondAuthorization = await secondAuthorizationResponse.Content
+            .ReadFromJsonAsync<PosEnrollmentAuthorization>();
+        Assert.NotNull(secondAuthorization);
+        using var secondRedeemResponse = await client.PostAsJsonAsync(
+            "/api/pos/v1/enrollments/redeem",
+            new RedeemPosEnrollmentRequest(
+                secondAuthorization.EnrollmentSessionId,
+                secondAuthorization.RedemptionCode,
+                "WORKSTATION-REENROLL",
+                firstPackage.DeviceId));
+        secondRedeemResponse.EnsureSuccessStatusCode();
+        var secondPackage = await secondRedeemResponse.Content
+            .ReadFromJsonAsync<PosEnrollmentPackage>();
+        Assert.NotNull(secondPackage);
+        Assert.Equal(firstPackage.DeviceId, secondPackage.DeviceId);
+        Assert.Equal(firstPackage.DocumentSeries.SeriesId, secondPackage.DocumentSeries.SeriesId);
+        Assert.Equal(firstPackage.DocumentSeries.SeriesCode, secondPackage.DocumentSeries.SeriesCode);
+        Assert.NotEqual(firstPackage.DeviceSecret, secondPackage.DeviceSecret);
+
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT
+              (SELECT COUNT(*) FROM dbo.DocumentSeries
+               WHERE DeviceId=@DeviceId AND DocumentType=N'SalesInvoice'),
+              (SELECT COUNT(*) FROM dbo.DocumentSeriesCursors
+               WHERE DocumentSeriesId=@SeriesId),
+              (SELECT COUNT(*) FROM dbo.EnrolledDevices
+               WHERE DeviceId=@DeviceId AND IsActive=1);
+            """, connection);
+        command.Parameters.AddWithValue("@DeviceId", firstPackage.DeviceId);
+        command.Parameters.AddWithValue("@SeriesId", firstPackage.DocumentSeries.SeriesId);
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(1, reader.GetInt32(0));
+        Assert.Equal(1, reader.GetInt32(1));
+        Assert.Equal(1, reader.GetInt32(2));
+    }
+    [Fact]
     public async Task User_without_enrollment_permission_is_denied()
     {
         using var client = fixture.CreateAdminClient(
@@ -108,7 +178,9 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@FiscalSeriesId", fiscalSeriesId);
         command.Parameters.AddWithValue(
             "@FiscalAuthorizationId", fixture.FiscalAuthorizationId);
-        command.Parameters.AddWithValue("@Prefix", ServerSliceFixture.Prefix);
+        command.Parameters.AddWithValue(
+            "@Prefix",
+            ("T" + fiscalSeriesId.ToString("N")[..3]).ToUpperInvariant());
         await command.ExecuteNonQueryAsync();
     }
 }

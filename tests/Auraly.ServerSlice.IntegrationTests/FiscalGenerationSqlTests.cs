@@ -126,7 +126,7 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         Assert.NotNull(statusPage);
         var change = Assert.Single(statusPage.Items.Where(item => item.DocumentId == request.DocumentId));
         Assert.Equal(FiscalDocumentStatusCodes.DianAccepted, change.Status);
-        Assert.Equal(request.FiscalSnapshot.Cufe, change.Cufe);
+        Assert.Equal(request.FiscalSnapshot!.Cufe, change.Cufe);
 
         using var nextRequest = new HttpRequestMessage(
             HttpMethod.Get,
@@ -205,7 +205,7 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         Assert.Equal(96, cude.Length);
         Assert.Equal(cude, await ScalarStringAsync(
             "SELECT UniqueCode FROM dbo.FiscalDocuments WHERE DocumentId=@DocumentId", returnId));
-        Assert.Contains(original.FiscalSnapshot.FiscalNumber,
+        Assert.Contains(original.FiscalSnapshot!.FiscalNumber,
             xml.Descendants().Where(element => element.Name.LocalName == "ID")
                 .Select(element => element.Value));
         Assert.Contains(original.FiscalSnapshot.Cufe,
@@ -281,7 +281,7 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
                     ServerSliceFixture.Prefix, 1, 10000),
                 "auraly-test-software",
                 [new PosSaleUblLineContract(1, "P-E2E", "999", "EA", "IVA", 19m)],
-                "1", "10", DateOnly.FromDateTime(request.FiscalSnapshot.IssuedAt.Date), null)
+                "1", "10", DateOnly.FromDateTime(request.FiscalSnapshot!.IssuedAt.Date), null)
         };
     }
 

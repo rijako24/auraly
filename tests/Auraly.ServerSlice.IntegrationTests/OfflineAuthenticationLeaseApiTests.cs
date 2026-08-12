@@ -52,17 +52,12 @@ public sealed class OfflineAuthenticationLeaseApiTests(ServerSliceFixture fixtur
             }
 
             Assert.Equal(1, await CountActiveLeasesAsync(user.UserId));
-            using var onlineConflict = await SendOnlineLoginAsync(user.Username);
-            Assert.Equal(HttpStatusCode.Conflict, onlineConflict.StatusCode);
-
-            using var release = await SendReleaseAsync(payload.LeaseId);
-            Assert.Equal(HttpStatusCode.NoContent, release.StatusCode);
-            using var repeatedRelease = await SendReleaseAsync(payload.LeaseId);
-            Assert.Equal(HttpStatusCode.NoContent, repeatedRelease.StatusCode);
-            Assert.Equal("Released", await ReadLeaseStatusAsync(payload.LeaseId));
-
             using var onlineLogin = await SendOnlineLoginAsync(user.Username);
             Assert.Equal(HttpStatusCode.OK, onlineLogin.StatusCode);
+            Assert.Equal(0, await CountActiveLeasesAsync(user.UserId));
+            Assert.Equal("Revoked", await ReadLeaseStatusAsync(payload.LeaseId));
+            using var release = await SendReleaseAsync(payload.LeaseId);
+            Assert.Equal(HttpStatusCode.NoContent, release.StatusCode);
         }
         finally
         {
@@ -127,7 +122,7 @@ public sealed class OfflineAuthenticationLeaseApiTests(ServerSliceFixture fixtur
 
     private async Task<HttpResponseMessage> SendOnlineLoginAsync(string username)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/login")
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/login")
         {
             Content = JsonContent.Create(
                 new AuthenticationLoginRequest(username, Password))

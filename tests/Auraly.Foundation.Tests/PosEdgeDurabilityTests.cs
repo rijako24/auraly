@@ -6,6 +6,7 @@ using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Organization;
+using Auraly.Contracts.Sales;
 using Auraly.Domain.Authorization;
 using Auraly.Fiscal.Core;
 using Auraly.Pos.Edge.Infrastructure;
@@ -107,8 +108,8 @@ public sealed class PosEdgeDurabilityTests
             await reopenedProcess.ApplyFiscalStatusPageAsync(new PosFiscalStatusPage(
                 [new PosFiscalStatusChange(
                     first.DocumentId.Value,
-                    first.FiscalNumber,
-                    first.Cufe,
+                    first.FiscalNumber!,
+                    first.Cufe!,
                     FiscalDocumentStatusCodes.DianAccepted,
                     "00",
                     "Accepted",
@@ -123,6 +124,77 @@ public sealed class PosEdgeDurabilityTests
             Assert.Equal(first.Cufe, fiscal.Cufe);
             Assert.Equal(cursor, await afterFiscalRestart.GetFiscalStatusCursorAsync());
             Assert.Single(await afterFiscalRestart.GetPendingOutboxAsync());
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            DeleteIfPresent(databasePath);
+            DeleteIfPresent($"{databasePath}-wal");
+            DeleteIfPresent($"{databasePath}-shm");
+        }
+    }
+
+    [Fact]
+    public async Task Commercial_receipt_is_durable_without_fiscal_artifacts()
+    {
+        var databasePath = Path.Combine(
+            Path.GetTempPath(), $"auraly-pos-receipt-{Guid.NewGuid():N}.db");
+        try
+        {
+            var tenantId = new TenantId(Guid.NewGuid());
+            var businessId = new BusinessId(Guid.NewGuid());
+            var warehouseId = new WarehouseId(Guid.NewGuid());
+            var deviceId = new DeviceId(Guid.NewGuid());
+            var userId = new UserId(Guid.NewGuid());
+            var execution = new SalesExecutionContext(
+                tenantId, businessId, warehouseId, userId, deviceId,
+                new WorkSessionId(Guid.NewGuid()), true);
+            var confirmation = new ConfirmOfflineSaleService(
+                new PermissionAuthorizer(new FixedPermissionProvider(
+                    new UserPermissionSet(
+                        tenantId, userId, [CommercePermissionCodes.SalesCreate]))));
+            var connectionString = $"Data Source={databasePath}";
+            var store = new PosEdgeSaleStore(connectionString, confirmation);
+            await store.InitializeAsync();
+            await store.ProvisionDocumentSeriesAsync(new PosEdgeDocumentSeriesProvision(
+                Guid.NewGuid(), deviceId, AuralyDocumentTypes.SalesReceipt,
+                "CVI", "03", 8, 1, 99_999_999));
+
+            var documentId = new DocumentId(Guid.NewGuid());
+            var product = new PosCatalogProduct(
+                new ProductId(Guid.NewGuid()), "P001", "Producto", ["7701234567890"],
+                true, false, "01", 19m);
+            var command = new PosEdgeIssueCommand(
+                userId,
+                documentId,
+                execution,
+                new DateTimeOffset(2026, 8, 10, 10, 0, 0, TimeSpan.FromHours(-5)),
+                "9001234567",
+                "222222222",
+                new FiscalTechnicalKey("unused-for-receipt", "v1"),
+                FiscalEnvironment.Test,
+                "https://example.test/qr",
+                [new OfflineSaleLine(product, 1m, 10_000m, 0m, 1_900m)],
+                DocumentType: PosSaleDocumentTypes.Receipt);
+
+            var issued = await store.IssueAsync(command);
+            var reopened = new PosEdgeSaleStore(connectionString, confirmation);
+            await reopened.InitializeAsync();
+            var replay = await reopened.IssueAsync(command);
+            var pending = await reopened.GetPendingOutboxAsync();
+
+            Assert.Equal("CVI03-00000001", issued.DocumentNumber);
+            Assert.Null(issued.FiscalNumber);
+            Assert.Null(issued.Cufe);
+            Assert.Null(issued.QrPayload);
+            Assert.Equal(PosSaleDocumentTypes.Receipt, issued.Upload.CommercialSnapshot.DocumentType);
+            Assert.Null(issued.Upload.FiscalSnapshot);
+            Assert.Null(issued.Upload.UblSnapshot);
+            Assert.True(replay.WasAlreadyIssued);
+            Assert.Equal(issued.DocumentNumber, replay.DocumentNumber);
+            Assert.Null(replay.Cufe);
+            Assert.Single(pending);
+            Assert.Equal("sales.receipt.confirmed", pending.Single().Type);
         }
         finally
         {

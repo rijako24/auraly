@@ -39,6 +39,27 @@ public sealed class PosArchitectureTests
     }
 
     [Fact]
+    public void Cached_online_pos_still_refreshes_workspace_options()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var page = File.ReadAllText(Path.Combine(
+            repositoryRoot, "admin", "src", "app", "(pos)", "pos", "page.tsx"));
+        var cachedClientStart = page.IndexOf(
+            "if (cachedOnlineClient)", StringComparison.Ordinal);
+        var bootstrapCall = page.IndexOf(
+            "const serverBootstrap = await loadSalesWorkspaceBootstrap();",
+            cachedClientStart,
+            StringComparison.Ordinal);
+
+        Assert.True(cachedClientStart >= 0, "The cached online client branch was not found.");
+        Assert.True(bootstrapCall > cachedClientStart, "The workspace bootstrap call was not found after the cached client branch.");
+        Assert.DoesNotContain(
+            "return;",
+            page[cachedClientStart..bootstrapCall],
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Pos_scanner_remains_editable_and_server_sync_has_no_polling_timer()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -58,7 +79,7 @@ public sealed class PosArchitectureTests
         Assert.True(scannerEnd > scannerStart, "The POS scanner input is malformed.");
 
         var scanner = page[scannerStart..scannerEnd];
-        Assert.Contains("disabled={busy}", scanner, StringComparison.Ordinal);
+        Assert.Contains("disabled={busy || !salesReady}", scanner, StringComparison.Ordinal);
         Assert.DoesNotContain("edgeReady", scanner, StringComparison.Ordinal);
         Assert.Contains(
             "Los servicios locales del equipo no est\\u00e1n disponibles.",
@@ -72,10 +93,8 @@ public sealed class PosArchitectureTests
             "client.mode === \"edge\"",
             page,
             StringComparison.Ordinal);
-        Assert.Contains(
-            "window.setInterval(() => void connect(), 3_000)",
-            page,
-            StringComparison.Ordinal);
+        Assert.DoesNotContain("window.setInterval(() => void connect(), 3_000)", page, StringComparison.Ordinal);
+        Assert.Contains("watchLocalState", page, StringComparison.Ordinal);
 
         var edgeHost = File.ReadAllText(Path.Combine(
             repositoryRoot,
@@ -138,8 +157,12 @@ public sealed class PosArchitectureTests
             "onSearch={searchProducts}",
             page,
             StringComparison.Ordinal);
+        Assert.Contains("event.key === \"ArrowDown\"", productSearchDialog, StringComparison.Ordinal);
+        Assert.Contains("event.key === \"ArrowUp\"", productSearchDialog, StringComparison.Ordinal);
+        Assert.Contains("moveSelection(1)", productSearchDialog, StringComparison.Ordinal);
+        Assert.Contains("moveSelection(-1)", productSearchDialog, StringComparison.Ordinal);
         Assert.Contains(
-            "Tab y Shift+Tab navegan; Enter agrega el producto enfocado; Esc vuelve al lector.",
+            "Flechas recorren; Tab entra al listado; Enter agrega; Esc vuelve al lector.",
             productSearchDialog,
             StringComparison.Ordinal);
     }
@@ -198,6 +221,66 @@ public sealed class PosArchitectureTests
         Assert.Contains("<OrdersWorkspace", page, StringComparison.Ordinal);
         Assert.Contains("ordersExpanded && client", page, StringComparison.Ordinal);
         Assert.Contains("setMessage(\"Los pedidos se consultan", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Platform_and_commerce_share_one_http_host()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var canonicalHost = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "API", "Auraly.Api", "Auraly.Api.csproj"));
+        var backendRouting = File.ReadAllText(Path.Combine(
+            repositoryRoot, "admin", "src", "lib", "backend-request-url.ts"));
+        var desktop = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "Desktop", "Auraly.Desktop", "Program.cs"));
+        var apiProjects = Directory.GetFiles(
+            Path.Combine(repositoryRoot, "src", "API"),
+            "*.csproj",
+            SearchOption.AllDirectories);
+        var webHosts = apiProjects.Where(path => File.ReadAllText(path)
+            .Contains("Microsoft.NET.Sdk.Web", StringComparison.Ordinal)).ToArray();
+        Assert.Single(webHosts);
+        Assert.EndsWith(
+            Path.Combine("Auraly.Api", "Auraly.Api.csproj"),
+            webHosts[0],
+            StringComparison.OrdinalIgnoreCase);
+        Assert.True(Directory.Exists(Path.Combine(repositoryRoot, "src", "API", "Auraly.Api", "Controllers")));
+        var controllerFiles = Directory.GetFiles(
+            Path.Combine(repositoryRoot, "src", "API"),
+            "*Controller.cs",
+            SearchOption.AllDirectories)
+            .Where(path => !path.Contains(
+                $"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}",
+                StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        Assert.NotEmpty(controllerFiles);
+        Assert.All(
+            controllerFiles,
+            controller => Assert.StartsWith(
+                Path.Combine(repositoryRoot, "src", "API", "Auraly.Api", "Controllers"),
+                controller,
+                StringComparison.OrdinalIgnoreCase));
+        var unversionedControllerRoute = new System.Text.RegularExpressions.Regex(
+            @"\[(?:Route|HttpGet|HttpPost|HttpPut|HttpPatch|HttpDelete)\(""api\/(?!v\d+\/)",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        Assert.All(controllerFiles, controller =>
+        {
+            var source = File.ReadAllText(controller);
+            Assert.Contains("api/v1/", source, StringComparison.Ordinal);
+            Assert.False(
+                unversionedControllerRoute.IsMatch(source),
+                $"Unversioned API route found in {Path.GetRelativePath(repositoryRoot, controller)}.");
+        });
+        Assert.False(Directory.Exists(Path.Combine(repositoryRoot, "src", "API", "Auraly.Platform.Composition")));
+        Assert.False(Directory.Exists(Path.Combine(
+            repositoryRoot,
+            "src",
+            "API",
+            string.Concat("Mi", "mos", "BabySpa.WebAPI"))));
+        Assert.DoesNotContain("AURALY_COMMERCE_API_URL", backendRouting, StringComparison.Ordinal);
+        Assert.DoesNotContain("IdentityApiUrl", desktop, StringComparison.Ordinal);
+        Assert.DoesNotContain("CommerceApiUrl", desktop, StringComparison.Ordinal);
+        Assert.Contains("string ApiUrl", desktop, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()

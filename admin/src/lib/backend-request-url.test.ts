@@ -4,58 +4,32 @@ import { afterEach, describe, it } from "node:test";
 import { getBackendRequestUrl } from "./backend-request-url";
 
 const originalBackend = process.env.NEXT_PUBLIC_API_URL;
-const originalCommerceBackend = process.env.AURALY_COMMERCE_API_URL;
 
 afterEach(() => {
-  restore("NEXT_PUBLIC_API_URL", originalBackend);
-  restore("AURALY_COMMERCE_API_URL", originalCommerceBackend);
+  if (originalBackend === undefined) delete process.env.NEXT_PUBLIC_API_URL;
+  else process.env.NEXT_PUBLIC_API_URL = originalBackend;
 });
 
 describe("getBackendRequestUrl", () => {
-  it("preserves the single gateway topology by default", () => {
-    process.env.NEXT_PUBLIC_API_URL = "https://gateway.auraly.test/api/";
-    delete process.env.AURALY_COMMERCE_API_URL;
+  it("routes platform and Commerce requests through one API", () => {
+    process.env.NEXT_PUBLIC_API_URL = "https://api.auraly.test/api/";
 
     assert.equal(
+      getBackendRequestUrl("businesses", "page=1"),
+      "https://api.auraly.test/api/v1/businesses?page=1",
+    );
+    assert.equal(
       getBackendRequestUrl("commerce/v1/pos/drafts/active"),
-      "https://gateway.auraly.test/api/commerce/v1/pos/drafts/active",
+      "https://api.auraly.test/api/commerce/v1/pos/drafts/active",
     );
     assert.equal(
       getBackendRequestUrl("auth/login"),
-      "https://gateway.auraly.test/api/auth/login",
+      "https://api.auraly.test/api/v1/auth/login",
     );
   });
 
-  it("routes Commerce requests to the dedicated Auraly API", () => {
-    process.env.NEXT_PUBLIC_API_URL = "https://identity.auraly.test/api";
-    process.env.AURALY_COMMERCE_API_URL = "http://127.0.0.1:5097/";
-
-    assert.equal(
-      getBackendRequestUrl(
-        "commerce/v1/pos/register-context/options",
-        "page=1",
-      ),
-      "http://127.0.0.1:5097/api/commerce/v1/pos/register-context/options?page=1",
-    );
-  });
-
-  it("routes canonical authentication to the dedicated Auraly API", () => {
-    process.env.NEXT_PUBLIC_API_URL = "https://legacy.auraly.test/api";
-    process.env.AURALY_COMMERCE_API_URL = "https://commerce.auraly.test/";
-
-    assert.equal(
-      getBackendRequestUrl("auth/refresh"),
-      "https://commerce.auraly.test/api/auth/refresh",
-    );
-    assert.equal(
-      getBackendRequestUrl("users"),
-      "https://legacy.auraly.test/api/users",
-    );
-  });
-
-  it("uses the root health endpoint of the dedicated Auraly API", () => {
-    process.env.NEXT_PUBLIC_API_URL = "https://identity.auraly.test/api";
-    process.env.AURALY_COMMERCE_API_URL = "http://127.0.0.1:5097";
+  it("uses the root health endpoint of the same API", () => {
+    process.env.NEXT_PUBLIC_API_URL = "http://127.0.0.1:5097/api";
 
     assert.equal(
       getBackendRequestUrl("health"),
@@ -63,8 +37,3 @@ describe("getBackendRequestUrl", () => {
     );
   });
 });
-
-function restore(name: string, value: string | undefined) {
-  if (value === undefined) delete process.env[name];
-  else process.env[name] = value;
-}

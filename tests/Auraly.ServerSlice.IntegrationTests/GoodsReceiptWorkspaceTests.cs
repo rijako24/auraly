@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
+using Auraly.Contracts.Inventory;
 using Auraly.Contracts.Purchasing;
+using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -30,6 +32,9 @@ public sealed class GoodsReceiptWorkspaceTests(ServerSliceFixture fixture)
             $"/api/commerce/v1/goods-receipts/drafts/{request.DraftId:D}");
         Assert.NotNull(recovered);
         Assert.Single(recovered.Lines);
+        Assert.Equal("Unidad", recovered.Lines.Single().PresentationName);
+        Assert.Equal(1m, recovered.Lines.Single().PresentationQuantity);
+        Assert.Equal(1m, recovered.Lines.Single().UnitsPerPresentation);
 
         var page = await client.GetFromJsonAsync<GoodsReceiptPage>(
             "/api/commerce/v1/goods-receipts?status=Draft&page=1&pageSize=25");
@@ -82,7 +87,8 @@ public sealed class GoodsReceiptWorkspaceTests(ServerSliceFixture fixture)
         using var client = fixture.CreateAdminClient(
             PurchasingPermissionCodes.ReadGoodsReceipts,
             PurchasingPermissionCodes.CreateGoodsReceipts,
-            PurchasingPermissionCodes.ConfirmGoodsReceipts);
+            PurchasingPermissionCodes.ConfirmGoodsReceipts,
+            InventoryPermissionCodes.Read);
         var options = await client.GetFromJsonAsync<GoodsReceiptWorkspaceOptions>(
             "/api/commerce/v1/goods-receipts/options");
         Assert.NotNull(options);
@@ -117,6 +123,23 @@ public sealed class GoodsReceiptWorkspaceTests(ServerSliceFixture fixture)
         Assert.NotNull(accepted);
         Assert.StartsWith("EMC00-", accepted.DocumentNumber);
 
+        InventoryOperationItem? historyItem = null;
+        for (var attempt = 0; attempt < 80 && historyItem is null; attempt++)
+        {
+            var history = await client.GetFromJsonAsync<InventoryOperationPage>(
+                $"/api/commerce/v1/inventory/operations?warehouseId={fixture.WarehouseId:D}" +
+                $"&search={Uri.EscapeDataString(accepted.DocumentNumber)}&page=1&pageSize=20");
+            historyItem = history?.Items.SingleOrDefault(item =>
+                item.DocumentId == accepted.DocumentId);
+            if (historyItem is null) await Task.Delay(25);
+        }
+        Assert.NotNull(historyItem);
+        Assert.Equal(PurchasingDocumentTypes.GoodsReceipt, historyItem.DocumentType);
+        Assert.Equal("Processed", historyItem.Status);
+        Assert.Equal(accepted.DocumentNumber, historyItem.DocumentNumber);
+        Assert.Equal(1, historyItem.LineCount);
+        Assert.Null(historyItem.TotalValueChange);
+
         using var draftGone = await client.GetAsync(
             $"/api/commerce/v1/goods-receipts/drafts/{draftRequest.DraftId:D}");
         Assert.Equal(HttpStatusCode.NotFound, draftGone.StatusCode);
@@ -132,6 +155,84 @@ public sealed class GoodsReceiptWorkspaceTests(ServerSliceFixture fixture)
         Assert.Equal(HttpStatusCode.BadRequest, wrongSupplier.StatusCode);
     }
 
+    [Fact]
+    public async Task Receipt_prefers_supplier_catalog_and_explicitly_associates_a_general_product()
+    {
+        var productId = Guid.NewGuid();
+        var productCode = $"GEN-{productId:N}";
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                IF NOT EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@TaxProfileId)
+                  INSERT dbo.TaxProfiles
+                    (TaxProfileId,BusinessId,Code,DianTaxCode,Name,Rate,IsActive,CreatedAt)
+                  VALUES
+                    (@TaxProfileId,@BusinessId,@TaxCode,N'01',N'IVA compra 19%',19,1,SYSDATETIMEOFFSET());
+
+                INSERT dbo.Products
+                  (ProductId,BusinessId,ProductCode,Reference,Sku,Name,Description,BaseUnitCode,
+                   TaxProfileId,PurchaseTaxProfileId,PurchaseTaxTreatment,ManageStock,IsWeighable,
+                   IsActive,Source,UnitPrice,Currency,CreatedAt)
+                SELECT @ProductId,BusinessId,@Code,@Code,@Code,N'Producto catálogo general',
+                       N'Producto aún no asociado al proveedor',N'EA',@TaxProfileId,
+                       @TaxProfileId,N'CapitalizedCost',ManageStock,0,1,Source,0,Currency,SYSUTCDATETIME()
+                FROM dbo.Products WHERE ProductId=@SourceProductId;
+                """;
+            command.Parameters.AddWithValue("@ProductId", productId);
+            command.Parameters.AddWithValue("@SourceProductId", fixture.ProductId);
+            command.Parameters.AddWithValue("@TaxProfileId", fixture.TaxProfileId);
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            command.Parameters.AddWithValue("@TaxCode", ($"VAT-{productId:N}")[..24]);
+            command.Parameters.AddWithValue("@Code", productCode);
+            Assert.True(await command.ExecuteNonQueryAsync() >= 1);
+        }
+
+        using var readClient = fixture.CreateAdminClient(PurchasingPermissionCodes.ReadGoodsReceipts);
+        var supplierCatalog = await readClient.GetFromJsonAsync<GoodsReceiptProductPage>(
+            $"/api/commerce/v1/goods-receipts/products?supplierId={fixture.SupplierId:D}&page=1&pageSize=50");
+        Assert.NotNull(supplierCatalog);
+        Assert.DoesNotContain(supplierCatalog.Items, item => item.ProductId == productId);
+
+        var generalCatalog = await readClient.GetFromJsonAsync<GoodsReceiptProductPage>(
+            $"/api/commerce/v1/goods-receipts/products?supplierId={fixture.SupplierId:D}" +
+            $"&search={Uri.EscapeDataString(productCode)}&includeUnassociated=true&page=1&pageSize=50");
+        Assert.NotNull(generalCatalog);
+        var candidate = Assert.Single(generalCatalog.Items);
+        Assert.False(candidate.IsAssociated);
+        Assert.Equal(PurchasingTaxTreatments.CapitalizedCost, candidate.TaxTreatment);
+
+        var association = new AssociateGoodsReceiptProductRequest(
+            fixture.SupplierId, productId, $"PROV-{productId:N}", false, "Caja", 24m);
+        using var denied = await readClient.PostAsJsonAsync(
+            "/api/commerce/v1/goods-receipts/supplier-products", association);
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+
+        using var manageClient = fixture.CreateAdminClient(
+            PurchasingPermissionCodes.ReadGoodsReceipts, "catalog.costs.manage");
+        using var associatedResponse = await manageClient.PostAsJsonAsync(
+            "/api/commerce/v1/goods-receipts/supplier-products", association);
+        Assert.Equal(HttpStatusCode.OK, associatedResponse.StatusCode);
+        var associated = await associatedResponse.Content.ReadFromJsonAsync<GoodsReceiptProductOption>();
+        Assert.NotNull(associated);
+        Assert.True(associated.IsAssociated);
+        Assert.Equal(association.SupplierProductCode, associated.SupplierProductCode);
+        Assert.Equal(PurchasingTaxTreatments.CapitalizedCost, associated.TaxTreatment);
+        Assert.Equal("Caja", associated.PurchasePresentationName);
+        Assert.Equal(24m, associated.UnitsPerPresentation);
+
+        var refreshedSupplierCatalog = await readClient.GetFromJsonAsync<GoodsReceiptProductPage>(
+            $"/api/commerce/v1/goods-receipts/products?supplierId={fixture.SupplierId:D}" +
+            $"&search={Uri.EscapeDataString(productCode)}&page=1&pageSize=50");
+        Assert.NotNull(refreshedSupplierCatalog);
+        Assert.Contains(refreshedSupplierCatalog.Items,
+            item => item.ProductId == productId && item.IsAssociated);
+
+        using var replay = await manageClient.PostAsJsonAsync(
+            "/api/commerce/v1/goods-receipts/supplier-products", association);
+        Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+    }
     private SaveGoodsReceiptDraftRequest CreateDraft()
     {
         var receivedAt = new DateTimeOffset(2026, 8, 2, 10, 30, 0, TimeSpan.FromHours(-5));

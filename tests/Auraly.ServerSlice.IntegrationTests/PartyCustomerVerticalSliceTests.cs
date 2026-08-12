@@ -208,7 +208,7 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
             divisionId,
             cityId,
             "55.667.788",
-            "Cliente creado en facturaciÃ³n",
+            "Cliente creado en facturación",
             "Principal",
             null);
 
@@ -281,7 +281,9 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
             PartyWorkspacePermissionCodes.Update,
             PartyWorkspacePermissionCodes.Deactivate,
             PartyWorkspacePermissionCodes.SupplierRead,
-            PartyWorkspacePermissionCodes.SupplierCreate);
+            PartyWorkspacePermissionCodes.SupplierCreate,
+            PartyWorkspacePermissionCodes.SellerCreate,
+            PartyWorkspacePermissionCodes.CarrierCreate);
 
         var country = await PostAndReadAsync<SaveCountryRequest, CountryItem>(
             admin, "/api/commerce/v1/masters/geography/countries",
@@ -327,13 +329,35 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(supplier.SupplierId, replay.SupplierId);
         Assert.True(replay.IdempotentReplay);
 
+        var sellerRequest = new CreateSellerRequest(
+            Guid.NewGuid(), fixture.BusinessId, customerRequest.Party, customerRequest.PrimarySite,
+            "VEN-PW", 4.5m, "SaleAfterTax", "Sale");
+        using var sellerResponse = await admin.PostAsJsonAsync("/api/commerce/v1/sellers", sellerRequest);
+        Assert.Equal(HttpStatusCode.Created, sellerResponse.StatusCode);
+        var seller = await sellerResponse.Content.ReadFromJsonAsync<CommercialRoleAcceptance>();
+        Assert.NotNull(seller);
+        Assert.Equal(customer.PartyId, seller.PartyId);
+
+        var carrierRequest = new CreateCarrierRequest(
+            Guid.NewGuid(), fixture.BusinessId, customerRequest.Party, customerRequest.PrimarySite,
+            "TRA-PW", "Road");
+        using var carrierResponse = await admin.PostAsJsonAsync("/api/commerce/v1/carriers", carrierRequest);
+        Assert.Equal(HttpStatusCode.Created, carrierResponse.StatusCode);
+        var carrier = await carrierResponse.Content.ReadFromJsonAsync<CommercialRoleAcceptance>();
+        Assert.NotNull(carrier);
+        Assert.Equal(customer.PartyId, carrier.PartyId);
+
+        using var duplicateSeller = await admin.PostAsJsonAsync(
+            "/api/commerce/v1/sellers", sellerRequest with { OperationId = Guid.NewGuid() });
+        Assert.Equal(HttpStatusCode.Conflict, duplicateSeller.StatusCode);
+
         var page = await admin.GetFromJsonAsync<PartyWorkspacePage>(
             "/api/commerce/v1/parties?page=1&pageSize=10&search=9017773331");
         Assert.NotNull(page);
         Assert.Equal(1, page.Page);
         Assert.Equal(10, page.PageSize);
         var item = Assert.Single(page.Items.Where(value => value.PartyId == customer.PartyId));
-        Assert.Equal(new[] { "Customer", "Supplier" }, item.Roles.OrderBy(value => value).ToArray());
+        Assert.Equal(new[] { "Carrier", "Customer", "Seller", "Supplier" }, item.Roles.OrderBy(value => value).ToArray());
         Assert.Equal("4", item.VerificationDigit);
 
         var update = new UpdatePartyRequest(
@@ -378,6 +402,12 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
             new SqlParameter("@PartyId", customer.PartyId), new SqlParameter("@BusinessId", fixture.BusinessId)));
         Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.Suppliers WHERE PartyId=@PartyId AND BusinessId=@BusinessId;",
+            new SqlParameter("@PartyId", customer.PartyId), new SqlParameter("@BusinessId", fixture.BusinessId)));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.CommerceSellers WHERE PartyId=@PartyId AND BusinessId=@BusinessId;",
+            new SqlParameter("@PartyId", customer.PartyId), new SqlParameter("@BusinessId", fixture.BusinessId)));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.Carriers WHERE PartyId=@PartyId AND BusinessId=@BusinessId;",
             new SqlParameter("@PartyId", customer.PartyId), new SqlParameter("@BusinessId", fixture.BusinessId)));
         Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.PartySites WHERE PartyId=@PartyId AND Code=N'PRINCIPAL';",
@@ -430,7 +460,9 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         TRequest request)
     {
         using var response = await client.PostAsJsonAsync(uri, request);
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var responseBody = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.Created,
+            $"Expected 201 Created but received {(int)response.StatusCode} {response.StatusCode}: {responseBody}");
         return await response.Content.ReadFromJsonAsync<TResponse>()
             ?? throw new InvalidOperationException($"Endpoint '{uri}' returned an empty body.");
     }

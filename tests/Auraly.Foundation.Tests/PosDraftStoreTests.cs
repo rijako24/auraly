@@ -18,7 +18,7 @@ public sealed class PosDraftStoreTests
             Assert.Equal(first.DraftId, second.DraftId);
             Assert.Single(second.Lines);
             Assert.Equal(2m, second.Lines[0].Quantity);
-            Assert.Equal(23_800m, second.PayableAmount);
+            Assert.Equal(20_000m, second.PayableAmount);
 
             var reopened = Store(path, ids);
             await reopened.InitializeAsync();
@@ -44,23 +44,23 @@ public sealed class PosDraftStoreTests
                 });
 
             Assert.Equal(2, draft.Lines.Count);
-            Assert.Equal(30_940m, draft.PayableAmount);
+            Assert.Equal(26_000m, draft.PayableAmount);
 
             var edited = await store.SetQuantityAsync(
                 draft.DraftId,
                 draft.Lines[1].LineId,
                 3m);
-            Assert.Equal(40_460m, edited.PayableAmount);
+            Assert.Equal(34_000m, edited.PayableAmount);
             var discounted = await store.SetDiscountAsync(
                 draft.DraftId,
                 edited.Lines[1].LineId,
                 1_000m);
-            Assert.Equal(39_270m, discounted.PayableAmount);
+            Assert.Equal(33_000m, discounted.PayableAmount);
             var removed = await store.RemoveLineAsync(
                 draft.DraftId,
                 discounted.Lines[0].LineId);
             Assert.Single(removed.Lines);
-            Assert.Equal(27_370m, removed.PayableAmount);
+            Assert.Equal(23_000m, removed.PayableAmount);
         });
     }
 
@@ -89,9 +89,9 @@ public sealed class PosDraftStoreTests
 
             Assert.Equal(orderId, imported.SourceOrderId);
             Assert.Equal(customerId, imported.CustomerId);
-            Assert.Equal(15_000m, imported.UntaxedAmount);
-            Assert.Equal(750m, imported.TaxAmount);
-            Assert.Equal(15_750m, imported.PayableAmount);
+            Assert.Equal(14_285.71m, imported.UntaxedAmount);
+            Assert.Equal(714.29m, imported.TaxAmount);
+            Assert.Equal(15_000m, imported.PayableAmount);
 
             var reopened = Store(path, ids);
             await reopened.InitializeAsync();
@@ -151,7 +151,7 @@ public sealed class PosDraftStoreTests
             Assert.Equal(customerId, recovered.CustomerId);
             Assert.Equal(sellerId, recovered.SellerId);
             Assert.Equal(500m, recovered.Lines.Single().Discount);
-            Assert.Equal(23_205m, recovered.PayableAmount);
+            Assert.Equal(19_500m, recovered.PayableAmount);
 
             await Assert.ThrowsAsync<InvalidOperationException>(
                 () => reopened.RecoverTemporaryAsync(temporary.DraftId, scope));

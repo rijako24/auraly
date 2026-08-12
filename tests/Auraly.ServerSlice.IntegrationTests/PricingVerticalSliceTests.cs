@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Pricing;
+using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Contracts.Purchasing;
 using Auraly.Pos.Edge.Infrastructure;
 using Microsoft.Data.SqlClient;
@@ -95,8 +96,12 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(10_650m, publication.Amount);
         Assert.True(publication.CatalogCursor > 0);
 
-        var signal = await fixture.ReadSynchronizationMessageAsync();
-        Assert.Equal("Catalog", signal.Stream);
+        PosSynchronizationInvalidation signal;
+        do
+        {
+            signal = await fixture.ReadSynchronizationMessageAsync();
+        }
+        while (signal.Stream != "Catalog");
         Assert.Equal(fixture.BusinessId, signal.BusinessId);
         Assert.True(signal.AvailableThroughCursor >= publication.CatalogCursor);
 
@@ -139,6 +144,85 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
         }
     }
 
+
+    [Fact]
+    public async Task Product_without_supplier_cost_is_prepared_then_published_from_the_single_pricing_view()
+    {
+        fixture.DrainSynchronizationMessages();
+        var productId = Guid.NewGuid();
+        var barcode = $"79{Random.Shared.NextInt64(10_000_000_000, 99_999_999_999)}";
+        await SeedProductAsync(productId, barcode, 4_000m);
+
+        using var pricing = fixture.CreateAdminClient(
+            PricingPermissionCodes.Read,
+            PricingPermissionCodes.ReadCostBasis,
+            PricingPermissionCodes.PreparePrices,
+            PricingPermissionCodes.PublishPrices);
+        var context = await pricing.GetFromJsonAsync<ProductPricingContext>(
+            $"/api/commerce/v1/pricing/products/{productId:D}/context");
+        Assert.NotNull(context);
+        Assert.Null(context!.CostBasisAmount);
+
+        using var response = await pricing.PutAsJsonAsync(
+            $"/api/commerce/v1/pricing/products/{productId:D}/prepared-price",
+            new PublishProductPriceRequest(
+                PriceInputModes.SalePrice, null, 5_500m, 1m, PricingRoundingModes.Nearest));
+        response.EnsureSuccessStatusCode();
+        var published = await response.Content.ReadFromJsonAsync<PreparedProductPrice>();
+        Assert.NotNull(published);
+        Assert.Equal(5_500m, published!.PreparedAmount);
+        Assert.Null(published.CostBasisAmount);
+        Assert.Null(published.EffectiveMarginPercent);
+        Assert.Equal(0, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.PricePublicationAudits WHERE ProductId=@Product", productId));
+
+        var candidates = await pricing.GetFromJsonAsync<PriceRevisionPage>(
+            "/api/commerce/v1/pricing/proposals?page=1&pageSize=20&status=Approved");
+        var candidate = Assert.Single(candidates!.Items.Where(x => x.ProductId == productId));
+        Assert.Equal("Product", candidate.Origin);
+        Assert.Equal(4_000m, candidate.CurrentSalePrice);
+        Assert.Equal(5_500m, candidate.SuggestedSalePrice);
+
+        using var publicationResponse = await pricing.PostAsJsonAsync(
+            "/api/commerce/v1/pricing/publish",
+            new PublishPricesRequest([new PublishPriceItem(
+                candidate.ProposalId, PriceInputModes.SalePrice, null, 5_500m,
+                1m, PricingRoundingModes.Nearest, candidate.ConcurrencyToken)]));
+        publicationResponse.EnsureSuccessStatusCode();
+        Assert.Equal(5_500m, await ScalarAsync<decimal>(
+            "SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", productId));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.PricePublicationAudits WHERE ProductId=@Product AND PublicationOrigin=N'Manual' AND ProposalId IS NULL", productId));
+    }
+    [Fact]
+    public async Task Product_manual_cost_calculates_margin_and_persists_the_published_price_version()
+    {
+        fixture.DrainSynchronizationMessages();
+        var productId = Guid.NewGuid();
+        var barcode = $"79{Random.Shared.NextInt64(10_000_000_000, 99_999_999_999)}";
+        await SeedProductAsync(productId, barcode, 4_000m);
+
+        using var pricing = fixture.CreateAdminClient(
+            PricingPermissionCodes.Read,
+            PricingPermissionCodes.ReadCostBasis,
+            PricingPermissionCodes.PreparePrices);
+        using var response = await pricing.PutAsJsonAsync(
+            $"/api/commerce/v1/pricing/products/{productId:D}/prepared-price",
+            new PublishProductPriceRequest(
+                PriceInputModes.Margin, 25m, null, 1m, PricingRoundingModes.Nearest, 4_000m));
+        response.EnsureSuccessStatusCode();
+        var published = await response.Content.ReadFromJsonAsync<PreparedProductPrice>();
+
+        Assert.NotNull(published);
+        // The established gross-margin rule uses cost / (100 - margin) * 100.
+        // It is intentionally not a 25% markup over cost.
+        Assert.Equal(5_333m, published!.PreparedAmount);
+        Assert.Equal(4_000m, published.CostBasisAmount);
+        Assert.Equal(24.995312m, published.EffectiveMarginPercent);
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.ProductPrices WHERE ProductId=@Product AND CostBasisType=N'Manual' AND CostBasisAmount=4000 AND TargetMarginPercent=25 AND Amount=4000 AND PreparedAmount=5333",
+            productId));
+    }
     [Fact]
     public async Task Pricing_permissions_and_business_scope_are_enforced()
     {

@@ -71,6 +71,7 @@ public sealed class PosSaleCompletionServiceTests
             Assert.NotEqual(draft.DraftId, result.NextDraft.DraftId);
             Assert.Empty(result.NextDraft.Lines);
             Assert.Equal("VTA03-00000101", result.NextDocumentNumber.FullNumber);
+            Assert.NotNull(result.NextFiscalNumber);
             Assert.Equal("FV101", result.NextFiscalNumber.FullNumber);
             Assert.Single(await fixture.Sales.GetPendingOutboxAsync());
         });
@@ -108,6 +109,7 @@ public sealed class PosSaleCompletionServiceTests
             Assert.True(recovered.IssuedSale.WasAlreadyIssued);
             Assert.Equal("VTA03-00000100", recovered.IssuedSale.DocumentNumber);
             Assert.Equal("FV100", recovered.IssuedSale.FiscalNumber);
+            Assert.NotNull(recovered.NextFiscalNumber);
             Assert.Equal("FV101", recovered.NextFiscalNumber.FullNumber);
             Assert.Single(await fixture.Sales.GetPendingOutboxAsync());
         });
@@ -269,7 +271,7 @@ public sealed class PosSaleCompletionServiceTests
                     new FiscalTechnicalKey("CLAVE-TECNICA", "v1"),
                     FiscalEnvironment.Test,
                     "https://catalogo-vpfe.dian.gov.co/document/searchqr",
-                    payments ?? [new OfflineSalePayment("Cash", 11_900m)],
+                    payments ?? [new OfflineSalePayment("Cash", 10_000m)],
                     80));
     }
 

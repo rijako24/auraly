@@ -11,9 +11,9 @@ test("calcula el mismo descuento por valor y porcentaje", () => {
   assert.deepEqual(byValue, {
     discount: 1_250,
     percentage: 10,
-    net: 11_250,
-    tax: 2_137.5,
-    total: 13_387.5,
+    net: 9_453.78,
+    tax: 1_796.22,
+    total: 11_250,
   });
 });
 
@@ -26,8 +26,8 @@ test("permite retirar el descuento con cero", () => {
   assert.deepEqual(calculatePosDiscount("percentage", 0, 10_000, 5), {
     discount: 0,
     percentage: 0,
-    net: 10_000,
-    tax: 500,
-    total: 10_500,
+    net: 9_523.81,
+    tax: 476.19,
+    total: 10_000,
   });
 });

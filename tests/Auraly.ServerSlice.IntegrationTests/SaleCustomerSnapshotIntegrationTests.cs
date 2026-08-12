@@ -63,7 +63,7 @@ public sealed class SaleCustomerSnapshotIntegrationTests(ServerSliceFixture fixt
             new SqlParameter("@DocumentId", request.DocumentId));
         var snapshot = PosSaleContractSerializer.Deserialize(snapshotJson!);
         Assert.Equal(storedCustomerId, snapshot.CustomerId);
-        Assert.Equal("222222222", snapshot.FiscalSnapshot.CustomerIdentification);
+        Assert.Equal("222222222", snapshot.FiscalSnapshot!.CustomerIdentification);
 
         await ExecuteAsync(
             """
@@ -77,7 +77,7 @@ public sealed class SaleCustomerSnapshotIntegrationTests(ServerSliceFixture fixt
             "SELECT SnapshotJson FROM dbo.FiscalSnapshots WHERE DocumentId=@DocumentId;",
             new SqlParameter("@DocumentId", request.DocumentId));
         var unchanged = PosSaleContractSerializer.Deserialize(unchangedJson!);
-        Assert.Equal("222222222", unchanged.FiscalSnapshot.CustomerIdentification);
+        Assert.Equal("222222222", unchanged.FiscalSnapshot!.CustomerIdentification);
 
         var visitingAgain = fixture.CreateValidRequest(8702) with { CustomerId = otherCustomerId };
         using var visitingAgainResponse = await client.SendAsync(fixture.CreateUploadMessage(visitingAgain));

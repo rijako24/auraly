@@ -119,7 +119,7 @@ public sealed class RabbitMqDocumentProcessingTests(ServerSliceFixture fixture)
             using var inventoryClient = fixture.CreateAdminClient(InventoryPermissionCodes.Adjust);
             await ConfirmAdjustmentAsync(inventoryClient, new ConfirmInventoryAdjustmentRequest(
                 adjustmentId, fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
-                "RABBIT_VERIFICATION", null, "Ajuste procesado por RabbitMQ",
+                "MANUAL_ADJUSTMENT", null, "Ajuste procesado por RabbitMQ",
                 [new InventoryAdjustmentLineRequest(1, fixture.ProductId, 1m, 5_000m)]));
             var inventorySignal = Assert.Single(fixture.DrainDocumentSignals());
             Assert.Equal(InventoryDocumentTypes.Adjustment, inventorySignal.DocumentType);
@@ -200,7 +200,7 @@ public sealed class RabbitMqDocumentProcessingTests(ServerSliceFixture fixture)
               INSERT dbo.DocumentSeries
                 (DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,
                  Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
-              VALUES(NEWID(),@BusinessId,NULL,N'InventoryAdjustment',N'AJI',N'RB',
+              VALUES(NEWID(),@BusinessId,NULL,N'InventoryAdjustment',N'AJI',N'00',
                  8,1,99999999,0,1,SYSDATETIMEOFFSET());
             """;
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);

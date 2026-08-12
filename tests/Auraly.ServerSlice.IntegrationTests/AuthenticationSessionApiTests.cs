@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using Auraly.Contracts.Authentication;
+using Auraly.Contracts.Organization;
 using Auraly.Contracts.WorkSessions;
 using Microsoft.Data.SqlClient;
 
@@ -23,6 +24,8 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
         var login = await LoginAsync(user.Username, clientId);
 
         var jwt = new JwtSecurityTokenHandler().ReadJwtToken(login.AccessToken);
+        Assert.True(login.AccessToken.Length < 3800, $"Access token length {login.AccessToken.Length} exceeds the safe cookie budget.");
+        Assert.DoesNotContain(jwt.Claims, claim => claim.Type == AuthenticationDefaults.PermissionClaim);
         var sessionId = Guid.Parse(jwt.Claims.Single(
             claim => claim.Type == AuthenticationDefaults.SessionIdClaim).Value);
         Assert.NotEqual(Guid.Empty, sessionId);
@@ -37,15 +40,30 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
 
         using var firstTab = AuthenticatedClient(login, clientId);
         using var secondTab = AuthenticatedClient(login, clientId);
-        using var firstMe = await firstTab.GetAsync("/api/auth/me");
-        using var secondMe = await secondTab.GetAsync("/api/auth/me");
+        using var firstMe = await firstTab.GetAsync("/api/v1/auth/me");
+        using var secondMe = await secondTab.GetAsync("/api/v1/auth/me");
         Assert.Equal(HttpStatusCode.OK, firstMe.StatusCode);
         Assert.Equal(HttpStatusCode.OK, secondMe.StatusCode);
 
-        using var conflictingClient = CreateLoginRequest(
+        using var compactTokenClient = AuthenticatedClient(login, clientId);
+        using var workspaceResponse = await compactTokenClient.GetAsync(
+            "/api/commerce/v1/pos/workspace/bootstrap");
+        Assert.Equal(HttpStatusCode.OK, workspaceResponse.StatusCode);
+        var workspace = await workspaceResponse.Content
+            .ReadFromJsonAsync<SalesWorkspaceBootstrap>();
+        Assert.NotNull(workspace);
+        Assert.Contains(workspace.Options, option =>
+            option.BusinessId == fixture.BusinessId &&
+            option.WarehouseId == fixture.WarehouseId);
+
+        using var replacementClient = CreateLoginRequest(
             user.Username, Password, Guid.NewGuid());
-        using var conflict = await fixture.CreateClient().SendAsync(conflictingClient);
-        Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+        using var replacement = await fixture.CreateClient().SendAsync(replacementClient);
+        Assert.Equal(HttpStatusCode.OK, replacement.StatusCode);
+        var replacementLogin = await ReadAuthenticationResponseAsync(replacement);
+        using var revokedOldToken = AuthenticatedClient(login, clientId);
+        using var oldTokenResponse = await revokedOldToken.GetAsync("/api/v1/auth/me");
+        Assert.Equal(HttpStatusCode.Unauthorized, oldTokenResponse.StatusCode);
         Assert.Equal(1, await CountActiveSessionsAsync(user.UserId));
     }
 
@@ -68,7 +86,7 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
         Assert.Equal(HttpStatusCode.Unauthorized, replay.StatusCode);
 
         using var authenticated = AuthenticatedClient(second, clientId);
-        using var rejected = await authenticated.GetAsync("/api/auth/me");
+        using var rejected = await authenticated.GetAsync("/api/v1/auth/me");
         Assert.Equal(HttpStatusCode.Unauthorized, rejected.StatusCode);
         Assert.Equal("Revoked", (await ReadSessionAsync(
             SessionId(second.AccessToken))).Status);
@@ -89,7 +107,7 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
             open.EnsureSuccessStatusCode();
 
         using var revoke = new HttpRequestMessage(
-            HttpMethod.Post, "/api/auth/revoke")
+            HttpMethod.Post, "/api/v1/auth/revoke")
         {
             Content = JsonContent.Create(
                 new AuthenticationRevokeRequest(login.RefreshToken))
@@ -101,13 +119,35 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
         using var revoked = await fixture.CreateClient().SendAsync(revoke);
         Assert.Equal(HttpStatusCode.NoContent, revoked.StatusCode);
 
-        using var noLongerAuthorized = await authenticated.GetAsync("/api/auth/me");
+        using var noLongerAuthorized = await authenticated.GetAsync("/api/v1/auth/me");
         Assert.Equal(HttpStatusCode.Unauthorized, noLongerAuthorized.StatusCode);
         Assert.Equal(0, await CountOpenWorkSessionsAsync(user.UserId));
         Assert.Equal(1, await CountWorkSessionClosuresAsync(user.UserId));
 
         var replacement = await LoginAsync(user.Username, Guid.NewGuid());
         Assert.NotEqual(SessionId(login.AccessToken), SessionId(replacement.AccessToken));
+        Assert.Equal(1, await CountActiveSessionsAsync(user.UserId));
+    }
+
+    [Fact]
+    public async Task New_login_closes_the_previous_open_work_session()
+    {
+        var user = await CreatePasswordUserAsync("auth-login-replacement");
+        var firstClientId = Guid.NewGuid();
+        var first = await LoginAsync(user.Username, firstClientId);
+        using var authenticated = AuthenticatedClient(first, firstClientId);
+
+        using (var open = await authenticated.PostAsJsonAsync(
+                   "/api/commerce/v1/work-sessions/current",
+                   new OpenWorkSessionRequest(
+                       fixture.BusinessId, fixture.WarehouseId, null)))
+            open.EnsureSuccessStatusCode();
+
+        var replacement = await LoginAsync(user.Username, Guid.NewGuid());
+
+        Assert.NotEqual(SessionId(first.AccessToken), SessionId(replacement.AccessToken));
+        Assert.Equal(0, await CountOpenWorkSessionsAsync(user.UserId));
+        Assert.Equal(1, await CountWorkSessionClosuresAsync(user.UserId));
         Assert.Equal(1, await CountActiveSessionsAsync(user.UserId));
     }
 
@@ -125,8 +165,7 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
             secondClient.SendAsync(second));
         try
         {
-            Assert.Single(responses, response => response.StatusCode == HttpStatusCode.OK);
-            Assert.Single(responses, response => response.StatusCode == HttpStatusCode.Conflict);
+            Assert.All(responses, response => Assert.Equal(HttpStatusCode.OK, response.StatusCode));
             Assert.Equal(1, await CountActiveSessionsAsync(user.UserId));
         }
         finally
@@ -151,7 +190,7 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
         string password,
         Guid clientId)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/login")
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/login")
         {
             Content = JsonContent.Create(
                 new AuthenticationLoginRequest(username, password))
@@ -165,7 +204,7 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
         AuthenticationResponse response,
         Guid clientId)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/refresh")
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/refresh")
         {
             Content = JsonContent.Create(
                 new AuthenticationRefreshRequest(

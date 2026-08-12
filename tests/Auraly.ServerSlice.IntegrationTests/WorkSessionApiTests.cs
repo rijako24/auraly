@@ -211,9 +211,13 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             VALUES
               (@UserId,@TenantId,@Username,UPPER(@Username),@Email,UPPER(@Email),
                N'Operador',N'Auraly',1,SYSUTCDATETIME());
+            INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt)
+            VALUES(NEWID(),@UserId,@RoleId,@BusinessId,SYSUTCDATETIME());
             """;
         command.Parameters.AddWithValue("@UserId", userId);
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        command.Parameters.AddWithValue("@RoleId", fixture.RoleId);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
         command.Parameters.AddWithValue("@Username", $"{prefix}-{userId:N}");
         command.Parameters.AddWithValue("@Email", $"{prefix}-{userId:N}@test.local");
         await command.ExecuteNonQueryAsync();

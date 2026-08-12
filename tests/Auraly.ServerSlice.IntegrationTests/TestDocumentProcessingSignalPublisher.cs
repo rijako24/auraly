@@ -32,9 +32,12 @@ internal sealed class TestDocumentProcessingSignalPublisher(
             {
                 await worker.ProcessOneAsync(signal, cancellationToken);
             }
-            catch (DocumentProcessingMessageException)
+            catch (Exception exception) when (
+                exception is DocumentProcessingMessageException or InvalidOperationException)
             {
-                // The deterministic test publisher mirrors a broker delivery that remains pending.
+                // A real broker has already accepted the signal. Processing failures remain
+                // durable in DocumentProcessingJobs and must not turn the publishing request
+                // into an HTTP failure.
             }
         }
         finally

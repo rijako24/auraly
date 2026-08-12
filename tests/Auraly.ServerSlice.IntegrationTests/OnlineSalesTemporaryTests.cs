@@ -48,6 +48,7 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
         using var client = fixture.CreateUserClient(
             userId,
             CommercePermissionCodes.SalesCreate,
+            CommercePermissionCodes.SalesRestartDraft,
             WorkSessionPermissionCodes.Open);
         client.Timeout = TimeSpan.FromSeconds(15);
         var workSession = await fixture.OpenWorkSessionAsync(client);
@@ -81,8 +82,8 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
         var draft = await OpenAsync(client, context);
         var captured = await MutateAsync<OnlineSalesDraft>(
             client,
-            $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/capture",
-            new CaptureOnlineSalesDraftProductRequest("P-E2E", 1m, draft.Version));
+            $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/items",
+            new AddOnlineSalesDraftItemRequest("P-E2E", 1m, draft.Version));
         var pauseKey = Guid.NewGuid().ToString("N");
         var next = await MutateAsync<OnlineSalesDraft>(
             client,
@@ -104,6 +105,7 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
         using var restarted = fixture.CreateUserClient(
             userId,
             CommercePermissionCodes.SalesCreate,
+            CommercePermissionCodes.SalesRestartDraft,
             WorkSessionPermissionCodes.Open);
         restarted.Timeout = TimeSpan.FromSeconds(15);
         var reopened = await OpenAsync(restarted, context);
@@ -117,8 +119,8 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
 
         var occupied = await MutateAsync<OnlineSalesDraft>(
             restarted,
-            $"/api/commerce/v1/pos/drafts/{next.DraftId:D}/capture",
-            new CaptureOnlineSalesDraftProductRequest("P-E2E", 1m, next.Version));
+            $"/api/commerce/v1/pos/drafts/{next.DraftId:D}/items",
+            new AddOnlineSalesDraftItemRequest("P-E2E", 1m, next.Version));
         using (var invalidRecovery = Mutation(
                    $"/api/commerce/v1/pos/drafts/temporaries/{saved.DraftId:D}/recover",
                    new RecoverOnlineSalesDraftRequest(saved.Version, occupied.Version)))

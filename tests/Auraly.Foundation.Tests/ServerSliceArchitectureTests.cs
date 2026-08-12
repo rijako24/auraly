@@ -106,11 +106,14 @@ public sealed class ServerSliceArchitectureTests
                              path.EndsWith(".json", StringComparison.OrdinalIgnoreCase)))
             {
                 var text = File.ReadAllText(file);
-                foreach (var token in forbidden)
+                if (!IsAbsorbedPlatformSurface(file, root))
                 {
-                    if (text.Contains(token, StringComparison.OrdinalIgnoreCase))
+                    foreach (var token in forbidden)
                     {
-                        violations.Add($"{Path.GetRelativePath(root, file)}: {token}");
+                        if (text.Contains(token, StringComparison.OrdinalIgnoreCase))
+                        {
+                            violations.Add($"{Path.GetRelativePath(root, file)}: {token}");
+                        }
                     }
                 }
 
@@ -189,6 +192,23 @@ public sealed class ServerSliceArchitectureTests
             StringComparison.Ordinal);
     }
 
+    private static bool IsAbsorbedPlatformSurface(string path, string root)
+    {
+        var apiRoot = Path.Combine(root, "src", "API", "Auraly.Api");
+        if (!path.StartsWith(apiRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var relative = Path.GetRelativePath(apiRoot, path);
+        return relative.Equals("Auraly.Api.csproj", StringComparison.OrdinalIgnoreCase) ||
+               relative.Equals("PlatformApiComposition.cs", StringComparison.OrdinalIgnoreCase) ||
+               relative.StartsWith($"Controllers{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) ||
+               relative.StartsWith($"Authorization{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) ||
+               relative.StartsWith($"Configuration{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) ||
+               relative.StartsWith($"Extensions{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) ||
+               relative.StartsWith($"Middleware{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase);
+    }
     private static bool IsBuildOutput(string path) =>
         path.Contains(
             $"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}",

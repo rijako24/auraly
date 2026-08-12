@@ -285,7 +285,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         {
             UblSnapshot = new PosSaleUblSnapshotContract(fixture.FiscalIssuerConfigurationId, "COP", "01", supplier, customer,
             new PosSaleUblAuthorizationContract(ServerSliceFixture.AuthorizationNumber, new DateOnly(2026, 1, 1), new DateOnly(2028, 12, 31), ServerSliceFixture.Prefix, 1, 10000),
-            "auraly-test-software", [new PosSaleUblLineContract(1, "P-E2E", "999", "EA", "IVA", 19m)], "1", "10", DateOnly.FromDateTime(request.FiscalSnapshot.IssuedAt.Date), null)
+            "auraly-test-software", [new PosSaleUblLineContract(1, "P-E2E", "999", "EA", "IVA", 19m)], "1", "10", DateOnly.FromDateTime(request.FiscalSnapshot!.IssuedAt.Date), null)
         };
     }
 

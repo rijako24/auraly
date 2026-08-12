@@ -8,6 +8,7 @@ using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Organization;
+using Auraly.Contracts.Sales;
 using Auraly.Pos.Edge.Host;
 using Auraly.Pos.Edge.Infrastructure;
 using Microsoft.AspNetCore.Hosting;
@@ -57,6 +58,8 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                 Guid.NewGuid(), Guid.NewGuid(), "FV", "18760000001",
                 1, 100, new DateOnly(2027, 12, 31), 2,
                 "9001234567", "technical-key", "v1", "https://example.test/qr"),
+            new PosEnrollmentDocumentSeries(
+                Guid.NewGuid(), "SalesReceipt", "CVI", "01", 8, 1, 99999999),
             null,
             DateTimeOffset.UtcNow);
 
@@ -90,6 +93,8 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     {
         var enrollmentPath =
             Path.Combine(Path.GetTempPath(), $"auraly-enrollment-{Guid.NewGuid():N}.protected");
+        var startupModePath =
+            Path.Combine(Path.GetTempPath(), $"auraly-startup-mode-{Guid.NewGuid():N}");
         try
         {
             using var factory = new WebApplicationFactory<Program>()
@@ -109,6 +114,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                     webHost.UseSetting(
                         "PosEdge:SecretKeyDirectory",
                         _secretPath + "-unenrolled");
+                    webHost.UseSetting("PosEdge:StartupModePath", startupModePath);
                     webHost.UseSetting("PosEdge:DeviceId", "");
                 });
             using var client = factory.CreateClient();
@@ -118,6 +124,15 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             response.EnsureSuccessStatusCode();
             var body = await response.Content.ReadFromJsonAsync<JsonElement>();
             Assert.Equal("EnrollmentRequired", body.GetProperty("status").GetString());
+            Assert.Equal("online", body.GetProperty("startupMode").GetString());
+
+            using var update = await client.PutAsJsonAsync(
+                "/edge/v1/configuration/startup-mode",
+                new PosStartupModeRequest(PosStartupModes.Enrolled));
+            Assert.Equal(HttpStatusCode.NoContent, update.StatusCode);
+
+            body = await client.GetFromJsonAsync<JsonElement>("/edge/v1/health");
+            Assert.Equal("enrolled", body.GetProperty("startupMode").GetString());
             Assert.Equal(
                 HttpStatusCode.NotFound,
                 (await client.GetAsync("/edge/v1/drafts/active")).StatusCode);
@@ -125,6 +140,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         finally
         {
             if (File.Exists(enrollmentPath)) File.Delete(enrollmentPath);
+            if (File.Exists(startupModePath)) File.Delete(startupModePath);
         }
     }
 
@@ -225,11 +241,13 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         Assert.Equal("FV1", result.IssuedSale.FiscalNumber);
         Assert.Empty(result.NextDraft.Lines);
         Assert.Equal("VTA03-00000002", result.NextDocumentNumber.FullNumber);
+        Assert.NotNull(result.NextFiscalNumber);
         Assert.Equal("FV2", result.NextFiscalNumber.FullNumber);
         Assert.Single(_printer.Receipts);
         Assert.Equal(result.IssuedSale.DocumentNumber, _printer.Receipts.Single().DocumentNumber);
         Assert.Equal(result.IssuedSale.FiscalNumber, _printer.Receipts.Single().FiscalNumber);
         Assert.Equal(result.IssuedSale.Cufe, _printer.Receipts.Single().Cufe);
+        Assert.NotNull(result.IssuedSale.Cufe);
         Assert.Contains(result.IssuedSale.Cufe, _printer.Receipts.Single().QrPayload);
         var localFiscal = await Client.GetFromJsonAsync<PosLocalFiscalStatus>(
             $"/edge/v1/sales/{result.IssuedSale.DocumentId.Value:D}/fiscal-status");
@@ -287,6 +305,42 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         var remaining = await Client.GetFromJsonAsync<PosDraft[]>(
             "/edge/v1/temporaries");
         Assert.Empty(remaining!);
+    }
+
+    [Fact]
+    public async Task Commercial_receipt_flows_through_the_local_http_api_without_fiscal_data()
+    {
+        var active = await Client.GetFromJsonAsync<PosDraft>("/edge/v1/drafts/active");
+        Assert.NotNull(active);
+
+        var capture = await Client.PostAsJsonAsync(
+            "/edge/v1/capture",
+            new CaptureRequest("770123", null));
+        capture.EnsureSuccessStatusCode();
+        var captured = await capture.Content.ReadFromJsonAsync<PosCaptureResult>();
+        Assert.NotNull(captured?.Draft);
+
+        var completed = await Client.PostAsJsonAsync(
+            $"/edge/v1/drafts/{captured.Draft.DraftId.Value:D}/complete",
+            new CompleteDraftRequest(
+                null,
+                [new CompletePaymentRequest("Cash", captured.Draft.PayableAmount, null)],
+                DocumentType: PosSaleDocumentTypes.Receipt));
+        completed.EnsureSuccessStatusCode();
+        var result = await completed.Content.ReadFromJsonAsync<CompletePosSaleResult>();
+
+        Assert.NotNull(result);
+        Assert.Equal("CVI03-00000001", result.IssuedSale.DocumentNumber);
+        Assert.Null(result.IssuedSale.FiscalNumber);
+        Assert.Null(result.IssuedSale.Cufe);
+        Assert.Null(result.IssuedSale.QrPayload);
+        Assert.Null(result.NextFiscalNumber);
+        Assert.Equal("CVI03-00000002", result.NextDocumentNumber.FullNumber);
+        var printed = Assert.Single(_printer.Receipts);
+        Assert.Equal(PosSaleDocumentTypes.Receipt, printed.DocumentType);
+        Assert.Null(printed.FiscalNumber);
+        Assert.Null(printed.Cufe);
+        Assert.Null(printed.QrPayload);
     }
 
     [Fact]
@@ -368,8 +422,8 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         discountResponse.EnsureSuccessStatusCode();
         var discounted = await discountResponse.Content.ReadFromJsonAsync<PosDraft>();
         Assert.Equal(5m, Assert.Single(discounted!.Lines).Discount);
-        Assert.Equal(75m, discounted.UntaxedAmount);
-        Assert.Equal(89.25m, discounted.PayableAmount);
+        Assert.Equal(63.03m, discounted.UntaxedAmount);
+        Assert.Equal(75m, discounted.PayableAmount);
 
         var consumerResponse = await Client.PutAsJsonAsync(
             $"/edge/v1/drafts/{captured.Draft.DraftId.Value:D}/customer",
@@ -449,10 +503,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             ["PosEdge:BusinessId"] = Guid.NewGuid().ToString("D"),
             ["PosEdge:WarehouseId"] = Guid.NewGuid().ToString("D"),
             ["PosEdge:UserId"] = userId.ToString("D"),
-            ["PosEdge:UserDisplayName"] = "Cajera de prueba",
             ["PosEdge:DeviceSeriesCode"] = "03",
-            ["PosEdge:BusinessName"] = "Sede de prueba",
-            ["PosEdge:WarehouseName"] = "Bodega de prueba",
             ["PosEdge:Documents:SalesInvoice:Prefix"] = "VTA",
             ["PosEdge:Documents:SalesInvoice:SeriesCode"] = "03",
             ["PosEdge:WarehouseAllowsNegativeStock"] = "true",
@@ -471,6 +522,12 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             ["PosEdge:Documents:SalesInvoice:Padding"] = "8",
             ["PosEdge:Documents:SalesInvoice:RangeStart"] = "1",
             ["PosEdge:Documents:SalesInvoice:RangeEnd"] = "99999999",
+            ["PosEdge:Documents:SalesReceipt:SeriesId"] = Guid.NewGuid().ToString("D"),
+            ["PosEdge:Documents:SalesReceipt:Prefix"] = "CVI",
+            ["PosEdge:Documents:SalesReceipt:SeriesCode"] = "03",
+            ["PosEdge:Documents:SalesReceipt:Padding"] = "8",
+            ["PosEdge:Documents:SalesReceipt:RangeStart"] = "1",
+            ["PosEdge:Documents:SalesReceipt:RangeEnd"] = "99999999",
             ["PosEdge:SecretKeyDirectory"] = _secretPath,
             ["PosEdge:Fiscal:ProtectedTechnicalKey"] =
                 PosEdgeProtectedSecret.ProtectTechnicalKey(
@@ -517,7 +574,9 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                     userId,
                     "cashier",
                     "Cajera de prueba",
-                    ["sales.create", "sales.discount", "sales.reprint", "sales.void"],
+                    ["sales.create", "sales.discount", "sales.reprint", "sales.void",
+                        CommercePermissionCodes.SalesRemoveLine,
+                        CommercePermissionCodes.SalesRestartDraft],
                     password)
             ]));
         var issuedAt = DateTimeOffset.UtcNow;

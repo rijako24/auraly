@@ -135,7 +135,17 @@ public sealed class PosCaptureServiceTests
         finally
         {
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-            if (File.Exists(path)) File.Delete(path);
+            for (var attempt = 0; attempt < 10 && File.Exists(path); attempt++)
+            {
+                try
+                {
+                    File.Delete(path);
+                }
+                catch (IOException) when (attempt < 9)
+                {
+                    await Task.Delay(50);
+                }
+            }
         }
     }
 

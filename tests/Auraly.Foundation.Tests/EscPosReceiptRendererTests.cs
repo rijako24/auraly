@@ -1,5 +1,6 @@
 using System.Text;
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.Contracts.Sales;
 using Auraly.Pos.Edge.Infrastructure;
 
 namespace Auraly.Foundation.Tests;
@@ -144,6 +145,7 @@ public sealed class EscPosReceiptRendererTests
                 Path.Combine(directory, $"{receipt.PrintJobId:N}.html"));
             Assert.Equal(expected, launcher.OpenedPath);
             Assert.True(File.Exists(expected));
+            Assert.NotNull(receipt.Cufe);
             Assert.Contains(receipt.Cufe, await File.ReadAllTextAsync(expected));
             Assert.Empty(Directory.GetFiles(directory, "*.tmp"));
         }
@@ -152,6 +154,41 @@ public sealed class EscPosReceiptRendererTests
             if (Directory.Exists(directory))
                 Directory.Delete(directory, recursive: true);
         }
+    }
+
+    [Fact]
+    public void Commercial_receipt_omits_all_fiscal_artifacts()
+    {
+        var receipt = new PosReceipt(
+            Guid.NewGuid(),
+            new DocumentId(Guid.NewGuid()),
+            "CVI03-00000042",
+            null,
+            new DateTimeOffset(2026, 8, 10, 14, 30, 0, TimeSpan.FromHours(-5)),
+            "222222222",
+            [new PosReceiptLine("P-001", "Producto", 1m, 10_000m, 0m, 1_900m, 11_900m)],
+            [new OfflineSalePayment("Cash", 11_900m)],
+            10_000m,
+            1_900m,
+            11_900m,
+            null,
+            null,
+            80,
+            PosSaleDocumentTypes.Receipt);
+
+        var esc = Encoding.UTF8.GetString(new EscPosReceiptRenderer().Render(receipt));
+        var html = new HtmlReceiptPreviewRenderer().Render(receipt);
+
+        Assert.Contains("COMPROBANTE DE VENTA", esc);
+        Assert.Contains("CVI03-00000042", esc);
+        Assert.DoesNotContain("NUMERO DIAN", esc);
+        Assert.DoesNotContain("CUFE", esc);
+        Assert.DoesNotContain("searchqr", esc);
+        Assert.Contains("Comprobante de venta", html);
+        Assert.Contains("CVI03-00000042", html);
+        Assert.DoesNotContain("Número DIAN", html);
+        Assert.DoesNotContain("CUFE", html);
+        Assert.DoesNotContain("<svg", html);
     }
 
     private static PosReceipt Receipt() =>

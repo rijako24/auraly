@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Catalog;
+using Auraly.Contracts.Pricing;
 using Auraly.Pos.Edge.Infrastructure;
 using Microsoft.Data.SqlClient;
 
@@ -9,6 +10,57 @@ namespace Auraly.ServerSlice.IntegrationTests;
 [Collection(ServerSliceCollection.Name)]
 public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Product_workspace_creates_classification_brand_and_link_atomically()
+    {
+        var (taxProfileId, _, _) = await ConfigureCatalogAsync();
+        var categoryId = Guid.NewGuid();
+        var brandId = Guid.NewGuid();
+        await ExecuteAsync(
+            """
+            INSERT dbo.ProductCategories(ProductCategoryId,BusinessId,Name,DisplayOrder,IsActive,IsBrowsable,CreatedAt)
+              VALUES(@Category,@Business,N'Aceites',0,1,1,SYSUTCDATETIME());
+            INSERT dbo.ProductBrands(ProductBrandId,BusinessId,Name,IsActive,CreatedAt)
+              VALUES(@Brand,@Business,N'Marca prueba',1,SYSDATETIMEOFFSET());
+            """,
+            new SqlParameter("@Category", categoryId),
+            new SqlParameter("@Brand", brandId),
+            new SqlParameter("@Business", fixture.BusinessId));
+
+        using var admin = fixture.CreateAdminClient(
+            CatalogPermissionCodes.Create,
+            CatalogPermissionCodes.ManagePrices,
+            CatalogPermissionCodes.ManageCosts);
+        using var parentResponse = await admin.PostAsJsonAsync(
+            "/api/commerce/v1/products",
+            ProductRequest(taxProfileId, [new ProductPriceInput(10_000m)], []));
+        parentResponse.EnsureSuccessStatusCode();
+        var parent = await parentResponse.Content.ReadFromJsonAsync<ProductDetail>();
+        Assert.NotNull(parent);
+
+        var request = ProductRequest(
+            taxProfileId,
+            [new ProductPriceInput(20_000m)],
+            [new ProductBarcodeInput($"ATOMIC-{Guid.NewGuid():N}", true)]) with
+        {
+            ProductCategoryId = categoryId,
+            ProductBrandId = brandId,
+            AllowsFractionalSale = true,
+            Link = new ProductLinkInput(parent.ProductId, true, 2m, true, 2m)
+        };
+        using var childResponse = await admin.PostAsJsonAsync("/api/commerce/v1/products", request);
+        Assert.Equal(HttpStatusCode.Created, childResponse.StatusCode);
+        var child = await childResponse.Content.ReadFromJsonAsync<ProductDetail>();
+        Assert.NotNull(child);
+
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.Products WHERE ProductId=@Id AND ProductCategoryId=@Category AND ProductBrandId=@Brand AND AllowsFractionalSale=1;",
+            new SqlParameter("@Id", child.ProductId), new SqlParameter("@Category", categoryId), new SqlParameter("@Brand", brandId)));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.ProductLinks WHERE ChildProductId=@Child AND ParentProductId=@Parent AND InventoryFactor=2 AND PriceFactor=2 AND IsActive=1;",
+            new SqlParameter("@Child", child.ProductId), new SqlParameter("@Parent", parent.ProductId)));
+    }
+
     [Fact]
     public async Task Catalog_push_failure_remains_durable_and_recovers_without_polling()
     {
@@ -87,6 +139,34 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(fixture.BusinessId, createdSignal.BusinessId);
         Assert.True(createdSignal.AvailableThroughCursor > 0);
         var suppliers = created.Suppliers!;
+
+        Assert.Equal(0m, await ScalarAsync<decimal>(
+            "SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Id AND IsActive=1;",
+            new SqlParameter("@Id", created.ProductId)));
+        Assert.Equal(12_500m, await ScalarAsync<decimal>(
+            "SELECT PreparedAmount FROM dbo.ProductPrices WHERE ProductId=@Id AND IsActive=1;",
+            new SqlParameter("@Id", created.ProductId)));
+
+        using var pricing = fixture.CreateAdminClient(
+            PricingPermissionCodes.Read,
+            PricingPermissionCodes.ReadCostBasis,
+            PricingPermissionCodes.PublishPrices);
+        var candidates = await pricing.GetFromJsonAsync<PriceRevisionPage>(
+            "/api/commerce/v1/pricing/proposals?page=1&pageSize=100&status=Approved");
+        var candidate = Assert.Single(candidates!.Items.Where(item => item.ProductId == created.ProductId));
+        using var publication = await pricing.PostAsJsonAsync(
+            "/api/commerce/v1/pricing/publish",
+            new PublishPricesRequest([new PublishPriceItem(
+                candidate.ProposalId,
+                PriceInputModes.SalePrice,
+                null,
+                12_500m,
+                1m,
+                PricingRoundingModes.Nearest,
+                candidate.ConcurrencyToken)]));
+        publication.EnsureSuccessStatusCode();
+        var publishedSignal = await fixture.ReadSynchronizationMessageAsync();
+        Assert.True(publishedSignal.AvailableThroughCursor > createdSignal.AvailableThroughCursor);
         var priceListId = Guid.NewGuid();
         var listItemId = Guid.NewGuid();
         var channelItemId = Guid.NewGuid();
@@ -94,7 +174,8 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         var channelCustomerId = Guid.NewGuid();
         var listPartyId = Guid.NewGuid();
         var channelPartyId = Guid.NewGuid();
-        var countryId = Guid.NewGuid();
+        var countryId = await ScalarAsync<Guid>(
+            "SELECT CountryId FROM dbo.Countries WHERE Code=N'CO';");
         await ExecuteAsync(
             """
             INSERT dbo.PriceLists(PriceListId,BusinessId,Code,Name,IsActive,CreatedAt)
@@ -105,8 +186,6 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             INSERT dbo.ResolvedPriceChannelItems
               (ResolvedPriceChannelItemId,PriceChannelId,ProductId,Amount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
               VALUES(@ChannelItem,@Channel,@Product,11500,N'COP',SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET());
-            INSERT dbo.Countries(CountryId,Code,Name,IsActive,CreatedAt)
-              VALUES(@Country,N'CO',N'Colombia',1,SYSDATETIMEOFFSET());
             INSERT dbo.Parties
               (PartyId,TenantId,PartyType,IdentificationCountryId,IdentificationTypeCode,
                Identification,NormalizedIdentification,DisplayName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
@@ -201,7 +280,7 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             Assert.Equal("Catalog", updatedSignal.Stream);
             Assert.True(
                 updatedSignal.AvailableThroughCursor >
-                createdSignal.AvailableThroughCursor);
+                publishedSignal.AvailableThroughCursor);
 
             await sync.SynchronizeAsync();
             Assert.Null(await local.CaptureAsync("7701234500012"));
@@ -226,6 +305,59 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         }
     }
 
+    [Fact]
+    public async Task Supplier_cost_changes_are_versioned_without_recreating_the_supplier_product()
+    {
+        var (taxProfileId, _, _) = await ConfigureCatalogAsync();
+        var request = ProductRequest(
+            taxProfileId,
+            [new ProductPriceInput(12_500m)],
+            [new ProductBarcodeInput($"76{Random.Shared.NextInt64(10_000_000_000, 99_999_999_999)}", true)]);
+
+        using var admin = fixture.CreateAdminClient(
+            CatalogPermissionCodes.Create,
+            CatalogPermissionCodes.Update,
+            CatalogPermissionCodes.ManagePrices,
+            CatalogPermissionCodes.ManageCosts);
+        using var creation = await admin.PostAsJsonAsync("/api/commerce/v1/products", request);
+        creation.EnsureSuccessStatusCode();
+        var created = (await creation.Content.ReadFromJsonAsync<ProductDetail>())!;
+        var supplier = Assert.Single(created.Suppliers!);
+        var supplierProductId = await ScalarAsync<Guid>(
+            "SELECT SupplierProductId FROM dbo.SupplierProducts WHERE ProductId=@Product AND SupplierId=@Supplier;",
+            new SqlParameter("@Product", created.ProductId),
+            new SqlParameter("@Supplier", supplier.SupplierId));
+
+        var changedRequest = request with
+        {
+            Prices = [new ProductPriceInput(0m)],
+            Suppliers = [supplier with { BaseUnitCost = 8_500m }]
+        };
+        using var changed = await admin.PutAsJsonAsync(
+            $"/api/commerce/v1/products/{created.ProductId:D}", changedRequest);
+        Assert.True(changed.IsSuccessStatusCode, await changed.Content.ReadAsStringAsync());
+
+        Assert.Equal(supplierProductId, await ScalarAsync<Guid>(
+            "SELECT SupplierProductId FROM dbo.SupplierProducts WHERE ProductId=@Product AND SupplierId=@Supplier;",
+            new SqlParameter("@Product", created.ProductId),
+            new SqlParameter("@Supplier", supplier.SupplierId)));
+        Assert.Equal(2, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.SupplierCostAgreements WHERE SupplierProductId=@Id;",
+            new SqlParameter("@Id", supplierProductId)));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.SupplierCostAgreements WHERE SupplierProductId=@Id AND IsActive=1 AND BaseUnitCost=8500;",
+            new SqlParameter("@Id", supplierProductId)));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.SupplierCostAgreements WHERE SupplierProductId=@Id AND IsActive=0 AND ValidUntil IS NOT NULL;",
+            new SqlParameter("@Id", supplierProductId)));
+
+        using var replay = await admin.PutAsJsonAsync(
+            $"/api/commerce/v1/products/{created.ProductId:D}", changedRequest);
+        replay.EnsureSuccessStatusCode();
+        Assert.Equal(2, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.SupplierCostAgreements WHERE SupplierProductId=@Id;",
+            new SqlParameter("@Id", supplierProductId)));
+    }
     [Fact]
     public async Task Security_uniqueness_and_warehouse_negative_policy_are_enforced()
     {
@@ -289,6 +421,9 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         var channel = fixture.PriceChannelId;
         var second = Guid.Parse("019ad230-6e45-7a28-a71e-25584f52bd65");
         const string sql = """
+            IF NOT EXISTS (SELECT 1 FROM dbo.ProductUnits WHERE BusinessId=@Business AND Code=N'EA')
+              INSERT dbo.ProductUnits(ProductUnitId,BusinessId,Code,Name,Symbol,AllowsFractionalQuantity,DecimalPlaces,IsActive,CreatedAt)
+              VALUES(NEWID(),@Business,N'EA',N'Unidad',N'und',0,0,1,SYSDATETIMEOFFSET());
             IF NOT EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId=@Tax)
               INSERT dbo.TaxProfiles(TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
               VALUES(@Tax,@Business,N'VAT19',N'IVA 19%',19,1,SYSDATETIMEOFFSET());

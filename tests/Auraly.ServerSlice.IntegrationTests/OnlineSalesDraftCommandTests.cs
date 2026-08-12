@@ -75,6 +75,8 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
         using var client = fixture.CreateUserClient(
             userId,
             CommercePermissionCodes.SalesCreate,
+            CommercePermissionCodes.SalesDiscount,
+            CommercePermissionCodes.SalesRemoveLine,
             WorkSessionPermissionCodes.Open);
         var workSession = await fixture.OpenWorkSessionAsync(client);
         var draft = await OpenAsync(client, workSession.WorkSessionId);
@@ -82,8 +84,8 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
         var captured = await MutateAsync<OnlineSalesDraft>(
             client,
             HttpMethod.Post,
-            $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/capture",
-            new CaptureOnlineSalesDraftProductRequest(barcode, 1m, draft.Version));
+            $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/items",
+            new AddOnlineSalesDraftItemRequest(barcode, 1m, draft.Version));
         var baseLine = Assert.Single(captured.Lines);
         Assert.Equal(10_000m, baseLine.UnitPrice);
         Assert.Equal("Base", baseLine.PriceSource);
@@ -154,8 +156,8 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             var draft = await OpenAsync(client, workSession.WorkSessionId);
             using var request = Mutation(
                 HttpMethod.Post,
-                $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/capture",
-                new CaptureOnlineSalesDraftProductRequest("P-E2E", 1m, draft.Version));
+                $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/items",
+                new AddOnlineSalesDraftItemRequest("P-E2E", 999_999m, draft.Version));
             using var response = await client.SendAsync(request);
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
             var problem = await response.Content.ReadAsStringAsync();

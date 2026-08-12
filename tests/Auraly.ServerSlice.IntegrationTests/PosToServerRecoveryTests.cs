@@ -96,7 +96,7 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
             Assert.Equal(
                 PosSaleRemoteStatuses.AlreadyProcessed,
                 duplicate.Response!.Status);
-            Assert.Equal(duplicateRequest.FiscalSnapshot.Cufe, duplicate.Response.CufeReceived);
+            Assert.Equal(duplicateRequest.FiscalSnapshot!.Cufe, duplicate.Response.CufeReceived);
             Assert.Equal(duplicateRequest.FiscalSnapshot.Cufe, duplicate.Response.CufeCalculated);
             Assert.Equal(1, await fixture.CountAsync("SalesDocuments", firstDocument.Value));
             Assert.Equal(1, await fixture.CountAsync("InventoryMovements", firstDocument.Value));

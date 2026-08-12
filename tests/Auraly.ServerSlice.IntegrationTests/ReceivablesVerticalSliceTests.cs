@@ -340,10 +340,9 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         HttpClient client, OnlineSalesDraft draft)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post,
-            $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/capture")
+            $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/items")
         {
-            Content = JsonContent.Create(new CaptureOnlineSalesDraftProductRequest(
-                "P-E2E", 1m, draft.Version))
+            Content = JsonContent.Create(new AddOnlineSalesDraftItemRequest("P-E2E", 1m, draft.Version))
         };
         request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
         using var response = await client.SendAsync(request);

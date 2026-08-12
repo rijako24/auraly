@@ -162,6 +162,91 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Commercial_receipt_uses_its_own_series_and_skips_the_fiscal_stage()
+    {
+        var userId = await CreateUserAsync("receipt");
+        using var client = fixture.CreateUserClient(
+            userId,
+            CommercePermissionCodes.SalesCreate,
+            WorkSessionPermissionCodes.Open);
+        client.Timeout = TimeSpan.FromSeconds(60);
+
+        var captured = await CaptureAsync(client, await OpenAsync(client));
+        var command = new CompleteOnlineSalesDraftRequest(
+            captured.Version,
+            [new OnlineSalesPayment("Cash", captured.PayableAmount, null)],
+            DocumentType: PosSaleDocumentTypes.Receipt);
+        var key = $"receipt-{Guid.NewGuid():N}";
+
+        var completed = await CompleteAsync(client, captured.DraftId, command, key);
+
+        Assert.Equal(PosSaleDocumentTypes.Receipt, completed.Receipt.DocumentType);
+        Assert.StartsWith("CVI00-", completed.Receipt.DocumentNumber);
+        Assert.Null(completed.Receipt.FiscalNumber);
+        Assert.Null(completed.Receipt.Cufe);
+        Assert.Null(completed.Receipt.QrPayload);
+        Assert.Equal("CommercialAccepted", completed.Receipt.FiscalStatus);
+        Assert.Equal(captured.PayableAmount, completed.Receipt.PayableAmount);
+
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var sql = connection.CreateCommand();
+            sql.CommandText = """
+                SELECT d.DocumentType,d.FiscalSeriesId,d.FiscalNumber,d.CufeReceived,d.FiscalStatus,
+                       (SELECT COUNT(*) FROM dbo.FiscalSnapshots f WHERE f.DocumentId=d.DocumentId),
+                       (SELECT COUNT(*) FROM dbo.FiscalDocuments f WHERE f.DocumentId=d.DocumentId),
+                       (SELECT COUNT(*) FROM dbo.FiscalDocumentProcesses f WHERE f.DocumentId=d.DocumentId),
+                       (SELECT COUNT(*) FROM dbo.InventoryMovements m WHERE m.DocumentId=d.DocumentId),
+                       (SELECT COUNT(*) FROM dbo.SalesPayments p WHERE p.DocumentId=d.DocumentId),
+                       (SELECT COUNT(*) FROM dbo.ServerOutboxMessages o WHERE o.DocumentId=d.DocumentId),
+                       (SELECT COUNT(*) FROM dbo.Receivables r WHERE r.SourceDocumentId=d.DocumentId),
+                       (SELECT COUNT(*) FROM dbo.AccountingPostingJobs a WHERE a.SourceDocumentId=d.DocumentId)
+                FROM dbo.SalesDocuments d WHERE d.DocumentId=@DocumentId;
+                """;
+            sql.Parameters.AddWithValue("@DocumentId", completed.Receipt.DocumentId);
+            await using var reader = await sql.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(PosSaleDocumentTypes.Receipt, reader.GetString(0));
+            Assert.True(reader.IsDBNull(1));
+            Assert.True(reader.IsDBNull(2));
+            Assert.True(reader.IsDBNull(3));
+            Assert.True(reader.IsDBNull(4));
+            Assert.Equal(0, reader.GetInt32(5));
+            Assert.Equal(0, reader.GetInt32(6));
+            Assert.Equal(0, reader.GetInt32(7));
+            Assert.Equal(1, reader.GetInt32(8));
+            Assert.Equal(1, reader.GetInt32(9));
+            Assert.Equal(1, reader.GetInt32(10));
+            Assert.Equal(0, reader.GetInt32(11));
+            Assert.Equal(0, reader.GetInt32(12));
+        }
+
+        var replay = await CompleteAsync(client, captured.DraftId, command, key);
+        Assert.True(replay.IsDuplicate);
+        Assert.Equal(completed.Receipt.DocumentId, replay.Receipt.DocumentId);
+        Assert.Equal(completed.Receipt.DocumentNumber, replay.Receipt.DocumentNumber);
+
+        await using var verify = new SqlConnection(fixture.ConnectionString);
+        await verify.OpenAsync();
+        await using var count = verify.CreateCommand();
+        count.CommandText = """
+            SELECT COUNT(*),
+                   (SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@DocumentId),
+                   (SELECT COUNT(*) FROM dbo.SalesPayments WHERE DocumentId=@DocumentId)
+            FROM dbo.SalesDocuments WHERE DocumentId=@DocumentId;
+            """;
+        count.Parameters.AddWithValue("@DocumentId", completed.Receipt.DocumentId);
+        await using var counts = await count.ExecuteReaderAsync();
+        Assert.True(await counts.ReadAsync());
+        Assert.Equal(1, counts.GetInt32(0));
+        Assert.Equal(1, counts.GetInt32(1));
+        Assert.Equal(1, counts.GetInt32(2));
+    }
+
+
+
+    [Fact]
     public async Task Two_online_users_share_server_series_without_number_collisions()
     {
         var firstUserId = await CreateUserAsync("parallel-a");
@@ -305,9 +390,16 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             VALUES(
               @UserId,@TenantId,@Username,UPPER(@Username),@Email,UPPER(@Email),
               N'Venta',N'Online',1,SYSDATETIMEOFFSET());
+            INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt)
+            VALUES(@UserRoleId,@UserId,@RoleId,@BusinessId,SYSDATETIMEOFFSET());
+
+
             """,
             new("@UserId", userId),
+            new("@UserRoleId", Guid.NewGuid()),
             new("@TenantId", fixture.TenantId),
+            new("@RoleId", fixture.RoleId),
+            new("@BusinessId", fixture.BusinessId),
             new("@Username", $"{prefix}-{userId:N}"),
             new("@Email", $"{prefix}-{userId:N}@test.local"));
         return userId;
@@ -343,11 +435,10 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
     {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
-            $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/capture")
+            $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/items")
         {
             Content = JsonContent.Create(
-                new CaptureOnlineSalesDraftProductRequest(
-                    "P-E2E",
+                new AddOnlineSalesDraftItemRequest("P-E2E",
                     1m,
                     draft.Version))
         };
@@ -366,6 +457,9 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
     {
         using var request = Mutation(draftId, command, key);
         using var response = await client.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException(
+                $"Checkout failed ({(int)response.StatusCode}): {await response.Content.ReadAsStringAsync()}");
         response.EnsureSuccessStatusCode();
         return await response.Content
             .ReadFromJsonAsync<CompleteOnlineSalesDraftResponse>()
