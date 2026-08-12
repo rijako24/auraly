@@ -5,6 +5,10 @@
 **Fuente funcional:** Xion, sin copiar código, interfaz, tablas ni nombres heredados.
 
 > [!IMPORTANT]
+> La sección **Rutas** de este documento fue reemplazada por
+> [`routes-slice-design.md`](./routes-slice-design.md), que contiene la auditoría
+> completa de Xion y el diseño definitivo de implementación.
+> [!IMPORTANT]
 > La decisión
 > [`order-source-of-truth.md`](./order-source-of-truth.md) prevalece sobre la
 > sección 3: los pedidos existentes del bot son la fuente única y no se duplican.

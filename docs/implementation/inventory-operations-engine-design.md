@@ -94,7 +94,7 @@ accounts or period closing is implemented.
 
 ## Intentional next work
 
-- explicit damage/average module;
+- inventory reversals and controlled correction documents;
 - reversal documents instead of deletion;
 - accounting journals and period controls consuming the durable operational facts;
 - web screens for counts, adjustments, transfers and conversions;

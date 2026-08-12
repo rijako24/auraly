@@ -48,8 +48,7 @@ recuperar ni eliminar la venta en espera de otro usuario.
 - `POST /api/commerce/v1/pos/drafts/products/search`
 - `POST /api/commerce/v1/pos/drafts/customers/search`
 - `POST /api/commerce/v1/pos/drafts/temporaries/search`
-- `POST /api/commerce/v1/pos/drafts/{draftId}/lines`
-- `POST /api/commerce/v1/pos/drafts/{draftId}/capture`
+- `POST /api/commerce/v1/pos/drafts/{draftId}/items`
 - `PUT /api/commerce/v1/pos/drafts/{draftId}/lines/{lineId}/quantity`
 - `PUT /api/commerce/v1/pos/drafts/{draftId}/lines/{lineId}/discount`
 - `POST /api/commerce/v1/pos/drafts/{draftId}/lines/{lineId}/remove`
