@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using MimosBabySpa.Application.Commerce;
+using MimosBabySpa.Infrastructure.Configuration;
 using RabbitMQ.Client;
 
 namespace MimosBabySpa.Infrastructure.Commerce;
@@ -29,27 +30,41 @@ public static class ExternalCustomerReconciliationMessagingRegistration
             ?? "auraly-external-customer-reconciliation";
         string? connectionString;
         if (string.Equals(transport, "ServiceBus", StringComparison.OrdinalIgnoreCase))
+        {
             connectionString = configuration[
                     "Auraly:ExternalCustomerReconciliation:ServiceBus:ConnectionString"]
                 ?? configuration["ServiceBusConnection"]
                 ?? configuration.GetConnectionString("ServiceBus");
+            var fullyQualifiedNamespace =
+                configuration["ServiceBusConnection:fullyQualifiedNamespace"];
+            if (string.IsNullOrWhiteSpace(connectionString) &&
+                string.IsNullOrWhiteSpace(fullyQualifiedNamespace))
+            {
+                throw new InvalidOperationException(
+                    "External-customer reconciliation ServiceBus connection is required; configure a connection string or fully qualified namespace. Committed events never fall back to polling.");
+            }
+        }
         else if (string.Equals(transport, "RabbitMq", StringComparison.OrdinalIgnoreCase))
+        {
             connectionString = configuration[
                     "Auraly:ExternalCustomerReconciliation:RabbitMq:ConnectionString"]
                 ?? configuration["Auraly:Processing:RabbitMq:ConnectionString"];
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                throw new InvalidOperationException(
+                    "External-customer reconciliation RabbitMq connection is required; committed events never fall back to polling.");
+            }
+        }
         else
             throw new InvalidOperationException(
                 "External-customer reconciliation transport must be ServiceBus or RabbitMq.");
 
-        if (string.IsNullOrWhiteSpace(connectionString))
-            throw new InvalidOperationException(
-                $"External-customer reconciliation {transport} connection is required; committed events never fall back to polling.");
-
         var options = new ExternalCustomerReconciliationTransportOptions(
             transport,
-            connectionString,
+            connectionString ?? string.Empty,
             queueName);
         services.AddSingleton(options);
+        services.TryAddSingleton<IConfiguration>(configuration);
         services.TryAddSingleton(TimeProvider.System);
         services.AddSingleton<ExternalCustomerReconciliationOutboxSignal>();
         services.AddScoped<ExternalCustomerReconciliationCommitState>();
@@ -72,9 +87,12 @@ public sealed class ServiceBusExternalCustomerReconciliationPublisher
     private readonly ServiceBusSender sender;
 
     public ServiceBusExternalCustomerReconciliationPublisher(
-        ExternalCustomerReconciliationTransportOptions options)
+        ExternalCustomerReconciliationTransportOptions options,
+        IConfiguration configuration)
     {
-        client = new ServiceBusClient(options.ConnectionString);
+        client = string.IsNullOrWhiteSpace(options.ConnectionString)
+            ? AzureManagedClientFactory.CreateServiceBusClient(configuration)
+            : new ServiceBusClient(options.ConnectionString);
         sender = client.CreateSender(options.QueueName);
     }
 
