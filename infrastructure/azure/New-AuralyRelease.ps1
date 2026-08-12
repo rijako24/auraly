@@ -31,7 +31,7 @@ if (Test-Path -LiteralPath $releasePath) {
 
 $gitStatus = (& git -C $repoRoot status --porcelain=v1)
 if (-not $AllowDirty -and $gitStatus) {
-    throw 'El ?rbol de Git tiene cambios. Confirme los cambios antes de crear un release reproducible.'
+    throw 'El arbol de Git tiene cambios. Confirme los cambios antes de crear un release reproducible.'
 }
 
 $commit = (& git -C $repoRoot rev-parse HEAD).Trim()
@@ -88,19 +88,31 @@ try {
     New-Item -ItemType Directory -Path $releasePath -Force | Out-Null
     New-Item -ItemType Directory -Path $publishPath -Force | Out-Null
 
-    & dotnet restore (Join-Path $repoRoot 'MimosBabySpa.sln') --locked-mode
-    if ($LASTEXITCODE) { throw 'dotnet restore fall?.' }
+    & dotnet restore (Join-Path $repoRoot 'Auraly.Commerce.sln') --locked-mode
+    if ($LASTEXITCODE) { throw 'dotnet restore fallo.' }
+    & dotnet restore `
+        (Join-Path $repoRoot 'src\API\MimosBabySpa.API\MimosBabySpa.API.csproj') `
+        --locked-mode
+    if ($LASTEXITCODE) { throw 'dotnet restore de Function fallo.' }
     & dotnet restore `
         (Join-Path $repoRoot 'src\Tests\MimosBabySpa.Tests\MimosBabySpa.Tests.csproj') `
         --locked-mode
-    if ($LASTEXITCODE) { throw 'dotnet restore de pruebas fall?.' }
+    if ($LASTEXITCODE) { throw 'dotnet restore de regresion legacy fallo.' }
 
-    & dotnet build (Join-Path $repoRoot 'MimosBabySpa.sln') `
+    & dotnet build (Join-Path $repoRoot 'Auraly.Commerce.sln') `
         -c Release --no-restore `
         -p:ContinuousIntegrationBuild=true `
         -p:Deterministic=true `
         "-p:PathMap=$repoRoot=/_/src"
-    if ($LASTEXITCODE) { throw 'dotnet build fall?.' }
+    if ($LASTEXITCODE) { throw 'dotnet build de Auraly Commerce fallo.' }
+
+    & dotnet build `
+        (Join-Path $repoRoot 'src\API\MimosBabySpa.API\MimosBabySpa.API.csproj') `
+        -c Release --no-restore `
+        -p:ContinuousIntegrationBuild=true `
+        -p:Deterministic=true `
+        "-p:PathMap=$repoRoot=/_/src"
+    if ($LASTEXITCODE) { throw 'dotnet build de Function fallo.' }
 
     & dotnet build `
         (Join-Path $repoRoot 'src\Tests\MimosBabySpa.Tests\MimosBabySpa.Tests.csproj') `
@@ -108,11 +120,19 @@ try {
         -p:ContinuousIntegrationBuild=true `
         -p:Deterministic=true `
         "-p:PathMap=$repoRoot=/_/src"
-    if ($LASTEXITCODE) { throw 'dotnet build de pruebas fall?.' }
+    if ($LASTEXITCODE) { throw 'dotnet build de regresion legacy fallo.' }
 
     & dotnet test (Join-Path $repoRoot 'src\Tests\MimosBabySpa.Tests\MimosBabySpa.Tests.csproj') `
         -c Release --no-build --logger 'console;verbosity=minimal'
-    if ($LASTEXITCODE) { throw 'dotnet test fall?.' }
+    if ($LASTEXITCODE) { throw 'La regresion legacy fallo.' }
+
+    & dotnet test (Join-Path $repoRoot 'tests\Auraly.Foundation.Tests\Auraly.Foundation.Tests.csproj') `
+        -c Release --no-build --logger 'console;verbosity=minimal'
+    if ($LASTEXITCODE) { throw 'Las pruebas de Auraly Foundation fallaron.' }
+
+    & dotnet test (Join-Path $repoRoot 'tests\Auraly.Pos.Edge.Host.Tests\Auraly.Pos.Edge.Host.Tests.csproj') `
+        -c Release --no-build --logger 'console;verbosity=minimal'
+    if ($LASTEXITCODE) { throw 'Las pruebas de POS Edge fallaron.' }
 
     $functionPublish = Join-Path $publishPath 'function'
     & dotnet publish (Join-Path $repoRoot 'src\API\MimosBabySpa.API\MimosBabySpa.API.csproj') `
@@ -120,27 +140,27 @@ try {
         -p:ContinuousIntegrationBuild=true `
         -p:Deterministic=true `
         "-p:PathMap=$repoRoot=/_/src"
-    if ($LASTEXITCODE) { throw 'La publicaci?n de Function fall?.' }
+    if ($LASTEXITCODE) { throw 'La publicacion de Function fallo.' }
 
     $apiPublish = Join-Path $publishPath 'api'
-    & dotnet publish (Join-Path $repoRoot 'src\API\MimosBabySpa.WebAPI\MimosBabySpa.WebAPI.csproj') `
+    & dotnet publish (Join-Path $repoRoot 'src\API\Auraly.Api\Auraly.Api.csproj') `
         -c Release --no-build -o $apiPublish `
         -p:ContinuousIntegrationBuild=true `
         -p:Deterministic=true `
         "-p:PathMap=$repoRoot=/_/src"
-    if ($LASTEXITCODE) { throw 'La publicaci?n de Web API fall?.' }
+    if ($LASTEXITCODE) { throw 'La publicacion de Auraly API fallo.' }
 
-    & dotnet build (Join-Path $repoRoot 'database\MimosBabySpa.Database\MimosBabySpa.Database.sqlproj') `
+    & dotnet build (Join-Path $repoRoot 'database\Auraly.Database\Auraly.Database.sqlproj') `
         -c Release --no-restore
-    if ($LASTEXITCODE) { throw 'La compilaci?n de base de datos fall?.' }
+    if ($LASTEXITCODE) { throw 'La compilacion de base de datos fallo.' }
 
     if (-not $SkipAdmin) {
         Push-Location (Join-Path $repoRoot 'admin')
         try {
             & npm ci
-            if ($LASTEXITCODE) { throw 'npm ci fall?.' }
+            if ($LASTEXITCODE) { throw 'npm ci fallo.' }
             & npm run build
-            if ($LASTEXITCODE) { throw 'La compilaci?n de Admin fall?.' }
+            if ($LASTEXITCODE) { throw 'La compilacion del frontend fallo.' }
         }
         finally {
             Pop-Location
@@ -155,7 +175,7 @@ try {
         -DestinationPath (Join-Path $releasePath "auraly-api-$Version.zip")
 
     Copy-Item -LiteralPath `
-        (Join-Path $repoRoot 'database\MimosBabySpa.Database\bin\Release\MimosBabySpa.Database.dacpac') `
+        (Join-Path $repoRoot 'database\Auraly.Database\bin\Release\Auraly.Database.dacpac') `
         -Destination (Join-Path $releasePath "auraly-database-$Version.dacpac")
 
     $artifacts = Get-ChildItem -LiteralPath $releasePath -File |

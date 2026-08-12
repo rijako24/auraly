@@ -17,19 +17,24 @@ public sealed class PosEdgeSchemaUpgradeTests
         var databasePath = Path.Combine(
             Path.GetTempPath(),
             $"auraly-pos-edge-upgrade-{Guid.NewGuid():N}.db");
+        var connectionString = new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath,
+            Pooling = false
+        }.ToString();
         var seriesId = Guid.NewGuid();
         var deviceId = new DeviceId(Guid.NewGuid());
         var authorizationId = Guid.NewGuid();
         try
         {
-            await CreatePreviousSchemaAsync(databasePath, seriesId, deviceId);
+            await CreatePreviousSchemaAsync(connectionString, seriesId, deviceId);
             var userId = new UserId(Guid.NewGuid());
             var permissionSet = new UserPermissionSet(
                 new TenantId(Guid.NewGuid()),
                 userId,
                 [CommercePermissionCodes.SalesCreate]);
             var store = new PosEdgeSaleStore(
-                $"Data Source={databasePath}",
+                connectionString,
                 new ConfirmOfflineSaleService(
                     new PermissionAuthorizer(new FixedPermissionProvider(permissionSet))));
 
@@ -44,7 +49,7 @@ public sealed class PosEdgeSchemaUpgradeTests
                 new DateOnly(2027, 7, 27),
                 authorizationId));
 
-            await using var verification = new SqliteConnection($"Data Source={databasePath}");
+            await using var verification = new SqliteConnection(connectionString);
             await verification.OpenAsync();
             await using var command = verification.CreateCommand();
             command.CommandText =
@@ -84,6 +89,11 @@ public sealed class PosEdgeSchemaUpgradeTests
         var databasePath = Path.Combine(
             Path.GetTempPath(),
             $"auraly-pos-edge-series-refresh-{Guid.NewGuid():N}.db");
+        var connectionString = new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath,
+            Pooling = false
+        }.ToString();
         var previousDevice = new DeviceId(Guid.NewGuid());
         var refreshedDevice = new DeviceId(Guid.NewGuid());
         var documentSeriesId = Guid.NewGuid();
@@ -98,7 +108,7 @@ public sealed class PosEdgeSchemaUpgradeTests
                 [CommercePermissionCodes.SalesCreate]);
             var authorization = new PermissionAuthorizer(new FixedPermissionProvider(permissions));
             var firstStore = new PosEdgeSaleStore(
-                $"Data Source={databasePath}",
+                connectionString,
                 new ConfirmOfflineSaleService(authorization));
             await firstStore.InitializeAsync();
             await firstStore.ProvisionDocumentSeriesAsync(new PosEdgeDocumentSeriesProvision(
@@ -121,7 +131,7 @@ public sealed class PosEdgeSchemaUpgradeTests
                 authorizationId));
 
             var restartedStore = new PosEdgeSaleStore(
-                $"Data Source={databasePath}",
+                connectionString,
                 new ConfirmOfflineSaleService(authorization));
             await restartedStore.InitializeAsync();
             await restartedStore.ProvisionDocumentSeriesAsync(new PosEdgeDocumentSeriesProvision(
@@ -164,11 +174,11 @@ public sealed class PosEdgeSchemaUpgradeTests
         }
     }
     private static async Task CreatePreviousSchemaAsync(
-        string databasePath,
+        string connectionString,
         Guid seriesId,
         DeviceId deviceId)
     {
-        await using var connection = new SqliteConnection($"Data Source={databasePath}");
+        await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText =
