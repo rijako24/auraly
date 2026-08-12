@@ -100,7 +100,7 @@ try {
     if ($LASTEXITCODE) { throw 'dotnet restore de regresion legacy fallo.' }
 
     & dotnet build (Join-Path $repoRoot 'Auraly.Commerce.sln') `
-        -c Release --no-restore `
+        -c Release --no-restore --warnaserror `
         -p:ContinuousIntegrationBuild=true `
         -p:Deterministic=true `
         "-p:PathMap=$repoRoot=/_/src"
@@ -108,7 +108,7 @@ try {
 
     & dotnet build `
         (Join-Path $repoRoot 'src\API\MimosBabySpa.API\MimosBabySpa.API.csproj') `
-        -c Release --no-restore `
+        -c Release --no-restore --warnaserror `
         -p:ContinuousIntegrationBuild=true `
         -p:Deterministic=true `
         "-p:PathMap=$repoRoot=/_/src"
@@ -116,7 +116,7 @@ try {
 
     & dotnet build `
         (Join-Path $repoRoot 'src\Tests\MimosBabySpa.Tests\MimosBabySpa.Tests.csproj') `
-        -c Release --no-restore `
+        -c Release --no-restore --warnaserror `
         -p:ContinuousIntegrationBuild=true `
         -p:Deterministic=true `
         "-p:PathMap=$repoRoot=/_/src"

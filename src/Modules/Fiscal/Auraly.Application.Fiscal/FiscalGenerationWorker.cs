@@ -128,21 +128,23 @@ public sealed class FiscalGenerationWorker(
     {
         var sale = work.Sale
             ?? throw new FiscalSnapshotDataException("The invoice fiscal payload is missing.");
+        var snapshot = sale.FiscalSnapshot
+            ?? throw new FiscalSnapshotDataException("The immutable sale has no fiscal snapshot.");
         var ubl = sale.UblSnapshot
             ?? throw new FiscalSnapshotDataException("The immutable sale has no UBL snapshot.");
         if (ubl.FiscalIssuerConfigurationId != work.Issuer.Id)
             throw new FiscalSnapshotDataException("The UBL snapshot references another issuer configuration.");
-        if (ubl.Customer.Identification != sale.FiscalSnapshot.CustomerIdentification ||
-            ubl.Supplier.Identification != sale.FiscalSnapshot.SupplierTaxId ||
+        if (ubl.Customer.Identification != snapshot.CustomerIdentification ||
+            ubl.Supplier.Identification != snapshot.SupplierTaxId ||
             ubl.Supplier.Identification != work.Issuer.SupplierTaxId)
             throw new FiscalSnapshotDataException("Supplier or customer identification differs from the verified fiscal snapshot.");
         if (ubl.Lines.Count != sale.Lines.Count)
             throw new FiscalSnapshotDataException("UBL line metadata does not match the immutable sale lines.");
-        if (work.Issuer.Environment != sale.FiscalSnapshot.Environment)
+        if (work.Issuer.Environment != snapshot.Environment)
             throw new FiscalSnapshotDataException("Issuer environment differs from the verified fiscal snapshot.");
         if (work.Authorization is null ||
-            ubl.Authorization.Number != sale.FiscalSnapshot.AuthorizationNumber ||
-            ubl.Authorization.Prefix != sale.FiscalSnapshot.Prefix ||
+            ubl.Authorization.Number != snapshot.AuthorizationNumber ||
+            ubl.Authorization.Prefix != snapshot.Prefix ||
             work.Authorization.Number != ubl.Authorization.Number ||
             work.Authorization.Prefix != ubl.Authorization.Prefix ||
             work.Authorization.ValidFrom != ubl.Authorization.ValidFrom ||
@@ -182,7 +184,7 @@ public sealed class FiscalGenerationWorker(
 
         return new DianInvoice(sale.FiscalSnapshot.FiscalNumber, sale.FiscalSnapshot.Cufe,
             sale.FiscalSnapshot.IssuedAt, ubl.CurrencyCode, ubl.InvoiceTypeCode,
-            sale.FiscalSnapshot.Environment,
+            snapshot.Environment,
             new DianAuthorization(ubl.Authorization.Number, ubl.Authorization.ValidFrom,
                 ubl.Authorization.ValidUntil, ubl.Authorization.Prefix,
                 ubl.Authorization.RangeStart, ubl.Authorization.RangeEnd),
