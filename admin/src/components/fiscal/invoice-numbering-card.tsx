@@ -56,7 +56,7 @@ export function InvoiceNumberingCard({
   }
 
   return (
-    <section className="h-full rounded-2xl border bg-card p-5 shadow-sm">
+    <section className="h-full rounded-2xl border bg-card p-5 text-card-foreground shadow-sm">
       <div className="flex items-start gap-3">
         <span className="rounded-xl bg-teal-100 p-2 text-teal-800"><Hash className="h-5 w-5" /></span>
         <div className="min-w-0 flex-1">
@@ -70,7 +70,17 @@ export function InvoiceNumberingCard({
         <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
           <label className="space-y-1 text-sm font-medium">
             {value?.canSetInitialConsecutive ? "Primera factura" : "Siguiente factura"}
-            <Input type="number" min={1} value={value?.canSetInitialConsecutive ? initial : (value?.nextConsecutive ?? initial)} disabled={!value?.canSetInitialConsecutive || saving} onChange={(event) => setInitial(Number(event.target.value))} />
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              step={1}
+              className="bg-background text-foreground caret-foreground"
+              value={value?.canSetInitialConsecutive ? initial : (value?.nextConsecutive ?? initial)}
+              disabled={!value?.canSetInitialConsecutive || saving}
+              onFocus={(event) => event.currentTarget.select()}
+              onChange={(event) => setInitial(event.currentTarget.valueAsNumber || 0)}
+            />
           </label>
           {value?.canSetInitialConsecutive && (
             <Button type="button" onClick={() => void save()} disabled={saving || initial < 1}>

@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { buildFiscalResolutionFormState } from "@/lib/fiscal-resolution-form-state";
 import type {
   FiscalResolutionConfiguration,
@@ -40,10 +39,8 @@ const text = {
   enterTechnicalKey: "Ingresa la clave t\u00e9cnica",
   protectedTechnicalKey: "La clave existente est\u00e1 cargada, pero nunca se devuelve ni se muestra. D\u00e9jala vac\u00eda para conservarla.",
   qrUrl: "URL oficial de consulta QR",
-  online: "Facturaci\u00f3n en l\u00ednea",
-  onlineHelp: "Serie emitida y numerada por el servidor.",
-  enrolled: "Equipos enrolados",
-  enrolledHelp: "Permite provisionar numeraci\u00f3n para POS Edge.",
+  provisioning: "Numeraci\u00f3n preparada autom\u00e1ticamente",
+  provisioningHelp: "Auraly crea la serie para ventas web/PWA y reserva un pool separado para cajas POS offline. As\u00ed no se duplican consecutivos.",
   save: "Guardar resoluci\u00f3n",
 } as const;
 
@@ -128,11 +125,16 @@ export function FiscalResolutionForm({ value, saving = false, onSave }: Props) {
       <Field label={text.qrUrl}>
         <Input required type="url" value={form.qrValidationUrl} onChange={(event) => set("qrValidationUrl", event.target.value)} />
       </Field>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Mode checked={form.prepareOnlineSeries} disabled={numberingLocked} onChange={(next) => set("prepareOnlineSeries", next)} title={text.online} description={text.onlineHelp} />
-        <Mode checked={form.prepareOfflineSeries} disabled={numberingLocked} onChange={(next) => set("prepareOfflineSeries", next)} title={text.enrolled} description={text.enrolledHelp} />
+      <div className="rounded-xl border border-teal-200 bg-teal-50 p-4 text-teal-950">
+        <p className="text-sm font-bold">{text.provisioning}</p>
+        <p className="mt-1 text-sm text-teal-800">{text.provisioningHelp}</p>
+        {value?.hasActiveAuthorization && (
+          <p className="mt-2 text-xs font-medium text-teal-900">
+            Estado actual: servidor {value.hasOnlineSeries ? "listo" : "no preparado"} · POS offline {value.hasOfflineSeriesAvailable ? "listo" : "no preparado"}.
+          </p>
+        )}
       </div>
-      <Button className="w-full" type="submit" disabled={saving || (!form.prepareOnlineSeries && !form.prepareOfflineSeries)}>
+      <Button className="w-full" type="submit" disabled={saving}>
         {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
         {text.save}
       </Button>
@@ -142,19 +144,4 @@ export function FiscalResolutionForm({ value, saving = false, onSave }: Props) {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <div className="space-y-2"><Label>{label}</Label>{children}</div>;
-}
-
-function Mode({ checked, onChange, title, description, disabled = false }: {
-  checked: boolean;
-  onChange: (value: boolean) => void;
-  title: string;
-  description: string;
-  disabled?: boolean;
-}) {
-  return (
-    <label className={`flex items-center justify-between gap-4 rounded-xl border p-4 ${disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"} ${checked ? "border-primary/40 bg-primary/5" : ""}`}>
-      <span><b className="block text-sm">{title}</b><small className="text-muted-foreground">{description}</small></span>
-      <Switch checked={checked} disabled={disabled} onCheckedChange={onChange} />
-    </label>
-  );
 }
