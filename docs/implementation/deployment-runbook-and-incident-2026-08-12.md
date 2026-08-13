@@ -183,3 +183,13 @@ Fecha de verificacion: 2026-08-12 (America/Bogota).
 
 La infraestructura de produccion declara Web PubSub `Standard_S1`, pero no se
 aplico ninguna mutacion en `RG-AURALY-PROD` durante esta promocion a DEV.
+
+### Incidente de conectividad del login BFF
+
+- Sintoma: la pagina y la API respondian 200, pero el login devolvia
+  `Error de conexion con el servidor`.
+- Causa: el Static Web App no tenia `AURALY_API_URL`; la ruta BFF no podia
+  construir la URL del backend.
+- Correccion: `main.bicep` administra ese App Setting con el hostname real de la
+  API. El preflight publica credenciales deliberadamente invalidas y exige 401,
+  demostrando que el navegador alcanza la API sin depender de un usuario real.

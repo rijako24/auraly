@@ -253,6 +253,9 @@ public sealed class ServerSliceArchitectureTests
         Assert.Contains("disableLocalAuth: true", template, StringComparison.Ordinal);
         Assert.Contains("Auraly__PosSynchronization__WebPubSub__Endpoint", template,
             StringComparison.Ordinal);
+        Assert.Contains("resource staticAdminSettings", template, StringComparison.Ordinal);
+        Assert.Contains("AURALY_API_URL", template, StringComparison.Ordinal);
+        Assert.Contains("apiApp.properties.defaultHostName", template, StringComparison.Ordinal);
         Assert.Contains("WebPubSub:Endpoint for managed identity", program,
             StringComparison.Ordinal);
     }
