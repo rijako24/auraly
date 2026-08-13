@@ -33,6 +33,7 @@ export interface PartyIdentityLookupResult { exists: boolean; hasRequestedRole: 
 export interface GeographyItem { countryId: string; code: string; name: string; isActive: boolean; }
 export interface DivisionItem { administrativeDivisionId: string; countryId: string; code: string; name: string; divisionType: string; isActive: boolean; }
 export interface CityItem { cityId: string; administrativeDivisionId: string; code: string; name: string; isActive: boolean; }
+export interface GeographyHierarchyItem { id: string; parentId: string | null; level: "Country" | "Division" | "City"; code: string; name: string; isActive: boolean; }
 export interface PartyInput { partyType: string; identificationCountryId: string; identificationTypeCode: string; identification: string; verificationDigit: string | null; displayName: string; legalName: string | null; firstName: string | null; lastName: string | null; email: string | null; phone: string | null; }
 export interface PartySiteInput { code: string; name: string; countryId: string; administrativeDivisionId: string; cityId: string; addressLine: string; neighborhood: string | null; postalCode: string | null; email: string | null; phone: string | null; isPrimary: boolean; }
 export interface CreateThirdPartyRequest { operationId: string; businessId: string; party: PartyInput; primarySite: PartySiteInput; pricing?: { priceListId: string | null; priceChannelId: string | null } | null; code?: string; defaultCommissionPercent?: number | null; commissionBasis?: string; commissionTrigger?: string; transportationMode?: string; }
@@ -56,10 +57,14 @@ export const partiesApi = {
   setStatus: (partyId: string, isActive: boolean, rowVersion: string) =>
     apiClient.post<PartyWorkspaceItem>(`/commerce/v1/parties/${partyId}/status`, { isActive, rowVersion }),
   countries: (includeInactive = false) => apiClient.get<GeographyItem[]>("/commerce/v1/masters/geography/countries", { includeInactive }),
+  geographyHierarchy: (includeInactive = false) => apiClient.get<GeographyHierarchyItem[]>("/commerce/v1/masters/geography/hierarchy", { includeInactive }),
   divisions: (countryId: string, includeInactive = false) => apiClient.get<DivisionItem[]>(`/commerce/v1/masters/geography/countries/${countryId}/divisions`, { includeInactive }),
   cities: (divisionId: string, includeInactive = false) => apiClient.get<CityItem[]>(`/commerce/v1/masters/geography/divisions/${divisionId}/cities`, { includeInactive }),
   createCountry: (body: { code: string; name: string; isActive: boolean }) => apiClient.post<GeographyItem>("/commerce/v1/masters/geography/countries", body),
   createDivision: (body: { countryId: string; code: string; name: string; divisionType: string; isActive: boolean }) => apiClient.post<DivisionItem>("/commerce/v1/masters/geography/divisions", body),
   createCity: (body: { administrativeDivisionId: string; code: string; name: string; isActive: boolean }) => apiClient.post<CityItem>("/commerce/v1/masters/geography/cities", body),
+  updateCountry: (id: string, body: { code: string; name: string; isActive: boolean }) => apiClient.put<GeographyItem>(`/commerce/v1/masters/geography/countries/${id}`, body),
+  updateDivision: (id: string, body: { countryId: string; code: string; name: string; divisionType: string; isActive: boolean }) => apiClient.put<DivisionItem>(`/commerce/v1/masters/geography/divisions/${id}`, body),
+  updateCity: (id: string, body: { administrativeDivisionId: string; code: string; name: string; isActive: boolean }) => apiClient.put<CityItem>(`/commerce/v1/masters/geography/cities/${id}`, body),
 };
 
