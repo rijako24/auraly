@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, type ReactNode } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
+import { defaultStartRoute, shouldApplyDefaultStart } from "@/lib/default-start-route";
 import { executionContextApi } from "@/services/api/execution-context";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
@@ -10,6 +12,8 @@ import { PageLoading } from "@/components/ui/page-loading";
 import { PageError } from "@/components/ui/page-error";
 
 export function BusinessContextProvider({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const router = useRouter();
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const setExecutionAccess = useAuthStore((state) => state.setExecutionAccess);
   const selectedTenantId = useTenantContextStore((state) => state.selectedTenantId);
@@ -57,6 +61,12 @@ export function BusinessContextProvider({ children }: { children: ReactNode }) {
       setExecutionAccess(accessQuery.data.roles, accessQuery.data.permissions);
     }
   }, [accessQuery.data, setExecutionAccess]);
+
+  useEffect(() => {
+    if (!accessQuery.data || !shouldApplyDefaultStart(pathname)) return;
+    const target = defaultStartRoute(accessQuery.data.roles, accessQuery.data.permissions);
+    if (target !== "/dashboard") router.replace(target);
+  }, [accessQuery.data, pathname, router]);
 
   if (!isAuthenticated) return null;
 

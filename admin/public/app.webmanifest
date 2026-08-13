@@ -1,0 +1,19 @@
+{
+  "id": "/",
+  "name": "Auraly Commerce",
+  "short_name": "Auraly",
+  "description": "Administración, pedidos, rutas, inventario y despachos de Auraly Commerce",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#07161a",
+  "orientation": "any",
+  "categories": ["business", "productivity"],
+  "icons": [{
+    "src": "/brand/auraly-mark.png",
+    "sizes": "512x512",
+    "type": "image/png",
+    "purpose": "any maskable"
+  }]
+}

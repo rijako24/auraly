@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "@/providers/theme-provider";
 import { QueryProvider } from "@/providers/query-provider";
+import { PwaProvider } from "@/providers/pwa-provider";
 
 import "./globals.css";
 
@@ -10,11 +11,13 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Auraly | Admin",
   description: "Panel de administración de Auraly",
+  manifest: "/app.webmanifest",
   icons: {
     icon: "/brand/auraly-mark.png",
     shortcut: "/brand/auraly-mark.png",
     apple: "/brand/auraly-mark.png",
   },
+  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Auraly" },
 };
 
 export default function RootLayout({
@@ -32,8 +35,7 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <QueryProvider>
-            {children}
-            <Toaster />
+            <PwaProvider>{children}<Toaster /></PwaProvider>
           </QueryProvider>
         </ThemeProvider>
       </body>

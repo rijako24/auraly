@@ -59,6 +59,9 @@
     <ProjectReference Include="..\..\Modules\Routes\Auraly.Domain.Routes\Auraly.Domain.Routes.csproj" />
     <ProjectReference Include="..\..\Modules\Routes\Auraly.Application.Routes\Auraly.Application.Routes.csproj" />
     <ProjectReference Include="..\..\Modules\Routes\Auraly.Infrastructure.Routes\Auraly.Infrastructure.Routes.csproj" />
+    <ProjectReference Include="..\..\Modules\Dispatching\Auraly.Contracts.Dispatching\Auraly.Contracts.Dispatching.csproj" />
+    <ProjectReference Include="..\..\Modules\Dispatching\Auraly.Application.Dispatching\Auraly.Application.Dispatching.csproj" />
+    <ProjectReference Include="..\..\Modules\Dispatching\Auraly.Infrastructure.Dispatching\Auraly.Infrastructure.Dispatching.csproj" />
     <ProjectReference Include="..\..\Modules\Returns\Auraly.Contracts.Returns\Auraly.Contracts.Returns.csproj" />
     <ProjectReference Include="..\..\Modules\Returns\Auraly.Application.Returns\Auraly.Application.Returns.csproj" />
     <ProjectReference Include="..\..\Modules\Receivables\Auraly.Contracts.Receivables\Auraly.Contracts.Receivables.csproj" />

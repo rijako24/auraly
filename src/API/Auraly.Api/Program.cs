@@ -22,6 +22,7 @@ using Auraly.Application.Receivables;
 using Auraly.Application.Pricing;
 using Auraly.Application.Inventory;
 using Auraly.Application.Routes;
+using Auraly.Application.Dispatching;
 using Auraly.Application.Returns;
 using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Identifiers;
@@ -38,6 +39,7 @@ using Auraly.Infrastructure.Fiscal;
 using Auraly.Infrastructure.Persistence;
 using Auraly.Infrastructure.Pricing;
 using Auraly.Infrastructure.Routes;
+using Auraly.Infrastructure.Dispatching;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
@@ -83,6 +85,7 @@ builder.Services.AddScoped<IAuralyExecutionContextAccessor, AuralyExecutionConte
 builder.Services.AddSingleton(new AccountingSqlConnectionFactory(connectionString));
 builder.Services.AddSingleton(new PricingSqlConnectionFactory(connectionString));
 builder.Services.AddSingleton(new RoutesSqlConnectionFactory(connectionString));
+builder.Services.AddSingleton(new DispatchingSqlConnectionFactory(connectionString));
 builder.Services.AddSingleton<ConfigurationFiscalTechnicalKeyProvider>();
 builder.Services.AddSingleton<SqlProtectedFiscalTechnicalKeyStore>();
 builder.Services.AddSingleton<IFiscalTechnicalKeySecretWriter>(sp =>
@@ -334,6 +337,8 @@ builder.Services.AddScoped<InventoryQueryService>();
 builder.Services.AddScoped<InventoryOperationService>();
 builder.Services.AddScoped<IRouteStore, SqlRouteStore>();
 builder.Services.AddScoped<RouteService>();
+builder.Services.AddScoped<IDispatchStore, SqlDispatchStore>();
+builder.Services.AddScoped<DispatchService>();
 builder.Services.AddScoped<ISalesReturnStore, SqlSalesReturnStore>();
 builder.Services.AddScoped<SalesReturnService>();
 builder.Services.AddScoped<ISalesReturnQueryStore, SqlSalesReturnQueryStore>();
@@ -566,7 +571,9 @@ app.MapReturnsApi();
 app.MapSalesReturnQueryApi();
 app.MapInventoryApi();
 app.MapRoutesApi();
+app.MapDispatchingApi();
 app.MapPricingApi();
+app.MapPriceSegmentsApi();
 app.MapAccountingApi();
 app.MapPost(
         "/api/pos/v1/sales",

@@ -853,6 +853,13 @@
           "Auraly.Domain.Catalog": "[1.0.0, )"
         }
       },
+      "auraly.application.dispatching": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Contracts.Dispatching": "[1.0.0, )"
+        }
+      },
       "auraly.application.documentprocessing": {
         "type": "Project",
         "dependencies": {
@@ -1032,6 +1039,9 @@
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
         }
       },
+      "auraly.contracts.dispatching": {
+        "type": "Project"
+      },
       "auraly.contracts.documentprocessing": {
         "type": "Project",
         "dependencies": {
@@ -1168,6 +1178,15 @@
       },
       "auraly.fiscal.ubl": {
         "type": "Project"
+      },
+      "auraly.infrastructure.dispatching": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.Application.Dispatching": "[1.0.0, )",
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Contracts.Dispatching": "[1.0.0, )",
+          "Microsoft.Data.SqlClient": "[5.2.2, )"
+        }
       },
       "auraly.infrastructure.fiscal": {
         "type": "Project",

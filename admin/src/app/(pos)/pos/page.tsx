@@ -216,9 +216,6 @@ export default function PosPage() {
   }, [client]);
 
   useEffect(() => {
-    if ("serviceWorker" in navigator) {
-      void navigator.serviceWorker.register("/pos-sw.js", { scope: "/pos" });
-    }
     let active = true;
     const bootstrap = async () => {
       setSetupLoading(true);

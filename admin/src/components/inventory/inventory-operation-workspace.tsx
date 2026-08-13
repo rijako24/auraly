@@ -39,17 +39,27 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AdjustmentCaptureGrid,
+  adjustmentUnitValue,
+} from "@/components/inventory/adjustment-capture-grid";
 import { Textarea } from "@/components/ui/textarea";
 import {
   inventoryApi,
   type InventoryAcceptance,
   type InventoryProductItem,
 } from "@/services/api/inventory";
+import {
+  inventoryDraftKey,
+  loadInventoryOperationDraft,
+  removeInventoryOperationDraft,
+  saveInventoryOperationDraft,
+} from "@/lib/operation-draft-store";
 
 export type WarehouseOption = { id: string; name: string };
 type OperationKind = "count" | "adjustment" | "transfer" | "conversion" | "damage";
 type Direction = "INPUT" | "OUTPUT";
-type Line = {
+export type InventoryOperationLine = {
   productId: string;
   productCode: string;
   productName: string;
@@ -58,8 +68,10 @@ type Line = {
   quantity: string;
   cost: string;
   direction: Direction;
+  salePrice: string;
   systemQuantity: number | null;
 };
+type Line = InventoryOperationLine;
 
 const PRODUCT_PAGE_SIZE = 50;
 const operationDocumentTypes: Record<OperationKind, string> = {
@@ -129,8 +141,11 @@ export function InventoryOperationWorkspace({
   const [reason, setReason] = useState("");
   const [notes, setNotes] = useState("");
   const [lines, setLines] = useState<Line[]>([]);
+  const [valuationBasis, setValuationBasis] = useState<"Cost" | "SalePrice">("Cost");
   const [countDocumentId, setCountDocumentId] = useState<string | null>(null);
   const [conversionType, setConversionType] = useState<"SPLIT" | "MERGE">("SPLIT");
+  const [documentId, setDocumentId] = useState(() => crypto.randomUUID());
+  const [hydratedKey, setHydratedKey] = useState<string | null>(null);
 
   const selected = operationOptions.find((option) => option.id === kind)!;
   const allowed = permissions.has(selected.permission);
@@ -146,19 +161,84 @@ export function InventoryOperationWorkspace({
   );
   const initialWarehouseId = warehouses.length === 1 ? warehouses[0].id : "";
   const warehouseIdsKey = warehouses.map((warehouse) => warehouse.id).join("|");
+  const draftKey = inventoryDraftKey(businessId, kind);
 
   useEffect(() => {
-    setWarehouseId(initialWarehouseId);
-    setDestinationId("");
-    setLines([]);
-    setCountDocumentId(null);
-  }, [businessId, initialWarehouseId, warehouseIdsKey]);
+    let active = true;
+    setHydratedKey(null);
+    void loadInventoryOperationDraft(draftKey)
+      .then((draft) => {
+        if (!active) return;
+        if (draft) {
+          setDocumentId(draft.documentId);
+          setWarehouseId(draft.warehouseId);
+          setDestinationId(draft.destinationId);
+          setReason(draft.reason);
+          setNotes(draft.notes);
+          setCountDocumentId(draft.countDocumentId);
+          setConversionType(draft.conversionType);
+          setValuationBasis(draft.valuationBasis ?? "Cost");
+          setLines(draft.lines.map((line) => ({ ...line, salePrice: line.salePrice ?? "" })));
+        } else {
+          setDocumentId(crypto.randomUUID());
+          setWarehouseId(initialWarehouseId);
+          setDestinationId("");
+          setReason("");
+          setNotes("");
+          setCountDocumentId(null);
+          setValuationBasis("Cost");
+          setConversionType("SPLIT");
+          setLines([]);
+        }
+        setHydratedKey(draftKey);
+      })
+      .catch(() => {
+        if (!active) return;
+        setHydratedKey(draftKey);
+        toast.error("No fue posible recuperar el borrador local de inventario.");
+      });
+    return () => { active = false; };
+  }, [draftKey, initialWarehouseId, warehouseIdsKey]);
 
   useEffect(() => {
-    setReason("");
-    setLines([]);
-    setCountDocumentId(null);
-  }, [kind]);
+    if (hydratedKey !== draftKey) return;
+    const timer = window.setTimeout(() => {
+      if (lines.length === 0 && notes.trim() === "" && !countDocumentId) {
+        void removeInventoryOperationDraft(draftKey);
+        return;
+      }
+      void saveInventoryOperationDraft({
+        key: draftKey,
+        businessId,
+        kind,
+        documentId,
+        warehouseId,
+        destinationId,
+        reason,
+        notes,
+        countDocumentId,
+        conversionType,
+        valuationBasis,
+        lines,
+        updatedAt: new Date().toISOString(),
+      }).catch(() => toast.error("No fue posible guardar el avance local."));
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [
+    businessId,
+    conversionType,
+    countDocumentId,
+    destinationId,
+    valuationBasis,
+    documentId,
+    draftKey,
+    hydratedKey,
+    kind,
+    lines,
+    notes,
+    reason,
+    warehouseId,
+  ]);
 
   useEffect(() => {
     if (!reasons.length) return;
@@ -200,7 +280,8 @@ export function InventoryOperationWorkspace({
         unitCode: product.unitCode,
         stock: product.quantityOnHand,
         quantity: "",
-        cost: "",
+        cost: product.averageUnitCost?.toString() ?? "",
+        salePrice: product.saleUnitPrice?.toString() ?? "",
         direction: kind === "conversion" && current.length > 0 ? "OUTPUT" : "INPUT",
         systemQuantity: null,
       },
@@ -236,6 +317,8 @@ export function InventoryOperationWorkspace({
   }
 
   function clear() {
+    void removeInventoryOperationDraft(draftKey);
+    setDocumentId(crypto.randomUUID());
     setLines([]);
     setCountDocumentId(null);
     setNotes("");
@@ -246,7 +329,6 @@ export function InventoryOperationWorkspace({
     mutationFn: async () => {
       const now = new Date().toISOString();
       if (kind === "count" && !countDocumentId) {
-        const documentId = crypto.randomUUID();
         const draft = await inventoryApi.startCount({
           documentId,
           businessId,
@@ -263,7 +345,6 @@ export function InventoryOperationWorkspace({
             systemQuantity:
               draft.lines.find((candidate) => candidate.productId === line.productId)
                 ?.systemQuantityAtBase ?? 0,
-            quantity: "",
           })),
         );
         return null;
@@ -281,7 +362,7 @@ export function InventoryOperationWorkspace({
         });
       } else if (kind === "adjustment") {
         result = await inventoryApi.confirmAdjustment({
-          documentId: crypto.randomUUID(),
+          documentId,
           businessId,
           warehouseId,
           occurredAt: now,
@@ -292,13 +373,12 @@ export function InventoryOperationWorkspace({
             lineNumber: index + 1,
             productId: line.productId,
             quantityChange: Number(line.quantity),
-            explicitUnitCost:
-              Number(line.quantity) > 0 && line.cost !== "" ? Number(line.cost) : null,
+            explicitUnitCost: Number(line.quantity) > 0 ? adjustmentUnitValue(line, valuationBasis) : null,
           })),
         });
       } else if (kind === "transfer") {
         result = await inventoryApi.confirmTransfer({
-          documentId: crypto.randomUUID(),
+          documentId,
           businessId,
           sourceWarehouseId: warehouseId,
           destinationWarehouseId: destinationId,
@@ -313,7 +393,7 @@ export function InventoryOperationWorkspace({
         });
       } else if (kind === "conversion") {
         result = await inventoryApi.confirmConversion({
-          documentId: crypto.randomUUID(),
+          documentId,
           businessId,
           warehouseId,
           occurredAt: now,
@@ -331,7 +411,7 @@ export function InventoryOperationWorkspace({
         });
       } else {
         result = await inventoryApi.confirmDamage({
-          documentId: crypto.randomUUID(),
+          documentId,
           businessId,
           warehouseId,
           occurredAt: now,
@@ -384,12 +464,17 @@ export function InventoryOperationWorkspace({
       (conversionType === "SPLIT"
         ? lines.filter((line) => line.direction === "INPUT").length === 1
         : lines.filter((line) => line.direction === "OUTPUT").length === 1));
+  const adjustmentValuationValid =
+    kind !== "adjustment" ||
+    lines.every((line) =>
+      Number(line.quantity) <= 0 || adjustmentUnitValue(line, valuationBasis) > 0,
+    );
   const ready =
     allowed &&
     Boolean(warehouseId) &&
     Boolean(reason.trim()) &&
     lines.length > 0 &&
-    ((kind === "count" && !countDocumentId) || (quantitiesValid && conversionValid)) &&
+    ((kind === "count" && !countDocumentId) || (quantitiesValid && conversionValid && adjustmentValuationValid)) &&
     (kind !== "transfer" ||
       (Boolean(destinationId) && destinationId !== warehouseId));
 
@@ -461,9 +546,22 @@ export function InventoryOperationWorkspace({
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="SPLIT">Un producto en varias salidas</SelectItem>
+
                     <SelectItem value="MERGE">Varios productos en una salida</SelectItem>
                   </SelectContent>
                 </Select>
+              </Field>
+            )}
+            {kind === "adjustment" && (
+              <Field label="Valorar entradas con">
+                <Select value={valuationBasis} onValueChange={(value) => setValuationBasis(value as "Cost" | "SalePrice")}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Cost">Precio costo</SelectItem>
+                    <SelectItem value="SalePrice">Precio de venta</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">El valor unitario se calcula desde el producto. Las salidas conservan el costo promedio.</p>
               </Field>
             )}
             <Field label="Motivo">
@@ -487,6 +585,8 @@ export function InventoryOperationWorkspace({
             />
           )}
 
+          <div className="[&_strong]:font-normal">
+          {kind === "adjustment" ? <AdjustmentCaptureGrid lines={lines} valuationBasis={valuationBasis} update={update} remove={(index) => setLines((current) => current.filter((_, currentIndex) => currentIndex !== index))} onKey={gridKey} /> : (
           <CaptureGrid
             kind={kind}
             prepared={Boolean(countDocumentId)}
@@ -498,6 +598,8 @@ export function InventoryOperationWorkspace({
             }}
             onKey={gridKey}
           />
+          )}
+          </div>
 
           <Field label="Observaciones">
             <Textarea value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={1000} />
@@ -580,7 +682,7 @@ function InventoryProductPicker({
   }
 
   return (
-    <div className="relative">
+    <div className="relative [&_strong]:font-normal">
       <Label htmlFor="inventory-product-search">Agregar productos</Label>
       <div className="mt-2 flex gap-2">
         <div className="relative min-w-0 flex-1">

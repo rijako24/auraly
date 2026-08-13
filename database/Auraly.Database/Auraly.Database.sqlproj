@@ -19,6 +19,7 @@
     <None Include="Scripts\Seeds\*.sql" />
   </ItemGroup>
   <ItemGroup>
+    <Build Include="Types\GuidIdList.sql" />
     <Build Include="Tables\Tenants.sql" />
     <Build Include="Tables\Permissions.sql" />
     <Build Include="Tables\SystemConfigurations.sql" />
@@ -129,6 +130,7 @@
     <Build Include="Tables\SalesDocumentTaxSummaries.sql" />
     <Build Include="Tables\SalesPayments.sql" />
     <Build Include="Tables\SalesReturns.sql" />
+    <Build Include="Tables\Dispatching.sql" />
     <Build Include="Tables\SalesReturnReceivableApplications.sql" />
     <Build Include="Tables\SalesReturnFiscalSnapshots.sql" />
 

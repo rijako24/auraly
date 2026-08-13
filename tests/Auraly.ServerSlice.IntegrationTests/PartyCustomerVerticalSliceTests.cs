@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
+using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Contracts.Parties;
+using Auraly.Pos.Edge.Infrastructure;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -11,6 +13,7 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Geography_customer_identity_sites_and_pricing_are_connected_end_to_end()
     {
+        fixture.DrainSynchronizationMessages();
         using var denied = fixture.CreateAdminClient(PartyPermissionCodes.GeographyRead);
         using var deniedMaster = await denied.PostAsJsonAsync(
             "/api/commerce/v1/masters/geography/countries",
@@ -79,6 +82,17 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(priceListId, created.PriceListId);
         Assert.Null(created.PriceChannelId);
         Assert.Equal("Barrio escrito por el usuario", Assert.Single(created.Sites).Neighborhood);
+        PosSynchronizationInvalidation customerSignal;
+        do
+        {
+            customerSignal = await fixture.ReadSynchronizationMessageAsync();
+        }
+        while (customerSignal.Stream != "Customers");
+        Assert.Equal(fixture.TenantId, customerSignal.TenantId);
+        Assert.Equal(fixture.BusinessId, customerSignal.BusinessId);
+        var customerOutboxCount = await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages WHERE BusinessId=@BusinessId AND Stream=N'Customers';",
+            new SqlParameter("@BusinessId", fixture.BusinessId));
 
         using var repeatedResponse = await admin.PostAsJsonAsync(
             "/api/commerce/v1/customers",
@@ -88,6 +102,35 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         Assert.NotNull(repeated);
         Assert.Equal(created.CustomerId, repeated.CustomerId);
         Assert.Equal(created.PartyId, repeated.PartyId);
+        Assert.Equal(customerOutboxCount, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages WHERE BusinessId=@BusinessId AND Stream=N'Customers';",
+            new SqlParameter("@BusinessId", fixture.BusinessId)));
+        await Task.Delay(100);
+        Assert.DoesNotContain(
+            fixture.DrainSynchronizationMessages(),
+            message => message.Stream == "Customers" &&
+                       message.AvailableThroughCursor > customerSignal.AvailableThroughCursor);
+
+        var sqlitePath = Path.Combine(
+            Path.GetTempPath(), $"auraly-customer-sync-{Guid.NewGuid():N}.db");
+        try
+        {
+            var local = new PosCatalogStore($"Data Source={sqlitePath}");
+            var synchronization = new PosCatalogSynchronizer(
+                fixture.CreateClient(), local,
+                new PosDeviceCredentials(fixture.DeviceId, ServerSliceFixture.DeviceSecret),
+                new PosOperationalScope(fixture.BusinessId, fixture.WarehouseId));
+            await synchronization.SynchronizeAsync();
+            var localCustomer = Assert.Single(
+                await local.SearchCustomersAsync("12345678"));
+            Assert.Equal(created.CustomerId, localCustomer.CustomerId);
+            Assert.Equal(priceListId, localCustomer.PriceListId);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(sqlitePath)) File.Delete(sqlitePath);
+        }
 
         var identification = Uri.EscapeDataString("1 234 567 8");
         var found = await admin.GetFromJsonAsync<CustomerDetail>(
