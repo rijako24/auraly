@@ -164,3 +164,22 @@ Si la API no está saludable:
 “Desplegado” significa: artefactos verificados, infraestructura compatible,
 base actualizada, servicios saludables y regresiones ejecutadas. Una carga ZIP
 exitosa por sí sola no completa un despliegue.
+
+### Cierre remoto de `0.2.0-rc4` en DEV
+
+Fecha de verificacion: 2026-08-12 (America/Bogota).
+
+- API `api-auraly-dev-w5usmo6w`: `Running`, `/health` devuelve `200 Healthy`.
+- Worker `func-auraly-dev-w5usmo6w`: `Running`, publicado mediante OneDeploy y
+  etiquetado con `Release__Version=0.2.0-rc4`.
+- Frontend `proud-moss-0d9cf540f.7.azurestaticapps.net`: `/login` devuelve 200.
+- Service Bus: tres colas activas, con sesiones obligatorias y `MaxDeliveryCount=10`.
+- Web PubSub `wps-auraly-dev-w5usmo6w`: `Free_F1`, aprovisionado y con
+  autenticacion local deshabilitada.
+- El paquete temporal de OneDeploy y el rol temporal de carga se eliminaron al
+  terminar.
+- El preflight remoto pasa y ahora valida API, worker, versiones, configuracion,
+  colas, sesiones, Web PubSub y salud HTTP.
+
+La infraestructura de produccion declara Web PubSub `Standard_S1`, pero no se
+aplico ninguna mutacion en `RG-AURALY-PROD` durante esta promocion a DEV.
