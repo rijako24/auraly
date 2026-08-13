@@ -96,7 +96,7 @@ test.describe.serial("maestros administrables desde la interfaz", () => {
     await dialog.getByLabel(/Tarifa/).fill("7");
     await dialog.getByLabel("Nombre").fill(vatName);
     await dialog.getByRole("button", { name: "Guardar", exact: true }).click();
-    await page.getByPlaceholder(/Buscar tarifas de IVA/).fill(vatName);
+    await page.getByPlaceholder(/Buscar tarifas de IVA/i).fill(vatName);
     await expect(page.getByText(vatName, { exact: true })).toBeVisible();
   });
 });
