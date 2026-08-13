@@ -2,7 +2,6 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 const username = process.env.AURALY_E2E_USERNAME ?? "admin2222";
 const password = process.env.AURALY_E2E_PASSWORD ?? "Admin123!";
-const productName = "Aceite vegetal 3000 ml";
 
 async function login(page: Page) {
   await page.goto("/login");
@@ -16,7 +15,31 @@ function field(scope: Locator, label: string) {
   return scope.getByText(label, { exact: true }).locator("..");
 }
 
-async function editInventoryManagement(page: Page, enabled: boolean) {
+async function createInventoryTestProduct(page: Page) {
+  const suffix = String(Date.now()).slice(-8);
+  const productName = `Producto inventario ${suffix}`;
+  await page.goto("/dashboard/products");
+  await page.getByRole("button", { name: "Nuevo producto" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByPlaceholder(/Nombre claro para venta/).fill(productName);
+  await dialog.getByPlaceholder(/Referencia del fabricante/).fill(`INV-${suffix}`);
+  const barcode = dialog.getByPlaceholder(/Escanea o escribe un c/);
+  await barcode.fill(`779${suffix.padStart(9, "0")}`);
+  await barcode.press("Enter");
+
+  for (const label of ["IVA de venta *", "IVA de compra *"]) {
+    await field(dialog, label).getByRole("combobox").click();
+    await page.getByRole("option").first().click();
+  }
+
+  await field(dialog, "Costo base").locator("input").fill("10000");
+  await field(dialog, "Margen sobre el precio antes de IVA").locator("input").fill("20");
+  await dialog.getByRole("button", { name: "Crear producto" }).click();
+  await expect(dialog).toBeHidden({ timeout: 20_000 });
+  return productName;
+}
+
+async function editInventoryManagement(page: Page, productName: string, enabled: boolean) {
   await page.goto("/dashboard/products");
   const search = page.getByPlaceholder("Buscar por nombre o SKU");
   await search.fill(productName);
@@ -24,7 +47,7 @@ async function editInventoryManagement(page: Page, enabled: boolean) {
   await expect(row).toBeVisible({ timeout: 20_000 });
   await row.getByRole("button", { name: "Editar" }).click();
   const dialog = page.getByRole("dialog");
-  const inventorySwitch = dialog.getByText("Maneja inventario", { exact: true }).locator("..").getByRole("switch");
+  const inventorySwitch = dialog.getByText("Maneja inventario", { exact: true }).locator("..").locator("..").getByRole("switch");
   await expect(inventorySwitch).toBeVisible({ timeout: 20_000 });
   if ((await inventorySwitch.isChecked()) !== enabled) await inventorySwitch.click();
   await dialog.getByRole("button", { name: "Guardar producto" }).click();
@@ -47,11 +70,12 @@ async function openInventoryProductSearch(page: Page) {
 }
 
 test("editar Maneja inventario controla la busqueda de productos", async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(150_000);
   await login(page);
+  const productName = await createInventoryTestProduct(page);
 
   try {
-    await editInventoryManagement(page, false);
+    await editInventoryManagement(page, productName, false);
     let search = await openInventoryProductSearch(page);
     const disabledResponse = page.waitForResponse((response) =>
       response.request().method() === "GET" &&
@@ -63,7 +87,7 @@ test("editar Maneja inventario controla la busqueda de productos", async ({ page
     await disabledResponse;
     await expect(page.getByRole("option").filter({ hasText: productName })).toHaveCount(0);
 
-    await editInventoryManagement(page, true);
+    await editInventoryManagement(page, productName, true);
     search = await openInventoryProductSearch(page);
     const enabledResponse = page.waitForResponse((response) =>
       response.request().method() === "GET" &&
@@ -89,6 +113,6 @@ test("editar Maneja inventario controla la busqueda de productos", async ({ page
     await expect(quantity).toBeFocused();
     await expect(quantity).toHaveValue("8");
   } finally {
-    await editInventoryManagement(page, true).catch(() => undefined);
+    await editInventoryManagement(page, productName, true).catch(() => undefined);
   }
 });
