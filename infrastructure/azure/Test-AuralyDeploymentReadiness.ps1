@@ -1,5 +1,5 @@
 #Requires -Version 5.1
-#Requires -Modules Az.Accounts, Az.Resources, Az.Websites
+#Requires -Modules Az.Accounts, Az.Resources, Az.ServiceBus, Az.Websites
 
 [CmdletBinding()]
 param(
@@ -25,7 +25,9 @@ $compactEnvironment = $Environment.ToLowerInvariant()
 $suffix = if ($Environment -eq 'Dev') { 'w5usmo6w' } else { '7sov4nxc' }
 $resourceGroup = "RG-AURALY-$($Environment.ToUpperInvariant())"
 $apiName = "api-auraly-$compactEnvironment-$suffix"
+$functionName = "func-auraly-$compactEnvironment-$suffix"
 $serviceBusName = "sb-auraly-$compactEnvironment-$suffix"
+$webPubSubName = "wps-auraly-$compactEnvironment-$suffix"
 $requiredQueues = @(
     'auraly-document-processing',
     'auraly-fiscal-processing',
@@ -89,6 +91,20 @@ function Test-RemoteEnvironment {
     $api = Get-AzWebApp -ResourceGroupName $resourceGroup -Name $apiName
     Assert-Condition ($null -ne $api) "No existe $apiName."
     Assert-Condition ($api.State -eq 'Running') "$apiName no esta en ejecucion."
+    $function = Get-AzWebApp -ResourceGroupName $resourceGroup -Name $functionName
+    Assert-Condition ($null -ne $function) "No existe $functionName."
+    Assert-Condition ($function.State -eq 'Running') "$functionName no esta en ejecucion."
+    $functionSettings = ConvertTo-SettingsMap $function.SiteConfig.AppSettings
+    $requiredFunctionSettings = @(
+        'AzureWebJobsStorage__accountName',
+        'ServiceBusConnection__fullyQualifiedNamespace',
+        'AppConfiguration__Endpoint',
+        'AZURE_CLIENT_ID',
+        'Release__Version'
+    )
+    $missingFunctionSettings = @($requiredFunctionSettings | Where-Object { -not $functionSettings.ContainsKey($_) -or [string]::IsNullOrWhiteSpace($functionSettings[$_]) })
+    Assert-Condition ($missingFunctionSettings.Count -eq 0) "Faltan configuraciones del worker: $($missingFunctionSettings -join ', ')."
+    Assert-Condition ($functionSettings['Release__Version'] -eq $ReleaseVersion) 'La version configurada en el worker no coincide con el release solicitado.'
     $settings = ConvertTo-SettingsMap $api.SiteConfig.AppSettings
 
     $requiredSettings = @(
@@ -129,14 +145,29 @@ function Test-RemoteEnvironment {
     Assert-Condition ($settings['Release__Version'] -eq $ReleaseVersion) `
         'La version configurada en la API no coincide con el release solicitado.'
 
-    foreach ($queueName in $requiredQueues) {
-        $queue = Get-AzResource `
+    $queues = @(
+        Get-AzServiceBusQueue `
             -ResourceGroupName $resourceGroup `
-            -ResourceType 'Microsoft.ServiceBus/namespaces/queues' `
-            -Name "$serviceBusName/$queueName" `
-            -ErrorAction SilentlyContinue
+            -NamespaceName $serviceBusName
+    )
+    foreach ($queueName in $requiredQueues) {
+        $queue = $queues | Where-Object Name -eq $queueName | Select-Object -First 1
         Assert-Condition ($null -ne $queue) "Falta la cola $queueName."
+        Assert-Condition ($queue.RequiresSession) `
+            "La cola $queueName debe exigir sesiones por BusinessId."
     }
+
+    $webPubSub = Get-AzResource `
+        -ResourceGroupName $resourceGroup `
+        -ResourceType 'Microsoft.SignalRService/WebPubSub' `
+        -Name $webPubSubName `
+        -ExpandProperties `
+        -ErrorAction SilentlyContinue
+    Assert-Condition ($null -ne $webPubSub) "Falta Web PubSub $webPubSubName."
+    Assert-Condition ($webPubSub.Properties.provisioningState -eq 'Succeeded') `
+        "Web PubSub $webPubSubName no termino de aprovisionarse."
+    Assert-Condition ([bool]$webPubSub.Properties.disableLocalAuth) `
+        "Web PubSub $webPubSubName debe bloquear autenticacion local."
 
     if (-not $SkipHealth) {
         $response = Invoke-WebRequest `
@@ -153,8 +184,11 @@ function Test-RemoteEnvironment {
         Release = $ReleaseVersion
         Api = $apiName
         ApiState = $api.State
+        Worker = $functionName
+        WorkerState = $function.State
         RuntimeSettings = 'Complete (values hidden)'
         Queues = $requiredQueues.Count
+        WebPubSub = "$($webPubSub.Name) ($($webPubSub.Sku.Name))"
         Health = if ($SkipHealth) { 'Skipped' } else { 'Healthy' }
     }
 }
