@@ -1,0 +1,173 @@
+#Requires -Version 5.1
+#Requires -Modules Az.Accounts, Az.Resources, Az.Websites
+
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)]
+    [ValidateSet('Dev', 'Prod')]
+    [string]$Environment,
+
+    [Parameter(Mandatory)]
+    [string]$ReleaseVersion,
+
+    [string]$SubscriptionId = '5ea009ce-23c5-4bbd-b1c8-62116d58f596',
+
+    [switch]$LocalOnly,
+
+    [switch]$SkipHealth
+)
+
+$ErrorActionPreference = 'Stop'
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$releasePath = Join-Path $repoRoot "artifacts\releases\$ReleaseVersion"
+$manifestPath = Join-Path $releasePath 'manifest.json'
+$compactEnvironment = $Environment.ToLowerInvariant()
+$suffix = if ($Environment -eq 'Dev') { 'w5usmo6w' } else { '7sov4nxc' }
+$resourceGroup = "RG-AURALY-$($Environment.ToUpperInvariant())"
+$apiName = "api-auraly-$compactEnvironment-$suffix"
+$serviceBusName = "sb-auraly-$compactEnvironment-$suffix"
+$requiredQueues = @(
+    'auraly-document-processing',
+    'auraly-fiscal-processing',
+    'auraly-external-customer-reconciliation'
+)
+
+function Assert-Condition {
+    param(
+        [bool]$Condition,
+        [string]$Message
+    )
+    if (-not $Condition) { throw $Message }
+}
+
+function Test-ReleaseArtifacts {
+    Assert-Condition (Test-Path -LiteralPath $manifestPath) `
+        "No existe el manifiesto inmutable $manifestPath."
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    Assert-Condition ($manifest.product -eq 'AURALY') 'El manifiesto no pertenece a Auraly.'
+    Assert-Condition ($manifest.version -eq $ReleaseVersion) 'La version del manifiesto no coincide.'
+    Assert-Condition (-not [bool]$manifest.dirty) 'El release fue creado desde un arbol sucio.'
+    Assert-Condition ([version]($manifest.node.TrimStart('v')) -ge [version]'20.19.0') `
+        'El release debe construirse con Node.js 20.19 o superior.'
+
+    foreach ($artifact in $manifest.artifacts) {
+        $path = Join-Path $releasePath $artifact.name
+        Assert-Condition (Test-Path -LiteralPath $path) "Falta el artefacto $($artifact.name)."
+        $actualHash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        Assert-Condition ($actualHash -eq $artifact.sha256) `
+            "El hash no coincide para $($artifact.name)."
+        Assert-Condition ((Get-Item -LiteralPath $path).Length -eq $artifact.bytes) `
+            "El tamano no coincide para $($artifact.name)."
+    }
+
+    $currentCommit = (& git -C $repoRoot rev-parse HEAD).Trim()
+    Assert-Condition ($LASTEXITCODE -eq 0) 'No fue posible leer el commit actual.'
+    Assert-Condition ($currentCommit -eq $manifest.commit) `
+        'El release no corresponde al commit actual. Cree una nueva version; no reutilice artefactos.'
+}
+
+function Test-Templates {
+    $output = Join-Path ([IO.Path]::GetTempPath()) "auraly-main-$([guid]::NewGuid().ToString('N')).json"
+    try {
+        & az bicep build --file (Join-Path $PSScriptRoot 'main.bicep') --outfile $output
+        Assert-Condition ($LASTEXITCODE -eq 0) 'main.bicep no compila.'
+    }
+    finally {
+        if (Test-Path -LiteralPath $output) { Remove-Item -LiteralPath $output -Force }
+    }
+}
+
+function ConvertTo-SettingsMap {
+    param($AppSettings)
+    $map = @{}
+    foreach ($setting in $AppSettings) { $map[$setting.Name] = [string]$setting.Value }
+    return $map
+}
+
+function Test-RemoteEnvironment {
+    Set-AzContext -SubscriptionId $SubscriptionId | Out-Null
+    $api = Get-AzWebApp -ResourceGroupName $resourceGroup -Name $apiName
+    Assert-Condition ($null -ne $api) "No existe $apiName."
+    Assert-Condition ($api.State -eq 'Running') "$apiName no esta en ejecucion."
+    $settings = ConvertTo-SettingsMap $api.SiteConfig.AppSettings
+
+    $requiredSettings = @(
+        'AppConfiguration__Endpoint',
+        'AZURE_CLIENT_ID',
+        'ServiceBusConnection__fullyQualifiedNamespace',
+        'ServiceBusConnection__clientId',
+        'Auraly__DocumentProcessing__ServiceBus__QueueName',
+        'Auraly__Fiscal__ServiceBus__QueueName',
+        'Auraly__ExternalCustomerReconciliation__QueueName',
+        'Auraly__Fiscal__SecretProtectionKey',
+        'Authentication__Jwt__Issuer',
+        'Authentication__Jwt__Audience',
+        'Authentication__Jwt__SigningKey',
+        'Auraly__PosSynchronization__WebPubSub__Endpoint',
+        'Auraly__PosSynchronization__WebPubSub__ManagedIdentityClientId',
+        'Auraly__PosSynchronization__WebPubSub__Hub',
+        'Release__Version'
+    )
+    $missing = @($requiredSettings | Where-Object {
+        -not $settings.ContainsKey($_) -or [string]::IsNullOrWhiteSpace($settings[$_])
+    })
+    Assert-Condition ($missing.Count -eq 0) `
+        "Faltan configuraciones de runtime: $($missing -join ', ')."
+
+    try {
+        $fiscalBytes = [Convert]::FromBase64String($settings['Auraly__Fiscal__SecretProtectionKey'])
+    }
+    catch {
+        throw 'Auraly__Fiscal__SecretProtectionKey no es Base64 valido.'
+    }
+    Assert-Condition ($fiscalBytes.Length -eq 32) `
+        'Auraly__Fiscal__SecretProtectionKey debe contener exactamente 32 bytes.'
+    $jwtLength = [Text.Encoding]::UTF8.GetByteCount(
+        $settings['Authentication__Jwt__SigningKey'])
+    Assert-Condition ($jwtLength -ge 32) `
+        'Authentication__Jwt__SigningKey debe contener al menos 32 bytes.'
+    Assert-Condition ($settings['Release__Version'] -eq $ReleaseVersion) `
+        'La version configurada en la API no coincide con el release solicitado.'
+
+    foreach ($queueName in $requiredQueues) {
+        $queue = Get-AzResource `
+            -ResourceGroupName $resourceGroup `
+            -ResourceType 'Microsoft.ServiceBus/namespaces/queues' `
+            -Name "$serviceBusName/$queueName" `
+            -ErrorAction SilentlyContinue
+        Assert-Condition ($null -ne $queue) "Falta la cola $queueName."
+    }
+
+    if (-not $SkipHealth) {
+        $response = Invoke-WebRequest `
+            -Uri "https://$apiName.azurewebsites.net/health" `
+            -UseBasicParsing `
+            -TimeoutSec 30
+        Assert-Condition ($response.StatusCode -eq 200) 'La API no responde salud HTTP 200.'
+        $health = $response.Content | ConvertFrom-Json
+        Assert-Condition ($health.status -eq 'Healthy') 'La API no reporta estado Healthy.'
+    }
+
+    [pscustomobject]@{
+        Environment = $Environment
+        Release = $ReleaseVersion
+        Api = $apiName
+        ApiState = $api.State
+        RuntimeSettings = 'Complete (values hidden)'
+        Queues = $requiredQueues.Count
+        Health = if ($SkipHealth) { 'Skipped' } else { 'Healthy' }
+    }
+}
+
+Test-ReleaseArtifacts
+Test-Templates
+if (-not $LocalOnly) { Test-RemoteEnvironment }
+else {
+    [pscustomobject]@{
+        Environment = $Environment
+        Release = $ReleaseVersion
+        LocalArtifacts = 'Verified'
+        Bicep = 'Verified'
+        Azure = 'Skipped'
+    }
+}

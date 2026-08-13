@@ -209,6 +209,54 @@ public sealed class ServerSliceArchitectureTests
             "Runtime environment settings must override remote values so secrets cannot be shadowed.");
     }
 
+    [Fact]
+    public void Azure_api_uses_the_canonical_authentication_configuration_contract()
+    {
+        var root = FindRepositoryRoot();
+        var template = File.ReadAllText(Path.Combine(
+            root, "infrastructure", "azure", "main.bicep"));
+
+        Assert.Contains("Authentication__Jwt__Issuer", template, StringComparison.Ordinal);
+        Assert.Contains("Authentication__Jwt__Audience", template, StringComparison.Ordinal);
+        Assert.Contains("Authentication__Jwt__SigningKey", template, StringComparison.Ordinal);
+        Assert.DoesNotContain("name: 'Jwt__Issuer'", template, StringComparison.Ordinal);
+        Assert.DoesNotContain("name: 'Jwt__Audience'", template, StringComparison.Ordinal);
+        Assert.DoesNotContain("name: 'Jwt__Secret'", template, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Azure_runtime_uses_managed_identity_and_declares_required_messaging_entities()
+    {
+        var root = FindRepositoryRoot();
+        var template = File.ReadAllText(Path.Combine(
+            root, "infrastructure", "azure", "main.bicep"));
+        var program = File.ReadAllText(Path.Combine(
+            root, "src", "API", "Auraly.Api", "Program.cs"));
+
+        Assert.Contains("name: 'auraly-document-processing'", template, StringComparison.Ordinal);
+        Assert.Contains("name: 'auraly-fiscal-processing'", template, StringComparison.Ordinal);
+        Assert.Contains("name: 'auraly-external-customer-reconciliation'", template,
+            StringComparison.Ordinal);
+        Assert.Contains("requiresSession: true", template, StringComparison.Ordinal);
+        Assert.Contains("ServiceBusConnection__fullyQualifiedNamespace", template,
+            StringComparison.Ordinal);
+        Assert.Contains("AzureRuntimeClientFactory.CreateServiceBusClient", program,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "Auraly:DocumentProcessing:ServiceBus:ConnectionString is required",
+            program,
+            StringComparison.Ordinal);
+
+        Assert.Contains("Microsoft.SignalRService/webPubSub", template, StringComparison.Ordinal);
+        Assert.Contains("Free_F1", template, StringComparison.Ordinal);
+        Assert.Contains("Standard_S1", template, StringComparison.Ordinal);
+        Assert.Contains("disableLocalAuth: true", template, StringComparison.Ordinal);
+        Assert.Contains("Auraly__PosSynchronization__WebPubSub__Endpoint", template,
+            StringComparison.Ordinal);
+        Assert.Contains("WebPubSub:Endpoint for managed identity", program,
+            StringComparison.Ordinal);
+    }
+
     private static bool IsAbsorbedPlatformSurface(string path, string root)
     {
         var apiRoot = Path.Combine(root, "src", "API", "Auraly.Api");
