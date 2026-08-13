@@ -7,6 +7,19 @@ internal static class ProductOfferModelConfiguration
 {
     public static void Configure(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<ProductLink>(entity =>
+        {
+            entity.ToTable("ProductLinks");
+            entity.HasKey(value => value.ProductLinkId);
+            entity.Property(value => value.InventoryFactor).HasPrecision(19, 6);
+            entity.Property(value => value.PriceFactor).HasPrecision(19, 6);
+            entity.HasIndex(value => new { value.BusinessId, value.ChildProductId }).IsUnique();
+            entity.HasIndex(value => new
+            {
+                value.BusinessId, value.ParentProductId, value.IsActive
+            });
+        });
+
         modelBuilder.Entity<ProductOffer>(entity =>
         {
             entity.HasKey(value => value.ProductOfferId);

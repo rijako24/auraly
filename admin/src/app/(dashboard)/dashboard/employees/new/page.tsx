@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Check } from "lucide-react";
 import { toast } from "sonner";
 
@@ -20,12 +20,15 @@ import { useBusinessContextStore } from "@/stores/business-context-store";
 
 export default function NewEmployeePage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const partyId = searchParams.get("partyId") ?? undefined;
+  const partyName = searchParams.get("name") ?? "";
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const { data: servicesData, isLoading, isError, refetch } = useServices({
     page: 1,
     pageSize: 500,
   });
-  const [name, setName] = useState("");
+  const [name, setName] = useState(partyName);
   const [isActive, setIsActive] = useState(true);
   const [selectedServiceIds, setSelectedServiceIds] = useState<Set<string>>(
     new Set()
@@ -49,10 +52,10 @@ export default function NewEmployeePage() {
 
   const validate = () => {
     const newErrors: Record<string, string> = {};
-    if (!businessId) newErrors.business = "Seleccione un negocio";
-    if (!name.trim()) newErrors.name = "El nombre es requerido";
+    if (!businessId) newErrors.business = "Este campo es requerido";
+    if (!name.trim()) newErrors.name = "Este campo es requerido";
     if (selectedServiceIds.size === 0) {
-      newErrors.services = "Seleccione al menos un servicio";
+      newErrors.services = "Este campo es requerido";
     }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -67,11 +70,12 @@ export default function NewEmployeePage() {
       await employeesApi.create({
         businessId: businessId!,
         name: name.trim(),
+        partyId,
         isActive,
         serviceIds: Array.from(selectedServiceIds),
       });
       toast.success("Empleado creado");
-      router.push("/dashboard/employees");
+      router.push("/dashboard/parties");
     } catch {
       toast.error("No se pudo crear el empleado");
     } finally {
@@ -80,7 +84,7 @@ export default function NewEmployeePage() {
   };
 
   const handleCancel = () => {
-    router.push("/dashboard/employees");
+    router.push("/dashboard/parties");
   };
 
   if (isLoading) return <PageLoading cards={1} />;
@@ -90,7 +94,7 @@ export default function NewEmployeePage() {
     <div className="space-y-6">
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="icon" asChild>
-          <Link href="/dashboard/employees">
+          <Link href="/dashboard/parties">
             <ArrowLeft className="h-4 w-4" />
           </Link>
         </Button>
@@ -144,7 +148,7 @@ export default function NewEmployeePage() {
               {errors.services && (
                 <p className="text-sm text-destructive">{errors.services}</p>
               )}
-              <div className="grid gap-2 rounded-md border p-4 sm:grid-cols-2">
+              <div className={`grid gap-2 rounded-md border p-4 sm:grid-cols-2 ${errors.services ? "border-destructive ring-1 ring-destructive/20" : ""}`}>
                 {services.map((service) => {
                   const isSelected = selectedServiceIds.has(service.serviceId);
                   return (

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -130,7 +131,7 @@ export default function PromotionsPage() {
             </div>
             <div className="space-y-2">
               <Label>Valor</Label>
-              <Input type="number" min="0" value={value} onChange={(e) => setValue(e.target.value)} />
+              <FormattedNumberInput kind={benefitType === PromotionBenefitType.PercentageDiscount ? "percent" : "currency"} value={value} onValueChange={(next) => setValue(next?.toString() ?? "")} />
             </div>
             <div className="space-y-2">
               <Label>Aplica a</Label>

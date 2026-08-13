@@ -84,7 +84,8 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         const string sql = """
             SELECT inventoryProduct.ManageStock,pp.Amount,lc.LatestUnitCost,
                    ib.QuantityOnHand,ib.AverageUnitCost,ib.InventoryValue,
-                   COALESCE(tax.Rate,0),w.PriceFormationCostBasis
+                   COALESCE(tax.Rate,0),w.PriceFormationCostBasis,pp.TargetMarginPercent,
+                   COALESCE(pp.RoundingIncrement,1),COALESCE(pp.RoundingMode,N'Nearest')
             FROM dbo.Products p WITH (UPDLOCK,HOLDLOCK)
             INNER JOIN dbo.Warehouses w WITH (UPDLOCK,HOLDLOCK)
               ON w.WarehouseId=@WarehouseId AND w.BusinessId=@BusinessId
@@ -120,7 +121,8 @@ public sealed class SqlGoodsReceiptDocumentHandler(
             reader.IsDBNull(4) ? 0 : reader.GetDecimal(4),
             reader.IsDBNull(5) ? 0 : reader.GetDecimal(5),
             !reader.IsDBNull(3),
-            reader.GetDecimal(6),reader.GetString(7));
+            reader.GetDecimal(6),reader.GetString(7),reader.IsDBNull(8) ? null : reader.GetDecimal(8),
+            reader.GetDecimal(9),reader.GetString(10));
     }
 
     private async Task ApplyInventoryReceiptAsync(
@@ -249,27 +251,33 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         ReceiptLineState state,
         CancellationToken cancellationToken)
     {
-        var currentMargin = observedCost <= 0
-            ? null
-            : PriceMargin.CalculateMarginPercentFromGross(
-                observedCost, state.CurrentSalePrice, state.SalesTaxRate);
-        decimal? targetMargin = null;
-        var suggested = state.CurrentSalePrice;
-        if (state.PreviousObservedUnitCost is > 0)
-        {
-            targetMargin = PriceMargin.CalculateMarginPercentFromGross(
-                state.PreviousObservedUnitCost.Value,
-                state.CurrentSalePrice, state.SalesTaxRate);
-            if (targetMargin is >= 0 and < 100)
-                suggested = PriceMargin.CalculateGrossSalePrice(observedCost, targetMargin.Value, state.SalesTaxRate);
-        }
+        if (state.TargetMarginPercent is null or <= 0 or >= 100)
+            throw new InvalidOperationException("The product requires a valid target margin before receiving merchandise.");
+        var currentMargin = observedCost <= 0 ? null : PriceMargin.CalculateMarginPercentFromGross(
+            observedCost, state.CurrentSalePrice, state.SalesTaxRate);
+        var targetMargin = state.TargetMarginPercent.Value;
+        var rawSuggested = PriceMargin.CalculateGrossSalePrice(observedCost, targetMargin, state.SalesTaxRate);
+        var suggested = PriceMargin.RoundPrice(rawSuggested, state.RoundingIncrement, state.RoundingMode);
+        var effectiveMargin = PriceMargin.CalculateMarginPercentFromGross(
+            observedCost, suggested, state.SalesTaxRate);
+        var costBasisType = state.PriceFormationCostBasis == "WeightedAverageCost"
+            ? "WeightedAverageCost"
+            : "LatestReceiptCost";
         const string sql = """
+            UPDATE dbo.ProductPrices
+            SET CostBasisType=@CostBasisType,CostBasisAmount=@ObservedCost,PreparedAmount=@RoundedPrice,
+                TargetMarginPercent=@TargetMargin,EffectiveMarginPercent=@EffectiveMargin,
+                InputMode=N'Margin'
+            WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND IsActive=1;
+
             INSERT dbo.PriceRevisionProposals
               (PriceRevisionProposalId,BusinessId,ProductId,SourceDocumentId,SourceLineNumber,
                PreviousObservedUnitCost,ObservedUnitCost,CurrentSalePrice,CurrentMarginPercent,
-               TargetMarginPercent,SuggestedSalePrice,Status,CreatedAt)
+               TargetMarginPercent,SuggestedSalePrice,RoundedSuggestedSalePrice,
+               EffectiveMarginAfterRounding,LastInputMode,Status,CreatedAt)
             VALUES(@Id,@BusinessId,@ProductId,@DocumentId,@LineNumber,@PreviousCost,@ObservedCost,
-               @CurrentPrice,@CurrentMargin,@TargetMargin,@SuggestedPrice,N'PendingReview',@Now);
+               @CurrentPrice,@CurrentMargin,@TargetMargin,@RawPrice,@RoundedPrice,
+               @EffectiveMargin,N'Margin',N'PendingReview',@Now);
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@Id", ids.NewId());
@@ -281,8 +289,11 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         AddDecimal(command, "@ObservedCost", observedCost, 19, 6);
         AddDecimal(command, "@CurrentPrice", state.CurrentSalePrice, 19, 4);
         AddNullableDecimal(command, "@CurrentMargin", currentMargin, 9, 6);
-        AddNullableDecimal(command, "@TargetMargin", targetMargin, 9, 6);
-        AddDecimal(command, "@SuggestedPrice", suggested, 19, 4);
+        AddDecimal(command, "@TargetMargin", targetMargin, 9, 6);
+        AddDecimal(command, "@RawPrice", rawSuggested, 19, 4);
+        AddDecimal(command, "@RoundedPrice", suggested, 19, 4);
+        AddNullableDecimal(command, "@EffectiveMargin", effectiveMargin, 9, 6);
+        command.Parameters.AddWithValue("@CostBasisType", costBasisType);
         command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -400,5 +411,8 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         decimal InventoryValue,
         bool HasInventoryBalance,
         decimal SalesTaxRate,
-        string PriceFormationCostBasis);
+        string PriceFormationCostBasis,
+        decimal? TargetMarginPercent,
+        decimal RoundingIncrement,
+        string RoundingMode);
 }

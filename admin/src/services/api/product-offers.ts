@@ -72,21 +72,15 @@ export const productOffersApi = {
     body.append("file", file);
     if (productOfferId) body.append("productOfferId", productOfferId);
     body.append("isPrimary", String(isPrimary));
-    const response = await fetch(
-      `/api/businesses/${businessId}/products/${productId}/images/upload`,
-      {
-        method: "POST",
-        credentials: "include",
-        headers: { "X-Business-Id": businessId },
-        body,
-      }
-    );
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ title: response.statusText }));
-      throw new Error(error.message || error.title || "No se pudo subir la imagen");
-    }
-    return response.json();
+    return apiClient.postForm<ProductImage>(
+      `/businesses/${businessId}/products/${productId}/images/upload`, body);
   },
+  setPrimaryImage: (businessId: string, productId: string, productImageId: string) =>
+    apiClient.put<ProductImage>(
+      `/businesses/${businessId}/products/${productId}/images/${productImageId}/primary`,
+      {}
+    ),
+
   deleteImage: (businessId: string, productId: string, productImageId: string) =>
     apiClient.delete(`/businesses/${businessId}/products/${productId}/images/${productImageId}`),
 };

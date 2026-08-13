@@ -11,9 +11,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageError } from "@/components/ui/page-error";
 import { PageLoading } from "@/components/ui/page-loading";
 import { useRole } from "@/hooks/use-roles";
+import { RolePermissionWorkspace } from "@/components/roles/role-permission-workspace";
 import { rolesApi } from "@/services/api";
 
 export default function RoleDetailPage() {
+  const params = useParams();
+  return <RolePermissionWorkspace roleId={params.id as string} />;
+}
+
+function LegacyRoleDetailPage() {
   const params = useParams();
   const id = params.id as string;
   const { data: role, isLoading, isError, refetch } = useRole(id);

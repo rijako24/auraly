@@ -53,7 +53,6 @@ CREATE TABLE [dbo].[ProductLinks]
     CONSTRAINT [FK_ProductLinks_Parent] FOREIGN KEY ([ParentProductId]) REFERENCES [dbo].[Products] ([ProductId]),
     CONSTRAINT [UQ_ProductLinks_Business_Child] UNIQUE ([BusinessId], [ChildProductId]),
     CONSTRAINT [CK_ProductLinks_DifferentProducts] CHECK ([ChildProductId] <> [ParentProductId]),
-    CONSTRAINT [CK_ProductLinks_Capability] CHECK ([SharesInventory] = 1 OR [SharesPrice] = 1),
     CONSTRAINT [CK_ProductLinks_InventoryFactor] CHECK (([SharesInventory] = 0 AND [InventoryFactor] IS NULL) OR ([SharesInventory] = 1 AND [InventoryFactor] > 0)),
     CONSTRAINT [CK_ProductLinks_PriceFactor] CHECK (([SharesPrice] = 0 AND [PriceFactor] IS NULL) OR ([SharesPrice] = 1 AND [PriceFactor] > 0))
 );

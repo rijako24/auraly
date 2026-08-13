@@ -2,7 +2,7 @@
 
 import { KeyboardEvent, useRef, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { CircleDollarSign, PackagePlus, Pencil, Power, Search, Truck } from "lucide-react";
+import { CircleDollarSign, Images, PackagePlus, Pencil, Power, Search, Truck } from "lucide-react";
 import { toast } from "sonner";
 
 import { ProductLearningSection } from "@/components/products/product-learning-section";
@@ -13,7 +13,7 @@ import { ProductMerchandisingEditor, type ProductMerchandisingEditorHandle } fro
 import { ProductSupplierEditor, type ProductSupplierEditorHandle } from "@/components/products/product-supplier-editor";
 import { ProductTaxEditor, type ProductTaxEditorHandle } from "@/components/products/product-tax-editor";
 import { ProductRecognitionSections, type ProductRecognitionSectionsHandle } from "@/components/products/product-recognition-sections";
-import { ProductOffersSection } from "@/components/products/product-offers-section";
+import { ProductImageGallery } from "@/components/products/product-image-gallery";
 import { DataTable } from "@/components/tables/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -174,7 +174,7 @@ export default function ProductsPage() {
     if (!selectedProduct || savingProduct) return;
     setProductValidationError(undefined);
     if (!form.name.trim()) {
-      const message = "El nombre del producto es obligatorio.";
+      const message = "Este campo es requerido";
       setProductValidationError(message);
       toast.error(message);
       requestAnimationFrame(() => document.getElementById("product-name")?.focus());
@@ -216,14 +216,14 @@ export default function ProductsPage() {
       cell: ({ row }) => (
         <div>
           <p className="font-medium">{row.original.name}</p>
-          <p className="text-xs text-muted-foreground">{row.original.sku || "Sin SKU"}</p>
+          <p className="text-xs text-muted-foreground">{row.original.productCode || row.original.sku || "Sin código"}</p>
         </div>
       ),
     },
     {
-      accessorKey: "categoryName",
-      header: "Categoría",
-      cell: ({ row }) => row.original.categoryName || "Sin categoría",
+      accessorKey: "areaName",
+      header: "Área",
+      cell: ({ row }) => row.original.areaName || "Sin área",
     },
     {
       accessorKey: "unitPrice",
@@ -299,8 +299,8 @@ export default function ProductsPage() {
       </div>
       <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
         <div>
-          <dt className="text-xs text-muted-foreground">Categoría</dt>
-          <dd className="break-words">{product.categoryName || "Sin categoría"}</dd>
+          <dt className="text-xs text-muted-foreground">Área</dt>
+          <dd className="break-words">{product.areaName || "Sin área"}</dd>
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">Precio</dt>
@@ -431,7 +431,7 @@ export default function ProductsPage() {
                 {productValidationError && <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"><strong>No se puede guardar todavía.</strong> {productValidationError}</div>}
                 <ProductFormSection id="product-identity" icon={PackagePlus} title="Identidad" description="Lo que el equipo vera al buscar y vender.">
                   <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-2 md:col-span-2"><Label htmlFor="product-name">Nombre <span className="text-destructive">*</span></Label><Input id="product-name" aria-invalid={Boolean(productValidationError && !form.name.trim())} value={form.name} maxLength={200} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} required /></div>
+                    <div className="space-y-2 md:col-span-2"><Label htmlFor="product-name">Nombre <span className="text-destructive">*</span></Label><Input id="product-name" aria-invalid={Boolean(productValidationError && !form.name.trim())} className={productValidationError && !form.name.trim() ? "border-destructive ring-1 ring-destructive/20" : ""} value={form.name} maxLength={200} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />{productValidationError && !form.name.trim() && <p className="text-sm text-destructive">Este campo es requerido</p>}</div>
                     <div className="space-y-2 md:col-span-2"><Label htmlFor="product-description">Descripcion</Label><Textarea id="product-description" className="min-h-24" value={form.description} maxLength={2000} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} /></div>
                   </div>
                 </ProductFormSection>
@@ -449,7 +449,9 @@ export default function ProductsPage() {
                   </div>
                 </ProductFormSection>
 
-                <ProductOffersSection productId={selectedProduct.productId} />
+                <ProductFormSection id="product-images" icon={Images} title="Im?genes del producto" description="Carga varias im?genes y elige una portada. Cada producto vinculado conserva su propia galer?a.">
+                  <ProductImageGallery productId={selectedProduct.productId} />
+                </ProductFormSection>
 
                 <details id="product-recognition" className="group scroll-mt-5 rounded-xl border bg-muted/10">
                   <summary className="cursor-pointer list-none p-5 font-semibold">Reconocimiento, alias y aprendizaje <span className="ml-2 text-xs font-normal text-muted-foreground">Información avanzada</span></summary>

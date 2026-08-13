@@ -14,7 +14,7 @@ public static class CatalogPermissionCodes
 
 public sealed record ProductBarcodeInput(string Value, bool IsPrimary = false);
 public sealed record ProductIdentifierInput(string Type, string Value);
-public sealed record ProductPriceInput(decimal Amount, string CurrencyCode = "COP");
+public sealed record ProductPriceInput(decimal Amount, string CurrencyCode = "COP", decimal? CostBasisAmount = null, decimal? TargetMarginPercent = null);
 public sealed record SupplierCostInput(
     Guid SupplierId,
     string Identification,

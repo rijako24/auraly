@@ -41,8 +41,8 @@ public sealed class ProductInventoryOfflineJourneyTests(ServerSliceFixture fixtu
             false,
             [new ProductBarcodeInput(barcode, true)],
             [],
-            [new ProductPriceInput(12_500m)],
-            [new SupplierCostInput(Guid.Empty, $"SUP-{Guid.NewGuid():N}", "Proveedor flujo", null, 10m)],
+            [new ProductPriceInput(12_500m, "COP", 10_000m, 20m)],
+            [new SupplierCostInput(Guid.Empty, $"SUP-{Guid.NewGuid():N}", "Proveedor flujo", null, 10_000m)],
             null);
         using var createdResponse = await catalog.PostAsJsonAsync(
             "/api/commerce/v1/products", createRequest);
@@ -54,26 +54,6 @@ public sealed class ProductInventoryOfflineJourneyTests(ServerSliceFixture fixtu
         var supplier = Assert.Single(product.Suppliers!);
         var createdSignal = await fixture.ReadSynchronizationMessageAsync();
         Assert.Equal("Catalog", createdSignal.Stream);
-
-        using var pricing = fixture.CreateAdminClient(
-            PricingPermissionCodes.Read,
-            PricingPermissionCodes.ReadCostBasis,
-            PricingPermissionCodes.PublishPrices);
-        var proposals = await pricing.GetFromJsonAsync<PriceRevisionPage>(
-            "/api/commerce/v1/pricing/proposals?page=1&pageSize=100&status=Approved");
-        var proposal = Assert.Single(proposals!.Items.Where(item => item.ProductId == product.ProductId));
-        using var publish = await pricing.PostAsJsonAsync(
-            "/api/commerce/v1/pricing/publish",
-            new PublishPricesRequest([new PublishPriceItem(
-                proposal.ProposalId,
-                PriceInputModes.SalePrice,
-                null,
-                12_500m,
-                1m,
-                PricingRoundingModes.Nearest,
-                proposal.ConcurrencyToken)]));
-        publish.EnsureSuccessStatusCode();
-        _ = await fixture.ReadSynchronizationMessageAsync();
 
         var occurredAt = new DateTimeOffset(2026, 8, 10, 9, 0, 0, TimeSpan.FromHours(-5));
         var receiptId = Guid.NewGuid();

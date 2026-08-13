@@ -26,14 +26,22 @@ public class BlobStorageService : IBlobStorageService
         {
             var container = GetContainerName(businessId);
             var containerClient = _blobServiceClient.GetBlobContainerClient(container);
-            await containerClient.CreateIfNotExistsAsync(PublicAccessType.Blob);
+            await containerClient.CreateIfNotExistsAsync(PublicAccessType.None);
 
             var blobClient = containerClient.GetBlobClient(fileName);
-            await blobClient.UploadAsync(imageStream, overwrite: true);
-
-            var url = blobClient.Uri.ToString();
+            var contentType = Path.GetExtension(fileName).ToLowerInvariant() switch
+            {
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".png" => "image/png",
+                ".webp" => "image/webp",
+                _ => "application/octet-stream"
+            };
+            await blobClient.UploadAsync(imageStream, new BlobUploadOptions
+            {
+                HttpHeaders = new BlobHttpHeaders { ContentType = contentType }
+            });
             _logger.LogInformation("Imagen subida: {FileName}", fileName);
-            return url;
+            return fileName;
         }
         catch (Exception ex)
         {

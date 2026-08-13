@@ -61,6 +61,7 @@ public class EmployeeAdminService : IEmployeeAdminService
         {
             EmployeeId = Guid.NewGuid(),
             BusinessId = request.BusinessId,
+            PartyId = request.PartyId,
             Name = request.Name,
             IsActive = true,
             CreatedAt = DateTime.UtcNow
@@ -157,7 +158,7 @@ public class EmployeeAdminService : IEmployeeAdminService
     }
 
     private static EmployeeDto MapToDto(Employee e) => new(
-        e.EmployeeId, e.BusinessId, e.Name, e.IsActive,
+        e.EmployeeId, e.BusinessId, e.PartyId, e.Name, e.IsActive,
         e.EmployeeServices?.Select(es => es.ServiceId).ToList() ?? [],
         e.CreatedAt);
 }

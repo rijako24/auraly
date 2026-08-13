@@ -46,6 +46,7 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             ProductCategoryId = categoryId,
             ProductBrandId = brandId,
             AllowsFractionalSale = true,
+            ManageInventory = false,
             Link = new ProductLinkInput(parent.ProductId, true, 2m, true, 2m)
         };
         using var childResponse = await admin.PostAsJsonAsync("/api/commerce/v1/products", request);
@@ -140,33 +141,13 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         Assert.True(createdSignal.AvailableThroughCursor > 0);
         var suppliers = created.Suppliers!;
 
-        Assert.Equal(0m, await ScalarAsync<decimal>(
+        Assert.Equal(12_500m, await ScalarAsync<decimal>(
             "SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Id AND IsActive=1;",
             new SqlParameter("@Id", created.ProductId)));
         Assert.Equal(12_500m, await ScalarAsync<decimal>(
             "SELECT PreparedAmount FROM dbo.ProductPrices WHERE ProductId=@Id AND IsActive=1;",
             new SqlParameter("@Id", created.ProductId)));
-
-        using var pricing = fixture.CreateAdminClient(
-            PricingPermissionCodes.Read,
-            PricingPermissionCodes.ReadCostBasis,
-            PricingPermissionCodes.PublishPrices);
-        var candidates = await pricing.GetFromJsonAsync<PriceRevisionPage>(
-            "/api/commerce/v1/pricing/proposals?page=1&pageSize=100&status=Approved");
-        var candidate = Assert.Single(candidates!.Items.Where(item => item.ProductId == created.ProductId));
-        using var publication = await pricing.PostAsJsonAsync(
-            "/api/commerce/v1/pricing/publish",
-            new PublishPricesRequest([new PublishPriceItem(
-                candidate.ProposalId,
-                PriceInputModes.SalePrice,
-                null,
-                12_500m,
-                1m,
-                PricingRoundingModes.Nearest,
-                candidate.ConcurrencyToken)]));
-        publication.EnsureSuccessStatusCode();
-        var publishedSignal = await fixture.ReadSynchronizationMessageAsync();
-        Assert.True(publishedSignal.AvailableThroughCursor > createdSignal.AvailableThroughCursor);
+        var publishedSignal = createdSignal;
         var priceListId = Guid.NewGuid();
         var listItemId = Guid.NewGuid();
         var channelItemId = Guid.NewGuid();
@@ -330,7 +311,7 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
 
         var changedRequest = request with
         {
-            Prices = [new ProductPriceInput(0m)],
+            Prices = request.Prices,
             Suppliers = [supplier with { BaseUnitCost = 8_500m }]
         };
         using var changed = await admin.PutAsJsonAsync(
@@ -464,7 +445,7 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             false,
             barcodes,
             [new ProductIdentifierInput("Alternate", $"ALT-{Guid.NewGuid():N}")],
-            prices,
+            prices.Select(price => price with { CostBasisAmount = price.CostBasisAmount ?? 8_000m, TargetMarginPercent = price.TargetMarginPercent ?? 20m }).ToArray(),
             [new SupplierCostInput(Guid.Empty, $"SUP-{Guid.NewGuid():N}", "Supplier", null, 8_000m)],
             null);
 

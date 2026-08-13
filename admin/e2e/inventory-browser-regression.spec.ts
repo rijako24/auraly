@@ -130,9 +130,9 @@ test.describe.serial("inventario completo desde navegador", () => {
     await addProduct(page, products.firstName, "4", 0);
     await addProduct(page, products.secondCode === "Sin SKU" ? products.secondName : products.secondCode, "6", 1);
     await page.getByRole("button", { name: "Preparar conteo" }).click();
-    await expect(page.getByText(/saldo base qued./)).toBeVisible({ timeout: 20_000 });
-    await page.getByTestId("inventory-quantity-0").fill("4");
-    await page.getByTestId("inventory-quantity-1").fill("6");
+    await expect(page.getByText(/Conteo preparado/)).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("inventory-quantity-0")).toHaveValue("4");
+    await expect(page.getByTestId("inventory-quantity-1")).toHaveValue("6");
     await page.getByRole("button", { name: /Confirmar conteo/ }).click();
     await waitForProcessed(page, "Conteo");
   });

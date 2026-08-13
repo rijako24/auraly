@@ -89,8 +89,9 @@ public sealed partial class SqlPartyStore(
                         P("@BusinessId", actor.BusinessId), P("@ActorId", actor.ActorId), P("@Now", now)
                     ],
                     ct);
-                await InsertSiteAsync(
-                    connection, transaction, actor, resolvedPartyId, siteId, request.PrimarySite, now, ct);
+                if (existingPartyId is null || !await PartyHasSiteAsync(connection, transaction, resolvedPartyId, ct))
+                    await InsertSiteAsync(
+                        connection, transaction, actor, resolvedPartyId, siteId, request.PrimarySite, now, ct);
                 if (request.Pricing is not null)
                     await InsertPricingAsync(
                         connection, transaction, actor, resolvedCustomerId, request.Pricing, now, ct);
@@ -638,6 +639,20 @@ public sealed partial class SqlPartyStore(
             ],
             ct);
     }
+    private static async Task<bool> PartyHasSiteAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid partyId, CancellationToken ct)
+    {
+        await using var command = new SqlCommand("""
+            SELECT CASE WHEN EXISTS (
+                SELECT 1 FROM dbo.PartySites WITH(UPDLOCK,HOLDLOCK)
+                WHERE PartyId=@PartyId AND IsActive=1
+            ) THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@PartyId", partyId);
+        return (bool)(await command.ExecuteScalarAsync(ct)
+            ?? throw new InvalidOperationException("Could not verify the Party site."));
+    }
+
 
     private static Task InsertSiteAsync(
         SqlConnection connection, SqlTransaction transaction, PartyActorIdentity actor,

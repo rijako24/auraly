@@ -17,6 +17,7 @@ import {
   DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
 import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -470,7 +471,7 @@ function ReceiptEditor({
             </Button>
           </div>
           {(productSearch || includeUnassociated) && productItems.length > 0 &&
-            <div ref={productListRef} className="max-h-56 overflow-y-auto border-b bg-background p-2"
+            <div ref={productListRef} className="max-h-56 overflow-y-auto border-b bg-background p-2 [&_strong]:font-normal"
               onScroll={(event) => {
                 const target = event.currentTarget;
                 if (target.scrollHeight - target.scrollTop - target.clientHeight < 80 && products.hasNextPage && !products.isFetchingNextPage) {
@@ -550,13 +551,14 @@ function ReceiptEditor({
                     </Select>}
                     {(line.preferredUnitsPerPresentation ?? line.unitsPerPresentation) <= 1 && <span className="mt-1 block text-xs text-muted-foreground">{line.baseUnitCode ?? line.presentationName}</span>}
                   </td>
-                  <td className="px-3 py-2"><Input type="number" min="0" step="0.01"
-                    aria-label={`Costo unitario de ${line.description}`}
-                    value={line.unitCost} onChange={(event) =>
-                      updateLine(line.productId, { unitCost: Number(event.target.value) })} /></td>
-                  <td className="px-3 py-2"><Input type="number" min="0" step="0.01"
-                    value={line.discountAmount} onChange={(event) =>
-                      updateLine(line.productId, { discountAmount: Number(event.target.value) })} /></td>
+                  <td className="px-3 py-2"><FormattedNumberInput kind="currency"
+                    ariaLabel={`Costo unitario de ${line.description}`}
+                    value={line.unitCost} onValueChange={(value) =>
+                      updateLine(line.productId, { unitCost: value ?? 0 })} /></td>
+                  <td className="px-3 py-2"><FormattedNumberInput kind="currency"
+                    ariaLabel={`Descuento de ${line.description}`}
+                    value={line.discountAmount} onValueChange={(value) =>
+                      updateLine(line.productId, { discountAmount: value ?? 0 })} /></td>
                   <td className="px-3 py-2">{line.taxRate} %</td>
                   <td className="px-3 py-2 text-right font-semibold">{formatCurrency(lineTotal)}</td>
                   <td className="pr-3"><Button type="button" size="icon" variant="ghost"

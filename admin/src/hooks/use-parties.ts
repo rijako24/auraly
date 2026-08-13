@@ -1,13 +1,13 @@
 "use client";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { partiesApi, type CreateThirdPartyRequest } from "@/services/api/parties";
+import { partiesApi, type CommercialPartyRole, type CreateThirdPartyRequest } from "@/services/api/parties";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
 export function useParties(params: { page: number; pageSize: number; search?: string; role?: string; isActive?: boolean; isIncomplete?: boolean }) {
   const businessId=useBusinessContextStore((state)=>state.selectedBusinessId);
   return useQuery({ queryKey:["parties",businessId,params],queryFn:()=>partiesApi.page(params),enabled:!!businessId,placeholderData:keepPreviousData });
 }
-export function useCreateThirdParty(role:"Customer"|"Supplier"|"Seller"|"Carrier") {
+export function useCreateThirdParty(role:CommercialPartyRole) {
   const client=useQueryClient(); const businessId=useBusinessContextStore((state)=>state.selectedBusinessId);
   return useMutation({mutationFn:(request:CreateThirdPartyRequest)=>role==="Customer"?partiesApi.createCustomer(request):role==="Supplier"?partiesApi.createSupplier(request):role==="Seller"?partiesApi.createSeller(request):partiesApi.createCarrier(request),onSuccess:()=>client.invalidateQueries({queryKey:["parties",businessId]})});
 }

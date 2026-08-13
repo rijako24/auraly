@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -213,7 +214,7 @@ export default function PayablesPage() {
         <DialogContent className="sm:max-w-lg">
           <form className="space-y-5" onSubmit={submitPayment}>
             <DialogHeader><DialogTitle>Registrar pago</DialogTitle><DialogDescription>El pago se aplicará a {detail?.documentNumber} mediante el motor transaccional.</DialogDescription></DialogHeader>
-            <div className="space-y-2"><Label htmlFor="payable-amount">Valor</Label><Input id="payable-amount" type="number" min="0.01" step="0.01" max={detail?.outstandingAmount} value={amount} onChange={(event) => setAmount(event.target.value)} required /></div>
+            <div className="space-y-2"><Label htmlFor="payable-amount">Valor</Label><FormattedNumberInput id="payable-amount" kind="currency" value={amount} onValueChange={(value) => setAmount(value?.toString() ?? "")} /></div>
             <div className="space-y-2"><Label>Medio de pago</Label><Select value={method} onValueChange={(value) => setMethod(value as "Cash" | "BankTransfer")}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="BankTransfer">Transferencia bancaria</SelectItem><SelectItem value="Cash">Efectivo</SelectItem></SelectContent></Select></div>
             <div className="space-y-2"><Label htmlFor="payable-reference">Referencia</Label><Input id="payable-reference" maxLength={120} value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Comprobante o referencia bancaria" /></div>
             <div className="space-y-2"><Label htmlFor="payable-notes">Notas</Label><Textarea id="payable-notes" maxLength={1000} value={notes} onChange={(event) => setNotes(event.target.value)} /></div>

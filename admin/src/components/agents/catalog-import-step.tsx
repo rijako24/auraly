@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
 import { Label } from "@/components/ui/label";
 import {
   Table,
@@ -193,15 +194,11 @@ export function CatalogImportStep({ businessId, onImported }: CatalogImportStepP
                       />
                     </TableCell>
                     <TableCell>
-                      <Input
-                        type="number"
+                      <FormattedNumberInput
+                        kind="currency"
                         className="w-24"
                         value={line.price}
-                        onChange={(e) =>
-                          updateLine(index, {
-                            price: parseFloat(e.target.value) || 0,
-                          })
-                        }
+                        onValueChange={(value) => updateLine(index, { price: value ?? 0 })}
                       />
                     </TableCell>
                     <TableCell>

@@ -50,6 +50,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<PublishedProductPriceRow> PublishedProductPrices { get; set; }
     public DbSet<ProductOffer> ProductOffers { get; set; }
     public DbSet<ProductImage> ProductImages { get; set; }
+    public DbSet<ProductLink> ProductLinks { get; set; }
     public DbSet<ProductAlias> ProductAliases { get; set; }
     public DbSet<ProductSearchTerm> ProductSearchTerms { get; set; }
     public DbSet<CartMutationReceipt> CartMutationReceipts { get; set; }
@@ -547,6 +548,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Source).HasConversion<int>();
             entity.Property(e => e.ExternalProductId).HasMaxLength(300);
             entity.Property(e => e.Sku).HasMaxLength(100);
+            entity.Property(e => e.ProductCode).HasMaxLength(64);
             entity.Property(e => e.Name).IsRequired().HasMaxLength(250);
             entity.Property(e => e.CategoryName).HasMaxLength(150);
             entity.Property(e => e.UnitPrice).HasPrecision(18, 2);
@@ -1202,6 +1204,7 @@ public class ApplicationDbContext : DbContext
         {
             entity.HasKey(e => e.EmployeeId);
             entity.Property(e => e.BusinessId).IsRequired();
+            entity.Property(e => e.PartyId);
             entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
             entity.Property(e => e.IsActive).IsRequired().HasDefaultValue(true);
             entity.Property(e => e.CreatedAt).IsRequired();
@@ -1210,6 +1213,7 @@ public class ApplicationDbContext : DbContext
                   .HasForeignKey(e => e.BusinessId)
                   .OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => new { e.BusinessId, e.PartyId }).IsUnique().HasFilter("[PartyId] IS NOT NULL");
             entity.HasIndex(e => new { e.BusinessId, e.Name }); // Ãndice para bÃºsquedas por nombre
         });
 

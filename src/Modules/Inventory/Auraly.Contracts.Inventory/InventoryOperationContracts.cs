@@ -152,7 +152,7 @@ public sealed record InventoryOperationAcceptance(
     bool IdempotentReplay);
 
 public sealed record InventoryProductQuery(Guid BusinessId, Guid WarehouseId, string? Search, int Page = 1, int PageSize = 50);
-public sealed record InventoryProductItem(Guid ProductId, string ProductCode, string? Reference, string ProductName, string UnitCode, decimal QuantityOnHand, decimal? AverageUnitCost);
+public sealed record InventoryProductItem(Guid ProductId, string ProductCode, string? Reference, string ProductName, string UnitCode, decimal QuantityOnHand, decimal? AverageUnitCost, decimal? SaleUnitPrice);
 public sealed record InventoryProductPage(IReadOnlyList<InventoryProductItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);
 public sealed record InventoryWarehouseOption(Guid WarehouseId, string Code, string Name);
 public sealed record WarehouseMasterItem(Guid WarehouseId, string Code, string Name, bool AllowNegativeStockSales, string PriceFormationCostBasis, bool IsActive);

@@ -35,9 +35,25 @@ public sealed class ProductAdminService : IProductAdminService
             request.Search,
             includeInactive,
             ct);
+        var categories = await _unitOfWork.ProductCategories.ListAsync(businessId, true, ct);
+        var categoryById = categories.ToDictionary(category => category.ProductCategoryId);
+
+        string? ResolveArea(Guid? categoryId)
+        {
+            if (categoryId is null) return null;
+            ProductCategory? area = null;
+            var currentId = categoryId;
+            var visited = new HashSet<Guid>();
+            while (currentId is { } id && visited.Add(id) && categoryById.TryGetValue(id, out var current))
+            {
+                area = current;
+                currentId = current.ParentProductCategoryId;
+            }
+            return area?.Name;
+        }
 
         return new PagedResponse<ProductDto>(
-            items.Select(MapToDto).ToList(),
+            items.Select(product => MapToDto(product, ResolveArea(product.ProductCategoryId))).ToList(),
             totalCount,
             request.Page,
             request.PageSize);
@@ -356,7 +372,7 @@ public sealed class ProductAdminService : IProductAdminService
             throw new NotFoundException(nameof(Business), businessId);
     }
 
-    private static ProductDto MapToDto(Product p) => new(
+    private static ProductDto MapToDto(Product p, string? areaName = null) => new(
         p.ProductId,
         p.BusinessId,
         p.IntegrationConnectionId,
@@ -373,5 +389,7 @@ public sealed class ProductAdminService : IProductAdminService
         p.IsActive,
         p.CreatedAt,
         p.UpdatedAt,
-        p.LastSyncedAt);
+        p.LastSyncedAt,
+        p.ProductCode,
+        areaName);
 }

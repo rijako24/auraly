@@ -11,6 +11,7 @@ using Auraly.Application.DocumentProcessing;
 using Auraly.Application.Fiscal;
 using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Contracts.Authentication;
+using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
@@ -771,6 +772,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             (DeviceId, PermissionCode, IsGranted, GrantedAt)
             VALUES
             (@DeviceId, @SalesCreate, 1, SYSDATETIMEOFFSET()),
+            (@DeviceId, @CatalogSync, 1, SYSDATETIMEOFFSET()),
             (@DeviceId, @FiscalStatusSync, 1, SYSDATETIMEOFFSET()),
             (@DeviceId, @PosCustomerCreate, 1, SYSDATETIMEOFFSET()),
             (@DeviceId, @PosIdentitySync, 1, SYSDATETIMEOFFSET());
@@ -874,6 +876,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         command.Parameters.AddWithValue("@DeniedHash", deniedCredential.Hash);
         command.Parameters.AddWithValue("@DeniedIterations", deniedCredential.Iterations);
         command.Parameters.AddWithValue("@SalesCreate", CommercePermissionCodes.SalesCreate);
+        command.Parameters.AddWithValue("@CatalogSync", CatalogPermissionCodes.Sync);
         command.Parameters.AddWithValue("@FiscalAuthorizationId", FiscalAuthorizationId);
         command.Parameters.AddWithValue("@FiscalStatusSync", FiscalPermissionCodes.PosStatusSync);
         command.Parameters.AddWithValue("@PosCustomerCreate", PartyPermissionCodes.PosCustomerCreate);

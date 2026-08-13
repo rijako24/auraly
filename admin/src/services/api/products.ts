@@ -16,9 +16,11 @@ export interface Product {
   externalProductId?: string | null;
   source?: ProductSource;
   sku?: string | null;
+  productCode?: string | null;
   name: string;
   description?: string | null;
   categoryName?: string | null;
+  areaName?: string | null;
   unitPrice: number;
   currency: string;
   manageStock: boolean;
@@ -85,7 +87,7 @@ export interface CreateCatalogProductRequest {
   isWeighable: boolean;
   barcodes: Array<{ value: string; isPrimary: boolean }>;
   identifiers: Array<{ type: string; value: string }>;
-  prices: Array<{ amount: number; currencyCode: string }>;
+  prices: Array<{ amount: number; currencyCode: string; costBasisAmount: number; targetMarginPercent: number }>;
   suppliers: Array<{
     supplierId: string;
     identification: string;
@@ -121,7 +123,7 @@ export const productsApi = {
   createCatalog: (request: CreateCatalogProductRequest) => apiClient.post<CatalogProductDetail>("/commerce/v1/products", request),
   getCatalog: (productId: string) => apiClient.get<{
     productId: string; businessId: string; productCode: string; reference: string | null; name: string;
-    isActive: boolean; barcodes: string[]; prices: Array<{ amount: number; currencyCode: string }>;
+    isActive: boolean; barcodes: string[]; prices: Array<{ amount: number; currencyCode: string; costBasisAmount: number | null; targetMarginPercent: number | null }>;
     suppliers: Array<{ supplierId: string; identification: string; name: string; supplierProductCode: string | null;
       baseUnitCost: number; isPrimary: boolean; purchasePresentationName: string; unitsPerPresentation: number }> | null;
     salesTaxProfileId: string; purchaseTaxProfileId: string; purchaseTaxTreatment: string; description: string | null;

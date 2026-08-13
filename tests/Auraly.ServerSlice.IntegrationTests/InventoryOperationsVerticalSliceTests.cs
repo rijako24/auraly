@@ -89,6 +89,57 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
     }
 
     [Fact]
+    public async Task Stock_count_with_two_changed_products_creates_two_kardex_movements()
+    {
+        var first = Guid.NewGuid();
+        var second = Guid.NewGuid();
+        await SeedAsync(first, second, Guid.NewGuid(), Guid.NewGuid());
+        using var client = fixture.CreateAdminClient(
+            InventoryPermissionCodes.Count,
+            InventoryPermissionCodes.Adjust);
+        var occurred = new DateTimeOffset(2026, 8, 13, 9, 0, 0, TimeSpan.FromHours(-5));
+
+        await ConfirmAdjustmentAsync(client, new(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, occurred,
+            "INITIAL_BALANCE", null, "Base para conteo de dos líneas",
+            [new(1, first, 10m, 5m), new(2, second, 8m, 5m)]));
+
+        var countId = Guid.NewGuid();
+        using (var start = await client.PostAsJsonAsync(
+            "/api/commerce/v1/stock-counts/start",
+            new StartStockCountRequest(
+                countId, fixture.BusinessId, fixture.WarehouseId,
+                occurred.AddMinutes(1), "PHYSICAL_COUNT", "Conteo de dos líneas",
+                [first, second])))
+        {
+            Assert.Equal(HttpStatusCode.OK, start.StatusCode);
+            var draft = await start.Content.ReadFromJsonAsync<StockCountDraft>();
+            Assert.NotNull(draft);
+            Assert.Equal(2, draft.Lines.Count);
+        }
+
+        using (var request = new HttpRequestMessage(
+            HttpMethod.Post, $"/api/commerce/v1/stock-counts/{countId:D}/confirm")
+        {
+            Content = JsonContent.Create(new ConfirmStockCountRequest(
+                fixture.BusinessId,
+                [new(1, first, 7m), new(2, second, 12m)]))
+        })
+        {
+            request.Headers.Add("Idempotency-Key", $"count-two-{countId:N}");
+            using var response = await client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        }
+
+        Assert.Equal(7m, (await BalanceAsync(fixture.WarehouseId, first)).Quantity);
+        Assert.Equal(12m, (await BalanceAsync(fixture.WarehouseId, second)).Quantity);
+        Assert.Equal(2, await CountAsync("InventoryMovements", countId));
+        Assert.Equal(-3m, await ScalarAsync<decimal>(
+            "SELECT QuantityChange FROM dbo.InventoryMovements WHERE DocumentId=@Id AND ProductId='" + first + "'", countId));
+        Assert.Equal(4m, await ScalarAsync<decimal>(
+            "SELECT QuantityChange FROM dbo.InventoryMovements WHERE DocumentId=@Id AND ProductId='" + second + "'", countId));
+    }
+    [Fact]
     public async Task Damage_updates_inventory_once_and_queries_respect_cost_permission()
     {
         var product = Guid.NewGuid();

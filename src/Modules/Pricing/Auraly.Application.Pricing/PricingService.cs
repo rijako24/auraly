@@ -160,7 +160,7 @@ public sealed class PricingService(
 
     private static PriceCalculationResult CalculateCore(PriceCalculationRequest request)
     {
-        if (request.CostBasisAmount < 0) throw new PricingValidationException("Cost basis cannot be negative.");
+        if (request.CostBasisAmount <= 0) throw new PricingValidationException("Cost basis must be greater than zero.");
         if (request.SalesTaxRate is < 0 or > 100) throw new PricingValidationException("SalesTaxRate is invalid.");
         if (!PriceInputModes.IsSupported(request.InputMode)) throw new PricingValidationException("InputMode is invalid.");
         if (!PricingRoundingModes.IsSupported(request.RoundingMode)) throw new PricingValidationException("RoundingMode is invalid.");
@@ -171,13 +171,14 @@ public sealed class PricingService(
         {
             if (request.InputMode == PriceInputModes.Margin)
             {
-                if (request.TargetMarginPercent is null) throw new PricingValidationException("TargetMarginPercent is required.");
+                if (request.TargetMarginPercent is null or <= 0 or >= 100)
+                    throw new PricingValidationException("TargetMarginPercent must be greater than zero and less than 100.");
                 target = request.TargetMarginPercent;
                 raw = PriceMargin.CalculateGrossSalePrice(request.CostBasisAmount, target.Value, request.SalesTaxRate);
             }
             else
             {
-                if (request.SalePrice is null || request.SalePrice < 0) throw new PricingValidationException("SalePrice is required.");
+                if (request.SalePrice is null or <= 0) throw new PricingValidationException("SalePrice must be greater than zero.");
                 raw = request.SalePrice.Value;
                 target = PriceMargin.CalculateMarginPercentFromGross(request.CostBasisAmount, raw, request.SalesTaxRate);
             }
@@ -204,8 +205,8 @@ public sealed class PricingService(
         if (inputMode != PriceInputModes.SalePrice || salePrice is null)
             throw new PricingValidationException(
                 "A product without a cost basis must define its sale price directly.");
-        if (salePrice < 0)
-            throw new PricingValidationException("SalePrice is required.");
+        if (salePrice <= 0)
+            throw new PricingValidationException("SalePrice must be greater than zero.");
         if (!PricingRoundingModes.IsSupported(roundingMode) || roundingIncrement <= 0)
             throw new PricingValidationException("The rounding configuration is invalid.");
 

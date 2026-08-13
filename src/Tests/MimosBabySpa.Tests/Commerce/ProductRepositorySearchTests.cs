@@ -156,6 +156,47 @@ public sealed class ProductRepositorySearchTests
         result[0].HasPublishedPrice.Should().BeTrue();
     }
 
+    [Fact]
+    public async Task GetLinkedFamily_ReturnsEveryOptionWithItsIndependentPriceAndStock()
+    {
+        await using var context = CreateContext();
+        var businessId = Guid.NewGuid();
+        var model = Product(businessId, "Tenis Runner", "RUNNER", active: true);
+        var black40 = Product(businessId, "Tenis Runner negro talla 40", "RUN-N40", active: true);
+        var white41 = Product(businessId, "Tenis Runner blanco talla 41", "RUN-B41", active: true);
+        model.StockQuantity = 0;
+        black40.StockQuantity = 4;
+        white41.StockQuantity = 7;
+        context.Products.AddRange(model, black40, white41);
+        Publish(context, model, 100_000m);
+        Publish(context, black40, 110_000m);
+        Publish(context, white41, 120_000m);
+        context.ProductLinks.AddRange(
+            FamilyLink(businessId, model.ProductId, black40.ProductId),
+            FamilyLink(businessId, model.ProductId, white41.ProductId));
+        await context.SaveChangesAsync();
+
+        var result = await new ProductRepository(context).GetLinkedFamilyAsync(
+            businessId, [black40.ProductId]);
+
+        result.Select(product => product.ProductId).Should().BeEquivalentTo([
+            model.ProductId, black40.ProductId, white41.ProductId]);
+        result.Single(product => product.ProductId == black40.ProductId).StockQuantity.Should().Be(4);
+        result.Single(product => product.ProductId == white41.ProductId).UnitPrice.Should().Be(120_000m);
+    }
+
+    private static ProductLink FamilyLink(Guid businessId, Guid parentId, Guid childId) => new()
+    {
+        ProductLinkId = Guid.NewGuid(),
+        BusinessId = businessId,
+        ParentProductId = parentId,
+        ChildProductId = childId,
+        SharesInventory = false,
+        SharesPrice = false,
+        IsActive = true,
+        CreatedAt = DateTimeOffset.UtcNow
+    };
+
     private static void Publish(ApplicationDbContext context, Product product, decimal amount)
     {
         var now = DateTimeOffset.UtcNow;

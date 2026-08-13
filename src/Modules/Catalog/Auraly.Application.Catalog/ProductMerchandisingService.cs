@@ -73,19 +73,19 @@ public sealed class ProductMerchandisingService(
         if (string.IsNullOrWhiteSpace(request.BaseUnitCode)) throw new CatalogValidationException("A sale unit is required.");
         if (request.IsWeighable && !request.AllowsFractionalSale) throw new CatalogValidationException("A scale product must allow decimal quantities.");
         if (request.Link is not null && request.LinkedProducts.Count > 0) throw new CatalogValidationException("A linked child cannot also be a root product.");
+        if (request.Link is { SharesInventory: true } && request.ManageInventory)
+            throw new CatalogValidationException("A product that shares its parent's inventory cannot control a separate inventory.");
         if (request.IsWeighable != (request.Scale is not null)) throw new CatalogValidationException("Scale capture requires exactly one scale configuration.");
         if (request.Barcodes.Any(x => string.IsNullOrWhiteSpace(x.Value)) ||
             request.Barcodes.Select(x => x.Value.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count() != request.Barcodes.Count ||
             request.Barcodes.Count(x => x.IsPrimary) > 1)
             throw new CatalogValidationException("Product barcodes are invalid or duplicated.");
         if (request.Link is { } link && (link.ParentProductId == productId ||
-            (!link.SharesInventory && !link.SharesPrice) ||
             (link.SharesInventory && link.InventoryFactor is null or <= 0) ||
             (link.SharesPrice && link.PriceFactor is null or <= 0)))
             throw new CatalogValidationException("The linked product configuration is invalid.");
         if (request.LinkedProducts.Select(x => x.ChildProductId).Distinct().Count() != request.LinkedProducts.Count ||
             request.LinkedProducts.Any(link => link.ChildProductId == productId ||
-                (!link.SharesInventory && !link.SharesPrice) ||
                 (link.SharesInventory && link.InventoryFactor is null or <= 0) ||
                 (link.SharesPrice && link.PriceFactor is null or <= 0)))
             throw new CatalogValidationException("The linked product list is invalid.");

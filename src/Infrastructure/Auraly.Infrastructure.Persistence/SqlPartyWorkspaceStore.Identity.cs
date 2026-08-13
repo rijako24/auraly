@@ -69,6 +69,8 @@ public sealed partial class SqlPartyWorkspaceStore
               seller.SellerId,seller.Code,seller.DefaultCommissionPercent,
               seller.CommissionBasis,seller.CommissionTrigger,seller.IsActive,
               carrier.CarrierId,carrier.Code,carrier.TransportationMode,carrier.IsActive,
+              employee.EmployeeId,employee.IsActive,
+              appUser.UserId,appUser.Username,appUser.Email,appUser.IsActive,
               p.RowVersion
             FROM dbo.Parties p
             OUTER APPLY(
@@ -102,12 +104,17 @@ public sealed partial class SqlPartyWorkspaceStore
               ON seller.PartyId=p.PartyId AND seller.BusinessId=@BusinessId
             LEFT JOIN dbo.Carriers carrier
               ON carrier.PartyId=p.PartyId AND carrier.BusinessId=@BusinessId
+            LEFT JOIN dbo.Employees employee
+              ON employee.PartyId=p.PartyId AND employee.BusinessId=@BusinessId
+            LEFT JOIN dbo.AppUsers appUser
+              ON appUser.PartyId=p.PartyId AND appUser.TenantId=@TenantId
             WHERE p.TenantId=@TenantId
               AND {identityPredicate}
               AND (
                 @RequireBusinessRole=0 OR
                 customer.CustomerId IS NOT NULL OR supplier.SupplierId IS NOT NULL OR
-                seller.SellerId IS NOT NULL OR carrier.CarrierId IS NOT NULL)
+                seller.SellerId IS NOT NULL OR carrier.CarrierId IS NOT NULL OR
+                employee.EmployeeId IS NOT NULL OR appUser.UserId IS NOT NULL)
             ORDER BY p.CreatedAt,p.PartyId;
             """;
         command.Parameters.AddRange([
@@ -145,11 +152,23 @@ public sealed partial class SqlPartyWorkspaceStore
                 reader.GetString(37),
                 reader.GetString(38),
                 reader.GetBoolean(39));
-        var roles = new List<string>(4);
+        var employee = reader.IsDBNull(40)
+            ? null
+            : new EmployeeRoleDetail(reader.GetGuid(40), reader.GetBoolean(41));
+        var user = reader.IsDBNull(42)
+            ? null
+            : new UserRoleDetail(
+                reader.GetGuid(42),
+                reader.GetString(43),
+                reader.GetString(44),
+                reader.GetBoolean(45));
+        var roles = new List<string>(6);
         if (customer is not null) roles.Add("Customer");
         if (supplier is not null) roles.Add("Supplier");
         if (seller is not null) roles.Add("Seller");
         if (carrier is not null) roles.Add("Carrier");
+        if (employee is not null) roles.Add("Employee");
+        if (user is not null) roles.Add("User");
 
         var site = reader.IsDBNull(12)
             ? null
@@ -170,9 +189,9 @@ public sealed partial class SqlPartyWorkspaceStore
         return new PartyWorkspaceDetail(
             reader.GetGuid(0),
             reader.GetString(1),
-            reader.GetGuid(2),
-            reader.GetString(3),
-            reader.GetString(4),
+            G(reader, 2),
+            S(reader, 3),
+            S(reader, 4),
             S(reader, 5),
             reader.GetString(6),
             S(reader, 7),
@@ -186,7 +205,9 @@ public sealed partial class SqlPartyWorkspaceStore
             supplier,
             seller,
             carrier,
-            Convert.ToBase64String((byte[])reader[40]));
+            employee,
+            user,
+            Convert.ToBase64String((byte[])reader[46]));
     }
 
     private static Guid? G(SqlDataReader reader, int ordinal) =>

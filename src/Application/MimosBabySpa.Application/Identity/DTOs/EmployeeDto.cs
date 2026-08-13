@@ -3,6 +3,7 @@ namespace MimosBabySpa.Application.Identity.DTOs;
 public record EmployeeDto(
     Guid EmployeeId,
     Guid BusinessId,
+    Guid? PartyId,
     string Name,
     bool IsActive,
     IReadOnlyList<Guid> ServiceIds,

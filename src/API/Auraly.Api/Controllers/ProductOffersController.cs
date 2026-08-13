@@ -76,4 +76,12 @@ public sealed class ProductOffersController : ControllerBase
         await _service.DeleteImageAsync(User.GetTenantId(), businessId, productId, productImageId, ct);
         return NoContent();
     }
+
+    [HttpPut("images/{productImageId:guid}/primary")]
+    [PermissionAuthorize("products.update")]
+    public async Task<ActionResult<ProductImageDto>> SetPrimaryImage(
+        Guid businessId, Guid productId, Guid productImageId, CancellationToken ct) =>
+        Ok(await _service.SetPrimaryImageAsync(
+            User.GetTenantId(), businessId, productId, productImageId, ct));
+
 }

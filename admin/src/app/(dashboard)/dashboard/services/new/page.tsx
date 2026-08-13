@@ -7,6 +7,7 @@ import { ArrowLeft } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
@@ -50,7 +51,7 @@ export default function NewServicePage() {
     if (!durationMinutes || isNaN(duration) || duration < 0) {
       newErrors.durationMinutes = "Duración inválida (minutos)";
     }
-    const priceNum = parseInt(price, 10);
+    const priceNum = Number(price);
     if (!price || isNaN(priceNum) || priceNum < 0) {
       newErrors.price = "Precio invalido en COP";
     }
@@ -69,7 +70,7 @@ export default function NewServicePage() {
       keywords: keywords.trim() || null,
       categoryId,
       durationMinutes: parseInt(durationMinutes, 10),
-      price: parseInt(price, 10),
+      price: Number(price),
       includeInCheckoutTotal,
       tier: Number(tier),
       serviceType: Number(serviceType),
@@ -196,14 +197,13 @@ export default function NewServicePage() {
 <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="price">Precio COP</Label>
-                <Input
+                <FormattedNumberInput
                   id="price"
-                  type="number"
-                  min={0}
+                  kind="currency"
                   value={price}
-                  onChange={(e) => setPrice(e.target.value)}
-                  placeholder="120000"
-                  className={errors.price ? "border-destructive" : ""}
+                  invalid={Boolean(errors.price)}
+                  onValueChange={(value) => setPrice(value?.toString() ?? "")}
+                  placeholder="120000.00"
                 />
                 <p className="text-xs text-muted-foreground">
                   Ej: 120000 = $120.000 COP

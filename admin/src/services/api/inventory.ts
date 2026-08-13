@@ -5,7 +5,7 @@ export interface InventoryMovementItem { inventoryMovementId:string; warehouseId
 export interface InventoryOperationItem { documentId:string; documentType:string; documentNumber:string|null; warehouseId:string; warehouseName:string; destinationWarehouseId:string|null; destinationWarehouseName:string|null; reasonCode:string; status:string; occurredAt:string; lineCount:number; totalValueChange:number|null; }
 export interface Page<T> { items:T[]; page:number; pageSize:number; totalCount:number; totalPages:number; }
 export interface InventoryAcceptance { documentId:string; movementId:string; documentType:string; documentNumber:string; status:string; processingSequence:number; idempotentReplay:boolean; }
-export interface InventoryProductItem { productId:string; productCode:string; reference:string|null; productName:string; unitCode:string; quantityOnHand:number; averageUnitCost:number|null; }
+export interface InventoryProductItem { productId:string; productCode:string; reference:string|null; productName:string; unitCode:string; quantityOnHand:number; averageUnitCost:number|null; saleUnitPrice:number|null; }
 export interface StockCountDraft { documentId:string; status:string; baseInventorySequence:number; lines:Array<{lineNumber:number;direction:string;productId:string;productCode:string;description:string;quantity:number;systemQuantityAtBase:number|null;explicitUnitCost:number|null;allocationWeight:number|null}>; }
 
 export interface WarehouseMasterItem { warehouseId:string; code:string; name:string; allowNegativeStockSales:boolean; priceFormationCostBasis:string; isActive:boolean; }

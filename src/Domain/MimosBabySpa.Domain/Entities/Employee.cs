@@ -7,6 +7,7 @@ public class Employee
 {
     public Guid EmployeeId { get; set; }
     public Guid BusinessId { get; set; }
+    public Guid? PartyId { get; set; }
     public string Name { get; set; } = string.Empty;
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

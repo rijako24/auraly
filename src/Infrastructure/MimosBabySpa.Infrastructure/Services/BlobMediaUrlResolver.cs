@@ -34,7 +34,7 @@ public class BlobMediaUrlResolver : IMediaUrlResolver
             return mediaRef;
         }
 
-        var containerName = $"business-{businessId:D}".ToLowerInvariant();
+        var containerName = $"business-{businessId:N}".ToLowerInvariant();
         var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
         var blobClient = containerClient.GetBlobClient(mediaRef);
 

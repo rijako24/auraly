@@ -9,7 +9,6 @@ import { useAuthStore } from "@/stores/auth-store";
  * server session whenever the application shell is mounted.
  */
 export function AuthSyncProvider({ children }: { children: ReactNode }) {
-  const clearAuth = useAuthStore((s) => s.clearAuth);
   const setAuth = useAuthStore((s) => s.setAuth);
 
   useEffect(() => {
@@ -17,8 +16,8 @@ export function AuthSyncProvider({ children }: { children: ReactNode }) {
     authApi
       .me()
       .then((data) => setAuth(data))
-      .catch(clearAuth);
-  }, [clearAuth, setAuth]);
+      .catch(() => undefined);
+  }, [setAuth]);
 
   return <>{children}</>;
 }

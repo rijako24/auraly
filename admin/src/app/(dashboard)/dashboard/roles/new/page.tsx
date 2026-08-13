@@ -9,10 +9,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { useSearchParams } from "next/navigation";
+import { RolePermissionWorkspace } from "@/components/roles/role-permission-workspace";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useRouter } from "next/navigation";
 
 export default function NewRolePage() {
+  const cloneFromId = useSearchParams().get("clone") ?? undefined;
+  return <RolePermissionWorkspace cloneFromId={cloneFromId} />;
+}
+
+function LegacyNewRolePage() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");

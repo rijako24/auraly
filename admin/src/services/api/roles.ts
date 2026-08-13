@@ -41,4 +41,9 @@ export const rolesApi = {
     }),
   revokePermission: (roleId: string, rolePermissionId: string) =>
     apiClient.delete(`/roles/${roleId}/permissions/${rolePermissionId}`),
+  getPermissionCatalog: () => apiClient.get<Permission[]>("/permissions"),
+  getAssignedPermissions: (roleId: string) =>
+    apiClient.get<Permission[]>(`/roles/${roleId}/permissions`),
+  replacePermissions: (roleId: string, permissionIds: string[]) =>
+    apiClient.post<void>(`/roles/${roleId}/permissions`, { permissionIds }),
 };

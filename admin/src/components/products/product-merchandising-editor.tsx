@@ -75,6 +75,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
       productCategoryId: form!.productCategoryId,
       productBrandId: form!.productBrandId,
       baseUnitCode: form!.baseUnitCode,
+      manageInventory: form!.link?.sharesInventory ? false : form!.manageInventory,
       allowsFractionalSale: form!.allowsFractionalSale,
       isWeighable: form!.isWeighable,
       scale: form!.isWeighable ? form!.scale : null,
@@ -294,13 +295,21 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
           <div className="space-y-2"><Label className="flex min-h-10 items-center">Inicio del código de balanza</Label><Input value={form.scale.barcodePrefix} onChange={(event) => setForm({ ...form, scale: { ...form.scale!, barcodePrefix: event.target.value } })} placeholder="Ej. 20" /><p className="min-h-8 text-xs text-muted-foreground">Prefijo que identifica una etiqueta generada por la balanza.</p></div>
           <div className="space-y-2"><Label className="flex min-h-10 items-center">Decimales del peso</Label><Input type="number" min="0" max="6" value={form.scale.decimalPlaces} onChange={(event) => setForm({ ...form, scale: { ...form.scale!, decimalPlaces: Number(event.target.value) } })} /><p className="min-h-8 text-xs text-muted-foreground">3 interpreta, por ejemplo, 1250 como 1,250 kg.</p></div>
         </div>}
+        <Toggle
+          label="Controla inventario"
+          detail={form.link?.sharesInventory ? `No puede habilitarse porque comparte inventario con ${form.link.parentProductName}. Desactiva esa opcion o desvincula el producto para controlar inventario propio.` : "Compras, ventas, traslados y ajustes cambian sus unidades disponibles."}
+          checked={form.link?.sharesInventory ? false : form.manageInventory}
+          disabled={Boolean(form.link?.sharesInventory)}
+          invalid={Boolean(form.link?.sharesInventory)}
+          onChange={(checked) => setForm({ ...form, manageInventory: checked })}
+        />
       </div></Block>
 
       <div>
-        <Block icon={Link2} title="Productos vinculados" description="Agrega todos los productos que deben descontar inventario o heredar precio de este producto principal.">
+        <Block icon={Link2} title="Familia de productos" description="Relaciona presentaciones, colores o tallas. Cada producto conserva su inventario y precio, salvo que elijas compartirlos.">
           {form.link ? <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
             <p className="font-semibold">Este producto está vinculado a {form.link.parentProductName}</p>
-            <p className="mt-1 text-xs">Para evitar cadenas, un producto vinculado no puede contener otros productos. Administra la lista desde el principal.</p>
+            <p className="mt-1 text-xs">Esta relacion permite encontrar todas las opciones de la familia. El inventario solo se bloquea cuando se comparte con el producto principal.</p>
           </div> : <>
             <div className="rounded-xl border bg-muted/20 p-3">
               <Label htmlFor={`linked-search-${productId}`}>Agregar producto a la lista</Label>
@@ -311,8 +320,8 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
                     childProductId: item.productId,
                     childProductCode: item.sku ?? "",
                     childProductName: item.name,
-                    sharesInventory: true,
-                    inventoryFactor: 1,
+                    sharesInventory: false,
+                    inventoryFactor: null,
                     sharesPrice: false,
                     priceFactor: null,
                   }] });
@@ -326,7 +335,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
             </div>
 
             <div className="mt-3 space-y-3">
-              {form.linkedProducts.length === 0 && <div className="rounded-xl border border-dashed p-5 text-center text-sm text-muted-foreground">Todavía no has agregado productos vinculados.</div>}
+              {form.linkedProducts.length === 0 && <div className="rounded-xl border border-dashed p-5 text-center text-sm text-muted-foreground">Todavia no has agregado opciones a esta familia.</div>}
               {form.linkedProducts.map((item, index) => <article key={item.childProductId} className="rounded-xl border p-4">
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <div><p className="font-semibold">{item.childProductName}</p><p className="text-xs text-muted-foreground">{item.childProductCode || "Sin código"}</p></div>
@@ -374,15 +383,16 @@ function Block({ icon: Icon, title, description, children }: {
   </section>;
 }
 
-function Toggle({ label, detail, checked, disabled = false, onChange }: {
+function Toggle({ label, detail, checked, disabled = false, invalid = false, onChange }: {
   label: string;
   detail: string;
   checked: boolean;
   disabled?: boolean;
   onChange: (checked: boolean) => void;
+  invalid?: boolean;
 }) {
-  return <div className={`mb-2 flex items-center justify-between gap-3 rounded-lg border p-3 ${disabled ? "opacity-60" : ""}`}>
-    <div><p className="text-sm font-medium">{label}</p><p className="text-xs text-muted-foreground">{detail}</p></div>
+  return <div className={`mb-2 flex items-center justify-between gap-3 rounded-lg border p-3 ${disabled ? "opacity-60" : ""} ${invalid ? "border-destructive/60 bg-destructive/5" : ""}`}>
+    <div><p className={`text-sm font-medium ${invalid ? "text-destructive" : ""}`}>{label}</p><p className={`text-xs ${invalid ? "text-destructive" : "text-muted-foreground"}`}>{detail}</p></div>
     <Switch checked={checked} disabled={disabled} onCheckedChange={onChange} />
   </div>;
 }

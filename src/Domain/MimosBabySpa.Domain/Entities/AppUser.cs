@@ -4,6 +4,7 @@ public class AppUser
 {
     public Guid UserId { get; set; }
     public Guid TenantId { get; set; }
+    public Guid? PartyId { get; set; }
     public string Username { get; set; } = string.Empty;
     public string NormalizedUsername { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;

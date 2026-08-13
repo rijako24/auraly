@@ -175,6 +175,7 @@ export interface ServiceResourceUsage {
 export interface Employee {
   employeeId: string;
   businessId: string;
+  partyId?: string | null;
   name: string;
   isActive: boolean;
   serviceIds?: string[];
@@ -567,6 +568,7 @@ export interface OrderSummary {
 export interface AppUser {
   userId: string;
   tenantId: string;
+  partyId?: string | null;
   username: string;
   email: string;
   firstName: string;
@@ -592,6 +594,8 @@ export interface AppRole {
   createdAt: string;
   updatedAt: string | null;
   permissions?: Permission[];
+  userCount?: number;
+  permissionCount?: number;
 }
 
 export interface Permission {

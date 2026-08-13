@@ -25,7 +25,11 @@ public sealed class LocalCommerceAdapter : ICommerceAdapter, IAuthoritativeComme
             pageSize,
             ct,
             includeInactive: true);
+        var family = await _unitOfWork.Products.GetLinkedFamilyAsync(
+            ctx.BusinessId, products.Select(product => product.ProductId).ToArray(), ct);
         var filtered = products
+            .Concat(family)
+            .DistinctBy(product => product.ProductId)
             .Select(Map)
             .Where(product => ProductMatches(product, request))
             .Take(Math.Clamp(request.Limit, 1, 50))

@@ -227,6 +227,7 @@ public sealed class SearchProductsOperation : IAgentOperation
             clarification_candidates = Array.Empty<object>(),
             resolution_hint = (string?)null,
             selection_status = "catalog_results",
+            linked_family_guidance = "Linked products are options of the same model. When the customer explicitly asks for availability by color, size or option, compare and report each returned product's available_stock independently.",
             response_guidance = "Present products as the main catalog results and keep recommendations in a separate, clearly optional section. Present at most the single returned recommendation; never merge it into the main options or invent another one. If unmatched_search_terms contains values, state briefly that those terms had no related catalog result; never substitute unrelated products for them. Show product name/presentation plus unit_price with currency when available. Do not show SKU/code, external ids, raw catalog ids, or stock quantities/status in normal product options. Use SKU/code only internally for operation calls. Mention available stock quantity only when a requested quantity is greater than the returned available stock, then ask whether the customer wants the available quantity instead. Do not omit returned prices for sellable product options, and do not invent missing prices."
         });
     }

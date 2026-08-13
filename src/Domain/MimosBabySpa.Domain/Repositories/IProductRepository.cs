@@ -35,6 +35,7 @@ public interface IProductRepository
     Task<Product?> GetBySkuAsync(Guid businessId, string sku, CancellationToken ct = default);
     Task<IReadOnlyList<string>> GetSearchTermsAsync(Guid businessId, Guid productId, CancellationToken ct = default);
     Task<IReadOnlyList<Product>> SearchByIndexTermsAsync(Guid businessId, IReadOnlyCollection<string> terms, int limit, CancellationToken ct = default);
+    Task<IReadOnlyList<Product>> GetLinkedFamilyAsync(Guid businessId, IReadOnlyCollection<Guid> productIds, CancellationToken ct = default);
     Task<IReadOnlyList<Product>> GetIdentityCatalogAsync(Guid businessId, CancellationToken ct = default);
     Task ReplaceSearchTermsAsync(Product product, CancellationToken ct = default);
     Task UpdateCategoryNameAsync(Guid businessId, Guid productCategoryId, string categoryName, CancellationToken ct = default);

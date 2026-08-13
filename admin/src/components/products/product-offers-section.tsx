@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
 import { Label } from "@/components/ui/label";
 import {
   productOffersApi,
@@ -175,11 +176,11 @@ export function ProductOffersSection({ productId }: { productId: string }) {
                 placeholder="Variante: eSIM, color, CPO…"
                 onChange={(event) => updateDraft(offer, "variantLabel", event.target.value)}
               />
-              <Input
-                type="number"
+              <FormattedNumberInput
+                kind="currency"
                 value={draft.unitPrice}
                 placeholder="Precio"
-                onChange={(event) => updateDraft(offer, "unitPrice", Number(event.target.value))}
+                onValueChange={(value) => updateDraft(offer, "unitPrice", value ?? 0)}
               />
               <Input
                 value={draft.currency}
@@ -223,7 +224,7 @@ export function ProductOffersSection({ productId }: { productId: string }) {
           </select>
           <Input type="number" value={newOffer.storageGb ?? ""} onChange={(event) => setNewOffer((value) => ({ ...value, storageGb: Number(event.target.value) }))} />
           <Input value={newOffer.variantLabel ?? ""} placeholder="Variante" onChange={(event) => setNewOffer((value) => ({ ...value, variantLabel: event.target.value }))} />
-          <Input type="number" value={newOffer.unitPrice} onChange={(event) => setNewOffer((value) => ({ ...value, unitPrice: Number(event.target.value) }))} />
+          <FormattedNumberInput kind="currency" value={newOffer.unitPrice} onValueChange={(price) => setNewOffer((value) => ({ ...value, unitPrice: price ?? 0 }))} />
           <Input value={newOffer.currency} maxLength={3} onChange={(event) => setNewOffer((value) => ({ ...value, currency: event.target.value.toUpperCase() }))} />
           <Input type="number" min={0} max={100} value={newOffer.minimumBatteryHealthPercent ?? ""} onChange={(event) => setNewOffer((value) => ({ ...value, minimumBatteryHealthPercent: Number(event.target.value) }))} />
           <Button size="sm" variant="outline" onClick={() => saveOffer.mutate({ request: newOffer })}>

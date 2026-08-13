@@ -2,12 +2,20 @@ import type { ApiError } from "@/types/api";
 import { buildLoginRedirect } from "@/lib/login-redirect";
 import { shouldIncludeExecutionContext } from "@/lib/api-execution-context";
 
+import {
+  isInstalledApplicationDisplay,
+  SESSION_EXPIRED_EVENT,
+  shouldRefreshSession,
+} from "@/lib/auth-session";
+
 const API_BASE = "/api";
 const SELECTED_TENANT_STORAGE_KEY = "selected_tenant_id";
 const SELECTED_BUSINESS_STORAGE_KEY = "selected_business_id";
 
 let activeRefresh: Promise<boolean> | null = null;
 
+let applicationRuntime: Promise<boolean> | null = null;
+const REQUEST_TIMEOUT_MS = 45_000;
 function getSelectedTenantId(): string | null {
   if (typeof window === "undefined") return null;
   try {
@@ -37,6 +45,55 @@ function buildJsonHeaders(includeExecutionContext = true): HeadersInit {
     if (businessId) headers["X-Business-Id"] = businessId;
   }
   return headers;
+}
+
+function buildExecutionHeaders(includeExecutionContext = true): Record<string, string> {
+  const headers = { ...buildJsonHeaders(includeExecutionContext) } as Record<string, string>;
+  delete headers["Content-Type"];
+  return headers;
+}
+
+function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  return fetch(input, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+}
+
+async function isApplicationRuntime(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  const iosNavigator = navigator as Navigator & { standalone?: boolean };
+  if (isInstalledApplicationDisplay(
+    window.matchMedia?.("(display-mode: standalone)").matches ?? false,
+    iosNavigator.standalone === true,
+  )) return true;
+
+  applicationRuntime ??= fetchWithTimeout(
+    "/api/runtime",
+    { method: "GET", credentials: "same-origin" },
+    5_000,
+  )
+    .then(async (response) => response.ok
+      ? Boolean((await response.json() as { desktop?: boolean }).desktop)
+      : false)
+    .catch(() => false);
+  return applicationRuntime;
+}
+
+async function expireWebSession(): Promise<void> {
+  if (typeof window === "undefined" || await isApplicationRuntime()) return;
+  try {
+    localStorage.removeItem("auth-state");
+  } catch {
+    // Storage can be unavailable in hardened browsers; navigation still expires the shell.
+  }
+  window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+  const destination = buildLoginRedirect(
+    window.location.pathname,
+    window.location.search,
+  );
+  window.location.replace(destination);
 }
 
 class ApiClient {
@@ -82,11 +139,11 @@ class ApiClient {
 
   private async refreshSession(): Promise<boolean> {
     try {
-      const res = await fetch(`${API_BASE}/auth/refresh`, {
+      const res = await fetchWithTimeout(`${API_BASE}/auth/refresh`, {
         method: "POST",
         credentials: "include",
         headers: buildJsonHeaders(false),
-      });
+      }, 15_000);
       return res.ok;
     } catch {
       return false;
@@ -97,19 +154,12 @@ class ApiClient {
     url: string,
     options: RequestInit
   ): Promise<Response> {
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       ...options,
       credentials: "include",
     });
 
-    if (response.status !== 401) return response;
-
-    const isAuthPath =
-      url.includes("/auth/login") ||
-      url.includes("/auth/refresh") ||
-      url.includes("/auth/register") ||
-      url.includes("/auth/invitations/accept");
-    if (isAuthPath) return response;
+    if (!shouldRefreshSession(response.status, url)) return response;
 
     activeRefresh ??= this.refreshSession().finally(() => {
       activeRefresh = null;
@@ -117,23 +167,15 @@ class ApiClient {
     const refreshed = await activeRefresh;
 
     if (!refreshed) {
-      if (typeof window !== "undefined") {
-        try {
-          localStorage.removeItem("auth-state");
-        } catch {
-          /* ignore */
-        }
-        const destination = buildLoginRedirect(
-          window.location.pathname, window.location.search);
-        if (window.location.pathname + window.location.search !== destination)
-          window.location.assign(destination);
-      }
+      await expireWebSession();
       return response;
     }
-    return fetch(url, {
+    const retried = await fetchWithTimeout(url, {
       ...options,
       credentials: "include",
     });
+    if (retried.status === 401) await expireWebSession();
+    return retried;
   }
 
   async get<T>(
@@ -183,6 +225,15 @@ class ApiClient {
       method: "PATCH",
       headers: buildJsonHeaders(shouldIncludeExecutionContext(path)),
       body: body ? JSON.stringify(body) : undefined,
+    });
+    return this.handleResponse<T>(response);
+  }
+
+  async postForm<T>(path: string, body: FormData): Promise<T> {
+    const response = await this.fetchWithRetry(this.buildUrl(path), {
+      method: "POST",
+      headers: buildExecutionHeaders(shouldIncludeExecutionContext(path)),
+      body,
     });
     return this.handleResponse<T>(response);
   }

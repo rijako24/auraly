@@ -11,6 +11,7 @@ export interface ProductMerchandising {
   productCategoryId: string | null;
   productBrandId: string | null;
   baseUnitCode: string;
+  manageInventory: boolean;
   allowsFractionalSale: boolean;
   isWeighable: boolean;
   scale: ProductScale | null;

@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { PackageCheck, Search, Send, TrendingUp, XCircle } from "lucide-react";
 import { toast } from "sonner";
+import { PriceSegmentsWorkspace } from "@/components/pricing/price-segments-workspace";
 import { DataTable } from "@/components/tables/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -304,6 +305,7 @@ export default function PricingPage() {
   }, [canBulk, canPublish, canReview, publish.isPending, publishRows, rejectRows]);
 
   return <div className="space-y-6">
+    <PriceSegmentsWorkspace />
     <header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
       <div>
         <p className="text-sm font-medium text-primary">Productos</p>

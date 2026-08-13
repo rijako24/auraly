@@ -78,6 +78,7 @@
 :r .\Seeds\SeedSolorzanoWorkingHours.sql
 :r .\Seeds\SeedAgenticConfiguration.sql
 :r .\Seeds\SeedSolorzanoWhatsAppNumber.sql
+:r .\Migrations\AllowInformationalProductLinks.sql
 :r .\Seeds\SeedRadaConceptWhatsAppNumber.sql
 :r .\Seeds\SeedSolorzanoDomicilioAgent.sql
 :r .\Seeds\SeedCJDistribuciones.sql

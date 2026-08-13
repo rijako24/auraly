@@ -2225,6 +2225,7 @@
           "Auraly.Application.Authentication": "[1.0.0, )",
           "Auraly.Application.Authorization": "[1.0.0, )",
           "Auraly.Application.Catalog": "[1.0.0, )",
+          "Auraly.Application.Dispatching": "[1.0.0, )",
           "Auraly.Application.DocumentProcessing": "[1.0.0, )",
           "Auraly.Application.Fiscal": "[1.0.0, )",
           "Auraly.Application.Inventory": "[1.0.0, )",
@@ -2247,6 +2248,7 @@
           "Auraly.Contracts.Authentication": "[1.0.0, )",
           "Auraly.Contracts.Authorization": "[1.0.0, )",
           "Auraly.Contracts.Catalog": "[1.0.0, )",
+          "Auraly.Contracts.Dispatching": "[1.0.0, )",
           "Auraly.Contracts.Fiscal": "[1.0.0, )",
           "Auraly.Contracts.Inventory": "[1.0.0, )",
           "Auraly.Contracts.Orders": "[1.0.0, )",
@@ -2261,6 +2263,7 @@
           "Auraly.Contracts.Sales": "[1.0.0, )",
           "Auraly.Contracts.WorkSessions": "[1.0.0, )",
           "Auraly.Domain.Routes": "[1.0.0, )",
+          "Auraly.Infrastructure.Dispatching": "[1.0.0, )",
           "Auraly.Infrastructure.Fiscal": "[1.0.0, )",
           "Auraly.Infrastructure.Persistence": "[1.0.0, )",
           "Auraly.Infrastructure.Pricing": "[1.0.0, )",
@@ -2301,6 +2304,13 @@
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
           "Auraly.Contracts.Catalog": "[1.0.0, )",
           "Auraly.Domain.Catalog": "[1.0.0, )"
+        }
+      },
+      "auraly.application.dispatching": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Contracts.Dispatching": "[1.0.0, )"
         }
       },
       "auraly.application.documentprocessing": {
@@ -2482,6 +2492,9 @@
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
         }
       },
+      "auraly.contracts.dispatching": {
+        "type": "Project"
+      },
       "auraly.contracts.documentprocessing": {
         "type": "Project",
         "dependencies": {
@@ -2618,6 +2631,15 @@
       },
       "auraly.fiscal.ubl": {
         "type": "Project"
+      },
+      "auraly.infrastructure.dispatching": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.Application.Dispatching": "[1.0.0, )",
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Contracts.Dispatching": "[1.0.0, )",
+          "Microsoft.Data.SqlClient": "[5.2.2, )"
+        }
       },
       "auraly.infrastructure.fiscal": {
         "type": "Project",

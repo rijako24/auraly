@@ -2,9 +2,10 @@
 
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Barcode, CircleDollarSign, Link2, PackagePlus, Tags, Truck } from "lucide-react";
+import { Barcode, CircleDollarSign, Images, Link2, PackagePlus, Tags, Truck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ProductFormSection } from "@/components/products/product-create-workspace";
+import { ProductImageGallery } from "@/components/products/product-image-gallery";
 import { ProductInventoryByWarehouse } from "@/components/products/product-inventory-by-warehouse";
 import { useProductCategories } from "@/hooks/use-products";
 import { formatCurrency } from "@/lib/utils";
@@ -32,6 +33,10 @@ export function ProductOverview({ product }: { product: Product }) {
 
   if (isLoading) return <div className="space-y-5">{Array.from({ length: 4 }).map((_, index) => <div key={index} className="h-44 animate-pulse rounded-2xl bg-muted" />)}</div>;
 
+    <ProductFormSection id="product-view-images" icon={Images} title="Im?genes del producto" description="La portada y las dem?s vistas disponibles para reconocerlo.">
+      <ProductImageGallery productId={product.productId} readOnly />
+    </ProductFormSection>
+
   return <div className="space-y-5">
     {(detail.isError || merchandising.isError) && <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">No fue posible cargar toda la ficha del producto. Reintenta antes de editar.</div>}
 
@@ -58,12 +63,13 @@ export function ProductOverview({ product }: { product: Product }) {
         {(merch?.barcodes ?? []).length ? merch!.barcodes.map((code) => <Badge key={code.value} variant={code.isPrimary ? "default" : "secondary"}>{code.value}{code.isPrimary ? " - Principal" : ""}</Badge>) : <p className="text-sm text-muted-foreground">No tiene codigos de barras asignados.</p>}
       </div>
       <div className="mt-4 grid gap-3 md:grid-cols-3">
-        <Summary label="Manejo de inventario" value={info?.manageInventory ? "Controla saldo por bodega" : "No controla saldo"} />
+        <Summary label="Controla inventario" value={info?.manageInventory ? "Sí, controla saldo por bodega" : "No controla saldo"} />
         <Summary label="Cantidad de venta" value={merch?.allowsFractionalSale ? "Permite cantidades decimales" : "Solo cantidades completas"} />
         <Summary label="Balanza" value={merch?.isWeighable ? `Habilitada${merch.scale?.scaleCode ? ` - codigo ${merch.scale.scaleCode}` : ""}` : "No utiliza balanza"} />
       </div>
       {(merch?.link || (merch?.linkedProducts?.length ?? 0) > 0) && <div className="mt-5 rounded-xl border bg-muted/20 p-4">
-        <p className="mb-3 flex items-center gap-2 font-semibold"><Link2 className="h-4 w-4 text-primary" />Productos vinculados</p>
+        <p className="mb-1 flex items-center gap-2 font-semibold"><Link2 className="h-4 w-4 text-primary" />Familia de productos vinculados</p>
+        <p className="mb-3 text-xs text-muted-foreground">El bot reconoce estas opciones como el mismo modelo y consulta el inventario de cada producto cuando no comparten saldo.</p>
         {merch?.link && <p className="text-sm">Producto principal: <strong>{merch.link.parentProductName}</strong>. Inventario: {merch.link.sharesInventory ? `factor ${merch.link.inventoryFactor}` : "propio"}. Precio: {merch.link.sharesPrice ? `factor ${merch.link.priceFactor}` : "propio"}.</p>}
         {!merch?.link && <div className="space-y-2">{merch?.linkedProducts.map((linked) => <div key={linked.childProductId} className="rounded-lg border bg-background p-3 text-sm"><strong>{linked.childProductName}</strong><p className="text-xs text-muted-foreground">{linked.childProductCode} - inventario {linked.sharesInventory ? `x ${linked.inventoryFactor}` : "propio"} - precio {linked.sharesPrice ? `x ${linked.priceFactor}` : "propio"}</p></div>)}</div>}
       </div>}

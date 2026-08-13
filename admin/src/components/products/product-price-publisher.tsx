@@ -5,7 +5,6 @@ import { ArrowRight, CheckCircle2, CircleDollarSign, Send } from "lucide-react";
 import { toast } from "sonner";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useProductPricingContext, useSavePreparedProductPrice } from "@/hooks/use-pricing";
@@ -87,11 +86,10 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
   const resolvedSale = decimalOrNull(salePrice);
   const resolvedIncrement = decimalOrNull(increment);
   const savesBySalePrice = lastEdited === "salePrice" || resolvedCost === null;
-  const validMargin = resolvedMargin !== null && resolvedMargin < 100
-    && (savesBySalePrice || resolvedMargin >= 0);
-  const valid = resolvedSale !== null && resolvedSale >= 0
+  const validMargin = resolvedMargin !== null && resolvedMargin > 0 && resolvedMargin < 100;
+  const valid = resolvedSale !== null && resolvedSale > 0
     && validMargin
-    && (resolvedCost === null || resolvedCost >= 0)
+    && resolvedCost !== null && resolvedCost > 0
     && resolvedIncrement !== null && resolvedIncrement > 0;
   const salesTaxRate = effectiveSalesTaxRate;
   const netSalePrice = resolvedSale === null ? 0 : resolvedSale / (1 + salesTaxRate / 100);
@@ -169,7 +167,7 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
         <div className="grid flex-1 gap-4 sm:grid-cols-2">
           <div className="space-y-2">
             <Label htmlFor={`rounding-${productId}`}>Redondear a múltiplos de</Label>
-            <Input id={`rounding-${productId}`} inputMode="decimal" value={increment} onChange={(event) => { setIncrement(event.target.value); setDirty(true); }} />
+            <FormattedNumberInput id={`rounding-${productId}`} kind="currency" value={increment} onValueChange={(value) => { setIncrement(value?.toString() ?? ""); setDirty(true); }} />
           </div>
           <div className="space-y-2">
             <Label>Dirección del redondeo</Label>

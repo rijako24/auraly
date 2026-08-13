@@ -132,10 +132,10 @@ public sealed class SqlTenantProvisioningStore(
 
                 INSERT dbo.AppRoles(RoleId,TenantId,Name,NormalizedName,Description,IsActive,IsSystemRole,CreatedAt)
                 VALUES
-                  (@CashierRoleId,@TenantId,N'Cajero',N'CASHIER',N'Operación de venta cotidiana sin acciones sensibles.',1,1,@Now),
-                  (@SupervisorRoleId,@TenantId,N'Supervisor',N'SUPERVISOR',N'Supervisión operativa y autorización de acciones sensibles.',1,1,@Now),
-                  (@AdministrativeRoleId,@TenantId,N'Administrativo',N'ADMINISTRATIVE',N'Administración comercial y operativa del tenant.',1,1,@Now),
-                  (@AdminRoleId,@TenantId,N'Administrador',N'TENANTADMINISTRATOR',N'Administración completa de la empresa y todas sus sedes.',1,1,@Now);
+                  (@CashierRoleId,@TenantId,N'Cajero',N'CASHIER',N'Operación de venta cotidiana sin acciones sensibles.',1,0,@Now),
+                  (@SupervisorRoleId,@TenantId,N'Supervisor',N'SUPERVISOR',N'Supervisión operativa y autorización de acciones sensibles.',1,0,@Now),
+                  (@AdministrativeRoleId,@TenantId,N'Administrativo',N'ADMINISTRATIVE',N'Administración comercial y operativa del tenant.',1,0,@Now),
+                  (@AdminRoleId,@TenantId,N'Administrador',N'ADMINISTRATOR',N'Administración completa de la empresa y todas sus sedes.',1,1,@Now);
                 INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
                 SELECT NEWID(),@AdminRoleId,PermissionId,@Now
                 FROM dbo.Permissions
@@ -143,7 +143,10 @@ public sealed class SqlTenantProvisioningStore(
                 INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
                 SELECT NEWID(),@AdministrativeRoleId,PermissionId,@Now
                 FROM dbo.Permissions
-                WHERE Resource NOT LIKE N'tenants.%';
+                WHERE Resource NOT LIKE N'tenants.%'
+                  AND Resource NOT LIKE N'roles.%'
+                  AND Resource NOT LIKE N'users.%'
+                  AND Resource NOT LIKE N'audit[_]logs.%';
                 INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
                 SELECT NEWID(),@SupervisorRoleId,PermissionId,@Now
                 FROM dbo.Permissions

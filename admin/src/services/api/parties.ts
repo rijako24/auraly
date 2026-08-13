@@ -1,6 +1,7 @@
 import { apiClient } from "./client";
 
-export type PartyRole = "Customer" | "Supplier" | "Seller" | "Carrier";
+export type PartyRole = "Customer" | "Supplier" | "Seller" | "Carrier" | "Employee" | "User";
+export type CommercialPartyRole = Exclude<PartyRole, "Employee" | "User">;
 export interface PartyWorkspaceItem {
   partyId: string; partyType: "NaturalPerson" | "Organization";
   identificationTypeCode: string | null; identification: string | null; verificationDigit: string | null;
@@ -20,14 +21,17 @@ export interface CustomerRoleDetail { customerId: string; priceListId: string | 
 export interface SupplierRoleDetail { supplierId: string; isActive: boolean; }
 export interface SellerRoleDetail { sellerId: string; code: string; defaultCommissionPercent: number | null; commissionBasis: string; commissionTrigger: string; isActive: boolean; }
 export interface CarrierRoleDetail { carrierId: string; code: string; transportationMode: string; isActive: boolean; }
+export interface EmployeeRoleDetail { employeeId: string; isActive: boolean; }
+export interface UserRoleDetail { userId: string; username: string; email: string; isActive: boolean; }
 export interface PartyWorkspaceDetail {
   partyId: string; partyType: "NaturalPerson" | "Organization";
-  identificationCountryId: string; identificationTypeCode: string; identification: string;
+  identificationCountryId: string | null; identificationTypeCode: string | null; identification: string | null;
   verificationDigit: string | null; displayName: string; legalName: string | null;
   firstName: string | null; lastName: string | null; email: string | null; phone: string | null;
   roles: PartyRole[]; primarySite: PartySiteDetail | null;
   customer: CustomerRoleDetail | null; supplier: SupplierRoleDetail | null;
-  seller: SellerRoleDetail | null; carrier: CarrierRoleDetail | null; rowVersion: string;
+  seller: SellerRoleDetail | null; carrier: CarrierRoleDetail | null;
+  employee: EmployeeRoleDetail | null; user: UserRoleDetail | null; rowVersion: string;
 }
 export interface PartyIdentityLookupResult { exists: boolean; hasRequestedRole: boolean; party: PartyWorkspaceDetail | null; }
 export interface GeographyItem { countryId: string; code: string; name: string; isActive: boolean; }

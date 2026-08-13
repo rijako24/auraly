@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ArrowRight, BriefcaseBusiness, MapPin, Pencil, Plus, Search, Truck, UserRound, UsersRound } from "lucide-react";
 import { toast } from "sonner";
@@ -14,13 +15,14 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCities, useCountries, useCreateThirdParty, useCustomerPricingOptions, useDivisions, useParties, usePartyDetail, usePartyIdentity, useSetPartyStatus, useUpdateParty } from "@/hooks/use-parties";
-import type { PartyRole, PartyWorkspaceDetail, PartyWorkspaceItem } from "@/services/api/parties";
+import type { CommercialPartyRole, PartyRole, PartyWorkspaceDetail, PartyWorkspaceItem } from "@/services/api/parties";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
-const roleLabels: Record<PartyRole,string>={Customer:"Cliente",Supplier:"Proveedor",Seller:"Vendedor",Carrier:"Transportador"};
-const roleDescriptions: Record<PartyRole,string>={Customer:"Ventas, precios y cartera",Supplier:"Compras, costos y cuentas por pagar",Seller:"Comisiones, rutas y atención comercial",Carrier:"Despachos y transporte de mercancía"};
-const rolePermissions: Record<PartyRole,string>={Customer:"customers.create",Supplier:"suppliers.create",Seller:"sellers.create",Carrier:"carriers.create"};
+const roleLabels: Record<PartyRole,string>={Customer:"Cliente",Supplier:"Proveedor",Seller:"Vendedor",Carrier:"Transportador",Employee:"Empleado",User:"Usuario"};
+const commercialRoles: CommercialPartyRole[]=["Customer","Supplier","Seller","Carrier"];
+const roleDescriptions: Record<CommercialPartyRole,string>={Customer:"Ventas, precios y cartera",Supplier:"Compras, costos y cuentas por pagar",Seller:"Comisiones, rutas y atención comercial",Carrier:"Despachos y transporte de mercancía"};
+const rolePermissions: Record<CommercialPartyRole,string>={Customer:"customers.create",Supplier:"suppliers.create",Seller:"sellers.create",Carrier:"carriers.create"};
 const emptyThirdPartyForm={identificationTypeCode:"CC",identification:"",displayName:"",legalName:"",firstName:"",lastName:"",email:"",phone:"",siteName:"Principal",addressLine:"",neighborhood:"",code:"",commission:"",commissionBasis:"SaleAfterTax",commissionTrigger:"Sale",transportationMode:"Road"};
 
 export default function PartiesPage(){
@@ -48,11 +50,12 @@ export default function PartiesPage(){
 }
 
 function CreateThirdPartyDialog({open,permissions,initialParty,onClose}:{open:boolean;permissions:Set<string>;initialParty?:PartyWorkspaceDetail;onClose:()=>void}){
-  const businessId=useBusinessContextStore((s)=>s.selectedBusinessId); const [selectedRole,setSelectedRole]=useState<PartyRole>();
+  const businessId=useBusinessContextStore((s)=>s.selectedBusinessId); const [selectedRole,setSelectedRole]=useState<CommercialPartyRole>();
   const role=selectedRole; const create=useCreateThirdParty(role??"Customer"); const pricingOptions=useCustomerPricingOptions(open&&role==="Customer");
   const countries=useCountries(); const [partyType,setPartyType]=useState("NaturalPerson"),[country,setCountry]=useState(""),[division,setDivision]=useState(""),[city,setCity]=useState("");
   const divisions=useDivisions(country),cities=useCities(division); const [pricingMode,setPricingMode]=useState("Default"),[pricingId,setPricingId]=useState("");
   const [form,setForm]=useState(emptyThirdPartyForm);
+  const [fieldErrors,setFieldErrors]=useState<Record<string,string>>({});
   const [lookupIdentification,setLookupIdentification]=useState("");
   const hydratedLookup=useRef("");
   useEffect(()=>{
@@ -64,11 +67,11 @@ function CreateThirdPartyDialog({open,permissions,initialParty,onClose}:{open:bo
     if(!open||!initialParty)return;
     const site=initialParty.primarySite;
     setPartyType(initialParty.partyType);
-    setForm({...emptyThirdPartyForm,identificationTypeCode:initialParty.identificationTypeCode,identification:initialParty.identification,displayName:initialParty.displayName,legalName:initialParty.legalName??"",firstName:initialParty.firstName??"",lastName:initialParty.lastName??"",email:initialParty.email??"",phone:initialParty.phone??"",siteName:site?.name??"Principal",addressLine:site?.addressLine??"",neighborhood:site?.neighborhood??""});
-    setCountry(site?.countryId??initialParty.identificationCountryId);
+    setForm({...emptyThirdPartyForm,identificationTypeCode:initialParty.identificationTypeCode??"",identification:initialParty.identification??"",displayName:initialParty.displayName,legalName:initialParty.legalName??"",firstName:initialParty.firstName??"",lastName:initialParty.lastName??"",email:initialParty.email??"",phone:initialParty.phone??"",siteName:site?.name??"Principal",addressLine:site?.addressLine??"",neighborhood:site?.neighborhood??""});
+    setCountry(site?.countryId??initialParty.identificationCountryId??"");
     setDivision(site?.administrativeDivisionId??"");
     setCity(site?.cityId??"");
-    setLookupIdentification(initialParty.identification);
+    setLookupIdentification(initialParty.identification??"");
     hydratedLookup.current="";
   },[open,initialParty]);
   useEffect(()=>{
@@ -89,8 +92,8 @@ function CreateThirdPartyDialog({open,permissions,initialParty,onClose}:{open:bo
     hydratedLookup.current=lookupKey;
     setPartyType(found.partyType);
     setForm((current)=>({...current,
-      identificationTypeCode:found.identificationTypeCode,
-      identification:found.identification,
+      identificationTypeCode:found.identificationTypeCode??current.identificationTypeCode,
+      identification:found.identification??current.identification,
       displayName:found.displayName,
       legalName:found.legalName??"",
       firstName:found.firstName??"",
@@ -105,15 +108,24 @@ function CreateThirdPartyDialog({open,permissions,initialParty,onClose}:{open:bo
       setCountry(found.primarySite.countryId);
       setDivision(found.primarySite.administrativeDivisionId);
       setCity(found.primarySite.cityId);
-    }else setCountry(found.identificationCountryId);
+    }else setCountry(found.identificationCountryId??country);
   },[identity.data,role,country,form.identificationTypeCode,lookupIdentification]);
   const set=(key:keyof typeof form,value:string)=>setForm((x)=>({...x,[key]:value}));
-  const reset=()=>{setSelectedRole(undefined);setPartyType("NaturalPerson");setCountry("");setDivision("");setCity("");setForm(emptyThirdPartyForm);setLookupIdentification("");hydratedLookup.current="";setPricingMode("Default");setPricingId("");};
+  const reset=()=>{setFieldErrors({});setSelectedRole(undefined);setPartyType("NaturalPerson");setCountry("");setDivision("");setCity("");setForm(emptyThirdPartyForm);setLookupIdentification("");hydratedLookup.current="";setPricingMode("Default");setPricingId("");};
   const close=()=>{reset();onClose()};
   const submit=async()=>{
-    if(!role||!businessId)return; if(identity.data?.hasRequestedRole)return toast.error("Esta identidad ya está registrada como "+roleLabels[role].toLowerCase()+" en el negocio."); if(!country||!division||!city)return toast.error("Selecciona país, departamento y ciudad.");
-    if(!form.identification.trim()||!form.displayName.trim()||!form.addressLine.trim())return toast.error("Completa identificación, nombre y dirección.");
-    if(role==="Customer"&&pricingMode!=="Default"&&!pricingId)return toast.error("Selecciona la lista o el canal.");
+    if(!role||!businessId)return; if(identity.data?.hasRequestedRole)return toast.error("Esta identidad ya está registrada como "+roleLabels[role].toLowerCase()+" en el negocio.");
+    const nextErrors:Record<string,string>={};
+    if(!form.identificationTypeCode)nextErrors.identificationTypeCode="Este campo es requerido";
+    if(!form.identification.trim())nextErrors.identification="Este campo es requerido";
+    if(!form.displayName.trim())nextErrors.displayName="Este campo es requerido";
+    if(!country)nextErrors.country="Este campo es requerido";
+    if(!division)nextErrors.division="Este campo es requerido";
+    if(!city)nextErrors.city="Este campo es requerido";
+    if(!form.siteName.trim())nextErrors.siteName="Este campo es requerido";
+    if(!form.addressLine.trim())nextErrors.addressLine="Este campo es requerido";
+    if(role==="Customer"&&pricingMode!=="Default"&&!pricingId)nextErrors.pricingId="Este campo es requerido";
+    setFieldErrors(nextErrors);if(Object.keys(nextErrors).length>0)return;
     const request={operationId:crypto.randomUUID(),businessId,party:{partyType,identificationCountryId:country,identificationTypeCode:form.identificationTypeCode,identification:form.identification,verificationDigit:null,displayName:form.displayName,legalName:partyType==="Organization"?(form.legalName||form.displayName):null,firstName:partyType==="NaturalPerson"?form.firstName:null,lastName:partyType==="NaturalPerson"?form.lastName:null,email:form.email||null,phone:form.phone||null},primarySite:{code:"PRINCIPAL",name:form.siteName,countryId:country,administrativeDivisionId:division,cityId:city,addressLine:form.addressLine,neighborhood:form.neighborhood||null,postalCode:null,email:form.email||null,phone:form.phone||null,isPrimary:true},pricing:role==="Customer"?{priceListId:pricingMode==="List"?pricingId:null,priceChannelId:pricingMode==="Channel"?pricingId:null}:undefined,code:form.code,defaultCommissionPercent:form.commission?Number(form.commission):null,commissionBasis:form.commissionBasis,commissionTrigger:form.commissionTrigger,transportationMode:form.transportationMode};
     try{await create.mutateAsync(request);toast.success(`${roleLabels[role]} creado y disponible en el listado`);close()}catch(error){toast.error(error instanceof Error?error.message:"No fue posible crear el tercero.")}
   };
@@ -124,7 +136,7 @@ function CreateThirdPartyDialog({open,permissions,initialParty,onClose}:{open:bo
         <h3 className="mt-2 text-xl font-semibold">¿Qué relación tendrá con el negocio?</h3>
         <p className="mt-1 max-w-2xl text-sm text-slate-300">Elige un rol para mostrar únicamente los datos que realmente necesita. Después podrás sumar otros roles sin duplicar la identidad.</p>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2">{(Object.keys(roleLabels) as PartyRole[]).map((item)=>{
+      <div className="grid gap-4 sm:grid-cols-2">{commercialRoles.map((item)=>{
         const disabled=!permissions.has(rolePermissions[item])||Boolean(initialParty?.roles.includes(item));
         const Icon=item==="Carrier"?Truck:item==="Customer"?UserRound:BriefcaseBusiness;
         return <button key={item} type="button" disabled={disabled} onClick={()=>setSelectedRole(item)} className="group relative min-h-32 overflow-hidden rounded-2xl border bg-card p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-teal-400 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0">
@@ -138,15 +150,15 @@ function CreateThirdPartyDialog({open,permissions,initialParty,onClose}:{open:bo
       </div>
       <IdentityNotice role={role} lookup={identity}/><div className="grid gap-4 md:grid-cols-2">
       <FormSectionTitle title="Identidad" description="Datos compartidos por todos los roles comerciales." /><Field label="Tipo de tercero"><Select value={partyType} onValueChange={setPartyType}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="NaturalPerson">Persona natural</SelectItem><SelectItem value="Organization">Organización</SelectItem></SelectContent></Select></Field>
-      <Field label="Tipo de identificación"><Select value={form.identificationTypeCode} onValueChange={(v)=>set("identificationTypeCode",v)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="CC">Cédula</SelectItem><SelectItem value="NIT">NIT</SelectItem><SelectItem value="CE">Cédula de extranjería</SelectItem><SelectItem value="PP">Pasaporte</SelectItem></SelectContent></Select></Field>
-      <Field label="Identificación"><Input value={form.identification} onChange={(e)=>set("identification",e.target.value)} onBlur={()=>setLookupIdentification(form.identification.trim())}/></Field><Field label="Nombre visible"><Input value={form.displayName} onChange={(e)=>set("displayName",e.target.value)}/></Field>
+      <Field label="Tipo de identificación" error={fieldErrors.identificationTypeCode}><Select value={form.identificationTypeCode} onValueChange={(v)=>set("identificationTypeCode",v)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="CC">Cédula</SelectItem><SelectItem value="NIT">NIT</SelectItem><SelectItem value="CE">Cédula de extranjería</SelectItem><SelectItem value="PP">Pasaporte</SelectItem></SelectContent></Select></Field>
+      <Field label="Identificación" error={fieldErrors.identification}><Input aria-invalid={Boolean(fieldErrors.identification)} value={form.identification} onChange={(e)=>set("identification",e.target.value)} onBlur={()=>setLookupIdentification(form.identification.trim())}/></Field><Field label="Nombre visible" error={fieldErrors.displayName}><Input aria-invalid={Boolean(fieldErrors.displayName)} value={form.displayName} onChange={(e)=>set("displayName",e.target.value)}/></Field>
       {partyType==="Organization"?<Field label="Razón social"><Input value={form.legalName} onChange={(e)=>set("legalName",e.target.value)}/></Field>:<><Field label="Nombres"><Input value={form.firstName} onChange={(e)=>set("firstName",e.target.value)}/></Field><Field label="Apellidos"><Input value={form.lastName} onChange={(e)=>set("lastName",e.target.value)}/></Field></>}
       <Field label="Teléfono"><Input value={form.phone} onChange={(e)=>set("phone",e.target.value)}/></Field><Field label="Correo"><Input type="email" value={form.email} onChange={(e)=>set("email",e.target.value)}/></Field>
-      <FormSectionTitle title="Ubicación principal" description="País, departamento y ciudad se seleccionan; el barrio se escribe libremente." />      <Field label="País"><Select value={country} onValueChange={(v)=>{setCountry(v);setDivision("");setCity("")}} disabled={countries.isLoading}><SelectTrigger><SelectValue placeholder={countries.isLoading?"Cargando...":"Selecciona"}/></SelectTrigger><SelectContent>{countries.data?.filter(x=>x.isActive).map(x=><SelectItem key={x.countryId} value={x.countryId}>{x.name}</SelectItem>)}</SelectContent></Select></Field>
-      <Field label="Departamento"><Select value={division} onValueChange={(v)=>{setDivision(v);setCity("")}} disabled={!country||divisions.isLoading}><SelectTrigger><SelectValue placeholder={!country?"Selecciona primero el país":divisions.isLoading?"Cargando...":"Selecciona"}/></SelectTrigger><SelectContent>{divisions.data?.filter(x=>x.isActive).map(x=><SelectItem key={x.administrativeDivisionId} value={x.administrativeDivisionId}>{x.name}</SelectItem>)}</SelectContent></Select></Field>
-      <Field label="Ciudad"><Select value={city} onValueChange={setCity} disabled={!division||cities.isLoading}><SelectTrigger><SelectValue placeholder={!division?"Selecciona primero el departamento":cities.isLoading?"Cargando...":"Selecciona"}/></SelectTrigger><SelectContent>{cities.data?.filter(x=>x.isActive).map(x=><SelectItem key={x.cityId} value={x.cityId}>{x.name}</SelectItem>)}</SelectContent></Select></Field>
-      <Field label="Nombre de la sede"><Input value={form.siteName} onChange={(e)=>set("siteName",e.target.value)}/></Field><Field label="Dirección"><Input value={form.addressLine} onChange={(e)=>set("addressLine",e.target.value)}/></Field><Field label="Barrio"><Input value={form.neighborhood} onChange={(e)=>set("neighborhood",e.target.value)}/></Field>
-      <FormSectionTitle title={`Configuración de ${roleLabels[role].toLowerCase()}`} description={roleDescriptions[role]} />{role==="Customer"&&<><Field label="Precio asignado"><Select value={pricingMode} onValueChange={(v)=>{setPricingMode(v);setPricingId("")}}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="Default">Precio predeterminado del negocio</SelectItem><SelectItem value="List">Lista de precios</SelectItem><SelectItem value="Channel">Canal de precios</SelectItem></SelectContent></Select></Field>{pricingMode!=="Default"&&<Field label={pricingMode==="List"?"Lista":"Canal"}><Select value={pricingId} onValueChange={setPricingId} disabled={pricingOptions.isLoading}><SelectTrigger><SelectValue placeholder={pricingOptions.isLoading?"Cargando...":"Selecciona"}/></SelectTrigger><SelectContent>{(pricingMode==="List"?pricingOptions.data?.priceLists:pricingOptions.data?.priceChannels)?.map(x=><SelectItem key={x.id} value={x.id}>{x.name} ({x.code})</SelectItem>)}</SelectContent></Select></Field>}</>}
+      <FormSectionTitle title="Ubicación principal" description="País, departamento y ciudad se seleccionan; el barrio se escribe libremente." />      <Field label="País" error={fieldErrors.country}><Select value={country} onValueChange={(v)=>{setCountry(v);setDivision("");setCity("")}} disabled={countries.isLoading}><SelectTrigger><SelectValue placeholder={countries.isLoading?"Cargando...":"Selecciona"}/></SelectTrigger><SelectContent>{countries.data?.filter(x=>x.isActive).map(x=><SelectItem key={x.countryId} value={x.countryId}>{x.name}</SelectItem>)}</SelectContent></Select></Field>
+      <Field label="Departamento" error={fieldErrors.division}><Select value={division} onValueChange={(v)=>{setDivision(v);setCity("")}} disabled={!country||divisions.isLoading}><SelectTrigger><SelectValue placeholder={!country?"Selecciona primero el país":divisions.isLoading?"Cargando...":"Selecciona"}/></SelectTrigger><SelectContent>{divisions.data?.filter(x=>x.isActive).map(x=><SelectItem key={x.administrativeDivisionId} value={x.administrativeDivisionId}>{x.name}</SelectItem>)}</SelectContent></Select></Field>
+      <Field label="Ciudad" error={fieldErrors.city}><Select value={city} onValueChange={setCity} disabled={!division||cities.isLoading}><SelectTrigger><SelectValue placeholder={!division?"Selecciona primero el departamento":cities.isLoading?"Cargando...":"Selecciona"}/></SelectTrigger><SelectContent>{cities.data?.filter(x=>x.isActive).map(x=><SelectItem key={x.cityId} value={x.cityId}>{x.name}</SelectItem>)}</SelectContent></Select></Field>
+      <Field label="Nombre de la sede" error={fieldErrors.siteName}><Input aria-invalid={Boolean(fieldErrors.siteName)} value={form.siteName} onChange={(e)=>set("siteName",e.target.value)}/></Field><Field label="Dirección" error={fieldErrors.addressLine}><Input aria-invalid={Boolean(fieldErrors.addressLine)} value={form.addressLine} onChange={(e)=>set("addressLine",e.target.value)}/></Field><Field label="Barrio"><Input value={form.neighborhood} onChange={(e)=>set("neighborhood",e.target.value)}/></Field>
+      <FormSectionTitle title={`Configuración de ${roleLabels[role].toLowerCase()}`} description={roleDescriptions[role]} />{role==="Customer"&&<><Field label="Precio asignado"><Select value={pricingMode} onValueChange={(v)=>{setPricingMode(v);setPricingId("")}}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="Default">Precio predeterminado del negocio</SelectItem><SelectItem value="List">Lista de precios</SelectItem><SelectItem value="Channel">Canal de precios</SelectItem></SelectContent></Select></Field>{pricingMode!=="Default"&&<Field label={pricingMode==="List"?"Lista":"Canal"} error={fieldErrors.pricingId}><Select value={pricingId} onValueChange={setPricingId} disabled={pricingOptions.isLoading}><SelectTrigger><SelectValue placeholder={pricingOptions.isLoading?"Cargando...":"Selecciona"}/></SelectTrigger><SelectContent>{(pricingMode==="List"?pricingOptions.data?.priceLists:pricingOptions.data?.priceChannels)?.map(x=><SelectItem key={x.id} value={x.id}>{x.name} ({x.code})</SelectItem>)}</SelectContent></Select></Field>}</>}
       {role==="Seller"&&<><Field label="Comisión %"><Input type="number" min="0" max="100" value={form.commission} onChange={(e)=>set("commission",e.target.value)}/></Field><Field label="Base de comisión"><Select value={form.commissionBasis} onValueChange={(v)=>set("commissionBasis",v)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="SaleBeforeTax">Venta antes de IVA</SelectItem><SelectItem value="SaleAfterTax">Venta después de IVA</SelectItem><SelectItem value="GrossMargin">Margen bruto</SelectItem></SelectContent></Select></Field><Field label="Causación"><Select value={form.commissionTrigger} onValueChange={(v)=>set("commissionTrigger",v)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="Sale">Al vender</SelectItem><SelectItem value="Collection">Al recaudar</SelectItem></SelectContent></Select></Field></>}
       {role==="Carrier"&&<Field label="Modalidad de transporte"><Select value={form.transportationMode} onValueChange={(v)=>set("transportationMode",v)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="Road">Terrestre</SelectItem><SelectItem value="Air">Aérea</SelectItem><SelectItem value="Maritime">Marítima</SelectItem><SelectItem value="Other">Otra</SelectItem></SelectContent></Select></Field>}
     </div></div>}
@@ -170,6 +182,7 @@ function PartyDetailDialog({target,onClose,onAddRole}:{target?:{partyId:string;e
   return <Dialog open onOpenChange={(value)=>!value&&onClose()}><DialogContent className="max-h-[92vh] max-w-5xl overflow-y-auto p-0"><div className="border-b bg-gradient-to-r from-slate-950 to-teal-950 px-6 py-5 text-white"><DialogHeader><DialogTitle className="text-white">{detail?.displayName??"Detalle del tercero"}</DialogTitle><DialogDescription className="text-slate-300">Una identidad compartida y una configuración independiente para cada rol.</DialogDescription></DialogHeader></div><div className="space-y-5 p-6">
     {detailQuery.isLoading?<div className="py-12 text-center text-muted-foreground">Cargando información...</div>:detailQuery.isError||!detail?<div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-destructive">No fue posible cargar el tercero.</div>:<Tabs id="party-identity" defaultValue="general" className="scroll-mt-5 space-y-5">
       <TabsList id="party-roles" className="h-auto scroll-mt-5 flex-wrap justify-start"><TabsTrigger value="general">Identidad y ubicación</TabsTrigger>{detail.roles.map((role)=><TabsTrigger key={role} value={role}>{roleLabels[role]}</TabsTrigger>)}</TabsList>
+      <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" asChild><Link href={`/dashboard/employees/new?partyId=${detail.partyId}&name=${encodeURIComponent(detail.displayName)}`}>Configurar como empleado</Link></Button><Button size="sm" variant="outline" asChild><Link href={`/dashboard/users/new?partyId=${detail.partyId}&name=${encodeURIComponent(detail.displayName)}&email=${encodeURIComponent(detail.email??"")}&phone=${encodeURIComponent(detail.phone??"")}`}>Crear acceso de usuario</Link></Button></div>
       <TabsContent value="general" className="space-y-5">
         <section className="rounded-2xl border bg-muted/15 p-5"><h3 className="mb-4 font-semibold">Identidad compartida</h3><div className="grid gap-4 md:grid-cols-2">{editing?<><Field label="Nombre visible"><Input value={name} onChange={(e)=>setName(e.target.value)}/></Field>{detail.partyType==="Organization"?<Field label="Razón social"><Input value={legalName} onChange={(e)=>setLegalName(e.target.value)}/></Field>:<><Field label="Nombres"><Input value={firstName} onChange={(e)=>setFirstName(e.target.value)}/></Field><Field label="Apellidos"><Input value={lastName} onChange={(e)=>setLastName(e.target.value)}/></Field></>}<Field label="Correo"><Input value={email} onChange={(e)=>setEmail(e.target.value)}/></Field><Field label="Teléfono"><Input value={phone} onChange={(e)=>setPhone(e.target.value)}/></Field></>:<><DetailValue label="Nombre" value={detail.displayName}/><DetailValue label="Identificación" value={`${detail.identificationTypeCode??""} ${detail.identification??"Sin documento"}`}/><DetailValue label="Correo" value={detail.email??"Sin correo"}/><DetailValue label="Teléfono" value={detail.phone??"Sin teléfono"}/></>}</div></section>
         <section className="rounded-2xl border p-5"><h3 className="font-semibold">Ubicación principal</h3>{detail.primarySite?<div className="mt-3 grid gap-3 text-sm md:grid-cols-2"><DetailValue label="Nombre" value={detail.primarySite.name}/><DetailValue label="Código" value={detail.primarySite.code}/><DetailValue label="Dirección" value={detail.primarySite.addressLine}/><DetailValue label="Barrio" value={detail.primarySite.neighborhood??"Sin barrio"}/></div>:<p className="mt-2 text-sm text-muted-foreground">No tiene una sede registrada.</p>}</section>
@@ -186,5 +199,5 @@ function PartyDetailDialog({target,onClose,onAddRole}:{target?:{partyId:string;e
 function RoleCard({title,rows}:{title:string;rows:[string,string][]}){return <section className="rounded-2xl border p-5"><h3 className="text-lg font-semibold">{title}</h3><div className="mt-4 grid gap-4 md:grid-cols-2">{rows.map(([label,value])=><DetailValue key={label} label={label} value={value}/>)}</div></section>}
 function DetailValue({label,value}:{label:string;value:string}){return <div><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-1 break-words font-medium">{value}</p></div>}
 function FormSectionTitle({title,description}:{title:string;description:string}){return <div className="col-span-full rounded-xl border bg-muted/30 px-4 py-3"><h3 className="font-semibold">{title}</h3><p className="text-sm text-muted-foreground">{description}</p></div>}
-function Field({label,children}:{label:string;children:React.ReactNode}){return <div className="space-y-2"><Label>{label}</Label>{children}</div>}
+function Field({label,children,error}:{label:string;children:React.ReactNode;error?:string}){return <div className={`space-y-2 rounded-lg ${error?"ring-1 ring-destructive/40 p-2 [&_input]:border-destructive [&_button]:border-destructive":""}`}><Label>{label}{error&&<span className="text-destructive"> *</span>}</Label>{children}{error&&<p className="text-sm text-destructive">{error}</p>}</div>}
 function Summary({icon:Icon,label,value}:{icon:typeof UserRound;label:string;value:string}){return <Card><CardContent className="flex items-center gap-3 p-4"><span className="rounded-xl bg-primary/10 p-2 text-primary"><Icon className="h-5 w-5"/></span><div><p className="text-xs text-muted-foreground">{label}</p><p className="font-semibold">{value}</p></div></CardContent></Card>}

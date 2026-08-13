@@ -19,7 +19,9 @@ public record ProductDto(
     bool IsActive,
     DateTime CreatedAt,
     DateTime? UpdatedAt,
-    DateTime? LastSyncedAt);
+    DateTime? LastSyncedAt,
+    string? ProductCode = null,
+    string? AreaName = null);
 
 public record UpdateProductStatusRequest(bool IsActive);
 public record UpdateProductRequest(

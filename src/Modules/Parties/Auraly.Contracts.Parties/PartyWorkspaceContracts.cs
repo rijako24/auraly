@@ -105,12 +105,20 @@ public sealed record CarrierRoleDetail(
     string TransportationMode,
     bool IsActive);
 
+public sealed record EmployeeRoleDetail(Guid EmployeeId, bool IsActive);
+
+public sealed record UserRoleDetail(
+    Guid UserId,
+    string Username,
+    string Email,
+    bool IsActive);
+
 public sealed record PartyWorkspaceDetail(
     Guid PartyId,
     string PartyType,
-    Guid IdentificationCountryId,
-    string IdentificationTypeCode,
-    string Identification,
+    Guid? IdentificationCountryId,
+    string? IdentificationTypeCode,
+    string? Identification,
     string? VerificationDigit,
     string DisplayName,
     string? LegalName,
@@ -124,6 +132,8 @@ public sealed record PartyWorkspaceDetail(
     SupplierRoleDetail? Supplier,
     SellerRoleDetail? Seller,
     CarrierRoleDetail? Carrier,
+    EmployeeRoleDetail? Employee,
+    UserRoleDetail? User,
     string RowVersion);
 
 public sealed record PartyIdentityLookupResult(

@@ -38,7 +38,7 @@ public sealed class CatalogService(
         Require(user, CatalogPermissionCodes.Create);
         RequireCapabilities(user, request);
         ValidateScope(user, request);
-        Validate(request);
+        Validate(request, requireCompletePricing: true);
         var product = await store.CreateAsync(
             user, ids.NewId(), request, timeProvider.GetUtcNow(), ct);
         await synchronization.DispatchPendingAsync(
@@ -55,7 +55,7 @@ public sealed class CatalogService(
         Require(user, CatalogPermissionCodes.Update);
         RequireCapabilities(user, request);
         ValidateScope(user, request);
-        Validate(request);
+        Validate(request, requireCompletePricing: false);
         var product = await store.UpdateAsync(
             user, productId, request, timeProvider.GetUtcNow(), ct);
         await synchronization.DispatchPendingAsync(
@@ -140,7 +140,8 @@ public sealed class CatalogService(
     private static void RequireCapabilities(CatalogUserIdentity user, SaveProductRequest request)
     {
         if (request.Prices.Count > 0) Require(user, CatalogPermissionCodes.ManagePrices);
-        if (request.Suppliers.Count > 0) Require(user, CatalogPermissionCodes.ManageCosts);
+        if (request.Suppliers.Count > 0 || request.Prices.Any(price => price.CostBasisAmount is not null))
+            Require(user, CatalogPermissionCodes.ManageCosts);
     }
 
 
@@ -151,7 +152,7 @@ public sealed class CatalogService(
         if (!user.Permissions.Contains(permission)) throw new CatalogForbiddenException($"Permission '{permission}' is required.");
     }
 
-    private static void Validate(SaveProductRequest request)
+    private static void Validate(SaveProductRequest request, bool requireCompletePricing)
     {
         if (string.IsNullOrWhiteSpace(request.Name) ||
             string.IsNullOrWhiteSpace(request.BaseUnitCode) || request.TaxProfileId == Guid.Empty)
@@ -160,9 +161,18 @@ public sealed class CatalogService(
             throw new CatalogValidationException("The purchase VAT treatment is invalid.");
         if (request.IsWeighable != (request.Scale is not null))
             throw new CatalogValidationException("A weighable product requires exactly one scale configuration.");
-        if (request.Prices.Count != 1 || request.Prices.Any(price => price.Amount < 0))
+        if (request.Prices.Count != 1 || request.Prices.Any(price => price.Amount <= 0))
             throw new CatalogValidationException(
-                "Every sellable product requires exactly one non-negative base price for its business.");
+                "Every sellable product requires exactly one positive base price for its business.");
+        if (requireCompletePricing && request.Prices.Any(price =>
+                price.CostBasisAmount is null or <= 0 ||
+                price.TargetMarginPercent is null or <= 0 or >= 100))
+            throw new CatalogValidationException(
+                "Every new product requires a positive cost and a margin greater than zero and less than 100 percent.");
+        if (request.Prices.Any(price =>
+                price.CostBasisAmount is < 0 ||
+                price.TargetMarginPercent is < 0 or >= 100))
+            throw new CatalogValidationException("Product cost and margin are invalid.");
         if (request.Suppliers.Any(supplier => supplier.BaseUnitCost < 0))
             throw new CatalogValidationException("Supplier costs cannot be negative.");
         if (request.Suppliers.Any(supplier => string.IsNullOrWhiteSpace(supplier.PurchasePresentationName)
@@ -176,8 +186,8 @@ public sealed class CatalogService(
             throw new CatalogValidationException("The scale barcode positions are invalid.");
         if (request.IsWeighable && !request.AllowsFractionalSale)
             throw new CatalogValidationException("A weighable product must allow fractional quantities.");
-        if (request.Link is { SharesInventory: false, SharesPrice: false })
-            throw new CatalogValidationException("A linked product must share inventory, price or both.");
+        if (request.Link is { SharesInventory: true } && request.ManageInventory)
+            throw new CatalogValidationException("A product that shares its parent's inventory cannot control a separate inventory.");
         if (request.Link is { SharesInventory: true, InventoryFactor: null or <= 0 })
             throw new CatalogValidationException("The linked inventory factor must be positive.");
         if (request.Link is { SharesPrice: true, PriceFactor: null or <= 0 })

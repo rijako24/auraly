@@ -66,6 +66,7 @@ public class UserService : IUserService
             UserId = Guid.NewGuid(),
             TenantId = tenantId,
             Username = request.Username,
+            PartyId = request.PartyId,
             NormalizedUsername = normalizedUsername,
             Email = request.Email,
             NormalizedEmail = normalizedEmail,

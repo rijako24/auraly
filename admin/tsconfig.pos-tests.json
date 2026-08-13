@@ -29,6 +29,8 @@
                     "src/lib/backend-request-url.ts",
                     "src/lib/backend-request-url.test.ts",
                     "src/lib/login-redirect.ts",
+                    "src/lib/auth-session.ts",
+                    "src/lib/auth-session.test.ts",
                     "src/lib/login-redirect.test.ts",
                     "src/lib/execution-context-selection.ts",
                     "src/lib/execution-context-selection.test.ts",
@@ -42,6 +44,8 @@
                     "src/lib/pricing-publication-draft.test.ts",
                     "src/lib/goods-receipt-calculator.ts",
                     "src/lib/goods-receipt-calculator.test.ts",
+                    "src/lib/formatted-decimal-input.ts",
+                    "src/lib/formatted-decimal-input.test.ts",
                     "src/lib/fiscal-resolution-form-state.ts",
                     "src/lib/fiscal-resolution-form-state.test.ts"
                 ]

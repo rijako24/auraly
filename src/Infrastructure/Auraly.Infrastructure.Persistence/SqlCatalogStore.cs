@@ -25,13 +25,13 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         CatalogUserIdentity user, Guid productId, SaveProductRequest request,
         DateTimeOffset now, bool create, CancellationToken ct)
     {
-        if (create)
-            request = request with { ProductCode = InternalCode("PRD", productId) };
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         try
         {
+            if (create)
+                request = request with { ProductCode = await NextProductCodeAsync(connection, transaction, user.BusinessId, ct) };
             if (!create)
                 await EnsurePriceUnchangedAsync(connection, transaction, user.BusinessId, productId, request.Prices.Single().Amount, ct);
             await ExecuteAsync(connection, transaction, """
@@ -67,7 +67,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                      PurchaseTaxProfileId,PurchaseTaxTreatment,ManageStock,AllowsFractionalSale,IsWeighable,IsActive,Source,UnitPrice,Currency,CreatedAt,UpdatedAt,CreatedByUserId,UpdatedByUserId)
                   VALUES
                     (@ProductId,@BusinessId,@ProductCode,@Reference,@Reference,@Name,@Description,@ProductCategoryId,(SELECT Name FROM dbo.ProductCategories WHERE ProductCategoryId=@ProductCategoryId),@ProductBrandId,@BaseUnitCode,@TaxProfileId,
-                     @PurchaseTaxProfileId,@PurchaseTaxTreatment,@ManageInventory,@AllowsFractionalSale,@IsWeighable,1,0,0,N'COP',@Now,NULL,@UserId,NULL);
+                     @PurchaseTaxProfileId,@PurchaseTaxTreatment,@ManageInventory,@AllowsFractionalSale,@IsWeighable,1,0,@InitialPrice,N'COP',@Now,NULL,@UserId,NULL);
                   """
                 : """
                   UPDATE dbo.Products SET ProductCode=@ProductCode,Reference=@Reference,Sku=@Reference,Name=@Name,
@@ -115,10 +115,14 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             {
                 await ExecuteAsync(connection, transaction, """
                     INSERT dbo.ProductPrices
-                      (ProductPriceId,BusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
-                    VALUES (@Id,@BusinessId,@ProductId,0,@Amount,@Currency,@Now,1,@Now);
+                      (ProductPriceId,BusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,CostBasisType,
+                       CostBasisAmount,TargetMarginPercent,EffectiveMarginPercent,InputMode,RoundingIncrement,
+                       RoundingMode,PublishedAt,ValidFrom,IsActive,CreatedAt)
+                    VALUES (@Id,@BusinessId,@ProductId,@Amount,@Amount,@Currency,N'Manual',@CostBasis,
+                       @TargetMargin,@TargetMargin,N'Margin',1,N'Nearest',@Now,@Now,1,@Now);
                     """, [P("@Id", ids.NewId()), P("@BusinessId", user.BusinessId), P("@ProductId", productId),
-                    P("@Amount", price.Amount), P("@Currency", price.CurrencyCode.ToUpperInvariant()), P("@Now", now)], ct);
+                    P("@Amount", price.Amount), P("@CostBasis", price.CostBasisAmount), P("@TargetMargin", price.TargetMarginPercent),
+                    P("@Currency", price.CurrencyCode.ToUpperInvariant()), P("@Now", now)], ct);
             }
             }
 
@@ -433,7 +437,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
     private const string ProductSelect = """
         SELECT p.ProductId,p.BusinessId,COALESCE(p.ProductCode,p.Sku),p.Reference,p.Name,p.IsActive,
           (SELECT Barcode AS [Value] FROM dbo.ProductBarcodes b WHERE b.ProductId=p.ProductId AND b.IsActive=1 FOR JSON PATH),
-          (SELECT Amount,CurrencyCode FROM dbo.ProductPrices x WHERE x.ProductId=p.ProductId AND x.IsActive=1 FOR JSON PATH),
+          (SELECT Amount,CurrencyCode,CostBasisAmount,TargetMarginPercent FROM dbo.ProductPrices x WHERE x.ProductId=p.ProductId AND x.IsActive=1 FOR JSON PATH),
           (SELECT s.SupplierId,s.Identification,s.Name,sp.SupplierProductCode,c.BaseUnitCost,sp.IsPrimary,sp.PurchasePresentationName,sp.UnitsPerPresentation
              FROM dbo.SupplierProducts sp JOIN dbo.Suppliers s ON s.SupplierId=sp.SupplierId
              JOIN dbo.SupplierCostAgreements c ON c.SupplierProductId=sp.SupplierProductId AND c.IsActive=1
@@ -552,10 +556,24 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                 "Sale prices must be changed from Products > Prices and profitability.");
     }
 
-    private static string InternalCode(string prefix, Guid id) =>
-        $"{prefix}-{id.ToString("N")[^12..].ToUpperInvariant()}";
+    private static async Task<string> NextProductCodeAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid businessId, CancellationToken ct)
+    {
+        const string sql = """
+            DECLARE @Next INT;
+            SELECT @Next=COALESCE(MAX(TRY_CONVERT(INT,SUBSTRING(ProductCode,5,10))),0)+1
+            FROM dbo.Products WITH(UPDLOCK,HOLDLOCK)
+            WHERE BusinessId=@BusinessId AND ProductCode LIKE N'PRD-%';
+            SELECT @Next;
+            """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        var next = Convert.ToInt32(await command.ExecuteScalarAsync(ct));
+        return $"PRD-{next:D6}";
+    }
     private static SqlParameter[] ProductParameters(CatalogUserIdentity user, Guid id, SaveProductRequest r, DateTimeOffset now) =>
         [P("@ProductId", id), P("@TenantId", user.TenantId), P("@BusinessId", user.BusinessId), P("@ProductCode", r.ProductCode.Trim()),
+         P("@InitialPrice", r.Prices.Single().Amount),
          P("@Reference", r.Reference), P("@Name", r.Name.Trim()), P("@Description", r.Description), P("@BaseUnitCode", r.BaseUnitCode.Trim()),
          P("@TaxProfileId", r.TaxProfileId), P("@PurchaseTaxProfileId", r.PurchaseTaxProfileId == Guid.Empty ? r.TaxProfileId : r.PurchaseTaxProfileId),
          P("@PurchaseTaxTreatment", r.PurchaseTaxTreatment), P("@ManageInventory", r.ManageInventory), P("@IsWeighable", r.IsWeighable),
