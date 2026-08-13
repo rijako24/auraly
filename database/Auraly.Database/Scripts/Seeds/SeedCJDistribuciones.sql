@@ -164,7 +164,9 @@ WHEN MATCHED THEN
         CategoryName = source.CategoryName,
         UnitPrice = source.UnitPrice,
         Currency = source.Currency,
-        ManageStock = 0,
+        -- Enable inventory for untouched demo products without undoing a later
+        -- decision made from the product editor.
+        ManageStock = CASE WHEN target.UpdatedByUserId IS NULL THEN 1 ELSE target.ManageStock END,
         StockQuantity = source.StockQuantity,
         IsActive = source.IsActive,
         RawPayloadJson = NULL,
@@ -174,7 +176,7 @@ WHEN NOT MATCHED THEN
             [Description], CategoryName, UnitPrice, Currency, ManageStock, StockQuantity,
             IsActive, RawPayloadJson, LastSyncedAt, CreatedAt)
     VALUES (source.ProductId, @BusinessId, @MantisCommerceConnectionId, NULL, 0, source.Sku, source.[Name],
-            source.[Description], source.CategoryName, source.UnitPrice, source.Currency, 0, source.StockQuantity,
+            source.[Description], source.CategoryName, source.UnitPrice, source.Currency, 1, source.StockQuantity,
             source.IsActive, NULL, NULL, GETUTCDATE());
 
 DELETE FROM dbo.Products
