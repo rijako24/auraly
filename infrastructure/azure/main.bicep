@@ -636,6 +636,14 @@ resource staticAdmin 'Microsoft.Web/staticSites@2023-12-01' = {
   }
 }
 
+resource staticAdminSettings 'Microsoft.Web/staticSites/config@2023-12-01' = {
+  parent: staticAdmin
+  name: 'appsettings'
+  properties: {
+    AURALY_API_URL: 'https://${apiApp.properties.defaultHostName}/api'
+  }
+}
+
 resource environmentConfig 'Microsoft.AppConfiguration/configurationStores/keyValues@2024-06-01' = if (seedAppConfiguration) {
   parent: appConfiguration
   name: 'Auraly:Environment'

@@ -28,6 +28,7 @@ $apiName = "api-auraly-$compactEnvironment-$suffix"
 $functionName = "func-auraly-$compactEnvironment-$suffix"
 $serviceBusName = "sb-auraly-$compactEnvironment-$suffix"
 $webPubSubName = "wps-auraly-$compactEnvironment-$suffix"
+$staticAdminName = "admin-auraly-$compactEnvironment-$suffix"
 $requiredQueues = @(
     'auraly-document-processing',
     'auraly-fiscal-processing',
@@ -169,6 +170,14 @@ function Test-RemoteEnvironment {
     Assert-Condition ([bool]$webPubSub.Properties.disableLocalAuth) `
         "Web PubSub $webPubSubName debe bloquear autenticacion local."
 
+    $staticAdmin = Get-AzResource `
+        -ResourceGroupName $resourceGroup `
+        -ResourceType 'Microsoft.Web/staticSites' `
+        -Name $staticAdminName `
+        -ExpandProperties `
+        -ErrorAction SilentlyContinue
+    Assert-Condition ($null -ne $staticAdmin) "Falta el frontend $staticAdminName."
+
     if (-not $SkipHealth) {
         $response = Invoke-WebRequest `
             -Uri "https://$apiName.azurewebsites.net/health" `
@@ -177,6 +186,24 @@ function Test-RemoteEnvironment {
         Assert-Condition ($response.StatusCode -eq 200) 'La API no responde salud HTTP 200.'
         $health = $response.Content | ConvertFrom-Json
         Assert-Condition ($health.status -eq 'Healthy') 'La API no reporta estado Healthy.'
+
+        $loginProbeStatus = 0
+        try {
+            $loginProbe = Invoke-WebRequest `
+                -Uri "https://$($staticAdmin.Properties.defaultHostname)/api/auth/login" `
+                -Method Post `
+                -ContentType 'application/json' `
+                -Body '{"username":"auraly-connectivity-probe","password":"invalid-probe"}' `
+                -UseBasicParsing `
+                -TimeoutSec 30
+            $loginProbeStatus = [int]$loginProbe.StatusCode
+        }
+        catch {
+            if (-not $_.Exception.Response) { throw }
+            $loginProbeStatus = [int]$_.Exception.Response.StatusCode
+        }
+        Assert-Condition ($loginProbeStatus -eq 401) `
+            'El BFF de autenticacion no alcanza la API; se esperaba 401 para credenciales de prueba.'
     }
 
     [pscustomobject]@{
@@ -189,6 +216,7 @@ function Test-RemoteEnvironment {
         RuntimeSettings = 'Complete (values hidden)'
         Queues = $requiredQueues.Count
         WebPubSub = "$($webPubSub.Name) ($($webPubSub.Sku.Name))"
+        Frontend = $staticAdmin.Properties.defaultHostname
         Health = if ($SkipHealth) { 'Skipped' } else { 'Healthy' }
     }
 }
