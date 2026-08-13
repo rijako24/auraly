@@ -193,6 +193,22 @@ public sealed class ServerSliceArchitectureTests
             StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Runtime_environment_overrides_remote_platform_configuration()
+    {
+        var root = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(
+            root, "src", "API", "Auraly.Api", "PlatformApiComposition.cs"));
+        var remote = source.IndexOf(
+            "AddAzureAppConfiguration", StringComparison.Ordinal);
+        var environment = source.IndexOf(
+            "AddEnvironmentVariables", remote, StringComparison.Ordinal);
+
+        Assert.True(remote >= 0, "The canonical API must load Azure App Configuration.");
+        Assert.True(environment > remote,
+            "Runtime environment settings must override remote values so secrets cannot be shadowed.");
+    }
+
     private static bool IsAbsorbedPlatformSurface(string path, string root)
     {
         var apiRoot = Path.Combine(root, "src", "API", "Auraly.Api");

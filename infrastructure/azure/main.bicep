@@ -25,6 +25,8 @@ param audioModelDeploymentName string = 'whisper'
 @secure()
 param jwtSecret string
 @secure()
+param fiscalSecretProtectionKey string
+@secure()
 param whatsAppVerifyToken string
 param whatsAppApiBaseUrl string = 'https://graph.facebook.com/v25.0/'
 
@@ -485,6 +487,10 @@ resource apiApp 'Microsoft.Web/sites@2024-04-01' = {
         {
           name: 'Auraly__Environment'
           value: compactEnvironment
+        }
+        {
+          name: 'Auraly__Fiscal__SecretProtectionKey'
+          value: fiscalSecretProtectionKey
         }
         {
           name: 'Jwt__Secret'
