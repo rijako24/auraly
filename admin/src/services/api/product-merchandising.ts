@@ -28,7 +28,11 @@ export const productMerchandisingApi = {
   get: (productId: string) => apiClient.get<ProductMerchandising>(`/commerce/v1/products/${productId}/merchandising`),
   save: (productId: string, request: SaveProductMerchandising) => apiClient.put<ProductMerchandising>(`/commerce/v1/products/${productId}/merchandising`, request),
   brands: () => apiClient.get<ProductBrand[]>("/commerce/v1/product-brands"),
+  allBrands: () => apiClient.get<ProductBrand[]>("/commerce/v1/product-brands", { includeInactive: true }),
   createBrand: (name: string) => apiClient.post<ProductBrand>("/commerce/v1/product-brands", { name, isActive: true }),
+  saveBrand: (id: string, name: string, isActive: boolean) => apiClient.put<ProductBrand>(`/commerce/v1/product-brands/${id}`, { name, isActive }),
   units: () => apiClient.get<ProductUnit[]>("/commerce/v1/product-units"),
+  allUnits: () => apiClient.get<ProductUnit[]>("/commerce/v1/product-units", { includeInactive: true }),
   createUnit: (request: Omit<ProductUnit, "productUnitId" | "isActive">) => apiClient.post<ProductUnit>("/commerce/v1/product-units", { ...request, isActive: true }),
+  saveUnit: (id: string, request: Omit<ProductUnit, "productUnitId">) => apiClient.put<ProductUnit>(`/commerce/v1/product-units/${id}`, request),
 };

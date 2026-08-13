@@ -1,4 +1,4 @@
-﻿using System.Security.Claims;
+using System.Security.Claims;
 using Auraly.Application.Parties;
 using Auraly.Contracts.Parties;
 
@@ -63,6 +63,11 @@ public static class PartyApi
             await Handle(async () => Results.Ok(await service.CountriesAsync(
                 context.User.ToPartyUserIdentity(), includeInactive ?? false, ct))));
 
+        geography.MapGet("/hierarchy", async (
+            HttpContext context, GeographyService service, bool? includeInactive, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.HierarchyAsync(
+                context.User.ToPartyUserIdentity(), includeInactive ?? false, ct))));
+
         geography.MapGet("/countries/{countryId:guid}/divisions", async (
             HttpContext context, GeographyService service, Guid countryId,
             bool? includeInactive, CancellationToken ct) =>
@@ -93,6 +98,16 @@ public static class PartyApi
             await Handle(async () => Results.Created(
                 "/api/commerce/v1/masters/geography/cities",
                 await service.CreateCityAsync(context.User.ToPartyUserIdentity(), request, ct))));
+
+        geography.MapPut("/countries/{countryId:guid}", async (
+            HttpContext context, GeographyService service, Guid countryId, SaveCountryRequest request, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.UpdateCountryAsync(context.User.ToPartyUserIdentity(), countryId, request, ct))));
+        geography.MapPut("/divisions/{divisionId:guid}", async (
+            HttpContext context, GeographyService service, Guid divisionId, SaveAdministrativeDivisionRequest request, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.UpdateDivisionAsync(context.User.ToPartyUserIdentity(), divisionId, request, ct))));
+        geography.MapPut("/cities/{cityId:guid}", async (
+            HttpContext context, GeographyService service, Guid cityId, SaveCityRequest request, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.UpdateCityAsync(context.User.ToPartyUserIdentity(), cityId, request, ct))));
 
         var pos = endpoints.MapGroup("/api/pos/v1/customers")
             .RequireAuthorization("pos.customer.create");

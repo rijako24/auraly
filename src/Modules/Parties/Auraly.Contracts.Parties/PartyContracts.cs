@@ -117,6 +117,8 @@ public sealed record AdministrativeDivisionItem(
     Guid AdministrativeDivisionId, Guid CountryId, string Code, string Name, string DivisionType, bool IsActive);
 public sealed record CityItem(
     Guid CityId, Guid AdministrativeDivisionId, string Code, string Name, bool IsActive);
+public sealed record GeographyHierarchyItem(
+    Guid Id, Guid? ParentId, string Level, string Code, string Name, bool IsActive);
 
 public sealed record SaveCountryRequest(string Code, string Name, bool IsActive = true);
 public sealed record SaveAdministrativeDivisionRequest(

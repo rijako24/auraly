@@ -360,6 +360,23 @@ public sealed partial class SqlPartyStore(
                 reader.GetString(3), reader.GetBoolean(4)),
             ct);
 
+    public Task<IReadOnlyCollection<GeographyHierarchyItem>> GeographyHierarchyAsync(
+        bool includeInactive, CancellationToken ct) =>
+        QueryAsync(
+            """
+            SELECT CountryId AS Id,CAST(NULL AS uniqueidentifier) AS ParentId,N'Country' AS [Level],Code,Name,IsActive
+            FROM dbo.Countries WHERE @IncludeInactive=1 OR IsActive=1
+            UNION ALL
+            SELECT AdministrativeDivisionId,CountryId,N'Division',Code,Name,IsActive
+            FROM dbo.AdministrativeDivisions WHERE @IncludeInactive=1 OR IsActive=1
+            UNION ALL
+            SELECT CityId,AdministrativeDivisionId,N'City',Code,Name,IsActive
+            FROM dbo.Cities WHERE @IncludeInactive=1 OR IsActive=1
+            ORDER BY [Level],Name;
+            """,
+            [P("@IncludeInactive", includeInactive)],
+            reader => new GeographyHierarchyItem(reader.GetGuid(0), reader.IsDBNull(1) ? null : reader.GetGuid(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetBoolean(5)), ct);
+
     public async Task<CountryItem> CreateCountryAsync(
         PartyActorIdentity actor, Guid id, SaveCountryRequest request, DateTimeOffset now, CancellationToken ct)
     {
@@ -418,6 +435,35 @@ public sealed partial class SqlPartyStore(
             request.Name.Trim(), request.IsActive);
     }
 
+    public async Task<CountryItem> UpdateCountryAsync(PartyActorIdentity actor, Guid id, SaveCountryRequest request, DateTimeOffset now, CancellationToken ct)
+    {
+        await ExecuteMasterAsync("""
+            UPDATE dbo.Countries SET Code=@Code,Name=@Name,IsActive=@Active,UpdatedAt=@Now WHERE CountryId=@Id;
+            IF @@ROWCOUNT=0 THROW 51033,'Country not found.',1;
+            """, [P("@Id",id),P("@Code",request.Code.Trim().ToUpperInvariant()),P("@Name",request.Name.Trim()),P("@Active",request.IsActive),P("@Now",now)], ct);
+        return new(id,request.Code.Trim().ToUpperInvariant(),request.Name.Trim(),request.IsActive);
+    }
+
+    public async Task<AdministrativeDivisionItem> UpdateDivisionAsync(PartyActorIdentity actor, Guid id, SaveAdministrativeDivisionRequest request, DateTimeOffset now, CancellationToken ct)
+    {
+        await ExecuteMasterAsync("""
+            IF NOT EXISTS(SELECT 1 FROM dbo.Countries WHERE CountryId=@CountryId) THROW 51031,'Country not found.',1;
+            UPDATE dbo.AdministrativeDivisions SET CountryId=@CountryId,Code=@Code,Name=@Name,DivisionType=@Type,IsActive=@Active,UpdatedAt=@Now WHERE AdministrativeDivisionId=@Id;
+            IF @@ROWCOUNT=0 THROW 51034,'Administrative division not found.',1;
+            """, [P("@Id",id),P("@CountryId",request.CountryId),P("@Code",request.Code.Trim().ToUpperInvariant()),P("@Name",request.Name.Trim()),P("@Type",request.DivisionType.Trim()),P("@Active",request.IsActive),P("@Now",now)], ct);
+        return new(id,request.CountryId,request.Code.Trim().ToUpperInvariant(),request.Name.Trim(),request.DivisionType.Trim(),request.IsActive);
+    }
+
+    public async Task<CityItem> UpdateCityAsync(PartyActorIdentity actor, Guid id, SaveCityRequest request, DateTimeOffset now, CancellationToken ct)
+    {
+        await ExecuteMasterAsync("""
+            IF NOT EXISTS(SELECT 1 FROM dbo.AdministrativeDivisions WHERE AdministrativeDivisionId=@DivisionId) THROW 51032,'Administrative division not found.',1;
+            UPDATE dbo.Cities SET AdministrativeDivisionId=@DivisionId,Code=@Code,Name=@Name,IsActive=@Active,UpdatedAt=@Now WHERE CityId=@Id;
+            IF @@ROWCOUNT=0 THROW 51035,'City not found.',1;
+            """, [P("@Id",id),P("@DivisionId",request.AdministrativeDivisionId),P("@Code",request.Code.Trim().ToUpperInvariant()),P("@Name",request.Name.Trim()),P("@Active",request.IsActive),P("@Now",now)], ct);
+        return new(id,request.AdministrativeDivisionId,request.Code.Trim().ToUpperInvariant(),request.Name.Trim(),request.IsActive);
+    }
+
     private async Task ExecuteMasterAsync(string sql, SqlParameter[] parameters, CancellationToken ct)
     {
         try
@@ -433,7 +479,7 @@ public sealed partial class SqlPartyStore(
         {
             throw new PartyConflictException("A master record with the same code already exists.");
         }
-        catch (SqlException exception) when (exception.Number is 51031 or 51032)
+        catch (SqlException exception) when (exception.Number is 51031 or 51032 or 51033 or 51034 or 51035)
         {
             throw new PartyValidationException(exception.Message);
         }

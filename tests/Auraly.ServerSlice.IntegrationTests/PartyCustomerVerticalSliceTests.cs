@@ -47,6 +47,32 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
                 "C01",
                 "Customer test city"));
 
+        var hierarchy = await admin.GetFromJsonAsync<IReadOnlyCollection<GeographyHierarchyItem>>(
+            "/api/commerce/v1/masters/geography/hierarchy?includeInactive=true");
+        Assert.NotNull(hierarchy);
+        Assert.Contains(hierarchy, item => item.Id == country.CountryId && item.Level == "Country");
+        Assert.Contains(hierarchy, item => item.Id == division.AdministrativeDivisionId && item.ParentId == country.CountryId);
+        Assert.Contains(hierarchy, item => item.Id == city.CityId && item.ParentId == division.AdministrativeDivisionId);
+
+        using var updateCityResponse = await admin.PutAsJsonAsync(
+            $"/api/commerce/v1/masters/geography/cities/{city.CityId:D}",
+            new SaveCityRequest(division.AdministrativeDivisionId, "C01", "Customer test city edited", false));
+        Assert.Equal(HttpStatusCode.OK, updateCityResponse.StatusCode);
+        var inactiveCity = await updateCityResponse.Content.ReadFromJsonAsync<CityItem>();
+        Assert.NotNull(inactiveCity);
+        Assert.False(inactiveCity.IsActive);
+        Assert.Equal("Customer test city edited", inactiveCity.Name);
+
+        using var hiddenCitiesResponse = await admin.GetAsync(
+            $"/api/commerce/v1/masters/geography/divisions/{division.AdministrativeDivisionId:D}/cities");
+        var hiddenCities = await hiddenCitiesResponse.Content.ReadFromJsonAsync<IReadOnlyCollection<CityItem>>();
+        Assert.DoesNotContain(hiddenCities!, item => item.CityId == city.CityId);
+
+        using var reactivateCityResponse = await admin.PutAsJsonAsync(
+            $"/api/commerce/v1/masters/geography/cities/{city.CityId:D}",
+            new SaveCityRequest(division.AdministrativeDivisionId, "C01", "Customer test city", true));
+        Assert.Equal(HttpStatusCode.OK, reactivateCityResponse.StatusCode);
+
         var priceListId = Guid.NewGuid();
         var priceChannelId = Guid.NewGuid();
         await ExecuteAsync(

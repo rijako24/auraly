@@ -278,6 +278,12 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
         </div>
       <div className="mt-5 space-y-3 border-t pt-5">
         <Toggle
+          label="Maneja inventario"
+          detail="Incluye este producto en conteos, entradas, ajustes, traslados, conversiones y averías."
+          checked={form.manageInventory}
+          onChange={(checked) => setForm({ ...form, manageInventory: checked })}
+        />
+        <Toggle
           label="Permitir venta fraccionada"
           detail={`Permite cantidades decimales para este producto vendido en ${selectedUnit?.name ?? "la unidad seleccionada"}.`}
           checked={form.allowsFractionalSale}

@@ -41,7 +41,7 @@ public sealed partial class SqlCatalogStore
               AND (i.ValidUntil IS NULL OR i.ValidUntil>SYSDATETIMEOFFSET());
 
             SELECT c.CustomerId,
-              COALESCE(p.Identification,N''),
+              COALESCE(p.NormalizedIdentification,p.Identification,N''),
               COALESCE(p.DisplayName,p.LegalName,p.Identification,N''),
               s.PriceListId,s.PriceChannelId,c.IsActive
             FROM dbo.Customers c
