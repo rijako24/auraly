@@ -43,7 +43,7 @@ describe("fiscal resolution form state", () => {
       rangeEnd: 900,
       initialConsecutive: 510,
       prepareOnlineSeries: true,
-      prepareOfflineSeries: false,
+      prepareOfflineSeries: true,
     });
   });
 

@@ -39,7 +39,7 @@ export function buildFiscalResolutionFormState(
     rangeStart: value.rangeStart ?? 1,
     rangeEnd: value.rangeEnd ?? 1_000_000,
     initialConsecutive: value.initialConsecutive ?? value.rangeStart ?? 1,
-    prepareOnlineSeries: value.hasOnlineSeries,
-    prepareOfflineSeries: value.hasOfflineSeriesAvailable,
+    prepareOnlineSeries: true,
+    prepareOfflineSeries: true,
   };
 }
