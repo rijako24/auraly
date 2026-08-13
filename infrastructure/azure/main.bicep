@@ -418,8 +418,8 @@ resource apiPlan 'Microsoft.Web/serverfarms@2024-04-01' = {
   tags: tags
   kind: 'linux'
   sku: {
-    name: environment == 'dev' ? 'F1' : 'B1'
-    tier: environment == 'dev' ? 'Free' : 'Basic'
+    name: 'B1'
+    tier: 'Basic'
     capacity: 1
   }
   properties: {
@@ -544,6 +544,18 @@ resource environmentConfig 'Microsoft.AppConfiguration/configurationStores/keyVa
 resource sqlConfig 'Microsoft.AppConfiguration/configurationStores/keyValues@2024-06-01' = if (seedAppConfiguration) {
   parent: appConfiguration
   name: 'ConnectionStrings:DefaultConnection'
+  properties: {
+    value: 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Initial Catalog=${database.name};Authentication=Active Directory Managed Identity;User Id=${identity.properties.clientId};Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;'
+    contentType: 'text/plain'
+  }
+  dependsOn: [
+    appConfigurationDeploymentOwnerRole
+  ]
+}
+
+resource auralySqlConfig 'Microsoft.AppConfiguration/configurationStores/keyValues@2024-06-01' = if (seedAppConfiguration) {
+  parent: appConfiguration
+  name: 'ConnectionStrings:Auraly'
   properties: {
     value: 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Initial Catalog=${database.name};Authentication=Active Directory Managed Identity;User Id=${identity.properties.clientId};Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;'
     contentType: 'text/plain'
