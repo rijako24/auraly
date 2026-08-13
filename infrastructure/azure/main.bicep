@@ -49,6 +49,7 @@ var databaseName = 'auraly-${compactEnvironment}'
 var identityName = 'id-auraly-${compactEnvironment}'
 var appConfigurationName = 'cfg-auraly-${compactEnvironment}-${suffix}'
 var serviceBusName = 'sb-auraly-${compactEnvironment}-${suffix}'
+var webPubSubName = 'wps-auraly-${compactEnvironment}-${suffix}'
 var functionName = 'func-auraly-${compactEnvironment}-${suffix}'
 var apiName = 'api-auraly-${compactEnvironment}-${suffix}'
 var adminName = 'admin-auraly-${compactEnvironment}-${suffix}'
@@ -74,6 +75,9 @@ var serviceBusSenderRoleId = subscriptionResourceId(
 var serviceBusReceiverRoleId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   '4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0')
+var webPubSubOwnerRoleId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  '12cf5a90-567b-43ae-8102-96cf46c7d9b4')
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: identityName
@@ -266,6 +270,51 @@ resource campaignQueue 'Microsoft.ServiceBus/namespaces/queues@2024-01-01' = {
   }
 }
 
+resource documentProcessingQueue 'Microsoft.ServiceBus/namespaces/queues@2024-01-01' = {
+  parent: serviceBus
+  name: 'auraly-document-processing'
+  properties: {
+    deadLetteringOnMessageExpiration: true
+    defaultMessageTimeToLive: 'P7D'
+    duplicateDetectionHistoryTimeWindow: 'PT10M'
+    enableBatchedOperations: true
+    lockDuration: 'PT5M'
+    maxDeliveryCount: 10
+    requiresDuplicateDetection: true
+    requiresSession: true
+  }
+}
+
+resource fiscalProcessingQueue 'Microsoft.ServiceBus/namespaces/queues@2024-01-01' = {
+  parent: serviceBus
+  name: 'auraly-fiscal-processing'
+  properties: {
+    deadLetteringOnMessageExpiration: true
+    defaultMessageTimeToLive: 'P7D'
+    duplicateDetectionHistoryTimeWindow: 'PT10M'
+    enableBatchedOperations: true
+    lockDuration: 'PT5M'
+    maxDeliveryCount: 10
+    requiresDuplicateDetection: true
+    requiresSession: true
+  }
+}
+
+resource externalCustomerQueue 'Microsoft.ServiceBus/namespaces/queues@2024-01-01' = {
+  parent: serviceBus
+  name: 'auraly-external-customer-reconciliation'
+  properties: {
+    deadLetteringOnMessageExpiration: true
+    defaultMessageTimeToLive: 'P7D'
+    duplicateDetectionHistoryTimeWindow: 'PT10M'
+    enableBatchedOperations: true
+    lockDuration: 'PT5M'
+    maxDeliveryCount: 10
+    requiresDuplicateDetection: true
+    requiresSession: true
+  }
+}
+
 resource serviceBusSenderRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(serviceBus.id, identity.id, serviceBusSenderRoleId)
   scope: serviceBus
@@ -281,6 +330,34 @@ resource serviceBusReceiverRole 'Microsoft.Authorization/roleAssignments@2022-04
   scope: serviceBus
   properties: {
     roleDefinitionId: serviceBusReceiverRoleId
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource webPubSub 'Microsoft.SignalRService/webPubSub@2024-03-01' = {
+  name: webPubSubName
+  location: location
+  tags: tags
+  sku: {
+    name: environment == 'dev' ? 'Free_F1' : 'Standard_S1'
+    tier: environment == 'dev' ? 'Free' : 'Standard'
+    capacity: 1
+  }
+  properties: {
+    disableLocalAuth: true
+    publicNetworkAccess: 'Enabled'
+    tls: {
+      clientCertEnabled: false
+    }
+  }
+}
+
+resource webPubSubOwnerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(webPubSub.id, identity.id, webPubSubOwnerRoleId)
+  scope: webPubSub
+  properties: {
+    roleDefinitionId: webPubSubOwnerRoleId
     principalId: identity.properties.principalId
     principalType: 'ServicePrincipal'
   }
@@ -473,6 +550,30 @@ resource apiApp 'Microsoft.Web/sites@2024-04-01' = {
           value: identity.properties.clientId
         }
         {
+          name: 'Auraly__DocumentProcessing__ServiceBus__QueueName'
+          value: documentProcessingQueue.name
+        }
+        {
+          name: 'Auraly__Fiscal__ServiceBus__QueueName'
+          value: fiscalProcessingQueue.name
+        }
+        {
+          name: 'Auraly__ExternalCustomerReconciliation__QueueName'
+          value: externalCustomerQueue.name
+        }
+        {
+          name: 'Auraly__PosSynchronization__WebPubSub__Endpoint'
+          value: 'https://${webPubSub.properties.hostName}'
+        }
+        {
+          name: 'Auraly__PosSynchronization__WebPubSub__ManagedIdentityClientId'
+          value: identity.properties.clientId
+        }
+        {
+          name: 'Auraly__PosSynchronization__WebPubSub__Hub'
+          value: 'auraly_pos'
+        }
+        {
           name: 'AppConfiguration__Endpoint'
           value: appConfiguration.properties.endpoint
         }
@@ -493,15 +594,15 @@ resource apiApp 'Microsoft.Web/sites@2024-04-01' = {
           value: fiscalSecretProtectionKey
         }
         {
-          name: 'Jwt__Secret'
+          name: 'Authentication__Jwt__SigningKey'
           value: jwtSecret
         }
         {
-          name: 'Jwt__Issuer'
+          name: 'Authentication__Jwt__Issuer'
           value: 'auraly-${compactEnvironment}'
         }
         {
-          name: 'Jwt__Audience'
+          name: 'Authentication__Jwt__Audience'
           value: 'auraly-admin-${compactEnvironment}'
         }
         {

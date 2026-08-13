@@ -187,12 +187,6 @@ if (!builder.Environment.IsEnvironment("Testing"))
     else if (string.Equals(
                  processingTransport, "ServiceBus", StringComparison.OrdinalIgnoreCase))
     {
-        var serviceBusConnection = builder.Configuration[
-            "Auraly:DocumentProcessing:ServiceBus:ConnectionString"];
-        if (string.IsNullOrWhiteSpace(serviceBusConnection))
-            throw new InvalidOperationException(
-                "Auraly:DocumentProcessing:ServiceBus:ConnectionString is required. " +
-                "Auraly never falls back to an in-memory processing transport.");
         var queueName = builder.Configuration[
             "Auraly:DocumentProcessing:ServiceBus:QueueName"];
         if (string.IsNullOrWhiteSpace(queueName))
@@ -200,7 +194,8 @@ if (!builder.Environment.IsEnvironment("Testing"))
                 "Auraly:DocumentProcessing:ServiceBus:QueueName is required.");
 
         builder.Services.AddSingleton(new DocumentProcessingServiceBusOptions(queueName));
-        builder.Services.AddSingleton(new ServiceBusClient(serviceBusConnection));
+        builder.Services.AddSingleton(
+            AzureRuntimeClientFactory.CreateServiceBusClient(builder.Configuration));
         builder.Services.AddSingleton(provider =>
             provider.GetRequiredService<ServiceBusClient>().CreateSender(queueName));
         builder.Services.AddSingleton<IDocumentProcessingSignalPublisher,
@@ -237,15 +232,20 @@ if (!builder.Environment.IsEnvironment("Testing"))
 }
 var webPubSubConnection = builder.Configuration[
     "Auraly:PosSynchronization:WebPubSub:ConnectionString"];
-if (string.IsNullOrWhiteSpace(webPubSubConnection))
+var webPubSubEndpoint = builder.Configuration[
+    "Auraly:PosSynchronization:WebPubSub:Endpoint"];
+if (string.IsNullOrWhiteSpace(webPubSubConnection) &&
+    string.IsNullOrWhiteSpace(webPubSubEndpoint))
     throw new InvalidOperationException(
-        "Auraly:PosSynchronization:WebPubSub:ConnectionString is required. " +
+        "Configure Auraly:PosSynchronization:WebPubSub:Endpoint for managed identity " +
+        "or Auraly:PosSynchronization:WebPubSub:ConnectionString. " +
         "POS synchronization never falls back to polling.");
 var webPubSubHub = builder.Configuration[
     "Auraly:PosSynchronization:WebPubSub:Hub"];
 if (string.IsNullOrWhiteSpace(webPubSubHub)) webPubSubHub = "auraly_pos";
-builder.Services.AddSingleton(
-    new WebPubSubServiceClient(webPubSubConnection, webPubSubHub));
+builder.Services.AddSingleton(_ =>
+    AzureRuntimeClientFactory.CreateWebPubSubServiceClient(
+        builder.Configuration, webPubSubConnection, webPubSubEndpoint, webPubSubHub));
 builder.Services.AddSingleton<IPosSynchronizationPushGateway,
     AzureWebPubSubSynchronizationGateway>();
 builder.Services.AddSingleton<SqlPosSynchronizationOutboxDispatcher>();
