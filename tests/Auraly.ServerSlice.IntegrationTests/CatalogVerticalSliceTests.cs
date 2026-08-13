@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Catalog;
+using Auraly.Contracts.Inventory;
 using Auraly.Contracts.Pricing;
 using Auraly.Pos.Edge.Infrastructure;
 using Microsoft.Data.SqlClient;
@@ -59,6 +60,75 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.ProductLinks WHERE ChildProductId=@Child AND ParentProductId=@Parent AND InventoryFactor=2 AND PriceFactor=2 AND IsActive=1;",
             new SqlParameter("@Child", child.ProductId), new SqlParameter("@Parent", parent.ProductId)));
+    }
+
+    [Fact]
+    public async Task Editing_inventory_management_controls_inventory_product_search()
+    {
+        var (taxProfileId, _, _) = await ConfigureCatalogAsync();
+        var request = ProductRequest(
+            taxProfileId,
+            [new ProductPriceInput(10_000m)],
+            [new ProductBarcodeInput($"INV-{Guid.NewGuid():N}", true)]) with
+        {
+            Name = $"Inventory editable {Guid.NewGuid():N}"
+        };
+
+        using var client = fixture.CreateAdminClient(
+            CatalogPermissionCodes.Create,
+            CatalogPermissionCodes.Read,
+            CatalogPermissionCodes.Update,
+            CatalogPermissionCodes.ManagePrices,
+            CatalogPermissionCodes.ManageCosts,
+            InventoryPermissionCodes.Read);
+        using var create = await client.PostAsJsonAsync("/api/commerce/v1/products", request);
+        create.EnsureSuccessStatusCode();
+        var product = (await create.Content.ReadFromJsonAsync<ProductDetail>())!;
+
+        var configuration = await client.GetFromJsonAsync<ProductMerchandisingConfiguration>(
+            $"/api/commerce/v1/products/{product.ProductId:D}/merchandising");
+        Assert.NotNull(configuration);
+        Assert.True(configuration.ManageInventory);
+
+        async Task SaveInventoryManagementAsync(bool manageInventory)
+        {
+            var save = new SaveProductMerchandisingRequest(
+                configuration.ProductCategoryId,
+                configuration.ProductBrandId,
+                configuration.BaseUnitCode,
+                manageInventory,
+                configuration.AllowsFractionalSale,
+                configuration.IsWeighable,
+                configuration.Scale,
+                configuration.Barcodes,
+                configuration.Link is null ? null : new ProductLinkInput(
+                    configuration.Link.ParentProductId,
+                    configuration.Link.SharesInventory,
+                    configuration.Link.InventoryFactor,
+                    configuration.Link.SharesPrice,
+                    configuration.Link.PriceFactor),
+                configuration.LinkedProducts.Select(item => new LinkedProductInput(
+                    item.ChildProductId,
+                    item.SharesInventory,
+                    item.InventoryFactor,
+                    item.SharesPrice,
+                    item.PriceFactor)).ToArray());
+            using var response = await client.PutAsJsonAsync(
+                $"/api/commerce/v1/products/{product.ProductId:D}/merchandising", save);
+            response.EnsureSuccessStatusCode();
+        }
+
+        async Task<InventoryProductPage> SearchAsync() =>
+            (await client.GetFromJsonAsync<InventoryProductPage>(
+                $"/api/commerce/v1/inventory/products?warehouseId={fixture.WarehouseId:D}&search={Uri.EscapeDataString(request.Name)}&page=1&pageSize=50"))!;
+
+        await SaveInventoryManagementAsync(false);
+        Assert.DoesNotContain((await SearchAsync()).Items, item => item.ProductId == product.ProductId);
+        Assert.Equal(0, await ScalarAsync<int>("SELECT CONVERT(int,ManageStock) FROM dbo.Products WHERE ProductId=@Product;", new SqlParameter("@Product", product.ProductId)));
+
+        await SaveInventoryManagementAsync(true);
+        Assert.Contains((await SearchAsync()).Items, item => item.ProductId == product.ProductId);
+        Assert.Equal(1, await ScalarAsync<int>("SELECT CONVERT(int,ManageStock) FROM dbo.Products WHERE ProductId=@Product;", new SqlParameter("@Product", product.ProductId)));
     }
 
     [Fact]
