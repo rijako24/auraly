@@ -25,6 +25,7 @@ export function MasterHierarchyExplorer({
   canManage,
   onCreate,
   onEdit,
+  rootCreateLabel,
 }: {
   title: string;
   description: string;
@@ -34,6 +35,7 @@ export function MasterHierarchyExplorer({
   canManage: boolean;
   onCreate: (level: number, parent: MasterHierarchyNode | null) => void;
   onEdit: (node: MasterHierarchyNode) => void;
+  rootCreateLabel?: string;
 }) {
   const [query, setQuery] = useState("");
   const [showInactive, setShowInactive] = useState(false);
@@ -93,7 +95,7 @@ export function MasterHierarchyExplorer({
           <span className="mt-0.5 rounded-2xl bg-teal-600 p-3 text-white shadow-sm"><Network className="h-5 w-5" /></span>
           <div><h2 className="text-xl font-bold">{title}</h2><p className="mt-1 max-w-2xl text-sm text-muted-foreground">{description}</p></div>
         </div>
-        <Button disabled={!canManage} onClick={() => onCreate(0, null)}><FolderPlus className="mr-2 h-4 w-4" />Nuevo {levels[0].toLocaleLowerCase("es")}</Button>
+        <Button disabled={!canManage} onClick={() => onCreate(0, null)}><FolderPlus className="mr-2 h-4 w-4" />{rootCreateLabel ?? `Nuevo ${levels[0].toLocaleLowerCase("es")}`}</Button>
       </div>
       <div className="mt-5 grid gap-3 md:grid-cols-[minmax(260px,1fr)_auto_auto]">
         <div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input value={query} onChange={(event) => setQuery(event.target.value)} className="pl-9" placeholder={`Buscar en toda la jerarquía de ${title.toLocaleLowerCase("es")}`} /></div>

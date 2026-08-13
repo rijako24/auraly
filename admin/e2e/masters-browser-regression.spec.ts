@@ -17,6 +17,7 @@ test.describe.serial("maestros administrables desde la interfaz", () => {
 
   test("ubicación y clasificación comparten explorador, búsqueda, edición y estado", async ({ page }) => {
     const suffix = String(Date.now()).slice(-7);
+    const countryCode = String.fromCharCode(65 + (Number(suffix) % 26), 65 + (Math.floor(Number(suffix) / 26) % 26));
     const countryName = `País UI ${suffix}`;
     const areaName = `Área UI ${suffix}`;
     const lineName = `Línea UI ${suffix}`;
@@ -26,7 +27,7 @@ test.describe.serial("maestros administrables desde la interfaz", () => {
     await expect(hierarchySearch).toBeVisible({ timeout: 20_000 });
     await page.getByRole("button", { name: /Nuevo pa.s/ }).click();
     let dialog = page.getByRole("dialog");
-    await dialog.getByLabel(/C.digo/).fill(`P${suffix}`);
+    await dialog.getByLabel(/C.digo/).fill(countryCode);
     await dialog.getByLabel("Nombre").fill(countryName);
     await dialog.getByRole("button", { name: "Guardar", exact: true }).click();
     await expect(dialog).toBeHidden({ timeout: 20_000 });
