@@ -127,6 +127,15 @@ test.describe.serial("inventario completo desde navegador", () => {
     const products = await readTwoCatalogProducts(page);
     await beginOperation(page, /Conteo f.sico/);
     await chooseFirst(page, page.locator("main"), "Bodega");
+    const initialCatalogRequest = page.waitForResponse((response) =>
+      response.request().method() === "GET" &&
+      response.url().includes("/commerce/v1/inventory/products") &&
+      response.url().includes("pageSize=50") &&
+      response.ok(),
+    );
+    await page.getByTestId("inventory-product-search").focus();
+    await initialCatalogRequest;
+    await expect(page.getByRole("option").first()).toBeVisible({ timeout: 20_000 });
     await addProduct(page, products.firstName, "4", 0);
     await addProduct(page, products.secondCode === "Sin SKU" ? products.secondName : products.secondCode, "6", 1);
     await page.getByRole("button", { name: "Preparar conteo" }).click();

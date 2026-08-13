@@ -1,4 +1,4 @@
-﻿using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Parties;
 using Auraly.Domain.Parties;
 
@@ -27,6 +27,13 @@ public sealed class GeographyService(IPartyStore store, IAuralyIdGenerator ids, 
         return store.CitiesAsync(divisionId, includeInactive, ct);
     }
 
+    public Task<IReadOnlyCollection<GeographyHierarchyItem>> HierarchyAsync(
+        PartyActorIdentity actor, bool includeInactive, CancellationToken ct)
+    {
+        PartyService.Require(actor, PartyPermissionCodes.GeographyRead);
+        return store.GeographyHierarchyAsync(includeInactive, ct);
+    }
+
     public Task<CountryItem> CreateCountryAsync(
         PartyActorIdentity actor, SaveCountryRequest request, CancellationToken ct)
     {
@@ -52,6 +59,29 @@ public sealed class GeographyService(IPartyStore store, IAuralyIdGenerator ids, 
         if (request.AdministrativeDivisionId == Guid.Empty)
             throw new PartyValidationException("Administrative division is required.");
         return store.CreateCityAsync(actor, ids.NewId(), request, time.GetUtcNow(), ct);
+    }
+
+    public Task<CountryItem> UpdateCountryAsync(PartyActorIdentity actor, Guid id, SaveCountryRequest request, CancellationToken ct)
+    {
+        PartyService.Require(actor, PartyPermissionCodes.GeographyManage);
+        ValidateCountry(request.Code, request.Name);
+        return store.UpdateCountryAsync(actor, id, request, time.GetUtcNow(), ct);
+    }
+
+    public Task<AdministrativeDivisionItem> UpdateDivisionAsync(PartyActorIdentity actor, Guid id, SaveAdministrativeDivisionRequest request, CancellationToken ct)
+    {
+        PartyService.Require(actor, PartyPermissionCodes.GeographyManage);
+        Validate(request.Code, request.Name);
+        if (request.CountryId == Guid.Empty) throw new PartyValidationException("Country is required.");
+        return store.UpdateDivisionAsync(actor, id, request, time.GetUtcNow(), ct);
+    }
+
+    public Task<CityItem> UpdateCityAsync(PartyActorIdentity actor, Guid id, SaveCityRequest request, CancellationToken ct)
+    {
+        PartyService.Require(actor, PartyPermissionCodes.GeographyManage);
+        Validate(request.Code, request.Name);
+        if (request.AdministrativeDivisionId == Guid.Empty) throw new PartyValidationException("Administrative division is required.");
+        return store.UpdateCityAsync(actor, id, request, time.GetUtcNow(), ct);
     }
 
     private static void ValidateCountry(string code, string name)

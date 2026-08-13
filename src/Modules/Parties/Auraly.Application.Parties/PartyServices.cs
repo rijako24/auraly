@@ -1,4 +1,4 @@
-﻿using Auraly.BuildingBlocks.Application.Synchronization;
+using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Parties;
 using Auraly.Domain.Parties;
@@ -30,12 +30,20 @@ public interface IPartyStore
         Guid countryId, bool includeInactive, CancellationToken ct);
     Task<IReadOnlyCollection<CityItem>> CitiesAsync(
         Guid divisionId, bool includeInactive, CancellationToken ct);
+    Task<IReadOnlyCollection<GeographyHierarchyItem>> GeographyHierarchyAsync(
+        bool includeInactive, CancellationToken ct);
     Task<CountryItem> CreateCountryAsync(
         PartyActorIdentity actor, Guid id, SaveCountryRequest request, DateTimeOffset now, CancellationToken ct);
     Task<AdministrativeDivisionItem> CreateDivisionAsync(
         PartyActorIdentity actor, Guid id, SaveAdministrativeDivisionRequest request,
         DateTimeOffset now, CancellationToken ct);
     Task<CityItem> CreateCityAsync(
+        PartyActorIdentity actor, Guid id, SaveCityRequest request, DateTimeOffset now, CancellationToken ct);
+    Task<CountryItem> UpdateCountryAsync(
+        PartyActorIdentity actor, Guid id, SaveCountryRequest request, DateTimeOffset now, CancellationToken ct);
+    Task<AdministrativeDivisionItem> UpdateDivisionAsync(
+        PartyActorIdentity actor, Guid id, SaveAdministrativeDivisionRequest request, DateTimeOffset now, CancellationToken ct);
+    Task<CityItem> UpdateCityAsync(
         PartyActorIdentity actor, Guid id, SaveCityRequest request, DateTimeOffset now, CancellationToken ct);
 }
 
