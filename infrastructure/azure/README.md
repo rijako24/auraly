@@ -98,6 +98,7 @@ Primero solicitar los secretos sin dejarlos en texto plano:
 $version = '0.1.0-rc6'
 $sqlPassword = Read-Host 'SQL administrator password' -AsSecureString
 $jwtSecret = Read-Host 'JWT secret' -AsSecureString
+$fiscalProtectionKey = Read-Host 'Fiscal protection key (Base64, 32 bytes)' -AsSecureString
 $whatsAppVerifyToken = Read-Host 'WhatsApp verify token' -AsSecureString
 ```
 
@@ -108,9 +109,9 @@ Desplegar una sola vez el recurso compartido y luego cada ambiente. Antes de `Ap
 .\infrastructure\azure\Deploy-Auraly.ps1 -Mode WhatIf  -Scope Shared -ReleaseVersion $version -IncludeSharedAudio
 .\infrastructure\azure\Deploy-Auraly.ps1 -Mode Apply   -Scope Shared -ReleaseVersion $version -IncludeSharedAudio
 
-.\infrastructure\azure\Deploy-Auraly.ps1 -Mode Validate -Scope Dev -ReleaseVersion $version -SqlAdministratorPassword $sqlPassword -JwtSecret $jwtSecret -WhatsAppVerifyToken $whatsAppVerifyToken -SeedAppConfiguration
-.\infrastructure\azure\Deploy-Auraly.ps1 -Mode WhatIf  -Scope Dev -ReleaseVersion $version -SqlAdministratorPassword $sqlPassword -JwtSecret $jwtSecret -WhatsAppVerifyToken $whatsAppVerifyToken -SeedAppConfiguration
-.\infrastructure\azure\Deploy-Auraly.ps1 -Mode Apply   -Scope Dev -ReleaseVersion $version -SqlAdministratorPassword $sqlPassword -JwtSecret $jwtSecret -WhatsAppVerifyToken $whatsAppVerifyToken -SeedAppConfiguration
+.\infrastructure\azure\Deploy-Auraly.ps1 -Mode Validate -Scope Dev -ReleaseVersion $version -SqlAdministratorPassword $sqlPassword -JwtSecret $jwtSecret -FiscalSecretProtectionKey $fiscalProtectionKey -WhatsAppVerifyToken $whatsAppVerifyToken -SeedAppConfiguration
+.\infrastructure\azure\Deploy-Auraly.ps1 -Mode WhatIf  -Scope Dev -ReleaseVersion $version -SqlAdministratorPassword $sqlPassword -JwtSecret $jwtSecret -FiscalSecretProtectionKey $fiscalProtectionKey -WhatsAppVerifyToken $whatsAppVerifyToken -SeedAppConfiguration
+.\infrastructure\azure\Deploy-Auraly.ps1 -Mode Apply   -Scope Dev -ReleaseVersion $version -SqlAdministratorPassword $sqlPassword -JwtSecret $jwtSecret -FiscalSecretProtectionKey $fiscalProtectionKey -WhatsAppVerifyToken $whatsAppVerifyToken -SeedAppConfiguration
 ```
 
 Para PROD se repiten las últimas tres líneas con `-Scope Prod`. No usar `-Scope All` en una liberación normal: la promoción debe permitir validar DEV antes de tocar PROD.

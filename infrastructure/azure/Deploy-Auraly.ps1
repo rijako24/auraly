@@ -28,6 +28,8 @@ param(
 
     [SecureString]$JwtSecret,
 
+    [SecureString]$FiscalSecretProtectionKey,
+
     [SecureString]$WhatsAppVerifyToken,
 
     [switch]$IncludeSharedAudio,
@@ -196,8 +198,8 @@ try {
         default { @() }
     }
 
-    if ($environments.Count -gt 0 -and (-not $JwtSecret -or -not $WhatsAppVerifyToken)) {
-        throw 'JwtSecret y WhatsAppVerifyToken son obligatorios para desplegar DEV o PROD.'
+    if ($environments.Count -gt 0 -and (-not $JwtSecret -or -not $FiscalSecretProtectionKey -or -not $WhatsAppVerifyToken)) {
+        throw 'JwtSecret, FiscalSecretProtectionKey y WhatsAppVerifyToken son obligatorios para desplegar DEV o PROD.'
     }
 
     foreach ($environment in $environments) {
@@ -221,6 +223,7 @@ try {
                 textModelDeploymentName = $textDeploymentName
                 audioModelDeploymentName = $audioDeploymentName
                 jwtSecret = $JwtSecret
+                fiscalSecretProtectionKey = $FiscalSecretProtectionKey
                 whatsAppVerifyToken = $WhatsAppVerifyToken
                 seedAppConfiguration = [bool]$SeedAppConfiguration
             }
@@ -229,6 +232,8 @@ try {
 }
 finally {
     $SqlAdministratorPassword = $null
+    $JwtSecret = $null
+    $FiscalSecretProtectionKey = $null
     if (Test-Path -LiteralPath $temporaryPath) {
         Remove-Item -LiteralPath $temporaryPath -Recurse -Force
     }

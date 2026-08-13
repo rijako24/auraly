@@ -120,6 +120,10 @@ public static class PlatformApiComposition
                 new Uri(endpoint),
                 AzureManagedClientFactory.CreateCredential(
                     builder.Configuration, "AppConfiguration:ManagedIdentityClientId")));
+
+        // Deployment-specific secrets and emergency overrides must win over
+        // centrally shared settings, including stale or empty remote values.
+        builder.Configuration.AddEnvironmentVariables();
     }
 
     public static void AddPlatformApi(
