@@ -138,8 +138,10 @@ public sealed partial class ProductRepository : IProductRepository
     {
         var product = await _context.Products.AsNoTracking().FirstOrDefaultAsync(product => product.BusinessId == businessId && product.ProductId == productId, ct);
         if (product is not null)
+        {
             await ApplyPublishedPricesAsync([product], businessId, ct);
             await ApplyInventoryBalancesAsync([product], businessId, ct);
+        }
         return product;
     }
 

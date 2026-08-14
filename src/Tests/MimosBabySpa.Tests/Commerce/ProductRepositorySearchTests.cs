@@ -102,6 +102,18 @@ public sealed class ProductRepositorySearchTests
         terms.Should().NotContain(term => term.Contains("produkto", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task GetById_ReturnsNullWhenProductDoesNotExist()
+    {
+        await using var context = CreateContext();
+        var businessId = Guid.NewGuid();
+
+        var result = await new ProductRepository(context).GetByIdAsync(
+            businessId, Guid.NewGuid());
+
+        result.Should().BeNull();
+    }
+
     private static ApplicationDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
