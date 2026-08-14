@@ -44,11 +44,11 @@ public sealed record PosEdgeIssueCommand(
     DocumentId DocumentId,
     SalesExecutionContext Context,
     DateTimeOffset IssuedAt,
-    string SupplierTaxId,
+    string? SupplierTaxId,
     string CustomerIdentification,
-    FiscalTechnicalKey TechnicalKey,
-    FiscalEnvironment Environment,
-    string QrValidationUrl,
+    FiscalTechnicalKey? TechnicalKey,
+    FiscalEnvironment? Environment,
+    string? QrValidationUrl,
     IReadOnlyCollection<OfflineSaleLine> Lines,
     IReadOnlyCollection<OfflineSalePayment>? Payments = null,
     PosSaleUblSnapshotContract? UblSnapshot = null,
@@ -407,6 +407,16 @@ public sealed class PosEdgeSaleStore
         string outboxType;
         if (isFiscal)
         {
+            if (string.IsNullOrWhiteSpace(command.SupplierTaxId) ||
+                command.TechnicalKey is null ||
+                command.Environment is null ||
+                string.IsNullOrWhiteSpace(command.QrValidationUrl))
+                throw new InvalidOperationException(
+                    "Electronic invoicing is not configured for this POS device.");
+            var supplierTaxId = command.SupplierTaxId;
+            var technicalKey = command.TechnicalKey;
+            var environment = command.Environment.Value;
+            var qrValidationUrl = command.QrValidationUrl;
             var cursor = await context.FiscalSeriesCursors.SingleAsync(
                 row => row.DeviceId == deviceId,
                 cancellationToken);
@@ -431,11 +441,11 @@ public sealed class PosEdgeSaleStore
                 documentNumber,
                 fiscalNumber,
                 command.IssuedAt,
-                command.SupplierTaxId,
+                supplierTaxId,
                 command.CustomerIdentification,
-                command.TechnicalKey,
-                command.Environment,
-                command.QrValidationUrl,
+                technicalKey,
+                environment,
+                qrValidationUrl,
                 command.Lines));
             invoice = confirmed.Invoice;
             snapshot = invoice.FiscalSnapshot
@@ -901,10 +911,10 @@ public sealed class PosEdgeSaleStore
                     snapshot.Prefix,
                     snapshot.Consecutive,
                     snapshot.IssuedAt,
-                    command.SupplierTaxId,
+                    command.SupplierTaxId!,
                     snapshot.CustomerIdentification,
-                    (int)command.Environment,
-                    command.TechnicalKey.Version,
+                    (int)command.Environment!.Value,
+                    command.TechnicalKey!.Version,
                     taxes,
                     snapshot.UntaxedAmount,
                     snapshot.TaxAmount,

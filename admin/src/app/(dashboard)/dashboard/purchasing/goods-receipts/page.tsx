@@ -44,6 +44,7 @@ type EditorDraft = {
   draftId: string; warehouseId: string; supplierId: string;
   supplierInvoiceNumber: string; supplierInvoiceDate: string; receivedAt: string;
   createsPayable: boolean; dueDate: string; notes: string;
+  withholdingConceptCode: string; withholdingJurisdictionCode: string;
   lines: GoodsReceiptLine[]; concurrencyToken: string | null;
 };
 
@@ -358,6 +359,8 @@ function ReceiptEditor({
         dueDate: draft.createsPayable ? toIsoOrNull(draft.dueDate) : null,
         currencyCode: "COP", notes: draft.notes.trim() || null, lines: draft.lines,
         draftConcurrencyToken: confirmationToken,
+        withholdingConceptCode: draft.withholdingConceptCode.trim() || null,
+        withholdingJurisdictionCode: draft.withholdingJurisdictionCode.trim() || null,
       });
       toast.success(`${accepted.documentNumber} fue confirmada y enviada al motor.`, {
         duration: 12000,
@@ -586,6 +589,15 @@ function ReceiptEditor({
           </dl>
         </section>
       </div>
+        <section className="grid gap-3 rounded-2xl border p-4 md:grid-cols-2">
+              <Field label="Concepto de retención">
+            <Input value={draft.withholdingConceptCode} onChange={(event) => change({ withholdingConceptCode: event.target.value })} placeholder="Ej. MERCANCIA (opcional)" />
+          </Field>
+          <Field label="Municipio para reteICA">
+            <Input value={draft.withholdingJurisdictionCode} onChange={(event) => change({ withholdingJurisdictionCode: event.target.value })} placeholder="Ej. 11001 (opcional)" />
+          </Field>
+              <p className="text-xs text-muted-foreground md:col-span-2">Al confirmar, el motor tributario aplica las reglas vigentes del proveedor y congela el cálculo en el documento.</p>
+        </section>
 
       <Dialog open={!!pendingAssociation} onOpenChange={(value) => {
         if (!value) { setPendingAssociation(undefined); setSupplierProductCode(""); setPurchasePresentationName("Unidad"); setUnitsPerPresentation(1); }
@@ -650,6 +662,7 @@ function emptyDraft(): EditorDraft {
     supplierInvoiceNumber: "", supplierInvoiceDate: new Date().toISOString().slice(0, 10),
     receivedAt: localDateTime(), createsPayable: true, dueDate: plusDays(30),
     notes: "", lines: [], concurrencyToken: null,
+    withholdingConceptCode: "", withholdingJurisdictionCode: "",
   };
 }
 
@@ -660,7 +673,16 @@ function fromDraft(draft: GoodsReceiptDraft): EditorDraft {
     supplierInvoiceDate: draft.supplierInvoiceDate?.slice(0, 10) ?? "",
     receivedAt: localDateTime(draft.receivedAt), createsPayable: draft.createsPayable,
     dueDate: draft.dueDate?.slice(0, 10) ?? "", notes: draft.notes ?? "",
-    lines: draft.lines.map(({ netAmount: _net, taxAmount: _tax, lineTotal: _total, ...line }) => line),
+    lines: draft.lines.map((line) => ({
+      lineNumber: line.lineNumber, productId: line.productId, description: line.description,
+      quantity: line.quantity, unitCost: line.unitCost, discountAmount: line.discountAmount,
+      taxCode: line.taxCode, taxRate: line.taxRate, taxTreatment: line.taxTreatment,
+      presentationName: line.presentationName, baseUnitCode: line.baseUnitCode,
+      preferredPresentationName: line.preferredPresentationName,
+      preferredUnitsPerPresentation: line.preferredUnitsPerPresentation,
+      presentationQuantity: line.presentationQuantity, unitsPerPresentation: line.unitsPerPresentation,
+    })),
+    withholdingConceptCode: "", withholdingJurisdictionCode: "",
     concurrencyToken: draft.concurrencyToken,
   };
 }

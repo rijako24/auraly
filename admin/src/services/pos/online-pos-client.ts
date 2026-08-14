@@ -29,6 +29,10 @@ import {
   PosNextNumbers,
   PosPaymentInput,
   PosPrintableReceipt,
+  type PosCashMovementAcceptance,
+  type PosCashMovementDirection,
+  type PosCashMovementInput,
+  type PosCashMovementReason,
   PosSensitiveAuthorization,
   PosApprovalCreateInput,
   PosApprovalSummary,
@@ -219,10 +223,13 @@ export class OnlinePosClient implements PosClient {
       status: "ok",
       serverConnected: true,
       deviceSeriesCode: "00",
+      businessId: this.context.businessId,
       businessName: this.context.businessName,
       warehouseName: this.context.warehouseName,
       userDisplayName: this.userDisplayName,
       userId: this.userId,
+      workSessionId: this.context.workSessionId,
+      fiscalReady: true,
       synchronizationInProgress: false,
       lastSynchronizationAt: null,
       lastSynchronizationFailed: false,
@@ -232,6 +239,29 @@ export class OnlinePosClient implements PosClient {
   async synchronizeNow() {
     // Online mode reads authoritative server data and has no local catalog to synchronize.
   }
+  cashMovementReasons(direction: PosCashMovementDirection) {
+    return request<PosCashMovementReason[]>(
+      "/api/commerce/v1/work-sessions/cash-reasons?businessId=" +
+      this.context.businessId + "&direction=" + direction,
+    );
+  }
+
+  confirmCashMovement(input: PosCashMovementInput) {
+    return request<PosCashMovementAcceptance>(
+      "/api/commerce/v1/work-sessions/" +
+      this.context.workSessionId + "/cash-movements",
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": input.documentId },
+        body: JSON.stringify({
+          ...input,
+          businessId: this.context.businessId,
+          workSessionId: this.context.workSessionId,
+        }),
+      },
+    );
+  }
+
 
   async searchProducts(search = "", skip = 0, take = 50) {
     const page = await request<OnlineProductPage>(
@@ -317,10 +347,12 @@ export class OnlinePosClient implements PosClient {
   }
 
   async nextNumbers(_documentType?: PosSaleDocumentType): Promise<PosNextNumbers | null> {
+    void _documentType;
     return null;
   }
 
   async capture(value: string, _customerId: string | null) {
+    void _customerId;
     return this.addProduct(value);
   }
 
@@ -328,6 +360,7 @@ export class OnlinePosClient implements PosClient {
     product: PosCatalogProduct,
     _customerId: string | null,
   ) {
+    void _customerId;
     return this.addProduct(product.productId);
   }
 

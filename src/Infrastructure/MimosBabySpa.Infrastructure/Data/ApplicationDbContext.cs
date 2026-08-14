@@ -99,6 +99,8 @@ public class ApplicationDbContext : DbContext
         modelBuilder.Entity<Tenant>(entity =>
         {
             entity.HasKey(e => e.TenantId);
+            entity.Property(e => e.TenantKey).IsRequired().HasMaxLength(64);
+            entity.HasIndex(e => e.TenantKey).IsUnique();
             entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
             entity.Property(e => e.Email).IsRequired().HasMaxLength(200);
             entity.HasIndex(e => e.Email).IsUnique();
@@ -1377,8 +1379,8 @@ public class ApplicationDbContext : DbContext
                 .WithMany(t => t.AppUsers)
                 .HasForeignKey(e => e.TenantId)
                 .OnDelete(DeleteBehavior.Restrict);
-            entity.HasIndex(e => e.NormalizedUsername).IsUnique();
-            entity.HasIndex(e => e.NormalizedEmail).IsUnique();
+            entity.HasIndex(e => new { e.TenantId, e.NormalizedUsername }).IsUnique();
+            entity.HasIndex(e => new { e.TenantId, e.NormalizedEmail }).IsUnique();
             entity.HasIndex(e => e.TenantId);
         });
 

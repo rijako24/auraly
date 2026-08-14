@@ -57,12 +57,10 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         }
 
         if (request.CommercialSnapshot.DocumentType == PosSaleDocumentTypes.Invoice)
-        {
             await InsertReceivableAsync(session, request, cancellationToken);
-            await SqlAccountingPostingJobWriter.InsertAsync(
-                session, document, request.CommercialSnapshot.IssuedAt, _idGenerator, _timeProvider,
-                cancellationToken);
-        }
+        await SqlAccountingPostingJobWriter.InsertAsync(
+            session, document, request.CommercialSnapshot.IssuedAt,
+            _idGenerator, _timeProvider, cancellationToken);
         await InsertOutboxAsync(session, request, document.Payload, cancellationToken);
         await MarkDocumentProcessedAsync(session, request, cancellationToken);
     }

@@ -48,6 +48,7 @@ public sealed class PosSynchronizationWork(
     PosIdentitySynchronizer identities,
     PosCatalogSynchronizer catalog,
     PosEdgeOutboxUploader uploader,
+    PosCashMovementServerClient cashMovements,
     PosFiscalStatusSynchronizer fiscalStatuses,
     PosEdgeAuthenticationService authentication,
     PosUiStateSignal uiState,
@@ -78,6 +79,9 @@ public sealed class PosSynchronizationWork(
         if (trigger.HasFlag(PosSynchronizationTrigger.LocalOutbox))
         {
             while (await uploader.UploadNextAsync(cancellationToken))
+            {
+            }
+            while (await cashMovements.UploadNextAsync(cancellationToken))
             {
             }
         }

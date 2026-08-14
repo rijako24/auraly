@@ -216,7 +216,7 @@ public sealed class SqlPayablesStore(
                 settlement.TotalAmount,
                 settlement.Allocations.Select((item, index) =>
                     new SupplierPaymentAllocationSnapshot(index + 1, item.PayableId, item.Amount))
-                    .ToArray());
+                    .ToArray(), request.WorkSessionId);
             var payloadJson = SupplierPaymentContractSerializer.Serialize(payload);
             await InsertPaymentAsync(
                 connection, transaction, user, request, settlement, number,
@@ -286,13 +286,20 @@ public sealed class SqlPayablesStore(
               THROW 51200,'The business is outside the authenticated tenant.',1;
             IF NOT EXISTS(SELECT 1 FROM dbo.Suppliers WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1)
               THROW 51201,'The supplier is outside the authenticated business.',1;
+            IF @WorkSessionId IS NOT NULL AND NOT EXISTS(
+              SELECT 1 FROM dbo.WorkSessions
+              WHERE WorkSessionId=@WorkSessionId AND BusinessId=@BusinessId
+                AND UserId=@UserId AND Status=N'Open')
+              THROW 51202,'The work session is not open for the authenticated user.',1;
             """, connection, transaction))
         {
             scope.Parameters.AddWithValue("@BusinessId", user.BusinessId);
             scope.Parameters.AddWithValue("@TenantId", user.TenantId);
             scope.Parameters.AddWithValue("@SupplierId", request.SupplierId);
+            scope.Parameters.AddWithValue("@UserId", user.UserId);
+            scope.Parameters.AddWithValue("@WorkSessionId", (object?)request.WorkSessionId ?? DBNull.Value);
             try { await scope.ExecuteNonQueryAsync(cancellationToken); }
-            catch (SqlException exception) when (exception.Number is 51200 or 51201)
+            catch (SqlException exception) when (exception.Number is 51200 or 51201 or 51202)
             { throw new PayablesValidationException(exception.Message); }
         }
         foreach (var allocation in settlement.Allocations.OrderBy(item => item.PayableId))
@@ -392,11 +399,11 @@ public sealed class SqlPayablesStore(
     {
         await using var command = new SqlCommand("""
             INSERT dbo.SupplierPayments
-              (PaymentId,BusinessId,SupplierId,DocumentSeriesId,DocumentNumber,
+              (PaymentId,BusinessId,SupplierId,WorkSessionId,DocumentSeriesId,DocumentNumber,
                DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,IdempotencyKey,
                PayloadHash,PaidAt,CurrencyCode,PaymentMethod,Reference,Notes,TotalAmount,
                Status,ConfirmedByUserId,AcceptedAt)
-            VALUES(@Id,@BusinessId,@SupplierId,@SeriesId,@Number,@Prefix,@SeriesCode,
+            VALUES(@Id,@BusinessId,@SupplierId,@WorkSessionId,@SeriesId,@Number,@Prefix,@SeriesCode,
                @Consecutive,@Key,@Hash,@PaidAt,@Currency,@Method,@Reference,@Notes,@Total,
                N'Accepted',@UserId,@Now);
             """, connection, transaction);
@@ -404,6 +411,7 @@ public sealed class SqlPayablesStore(
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@SupplierId", request.SupplierId);
         command.Parameters.AddWithValue("@SeriesId", number.SeriesId);
+        command.Parameters.AddWithValue("@WorkSessionId", (object?)request.WorkSessionId ?? DBNull.Value);
         command.Parameters.AddWithValue("@Number", number.FullNumber);
         command.Parameters.AddWithValue("@Prefix", number.Prefix);
         command.Parameters.AddWithValue("@SeriesCode", number.SeriesCode);
@@ -468,7 +476,7 @@ public sealed class SqlPayablesStore(
         {
             request.PaymentId, request.BusinessId, request.SupplierId, request.PaidAt,
             Currency = request.CurrencyCode, request.PaymentMethod, request.Reference,
-            request.Notes, settlement.TotalAmount, settlement.Allocations
+            request.Notes, request.WorkSessionId, settlement.TotalAmount, settlement.Allocations
         }));
 
     private static void AddMoney(SqlCommand command, string name, decimal value)

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, CalendarClock, Plug, Save } from "lucide-react";
+import { ArrowLeft, CalendarClock, Copy, Link2, Plug, Save } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,11 +11,14 @@ import { PageLoading } from "@/components/ui/page-loading";
 import { AvailabilityBlocksEditor } from "@/components/settings/availability-blocks-editor";
 import { WorkingHoursEditor } from "@/components/settings/working-hours-editor";
 import { useBusinessWorkingHours, useUpdateBusinessWorkingHours } from "@/hooks/use-working-hours";
+import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import type { WorkingHour } from "@/types/entities";
 
 export default function BusinessSettingsPage() {
   const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
+  const tenantKey = useAuthStore((state) => state.user?.tenantKey);
+  const [loginUrl, setLoginUrl] = useState("");
   const { data, isLoading, isError, refetch } = useBusinessWorkingHours();
   const updateHours = useUpdateBusinessWorkingHours();
   const [workingHours, setWorkingHours] = useState<WorkingHour[]>([]);
@@ -23,6 +26,13 @@ export default function BusinessSettingsPage() {
   useEffect(() => {
     if (data) setWorkingHours(data);
   }, [data]);
+
+  useEffect(() => {
+    if (tenantKey)
+      setLoginUrl(
+        window.location.origin + "/login?tenant=" + encodeURIComponent(tenantKey),
+      );
+  }, [tenantKey]);
 
   if (!businessId) {
     return (
@@ -41,6 +51,29 @@ export default function BusinessSettingsPage() {
   return (
     <div className="space-y-6">
       <Header />
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Link2 className="h-4 w-4" />
+            Enlace de acceso de la empresa
+          </CardTitle>
+          <CardDescription>
+            La clave {tenantKey} es permanente. Comparte este enlace para que el login no vuelva a pedir la empresa.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex gap-2">
+          <code className="min-w-0 flex-1 truncate rounded-md bg-muted px-3 py-2 text-xs">{loginUrl}</code>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            disabled={!loginUrl}
+            onClick={() => navigator.clipboard.writeText(loginUrl)}
+            aria-label="Copiar enlace de acceso"
+          ><Copy className="h-4 w-4" /></Button>
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
         <Card>
@@ -68,8 +101,6 @@ export default function BusinessSettingsPage() {
             <WorkingHoursEditor value={workingHours} onChange={setWorkingHours} />
           </CardContent>
         </Card>
-
-
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">

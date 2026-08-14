@@ -6,6 +6,7 @@ using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Organization;
 using Auraly.Contracts.Parties;
 
+using Auraly.Contracts.WorkSessions;
 namespace Auraly.Application.Organization;
 
 public sealed record PosEnrollmentUserIdentity(
@@ -60,9 +61,9 @@ public sealed class PosEnrollmentService(
         CatalogPermissionCodes.Sync,
         FiscalPermissionCodes.PosStatusSync,
         PartyPermissionCodes.PosCustomerCreate,
-        CommercePermissionCodes.PosIdentitySync
+        CommercePermissionCodes.PosIdentitySync,
+        WorkSessionPermissionCodes.ManageCash
     ];
-
     public async Task<PosEnrollmentAuthorization> AuthorizeAsync(
         PosEnrollmentUserIdentity user,
         CreatePosEnrollmentRequest request,

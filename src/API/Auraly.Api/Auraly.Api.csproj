@@ -66,5 +66,8 @@
     <ProjectReference Include="..\..\Modules\Returns\Auraly.Application.Returns\Auraly.Application.Returns.csproj" />
     <ProjectReference Include="..\..\Modules\Receivables\Auraly.Contracts.Receivables\Auraly.Contracts.Receivables.csproj" />
     <ProjectReference Include="..\..\Modules\Receivables\Auraly.Application.Receivables\Auraly.Application.Receivables.csproj" />
+    <ProjectReference Include="../../Modules/Taxation/Auraly.Commerce.Taxation.Contracts/Auraly.Commerce.Taxation.Contracts.csproj" />
+    <ProjectReference Include="../../Modules/Taxation/Auraly.Commerce.Taxation.Application/Auraly.Commerce.Taxation.Application.csproj" />
+    <ProjectReference Include="../../Modules/Taxation/Auraly.Commerce.Taxation.Domain/Auraly.Commerce.Taxation.Domain.csproj" />
   </ItemGroup>
 </Project>

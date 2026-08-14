@@ -46,6 +46,10 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.Null(state.PasswordHash);
         Assert.Equal("Pending", state.InvitationStatus);
 
+        var immutableKeyError = await Assert.ThrowsAsync<SqlException>(
+            () => TryChangeTenantKeyAsync(result.TenantId, $"@changed-{suffix}"));
+        Assert.Equal(51040, immutableKeyError.Number);
+
         var token = await ReadInvitationTokenAsync(result.TenantId);
         using var publicClient = fixture.CreateClient();
         using var accepted = await publicClient.PostAsJsonAsync(
@@ -65,7 +69,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
 
         using var loginRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/login")
         {
-            Content = JsonContent.Create(new AuthenticationLoginRequest(email, Password))
+            Content = JsonContent.Create(new AuthenticationLoginRequest(email, result.TenantKey, Password))
         };
         loginRequest.Headers.Add(AuthenticationDefaults.ClientIdHeader, Guid.NewGuid().ToString("D"));
         using var login = await publicClient.SendAsync(loginRequest);
@@ -132,7 +136,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
               (SELECT COUNT(*) FROM dbo.InventoryReasons r INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId WHERE b.TenantId=@TenantId),
               (SELECT COUNT(*) FROM dbo.ProductUnits u INNER JOIN dbo.Businesses b ON b.BusinessId=u.BusinessId WHERE b.TenantId=@TenantId),
               (SELECT COUNT(*) FROM dbo.Customers c INNER JOIN dbo.Parties p ON p.PartyId=c.PartyId WHERE p.TenantId=@TenantId AND p.DisplayName=N'Consumidor final'),
-              (SELECT COUNT(*) FROM dbo.AppRoles WHERE TenantId=@TenantId AND NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'TENANTADMINISTRATOR')),
+              (SELECT COUNT(*) FROM dbo.AppRoles WHERE TenantId=@TenantId AND NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'ADMINISTRATOR')),
               (SELECT COUNT(*) FROM dbo.UserRoles WHERE UserId=@UserId),
               u.IsActive,u.PasswordHash,i.Status
             FROM dbo.AppUsers u
@@ -163,6 +167,18 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         using var json = JsonDocument.Parse(payload!);
         return json.RootElement.GetProperty("activationToken").GetString()
             ?? throw new InvalidOperationException("Invitation token is missing.");
+    }
+
+    private async Task TryChangeTenantKeyAsync(Guid tenantId, string tenantKey)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(
+            "UPDATE dbo.Tenants SET TenantKey=@TenantKey WHERE TenantId=@TenantId;",
+            connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@TenantKey", tenantKey);
+        await command.ExecuteNonQueryAsync();
     }
 
     private async Task<int> CountDefaultWarehousesAsync(Guid tenantId, Guid businessId)

@@ -9,7 +9,7 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
-public sealed class SqlWorkSessionStore(
+public sealed partial class SqlWorkSessionStore(
     SqlServerConnectionFactory connections,
     IAuralyIdGenerator ids,
     TimeProvider timeProvider) : IWorkSessionStore
@@ -82,6 +82,27 @@ public sealed class SqlWorkSessionStore(
                 "@DeviceId", (object?)request.DeviceId ?? DBNull.Value);
             insert.Parameters.AddWithValue("@OpenedAt", openedAt);
             await insert.ExecuteNonQueryAsync(cancellationToken);
+            if (request.OpeningCash > 0)
+            {
+                await using var opening = new SqlCommand("""
+                    INSERT dbo.WorkSessionMovements
+                      (WorkSessionMovementId,WorkSessionId,DocumentId,PaymentNumber,
+                       BusinessDate,MovementType,PaymentMethodCode,Amount,Reference,
+                       SourceKey,OccurredAt,RecordedByUserId)
+                    VALUES
+                      (@MovementId,@WorkSessionId,NULL,NULL,@BusinessDate,N'OpeningFloat',
+                       N'Cash',@Amount,N'Fondo inicial',@SourceKey,@OpenedAt,@UserId);
+                    """, connection, transaction);
+                opening.Parameters.AddWithValue("@MovementId", ids.NewId());
+                opening.Parameters.AddWithValue("@WorkSessionId", workSessionId);
+                opening.Parameters.AddWithValue("@BusinessDate", openedAt.Date);
+                AddMoney(opening, "@Amount", request.OpeningCash);
+                opening.Parameters.AddWithValue("@SourceKey", $"opening-float:{workSessionId:N}");
+                opening.Parameters.AddWithValue("@OpenedAt", openedAt);
+                opening.Parameters.AddWithValue("@UserId", identity.UserId);
+                await opening.ExecuteNonQueryAsync(cancellationToken);
+            }
+
             await transaction.CommitAsync(cancellationToken);
             return new WorkSessionView(
                 workSessionId,

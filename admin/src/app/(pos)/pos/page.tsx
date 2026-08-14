@@ -2,6 +2,8 @@
 
 import {
   AlertTriangle,
+  ArrowDownToLine,
+  ArrowUpFromLine,
   Banknote,
   Barcode,
   CheckCircle2,
@@ -24,11 +26,13 @@ import {
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { authApi } from "@/services/api/auth";
+import { useRouter } from "next/navigation";
 import { OrdersWorkspace } from "@/components/orders/orders-workspace";
 import { SalesReturnWorkspace } from "@/components/returns/sales-return-workspace";
 import {
   PosCatalogProduct,
   type PosSaleDocumentType,
+  type PosCashMovementDirection,
   PosCustomer,
   type PosCreateCustomerInput,
   PosDraft,
@@ -58,6 +62,7 @@ import {
   redeemPosEnrollment,
 } from "@/services/pos/pos-enrollment";
 import { PosConfirmDialog } from "./pos-confirm-dialog";
+import { PosCashMovementDialog } from "./pos-cash-movement-dialog";
 import { PosCustomerSearchDialog } from "./pos-customer-search-dialog";
 import { PosDocumentTypeDialog } from "./pos-document-type-dialog";
 import { PosDiscountDialog } from "./pos-discount-dialog";
@@ -66,6 +71,7 @@ import { PosInvoiceSearchDialog } from "./pos-invoice-search-dialog";
 import { PosLocalLogin } from "./pos-local-login";
 import { PosOnlineSetup } from "./pos-online-setup";
 import { PosPaymentDialog } from "./pos-payment-dialog";
+import { PosPrinterDialog } from "./pos-printer-dialog";
 import {
   shouldShowCashChange,
   type PosPaymentSettlement,
@@ -105,6 +111,7 @@ function describeWorkspaceBootstrapError(caught: unknown): string {
 
 export default function PosPage() {
   const scanner = useRef<HTMLInputElement>(null);
+  const router = useRouter();
   const quantityInputs = useRef(new Map<string, HTMLInputElement>());
   const lineRows = useRef(new Map<string, HTMLTableRowElement>());
   const skipQuantityBlur = useRef<string | null>(null);
@@ -135,12 +142,14 @@ export default function PosPage() {
   });
   const [workstation, setWorkstation] = useState({
     deviceSeriesCode: "\u2014",
+    businessId: "",
     businessName: "",
     warehouseName: "",
     userDisplayName: "\u2014",
     userId: null as string | null,
     workSessionId: null as string | null,
     deviceId: null as string | null,
+    fiscalReady: false,
   });
   const [returnsOpen, setReturnsOpen] = useState(false);
   const [message, setMessage] = useState("Esperando producto");
@@ -153,8 +162,11 @@ export default function PosPage() {
   const [discountOpen, setDiscountOpen] = useState(false);
   const [invoiceSearchOpen, setInvoiceSearchOpen] = useState(false);
   const [documentTypeOpen, setDocumentTypeOpen] = useState(false);
+  const [cashMovementDirection, setCashMovementDirection] =
+    useState<PosCashMovementDirection | null>(null);
+  const [printerOpen, setPrinterOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<PosCustomer | null>(null);
-  const [documentType, setDocumentType] = useState<PosSaleDocumentType>("SalesInvoice");
+  const [documentType, setDocumentType] = useState<PosSaleDocumentType>("SalesReceipt");
 
   const [sidePanel, setSidePanel] = useState<"temporaries" | "orders">("temporaries");
   const [ordersExpanded, setOrdersExpanded] = useState(false);
@@ -201,6 +213,12 @@ export default function PosPage() {
   const focusScanner = useCallback(() => {
     window.requestAnimationFrame(() => scanner.current?.focus());
   }, []);
+  useEffect(() => {
+    const saved = window.localStorage.getItem("auraly.pos.document-type");
+    if (saved === "SalesInvoice" || saved === "SalesReceipt")
+      setDocumentType(saved);
+  }, []);
+
 
   useEffect(() => {
     setQuantityDrafts(
@@ -242,12 +260,14 @@ export default function PosPage() {
               setServerConnected(health.serverConnected);
               setWorkstation({
                 deviceSeriesCode: health.deviceSeriesCode,
+                businessId: health.businessId,
                 businessName: health.businessName,
                 warehouseName: health.warehouseName,
                 userDisplayName: health.userDisplayName || "\u2014",
                 userId: health.userId,
                 workSessionId: health.workSessionId ?? null,
                 deviceId: health.deviceId ?? null,
+                fiscalReady: health.fiscalReady,
               });
             }
 
@@ -338,12 +358,14 @@ export default function PosPage() {
           setServerConnected(health.serverConnected);
           setWorkstation({
             deviceSeriesCode: health.deviceSeriesCode,
+            businessId: health.businessId,
             businessName: health.businessName,
             warehouseName: health.warehouseName,
             userDisplayName: health.userDisplayName || "\u2014",
             userId: health.userId,
             workSessionId: health.workSessionId ?? null,
             deviceId: health.deviceId ?? null,
+            fiscalReady: health.fiscalReady,
           });
         }
         if (
@@ -435,7 +457,22 @@ export default function PosPage() {
   }, [busy, draft]);
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
-      if (invoiceSearchOpen || returnsOpen || documentTypeOpen) return;
+      if (
+        invoiceSearchOpen ||
+        returnsOpen ||
+        documentTypeOpen ||
+        cashMovementDirection
+      ) return;
+      const canOpenCashMovement =
+        Boolean(workstation.workSessionId) &&
+        !busy &&
+        !temporaryOpen &&
+        !paymentOpen &&
+        !productSearchOpen &&
+        !customerSearchOpen &&
+        !discountOpen &&
+        !printerOpen &&
+        !confirmation;
       if (
         event.ctrlKey &&
         event.key === "F6" &&
@@ -551,10 +588,16 @@ export default function PosPage() {
       ) {
         event.preventDefault();
         requestCancelSale();
-      } else if (event.key === "F8" && !busy) {
+      } else if (event.ctrlKey && event.key === "F8" && canOpenCashMovement) {
+        event.preventDefault();
+        setCashMovementDirection("In");
+      } else if (event.ctrlKey && event.key === "F9" && canOpenCashMovement) {
+        event.preventDefault();
+        setCashMovementDirection("Out");
+      } else if (!event.ctrlKey && event.key === "F8" && !busy) {
         event.preventDefault();
         setSidePanel("temporaries");
-      } else if (event.key === "F9" && !busy) {
+      } else if (!event.ctrlKey && event.key === "F9" && !busy) {
         event.preventDefault();
         setSidePanel("orders");
       }
@@ -564,6 +607,7 @@ export default function PosPage() {
   }, [
     busy,
     client,
+    cashMovementDirection,
     returnsOpen,
     confirmation,
     customerSearchOpen,
@@ -579,6 +623,8 @@ export default function PosPage() {
     requestRemoveLine,
     selectedLineId,
     temporaryOpen,
+    printerOpen,
+    workstation.workSessionId,
   ]);
 
   async function capture(event: FormEvent) {
@@ -1241,7 +1287,7 @@ export default function PosPage() {
     setMessage("Revisa la novedad");
   }
 
-  async function activateOnline(option: SalesWorkspaceOption) {
+  async function activateOnline(option: SalesWorkspaceOption, initialDocumentType: PosSaleDocumentType) {
     setSetupError(null);
     const requestedWorkspace = salesWorkspaceKey(option.businessId, option.warehouseId);
     if (
@@ -1253,6 +1299,8 @@ export default function PosPage() {
       focusScanner();
       return;
     }
+      setDocumentType(initialDocumentType);
+      window.localStorage.setItem("auraly.pos.document-type", initialDocumentType);
     try {
       window.localStorage.setItem("selected_business_id", option.businessId);
       const context = await selectSalesWorkspace(option);
@@ -1270,12 +1318,14 @@ export default function PosPage() {
       setScan("");
       setWorkstation({
         deviceSeriesCode: "\u2014",
+        businessId: context.businessId,
         businessName: context.businessName,
         warehouseName: context.warehouseName,
         userDisplayName: onlineUserName || "—",
         userId: onlineUserId || null,
         workSessionId: null,
         deviceId: null,
+        fiscalReady: true,
       });
       setServerConnected(true);
       setClient(onlineClient);
@@ -1290,9 +1340,10 @@ export default function PosPage() {
     }
   }
 
-  async function enrollOffline(option: SalesWorkspaceOption) {
+  async function enrollOffline(option: SalesWorkspaceOption, initialDocumentType: PosSaleDocumentType) {
     if (!edgeEnrollmentToken) return;
     setSetupError(null);
+      window.localStorage.setItem("auraly.pos.document-type", initialDocumentType);
     setSetupLoading(true);
     try {
       const authorization = await authorizePosEnrollment(option);
@@ -1328,7 +1379,10 @@ export default function PosPage() {
 
       if (serverConnected) {
         try {
-          const onlineSession = await authApi.login({ username, password });
+          const tenantKey = useAuthStore.getState().user?.tenantKey;
+          if (!tenantKey)
+            throw new Error("No se pudo identificar la empresa para abrir la sesion en linea.");
+          const onlineSession = await authApi.login({ tenantKey, username, password });
           useAuthStore.getState().setAuth(onlineSession.user);
         } catch {
           // Local authentication remains valid when the server cannot create a web session.
@@ -1349,11 +1403,14 @@ export default function PosPage() {
     }
     setEdgeLoginError(null);
     try {
-      const onlineSession = await authApi.login({ username, password });
+      const tenantKey = useAuthStore.getState().user?.tenantKey;
+      if (!tenantKey)
+        throw new Error("No se pudo identificar la empresa para abrir la sesion en linea.");
+      const onlineSession = await authApi.login({ tenantKey, username, password });
       useAuthStore.getState().setAuth(onlineSession.user);
       await new PosEdgeClient(edgeEnrollmentToken).setStartupMode("online");
       forgetSalesWorkspace();
-      window.location.assign("/dashboard");
+      router.push("/dashboard");
     } catch (caught) {
       const message =
         typeof caught === "object" && caught !== null && "message" in caught
@@ -1402,7 +1459,7 @@ function changeOnlineWorkspace() {
       ).setStartupMode(mode);
       if (mode === "online") {
         forgetSalesWorkspace();
-        window.location.assign("/dashboard");
+        router.push("/dashboard");
       } else {
         window.location.reload();
       }
@@ -1419,7 +1476,7 @@ function changeOnlineWorkspace() {
         readEdgeUserSession(),
       ).setStartupMode("online");
       forgetSalesWorkspace();
-      window.location.assign("/pos");
+      window.location.reload();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "No fue posible abrir la configuración.");
     }
@@ -1467,6 +1524,32 @@ edgeCapable={edgeEnrollmentRequired}
             label={serverConnected ? "Conectado con Auraly" : "Modo sin conexión"}
             network
           />
+          <div className="flex items-center gap-1" aria-label="Atajos de caja">
+            <button
+              type="button"
+              onClick={() => setCashMovementDirection("In")}
+              disabled={busy || !workstation.workSessionId}
+              title="Registrar entrada de dinero (Ctrl+F8)"
+              aria-keyshortcuts="Control+F8"
+              className="flex h-8 items-center gap-1.5 rounded-full border border-emerald-300/20 px-3 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-300/10 hover:text-white disabled:opacity-40"
+            >
+              <ArrowDownToLine className="h-3.5 w-3.5" />
+              <span className="hidden md:inline">Entrada de dinero</span>
+              <kbd className="hidden xl:inline text-[10px] opacity-70">Ctrl+F8</kbd>
+            </button>
+            <button
+              type="button"
+              onClick={() => setCashMovementDirection("Out")}
+              disabled={busy || !workstation.workSessionId}
+              title="Registrar salida de dinero (Ctrl+F9)"
+              aria-keyshortcuts="Control+F9"
+              className="flex h-8 items-center gap-1.5 rounded-full border border-amber-300/20 px-3 text-xs font-semibold text-amber-200 transition hover:bg-amber-300/10 hover:text-white disabled:opacity-40"
+            >
+              <ArrowUpFromLine className="h-3.5 w-3.5" />
+              <span className="hidden md:inline">Salida de dinero</span>
+              <kbd className="hidden xl:inline text-[10px] opacity-70">Ctrl+F9</kbd>
+            </button>
+          </div>
           {client.mode === "edge" && (
             <button
               type="button"
@@ -1543,6 +1626,18 @@ edgeCapable={edgeEnrollmentRequired}
               <span className="hidden lg:inline">Modo online</span>
             </button>
           )}
+          {client instanceof PosEdgeClient && (
+            <button
+              type="button"
+              onClick={() => setPrinterOpen(true)}
+              disabled={busy}
+              title="Configurar impresoras de tirilla y carta"
+              className="flex h-8 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-xs font-semibold text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
+            >
+              <Printer className="h-4 w-4" />
+              <span className="hidden lg:inline">Impresoras</span>
+            </button>
+          )}
           {client.mode === "edge" && serverConnected && (
             <button
               type="button"
@@ -1554,7 +1649,8 @@ edgeCapable={edgeEnrollmentRequired}
               <Settings2 className="h-4 w-4" />
               <span className="hidden lg:inline">Configurar equipo</span>
             </button>
-          )}          {client.mode === "edge" && (
+          )}
+          {client.mode === "edge" && (
             <button
               type="button"
               onClick={() => void logoutLocal()}
@@ -2179,6 +2275,18 @@ edgeCapable={edgeEnrollmentRequired}
         />
       )}
 
+      {cashMovementDirection && client && (
+        <PosCashMovementDialog
+          client={client}
+          initialDirection={cashMovementDirection}
+          onClose={() => setCashMovementDirection(null)}
+          onCompleted={(text) => {
+            setMessage(text);
+            setCashMovementDirection(null);
+          }}
+        />
+      )}
+
       {paymentOpen && draft && (
         <PosPaymentDialog
           total={draft.payableAmount}
@@ -2189,6 +2297,10 @@ edgeCapable={edgeEnrollmentRequired}
           }}
           onConfirm={completeSale}
         />
+      )}
+
+      {printerOpen && client instanceof PosEdgeClient && (
+        <PosPrinterDialog client={client} onClose={() => setPrinterOpen(false)} />
       )}
 
       {invoiceSearchOpen && client && (
@@ -2207,6 +2319,10 @@ edgeCapable={edgeEnrollmentRequired}
       {documentTypeOpen && (
         <PosDocumentTypeDialog
           value={documentType}
+          businessId={workstation.businessId}
+          edgeMode={client.mode === "edge"}
+          edgeFiscalReady={workstation.fiscalReady}
+          onFiscalEnrollmentRequired={() => void reconfigureEdge()}
           busy={busy}
           onSelect={changeDocumentType}
           onCancel={() => {
@@ -2346,12 +2462,14 @@ function StatusChip({
   const Icon = network ? (ok ? Wifi : WifiOff) : ok ? CheckCircle2 : AlertTriangle;
   return (
     <span
-      className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 ${
+      title={label}
+      aria-label={label}
+      className={`flex h-8 w-8 items-center justify-center rounded-full ${
         ok ? "bg-emerald-400/15 text-emerald-100" : "bg-amber-400/15 text-amber-100"
       }`}
     >
-      <Icon className="h-3.5 w-3.5" />
-      {label}
+      <Icon className="h-4 w-4" aria-hidden="true" />
+      <span className="sr-only">{label}</span>
     </span>
   );
 }

@@ -125,7 +125,7 @@ public sealed class OfflineAuthenticationLeaseApiTests(ServerSliceFixture fixtur
         var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/login")
         {
             Content = JsonContent.Create(
-                new AuthenticationLoginRequest(username, Password))
+                new AuthenticationLoginRequest(username, "@auraly-e2e", Password))
         };
         request.Headers.Add(
             AuthenticationDefaults.ClientIdHeader,

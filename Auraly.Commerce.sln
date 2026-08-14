@@ -207,6 +207,18 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Application.Dispatch
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Infrastructure.Dispatching", "src\Modules\Dispatching\Auraly.Infrastructure.Dispatching\Auraly.Infrastructure.Dispatching.csproj", "{D711CD78-C24F-43B3-8FF1-00E26FF3C721}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Taxation", "Taxation", "{FAC04DA9-9948-4D65-820C-0F7123CF0AF2}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Commerce.Taxation.Contracts", "src\Modules\Taxation\Auraly.Commerce.Taxation.Contracts\Auraly.Commerce.Taxation.Contracts.csproj", "{B32C3F0F-93C6-4C6A-A053-D2AA8971345C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Commerce.Taxation.Domain", "src\Modules\Taxation\Auraly.Commerce.Taxation.Domain\Auraly.Commerce.Taxation.Domain.csproj", "{A9905F69-4E4B-402C-BF7C-908DB55CBD8C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Commerce.Taxation.Application", "src\Modules\Taxation\Auraly.Commerce.Taxation.Application\Auraly.Commerce.Taxation.Application.csproj", "{7FF58FB9-7599-4C62-B433-0433285C0F53}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "WorkSessions", "WorkSessions", "{2DB59202-BA62-42BF-A068-055D82EA802B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Domain.WorkSessions", "src\Modules\WorkSessions\Auraly.Domain.WorkSessions\Auraly.Domain.WorkSessions.csproj", "{A7DD2B34-A005-4300-974A-85DC432AA0F4}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -504,6 +516,22 @@ Global
 		{D711CD78-C24F-43B3-8FF1-00E26FF3C721}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D711CD78-C24F-43B3-8FF1-00E26FF3C721}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D711CD78-C24F-43B3-8FF1-00E26FF3C721}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B32C3F0F-93C6-4C6A-A053-D2AA8971345C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B32C3F0F-93C6-4C6A-A053-D2AA8971345C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B32C3F0F-93C6-4C6A-A053-D2AA8971345C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B32C3F0F-93C6-4C6A-A053-D2AA8971345C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A9905F69-4E4B-402C-BF7C-908DB55CBD8C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A9905F69-4E4B-402C-BF7C-908DB55CBD8C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A9905F69-4E4B-402C-BF7C-908DB55CBD8C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A9905F69-4E4B-402C-BF7C-908DB55CBD8C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7FF58FB9-7599-4C62-B433-0433285C0F53}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7FF58FB9-7599-4C62-B433-0433285C0F53}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7FF58FB9-7599-4C62-B433-0433285C0F53}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7FF58FB9-7599-4C62-B433-0433285C0F53}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A7DD2B34-A005-4300-974A-85DC432AA0F4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A7DD2B34-A005-4300-974A-85DC432AA0F4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A7DD2B34-A005-4300-974A-85DC432AA0F4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A7DD2B34-A005-4300-974A-85DC432AA0F4}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{E3ECCBF0-6B36-4460-A25E-4FFBE9837688} = {AA52BDD3-C36B-499D-9049-BB721311A642}
@@ -599,5 +627,9 @@ Global
 		{5584023A-ED05-4641-9D7C-2BCF80BA998F} = {B43441E0-765D-4F7C-B5DC-55547BA43441}
 		{73B01268-B140-40D8-B769-AE9103CB6113} = {B43441E0-765D-4F7C-B5DC-55547BA43441}
 		{D711CD78-C24F-43B3-8FF1-00E26FF3C721} = {B43441E0-765D-4F7C-B5DC-55547BA43441}
+		{B32C3F0F-93C6-4C6A-A053-D2AA8971345C} = {FAC04DA9-9948-4D65-820C-0F7123CF0AF2}
+		{A9905F69-4E4B-402C-BF7C-908DB55CBD8C} = {FAC04DA9-9948-4D65-820C-0F7123CF0AF2}
+		{7FF58FB9-7599-4C62-B433-0433285C0F53} = {FAC04DA9-9948-4D65-820C-0F7123CF0AF2}
+		{A7DD2B34-A005-4300-974A-85DC432AA0F4} = {2DB59202-BA62-42BF-A068-055D82EA802B}
 	EndGlobalSection
 EndGlobal

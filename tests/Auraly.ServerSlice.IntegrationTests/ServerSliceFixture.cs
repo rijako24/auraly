@@ -8,6 +8,7 @@ using System.Text;
 using System.Net.Http.Json;
 using Auraly.Api;
 using Auraly.Application.DocumentProcessing;
+using Auraly.Commerce.Accounting.Application;
 using Auraly.Application.Fiscal;
 using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Contracts.Authentication;
@@ -165,6 +166,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                 services.AddSingleton<TestDocumentProcessingSignalPublisher>();
                 services.AddSingleton<IDocumentProcessingSignalPublisher>(provider =>
                     provider.GetRequiredService<TestDocumentProcessingSignalPublisher>());
+                services.AddSingleton<TestAccountingProcessingSignalPublisher>();
+                services.AddSingleton<IAccountingProcessingSignalPublisher>(provider =>
+                    provider.GetRequiredService<TestAccountingProcessingSignalPublisher>());
                 services.AddSingleton<TestFiscalProcessingSignalPublisher>();
                 services.AddSingleton<IFiscalProcessingSignalPublisher>(provider => provider.GetRequiredService<TestFiscalProcessingSignalPublisher>());
                 services.AddSingleton<TestPosSynchronizationPushGateway>();
@@ -692,8 +696,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         var allowedCredential = PosDeviceCredentialHasher.Create(DeviceSecret);
         var deniedCredential = PosDeviceCredentialHasher.Create(DeniedDeviceSecret);
         const string sql = """
-            INSERT INTO dbo.Tenants (TenantId, Name, Email, IsActive, CreatedAt)
-            VALUES (@TenantId, N'Auraly E2E', @TenantEmail, 1, SYSUTCDATETIME());
+            INSERT INTO dbo.Tenants (TenantId, TenantKey, Name, Email, IsActive, CreatedAt)
+            VALUES (@TenantId, N'@auraly-e2e', N'Auraly E2E', @TenantEmail, 1, SYSUTCDATETIME());
 
             INSERT INTO dbo.Businesses
             (BusinessId, TenantId, Name, Description, Address, Phone, Email, Website, IsActive, CreatedAt)

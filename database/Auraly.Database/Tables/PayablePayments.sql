@@ -2,6 +2,7 @@ CREATE TABLE [dbo].[SupplierPayments]
 (
     [PaymentId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [WorkSessionId] UNIQUEIDENTIFIER NULL,
     [SupplierId] UNIQUEIDENTIFIER NOT NULL,
     [DocumentSeriesId] UNIQUEIDENTIFIER NOT NULL,
     [DocumentNumber] NVARCHAR(40) NOT NULL,
@@ -24,6 +25,7 @@ CREATE TABLE [dbo].[SupplierPayments]
     CONSTRAINT [PK_SupplierPayments] PRIMARY KEY CLUSTERED ([PaymentId]),
     CONSTRAINT [FK_SupplierPayments_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_SupplierPayments_Suppliers] FOREIGN KEY ([SupplierId]) REFERENCES [dbo].[Suppliers] ([SupplierId]),
+    CONSTRAINT [FK_SupplierPayments_WorkSessions] FOREIGN KEY ([WorkSessionId]) REFERENCES [dbo].[WorkSessions] ([WorkSessionId]),
     CONSTRAINT [FK_SupplierPayments_DocumentSeries] FOREIGN KEY ([DocumentSeriesId]) REFERENCES [dbo].[DocumentSeries] ([DocumentSeriesId]),
     CONSTRAINT [FK_SupplierPayments_Users] FOREIGN KEY ([ConfirmedByUserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
     CONSTRAINT [UQ_SupplierPayments_Business_Number] UNIQUE ([BusinessId], [DocumentNumber]),

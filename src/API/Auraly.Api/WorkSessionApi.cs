@@ -58,6 +58,93 @@ public static class WorkSessionApi
                 return closure is null ? Results.NotFound() : Results.Ok(closure);
             }));
 
+        group.MapGet("/cash-reasons", async (
+            HttpContext context,
+            Guid businessId,
+            string? direction,
+            WorkSessionService service,
+            CancellationToken cancellationToken) =>
+            await Handle(async () => Results.Ok(
+                await service.ListCashReasonsAsync(
+                    context.User.ToWorkSessionIdentity(),
+                    businessId,
+                    direction,
+                    cancellationToken))));
+
+        group.MapPut("/cash-reasons/{reasonId:guid}", async (
+            HttpContext context,
+            Guid reasonId,
+            UpsertCashMovementReasonRequest request,
+            WorkSessionService service,
+            CancellationToken cancellationToken) =>
+            await Handle(async () =>
+            {
+                if (request.ReasonId != reasonId)
+                    throw new WorkSessionValidationException(
+                        "The route and request reason identifiers differ.");
+                return Results.Ok(await service.UpsertCashReasonAsync(
+                    context.User.ToWorkSessionIdentity(),
+                    request,
+                    cancellationToken));
+            }));
+
+        group.MapPost("/{workSessionId:guid}/cash-movements", async (
+            HttpContext context,
+            Guid workSessionId,
+            ConfirmCashMovementRequest request,
+            WorkSessionService service,
+            CancellationToken cancellationToken) =>
+            await Handle(async () =>
+            {
+                if (request.WorkSessionId != workSessionId)
+                    throw new WorkSessionValidationException(
+                        "The route and request work-session identifiers differ.");
+                var acceptance = await service.ConfirmCashMovementAsync(
+                    context.User.ToWorkSessionIdentity(),
+                    context.Request.Headers["Idempotency-Key"].ToString(),
+                    request,
+                    cancellationToken);
+                return Results.Accepted(
+                    $"/api/commerce/v1/work-sessions/{workSessionId:D}/cash-movements/{acceptance.DocumentId:D}",
+                    acceptance);
+            }));
+
+        var deviceGroup = endpoints.MapGroup("/api/pos/v1")
+            .RequireAuthorization("pos.cash.manage");
+        deviceGroup.MapGet("/cash-movement-reasons", async (
+            HttpContext context,
+            Guid businessId,
+            string? direction,
+            WorkSessionService service,
+            CancellationToken cancellationToken) =>
+            await Handle(async () => Results.Ok(
+                await service.ListCashReasonsAsync(
+                    context.User.ToDeviceWorkSessionIdentity(),
+                    businessId,
+                    direction,
+                    cancellationToken))));
+        deviceGroup.MapPost("/cash-movements", async (
+            HttpContext context,
+            DeviceCashMovementRequest request,
+            WorkSessionService service,
+            CancellationToken cancellationToken) =>
+            await Handle(async () =>
+            {
+                if (request.UserId == Guid.Empty)
+                    throw new WorkSessionValidationException(
+                        "The local cashier is required.");
+                var deviceIdentity = context.User.ToDeviceWorkSessionIdentity();
+                var identity = deviceIdentity with { UserId = request.UserId };
+                var acceptance = await service.ConfirmCashMovementAsync(
+                    identity,
+                    context.Request.Headers["Idempotency-Key"].ToString(),
+                    request.Movement,
+                    cancellationToken);
+                return Results.Accepted(
+                    $"/api/commerce/v1/work-sessions/{request.Movement.WorkSessionId:D}/cash-movements/{acceptance.DocumentId:D}",
+                    acceptance);
+            }));
+
         return endpoints;
     }
 
@@ -99,6 +186,15 @@ public static class WorkSessionClaimsPrincipalExtensions
             principal.FindAll("permission")
                 .Select(claim => claim.Value)
                 .ToHashSet(StringComparer.Ordinal));
+    public static WorkSessionIdentity ToDeviceWorkSessionIdentity(
+        this ClaimsPrincipal principal) =>
+        new(
+            RequiredGuid(principal, ClaimTypes.NameIdentifier),
+            RequiredGuid(principal, PosAuthenticationDefaults.TenantIdClaim),
+            principal.FindAll(PosAuthenticationDefaults.PermissionClaim)
+                .Select(claim => claim.Value)
+                .ToHashSet(StringComparer.Ordinal));
+
 
     private static Guid RequiredGuid(
         ClaimsPrincipal principal,

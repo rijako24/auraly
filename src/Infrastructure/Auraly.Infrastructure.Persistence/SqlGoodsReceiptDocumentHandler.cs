@@ -27,16 +27,68 @@ public sealed class SqlGoodsReceiptDocumentHandler(
             receipt.TenantId != document.TenantId.Value)
             throw new InvalidOperationException("The goods receipt envelope does not match its payload.");
 
+        if (receipt.Withholding.GrossAmount != receipt.GrandTotal ||
+            receipt.Withholding.WithholdingTotal != receipt.Withholding.Lines.Sum(line => line.Amount) ||
+            receipt.Withholding.NetAmount + receipt.Withholding.WithholdingTotal != receipt.GrandTotal)
+            throw new InvalidOperationException("The immutable withholding snapshot does not reconcile.");
+
         var session = sessions.Current;
         foreach (var line in receipt.Lines.OrderBy(line => line.LineNumber))
             await ProcessLineAsync(session, receipt, line, cancellationToken);
-        if (receipt.CreatesPayable && receipt.GrandTotal > 0)
+        await PersistWithholdingSnapshotAsync(session, receipt, cancellationToken);
+        if (receipt.CreatesPayable && receipt.Withholding.NetAmount > 0)
             await OpenPayableAsync(session, receipt, cancellationToken);
         await SqlAccountingPostingJobWriter.InsertAsync(
             session, document, receipt.ReceivedAt, ids, timeProvider,
             cancellationToken);
         await InsertOutboxAsync(session, receipt, document.Payload, cancellationToken);
         await MarkProcessedAsync(session, receipt, cancellationToken);
+    }
+
+    private async Task PersistWithholdingSnapshotAsync(
+        SqlDocumentProcessingSessionAccessor.Session session,
+        GoodsReceiptDocumentPayload receipt,
+        CancellationToken cancellationToken)
+    {
+        await using (var command = new SqlCommand("""
+            INSERT dbo.DocumentWithholdingSnapshots
+              (DocumentId,DocumentType,BusinessId,GrossAmount,WithholdingTotal,NetAmount,RecognizedAt)
+            VALUES(@DocumentId,N'GoodsReceipt',@BusinessId,@Gross,@Withholding,@Net,@At);
+            """, session.Connection, session.Transaction))
+        {
+            command.Parameters.AddWithValue("@DocumentId", receipt.DocumentId);
+            command.Parameters.AddWithValue("@BusinessId", receipt.BusinessId);
+            AddDecimal(command, "@Gross", receipt.Withholding.GrossAmount, 19, 4);
+            AddDecimal(command, "@Withholding", receipt.Withholding.WithholdingTotal, 19, 4);
+            AddDecimal(command, "@Net", receipt.Withholding.NetAmount, 19, 4);
+            command.Parameters.AddWithValue("@At", receipt.ReceivedAt);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        for (var index = 0; index < receipt.Withholding.Lines.Count; index++)
+        {
+            var line = receipt.Withholding.Lines[index];
+            await using var command = new SqlCommand("""
+                INSERT dbo.DocumentWithholdingLines
+                  (DocumentId,DocumentType,LineNumber,RuleId,RuleVersion,RuleCode,Name,Kind,
+                   BaseKind,TaxableBase,Rate,Amount,JurisdictionCode)
+                VALUES(@DocumentId,N'GoodsReceipt',@Line,@RuleId,@Version,@Code,@Name,@Kind,
+                   @BaseKind,@Base,@Rate,@Amount,@Jurisdiction);
+                """, session.Connection, session.Transaction);
+            command.Parameters.AddWithValue("@DocumentId", receipt.DocumentId);
+            command.Parameters.AddWithValue("@Line", index + 1);
+            command.Parameters.AddWithValue("@RuleId", line.RuleId);
+            command.Parameters.AddWithValue("@Version", line.RuleVersion);
+            command.Parameters.AddWithValue("@Code", line.RuleCode);
+            command.Parameters.AddWithValue("@Name", line.Name);
+            command.Parameters.AddWithValue("@Kind", line.Kind);
+            command.Parameters.AddWithValue("@BaseKind", line.BaseKind);
+            AddDecimal(command, "@Base", line.TaxableBase, 19, 4);
+            AddDecimal(command, "@Rate", line.Rate, 9, 6);
+            AddDecimal(command, "@Amount", line.Amount, 19, 4);
+            command.Parameters.AddWithValue("@Jurisdiction", (object?)line.JurisdictionCode ?? DBNull.Value);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
     }
 
     private async Task ProcessLineAsync(
@@ -303,7 +355,7 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         GoodsReceiptDocumentPayload receipt,
         CancellationToken cancellationToken)
     {
-        var payable = PayableOpening.Create(receipt.GrandTotal, receipt.ReceivedAt, receipt.DueDate);
+        var payable = PayableOpening.Create(receipt.Withholding.NetAmount, receipt.ReceivedAt, receipt.DueDate);
         var payableId = ids.NewId();
         var now = timeProvider.GetUtcNow();
         const string sql = """

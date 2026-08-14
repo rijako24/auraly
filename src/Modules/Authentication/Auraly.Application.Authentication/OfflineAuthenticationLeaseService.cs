@@ -75,7 +75,7 @@ public sealed class OfflineAuthenticationLeaseService(
 
         var now = timeProvider.GetUtcNow();
         var user = await authenticationSessions.FindUserAsync(
-            request.Username.Trim().ToUpperInvariant(), cancellationToken);
+            device.TenantId, request.Username.Trim().ToUpperInvariant(), cancellationToken);
         if (user is null || user.TenantId != device.TenantId || !user.IsActive ||
             string.IsNullOrWhiteSpace(user.PasswordHash))
             throw new AuthenticationDeniedException("Invalid credentials.");

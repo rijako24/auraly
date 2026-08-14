@@ -30,6 +30,7 @@ public sealed record ProvisionTenantResult(
     Guid ProvisioningRequestId,
     Guid TenantId,
     Guid BusinessId,
+    string TenantKey,
     Guid SalesWarehouseId,
     Guid OrdersWarehouseId,
     Guid DefaultCustomerId,
