@@ -136,6 +136,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         }
 
         var nonStockProductId = await CreateNonStockProductAsync();
+        await ConfigureTargetMarginsAsync(fixture.ProductId, nonStockProductId);
         var receivedAt = new DateTimeOffset(
             2026, 8, 1, 9, 0, 0, TimeSpan.FromHours(-5));
         var receipt = new ConfirmGoodsReceiptRequest(
@@ -482,6 +483,22 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         };
         message.Headers.Add("Idempotency-Key", idempotencyKey);
         return message;
+    }
+
+    private async Task ConfigureTargetMarginsAsync(Guid stockProductId, Guid nonStockProductId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            UPDATE dbo.ProductPrices
+            SET TargetMarginPercent=30,RoundingIncrement=1,RoundingMode=N'Nearest'
+            WHERE BusinessId=@BusinessId AND ProductId IN (@StockProductId,@NonStockProductId)
+              AND IsActive=1;
+            """, connection);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@StockProductId", stockProductId);
+        command.Parameters.AddWithValue("@NonStockProductId", nonStockProductId);
+        Assert.Equal(2, await command.ExecuteNonQueryAsync());
     }
 
     private async Task<Guid> CreateNonStockProductAsync()
