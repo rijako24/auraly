@@ -17,7 +17,7 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
         fixture.DrainSynchronizationMessages();
         var productId = Guid.NewGuid();
         var barcode = $"79{Random.Shared.NextInt64(10_000_000_000, 99_999_999_999)}";
-        await SeedProductAsync(productId, barcode, 10_000m);
+        await SeedProductAsync(productId, barcode, 10_000m, 20m);
 
         var documentId = Guid.NewGuid();
         var receivedAt = new DateTimeOffset(2026, 8, 2, 10, 0, 0, TimeSpan.FromHours(-5));
@@ -238,7 +238,11 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(HttpStatusCode.Forbidden, hiddenCosts.StatusCode);
     }
 
-    private async Task SeedProductAsync(Guid productId, string barcode, decimal price)
+    private async Task SeedProductAsync(
+        Guid productId,
+        string barcode,
+        decimal price,
+        decimal? targetMarginPercent = null)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -262,9 +266,11 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
             VALUES
               (NEWID(),@BusinessId,@ProductId,@Barcode,1,1,SYSDATETIMEOFFSET());
             INSERT dbo.ProductPrices
-              (ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
+              (ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,
+               TargetMarginPercent,RoundingIncrement,RoundingMode,IsActive,CreatedAt)
             VALUES
-              (NEWID(),@BusinessId,@ProductId,@Price,N'COP',SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET());
+              (NEWID(),@BusinessId,@ProductId,@Price,N'COP',SYSDATETIMEOFFSET(),
+               @TargetMarginPercent,1,N'Nearest',1,SYSDATETIMEOFFSET());
             INSERT dbo.SupplierProducts
               (SupplierProductId,BusinessId,ProductId,SupplierId,SupplierProductCode,IsPrimary,IsActive,CreatedAt)
             VALUES
@@ -283,6 +289,9 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@TaxCode", $"T-{productId:N}"[..32]);
         command.Parameters.AddWithValue("@Barcode", barcode);
         command.Parameters.AddWithValue("@Price", price);
+        command.Parameters.AddWithValue(
+            "@TargetMarginPercent",
+            targetMarginPercent is { } margin ? margin : DBNull.Value);
         await command.ExecuteNonQueryAsync();
     }
 
