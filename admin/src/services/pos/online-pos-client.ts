@@ -189,6 +189,14 @@ export async function selectSalesWorkspace(
   );
   return { ...selected, workSessionId: session.workSessionId };
 }
+export function rememberSalesWorkspace(option: Pick<SalesWorkspaceOption,"businessId"|"warehouseId">): void {
+  try {
+    window.localStorage.setItem(
+      WORKSPACE_STORAGE_KEY,
+      salesWorkspaceKey(option.businessId, option.warehouseId),
+    );
+  } catch { /* IndexedDB remains the durable offline source. */ }
+}
 export function rememberedSalesWorkspaceKey(): string | null {
   try {
     return window.localStorage.getItem(WORKSPACE_STORAGE_KEY);

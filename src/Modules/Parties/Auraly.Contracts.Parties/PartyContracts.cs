@@ -51,7 +51,11 @@ public sealed record PartySiteInput(
     string? PostalCode,
     string? Email,
     string? Phone,
-    bool IsPrimary = true);
+    bool IsPrimary = true,
+    string? GoogleMapsUrl = null,
+    string? GooglePlaceId = null,
+    decimal? Latitude = null,
+    decimal? Longitude = null);
 
 public sealed record CustomerPricingInput(Guid? PriceListId, Guid? PriceChannelId);
 
@@ -87,7 +91,12 @@ public sealed record PartySiteDetail(
     string? Email,
     string? Phone,
     bool IsPrimary,
-    bool IsActive);
+    bool IsActive,
+    string? GoogleMapsUrl = null,
+    string? GooglePlaceId = null,
+    decimal? Latitude = null,
+    decimal? Longitude = null,
+    string RowVersion = "");
 
 public sealed record CustomerDetail(
     Guid CustomerId,

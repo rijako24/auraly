@@ -291,6 +291,21 @@ public sealed partial class SqlPartyWorkspaceStore(
                 WHERE PartyId=@PartyId AND BusinessId=@BusinessId;
                 UPDATE dbo.Suppliers SET IsActive=@Active WHERE PartyId=@PartyId AND BusinessId=@BusinessId;
                 UPDATE dbo.CommerceSellers SET IsActive=@Active WHERE PartyId=@PartyId AND BusinessId=@BusinessId;
+
+                DELETE assignment
+                FROM dbo.UserRoles assignment
+                JOIN dbo.AppUsers app ON app.UserId=assignment.UserId AND app.PartyId=@PartyId
+                JOIN dbo.AppRoles role ON role.RoleId=assignment.RoleId AND role.NormalizedName=N'SELLER'
+                WHERE assignment.BusinessId=@BusinessId AND @Active=0;
+
+                INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt,AssignedByUserId)
+                SELECT NEWID(),app.UserId,role.RoleId,@BusinessId,@Now,@ActorId
+                FROM dbo.AppUsers app
+                JOIN dbo.AppRoles role ON role.TenantId=app.TenantId AND role.NormalizedName=N'SELLER' AND role.IsActive=1
+                WHERE app.PartyId=@PartyId AND app.IsActive=1 AND @Active=1
+                  AND EXISTS(SELECT 1 FROM dbo.CommerceSellers seller WHERE seller.PartyId=@PartyId AND seller.BusinessId=@BusinessId AND seller.IsActive=1)
+                  AND NOT EXISTS(SELECT 1 FROM dbo.UserRoles assignment WHERE assignment.UserId=app.UserId AND assignment.RoleId=role.RoleId AND assignment.BusinessId=@BusinessId);
+
                 UPDATE dbo.Carriers SET IsActive=@Active WHERE PartyId=@PartyId AND BusinessId=@BusinessId;
                 UPDATE dbo.Employees SET IsActive=@Active,UpdatedAt=@Now WHERE PartyId=@PartyId AND BusinessId=@BusinessId;
                 UPDATE dbo.AppUsers SET IsActive=@Active,UpdatedAt=@Now WHERE PartyId=@PartyId AND TenantId=@TenantId;
@@ -425,10 +440,10 @@ public sealed partial class SqlPartyWorkspaceStore(
     }
     private static Task InsertSiteAsync(SqlConnection c,SqlTransaction t,PartyActorIdentity a,Guid party,Guid id,PartySiteInput s,DateTimeOffset now,CancellationToken ct)=>ExecuteAsync(c,t,"""
         IF NOT EXISTS(SELECT 1 FROM dbo.PartySites WHERE PartyId=@Party AND Code=@Code)
-        INSERT dbo.PartySites(PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,AddressLine,Neighborhood,PostalCode,Email,Phone,IsPrimary,IsActive,CreatedBy,CreatedAt)
-        VALUES(@Id,@Party,@Code,@Name,@Country,@Division,@City,@Address,@Neighborhood,@Postal,@Email,@Phone,
+        INSERT dbo.PartySites(PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,AddressLine,Neighborhood,PostalCode,Email,Phone,GoogleMapsUrl,GooglePlaceId,Latitude,Longitude,IsPrimary,IsActive,CreatedBy,CreatedAt)
+        VALUES(@Id,@Party,@Code,@Name,@Country,@Division,@City,@Address,@Neighborhood,@Postal,@Email,@Phone,@GoogleMapsUrl,@GooglePlaceId,@Latitude,@Longitude,
           CASE WHEN EXISTS(SELECT 1 FROM dbo.PartySites WHERE PartyId=@Party AND IsPrimary=1 AND IsActive=1) THEN 0 ELSE @Primary END,1,@Actor,@Now)
-        """,[P("@Id",id),P("@Party",party),P("@Code",s.Code.Trim().ToUpperInvariant()),P("@Name",s.Name.Trim()),P("@Country",s.CountryId),P("@Division",s.AdministrativeDivisionId),P("@City",s.CityId),P("@Address",s.AddressLine.Trim()),P("@Neighborhood",Empty(s.Neighborhood)),P("@Postal",Empty(s.PostalCode)),P("@Email",Empty(s.Email)),P("@Phone",Empty(s.Phone)),P("@Primary",s.IsPrimary),P("@Actor",a.ActorId),P("@Now",now)],ct);
+        """,[P("@Id",id),P("@Party",party),P("@Code",s.Code.Trim().ToUpperInvariant()),P("@Name",s.Name.Trim()),P("@Country",s.CountryId),P("@Division",s.AdministrativeDivisionId),P("@City",s.CityId),P("@Address",s.AddressLine.Trim()),P("@Neighborhood",Empty(s.Neighborhood)),P("@Postal",Empty(s.PostalCode)),P("@Email",Empty(s.Email)),P("@Phone",Empty(s.Phone)),P("@GoogleMapsUrl",Empty(s.GoogleMapsUrl)),P("@GooglePlaceId",Empty(s.GooglePlaceId)),P("@Latitude",s.Latitude),P("@Longitude",s.Longitude),P("@Primary",s.IsPrimary),P("@Actor",a.ActorId),P("@Now",now)],ct);
     private static async Task ExecuteAsync(SqlConnection c,SqlTransaction t,string sql,SqlParameter[] ps,CancellationToken ct){await using var x=c.CreateCommand();x.Transaction=t;x.CommandText=sql;x.Parameters.AddRange(ps);await x.ExecuteNonQueryAsync(ct);}
     private static SqlParameter P(string n,object? v)=>new(n,v??DBNull.Value);
     private static string? Empty(string? v)=>string.IsNullOrWhiteSpace(v)?null:v.Trim();

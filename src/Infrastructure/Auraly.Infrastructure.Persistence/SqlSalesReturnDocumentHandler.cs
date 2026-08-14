@@ -311,9 +311,9 @@ public sealed class SqlSalesReturnDocumentHandler(
             load.Parameters.AddWithValue("@OriginalDocumentId", value.OriginalDocumentId);
             load.Parameters.AddWithValue("@IssuedAt", value.ReturnedAt);
             await using var reader = await load.ExecuteReaderAsync(cancellationToken);
-            if (!await reader.ReadAsync(cancellationToken))
-                throw new InvalidOperationException(
-                    "The return cannot create a credit note without the original fiscal snapshot and an active issuer configuration.");
+            // Sales receipts are deliberately non-fiscal. Their return still applies inventory
+            // and the economic resolution, but it must not try to create a DIAN credit note.
+            if (!await reader.ReadAsync(cancellationToken)) return;
             originalJson = reader.GetString(0);
             issuerConfigurationId = reader.GetGuid(1);
             environment = reader.GetByte(2);

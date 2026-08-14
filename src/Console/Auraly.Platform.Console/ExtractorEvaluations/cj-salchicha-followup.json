@@ -1,0 +1,32 @@
+{
+  "cases": [
+    {
+      "id": "cj_catalog_option_selection_is_add_not_search",
+      "message": "agrega 1 Salchicha long x 550 gr",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": ["order_changes"],
+      "absentSignals": ["catalog_query"],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": ["550"],
+          "operations": ["add"],
+          "quantities": [1]
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Estas son las opciones que encontre: SALCHICHA RANCHERA SUPER X 525 GR, SALCHICHA LONG X 550GR, SALCHICHA LONG X 1100 G X 20UND, SALCHICHA CAZADORA y SALCHICHA CUNIT MANGUERA XL X10. Cual te gustaria agregar y en que cantidad?"
+        }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "[{\"external_product_id\":\"CF59\",\"sku\":\"CF59\",\"name\":\"SALCHICHA LONG X 550GR\",\"unit_price\":16023.21,\"currency\":\"COP\",\"stock_quantity\":49},{\"external_product_id\":\"CF20\",\"sku\":\"CF20\",\"name\":\"SALCHICHA LONG X 1100 G X 20UND\",\"unit_price\":28032.50,\"currency\":\"COP\",\"stock_quantity\":113}]"
+      }
+    }
+  ],
+  "repetitions": 5
+}

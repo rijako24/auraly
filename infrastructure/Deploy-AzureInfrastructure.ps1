@@ -18,7 +18,7 @@
     ID de la suscripción de Azure
 
 .PARAMETER ResourceGroupName
-    Nombre del grupo de recursos (default: MimosBabySpa-RG)
+    Nombre del grupo de recursos (default: Auraly-RG)
 
 .PARAMETER Location
     Región de Azure (default: eastus)
@@ -74,7 +74,7 @@ param(
     [string]$SubscriptionId,
     
     [Parameter(Mandatory=$false)]
-    [string]$ResourceGroupName = "MimosBabySpa-RG",
+    [string]$ResourceGroupName = "Auraly-RG",
     
     [Parameter(Mandatory=$false)]
     [ValidateSet("eastus", "eastus2", "westus", "westus2", "westeurope", "northeurope", "southeastasia", "japaneast", "brazilsouth", "australiaeast", "centralus", "southcentralus")]
@@ -130,7 +130,7 @@ $envSuffix = if ($Environment -ne "prod") { "-$Environment" } else { "" }
 
 $storageAccountName = "mimosbabyspa$($Environment)stg$uniqueSuffix".ToLower().Substring(0, 24)
 $sqlServerName = "mimosbabyspa-sql-$Environment-$uniqueSuffix".ToLower().Substring(0, 63)
-$sqlDatabaseName = "MimosBabySpa$envSuffix"
+$sqlDatabaseName = "Auraly$envSuffix"
 $functionAppName = if ([string]::IsNullOrEmpty($FunctionAppName)) { 
     "mimosbabyspa-func-$Environment-$uniqueSuffix".ToLower().Substring(0, 60) 
 } else { 
@@ -143,7 +143,7 @@ $appServicePlanName = "mimosbabyspa-plan-$Environment-$uniqueSuffix".ToLower().S
 # Tags para recursos
 $tags = @{
     "Environment" = $Environment
-    "Project" = "MimosBabySpa"
+    "Project" = "Auraly"
     "ManagedBy" = "InfrastructureAsCode"
     "CreatedDate" = $timestamp
 }

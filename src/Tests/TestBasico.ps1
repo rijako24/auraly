@@ -72,7 +72,7 @@ Test-Item "El proyecto compila sin errores" {
 
 # Test 2: LoadedBusinessContext existe
 Test-Item "LoadedBusinessContext existe" {
-    $path = Join-Path $projectRoot "src\Application\MimosBabySpa.Application\Configuration\LoadedBusinessContext.cs"
+    $path = Join-Path $projectRoot "src\Application\Auraly.Platform.Application\Configuration\LoadedBusinessContext.cs"
     $exists = Test-Path $path
     if ($exists) {
         $content = Get-Content $path -Raw
@@ -84,7 +84,7 @@ Test-Item "LoadedBusinessContext existe" {
 
 # Test 3: CachedBusinessContextProvider existe
 Test-Item "CachedBusinessContextProvider existe" {
-    $path = Join-Path $projectRoot "src\Application\MimosBabySpa.Application\Configuration\CachedBusinessContextProvider.cs"
+    $path = Join-Path $projectRoot "src\Application\Auraly.Platform.Application\Configuration\CachedBusinessContextProvider.cs"
     $exists = Test-Path $path
     if ($exists) {
         $content = Get-Content $path -Raw
@@ -96,7 +96,7 @@ Test-Item "CachedBusinessContextProvider existe" {
 
 # Test 4: SystemPromptProvider existe
 Test-Item "SystemPromptProvider existe" {
-    $path = Join-Path $projectRoot "src\Application\MimosBabySpa.Application\Prompts\SystemPromptProvider.cs"
+    $path = Join-Path $projectRoot "src\Application\Auraly.Platform.Application\Prompts\SystemPromptProvider.cs"
     $exists = Test-Path $path
     if ($exists) {
         $content = Get-Content $path -Raw
@@ -108,7 +108,7 @@ Test-Item "SystemPromptProvider existe" {
 
 # Test 5: HybridTransactionalOrchestrator refactorizado
 Test-Item "HybridTransactionalOrchestrator usa CachedBusinessContextProvider" {
-    $path = Join-Path $projectRoot "src\Application\MimosBabySpa.Application\Orchestration\HybridTransactionalOrchestrator.cs"
+    $path = Join-Path $projectRoot "src\Application\Auraly.Platform.Application\Orchestration\HybridTransactionalOrchestrator.cs"
     $exists = Test-Path $path
     if ($exists) {
         $content = Get-Content $path -Raw
@@ -121,7 +121,7 @@ Test-Item "HybridTransactionalOrchestrator usa CachedBusinessContextProvider" {
 
 # Test 6: JsonSchemaPromptBuilder refactorizado
 Test-Item "JsonSchemaPromptBuilder usa LoadedBusinessContext" {
-    $path = Join-Path $projectRoot "src\Application\MimosBabySpa.Application\LLM\Extraction\JsonSchemaPromptBuilder.cs"
+    $path = Join-Path $projectRoot "src\Application\Auraly.Platform.Application\LLM\Extraction\JsonSchemaPromptBuilder.cs"
     $exists = Test-Path $path
     if ($exists) {
         $content = Get-Content $path -Raw
@@ -133,7 +133,7 @@ Test-Item "JsonSchemaPromptBuilder usa LoadedBusinessContext" {
 
 # Test 7: SmartExtractionService refactorizado
 Test-Item "SmartExtractionService usa LoadedBusinessContext" {
-    $path = Join-Path $projectRoot "src\Application\MimosBabySpa.Application\LLM\Extraction\SmartExtractionService.cs"
+    $path = Join-Path $projectRoot "src\Application\Auraly.Platform.Application\LLM\Extraction\SmartExtractionService.cs"
     $exists = Test-Path $path
     if ($exists) {
         $content = Get-Content $path -Raw
@@ -145,7 +145,7 @@ Test-Item "SmartExtractionService usa LoadedBusinessContext" {
 
 # Test 8: ProcessingContext actualizado
 Test-Item "ProcessingContext incluye BusinessContext" {
-    $path = Join-Path $projectRoot "src\Application\MimosBabySpa.Application\Orchestration\ProcessingContext.cs"
+    $path = Join-Path $projectRoot "src\Application\Auraly.Platform.Application\Orchestration\ProcessingContext.cs"
     $exists = Test-Path $path
     if ($exists) {
         $content = Get-Content $path -Raw
@@ -157,7 +157,7 @@ Test-Item "ProcessingContext incluye BusinessContext" {
 
 # Test 9: Program.cs tiene registro de servicios
 Test-Item "Program.cs registra CachedBusinessContextProvider" {
-    $path = Join-Path $projectRoot "src\API\MimosBabySpa.API\Program.cs"
+    $path = Join-Path $projectRoot "src\API\Auraly.Platform.Worker\Program.cs"
     $exists = Test-Path $path
     if ($exists) {
         $content = Get-Content $path -Raw
@@ -171,7 +171,7 @@ Test-Item "Program.cs registra CachedBusinessContextProvider" {
 
 # Test 10: Microsoft.Extensions.Caching.Memory agregado
 Test-Item "Paquete Microsoft.Extensions.Caching.Memory agregado" {
-    $path = Join-Path $projectRoot "src\Application\MimosBabySpa.Application\MimosBabySpa.Application.csproj"
+    $path = Join-Path $projectRoot "src\Application\Auraly.Platform.Application\Auraly.Platform.Application.csproj"
     $exists = Test-Path $path
     if ($exists) {
         $content = Get-Content $path -Raw

@@ -23,79 +23,79 @@ using Microsoft.IdentityModel.Tokens;
 
 using Microsoft.OpenApi.Models;
 
-using MimosBabySpa.Application.Auth.Interfaces;
+using Auraly.Platform.Application.Auth.Interfaces;
 
-using MimosBabySpa.Application.Auth.Services;
+using Auraly.Platform.Application.Auth.Services;
 
-using MimosBabySpa.Application.Agents;
+using Auraly.Platform.Application.Agents;
 
-using MimosBabySpa.Application.Agents.Composition;
+using Auraly.Platform.Application.Agents.Composition;
 
-using MimosBabySpa.Application.Agents.Facts;
+using Auraly.Platform.Application.Agents.Facts;
 
-using MimosBabySpa.Application.Agents.Facts.Resolvers;
+using Auraly.Platform.Application.Agents.Facts.Resolvers;
 
-using MimosBabySpa.Application.Agents.Gating;
+using Auraly.Platform.Application.Agents.Gating;
 
-using MimosBabySpa.Application.Agents.Runtime;
+using Auraly.Platform.Application.Agents.Runtime;
 
-using MimosBabySpa.Application.Agents.Templates;
+using Auraly.Platform.Application.Agents.Templates;
 
-using MimosBabySpa.Application.Agents.Testing;
+using Auraly.Platform.Application.Agents.Testing;
 
-using MimosBabySpa.Application.Agents.Operations.Support;
+using Auraly.Platform.Application.Agents.Operations.Support;
 
-using MimosBabySpa.Application.Billing;
+using Auraly.Platform.Application.Billing;
 
-using MimosBabySpa.Application.Campaigns.Interfaces;
+using Auraly.Platform.Application.Campaigns.Interfaces;
 
-using MimosBabySpa.Application.Campaigns.Services;
+using Auraly.Platform.Application.Campaigns.Services;
 
-using MimosBabySpa.Application.BusinessRules;
+using Auraly.Platform.Application.BusinessRules;
 
-using MimosBabySpa.Application.Common.Interfaces;
+using Auraly.Platform.Application.Common.Interfaces;
 
-using MimosBabySpa.Application.Commerce;
+using Auraly.Platform.Application.Commerce;
 
-using MimosBabySpa.Application.Configuration;
+using Auraly.Platform.Application.Configuration;
 
-using MimosBabySpa.Application.Identity.Interfaces;
+using Auraly.Platform.Application.Identity.Interfaces;
 
-using MimosBabySpa.Application.Identity.Services;
+using Auraly.Platform.Application.Identity.Services;
 
-using MimosBabySpa.Application.LLM;
+using Auraly.Platform.Application.LLM;
 
-using MimosBabySpa.Application.Services;
+using Auraly.Platform.Application.Services;
 
-using MimosBabySpa.Application.Promotions;
+using Auraly.Platform.Application.Promotions;
 
-using MimosBabySpa.Application.StateManagement;
+using Auraly.Platform.Application.StateManagement;
 
-using MimosBabySpa.Application.Time;
+using Auraly.Platform.Application.Time;
 
-using MimosBabySpa.Application.WhatsAppTemplates.Interfaces;
+using Auraly.Platform.Application.WhatsAppTemplates.Interfaces;
 
-using MimosBabySpa.Domain.Repositories;
+using Auraly.Platform.Domain.Repositories;
 
-using MimosBabySpa.Infrastructure.Catalog;
+using Auraly.Platform.Infrastructure.Catalog;
 
-using MimosBabySpa.Infrastructure.Commerce;
+using Auraly.Platform.Infrastructure.Commerce;
 
-using MimosBabySpa.Infrastructure.Configuration;
+using Auraly.Platform.Infrastructure.Configuration;
 
-using MimosBabySpa.Infrastructure.LLM;
+using Auraly.Platform.Infrastructure.LLM;
 
-using MimosBabySpa.Infrastructure.CrossCutting;
+using Auraly.Platform.Infrastructure.CrossCutting;
 
-using MimosBabySpa.Infrastructure.Data;
+using Auraly.Platform.Infrastructure.Data;
 
-using MimosBabySpa.Infrastructure.Identity;
+using Auraly.Platform.Infrastructure.Identity;
 
-using MimosBabySpa.Infrastructure.MultiTenancy;
+using Auraly.Platform.Infrastructure.MultiTenancy;
 
-using MimosBabySpa.Infrastructure.Repositories;
+using Auraly.Platform.Infrastructure.Repositories;
 
-using MimosBabySpa.Infrastructure.Services;
+using Auraly.Platform.Infrastructure.Services;
 
 using Auraly.Api.Authorization;
 
@@ -479,8 +479,8 @@ public static class PlatformApiComposition
         builder.Services.AddScoped<IAgentRepository, AgentRepository>();
 
         builder.Services.AddScoped<IAgentAdminService, AgentAdminService>();
-        builder.Services.AddHttpClient<MimosBabySpa.Application.Identity.Interfaces.IWhatsAppChannelAdminService,
-            MimosBabySpa.Infrastructure.Services.WhatsAppChannelAdminService>();
+        builder.Services.AddHttpClient<Auraly.Platform.Application.Identity.Interfaces.IWhatsAppChannelAdminService,
+            Auraly.Platform.Infrastructure.Services.WhatsAppChannelAdminService>();
 
         builder.Services.AddScoped<ICatalogImportAdminService, CatalogImportAdminService>();
 
@@ -536,93 +536,93 @@ public static class PlatformApiComposition
 
         builder.Services.AddScoped<ITemplateRenderer, PromptTemplateRenderer>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Availability.CheckAvailabilityOperation>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.IAgentOperation, Auraly.Platform.Application.Agents.Operations.Availability.CheckAvailabilityOperation>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Catalog.GetCompatibleAddOnsOperation>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.IAgentOperation, Auraly.Platform.Application.Agents.Operations.Catalog.GetCompatibleAddOnsOperation>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Catalog.GetServiceFulfillmentOperation>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.IAgentOperation, Auraly.Platform.Application.Agents.Operations.Catalog.GetServiceFulfillmentOperation>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Catalog.ResolveServiceSelectionOperation>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.IAgentOperation, Auraly.Platform.Application.Agents.Operations.Catalog.ResolveServiceSelectionOperation>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Catalog.GetServiceCatalogOperation>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.IAgentOperation, Auraly.Platform.Application.Agents.Operations.Catalog.GetServiceCatalogOperation>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.SearchProductsOperation>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.IAgentOperation, Auraly.Platform.Application.Agents.Operations.Commerce.SearchProductsOperation>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.SearchProductOffersOperation>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.IAgentOperation, Auraly.Platform.Application.Agents.Operations.Commerce.SearchProductOffersOperation>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.SearchRecipesOperation>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.IAgentOperation, Auraly.Platform.Application.Agents.Operations.Commerce.SearchRecipesOperation>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.ApplyOrderChangesOperation>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.IAgentOperation, Auraly.Platform.Application.Agents.Operations.Commerce.ApplyOrderChangesOperation>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.Reservation.IReservationCheckoutPreparationService, MimosBabySpa.Application.Agents.Operations.Reservation.ReservationCheckoutPreparationService>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.Reservation.IReservationCheckoutPreparationService, Auraly.Platform.Application.Agents.Operations.Reservation.ReservationCheckoutPreparationService>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.CreateCommerceOrderOperation>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.IAgentOperation, Auraly.Platform.Application.Agents.Operations.Commerce.CreateCommerceOrderOperation>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.PrepareCommerceCheckoutOperation>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.IAgentOperation, Auraly.Platform.Application.Agents.Operations.Commerce.PrepareCommerceCheckoutOperation>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Reservation.PrepareReservationCheckoutOperation>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.IAgentOperation, Auraly.Platform.Application.Agents.Operations.Reservation.PrepareReservationCheckoutOperation>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Reservation.ManageReservationOperation>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.IAgentOperation, Auraly.Platform.Application.Agents.Operations.Reservation.ManageReservationOperation>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.Reservation.IReservationCreationService, MimosBabySpa.Application.Agents.Operations.Reservation.ReservationCreationService>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.Reservation.IReservationCreationService, Auraly.Platform.Application.Agents.Operations.Reservation.ReservationCreationService>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Reservation.CreateReservationOperation>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.IAgentOperation, Auraly.Platform.Application.Agents.Operations.Reservation.CreateReservationOperation>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Reservation.ListCustomerReservationsOperation>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.IAgentOperation, Auraly.Platform.Application.Agents.Operations.Reservation.ListCustomerReservationsOperation>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Commerce.GetOrderDraftOperation>();
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Conversation.GetKnownFactsOperation>();
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Conversation.CompleteConversationRequestOperation>();
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Checkout.ListPaymentMethodsOperation>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.IAgentOperation, Auraly.Platform.Application.Agents.Operations.Commerce.GetOrderDraftOperation>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.IAgentOperation, Auraly.Platform.Application.Agents.Operations.Conversation.GetKnownFactsOperation>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.IAgentOperation, Auraly.Platform.Application.Agents.Operations.Conversation.CompleteConversationRequestOperation>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.IAgentOperation, Auraly.Platform.Application.Agents.Operations.Checkout.ListPaymentMethodsOperation>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Escalation.RequestHumanEscalationOperation>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.IAgentOperation, Auraly.Platform.Application.Agents.Operations.Escalation.RequestHumanEscalationOperation>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IAgentOperation, MimosBabySpa.Application.Agents.Operations.Conversation.ResetConversationRequestOperation>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.IAgentOperation, Auraly.Platform.Application.Agents.Operations.Conversation.ResetConversationRequestOperation>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.AgentOperationRegistry>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.AgentOperationRegistry>();
 
-        MimosBabySpa.Application.Agents.Operations.Internal.InternalOperationRegistration.AddInternalAgentOperations(builder.Services);
+        Auraly.Platform.Application.Agents.Operations.Internal.InternalOperationRegistration.AddInternalAgentOperations(builder.Services);
 
-        builder.Services.AddSingleton<MimosBabySpa.Application.Agents.Facts.FactMutationBatchProcessor>();
+        builder.Services.AddSingleton<Auraly.Platform.Application.Agents.Facts.FactMutationBatchProcessor>();
 
-        builder.Services.AddSingleton<MimosBabySpa.Application.Agents.Runtime.IDeterministicFlowSelector, MimosBabySpa.Application.Agents.Runtime.DeterministicFlowSelector>();
+        builder.Services.AddSingleton<Auraly.Platform.Application.Agents.Runtime.IDeterministicFlowSelector, Auraly.Platform.Application.Agents.Runtime.DeterministicFlowSelector>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Commerce.ICartProductResolver, MimosBabySpa.Application.Commerce.CommerceCartProductResolver>();
-        builder.Services.AddScoped<MimosBabySpa.Application.Commerce.IProductCandidateRetriever, MimosBabySpa.Application.Commerce.LocalProductCandidateRetriever>();
-        builder.Services.AddScoped<MimosBabySpa.Application.Commerce.IProductAliasService, MimosBabySpa.Application.Commerce.ProductAliasService>();
-        builder.Services.AddScoped<MimosBabySpa.Application.Commerce.IProductCatalogSyncService, MimosBabySpa.Application.Commerce.ProductCatalogSyncService>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Commerce.ICartProductResolver, Auraly.Platform.Application.Commerce.CommerceCartProductResolver>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Commerce.IProductCandidateRetriever, Auraly.Platform.Application.Commerce.LocalProductCandidateRetriever>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Commerce.IProductAliasService, Auraly.Platform.Application.Commerce.ProductAliasService>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Commerce.IProductCatalogSyncService, Auraly.Platform.Application.Commerce.ProductCatalogSyncService>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Commerce.ICartMutationStore, MimosBabySpa.Application.Commerce.CommerceCartMutationStore>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Commerce.ICartMutationStore, Auraly.Platform.Application.Commerce.CommerceCartMutationStore>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Commerce.CartCommandBatchProcessor>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Commerce.CartCommandBatchProcessor>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Configuration.AgentConfigurationCompiler>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Configuration.AgentConfigurationCompiler>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Runtime.StageConditionEvaluator>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Runtime.StageConditionEvaluator>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Runtime.OperationArgumentBinder>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Runtime.OperationArgumentBinder>();
 
-        builder.Services.AddSingleton<MimosBabySpa.Application.Agents.Planning.TurnPlanValidator>();
+        builder.Services.AddSingleton<Auraly.Platform.Application.Agents.Planning.TurnPlanValidator>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Planning.ITurnPlanningContextEnricher, MimosBabySpa.Application.Agents.Planning.CommerceCartPlanningContextEnricher>();
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Planning.ITurnPlanningContextEnricher, MimosBabySpa.Application.Agents.Planning.CommerceSelectionPlanningContextEnricher>();
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Planning.ITurnPlanner, MimosBabySpa.Application.Agents.Planning.LlmTurnPlanner>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Planning.ITurnPlanningContextEnricher, Auraly.Platform.Application.Agents.Planning.CommerceCartPlanningContextEnricher>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Planning.ITurnPlanningContextEnricher, Auraly.Platform.Application.Agents.Planning.CommerceSelectionPlanningContextEnricher>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Planning.ITurnPlanner, Auraly.Platform.Application.Agents.Planning.LlmTurnPlanner>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Runtime.DeterministicStageExecutor>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Runtime.DeterministicStageExecutor>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Runtime.DeterministicStageTransitionResolver>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Runtime.DeterministicStageTransitionResolver>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Runtime.DeterministicTurnCoordinator>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Runtime.DeterministicTurnCoordinator>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IDeterministicResponseRenderer, MimosBabySpa.Application.Agents.Runtime.DeterministicResponseRenderer>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Runtime.IDeterministicResponseRenderer, Auraly.Platform.Application.Agents.Runtime.DeterministicResponseRenderer>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IOperationEventContextResolver, MimosBabySpa.Application.Agents.Runtime.ReservationCreatedOperationEventContextResolver>();
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IOperationEventContextResolver, MimosBabySpa.Application.Agents.Runtime.OrderCreatedOperationEventContextResolver>();
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IOperationEventContextResolver, MimosBabySpa.Application.Agents.Runtime.ManualPaymentRequestedOperationEventContextResolver>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Runtime.IOperationEventContextResolver, Auraly.Platform.Application.Agents.Runtime.ReservationCreatedOperationEventContextResolver>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Runtime.IOperationEventContextResolver, Auraly.Platform.Application.Agents.Runtime.OrderCreatedOperationEventContextResolver>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Runtime.IOperationEventContextResolver, Auraly.Platform.Application.Agents.Runtime.ManualPaymentRequestedOperationEventContextResolver>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Runtime.IDeterministicTurnEffectProcessor, MimosBabySpa.Application.Agents.Runtime.DeterministicTurnEffectProcessor>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Runtime.IDeterministicTurnEffectProcessor, Auraly.Platform.Application.Agents.Runtime.DeterministicTurnEffectProcessor>();
 
-        builder.Services.AddScoped<MimosBabySpa.Application.Agents.Operations.IOperationPresentationComposer, MimosBabySpa.Application.Agents.Operations.OperationPresentationComposer>();
+        builder.Services.AddScoped<Auraly.Platform.Application.Agents.Operations.IOperationPresentationComposer, Auraly.Platform.Application.Agents.Operations.OperationPresentationComposer>();
 
         builder.Services.AddScoped<IAgentConversationService, AgentConversationService>();
 

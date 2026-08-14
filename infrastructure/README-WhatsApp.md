@@ -42,7 +42,7 @@ El script obtendrá automáticamente la URL del webhook desde Azure:
     -AppId "1234567890123456" `
     -AppSecret (ConvertTo-SecureString "tu-app-secret" -AsPlainText -Force) `
     -FunctionAppName "mimosbabyspa-functions" `
-    -ResourceGroupName "MimosBabySpa-RG" `
+    -ResourceGroupName "Auraly-RG" `
     -VerifyToken "mi-token-secreto-123"
 ```
 
@@ -56,7 +56,7 @@ Si ya tienes un número de WhatsApp Business configurado, puedes especificarlo:
     -AppSecret (ConvertTo-SecureString "tu-app-secret" -AsPlainText -Force) `
     -PhoneNumber "+1234567890" `
     -FunctionAppName "mimosbabyspa-functions" `
-    -ResourceGroupName "MimosBabySpa-RG" `
+    -ResourceGroupName "Auraly-RG" `
     -VerifyToken "mi-token-secreto-123"
 ```
 
@@ -131,7 +131,7 @@ Si ya tienes un número de WhatsApp Business configurado en otra aplicación o c
 ```powershell
 az functionapp function keys list `
     --name mimosbabyspa-functions `
-    --resource-group MimosBabySpa-RG `
+    --resource-group Auraly-RG `
     --function-name WhatsAppWebhook
 ```
 
@@ -142,7 +142,7 @@ Después de obtener las credenciales, configura la Function App:
 ```powershell
 az functionapp config appsettings set `
     --name mimosbabyspa-functions `
-    --resource-group MimosBabySpa-RG `
+    --resource-group Auraly-RG `
     --settings `
     "WhatsApp:PhoneNumberId=123456789012345" `
     "WhatsApp:AccessToken=tu-access-token-permanente"
@@ -190,7 +190,7 @@ El bot debe responder automáticamente. Si no responde:
 ```powershell
 az functionapp log tail `
     --name mimosbabyspa-functions `
-    --resource-group MimosBabySpa-RG
+    --resource-group Auraly-RG
 ```
 
 ### Ver Métricas en Azure Portal

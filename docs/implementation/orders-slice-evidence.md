@@ -39,5 +39,5 @@ La impresión automática de múltiples facturas desde un lote administrativo, r
 
 - Se aislaron los datos tributarios de las pruebas SQL para evitar dependencia del orden de ejecución.
 - Se actualizaron los constructores históricos de `OrderSnapshot` para eliminar el argumento `TaxTotal` en vez de conservar una sobrecarga legacy.
-- Se corrigieron las pruebas que aún buscaban semillas en `database/MimosBabySpa.Database`; ahora usan `database/Auraly.Database`.
+- Se corrigieron las pruebas que aún buscaban semillas en `database/Auraly.Database`; ahora usan `database/Auraly.Database`.
 - Se verificó explícitamente que `SourceOrderId` llegue a la outbox SQLite y al vínculo único del servidor.

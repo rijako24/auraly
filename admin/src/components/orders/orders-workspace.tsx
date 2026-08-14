@@ -3,7 +3,6 @@
 import {
   CalendarDays,
   Check,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
@@ -49,6 +48,7 @@ const date = new Intl.DateTimeFormat("es-CO", {
 type OrdersWorkspaceProps = {
   compact?: boolean;
   connected?: boolean;
+  showHeader?: boolean;
   loadPage: (filters: {
     page: number;
     pageSize: number;
@@ -71,6 +71,7 @@ type OrdersWorkspaceProps = {
 export function OrdersWorkspace({
   compact = false,
   connected = true,
+  showHeader = true,
   loadPage,
   loadDetail,
   onRecover,
@@ -220,7 +221,7 @@ export function OrdersWorkspace({
 
   return (
     <div className={`flex min-h-0 flex-col ${compact ? "gap-2" : "gap-4"}`}>
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      {showHeader && <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
             <span className="grid h-9 w-9 place-items-center rounded-xl bg-teal-50 text-teal-700">
@@ -242,7 +243,7 @@ export function OrdersWorkspace({
             Expandir
           </Button>
         )}
-      </div>
+      </div>}
 
       <div className={`grid gap-2 ${compact ? "grid-cols-1" : "md:grid-cols-2 xl:grid-cols-6"}`}>
         <label className={`relative ${compact ? "" : "xl:col-span-2"}`}>

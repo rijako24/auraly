@@ -1,0 +1,364 @@
+{
+  "cases": [
+    {
+      "id": "medidental_long_order_preserves_every_requested_line",
+      "message": "Agregame 5 cajas de compulas SYGD-MA, 2 resinas BISG-MA, 3 ionomeros IONO-CEM, 4 adhesivos LC Bond, 6 kits DV-SEAL, 2 escaler P5 Max, 3 lamparas L9 y 1 kit de electrodos.",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "absentSignals": [
+        "catalog_query"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 8,
+          "products": [
+            "compula",
+            "BISG-MA",
+            "ionomero",
+            "LC Bond",
+            "DV-SEAL",
+            "escaler",
+            "lampara",
+            "electrodo"
+          ],
+          "operations": [
+            "add"
+          ],
+          "quantities": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ]
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql"
+    },
+    {
+      "id": "medidental_semantic_rejection_of_corn_searches_replacement_options",
+      "message": "No cambies aun Ceramik Mini del pedido; solo muestrame otros sellantes como alternativas.",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "absentSignals": [
+        "order_changes"
+      ],
+      "currentCart": [
+        {
+          "name": "Ceramik Mini",
+          "quantity": 6
+        },
+        {
+          "name": "Compulas SYGD-MA",
+          "quantity": 5
+        }
+      ],
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Pedido actual: Ceramik Mini x6 y Compulas SYGD-MA x5. Deseas agregar o cambiar algo?"
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql"
+    },
+    {
+      "id": "medidental_offered_corn_without_quantity_does_not_mutate",
+      "message": "El kit DV-SEAL.",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "absentSignals": [
+        "order_changes",
+        "catalog_query"
+      ],
+      "currentCart": [
+        {
+          "name": "Ceramik Mini",
+          "quantity": 6
+        },
+        {
+          "name": "Compulas SYGD-MA",
+          "quantity": 5
+        }
+      ],
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Para reemplazar Ceramik Mini encontre Kit DV-SEAL e IONO-CEM. Cual prefieres y en que cantidad?"
+        }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "{\"schemaVersion\":2,\"sequence\":1,\"snapshots\":[{\"sequence\":1,\"searchTerms\":[\"sellante\"],\"replacementReference\":\"Ceramik Mini\",\"products\":[{\"externalProductId\":\"M01\",\"name\":\"Kit DV-SEAL\",\"unitPrice\":9000,\"currency\":\"COP\"},{\"externalProductId\":\"M02\",\"name\":\"IONO-CEM\",\"unitPrice\":8000,\"currency\":\"COP\"}]}]}"
+      },
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql"
+    },
+    {
+      "id": "medidental_affirmative_add_without_quantity_never_invents_one",
+      "message": "Si, agregame ese.",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "absentSignals": [
+        "order_changes",
+        "catalog_query"
+      ],
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Tengo Kit DV-SEAL e IONO-CEM. Cual prefieres?"
+        },
+        {
+          "role": "user",
+          "content": "El kit DV-SEAL."
+        },
+        {
+          "role": "assistant",
+          "content": "Perfecto, cuantas unidades de Kit DV-SEAL deseas?"
+        }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "[{\"external_product_id\":\"M01\",\"name\":\"Kit DV-SEAL\",\"unit_price\":9000,\"currency\":\"COP\"},{\"external_product_id\":\"M02\",\"name\":\"IONO-CEM\",\"unit_price\":8000,\"currency\":\"COP\"}]"
+      },
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql"
+    },
+    {
+      "id": "medidental_explicit_quantity_completes_selected_corn",
+      "message": "Si, agregame 3 de ese.",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "absentSignals": [
+        "catalog_query"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": [
+            "DV-SEAL"
+          ],
+          "operations": [
+            "add"
+          ],
+          "quantities": [
+            3
+          ]
+        }
+      ],
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Tengo Kit DV-SEAL e IONO-CEM. Cual prefieres?"
+        },
+        {
+          "role": "user",
+          "content": "El kit DV-SEAL."
+        },
+        {
+          "role": "assistant",
+          "content": "Perfecto, cuantas unidades de Kit DV-SEAL deseas?"
+        }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "[{\"external_product_id\":\"M01\",\"name\":\"Kit DV-SEAL\",\"unit_price\":9000,\"currency\":\"COP\"},{\"external_product_id\":\"M02\",\"name\":\"IONO-CEM\",\"unit_price\":8000,\"currency\":\"COP\"}]"
+      },
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql"
+    },
+    {
+      "id": "medidental_remove_existing_product",
+      "message": "Sacame por completo el kit de electrodos del pedido.",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "absentSignals": [
+        "catalog_query"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": [
+            "electrodo"
+          ],
+          "operations": [
+            "remove"
+          ]
+        }
+      ],
+      "currentCart": [
+        {
+          "name": "Kit de electrodos Tripower",
+          "quantity": 1
+        },
+        {
+          "name": "Kit DV-SEAL",
+          "quantity": 3
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql"
+    },
+    {
+      "id": "medidental_ask_for_breast_options_is_read_only_catalog_search",
+      "message": "Que opciones de resina tienes?",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "absentSignals": [
+        "order_changes"
+      ],
+      "currentCart": [
+        {
+          "name": "resina SYGD-MA",
+          "quantity": 3
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql"
+    },
+    {
+      "id": "medidental_selected_breast_without_quantity_does_not_mutate",
+      "message": "Si, agregame la BISG-MA.",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "absentSignals": [
+        "order_changes",
+        "catalog_query"
+      ],
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Tengo RESINA BISG-MA y RESINA TEGD-MA. Cual deseas agregar y en que cantidad?"
+        }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "[{\"external_product_id\":\"PO63\",\"name\":\"RESINA BISG-MA\",\"unit_price\":14033.67,\"currency\":\"COP\"},{\"external_product_id\":\"PO62\",\"name\":\"RESINA TEGD-MA\",\"unit_price\":13001.08,\"currency\":\"COP\"}]"
+      },
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql"
+    },
+    {
+      "id": "medidental_quantity_after_breast_selection_adds_exact_variant",
+      "message": "Ponme 4 de esa, la RESINA BISG-MA.",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "absentSignals": [
+        "catalog_query"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": [
+            "RESINA BISG-MA"
+          ],
+          "operations": [
+            "add"
+          ],
+          "quantities": [
+            4
+          ]
+        }
+      ],
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Tengo RESINA BISG-MA y RESINA TEGD-MA. Cual deseas agregar y en que cantidad?"
+        },
+        {
+          "role": "user",
+          "content": "La BISG-MA."
+        },
+        {
+          "role": "assistant",
+          "content": "Cuantas unidades de RESINA BISG-MA deseas?"
+        }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "[{\"external_product_id\":\"PO63\",\"name\":\"RESINA BISG-MA\",\"unit_price\":14033.67,\"currency\":\"COP\"},{\"external_product_id\":\"PO62\",\"name\":\"RESINA TEGD-MA\",\"unit_price\":13001.08,\"currency\":\"COP\"}]"
+      },
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql"
+    },
+    {
+      "id": "medidental_change_total_quantity_of_existing_line",
+      "message": "De la RESINA BISG-MA dejame solo 2 en total.",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "absentSignals": [
+        "catalog_query"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": [
+            "RESINA BISG-MA"
+          ],
+          "operations": [
+            "set_quantity"
+          ],
+          "quantities": [
+            2
+          ]
+        }
+      ],
+      "currentCart": [
+        {
+          "name": "RESINA BISG-MA",
+          "quantity": 4
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql"
+    },
+    {
+      "id": "medidental_increment_existing_line",
+      "message": "Agregame una RESINA BISG-MA mas.",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "absentSignals": [
+        "catalog_query"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": [
+            "RESINA BISG-MA"
+          ],
+          "operations": [
+            "add"
+          ],
+          "quantities": [
+            1
+          ]
+        }
+      ],
+      "currentCart": [
+        {
+          "name": "RESINA BISG-MA",
+          "quantity": 2
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql"
+    }
+  ],
+  "repetitions": 3
+}

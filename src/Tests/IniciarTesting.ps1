@@ -65,7 +65,7 @@ function Test-Prerequisites {
     
     # Verificar estructura del proyecto
     $projectRoot = Split-Path -Parent $PSScriptRoot | Split-Path -Parent
-    $apiPath = Join-Path $projectRoot "src\API\MimosBabySpa.API"
+    $apiPath = Join-Path $projectRoot "src\API\Auraly.Platform.Worker"
     
     if (-not (Test-Path $apiPath)) {
         Write-Error "Directorio de API no encontrado: $apiPath"
@@ -107,7 +107,7 @@ function Start-AzureFunctions {
     Write-Step "🚀 Iniciando Azure Functions"
     
     $projectRoot = Split-Path -Parent $PSScriptRoot | Split-Path -Parent
-    $apiPath = Join-Path $projectRoot "src\API\MimosBabySpa.API"
+    $apiPath = Join-Path $projectRoot "src\API\Auraly.Platform.Worker"
     $logsPath = Join-Path $PSScriptRoot "logs.txt"
     
     # Limpiar logs anteriores

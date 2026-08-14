@@ -37,7 +37,7 @@ No deben aparecer en proyectos, namespaces, clases, tablas, endpoints ni nuevas 
 
 ```text
 Talkio
-MimosBabySpa
+Auraly
 Xion
 PedidosOK
 EnSa

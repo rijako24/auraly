@@ -1,0 +1,17 @@
+using Auraly.Platform.Domain.Enums;
+
+namespace Auraly.Platform.Application.Identity.DTOs;
+
+public record UpdateServiceRequest(
+    string? ServiceName,
+    string? Description,
+    string? Keywords,
+    int? DurationMinutes,
+    decimal? Price,
+    bool? IncludeInCheckoutTotal,
+    bool? IsActive,
+    Guid? CategoryId,
+    ServiceTier? Tier,
+    ServiceType? ServiceType,
+    ServiceFulfillmentKind? FulfillmentKind,
+    string? FixedScheduleLabel);

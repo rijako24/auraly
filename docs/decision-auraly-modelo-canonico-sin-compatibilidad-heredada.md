@@ -10,7 +10,7 @@ compatibilidad permanente con nombres, tablas, contratos o componentes heredados
 
 La versión liberada de Auraly no contendrá componentes legacy.
 
-Xion, Pedidos OK, Xion Web, Talkio y MimosBabySpa se usan únicamente para:
+Xion, Pedidos OK, Xion Web, Talkio y Auraly se usan únicamente para:
 
 - entender reglas del negocio;
 - contrastar comportamientos;
@@ -464,7 +464,7 @@ CI analiza código y artefactos desplegables buscando:
 ```text
 Talkio
 Mimos
-MimosBabySpa
+Auraly
 Xion
 PedidosOK
 PedidoOk

@@ -52,7 +52,7 @@
         -AppId "1234567890123456" `
         -AppSecret "tu-app-secret" `
         -FunctionAppName "mimosbabyspa-functions" `
-        -ResourceGroupName "MimosBabySpa-RG" `
+        -ResourceGroupName "Auraly-RG" `
         -VerifyToken "mi-token-secreto" `
         -PhoneNumber "+1234567890"
 
@@ -63,7 +63,7 @@
         -AppSecret "tu-app-secret" `
         -PhoneNumber "+1234567890" `
         -FunctionAppName "mimosbabyspa-functions" `
-        -ResourceGroupName "MimosBabySpa-RG" `
+        -ResourceGroupName "Auraly-RG" `
         -VerifyToken "mi-token-secreto"
 #>
 

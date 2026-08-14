@@ -517,7 +517,7 @@ public sealed partial class SqlPartyStore(
 
             SELECT s.PartySiteId,s.Code,s.Name,co.CountryId,co.Code,co.Name,
               d.AdministrativeDivisionId,d.Code,d.Name,ci.CityId,ci.Code,ci.Name,
-              s.AddressLine,s.Neighborhood,s.PostalCode,s.Email,s.Phone,s.IsPrimary,s.IsActive
+              s.AddressLine,s.Neighborhood,s.PostalCode,s.Email,s.Phone,s.GoogleMapsUrl,s.GooglePlaceId,s.Latitude,s.Longitude,s.IsPrimary,s.IsActive,s.RowVersion
             FROM dbo.PartySites s
             JOIN dbo.Customers c ON c.PartyId=s.PartyId AND c.CustomerId=@CustomerId
             JOIN dbo.Countries co ON co.CountryId=s.CountryId
@@ -542,7 +542,11 @@ public sealed partial class SqlPartyStore(
                 reader.GetGuid(6), reader.GetString(7), reader.GetString(8),
                 reader.GetGuid(9), reader.GetString(10), reader.GetString(11),
                 reader.GetString(12), NullString(reader, 13), NullString(reader, 14),
-                NullString(reader, 15), NullString(reader, 16), reader.GetBoolean(17), reader.GetBoolean(18)));
+                NullString(reader, 15), NullString(reader, 16), reader.GetBoolean(21), reader.GetBoolean(22),
+                NullString(reader, 17), NullString(reader, 18),
+                reader.IsDBNull(19) ? null : reader.GetDecimal(19),
+                reader.IsDBNull(20) ? null : reader.GetDecimal(20),
+                Convert.ToBase64String((byte[])reader[23])));
         return new CustomerDetail(
             (Guid)header[0]!, (Guid)header[1]!, (Guid)header[2]!, (string)header[3]!,
             header[4] as string, header[5] as string, header[6] as string,
@@ -706,10 +710,10 @@ public sealed partial class SqlPartyStore(
         ExecuteAsync(connection, transaction, """
             INSERT dbo.PartySites
               (PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,
-               AddressLine,Neighborhood,PostalCode,Email,Phone,IsPrimary,IsActive,CreatedBy,CreatedAt)
+               AddressLine,Neighborhood,PostalCode,Email,Phone,GoogleMapsUrl,GooglePlaceId,Latitude,Longitude,IsPrimary,IsActive,CreatedBy,CreatedAt)
             VALUES
               (@SiteId,@PartyId,@Code,@Name,@CountryId,@DivisionId,@CityId,
-               @Address,@Neighborhood,@PostalCode,@Email,@Phone,
+               @Address,@Neighborhood,@PostalCode,@Email,@Phone,@GoogleMapsUrl,@GooglePlaceId,@Latitude,@Longitude,
                CASE WHEN EXISTS(SELECT 1 FROM dbo.PartySites WHERE PartyId=@PartyId AND IsPrimary=1 AND IsActive=1)
                     THEN 0 ELSE @Primary END,1,@ActorId,@Now);
             """,
@@ -719,7 +723,9 @@ public sealed partial class SqlPartyStore(
                 P("@DivisionId", site.AdministrativeDivisionId), P("@CityId", site.CityId),
                 P("@Address", site.AddressLine.Trim()), P("@Neighborhood", site.Neighborhood?.Trim()),
                 P("@PostalCode", site.PostalCode?.Trim()), P("@Email", site.Email?.Trim()),
-                P("@Phone", site.Phone?.Trim()), P("@Primary", site.IsPrimary),
+                P("@Phone", site.Phone?.Trim()), P("@GoogleMapsUrl", site.GoogleMapsUrl?.Trim()),
+                P("@GooglePlaceId", site.GooglePlaceId?.Trim()), P("@Latitude", site.Latitude),
+                P("@Longitude", site.Longitude), P("@Primary", site.IsPrimary),
                 P("@ActorId", actor.ActorId), P("@Now", now)
             ],
             ct);

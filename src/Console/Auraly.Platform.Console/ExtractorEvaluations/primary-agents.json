@@ -1,0 +1,228 @@
+{
+    "repetitions":  3,
+    "cases":  [
+                  {
+                      "id":  "mimos_future_service_age",
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedAgenticConfiguration.sql",
+                      "stage":  "discovery",
+                      "message":  "Mi bebé tiene 2 meses y en dos días cumple 3; quiero llevarlo por su cumplemes de 3 meses.",
+                      "expectedFlow":  "booking",
+                      "expectedFacts":  [
+                                            {
+                                                "key":  "baby_age_months",
+                                                "equals":  3
+                                            }
+                                        ]
+                  },
+                  {
+                      "id":  "collect_respects_channel_authority_and_captures_later_email",
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedAgenticConfiguration.sql",
+                      "stage":  "customer_data",
+                      "message":  "Soy Laura Gomez, mi celular es 300 123 4567 y mi correo laura.gomez@example.com.",
+                      "expectedFlow":  "booking",
+                      "expectedFacts":  [
+                                            {
+                                                "key":  "customer_name",
+                                                "equals":  "Laura Gomez"
+                                            },
+                                            {
+                                                "key":  "customer_email",
+                                                "equals":  "laura.gomez@example.com"
+                                            }
+                                        ],
+                      "absentFacts":  [
+                                          "customer_phone"
+                                      ]
+                  },
+                  {
+                      "id":  "generic_phone_email_extraction",
+                      "factSchema":  [
+                                         {
+                                             "key":  "contact_phone",
+                                             "role":  "customer.phone",
+                                             "label":  "tel?fono de contacto",
+                                             "type":  "phone",
+                                             "source":  "user",
+                                             "scope":  "request"
+                                         },
+                                         {
+                                             "key":  "contact_email",
+                                             "role":  "customer.email",
+                                             "label":  "correo electr?nico de contacto",
+                                             "type":  "email",
+                                             "source":  "user",
+                                             "scope":  "request"
+                                         }
+                                     ],
+                      "stage":  "extraction",
+                      "message":  "Mi WhatsApp es +57 300 123 4567 y el correo es laura.gomez+reservas@example.com.",
+                      "expectedFlow":  "extraction",
+                      "expectedFacts":  [
+                                            {
+                                                "key":  "contact_phone",
+                                                "equals":  "+573001234567"
+                                            },
+                                            {
+                                                "key":  "contact_email",
+                                                "equals":  "laura.gomez+reservas@example.com"
+                                            }
+                                        ]
+                  },
+                  {
+                      "id":  "luis_relative_date_and_time",
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedLuisPetitBarber.sql",
+                      "stage":  "discovery",
+                      "message":  "Quiero reservar un corte mañana a las 10:30 de la mañana.",
+                      "expectedFlow":  "booking",
+                      "expectedFacts":  [
+                                            {
+                                                "key":  "desired_date",
+                                                "dateOffsetDays":  1
+                                            },
+                                            {
+                                                "key":  "desired_time",
+                                                "equals":  "10:30"
+                                            }
+                                        ]
+                  },
+                  {
+                      "id":  "luis_change_existing_reservation_intent",
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedLuisPetitBarber.sql",
+                      "stage":  "discovery",
+                      "message":  "Ya tengo una cita pero necesito cambiarla para mañana.",
+                      "expectedFlow":  "reservation_management"
+                  },
+                  {
+                      "id":  "cj_multiple_products_and_quantities",
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "stage":  "product_selection",
+                      "message":  "Agrega 2 paquetes de papa y 3 paquetes de tocineta.",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "order_changes"
+                                          ]
+                  },
+                  {
+                      "id":  "cj_two_addresses_are_ambiguous",
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "stage":  "product_selection",
+                      "message":  "Manda dos papas a la Calle 10 y tres tocinetas a la Carrera 20.",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "order_changes"
+                                          ],
+                      "expectedAmbiguousFields":  [
+                                                      "delivery_address"
+                                                  ]
+                  },
+                  {
+                      "id":  "mimos_unclear_age_is_not_invented",
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedAgenticConfiguration.sql",
+                      "stage":  "discovery",
+                      "message":  "Quiero llevar a mi bebé por su cumplemes, pero todavía no sé si será este mes o el próximo.",
+                      "expectedFlow":  "booking",
+                      "absentFacts":  [
+                                          "baby_age_months"
+                                      ],
+                      "expectedAmbiguousFields":  [
+                                                      "baby_age_months"
+                                                  ]
+                  },
+                  {
+                      "id":  "cj_recipe_request",
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "stage":  "product_selection",
+                      "message":  "Quiero preparar pollo con tocineta.",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "recipe_request"
+                                          ]
+                  },
+                  {
+                      "id":  "cj_contextual_catalog_price_query",
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "stage":  "product_selection",
+                      "history":  [
+                                      {
+                                          "role":  "user",
+                                          "content":  "Quiero preparar pollo con tocineta."
+                                      },
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Puedo mostrarte productos de pollo y tocineta disponibles en el catalogo."
+                                      }
+                                  ],
+                      "message":  "Dame los precios.",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "catalog_query"
+                                          ]
+                  },
+                  {
+                      "id":  "cj_selection_finished",
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "stage":  "product_selection",
+                      "history":  [
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Tu pedido vigente contiene pollo y tocineta. Puedes seguir agregando productos o finalizar la seleccion."
+                                      }
+                                  ],
+                      "message":  "Solo eso.",
+                      "expectedFlow":  "order",
+                      "expectedFacts":  [
+                                            {
+                                                "key":  "order_finalized",
+                                                "equals":  true
+                                            }
+                                        ]
+                  },
+                  {
+                      "id":  "cj_early_delivery_and_payment",
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "stage":  "product_selection",
+                      "message":  "La entrega es a domicilio en la calle 5 y pago en efectivo.",
+                      "expectedFlow":  "order",
+                      "expectedFacts":  [
+                                            {
+                                                "key":  "delivery_method",
+                                                "equals":  "domicilio"
+                                            },
+                                            {
+                                                "key":  "delivery_address",
+                                                "equals":  "calle 5"
+                                            },
+                                            {
+                                                "key":  "payment_method",
+                                                "equals":  "efectivo"
+                                            }
+                                        ]
+                  },
+                  {
+                      "id":  "cj_customer_type_selector",
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "stage":  "customer_type",
+                      "message":  "la a",
+                      "expectedFlow":  "order",
+                      "expectedFacts":  [
+                                            {
+                                                "key":  "customer_type",
+                                                "equals":  "Hogar"
+                                            }
+                                        ]
+                  },
+                  {
+                      "id":  "cj_customer_type_natural_language",
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "stage":  "customer_type",
+                      "message":  "compro para mi casa",
+                      "expectedFlow":  "order",
+                      "expectedFacts":  [
+                                            {
+                                                "key":  "customer_type",
+                                                "equals":  "Hogar"
+                                            }
+                                        ]
+                  }
+              ]
+}

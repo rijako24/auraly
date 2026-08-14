@@ -81,7 +81,7 @@ Get-Content -Wait -Tail 50 logs.txt | .\AnalizarLogs.ps1 -Watch
 
 ```powershell
 # Paso 1: Navegar a la carpeta de tests
-cd c:\Users\RichardJacome\MimosBabySpa\src\Tests
+cd c:\Users\RichardJacome\Auraly\src\Tests
 
 # Paso 2: Ejecutar script maestro con tests automáticos
 .\IniciarTesting.ps1 -RunTests -AnalyzeLogs
@@ -93,13 +93,13 @@ cd c:\Users\RichardJacome\MimosBabySpa\src\Tests
 
 ```powershell
 # Paso 1: Iniciar entorno
-cd c:\Users\RichardJacome\MimosBabySpa\src\Tests
+cd c:\Users\RichardJacome\Auraly\src\Tests
 .\IniciarTesting.ps1
 
 # En otra terminal PowerShell...
 
 # Paso 2: Ejecutar tests
-cd c:\Users\RichardJacome\MimosBabySpa\src\Tests
+cd c:\Users\RichardJacome\Auraly\src\Tests
 .\TestConversacionCompleta.ps1
 
 # Paso 3: Analizar resultados
@@ -262,15 +262,15 @@ private static readonly TimeSpan CacheExpiration = TimeSpan.FromMinutes(1);
 ### Habilitar Logging MÁS Detallado
 
 ```json
-// src/API/MimosBabySpa.API/local.settings.json
+// src/API/Auraly.Platform.Worker/local.settings.json
 
 {
   "Logging": {
     "LogLevel": {
       "Default": "Debug",
-      "MimosBabySpa.Application.Configuration": "Debug",
-      "MimosBabySpa.Application.Orchestration": "Debug",
-      "MimosBabySpa.Application.LLM": "Information"
+      "Auraly.Platform.Application.Configuration": "Debug",
+      "Auraly.Platform.Application.Orchestration": "Debug",
+      "Auraly.Platform.Application.LLM": "Information"
     }
   }
 }
@@ -317,7 +317,7 @@ git commit -m "..."
 ### 2. Monitorear Logs en Tiempo Real
 ```powershell
 # Terminal 1: Iniciar Functions
-cd src\API\MimosBabySpa.API
+cd src\API\Auraly.Platform.Worker
 func start --verbose | Tee-Object -FilePath ..\..\Tests\logs.txt
 
 # Terminal 2: Ver logs filtrados

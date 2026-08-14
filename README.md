@@ -65,8 +65,8 @@ cd src\Tests
 O manualmente:
 
 ```powershell
-cd src\Infrastructure\MimosBabySpa.Infrastructure
-dotnet ef database update --startup-project ..\..\API\MimosBabySpa.API\MimosBabySpa.API.csproj --context ApplicationDbContext
+cd src\Infrastructure\Auraly.Platform.Infrastructure
+dotnet ef database update --startup-project ..\..\API\Auraly.Platform.Worker\Auraly.Platform.Worker.csproj --context ApplicationDbContext
 ```
 
 ## 🔧 Desarrollo Local
@@ -74,7 +74,7 @@ dotnet ef database update --startup-project ..\..\API\MimosBabySpa.API\MimosBaby
 ### Ejecutar Azure Functions Localmente
 
 ```powershell
-cd src\API\MimosBabySpa.API
+cd src\API\Auraly.Platform.Worker
 func start
 ```
 
@@ -98,7 +98,7 @@ Usa la URL de ngrok para configurar el webhook temporalmente.
 Ejecuta los escenarios de integración del motor agentic:
 
 ```powershell
-dotnet run --project src/Tests/MimosBabySpa.IntegrationTests/MimosBabySpa.IntegrationTests.csproj
+dotnet run --project src/Tests/Auraly.IntegrationTests/Auraly.IntegrationTests.csproj
 ```
 
 Los escenarios cubren reservas exitosas, sin disponibilidad, doble booking, cambios de fecha, add-ons y flujos conversacionales completos.
@@ -109,7 +109,7 @@ Los escenarios cubren reservas exitosas, sin disponibilidad, doble booking, camb
 
 ```powershell
 az functionapp create `
-  --resource-group MimosBabySpa `
+  --resource-group Auraly `
   --consumption-plan-location eastus `
   --runtime dotnet-isolated `
   --runtime-version 8 `
@@ -123,7 +123,7 @@ az functionapp create `
 ```powershell
 az functionapp config appsettings set `
   --name mimosbabyspa-functions `
-  --resource-group MimosBabySpa `
+  --resource-group Auraly `
   --settings `
     "ConnectionStrings:DefaultConnection=<TU_CONNECTION_STRING>" `
     "OpenAI:TextModel:ApiKey=<TU_GPT_KEY>" `
@@ -139,7 +139,7 @@ az functionapp config appsettings set `
 ### 3. Publicar Function App
 
 ```powershell
-cd src\API\MimosBabySpa.API
+cd src\API\Auraly.Platform.Worker
 func azure functionapp publish mimosbabyspa-functions
 ```
 
@@ -160,8 +160,8 @@ Actualiza la URL del webhook en Meta for Developers con la URL de tu Function Ap
 Las migraciones se crean automáticamente con EF Core Code First. Para crear una nueva migración:
 
 ```powershell
-cd src\Infrastructure\MimosBabySpa.Infrastructure
-dotnet ef migrations add NombreMigracion --startup-project ..\..\API\MimosBabySpa.API\MimosBabySpa.API.csproj --context ApplicationDbContext
+cd src\Infrastructure\Auraly.Platform.Infrastructure
+dotnet ef migrations add NombreMigracion --startup-project ..\..\API\Auraly.Platform.Worker\Auraly.Platform.Worker.csproj --context ApplicationDbContext
 ```
 
 ## 🧠 Inteligencia Artificial

@@ -16,7 +16,7 @@ dotnet build database\Auraly.Database\Auraly.Database.sqlproj --configuration Re
 dotnet test tests\Auraly.Foundation.Tests\Auraly.Foundation.Tests.csproj --configuration Release
 dotnet test tests\Auraly.ServerSlice.IntegrationTests\Auraly.ServerSlice.IntegrationTests.csproj --configuration Release
 dotnet test tests\Auraly.Pos.Edge.Host.Tests\Auraly.Pos.Edge.Host.Tests.csproj --configuration Release
-dotnet test src\Tests\MimosBabySpa.Tests\MimosBabySpa.Tests.csproj --configuration Release
+dotnet test src\Tests\Auraly.Platform.Tests\Auraly.Platform.Tests.csproj --configuration Release
 ```
 
 Desde `admin`:

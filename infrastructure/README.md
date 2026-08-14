@@ -41,7 +41,7 @@ Este directorio contiene scripts para desplegar toda la infraestructura necesari
 ```powershell
 .\Deploy-AzureInfrastructure.ps1 `
     -SubscriptionId "tu-subscription-id" `
-    -ResourceGroupName "MimosBabySpa-Production-RG" `
+    -ResourceGroupName "Auraly-Production-RG" `
     -Location "eastus" `
     -Environment "prod" `
     -SqlAdminUsername "sqladmin" `
@@ -58,7 +58,7 @@ Este directorio contiene scripts para desplegar toda la infraestructura necesari
 | Parámetro | Requerido | Descripción | Default |
 |-----------|-----------|-------------|---------|
 | `SubscriptionId` | Sí | ID de la suscripción de Azure | - |
-| `ResourceGroupName` | No | Nombre del grupo de recursos | `MimosBabySpa-RG` |
+| `ResourceGroupName` | No | Nombre del grupo de recursos | `Auraly-RG` |
 | `Location` | No | Región de Azure | `eastus` |
 | `Environment` | No | Ambiente (dev/staging/prod) | `dev` |
 | `SqlAdminUsername` | Sí | Usuario administrador de SQL | - |
@@ -95,7 +95,7 @@ El script configura automáticamente:
 **Para desarrollo local**, agrega tu IP:
 ```powershell
 New-AzSqlServerFirewallRule `
-    -ResourceGroupName "MimosBabySpa-RG" `
+    -ResourceGroupName "Auraly-RG" `
     -ServerName "tu-sql-server" `
     -FirewallRuleName "MyIP" `
     -StartIpAddress "tu-ip-publica" `
@@ -127,7 +127,7 @@ Donde:
 
 Todos los recursos se etiquetan con:
 - `Environment`: dev/staging/prod
-- `Project`: MimosBabySpa
+- `Project`: Auraly
 - `ManagedBy`: InfrastructureAsCode
 - `CreatedDate`: fecha de creación
 
@@ -160,13 +160,13 @@ La contraseña debe cumplir:
 
 1. **Desplegar esquema de base de datos:**
    ```powershell
-   cd ..\database\MimosBabySpa.Database\Scripts
-   .\Deploy.ps1 -ServerInstance "tu-sql-server.database.windows.net" -DatabaseName "MimosBabySpa"
+   cd ..\database\Auraly.Database\Scripts
+   .\Deploy.ps1 -ServerInstance "tu-sql-server.database.windows.net" -DatabaseName "Auraly"
    ```
 
 2. **Publicar Function App:**
    ```powershell
-   cd ..\..\src\API\MimosBabySpa.API
+   cd ..\..\src\API\Auraly.Platform.Worker
    func azure functionapp publish mimosbabyspa-func-dev-xxxxx
    ```
 
@@ -176,7 +176,7 @@ La contraseña debe cumplir:
        -AppId "tu-app-id" `
        -AppSecret (ConvertTo-SecureString "tu-app-secret" -AsPlainText -Force) `
        -FunctionAppName "mimosbabyspa-func-dev-xxxxx" `
-       -ResourceGroupName "MimosBabySpa-RG" `
+       -ResourceGroupName "Auraly-RG" `
        -VerifyToken "mi-token-secreto"
    ```
    
@@ -187,7 +187,7 @@ La contraseña debe cumplir:
    # Obtener Function Key
    az functionapp function keys list `
        --name mimosbabyspa-func-dev-xxxxx `
-       --resource-group MimosBabySpa-RG `
+       --resource-group Auraly-RG `
        --function-name WhatsAppWebhook
    
    # Configurar en Meta for Developers:
@@ -206,18 +206,18 @@ La contraseña debe cumplir:
 
 ```powershell
 # Verificar recursos creados
-Get-AzResource -ResourceGroupName "MimosBabySpa-RG" | Format-Table Name, ResourceType, Location
+Get-AzResource -ResourceGroupName "Auraly-RG" | Format-Table Name, ResourceType, Location
 
 # Verificar configuración de Function App
 az functionapp config appsettings list `
     --name mimosbabyspa-func-dev-xxxxx `
-    --resource-group MimosBabySpa-RG
+    --resource-group Auraly-RG
 
 # Probar conexión a SQL
 Test-AzSqlDatabaseConnection `
-    -ResourceGroupName "MimosBabySpa-RG" `
+    -ResourceGroupName "Auraly-RG" `
     -ServerName "tu-sql-server" `
-    -DatabaseName "MimosBabySpa"
+    -DatabaseName "Auraly"
 ```
 
 ## 🗑️ Eliminar Recursos
@@ -225,7 +225,7 @@ Test-AzSqlDatabaseConnection `
 Para eliminar toda la infraestructura:
 
 ```powershell
-Remove-AzResourceGroup -Name "MimosBabySpa-RG" -Force
+Remove-AzResourceGroup -Name "Auraly-RG" -Force
 ```
 
 ⚠️ **CUIDADO**: Esto eliminará TODOS los recursos del grupo.

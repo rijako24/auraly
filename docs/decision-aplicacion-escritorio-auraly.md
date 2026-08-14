@@ -388,7 +388,7 @@ Auraly
 Un acceso puede llamarse `Auraly POS` si abre directamente la caja, pero sigue
 siendo el mismo producto.
 
-No aparecen Talkio, MimosBabySpa, Xion o Pedidos OK en solución, instalador,
+No aparecen Talkio, Auraly, Xion o Pedidos OK en solución, instalador,
 ventana, carpetas nuevas, servicios, protocolo o certificados.
 
 ---

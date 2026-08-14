@@ -11,6 +11,8 @@ DECLARE @OrderPermissions TABLE
 INSERT INTO @OrderPermissions ([Module],[Action],[Resource],[Description])
 VALUES
     (N'Orders',N'Read',N'orders.read',N'Consultar pedidos del negocio'),
+    (N'Orders',N'Create',N'orders.create',N'Crear pedidos comerciales y reservar sus existencias'),
+    (N'Orders',N'Update',N'orders.update',N'Editar pedidos comerciales antes de facturarlos'),
     (N'Orders',N'Recover',N'orders.recover',N'Recuperar un pedido en la venta activa'),
     (N'Orders',N'Invoice',N'orders.invoice',N'Facturar uno o varios pedidos'),
     (N'Orders',N'Cancel',N'orders.cancel',N'Cancelar pedidos'),
@@ -30,6 +32,8 @@ JOIN dbo.Permissions permission
   ON permission.Resource IN
   (
       N'orders.read',
+      N'orders.create',
+      N'orders.update',
       N'orders.recover',
       N'orders.invoice',
       N'orders.cancel',

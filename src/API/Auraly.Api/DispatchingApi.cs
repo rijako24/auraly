@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Auraly.Application.Dispatching;
 using Auraly.Contracts.Dispatching;
+using Auraly.Infrastructure.Persistence;
 
 namespace Auraly.Api;
 
@@ -8,8 +9,10 @@ public static class DispatchingApi
 {
     public static IEndpointRouteBuilder MapDispatchingApi(this IEndpointRouteBuilder endpoints)
     {
+        // The services enforce each operation's exact permission. Keeping only authentication
+        // here lets transporter-only users execute an assigned dispatch without admin read access.
         var group = endpoints.MapGroup("/api/commerce/v1/dispatches")
-            .RequireAuthorization(DispatchPermissionCodes.Read);
+            .RequireAuthorization();
 
         group.MapGet("", async (ClaimsPrincipal principal, int page, int pageSize,
             string? search, string? status, DateOnly? from, DateOnly? to,
@@ -62,6 +65,54 @@ public static class DispatchingApi
         group.MapPost("/{dispatchId:guid}/shortages", async (ClaimsPrincipal principal, Guid dispatchId,
             DeclareDispatchShortageRequest request, DispatchService service, CancellationToken ct) =>
             await ExecuteAsync(() => service.DeclareShortageAsync(principal.ToDispatchIdentity(), dispatchId, request, ct), Results.Ok));
+
+        group.MapGet("/{dispatchId:guid}/execution", async (ClaimsPrincipal principal, Guid dispatchId,
+            DispatchDeliveryService service, CancellationToken ct) =>
+            await ExecuteAsync(() => service.GetAsync(principal.ToDispatchIdentity(), dispatchId, ct), Results.Ok));
+
+        group.MapPut("/{dispatchId:guid}/delivery-results", async (ClaimsPrincipal principal, Guid dispatchId,
+            RecordDispatchDeliveryRequest request, DispatchDeliveryService service, CancellationToken ct) =>
+            await ExecuteAsync(() => service.RecordAsync(principal.ToDispatchIdentity(), dispatchId, request, ct), Results.Ok));
+
+        group.MapPut("/{dispatchId:guid}/delivery-order", async (ClaimsPrincipal principal, Guid dispatchId,
+            ReorderDispatchDocumentsRequest request, DispatchDeliveryService service, CancellationToken ct) =>
+            await ExecuteAsync(() => service.ReorderAsync(principal.ToDispatchIdentity(), dispatchId, request, ct), Results.Ok));
+
+        group.MapPost("/{dispatchId:guid}/expenses", async (ClaimsPrincipal principal, Guid dispatchId,
+            DispatchExpenseInput request, DispatchDeliveryService service, CancellationToken ct) =>
+            await ExecuteAsync(() => service.RecordExpenseAsync(principal.ToDispatchIdentity(), dispatchId, request, ct), Results.Ok));
+
+        group.MapPut("/{dispatchId:guid}/expenses/{expenseId:guid}/review", async (ClaimsPrincipal principal, Guid dispatchId,
+            Guid expenseId, ReviewDispatchExpenseRequest request, DispatchDeliveryService service, CancellationToken ct) =>
+            await ExecuteAsync(() => service.ReviewExpenseAsync(principal.ToDispatchIdentity(), dispatchId, expenseId, request, ct), Results.Ok));
+        group.MapPost("/{dispatchId:guid}/evidence", async (ClaimsPrincipal principal, Guid dispatchId,
+            IFormFile file, DispatchDeliveryService service, AzureBlobObjectStorage blobs, CancellationToken ct) =>
+        {
+            var actor = principal.ToDispatchIdentity();
+            await service.GetAsync(actor, dispatchId, ct);
+            if (file.Length is <= 0 or > 8_388_608 || !file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+                return Results.Problem("Evidence must be an image of at most 8 MB.", statusCode: 400);
+            var extension = Path.GetExtension(file.FileName);
+            if (extension.Length > 10) extension = ".jpg";
+            await using var stream = file.OpenReadStream();
+            var url = await blobs.UploadImageAsync(actor.BusinessId, stream, $"dispatch-evidence/{dispatchId:D}/{Guid.NewGuid():N}{extension}", file.ContentType, ct);
+            return Results.Ok(new { url });
+        }).DisableAntiforgery();
+
+
+        group.MapPost("/{dispatchId:guid}/close-route", async (ClaimsPrincipal principal, Guid dispatchId,
+            CloseDispatchRouteRequest request, DispatchDeliveryService service, CancellationToken ct) =>
+            await ExecuteAsync(() => service.CloseRouteAsync(principal.ToDispatchIdentity(), dispatchId, request, ct), Results.Ok));
+
+        group.MapPost("/{dispatchId:guid}/settle", async (ClaimsPrincipal principal, Guid dispatchId,
+            SettleDispatchRequest request, DispatchDeliveryService service,
+            DispatchSettlementCoordinator coordinator, CancellationToken ct) =>
+            await ExecuteAsync(async () =>
+            {
+                var result = await service.SettleAsync(principal.ToDispatchIdentity(), dispatchId, request, ct);
+                coordinator.Signal();
+                return result;
+            }, Results.Ok));
 
         return endpoints;
     }

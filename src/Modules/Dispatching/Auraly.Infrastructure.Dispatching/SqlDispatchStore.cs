@@ -15,6 +15,7 @@ public sealed class SqlDispatchStore(DispatchingSqlConnectionFactory connections
           OUTER APPLY(SELECT COUNT(*) DocumentCount FROM dbo.DispatchSourceDocuments x WHERE x.DispatchId=d.DispatchId) docs
           OUTER APPLY(SELECT COUNT(*) LineCount,COALESCE(SUM(AssignedQuantity),0) Expected,COALESCE(SUM(VerifiedQuantity),0) Verified,COALESCE(SUM(ShortageQuantity),0) Shortage FROM dbo.DispatchLines x WHERE x.DispatchId=d.DispatchId) lines
           WHERE d.TenantId=@TenantId AND d.BusinessId=@BusinessId
+            AND (@ReadAll=1 OR d.DriverUserId=@UserId)
             AND (@Status IS NULL OR d.Status=@Status)
             AND (@From IS NULL OR d.ScheduledDate>=@From) AND (@To IS NULL OR d.ScheduledDate<=@To)
             AND (@Search IS NULL OR d.DispatchNumber LIKE '%'+@Search+'%' OR d.DriverName LIKE '%'+@Search+'%' OR d.VehiclePlate LIKE '%'+@Search+'%'
@@ -43,7 +44,16 @@ public sealed class SqlDispatchStore(DispatchingSqlConnectionFactory connections
           WHERE r.BusinessId=@BusinessId AND r.IsActive=1 ORDER BY r.Name
         """,connection))
         { Scope(command,actor); await using var reader=await command.ExecuteReaderAsync(ct); while(await reader.ReadAsync(ct)) routes.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetString(3))); }
-        return new(warehouses,routes);
+        var drivers=new List<DispatchDriverOption>();
+        await using(var command=new SqlCommand("""
+          SELECT DISTINCT u.UserId,CONCAT(u.FirstName,N' ',u.LastName)
+          FROM dbo.AppUsers u INNER JOIN dbo.UserRoles ur ON ur.UserId=u.UserId AND (ur.BusinessId=@BusinessId OR ur.BusinessId IS NULL)
+          INNER JOIN dbo.RolePermissions rp ON rp.RoleId=ur.RoleId INNER JOIN dbo.Permissions p ON p.PermissionId=rp.PermissionId
+          WHERE u.TenantId=@TenantId AND u.IsActive=1 AND p.Resource=N'dispatches.delivery.execute'
+          ORDER BY CONCAT(u.FirstName,N' ',u.LastName)
+        """,connection))
+        { Scope(command,actor); await using var reader=await command.ExecuteReaderAsync(ct); while(await reader.ReadAsync(ct)) drivers.Add(new(reader.GetGuid(0),reader.GetString(1))); }
+        return new(warehouses,routes,drivers);
     }
 
     public async Task<DispatchCandidatePage> CandidatesAsync(DispatchActorIdentity actor, DispatchCandidateQuery query, CancellationToken ct)
@@ -78,7 +88,7 @@ public sealed class SqlDispatchStore(DispatchingSqlConnectionFactory connections
         await using var header=new SqlCommand("""
           SELECT d.DispatchId,d.BusinessId,d.WarehouseId,w.Name,d.DispatchNumber,d.ScheduledDate,d.DriverName,d.VehiclePlate,d.RouteId,r.Name,d.Notes,d.Status,d.CreatedAt,d.UpdatedAt,d.RowVersion
           FROM dbo.Dispatches d INNER JOIN dbo.Warehouses w ON w.WarehouseId=d.WarehouseId LEFT JOIN dbo.SalesRoutes r ON r.RouteId=d.RouteId
-          WHERE d.DispatchId=@Id AND d.TenantId=@TenantId AND d.BusinessId=@BusinessId
+          WHERE d.DispatchId=@Id AND d.TenantId=@TenantId AND d.BusinessId=@BusinessId AND (@ReadAll=1 OR d.DriverUserId=@UserId)
         """,connection); Identity(header,actor,dispatchId);
         Guid business,warehouse; string warehouseName,number,driver,status,version; DateOnly date; string? plate,routeName,notes; Guid? routeId; DateTimeOffset created,updated;
         await using(var reader=await header.ExecuteReaderAsync(ct)) { if(!await reader.ReadAsync(ct)) return null; business=reader.GetGuid(1);warehouse=reader.GetGuid(2);warehouseName=reader.GetString(3);number=reader.GetString(4);date=DateOnly.FromDateTime(reader.GetDateTime(5));driver=reader.GetString(6);plate=NullableString(reader,7);routeId=NullableGuid(reader,8);routeName=NullableString(reader,9);notes=NullableString(reader,10);status=reader.GetString(11);created=reader.GetDateTimeOffset(12);updated=reader.GetDateTimeOffset(13);version=Version(reader,14); }
@@ -101,9 +111,13 @@ public sealed class SqlDispatchStore(DispatchingSqlConnectionFactory connections
           await using(var command=new SqlCommand("""
             IF NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId AND IsActive=1) THROW 51000,'La bodega no es válida para el despacho.',1;
             IF @RouteId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.SalesRoutes WHERE RouteId=@RouteId AND BusinessId=@BusinessId AND IsActive=1) THROW 51000,'La ruta no es válida para el despacho.',1;
-            INSERT dbo.Dispatches(DispatchId,TenantId,BusinessId,WarehouseId,DispatchNumber,ScheduledDate,DriverName,VehiclePlate,RouteId,Notes,Status,CreatedBy,CreatedAt,UpdatedAt)
-            VALUES(@Id,@TenantId,@BusinessId,@WarehouseId,@Number,@Date,@Driver,@Plate,@RouteId,@Notes,N'Draft',@UserId,@Now,@Now);
-          """,connection,transaction)) { Scope(command,actor);command.Parameters.AddWithValue("@Id",dispatchId);command.Parameters.AddWithValue("@WarehouseId",request.WarehouseId);command.Parameters.AddWithValue("@Number",dispatchNumber);command.Parameters.AddWithValue("@Date",request.ScheduledDate.ToDateTime(TimeOnly.MinValue));command.Parameters.AddWithValue("@Driver",driverName);command.Parameters.AddWithValue("@Plate",(object?)vehiclePlate??DBNull.Value);command.Parameters.AddWithValue("@RouteId",(object?)request.RouteId??DBNull.Value);command.Parameters.AddWithValue("@Notes",(object?)notes??DBNull.Value);command.Parameters.AddWithValue("@Now",now);await command.ExecuteNonQueryAsync(ct); }
+            DECLARE @ResolvedDriver nvarchar(160)=@Driver;
+            IF @DriverUserId IS NOT NULL BEGIN
+              SELECT @ResolvedDriver=CONCAT(u.FirstName,N' ',u.LastName) FROM dbo.AppUsers u WHERE u.UserId=@DriverUserId AND u.TenantId=@TenantId AND u.IsActive=1;
+              IF @ResolvedDriver IS NULL THROW 51000,'El transportador seleccionado no está activo.',1;
+            END
+            INSERT dbo.Dispatches(DispatchId,TenantId,BusinessId,WarehouseId,DispatchNumber,ScheduledDate,DriverUserId,DriverName,VehiclePlate,RouteId,Notes,Status,CreatedBy,CreatedAt,UpdatedAt) VALUES(@Id,@TenantId,@BusinessId,@WarehouseId,@Number,@Date,@DriverUserId,@ResolvedDriver,@Plate,@RouteId,@Notes,N'Draft',@UserId,@Now,@Now);
+          """,connection,transaction)) { Scope(command,actor);command.Parameters.AddWithValue("@Id",dispatchId);command.Parameters.AddWithValue("@WarehouseId",request.WarehouseId);command.Parameters.AddWithValue("@Number",dispatchNumber);command.Parameters.AddWithValue("@Date",request.ScheduledDate.ToDateTime(TimeOnly.MinValue));command.Parameters.AddWithValue("@Driver",driverName);command.Parameters.AddWithValue("@DriverUserId",(object?)request.DriverUserId??DBNull.Value);command.Parameters.AddWithValue("@Plate",(object?)vehiclePlate??DBNull.Value);command.Parameters.AddWithValue("@RouteId",(object?)request.RouteId??DBNull.Value);command.Parameters.AddWithValue("@Notes",(object?)notes??DBNull.Value);command.Parameters.AddWithValue("@Now",now);await command.ExecuteNonQueryAsync(ct); }
           await AttachAsync(connection,transaction,actor,dispatchId,request.SourceDocumentIds,request.WarehouseId,now,ct); await transaction.CommitAsync(ct); return await ResultAsync(actor,dispatchId,ct);
         } catch(SqlException ex) { await transaction.RollbackAsync(CancellationToken.None); throw Conflict(ex); }
     }
@@ -175,7 +189,7 @@ public sealed class SqlDispatchStore(DispatchingSqlConnectionFactory connections
       await using var connection=connections.Create();await connection.OpenAsync(ct);await using var command=new SqlCommand("""
         SELECT d.DispatchNumber,d.ScheduledDate,d.Status,d.DriverName,d.VehiclePlate,sd.SourceDocumentType,sd.DocumentNumberSnapshot,sd.CustomerNameSnapshot,sd.DeliveryAddressSnapshot,sd.SellerNameSnapshot,l.ProductCodeSnapshot,l.DescriptionSnapshot,l.AssignedQuantity,l.VerifiedQuantity,l.ShortageQuantity,l.UnitPriceSnapshot,l.LineTotalSnapshot
         FROM dbo.Dispatches d INNER JOIN dbo.DispatchSourceDocuments sd ON sd.DispatchId=d.DispatchId INNER JOIN dbo.DispatchLines l ON l.DispatchSourceDocumentId=sd.DispatchSourceDocumentId
-        WHERE d.DispatchId=@Id AND d.TenantId=@TenantId AND d.BusinessId=@BusinessId ORDER BY sd.CustomerNameSnapshot,sd.DocumentNumberSnapshot,l.DescriptionSnapshot
+        WHERE d.DispatchId=@Id AND d.TenantId=@TenantId AND d.BusinessId=@BusinessId AND (@ReadAll=1 OR d.DriverUserId=@UserId) ORDER BY sd.CustomerNameSnapshot,sd.DocumentNumberSnapshot,l.DescriptionSnapshot
       """,connection);Identity(command,actor,id);var rows=new List<DispatchReportRow>();await using var reader=await command.ExecuteReaderAsync(ct);while(await reader.ReadAsync(ct))rows.Add(new(reader.GetString(0),DateOnly.FromDateTime(reader.GetDateTime(1)),reader.GetString(2),reader.GetString(3),NullableString(reader,4),reader.GetString(5),reader.GetString(6),reader.GetString(7),NullableString(reader,8),reader.GetString(9),reader.GetString(10),reader.GetString(11),reader.GetDecimal(12),reader.GetDecimal(13),reader.GetDecimal(14),prices?reader.GetDecimal(15):null,prices?reader.GetDecimal(16):null));if(rows.Count==0)throw new DispatchNotFoundException("The dispatch does not exist or has no documents.");return new($"Manifiesto {rows[0].DispatchNumber}",DateTimeOffset.UtcNow,prices,rows);
     }
 
@@ -199,7 +213,7 @@ public sealed class SqlDispatchStore(DispatchingSqlConnectionFactory connections
     private async Task<DispatchMutationResult> ResultAsync(DispatchActorIdentity actor,Guid id,CancellationToken ct){await using var c=connections.Create();await c.OpenAsync(ct);await using var command=new SqlCommand("SELECT d.DispatchNumber,d.Status,COUNT(DISTINCT sd.DispatchSourceDocumentId),COUNT(DISTINCT l.DispatchLineId),COALESCE(SUM(l.AssignedQuantity),0),COALESCE(SUM(l.VerifiedQuantity),0),COALESCE(SUM(l.ShortageQuantity),0),d.RowVersion FROM dbo.Dispatches d LEFT JOIN dbo.DispatchSourceDocuments sd ON sd.DispatchId=d.DispatchId LEFT JOIN dbo.DispatchLines l ON l.DispatchId=d.DispatchId WHERE d.DispatchId=@Id AND d.TenantId=@TenantId AND d.BusinessId=@BusinessId GROUP BY d.DispatchNumber,d.Status,d.RowVersion",c);Identity(command,actor,id);await using var r=await command.ExecuteReaderAsync(ct);if(!await r.ReadAsync(ct))throw new DispatchNotFoundException("The dispatch does not exist.");return new(id,r.GetString(0),r.GetString(1),r.GetInt32(2),r.GetInt32(3),r.GetDecimal(4),r.GetDecimal(5),r.GetDecimal(6),Version(r,7));}
     private static void AddQuery(SqlCommand c,DispatchActorIdentity a,DispatchQuery q){Scope(c,a);c.Parameters.AddWithValue("@Search",(object?)q.Search??DBNull.Value);c.Parameters.AddWithValue("@Status",(object?)q.Status??DBNull.Value);c.Parameters.AddWithValue("@From",q.From.HasValue?q.From.Value.ToDateTime(TimeOnly.MinValue):DBNull.Value);c.Parameters.AddWithValue("@To",q.To.HasValue?q.To.Value.ToDateTime(TimeOnly.MinValue):DBNull.Value);}
     private static void AddCandidate(SqlCommand c,DispatchActorIdentity a,DispatchCandidateQuery q){c.Parameters.AddWithValue("@BusinessId",a.BusinessId);c.Parameters.AddWithValue("@Search",(object?)q.Search??DBNull.Value);c.Parameters.AddWithValue("@DocumentType",(object?)q.DocumentType??DBNull.Value);c.Parameters.AddWithValue("@WarehouseId",(object?)q.WarehouseId??DBNull.Value);c.Parameters.AddWithValue("@From",q.From.HasValue?q.From.Value.ToDateTime(TimeOnly.MinValue):DBNull.Value);c.Parameters.AddWithValue("@To",q.To.HasValue?q.To.Value.ToDateTime(TimeOnly.MinValue):DBNull.Value);}
-    private static void Scope(SqlCommand c,DispatchActorIdentity a){c.Parameters.AddWithValue("@TenantId",a.TenantId);c.Parameters.AddWithValue("@BusinessId",a.BusinessId);c.Parameters.AddWithValue("@UserId",a.UserId);}
+    private static void Scope(SqlCommand c,DispatchActorIdentity a){c.Parameters.AddWithValue("@TenantId",a.TenantId);c.Parameters.AddWithValue("@BusinessId",a.BusinessId);c.Parameters.AddWithValue("@UserId",a.UserId);c.Parameters.AddWithValue("@ReadAll",a.Permissions.Contains(DispatchPermissionCodes.ReadAll));}
     private static void Identity(SqlCommand c,DispatchActorIdentity a,Guid id){Scope(c,a);c.Parameters.AddWithValue("@Id",id);}
     private static void Decimal(SqlCommand c,string name,decimal value){var p=c.Parameters.Add(name,SqlDbType.Decimal);p.Precision=19;p.Scale=6;p.Value=value;}
     private static string Version(SqlDataReader r,int i)=>Convert.ToBase64String((byte[])r.GetValue(i));

@@ -1,0 +1,17 @@
+using Auraly.Platform.Domain.Entities;
+
+namespace Auraly.Platform.Domain.Repositories;
+
+public interface IBusinessRepository
+{
+    Task<Business?> GetByIdAsync(Guid businessId);
+    Task<Business?> GetByNameAsync(string name, CancellationToken ct = default);
+    Task<Business?> GetByIdWithConfigurationAsync(Guid businessId);
+    Task<IReadOnlyList<Business>> GetByTenantIdAsync(Guid tenantId, CancellationToken ct = default);
+    Task<(IReadOnlyList<Business> Items, int TotalCount)> GetPagedAsync(int page, int pageSize, string? search = null, CancellationToken ct = default);
+    Task<(IReadOnlyList<Business> Items, int TotalCount)> GetPagedByTenantIdAsync(
+        Guid tenantId, int page, int pageSize, string? search = null, CancellationToken ct = default);
+    Task<Business> CreateAsync(Business business);
+    Task<Business> UpdateAsync(Business business);
+}
+

@@ -7,10 +7,15 @@ export function useParties(params: { page: number; pageSize: number; search?: st
   const businessId=useBusinessContextStore((state)=>state.selectedBusinessId);
   return useQuery({ queryKey:["parties",businessId,params],queryFn:()=>partiesApi.page(params),enabled:!!businessId,placeholderData:keepPreviousData });
 }
+export function useCustomerMap(){
+  const businessId=useBusinessContextStore((state)=>state.selectedBusinessId);
+  return useQuery({queryKey:["parties","customer-map",businessId],queryFn:()=>partiesApi.customerMap(),enabled:!!businessId,staleTime:60_000});
+}
 export function useCreateThirdParty(role:CommercialPartyRole) {
   const client=useQueryClient(); const businessId=useBusinessContextStore((state)=>state.selectedBusinessId);
   return useMutation({mutationFn:(request:CreateThirdPartyRequest)=>role==="Customer"?partiesApi.createCustomer(request):role==="Supplier"?partiesApi.createSupplier(request):role==="Seller"?partiesApi.createSeller(request):partiesApi.createCarrier(request),onSuccess:()=>client.invalidateQueries({queryKey:["parties",businessId]})});
 }
+export function useAddPartySite(partyId:string){const client=useQueryClient();const businessId=useBusinessContextStore((state)=>state.selectedBusinessId);return useMutation({mutationFn:({customerId,request}:{customerId:string;request:Parameters<typeof partiesApi.addSite>[1]})=>partiesApi.addSite(customerId,request),onSuccess:async()=>{await Promise.all([client.invalidateQueries({queryKey:["parties","detail",businessId,partyId]}),client.invalidateQueries({queryKey:["parties",businessId]})])}});}
 export function useUpdateParty(){const client=useQueryClient();const businessId=useBusinessContextStore((state)=>state.selectedBusinessId);return useMutation({mutationFn:({partyId,request}:{partyId:string;request:Parameters<typeof partiesApi.update>[1]})=>partiesApi.update(partyId,request),onSuccess:()=>client.invalidateQueries({queryKey:["parties",businessId]})});}
 export function useSetPartyStatus(){const client=useQueryClient();const businessId=useBusinessContextStore((state)=>state.selectedBusinessId);return useMutation({mutationFn:({partyId,isActive,rowVersion}:{partyId:string;isActive:boolean;rowVersion:string})=>partiesApi.setStatus(partyId,isActive,rowVersion),onSuccess:()=>client.invalidateQueries({queryKey:["parties",businessId]})});}
 export function useCountries(includeInactive=false){return useQuery({

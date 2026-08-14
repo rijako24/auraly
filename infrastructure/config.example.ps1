@@ -6,7 +6,7 @@ $Config = @{
     SubscriptionId = "12345678-1234-1234-1234-123456789012"
     
     # Resource Group
-    ResourceGroupName = "MimosBabySpa-RG"
+    ResourceGroupName = "Auraly-RG"
     Location = "eastus"
     Environment = "dev"  # dev, staging, prod
     

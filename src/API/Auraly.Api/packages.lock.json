@@ -1279,6 +1279,7 @@
           "Auraly.Domain.Returns": "[1.0.0, )",
           "Auraly.Domain.WorkSessions": "[1.0.0, )",
           "Auraly.Fiscal.Core": "[1.0.0, )",
+          "Azure.Storage.Blobs": "[12.19.1, )",
           "BCrypt.Net-Next": "[4.0.3, )",
           "Microsoft.Data.SqlClient": "[5.2.2, )",
           "Microsoft.Extensions.Configuration.Abstractions": "[8.0.0, )",
@@ -1307,25 +1308,27 @@
           "Microsoft.Data.SqlClient": "[5.2.2, )"
         }
       },
-      "mimosbabyspa.application": {
+      "auraly.platform.application": {
         "type": "Project",
         "dependencies": {
           "Auraly.Contracts.Authorization": "[1.0.0, )",
           "Auraly.Contracts.Parties": "[1.0.0, )",
+          "Auraly.Platform.Domain": "[1.0.0, )",
           "Microsoft.Extensions.Caching.Memory": "[8.0.1, )",
           "Microsoft.Extensions.Configuration.Abstractions": "[8.0.0, )",
           "Microsoft.Extensions.Configuration.Binder": "[8.0.0, )",
-          "Microsoft.Extensions.Logging.Abstractions": "[8.0.3, )",
-          "MimosBabySpa.Domain": "[1.0.0, )"
+          "Microsoft.Extensions.Logging.Abstractions": "[8.0.3, )"
         }
       },
-      "mimosbabyspa.domain": {
+      "auraly.platform.domain": {
         "type": "Project"
       },
-      "mimosbabyspa.infrastructure": {
+      "auraly.platform.infrastructure": {
         "type": "Project",
         "dependencies": {
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Platform.Application": "[1.0.0, )",
+          "Auraly.Platform.Domain": "[1.0.0, )",
           "Azure.AI.OpenAI": "[2.1.0, )",
           "Azure.Identity": "[1.17.2, )",
           "Azure.Messaging.ServiceBus": "[7.18.2, )",
@@ -1342,8 +1345,6 @@
           "Microsoft.Extensions.Logging.Abstractions": "[8.0.3, )",
           "Microsoft.Extensions.Options": "[8.0.2, )",
           "Microsoft.IdentityModel.Tokens": "[8.2.1, )",
-          "MimosBabySpa.Application": "[1.0.0, )",
-          "MimosBabySpa.Domain": "[1.0.0, )",
           "PdfPig": "[0.1.8, )",
           "RabbitMQ.Client": "[7.2.1, )",
           "System.IdentityModel.Tokens.Jwt": "[8.2.1, )",

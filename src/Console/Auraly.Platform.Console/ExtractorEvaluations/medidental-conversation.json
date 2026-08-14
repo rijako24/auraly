@@ -1,0 +1,540 @@
+{
+  "cases": [
+    {
+      "id": "medidental_recipe_with_full_history",
+      "message": "necesito una resina para restauraciones de alta estetica",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "content": "hola quiero hacer un pedido",
+          "role": "user"
+        },
+        {
+          "content": "Hola. Indica tu nombre.",
+          "role": "assistant"
+        },
+        {
+          "content": "Richard",
+          "role": "user"
+        },
+        {
+          "content": "Selecciona tu perfil comercial.",
+          "role": "assistant"
+        },
+        {
+          "content": "la a",
+          "role": "user"
+        },
+        {
+          "content": "Puedes escribir los productos o contarme que deseas preparar.",
+          "role": "assistant"
+        }
+      ]
+    },
+    {
+      "id": "medidental_order_changes_with_full_history",
+      "message": "agrega 2 resinas CHRO-MA y 4 adhesivos LC Bond",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 2,
+          "products": [
+            "CHRO-MA",
+            "LC Bond"
+          ],
+          "quantities": [
+            2,
+            4
+          ]
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "content": "quiero pedir resina CHRO-MA con adhesivo LC Bond",
+          "role": "user"
+        },
+        {
+          "content": "Productos disponibles: resina CHRO-MA y adhesivo LC Bond con sus precios vigentes.",
+          "role": "assistant"
+        }
+      ]
+    },
+    {
+      "id": "medidental_decimal_weight_in_words",
+      "message": "dame una unidad y media de resina CHRO-MA",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": [
+            "resina"
+          ],
+          "operations": [
+            "add"
+          ],
+          "quantities": [
+            1.5
+          ]
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": []
+    },
+    {
+      "id": "medidental_decimal_pound_in_words",
+      "message": "dame una caja y media de compulas BISG-MA",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": [
+            "compula"
+          ],
+          "operations": [
+            "add"
+          ],
+          "quantities": [
+            1.5
+          ]
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": []
+    },
+    {
+      "id": "medidental_decimal_weight_compact_follow_up",
+      "message": "entonces agrega 1.5 unidades",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": [
+            "resina"
+          ],
+          "operations": [
+            "add"
+          ],
+          "quantities": [
+            1.5
+          ]
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Te ofreci resina CHRO-MA x kg con su precio vigente. Cuanto deseas?"
+        }
+      ]
+    },
+    {
+      "id": "medidental_contextual_multi_product_selection",
+      "message": "dame 2 CHRO-MA, 1 TEGD-MA y 2 BISG-MA",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 3,
+          "products": [
+            "CHRO-MA",
+            "TEGD-MA",
+            "BISG-MA"
+          ]
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "role": "user",
+          "content": "tienes resina"
+        },
+        {
+          "role": "assistant",
+          "content": "Productos disponibles: RESINA CHRO-MA, RESINA TEGD-MA y RESINA BISG-MA, todas con precios vigentes."
+        }
+      ]
+    },
+    {
+      "id": "medidental_plural_multi_product_selection",
+      "message": "dame 2 resinas y 2 dos escalers",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 2,
+          "products": [
+            "resina",
+            "escaler"
+          ]
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": []
+    },
+    {
+      "id": "medidental_batch_preserved_before_ambiguity",
+      "message": "dame 1 escaler y dos lamparas y 1 resina",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 3,
+          "products": [
+            "escaler",
+            "lampara",
+            "resina"
+          ]
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Productos disponibles: ESCALER P5 MAX, POWERLED L9, RESINA CHRO-MA, ESCALER P6 MAX y opciones de adhesivo LC Bond, todos con precios vigentes."
+        }
+      ]
+    },
+    {
+      "id": "medidental_pending_batch_candidate_selection",
+      "message": "ESCALER P5 MAX",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "allowedCounts": [
+            0,
+            1
+          ],
+          "products": []
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "role": "user",
+          "content": "dame 1 escaler y dos lamparas y 1 resina"
+        },
+        {
+          "role": "assistant",
+          "content": "Para escaler encontre ESCALER P5 MAX y ESCALER P6 MAX. Cual prefieres? Conservare los demas productos de tu solicitud."
+        }
+      ],
+      "applyRuntimeGuards": true,
+      "initialFacts": {
+        "system.pending_cart_commands": "{\"schemaVersion\":1,\"commands\":[{\"operation\":\"add\",\"productText\":\"escaler\",\"quantity\":1,\"destinationReference\":null},{\"operation\":\"add\",\"productText\":\"lamparas\",\"quantity\":2,\"destinationReference\":null},{\"operation\":\"add\",\"productText\":\"resina\",\"quantity\":1,\"destinationReference\":null}],\"ambiguousProductText\":\"escaler\",\"productCandidates\":[{\"name\":\"ESCALER P5 MAX\",\"unitPrice\":5647.05,\"currency\":\"COP\"},{\"name\":\"ESCALER P6 MAX\",\"unitPrice\":6499.82,\"currency\":\"COP\"}],\"expiresAtUtc\":\"2099-01-01T00:00:00Z\"}"
+      }
+    },
+    {
+      "id": "medidental_availability_question_is_catalog_query",
+      "message": "tienes resina",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "absentSignals": [
+        "order_changes"
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": []
+    },
+    {
+      "id": "medidental_add_another_product_later",
+      "message": "agregame tambien 3 lamparas L9",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": [
+            "lampara"
+          ],
+          "operations": [
+            "add"
+          ],
+          "quantities": [
+            3
+          ]
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Tu pedido actual tiene RESINA CHRO-MA x2."
+        }
+      ]
+    },
+    {
+      "id": "medidental_remove_product_with_partial_plural_name",
+      "message": "quitame las resinas BISG-MA",
+      "stage": "cart_review",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": [
+            "BISG-MA"
+          ],
+          "operations": [
+            "remove"
+          ],
+          "quantities": []
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Pedido actual: RESINA BISG-MA x2, POWERLED L9 x1."
+        }
+      ]
+    },
+    {
+      "id": "medidental_set_final_quantity_with_partial_name",
+      "message": "dejame solo una de TEGD-MA",
+      "stage": "cart_review",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "currentCart": [
+        {
+          "name": "RESINA TEGD-MA",
+          "quantity": 3
+        },
+        {
+          "name": "ESCALER P6 MAX",
+          "quantity": 1
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Pedido actual: RESINA TEGD-MA x3 y ESCALER P6 MAX x1."
+        }
+      ]
+    },
+    {
+      "id": "medidental_product_information_before_add_is_query",
+      "message": "cuanto cuesta la RESINA CHRO-MA y cuanto hay disponible",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "absentSignals": [
+        "order_changes"
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": []
+    },
+    {
+      "id": "medidental_large_quantity_is_preserved_for_stock_validation",
+      "message": "dame 5000 resinas CHRO-MA",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": [
+            "CHRO-MA"
+          ],
+          "operations": [
+            "add"
+          ],
+          "quantities": [
+            5000
+          ]
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "RESINA CHRO-MA esta disponible con precio vigente."
+        }
+      ]
+    },
+    {
+      "id": "medidental_set_final_quantity_without_only_word",
+      "message": "dejame 3 de TEGD-MA",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": [
+            "TEGD-MA"
+          ],
+          "operations": [
+            "set_quantity"
+          ],
+          "quantities": [
+            3
+          ]
+        }
+      ],
+      "currentCart": [
+        {
+          "name": "RESINA TEGD-MA",
+          "quantity": 2
+        },
+        {
+          "name": "RESINA BISG-MA",
+          "quantity": 2
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Pedido actual: RESINA TEGD-MA x2 y RESINA BISG-MA x2."
+        }
+      ]
+    },
+    {
+      "id": "medidental_collects_name_and_profile_ahead",
+      "message": "hola quiero hacer un pedido me llamo richard y soy de la Clinica Sonrisa",
+      "stage": "customer_identity",
+      "expectedFlow": "order",
+      "expectedFacts": [
+        {
+          "key": "customer_name",
+          "value": "richard"
+        },
+        {
+          "key": "company_name",
+          "value": "Clinica Sonrisa"
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": []
+    },
+    {
+      "id": "medidental_restarts_finalized_selection_as_new_order",
+      "message": "Hola quiero hacer un pedido",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "restart_request"
+      ],
+      "absentFacts": [
+        "customer_name"
+      ],
+      "absentSignals": [
+        "order_changes"
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Prefieres recoger tu pedido o recibirlo a domicilio?"
+        }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard",
+        "company_name": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio"
+      }
+    },
+    {
+      "id": "medidental_declines_optional_delivery_reference",
+      "message": "No, no deseo agregar una referencia adicional.",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "absentFacts": [
+        "delivery_reference",
+        "delivery_address",
+        "delivery_phone"
+      ],
+      "absentSignals": [
+        "order_changes",
+        "catalog_query",
+        "restart_request",
+        "known_fact_query"
+      ],
+      "absentAmbiguousFields": [
+        "delivery_reference"
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Ya tengo tu direccion y telefono. Deseas agregar un barrio, apartamento o referencia complementaria antes de confirmar el pedido?"
+        }
+      ],
+      "initialFacts": {
+        "order_finalized": "true",
+        "cart_review_confirmed": "true",
+        "delivery_method": "domicilio",
+        "city": "Valledupar",
+        "delivery_address": "Calle 5N",
+        "delivery_phone": "3012926660",
+        "customer_name": "Richard",
+        "payment_method": "efectivo"
+      }
+    }
+  ],
+  "repetitions": 3
+}

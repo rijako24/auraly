@@ -5,9 +5,9 @@ $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $sqlFile = Join-Path $scriptDir "AddOperatingHoursPaymentMethodsIntegrationsToBusinessConfiguration.sql"
 
-$appSettingsPath = Join-Path $scriptDir "..\src\Console\MimosBabySpa.Console\appSettings.json"
+$appSettingsPath = Join-Path $scriptDir "..\src\Console\Auraly.Platform.Console\appSettings.json"
 if (-not (Test-Path $appSettingsPath)) {
-    $appSettingsPath = Join-Path $scriptDir "..\src\Console\MimosBabySpa.Console\appsettings.json"
+    $appSettingsPath = Join-Path $scriptDir "..\src\Console\Auraly.Platform.Console\appsettings.json"
 }
 if (-not (Test-Path $appSettingsPath)) {
     Write-Host "No se encontró appsettings.json en la consola." -ForegroundColor Red

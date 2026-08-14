@@ -30,6 +30,7 @@ import {
   Undo2,
   UserCog,
   UserPlus,
+  Users,
 } from "lucide-react";
 
 export interface NavItem {
@@ -58,6 +59,7 @@ export const navigation: NavEntry[] = [
   { name: "Precios y rentabilidad", href: "/dashboard/products/pricing", icon: TrendingUp, permission: "pricing.read" },
   { name: "Listas y canales", href: "/dashboard/products/price-segments", icon: BadgePercent, permission: "pricing.segments.read" },
   { name: "Promociones", href: "/dashboard/promotions", icon: BadgePercent, permission: "promotions.read" },
+  { name: "Empleados", href: "/dashboard/employees", icon: Users, permission: "employees.read" },
   { type: "separator", label: "Operaciones" },
   { name: "Punto de venta", href: "/pos", icon: ReceiptText, permission: "sales.create" },
   { name: "Inventario", href: "/dashboard/inventory", icon: Package, permission: "inventory.read" },
@@ -84,6 +86,7 @@ export const navigation: NavEntry[] = [
   { type: "separator", label: "Administracion" },
   { name: "Tenants", href: "/dashboard/tenants", icon: Building2, permission: "tenants.read" },
   { name: "Negocios", href: "/dashboard/businesses", icon: Store, permission: "businesses.read" },
+  { name: "Usuarios", href: "/dashboard/users", icon: UserCog, permission: "users.read" },
   { name: "Roles", href: "/dashboard/roles", icon: Shield, permission: "roles.read" },
   { name: "Auditoria", href: "/dashboard/audit-logs", icon: FileSearch, permission: "audit_logs.read" },
   { type: "separator", label: "Configuracion" },

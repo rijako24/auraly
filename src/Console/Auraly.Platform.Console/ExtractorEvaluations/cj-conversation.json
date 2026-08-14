@@ -1,0 +1,505 @@
+{
+    "cases":  [
+                  {
+                      "id":  "cj_recipe_with_full_history",
+                      "message":  "quiero preparar pollo con tocineta",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "recipe_request"
+                                          ],
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "content":  "hola quiero hacer un pedido",
+                                          "role":  "user"
+                                      },
+                                      {
+                                          "content":  "Hola. Indica tu nombre.",
+                                          "role":  "assistant"
+                                      },
+                                      {
+                                          "content":  "Richard",
+                                          "role":  "user"
+                                      },
+                                      {
+                                          "content":  "Selecciona tu perfil comercial.",
+                                          "role":  "assistant"
+                                      },
+                                      {
+                                          "content":  "la a",
+                                          "role":  "user"
+                                      },
+                                      {
+                                          "content":  "Puedes escribir los productos o contarme que deseas preparar.",
+                                          "role":  "assistant"
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "cj_order_changes_with_full_history",
+                      "message":  "agrega 2 kilos de pollo y 400 gramos de tocineta",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "order_changes"
+                                          ],
+                      "expectedSignalItems":  [
+                                                  {
+                                                      "type":  "order_changes",
+                                                      "count":  2,
+                                                      "products":  ["pollo", "tocineta"],
+                                                      "quantities":  [2, 0.4]
+                                                  }
+                                              ],
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "content":  "quiero preparar pollo con tocineta",
+                                          "role":  "user"
+                                      },
+                                      {
+                                          "content":  "Productos disponibles: pollo y tocineta con sus precios vigentes.",
+                                          "role":  "assistant"
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "cj_decimal_weight_in_words",
+                      "message":  "dame un kilo y medio de pollo entero",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  ["order_changes"],
+                      "expectedSignalItems":  [
+                                                  {
+                                                      "type":  "order_changes",
+                                                      "count":  1,
+                                                      "products":  ["pollo"],
+                                                      "operations":  ["add"],
+                                                      "quantities":  [1.5]
+                                                  }
+                                              ],
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  []
+                  },
+                  {
+                      "id":  "cj_decimal_pound_in_words",
+                      "message":  "dame una libra y media de tocineta",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  ["order_changes"],
+                      "expectedSignalItems":  [
+                                                  {
+                                                      "type":  "order_changes",
+                                                      "count":  1,
+                                                      "products":  ["tocineta"],
+                                                      "operations":  ["add"],
+                                                      "quantities":  [1.5]
+                                                  }
+                                              ],
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  []
+                  },
+                  {
+                      "id":  "cj_decimal_weight_compact_follow_up",
+                      "message":  "entonces agrega 1.5k",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  ["order_changes"],
+                      "expectedSignalItems":  [
+                                                  {
+                                                      "type":  "order_changes",
+                                                      "count":  1,
+                                                      "products":  ["pollo"],
+                                                      "operations":  ["add"],
+                                                      "quantities":  [1.5]
+                                                  }
+                                              ],
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Te ofreci Pollo entero x kg con su precio vigente. Cuanto deseas?"
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "cj_contextual_multi_product_selection",
+                      "message":  "dame 2 bandejas y 1 de mac pollo y 2 criollas",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "order_changes"
+                                          ],
+                      "expectedSignalItems":  [
+                                                  {
+                                                      "type":  "order_changes",
+                                                      "count":  3,
+                                                      "products":  [
+                                                                       "bandej",
+                                                                       "mac pollo",
+                                                                       "crioll"
+                                                                   ]
+                                                  }
+                                              ],
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "role":  "user",
+                                          "content":  "tienes pechuga"
+                                      },
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Productos disponibles: TROZOS DE PECHUGA DE POLLO, BANDEJA FILETE DE PECHUGA CON HUESO, PECHUGA MAC POLLO, PECHUGA CRIOLLA y PECHUGA MERCAPOLLO, todos con precios vigentes."
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "cj_plural_multi_product_selection",
+                      "message":  "dame 2 pechugas y 2 dos perniles",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "order_changes"
+                                          ],
+                      "expectedSignalItems":  [
+                                                  {
+                                                      "type":  "order_changes",
+                                                      "count":  2,
+                                                      "products":  [
+                                                                       "pechug",
+                                                                       "pernil"
+                                                                   ]
+                                                  }
+                                              ],
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+
+                                  ]
+                  },
+                  {
+                      "id":  "cj_batch_preserved_before_ambiguity",
+                      "message":  "dame 1 pernil y dos alas y 1 pechuga",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "order_changes"
+                                          ],
+                      "expectedSignalItems":  [
+                                                  {
+                                                      "type":  "order_changes",
+                                                      "count":  3,
+                                                      "products":  [
+                                                                       "pernil",
+                                                                       "ala",
+                                                                       "pechug"
+                                                                   ]
+                                                  }
+                                              ],
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Productos disponibles: PERNIL MERCAPOLLO, ALA JUMBO MERCAPOLLO, PECHUGA CAMPOLLO, PERNIL CAMPOLLO y opciones de tocineta, todos con precios vigentes."
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "cj_pending_batch_candidate_selection",
+                      "message":  "campollo",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "order_changes"
+                                          ],
+                      "expectedSignalItems":  [
+                                                  {
+                                                      "type":  "order_changes",
+                                                      "allowedCounts":  [
+                                                                             0,
+                                                                             1
+                                                                         ],
+                                                      "products":  [
+
+                                                                   ]
+                                                  }
+                                              ],
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "role":  "user",
+                                          "content":  "dame 1 pernil y dos alas y 1 pechuga"
+                                      },
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Para pernil encontre PERNIL MERCAPOLLO y PERNIL CAMPOLLO. Cual prefieres? Conservare los demas productos de tu solicitud."
+                                      }
+                                  ],
+                      "applyRuntimeGuards":  true,
+                      "initialFacts":  {
+                                           "system.pending_cart_commands":  "{\"schemaVersion\":1,\"commands\":[{\"operation\":\"add\",\"productText\":\"pernil\",\"quantity\":1,\"destinationReference\":null},{\"operation\":\"add\",\"productText\":\"alas\",\"quantity\":2,\"destinationReference\":null},{\"operation\":\"add\",\"productText\":\"pechuga\",\"quantity\":1,\"destinationReference\":null}],\"ambiguousProductText\":\"pernil\",\"productCandidates\":[{\"name\":\"PERNIL MERCAPOLLO\",\"unitPrice\":5647.05,\"currency\":\"COP\"},{\"name\":\"PERNIL CAMPOLLO\",\"unitPrice\":6499.82,\"currency\":\"COP\"}],\"expiresAtUtc\":\"2099-01-01T00:00:00Z\"}"
+                                       }
+                  },
+                  {
+                      "id":  "cj_availability_question_is_catalog_query",
+                      "message":  "tienes pechuga",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "catalog_query"
+                                          ],
+                      "absentSignals":  [
+                                            "order_changes"
+                                        ],
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+
+                                  ]
+                  },
+                  {
+                      "id":  "cj_add_another_product_later",
+                      "message":  "agregame tambien 3 alas jumbo",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "order_changes"
+                                          ],
+                      "expectedSignalItems":  [
+                                                  {
+                                                      "type":  "order_changes",
+                                                      "count":  1,
+                                                      "products":  [
+                                                                       "ala"
+                                                                   ],
+                                                      "operations":  [
+                                                                         "add"
+                                                                     ],
+                                                      "quantities":  [
+                                                                         3
+                                                                     ]
+                                                  }
+                                              ],
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Tu pedido actual tiene PECHUGA CAMPOLLO x2."
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "cj_remove_product_with_partial_plural_name",
+                      "message":  "quitame las pechugas criollas",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "order_changes"
+                                          ],
+                      "expectedSignalItems":  [
+                                                  {
+                                                      "type":  "order_changes",
+                                                      "count":  1,
+                                                      "products":  [
+                                                                       "crioll"
+                                                                   ],
+                                                      "operations":  [
+                                                                         "remove"
+                                                                     ],
+                                                      "quantities":  [
+
+                                                                     ]
+                                                  }
+                                              ],
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Pedido actual: PECHUGA CRIOLLA x2, ALA JUMBO MERCAPOLLO x1."
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "cj_set_final_quantity_with_partial_name",
+                      "message":  "dejame solo una de mac pollo",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "order_changes"
+                                          ],
+                      "currentCart":  [{"name":"PECHUGA MAC POLLO","quantity":3},{"name":"PERNIL CAMPOLLO","quantity":1}],
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Pedido actual: PECHUGA MAC POLLO x3 y PERNIL CAMPOLLO x1."
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "cj_product_information_before_add_is_query",
+                      "message":  "cuanto cuesta la pechuga campollo y cuanto hay disponible",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "catalog_query"
+                                          ],
+                      "absentSignals":  [
+                                            "order_changes"
+                                        ],
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+
+                                  ]
+                  },
+                  {
+                      "id":  "cj_large_quantity_is_preserved_for_stock_validation",
+                      "message":  "dame 5000 pechugas campollo",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "order_changes"
+                                          ],
+                      "expectedSignalItems":  [
+                                                  {
+                                                      "type":  "order_changes",
+                                                      "count":  1,
+                                                      "products":  [
+                                                                       "campollo"
+                                                                   ],
+                                                      "operations":  [
+                                                                         "add"
+                                                                     ],
+                                                      "quantities":  [
+                                                                         5000
+                                                                     ]
+                                                  }
+                                              ],
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "PECHUGA CAMPOLLO esta disponible con precio vigente."
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "cj_set_final_quantity_without_only_word",
+                      "message":  "dejame 3 de mac pollo",
+                      "stage":  "product_selection",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "order_changes"
+                                          ],
+                      "expectedSignalItems":  [
+                                                  {
+                                                      "type":  "order_changes",
+                                                      "count":  1,
+                                                      "products":  [
+                                                                       "mac pollo"
+                                                                   ],
+                                                      "operations":  [
+                                                                         "set_quantity"
+                                                                     ],
+                                                      "quantities":  [
+                                                                         3
+                                                                     ]
+                                                  }
+                                              ],
+                      "currentCart":  [{"name":"PECHUGA MAC POLLO","quantity":2},{"name":"PECHUGA CRIOLLA","quantity":2}],
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Pedido actual: PECHUGA MAC POLLO x2 y PECHUGA CRIOLLA x2."
+                                      }
+                                  ]
+                  },
+                  {
+                      "id":  "cj_collects_name_and_profile_ahead",
+                      "message":  "hola quiero hacer un pedido me llamo richard y soy restaurante",
+                      "stage":  "customer_name",
+                      "expectedFlow":  "order",
+                      "expectedFacts":  [
+                                            {
+                                                "key":  "customer_name",
+                                                "value":  "richard"
+                                            },
+                                            {
+                                                "key":  "customer_type",
+                                                "value":  "Restaurante"
+                                            }
+                                        ],
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+
+                                  ]
+                  },
+                  {
+                      "id":  "cj_restarts_finalized_selection_as_new_order",
+                      "message":  "Hola quiero hacer un pedido",
+                      "stage":  "order_data",
+                      "expectedFlow":  "order",
+                      "expectedSignals":  [
+                                              "restart_request"
+                                          ],
+                      "absentFacts":  [
+                                            "customer_name"
+                                        ],
+                      "absentSignals":  [
+                                              "order_changes"
+                                          ],
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Prefieres recoger tu pedido o recibirlo a domicilio?"
+                                      }
+                                  ],
+                      "initialFacts":  {
+                                           "customer_name":  "Richard",
+                                           "customer_type":  "Hogar",
+                                           "order_finalized":  "true",
+                                           "delivery_method":  "domicilio"
+                                       }
+                  },
+                  {
+                      "id":  "cj_declines_optional_delivery_reference",
+                      "message":  "no",
+                      "stage":  "order_data",
+                      "expectedFlow":  "order",
+                      "absentFacts":  [
+                                            "delivery_reference",
+                                            "delivery_address",
+                                            "delivery_phone"
+                                        ],
+                      "absentSignals":  [
+                                              "order_changes",
+                                              "catalog_query",
+                                              "recipe_request",
+                                              "restart_request",
+                                              "known_fact_query"
+                                          ],
+                      "absentAmbiguousFields":  [
+                                                     "delivery_reference"
+                                                 ],
+                      "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+                      "history":  [
+                                      {
+                                          "role":  "assistant",
+                                          "content":  "Ya tengo tu direccion y telefono. Deseas agregar un barrio, apartamento o referencia complementaria antes de confirmar el pedido?"
+                                      }
+                                  ],
+                      "initialFacts":  {
+                                           "order_finalized":  "true",
+                                           "cart_review_confirmed":  "true",
+                                           "delivery_method":  "domicilio",
+                                           "city":  "Valledupar",
+                                           "delivery_address":  "Calle 5N",
+                                           "delivery_phone":  "3012926660",
+                                           "customer_name":  "Richard",
+                                           "payment_method":  "efectivo"
+                                       }
+                  }
+              ],
+    "repetitions":  3
+}

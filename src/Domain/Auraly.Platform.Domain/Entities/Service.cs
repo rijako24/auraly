@@ -1,0 +1,61 @@
+using Auraly.Platform.Domain.Enums;
+
+namespace Auraly.Platform.Domain.Entities;
+
+/// <summary>
+/// Servicio ofrecido por un negocio (ej: Marineritos, Aventuras Marinas).
+///
+/// Categoría y tier de recomendación:
+///   - CategoryId: categoria opcional del servicio (FK a ServiceCategories). Define agrupacion y elegibilidad de add-ons cuando existe.
+///   - Tier: orden de recomendación dentro de la misma categoría (Deluxe > Premium > Base).
+/// </summary>
+public class Service
+{
+    public Guid ServiceId { get; set; }
+    public Guid BusinessId { get; set; }
+    public string ServiceName { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public string? Keywords { get; set; }
+    public int DurationMinutes { get; set; }
+    public decimal Price { get; set; }
+    public bool IncludeInCheckoutTotal { get; set; } = true;
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedAt { get; set; }
+    public DateTime? UpdatedAt { get; set; }
+
+    /// <summary>
+    /// Categoria opcional del servicio (Planes Baby Spa, Taller, Clase, etc.). Por negocio.
+    /// </summary>
+    public Guid? CategoryId { get; set; }
+
+    /// <summary>
+    /// Orden de recomendación dentro de la categoría (Deluxe > Premium > Base).
+    /// </summary>
+    public ServiceTier Tier { get; set; } = ServiceTier.Base;
+
+    /// <summary>
+    /// Tipo de servicio: Standard (principal reservable) o AddOn (extra opcional).
+    /// </summary>
+    public ServiceType ServiceType { get; set; } = ServiceType.Standard;
+
+    /// <summary>
+    /// Define si el servicio se agenda por disponibilidad o se inscribe en un horario fijo.
+    /// </summary>
+    public ServiceFulfillmentKind FulfillmentKind { get; set; } = ServiceFulfillmentKind.Reservation;
+
+    /// <summary>
+    /// Etiqueta de horario fijo usada para servicios de inscripcion.
+    /// </summary>
+    public string? FixedScheduleLabel { get; set; }
+
+    // Navigation properties
+    public virtual Business Business { get; set; } = null!;
+    public virtual ServiceCategory? ServiceCategory { get; set; }
+    public virtual ICollection<ServiceResourceUsage> ResourceUsages { get; set; } = new List<ServiceResourceUsage>();
+
+    /// <summary>
+    /// Servicios que componen este bundle (cuando este servicio ES un bundle).
+    /// Vacío para servicios simples o decoraciones.
+    /// </summary>
+    public virtual ICollection<ServiceBundleItem> BundleItems { get; set; } = new List<ServiceBundleItem>();
+}

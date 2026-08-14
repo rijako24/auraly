@@ -26,9 +26,9 @@ El LLM interpreta lenguaje natural dentro de un contrato acotado. La validez de 
 
 ## Fuentes De Verdad
 
-- Codigo de motor: `src/Application/MimosBabySpa.Application/Agents`.
+- Codigo de motor: `src/Application/Auraly.Platform.Application/Agents`.
 - Configuracion viva del agente: `Agents.SettingsJson`.
-- Seed principal por tenant: scripts en `database/MimosBabySpa.Database/Scripts/Seeds`.
+- Seed principal por tenant: scripts en `database/Auraly.Database/Scripts/Seeds`.
 - Catalogo de servicios/productos: tablas e integraciones, nunca texto duplicado en prompts.
 - Contratos de operaciones: implementaciones en `Agents/Operations`, `OperationDescriptor` y `AgentOperationRegistry`.
 - Admin declarativo: `admin/src/types/agent-settings.ts`.

@@ -265,7 +265,7 @@ else {
     if (-not (Test-Path $LogFile)) {
         Write-Error "Archivo de logs no encontrado: $LogFile"
         Write-Host "`nPara generar logs, ejecuta:`n"
-        Write-Host "  cd src\API\MimosBabySpa.API"
+        Write-Host "  cd src\API\Auraly.Platform.Worker"
         Write-Host "  func start --verbose > logs.txt`n"
         exit 1
     }

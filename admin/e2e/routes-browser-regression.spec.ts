@@ -65,13 +65,13 @@ test("crea, programa y edita una ruta con vendedor y establecimiento desde UI", 
 
   dialog = page.getByRole("dialog");
   await dialog.getByRole("tab", { name: /Recorrido/ }).click();
-  await dialog.getByRole("button", { name: "Agregar establecimientos" }).click();
+  await dialog.getByRole("button", { name: "Asignar clientes" }).click();
   const candidateDialog = page.getByRole("dialog").last();
-  await candidateDialog.getByPlaceholder("Buscar establecimientos").fill(customerName);
+  await candidateDialog.getByPlaceholder(/Cliente, documento, sede/).fill(customerName);
   const candidate = candidateDialog.getByText(new RegExp(customerName)).first().locator("..").locator("..");
   await expect(candidate).toBeVisible({ timeout: 20_000 });
   await candidate.getByRole("checkbox").click();
-  await candidateDialog.getByRole("button", { name: "Agregar al recorrido" }).click();
+  await candidateDialog.getByRole("button", { name: "Agregar y ordenar" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(1, { timeout: 20_000 });
   await expect(dialog.getByText(new RegExp(customerName)).first()).toBeVisible({ timeout: 20_000 });
   await dialog.getByRole("button", { name: "Cerrar" }).click();

@@ -1,0 +1,133 @@
+{
+  "repetitions": 3,
+  "cases": [
+    {
+      "id": "explicit_cart_request_excludes_redundant_catalog_read",
+      "message": "Agrega 2 unidades de producto alfa",
+      "stage": "product_selection",
+      "applyRuntimeGuards": true,
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "absentSignals": [
+        "catalog_query"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "exactProducts": [
+            "producto alfa"
+          ],
+          "operations": [
+            "add"
+          ],
+          "quantities": [
+            2
+          ]
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql"
+    },
+    {
+      "id": "availability_question_with_quantity_remains_read_only",
+      "message": "¿Tienes 2 unidades de producto alfa?",
+      "stage": "product_selection",
+      "applyRuntimeGuards": true,
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "absentSignals": [
+        "order_changes"
+      ],
+      "expectedSignalTargets": [
+        {
+          "type": "catalog_query",
+          "includes": [
+            "producto alfa"
+          ]
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql"
+    },
+    {
+      "id": "cart_request_and_catalog_read_for_different_targets_are_preserved",
+      "message": "Agrega 2 unidades de producto alfa y ¿qué opciones de producto beta tienes?",
+      "stage": "product_selection",
+      "applyRuntimeGuards": true,
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes",
+        "catalog_query"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "exactProducts": [
+            "producto alfa"
+          ],
+          "operations": [
+            "add"
+          ],
+          "quantities": [
+            2
+          ]
+        }
+      ],
+      "expectedSignalTargets": [
+        {
+          "type": "catalog_query",
+          "includes": [
+            "producto beta"
+          ],
+          "excludes": [
+            "producto alfa"
+          ]
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql"
+    },
+    {
+      "id": "cart_request_preserves_all_independent_catalog_targets",
+      "message": "Agrega 2 unidades de producto alfa y muéstrame producto beta y producto gamma",
+      "stage": "product_selection",
+      "applyRuntimeGuards": true,
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes",
+        "catalog_query"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "exactProducts": [
+            "producto alfa"
+          ],
+          "operations": [
+            "add"
+          ],
+          "quantities": [
+            2
+          ]
+        }
+      ],
+      "expectedSignalTargets": [
+        {
+          "type": "catalog_query",
+          "includes": [
+            "producto beta",
+            "producto gamma"
+          ],
+          "excludes": [
+            "producto alfa"
+          ]
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql"
+    }
+  ]
+}

@@ -62,6 +62,12 @@ public sealed class CommercialPartyRoleService(ICommercialPartyRoleStore store, 
             throw new PartyValidationException("Legal name is required for an organization.");
         if (string.IsNullOrWhiteSpace(site.Code) || string.IsNullOrWhiteSpace(site.Name) || string.IsNullOrWhiteSpace(site.AddressLine))
             throw new PartyValidationException("Site code, name and address are required.");
+        if ((site.Latitude is null) != (site.Longitude is null))
+            throw new PartyValidationException("Latitude and longitude must be provided together.");
+        if (site.Latitude is < -90 or > 90 || site.Longitude is < -180 or > 180)
+            throw new PartyValidationException("The site coordinates are outside the valid range.");
+        if (site.GoogleMapsUrl?.Length > 1000 || site.GooglePlaceId?.Length > 255)
+            throw new PartyValidationException("The Google Maps location is too long.");
     }
 
     private static string InternalCode(string prefix, Guid id) =>

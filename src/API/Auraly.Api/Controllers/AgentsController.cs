@@ -1,12 +1,12 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using MimosBabySpa.Application.Agents;
-using MimosBabySpa.Application.Agents.Testing;
-using MimosBabySpa.Application.Identity.DTOs;
-using MimosBabySpa.Application.Identity.Interfaces;
-using MimosBabySpa.Application.Services;
-using MimosBabySpa.Domain.Entities;
-using MimosBabySpa.Infrastructure.Data;
+using Auraly.Platform.Application.Agents;
+using Auraly.Platform.Application.Agents.Testing;
+using Auraly.Platform.Application.Identity.DTOs;
+using Auraly.Platform.Application.Identity.Interfaces;
+using Auraly.Platform.Application.Services;
+using Auraly.Platform.Domain.Entities;
+using Auraly.Platform.Infrastructure.Data;
 using Auraly.Api.Authorization;
 using Auraly.Api.Extensions;
 

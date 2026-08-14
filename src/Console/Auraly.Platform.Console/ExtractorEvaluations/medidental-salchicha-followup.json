@@ -1,0 +1,42 @@
+{
+  "cases": [
+    {
+      "id": "medidental_catalog_option_selection_is_add_not_search",
+      "message": "agrega 1 Osseo 100",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "absentSignals": [
+        "catalog_query"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": [
+            "Osseo 100"
+          ],
+          "operations": [
+            "add"
+          ],
+          "quantities": [
+            1
+          ]
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Estas son las opciones que encontre: MOTOR OSSEO 100 y MOTOR OSSEO 200. Cual te gustaria agregar y en que cantidad?"
+        }
+      ],
+      "initialFacts": {
+        "system.catalog_products": "[{\"external_product_id\":\"CF59\",\"sku\":\"CF59\",\"name\":\"MOTOR OSSEO 100\",\"unit_price\":16023.21,\"currency\":\"COP\",\"stock_quantity\":49},{\"external_product_id\":\"CF20\",\"sku\":\"CF20\",\"name\":\"MOTOR OSSEO 200\",\"unit_price\":28032.50,\"currency\":\"COP\",\"stock_quantity\":113}]"
+      }
+    }
+  ],
+  "repetitions": 5
+}

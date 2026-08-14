@@ -1,9 +1,11 @@
 import { apiClient, withPagedDefaults } from "./client";
+import { loadDispatchSnapshot, loadPendingEvidence, queueDeliveryOperation, queueExpenseOperation, removePendingEvidence, saveDispatchSnapshot, savePendingEvidence } from "@/lib/dispatch-offline-store";
 
-export type DispatchStatus = "Draft" | "Prepared" | "InVerification" | "Verified" | "Released" | "Cancelled";
+export type DispatchStatus = "Draft" | "Prepared" | "InVerification" | "Verified" | "Released" | "InDelivery" | "PendingSettlement" | "SettlementProcessing" | "SettlementAttention" | "Closed" | "Cancelled";
+export type DeliveryStatus = "Pending" | "Delivered" | "PartiallyDelivered" | "NotDelivered";
 export interface DispatchListItem { dispatchId:string;dispatchNumber:string;scheduledDate:string;driverName:string;vehiclePlate:string|null;status:DispatchStatus;documentCount:number;lineCount:number;expectedQuantity:number;verifiedQuantity:number;shortageQuantity:number;updatedAt:string;rowVersion:string; }
 export interface DispatchPage { items:DispatchListItem[];page:number;pageSize:number;totalCount:number;totalPages:number; }
-export interface DispatchOptions { warehouses:Array<{warehouseId:string;code:string;name:string}>;routes:Array<{routeId:string;code:string;name:string;sellerName:string}>; }
+export interface DispatchOptions { warehouses:Array<{warehouseId:string;code:string;name:string}>;routes:Array<{routeId:string;code:string;name:string;sellerName:string}>;drivers:Array<{userId:string;name:string}>; }
 export interface DispatchCandidate { documentId:string;documentType:"SalesInvoice"|"SalesReceipt";documentNumber:string;issuedAt:string;warehouseId:string;warehouseName:string;customerId:string|null;customerName:string;deliveryAddress:string|null;sellerName:string;lineCount:number;pendingQuantity:number;documentTotal:number; }
 export interface DispatchCandidatePage { items:DispatchCandidate[];page:number;pageSize:number;totalCount:number;totalPages:number; }
 export interface DispatchDocument { dispatchSourceDocumentId:string;sourceDocumentId:string;documentType:string;documentNumber:string;customerId:string|null;customerName:string;deliveryAddress:string|null;sellerName:string;documentTotal:number;status:string; }
@@ -12,20 +14,39 @@ export interface DispatchDetail { dispatchId:string;businessId:string;warehouseI
 export interface DispatchMutation { dispatchId:string;dispatchNumber:string;status:DispatchStatus;documentCount:number;lineCount:number;expectedQuantity:number;verifiedQuantity:number;shortageQuantity:number;rowVersion:string; }
 export interface DispatchReportRow { dispatchNumber:string;scheduledDate:string;status:string;driverName:string;vehiclePlate:string|null;documentType:string;documentNumber:string;customerName:string;deliveryAddress:string|null;sellerName:string;productCode:string;productName:string;assignedQuantity:number;verifiedQuantity:number;shortageQuantity:number;unitPrice:number|null;lineTotal:number|null; }
 export interface DispatchReport { title:string;generatedAt:string;includesPrices:boolean;rows:DispatchReportRow[]; }
+export interface DeliveryPayment { paymentId:string;applicationType:"InvoicePayment"|"CreditDocument"|"CreditAdvance";paymentMethod:"Cash"|"Deposit"|null;amount:number;reference:string|null;evidenceUrl:string|null; }
+export interface DeliveryReturn { returnLineId:string;originalLineNumber:number;productId:string;productCode:string;description:string;quantity:number;inventoryDisposition:string;reasonCode:string;reasonDescription:string; }
+export interface DeliveryProductLine { originalLineNumber:number;productId:string;productCode:string;description:string;quantity:number;unitPrice:number;lineTotal:number; }
+export interface DeliveryDocument { dispatchSourceDocumentId:string;sourceDocumentId:string;documentType:string;documentNumber:string;sequence:number;customerId:string|null;customerName:string;deliveryAddress:string|null;documentTotal:number;creditAmount:number;deliveryStatus:DeliveryStatus;reason:string|null;notes:string|null;latitude:number|null;longitude:number|null;deliveredAt:string|null;lines:DeliveryProductLine[];payments:DeliveryPayment[];returns:DeliveryReturn[]; }
+export interface DispatchExpense { expenseId:string;category:string;amount:number;description:string;evidenceUrl:string;approvalStatus:"Pending"|"Approved"|"Rejected";approvedAmount:number|null; }
+export interface SettlementSummary { grossCash:number;approvedCashExpenses:number;expectedCash:number;declaredCash:number;difference:number;depositTotal:number;remainingCreditTotal:number;creditAdvanceTotal:number;returnTotal:number;undeliveredTotal:number;dispatchTotal:number;balanceDifference:number;status:string;receivedBy:string|null;receivedAt:string|null; }
+export interface DispatchExecution { dispatchId:string;dispatchNumber:string;scheduledDate:string;driverName:string;vehiclePlate:string|null;status:DispatchStatus;documents:DeliveryDocument[];expenses:DispatchExpense[];settlement:SettlementSummary|null; }
+export interface DeliveryResultInput { dispatchSourceDocumentId:string;deliveryStatus:Exclude<DeliveryStatus,"Pending">;reason:string|null;notes:string|null;latitude:number|null;longitude:number|null;occurredAt:string;idempotencyKey:string;payments:Array<{applicationType:"InvoicePayment"|"CreditDocument"|"CreditAdvance";paymentMethod:"Cash"|"Deposit"|null;amount:number;reference:string|null;evidenceUrl:string|null}>;returns:Array<{originalLineNumber:number;quantity:number;inventoryDisposition:"Sellable"|"NotReturned";reasonCode:string;reasonDescription:string}>; }
+
+async function localEvidence(values:(string|null)[]) { const result:Array<{placeholder:string;file:File}>=[]; for(const placeholder of values.filter((value):value is string=>Boolean(value?.startsWith("local:")))) { const file=await loadPendingEvidence(placeholder); if(file) result.push({placeholder,file}); } return result; }
+async function cachedExecution(id:string) { try { const value=await apiClient.get<DispatchExecution>(`/commerce/v1/dispatches/${id}/execution`); await saveDispatchSnapshot(value); return value; } catch(error) { const value=await loadDispatchSnapshot(id); if(value)return value; throw error; } }
+async function offlineEvidence(file:File) { const placeholder=`local:${crypto.randomUUID()}`; await savePendingEvidence(placeholder,file); return {url:placeholder}; }
+async function offlineDelivery(id:string,request:DeliveryResultInput) { if(typeof navigator==="undefined"||navigator.onLine)return apiClient.put<DispatchExecution>(`/commerce/v1/dispatches/${id}/delivery-results`,request); const evidence=await localEvidence(request.payments.map(value=>value.evidenceUrl)); await queueDeliveryOperation(id,request,evidence); await Promise.all(evidence.map(value=>removePendingEvidence(value.placeholder))); const snapshot=await loadDispatchSnapshot(id); if(!snapshot)throw new Error("Prepara el despacho con conexión antes de trabajar sin señal."); return snapshot; }
+async function offlineExpense(id:string,request:{category:string;amount:number;description:string;evidenceUrl:string;idempotencyKey:string;occurredAt:string}) { if(typeof navigator==="undefined"||navigator.onLine)return apiClient.post<DispatchExecution>(`/commerce/v1/dispatches/${id}/expenses`,request); const evidence=await localEvidence([request.evidenceUrl]); await queueExpenseOperation(id,request,evidence); await Promise.all(evidence.map(value=>removePendingEvidence(value.placeholder))); const snapshot=await loadDispatchSnapshot(id); if(!snapshot)throw new Error("Prepara el despacho con conexión antes de trabajar sin señal."); return snapshot; }
 
 export const dispatchesApi = {
-  page: (params:{page?:number;pageSize?:number;search?:string;status?:string;from?:string;to?:string}) =>
-    apiClient.get<DispatchPage>("/commerce/v1/dispatches",withPagedDefaults(params)),
+  page: (params:{page?:number;pageSize?:number;search?:string;status?:string;from?:string;to?:string}) => apiClient.get<DispatchPage>("/commerce/v1/dispatches",withPagedDefaults(params)),
   options: () => apiClient.get<DispatchOptions>("/commerce/v1/dispatches/options"),
-  candidates: (params:{page?:number;pageSize?:number;search?:string;documentType?:string;from?:string;to?:string;warehouseId?:string}) =>
-    apiClient.get<DispatchCandidatePage>("/commerce/v1/dispatches/candidates",withPagedDefaults(params)),
+  candidates: (params:{page?:number;pageSize?:number;search?:string;documentType?:string;from?:string;to?:string;warehouseId?:string}) => apiClient.get<DispatchCandidatePage>("/commerce/v1/dispatches/candidates",withPagedDefaults(params)),
   detail: (id:string) => apiClient.get<DispatchDetail>(`/commerce/v1/dispatches/${id}`),
+  execution: cachedExecution,
   report: (id:string,includePrices:boolean) => apiClient.get<DispatchReport>(`/commerce/v1/dispatches/${id}/report`,{includePrices}),
-  create: (request:{businessId:string;warehouseId:string;scheduledDate:string;driverName:string;vehiclePlate:string|null;routeId:string|null;notes:string|null;sourceDocumentIds:string[]}) =>
-    apiClient.post<DispatchMutation>("/commerce/v1/dispatches",request),
+  create: (request:{businessId:string;warehouseId:string;scheduledDate:string;driverName:string;vehiclePlate:string|null;driverUserId:string|null;routeId:string|null;notes:string|null;sourceDocumentIds:string[]}) => apiClient.post<DispatchMutation>("/commerce/v1/dispatches",request),
   addDocuments: (id:string,sourceDocumentIds:string[],rowVersion:string) => apiClient.post<DispatchMutation>(`/commerce/v1/dispatches/${id}/documents`,{sourceDocumentIds,rowVersion}),
   removeDocument: (id:string,sourceDocumentId:string,rowVersion:string) => apiClient.delete<DispatchMutation>(`/commerce/v1/dispatches/${id}/documents/${sourceDocumentId}?rowVersion=${encodeURIComponent(rowVersion)}`),
   transition: (id:string,action:string,rowVersion:string) => apiClient.post<DispatchMutation>(`/commerce/v1/dispatches/${id}/${action}`,{rowVersion,idempotencyKey:crypto.randomUUID()}),
   verify: (id:string,dispatchLineId:string,quantityDelta:number,barcode:string|null,idempotencyKey=crypto.randomUUID()) => apiClient.post<DispatchMutation>(`/commerce/v1/dispatches/${id}/verification-events`,{dispatchLineId,quantityDelta,barcode,idempotencyKey,occurredAt:new Date().toISOString()}),
   shortage: (id:string,request:{dispatchLineId:string;quantity:number;reason:string;notes:string|null;rowVersion:string}) => apiClient.post<DispatchMutation>(`/commerce/v1/dispatches/${id}/shortages`,{...request,idempotencyKey:crypto.randomUUID()}),
+  uploadEvidence: (id:string,file:File) => { if(typeof navigator!=="undefined"&&!navigator.onLine)return offlineEvidence(file); const body=new FormData();body.append("file",file);return apiClient.postForm<{url:string}>(`/commerce/v1/dispatches/${id}/evidence`,body); },
+  recordDelivery: offlineDelivery,
+  reorder: (id:string,orderedDocumentIds:string[],rowVersion:string) => apiClient.put<DispatchExecution>(`/commerce/v1/dispatches/${id}/delivery-order`,{orderedDocumentIds,rowVersion,idempotencyKey:crypto.randomUUID()}),
+  addExpense: offlineExpense,
+  reviewExpense: (id:string,expenseId:string,request:{decision:"Approved"|"Rejected";approvedAmount:number|null;notes:string|null;idempotencyKey:string}) => apiClient.put<DispatchExecution>(`/commerce/v1/dispatches/${id}/expenses/${expenseId}/review`,request),
+  closeRoute: (id:string,declaredCash:number,differenceReason:string|null) => apiClient.post<DispatchExecution>(`/commerce/v1/dispatches/${id}/close-route`,{declaredCash,differenceReason,idempotencyKey:crypto.randomUUID()}),
+  settle: (id:string,cashReceived:number,notes:string|null) => apiClient.post<DispatchExecution>(`/commerce/v1/dispatches/${id}/settle`,{cashReceived,notes,idempotencyKey:crypto.randomUUID()}),
 };

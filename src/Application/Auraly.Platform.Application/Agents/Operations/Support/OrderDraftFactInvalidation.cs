@@ -1,0 +1,23 @@
+using Auraly.Platform.Application.Agents.Facts;
+using Auraly.Platform.Application.Services;
+
+namespace Auraly.Platform.Application.Agents.Operations.Support;
+
+internal static class OrderDraftFactInvalidation
+{
+    private const string OrderFinalizedRole = "order.finalized";
+
+    public static async Task ClearOrderFinalizedAsync(
+        IConversationFactsService factsService,
+        AgentConversationContext ctx,
+        CancellationToken cancellationToken)
+    {
+        var key = new FactRoleIndex(ctx.Config?.FactSchema ?? []).KeyByRole(OrderFinalizedRole);
+        if (string.IsNullOrWhiteSpace(key))
+            return;
+
+        var cleared = await factsService.ClearFieldsAsync(ctx.ConversationId, [key], cancellationToken);
+        foreach (var factKey in cleared)
+            ctx.Facts.Remove(factKey);
+    }
+}

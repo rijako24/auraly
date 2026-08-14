@@ -9,9 +9,14 @@ public static class RoutePermissionCodes
     public const string Deactivate = "routes.deactivate";
     public const string ManageStops = "routes.stops.manage";
     public const string Export = "routes.export";
+    public const string ReadAll = "routes.read-all";
+    public const string RecordVisits = "routes.visits.record";
     public const string ReadZones = "route-zones.read";
     public const string ManageZones = "route-zones.manage";
 }
+
+public sealed record SalesRouteVisit(Guid RouteVisitId, Guid RouteStopId, DateOnly VisitDate, string Status, string? SkipReason, Guid? OrderId, DateTimeOffset OccurredAt, Guid RecordedBy, string? VisitObservation = null);
+public sealed record RecordSalesRouteVisitRequest(Guid RouteStopId, DateOnly VisitDate, string Status, string? SkipReason, Guid? OrderId, DateTimeOffset OccurredAt, string IdempotencyKey, string? VisitObservation = null);
 
 public sealed record RouteActorIdentity(
     Guid UserId,
@@ -108,6 +113,10 @@ public sealed record SalesRouteStop(
     string? Neighborhood,
     string CityName,
     string? Phone,
+    string? GoogleMapsUrl,
+    decimal? Latitude,
+    decimal? Longitude,
+    TimeOnly? PlannedVisitTime,
     string? VisitNote,
     string RowVersion);
 
@@ -153,6 +162,9 @@ public sealed record RouteCandidateSite(
     string? Neighborhood,
     string CityName,
     string? Phone,
+    string? GoogleMapsUrl,
+    decimal? Latitude,
+    decimal? Longitude,
     bool IsAlreadyInRoute,
     bool HasScheduleConflict,
     string? ConflictDescription);
@@ -167,7 +179,10 @@ public sealed record RouteCandidatePage(
 public sealed record AddRouteStopItem(
     Guid CustomerId,
     Guid PartySiteId,
-    string? VisitNote);
+    string? VisitNote = null,
+    TimeOnly? PlannedVisitTime = null);
+
+public sealed record UpdateRouteStopRequest(TimeOnly? PlannedVisitTime, string? VisitNote, string RouteRowVersion);
 
 public sealed record AddRouteStopsRequest(
     IReadOnlyCollection<AddRouteStopItem> Stops,

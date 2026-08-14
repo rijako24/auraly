@@ -37,19 +37,19 @@ SessionId.
 
     dotnet build Auraly.Commerce.sln --configuration Release --disable-build-servers
     dotnet build database/Auraly.Database/Auraly.Database.sqlproj --configuration Release --disable-build-servers
-    dotnet build MimosBabySpa.sln --configuration Release --disable-build-servers
+    dotnet build Auraly.Commerce.sln --configuration Release --disable-build-servers
 
 ## Pruebas automáticas
 
 Productor y señal post-commit:
 
-    dotnet test src/Tests/MimosBabySpa.Tests/MimosBabySpa.Tests.csproj --configuration Release --filter FullyQualifiedName~ExternalCustomerReconciliation
+    dotnet test src/Tests/Auraly.Platform.Tests/Auraly.Platform.Tests.csproj --configuration Release --filter FullyQualifiedName~ExternalCustomerReconciliation
 
 Productor completo con SQL Server y RabbitMQ reales:
 
     $env:AURALY_TEST_RABBITMQ='amqp://usuario:clave@localhost:5672'
     $env:AURALY_REQUIRE_RABBITMQ_TEST='1'
-    dotnet test src/Tests/MimosBabySpa.Tests/MimosBabySpa.Tests.csproj --configuration Release --filter FullyQualifiedName~ExternalCustomerReconciliationSqlOutboxIntegrationTests
+    dotnet test src/Tests/Auraly.Platform.Tests/Auraly.Platform.Tests.csproj --configuration Release --filter FullyQualifiedName~ExternalCustomerReconciliationSqlOutboxIntegrationTests
 SQL de idempotencia y concurrencia:
 
     dotnet test tests/Auraly.ServerSlice.IntegrationTests/Auraly.ServerSlice.IntegrationTests.csproj --configuration Release --filter FullyQualifiedName~ExternalCustomerReconciliationEventTests

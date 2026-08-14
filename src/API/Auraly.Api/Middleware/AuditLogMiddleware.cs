@@ -1,4 +1,4 @@
-using MimosBabySpa.Application.Identity.Interfaces;
+using Auraly.Platform.Application.Identity.Interfaces;
 
 namespace Auraly.Api.Middleware;
 

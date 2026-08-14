@@ -6,7 +6,7 @@ using Azure;
 
 // Leer configuración desde local.settings.json
 var currentDir = Directory.GetCurrentDirectory();
-var apiPath = Path.Combine(currentDir, "..", "src", "API", "MimosBabySpa.API", "local.settings.json");
+var apiPath = Path.Combine(currentDir, "..", "src", "API", "Auraly.Platform.Worker", "local.settings.json");
 
 if (!File.Exists(apiPath))
 {

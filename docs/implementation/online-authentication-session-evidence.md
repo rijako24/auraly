@@ -75,9 +75,9 @@ despliegues existentes, pero ya no emite tokens con ellos.
 
 ```powershell
 dotnet build Auraly.Commerce.sln --configuration Release
-dotnet build MimosBabySpa.sln --configuration Release
+dotnet build Auraly.Commerce.sln --configuration Release
 dotnet build database/Auraly.Database/Auraly.Database.sqlproj --configuration Release
-dotnet test src/Tests/MimosBabySpa.Tests/MimosBabySpa.Tests.csproj --configuration Release --no-build
+dotnet test src/Tests/Auraly.Platform.Tests/Auraly.Platform.Tests.csproj --configuration Release --no-build
 dotnet test tests/Auraly.Foundation.Tests/Auraly.Foundation.Tests.csproj --configuration Release --no-build
 dotnet test tests/Auraly.Pos.Edge.Host.Tests/Auraly.Pos.Edge.Host.Tests.csproj --configuration Release --no-build
 dotnet test tests/Auraly.ServerSlice.IntegrationTests/Auraly.ServerSlice.IntegrationTests.csproj --configuration Release --no-build

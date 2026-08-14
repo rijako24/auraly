@@ -1,10 +1,10 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using MimosBabySpa.Application.Common.Exceptions;
-using MimosBabySpa.Application.WhatsAppTemplates.DTOs;
-using MimosBabySpa.Application.WhatsAppTemplates.Interfaces;
-using MimosBabySpa.Domain.Entities;
-using MimosBabySpa.Domain.Repositories;
+using Auraly.Platform.Application.Common.Exceptions;
+using Auraly.Platform.Application.WhatsAppTemplates.DTOs;
+using Auraly.Platform.Application.WhatsAppTemplates.Interfaces;
+using Auraly.Platform.Domain.Entities;
+using Auraly.Platform.Domain.Repositories;
 using Auraly.Api.Authorization;
 using Auraly.Api.Extensions;
 

@@ -186,7 +186,7 @@ public sealed partial class SqlPartyWorkspaceStore
                 S(reader, 22),
                 reader.GetBoolean(23));
 
-        return new PartyWorkspaceDetail(
+        var detail = new PartyWorkspaceDetail(
             reader.GetGuid(0),
             reader.GetString(1),
             G(reader, 2),
@@ -208,6 +208,41 @@ public sealed partial class SqlPartyWorkspaceStore
             employee,
             user,
             Convert.ToBase64String((byte[])reader[46]));
+        await reader.CloseAsync();
+        var sites = await LoadSitesAsync(connection, detail.PartyId, ct);
+        return detail with
+        {
+            PrimarySite = sites.FirstOrDefault(site => site.IsPrimary && site.IsActive)
+                ?? sites.FirstOrDefault(site => site.IsActive),
+            Sites = sites
+        };
+    }
+
+    private static async Task<IReadOnlyCollection<PartyWorkspaceSiteDetail>> LoadSitesAsync(
+        SqlConnection connection, Guid partyId, CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT PartySiteId,Code,Name,CountryId,AdministrativeDivisionId,CityId,
+              AddressLine,Neighborhood,PostalCode,Email,Phone,IsPrimary,IsActive,
+              GoogleMapsUrl,GooglePlaceId,Latitude,Longitude,RowVersion
+            FROM dbo.PartySites
+            WHERE PartyId=@PartyId
+            ORDER BY IsActive DESC,IsPrimary DESC,Name,PartySiteId;
+            """;
+        command.Parameters.Add(P("@PartyId", partyId));
+        var sites = new List<PartyWorkspaceSiteDetail>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            sites.Add(new(
+                reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
+                reader.GetGuid(3), reader.GetGuid(4), reader.GetGuid(5),
+                reader.GetString(6), S(reader, 7), S(reader, 8), S(reader, 9), S(reader, 10),
+                reader.GetBoolean(11), reader.GetBoolean(12), S(reader, 13), S(reader, 14),
+                reader.IsDBNull(15) ? null : reader.GetDecimal(15),
+                reader.IsDBNull(16) ? null : reader.GetDecimal(16),
+                Convert.ToBase64String((byte[])reader[17])));
+        return sites;
     }
 
     private static Guid? G(SqlDataReader reader, int ordinal) =>

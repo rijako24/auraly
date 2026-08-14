@@ -1,0 +1,321 @@
+using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.Platform.Domain.Repositories;
+using Auraly.Platform.Infrastructure.Data;
+using Auraly.Platform.Infrastructure.Commerce;
+
+namespace Auraly.Platform.Infrastructure.Repositories;
+
+public class UnitOfWork : IUnitOfWork
+{
+    private readonly ApplicationDbContext _context;
+    private readonly ExternalCustomerReconciliationCommitState _reconciliationState;
+    private readonly ExternalCustomerReconciliationOutboxSignal _reconciliationSignal;
+    private readonly IAuralyIdGenerator _ids;
+    private IConversationRepository? _conversations;
+    private IMessageRepository? _messages;
+    private ILeadRepository? _leads;
+    private ICampaignRepository? _campaigns;
+    private IBusinessRepository? _businesses;
+    private IBusinessWhatsAppNumberRepository? _businessWhatsAppNumbers;
+    private ISystemConfigurationRepository? _systemConfigurations;
+    private IConversationContextRepository? _conversationContexts;
+    private ICustomerMemoryRepository? _customerMemory;
+    private IReservationRepository? _reservations;
+    private IServiceRepository? _services;
+    private IServiceCategoryRepository? _serviceCategories;
+    private IBusinessAttachmentRepository? _businessAttachments;
+    private IBusinessResourceRepository? _businessResources;
+    private IEmployeeRepository? _employees;
+    private IEmployeeServiceRepository? _employeeServices;
+    private IBusinessWorkingHourRepository? _businessWorkingHours;
+    private IEmployeeWorkingHourRepository? _employeeWorkingHours;
+    private IEmployeeScheduleExceptionRepository? _employeeScheduleExceptions;
+    private IBusinessSchedulingSettingsRepository? _businessSchedulingSettings;
+    private IBusinessAvailabilityBlockRepository? _businessAvailabilityBlocks;
+    private IScheduledAutomationJobRepository? _scheduledAutomationJobs;
+    private IReservationAttendanceResponseRepository? _reservationAttendanceResponses;
+    private IIntegrationConnectionRepository? _integrationConnections;
+    private IExternalCommerceCustomerRepository? _externalCommerceCustomers;
+    private IReservationIntegrationEventRepository? _reservationIntegrationEvents;
+    private IExternalEscalationAttemptRepository? _externalEscalationAttempts;
+    private IExternalEscalationOutcomeDeliveryRepository? _externalEscalationOutcomeDeliveries;
+    private IConversationStateRepository? _conversationStates;
+    private IServiceAddOnRuleRepository? _serviceAddOnRules;
+    private IReservationAddOnRepository? _reservationAddOns;
+    private IProductRepository? _products;
+    private IProductCategoryRepository? _productCategories;
+    private IProductAliasRepository? _productAliases;
+    private ICartMutationReceiptRepository? _cartMutationReceipts;
+    private IProductRecommendationRuleRepository? _productRecommendationRules;
+    private IPromotionRepository? _promotions;
+    private IOrderDraftRepository? _orderDrafts;
+    private IOrderDraftItemRepository? _orderDraftItems;
+    private IOrderRepository? _orders;
+    private IOrderItemRepository? _orderItems;
+    private IOrderConnectionEventRepository? _orderConnectionEvents;
+    private IPaymentTransactionRepository? _paymentTransactions;
+    private IEnrollmentRepository? _enrollments;
+    private IAppUserRepository? _appUsers;
+    private IAppRoleRepository? _appRoles;
+    private IPermissionRepository? _permissions;
+    private IUserRoleRepository? _userRoles;
+    private IRolePermissionRepository? _rolePermissions;
+    private IRefreshTokenRepository? _refreshTokens;
+    private IUserExternalLoginRepository? _userExternalLogins;
+    private IAuditLogRepository? _auditLogs;
+    private ITenantRepository? _tenants;
+    private ISubscriptionPlanRepository? _subscriptionPlans;
+    private IBusinessSubscriptionRepository? _businessSubscriptions;
+    private IBusinessUsagePeriodRepository? _businessUsagePeriods;
+    private IUsageLedgerRepository? _usageLedger;
+    private IUsageCostRateRepository? _usageCostRates;
+    private IAgentTemplateRepository? _agentTemplates;
+    private IBusinessInboundContactRepository? _businessInboundContacts;
+
+    public UnitOfWork(
+        ApplicationDbContext context,
+        ExternalCustomerReconciliationCommitState reconciliationState,
+        ExternalCustomerReconciliationOutboxSignal reconciliationSignal,
+        IAuralyIdGenerator ids)
+    {
+        _context = context;
+        _reconciliationState = reconciliationState;
+        _reconciliationSignal = reconciliationSignal;
+        _ids = ids;
+    }
+
+    public IConversationRepository Conversations =>
+        _conversations ??= new ConversationRepository(_context);
+
+    public IMessageRepository Messages =>
+        _messages ??= new MessageRepository(_context);
+
+    public ILeadRepository Leads =>
+        _leads ??= new LeadRepository(_context);
+    public ICampaignRepository Campaigns =>
+        _campaigns ??= new CampaignRepository(_context);
+
+
+    public IBusinessRepository Businesses =>
+        _businesses ??= new BusinessRepository(_context);
+
+    public IBusinessWhatsAppNumberRepository BusinessWhatsAppNumbers =>
+        _businessWhatsAppNumbers ??= new BusinessWhatsAppNumberRepository(_context);
+
+    public ISystemConfigurationRepository SystemConfigurations =>
+        _systemConfigurations ??= new SystemConfigurationRepository(_context);
+
+    public IConversationContextRepository ConversationContexts =>
+        _conversationContexts ??= new ConversationContextRepository(_context);
+
+    public ICustomerMemoryRepository CustomerMemory =>
+        _customerMemory ??= new CustomerMemoryRepository(_context);
+
+    public IReservationRepository Reservations =>
+        _reservations ??= new ReservationRepository(_context);
+
+    public IServiceRepository Services =>
+        _services ??= new ServiceRepository(_context);
+
+    public IServiceCategoryRepository ServiceCategories =>
+        _serviceCategories ??= new ServiceCategoryRepository(_context);
+
+    public IBusinessAttachmentRepository BusinessAttachments =>
+        _businessAttachments ??= new BusinessAttachmentRepository(_context);
+
+    public IBusinessResourceRepository BusinessResources =>
+        _businessResources ??= new BusinessResourceRepository(_context);
+
+    public IEmployeeRepository Employees =>
+        _employees ??= new EmployeeRepository(_context);
+
+    public IEmployeeServiceRepository EmployeeServices =>
+        _employeeServices ??= new EmployeeServiceRepository(_context);
+
+    public IBusinessWorkingHourRepository BusinessWorkingHours =>
+        _businessWorkingHours ??= new BusinessWorkingHourRepository(_context);
+
+    public IEmployeeWorkingHourRepository EmployeeWorkingHours =>
+        _employeeWorkingHours ??= new EmployeeWorkingHourRepository(_context);
+
+    public IEmployeeScheduleExceptionRepository EmployeeScheduleExceptions =>
+        _employeeScheduleExceptions ??= new EmployeeScheduleExceptionRepository(_context);
+
+    public IBusinessSchedulingSettingsRepository BusinessSchedulingSettings =>
+        _businessSchedulingSettings ??= new BusinessSchedulingSettingsRepository(_context);
+
+
+    public IBusinessAvailabilityBlockRepository BusinessAvailabilityBlocks =>
+        _businessAvailabilityBlocks ??= new BusinessAvailabilityBlockRepository(_context);
+
+    public IScheduledAutomationJobRepository ScheduledAutomationJobs =>
+        _scheduledAutomationJobs ??= new ScheduledAutomationJobRepository(_context);
+
+    public IReservationAttendanceResponseRepository ReservationAttendanceResponses =>
+        _reservationAttendanceResponses ??= new ReservationAttendanceResponseRepository(_context);
+
+    public IIntegrationConnectionRepository IntegrationConnections =>
+        _integrationConnections ??= new IntegrationConnectionRepository(_context);
+
+    public IExternalCommerceCustomerRepository ExternalCommerceCustomers =>
+        _externalCommerceCustomers ??= new ExternalCommerceCustomerRepository(
+            _context,
+            _reconciliationState,
+            _ids);
+
+    public IReservationIntegrationEventRepository ReservationIntegrationEvents =>
+        _reservationIntegrationEvents ??= new ReservationIntegrationEventRepository(_context);
+
+    public IExternalEscalationAttemptRepository ExternalEscalationAttempts =>
+        _externalEscalationAttempts ??= new ExternalEscalationAttemptRepository(_context);
+
+    public IExternalEscalationOutcomeDeliveryRepository ExternalEscalationOutcomeDeliveries =>
+        _externalEscalationOutcomeDeliveries ??= new ExternalEscalationOutcomeDeliveryRepository(_context);
+
+    public IConversationStateRepository ConversationStates =>
+        _conversationStates ??= new ConversationStateRepository(_context);
+
+    public IServiceAddOnRuleRepository ServiceAddOnRules =>
+        _serviceAddOnRules ??= new ServiceAddOnRuleRepository(_context);
+
+    public IReservationAddOnRepository ReservationAddOns =>
+        _reservationAddOns ??= new ReservationAddOnRepository(_context);
+
+    public IProductRepository Products =>
+        _products ??= new ProductRepository(_context);
+    public IProductCategoryRepository ProductCategories =>
+        _productCategories ??= new ProductCategoryRepository(_context);
+    public IProductAliasRepository ProductAliases =>
+        _productAliases ??= new ProductAliasRepository(_context);
+    public ICartMutationReceiptRepository CartMutationReceipts =>
+        _cartMutationReceipts ??= new CartMutationReceiptRepository(_context);
+    public IProductRecommendationRuleRepository ProductRecommendationRules =>
+        _productRecommendationRules ??= new ProductRecommendationRuleRepository(_context);
+
+
+    public IPromotionRepository Promotions =>
+        _promotions ??= new PromotionRepository(_context);
+
+    public IOrderDraftRepository OrderDrafts =>
+        _orderDrafts ??= new OrderDraftRepository(_context);
+
+    public IOrderDraftItemRepository OrderDraftItems =>
+        _orderDraftItems ??= new OrderDraftItemRepository(_context);
+
+    public IOrderRepository Orders =>
+        _orders ??= new OrderRepository(_context);
+
+    public IOrderItemRepository OrderItems =>
+        _orderItems ??= new OrderItemRepository(_context);
+
+    public IOrderConnectionEventRepository OrderConnectionEvents =>
+        _orderConnectionEvents ??= new OrderConnectionEventRepository(_context);
+
+    public IPaymentTransactionRepository PaymentTransactions =>
+        _paymentTransactions ??= new PaymentTransactionRepository(_context);
+
+    public IEnrollmentRepository Enrollments =>
+        _enrollments ??= new EnrollmentRepository(_context);
+
+    public IAppUserRepository AppUsers =>
+        _appUsers ??= new AppUserRepository(_context);
+
+    public IAppRoleRepository AppRoles =>
+        _appRoles ??= new AppRoleRepository(_context);
+
+    public IPermissionRepository Permissions =>
+        _permissions ??= new PermissionRepository(_context);
+
+    public IUserRoleRepository UserRoles =>
+        _userRoles ??= new UserRoleRepository(_context);
+
+    public IRolePermissionRepository RolePermissions =>
+        _rolePermissions ??= new RolePermissionRepository(_context);
+
+    public IRefreshTokenRepository RefreshTokens =>
+        _refreshTokens ??= new RefreshTokenRepository(_context);
+
+    public IUserExternalLoginRepository UserExternalLogins =>
+        _userExternalLogins ??= new UserExternalLoginRepository(_context);
+
+    public IAuditLogRepository AuditLogs =>
+        _auditLogs ??= new AuditLogRepository(_context);
+
+    public ITenantRepository Tenants =>
+        _tenants ??= new TenantRepository(_context);
+
+    public ISubscriptionPlanRepository SubscriptionPlans =>
+        _subscriptionPlans ??= new SubscriptionPlanRepository(_context);
+
+    public IBusinessSubscriptionRepository BusinessSubscriptions =>
+        _businessSubscriptions ??= new BusinessSubscriptionRepository(_context);
+
+    public IBusinessUsagePeriodRepository BusinessUsagePeriods =>
+        _businessUsagePeriods ??= new BusinessUsagePeriodRepository(_context);
+
+    public IUsageLedgerRepository UsageLedger =>
+        _usageLedger ??= new UsageLedgerRepository(_context);
+
+    public IUsageCostRateRepository UsageCostRates =>
+        _usageCostRates ??= new UsageCostRateRepository(_context);
+
+    public IAgentTemplateRepository AgentTemplates =>
+        _agentTemplates ??= new AgentTemplateRepository(_context);
+
+    public IBusinessInboundContactRepository BusinessInboundContacts =>
+        _businessInboundContacts ??= new BusinessInboundContactRepository(_context);
+
+    public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        var changes = await _context.SaveChangesAsync(cancellationToken);
+        if (_context.Database.CurrentTransaction is null)
+            NotifyCommittedReconciliationMessages();
+        return changes;
+    }
+
+    public async Task ExecuteInTransactionAsync(Func<Task> action, CancellationToken cancellationToken = default)
+    {
+        await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await action();
+            await transaction.CommitAsync(cancellationToken);
+            NotifyCommittedReconciliationMessages();
+        }
+        catch
+        {
+            _reconciliationState.ConsumeCommitted();
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
+    }
+
+    public async Task<T> ExecuteInTransactionAsync<T>(Func<Task<T>> action, CancellationToken cancellationToken = default)
+    {
+        await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            var result = await action();
+            await transaction.CommitAsync(cancellationToken);
+            NotifyCommittedReconciliationMessages();
+            return result;
+        }
+        catch
+        {
+            _reconciliationState.ConsumeCommitted();
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
+    }
+
+    private void NotifyCommittedReconciliationMessages()
+    {
+        if (_reconciliationState.ConsumeCommitted())
+            _reconciliationSignal.Notify();
+    }
+
+    public void Dispose()
+    {
+        _context.Dispose();
+    }
+}

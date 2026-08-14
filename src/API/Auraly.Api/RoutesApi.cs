@@ -27,6 +27,15 @@ public static class RoutesApi
         routes.MapGet("/{routeId:guid}/export", async (ClaimsPrincipal principal, Guid routeId, RouteService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ExportAsync(principal.ToRouteIdentity(), routeId, token), Results.Ok));
 
+        routes.MapGet("/{routeId:guid}/visits", async (
+            ClaimsPrincipal principal, Guid routeId, DateOnly date, RouteService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.VisitsAsync(principal.ToRouteIdentity(), routeId, date, token), Results.Ok));
+
+        routes.MapPut("/{routeId:guid}/visits", async (
+            ClaimsPrincipal principal, Guid routeId, RecordSalesRouteVisitRequest request,
+            RouteService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.RecordVisitAsync(principal.ToRouteIdentity(), routeId, request, token), Results.Ok));
+
         routes.MapGet("/{routeId:guid}/candidate-sites", async (
             ClaimsPrincipal principal, Guid routeId, int page, int pageSize, string? search,
             Guid? countryId, Guid? administrativeDivisionId, Guid? cityId, string? neighborhood,
@@ -47,6 +56,9 @@ public static class RoutesApi
 
         routes.MapPost("/{routeId:guid}/stops", async (ClaimsPrincipal principal, Guid routeId, AddRouteStopsRequest request, RouteService service, CancellationToken token) =>
             await ExecuteAsync(() => service.AddStopsAsync(principal.ToRouteIdentity(), routeId, request, token), Results.Ok));
+
+        routes.MapPut("/{routeId:guid}/stops/{stopId:guid}", async (ClaimsPrincipal principal, Guid routeId, Guid stopId, UpdateRouteStopRequest request, RouteService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.UpdateStopAsync(principal.ToRouteIdentity(),routeId,stopId,request,token),Results.Ok));
 
         routes.MapDelete("/{routeId:guid}/stops/{stopId:guid}", async (
             ClaimsPrincipal principal, Guid routeId, Guid stopId, string rowVersion,

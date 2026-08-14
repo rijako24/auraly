@@ -15,8 +15,11 @@ public interface IRouteStore
     Task<RouteMutationResult> UpdateAsync(RouteActorIdentity actor, Guid routeId, UpdateSalesRouteRequest request, string code, string name, string? notes, IReadOnlyList<RouteScheduleInput> schedules, byte[] rowVersion, DateTimeOffset now, CancellationToken ct);
     Task<RouteMutationResult> SetStatusAsync(RouteActorIdentity actor, Guid routeId, bool isActive, byte[] rowVersion, DateTimeOffset now, CancellationToken ct);
     Task<RouteMutationResult> AddStopsAsync(RouteActorIdentity actor, Guid routeId, IReadOnlyCollection<(Guid StopId, AddRouteStopItem Stop)> stops, byte[] rowVersion, DateTimeOffset now, CancellationToken ct);
+    Task<RouteMutationResult> UpdateStopAsync(RouteActorIdentity actor, Guid routeId, Guid stopId, UpdateRouteStopRequest request, string? visitNote, byte[] rowVersion, DateTimeOffset now, CancellationToken ct);
     Task<RouteMutationResult> RemoveStopAsync(RouteActorIdentity actor, Guid routeId, Guid stopId, byte[] rowVersion, DateTimeOffset now, CancellationToken ct);
     Task<RouteMutationResult> ReorderStopsAsync(RouteActorIdentity actor, Guid routeId, IReadOnlyCollection<Guid> orderedStopIds, byte[] rowVersion, DateTimeOffset now, CancellationToken ct);
+    Task<IReadOnlyCollection<SalesRouteVisit>> VisitsAsync(RouteActorIdentity actor, Guid routeId, DateOnly date, CancellationToken ct);
+    Task<SalesRouteVisit> RecordVisitAsync(RouteActorIdentity actor, Guid routeId, RecordSalesRouteVisitRequest request, string? reason, string? observation, CancellationToken ct);
 }
 
 public sealed class RouteService(
@@ -130,6 +133,13 @@ public sealed class RouteService(
         return store.AddStopsAsync(actor, routeId, values, RowVersion(request.RouteRowVersion), time.GetUtcNow(), ct);
     }
 
+    public Task<RouteMutationResult> UpdateStopAsync(RouteActorIdentity actor, Guid routeId, Guid stopId, UpdateRouteStopRequest request, CancellationToken ct)
+    {
+        Require(actor,RoutePermissionCodes.ManageStops);Required(routeId,"RouteId");Required(stopId,"RouteStopId");
+        var note=request.VisitNote?.Trim();if(note?.Length>300)throw new RouteValidationException("VisitNote cannot exceed 300 characters.");
+        return store.UpdateStopAsync(actor,routeId,stopId,request,note,RowVersion(request.RouteRowVersion),time.GetUtcNow(),ct);
+    }
+
     public Task<RouteMutationResult> RemoveStopAsync(RouteActorIdentity actor, Guid routeId, Guid stopId, string routeRowVersion, CancellationToken ct)
     {
         Require(actor, RoutePermissionCodes.ManageStops);
@@ -147,6 +157,28 @@ public sealed class RouteService(
         if (request.OrderedStopIds.Count != request.OrderedStopIds.Distinct().Count())
             throw new RouteValidationException("The stop order cannot contain duplicates.");
         return store.ReorderStopsAsync(actor, routeId, request.OrderedStopIds, RowVersion(request.RouteRowVersion), time.GetUtcNow(), ct);
+    }
+
+    public Task<IReadOnlyCollection<SalesRouteVisit>> VisitsAsync(RouteActorIdentity actor, Guid routeId, DateOnly date, CancellationToken ct)
+    {
+        Require(actor, RoutePermissionCodes.Read); Required(routeId, "RouteId");
+        return store.VisitsAsync(actor, routeId, date, ct);
+    }
+
+    public Task<SalesRouteVisit> RecordVisitAsync(RouteActorIdentity actor, Guid routeId, RecordSalesRouteVisitRequest request, CancellationToken ct)
+    {
+        Require(actor, RoutePermissionCodes.RecordVisits); Required(routeId, "RouteId"); Required(request.RouteStopId, "RouteStopId");
+        if (request.Status is not ("Visited" or "Skipped")) throw new RouteValidationException("Visit status must be Visited or Skipped.");
+        var reason = request.SkipReason?.Trim();
+        var observation = request.VisitObservation?.Trim();
+        if (request.Status == "Skipped" && string.IsNullOrWhiteSpace(reason)) throw new RouteValidationException("A reason is required when a customer is skipped.");
+        if (request.Status == "Visited" && request.OrderId is null) throw new RouteValidationException("A visited customer requires its order.");
+        if (reason?.Length > 300) throw new RouteValidationException("SkipReason cannot exceed 300 characters.");
+        if (request.Status == "Skipped" && string.IsNullOrWhiteSpace(observation)) throw new RouteValidationException("An observation is required when a visit finishes without an order.");
+        if (observation?.Length > 1000) throw new RouteValidationException("VisitObservation cannot exceed 1000 characters.");
+        if (request.Status == "Visited" && observation is not null) throw new RouteValidationException("VisitObservation only applies to a visit without an order.");
+        if (string.IsNullOrWhiteSpace(request.IdempotencyKey) || request.IdempotencyKey.Trim().Length > 128) throw new RouteValidationException("IdempotencyKey is required.");
+        return store.RecordVisitAsync(actor, routeId, request with { IdempotencyKey=request.IdempotencyKey.Trim() }, reason, observation, ct);
     }
 
     private static IReadOnlyList<RouteScheduleInput> ValidateSchedules(IReadOnlyCollection<RouteScheduleInput> source)

@@ -1,0 +1,58 @@
+using System.Text.Json;
+using Azure.Messaging.ServiceBus;
+using Microsoft.Extensions.Configuration;
+using Auraly.Platform.Application.Campaigns.DTOs;
+using Auraly.Platform.Infrastructure.Configuration;
+using Auraly.Platform.Application.Campaigns.Interfaces;
+
+namespace Auraly.Platform.Infrastructure.Services;
+
+public sealed class CampaignQueueService : ICampaignQueueService, IAsyncDisposable
+{
+    public const string DefaultQueueName = "campaign-dispatch";
+
+    private readonly IConfiguration _configuration;
+    private ServiceBusClient? _client;
+    private ServiceBusSender? _sender;
+
+    public CampaignQueueService(IConfiguration configuration)
+    {
+        _configuration = configuration;
+    }
+
+    public async Task EnqueueAsync(
+        CampaignDispatchMessage message,
+        DateTime? scheduledAtUtc = null,
+        CancellationToken ct = default)
+    {
+        var serviceBusMessage = new ServiceBusMessage(JsonSerializer.Serialize(message))
+        {
+            MessageId = $"campaign:{message.CampaignId:N}",
+            SessionId = message.BusinessId.ToString("N"),
+            ContentType = "application/json"
+        };
+
+        if (scheduledAtUtc.HasValue)
+            serviceBusMessage.ScheduledEnqueueTime = new DateTimeOffset(DateTime.SpecifyKind(scheduledAtUtc.Value, DateTimeKind.Utc));
+
+        await GetSender().SendMessageAsync(serviceBusMessage, ct);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_sender is not null)
+            await _sender.DisposeAsync();
+        if (_client is not null)
+            await _client.DisposeAsync();
+    }
+
+    private ServiceBusSender GetSender()
+    {
+        if (_sender is not null)
+            return _sender;
+
+        _client = AzureManagedClientFactory.CreateServiceBusClient(_configuration);
+        _sender = _client.CreateSender(DefaultQueueName);
+        return _sender;
+    }
+}

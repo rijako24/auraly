@@ -150,6 +150,10 @@ CREATE TABLE [dbo].[PartySites] (
     [PostalCode] NVARCHAR(16) NULL,
     [Email] NVARCHAR(254) NULL,
     [Phone] NVARCHAR(32) NULL,
+    [GoogleMapsUrl] NVARCHAR(1000) NULL,
+    [GooglePlaceId] NVARCHAR(255) NULL,
+    [Latitude] DECIMAL(9,6) NULL,
+    [Longitude] DECIMAL(9,6) NULL,
     [IsPrimary] BIT NOT NULL,
     [IsActive] BIT NOT NULL,
     [CreatedBy] UNIQUEIDENTIFIER NOT NULL,
@@ -162,6 +166,7 @@ CREATE TABLE [dbo].[PartySites] (
     CONSTRAINT [FK_PartySites_AdministrativeDivisions] FOREIGN KEY ([AdministrativeDivisionId])
         REFERENCES [dbo].[AdministrativeDivisions] ([AdministrativeDivisionId]),
     CONSTRAINT [FK_PartySites_Cities] FOREIGN KEY ([CityId]) REFERENCES [dbo].[Cities] ([CityId]),
+    CONSTRAINT [CK_PartySites_Coordinates] CHECK (([Latitude] IS NULL AND [Longitude] IS NULL) OR ([Latitude] BETWEEN -90 AND 90 AND [Longitude] BETWEEN -180 AND 180)),
     CONSTRAINT [UQ_PartySites_Party_Code] UNIQUE ([PartyId], [Code])
 );
 GO

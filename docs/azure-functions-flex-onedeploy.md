@@ -1,6 +1,6 @@
 # Despliegue de Azure Functions Flex Consumption
 
-Procedimiento probado para publicar `MimosBabySpa.API` en la Function App Flex Consumption de Talkio AI.
+Procedimiento probado para publicar `Auraly.Platform.Worker` en la Function App Flex Consumption de Talkio AI.
 
 ## Destino actual
 
@@ -8,7 +8,7 @@ Procedimiento probado para publicar `MimosBabySpa.API` en la Function App Flex C
 - Function App: `az-talkioai-dev`
 - Plan: Flex Consumption `FC1`, Linux
 - Runtime: `dotnet-isolated`, .NET 8
-- Proyecto: `src\API\MimosBabySpa.API\MimosBabySpa.API.csproj`
+- Proyecto: `src\API\Auraly.Platform.Worker\Auraly.Platform.Worker.csproj`
 
 ## Reglas importantes
 
@@ -25,9 +25,9 @@ Procedimiento probado para publicar `MimosBabySpa.API` en la Function App Flex C
 Desde la raiz del repositorio:
 
 ```powershell
-dotnet test src\Tests\MimosBabySpa.Tests\MimosBabySpa.Tests.csproj -c Release
+dotnet test src\Tests\Auraly.Platform.Tests\Auraly.Platform.Tests.csproj -c Release
 
-dotnet publish src\API\MimosBabySpa.API\MimosBabySpa.API.csproj `
+dotnet publish src\API\Auraly.Platform.Worker\Auraly.Platform.Worker.csproj `
   -c Release `
   -o .deploy\function-flex-publish
 ```
@@ -38,8 +38,8 @@ El publish debe contener al menos:
 .deploy/function-flex-publish/
   .azurefunctions/
   host.json
-  MimosBabySpa.API.dll
-  MimosBabySpa.Application.dll
+  Auraly.Platform.Worker.dll
+  Auraly.Platform.Application.dll
 ```
 
 ## 2. Crear un ZIP portable
@@ -230,7 +230,7 @@ Un deployment se considera valido cuando el recibo nuevo queda `Processed`; un h
 
 ### `customerReadable could not be mapped`
 
-La base ya contiene configuracion del motor nuevo, pero la Function sigue ejecutando un `MimosBabySpa.Application.dll` anterior. Volver a publicar por OneDeploy y comprobar el resultado con un recibo real.
+La base ya contiene configuracion del motor nuevo, pero la Function sigue ejecutando un `Auraly.Platform.Application.dll` anterior. Volver a publicar por OneDeploy y comprobar el resultado con un recibo real.
 
 ### Core Tools interpreta `net8.0` como `80.0`
 

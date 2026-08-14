@@ -2,6 +2,9 @@ SET NOCOUNT ON;
 DECLARE @Values TABLE([Action] NVARCHAR(50),[Resource] NVARCHAR(100),[Description] NVARCHAR(500));
 INSERT @Values VALUES
 (N'Read',N'dispatches.read',N'Consultar despachos'),
+(N'ReadAll',N'dispatches.read-all',N'Consultar los despachos de todos los transportadores'),
+(N'ExecuteDeliveries',N'dispatches.delivery.execute',N'Atender cargues y entregas asignadas al transportador'),
+(N'Settle',N'dispatches.settle',N'Revisar novedades y liquidar despachos'),
 (N'Create',N'dispatches.create',N'Crear despachos'),
 (N'EditDraft',N'dispatches.edit-draft',N'Editar borradores de despacho'),
 (N'AttachDocuments',N'dispatches.attach-documents',N'Agregar facturas y comprobantes de venta'),

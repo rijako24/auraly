@@ -9,6 +9,8 @@ public interface IPartyWorkspaceStore
 {
     Task<PartyWorkspacePage> PageAsync(
         PartyActorIdentity actor, int page, PartyWorkspaceQuery query, CancellationToken ct);
+    Task<IReadOnlyCollection<CustomerMapSite>> CustomerMapAsync(
+        PartyActorIdentity actor, CustomerMapQuery query, CancellationToken ct);
     Task<PartyWorkspaceDetail?> FindIdentityAsync(
         PartyActorIdentity actor, Guid countryId, string identificationType,
         string normalizedIdentification, CancellationToken ct);
@@ -46,6 +48,13 @@ public sealed class PartyWorkspaceService(
         if (role is not null && role is not ("Customer" or "Supplier" or "Seller" or "Carrier" or "Employee" or "User"))
             throw new PartyValidationException("Role must be Customer, Supplier, Seller, Carrier, Employee or User.");
         return store.PageAsync(actor, page, query with { Search = query.Search?.Trim(), Role = role }, ct);
+    }
+
+    public Task<IReadOnlyCollection<CustomerMapSite>> CustomerMapAsync(
+        PartyActorIdentity actor, CustomerMapQuery query, CancellationToken ct)
+    {
+        Require(actor, PartyWorkspacePermissionCodes.Read, PartyPermissionCodes.CustomerRead);
+        return store.CustomerMapAsync(actor, query with { Search = query.Search?.Trim() }, ct);
     }
 
     public async Task<PartyIdentityLookupResult> FindIdentityAsync(
@@ -169,6 +178,12 @@ public sealed class PartyWorkspaceService(
         Translate(() => PartyValidation.NormalizeCode(site.Code, "SiteCode", 32));
         Translate(() => { PartyValidation.RequireText(site.Name, "SiteName", 160); return true; });
         Translate(() => { PartyValidation.RequireText(site.AddressLine, "AddressLine", 300); return true; });
+        if ((site.Latitude is null) != (site.Longitude is null))
+            throw new PartyValidationException("Latitude and longitude must be provided together.");
+        if (site.Latitude is < -90 or > 90 || site.Longitude is < -180 or > 180)
+            throw new PartyValidationException("The site coordinates are outside the valid range.");
+        if (site.GoogleMapsUrl?.Length > 1000 || site.GooglePlaceId?.Length > 255)
+            throw new PartyValidationException("The Google Maps location is too long.");
     }
 
     private static byte[] RowVersion(string value)

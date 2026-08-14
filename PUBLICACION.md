@@ -17,7 +17,7 @@ Guia operativa para publicar la base de datos y la Azure Function sin redescubri
 - SqlPackage local: `C:\Users\richa\.dotnet\tools\sqlpackage.exe`
 - Proyecto BD: `database\Auraly.Database\Auraly.Database.sqlproj`
 - DACPAC: `database\Auraly.Database\bin\Debug\Auraly.Database.dacpac`
-- Proyecto Function: `src\API\MimosBabySpa.API\MimosBabySpa.API.csproj`
+- Proyecto Function: `src\API\Auraly.Platform.Worker\Auraly.Platform.Worker.csproj`
 - Publish profile: `az-talkioai-dev - Zip Deploy`
 
 ## Publicar BD local
@@ -75,7 +75,7 @@ Resultado esperado: `Successfully published database.`
 Compilar en Release:
 
 ```powershell
-dotnet publish src\API\MimosBabySpa.API\MimosBabySpa.API.csproj -c Release /p:PublishProfile="az-talkioai-dev - Zip Deploy"
+dotnet publish src\API\Auraly.Platform.Worker\Auraly.Platform.Worker.csproj -c Release /p:PublishProfile="az-talkioai-dev - Zip Deploy"
 ```
 
 Crear zip. Usar `tar`, no `Compress-Archive`, porque el paquete debe incluir la carpeta oculta `.azurefunctions` en la raiz:
@@ -88,7 +88,7 @@ if (Test-Path .\publish\az-talkioai-dev.zip) {
 New-Item -ItemType Directory -Force -Path .\publish | Out-Null
 
 tar -a -cf .\publish\az-talkioai-dev.zip `
-  -C .\src\API\MimosBabySpa.API\bin\Release\net8.0\linux-x64\publish .
+  -C .\src\API\Auraly.Platform.Worker\bin\Release\net8.0\linux-x64\publish .
 ```
 
 Validar que el zip contiene `.azurefunctions`:

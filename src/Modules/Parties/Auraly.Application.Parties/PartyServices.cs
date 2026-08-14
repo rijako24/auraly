@@ -23,7 +23,7 @@ public interface IPartyStore
     Task<PartyUserAccountLink?> GetUserAccountAsync(
         Guid tenantId, Guid partyId, CancellationToken ct);
     Task<PartyUserAccountLink> LinkUserAccountAsync(
-        Guid tenantId, Guid partyId, Guid userId, DateTimeOffset now, CancellationToken ct);
+        Guid tenantId, Guid partyId, Guid userId, Guid assignedByUserId, DateTimeOffset now, CancellationToken ct);
     Task UnlinkUserAccountAsync(Guid tenantId, Guid partyId, DateTimeOffset now, CancellationToken ct);
     Task<IReadOnlyCollection<CountryItem>> CountriesAsync(bool includeInactive, CancellationToken ct);
     Task<IReadOnlyCollection<AdministrativeDivisionItem>> DivisionsAsync(
@@ -130,7 +130,7 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
         if (partyId == Guid.Empty || request.UserId == Guid.Empty)
             throw new PartyValidationException("PartyId and UserId are required.");
         return store.LinkUserAccountAsync(
-            actor.TenantId, partyId, request.UserId, time.GetUtcNow(), ct);
+            actor.TenantId, partyId, request.UserId, actor.ActorId, time.GetUtcNow(), ct);
     }
 
     public Task UnlinkUserAccountAsync(
@@ -159,6 +159,12 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
         Translate(() => PartyValidation.NormalizeCode(site.Code, "SiteCode", 32));
         Translate(() => PartyValidation.RequireText(site.Name, "SiteName", 160));
         Translate(() => PartyValidation.RequireText(site.AddressLine, "AddressLine", 300));
+        if ((site.Latitude is null) != (site.Longitude is null))
+            throw new PartyValidationException("Latitude and longitude must be provided together.");
+        if (site.Latitude is < -90 or > 90 || site.Longitude is < -180 or > 180)
+            throw new PartyValidationException("The site coordinates are outside the valid range.");
+        if (site.GoogleMapsUrl?.Length > 1000 || site.GooglePlaceId?.Length > 255)
+            throw new PartyValidationException("The Google Maps location is too long.");
         if (site.Neighborhood?.Length > 120)
             throw new PartyValidationException("Neighborhood cannot exceed 120 characters.");
     }

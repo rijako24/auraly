@@ -133,6 +133,9 @@
     <Build Include="Tables\SalesPayments.sql" />
     <Build Include="Tables\SalesReturns.sql" />
     <Build Include="Tables\Dispatching.sql" />
+    <Build Include="Tables\DispatchDelivery.sql" />
+    <Build Include="Tables\DispatchSettlementOperations.sql" />
+    <Build Include="Tables\DispatchExpenses.sql" />
     <Build Include="Tables\SalesReturnReceivableApplications.sql" />
     <Build Include="Tables\SalesReturnFiscalSnapshots.sql" />
 

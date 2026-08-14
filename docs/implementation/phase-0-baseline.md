@@ -36,7 +36,7 @@ Ejecutado sobre una copia limpia de `design/auraly-commerce-mvp`:
 
 | Comando | Resultado |
 |---|---|
-| `dotnet build Auraly.sln --configuration Release` | Correcto, 0 errores, 0 advertencias |
+| `dotnet build Auraly.Commerce.sln --configuration Release` | Correcto, 0 errores, 0 advertencias |
 | `dotnet test src/Tests/Auraly.Tests/Auraly.Tests.csproj --configuration Release` | Correcto, 693/693 |
 | `dotnet build database/Auraly.Database/Auraly.Database.sqlproj --configuration Release` | Correcto, DACPAC generado |
 | `npm ci` en `admin` | Correcto con advertencias de motor y dependencias obsoletas |

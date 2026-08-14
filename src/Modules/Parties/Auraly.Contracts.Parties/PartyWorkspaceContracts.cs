@@ -74,6 +74,14 @@ public sealed record PartyWorkspacePage(
     int TotalCount,
     int TotalPages);
 
+public sealed record CustomerMapQuery(string? Search = null, Guid? RouteId = null, Guid? SellerId = null, bool OnlyUnassigned = false);
+public sealed record CustomerMapAssignment(Guid RouteId, string RouteName, Guid SellerId, string SellerName);
+public sealed record CustomerMapSite(
+    Guid CustomerId, Guid PartyId, string CustomerName, string? Identification,
+    Guid PartySiteId, string SiteName, string AddressLine, string? Neighborhood,
+    string CityName, string? Phone, string? GoogleMapsUrl, decimal? Latitude, decimal? Longitude,
+    IReadOnlyCollection<CustomerMapAssignment> Assignments);
+
 public sealed record SupplierAcceptance(Guid SupplierId, Guid PartyId, bool IdempotentReplay);
 public sealed record CreateSellerRequest(Guid OperationId, Guid BusinessId, PartyInput Party, PartySiteInput PrimarySite, string Code, decimal? DefaultCommissionPercent, string CommissionBasis, string CommissionTrigger);
 public sealed record CreateCarrierRequest(Guid OperationId, Guid BusinessId, PartyInput Party, PartySiteInput PrimarySite, string Code, string TransportationMode);
@@ -92,7 +100,13 @@ public sealed record PartyWorkspaceSiteDetail(
     string? PostalCode,
     string? Email,
     string? Phone,
-    bool IsPrimary);
+    bool IsPrimary,
+    bool IsActive = true,
+    string? GoogleMapsUrl = null,
+    string? GooglePlaceId = null,
+    decimal? Latitude = null,
+    decimal? Longitude = null,
+    string RowVersion = "");
 
 public sealed record CustomerRoleDetail(
     Guid CustomerId,
@@ -145,7 +159,8 @@ public sealed record PartyWorkspaceDetail(
     CarrierRoleDetail? Carrier,
     EmployeeRoleDetail? Employee,
     UserRoleDetail? User,
-    string RowVersion);
+    string RowVersion,
+    IReadOnlyCollection<PartyWorkspaceSiteDetail>? Sites = null);
 
 public sealed record PartyIdentityLookupResult(
     bool Exists,

@@ -129,6 +129,7 @@ PRINT 'Post-deployment scripts executed successfully.';
 :r .\Seeds\SeedInventoryReasons.sql
 :r .\Seeds\SeedInventoryDocumentSeries.sql
 :r .\Seeds\SeedRoutePermissions.sql
+:r .\Seeds\SeedSellerRole.sql
 :r .\Seeds\SeedDispatchPermissions.sql
 :r .\Seeds\SeedSalesReceiptDocumentSeries.sql
 :r .\Seeds\SeedProductMerchandisingMasters.sql

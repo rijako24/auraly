@@ -19,7 +19,7 @@ Write-Host ""
 
 # 2. Ejecutar pruebas unitarias
 Write-Host "[2/4] Ejecutando pruebas unitarias..." -ForegroundColor Yellow
-$testResult = dotnet test src/Tests/MimosBabySpa.Tests/MimosBabySpa.Tests.csproj --verbosity minimal 2>&1
+$testResult = dotnet test src/Tests/Auraly.Platform.Tests/Auraly.Platform.Tests.csproj --verbosity minimal 2>&1
 $testOutput = $testResult | Select-Object -Last 5
 Write-Host $testOutput
 if ($testOutput -match "Correctas!") {
@@ -31,7 +31,7 @@ Write-Host ""
 
 # 3. Verificar migraciones aplicadas
 Write-Host "[3/4] Verificando migraciones..." -ForegroundColor Yellow
-$migrations = dotnet ef migrations list --project src/Infrastructure/MimosBabySpa.Infrastructure/MimosBabySpa.Infrastructure.csproj --startup-project src/API/MimosBabySpa.API/MimosBabySpa.API.csproj 2>&1
+$migrations = dotnet ef migrations list --project src/Infrastructure/Auraly.Platform.Infrastructure/Auraly.Platform.Infrastructure.csproj --startup-project src/API/Auraly.Platform.Worker/Auraly.Platform.Worker.csproj 2>&1
 if ($migrations -match "AddAIVendedorEntities" -and $migrations -match "RemoveBabySpecificFieldsFromCustomerProfile") {
     Write-Host "✅ Migraciones encontradas" -ForegroundColor Green
 } else {
@@ -41,8 +41,8 @@ Write-Host ""
 
 # 4. Verificar configuración
 Write-Host "[4/4] Verificando configuración..." -ForegroundColor Yellow
-if (Test-Path "src/API/MimosBabySpa.API/local.settings.json") {
-    $settings = Get-Content "src/API/MimosBabySpa.API/local.settings.json" | ConvertFrom-Json
+if (Test-Path "src/API/Auraly.Platform.Worker/local.settings.json") {
+    $settings = Get-Content "src/API/Auraly.Platform.Worker/local.settings.json" | ConvertFrom-Json
     if ($settings.Values.'Features:UseAIVendedor' -eq "true") {
         Write-Host "✅ Feature flag activado" -ForegroundColor Green
     } else {
@@ -58,7 +58,7 @@ Write-Host "  VALIDACIÓN COMPLETA" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Próximos pasos:" -ForegroundColor Green
-Write-Host "1. Ejecutar función localmente: cd src/API/MimosBabySpa.API && func start" -ForegroundColor White
+Write-Host "1. Ejecutar función localmente: cd src/API/Auraly.Platform.Worker && func start" -ForegroundColor White
 Write-Host "2. Enviar mensaje de prueba por WhatsApp" -ForegroundColor White
 Write-Host "3. Verificar logs del orquestador" -ForegroundColor White
 Write-Host "4. Revisar tablas ConversationSessions y CustomerProfiles en BD" -ForegroundColor White

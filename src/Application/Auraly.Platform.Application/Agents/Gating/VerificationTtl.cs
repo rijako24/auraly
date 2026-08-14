@@ -1,0 +1,6 @@
+namespace Auraly.Platform.Application.Agents.Gating;
+
+public static class VerificationTtl
+{
+    public static readonly TimeSpan AvailabilityChecked = TimeSpan.FromMinutes(5);
+}

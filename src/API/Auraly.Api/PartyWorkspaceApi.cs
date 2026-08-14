@@ -19,6 +19,10 @@ public static class PartyWorkspaceApi
             CancellationToken ct) =>
             await Handle(async () => Results.Created("/api/commerce/v1/parties",
                 await service.CreateIdentityAsync(context.User.ToPartyUserIdentity(), request, ct))));
+        parties.MapGet("/customer-map", async(HttpContext context, PartyWorkspaceService service,
+            string? search, Guid? routeId, Guid? sellerId, bool? onlyUnassigned, CancellationToken ct) =>
+            await Handle(async() => Results.Ok(await service.CustomerMapAsync(context.User.ToPartyUserIdentity(),
+                new CustomerMapQuery(search, routeId, sellerId, onlyUnassigned ?? false), ct))));
         parties.MapGet("/identity", async(
             HttpContext context,
             PartyWorkspaceService service,

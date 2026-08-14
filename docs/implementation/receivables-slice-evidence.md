@@ -32,7 +32,7 @@ También se verificó que una venta totalmente financiada no crea un medio de pa
 | `Auraly.Foundation.Tests` | 152/152 |
 | `Auraly.ServerSlice.IntegrationTests` | 98/98 con SQL Server real |
 | `Auraly.Pos.Edge.Host.Tests` | 16/16 |
-| `MimosBabySpa.Tests` | 701/701 |
+| `Auraly.Platform.Tests` | 701/701 |
 | `npm run test:pos` | 25/25 |
 | `npx tsc --noEmit` | correcto |
 | `npm run build` | correcto; ruta `/dashboard/receivables` generada |

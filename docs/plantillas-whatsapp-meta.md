@@ -298,5 +298,5 @@ foreach ($name in @('delivery_request', 'delivery_unavailable')) {
 - Crear/editar en Meta.
 - Esperar `APPROVED`.
 - Actualizar `templateName`, `headerParameters` y `bodyParameters` en el seed/configuracion.
-- Ejecutar `dotnet build MimosBabySpa.sln`.
+- Ejecutar `dotnet build Auraly.Commerce.sln`.
 - Probar un envio real o controlado.

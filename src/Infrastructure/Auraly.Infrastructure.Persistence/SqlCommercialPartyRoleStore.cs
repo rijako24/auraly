@@ -85,8 +85,19 @@ public sealed class SqlCommercialPartyRoleStore(SqlServerConnectionFactory conne
                 await ExecuteAsync(connection, transaction, """
                     INSERT dbo.CommerceSellers(SellerId,BusinessId,PartyId,Code,DefaultCommissionPercent,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
                     VALUES(@RoleId,@BusinessId,@PartyId,@Code,@Commission,@Option1,@Option2,1,@Now);
+
+                    INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt,AssignedByUserId)
+                    SELECT NEWID(),app.UserId,accessRole.RoleId,@BusinessId,@Now,@Actor
+                    FROM dbo.AppUsers app
+                    JOIN dbo.AppRoles accessRole ON accessRole.TenantId=app.TenantId
+                      AND accessRole.NormalizedName=N'SELLER' AND accessRole.IsActive=1
+                    WHERE app.PartyId=@PartyId AND app.IsActive=1
+                      AND NOT EXISTS(
+                        SELECT 1 FROM dbo.UserRoles assigned
+                        WHERE assigned.UserId=app.UserId AND assigned.RoleId=accessRole.RoleId
+                          AND assigned.BusinessId=@BusinessId);
                     """, [P("@RoleId",roleId),P("@BusinessId",businessId),P("@PartyId",resolvedPartyId),P("@Code",code.Trim().ToUpperInvariant()),
-                    P("@Commission",commission),P("@Option1",option1),P("@Option2",option2),P("@Now",now)], ct);
+                    P("@Commission",commission),P("@Option1",option1),P("@Option2",option2),P("@Actor",actor.ActorId),P("@Now",now)], ct);
             else
                 await ExecuteAsync(connection, transaction, """
                     INSERT dbo.Carriers(CarrierId,BusinessId,PartyId,Code,TransportationMode,IsActive,CreatedAt)
@@ -152,9 +163,9 @@ public sealed class SqlCommercialPartyRoleStore(SqlServerConnectionFactory conne
     {if(string.IsNullOrWhiteSpace(value))return;var v=value.Trim();await ExecuteAsync(c,t,"INSERT dbo.PartyContacts(PartyContactId,PartyId,ContactType,Value,NormalizedValue,IsPrimary,IsActive,CreatedAt) VALUES(NEWID(),@Party,@Type,@Value,@Normalized,1,1,@Now)",[P("@Party",party),P("@Type",type),P("@Value",v),P("@Normalized",type=="Email"?v.ToUpperInvariant():string.Concat(v.Where(char.IsDigit))),P("@Now",now)],ct);}
     private static Task InsertSiteAsync(SqlConnection c,SqlTransaction t,PartyActorIdentity actor,Guid party,Guid siteId,PartySiteInput s,DateTimeOffset now,CancellationToken ct)=>ExecuteAsync(c,t,"""
         IF NOT EXISTS(SELECT 1 FROM dbo.PartySites WHERE PartyId=@Party AND Code=@Code)
-        INSERT dbo.PartySites(PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,AddressLine,Neighborhood,PostalCode,Email,Phone,IsPrimary,IsActive,CreatedBy,CreatedAt)
-        VALUES(@Id,@Party,@Code,@Name,@Country,@Division,@City,@Address,@Neighborhood,@Postal,@Email,@Phone,CASE WHEN EXISTS(SELECT 1 FROM dbo.PartySites WHERE PartyId=@Party AND IsPrimary=1 AND IsActive=1) THEN 0 ELSE @Primary END,1,@Actor,@Now)
-        """,[P("@Id",siteId),P("@Party",party),P("@Code",s.Code.Trim().ToUpperInvariant()),P("@Name",s.Name.Trim()),P("@Country",s.CountryId),P("@Division",s.AdministrativeDivisionId),P("@City",s.CityId),P("@Address",s.AddressLine.Trim()),P("@Neighborhood",Empty(s.Neighborhood)),P("@Postal",Empty(s.PostalCode)),P("@Email",Empty(s.Email)),P("@Phone",Empty(s.Phone)),P("@Primary",s.IsPrimary),P("@Actor",actor.ActorId),P("@Now",now)],ct);
+        INSERT dbo.PartySites(PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,AddressLine,Neighborhood,PostalCode,Email,Phone,GoogleMapsUrl,GooglePlaceId,Latitude,Longitude,IsPrimary,IsActive,CreatedBy,CreatedAt)
+        VALUES(@Id,@Party,@Code,@Name,@Country,@Division,@City,@Address,@Neighborhood,@Postal,@Email,@Phone,@GoogleMapsUrl,@GooglePlaceId,@Latitude,@Longitude,CASE WHEN EXISTS(SELECT 1 FROM dbo.PartySites WHERE PartyId=@Party AND IsPrimary=1 AND IsActive=1) THEN 0 ELSE @Primary END,1,@Actor,@Now)
+        """,[P("@Id",siteId),P("@Party",party),P("@Code",s.Code.Trim().ToUpperInvariant()),P("@Name",s.Name.Trim()),P("@Country",s.CountryId),P("@Division",s.AdministrativeDivisionId),P("@City",s.CityId),P("@Address",s.AddressLine.Trim()),P("@Neighborhood",Empty(s.Neighborhood)),P("@Postal",Empty(s.PostalCode)),P("@Email",Empty(s.Email)),P("@Phone",Empty(s.Phone)),P("@GoogleMapsUrl",Empty(s.GoogleMapsUrl)),P("@GooglePlaceId",Empty(s.GooglePlaceId)),P("@Latitude",s.Latitude),P("@Longitude",s.Longitude),P("@Primary",s.IsPrimary),P("@Actor",actor.ActorId),P("@Now",now)],ct);
     private static async Task ExecuteAsync(SqlConnection c,SqlTransaction t,string sql,SqlParameter[] ps,CancellationToken ct){await using var x=c.CreateCommand();x.Transaction=t;x.CommandText=sql;x.Parameters.AddRange(ps);await x.ExecuteNonQueryAsync(ct);}
     private static SqlParameter P(string name,object? value)=>new(name,value??DBNull.Value);
     private static string? Empty(string? value)=>string.IsNullOrWhiteSpace(value)?null:value.Trim();

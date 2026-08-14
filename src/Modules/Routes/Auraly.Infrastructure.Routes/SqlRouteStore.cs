@@ -33,6 +33,10 @@ public sealed class SqlRouteStore(
               AND (@IsActive IS NULL OR route.IsActive=@IsActive)
               AND (@DayOfWeek IS NULL OR EXISTS(SELECT 1 FROM dbo.SalesRouteSchedules daySchedule WHERE daySchedule.RouteId=route.RouteId AND daySchedule.DayOfWeek=@DayOfWeek AND daySchedule.IsActive=1))
               AND (@PreparationStatus IS NULL OR @PreparationStatus=CASE WHEN schedules.ScheduleCount>0 AND stops.StopCount>0 THEN N'Ready' ELSE N'Draft' END)
+              AND (@ReadAll=1 OR EXISTS(
+                    SELECT 1 FROM dbo.AppUsers currentUser
+                    INNER JOIN dbo.CommerceSellers currentSeller ON currentSeller.PartyId=currentUser.PartyId AND currentSeller.BusinessId=@BusinessId AND currentSeller.IsActive=1
+                    WHERE currentUser.UserId=@UserId AND currentUser.TenantId=@TenantId AND currentSeller.SellerId=route.SellerId))
             """;
         int total;
         await using (var count = new SqlCommand("SELECT COUNT(*) " + source, connection))
@@ -90,7 +94,8 @@ public sealed class SqlRouteStore(
 
             SELECT stop.RouteStopId,stop.CustomerId,stop.PartySiteId,stop.Sequence,party.DisplayName,
               party.Identification,site.Name,site.AddressLine,site.Neighborhood,city.Name,
-              COALESCE(site.Phone,phone.Value),stop.VisitNote,stop.RowVersion
+              COALESCE(site.Phone,phone.Value),site.GoogleMapsUrl,site.Latitude,site.Longitude,
+              stop.PlannedVisitTime,stop.VisitNote,stop.RowVersion
             FROM dbo.SalesRouteStops stop
             INNER JOIN dbo.Customers customer ON customer.CustomerId=stop.CustomerId AND customer.BusinessId=@BusinessId
             INNER JOIN dbo.Parties party ON party.PartyId=customer.PartyId
@@ -105,6 +110,13 @@ public sealed class SqlRouteStore(
         command.Parameters.AddWithValue("@RouteId", routeId);
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct)) return null;
+        if (!actor.Permissions.Contains(RoutePermissionCodes.ReadAll))
+        {
+            var sellerId = reader.GetGuid(4);
+            if (!await UserOwnsSellerAsync(actor, sellerId, ct))
+                return null;
+        }
+
         var header = new
         {
             RouteId = reader.GetGuid(0), BusinessId = reader.GetGuid(1), Code = reader.GetString(2), Name = reader.GetString(3),
@@ -124,7 +136,9 @@ public sealed class SqlRouteStore(
             stops.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2), reader.GetInt32(3), reader.GetString(4),
                 reader.IsDBNull(5) ? null : reader.GetString(5), reader.GetString(6), reader.GetString(7),
                 reader.IsDBNull(8) ? null : reader.GetString(8), reader.GetString(9), reader.IsDBNull(10) ? null : reader.GetString(10),
-                reader.IsDBNull(11) ? null : reader.GetString(11), Version(reader, 12)));
+                reader.IsDBNull(11) ? null : reader.GetString(11), reader.IsDBNull(12) ? null : reader.GetDecimal(12),
+                reader.IsDBNull(13) ? null : reader.GetDecimal(13), reader.IsDBNull(14) ? null : TimeOnly.FromTimeSpan(reader.GetTimeSpan(14)),
+                reader.IsDBNull(15) ? null : reader.GetString(15), Version(reader, 16)));
         return new(header.RouteId, header.BusinessId, header.Code, header.Name, header.SellerId, header.SellerName,
             header.ZoneId, header.ZoneName, header.Notes, header.IsActive, header.PreparationStatus,
             schedules, stops, header.CreatedAt, header.UpdatedAt, header.RowVersion);
@@ -185,6 +199,7 @@ public sealed class SqlRouteStore(
               COALESCE(site.Phone,(SELECT TOP(1) contact.Value FROM dbo.PartyContacts contact
                                    WHERE contact.PartyId=party.PartyId AND contact.ContactType=N'Phone' AND contact.IsActive=1
                                    ORDER BY contact.IsPrimary DESC,contact.CreatedAt)),
+              site.GoogleMapsUrl,site.Latitude,site.Longitude,
               CAST(CASE WHEN EXISTS(SELECT 1 FROM dbo.SalesRouteStops ownStop WHERE ownStop.RouteId=@RouteId AND ownStop.PartySiteId=site.PartySiteId AND ownStop.IsActive=1) THEN 1 ELSE 0 END AS bit),
               (SELECT TOP(1) otherRoute.Name FROM dbo.SalesRouteStops otherStop
                INNER JOIN dbo.SalesRoutes otherRoute ON otherRoute.RouteId=otherStop.RouteId AND otherRoute.BusinessId=@BusinessId AND otherRoute.IsActive=1
@@ -204,10 +219,12 @@ public sealed class SqlRouteStore(
         await using var reader = await command.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
         {
-            var conflict = reader.IsDBNull(10) ? null : reader.GetString(10);
+            var conflict = reader.IsDBNull(13) ? null : reader.GetString(13);
             items.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3),
                 reader.GetString(4), reader.GetString(5), reader.IsDBNull(6) ? null : reader.GetString(6), reader.GetString(7),
-                reader.IsDBNull(8) ? null : reader.GetString(8), reader.GetBoolean(9), conflict is not null,
+                reader.IsDBNull(8) ? null : reader.GetString(8), reader.IsDBNull(9) ? null : reader.GetString(9),
+                reader.IsDBNull(10) ? null : reader.GetDecimal(10), reader.IsDBNull(11) ? null : reader.GetDecimal(11),
+                reader.GetBoolean(12), conflict is not null,
                 conflict is null ? null : $"Already scheduled in route '{conflict}' on an overlapping day."));
         }
         return new(items, query.Page, query.PageSize, total, total == 0 ? 0 : (int)Math.Ceiling(total / (decimal)query.PageSize));
@@ -306,15 +323,29 @@ public sealed class SqlRouteStore(
             {
                 await ValidateStopAsync(connection, transaction, actor, routeId, value.Stop.CustomerId, value.Stop.PartySiteId, ct);
                 await using var command = new SqlCommand("""
-                    INSERT dbo.SalesRouteStops(RouteStopId,RouteId,CustomerId,PartySiteId,Sequence,VisitNote,IsActive,CreatedBy,CreatedAt)
-                    VALUES(@StopId,@RouteId,@CustomerId,@PartySiteId,@Sequence,@VisitNote,1,@UserId,@Now);
+                    INSERT dbo.SalesRouteStops(RouteStopId,RouteId,CustomerId,PartySiteId,Sequence,PlannedVisitTime,VisitNote,IsActive,CreatedBy,CreatedAt)
+                    VALUES(@StopId,@RouteId,@CustomerId,@PartySiteId,@Sequence,@PlannedVisitTime,@VisitNote,1,@UserId,@Now);
                     """, connection, transaction);
                 AddScope(command, actor); command.Parameters.AddWithValue("@StopId", value.StopId); command.Parameters.AddWithValue("@RouteId", routeId);
                 command.Parameters.AddWithValue("@CustomerId", value.Stop.CustomerId); command.Parameters.AddWithValue("@PartySiteId", value.Stop.PartySiteId);
-                command.Parameters.AddWithValue("@Sequence", ++sequence); command.Parameters.AddWithValue("@VisitNote", (object?)value.Stop.VisitNote ?? DBNull.Value); command.Parameters.AddWithValue("@Now", now);
+                command.Parameters.AddWithValue("@Sequence", ++sequence); command.Parameters.AddWithValue("@PlannedVisitTime", value.Stop.PlannedVisitTime?.ToTimeSpan() ?? (object)DBNull.Value); command.Parameters.AddWithValue("@VisitNote", (object?)value.Stop.VisitNote ?? DBNull.Value); command.Parameters.AddWithValue("@Now", now);
                 await command.ExecuteNonQueryAsync(ct);
             }
             await TouchAsync(connection, transaction, actor, routeId, now, ct);
+        });
+
+    public Task<RouteMutationResult> UpdateStopAsync(RouteActorIdentity actor, Guid routeId, Guid stopId, UpdateRouteStopRequest request, string? visitNote, byte[] rowVersion, DateTimeOffset now, CancellationToken ct) =>
+        MutateRouteAsync(actor, routeId, rowVersion, now, ct, async (connection, transaction) =>
+        {
+            await using var command = new SqlCommand("""
+                UPDATE dbo.SalesRouteStops SET PlannedVisitTime=@PlannedVisitTime,VisitNote=@VisitNote,UpdatedBy=@UserId,UpdatedAt=@Now
+                WHERE RouteStopId=@StopId AND RouteId=@RouteId AND IsActive=1;
+                IF @@ROWCOUNT=0 THROW 51704,'The route stop does not exist.',1;
+                """, connection, transaction);
+            AddScope(command,actor);command.Parameters.AddWithValue("@RouteId",routeId);command.Parameters.AddWithValue("@StopId",stopId);
+            command.Parameters.AddWithValue("@PlannedVisitTime",request.PlannedVisitTime?.ToTimeSpan()??(object)DBNull.Value);
+            command.Parameters.AddWithValue("@VisitNote",(object?)visitNote??DBNull.Value);command.Parameters.AddWithValue("@Now",now);
+            await command.ExecuteNonQueryAsync(ct);await TouchAsync(connection,transaction,actor,routeId,now,ct);
         });
 
     public Task<RouteMutationResult> RemoveStopAsync(RouteActorIdentity actor, Guid routeId, Guid stopId, byte[] rowVersion, DateTimeOffset now, CancellationToken ct) =>
@@ -367,6 +398,113 @@ public sealed class SqlRouteStore(
         catch (RouteConflictException) { await SafeRollbackAsync(transaction, ct); throw; }
         catch (SqlException exception) { await SafeRollbackAsync(transaction, ct); throw Translate(exception, "The route operation conflicts with its current state."); }
     }
+
+    public async Task<IReadOnlyCollection<SalesRouteVisit>> VisitsAsync(RouteActorIdentity actor, Guid routeId, DateOnly date, CancellationToken ct)
+    {
+        await EnsureRouteAccessAsync(actor, routeId, ct);
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = new SqlCommand("""
+            SELECT RouteVisitId,RouteStopId,VisitDate,Status,SkipReason,VisitObservation,OrderId,OccurredAt,RecordedBy
+            FROM dbo.SalesRouteVisits
+            WHERE BusinessId=@BusinessId AND RouteId=@RouteId AND VisitDate=@VisitDate
+            ORDER BY OccurredAt,RouteVisitId;
+            """, connection);
+        AddScope(command, actor);
+        command.Parameters.AddWithValue("@RouteId", routeId);
+        command.Parameters.Add("@VisitDate", SqlDbType.Date).Value = date.ToDateTime(TimeOnly.MinValue);
+        var values = new List<SalesRouteVisit>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            values.Add(ReadVisit(reader));
+        return values;
+    }
+
+    public async Task<SalesRouteVisit> RecordVisitAsync(RouteActorIdentity actor, Guid routeId, RecordSalesRouteVisitRequest request, string? reason, string? observation, CancellationToken ct)
+    {
+        await EnsureRouteAccessAsync(actor, routeId, ct);
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+        try
+        {
+            await using (var existing = new SqlCommand("""
+                SELECT RouteVisitId,RouteStopId,VisitDate,Status,SkipReason,OrderId,OccurredAt,RecordedBy
+                FROM dbo.SalesRouteVisits WITH(UPDLOCK,HOLDLOCK)
+                WHERE BusinessId=@BusinessId AND IdempotencyKey=@IdempotencyKey;
+                """, connection, transaction))
+            {
+                AddScope(existing, actor);
+                existing.Parameters.AddWithValue("@IdempotencyKey", request.IdempotencyKey);
+                await using var reader = await existing.ExecuteReaderAsync(ct);
+                if (await reader.ReadAsync(ct))
+                {
+                    var value = ReadVisit(reader);
+                    if (value.RouteStopId != request.RouteStopId || value.VisitDate != request.VisitDate || value.Status != request.Status || value.OrderId != request.OrderId)
+                        throw new RouteConflictException("The idempotency key was already used for a different route visit.");
+                    await reader.DisposeAsync();
+                    await transaction.CommitAsync(ct);
+                    return value;
+                }
+            }
+
+            var visitId = ids.NewId();
+            var createdAt = DateTimeOffset.UtcNow;
+            await using var command = new SqlCommand("""
+                IF NOT EXISTS(SELECT 1 FROM dbo.SalesRouteStops WHERE RouteStopId=@RouteStopId AND RouteId=@RouteId AND IsActive=1)
+                  THROW 51702,'The route stop is not active in this route.',1;
+                IF @OrderId IS NOT NULL AND NOT EXISTS(
+                    SELECT 1 FROM dbo.Orders orders
+                    INNER JOIN dbo.SalesRouteStops stop ON stop.RouteStopId=@RouteStopId AND stop.CustomerId=orders.CustomerId
+                    WHERE orders.OrderId=@OrderId AND orders.BusinessId=@BusinessId)
+                  THROW 51702,'The order does not belong to this route customer.',1;
+                INSERT dbo.SalesRouteVisits(RouteVisitId,BusinessId,RouteId,RouteStopId,VisitDate,Status,SkipReason,VisitObservation,OrderId,OccurredAt,RecordedBy,IdempotencyKey,CreatedAt)
+                VALUES(@RouteVisitId,@BusinessId,@RouteId,@RouteStopId,@VisitDate,@Status,@SkipReason,@VisitObservation,@OrderId,@OccurredAt,@UserId,@IdempotencyKey,@CreatedAt);
+                """, connection, transaction);
+            AddScope(command, actor);
+            command.Parameters.AddWithValue("@RouteVisitId", visitId);
+            command.Parameters.AddWithValue("@RouteId", routeId);
+            command.Parameters.AddWithValue("@RouteStopId", request.RouteStopId);
+            command.Parameters.Add("@VisitDate", SqlDbType.Date).Value = request.VisitDate.ToDateTime(TimeOnly.MinValue);
+            command.Parameters.AddWithValue("@Status", request.Status);
+            command.Parameters.AddWithValue("@SkipReason", (object?)reason ?? DBNull.Value);
+            command.Parameters.AddWithValue("@VisitObservation", (object?)observation ?? DBNull.Value);
+            command.Parameters.AddWithValue("@OrderId", (object?)request.OrderId ?? DBNull.Value);
+            command.Parameters.AddWithValue("@OccurredAt", request.OccurredAt);
+            command.Parameters.AddWithValue("@IdempotencyKey", request.IdempotencyKey);
+            command.Parameters.AddWithValue("@CreatedAt", createdAt);
+            await command.ExecuteNonQueryAsync(ct);
+            await transaction.CommitAsync(ct);
+            return new(visitId, request.RouteStopId, request.VisitDate, request.Status, reason, request.OrderId, request.OccurredAt, actor.UserId, observation);
+        }
+        catch (RouteConflictException) { await SafeRollbackAsync(transaction, ct); throw; }
+        catch (SqlException exception) { await SafeRollbackAsync(transaction, ct); throw Translate(exception, "This customer already has a route result for the selected date."); }
+    }
+
+    private async Task EnsureRouteAccessAsync(RouteActorIdentity actor, Guid routeId, CancellationToken ct)
+    {
+        var route = await GetAsync(actor, routeId, ct);
+        if (route is null) throw new RouteNotFoundException("The route does not exist in the authenticated business.");
+    }
+
+    private async Task<bool> UserOwnsSellerAsync(RouteActorIdentity actor, Guid sellerId, CancellationToken ct)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = new SqlCommand("""
+            SELECT COUNT(*) FROM dbo.AppUsers currentUser
+            INNER JOIN dbo.CommerceSellers seller ON seller.PartyId=currentUser.PartyId AND seller.BusinessId=@BusinessId AND seller.IsActive=1
+            WHERE currentUser.UserId=@UserId AND currentUser.TenantId=@TenantId AND seller.SellerId=@SellerId;
+            """, connection);
+        AddScope(command, actor);
+        command.Parameters.AddWithValue("@SellerId", sellerId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(ct)) == 1;
+    }
+
+    private static SalesRouteVisit ReadVisit(SqlDataReader reader) => new(
+        reader.GetGuid(0), reader.GetGuid(1), DateOnly.FromDateTime(reader.GetDateTime(2)), reader.GetString(3),
+        reader.IsDBNull(4) ? null : reader.GetString(4), reader.IsDBNull(6) ? null : reader.GetGuid(6),
+        reader.GetDateTimeOffset(7), reader.GetGuid(8), reader.IsDBNull(5) ? null : reader.GetString(5));
 
     private static async Task LockRouteAsync(SqlConnection connection, SqlTransaction transaction, RouteActorIdentity actor, Guid routeId, byte[] rowVersion, CancellationToken ct)
     {
@@ -445,8 +583,23 @@ public sealed class SqlRouteStore(
 
     private async Task<RouteMutationResult> MutationAsync(RouteActorIdentity actor, Guid routeId, CancellationToken ct)
     {
-        var detail = await GetAsync(actor, routeId, ct) ?? throw new RouteNotFoundException("The route does not exist.");
-        return new(detail.RouteId, detail.RowVersion, detail.IsActive, detail.PreparationStatus, detail.Stops.Count);
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = new SqlCommand("""
+            SELECT route.RouteId,route.RowVersion,route.IsActive,
+              CASE WHEN EXISTS(SELECT 1 FROM dbo.SalesRouteSchedules x WHERE x.RouteId=route.RouteId AND x.IsActive=1)
+                     AND EXISTS(SELECT 1 FROM dbo.SalesRouteStops x WHERE x.RouteId=route.RouteId AND x.IsActive=1)
+                   THEN N'Ready' ELSE N'Draft' END,
+              (SELECT COUNT(1) FROM dbo.SalesRouteStops x WHERE x.RouteId=route.RouteId AND x.IsActive=1)
+            FROM dbo.SalesRoutes route
+            INNER JOIN dbo.Businesses business ON business.BusinessId=route.BusinessId AND business.TenantId=@TenantId
+            WHERE route.RouteId=@RouteId AND route.BusinessId=@BusinessId;
+            """, connection);
+        AddScope(command, actor);
+        command.Parameters.AddWithValue("@RouteId", routeId);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct)) throw new RouteNotFoundException("The route does not exist.");
+        return new(reader.GetGuid(0), Version(reader, 1), reader.GetBoolean(2), reader.GetString(3), reader.GetInt32(4));
     }
 
     private static async Task TouchAsync(SqlConnection connection, SqlTransaction transaction, RouteActorIdentity actor, Guid routeId, DateTimeOffset now, CancellationToken ct)
@@ -463,7 +616,12 @@ public sealed class SqlRouteStore(
     private static void AddRoute(SqlCommand command, Guid routeId, string code, string name, Guid sellerId, Guid? zoneId, string? notes, DateTimeOffset now)
     { command.Parameters.AddWithValue("@RouteId", routeId); command.Parameters.AddWithValue("@Code", code); command.Parameters.AddWithValue("@Name", name); command.Parameters.AddWithValue("@SellerId", sellerId); command.Parameters.AddWithValue("@ZoneId", (object?)zoneId ?? DBNull.Value); command.Parameters.AddWithValue("@Notes", (object?)notes ?? DBNull.Value); command.Parameters.AddWithValue("@Now", now); }
     private static void AddScope(SqlCommand command, RouteActorIdentity actor)
-    { command.Parameters.AddWithValue("@TenantId", actor.TenantId); command.Parameters.AddWithValue("@BusinessId", actor.BusinessId); command.Parameters.AddWithValue("@UserId", actor.UserId); }
+    {
+        command.Parameters.AddWithValue("@TenantId", actor.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", actor.BusinessId);
+        command.Parameters.AddWithValue("@UserId", actor.UserId);
+        command.Parameters.AddWithValue("@ReadAll", actor.Permissions.Contains(RoutePermissionCodes.ReadAll));
+    }
     private static void AddQuery(SqlCommand command, RouteActorIdentity actor, SalesRouteQuery query)
     { AddScope(command, actor); command.Parameters.AddWithValue("@Search", (object?)query.Search ?? DBNull.Value); command.Parameters.AddWithValue("@SellerId", (object?)query.SellerId ?? DBNull.Value); command.Parameters.AddWithValue("@ZoneId", (object?)query.ZoneId ?? DBNull.Value); command.Parameters.AddWithValue("@DayOfWeek", (object?)query.DayOfWeek ?? DBNull.Value); command.Parameters.AddWithValue("@IsActive", (object?)query.IsActive ?? DBNull.Value); command.Parameters.AddWithValue("@PreparationStatus", (object?)query.PreparationStatus ?? DBNull.Value); }
     private static void AddCandidate(SqlCommand command, RouteActorIdentity actor, Guid routeId, RouteCandidateQuery query)

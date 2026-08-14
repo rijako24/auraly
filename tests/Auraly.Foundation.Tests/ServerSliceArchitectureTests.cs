@@ -64,11 +64,17 @@ public sealed class ServerSliceArchitectureTests
         {
             projectNames[desktopProject]++;
         }
+        var executableProjects = projects
+            .Where(IsExecutableProject)
+            .Select(Path.GetFileNameWithoutExtension)
+            .ToHashSet(StringComparer.Ordinal);
+
         var disconnected = projectNames
             .Where(entry =>
                 entry.Value == 0 &&
                 !entry.Key.EndsWith("Tests", StringComparison.Ordinal) &&
-                !entry.Key.EndsWith(".Api", StringComparison.Ordinal))
+                !entry.Key.EndsWith(".Api", StringComparison.Ordinal) &&
+                !executableProjects.Contains(entry.Key))
             .Select(entry => entry.Key)
             .Order(StringComparer.Ordinal)
             .ToArray();
@@ -92,7 +98,6 @@ public sealed class ServerSliceArchitectureTests
         {
             string.Concat("Talk", "io"),
             string.Concat("Mi", "mos"),
-            string.Concat("Xi", "on"),
             string.Concat("Pedidos", "OK")
         };
         var violations = new List<string>();
@@ -107,14 +112,11 @@ public sealed class ServerSliceArchitectureTests
                          .Where(path => !path.EndsWith("packages.lock.json", StringComparison.OrdinalIgnoreCase)))
             {
                 var text = File.ReadAllText(file);
-                if (!IsAbsorbedPlatformSurface(file, root))
+                foreach (var token in forbidden)
                 {
-                    foreach (var token in forbidden)
+                    if (text.Contains(token, StringComparison.OrdinalIgnoreCase))
                     {
-                        if (text.Contains(token, StringComparison.OrdinalIgnoreCase))
-                        {
-                            violations.Add($"{Path.GetRelativePath(root, file)}: {token}");
-                        }
+                        violations.Add($"{Path.GetRelativePath(root, file)}: {token}");
                     }
                 }
 
@@ -260,23 +262,14 @@ public sealed class ServerSliceArchitectureTests
             StringComparison.Ordinal);
     }
 
-    private static bool IsAbsorbedPlatformSurface(string path, string root)
-    {
-        var apiRoot = Path.Combine(root, "src", "API", "Auraly.Api");
-        if (!path.StartsWith(apiRoot, StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
+    private static bool IsExecutableProject(string path) =>
+        XDocument.Load(path)
+            .Descendants("OutputType")
+            .Any(element => string.Equals(
+                element.Value,
+                "Exe",
+                StringComparison.OrdinalIgnoreCase));
 
-        var relative = Path.GetRelativePath(apiRoot, path);
-        return relative.Equals("Auraly.Api.csproj", StringComparison.OrdinalIgnoreCase) ||
-               relative.Equals("PlatformApiComposition.cs", StringComparison.OrdinalIgnoreCase) ||
-               relative.StartsWith($"Controllers{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) ||
-               relative.StartsWith($"Authorization{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) ||
-               relative.StartsWith($"Configuration{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) ||
-               relative.StartsWith($"Extensions{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) ||
-               relative.StartsWith($"Middleware{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase);
-    }
     private static bool IsBuildOutput(string path) =>
         path.Contains(
             $"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}",

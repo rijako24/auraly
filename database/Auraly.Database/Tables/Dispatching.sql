@@ -5,6 +5,7 @@ CREATE TABLE [dbo].[Dispatches] (
     [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
     [DispatchNumber] NVARCHAR(64) NOT NULL,
     [ScheduledDate] DATE NOT NULL,
+    [DriverUserId] UNIQUEIDENTIFIER NULL,
     [DriverName] NVARCHAR(160) NOT NULL,
     [VehiclePlate] NVARCHAR(24) NULL,
     [RouteId] UNIQUEIDENTIFIER NULL,
@@ -24,13 +25,16 @@ CREATE TABLE [dbo].[Dispatches] (
     CONSTRAINT [FK_Dispatches_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants] ([TenantId]),
     CONSTRAINT [FK_Dispatches_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_Dispatches_Warehouses] FOREIGN KEY ([BusinessId],[WarehouseId]) REFERENCES [dbo].[Warehouses] ([BusinessId],[WarehouseId]),
+    CONSTRAINT [FK_Dispatches_DriverUsers] FOREIGN KEY ([DriverUserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
     CONSTRAINT [FK_Dispatches_Routes] FOREIGN KEY ([RouteId]) REFERENCES [dbo].[SalesRoutes] ([RouteId]),
     CONSTRAINT [FK_Dispatches_CreatedBy] FOREIGN KEY ([CreatedBy]) REFERENCES [dbo].[AppUsers] ([UserId]),
     CONSTRAINT [UQ_Dispatches_Business_Number] UNIQUE ([BusinessId],[DispatchNumber]),
-    CONSTRAINT [CK_Dispatches_Status] CHECK ([Status] IN (N'Draft',N'Prepared',N'InVerification',N'Verified',N'Released',N'Cancelled'))
+    CONSTRAINT [CK_Dispatches_Status] CHECK ([Status] IN (N'Draft',N'Prepared',N'InVerification',N'Verified',N'Released',N'InDelivery',N'PendingSettlement',N'SettlementProcessing',N'SettlementAttention',N'Closed',N'Cancelled'))
 );
 GO
 CREATE INDEX [IX_Dispatches_Business_Date_Status] ON [dbo].[Dispatches] ([BusinessId],[ScheduledDate],[Status]) INCLUDE ([DriverName],[VehiclePlate],[UpdatedAt]);
+GO
+CREATE INDEX [IX_Dispatches_Driver_Date] ON [dbo].[Dispatches] ([DriverUserId],[ScheduledDate],[Status]);
 GO
 
 CREATE TABLE [dbo].[DispatchSourceDocuments] (
@@ -54,7 +58,7 @@ CREATE TABLE [dbo].[DispatchSourceDocuments] (
     CONSTRAINT [FK_DispatchSourceDocuments_Sellers] FOREIGN KEY ([SellerId]) REFERENCES [dbo].[AppUsers] ([UserId]),
     CONSTRAINT [UQ_DispatchSourceDocuments_Dispatch_Document] UNIQUE ([DispatchId],[SourceDocumentId]),
     CONSTRAINT [CK_DispatchSourceDocuments_Type] CHECK ([SourceDocumentType] IN (N'SalesInvoice',N'SalesReceipt')),
-    CONSTRAINT [CK_DispatchSourceDocuments_Status] CHECK ([Status] IN (N'Pending',N'Verified',N'Short',N'Released',N'Cancelled'))
+    CONSTRAINT [CK_DispatchSourceDocuments_Status] CHECK ([Status] IN (N'Pending',N'Verified',N'Short',N'Released',N'Delivered',N'PartiallyDelivered',N'NotDelivered',N'Cancelled'))
 );
 GO
 CREATE INDEX [IX_DispatchSourceDocuments_Source] ON [dbo].[DispatchSourceDocuments] ([SourceDocumentId],[DispatchId]);

@@ -19,7 +19,7 @@
 ### 1. Inicia la API (Terminal 1)
 
 ```powershell
-cd src\API\MimosBabySpa.API
+cd src\API\Auraly.Platform.Worker
 func start
 ```
 

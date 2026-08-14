@@ -4,8 +4,8 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
-using MimosBabySpa.Application.Services;
-using MimosBabySpa.Domain.Repositories;
+using Auraly.Platform.Application.Services;
+using Auraly.Platform.Domain.Repositories;
 using Auraly.Api.Configuration;
 
 namespace Auraly.Api.Controllers;

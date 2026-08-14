@@ -21,12 +21,12 @@ No existe dependencia de Auraly hacia proyectos legacy. Los adaptadores existent
 ## Pruebas ejecutadas
 
 - Auraly.Commerce.sln Release: correcto, 0 errores y 0 advertencias.
-- MimosBabySpa.sln Release: correcto, 0 errores y 0 advertencias.
+- Auraly.Commerce.sln Release: correcto, 0 errores y 0 advertencias.
 - Auraly.Database.sqlproj Release: correcto, 0 errores y 0 advertencias.
 - Auraly.Foundation.Tests: 150 correctas.
 - Auraly.ServerSlice.IntegrationTests: 96 correctas con SQL Server real, DACPAC y RabbitMQ requerido.
 - Auraly.Pos.Edge.Host.Tests: 16 correctas.
-- MimosBabySpa.Tests: 701 correctas, incluido SQL Server real y RabbitMQ requerido.
+- Auraly.Platform.Tests: 701 correctas, incluido SQL Server real y RabbitMQ requerido.
 - POS frontend: 25 correctas.
 - TypeScript: npx tsc --noEmit correcto.
 - Admin: npm run build correcto; 54 páginas estáticas, incluidas /dashboard/parties/imports y /pos.

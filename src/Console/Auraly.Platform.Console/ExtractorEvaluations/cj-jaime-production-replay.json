@@ -1,0 +1,32 @@
+{
+  "cases": [
+    {
+      "id": "jaime_exact_production_history_with_authoritative_context",
+      "message": "Salchicha long x 550 gr",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "absentSignals": ["order_changes", "catalog_query"],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql",
+      "history": [
+        {"role":"assistant","content":"Gracias por la aclaracion. Entonces agrego 1 unidad de BUTIFARRA CUNIT X 500 GR. No encontre Long x 10. Podrias darme mas detalles?"},
+        {"role":"user","content":"500"},
+        {"role":"assistant","content":"Perfecto, ya podemos armar tu pedido. Cuentame que productos y cantidades necesitas."},
+        {"role":"user","content":"Salchicha Long"},
+        {"role":"assistant","content":"Productos disponibles: SALCHICHA RANCHERA SUPER X 525 GR X 7 UND, SALCHICHA LONG X 550GR, SALCHICHA LONG X 1100 G X 20UND, SALCHICHA CAZADORA y SALCHICHA CUNIT MANGUERA XL X 10 UND. Cual te gustaria agregar? Tambien puedes indicarme la cantidad."},
+        {"role":"user","content":"Long x 550gr"},
+        {"role":"assistant","content":"Por ahora no encontre Long x 550gr productos para esa busqueda en nuestro catalogo."},
+        {"role":"user","content":"Salchicha long x 550gr"},
+        {"role":"assistant","content":"Productos disponibles: SALCHICHA RANCHERA SUPER X 525 GR X 7 UND, SALCHICHA LONG X 550GR, SALCHICHA LONG X 1100 G X 20UND, SALCHICHA CAZADORA y SALCHICHA CUNIT MANGUERA XL X 10 UND. Cual te gustaria agregar? Tambien puedes indicarme la cantidad."},
+        {"role":"user","content":"Salchicha long x 550 gr"},
+        {"role":"assistant","content":"Productos disponibles: SALCHICHA RANCHERA SUPER X 525 GR X 7 UND, SALCHICHA LONG X 550GR, SALCHICHA LONG X 1100 G X 20UND, SALCHICHA CAZADORA y SALCHICHA CUNIT MANGUERA XL X 10 UND. Cual te gustaria agregar? Tambien puedes indicarme la cantidad."},
+        {"role":"user","content":"Salchicha long x 550 gr"},
+        {"role":"assistant","content":"Productos disponibles: SALCHICHA RANCHERA SUPER X 525 GR X 7 UND, SALCHICHA LONG X 550GR, SALCHICHA LONG X 1100 G X 20UND, SALCHICHA CAZADORA y SALCHICHA CUNIT MANGUERA XL X 10 UND. Cual te gustaria agregar? Tambien puedes indicarme la cantidad."}
+      ],
+      "initialFacts": {
+        "system.catalog_products": "[{\"product_id\":\"cda3bfe2-0a20-414d-9530-d0bb553fbfa1\",\"external_product_id\":\"CF59\",\"sku\":\"CF59\",\"name\":\"SALCHICHA LONG X 550GR\",\"unit_price\":16023.21,\"currency\":\"COP\",\"stock_quantity\":49},{\"product_id\":\"c9becf75-ae33-4f81-9c36-0adaedd558f8\",\"external_product_id\":\"CF20\",\"sku\":\"CF20\",\"name\":\"SALCHICHA LONG X 1100 G X 20UND\",\"unit_price\":28032.50,\"currency\":\"COP\",\"stock_quantity\":113}]",
+        "system.pending_cart_commands": "{\"schemaVersion\":1,\"commands\":[{\"operation\":\"add\",\"productText\":\"salchicha cazadora\",\"quantity\":1},{\"operation\":\"add\",\"productText\":\"butifarra\",\"quantity\":1},{\"operation\":\"add\",\"productText\":\"Long x 10\",\"quantity\":1},{\"operation\":\"add\",\"productText\":\"bolsa de papa\",\"quantity\":5},{\"operation\":\"add\",\"productText\":\"lomo de cerdo\",\"quantity\":1},{\"operation\":\"add\",\"productText\":\"k de pechuga\",\"quantity\":5},{\"operation\":\"add\",\"productText\":\"j1\",\"quantity\":10}],\"ambiguousProductText\":\"Long x 10\",\"productCandidates\":[],\"expiresAtUtc\":\"2099-01-01T00:00:00Z\"}"
+      }
+    }
+  ],
+  "repetitions": 10
+}

@@ -5,7 +5,7 @@ using Azure.AI.OpenAI;
 using Azure;
 
 // Leer configuración desde local.settings.json
-var apiPath = Path.Combine(Directory.GetCurrentDirectory(), "src", "API", "MimosBabySpa.API", "local.settings.json");
+var apiPath = Path.Combine(Directory.GetCurrentDirectory(), "src", "API", "Auraly.Platform.Worker", "local.settings.json");
 var jsonContent = File.ReadAllText(apiPath);
 using var doc = JsonDocument.Parse(jsonContent);
 

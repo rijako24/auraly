@@ -3,12 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { DailyRouteApp } from "@/components/orders/daily-route-app";
 import { OrdersWorkspace } from "@/components/orders/orders-workspace";
+import { Button } from "@/components/ui/button";
 import { PageError } from "@/components/ui/page-error";
 import {
+  invoiceCommerceOrders,
   loadCommerceOrder,
   loadCommerceOrders,
-  invoiceCommerceOrders,
 } from "@/services/orders/commerce-orders-client";
 import {
   loadSalesWorkspaceOptions,
@@ -26,6 +28,11 @@ export default function OrdersPage() {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const [workspaces, setWorkspaces] = useState<SalesWorkspaceOption[]>([]);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [routeMode, setRouteMode] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("view") === "today-route",
+  );
 
   useEffect(() => {
     let active = true;
@@ -53,23 +60,41 @@ export default function OrdersPage() {
       workspaces.find(
         (option) =>
           salesWorkspaceKey(option.businessId, option.warehouseId) === remembered,
-      ) ??
-      workspaces[0] ??
-      null
+      ) ?? workspaces[0] ?? null
     );
   }, [workspaces]);
 
   if (!businessId)
     return <PageError message="Selecciona una sede para consultar sus pedidos." />;
 
+  if (routeMode)
+    return (
+      <DailyRouteApp
+        businessId={businessId}
+        onAdministrative={() => {
+          setRouteMode(false);
+          router.replace("/dashboard/orders");
+        }}
+      />
+    );
+
   return (
-    <div className="space-y-4">
-      <header>
-        <p className="text-sm font-semibold text-teal-700">Comercio</p>
-        <h1 className="text-2xl font-black tracking-tight text-slate-950">Pedidos</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Los mismos pedidos creados por el bot, listos para recuperar o facturar.
-        </p>
+    <div className="space-y-6">
+      <header className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Pedidos</h1>
+          <p className="text-muted-foreground">
+            Los mismos pedidos creados por el bot, listos para recuperar o facturar.
+          </p>
+        </div>
+        <Button
+          onClick={() => {
+            setRouteMode(true);
+            router.replace("/dashboard/orders?view=today-route");
+          }}
+        >
+          Abrir ruta de hoy
+        </Button>
       </header>
       {workspaceError && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
@@ -77,6 +102,7 @@ export default function OrdersPage() {
         </div>
       )}
       <OrdersWorkspace
+        showHeader={false}
         loadPage={loadCommerceOrders}
         loadDetail={loadCommerceOrder}
         onRecover={

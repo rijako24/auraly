@@ -2,8 +2,8 @@ using Auraly.Api.Authorization;
 using Auraly.Api.Extensions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using MimosBabySpa.Application.Identity.DTOs;
-using MimosBabySpa.Application.Identity.Interfaces;
+using Auraly.Platform.Application.Identity.DTOs;
+using Auraly.Platform.Application.Identity.Interfaces;
 
 namespace Auraly.Api.Controllers;
 

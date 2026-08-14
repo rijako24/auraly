@@ -4,7 +4,7 @@
 
 Este documento complementa las decisiones anteriores y reemplaza cualquier instrucción que:
 
-- conserve nombres `MimosBabySpa`, `Mimos`, `Talkio` o `TalkioAI`;
+- conserve nombres `Auraly`, `Mimos`, `Talkio` o `TalkioAI`;
 - use migraciones de Entity Framework para modificar la base;
 - trate Pedidos únicamente como integración externa o listado de consulta;
 - proponga copiar visualmente las pantallas WinForms de Xion.
@@ -19,16 +19,16 @@ La solución, proyectos, ensamblados, namespaces, carpetas y textos técnicos de
 
 | Actual | Final |
 |---|---|
-| `MimosBabySpa.sln` | `Auraly.sln` |
-| `MimosBabySpa.WebAPI` | `Auraly.Api` |
-| `MimosBabySpa.API` — actualmente Azure Functions | `Auraly.Functions` |
-| `MimosBabySpa.Console` | `Auraly.Tools.Console` |
-| `MimosBabySpa.Tests` | `Auraly.Tests` |
-| `MimosBabySpa.Database.sln` | `Auraly.Database.sln` |
-| `MimosBabySpa.Database.sqlproj` | `Auraly.Database.sqlproj` |
-| `MimosBabySpa.Domain` | `Auraly.Domain.Platform` como transición |
-| `MimosBabySpa.Application` | `Auraly.Application.Platform` como transición |
-| `MimosBabySpa.Infrastructure` | `Auraly.Infrastructure.Platform` como transición |
+| `Auraly.Commerce.sln` | `Auraly.Commerce.sln` |
+| `Auraly.WebAPI` | `Auraly.Api` |
+| `Auraly.Platform.Worker` — actualmente Azure Functions | `Auraly.Functions` |
+| `Auraly.Platform.Console` | `Auraly.Tools.Console` |
+| `Auraly.Platform.Tests` | `Auraly.Tests` |
+| `Auraly.Database.sln` | `Auraly.Database.sln` |
+| `Auraly.Database.sqlproj` | `Auraly.Database.sqlproj` |
+| `Auraly.Platform.Domain` | `Auraly.Domain.Platform` como transición |
+| `Auraly.Platform.Application` | `Auraly.Application.Platform` como transición |
+| `Auraly.Platform.Infrastructure` | `Auraly.Infrastructure.Platform` como transición |
 | `HashGen` | `Auraly.Tools.HashGen` |
 | `TestOpenAI` | `Auraly.Tests.OpenAI` o se elimina si ya no tiene propósito |
 
@@ -601,7 +601,7 @@ Orders entra antes de facturación porque permite validar catálogo, precios, cl
 
 ## 10. Criterios de aceptación
 
-- La solución principal se llama `Auraly.sln`.
+- La solución principal se llama `Auraly.Commerce.sln`.
 - Ningún proyecto, namespace o ensamblado conserva `Mimos` o `Talkio`.
 - Azure Functions se identifica como `Auraly.Functions`, no como API.
 - El frontend conserva el nombre `auraly-admin`.

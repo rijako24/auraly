@@ -15,7 +15,8 @@ public sealed class RoutesVerticalSliceTests(ServerSliceFixture fixture)
         using var client = fixture.CreateAdminClient(
             RoutePermissionCodes.Read, RoutePermissionCodes.Create, RoutePermissionCodes.Update,
             RoutePermissionCodes.ManageStops, RoutePermissionCodes.ManageZones,
-            RoutePermissionCodes.Activate, RoutePermissionCodes.Deactivate, RoutePermissionCodes.Export);
+            RoutePermissionCodes.Activate, RoutePermissionCodes.Deactivate, RoutePermissionCodes.Export,
+            RoutePermissionCodes.RecordVisits, RoutePermissionCodes.ReadAll);
 
         var zoneResponse = await client.PostAsJsonAsync("/api/commerce/v1/route-zones",
             new CreateSalesZoneRequest(fixture.BusinessId, $"ZN-{Guid.NewGuid():N}"[..12], "Zona norte"));
@@ -59,6 +60,25 @@ public sealed class RoutesVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(seed.CustomerTwoId, reordered!.Stops.First().CustomerId);
         Assert.Equal([1,2], reordered.Stops.Select(stop => stop.Sequence));
 
+        var visitDate = DateOnly.FromDateTime(DateTime.UtcNow);
+        var stop = reordered.Stops.First();
+        using (var incomplete = await client.PutAsJsonAsync($"/api/commerce/v1/routes/{created.RouteId:D}/visits",
+                   new RecordSalesRouteVisitRequest(stop.RouteStopId, visitDate, "Skipped", "Cliente cerrado", null,
+                       DateTimeOffset.UtcNow, $"visit-{Guid.NewGuid():N}")))
+            Assert.Equal(HttpStatusCode.BadRequest, incomplete.StatusCode);
+
+        const string observation = "Se visitó el establecimiento y estaba cerrado.";
+        using (var recorded = await client.PutAsJsonAsync($"/api/commerce/v1/routes/{created.RouteId:D}/visits",
+                   new RecordSalesRouteVisitRequest(stop.RouteStopId, visitDate, "Skipped", "Cliente cerrado", null,
+                       DateTimeOffset.UtcNow, $"visit-{Guid.NewGuid():N}", observation)))
+            Assert.Equal(HttpStatusCode.OK, recorded.StatusCode);
+
+        var visits = await client.GetFromJsonAsync<SalesRouteVisit[]>(
+            $"/api/commerce/v1/routes/{created.RouteId:D}/visits?date={visitDate:yyyy-MM-dd}");
+        var skipped = Assert.Single(visits!);
+        Assert.Equal("Cliente cerrado", skipped.SkipReason);
+        Assert.Equal(observation, skipped.VisitObservation);
+
         var page = await client.GetFromJsonAsync<SalesRoutePage>(
             "/api/commerce/v1/routes?page=1&pageSize=20&search=prueba&dayOfWeek=1&isActive=true");
         var listed = Assert.Single(page!.Items.Where(item => item.RouteId == created.RouteId));
@@ -76,7 +96,8 @@ public sealed class RoutesVerticalSliceTests(ServerSliceFixture fixture)
             Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
 
         using var client = fixture.CreateAdminClient(RoutePermissionCodes.Read, RoutePermissionCodes.Create,
-            RoutePermissionCodes.Update, RoutePermissionCodes.ManageStops, RoutePermissionCodes.ManageZones);
+            RoutePermissionCodes.Update, RoutePermissionCodes.ManageStops, RoutePermissionCodes.ManageZones,
+            RoutePermissionCodes.ReadAll);
         var first = await CreateRouteAsync(client, seed.SellerId, "Ruta uno", 1, 1);
         var add = await client.PostAsJsonAsync($"/api/commerce/v1/routes/{first.RouteId:D}/stops",
             new AddRouteStopsRequest([new(seed.CustomerOneId,seed.SiteOneId,null)],first.RowVersion));

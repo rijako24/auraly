@@ -1,0 +1,397 @@
+{
+  "cases": [
+    {
+      "id": "medidental_open_catalog_products_is_exploration",
+      "message": "Que productos manejan",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "expectedSignalProperties": [
+        {
+          "type": "catalog_query",
+          "path": "intent",
+          "equals": "explore_catalog"
+        },
+        {
+          "type": "catalog_query",
+          "path": "target",
+          "equals": null
+        }
+      ],
+      "absentSignals": [
+        "order_changes",
+        "restart_request"
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql"
+    },
+    {
+      "id": "medidental_open_catalog_references_is_exploration",
+      "message": "Que referencias me puedes ofrecer",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "expectedSignalProperties": [
+        {
+          "type": "catalog_query",
+          "path": "intent",
+          "equals": "explore_catalog"
+        },
+        {
+          "type": "catalog_query",
+          "path": "target",
+          "equals": null
+        }
+      ],
+      "absentSignals": [
+        "order_changes",
+        "restart_request"
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql"
+    },
+    {
+      "id": "medidental_catalog_query_in_product_selection",
+      "message": "que resinas tienes?",
+      "stage": "product_selection",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "expectedSignalProperties": [
+        {
+          "type": "catalog_query",
+          "path": "intent",
+          "equals": "search_target"
+        }
+      ],
+      "absentSignals": [
+        "order_changes",
+        "restart_request"
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql"
+    },
+    {
+      "id": "medidental_catalog_query_after_finishing_products",
+      "message": "que resinas tienes?",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "absentSignals": [
+        "order_changes",
+        "restart_request"
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "role": "user",
+          "content": "ya no quiero mas productos"
+        },
+        {
+          "role": "assistant",
+          "content": "Prefieres recoger tu pedido o que te lo enviemos a domicilio?"
+        }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard",
+        "company_name": "Hogar",
+        "order_finalized": "true"
+      }
+    },
+    {
+      "id": "medidental_catalog_query_during_payment",
+      "message": "antes de pagar, que motor de implante tienes?",
+      "stage": "payment_method",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "absentSignals": [
+        "order_changes",
+        "restart_request"
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "initialFacts": {
+        "customer_name": "Richard",
+        "company_name": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio",
+        "city": "Valledupar",
+        "delivery_address": "Calle 5 # 10-20",
+        "delivery_phone": "3012926660"
+      }
+    },
+    {
+      "id": "medidental_catalog_query_after_official_summary",
+      "message": "y que motores Osseo tienes?",
+      "stage": "summary",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "absentSignals": [
+        "order_changes",
+        "restart_request"
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "initialFacts": {
+        "customer_name": "Richard",
+        "company_name": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio",
+        "city": "Valledupar",
+        "delivery_address": "Calle 5 # 10-20",
+        "delivery_phone": "3012926660",
+        "payment_method": "efectivo",
+        "order_checkout_presented": "true"
+      }
+    },
+    {
+      "id": "medidental_cart_add_after_finishing_products",
+      "message": "cambie de idea, agregame 2 resinas BISG-MA",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "absentSignals": [
+        "catalog_query",
+        "restart_request"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": [
+            "BISG-MA"
+          ],
+          "operations": [
+            "add"
+          ],
+          "quantities": [
+            2
+          ]
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "initialFacts": {
+        "customer_name": "Richard",
+        "company_name": "Hogar",
+        "order_finalized": "true"
+      }
+    },
+    {
+      "id": "medidental_cart_remove_after_official_summary",
+      "message": "mejor quita la motor Osseo del pedido",
+      "stage": "summary",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes"
+      ],
+      "absentSignals": [
+        "catalog_query",
+        "restart_request"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": [
+            "motor Osseo"
+          ],
+          "operations": [
+            "remove"
+          ],
+          "quantities": []
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "initialFacts": {
+        "customer_name": "Richard",
+        "company_name": "Hogar",
+        "order_finalized": "true",
+        "order_checkout_presented": "true"
+      },
+      "currentCart": [
+        {
+          "name": "MOTOR OSSEO 200",
+          "quantity": 3
+        }
+      ]
+    },
+    {
+      "id": "medidental_mixed_cart_change_and_catalog_query_during_delivery",
+      "message": "agregame una RESINA BISG-MA y que motor de implante tienes?",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "order_changes",
+        "catalog_query"
+      ],
+      "absentSignals": [
+        "restart_request"
+      ],
+      "expectedSignalItems": [
+        {
+          "type": "order_changes",
+          "count": 1,
+          "products": [
+            "BISG-MA"
+          ],
+          "operations": [
+            "add"
+          ],
+          "quantities": [
+            1
+          ]
+        }
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "initialFacts": {
+        "customer_name": "Richard",
+        "company_name": "Hogar",
+        "order_finalized": "true"
+      }
+    },
+    {
+      "id": "medidental_catalog_query_in_first_greeting_before_identity",
+      "message": "hola, que resinas tienes?",
+      "stage": "customer_identity",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "absentSignals": [
+        "order_changes",
+        "restart_request"
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql"
+    },
+    {
+      "id": "medidental_saved_address_contextual_question_is_not_catalog",
+      "message": "Cual tienes registrada?",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "known_fact_query"
+      ],
+      "absentSignals": [
+        "catalog_query",
+        "order_changes",
+        "restart_request"
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "role": "user",
+          "content": "domicilio"
+        },
+        {
+          "role": "assistant",
+          "content": "Solo para confirmar, la direccion de entrega sigue siendo la misma que tenemos registrada o quieres actualizarla?"
+        }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard",
+        "company_name": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio",
+        "delivery_address": "Calle 5 # 10-20",
+        "delivery_phone": "3012926660"
+      }
+    },
+    {
+      "id": "medidental_explicit_saved_address_question_is_not_catalog",
+      "message": "Cual direccion tienes registrada?",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "known_fact_query"
+      ],
+      "absentSignals": [
+        "catalog_query",
+        "order_changes",
+        "restart_request"
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "La direccion de entrega sigue siendo la misma que tenemos registrada?"
+        }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard",
+        "company_name": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio",
+        "delivery_address": "Calle 5 # 10-20",
+        "delivery_phone": "3012926660"
+      }
+    },
+    {
+      "id": "medidental_saved_payment_contextual_question_is_not_catalog",
+      "message": "Cual tienes registrado?",
+      "stage": "payment_method",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "known_fact_query"
+      ],
+      "absentSignals": [
+        "catalog_query",
+        "order_changes",
+        "restart_request"
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Quieres pagar con el mismo metodo que tienes registrado o prefieres cambiarlo?"
+        }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard",
+        "company_name": "Hogar",
+        "order_finalized": "true",
+        "delivery_method": "domicilio",
+        "delivery_address": "Calle 5 # 10-20",
+        "delivery_phone": "3012926660",
+        "payment_method": "efectivo"
+      }
+    },
+    {
+      "id": "medidental_contextual_product_followup_remains_catalog",
+      "message": "Y cuales tienes disponibles?",
+      "stage": "order_data",
+      "expectedFlow": "order",
+      "expectedSignals": [
+        "catalog_query"
+      ],
+      "absentSignals": [
+        "order_changes",
+        "restart_request"
+      ],
+      "seed": "../../../../database/Auraly.Database/Scripts/Seeds/SeedMedidental.sql",
+      "history": [
+        {
+          "role": "user",
+          "content": "quiero preparar resina"
+        },
+        {
+          "role": "assistant",
+          "content": "Te interesan opciones de resina?"
+        }
+      ],
+      "initialFacts": {
+        "customer_name": "Richard",
+        "company_name": "Hogar",
+        "order_finalized": "true"
+      }
+    }
+  ],
+  "repetitions": 3
+}

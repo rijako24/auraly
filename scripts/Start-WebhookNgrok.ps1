@@ -4,7 +4,7 @@
     Inicia ngrok para exponer el webhook de WhatsApp y muestra la URL y token para Meta.
 
 .DESCRIPTION
-    1. Asegúrate de tener la API corriendo en otra terminal: cd src\API\MimosBabySpa.API; func start
+    1. Asegúrate de tener la API corriendo en otra terminal: cd src\API\Auraly.Platform.Worker; func start
     2. Este script inicia ngrok en el puerto 7071
     3. Muestra la URL del Callback y el Verify Token para configurar en Meta for Developers
 
@@ -39,7 +39,7 @@ try {
     if (-not $Force) {
         Write-Host "⚠  La API no responde en localhost:$ApiPort" -ForegroundColor Yellow
         Write-Host "   Ejecuta en otra terminal:" -ForegroundColor Gray
-        Write-Host "   cd src\API\MimosBabySpa.API" -ForegroundColor White
+        Write-Host "   cd src\API\Auraly.Platform.Worker" -ForegroundColor White
         Write-Host "   func start" -ForegroundColor White
         Write-Host ""
         $continue = Read-Host "¿Continuar con ngrok de todos modos? (s/n)"

@@ -91,12 +91,18 @@ public static class OrdersApi
             HttpContext context,
             InvoiceOrdersRequest request,
             OrderBatchService service,
+            SellerOrderInvoiceInventoryService sellerInventory,
             CancellationToken ct) =>
-            await Handle(() => service.InvoiceAsync(
-                context.User.ToOrderUserActor(request.WorkSessionId),
-                request,
-                context.Request.Headers["Idempotency-Key"].ToString(),
-                ct)));
+            await Handle(async () =>
+            {
+                var actor = context.User.ToOrderUserActor(request.WorkSessionId);
+                await sellerInventory.PrepareAsync(actor, request, ct);
+                return await service.InvoiceAsync(
+                    actor,
+                    request,
+                    context.Request.Headers["Idempotency-Key"].ToString(),
+                    ct);
+            }));
 
 
         return endpoints;

@@ -18,18 +18,18 @@
 az login
 
 # Crear Resource Group
-az group create --name MimosBabySpa --location eastus
+az group create --name Auraly --location eastus
 
 # Crear Storage Account
 az storage account create `
   --name mimosbabyspastorage `
-  --resource-group MimosBabySpa `
+  --resource-group Auraly `
   --location eastus `
   --sku Standard_LRS
 
 # Crear Function App
 az functionapp create `
-  --resource-group MimosBabySpa `
+  --resource-group Auraly `
   --consumption-plan-location eastus `
   --runtime dotnet-isolated `
   --runtime-version 8 `
@@ -43,7 +43,7 @@ az functionapp create `
 ```powershell
 az functionapp config appsettings set `
   --name mimosbabyspa-functions `
-  --resource-group MimosBabySpa `
+  --resource-group Auraly `
   --settings `
     "ConnectionStrings:DefaultConnection=Server=tcp:TU_SERVIDOR.database.windows.net,1433;Initial Catalog=TU_DB;Persist Security Info=False;User ID=TU_USUARIO;Password=TU_PASSWORD;MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;" `
     "OpenAI:TextModel:ApiKey=TU_GPT_KEY" `
@@ -59,14 +59,14 @@ az functionapp config appsettings set `
 ### 3. Aplicar Migraciones a la Base de Datos
 
 ```powershell
-cd src\Infrastructure\MimosBabySpa.Infrastructure
-dotnet ef database update --startup-project ..\..\API\MimosBabySpa.API\MimosBabySpa.API.csproj --context ApplicationDbContext --connection "TU_CONNECTION_STRING"
+cd src\Infrastructure\Auraly.Platform.Infrastructure
+dotnet ef database update --startup-project ..\..\API\Auraly.Platform.Worker\Auraly.Platform.Worker.csproj --context ApplicationDbContext --connection "TU_CONNECTION_STRING"
 ```
 
 ### 4. Publicar Function App
 
 ```powershell
-cd src\API\MimosBabySpa.API
+cd src\API\Auraly.Platform.Worker
 func azure functionapp publish mimosbabyspa-functions
 ```
 
@@ -85,7 +85,7 @@ func azure functionapp publish mimosbabyspa-functions
 ```powershell
 az functionapp function keys list `
   --name mimosbabyspa-functions `
-  --resource-group MimosBabySpa `
+  --resource-group Auraly `
   --function-name WhatsAppWebhook
 ```
 

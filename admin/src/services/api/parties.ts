@@ -11,11 +11,14 @@ export interface PartyWorkspaceItem {
   completionStatus: "Complete" | "Incomplete"; rowVersion: string;
 }
 export interface PartyWorkspacePage { items: PartyWorkspaceItem[]; page: number; pageSize: number; totalCount: number; totalPages: number; }
+export interface CustomerMapAssignment { routeId:string; routeName:string; sellerId:string; sellerName:string; }
+export interface CustomerMapSite { customerId:string; partyId:string; customerName:string; identification:string|null; partySiteId:string; siteName:string; addressLine:string; neighborhood:string|null; cityName:string; phone:string|null; googleMapsUrl:string|null; latitude:number|null; longitude:number|null; assignments:CustomerMapAssignment[]; }
 export interface PartySiteDetail {
   partySiteId: string; code: string; name: string; countryId: string;
   administrativeDivisionId: string; cityId: string; addressLine: string;
   neighborhood: string | null; postalCode: string | null;
-  email: string | null; phone: string | null; isPrimary: boolean;
+  email: string | null; phone: string | null; isPrimary: boolean; isActive: boolean;
+  googleMapsUrl: string | null; googlePlaceId: string | null; latitude: number | null; longitude: number | null; rowVersion: string;
 }
 export interface CustomerRoleDetail { customerId: string; priceListId: string | null; priceChannelId: string | null; isActive: boolean; }
 export interface SupplierRoleDetail { supplierId: string; isActive: boolean; }
@@ -28,7 +31,7 @@ export interface PartyWorkspaceDetail {
   identificationCountryId: string | null; identificationTypeCode: string | null; identification: string | null;
   verificationDigit: string | null; displayName: string; legalName: string | null;
   firstName: string | null; lastName: string | null; email: string | null; phone: string | null;
-  roles: PartyRole[]; primarySite: PartySiteDetail | null;
+  roles: PartyRole[]; primarySite: PartySiteDetail | null; sites: PartySiteDetail[] | null;
   customer: CustomerRoleDetail | null; supplier: SupplierRoleDetail | null;
   seller: SellerRoleDetail | null; carrier: CarrierRoleDetail | null;
   employee: EmployeeRoleDetail | null; user: UserRoleDetail | null; rowVersion: string;
@@ -40,24 +43,30 @@ export interface DivisionItem { administrativeDivisionId: string; countryId: str
 export interface CityItem { cityId: string; administrativeDivisionId: string; code: string; name: string; isActive: boolean; }
 export interface GeographyHierarchyItem { id: string; parentId: string | null; level: "Country" | "Division" | "City"; code: string; name: string; isActive: boolean; }
 export interface PartyInput { partyType: string; identificationCountryId: string; identificationTypeCode: string; identification: string; verificationDigit: string | null; displayName: string; legalName: string | null; firstName: string | null; lastName: string | null; email: string | null; phone: string | null; }
-export interface PartySiteInput { code: string; name: string; countryId: string; administrativeDivisionId: string; cityId: string; addressLine: string; neighborhood: string | null; postalCode: string | null; email: string | null; phone: string | null; isPrimary: boolean; }
+export interface PartySiteInput { code: string; name: string; countryId: string; administrativeDivisionId: string; cityId: string; addressLine: string; neighborhood: string | null; postalCode: string | null; email: string | null; phone: string | null; isPrimary: boolean; googleMapsUrl: string | null; googlePlaceId: string | null; latitude: number | null; longitude: number | null; }
 export interface CreateThirdPartyRequest { operationId: string; businessId: string; party: PartyInput; primarySite: PartySiteInput; pricing?: { priceListId: string | null; priceChannelId: string | null } | null; code?: string; defaultCommissionPercent?: number | null; commissionBasis?: string; commissionTrigger?: string; transportationMode?: string; }
 export interface CustomerPricingOption { id: string; code: string; name: string; }
 export interface CustomerPricingOptions { priceLists: CustomerPricingOption[]; priceChannels: CustomerPricingOption[]; }
+export interface SellerUserAccess { userId:string; partyId:string; username:string; email:string; isActive:boolean; roleName:string; businessId:string; }
+export interface CreateSellerUserAccess { username:string; email:string; password:string; firstName:string; lastName:string; phoneNumber:string|null; }
 
 export const partiesApi = {
   page: (params: { page: number; pageSize: number; search?: string; role?: string; isActive?: boolean; isIncomplete?: boolean }) =>
     apiClient.get<PartyWorkspacePage>("/commerce/v1/parties", params),
   createIdentity: (request: CreateThirdPartyRequest & { targetRole: "Employee" | "User" }) => apiClient.post<PartyIdentityAcceptance>("/commerce/v1/parties/identity", request),
+  customerMap: () => apiClient.get<CustomerMapSite[]>("/commerce/v1/parties/customer-map"),
   createCustomer: (request: CreateThirdPartyRequest) => apiClient.post("/commerce/v1/customers", request),
   createSupplier: (request: CreateThirdPartyRequest) => apiClient.post("/commerce/v1/suppliers", request),
   createSeller: (request: CreateThirdPartyRequest) => apiClient.post("/commerce/v1/sellers", request),
   createCarrier: (request: CreateThirdPartyRequest) => apiClient.post("/commerce/v1/carriers", request),
+  addSite: (customerId: string, request: { operationId: string; site: PartySiteInput }) => apiClient.post<PartySiteDetail>(`/commerce/v1/customers/${customerId}/sites`, request),
   identity: (params: { countryId: string; identificationTypeCode: string; identification: string; requestedRole: PartyRole }) =>
     apiClient.get<PartyIdentityLookupResult>("/commerce/v1/parties/identity", params),
   detail: (partyId: string) =>
     apiClient.get<PartyWorkspaceDetail>("/commerce/v1/parties/" + partyId),
   pricingOptions: () => apiClient.get<CustomerPricingOptions>("/commerce/v1/parties/customer-pricing-options"),
+  sellerAccess: (partyId:string) => apiClient.get<SellerUserAccess|null>(`/commerce/v1/parties/${partyId}/seller-access`),
+  createSellerAccess: (partyId:string,request:CreateSellerUserAccess) => apiClient.post<SellerUserAccess>(`/commerce/v1/parties/${partyId}/seller-access`,request),
   update: (partyId: string, request: { partyType: string; displayName: string; legalName: string | null; firstName: string | null; lastName: string | null; verificationDigit: string | null; email: string | null; phone: string | null; rowVersion: string }) =>
     apiClient.put<PartyWorkspaceItem>(`/commerce/v1/parties/${partyId}`, request),
   setStatus: (partyId: string, isActive: boolean, rowVersion: string) =>

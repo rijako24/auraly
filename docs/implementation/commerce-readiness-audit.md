@@ -35,7 +35,7 @@ Los 18 escenarios E2E cubren:
 | `Auraly.Foundation.Tests` | 165/165 |
 | `Auraly.Pos.Edge.Host.Tests` | 23/23 |
 | `Auraly.ServerSlice.IntegrationTests` | 129/129 con SQL Server real y RabbitMQ |
-| `MimosBabySpa.Tests` — regresión de módulos preexistentes | 727/727 |
+| `Auraly.Platform.Tests` — regresión de módulos preexistentes | 727/727 |
 | Build de `Auraly.Database.sqlproj` | aprobado, 0 errores y 0 advertencias |
 | Publicación DACPAC en `AuralyCutoverValidation` | aprobada |
 | Actualización DACPAC de `AuralyLocal` preservando datos | aprobada |

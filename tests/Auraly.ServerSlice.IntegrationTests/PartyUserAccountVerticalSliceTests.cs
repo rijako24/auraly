@@ -90,6 +90,12 @@ public sealed class PartyUserAccountVerticalSliceTests(ServerSliceFixture fixtur
         Assert.NotNull(linked);
         Assert.Equal(partyId, linked.PartyId);
         Assert.Equal(userId, linked.UserId);
+        Assert.Equal(0, await ScalarAsync<int>(
+            """
+            SELECT COUNT(*) FROM dbo.UserRoles assignment
+            JOIN dbo.AppRoles role ON role.RoleId=assignment.RoleId AND role.NormalizedName=N'SELLER'
+            WHERE assignment.UserId=@UserId;
+            """, new SqlParameter("@UserId", userId)));
 
         var queried = await admin.GetFromJsonAsync<PartyUserAccountLink>(
             $"/api/commerce/v1/parties/{partyId:D}/user-account");
@@ -125,6 +131,91 @@ public sealed class PartyUserAccountVerticalSliceTests(ServerSliceFixture fixtur
         Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.AppUsers WHERE UserId=@UserId;",
             new SqlParameter("@UserId", userId)));
+    }
+
+    [Fact]
+    public async Task Creating_access_for_an_existing_seller_links_the_party_and_assigns_the_seller_role_atomically()
+    {
+        var partyId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
+        var roleId = Guid.NewGuid();
+        var suffix = Guid.NewGuid().ToString("N");
+        await ExecuteAsync(
+            """
+            INSERT dbo.Parties(PartyId,TenantId,PartyType,DisplayName,LegalName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
+            VALUES(@PartyId,@TenantId,N'Organization',N'Vendedor acceso',N'Vendedor acceso',N'Complete',1,@ActorId,SYSDATETIMEOFFSET());
+            INSERT dbo.CommerceSellers(SellerId,BusinessId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
+            VALUES(@SellerId,@BusinessId,@PartyId,@SellerCode,N'SaleAfterTax',N'Sale',1,SYSDATETIMEOFFSET());
+            IF NOT EXISTS(SELECT 1 FROM dbo.AppRoles WHERE TenantId=@TenantId AND NormalizedName=N'SELLER')
+              INSERT dbo.AppRoles(RoleId,TenantId,Name,NormalizedName,Description,IsActive,IsSystemRole,CreatedAt)
+              VALUES(@RoleId,@TenantId,N'Vendedor',N'SELLER',N'Integration seller role',1,0,SYSDATETIMEOFFSET());
+            """,
+            new SqlParameter("@PartyId", partyId), new SqlParameter("@SellerId", sellerId),
+            new SqlParameter("@RoleId", roleId), new SqlParameter("@TenantId", fixture.TenantId),
+            new SqlParameter("@BusinessId", fixture.BusinessId), new SqlParameter("@ActorId", fixture.UserId),
+            new SqlParameter("@SellerCode", $"SA-{suffix[..10]}"));
+
+        using var denied = fixture.CreateAdminClient(PartyPermissionCodes.ManageUserAccounts);
+        using var deniedResponse = await denied.PostAsJsonAsync(
+            $"/api/commerce/v1/parties/{partyId:D}/seller-access",
+            new { username=$"seller-{suffix}", email=$"seller-{suffix}@auraly.test", password="Seller.2026!", firstName="Sara", lastName="Ventas", phoneNumber="3001234567" });
+        Assert.Equal(HttpStatusCode.Forbidden, deniedResponse.StatusCode);
+
+        using var admin = fixture.CreateAdminClient(
+            "users.create", "users.assign_role", PartyPermissionCodes.ManageUserAccounts);
+        using var response = await admin.PostAsJsonAsync(
+            $"/api/commerce/v1/parties/{partyId:D}/seller-access",
+            new { username=$"seller-{suffix}", email=$"seller-{suffix}@auraly.test", password="Seller.2026!", firstName="Sara", lastName="Ventas", phoneNumber="3001234567" });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, await ScalarAsync<int>(
+            """
+            SELECT COUNT(*) FROM dbo.AppUsers app
+            JOIN dbo.UserRoles assignment ON assignment.UserId=app.UserId AND assignment.BusinessId=@BusinessId
+            JOIN dbo.AppRoles role ON role.RoleId=assignment.RoleId AND role.NormalizedName=N'SELLER'
+            WHERE app.PartyId=@PartyId AND app.PosOfflinePasswordHash IS NOT NULL AND app.PosOfflinePasswordSalt IS NOT NULL;
+            """, new SqlParameter("@PartyId",partyId),new SqlParameter("@BusinessId",fixture.BusinessId)));
+
+        using var duplicate = await admin.PostAsJsonAsync(
+            $"/api/commerce/v1/parties/{partyId:D}/seller-access",
+            new { username=$"seller-duplicate-{suffix}", email=$"seller-duplicate-{suffix}@auraly.test", password="Seller.2026!", firstName="Sara", lastName="Ventas", phoneNumber="3001234567" });
+        Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
+        Assert.Equal(1, await ScalarAsync<int>("SELECT COUNT(*) FROM dbo.AppUsers WHERE PartyId=@PartyId;",new SqlParameter("@PartyId",partyId)));
+    }
+
+    [Fact]
+    public async Task Adding_the_seller_commercial_role_to_an_already_linked_user_assigns_access_automatically()
+    {
+        var countryId = await ScalarAsync<Guid>("SELECT TOP(1) CountryId FROM dbo.Countries WHERE IsActive=1 ORDER BY Code;");
+        var divisionId = await ScalarAsync<Guid>("SELECT TOP(1) AdministrativeDivisionId FROM dbo.AdministrativeDivisions WHERE CountryId=@CountryId AND IsActive=1 ORDER BY Code;",new SqlParameter("@CountryId",countryId));
+        var cityId = await ScalarAsync<Guid>("SELECT TOP(1) CityId FROM dbo.Cities WHERE AdministrativeDivisionId=@DivisionId AND IsActive=1 ORDER BY Code;",new SqlParameter("@DivisionId",divisionId));
+        var partyId=Guid.NewGuid();var userId=Guid.NewGuid();var roleId=Guid.NewGuid();var suffix=Guid.NewGuid().ToString("N");
+        await ExecuteAsync(
+            """
+            INSERT dbo.Parties(PartyId,TenantId,PartyType,IdentificationCountryId,IdentificationTypeCode,Identification,NormalizedIdentification,DisplayName,FirstName,LastName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
+            VALUES(@PartyId,@TenantId,N'NaturalPerson',@CountryId,N'CC',@Identification,@Identification,N'Vendedor existente',N'Vendedor',N'Existente',N'Complete',1,@ActorId,SYSDATETIMEOFFSET());
+            INSERT dbo.AppUsers(UserId,TenantId,PartyId,Username,NormalizedUsername,Email,NormalizedEmail,FirstName,LastName,AccessFailedCount,EmailConfirmed,IsActive,CreatedAt)
+            VALUES(@UserId,@TenantId,@PartyId,@Username,@NormalizedUsername,@Email,@NormalizedEmail,N'Vendedor',N'Existente',0,1,1,SYSUTCDATETIME());
+            IF NOT EXISTS(SELECT 1 FROM dbo.AppRoles WHERE TenantId=@TenantId AND NormalizedName=N'SELLER')
+              INSERT dbo.AppRoles(RoleId,TenantId,Name,NormalizedName,Description,IsActive,IsSystemRole,CreatedAt)
+              VALUES(@RoleId,@TenantId,N'Vendedor',N'SELLER',N'Integration seller role',1,0,SYSDATETIMEOFFSET());
+            """,
+            new SqlParameter("@PartyId",partyId),new SqlParameter("@UserId",userId),new SqlParameter("@RoleId",roleId),
+            new SqlParameter("@TenantId",fixture.TenantId),new SqlParameter("@ActorId",fixture.UserId),new SqlParameter("@CountryId",countryId),
+            new SqlParameter("@Identification",$"7{suffix[..14]}"),new SqlParameter("@Username",$"existing-{suffix}"),new SqlParameter("@NormalizedUsername",$"EXISTING-{suffix}"),
+            new SqlParameter("@Email",$"existing-{suffix}@auraly.test"),new SqlParameter("@NormalizedEmail",$"EXISTING-{suffix}@AURALY.TEST"));
+        var request=new CreateSellerRequest(Guid.NewGuid(),fixture.BusinessId,
+            new PartyInput(PartyTypes.NaturalPerson,countryId,"CC",$"7{suffix[..14]}",null,"Vendedor existente",null,"Vendedor","Existente",$"existing-{suffix}@auraly.test","3001234567"),
+            new PartySiteInput("PRINCIPAL","Principal",countryId,divisionId,cityId,"Calle 1",null,null,null,"3001234567",true),
+            $"UE-{suffix[..10]}",null,"SaleAfterTax","Sale");
+        using var admin=fixture.CreateAdminClient(PartyWorkspacePermissionCodes.SellerCreate);
+        using var response=await admin.PostAsJsonAsync("/api/commerce/v1/sellers",request);
+        Assert.Equal(HttpStatusCode.Created,response.StatusCode);
+        Assert.Equal(1,await ScalarAsync<int>(
+            """
+            SELECT COUNT(*) FROM dbo.UserRoles assignment
+            JOIN dbo.AppRoles role ON role.RoleId=assignment.RoleId AND role.NormalizedName=N'SELLER'
+            WHERE assignment.UserId=@UserId AND assignment.BusinessId=@BusinessId;
+            """,new SqlParameter("@UserId",userId),new SqlParameter("@BusinessId",fixture.BusinessId)));
     }
 
     private async Task ExecuteAsync(string sql, params SqlParameter[] parameters)

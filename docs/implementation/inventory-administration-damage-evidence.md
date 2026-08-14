@@ -25,7 +25,7 @@ Resultado: 1/1 aprobada. La prueba explícita `RabbitMqDocumentProcessingTests` 
 
 ## Base local y servicios
 
-El primer publish local detectó siete columnas preexistentes ausentes del SQL project y se detuvo por posible pérdida de datos. Las columnas se incorporaron al proyecto, el DACPAC se reconstruyó y después se publicó satisfactoriamente en `MimosBabySpa` con postdeployment completo. La API queda en `http://127.0.0.1:5097`, el admin en `http://127.0.0.1:3000` y RabbitMQ real procesa las señales sin polling.
+El primer publish local detectó siete columnas preexistentes ausentes del SQL project y se detuvo por posible pérdida de datos. Las columnas se incorporaron al proyecto, el DACPAC se reconstruyó y después se publicó satisfactoriamente en `Auraly` con postdeployment completo. La API queda en `http://127.0.0.1:5097`, el admin en `http://127.0.0.1:3000` y RabbitMQ real procesa las señales sin polling.
 
 La inspección visual automatizada no pudo iniciarse porque el controlador del navegador fue bloqueado por las ACL del entorno. La ruta sí está incluida en TypeScript, el servidor Next está activo y el acceso queda disponible para prueba manual autenticada.
 ## Evidencia de cierre de operaciones

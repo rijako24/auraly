@@ -91,11 +91,11 @@ try {
     & dotnet restore (Join-Path $repoRoot 'Auraly.Commerce.sln') --locked-mode
     if ($LASTEXITCODE) { throw 'dotnet restore fallo.' }
     & dotnet restore `
-        (Join-Path $repoRoot 'src\API\MimosBabySpa.API\MimosBabySpa.API.csproj') `
+        (Join-Path $repoRoot 'src\API\Auraly.Platform.Worker\Auraly.Platform.Worker.csproj') `
         --locked-mode
     if ($LASTEXITCODE) { throw 'dotnet restore de Function fallo.' }
     & dotnet restore `
-        (Join-Path $repoRoot 'src\Tests\MimosBabySpa.Tests\MimosBabySpa.Tests.csproj') `
+        (Join-Path $repoRoot 'src\Tests\Auraly.Platform.Tests\Auraly.Platform.Tests.csproj') `
         --locked-mode
     if ($LASTEXITCODE) { throw 'dotnet restore de regresion legacy fallo.' }
 
@@ -107,7 +107,7 @@ try {
     if ($LASTEXITCODE) { throw 'dotnet build de Auraly Commerce fallo.' }
 
     & dotnet build `
-        (Join-Path $repoRoot 'src\API\MimosBabySpa.API\MimosBabySpa.API.csproj') `
+        (Join-Path $repoRoot 'src\API\Auraly.Platform.Worker\Auraly.Platform.Worker.csproj') `
         -c Release --no-restore --warnaserror `
         -p:ContinuousIntegrationBuild=true `
         -p:Deterministic=true `
@@ -115,14 +115,14 @@ try {
     if ($LASTEXITCODE) { throw 'dotnet build de Function fallo.' }
 
     & dotnet build `
-        (Join-Path $repoRoot 'src\Tests\MimosBabySpa.Tests\MimosBabySpa.Tests.csproj') `
+        (Join-Path $repoRoot 'src\Tests\Auraly.Platform.Tests\Auraly.Platform.Tests.csproj') `
         -c Release --no-restore --warnaserror `
         -p:ContinuousIntegrationBuild=true `
         -p:Deterministic=true `
         "-p:PathMap=$repoRoot=/_/src"
     if ($LASTEXITCODE) { throw 'dotnet build de regresion legacy fallo.' }
 
-    & dotnet test (Join-Path $repoRoot 'src\Tests\MimosBabySpa.Tests\MimosBabySpa.Tests.csproj') `
+    & dotnet test (Join-Path $repoRoot 'src\Tests\Auraly.Platform.Tests\Auraly.Platform.Tests.csproj') `
         -c Release --no-build --logger 'console;verbosity=minimal'
     if ($LASTEXITCODE) { throw 'La regresion legacy fallo.' }
 
@@ -135,7 +135,7 @@ try {
     if ($LASTEXITCODE) { throw 'Las pruebas de POS Edge fallaron.' }
 
     $functionPublish = Join-Path $publishPath 'function'
-    & dotnet publish (Join-Path $repoRoot 'src\API\MimosBabySpa.API\MimosBabySpa.API.csproj') `
+    & dotnet publish (Join-Path $repoRoot 'src\API\Auraly.Platform.Worker\Auraly.Platform.Worker.csproj') `
         -c Release --no-build -o $functionPublish `
         -p:ContinuousIntegrationBuild=true `
         -p:Deterministic=true `

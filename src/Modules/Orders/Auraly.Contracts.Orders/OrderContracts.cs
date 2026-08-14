@@ -3,6 +3,8 @@ namespace Auraly.Contracts.Orders;
 public static class OrderPermissionCodes
 {
     public const string Read = "orders.read";
+    public const string Create = "orders.create";
+    public const string Update = "orders.update";
     public const string Recover = "orders.recover";
     public const string Invoice = "orders.invoice";
     public const string Cancel = "orders.cancel";

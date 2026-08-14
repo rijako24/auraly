@@ -18,20 +18,20 @@ Backend .NET 8 para automatizar conversaciones de WhatsApp de Mimo's Baby Spa: v
 
 ## Estructura principal
 
-- `MimosBabySpa.sln`: solucion principal.
-- `src/API/MimosBabySpa.API`: Azure Functions productivas.
-- `src/API/MimosBabySpa.WebAPI`: API web/admin si se necesita superficie HTTP tradicional.
-- `src/Application/MimosBabySpa.Application`: casos de uso, servicios, motor agentic, DTOs, reglas.
-- `src/Domain/MimosBabySpa.Domain`: entidades, enums e interfaces de repositorios.
-- `src/Infrastructure/MimosBabySpa.Infrastructure`: EF Core, repositorios, servicios externos.
-- `src/Console/MimosBabySpa.Console`: utilidades/runner de consola.
+- `Auraly.Commerce.sln`: solucion principal.
+- `src/API/Auraly.Platform.Worker`: Azure Functions productivas.
+- `src/API/Auraly.WebAPI`: API web/admin si se necesita superficie HTTP tradicional.
+- `src/Application/Auraly.Platform.Application`: casos de uso, servicios, motor agentic, DTOs, reglas.
+- `src/Domain/Auraly.Platform.Domain`: entidades, enums e interfaces de repositorios.
+- `src/Infrastructure/Auraly.Platform.Infrastructure`: EF Core, repositorios, servicios externos.
+- `src/Console/Auraly.Platform.Console`: utilidades/runner de consola.
 - `src/Tests`: pruebas unitarias/integracion y utilidades de testing.
-- `database/MimosBabySpa.Database`: proyecto SQL y scripts de seed/tablas.
+- `database/Auraly.Database`: proyecto SQL y scripts de seed/tablas.
 - `admin`: frontend/admin separado si aplica.
 
 ## Entradas runtime importantes
 
-Azure Functions actuales en `src/API/MimosBabySpa.API/Functions`:
+Azure Functions actuales en `src/API/Auraly.Platform.Worker/Functions`:
 
 - `WhatsAppWebhookFunction`: recibe mensajes/eventos de WhatsApp.
 - `WompiWebhookFunction`: recibe confirmaciones/eventos de pago.
@@ -39,11 +39,11 @@ Azure Functions actuales en `src/API/MimosBabySpa.API/Functions`:
 - Confirmacion manual de pagos: accion autenticada en admin (`POST /api/payments/{id}/confirm-manual`).
 - `ReleaseConversationFunction`: libera conversaciones escaladas a humano.
 
-La DI principal esta en `src/API/MimosBabySpa.API/Program.cs`. Antes de asumir que un servicio existe, confirmar ahi o en el proyecto WebAPI si se trabaja esa superficie.
+La DI principal esta en `src/API/Auraly.Platform.Worker/Program.cs`. Antes de asumir que un servicio existe, confirmar ahi o en el proyecto WebAPI si se trabaja esa superficie.
 
 ## Motor agentic
 
-Carpeta principal: `src/Application/MimosBabySpa.Application/Agents`.
+Carpeta principal: `src/Application/Auraly.Platform.Application/Agents`.
 
 Flujo actual:
 
@@ -59,7 +59,7 @@ Flujo actual:
 Configuracion del agente:
 
 - Fuente de verdad: `Agents.SettingsJson` en base de datos.
-- Seeds por tenant: `database/MimosBabySpa.Database/Scripts/Seeds`.
+- Seeds por tenant: `database/Auraly.Database/Scripts/Seeds`.
 - `SystemPromptMarkdown` es legacy/fallback; no debe gobernar reglas deterministas.
 - Persona, policies, flows, facts, signals, operaciones, outcomes, templates, checkout, commerce y webhooks viven en `SettingsJson`.
 - El catalogo no se duplica en prompts: operaciones y adapters lo consultan desde tablas o integraciones.
@@ -112,33 +112,33 @@ Cuando agregues entidad:
 Build principal:
 
 ```powershell
-dotnet build MimosBabySpa.sln
+dotnet build Auraly.Commerce.sln
 ```
 
 Tests de integracion del motor:
 
 ```powershell
-dotnet run --project src/Tests/MimosBabySpa.IntegrationTests/MimosBabySpa.IntegrationTests.csproj
+dotnet run --project src/Tests/Auraly.IntegrationTests/Auraly.IntegrationTests.csproj
 ```
 
 Publicacion de base de datos:
 
-- Para publicar BD, usar la cadena `ConnectionStrings:DefaultConnection` de `src/Console/MimosBabySpa.Console/appsettings.json`.
-- No asumir defaults de `database/MimosBabySpa.Database/Scripts/config.json` (`localhost/MimosBabySpa`) salvo que el usuario lo pida explicitamente.
+- Para publicar BD, usar la cadena `ConnectionStrings:DefaultConnection` de `src/Console/Auraly.Platform.Console/appsettings.json`.
+- No asumir defaults de `database/Auraly.Database/Scripts/config.json` (`localhost/Auraly`) salvo que el usuario lo pida explicitamente.
 - Si se usa el proyecto SQL/DACPAC, derivar `ServerInstance`, `DatabaseName` y credenciales desde ese connection string antes de ejecutar `Publish.ps1`/`SqlPackage`.
 
 Azure Functions local:
 
 ```powershell
-cd src/API/MimosBabySpa.API
+cd src/API/Auraly.Platform.Worker
 func start
 ```
 
 Migraciones EF manuales, si se usan:
 
 ```powershell
-cd src/Infrastructure/MimosBabySpa.Infrastructure
-dotnet ef database update --startup-project ../../API/MimosBabySpa.API/MimosBabySpa.API.csproj --context ApplicationDbContext
+cd src/Infrastructure/Auraly.Platform.Infrastructure
+dotnet ef database update --startup-project ../../API/Auraly.Platform.Worker/Auraly.Platform.Worker.csproj --context ApplicationDbContext
 ```
 
 ## Documentacion que se conserva

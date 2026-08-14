@@ -1,0 +1,95 @@
+namespace Auraly.Platform.Domain.Models;
+
+/// <summary>
+/// Estado del motor agentic (universal, multitenant).
+/// Solo metadatos de orquestación — hechos libres en ConversationContexts, booking en Reservations, pago en PaymentTransactions.
+/// </summary>
+public class ConversationState
+{
+    public Guid ConversationId { get; set; }
+    public Guid BusinessId { get; set; }
+    public ConversationOwner Owner { get; set; } = ConversationOwner.Bot;
+    public DateTime? LastEscalatedAt { get; set; }
+    public int ConsecutiveDegradedTurns { get; set; }
+    public string? LastUserMessage { get; set; }
+    public string? LastBotMessage { get; set; }
+    public DateTime? ActiveRequestStartedAtUtc { get; set; }
+    public Dictionary<string, VerificationEntry> Verifications { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>Durable deterministic cursor. It changes only after a compiled route or transition.</summary>
+    public string? ActiveFlowId { get; set; }
+    public string? ActiveStageId { get; set; }
+    public DateTime? ActiveFlowExpiresAtUtc { get; set; }
+
+    /// <summary>Monotonic versions used to invalidate dependent facts and verifications.</summary>
+    public Dictionary<string, long> FactVersions { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Validated semantic plan deferred until the customer resolves an ambiguity.</summary>
+    public PendingTurnPlan? PendingTurnPlan { get; set; }
+    public long RequestGeneration { get; set; }
+    public long LastOpenedRequestGeneration { get; set; } = -1;
+    public Dictionary<string, DateTime> ExecutedOperationKeys { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Indexed projection used to discover a due customer-reply wait.</summary>
+    public DateTime? FollowUpDueAtUtc { get; set; }
+
+    /// <summary>The only customer-reply wait owned by this conversation.</summary>
+    public PendingCustomerReply? PendingCustomerReply { get; set; }
+    public long CustomerReplyExpectationVersion { get; set; }
+
+    /// <summary>External commerce identity resolved from the channel phone for this conversation.</summary>
+    public ExternalCommerceCustomerIdentity? CommerceCustomer { get; set; }
+    public long CommerceCustomerLookupGeneration { get; set; } = -1;
+
+    /// <summary>
+    /// Snapshots de los facts en el momento en que cada etapa fue completada por primera vez.
+    /// Clave: stageId · Valor: factKey → factValue al momento de completarse.
+    /// Usado para detectar si el cliente cambió datos relevantes después del cierre de una etapa.
+    /// </summary>
+    public Dictionary<string, Dictionary<string, string>> StageFactSnapshots { get; set; } = new(StringComparer.Ordinal);
+
+    public int Version { get; set; } = 1;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public sealed class PendingTurnPlan
+{
+    public int SchemaVersion { get; set; } = 1;
+    public string ConfigurationSignature { get; set; } = string.Empty;
+    public string FlowId { get; set; } = string.Empty;
+    public string StageId { get; set; } = string.Empty;
+    public string PlanJson { get; set; } = string.Empty;
+    public IReadOnlyList<string> AmbiguousFields { get; set; } = [];
+    public DateTime CreatedAtUtc { get; set; }
+    public DateTime ExpiresAtUtc { get; set; }
+}
+
+public sealed class PendingCustomerReply
+{
+    public long Version { get; set; }
+    public Guid AgentId { get; set; }
+    public long RequestGeneration { get; set; }
+    public string FlowId { get; set; } = string.Empty;
+    public string StageId { get; set; } = string.Empty;
+    public Guid SourceMessageId { get; set; }
+    public DateTime WaitingSinceUtc { get; set; }
+    public DateTime? ClaimedAtUtc { get; set; }
+    public DateTime? FollowUpSentAtUtc { get; set; }
+    public string? TerminalReason { get; set; }
+}
+
+public enum ConversationOwner
+{
+    Bot,
+    Human
+}
+public sealed class ExternalCommerceCustomerIdentity
+{
+    public int Provider { get; set; }
+    public string ExternalAccountId { get; set; } = string.Empty;
+    public string ExternalCustomerId { get; set; } = string.Empty;
+    public string? Name { get; set; }
+    public string Phone { get; set; } = string.Empty;
+    public DateTime ResolvedAtUtc { get; set; }
+}

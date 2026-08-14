@@ -409,7 +409,7 @@ No hacen falta esquemas ni bases separadas en el MVP.
 
 ### R17. Renombrado
 
-El repositorio aún contiene solución, proyectos y rutas `MimosBabySpa`. Renombrar ensamblados, namespaces, SQL, pipelines, recursos y secretos mientras se agregan módulos amplía el fallo.
+El repositorio aún contiene solución, proyectos y rutas `Auraly`. Renombrar ensamblados, namespaces, SQL, pipelines, recursos y secretos mientras se agregan módulos amplía el fallo.
 
 Hacerlo como iniciativa separada:
 
@@ -607,7 +607,7 @@ La estrategia debe cubrir:
 
 Definition of Done: reglas trazadas, pruebas, SQL revisado, permisos negativos, telemetría, errores operables, reversión, documentación, migración y UAT.
 
-El backend de la rama pasó `dotnet test MimosBabySpa.sln --no-restore`. El frontend no compiló en el worktree porque no tenía dependencias instaladas; el pipeline debe restaurar y compilar backend, frontend y proyecto SQL desde cero.
+El backend de la rama pasó `dotnet test Auraly.Commerce.sln --no-restore`. El frontend no compiló en el worktree porque no tenía dependencias instaladas; el pipeline debe restaurar y compilar backend, frontend y proyecto SQL desde cero.
 
 ### R19. Migración Xion
 

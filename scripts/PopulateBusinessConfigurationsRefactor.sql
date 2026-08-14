@@ -9,10 +9,10 @@ GO
 
 -- ==============================================================================
 -- 1. SALES GUIDANCE CONFIGURATION
--- Agregar configuración de guía de ventas para MimosBabySpa
+-- Agregar configuración de guía de ventas para Auraly
 -- ==============================================================================
 
-DECLARE @BusinessId UNIQUEIDENTIFIER = (SELECT TOP 1 BusinessId FROM Businesses WHERE Name = 'MimosBabySpa');
+DECLARE @BusinessId UNIQUEIDENTIFIER = (SELECT TOP 1 BusinessId FROM Businesses WHERE Name = 'Auraly');
 
 IF @BusinessId IS NOT NULL
 BEGIN
@@ -36,16 +36,16 @@ BEGIN
             GETUTCDATE()
         );
         
-        PRINT '✅ SalesGuidance agregada para MimosBabySpa';
+        PRINT '✅ SalesGuidance agregada para Auraly';
     END
     ELSE
     BEGIN
-        PRINT '⚠️ SalesGuidance ya existe para MimosBabySpa';
+        PRINT '⚠️ SalesGuidance ya existe para Auraly';
     END
 END
 ELSE
 BEGIN
-    PRINT '❌ Negocio MimosBabySpa no encontrado';
+    PRINT '❌ Negocio Auraly no encontrado';
 END
 GO
 
@@ -54,7 +54,7 @@ GO
 -- Agregar personalidad del asistente a Business.PersonalityJson
 -- ==============================================================================
 
-DECLARE @BusinessId UNIQUEIDENTIFIER = (SELECT TOP 1 BusinessId FROM Businesses WHERE Name = 'MimosBabySpa');
+DECLARE @BusinessId UNIQUEIDENTIFIER = (SELECT TOP 1 BusinessId FROM Businesses WHERE Name = 'Auraly');
 
 IF @BusinessId IS NOT NULL
 BEGIN
@@ -83,16 +83,16 @@ BEGIN
             UpdatedAt = GETUTCDATE()
         WHERE BusinessId = @BusinessId;
         
-        PRINT '✅ PersonalityJson agregada para MimosBabySpa';
+        PRINT '✅ PersonalityJson agregada para Auraly';
     END
     ELSE
     BEGIN
-        PRINT '⚠️ PersonalityJson ya existe para MimosBabySpa';
+        PRINT '⚠️ PersonalityJson ya existe para Auraly';
     END
 END
 ELSE
 BEGIN
-    PRINT '❌ Negocio MimosBabySpa no encontrado';
+    PRINT '❌ Negocio Auraly no encontrado';
 END
 GO
 

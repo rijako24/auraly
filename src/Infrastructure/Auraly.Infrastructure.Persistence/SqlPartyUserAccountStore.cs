@@ -29,6 +29,7 @@ public sealed partial class SqlPartyStore
         Guid tenantId,
         Guid partyId,
         Guid userId,
+        Guid assignedByUserId,
         DateTimeOffset now,
         CancellationToken ct)
     {
@@ -64,6 +65,17 @@ public sealed partial class SqlPartyStore
                 SET PartyId=@PartyId,UpdatedAt=@Now
                 WHERE UserId=@UserId AND TenantId=@TenantId;
 
+                INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt,AssignedByUserId)
+                SELECT NEWID(),@UserId,role.RoleId,seller.BusinessId,@Now,@AssignedByUserId
+                FROM dbo.CommerceSellers seller
+                JOIN dbo.AppRoles role ON role.TenantId=@TenantId
+                  AND role.NormalizedName=N'SELLER' AND role.IsActive=1
+                WHERE seller.PartyId=@PartyId AND seller.IsActive=1
+                  AND NOT EXISTS(
+                    SELECT 1 FROM dbo.UserRoles assigned
+                    WHERE assigned.UserId=@UserId AND assigned.RoleId=role.RoleId
+                      AND assigned.BusinessId=seller.BusinessId);
+
                 SELECT UserId,PartyId,Username,Email,IsActive
                 FROM dbo.AppUsers
                 WHERE UserId=@UserId AND TenantId=@TenantId;
@@ -73,6 +85,7 @@ public sealed partial class SqlPartyStore
                 P("@TenantId", tenantId),
                 P("@PartyId", partyId),
                 P("@UserId", userId),
+                P("@AssignedByUserId", assignedByUserId),
                 P("@Now", now.UtcDateTime)
             ]);
             await using var reader = await command.ExecuteReaderAsync(ct);
@@ -114,6 +127,12 @@ public sealed partial class SqlPartyStore
               SELECT 1 FROM dbo.Parties
               WHERE PartyId=@PartyId AND TenantId=@TenantId)
               THROW 51040,'Party is outside the authenticated tenant.',1;
+
+            DELETE assignment
+            FROM dbo.UserRoles assignment
+            JOIN dbo.AppUsers app ON app.UserId=assignment.UserId AND app.PartyId=@PartyId AND app.TenantId=@TenantId
+            JOIN dbo.AppRoles role ON role.RoleId=assignment.RoleId AND role.NormalizedName=N'SELLER'
+            JOIN dbo.CommerceSellers seller ON seller.PartyId=@PartyId AND seller.BusinessId=assignment.BusinessId;
 
             UPDATE dbo.AppUsers
             SET PartyId=NULL,UpdatedAt=@Now
