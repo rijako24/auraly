@@ -73,17 +73,17 @@ public class AppUserRepository : IAppUserRepository
         return (items, totalCount);
     }
 
-    public async Task<bool> ExistsWithUsernameAsync(string normalizedUsername, Guid? excludeUserId = null, CancellationToken ct = default)
+    public async Task<bool> ExistsWithUsernameAsync(Guid tenantId, string normalizedUsername, Guid? excludeUserId = null, CancellationToken ct = default)
     {
-        var query = _context.AppUsers.Where(u => u.NormalizedUsername == normalizedUsername);
+        var query = _context.AppUsers.Where(u => u.TenantId == tenantId && u.NormalizedUsername == normalizedUsername);
         if (excludeUserId.HasValue)
             query = query.Where(u => u.UserId != excludeUserId.Value);
         return await query.AnyAsync(ct);
     }
 
-    public async Task<bool> ExistsWithEmailAsync(string normalizedEmail, Guid? excludeUserId = null, CancellationToken ct = default)
+    public async Task<bool> ExistsWithEmailAsync(Guid tenantId, string normalizedEmail, Guid? excludeUserId = null, CancellationToken ct = default)
     {
-        var query = _context.AppUsers.Where(u => u.NormalizedEmail == normalizedEmail);
+        var query = _context.AppUsers.Where(u => u.TenantId == tenantId && u.NormalizedEmail == normalizedEmail);
         if (excludeUserId.HasValue)
             query = query.Where(u => u.UserId != excludeUserId.Value);
         return await query.AnyAsync(ct);

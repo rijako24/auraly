@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Auraly.Api;
 using Auraly.Application.Fiscal;
+using Auraly.Commerce.Accounting.Application;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Payables;
 using Auraly.Contracts.Purchasing;
@@ -32,11 +33,14 @@ public sealed class PayablesRabbitMqIntegrationTests(ServerSliceFixture fixture)
         var documentQueue = $"auraly-tests-payables-{suffix}";
         var fiscalQueue = $"auraly-tests-payables-fiscal-{suffix}";
         var options = new RabbitMqProcessingOptions(
-            rabbitConnection, documentQueue, fiscalQueue);
+            rabbitConnection, documentQueue, fiscalQueue, $"auraly-tests-payables-accounting-{suffix}");
         await using var connection = new RabbitMqProcessingConnection(options);
         await using var transport = new RabbitMqProcessingTransport(
             connection, options, TimeProvider.System);
         var fiscal = new FiscalProcessingCoordinator(
+            transport,
+            fixture.Services.GetRequiredService<IAuralyIdGenerator>());
+        var accounting = new AccountingProcessingCoordinator(
             transport,
             fixture.Services.GetRequiredService<IAuralyIdGenerator>());
         using var service = new RabbitMqDocumentProcessingHostedService(
@@ -45,6 +49,7 @@ public sealed class PayablesRabbitMqIntegrationTests(ServerSliceFixture fixture)
             options,
             fixture.Services.GetRequiredService<IServiceScopeFactory>(),
             fiscal,
+            accounting,
             NullLogger<RabbitMqDocumentProcessingHostedService>.Instance);
 
         fixture.PauseDocumentProcessing();

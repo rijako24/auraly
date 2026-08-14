@@ -8,6 +8,14 @@ public static class AccountingApi
 {
     public static IEndpointRouteBuilder MapAccountingApi(this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapGet("/api/commerce/v1/accounting/accounts", async (HttpContext context, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.ListAccountsAsync(context.User.ToAccountingIdentity(), token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/cost-centers", async (HttpContext context, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.ListCostCentersAsync(context.User.ToAccountingIdentity(), token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/periods", async (HttpContext context, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.ListPeriodsAsync(context.User.ToAccountingIdentity(), token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/account-mappings", async (HttpContext context, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.ListMappingsAsync(context.User.ToAccountingIdentity(), token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapPost("/api/commerce/v1/accounting/accounts", async (HttpContext context, CreateAccountingAccountRequest request, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.CreateAccountAsync(context.User.ToAccountingIdentity(), request, token), value => Results.Created($"/api/commerce/v1/accounting/accounts/{value.AccountId:D}", value))).RequireAuthorization("accounting.user");
         endpoints.MapPost("/api/commerce/v1/accounting/cost-centers", async (HttpContext context, CreateCostCenterRequest request, AccountingService service, CancellationToken token) =>

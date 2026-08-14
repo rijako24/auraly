@@ -4,6 +4,7 @@ using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.BuildingBlocks.Infrastructure.Identifiers;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Authorization;
+using Auraly.Contracts.WorkSessions;
 using Auraly.Pos.Edge.Infrastructure;
 
 namespace Auraly.Pos.Edge.Host;
@@ -163,8 +164,14 @@ public static class PosEdgeHostApplication
         builder.Services.AddPosSaleCompletion(
             builder.Configuration,
             connectionString,
+            databasePath,
             runtime,
             credentials);
+        builder.Services.AddSingleton(sp => new PosCashMovementStore(
+            connectionString,
+            sp.GetRequiredService<TimeProvider>()));
+        builder.Services.AddSingleton<PosCashMovementServerClient>();
+        builder.Services.AddHostedService<PosCashMovementStorageInitializer>();
         builder.Services.AddSingleton<IPosSaleUploadClient>(sp =>
             new HttpPosSaleUploadClient(
                 sp.GetRequiredService<HttpClient>(),
@@ -306,6 +313,29 @@ public static class PosEdgeHostApplication
             startupMode.Save(request.Mode);
             return Results.NoContent();
         });
+        edge.MapGet("/configuration/printers", (
+            PosPrinterConfigurationStore printers) =>
+            Results.Ok(new PosPrinterConfigurationView(
+                printers.Load(), printers.InstalledPrinters())));
+        edge.MapPut("/configuration/printers", (
+            PosPrinterConfiguration request,
+            PosPrinterConfigurationStore printers) =>
+        {
+            try
+            {
+                return Results.Ok(new PosPrinterConfigurationView(
+                    printers.Save(request), printers.InstalledPrinters()));
+            }
+            catch (ArgumentException exception)
+            {
+                return Results.ValidationProblem(
+                    new Dictionary<string, string[]>
+                    {
+                        [nameof(PosPrinterConfiguration)] = [exception.Message]
+                    });
+            }
+        });
+
         edge.MapPost("/enrollment/redeem", async (
             LocalPosEnrollmentRequest request,
             PosEdgeEnrollmentClient client,
@@ -380,6 +410,60 @@ public static class PosEdgeHostApplication
                     statusCode: status);
             }
         });
+        edge.MapGet("/cash-movement-reasons", async (
+            string? direction,
+            PosCashMovementStore store,
+            PosCashMovementServerClient server,
+            PosEdgeRuntimeContext context,
+            CancellationToken ct) =>
+        {
+            if (!CashMovementDirections.IsSupported(direction ?? string.Empty))
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    [nameof(direction)] = ["La direccion debe ser In u Out."]
+                });
+            try
+            {
+                await server.RefreshReasonsAsync(context.BusinessId.Value, ct);
+            }
+            catch (HttpRequestException)
+            {
+                // The last durable catalog remains authoritative while offline.
+            }
+            return Results.Ok(await store.ListReasonsAsync(
+                context.BusinessId.Value, direction!, ct));
+        });
+        edge.MapPost("/cash-movements", async (
+            QueueLocalCashMovementRequest request,
+            PosCashMovementStore store,
+            PosSynchronizationSignal synchronization,
+            PosEdgeRuntimeContext context,
+            PosLocalSessionAccessor sessions,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                var user = sessions.Required();
+                var acceptance = await store.QueueAsync(
+                    context.BusinessId.Value,
+                    user.WorkSessionId,
+                    user.UserId,
+                    request,
+                    ct);
+                synchronization.Signal(PosSynchronizationTrigger.LocalOutbox);
+                return Results.Accepted(
+                    "/edge/v1/cash-movements/" + request.DocumentId.ToString("D"),
+                    acceptance);
+            }
+            catch (ArgumentException exception)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    [nameof(request)] = [exception.Message]
+                });
+            }
+        });
+
         edge.MapPost("/approvals", async (
             CreatePosApprovalRequest request,
             PosRemoteApprovalClient approvals,
@@ -414,6 +498,7 @@ public static class PosEdgeHostApplication
             PosWorkstationIdentity workstation,
             PosCatalogStore catalog,
             PosLocalIdentityStore identities,
+            PosSaleHostSettings saleSettings,
             PosStartupModeStore startupMode,
             PosSynchronizationState synchronizationState,
             CancellationToken ct) =>
@@ -435,12 +520,14 @@ public static class PosEdgeHostApplication
                 status,
                 serverConnected = server.IsConnected,
                 deviceSeriesCode = workstation.DeviceSeriesCode,
+                businessId = runtime.BusinessId.Value,
                 businessName = workstation.BusinessName,
                 warehouseName = workstation.WarehouseName,
                 userDisplayName = user?.DisplayName ?? string.Empty,
                 userId = user?.UserId,
                 workSessionId = user?.WorkSessionId,
                 deviceId = runtime.DeviceId.Value,
+                fiscalReady = saleSettings.Fiscal is not null,
                 permissions = user?.Permissions ?? Array.Empty<string>(),
                 catalogStatus = catalogStatus.Status,
                 catalogCursor = catalogStatus.Cursor,
@@ -821,9 +908,11 @@ public static class PosEdgeHostApplication
             status = "EnrollmentRequired",
             serverConnected = false,
             deviceSeriesCode = "",
+            businessId = "",
             businessName = "",
             warehouseName = "",
             userDisplayName = "",
+            fiscalReady = false,
             startupMode = startupModeStore.Load(hasEnrollment: false)
         }));
         edge.MapPost("/enrollment/redeem", async (

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Auraly.Application.DocumentProcessing;
+using Auraly.Commerce.Accounting.Application;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -31,9 +32,18 @@ internal sealed class TestDocumentProcessingSignalPublisher(
             try
             {
                 await worker.ProcessOneAsync(signal, cancellationToken);
+                if (AccountingProcessingPolicy.Supports(signal.DocumentType))
+                {
+                    var accounting = scope.ServiceProvider
+                        .GetRequiredService<AccountingProcessingCoordinator>();
+                    await accounting.RequestPostingAsync(
+                        signal.BusinessId,
+                        signal.DocumentId,
+                        signal.DocumentType,
+                        cancellationToken);
+                }
             }
-            catch (Exception exception) when (
-                exception is DocumentProcessingMessageException or InvalidOperationException)
+            catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 // A real broker has already accepted the signal. Processing failures remain
                 // durable in DocumentProcessingJobs and must not turn the publishing request

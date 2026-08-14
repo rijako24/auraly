@@ -51,9 +51,13 @@
     <ProjectReference Include="..\..\Modules\Payables\Auraly.Domain.Payables\Auraly.Domain.Payables.csproj" />
     <ProjectReference Include="..\..\Modules\Pricing\Auraly.Domain.Pricing\Auraly.Domain.Pricing.csproj" />
     <ProjectReference Include="..\..\Modules\WorkSessions\Auraly.Application.WorkSessions\Auraly.Application.WorkSessions.csproj" />
+    <ProjectReference Include="..\..\Modules\WorkSessions\Auraly.Domain.WorkSessions\Auraly.Domain.WorkSessions.csproj" />
     <ProjectReference Include="..\..\Modules\WorkSessions\Auraly.Contracts.WorkSessions\Auraly.Contracts.WorkSessions.csproj" />
     <ProjectReference Include="..\..\Modules\Receivables\Auraly.Contracts.Receivables\Auraly.Contracts.Receivables.csproj" />
     <ProjectReference Include="..\..\Modules\Receivables\Auraly.Application.Receivables\Auraly.Application.Receivables.csproj" />
+    <ProjectReference Include="../../Modules/Taxation/Auraly.Commerce.Taxation.Contracts/Auraly.Commerce.Taxation.Contracts.csproj" />
+    <ProjectReference Include="../../Modules/Taxation/Auraly.Commerce.Taxation.Domain/Auraly.Commerce.Taxation.Domain.csproj" />
+    <ProjectReference Include="../../Modules/Taxation/Auraly.Commerce.Taxation.Application/Auraly.Commerce.Taxation.Application.csproj" />
     <ProjectReference Include="..\..\Modules\Receivables\Auraly.Domain.Receivables\Auraly.Domain.Receivables.csproj" />
   </ItemGroup>
 </Project>

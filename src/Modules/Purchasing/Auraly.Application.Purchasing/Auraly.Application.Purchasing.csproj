@@ -9,4 +9,8 @@
     <ProjectReference Include="..\..\DocumentProcessing\Auraly.Application.DocumentProcessing\Auraly.Application.DocumentProcessing.csproj" />
     <ProjectReference Include="..\Auraly.Domain.Purchasing\Auraly.Domain.Purchasing.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../Taxation/Auraly.Commerce.Taxation.Contracts/Auraly.Commerce.Taxation.Contracts.csproj" />
+    <ProjectReference Include="../../Taxation/Auraly.Commerce.Taxation.Application/Auraly.Commerce.Taxation.Application.csproj" />
+  </ItemGroup>
 </Project>

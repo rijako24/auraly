@@ -62,6 +62,8 @@ public sealed class PayablesService(
         if (request.BusinessId != user.BusinessId)
             throw new PayablesForbiddenException("The payment belongs to another business.");
         if (request.PaymentId == Guid.Empty) throw new PayablesValidationException("PaymentId is required.");
+        if (request.WorkSessionId == Guid.Empty)
+            throw new PayablesValidationException("WorkSessionId must be null or valid.");
         if (request.SupplierId == Guid.Empty) throw new PayablesValidationException("SupplierId is required.");
         if (request.PaidAt == default) throw new PayablesValidationException("PaidAt is required.");
         if (string.IsNullOrWhiteSpace(request.CurrencyCode))

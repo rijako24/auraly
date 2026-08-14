@@ -23,7 +23,7 @@ CREATE TABLE [dbo].[WorkSessionMovements]
     CONSTRAINT [UQ_WorkSessionMovements_Source] UNIQUE ([WorkSessionId],[SourceKey]),
     CONSTRAINT [CK_WorkSessionMovements_Type] CHECK (
         [MovementType] IN
-            (N'SalePayment',N'Refund',N'ReceivablePayment',N'CashIn',N'CashOut',N'Adjustment')),
+            (N'SalePayment',N'Refund',N'ReceivablePayment',N'PayablePayment',N'OpeningFloat',N'CashIn',N'CashOut',N'Adjustment')),
     CONSTRAINT [CK_WorkSessionMovements_Amount] CHECK ([Amount] <> 0),
     CONSTRAINT [CK_WorkSessionMovements_SaleSource] CHECK (
         ([MovementType] IN (N'SalePayment',N'Refund')

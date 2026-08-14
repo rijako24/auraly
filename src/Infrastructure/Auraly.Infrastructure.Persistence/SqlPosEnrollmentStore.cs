@@ -113,15 +113,19 @@ public sealed class SqlPosEnrollmentStore(
             throw new PosEnrollmentConflictException(
                 "Este equipo ya está asociado a otra sede. Conserva su identidad actual para no invalidar facturas offline pendientes.");
 
-        var material = await technicalKeys.ResolveAsync(
-            new FiscalKeyReference(
-                data.TenantId, data.BusinessId, data.AuthorizationNumber,
-                data.TechnicalKeyVersion, (FiscalEnvironment)data.Environment),
-            cancellationToken)
-            ?? throw new PosEnrollmentValidationException(
+        var material = data.FiscalSeriesId is null
+            ? null
+            : await technicalKeys.ResolveAsync(
+                new FiscalKeyReference(
+                    data.TenantId, data.BusinessId, data.AuthorizationNumber!,
+                    data.TechnicalKeyVersion!, (FiscalEnvironment)data.Environment!.Value),
+                cancellationToken);
+        if (data.FiscalSeriesId is not null && material is null)
+            throw new PosEnrollmentValidationException(
                 "La clave técnica de la resolución no está disponible en el almacenamiento seguro del servidor.");
-        if (!string.Equals(material.SupplierTaxId, data.SupplierTaxId, StringComparison.Ordinal) ||
-            !string.Equals(material.QrValidationUrl, data.QrValidationUrl, StringComparison.Ordinal))
+        if (material is not null &&
+            (!string.Equals(material.SupplierTaxId, data.SupplierTaxId, StringComparison.Ordinal) ||
+             !string.Equals(material.QrValidationUrl, data.QrValidationUrl, StringComparison.Ordinal)))
             throw new PosEnrollmentValidationException(
                 "La configuración fiscal segura no coincide con la resolución asignada.");
 
@@ -153,6 +157,9 @@ public sealed class SqlPosEnrollmentStore(
                 connection, transaction, data, existing, credential,
                 devicePermissions, request.InstallationId, now, cancellationToken);
         }
+        if (data.FiscalSeriesId is not null)
+            await AssignFiscalSeriesAsync(
+                connection, transaction, data, deviceId, cancellationToken);
         var receiptDocumentSeries = await EnsureReceiptDocumentSeriesAsync(
             connection, transaction, data.BusinessId, deviceId,
             documentSeries.SeriesCode, idGenerator.NewId(), now, cancellationToken);
@@ -165,12 +172,13 @@ public sealed class SqlPosEnrollmentStore(
             data.UserId, data.UserDisplayName,
             devicePermissions.Order(StringComparer.Ordinal).ToArray(),
             documentSeries,
-            new PosEnrollmentFiscalSeries(
-                data.FiscalSeriesId, data.FiscalAuthorizationId, data.FiscalPrefix,
-                data.AuthorizationNumber, data.FiscalRangeStart, data.FiscalRangeEnd,
-                data.ValidUntil, data.Environment, data.SupplierTaxId,
-                new string(material.TechnicalKey.Reveal()), data.TechnicalKeyVersion,
-                data.QrValidationUrl),
+            material is null ? null : new PosEnrollmentFiscalSeries(
+                data.FiscalSeriesId!.Value, data.FiscalAuthorizationId!.Value,
+                data.FiscalPrefix!, data.AuthorizationNumber!,
+                data.FiscalRangeStart!.Value, data.FiscalRangeEnd!.Value,
+                data.ValidUntil!.Value, data.Environment!.Value, data.SupplierTaxId!,
+                new string(material.TechnicalKey.Reveal()), data.TechnicalKeyVersion!,
+                data.QrValidationUrl!),
             receiptDocumentSeries,
             offlineLeaseTrust.TrustedPublicKeys,
             now);
@@ -269,16 +277,23 @@ public sealed class SqlPosEnrollmentStore(
             FROM dbo.PosEnrollmentSessions e WITH (UPDLOCK,HOLDLOCK)
             JOIN dbo.Businesses b ON b.BusinessId=e.BusinessId AND b.IsActive=1
             JOIN dbo.Warehouses w ON w.WarehouseId=e.WarehouseId AND w.IsActive=1
-            JOIN dbo.FiscalSeries fs WITH (UPDLOCK,HOLDLOCK)
+            LEFT JOIN dbo.FiscalSeries fs WITH (UPDLOCK,HOLDLOCK)
               ON fs.BusinessId=e.BusinessId AND fs.DocumentType=N'SalesInvoice'
              AND fs.EmitterKind=N'Device' AND fs.IsActive=1
              AND ((@ExistingDeviceId IS NULL AND fs.DeviceId IS NULL)
-               OR (@ExistingDeviceId IS NOT NULL AND fs.DeviceId=@ExistingDeviceId))
-            JOIN dbo.FiscalAuthorizations fa
+               OR (@ExistingDeviceId IS NOT NULL
+                   AND (fs.DeviceId=@ExistingDeviceId OR fs.DeviceId IS NULL)))
+             AND EXISTS (
+                 SELECT 1 FROM dbo.FiscalAuthorizations eligible
+                 WHERE eligible.FiscalAuthorizationId=fs.FiscalAuthorizationId
+                   AND eligible.BusinessId=e.BusinessId
+                   AND eligible.IsActive=1)
+            LEFT JOIN dbo.FiscalAuthorizations fa
               ON fa.FiscalAuthorizationId=fs.FiscalAuthorizationId
              AND fa.BusinessId=e.BusinessId AND fa.IsActive=1
             WHERE e.EnrollmentSessionId=@SessionId
-            ORDER BY fs.CreatedAt,fs.SeriesId;
+            ORDER BY CASE WHEN fs.DeviceId=@ExistingDeviceId THEN 0 ELSE 1 END,
+                     fs.CreatedAt,fs.SeriesId;
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         Add(command, "@SessionId", sessionId);
@@ -291,10 +306,17 @@ public sealed class SqlPosEnrollmentStore(
             reader.GetBoolean(6), reader.GetGuid(7), reader.GetString(8),
             (byte[])reader[9], reader.GetFieldValue<DateTimeOffset>(10),
             reader.IsDBNull(11) ? null : reader.GetFieldValue<DateTimeOffset>(11),
-            reader.GetGuid(12), reader.GetGuid(13), reader.GetString(14),
-            reader.GetInt64(15), reader.GetInt64(16), reader.GetString(17),
-            DateOnly.FromDateTime(reader.GetDateTime(18)), reader.GetByte(19),
-            reader.GetString(20), reader.GetString(21), reader.GetString(22));
+            reader.IsDBNull(12) ? null : reader.GetGuid(12),
+            reader.IsDBNull(13) ? null : reader.GetGuid(13),
+            reader.IsDBNull(14) ? null : reader.GetString(14),
+            reader.IsDBNull(15) ? null : reader.GetInt64(15),
+            reader.IsDBNull(16) ? null : reader.GetInt64(16),
+            reader.IsDBNull(17) ? null : reader.GetString(17),
+            reader.IsDBNull(18) ? null : DateOnly.FromDateTime(reader.GetDateTime(18)),
+            reader.IsDBNull(19) ? null : reader.GetByte(19),
+            reader.IsDBNull(20) ? null : reader.GetString(20),
+            reader.IsDBNull(21) ? null : reader.GetString(21),
+            reader.IsDBNull(22) ? null : reader.GetString(22));
     }
 
     private static async Task<string> AllocateSeriesCodeAsync(
@@ -352,12 +374,6 @@ public sealed class SqlPosEnrollmentStore(
             INSERT dbo.DocumentSeriesCursors(DocumentSeriesId,NextConsecutive,UpdatedAt)
             VALUES(@DocumentSeriesId,1,@Now);
 
-            UPDATE dbo.FiscalSeries
-            SET DeviceId=@DeviceId
-            WHERE SeriesId=@FiscalSeriesId AND EmitterKind=N'Device'
-              AND DeviceId IS NULL AND IsActive=1;
-            IF @@ROWCOUNT<>1 THROW 51001,'The fiscal device series is no longer available.',1;
-
             UPDATE dbo.PosEnrollmentSessions
             SET RedeemedAt=@Now,DeviceId=@DeviceId
             WHERE EnrollmentSessionId=@SessionId AND RedeemedAt IS NULL;
@@ -374,7 +390,6 @@ public sealed class SqlPosEnrollmentStore(
             Add(command, "@DocumentSeriesId", documentSeriesId);
             Add(command, "@BusinessId", data.BusinessId);
             Add(command, "@SeriesCode", seriesCode);
-            Add(command, "@FiscalSeriesId", data.FiscalSeriesId);
             Add(command, "@Now", now);
             Add(command, "@SessionId", data.SessionId);
             await command.ExecuteNonQueryAsync(cancellationToken);
@@ -391,6 +406,28 @@ public sealed class SqlPosEnrollmentStore(
             Add(permissionCommand, "@Now", now);
             await permissionCommand.ExecuteNonQueryAsync(cancellationToken);
         }
+    }
+
+    private static async Task AssignFiscalSeriesAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Provisioning data,
+        Guid deviceId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            UPDATE dbo.FiscalSeries
+            SET DeviceId=@DeviceId
+            WHERE SeriesId=@FiscalSeriesId
+              AND EmitterKind=N'Device'
+              AND IsActive=1
+              AND (DeviceId IS NULL OR DeviceId=@DeviceId);
+            IF @@ROWCOUNT<>1
+                THROW 51001,'The fiscal device series is no longer available.',1;
+            """, connection, transaction);
+        Add(command, "@DeviceId", deviceId);
+        Add(command, "@FiscalSeriesId", data.FiscalSeriesId!.Value);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task<PosEnrollmentDocumentSeries> EnsureReceiptDocumentSeriesAsync(
@@ -478,15 +515,15 @@ public sealed class SqlPosEnrollmentStore(
         byte[] CodeHash,
         DateTimeOffset ExpiresAt,
         DateTimeOffset? RedeemedAt,
-        Guid FiscalSeriesId,
-        Guid FiscalAuthorizationId,
-        string FiscalPrefix,
-        long FiscalRangeStart,
-        long FiscalRangeEnd,
-        string AuthorizationNumber,
-        DateOnly ValidUntil,
-        byte Environment,
-        string SupplierTaxId,
-        string TechnicalKeyVersion,
-        string QrValidationUrl);
+        Guid? FiscalSeriesId,
+        Guid? FiscalAuthorizationId,
+        string? FiscalPrefix,
+        long? FiscalRangeStart,
+        long? FiscalRangeEnd,
+        string? AuthorizationNumber,
+        DateOnly? ValidUntil,
+        byte? Environment,
+        string? SupplierTaxId,
+        string? TechnicalKeyVersion,
+        string? QrValidationUrl);
 }

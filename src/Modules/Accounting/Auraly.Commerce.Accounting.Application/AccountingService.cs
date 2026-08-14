@@ -5,6 +5,10 @@ namespace Auraly.Commerce.Accounting.Application;
 
 public interface IAccountingStore
 {
+    Task<IReadOnlyList<AccountingAccountView>> ListAccountsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
+    Task<IReadOnlyList<AccountingCostCenterView>> ListCostCentersAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
+    Task<IReadOnlyList<AccountingPeriodView>> ListPeriodsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
+    Task<IReadOnlyList<AccountingMappingView>> ListMappingsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
     Task<AccountingAccountView> CreateAccountAsync(AccountingUserIdentity user, CreateAccountingAccountRequest request, CancellationToken cancellationToken);
     Task<AccountingCostCenterView> CreateCostCenterAsync(AccountingUserIdentity user, CreateCostCenterRequest request, CancellationToken cancellationToken);
     Task<AccountingPeriodView> CreatePeriodAsync(AccountingUserIdentity user, CreateAccountingPeriodRequest request, CancellationToken cancellationToken);
@@ -17,6 +21,34 @@ public interface IAccountingStore
 
 public sealed class AccountingService(IAccountingStore store)
 {
+    public Task<IReadOnlyList<AccountingAccountView>> ListAccountsAsync(
+        AccountingUserIdentity user, CancellationToken cancellationToken = default)
+    {
+        Demand(user, AccountingPermissionCodes.Read);
+        return store.ListAccountsAsync(user, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<AccountingCostCenterView>> ListCostCentersAsync(
+        AccountingUserIdentity user, CancellationToken cancellationToken = default)
+    {
+        Demand(user, AccountingPermissionCodes.Read);
+        return store.ListCostCentersAsync(user, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<AccountingPeriodView>> ListPeriodsAsync(
+        AccountingUserIdentity user, CancellationToken cancellationToken = default)
+    {
+        Demand(user, AccountingPermissionCodes.Read);
+        return store.ListPeriodsAsync(user, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<AccountingMappingView>> ListMappingsAsync(
+        AccountingUserIdentity user, CancellationToken cancellationToken = default)
+    {
+        Demand(user, AccountingPermissionCodes.Read);
+        return store.ListMappingsAsync(user, cancellationToken);
+    }
+
     public Task<AccountingAccountView> CreateAccountAsync(AccountingUserIdentity user, CreateAccountingAccountRequest request, CancellationToken cancellationToken = default)
     {
         Demand(user, AccountingPermissionCodes.Configure);
@@ -56,6 +88,8 @@ public sealed class AccountingService(IAccountingStore store)
         if (request.TenantId != user.TenantId || request.AccountId == Guid.Empty || request.BusinessId is { } businessId && businessId != user.BusinessId)
             throw new AccountingForbiddenException("The mapping is outside the authenticated scope.");
         ValidateText(request.Category, 64, "Accounting category");
+        if (!AccountingCategories.IsSupported(request.Category.Trim()))
+            throw new AccountingValidationException("The accounting category is not supported.");
         if (request.EffectiveTo < request.EffectiveFrom)
             throw new AccountingValidationException("The mapping validity range is invalid.");
         return store.SetMappingAsync(user, request with { Category = request.Category.Trim() }, cancellationToken);

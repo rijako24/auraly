@@ -51,9 +51,10 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         Assert.Equal(
             fixture.OfflineLeasePublicKeyPem,
             package.OfflineLeaseTrustedPublicKeys![ServerSliceFixture.OfflineLeaseKeyId]);
-        Assert.Equal(ServerSliceFixture.TechnicalKeyValue, package.FiscalSeries.TechnicalKey);
+        var fiscal = Assert.IsType<PosEnrollmentFiscalSeries>(package.FiscalSeries);
+        Assert.Equal(ServerSliceFixture.TechnicalKeyValue, fiscal.TechnicalKey);
         Assert.NotEqual(Guid.Empty, package.DocumentSeries.SeriesId);
-        Assert.Equal(fiscalSeriesId, package.FiscalSeries.SeriesId);
+        Assert.Equal(fiscalSeriesId, fiscal.SeriesId);
         Assert.Contains("catalog.sync", package.Permissions);
         Assert.Contains(CommercePermissionCodes.SalesCreate, package.Permissions);
 

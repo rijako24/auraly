@@ -1,3 +1,5 @@
+using Auraly.Application.DocumentProcessing;
+using Auraly.Domain.WorkSessions;
 using Auraly.Contracts.WorkSessions;
 
 namespace Auraly.Application.WorkSessions;
@@ -30,9 +32,33 @@ public interface IWorkSessionStore
         WorkSessionIdentity identity,
         Guid workSessionId,
         CancellationToken cancellationToken);
+    Task<IReadOnlyList<CashMovementReasonView>> ListCashReasonsAsync(
+        WorkSessionIdentity identity,
+        Guid businessId,
+        string? direction,
+        CancellationToken cancellationToken);
+
+    Task<CashMovementReasonView> UpsertCashReasonAsync(
+        WorkSessionIdentity identity,
+        CashMovementReasonDefinition reason,
+        CancellationToken cancellationToken);
+
+    Task<CashMovementReasonDefinition?> FindCashReasonAsync(
+        WorkSessionIdentity identity,
+        Guid businessId,
+        Guid reasonId,
+        CancellationToken cancellationToken);
+
+    Task<CashMovementAcceptance> AcceptCashMovementAsync(
+        WorkSessionIdentity identity,
+        string idempotencyKey,
+        CashMovement movement,
+        CancellationToken cancellationToken);
 }
 
-public sealed class WorkSessionService(IWorkSessionStore store)
+public sealed class WorkSessionService(
+    IWorkSessionStore store,
+    IDocumentProcessingSignalPublisher signalPublisher)
 {
     public Task<WorkSessionView?> CurrentAsync(
         WorkSessionIdentity identity,
@@ -54,6 +80,9 @@ public sealed class WorkSessionService(IWorkSessionStore store)
         if (request.DeviceId == Guid.Empty)
             throw new WorkSessionValidationException(
                 "DeviceId must be null or a valid identifier.");
+        if (request.OpeningCash < 0)
+            throw new WorkSessionValidationException(
+                "Opening cash cannot be negative.");
         return store.OpenOrResumeAsync(identity, request, cancellationToken);
     }
 
@@ -127,6 +156,107 @@ public sealed class WorkSessionService(IWorkSessionStore store)
         if (workSessionId == Guid.Empty)
             throw new WorkSessionValidationException("WorkSessionId is required.");
         return store.GetClosureAsync(identity, workSessionId, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<CashMovementReasonView>> ListCashReasonsAsync(
+        WorkSessionIdentity identity,
+        Guid businessId,
+        string? direction,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(identity, WorkSessionPermissionCodes.Read);
+        if (businessId == Guid.Empty)
+            throw new WorkSessionValidationException("BusinessId is required.");
+        var normalizedDirection = NullIfWhiteSpace(direction);
+        if (normalizedDirection is not null &&
+            !CashMovementDirections.IsSupported(normalizedDirection))
+            throw new WorkSessionValidationException(
+                "Direction must be In or Out.");
+        return store.ListCashReasonsAsync(
+            identity, businessId, normalizedDirection, cancellationToken);
+    }
+
+    public Task<CashMovementReasonView> UpsertCashReasonAsync(
+        WorkSessionIdentity identity,
+        UpsertCashMovementReasonRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(identity, WorkSessionPermissionCodes.ConfigureCashReasons);
+        if (!Enum.TryParse<CashMovementDirection>(
+                request.Direction, ignoreCase: false, out var direction))
+            throw new WorkSessionValidationException(
+                "Direction must be In or Out.");
+        try
+        {
+            var reason = CashMovementReasonDefinition.Create(
+                request.ReasonId,
+                request.BusinessId,
+                request.Code,
+                request.Name,
+                direction,
+                request.CounterpartAccountingCategory,
+                request.DefaultCostCenterId,
+                request.RequiresReference,
+                request.IsActive);
+            return store.UpsertCashReasonAsync(
+                identity, reason, cancellationToken);
+        }
+        catch (CashMovementRuleException exception)
+        {
+            throw new WorkSessionValidationException(exception.Message);
+        }
+    }
+
+    public async Task<CashMovementAcceptance> ConfirmCashMovementAsync(
+        WorkSessionIdentity identity,
+        string idempotencyKey,
+        ConfirmCashMovementRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(identity, WorkSessionPermissionCodes.ManageCash);
+        if (string.IsNullOrWhiteSpace(idempotencyKey) ||
+            idempotencyKey.Trim().Length > 160)
+            throw new WorkSessionValidationException(
+                "A valid Idempotency-Key header is required.");
+        var reason = await store.FindCashReasonAsync(
+            identity,
+            request.BusinessId,
+            request.ReasonId,
+            cancellationToken)
+            ?? throw new WorkSessionValidationException(
+                "The selected cash movement reason does not exist or is inactive.");
+        CashMovement movement;
+        try
+        {
+            movement = CashMovement.Create(
+                request.DocumentId,
+                request.BusinessId,
+                request.WorkSessionId,
+                reason,
+                request.Amount,
+                request.OccurredAt,
+                request.Reference,
+                request.Notes,
+                request.CostCenterId);
+        }
+        catch (CashMovementRuleException exception)
+        {
+            throw new WorkSessionValidationException(exception.Message);
+        }
+
+        var acceptance = await store.AcceptCashMovementAsync(
+            identity,
+            idempotencyKey.Trim(),
+            movement,
+            cancellationToken);
+        await signalPublisher.PublishAsync(
+            new DocumentProcessingSignal(
+                acceptance.MovementId,
+                request.BusinessId,
+                request.DocumentId,
+                acceptance.DocumentType),
+            cancellationToken);
+        return acceptance;
     }
 
     private static void Demand(WorkSessionIdentity identity, string permission)

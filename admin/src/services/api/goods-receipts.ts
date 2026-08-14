@@ -153,6 +153,7 @@ export const goodsReceiptsApi = {
     receivedAt: string; createsPayable: boolean; dueDate: string | null;
     currencyCode: string; notes: string | null; lines: GoodsReceiptLine[];
     draftConcurrencyToken: string | null;
+    withholdingConceptCode: string | null; withholdingJurisdictionCode: string | null;
   }) => apiClient.postIdempotent<GoodsReceiptAcceptance>(
     "/commerce/v1/goods-receipts/confirm", request, `goods-receipt-${request.documentId}`,
   ),

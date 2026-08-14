@@ -31,7 +31,8 @@ public sealed class ExternalCustomerReconciliationRabbitMqTests(ServerSliceFixtu
         var options = new RabbitMqProcessingOptions(
             rabbitConnection,
             $"unused-documents-{suffix}",
-            $"unused-fiscal-{suffix}");
+            $"unused-fiscal-{suffix}",
+            $"unused-accounting-{suffix}");
         await using var connection = new RabbitMqProcessingConnection(options);
         using var service = new ExternalCustomerReconciliationRabbitMqHostedService(
             connection,

@@ -62,30 +62,7 @@ public sealed class PosEdgeEnrollmentStore(
                 package.WarehouseAllowsNegativeStock.ToString(),
             ["PosEdge:UserId"] = package.InitialUserId.ToString("D"),
             ["PosEdge:UserDisplayName"] = package.InitialUserDisplayName,
-            ["PosEdge:SupplierTaxId"] = package.FiscalSeries.SupplierTaxId,
             ["PosEdge:SecretKeyDirectory"] = keyDirectory,
-            ["PosEdge:Fiscal:ProtectedTechnicalKey"] =
-                PosEdgeProtectedSecret.ProtectTechnicalKey(
-                    keyDirectory, package.FiscalSeries.TechnicalKey),
-            ["PosEdge:Fiscal:TechnicalKeyVersion"] =
-                package.FiscalSeries.TechnicalKeyVersion,
-            ["PosEdge:Fiscal:Environment"] =
-                ((FiscalEnvironment)package.FiscalSeries.Environment).ToString(),
-            ["PosEdge:Fiscal:QrValidationUrl"] =
-                package.FiscalSeries.QrValidationUrl,
-            ["PosEdge:Fiscal:SeriesId"] =
-                package.FiscalSeries.SeriesId.ToString("D"),
-            ["PosEdge:Fiscal:FiscalAuthorizationId"] =
-                package.FiscalSeries.FiscalAuthorizationId.ToString("D"),
-            ["PosEdge:Fiscal:Prefix"] = package.FiscalSeries.Prefix,
-            ["PosEdge:Fiscal:AuthorizationNumber"] =
-                package.FiscalSeries.AuthorizationNumber,
-            ["PosEdge:Fiscal:RangeStart"] =
-                package.FiscalSeries.RangeStart.ToString(),
-            ["PosEdge:Fiscal:RangeEnd"] =
-                package.FiscalSeries.RangeEnd.ToString(),
-            ["PosEdge:Fiscal:ValidUntil"] =
-                package.FiscalSeries.ValidUntil.ToString("yyyy-MM-dd"),
             ["PosEdge:Documents:SalesInvoice:SeriesId"] =
                 package.DocumentSeries.SeriesId.ToString("D"),
             ["PosEdge:Documents:SalesInvoice:Prefix"] =
@@ -117,6 +94,29 @@ public sealed class PosEdgeEnrollmentStore(
                     Path.GetDirectoryName(Path.GetFullPath(databasePath))!,
                     "receipts")
         };
+        if (package.FiscalSeries is { } fiscal)
+        {
+            values["PosEdge:SupplierTaxId"] = fiscal.SupplierTaxId;
+            values["PosEdge:Fiscal:ProtectedTechnicalKey"] =
+                PosEdgeProtectedSecret.ProtectTechnicalKey(
+                    keyDirectory, fiscal.TechnicalKey);
+            values["PosEdge:Fiscal:TechnicalKeyVersion"] =
+                fiscal.TechnicalKeyVersion;
+            values["PosEdge:Fiscal:Environment"] =
+                ((FiscalEnvironment)fiscal.Environment).ToString();
+            values["PosEdge:Fiscal:QrValidationUrl"] = fiscal.QrValidationUrl;
+            values["PosEdge:Fiscal:SeriesId"] = fiscal.SeriesId.ToString("D");
+            values["PosEdge:Fiscal:FiscalAuthorizationId"] =
+                fiscal.FiscalAuthorizationId.ToString("D");
+            values["PosEdge:Fiscal:Prefix"] = fiscal.Prefix;
+            values["PosEdge:Fiscal:AuthorizationNumber"] =
+                fiscal.AuthorizationNumber;
+            values["PosEdge:Fiscal:RangeStart"] = fiscal.RangeStart.ToString();
+            values["PosEdge:Fiscal:RangeEnd"] = fiscal.RangeEnd.ToString();
+            values["PosEdge:Fiscal:ValidUntil"] =
+                fiscal.ValidUntil.ToString("yyyy-MM-dd");
+        }
+
         foreach (var key in package.OfflineLeaseTrustedPublicKeys ??
                  new Dictionary<string, string>(StringComparer.Ordinal))
             values[$"PosEdge:OfflineLeaseTrust:TrustedPublicKeys:{key.Key}"] = key.Value;

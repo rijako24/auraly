@@ -75,5 +75,6 @@ public sealed class TenantService(
     }
 
     private static TenantDto MapToDto(Tenant tenant) => new(
-        tenant.TenantId, tenant.Name, tenant.Email, tenant.IsActive, tenant.CreatedAt, tenant.Businesses?.Count ?? 0);
+        tenant.TenantId, tenant.TenantKey, tenant.Name, tenant.Email, tenant.IsActive,
+        tenant.CreatedAt, tenant.Businesses?.Count ?? 0);
 }
