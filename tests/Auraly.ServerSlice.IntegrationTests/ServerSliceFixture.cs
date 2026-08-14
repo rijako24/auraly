@@ -836,9 +836,11 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             (@ProductId, @BusinessId, 0, N'P-E2E', N'Producto E2E', 10000, N'COP', 1, 1, SYSUTCDATETIME());
 
             INSERT dbo.ProductPrices
-              (ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
+              (ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,
+               TargetMarginPercent,RoundingIncrement,RoundingMode,IsActive,CreatedAt)
             VALUES
-              (NEWID(),@BusinessId,@ProductId,10000,N'COP','2026-01-01',1,SYSDATETIMEOFFSET());
+              (NEWID(),@BusinessId,@ProductId,10000,N'COP','2026-01-01',
+               30,1,N'Nearest',1,SYSDATETIMEOFFSET());
 
             INSERT dbo.Parties
               (PartyId,TenantId,PartyType,DisplayName,LegalName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
