@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { login as sharedLogin } from "./support/auth";
 
 function field(scope: Locator, label: string) {
   return scope.getByText(label, { exact: true }).locator("..");
@@ -12,12 +13,8 @@ async function chooseFirst(page: Page, scope: Locator, label: string) {
   await option.click();
 }
 
-async function login(page: Page, username: string, password: string) {
-  await page.goto("/login");
-  await page.locator("#username").fill(username);
-  await page.locator("#password").fill(password);
-  await page.getByRole("button", { name: "Iniciar sesión" }).click();
-  await expect(page).toHaveURL(/\/dashboard(?:\/|$)/, { timeout: 20_000 });
+async function login(page: Page, tenantKey: string, username: string, password: string) {
+  await sharedLogin(page, { tenantKey, username, password });
 }
 
 function queryScalar(query: string) {
@@ -32,7 +29,10 @@ test("aprovisiona una empresa desde UI, activa la invitación e ingresa como adm
   const adminEmail = `admin-${suffix}@e2e.auraly.test`;
   const password = "AuralyE2E-2026!";
 
-  await login(page, "admin", "Admin123!");
+  const platformTenantKey = process.env.AURALY_E2E_PLATFORM_TENANT_KEY ?? queryScalar(
+    "SELECT t.TenantKey FROM dbo.AppUsers u JOIN dbo.Tenants t ON t.TenantId=u.TenantId WHERE u.NormalizedEmail=N'ADMIN@MIMOSBABYSPA.COM';",
+  );
+  await login(page, platformTenantKey, "admin", "Admin123!");
   await page.goto("/dashboard/tenants/new");
   const main = page.locator("main");
   await field(main, "Razón social").locator("input").fill(`Empresa UI ${suffix} SAS`);
@@ -64,6 +64,10 @@ test("aprovisiona una empresa desde UI, activa la invitación e ingresa como adm
   await expect(page.getByRole("heading", { name: tradeName })).toBeVisible();
 
   const tenantId = page.url().split("/").at(-1)!;
+  const tenantKey = queryScalar(
+    `SELECT TenantKey FROM dbo.Tenants WHERE TenantId='${tenantId}';`,
+  );
+  expect(tenantKey).toMatch(/^@/);
   const token = queryScalar(`SELECT TOP(1) JSON_VALUE(Payload,'$.activationToken') FROM dbo.TenantProvisioningOutboxMessages WHERE TenantId='${tenantId}' AND Type=N'TenantAdministratorInvitation' ORDER BY OccurredAt DESC;`);
   expect(token).toHaveLength(64);
   expect(queryScalar(`SELECT CONCAT((SELECT COUNT(*) FROM dbo.Businesses WHERE TenantId='${tenantId}'),'|',(SELECT COUNT(*) FROM dbo.Warehouses w JOIN dbo.Businesses b ON b.BusinessId=w.BusinessId WHERE b.TenantId='${tenantId}' AND w.Code IN(N'VEN',N'PED')),'|',(SELECT COUNT(*) FROM dbo.AppRoles WHERE TenantId='${tenantId}' AND Name IN(N'Cajero',N'Supervisor',N'Administrativo',N'Administrador')),'|',(SELECT COUNT(*) FROM dbo.Customers c JOIN dbo.Parties p ON p.PartyId=c.PartyId WHERE p.TenantId='${tenantId}' AND p.DisplayName=N'Consumidor final'));`)).toBe("1|2|4|1");
@@ -75,7 +79,7 @@ test("aprovisiona una empresa desde UI, activa la invitación e ingresa como adm
   await page.getByRole("button", { name: "Activar cuenta" }).click();
   await expect(page.getByRole("heading", { name: "Tu empresa está lista" })).toBeVisible({ timeout: 20_000 });
   await page.getByRole("link", { name: "Ir a iniciar sesión" }).click();
-  await login(page, adminEmail, password);
+  await login(page, tenantKey, adminEmail, password);
   await expect(page.getByRole("link", { name: "Tenants", exact: true })).toHaveCount(0);
   await page.getByRole("link", { name: "Negocios", exact: true }).click();
   await expect(page.getByText("Sede principal E2E", { exact: true }).first()).toBeVisible({ timeout: 20_000 });

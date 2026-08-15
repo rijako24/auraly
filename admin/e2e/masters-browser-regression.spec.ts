@@ -1,15 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
-
-const user = process.env.AURALY_E2E_USERNAME ?? "admin2222";
-const password = process.env.AURALY_E2E_PASSWORD ?? "Admin123!";
-
-async function login(page: Page) {
-  await page.goto("/login");
-  await page.locator("#username").fill(user);
-  await page.locator("#password").fill(password);
-  await page.getByRole("button", { name: /Iniciar sesi.n/ }).click();
-  await expect(page).toHaveURL(/\/dashboard(?:\/|$)/, { timeout: 20_000 });
-}
+import { expect, test } from "@playwright/test";
+import { login } from "./support/auth";
 
 test.describe.serial("maestros administrables desde la interfaz", () => {
   test.setTimeout(120_000);

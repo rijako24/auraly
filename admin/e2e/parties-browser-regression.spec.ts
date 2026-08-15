@@ -1,20 +1,11 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { login } from "./support/auth";
 
 type Role = "Cliente" | "Proveedor" | "Vendedor" | "Transportador";
-const user = process.env.AURALY_E2E_USERNAME ?? "admin2222";
-const password = process.env.AURALY_E2E_PASSWORD ?? "Admin123!";
-
 function field(scope: Locator, label: string) {
   return scope.getByText(label, { exact: true }).locator("..");
 }
 
-async function login(page: Page) {
-  await page.goto("/login");
-  await page.locator("#username").fill(user);
-  await page.locator("#password").fill(password);
-  await page.getByRole("button", { name: /Iniciar sesi.n/ }).click();
-  await expect(page).toHaveURL(/\/dashboard(?:\/|$)/, { timeout: 20_000 });
-}
 
 async function selectFirst(page: Page, dialog: Locator, label: string) {
   const combo = field(dialog, label).getByRole("combobox");
