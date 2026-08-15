@@ -234,6 +234,8 @@ public sealed class ServerSliceArchitectureTests
             root, "infrastructure", "azure", "main.bicep"));
         var program = File.ReadAllText(Path.Combine(
             root, "src", "API", "Auraly.Api", "Program.cs"));
+        var deploymentScript = File.ReadAllText(Path.Combine(
+            root, "infrastructure", "azure", "Deploy-Auraly.ps1"));
 
         Assert.Contains("name: 'auraly-document-processing'", template, StringComparison.Ordinal);
         Assert.Contains("name: 'auraly-fiscal-processing'", template, StringComparison.Ordinal);
@@ -256,6 +258,14 @@ public sealed class ServerSliceArchitectureTests
         Assert.Contains("Auraly__PosSynchronization__WebPubSub__Endpoint", template,
             StringComparison.Ordinal);
         Assert.Contains("resource staticAdminSettings", template, StringComparison.Ordinal);
+        Assert.Contains("Microsoft.Communication/communicationServices@2025-09-01", template,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("Microsoft.Communication/communicationServices@2025-05-01", template,
+            StringComparison.Ordinal);
+        Assert.Contains("staticSites/config@2025-03-01' = if (deployStaticAdminSettings)", template,
+            StringComparison.Ordinal);
+        Assert.Contains("deployStaticAdminSettings = $Mode -ne 'WhatIf'", deploymentScript,
+            StringComparison.Ordinal);
         Assert.Contains("AURALY_API_URL", template, StringComparison.Ordinal);
         Assert.Contains("apiApp.properties.defaultHostName", template, StringComparison.Ordinal);
         Assert.Contains("WebPubSub:Endpoint for managed identity", program,

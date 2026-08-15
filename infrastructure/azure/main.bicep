@@ -34,6 +34,7 @@ param releaseVersion string
 @minLength(64)
 @maxLength(64)
 param posInstallerSha256 string
+param deployStaticAdminSettings bool = true
 param maximumFunctionInstances int = 20
 param seedAppConfiguration bool = false
 
@@ -89,7 +90,7 @@ resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' 
   location: location
   tags: tags
 }
-resource emailService 'Microsoft.Communication/emailServices@2025-05-01' = {
+resource emailService 'Microsoft.Communication/emailServices@2025-09-01' = {
   name: emailServiceName
   location: 'global'
   tags: tags
@@ -98,7 +99,7 @@ resource emailService 'Microsoft.Communication/emailServices@2025-05-01' = {
   }
 }
 
-resource emailDomain 'Microsoft.Communication/emailServices/domains@2025-05-01' = {
+resource emailDomain 'Microsoft.Communication/emailServices/domains@2025-09-01' = {
   parent: emailService
   name: 'AzureManagedDomain'
   location: 'global'
@@ -109,7 +110,7 @@ resource emailDomain 'Microsoft.Communication/emailServices/domains@2025-05-01' 
   }
 }
 
-resource communicationService 'Microsoft.Communication/communicationServices@2025-05-01' = {
+resource communicationService 'Microsoft.Communication/communicationServices@2025-09-01' = {
   name: communicationServiceName
   location: 'global'
   tags: tags
@@ -733,7 +734,7 @@ resource staticAdmin 'Microsoft.Web/staticSites@2023-12-01' = {
   }
 }
 
-resource staticAdminSettings 'Microsoft.Web/staticSites/config@2023-12-01' = {
+resource staticAdminSettings 'Microsoft.Web/staticSites/config@2025-03-01' = if (deployStaticAdminSettings) {
   parent: staticAdmin
   name: 'appsettings'
   properties: {
