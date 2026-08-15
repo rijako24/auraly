@@ -252,7 +252,6 @@ finally {
     $SqlAdministratorPassword = $null
     $JwtSecret = $null
     $FiscalSecretProtectionKey = $null
-    $PosInstallerSha256 = $null
     if (Test-Path -LiteralPath $temporaryPath) {
         Remove-Item -LiteralPath $temporaryPath -Recurse -Force
     }
