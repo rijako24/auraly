@@ -10,16 +10,13 @@ public sealed class ProductAliasAdminService : IProductAliasAdminService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IProductAliasService _aliases;
-    private readonly IAuditService _auditService;
 
     public ProductAliasAdminService(
         IUnitOfWork unitOfWork,
-        IProductAliasService aliases,
-        IAuditService auditService)
+        IProductAliasService aliases)
     {
         _unitOfWork = unitOfWork;
         _aliases = aliases;
-        _auditService = auditService;
     }
 
     public async Task<IReadOnlyList<ProductAliasDto>> GetByProductAsync(
@@ -48,13 +45,6 @@ public sealed class ProductAliasAdminService : IProductAliasAdminService
         var oldState = (await _aliases.GetByProductAsync(businessId, productId, ct))
             .SingleOrDefault(alias => alias.ProductAliasId == productAliasId);
         var result = await _aliases.ReviewAsync(businessId, productId, productAliasId, request, ct);
-        await _auditService.LogAsync(
-            request.Action == ProductAliasReviewAction.Approve ? "Approve" : "Reject",
-            "ProductAlias",
-            productAliasId.ToString(),
-            oldState,
-            result,
-            ct);
         return result;
     }
 
@@ -70,13 +60,6 @@ public sealed class ProductAliasAdminService : IProductAliasAdminService
         var oldState = (await _aliases.GetByProductAsync(businessId, productId, ct))
             .SingleOrDefault(alias => alias.ProductAliasId == productAliasId);
         var result = await _aliases.PromoteAsync(businessId, productId, productAliasId, request, ct);
-        await _auditService.LogAsync(
-            "Promote",
-            "ProductAlias",
-            productAliasId.ToString(),
-            oldState,
-            result,
-            ct);
         return result;
     }
 

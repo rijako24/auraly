@@ -12,12 +12,10 @@ namespace Auraly.Platform.Application.Identity.Services;
 public sealed class ProductAdminService : IProductAdminService
 {
     private readonly IUnitOfWork _unitOfWork;
-    private readonly IAuditService _auditService;
 
-    public ProductAdminService(IUnitOfWork unitOfWork, IAuditService auditService)
+    public ProductAdminService(IUnitOfWork unitOfWork)
     {
         _unitOfWork = unitOfWork;
-        _auditService = auditService;
     }
 
     public async Task<PagedResponse<ProductDto>> GetPagedByBusinessIdAsync(
@@ -78,13 +76,6 @@ public sealed class ProductAdminService : IProductAdminService
         await _unitOfWork.SaveChangesAsync(ct);
 
         var updated = MapToDto(product);
-        await _auditService.LogAsync(
-            request.IsActive ? "Activate" : "Deactivate",
-            "Product",
-            product.ProductId.ToString(),
-            oldState,
-            updated,
-            ct);
 
         return updated;
     }
@@ -111,8 +102,11 @@ public sealed class ProductAdminService : IProductAdminService
         if (currency.Length != 3 || !currency.All(char.IsLetter))
             throw new DomainValidationException("Currency", "La moneda debe ser un codigo de tres letras.");
 
+        var reference = NormalizeOptional(request.Reference);
         var description = NormalizeOptional(request.Description);
         var categoryName = NormalizeOptional(request.CategoryName);
+        if (reference?.Length > 120)
+            throw new DomainValidationException("Reference", "La referencia no puede superar 120 caracteres.");
         if (description?.Length > 2000)
             throw new DomainValidationException("Description", "La descripcion no puede superar 2000 caracteres.");
         if (categoryName?.Length > 150)
@@ -122,6 +116,7 @@ public sealed class ProductAdminService : IProductAdminService
 
         var searchIndexChanged =
             !string.Equals(product.Name, name, StringComparison.Ordinal)
+            || !string.Equals(product.Reference, reference, StringComparison.Ordinal)
             || !string.Equals(product.Description, description, StringComparison.Ordinal)
             || !string.Equals(product.CategoryName, categoryName, StringComparison.Ordinal);
         var productChanged = searchIndexChanged
@@ -135,6 +130,8 @@ public sealed class ProductAdminService : IProductAdminService
             return oldState;
 
         product.Name = name;
+        product.Reference = reference;
+        product.Sku = reference;
         product.Description = description;
         product.CategoryName = categoryName;
         product.UpdatedAt = DateTime.UtcNow;
@@ -148,13 +145,6 @@ public sealed class ProductAdminService : IProductAdminService
         await _unitOfWork.SaveChangesAsync(ct);
 
         var updated = MapToDto(product);
-        await _auditService.LogAsync(
-            "Update",
-            "Product",
-            product.ProductId.ToString(),
-            oldState,
-            updated,
-            ct);
 
         return updated;
     }
@@ -252,7 +242,6 @@ public sealed class ProductAdminService : IProductAdminService
         };
         await _unitOfWork.ProductCategories.CreateAsync(category, ct);
         await _unitOfWork.SaveChangesAsync(ct);
-        await _auditService.LogAsync("Create", "ProductCategory", category.ProductCategoryId.ToString(), null, category, ct);
         var updated = await _unitOfWork.ProductCategories.ListAsync(businessId, true, ct);
         return MapCategoryTree(updated).Single(item => item.ProductCategoryId == category.ProductCategoryId);
     }
@@ -282,7 +271,6 @@ public sealed class ProductAdminService : IProductAdminService
         if (!string.Equals(oldName, name, StringComparison.Ordinal))
             await _unitOfWork.Products.UpdateCategoryNameAsync(businessId, productCategoryId, name, ct);
         await _unitOfWork.SaveChangesAsync(ct);
-        await _auditService.LogAsync("Update", "ProductCategory", productCategoryId.ToString(), oldName, category, ct);
         var updated = await _unitOfWork.ProductCategories.ListAsync(businessId, true, ct);
         return MapCategoryTree(updated).Single(item => item.ProductCategoryId == productCategoryId);
     }
@@ -391,5 +379,6 @@ public sealed class ProductAdminService : IProductAdminService
         p.UpdatedAt,
         p.LastSyncedAt,
         p.ProductCode,
-        areaName);
+        areaName,
+        p.Reference);
 }

@@ -1,455 +1,143 @@
-# Decisión: Auraly como aplicación de escritorio
+# Decisión: entrada única Web/POS Edge e instalador genérico
 
-**Estado:** incluido en el Commerce MVP  
-**Plataforma inicial:** Windows  
-**Objetivo:** que Caja y Backoffice puedan instalarse y abrirse como una
-aplicación del sistema, conservando una única interfaz y lógica web.
-
----
+**Estado:** decisión vigente del Commerce MVP
+**Plataforma local inicial:** Windows
+**Principio:** una sola experiencia funcional, dos capacidades de ejecución.
 
 ## 1. Decisión
 
-Auraly tendrá dos superficies:
+La ruta `/pos` es la entrada única. El usuario no elige entre dos productos ni recibe un instalador preparado para una empresa.
+
+- En navegador, Auraly trabaja online contra la API y el motor documental central.
+- En una instalación Auraly POS, la misma interfaz usa POS Edge, SQLite, periféricos y sincronización durable para operar sin conexión.
+- Ambos modos comparten contratos, permisos, reglas fiscales, numeración y motor contable; no existen dos implementaciones del negocio.
+
+No es técnicamente seguro ni posible que una página web instale silenciosamente ejecutables, servicios, controladores o una base local. Por eso Auraly detecta capacidades: deja vender online y ofrece instalar el modo resistente cuando el usuario autorizado configura su puesto.
+
+## 2. Flujo canónico
+
+### Acceso genérico
+
+1. El usuario abre Auraly o `/pos`.
+2. Si no existe tenant en la URL, el login solicita empresa, usuario y contraseña. El ejemplo de empresa es `@auraly`.
+3. Si el enlace contiene el tenant key, por ejemplo `?tenant=@auraly`, el campo empresa aparece resuelto y no se puede editar.
+4. Un login correcto recuerda el tenant key en ese dispositivo. Un intento fallido nunca reemplaza el valor recordado.
+5. El tenant key es inmutable después de crear la empresa. La aplicación puede copiar un enlace empresarial, pero no modificar la clave.
+
+La identidad sigue siendo única dentro de un tenant, no globalmente. Correo, nombre de usuario e identificación pueden repetirse en empresas diferentes.
+
+### Preparación del punto de venta
+
+1. La API resuelve las sedes, bodegas y cajas permitidas para el usuario autenticado.
+2. El usuario selecciona el contexto operativo.
+3. Se elige solamente `Factura electrónica` o `Comprobante de venta`.
+4. `Comprobante de venta` entra directamente a vender.
+5. `Factura electrónica` abre la configuración fiscal mínima requerida y no habilita la emisión hasta validarla.
+6. Dentro de la caja, el selector de documento existente permite cambiar. Si se cambia de comprobante a factura, el mismo diálogo solicita la configuración fiscal faltante.
+
+No se agrega un asistente fiscal paralelo ni estados duplicados.
+
+### Descarga e instalación
+
+Después del login y de conocer el contexto operativo, Auraly comprueba si POS Edge está disponible:
+
+- si está disponible, continúa con la inicialización y sincronización local;
+- si no está disponible, muestra una tarjeta de instalación y permite seguir vendiendo online;
+- la descarga obtiene de una única API autenticada la versión, URL HTTPS y SHA-256 del instalador publicado;
+- el instalador es genérico: no contiene tenant, usuario, contraseña, token, sede ni caja;
+- al abrir Auraly POS, el login determina el tenant y el enrolamiento autorizado asocia el dispositivo con sede, bodega y caja;
+- una actualización preserva la base SQLite y la identidad protegida del dispositivo.
+
+El resumen de aprovisionamiento de una empresa usa exactamente la misma fuente del instalador. No existe un segundo endpoint ni una descarga binaria a través del proxy JSON del frontend.
+
+## 3. Responsabilidades
 
 ```text
-Auraly Desktop     aplicación instalada; principal para POS
-Auraly Web         navegador; disponible para administración
+Interfaz React compartida
+  ├─ navegador: API online
+  └─ Auraly Desktop: API local de POS Edge
+                         ├─ SQLite y outbox durable
+                         ├─ impresión y cajón
+                         ├─ identidad offline protegida
+                         └─ sincronización push con el servidor
+
+API Auraly
+  └─ motor documental
+       ├─ operación e inventario
+       ├─ fiscal
+       └─ contabilidad
 ```
 
-No son dos productos funcionales. Ambos ejecutan el mismo frontend, contratos y
-permisos.
+El navegador no intenta emular capacidades locales. POS Edge no implementa otro motor contable ni accede directamente a SQL Server central.
 
-La caja se opera desde `Auraly Desktop`:
+## 4. Operación online y offline
 
-- icono en Inicio/escritorio;
-- ventana propia sin barra del navegador;
-- instalación y actualización controladas;
-- inicio de sesión;
-- soporte offline y almacenamiento local;
-- integración con Auraly POS Edge;
-- identificación permanente del dispositivo;
-- asociación segura a una caja y bodega.
+### Navegador online
 
-Un usuario administrativo también puede instalarla en modo Backoffice, sin caja.
+- el servidor es autoritativo;
+- los borradores y documentos se procesan por la API;
+- si se pierde conexión antes de confirmar, la interfaz conserva únicamente lo que el flujo online soporte de manera explícita;
+- no se promete continuidad offline sin POS Edge.
 
----
+### POS instalado
 
-## 2. Tecnología recomendada
+- el catálogo, identidad autorizada, consecutivos y documentos necesarios se guardan localmente;
+- confirmar una venta escribe documento, numeración y outbox en una sola transacción SQLite;
+- la sincronización es idempotente y llega al mismo motor del servidor;
+- Web PubSub notifica cambios; no reemplaza la outbox ni la reconciliación por cursor;
+- reiniciar la aplicación no pierde ventas confirmadas ni trabajo durable.
 
-Para el MVP Windows:
+“Siempre local” aplica solamente al puesto instalado. Forzarlo en cualquier navegador crearía una promesa imposible de cumplir y una superficie de seguridad mayor.
 
-```text
-Auraly.Desktop             host .NET
-WebView2                   renderiza React
-frontend compartido        mismo código de Auraly Web
-Auraly POS Edge            periféricos/sincronización
-SQLite                     datos POS locales
-```
+## 5. Periféricos
 
-El host es delgado: ventana, assets locales, almacenamiento protegido,
-actualización, activación y comunicación con POS Edge. No contiene reglas de
-precios, facturación, inventario ni fiscalidad.
+POS Edge descubre y persiste configuración por dispositivo:
 
-### Alternativas
+- impresora de tirilla, con ancho de 58 u 80 mm;
+- impresora de carta;
+- apertura de cajón cuando el hardware lo permita;
+- futuras balanza y periféricos mediante adaptadores explícitos.
 
-| Alternativa | Decisión |
+El navegador puede previsualizar o usar el diálogo normal del sistema, pero no imprime silenciosamente. La impresión automática y la apertura de cajón requieren POS Edge.
+
+## 6. Caja y arqueo
+
+Las entradas y salidas de efectivo son movimientos explícitos del turno, con motivo, importe, usuario y hora. Se reflejan en el arqueo y llegan al motor como eventos operativos auditables. La pantalla de caja ofrece botones visibles y atajos `Ctrl+F8` para entrada y `Ctrl+F9` para salida; no se reservan teclas de función solas que puedan interferir con el navegador o el sistema.
+
+## 7. Seguridad
+
+- secretos locales protegidos con mecanismos del sistema operativo;
+- POS Edge escucha únicamente en loopback y valida origen/token de sesión local;
+- enrolamiento revocable y sujeto al cupo de dispositivos del tenant;
+- el tenant y el dispositivo se validan en servidor en cada operación sensible;
+- el instalador no confiere permisos ni autoridad;
+- el SHA-256 publicado permite comprobar integridad y el artefacto debe firmarse antes de producción.
+
+## 8. Fallos esperados
+
+| Falla | Comportamiento |
 |---|---|
-| solo PWA instalada | respaldo útil, pero menor control sobre instalación, soporte, almacenamiento y periféricos |
-| Electron | maduro, pero agrega un runtime pesado cuando Windows ya ofrece WebView2 |
-| Tauri | liviano, pero introduce Rust innecesariamente |
-| MAUI/Blazor Hybrid | obligaría a cambiar o duplicar el frontend React |
-| UI WPF/WinUI completa | duplicaría pantallas y pruebas |
-
-WebView2 permite experiencia instalada sin construir otra UI.
-
----
-
-## 3. Proyectos
-
-```text
-src/Desktop/Auraly.Desktop
-src/Desktop/Auraly.Desktop.Contracts
-src/Desktop/Auraly.Desktop.Infrastructure
-src/POS/Auraly.Pos.Edge
-src/POS/Auraly.Pos.LocalStore
-```
-
-Frontend:
-
-```text
-admin/src/features/pos
-admin/src/features/backoffice
-admin/src/platform
-```
-
-Adaptadores:
-
-```text
-IDesktopBridge
-ILocalStore
-IPeripheralGateway
-IConnectivityMonitor
-ISecureSecretStore
-IApplicationUpdater
-IDeviceEnrollmentClient
-```
-
----
-
-## 4. Instalación e inicio
-
-El instalador:
-
-- instala Auraly Desktop;
-- valida WebView2 Runtime;
-- instala POS Edge solo si el perfil lo requiere;
-- crea accesos;
-- registra `auraly://`;
-- registra desinstalador;
-- no solicita secretos del negocio.
-
-Al abrir:
-
-```text
-Splash breve
-  -> verificar assets locales
-  -> cargar instalación
-  -> comprobar compatibilidad
-  -> Login
-  -> restaurar módulo autorizado
-```
-
-Es de instancia única. La segunda apertura lleva al frente la ventana existente.
-Inicio automático con Windows es opcional.
-
----
-
-## 5. Identidades separadas
-
-```text
-InstallationId     instalación de Auraly Desktop
-DeviceId           dispositivo registrado
-CashRegisterId     caja lógica
-WarehouseId        bodega heredada por la caja
-UserId             persona autenticada
-CashSessionId      turno/arqueo abierto
-```
-
-Una persona puede usar varias cajas y una caja varias personas por turnos. El
-dispositivo no es el usuario.
-
----
-
-## 6. Modos
-
-```text
-Backoffice
-PointOfSale
-Hybrid
-```
-
-### Backoffice
-
-- no exige `CashRegisterId`;
-- muestra menú por permisos;
-- normalmente opera online;
-- no descarga catálogo POS ni rangos fiscales;
-- no instala periféricos salvo necesidad.
-
-### PointOfSale
-
-- exige dispositivo enrolado y caja activa;
-- hereda la bodega de la caja;
-- descarga catálogo/precios;
-- recibe numeración;
-- habilita almacenamiento/outbox offline;
-- valida sesión/arqueo;
-- integra periféricos.
-
-### Hybrid
-
-Permite POS y Backoffice en el mismo equipo. Es una capacidad configurada, no otro
-ejecutable.
-
----
-
-## 7. Enrolamiento
-
-Primera apertura:
-
-1. genera `InstallationId` UUIDv7;
-2. recibe URL/entorno;
-3. administrador inicia sesión o usa código temporal;
-4. servidor registra dispositivo;
-5. asigna perfil;
-6. si es POS, asigna una caja existente;
-7. la caja determina la bodega;
-8. descarga configuración, catálogo y numeración;
-9. prueba periféricos.
-
-La caja no se configura escribiendo libremente “Caja 1” en un archivo.
-
-```text
-DeviceCashRegisterAssignment
-  DeviceCashRegisterAssignmentId
-  DeviceId
-  CashRegisterId
-  ValidFromUtc
-  ValidUntilUtc?
-  Status
-  AssignedByUserId
-  RowVersion
-```
-
-Reasignar requiere permiso, conectividad y auditoría. Revocar invalida futuras
-sincronizaciones y asignaciones de números.
-
----
-
-## 8. Login
-
-La app exige autenticación.
-
-### Online
-
-- OIDC/OAuth;
-- access token corto;
-- refresh token protegido;
-- permisos/alcances del servidor;
-- revocación remota.
-
-### Offline
-
-Solo ingresa un usuario que inició online previamente en ese equipo, está
-autorizado para el negocio/caja y tiene credencial offline vigente.
-
-No se guarda su contraseña. Se usa PIN o desbloqueo local contra:
-
-- material cifrado con protección Windows;
-- snapshot firmado de permisos mínimos;
-- expiración configurable;
-- revocación aplicada al reconectar.
-
-Las capacidades que requieren servidor no se habilitan por tener sesión offline.
-
----
-
-## 9. Apertura POS
-
-```text
-validar asignación y bodega
-validar configuración
-validar catálogo y precios
-validar rango de factura
-validar periféricos requeridos
-abrir/seleccionar sesión de caja
-abrir Facturación
-```
-
-Siempre muestra:
-
-```text
-Caja C03 · Bodega Norte · Usuario Ana · Arqueo #... · Online/Offline
-```
-
-Si falta algo crítico, presenta diagnóstico; no abre una venta aparentemente
-funcional.
-
----
-
-## 10. Assets y offline
-
-La aplicación instala una versión firmada del frontend. No descarga
-HTML/JavaScript en cada apertura.
-
-```text
-Desktop shell
-  -> assets React locales
-  -> local store
-  -> API cuando hay red
-```
-
-Así abre aunque Internet, Azure o el servidor on-premise estén temporalmente
-inaccesibles.
-
-La versión de assets y contratos se valida. Una actualización incompatible no se
-aplica en mitad de una venta.
-
----
-
-## 11. POS Edge
-
-```text
-Auraly Desktop
-      |
-      | canal local autenticado
-      v
-Auraly POS Edge
-      +-- balanza
-      +-- impresora
-      +-- cajón
-      +-- lector no-keyboard-wedge
-      +-- SQLite
-```
-
-Se usa named pipe o loopback restringido con token rotatorio, protocolo versionado
-y sin puerto abierto a la red. El lector keyboard wedge escribe directamente en
-la captura.
-
----
-
-## 12. Actualizaciones
-
-- firmadas;
-- canales `Stable`, `Pilot`, `Internal`;
-- descarga en segundo plano;
-- instalación fuera de una factura activa;
-- rollback si falla el arranque;
-- compatibilidad con API/base local.
-
-Cloud usa manifiesto administrado por Auraly. On-premise usa servidor local o
-paquete firmado. La empresa puede controlar la ventana de despliegue.
-
----
-
-## 13. Navegación
-
-```text
-auraly://pos
-auraly://orders/{id}
-auraly://products/{id}
-auraly://sync/status
-```
-
-Todo deep link valida sesión, negocio y permiso, y nunca ejecuta una acción
-destructiva al abrir.
-
----
-
-## 14. Seguridad local
-
-- secretos en almacén protegido;
-- base local protegida/cifrada según amenaza;
-- paquetes y numeración firmados;
-- bloqueo por inactividad;
-- cierre sin borrar outbox;
-- logs sin tokens ni datos de tarjeta;
-- CSP estricta;
-- bridge con comandos permitidos;
-- JavaScript remoto arbitrario bloqueado.
-
-El usuario Windows no obtiene permisos Auraly automáticamente.
-
----
-
-## 15. Cloud y on-premise
-
-```text
-EnvironmentProfile
-  ProfileId
-  DisplayName
-  ApiBaseUrl
-  IdentityAuthority
-  UpdateChannelUrl
-  DeploymentMode
-  TrustPolicy
-```
-
-Cloud viene preconfigurado. On-premise usa paquete/código del servidor del
-cliente. Cambiar entorno exige permiso y logout. No mezcla catálogo, tokens,
-rangos ni outbox.
-
----
-
-## 16. Experiencia sin caja
-
-Un PC administrativo puede:
-
-```text
-abrir Auraly
-iniciar sesión
-ver su menú
-usar Productos, Compras, Inventario, Reportes y Usuarios
-```
-
-No muestra caja, arqueo, rango ni periféricos. El escritorio es distribución, no
-un permiso.
-
----
-
-## 17. Nombre
-
-Producto y ventana:
-
-```text
-Auraly
-```
-
-Un acceso puede llamarse `Auraly POS` si abre directamente la caja, pero sigue
-siendo el mismo producto.
-
-No aparecen Talkio, Auraly, Xion o Pedidos OK en solución, instalador,
-ventana, carpetas nuevas, servicios, protocolo o certificados.
-
----
-
-## 18. Diagnóstico
-
-```text
-versión Desktop/frontend/POS Edge
-entorno
-DeviceId
-CashRegisterId
-última sincronización
-operaciones pendientes
-periféricos
-espacio local
-actualización
-```
-
-Se exporta paquete sanitizado con permiso, sin secretos ni información completa de
-clientes/facturas.
-
----
-
-## 19. Pruebas
-
-- instalación, actualización, rollback y desinstalación;
-- enrolamiento, revocación y reasignación;
-- Backoffice sin caja e Hybrid;
-- login online/offline, expiración y revocación;
-- abrir sin red, vender, cerrar/reabrir y sincronizar;
-- lector, balanza, impresión y cajón;
-- POS Edge detenido/reiniciado;
-- deep links y bridge maliciosos;
-- manipulación/copia de configuración local;
-- clonación de caja;
-- actualización o paquete sin firma.
-
----
-
-## 20. Criterios de aceptación
-
-- se instala y abre como aplicación Windows;
-- no muestra barra ni controles del navegador;
-- comparte React con Auraly Web;
-- POS exige login, dispositivo y `CashRegisterId`;
-- la caja hereda `WarehouseId`;
-- Backoffice funciona instalado sin caja;
-- abre sin Internet con assets locales;
-- no mezcla entornos;
-- POS Edge usa canal local seguro;
-- actualización no interrumpe una venta;
-- usuario ve caja, bodega, sesión y conectividad;
-- no quedan nombres legados.
-
----
-
-## 21. Conclusión
-
-Auraly Desktop entrega una experiencia instalada, similar en comportamiento a una
-app de mensajería, sin duplicar Auraly Web.
-
-Para caja es la superficie operativa completa y offline. Para usuarios no POS es
-una alternativa cómoda al navegador. La diferencia se controla por enrolamiento,
-capacidades y permisos.
+| API no disponible en navegador | informa desconexión y no simula una confirmación |
+| API no disponible con POS Edge | continúa dentro de la capacidad offline provisionada y deja outbox pendiente |
+| POS Edge no está instalado | ofrece descarga y mantiene modo online |
+| instalador no publicado | muestra indisponibilidad, sin enlace roto |
+| impresora no disponible | conserva documento y permite reintentar/reconfigurar |
+| conflicto de enrolamiento o cupo | bloquea el enrolamiento, no la identidad del usuario |
+| versión incompatible | exige actualización antes de usar capacidades locales incompatibles |
+
+## 9. Criterios de aceptación
+
+1. Login genérico y enlaces empresariales llegan a la misma sesión.
+2. El tenant key no se puede editar después de crearlo.
+3. El dispositivo recuerda la última empresa solo tras autenticación correcta.
+4. El instalador descargado no contiene información del tenant.
+5. Navegador y escritorio muestran las mismas opciones autorizadas.
+6. Comprobante entra sin configuración fiscal; factura no entra sin fiscalidad válida.
+7. POS instalado reinicia y conserva SQLite, enrolamiento y outbox.
+8. Impresoras y cajón usan configuración local por dispositivo.
+9. Entrada/salida de efectivo afecta el arqueo y su contabilización exactamente una vez.
+10. La venta sincronizada produce los mismos efectos operativos, fiscales y contables que la venta online.
+
+## 10. Conclusión
+
+La unificación correcta es una sola entrada, una sola interfaz y un solo motor, no pretender que todos los navegadores sean una instalación local. El navegador entrega acceso inmediato online; el instalador genérico agrega continuidad offline y periféricos después de que el login determine el tenant. Así se evita preconfigurar empresas, duplicar endpoints y mantener dos reglas de negocio.

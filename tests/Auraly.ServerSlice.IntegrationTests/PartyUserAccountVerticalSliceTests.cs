@@ -140,6 +140,10 @@ public sealed class PartyUserAccountVerticalSliceTests(ServerSliceFixture fixtur
         var sellerId = Guid.NewGuid();
         var roleId = Guid.NewGuid();
         var suffix = Guid.NewGuid().ToString("N");
+        var username = $"seller-{suffix}";
+        var email = $"seller-{suffix}@auraly.test";
+        var otherTenantId = Guid.NewGuid();
+        var otherTenantUserId = Guid.NewGuid();
         await ExecuteAsync(
             """
             INSERT dbo.Parties(PartyId,TenantId,PartyType,DisplayName,LegalName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
@@ -149,23 +153,34 @@ public sealed class PartyUserAccountVerticalSliceTests(ServerSliceFixture fixtur
             IF NOT EXISTS(SELECT 1 FROM dbo.AppRoles WHERE TenantId=@TenantId AND NormalizedName=N'SELLER')
               INSERT dbo.AppRoles(RoleId,TenantId,Name,NormalizedName,Description,IsActive,IsSystemRole,CreatedAt)
               VALUES(@RoleId,@TenantId,N'Vendedor',N'SELLER',N'Integration seller role',1,0,SYSDATETIMEOFFSET());
+            INSERT dbo.Tenants(TenantId,Name,Email,IsActive,CreatedAt)
+              VALUES(@OtherTenantId,N'Tenant with reusable identity',@OtherTenantEmail,1,SYSUTCDATETIME());
+            INSERT dbo.AppUsers
+              (UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,
+               FirstName,LastName,AccessFailedCount,EmailConfirmed,IsActive,CreatedAt)
+              VALUES(@OtherTenantUserId,@OtherTenantId,@Username,UPPER(@Username),@Email,UPPER(@Email),
+               N'Another',N'Tenant',0,1,1,SYSUTCDATETIME());
             """,
             new SqlParameter("@PartyId", partyId), new SqlParameter("@SellerId", sellerId),
             new SqlParameter("@RoleId", roleId), new SqlParameter("@TenantId", fixture.TenantId),
             new SqlParameter("@BusinessId", fixture.BusinessId), new SqlParameter("@ActorId", fixture.UserId),
-            new SqlParameter("@SellerCode", $"SA-{suffix[..10]}"));
+            new SqlParameter("@SellerCode", $"SA-{suffix[..10]}"),
+            new SqlParameter("@OtherTenantId", otherTenantId),
+            new SqlParameter("@OtherTenantUserId", otherTenantUserId),
+            new SqlParameter("@OtherTenantEmail", $"tenant-{suffix}@auraly.test"),
+            new SqlParameter("@Username", username), new SqlParameter("@Email", email));
 
         using var denied = fixture.CreateAdminClient(PartyPermissionCodes.ManageUserAccounts);
         using var deniedResponse = await denied.PostAsJsonAsync(
             $"/api/commerce/v1/parties/{partyId:D}/seller-access",
-            new { username=$"seller-{suffix}", email=$"seller-{suffix}@auraly.test", password="Seller.2026!", firstName="Sara", lastName="Ventas", phoneNumber="3001234567" });
+            new { username, email, password="Seller.2026!", firstName="Sara", lastName="Ventas", phoneNumber="3001234567" });
         Assert.Equal(HttpStatusCode.Forbidden, deniedResponse.StatusCode);
 
         using var admin = fixture.CreateAdminClient(
             "users.create", "users.assign_role", PartyPermissionCodes.ManageUserAccounts);
         using var response = await admin.PostAsJsonAsync(
             $"/api/commerce/v1/parties/{partyId:D}/seller-access",
-            new { username=$"seller-{suffix}", email=$"seller-{suffix}@auraly.test", password="Seller.2026!", firstName="Sara", lastName="Ventas", phoneNumber="3001234567" });
+            new { username, email, password="Seller.2026!", firstName="Sara", lastName="Ventas", phoneNumber="3001234567" });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(1, await ScalarAsync<int>(
             """

@@ -19,15 +19,15 @@ public class AppUserRepository : IAppUserRepository
             .Include(u => u.Tenant)
             .FirstOrDefaultAsync(u => u.UserId == userId, ct);
 
-    public async Task<AppUser?> GetByUsernameAsync(string normalizedUsername, CancellationToken ct = default) =>
+    public async Task<AppUser?> GetByUsernameAsync(Guid tenantId, string normalizedUsername, CancellationToken ct = default) =>
         await _context.AppUsers
             .Include(u => u.Tenant)
-            .FirstOrDefaultAsync(u => u.NormalizedUsername == normalizedUsername, ct);
+            .FirstOrDefaultAsync(u => u.TenantId == tenantId && u.NormalizedUsername == normalizedUsername, ct);
 
-    public async Task<AppUser?> GetByEmailAsync(string normalizedEmail, CancellationToken ct = default) =>
+    public async Task<AppUser?> GetByEmailAsync(Guid tenantId, string normalizedEmail, CancellationToken ct = default) =>
         await _context.AppUsers
             .Include(u => u.Tenant)
-            .FirstOrDefaultAsync(u => u.NormalizedEmail == normalizedEmail, ct);
+            .FirstOrDefaultAsync(u => u.TenantId == tenantId && u.NormalizedEmail == normalizedEmail, ct);
 
     public async Task<AppUser?> GetByExternalLoginAsync(string provider, string providerKey, CancellationToken ct = default) =>
         await _context.AppUsers

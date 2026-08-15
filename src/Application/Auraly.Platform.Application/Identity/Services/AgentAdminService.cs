@@ -21,7 +21,6 @@ public sealed class AgentAdminService : IAgentAdminService
 
     private readonly IAgentRepository _agentRepository;
     private readonly IUnitOfWork _unitOfWork;
-    private readonly IAuditService _auditService;
     private readonly ICorrelationIdProvider _correlationIdProvider;
     private readonly Auraly.Platform.Application.Services.AgentConfigProviderAccessor _configProvider;
     private readonly ILogger<AgentAdminService> _logger;
@@ -29,14 +28,12 @@ public sealed class AgentAdminService : IAgentAdminService
     public AgentAdminService(
         IAgentRepository agentRepository,
         IUnitOfWork unitOfWork,
-        IAuditService auditService,
         ICorrelationIdProvider correlationIdProvider,
         Auraly.Platform.Application.Services.AgentConfigProviderAccessor configProvider,
         ILogger<AgentAdminService> logger)
     {
         _agentRepository = agentRepository;
         _unitOfWork = unitOfWork;
-        _auditService = auditService;
         _correlationIdProvider = correlationIdProvider;
         _configProvider = configProvider;
         _logger = logger;
@@ -112,8 +109,6 @@ public sealed class AgentAdminService : IAgentAdminService
 
         await _unitOfWork.BusinessInboundContacts.AddAsync(contact, ct);
         await _unitOfWork.SaveChangesAsync(ct);
-
-        await _auditService.LogAsync("Create", nameof(BusinessInboundContact), contact.BusinessInboundContactId.ToString(), null, MapToInboundContactDto(contact), ct);
         _logger.LogInformation(
             "Inbound contact {ContactId} created for business {BusinessId} [CorrelationId: {CorrelationId}]",
             contact.BusinessInboundContactId,
@@ -166,7 +161,6 @@ public sealed class AgentAdminService : IAgentAdminService
 
         var updated = await _unitOfWork.BusinessInboundContacts.GetByIdAsync(contactId, ct) ?? contact;
         var dto = MapToInboundContactDto(updated);
-        await _auditService.LogAsync("Update", nameof(BusinessInboundContact), contactId.ToString(), oldState, dto, ct);
         return dto;
     }
 
@@ -182,7 +176,6 @@ public sealed class AgentAdminService : IAgentAdminService
         contact.UpdatedAt = DateTime.UtcNow;
         await _unitOfWork.BusinessInboundContacts.UpdateAsync(contact, ct);
         await _unitOfWork.SaveChangesAsync(ct);
-        await _auditService.LogAsync("Deactivate", nameof(BusinessInboundContact), contactId.ToString(), oldState, MapToInboundContactDto(contact), ct);
     }
 
     public async Task<AgentDto> CreateAsync(
@@ -225,7 +218,6 @@ public sealed class AgentAdminService : IAgentAdminService
 
         await _agentRepository.AddAsync(agent, ct);
         var dto = MapToDto(agent);
-        await _auditService.LogAsync("Create", nameof(Agent), agent.AgentId.ToString(), null, dto, ct);
         _logger.LogInformation(
             "Draft agent {AgentId} created for business {BusinessId} [CorrelationId: {CorrelationId}]",
             agent.AgentId,
@@ -270,14 +262,6 @@ public sealed class AgentAdminService : IAgentAdminService
             }
         }
 
-        await _auditService.LogAsync(
-            "Update",
-            nameof(Agent),
-            agentId.ToString(),
-            new { settingsJson = oldJson },
-            new { settingsJson },
-            ct);
-
         _logger.LogInformation(
             "Agent {AgentId} settings updated [CorrelationId: {CorrelationId}]",
             agentId, _correlationIdProvider.CorrelationId);
@@ -316,7 +300,6 @@ public sealed class AgentAdminService : IAgentAdminService
         _configProvider().Invalidate(agentId);
 
         var dto = MapToDto(agent);
-        await _auditService.LogAsync("UpdateStatus", nameof(Agent), agentId.ToString(), oldState, new { agent.IsActive }, ct);
         return dto;
     }
 

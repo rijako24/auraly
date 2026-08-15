@@ -779,7 +779,7 @@ Console.WriteLine("  Usa     --trace para ver TurnPlan, operaciones y respuestas
 
 Console.WriteLine("  Usa     pilot-seed-turn-plan para inspeccionar una extraccion real");
 Console.WriteLine("  Usa     eval-seed-extractor para ejecutar una suite de extraccion");
-Console.WriteLine("  Usa     andina, medidental, auraly, mimos, luis o cj para seleccionar el agente interactivo");
+Console.WriteLine("  Usa     andina, medidental, auraly, luis o cj para seleccionar el agente interactivo");
 
 Console.WriteLine();
 
@@ -787,20 +787,20 @@ Console.WriteLine();
 
 var userPhone = CreateTestUserPhone();
 
-var customerName = Environment.GetEnvironmentVariable("TALKIO_CONSOLE_CUSTOMER_NAME");
+var customerName = Environment.GetEnvironmentVariable("AURALY_CONSOLE_CUSTOMER_NAME");
 var recipientPhoneNumberId = Environment.GetEnvironmentVariable(
-    "TALKIO_CONSOLE_RECIPIENT_PHONE_NUMBER_ID")?.Trim();
+    "AURALY_CONSOLE_RECIPIENT_PHONE_NUMBER_ID")?.Trim();
 var singleTurnMode = args.Any(value =>
     value.Equals("single-turn", StringComparison.OrdinalIgnoreCase));
 
 string? singleTurnMessage = null;
 if (singleTurnMode)
 {
-    var encodedMessage = Environment.GetEnvironmentVariable("TALKIO_CONSOLE_MESSAGE_BASE64");
+    var encodedMessage = Environment.GetEnvironmentVariable("AURALY_CONSOLE_MESSAGE_BASE64");
     if (string.IsNullOrWhiteSpace(encodedMessage))
     {
         Console.Error.WriteLine(
-            "TALKIO_CONSOLE_MESSAGE_BASE64 is required in single-turn mode.");
+            "AURALY_CONSOLE_MESSAGE_BASE64 is required in single-turn mode.");
         Environment.ExitCode = 2;
         return;
     }
@@ -812,7 +812,7 @@ if (singleTurnMode)
     }
     catch (FormatException)
     {
-        Console.Error.WriteLine("TALKIO_CONSOLE_MESSAGE_BASE64 is not valid Base64.");
+        Console.Error.WriteLine("AURALY_CONSOLE_MESSAGE_BASE64 is not valid Base64.");
         Environment.ExitCode = 2;
         return;
     }
@@ -1174,7 +1174,7 @@ static bool IsTraceEnabled(string[] args) =>
 
                || a.Equals("trace", StringComparison.OrdinalIgnoreCase))
 
-    || string.Equals(Environment.GetEnvironmentVariable("TALKIO_CONSOLE_TRACE"), "true", StringComparison.OrdinalIgnoreCase);
+    || string.Equals(Environment.GetEnvironmentVariable("AURALY_CONSOLE_TRACE"), "true", StringComparison.OrdinalIgnoreCase);
 
 static ConsoleAgentOptions? ResolveRequestedConsoleAgent(string[] args)
 
@@ -1208,9 +1208,6 @@ static ConsoleAgentOptions? ResolveRequestedConsoleAgent(string[] args)
         if (normalized is "luis" or "luispetit")
 
             return ConsoleAgentOptions.LuisPetit();
-
-        if (normalized is "mimos" or "mimi" or "mimobot")
-            return ConsoleAgentOptions.Mimos();
 
         if (normalized is "auraly" or "aly")
             return ConsoleAgentOptions.Auraly();
@@ -1378,7 +1375,7 @@ static string CreateTestUserPhone()
 
 {
 
-    var configuredPhone = Environment.GetEnvironmentVariable("TALKIO_CONSOLE_PHONE");
+    var configuredPhone = Environment.GetEnvironmentVariable("AURALY_CONSOLE_PHONE");
 
     if (!string.IsNullOrWhiteSpace(configuredPhone))
 
@@ -1416,41 +1413,33 @@ internal sealed record ConsoleAgentOptions(
 
         var businessId = GetGuid(
 
-            "TALKIO_CONSOLE_BUSINESS_ID",
+            "AURALY_CONSOLE_BUSINESS_ID",
 
             defaults.BusinessId.ToString());
 
         var agentId = GetGuid(
 
-            "TALKIO_CONSOLE_AGENT_ID",
+            "AURALY_CONSOLE_AGENT_ID",
 
             defaults.AgentId.ToString());
 
-        var agentName = GetText("TALKIO_CONSOLE_AGENT_NAME", defaults.AgentName);
+        var agentName = GetText("AURALY_CONSOLE_AGENT_NAME", defaults.AgentName);
 
         return new ConsoleAgentOptions(
 
             businessId,
 
-            GetText("TALKIO_CONSOLE_BUSINESS_NAME", defaults.BusinessName),
+            GetText("AURALY_CONSOLE_BUSINESS_NAME", defaults.BusinessName),
 
             agentId,
 
             agentName,
 
-            GetText("TALKIO_CONSOLE_AGENT_DISPLAY_NAME", agentName),
+            GetText("AURALY_CONSOLE_AGENT_DISPLAY_NAME", agentName),
 
-            GetList("TALKIO_CONSOLE_AGENT_ALIASES", string.Join(';', defaults.AgentAliases)));
+            GetList("AURALY_CONSOLE_AGENT_ALIASES", string.Join(';', defaults.AgentAliases)));
 
     }
-
-    public static ConsoleAgentOptions Mimos() => new(
-        Guid.Parse("22222222-2222-2222-2222-222222222222"),
-        "Mimo's Baby Spa",
-        Guid.Empty,
-        "Mimi Bot",
-        "Mimi",
-        ["Mimi Bot", "Mimo Bot"]);
 
     public static ConsoleAgentOptions Auraly() => new(
         Guid.Parse("A0A10000-0000-0000-0000-000000000001"),

@@ -34,7 +34,7 @@ cd scripts
 
 El script abrirá ngrok en una ventana y mostrará:
 - **Callback URL** → copia esta URL
-- **Verify Token** → `mimos-meta-verify-2024`
+- **Verify Token** → `auraly-meta-verify-2024`
 
 ### 3. Configura en Meta for Developers
 
@@ -42,7 +42,7 @@ El script abrirá ngrok en una ventana y mostrará:
 2. **WhatsApp** → **Configuración**
 3. **Configurar webhooks**
 4. Callback URL: pega la URL que te mostró el script
-5. Verify Token: `mimos-meta-verify-2024`
+5. Verify Token: `auraly-meta-verify-2024`
 6. **Verificar y guardar**
 7. **Gestionar** → suscríbete a **messages**
 
@@ -51,7 +51,7 @@ El script abrirá ngrok en una ventana y mostrará:
 | Campo | Valor |
 |-------|-------|
 | **Callback URL** | `https://[tu-subdominio].ngrok-free.app/api/WhatsAppWebhook` |
-| **Verify Token** | `mimos-meta-verify-2024` |
+| **Verify Token** | `auraly-meta-verify-2024` |
 
 El Verify Token está en `local.settings.json` → `WhatsApp__Webhook__VerifyToken`.
 Puedes cambiarlo; debe coincidir en Meta y en la configuración local.

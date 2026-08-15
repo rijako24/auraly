@@ -63,7 +63,7 @@ public sealed partial class SearchRecipesOperation : IAgentOperation
             timeout.CancelAfter(TimeSpan.FromSeconds(8));
 
             using var request = new HttpRequestMessage(HttpMethod.Get, BuildDuckDuckGoUri(searchQuery));
-            request.Headers.UserAgent.ParseAdd("TalkioAI/1.0 (+https://talkio.ai)");
+            request.Headers.UserAgent.ParseAdd("Auraly/1.0 (+https://github.com/rijako24/auraly)");
 
             using var response = await HttpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
             if (!response.IsSuccessStatusCode)

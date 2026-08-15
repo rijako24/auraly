@@ -55,6 +55,8 @@ CROSS JOIN dbo.Permissions permissionValue
 WHERE roleValue.IsActive=1
   AND (
     roleValue.NormalizedName IN(N'ADMINISTRATOR',N'TENANTADMINISTRATOR')
+      AND (permissionValue.Resource NOT LIKE N'tenants.%' AND permissionValue.Resource NOT LIKE N'platform.%'
+        OR EXISTS(SELECT 1 FROM dbo.Tenants ownerTenant WHERE ownerTenant.TenantId=roleValue.TenantId AND ownerTenant.TenantKey=N'@auraly'))
     OR roleValue.NormalizedName=N'CASHIER' AND permissionValue.Resource IN(
       N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read',N'work_sessions.read')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(

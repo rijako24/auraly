@@ -2,7 +2,7 @@
 
 <#
 .SYNOPSIS
-    Configura WhatsApp Cloud API y el webhook para Mimos Baby Spa
+    Configura WhatsApp Cloud API y el webhook para Auraly
 
 .DESCRIPTION
     Este script ayuda a configurar WhatsApp Cloud API mediante la Graph API de Meta:
@@ -44,14 +44,14 @@
     .\Setup-WhatsAppCloud.ps1 `
         -AppId "1234567890123456" `
         -AppSecret "tu-app-secret" `
-        -WebhookUrl "https://mimosbabyspa-functions.azurewebsites.net/api/WhatsAppWebhook?code=abc123" `
+        -WebhookUrl "https://auraly-functions.azurewebsites.net/api/WhatsAppWebhook?code=abc123" `
         -VerifyToken "mi-token-secreto"
 
 .EXAMPLE
     .\Setup-WhatsAppCloud.ps1 `
         -AppId "1234567890123456" `
         -AppSecret "tu-app-secret" `
-        -FunctionAppName "mimosbabyspa-functions" `
+        -FunctionAppName "auraly-functions" `
         -ResourceGroupName "Auraly-RG" `
         -VerifyToken "mi-token-secreto" `
         -PhoneNumber "+1234567890"
@@ -62,7 +62,7 @@
         -AppId "1234567890123456" `
         -AppSecret "tu-app-secret" `
         -PhoneNumber "+1234567890" `
-        -FunctionAppName "mimosbabyspa-functions" `
+        -FunctionAppName "auraly-functions" `
         -ResourceGroupName "Auraly-RG" `
         -VerifyToken "mi-token-secreto"
 #>
@@ -106,7 +106,7 @@ $AppSecretPlain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BST
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  Configuración de WhatsApp Cloud API" -ForegroundColor Cyan
-Write-Host "  Mimos Baby Spa" -ForegroundColor Cyan
+Write-Host "  Auraly" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 

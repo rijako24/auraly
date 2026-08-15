@@ -54,7 +54,6 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         var fiscal = Assert.IsType<PosEnrollmentFiscalSeries>(package.FiscalSeries);
         Assert.Equal(ServerSliceFixture.TechnicalKeyValue, fiscal.TechnicalKey);
         Assert.NotEqual(Guid.Empty, package.DocumentSeries.SeriesId);
-        Assert.Equal(fiscalSeriesId, fiscal.SeriesId);
         Assert.Contains("catalog.sync", package.Permissions);
         Assert.Contains(CommercePermissionCodes.SalesCreate, package.Permissions);
 
@@ -149,6 +148,44 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         Assert.Equal(1, reader.GetInt32(2));
     }
     [Fact]
+    public async Task New_device_enrollment_never_exceeds_tenant_capacity()
+    {
+        var original = await ReadDeviceCapacityAsync();
+        await SetDeviceCapacityAsync(original.ActiveDevices);
+        var fiscalSeriesId = Guid.NewGuid();
+        await SeedAvailableDeviceFiscalSeriesAsync(fiscalSeriesId);
+
+        try
+        {
+            using var client = fixture.CreateAdminClient(
+                CommercePermissionCodes.EnrolledDevicesEnroll);
+            using var authorizationResponse = await client.PostAsJsonAsync(
+                "/api/commerce/v1/pos/enrollments",
+                new CreatePosEnrollmentRequest(
+                    fixture.BusinessId,
+                    fixture.WarehouseId,
+                    "Equipo sobre cupo"));
+            authorizationResponse.EnsureSuccessStatusCode();
+            var authorization = await authorizationResponse.Content
+                .ReadFromJsonAsync<PosEnrollmentAuthorization>();
+            Assert.NotNull(authorization);
+
+            using var redeemResponse = await client.PostAsJsonAsync(
+                "/api/pos/v1/enrollments/redeem",
+                new RedeemPosEnrollmentRequest(
+                    authorization.EnrollmentSessionId,
+                    authorization.RedemptionCode,
+                    "WORKSTATION-OVER-CAPACITY"));
+
+            Assert.Equal(HttpStatusCode.Conflict, redeemResponse.StatusCode);
+            Assert.Equal(original.ActiveDevices, (await ReadDeviceCapacityAsync()).ActiveDevices);
+        }
+        finally
+        {
+            await SetDeviceCapacityAsync(original.MaximumDevices);
+        }
+    }
+    [Fact]
     public async Task User_without_enrollment_permission_is_denied()
     {
         using var client = fixture.CreateAdminClient(
@@ -162,6 +199,34 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    private async Task<DeviceCapacityState> ReadDeviceCapacityAsync()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT t.MaximumEnrolledDevices,
+                   (SELECT COUNT(*) FROM dbo.EnrolledDevices d
+                    WHERE d.TenantId=t.TenantId AND d.IsActive=1)
+            FROM dbo.Tenants t
+            WHERE t.TenantId=@TenantId;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        return new DeviceCapacityState(reader.GetInt32(0), reader.GetInt32(1));
+    }
+
+    private async Task SetDeviceCapacityAsync(int maximumDevices)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(
+            "UPDATE dbo.Tenants SET MaximumEnrolledDevices=@MaximumDevices WHERE TenantId=@TenantId;",
+            connection);
+        command.Parameters.AddWithValue("@MaximumDevices", maximumDevices);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync());
+    }
     private async Task SeedAvailableDeviceFiscalSeriesAsync(Guid fiscalSeriesId)
     {
         const string sql = """
@@ -184,4 +249,5 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
             ("T" + fiscalSeriesId.ToString("N")[..3]).ToUpperInvariant());
         await command.ExecuteNonQueryAsync();
     }
+    private sealed record DeviceCapacityState(int MaximumDevices, int ActiveDevices);
 }

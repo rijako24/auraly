@@ -12,9 +12,11 @@ import { PageError } from "@/components/ui/page-error";
 import type { Tenant } from "@/types/entities";
 import { formatDate } from "@/lib/utils";
 import { useTenants } from "@/hooks/use-tenants";
+import { useAuthStore } from "@/stores/auth-store";
 
 export default function TenantsPage() {
   const { data, isLoading, isError, refetch } = useTenants();
+  const canCreateTenant = useAuthStore((state) => state.user?.permissions.includes("tenants.create") ?? false);
   const tenants = data?.items ?? [];
   const columns: ColumnDef<Tenant>[] = useMemo(() => [
     { accessorKey: "name", header: "Nombre", cell: ({ row }) => <div className="font-medium">{row.original.name}</div> },
@@ -34,7 +36,7 @@ export default function TenantsPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div><h1 className="text-2xl font-semibold tracking-tight">Tenants</h1><p className="text-muted-foreground">Gestiona las organizaciones que usan la plataforma</p></div>
-        <Button asChild><Link href="/dashboard/tenants/new"><Plus className="mr-2 h-4 w-4" />Nuevo Tenant</Link></Button>
+        {canCreateTenant && <Button asChild><Link href="/dashboard/tenants/new"><Plus className="mr-2 h-4 w-4" />Nuevo Tenant</Link></Button>}
       </div>
       <DataTable columns={columns} data={tenants} searchKey="name" searchPlaceholder="Buscar por nombre..." enableRowSelection={false} />
     </div>

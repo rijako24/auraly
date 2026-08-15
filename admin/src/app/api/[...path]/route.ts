@@ -71,19 +71,23 @@ async function proxy(
       body: body || undefined,
     });
 
-    const data = await res.text();
-    const contentType = res.headers.get("Content-Type") || "application/json";
-
-    if (!res.ok) {
-      return new NextResponse(data, {
-        status: res.status,
-        headers: { "Content-Type": contentType },
-      });
+    const responseHeaders = new Headers();
+    for (const name of [
+      "content-type",
+      "content-disposition",
+      "content-length",
+      "cache-control",
+      "accept-ranges",
+      "etag",
+      "last-modified",
+    ]) {
+      const value = res.headers.get(name);
+      if (value) responseHeaders.set(name, value);
     }
 
-    return new NextResponse(data, {
+    return new NextResponse(res.body, {
       status: res.status,
-      headers: { "Content-Type": contentType },
+      headers: responseHeaders,
     });
   } catch (error) {
     console.error("[api/proxy]", method, path, error);

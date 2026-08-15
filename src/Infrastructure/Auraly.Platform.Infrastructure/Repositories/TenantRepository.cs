@@ -21,6 +21,11 @@ public class TenantRepository : ITenantRepository
         return tenant;
     }
 
+    public Task<Tenant?> GetByIdForCapacityUpdateAsync(Guid tenantId, CancellationToken ct = default) =>
+        _context.Tenants
+            .FromSqlInterpolated($"SELECT * FROM dbo.Tenants WITH (UPDLOCK,HOLDLOCK) WHERE TenantId={tenantId}")
+            .SingleOrDefaultAsync(ct);
+
     public async Task<(IReadOnlyList<Tenant> Items, int TotalCount)> GetPagedAsync(int page, int pageSize, string? search, CancellationToken ct = default)
     {
         var query = _context.Tenants

@@ -36,8 +36,7 @@ Alias legado: Aduana
 No deben aparecer en proyectos, namespaces, clases, tablas, endpoints ni nuevas variables:
 
 ```text
-Talkio
-Auraly
+Nombres comerciales ajenos a Auraly
 Xion
 PedidosOK
 EnSa
@@ -621,7 +620,7 @@ en cada tabla si `LegacyEntityMappings` cubre el caso.
 
 CI debe detectar:
 
-- proyectos o namespaces nuevos con Talkio/Mimos/Xion;
+- proyectos o namespaces nuevos con marcas heredadas o Xion;
 - clases nuevas con prefijos `Z`, `S`, `Sl`;
 - `EnSa`, `Aduana` o `CargueDeMercancia` fuera de migración;
 - tablas no registradas en el mapa de propiedad;

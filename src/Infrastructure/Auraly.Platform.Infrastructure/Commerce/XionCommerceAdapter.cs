@@ -435,7 +435,7 @@ public sealed class XionCommerceAdapter :
             Procesado = true,
             NombreCliente = order.CustomerNameSnapshot ?? context.Customer?.Name ?? string.Empty,
             Observacion = string.IsNullOrWhiteSpace(order.Notes)
-                ? $"Creado por Talkio. Ref {order.OrderId:N}"
+                ? $"Creado por Auraly. Ref {order.OrderId:N}"
                 : order.Notes.Trim(),
             TotalPedido = order.Total,
             IdEquipo = settings.EquipoId,

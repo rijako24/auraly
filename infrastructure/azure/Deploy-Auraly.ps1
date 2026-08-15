@@ -32,6 +32,9 @@ param(
 
     [SecureString]$WhatsAppVerifyToken,
 
+    [ValidatePattern('^[0-9A-Fa-f]{64}$')]
+    [string]$PosInstallerSha256,
+
     [switch]$IncludeSharedAudio,
 
     [switch]$SeedAppConfiguration
@@ -201,6 +204,20 @@ try {
     if ($environments.Count -gt 0 -and (-not $JwtSecret -or -not $FiscalSecretProtectionKey -or -not $WhatsAppVerifyToken)) {
         throw 'JwtSecret, FiscalSecretProtectionKey y WhatsAppVerifyToken son obligatorios para desplegar DEV o PROD.'
     }
+    if ($environments.Count -gt 0 -and -not $PosInstallerSha256) {
+        $repositoryRoot = (Resolve-Path (Join-Path $templateRoot '..\..')).Path
+        $manifestPath = Join-Path $repositoryRoot "artifacts\releases\$ReleaseVersion\manifest.json"
+        if (-not (Test-Path -LiteralPath $manifestPath)) {
+            throw "No existe el manifiesto del release $ReleaseVersion para resolver el instalador POS."
+        }
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        $installerName = "auraly-pos-$ReleaseVersion.exe"
+        $installer = $manifest.artifacts | Where-Object name -EQ $installerName | Select-Object -First 1
+        if (-not $installer -or "$($installer.sha256)" -notmatch '^[0-9A-Fa-f]{64}$') {
+            throw "El release no contiene $installerName con SHA-256 válido."
+        }
+        $PosInstallerSha256 = "$($installer.sha256)"
+    }
 
     foreach ($environment in $environments) {
         $groupName = "RG-AURALY-$($environment.ToUpperInvariant())"
@@ -213,6 +230,7 @@ try {
                 environment = $environment
                 location = $Location
                 releaseVersion = $ReleaseVersion
+                posInstallerSha256 = $PosInstallerSha256
                 sqlAdministratorLogin = $SqlAdministratorLogin
                 sqlAdministratorPassword = $SqlAdministratorPassword
                 sqlEntraAdministratorLogin = $SqlEntraAdministratorLogin
@@ -234,6 +252,7 @@ finally {
     $SqlAdministratorPassword = $null
     $JwtSecret = $null
     $FiscalSecretProtectionKey = $null
+    $PosInstallerSha256 = $null
     if (Test-Path -LiteralPath $temporaryPath) {
         Remove-Item -LiteralPath $temporaryPath -Recurse -Force
     }

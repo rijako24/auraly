@@ -44,9 +44,12 @@ public sealed class TenantService(
         tenant.UpdatedAt = DateTime.UtcNow;
         if (maximumUsers is < 1) throw new ArgumentException("El l\u00edmite de usuarios debe ser al menos 1.");
         if (maximumEnrolledDevices is < 0) throw new ArgumentException("El l\u00edmite de cajas no puede ser negativo.");
+        if (maximumUsers < tenant.ActiveUserCount)
+            throw new ConflictException($"El cupo no puede ser menor que los {tenant.ActiveUserCount} usuarios activos actuales.");
+        if (maximumEnrolledDevices < tenant.ActiveEnrolledDeviceCount)
+            throw new ConflictException($"El cupo no puede ser menor que las {tenant.ActiveEnrolledDeviceCount} cajas enroladas actuales.");
         if (maximumUsers.HasValue) tenant.MaximumUsers = maximumUsers.Value;
         if (maximumEnrolledDevices.HasValue) tenant.MaximumEnrolledDevices = maximumEnrolledDevices.Value;
-        unitOfWork.Tenants.Update(tenant);
         await unitOfWork.SaveChangesAsync(ct);
         return MapToDto(tenant);
     }
@@ -57,7 +60,6 @@ public sealed class TenantService(
             ?? throw new NotFoundException(nameof(Tenant), tenantId);
         tenant.IsActive = false;
         tenant.UpdatedAt = DateTime.UtcNow;
-        unitOfWork.Tenants.Update(tenant);
         await unitOfWork.SaveChangesAsync(ct);
         await unitOfWork.Tenants.RevokeActiveAuthenticationSessionsAsync(tenantId, DateTimeOffset.UtcNow, ct);
     }
@@ -68,7 +70,6 @@ public sealed class TenantService(
             ?? throw new NotFoundException(nameof(Tenant), tenantId);
         tenant.IsActive = true;
         tenant.UpdatedAt = DateTime.UtcNow;
-        unitOfWork.Tenants.Update(tenant);
         await unitOfWork.SaveChangesAsync(ct);
 
     }

@@ -13,6 +13,7 @@ public class Product
     public ProductSource Source { get; set; } = ProductSource.Local;
     public string? Sku { get; set; }
     public string? ProductCode { get; set; }
+    public string? Reference { get; set; }
     public string Name { get; set; } = string.Empty;
     public string? Description { get; set; }
     public string? CategoryName { get; set; }

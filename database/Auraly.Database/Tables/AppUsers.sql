@@ -66,18 +66,3 @@ GO
 CREATE INDEX [IX_AppUsers_CreatedByUserId] ON [dbo].[AppUsers] ([CreatedByUserId]);
 
 GO
-
-CREATE TRIGGER [dbo].[TR_AppUsers_EnforceTenantCapacity]
-ON [dbo].[AppUsers]
-AFTER INSERT, UPDATE
-AS
-BEGIN
-    SET NOCOUNT ON;
-    IF EXISTS(
-        SELECT 1
-        FROM dbo.Tenants t
-        JOIN (SELECT DISTINCT TenantId FROM inserted) changed ON changed.TenantId=t.TenantId
-        WHERE (SELECT COUNT_BIG(1) FROM dbo.AppUsers u WHERE u.TenantId=t.TenantId AND u.IsActive=1)>t.MaximumUsers)
-        THROW 51081, N'La organización alcanzó el máximo de usuarios activos permitido. Desactiva un usuario o solicita a Auraly una ampliación de capacidad.', 1;
-END;
-GO

@@ -4,6 +4,8 @@ using Auraly.Contracts.Tenants;
 using Auraly.Application.WorkSessions;
 using Auraly.Contracts.Authentication;
 using Auraly.Infrastructure.Persistence;
+using Auraly.Platform.Application.Identity.DTOs;
+using Auraly.Platform.Application.Identity.Services;
 
 namespace Auraly.Api;
 
@@ -21,6 +23,22 @@ public static class AuthenticationApi
             await HandleInvitation(async () => Results.Ok(
                 await service.AcceptAsync(request, cancellationToken))));
 
+        group.MapPost("/password-recovery/request", async (
+            RequestPasswordRecoveryRequest request,
+            PasswordRecoveryService service,
+            CancellationToken cancellationToken) =>
+            await HandlePasswordRecovery(async () => Results.Accepted(
+                value: await service.RequestAsync(request, cancellationToken))));
+
+        group.MapPost("/password-recovery/confirm", async (
+            ConfirmPasswordRecoveryRequest request,
+            PasswordRecoveryService service,
+            CancellationToken cancellationToken) =>
+            await HandlePasswordRecovery(async () =>
+            {
+                await service.ConfirmAsync(request, cancellationToken);
+                return Results.NoContent();
+            }));
         group.MapPost("/login", async (
             HttpContext context,
             AuthenticationLoginRequest request,
@@ -105,6 +123,14 @@ public static class AuthenticationApi
             : throw new AuthenticationValidationException(
                 $"Header '{AuthenticationDefaults.ClientIdHeader}' is required.");
 
+    private static async Task<IResult> HandlePasswordRecovery(Func<Task<IResult>> action)
+    {
+        try { return await action(); }
+        catch (PasswordRecoveryException exception)
+        {
+            return Results.Problem(exception.Message, statusCode: 400, title: exception.Code);
+        }
+    }
     private static async Task<IResult> HandleInvitation(Func<Task<IResult>> action)
     {
         try

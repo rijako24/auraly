@@ -9,7 +9,7 @@ public class ReleaseLinkSettings
     public const string SectionName = "Release";
 
     /// <summary>
-    /// URL base del API (ej: https://api.mimos.com o la Function App URL).
+    /// URL base del API (ej: https://api.example.com o la Function App URL).
     /// Sin barra final. El path /api/release se concatena.
     /// </summary>
     public string BaseUrl { get; set; } = string.Empty;

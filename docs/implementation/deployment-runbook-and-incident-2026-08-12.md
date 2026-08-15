@@ -15,27 +15,16 @@ El procedimiento evita la secuencia lenta que ocurrió en el primer despliegue:
 publicar, esperar el arranque, descubrir una clave con nombre incorrecto,
 corregir y volver a publicar.
 
-## Topología de mensajes: una sola cola del motor
+## Topología de mensajes: operación, contabilidad y fiscalidad desacopladas
 
-Auraly tiene un solo motor documental ordenado:
+Auraly usa carriles con responsabilidades explícitas; ningún botón de la UI escribe asientos directamente:
 
-- `auraly-document-processing`: única cola del motor; `SessionId = BusinessId`,
-  `MessageId = MovementId`, un documento por mensaje y una ejecución a la vez
-  dentro del negocio. Aplica inventario, costo, cartera, pagos, contabilidad,
-  impuestos y proyecciones operativas.
+- `auraly-document-processing`: cola operacional ordenada. `SessionId = BusinessId`, `MessageId = MovementId`, un documento por mensaje. Procesa inventario, costos, caja, cuentas por cobrar y cuentas por pagar. Al confirmar sus efectos publica de forma durable el trabajo contable requerido.
+- `auraly-accounting-processing`: cola del motor contable. Genera asientos balanceados e idempotentes, PUC, centros de costo, retenciones y proyecciones contables. Un fallo contable se reintenta o va a intervención sin duplicar ni revertir el documento operacional confirmado.
+- `auraly-fiscal-processing`: generación, firma, envío y consulta DIAN. Está separada para que la latencia de un proveedor externo no bloquee operación ni contabilidad.
+- `auraly-external-customer-reconciliation`: convierte clientes externos del bot en `Party/Customer`; no mueve documentos, inventario ni asientos.
 
-Existen dos carriles auxiliares, pero no son motores comerciales:
-
-- `auraly-fiscal-processing`: generación, firma, envío y consulta DIAN. Está
-  separado para que un timeout externo no bloquee el orden operativo ya
-  confirmado. También usa sesión por negocio.
-- `auraly-external-customer-reconciliation`: convierte clientes externos del bot
-  en `Party/Customer`; no mueve documentos ni inventario.
-
-No se deben crear nuevas colas por cada tipo documental. Ventas, entradas,
-conteos, ajustes, traslados, conversiones, averías y devoluciones entran por la
-misma cola `auraly-document-processing`.
-
+No se crean colas por cada tipo documental. Ventas, entradas, conteos, ajustes, traslados, conversiones, averías, devoluciones, entradas y salidas de caja entran por la cola operacional; solo los efectos contables pasan a la cola contable.
 ## Causas encontradas y corrección permanente
 
 | Falla observada | Causa raíz | Protección permanente |
@@ -45,7 +34,7 @@ misma cola `auraly-document-processing`.
 | La protección fiscal detenía el arranque | Faltaba una clave Base64 de 32 bytes | Parámetro Bicep seguro y preflight que valida formato/longitud sin mostrar el valor |
 | JWT no era reconocido | IaC usaba `Jwt__*`; la API usa `Authentication__Jwt__*` | Un único contrato canónico y prueba que prohíbe los nombres anteriores |
 | Service Bus exigía cadena de conexión | El host no reutilizaba la fábrica de identidad administrada | API usa `ServiceBusConnection__fullyQualifiedNamespace` y `clientId`; no se versionan secretos |
-| Las entidades del motor no existían | La infraestructura solo declaraba colas heredadas del bot | Bicep declara la cola del motor y los dos carriles auxiliares con sesiones y DLQ |
+| Las entidades del motor no existían | La infraestructura solo declaraba colas heredadas del bot | Bicep declara las colas operacional, contable y fiscal, más reconciliación externa, con sesiones y DLQ |
 | `az webapp deploy` falló por el certificado del proxy local | Problema del cliente local, no del paquete | La publicación puede usar Kudu autenticado; nunca se desactiva la validación TLS |
 | El primer diagnóstico tomó varios ciclos | No existía contrato de preflight de extremo a extremo | `Test-AuralyDeploymentReadiness.ps1` falla antes de publicar y lista exactamente el dato faltante |
 
@@ -57,7 +46,7 @@ El preflight exige, sin imprimir valores:
 - `AZURE_CLIENT_ID`;
 - `ServiceBusConnection__fullyQualifiedNamespace`;
 - `ServiceBusConnection__clientId`;
-- los nombres de la cola documental y los dos carriles auxiliares;
+- los nombres de las colas operacional, contable y fiscal, más reconciliación externa;
 - `Auraly__Fiscal__SecretProtectionKey` (Base64, 32 bytes);
 - `Authentication__Jwt__Issuer`;
 - `Authentication__Jwt__Audience`;
@@ -126,7 +115,7 @@ Después se promueven los mismos ZIP/DACPAC y se ejecuta:
     -Environment Prod -ReleaseVersion $version
 ```
 
-No se modifica `RG-TALKIOAI-DEV` ni recursos heredados durante esta promoción.
+No se modifica `RG-AURALY-DEV` ni recursos heredados durante esta promoción.
 
 ## Diagnóstico rápido
 
@@ -173,7 +162,7 @@ Fecha de verificacion: 2026-08-12 (America/Bogota).
 - Worker `func-auraly-dev-w5usmo6w`: `Running`, publicado mediante OneDeploy y
   etiquetado con `Release__Version=0.2.0-rc4`.
 - Frontend `proud-moss-0d9cf540f.7.azurestaticapps.net`: `/login` devuelve 200.
-- Service Bus: tres colas activas, con sesiones obligatorias y `MaxDeliveryCount=10`.
+- Service Bus: cuatro colas activas, con sesiones obligatorias y `MaxDeliveryCount=10`.
 - Web PubSub `wps-auraly-dev-w5usmo6w`: `Free_F1`, aprovisionado y con
   autenticacion local deshabilitada.
 - El paquete temporal de OneDeploy y el rol temporal de carga se eliminaron al

@@ -107,7 +107,7 @@ public sealed class ExecutionContextTests(ServerSliceFixture fixture)
                 1_000,
                 250,
                 true,
-                false);
+                true);
 
             using var createdResponse = await client.PutAsJsonAsync(
                 $"/api/commerce/v1/fiscal/configuration?businessId={businessId:D}",
@@ -121,6 +121,8 @@ public sealed class ExecutionContextTests(ServerSliceFixture fixture)
             Assert.Equal(250, created.InitialConsecutive);
             Assert.Equal(250, created.NextConsecutive);
             Assert.True(created.CanSetInitialConsecutive);
+            Assert.True(created.HasOfflineSeriesAvailable);
+            Assert.Equal(0, await CountFiscalSeriesOverlapsAsync(businessId, authorizationNumber));
             await SetInitialFiscalConsecutive(businessId, authorizationNumber, null);
             var incomplete = await client.GetFromJsonAsync<FiscalResolutionConfiguration>(
                 $"/api/commerce/v1/fiscal/configuration?businessId={businessId:D}");
@@ -481,6 +483,34 @@ public sealed class ExecutionContextTests(ServerSliceFixture fixture)
         Assert.Equal(1, await command.ExecuteNonQueryAsync());
     }
 
+    private async Task<int> CountFiscalSeriesOverlapsAsync(
+        Guid businessId,
+        string authorizationNumber)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT COUNT(*)
+            FROM dbo.FiscalSeries candidate
+            JOIN dbo.FiscalSeries other
+              ON other.SeriesId>candidate.SeriesId
+             AND other.BusinessId=candidate.BusinessId
+             AND other.FiscalAuthorizationId=candidate.FiscalAuthorizationId
+             AND other.DocumentType=candidate.DocumentType
+             AND other.Prefix=candidate.Prefix
+             AND other.IsActive=1
+             AND candidate.RangeStart<=other.RangeEnd
+             AND other.RangeStart<=candidate.RangeEnd
+            JOIN dbo.FiscalAuthorizations auth
+              ON auth.FiscalAuthorizationId=candidate.FiscalAuthorizationId
+            WHERE candidate.BusinessId=@BusinessId
+              AND auth.AuthorizationNumber=@AuthorizationNumber
+              AND candidate.IsActive=1;
+            """, connection);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@AuthorizationNumber", authorizationNumber);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
     private async Task DeleteFiscalConfigurationScope(Guid businessId, Guid roleId)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);

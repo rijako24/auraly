@@ -3,7 +3,7 @@
 
 <#
 .SYNOPSIS
-    Despliega toda la infraestructura de Azure para Mimos Baby Spa
+    Despliega toda la infraestructura de Azure para Auraly
 
 .DESCRIPTION
     Este script crea y configura todos los recursos necesarios en Azure:
@@ -128,17 +128,17 @@ $timestamp = Get-Date -Format "yyyyMMdd"
 $uniqueSuffix = (New-Guid).ToString().Substring(0, 8)
 $envSuffix = if ($Environment -ne "prod") { "-$Environment" } else { "" }
 
-$storageAccountName = "mimosbabyspa$($Environment)stg$uniqueSuffix".ToLower().Substring(0, 24)
-$sqlServerName = "mimosbabyspa-sql-$Environment-$uniqueSuffix".ToLower().Substring(0, 63)
+$storageAccountName = "auraly$($Environment)stg$uniqueSuffix".ToLower().Substring(0, 24)
+$sqlServerName = "auraly-sql-$Environment-$uniqueSuffix".ToLower().Substring(0, 63)
 $sqlDatabaseName = "Auraly$envSuffix"
 $functionAppName = if ([string]::IsNullOrEmpty($FunctionAppName)) { 
-    "mimosbabyspa-func-$Environment-$uniqueSuffix".ToLower().Substring(0, 60) 
+    "auraly-func-$Environment-$uniqueSuffix".ToLower().Substring(0, 60)
 } else { 
     $FunctionAppName.ToLower() 
 }
-$openAIServiceName = "mimosbabyspa-openai-$Environment-$uniqueSuffix".ToLower().Substring(0, 60)
-$appInsightsName = "mimosbabyspa-ai-$Environment-$uniqueSuffix".ToLower().Substring(0, 60)
-$appServicePlanName = "mimosbabyspa-plan-$Environment-$uniqueSuffix".ToLower().Substring(0, 60)
+$openAIServiceName = "auraly-openai-$Environment-$uniqueSuffix".ToLower().Substring(0, 60)
+$appInsightsName = "auraly-ai-$Environment-$uniqueSuffix".ToLower().Substring(0, 60)
+$appServicePlanName = "auraly-plan-$Environment-$uniqueSuffix".ToLower().Substring(0, 60)
 
 # Tags para recursos
 $tags = @{
@@ -150,7 +150,7 @@ $tags = @{
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "  Despliegue de Infraestructura Azure" -ForegroundColor Cyan
-Write-Host "  Mimos Baby Spa" -ForegroundColor Cyan
+Write-Host "  Auraly" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Configuración:" -ForegroundColor Yellow

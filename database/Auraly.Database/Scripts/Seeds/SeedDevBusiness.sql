@@ -4,7 +4,7 @@
 
 -- Para el negocio 22222222-2222-2222-2222-222222222222:
 
---   1. Crea usuario admin con rol Administrator asignado al negocio
+--   1. Conserva permisos y rol del tenant de demostración sin crear identidades técnicas
 
 --   2. Crea adjuntos (indicaciones, tÃ©rminos)
 
@@ -174,41 +174,7 @@ ELSE
 
 
 
--- Usuario admin (username Ãºnico por tenant, usar admin2222 para evitar conflicto con admin global)
-
-DECLARE @AdminUsername NVARCHAR(100) = N'admin2222';
-
-DECLARE @AdminEmail NVARCHAR(256) = N'admin2222@mimosbabyspa.com';
-
-
-
-IF @PasswordHash IS NULL
-
-    PRINT N'Usuario admin dev no creado: suministre BootstrapAdminPasswordHash de forma segura.';
-
-ELSE IF NOT EXISTS (SELECT 1 FROM [dbo].[AppUsers] WHERE [TenantId] = @TenantId AND [NormalizedUsername] = UPPER(@AdminUsername))
-
-BEGIN
-
-    SET @AdminUserId = NEWID();
-
-    INSERT INTO [dbo].[AppUsers] ([UserId], [TenantId], [Username], [NormalizedUsername], [Email], [NormalizedEmail], [PasswordHash], [FirstName], [LastName], [AccessFailedCount], [EmailConfirmed], [IsActive], [CreatedAt])
-
-    VALUES (@AdminUserId, @TenantId, @AdminUsername, UPPER(@AdminUsername), @AdminEmail, UPPER(@AdminEmail), @PasswordHash, N'Admin', N'Negocio 2222', 0, 1, 1, GETUTCDATE());
-
-    INSERT INTO [dbo].[UserRoles] ([UserRoleId], [UserId], [RoleId], [BusinessId], [AssignedAt])
-
-    VALUES (NEWID(), @AdminUserId, @AdminRoleId, @BusinessId, GETUTCDATE());
-
-    PRINT N'Usuario admin dev creado y asignado al negocio 22222222.';
-
-END
-
-ELSE
-
-    PRINT N'Usuario admin para tenant ya existe.';
-
-
+-- La identidad administrativa de plataforma se aprovisiona exclusivamente en el tenant @auraly.
 
 -- ============================================================
 

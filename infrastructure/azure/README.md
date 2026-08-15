@@ -41,11 +41,11 @@ La línea base registrada es `0.1.0-rc5`, generada desde el commit `3777f861fd8b
 
 ## Ambiente legado: no borrar
 
-`RG-TALKIOAI-DEV` es el ambiente anterior. Al 10 de agosto de 2026 sigue existiendo y contiene, entre otros, `az-talkioai-dev`, `app-auraly-dev`, la Static Web App `Auraly`, el servidor SQL `talkioai`, la base `auraly-db`, `satalkioaidev` y cuentas antiguas de Azure AI.
+Existe un grupo de recursos anterior, fuera de la infraestructura canónica. No se enumeran aquí sus identificadores para evitar reutilizarlos por error.
 
 Este grupo no forma parte de la infraestructura Auraly nueva y **no debe modificarse ni borrarse** durante un despliegue. Su retiro exige una autorización separada, inventario, respaldo, validación de tráfico y plan de reversión. Ninguno de los scripts de esta carpeta implementa ese retiro.
 
-`PUBLICACION.md` y `docs/azure-functions-flex-onedeploy.md` documentan el ambiente legado; no son el procedimiento vigente para DEV o PROD.
+`PUBLICACION.md` y `docs/azure-functions-flex-onedeploy.md` redirigen a este procedimiento canónico.
 
 ## Requisitos locales
 
@@ -75,7 +75,7 @@ El mismo release debe desplegarse primero en DEV y después en PROD. La versión
 
 ```powershell
 $version = '0.1.0-rc6'
-.\infrastructure\azure\New-AuralyRelease.ps1 -Version $version
+.\infrastructure\azure\New-AuralyRelease.ps1 -Version $version -PosApiUrl 'https://api-auraly-dev-w5usmo6w.azurewebsites.net'
 Get-Content ".\artifacts\releases\$version\manifest.json"
 ```
 
@@ -84,6 +84,7 @@ El script exige un árbol Git limpio, hace restore bloqueado, build determiníst
 - `auraly-function-<version>.zip`
 - `auraly-api-<version>.zip`
 - `auraly-database-<version>.dacpac`
+- `auraly-pos-<version>.exe`, genérico por tenant y configurado únicamente para el ambiente
 - `manifest.json` con commit, herramientas, tamaños y SHA-256
 
 Los releases son inmutables: no se reemplaza una carpeta existente. Para una corrección se crea una versión nueva.
@@ -119,6 +120,20 @@ Para PROD se repiten las últimas tres líneas con `-Scope Prod`. No usar `-Scop
 Si el administrador Entra no puede inferirse desde la sesión, pasar también `-SqlEntraAdministratorLogin` y `-SqlEntraAdministratorObjectId`. Conviene entregar explícitamente una contraseña SQL administrada; si se omite, el script genera una aleatoria que no podrá reutilizarse después para publicar el DACPAC.
 
 ## Desplegar DEV
+
+### Publicar el instalador POS del release
+
+El instalador pertenece al release inmutable y no contiene tenant ni credenciales. Después de aplicar la infraestructura DEV y antes de publicar la API, se carga en el contenedor privado `downloads`; la API lo entrega autenticado y publica su SHA-256:
+
+```powershell
+$installer = ".\artifacts\releases\$version\auraly-pos-$version.exe"
+az storage blob upload --account-name 'stauralydevw5usmo6w' `
+  --container-name 'downloads' --name 'Auraly-POS-Setup.exe' `
+  --file $installer --auth-mode login --overwrite true
+```
+
+`Deploy-Auraly.ps1` toma el SHA-256 del manifiesto y configura `PosInstaller__Version` y `PosInstaller__Sha256`. El preflight rechaza un release sin metadatos íntegros.
+
 
 ### 1. Base de datos DEV
 

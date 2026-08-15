@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-const user = process.env.AURALY_E2E_USERNAME ?? "admin2222";
+const user = process.env.AURALY_E2E_USERNAME ?? "admin";
 const password = process.env.AURALY_E2E_PASSWORD ?? "Admin123!";
 
 async function login(page: Page) {

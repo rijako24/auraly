@@ -13,20 +13,17 @@ namespace Auraly.Platform.Application.Identity.Services;
 public class BusinessAdminService : IBusinessAdminService
 {
     private readonly IUnitOfWork _unitOfWork;
-    private readonly IAuditService _auditService;
     private readonly IBusinessDefaultsProvisioner _defaultsProvisioner;
     private readonly ICorrelationIdProvider _correlationIdProvider;
     private readonly ILogger<BusinessAdminService> _logger;
 
     public BusinessAdminService(
         IUnitOfWork unitOfWork,
-        IAuditService auditService,
         IBusinessDefaultsProvisioner defaultsProvisioner,
         ICorrelationIdProvider correlationIdProvider,
         ILogger<BusinessAdminService> logger)
     {
         _unitOfWork = unitOfWork;
-        _auditService = auditService;
         _defaultsProvisioner = defaultsProvisioner;
         _correlationIdProvider = correlationIdProvider;
         _logger = logger;
@@ -93,8 +90,6 @@ public class BusinessAdminService : IBusinessAdminService
                 ct);
         }, ct);
 
-        await _auditService.LogAsync("Create", "Business", business.BusinessId.ToString(), null, business, ct);
-
         _logger.LogInformation("Business '{Name}' created for tenant {TenantId} [CorrelationId: {CorrelationId}]",
             business.Name, tenantId, _correlationIdProvider.CorrelationId);
 
@@ -124,8 +119,6 @@ public class BusinessAdminService : IBusinessAdminService
         await _unitOfWork.Businesses.UpdateAsync(business);
         await _unitOfWork.SaveChangesAsync(ct);
 
-        await _auditService.LogAsync("Update", "Business", businessId.ToString(), oldState, MapToDto(business), ct);
-
         return MapToDto(business);
     }
 
@@ -141,8 +134,6 @@ public class BusinessAdminService : IBusinessAdminService
         business.UpdatedAt = DateTime.UtcNow;
         await _unitOfWork.Businesses.UpdateAsync(business);
         await _unitOfWork.SaveChangesAsync(ct);
-
-        await _auditService.LogAsync("Deactivate", "Business", businessId.ToString(), null, null, ct);
     }
 
     private async Task<Business> GetBusinessForScopeAsync(

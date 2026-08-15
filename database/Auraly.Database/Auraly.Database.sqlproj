@@ -101,6 +101,7 @@
     <Build Include="Tables\RolePermissions.sql" />
     <Build Include="Tables\UserExternalLogins.sql" />
     <Build Include="Tables\RefreshTokens.sql" />
+    <Build Include="Tables\PasswordResetRequests.sql" />
     <Build Include="Tables\AuthenticationSessions.sql" />
     <Build Include="Tables\OfflineAuthenticationLeases.sql" />
     <Build Include="Tables\AuditLogs.sql" />
@@ -114,8 +115,6 @@
     <Build Include="Tables\SalesInvoiceNumberingConfigurations.sql" />
     <Build Include="Tables\FiscalTechnicalKeySecrets.sql" />
     <Build Include="Tables\FiscalSeries.sql" />
-    <Build Include="Triggers\FiscalSeriesRangeGuard.sql" />
-    <Build Include="Triggers\TenantKeyImmutable.sql" />
 
     <Build Include="Tables\WorkSessions.sql" />
     <Build Include="Tables\WorkSessionClosures.sql" />

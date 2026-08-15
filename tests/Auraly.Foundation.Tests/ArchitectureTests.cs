@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 
 namespace Auraly.Foundation.Tests;
@@ -155,6 +156,43 @@ public sealed class ArchitectureTests
             $"Redundant organization location references:{Environment.NewLine}{string.Join(Environment.NewLine, violations)}");
     }
 
+    [Fact]
+    public void Database_schema_does_not_use_triggers()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var databaseRoot = Path.Combine(repositoryRoot, "database", "Auraly.Database");
+        var triggerDefinition = new Regex(@"\b(?:CREATE|ALTER)\s+TRIGGER\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var violations = Directory.GetFiles(databaseRoot, "*.sql", SearchOption.AllDirectories)
+            .Where(path => triggerDefinition.IsMatch(File.ReadAllText(path)))
+            .Select(path => Path.GetRelativePath(repositoryRoot, path))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.True(violations.Length == 0,
+            $"Los triggers de base de datos están prohibidos; usa servicios transaccionales y auditoría explícita:{Environment.NewLine}{string.Join(Environment.NewLine, violations)}");
+    }
+
+    [Fact]
+    public void Azure_topology_provisions_distinct_operational_accounting_and_fiscal_queues()
+    {
+        var root = FindRepositoryRoot();
+        var bicep = File.ReadAllText(Path.Combine(root, "infrastructure", "azure", "main.bicep"));
+        var readiness = File.ReadAllText(Path.Combine(root, "infrastructure", "azure", "Test-AuralyDeploymentReadiness.ps1"));
+        var queues = new[]
+        {
+            (Name: "auraly-document-processing", Setting: "Auraly__DocumentProcessing__ServiceBus__QueueName"),
+            (Name: "auraly-accounting-processing", Setting: "Auraly__Accounting__ServiceBus__QueueName"),
+            (Name: "auraly-fiscal-processing", Setting: "Auraly__Fiscal__ServiceBus__QueueName")
+        };
+
+        foreach (var queue in queues)
+        {
+            Assert.Contains(queue.Name, bicep, StringComparison.Ordinal);
+            Assert.Contains(queue.Setting, bicep, StringComparison.Ordinal);
+            Assert.Contains(queue.Name, readiness, StringComparison.Ordinal);
+            Assert.Contains(queue.Setting, readiness, StringComparison.Ordinal);
+        }
+    }
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

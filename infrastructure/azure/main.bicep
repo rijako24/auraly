@@ -31,6 +31,9 @@ param whatsAppVerifyToken string
 param whatsAppApiBaseUrl string = 'https://graph.facebook.com/v25.0/'
 
 param releaseVersion string
+@minLength(64)
+@maxLength(64)
+param posInstallerSha256 string
 param maximumFunctionInstances int = 20
 param seedAppConfiguration bool = false
 
@@ -160,6 +163,13 @@ resource deploymentContainer 'Microsoft.Storage/storageAccounts/blobServices/con
   }
 }
 
+resource posInstallerContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobService
+  name: 'downloads'
+  properties: {
+    publicAccess: 'None'
+  }
+}
 resource storageBlobRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(storage.id, identity.id, blobDataOwnerRoleId)
   scope: storage
@@ -318,6 +328,20 @@ resource documentProcessingQueue 'Microsoft.ServiceBus/namespaces/queues@2024-01
   }
 }
 
+resource accountingProcessingQueue 'Microsoft.ServiceBus/namespaces/queues@2024-01-01' = {
+  parent: serviceBus
+  name: 'auraly-accounting-processing'
+  properties: {
+    deadLetteringOnMessageExpiration: true
+    defaultMessageTimeToLive: 'P7D'
+    duplicateDetectionHistoryTimeWindow: 'PT10M'
+    enableBatchedOperations: true
+    lockDuration: 'PT5M'
+    maxDeliveryCount: 10
+    requiresDuplicateDetection: true
+    requiresSession: true
+  }
+}
 resource fiscalProcessingQueue 'Microsoft.ServiceBus/namespaces/queues@2024-01-01' = {
   parent: serviceBus
   name: 'auraly-fiscal-processing'
@@ -587,6 +611,10 @@ resource apiApp 'Microsoft.Web/sites@2024-04-01' = {
           value: documentProcessingQueue.name
         }
         {
+          name: 'Auraly__Accounting__ServiceBus__QueueName'
+          value: accountingProcessingQueue.name
+        }
+        {
           name: 'Auraly__Fiscal__ServiceBus__QueueName'
           value: fiscalProcessingQueue.name
         }
@@ -665,6 +693,22 @@ resource apiApp 'Microsoft.Web/sites@2024-04-01' = {
         {
           name: 'Auraly__Email__SupportEmail'
           value: 'soporte@auralyapp.co'
+        }
+        {
+          name: 'PosInstaller__ContainerName'
+          value: posInstallerContainer.name
+        }
+        {
+          name: 'PosInstaller__BlobName'
+          value: 'Auraly-POS-Setup.exe'
+        }
+        {
+          name: 'PosInstaller__Version'
+          value: releaseVersion
+        }
+        {
+          name: 'PosInstaller__Sha256'
+          value: toUpper(posInstallerSha256)
         }
         {
           name: 'Release__Version'

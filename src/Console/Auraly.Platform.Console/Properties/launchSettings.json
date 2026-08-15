@@ -3,23 +3,23 @@
                      "Medidental":  {
                                                "commandName":  "Project",
                                                "environmentVariables":  {
-                                                                            "TALKIO_CONSOLE_BUSINESS_ID":  "D3E4A700-0000-0000-0000-000000000010",
-                                                                            "TALKIO_CONSOLE_BUSINESS_NAME":  "Medidental",
-                                                                            "TALKIO_CONSOLE_AGENT_ID":  "D3E4A700-0000-0000-0000-000000000020",
-                                                                            "TALKIO_CONSOLE_AGENT_NAME":  "Asistente Medidental",
-                                                                            "TALKIO_CONSOLE_AGENT_DISPLAY_NAME":  "Medidental",
-                                                                            "TALKIO_CONSOLE_AGENT_ALIASES":  "Asistente Medidental;Medidental"
+                                                                            "AURALY_CONSOLE_BUSINESS_ID":  "D3E4A700-0000-0000-0000-000000000010",
+                                                                            "AURALY_CONSOLE_BUSINESS_NAME":  "Medidental",
+                                                                            "AURALY_CONSOLE_AGENT_ID":  "D3E4A700-0000-0000-0000-000000000020",
+                                                                            "AURALY_CONSOLE_AGENT_NAME":  "Asistente Medidental",
+                                                                            "AURALY_CONSOLE_AGENT_DISPLAY_NAME":  "Medidental",
+                                                                            "AURALY_CONSOLE_AGENT_ALIASES":  "Asistente Medidental;Medidental"
                                                                         }
                                            },
                      "Luis Bot":  {
                                       "commandName":  "Project",
                                       "environmentVariables":  {
-                                                                   "TALKIO_CONSOLE_BUSINESS_ID":  "BABA0000-0000-0000-0000-000000000001",
-                                                                   "TALKIO_CONSOLE_BUSINESS_NAME":  "Luis Petit Profesional Barber",
-                                                                   "TALKIO_CONSOLE_AGENT_ID":  "BABA0000-0000-0000-0000-000000000002",
-                                                                   "TALKIO_CONSOLE_AGENT_NAME":  "Luis",
-                                                                   "TALKIO_CONSOLE_AGENT_DISPLAY_NAME":  "Luis",
-                                                                   "TALKIO_CONSOLE_AGENT_ALIASES":  "Luis Petit"
+                                                                   "AURALY_CONSOLE_BUSINESS_ID":  "BABA0000-0000-0000-0000-000000000001",
+                                                                   "AURALY_CONSOLE_BUSINESS_NAME":  "Luis Petit Profesional Barber",
+                                                                   "AURALY_CONSOLE_AGENT_ID":  "BABA0000-0000-0000-0000-000000000002",
+                                                                   "AURALY_CONSOLE_AGENT_NAME":  "Luis",
+                                                                   "AURALY_CONSOLE_AGENT_DISPLAY_NAME":  "Luis",
+                                                                   "AURALY_CONSOLE_AGENT_ALIASES":  "Luis Petit"
                                                                }
                                   }
                  }

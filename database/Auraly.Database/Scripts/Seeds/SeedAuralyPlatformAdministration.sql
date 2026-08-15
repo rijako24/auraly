@@ -1,0 +1,108 @@
+-- Canonical platform identity and authorization boundary for tenant @auraly.
+SET NOCOUNT ON;
+
+DECLARE @AuralyTenantId UNIQUEIDENTIFIER = 'A0A10000-0000-0000-0000-000000000000';
+DECLARE @PlatformRoleId UNIQUEIDENTIFIER;
+DECLARE @AdminUserId UNIQUEIDENTIFIER;
+DECLARE @PasswordHash NVARCHAR(500) = NULLIF(N'$(BootstrapAdminPasswordHash)', N'');
+
+IF NOT EXISTS (SELECT 1 FROM dbo.Tenants WHERE TenantId=@AuralyTenantId AND TenantKey=N'@auraly')
+    THROW 51000, 'SeedAuralyPlatformAdministration requiere el tenant canonico @auraly.', 1;
+
+DECLARE @PlatformPermissions TABLE(Module NVARCHAR(50), Action NVARCHAR(50), Resource NVARCHAR(100), Description NVARCHAR(500));
+INSERT INTO @PlatformPermissions VALUES
+(N'Tenants',N'Read',N'tenants.read',N'Ver tenants'),
+(N'Tenants',N'Create',N'tenants.create',N'Crear tenants'),
+(N'Tenants',N'Update',N'tenants.update',N'Actualizar datos de tenants'),
+(N'Tenants',N'UpdateCapacity',N'tenants.capacity.update',N'Modificar cupos de usuarios y cajas'),
+(N'Tenants',N'UpdateStatus',N'tenants.status.update',N'Activar o inactivar tenants'),
+(N'Tenants',N'ReadUsers',N'tenants.users.read',N'Consultar usuarios de otros tenants'),
+(N'Tenants',N'ManageUsers',N'tenants.users.manage',N'Administrar usuarios de otros tenants'),
+(N'Tenants',N'ReadDevices',N'tenants.devices.read',N'Consultar cajas enroladas de otros tenants'),
+(N'Tenants',N'RevokeDevices',N'tenants.devices.revoke',N'Desenrolar cajas de otros tenants'),
+(N'Platform',N'AssignPermissions',N'platform.permissions.assign',N'Delegar permisos de plataforma');
+
+INSERT dbo.Permissions(PermissionId,Module,Action,Resource,Description,CreatedAt)
+SELECT NEWID(),source.Module,source.Action,source.Resource,source.Description,SYSUTCDATETIME()
+FROM @PlatformPermissions source
+WHERE NOT EXISTS(SELECT 1 FROM dbo.Permissions existing WHERE existing.Resource=source.Resource);
+
+-- Elimina autoridad de plataforma heredada por roles de clientes.
+DELETE assignment
+FROM dbo.RolePermissions assignment
+JOIN dbo.AppRoles roleValue ON roleValue.RoleId=assignment.RoleId
+JOIN dbo.Permissions permissionValue ON permissionValue.PermissionId=assignment.PermissionId
+LEFT JOIN dbo.Tenants tenantValue ON tenantValue.TenantId=roleValue.TenantId
+WHERE (permissionValue.Resource LIKE N'tenants.%' OR permissionValue.Resource LIKE N'platform.%')
+  AND ISNULL(tenantValue.TenantKey,N'')<>N'@auraly';
+
+SELECT @PlatformRoleId=RoleId
+FROM dbo.AppRoles
+WHERE TenantId=@AuralyTenantId AND NormalizedName=N'ADMINISTRATOR';
+
+IF @PlatformRoleId IS NULL
+BEGIN
+    SET @PlatformRoleId=NEWID();
+    INSERT dbo.AppRoles(RoleId,TenantId,Name,NormalizedName,Description,IsActive,IsSystemRole,CreatedAt)
+    VALUES(@PlatformRoleId,@AuralyTenantId,N'Administrador de plataforma',N'ADMINISTRATOR',N'Administración integral y delegable de la plataforma Auraly.',1,1,SYSUTCDATETIME());
+END
+ELSE
+BEGIN
+    UPDATE dbo.AppRoles
+    SET Name=N'Administrador de plataforma',Description=N'Administración integral y delegable de la plataforma Auraly.',IsActive=1,IsSystemRole=1,UpdatedAt=SYSUTCDATETIME()
+    WHERE RoleId=@PlatformRoleId;
+END;
+
+-- El administrador raíz recibe el catálogo completo. Los roles delegados se crean desde la aplicación con subconjuntos.
+INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
+SELECT NEWID(),@PlatformRoleId,permissionValue.PermissionId,SYSUTCDATETIME()
+FROM dbo.Permissions permissionValue
+WHERE NOT EXISTS(SELECT 1 FROM dbo.RolePermissions existing WHERE existing.RoleId=@PlatformRoleId AND existing.PermissionId=permissionValue.PermissionId);
+
+SELECT @AdminUserId=UserId FROM dbo.AppUsers WHERE TenantId=@AuralyTenantId AND NormalizedUsername=N'ADMIN';
+IF @AdminUserId IS NULL AND @PasswordHash IS NULL
+    PRINT N'@auraly/admin no creado: suministre BootstrapAdminPasswordHash de forma segura.';
+ELSE IF @AdminUserId IS NULL
+BEGIN
+    SET @AdminUserId=NEWID();
+    INSERT dbo.AppUsers(UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,PasswordHash,FirstName,LastName,AccessFailedCount,EmailConfirmed,IsActive,CreatedAt)
+    VALUES(@AdminUserId,@AuralyTenantId,N'admin',N'ADMIN',N'admin@auraly.ai',N'ADMIN@AURALY.AI',@PasswordHash,N'Administrador',N'Auraly',0,1,1,SYSUTCDATETIME());
+END
+ELSE
+BEGIN
+    UPDATE dbo.AppUsers SET IsActive=1,AccessFailedCount=0,LockoutEnd=NULL,UpdatedAt=SYSUTCDATETIME() WHERE UserId=@AdminUserId;
+END;
+
+IF @AdminUserId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.UserRoles WHERE UserId=@AdminUserId AND RoleId=@PlatformRoleId AND BusinessId IS NULL)
+    INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt) VALUES(NEWID(),@AdminUserId,@PlatformRoleId,NULL,SYSUTCDATETIME());
+-- Retira sin destruir auditoría cualquier identidad técnica obsoleta llamada admin2222.
+DECLARE @RetiredUsers TABLE(UserId UNIQUEIDENTIFIER PRIMARY KEY);
+INSERT INTO @RetiredUsers(UserId)
+SELECT UserId FROM dbo.AppUsers WHERE NormalizedUsername=N'ADMIN2222';
+
+UPDATE sessionValue
+SET Status=N'Revoked',RevokedAt=SYSUTCDATETIME(),RevocationReason=N'IdentityRetired',UpdatedAt=SYSUTCDATETIME()
+FROM dbo.AuthenticationSessions sessionValue
+JOIN @RetiredUsers retired ON retired.UserId=sessionValue.UserId
+WHERE sessionValue.Status=N'Active';
+
+UPDATE tokenValue
+SET RevokedAt=GETUTCDATE()
+FROM dbo.RefreshTokens tokenValue
+JOIN @RetiredUsers retired ON retired.UserId=tokenValue.UserId
+WHERE tokenValue.RevokedAt IS NULL;
+
+DELETE assignment
+FROM dbo.UserRoles assignment
+JOIN @RetiredUsers retired ON retired.UserId=assignment.UserId;
+
+UPDATE userValue
+SET Username=CONCAT(N'retired-',LEFT(REPLACE(CONVERT(NVARCHAR(36),userValue.UserId),N'-',N''),12)),
+    NormalizedUsername=UPPER(CONCAT(N'retired-',LEFT(REPLACE(CONVERT(NVARCHAR(36),userValue.UserId),N'-',N''),12))),
+    Email=CONCAT(N'retired+',REPLACE(CONVERT(NVARCHAR(36),userValue.UserId),N'-',N''),N'@invalid.auraly.local'),
+    NormalizedEmail=UPPER(CONCAT(N'retired+',REPLACE(CONVERT(NVARCHAR(36),userValue.UserId),N'-',N''),N'@invalid.auraly.local')),
+    IsActive=0,AccessFailedCount=0,LockoutEnd=NULL,UpdatedAt=SYSUTCDATETIME()
+FROM dbo.AppUsers userValue
+JOIN @RetiredUsers retired ON retired.UserId=userValue.UserId;
+PRINT N'SeedAuralyPlatformAdministration: @auraly/admin y permisos de plataforma listos; admin2222 retirado.';
+GO

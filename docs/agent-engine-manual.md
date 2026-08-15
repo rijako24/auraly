@@ -1,6 +1,6 @@
 # Manual Del Motor Agentic
 
-Este documento es una guia estable para entender, cambiar y revisar el motor agentic de Talkio AI. Debe usarse antes de tocar prompts, `Agents.SettingsJson`, tools, flows, seeds, reservas, checkout, pagos, escalaciones o comportamiento conversacional.
+Este documento es una guia estable para entender, cambiar y revisar el motor agentic de Auraly. Debe usarse antes de tocar prompts, `Agents.SettingsJson`, tools, flows, seeds, reservas, checkout, pagos, escalaciones o comportamiento conversacional.
 
 ## Proposito Del Motor
 

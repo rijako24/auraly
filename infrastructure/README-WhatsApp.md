@@ -1,6 +1,6 @@
 # Configuración de WhatsApp Cloud API
 
-Esta guía te ayudará a configurar WhatsApp Cloud API para Mimos Baby Spa usando el script de automatización.
+Esta guía te ayudará a configurar WhatsApp Cloud API para Auraly usando el script de automatización.
 
 ## 📋 Requisitos Previos
 
@@ -29,7 +29,7 @@ Esta guía te ayudará a configurar WhatsApp Cloud API para Mimos Baby Spa usand
 .\Setup-WhatsAppCloud.ps1 `
     -AppId "1234567890123456" `
     -AppSecret (ConvertTo-SecureString "tu-app-secret" -AsPlainText -Force) `
-    -WebhookUrl "https://mimosbabyspa-functions.azurewebsites.net/api/WhatsAppWebhook?code=abc123" `
+    -WebhookUrl "https://auraly-functions.azurewebsites.net/api/WhatsAppWebhook?code=abc123" `
     -VerifyToken "mi-token-secreto-123"
 ```
 
@@ -41,7 +41,7 @@ El script obtendrá automáticamente la URL del webhook desde Azure:
 .\Setup-WhatsAppCloud.ps1 `
     -AppId "1234567890123456" `
     -AppSecret (ConvertTo-SecureString "tu-app-secret" -AsPlainText -Force) `
-    -FunctionAppName "mimosbabyspa-functions" `
+    -FunctionAppName "auraly-functions" `
     -ResourceGroupName "Auraly-RG" `
     -VerifyToken "mi-token-secreto-123"
 ```
@@ -55,7 +55,7 @@ Si ya tienes un número de WhatsApp Business configurado, puedes especificarlo:
     -AppId "1234567890123456" `
     -AppSecret (ConvertTo-SecureString "tu-app-secret" -AsPlainText -Force) `
     -PhoneNumber "+1234567890" `
-    -FunctionAppName "mimosbabyspa-functions" `
+    -FunctionAppName "auraly-functions" `
     -ResourceGroupName "Auraly-RG" `
     -VerifyToken "mi-token-secreto-123"
 ```
@@ -130,7 +130,7 @@ Si ya tienes un número de WhatsApp Business configurado en otra aplicación o c
 
 ```powershell
 az functionapp function keys list `
-    --name mimosbabyspa-functions `
+    --name auraly-functions `
     --resource-group Auraly-RG `
     --function-name WhatsAppWebhook
 ```
@@ -141,7 +141,7 @@ Después de obtener las credenciales, configura la Function App:
 
 ```powershell
 az functionapp config appsettings set `
-    --name mimosbabyspa-functions `
+    --name auraly-functions `
     --resource-group Auraly-RG `
     --settings `
     "WhatsApp:PhoneNumberId=123456789012345" `
@@ -189,7 +189,7 @@ El bot debe responder automáticamente. Si no responde:
 
 ```powershell
 az functionapp log tail `
-    --name mimosbabyspa-functions `
+    --name auraly-functions `
     --resource-group Auraly-RG
 ```
 

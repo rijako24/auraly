@@ -12,69 +12,58 @@ namespace Auraly.Api.Controllers;
 [ApiController]
 [Route("api/v1/users")]
 [Authorize]
-public class UsersController : ControllerBase
+public class UsersController(IUserService userService) : ControllerBase
 {
-    private readonly IUserService _userService;
-
-    public UsersController(IUserService userService)
-    {
-        _userService = userService;
-    }
-
     [HttpGet]
     [PermissionAuthorize("users.read")]
-    public async Task<ActionResult<PagedResponse<UserDto>>> GetAll(
-        [FromQuery] PagedRequest request, [FromQuery] Guid? tenantId, CancellationToken ct)
+    public async Task<ActionResult<PagedResponse<UserDto>>> GetAll([FromQuery] PagedRequest request, [FromQuery] Guid? tenantId, CancellationToken ct)
     {
         var ownTenantId = User.GetTenantId();
         var requestedTenantId = tenantId ?? ownTenantId;
-        if (requestedTenantId != ownTenantId && !User.HasPermission("tenants.read"))
-            throw new ForbiddenException();
-        return Ok(await _userService.GetPagedAsync(requestedTenantId, request, ct));
+        EnsureCrossTenantPermission(requestedTenantId, "tenants.users.read");
+        return Ok(await userService.GetPagedAsync(requestedTenantId, request, ct));
     }
 
     [HttpGet("{userId:guid}")]
     [PermissionAuthorize("users.read")]
     public async Task<ActionResult<UserDto>> GetById(Guid userId, CancellationToken ct)
     {
-        var user = await _userService.GetByIdAsync(userId, ct);
-        EnsureScope(user);
+        var user = await userService.GetByIdAsync(userId, ct);
+        EnsureScope(user, "tenants.users.read");
         return Ok(user);
     }
 
     [HttpPost]
     [PermissionAuthorize("users.create")]
-    public async Task<ActionResult<UserDto>> Create(
-        [FromBody] CreateUserRequest request, CancellationToken ct)
+    public async Task<ActionResult<UserDto>> Create([FromBody] CreateUserRequest request, CancellationToken ct)
     {
-        var result = await _userService.CreateAsync(User.GetTenantId(), request, User.GetUserId(), ct);
+        var result = await userService.CreateAsync(User.GetTenantId(), request, User.GetUserId(), ct);
         return CreatedAtAction(nameof(GetById), new { userId = result.UserId }, result);
     }
 
     [HttpPut("{userId:guid}")]
     [PermissionAuthorize("users.update")]
-    public async Task<ActionResult<UserDto>> Update(
-        Guid userId, [FromBody] UpdateUserRequest request, CancellationToken ct)
+    public async Task<ActionResult<UserDto>> Update(Guid userId, [FromBody] UpdateUserRequest request, CancellationToken ct)
     {
-        await EnsureScopeAsync(userId, ct);
-        return Ok(await _userService.UpdateAsync(userId, request, ct));
+        await EnsureScopeAsync(userId, "tenants.users.manage", ct);
+        return Ok(await userService.UpdateAsync(userId, request, ct));
     }
 
     [HttpPost("{userId:guid}/reset-password")]
     [PermissionAuthorize("users.update")]
-    public async Task<IActionResult> ResetPassword(
-        Guid userId, [FromBody] ResetUserPasswordRequest request, CancellationToken ct)
+    public async Task<IActionResult> ResetPassword(Guid userId, [FromBody] ResetUserPasswordRequest request, CancellationToken ct)
     {
-        await EnsureScopeAsync(userId, ct);
-        await _userService.ResetPasswordAsync(userId, request, ct);
+        await EnsureScopeAsync(userId, "tenants.users.manage", ct);
+        await userService.ResetPasswordAsync(userId, request, ct);
         return NoContent();
     }
+
     [HttpPost("{userId:guid}/deactivate")]
     [PermissionAuthorize("users.delete")]
     public async Task<IActionResult> Deactivate(Guid userId, CancellationToken ct)
     {
-        await EnsureScopeAsync(userId, ct);
-        await _userService.DeactivateAsync(userId, ct);
+        await EnsureScopeAsync(userId, "tenants.users.manage", ct);
+        await userService.DeactivateAsync(userId, ct);
         return NoContent();
     }
 
@@ -82,48 +71,56 @@ public class UsersController : ControllerBase
     [PermissionAuthorize("users.delete")]
     public async Task<IActionResult> Activate(Guid userId, CancellationToken ct)
     {
-        await EnsureScopeAsync(userId, ct);
-        await _userService.ActivateAsync(userId, ct);
+        await EnsureScopeAsync(userId, "tenants.users.manage", ct);
+        await userService.ActivateAsync(userId, ct);
         return NoContent();
     }
 
     [HttpPost("{userId:guid}/roles")]
     [PermissionAuthorize("users.assign_role")]
-    public async Task<IActionResult> AssignRole(
-        Guid userId, [FromBody] AssignRoleRequest request, CancellationToken ct)
+    public async Task<IActionResult> AssignRole(Guid userId, [FromBody] AssignRoleRequest request, CancellationToken ct)
     {
-        await EnsureScopeAsync(userId, ct);
-        await _userService.AssignRoleAsync(userId, request, User.GetUserId(), ct);
+        await EnsureOwnTenantAsync(userId, ct);
+        await userService.AssignRoleAsync(userId, request, User.GetUserId(), ct);
         return NoContent();
     }
 
     [HttpDelete("{userId:guid}/roles/{roleId:guid}")]
     [PermissionAuthorize("users.remove_role")]
-    public async Task<IActionResult> RemoveRole(
-        Guid userId, Guid roleId, [FromQuery] Guid? businessId, CancellationToken ct)
+    public async Task<IActionResult> RemoveRole(Guid userId, Guid roleId, [FromQuery] Guid? businessId, CancellationToken ct)
     {
-        await EnsureScopeAsync(userId, ct);
-        await _userService.RemoveRoleAsync(userId, roleId, businessId, ct);
+        await EnsureOwnTenantAsync(userId, ct);
+        await userService.RemoveRoleAsync(userId, roleId, businessId, User.GetUserId(), ct);
         return NoContent();
     }
 
     [HttpGet("{userId:guid}/permissions")]
     [PermissionAuthorize("users.read")]
-    public async Task<ActionResult<IReadOnlyList<string>>> GetPermissions(
-        Guid userId, [FromQuery] Guid? businessId, CancellationToken ct)
+    public async Task<ActionResult<IReadOnlyList<string>>> GetPermissions(Guid userId, [FromQuery] Guid? businessId, CancellationToken ct)
     {
-        await EnsureScopeAsync(userId, ct);
-        return Ok(await _userService.GetUserPermissionsAsync(userId, businessId, ct));
+        await EnsureScopeAsync(userId, "tenants.users.read", ct);
+        return Ok(await userService.GetUserPermissionsAsync(userId, businessId, ct));
     }
 
-    private async Task EnsureScopeAsync(Guid userId, CancellationToken ct) =>
-        EnsureScope(await _userService.GetByIdAsync(userId, ct));
-
-    private void EnsureScope(UserDto user)
+    private void EnsureCrossTenantPermission(Guid requestedTenantId, string permission)
     {
-        if (user.TenantId == User.GetTenantId() || User.HasPermission("tenants.read"))
-            return;
+        if (requestedTenantId != User.GetTenantId() && !User.HasPermission(permission))
+            throw new ForbiddenException("No puede consultar usuarios de otra organización.");
+    }
 
-        throw new ForbiddenException("No puede administrar usuarios de otra organizaci\u00f3n.");
+    private async Task EnsureScopeAsync(Guid userId, string crossTenantPermission, CancellationToken ct) =>
+        EnsureScope(await userService.GetByIdAsync(userId, ct), crossTenantPermission);
+
+    private async Task EnsureOwnTenantAsync(Guid userId, CancellationToken ct)
+    {
+        var target = await userService.GetByIdAsync(userId, ct);
+        if (target.TenantId != User.GetTenantId())
+            throw new ForbiddenException("Los roles se administran únicamente dentro de la organización que los define.");
+    }
+
+    private void EnsureScope(UserDto user, string crossTenantPermission)
+    {
+        if (user.TenantId == User.GetTenantId() || User.HasPermission(crossTenantPermission)) return;
+        throw new ForbiddenException("No puede administrar usuarios de otra organización.");
     }
 }

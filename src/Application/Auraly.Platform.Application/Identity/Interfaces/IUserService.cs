@@ -13,6 +13,6 @@ public interface IUserService
     Task DeactivateAsync(Guid userId, CancellationToken ct = default);
     Task ActivateAsync(Guid userId, CancellationToken ct = default);
     Task AssignRoleAsync(Guid userId, AssignRoleRequest request, Guid assignedByUserId, CancellationToken ct = default);
-    Task RemoveRoleAsync(Guid userId, Guid roleId, Guid? businessId, CancellationToken ct = default);
+    Task RemoveRoleAsync(Guid userId, Guid roleId, Guid? businessId, Guid actorUserId, CancellationToken ct = default);
     Task<IReadOnlyList<string>> GetUserPermissionsAsync(Guid userId, Guid? businessId = null, CancellationToken ct = default);
 }
