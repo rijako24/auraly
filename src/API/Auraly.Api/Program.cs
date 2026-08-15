@@ -5,6 +5,9 @@ using System.Text;
 using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Accounting.Infrastructure;
 using Auraly.Commerce.Accounting.Contracts;
+using Auraly.Commerce.Taxation.Application;
+using Auraly.Commerce.Taxation.Domain;
+
 using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Application.Authentication;
 using Auraly.Application.Authorization;
@@ -31,6 +34,7 @@ using Auraly.Contracts.Authentication;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.DocumentProcessing;
+using Auraly.Contracts.WorkSessions;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Parties;
 using Auraly.Contracts.Sales;
@@ -130,6 +134,8 @@ builder.Services.AddScoped<IConfirmedDocumentHandler, SqlSalesReceiptDocumentHan
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlGoodsReceiptDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPurchaseReturnDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPayablePaymentDocumentHandler>();
+builder.Services.AddScoped<IConfirmedDocumentHandler, SqlCashReceiptDocumentHandler>();
+builder.Services.AddScoped<IConfirmedDocumentHandler, SqlCashDisbursementDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlReceivablePaymentDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlSalesReturnDocumentHandler>();
 builder.Services.AddScoped<SqlInventoryOperationProcessor>();
@@ -141,9 +147,12 @@ builder.Services.AddScoped<IConfirmedDocumentHandler, SqlProductConversionDocume
 builder.Services.AddScoped<DocumentProcessingEngine>();
 builder.Services.AddScoped<DocumentProcessingWorker>();
 builder.Services.AddScoped<SqlAccountingPostingProcessor>();
-builder.Services.AddScoped<IDocumentProcessingCompletionObserver, SqlAccountingCompletionObserver>();
 builder.Services.AddScoped<IAccountingStore, SqlAccountingStore>();
 builder.Services.AddScoped<AccountingService>();
+builder.Services.AddScoped<IWithholdingRuleStore, SqlWithholdingRuleStore>();
+builder.Services.AddScoped<WithholdingEngine>();
+builder.Services.AddScoped<WithholdingService>();
+builder.Services.AddSingleton<AccountingProcessingCoordinator>();
 builder.Services.AddSingleton<FiscalProcessingCoordinator>();
 builder.Services.AddScoped<ReceivePosSaleService>();
 if (!builder.Environment.IsEnvironment("Testing"))
@@ -158,18 +167,21 @@ if (!builder.Environment.IsEnvironment("Testing"))
             "Auraly:DocumentProcessing:RabbitMq:QueueName"];
         var fiscalQueue = builder.Configuration[
             "Auraly:Fiscal:RabbitMq:QueueName"];
+        var accountingQueue = builder.Configuration[
+            "Auraly:Accounting:RabbitMq:QueueName"];
         var externalCustomerQueue = builder.Configuration[
             "Auraly:ExternalCustomerReconciliation:QueueName"] ??
             "auraly-external-customer-reconciliation";
         if (string.IsNullOrWhiteSpace(rabbitConnection) ||
             string.IsNullOrWhiteSpace(documentQueue) ||
             string.IsNullOrWhiteSpace(fiscalQueue) ||
+            string.IsNullOrWhiteSpace(accountingQueue) ||
             string.IsNullOrWhiteSpace(externalCustomerQueue))
             throw new InvalidOperationException(
-                "RabbitMQ connection and document/fiscal/external-customer queue names are required.");
+                "RabbitMQ connection and document/fiscal/accounting/external-customer queue names are required.");
 
         builder.Services.AddSingleton(new RabbitMqProcessingOptions(
-            rabbitConnection, documentQueue, fiscalQueue));
+            rabbitConnection, documentQueue, fiscalQueue, accountingQueue));
         builder.Services.AddSingleton(
             new ExternalCustomerReconciliationRabbitMqOptions(externalCustomerQueue));
         builder.Services.AddSingleton<RabbitMqProcessingConnection>();
@@ -178,8 +190,12 @@ if (!builder.Environment.IsEnvironment("Testing"))
             provider.GetRequiredService<RabbitMqProcessingTransport>());
         builder.Services.AddSingleton<IFiscalProcessingSignalPublisher>(provider =>
             provider.GetRequiredService<RabbitMqProcessingTransport>());
+        builder.Services.AddSingleton<IAccountingProcessingSignalPublisher>(provider =>
+            provider.GetRequiredService<RabbitMqProcessingTransport>());
         if (builder.Configuration.GetValue("Auraly:Fiscal:Worker:Enabled", true))
             builder.Services.AddHostedService<RabbitMqFiscalProcessingHostedService>();
+        if (builder.Configuration.GetValue("Auraly:Accounting:Worker:Enabled", true))
+            builder.Services.AddHostedService<RabbitMqAccountingProcessingHostedService>();
         if (builder.Configuration.GetValue(
                 "Auraly:DocumentProcessing:Worker:Enabled", true))
             builder.Services.AddHostedService<RabbitMqDocumentProcessingHostedService>();
@@ -210,18 +226,30 @@ if (!builder.Environment.IsEnvironment("Testing"))
             throw new InvalidOperationException(
                 "Auraly:Fiscal:ServiceBus:QueueName is required. " +
                 "Fiscal processing never falls back to SQL polling.");
+        var accountingQueueName = builder.Configuration[
+            "Auraly:Accounting:ServiceBus:QueueName"];
+        if (string.IsNullOrWhiteSpace(accountingQueueName))
+            throw new InvalidOperationException(
+                "Auraly:Accounting:ServiceBus:QueueName is required. " +
+                "Accounting processing never falls back to synchronous observers.");
         var externalCustomerQueueName = builder.Configuration[
             "Auraly:ExternalCustomerReconciliation:QueueName"] ??
             "auraly-external-customer-reconciliation";
         builder.Services.AddSingleton(
             new FiscalProcessingServiceBusOptions(fiscalQueueName));
         builder.Services.AddSingleton(
+            new AccountingProcessingServiceBusOptions(accountingQueueName));
+        builder.Services.AddSingleton(
             new ExternalCustomerReconciliationServiceBusOptions(
                 externalCustomerQueueName));
         builder.Services.AddSingleton<IFiscalProcessingSignalPublisher,
             ServiceBusFiscalProcessingPublisher>();
+        builder.Services.AddSingleton<IAccountingProcessingSignalPublisher,
+            ServiceBusAccountingProcessingPublisher>();
         if (builder.Configuration.GetValue("Auraly:Fiscal:Worker:Enabled", true))
             builder.Services.AddHostedService<FiscalProcessingHostedService>();
+        if (builder.Configuration.GetValue("Auraly:Accounting:Worker:Enabled", true))
+            builder.Services.AddHostedService<AccountingProcessingHostedService>();
         if (builder.Configuration.GetValue(
                 "Auraly:DocumentProcessing:Worker:Enabled", true))
             builder.Services.AddHostedService<DocumentProcessingHostedService>();
@@ -299,6 +327,8 @@ builder.Services.AddScoped<IAuthenticationSessionValidator>(
     services => services.GetRequiredService<Auraly.Application.Authentication.AuthenticationService>());
 builder.Services.Configure<OfflineAuthenticationLeaseSigningOptions>(
     builder.Configuration.GetSection(OfflineAuthenticationLeaseSigningOptions.SectionName));
+builder.Services.Configure<PosInstallerOptions>(
+    builder.Configuration.GetSection(PosInstallerOptions.SectionName));
 builder.Services.AddSingleton<RsaOfflineAuthenticationLeaseSigner>();
 builder.Services.AddSingleton<IOfflineAuthenticationLeaseSigner>(services =>
     services.GetRequiredService<RsaOfflineAuthenticationLeaseSigner>());
@@ -540,6 +570,14 @@ builder.Services.AddAuthorization(options =>
                 PosAuthenticationDefaults.PermissionClaim,
                 CommercePermissionCodes.SalesCreate);
         });
+    options.AddPolicy("pos.cash.manage", policy =>
+    {
+        policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
+        policy.RequireAuthenticatedUser();
+        policy.RequireClaim(
+            PosAuthenticationDefaults.PermissionClaim,
+            WorkSessionPermissionCodes.ManageCash);
+    });
 });
 var app = builder.Build();
 app.UseResponseCompression();
@@ -561,6 +599,7 @@ app.MapExternalCustomerReconciliationApi();
 app.MapPartyUserAccountApi();
 app.MapSalesWorkspaceApi();
 app.MapPosEnrollmentApi();
+app.MapPosInstallerApi();
 app.MapPosApprovalApi();
 app.MapOnlineSalesDraftApi();
 
@@ -583,6 +622,7 @@ app.MapDispatchingApi();
 app.MapPricingApi();
 app.MapPriceSegmentsApi();
 app.MapAccountingApi();
+app.MapTaxationApi();
 app.MapPost(
         "/api/pos/v1/sales",
         async (

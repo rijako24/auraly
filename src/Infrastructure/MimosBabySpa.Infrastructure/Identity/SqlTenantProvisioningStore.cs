@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Microsoft.Data.SqlClient;
+using Auraly.BuildingBlocks.Domain.Identity;
 using Microsoft.EntityFrameworkCore;
 using Auraly.Contracts.Tenants;
 using MimosBabySpa.Infrastructure.Data;
@@ -35,6 +36,9 @@ public sealed class SqlTenantProvisioningStore(
             }
 
             var tenantId = ids.NewId();
+            var tenantKey = await ResolveTenantKeyAsync(
+                connection, transaction, request.TradeName, request.Nit,
+                tenantId, cancellationToken);
             var businessId = ids.NewId();
             var salesWarehouseId = ids.NewId();
             var ordersWarehouseId = ids.NewId();
@@ -59,9 +63,8 @@ public sealed class SqlTenantProvisioningStore(
                     THROW 51021,'La ciudad no pertenece al departamento seleccionado.',1;
                 IF EXISTS (SELECT 1 FROM dbo.TenantLegalProfiles WHERE NormalizedNit=@NormalizedNit)
                     THROW 51022,'Ya existe una empresa con este NIT.',1;
-
-                INSERT dbo.Tenants(TenantId,Name,Email,IsActive,MaximumUsers,MaximumEnrolledDevices,CreatedAt)
-                VALUES(@TenantId,@TradeName,@CompanyEmail,1,@MaximumUsers,@MaximumEnrolledDevices,@Now);
+                INSERT dbo.Tenants(TenantId,TenantKey,Name,Email,IsActive,MaximumUsers,MaximumEnrolledDevices,CreatedAt)
+                VALUES(@TenantId,@TenantKey,@TradeName,@CompanyEmail,1,@MaximumUsers,@MaximumEnrolledDevices,@Now);
 
                 INSERT dbo.Businesses
                   (BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,TimeZone,IsActive,CreatedAt)
@@ -170,6 +173,7 @@ public sealed class SqlTenantProvisioningStore(
                 """;
 
             await using var command = new SqlCommand(sql, connection, transaction);
+            Add("@TenantKey", tenantKey);
             void Add(string name, object? value) => command.Parameters.AddWithValue(name, value ?? DBNull.Value);
             Add("@RequestId", request.ProvisioningRequestId);
             Add("@TenantId", tenantId); Add("@BusinessId", businessId);
@@ -191,7 +195,8 @@ public sealed class SqlTenantProvisioningStore(
             Add("@AuditPayload", JsonSerializer.Serialize(new { request.ProvisioningRequestId, businessId, salesWarehouseId, ordersWarehouseId, request.MaximumUsers, request.MaximumEnrolledDevices }));
             await command.ExecuteNonQueryAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            return new(request.ProvisioningRequestId, tenantId, businessId, salesWarehouseId, ordersWarehouseId, customerId, null, "Completed");
+            return new(request.ProvisioningRequestId, tenantId, businessId, tenantKey,
+                salesWarehouseId, ordersWarehouseId, customerId, null, "Completed");
         }
         catch
         {
@@ -326,15 +331,55 @@ public sealed class SqlTenantProvisioningStore(
     private static async Task<ProvisionTenantResult?> FindReceiptAsync(SqlConnection connection, SqlTransaction transaction, Guid requestId, CancellationToken ct)
     {
         await using var command = new SqlCommand("""
-            SELECT ProvisioningRequestId,TenantId,BusinessId,SalesWarehouseId,OrdersWarehouseId,DefaultCustomerId,AdministratorUserId,Status
-            FROM dbo.TenantProvisioningRequests WHERE ProvisioningRequestId=@RequestId;
+            SELECT r.ProvisioningRequestId,r.TenantId,t.TenantKey,r.BusinessId,
+                   r.SalesWarehouseId,r.OrdersWarehouseId,r.DefaultCustomerId,
+                   r.AdministratorUserId,r.Status
+            FROM dbo.TenantProvisioningRequests r
+            INNER JOIN dbo.Tenants t ON t.TenantId=r.TenantId
+            WHERE r.ProvisioningRequestId=@RequestId;
             """, connection, transaction);
         command.Parameters.AddWithValue("@RequestId", requestId);
         await using var reader = await command.ExecuteReaderAsync(ct);
         return await reader.ReadAsync(ct)
-            ? new(reader.GetGuid(0),reader.GetGuid(1),reader.GetGuid(2),reader.GetGuid(3),reader.GetGuid(4),reader.GetGuid(5),reader.IsDBNull(6)?null:reader.GetGuid(6),reader.GetString(7))
+            ? new(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(3), reader.GetString(2),
+                reader.GetGuid(4), reader.GetGuid(5), reader.GetGuid(6),
+                reader.IsDBNull(7) ? null : reader.GetGuid(7), reader.GetString(8))
             : null;
     }
+    private static async Task<string> ResolveTenantKeyAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        string tradeName,
+        string nit,
+        Guid tenantId,
+        CancellationToken cancellationToken)
+    {
+        var baseKey = TenantKey.FromName(tradeName).Value;
+        var suffix = NormalizeDigits(nit);
+        suffix = suffix.Length > 4 ? suffix[^4..] : suffix;
+        var candidates = new[]
+        {
+            baseKey,
+            TenantKey.Parse($"{baseKey}-{suffix}").Value,
+            TenantKey.Parse($"{baseKey}-{tenantId:N}"[..Math.Min(
+                TenantKey.MaximumLength, baseKey.Length + 9)]).Value
+        }.Distinct(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var candidate in candidates)
+        {
+            await using var command = new SqlCommand("""
+                SELECT COUNT_BIG(1)
+                FROM dbo.Tenants WITH(UPDLOCK,HOLDLOCK)
+                WHERE TenantKey=@TenantKey;
+                """, connection, transaction);
+            command.Parameters.AddWithValue("@TenantKey", candidate);
+            if (Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) == 0)
+                return candidate;
+        }
+        throw new InvalidOperationException(
+            "No fue posible generar una clave Ãºnica para la empresa.");
+    }
+
 
     private static string NormalizeDigits(string value) => new(value.Where(char.IsDigit).ToArray());
     private static string NormalizeIdentity(string value) => new(value.Where(char.IsLetterOrDigit).Select(char.ToUpperInvariant).ToArray());

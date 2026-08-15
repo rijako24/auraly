@@ -193,7 +193,7 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
         var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/login")
         {
             Content = JsonContent.Create(
-                new AuthenticationLoginRequest(username, password))
+                new AuthenticationLoginRequest(username, "@auraly-e2e", password))
         };
         request.Headers.Add(
             AuthenticationDefaults.ClientIdHeader, clientId.ToString("D"));

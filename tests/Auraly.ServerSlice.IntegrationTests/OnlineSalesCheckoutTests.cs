@@ -219,7 +219,7 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             Assert.Equal(1, reader.GetInt32(9));
             Assert.Equal(1, reader.GetInt32(10));
             Assert.Equal(0, reader.GetInt32(11));
-            Assert.Equal(0, reader.GetInt32(12));
+            Assert.Equal(1, reader.GetInt32(12));
         }
 
         var replay = await CompleteAsync(client, captured.DraftId, command, key);

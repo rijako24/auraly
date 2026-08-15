@@ -237,18 +237,55 @@ export type PosCompleteSaleResult = {
   printPreviewOpened?: boolean;
 };
 
+export type PosCashMovementDirection = "In" | "Out";
+
+export type PosCashMovementReason = {
+  reasonId: string;
+  businessId: string;
+  code: string;
+  name: string;
+  direction: PosCashMovementDirection;
+  counterpartAccountingCategory: string | null;
+  defaultCostCenterId: string | null;
+  defaultCostCenterName: string | null;
+  accountCode: string | null;
+  accountName: string | null;
+  isAccountingConfigured: boolean;
+  requiresReference: boolean;
+  isActive: boolean;
+};
+
+export type PosCashMovementInput = {
+  documentId: string;
+  reasonId: string;
+  amount: number;
+  occurredAt: string;
+  reference: string | null;
+  notes: string | null;
+  costCenterId: string | null;
+};
+
+export type PosCashMovementAcceptance = {
+  documentId: string;
+  status: string;
+  idempotentReplay: boolean;
+  documentNumber?: string;
+};
+
 export interface PosClient {
   readonly mode: "edge" | "online";
   health(): Promise<{
     status: string;
     serverConnected: boolean;
     deviceSeriesCode: string;
+    businessId: string;
     businessName: string;
     warehouseName: string;
     userDisplayName: string;
     userId: string | null;
     workSessionId?: string | null;
     deviceId?: string | null;
+    fiscalReady: boolean;
     synchronizationInProgress: boolean;
     lastSynchronizationAt: string | null;
     lastSynchronizationFailed: boolean;
@@ -299,6 +336,8 @@ export interface PosClient {
     orderIds: string[],
     paymentMethodCode: string,
   ): Promise<InvoiceOrdersResponse>;
+  cashMovementReasons(direction: PosCashMovementDirection): Promise<PosCashMovementReason[]>;
+  confirmCashMovement(input: PosCashMovementInput): Promise<PosCashMovementAcceptance>;
 }
 
 export class PosEdgeError extends Error {
@@ -321,6 +360,18 @@ export type PosLocalUserSession = {
   token: string | null;
 };
 
+export type PosPrinterConfiguration = {
+  receiptMode: "BrowserPreview" | "WindowsRaw" | "File";
+  receiptPrinterName: string | null;
+  receiptPaperWidthMillimeters: 58 | 80;
+  letterPrinterName: string | null;
+};
+
+export type PosPrinterConfigurationView = {
+  configuration: PosPrinterConfiguration;
+  installedPrinters: string[];
+};
+
 export class PosEdgeClient implements PosClient {
   readonly mode = "edge" as const;
 
@@ -335,12 +386,14 @@ export class PosEdgeClient implements PosClient {
       startupMode: "online" | "enrolled";
       serverConnected: boolean;
       deviceSeriesCode: string;
-    businessName: string;
-    warehouseName: string;
+      businessId: string;
+      businessName: string;
+      warehouseName: string;
       userDisplayName: string;
       userId: string | null;
       workSessionId: string | null;
       deviceId: string;
+      fiscalReady: boolean;
       synchronizationInProgress: boolean;
       lastSynchronizationAt: string | null;
       lastSynchronizationFailed: boolean;
@@ -357,6 +410,19 @@ export class PosEdgeClient implements PosClient {
       method: "PUT",
       body: JSON.stringify({ mode }),
     });
+  }
+
+  printerConfiguration() {
+    return this.request<PosPrinterConfigurationView>(
+      "/edge/v1/configuration/printers",
+    );
+  }
+
+  savePrinterConfiguration(configuration: PosPrinterConfiguration) {
+    return this.request<PosPrinterConfigurationView>(
+      "/edge/v1/configuration/printers",
+      { method: "PUT", body: JSON.stringify(configuration) },
+    );
   }
 
   watchLocalState(onStateChanged: () => void): () => void {
@@ -394,6 +460,19 @@ export class PosEdgeClient implements PosClient {
     };
     void listen();
     return () => controller.abort();
+  }
+
+  cashMovementReasons(direction: PosCashMovementDirection) {
+    return this.request<PosCashMovementReason[]>(
+      "/edge/v1/cash-movement-reasons?direction=" + direction,
+    );
+  }
+
+  confirmCashMovement(input: PosCashMovementInput) {
+    return this.request<PosCashMovementAcceptance>("/edge/v1/cash-movements", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
   }
 
   async login(username: string, password: string) {

@@ -12,8 +12,8 @@ public interface IAppUserRepository
     Task<int> CountActiveByTenantAsync(Guid tenantId, CancellationToken ct = default);
     Task<(IReadOnlyList<AppUser> Items, int TotalCount)> GetPagedByTenantAsync(
         Guid tenantId, int page, int pageSize, string? search = null, CancellationToken ct = default);
-    Task<bool> ExistsWithUsernameAsync(string normalizedUsername, Guid? excludeUserId = null, CancellationToken ct = default);
-    Task<bool> ExistsWithEmailAsync(string normalizedEmail, Guid? excludeUserId = null, CancellationToken ct = default);
+    Task<bool> ExistsWithUsernameAsync(Guid tenantId, string normalizedUsername, Guid? excludeUserId = null, CancellationToken ct = default);
+    Task<bool> ExistsWithEmailAsync(Guid tenantId, string normalizedEmail, Guid? excludeUserId = null, CancellationToken ct = default);
     Task AddAsync(AppUser user, CancellationToken ct = default);
     void Update(AppUser user);
 }

@@ -46,11 +46,11 @@ CREATE TABLE [dbo].[AppUsers] (
 
 GO
 
-CREATE UNIQUE INDEX [IX_AppUsers_NormalizedUsername] ON [dbo].[AppUsers] ([NormalizedUsername]);
+CREATE UNIQUE INDEX [UX_AppUsers_Tenant_Username] ON [dbo].[AppUsers] ([TenantId], [NormalizedUsername]);
 
 GO
 
-CREATE UNIQUE INDEX [IX_AppUsers_NormalizedEmail] ON [dbo].[AppUsers] ([NormalizedEmail]);
+CREATE UNIQUE INDEX [UX_AppUsers_Tenant_Email] ON [dbo].[AppUsers] ([TenantId], [NormalizedEmail]);
 
 GO
 

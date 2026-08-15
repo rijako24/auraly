@@ -55,10 +55,10 @@ public class UserService : IUserService
 
         var normalizedEmail = request.Email.ToUpperInvariant();
 
-        if (await _unitOfWork.AppUsers.ExistsWithUsernameAsync(normalizedUsername, ct: ct))
+        if (await _unitOfWork.AppUsers.ExistsWithUsernameAsync(tenantId, normalizedUsername, ct: ct))
             throw new ConflictException($"El nombre de usuario '{request.Username}' ya está en uso.");
 
-        if (await _unitOfWork.AppUsers.ExistsWithEmailAsync(normalizedEmail, ct: ct))
+        if (await _unitOfWork.AppUsers.ExistsWithEmailAsync(tenantId, normalizedEmail, ct: ct))
             throw new ConflictException($"El email '{request.Email}' ya está registrado.");
 
         var offlinePassword = PosOfflinePasswordHasher.Hash(

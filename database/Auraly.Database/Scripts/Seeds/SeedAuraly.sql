@@ -36,9 +36,9 @@ IF NOT EXISTS (SELECT 1 FROM dbo.Tenants WHERE TenantId = @TenantId)
 
 BEGIN
 
-    INSERT INTO dbo.Tenants (TenantId, Name, Email, IsActive, CreatedAt)
+    INSERT INTO dbo.Tenants (TenantId, TenantKey, Name, Email, IsActive, CreatedAt)
 
-    VALUES (@TenantId, N'AURALY', N'admin@auraly.ai', 1, GETUTCDATE());
+    VALUES (@TenantId, N'@auraly', N'AURALY', N'admin@auraly.ai', 1, GETUTCDATE());
 
 END
 

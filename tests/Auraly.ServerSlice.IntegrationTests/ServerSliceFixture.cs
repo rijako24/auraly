@@ -8,6 +8,7 @@ using System.Text;
 using System.Net.Http.Json;
 using Auraly.Api;
 using Auraly.Application.DocumentProcessing;
+using Auraly.Commerce.Accounting.Application;
 using Auraly.Application.Fiscal;
 using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Contracts.Authentication;
@@ -165,6 +166,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                 services.AddSingleton<TestDocumentProcessingSignalPublisher>();
                 services.AddSingleton<IDocumentProcessingSignalPublisher>(provider =>
                     provider.GetRequiredService<TestDocumentProcessingSignalPublisher>());
+                services.AddSingleton<TestAccountingProcessingSignalPublisher>();
+                services.AddSingleton<IAccountingProcessingSignalPublisher>(provider =>
+                    provider.GetRequiredService<TestAccountingProcessingSignalPublisher>());
                 services.AddSingleton<TestFiscalProcessingSignalPublisher>();
                 services.AddSingleton<IFiscalProcessingSignalPublisher>(provider => provider.GetRequiredService<TestFiscalProcessingSignalPublisher>());
                 services.AddSingleton<TestPosSynchronizationPushGateway>();
@@ -692,8 +696,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         var allowedCredential = PosDeviceCredentialHasher.Create(DeviceSecret);
         var deniedCredential = PosDeviceCredentialHasher.Create(DeniedDeviceSecret);
         const string sql = """
-            INSERT INTO dbo.Tenants (TenantId, Name, Email, IsActive, MaximumUsers, MaximumEnrolledDevices, CreatedAt)
-            VALUES (@TenantId, N'Auraly E2E', @TenantEmail, 1, 20, 4, SYSUTCDATETIME());
+            INSERT INTO dbo.Tenants (TenantId, TenantKey, Name, Email, IsActive, MaximumUsers, MaximumEnrolledDevices, CreatedAt)
+            VALUES (@TenantId, N'@auraly-e2e', N'Auraly E2E', @TenantEmail, 1, 20, 4, SYSUTCDATETIME());
 
             INSERT INTO dbo.Businesses
             (BusinessId, TenantId, Name, Description, Address, Phone, Email, Website, IsActive, CreatedAt)
@@ -832,9 +836,11 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             (@ProductId, @BusinessId, 0, N'P-E2E', N'Producto E2E', 10000, N'COP', 1, 1, SYSUTCDATETIME());
 
             INSERT dbo.ProductPrices
-              (ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
+              (ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,
+               TargetMarginPercent,RoundingIncrement,RoundingMode,IsActive,CreatedAt)
             VALUES
-              (NEWID(),@BusinessId,@ProductId,10000,N'COP','2026-01-01',1,SYSDATETIMEOFFSET());
+              (NEWID(),@BusinessId,@ProductId,10000,N'COP','2026-01-01',
+               30,1,N'Nearest',1,SYSDATETIMEOFFSET());
 
             INSERT dbo.Parties
               (PartyId,TenantId,PartyType,DisplayName,LegalName,CompletionStatus,IsActive,CreatedBy,CreatedAt)

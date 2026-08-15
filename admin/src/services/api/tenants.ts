@@ -17,7 +17,7 @@ export interface TenantEnrolledDevice {
   lastSeenAt: string | null; businessId: string | null; businessName: string | null;
 }
 export interface ProvisionTenantResult {
-  provisioningRequestId: string; tenantId: string; businessId: string;
+  provisioningRequestId: string; tenantId: string; tenantKey: string; businessId: string;
   salesWarehouseId: string; ordersWarehouseId: string; defaultCustomerId: string;
   administratorUserId: string | null; status: string;
 }

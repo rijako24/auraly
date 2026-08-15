@@ -51,6 +51,7 @@
     <Build Include="Tables\Products.sql" />
     <Build Include="Tables\AuralyCatalog.sql" />
     <Build Include="Tables\AuralyParties.sql" />
+    <Build Include="Tables\WithholdingRules.sql" />
     <Build Include="Tables\PartyWorkspace.sql" />
     <Build Include="Tables\AuralyPosPricing.sql" />
     <Build Include="Tables\SalesRoutes.sql" />
@@ -114,6 +115,7 @@
     <Build Include="Tables\FiscalTechnicalKeySecrets.sql" />
     <Build Include="Tables\FiscalSeries.sql" />
     <Build Include="Triggers\FiscalSeriesRangeGuard.sql" />
+    <Build Include="Triggers\TenantKeyImmutable.sql" />
 
     <Build Include="Tables\WorkSessions.sql" />
     <Build Include="Tables\WorkSessionClosures.sql" />
@@ -134,6 +136,8 @@
     <Build Include="Tables\SalesReturnReceivableApplications.sql" />
     <Build Include="Tables\SalesReturnFiscalSnapshots.sql" />
 
+    <Build Include="Tables\CashMovementReasons.sql" />
+    <Build Include="Tables\CashMovementDocuments.sql" />
     <Build Include="Tables\WorkSessionMovements.sql" />
     <Build Include="Tables\FiscalSnapshots.sql" />
     <Build Include="Tables\FiscalIssuerConfigurations.sql" />
@@ -143,6 +147,7 @@
     <Build Include="Tables\BusinessProcessingCursors.sql" />
     <Build Include="Tables\DocumentProcessingJobs.sql" />
     <Build Include="Tables\DocumentProcessingPayloads.sql" />
+    <Build Include="Tables/DocumentWithholdings.sql" />
     <Build Include="Tables\GoodsReceiptProcessing.sql" />
     <Build Include="Tables\GoodsReceiptDrafts.sql" />
     <Build Include="Tables\PurchaseReturns.sql" />

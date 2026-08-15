@@ -1,5 +1,7 @@
 CREATE TABLE [dbo].[Tenants] (
     [TenantId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    [TenantKey] NVARCHAR(64) NOT NULL
+        CONSTRAINT [DF_Tenants_TenantKey] DEFAULT (CONCAT(N'@tenant-',LOWER(REPLACE(CONVERT(NVARCHAR(36),NEWID()),N'-',N'')))),
     [Name] NVARCHAR(200) NOT NULL,
     [Email] NVARCHAR(200) NOT NULL,
     [IsActive] BIT NOT NULL DEFAULT 1,
@@ -10,6 +12,14 @@ CREATE TABLE [dbo].[Tenants] (
     [CreatedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     [UpdatedAt] DATETIME2 NULL
 );
+
+GO
+CREATE UNIQUE INDEX [UX_Tenants_TenantKey] ON [dbo].[Tenants] ([TenantKey]);
+
+GO
+
+ALTER TABLE [dbo].[Tenants] ADD CONSTRAINT [CK_Tenants_TenantKey]
+    CHECK ([TenantKey] LIKE N'@%' AND LEN([TenantKey]) BETWEEN 3 AND 64);
 
 GO
 

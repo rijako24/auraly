@@ -1,8 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Copy } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,14 @@ export default function TenantDetailPage() {
   const params = useParams();
   const id = params.id as string;
   const { data: tenant, isLoading, isError, refetch } = useTenant(id);
+  const [loginUrl, setLoginUrl] = useState("");
+
+  useEffect(() => {
+    if (tenant?.tenantKey)
+      setLoginUrl(
+        window.location.origin + "/login?tenant=" + encodeURIComponent(tenant.tenantKey),
+      );
+  }, [tenant?.tenantKey]);
 
   if (isLoading) return <PageLoading cards={1} />;
   if (isError || !tenant) return <PageError onRetry={refetch} />;
@@ -37,6 +46,20 @@ export default function TenantDetailPage() {
       <TenantGovernancePanel tenant={tenant} />
 
       <TenantProvisioningSummary tenant={tenant} />
+      <section className="rounded-2xl border bg-card p-6 shadow-sm">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div><p className="text-sm font-medium text-muted-foreground">Clave inmutable</p><p className="font-mono">{tenant.tenantKey}</p></div>
+          <div className="sm:col-span-2">
+            <p className="text-sm font-medium text-muted-foreground">Enlace de acceso empresarial</p>
+            <div className="mt-1 flex gap-2">
+              <code className="min-w-0 flex-1 truncate rounded-md bg-muted px-3 py-2 text-xs">{loginUrl}</code>
+              <Button type="button" variant="outline" size="icon" disabled={!loginUrl} onClick={() => navigator.clipboard.writeText(loginUrl)} aria-label="Copiar enlace de acceso">
+                <Copy className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

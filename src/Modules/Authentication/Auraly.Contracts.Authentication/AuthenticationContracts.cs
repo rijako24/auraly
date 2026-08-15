@@ -10,6 +10,7 @@ public static class AuthenticationDefaults
 
 public sealed record AuthenticationLoginRequest(
     string Username,
+    string TenantKey,
     string Password);
 
 public sealed record AuthenticationRefreshRequest(
@@ -23,6 +24,7 @@ public sealed record AuthenticationUserView(
     Guid UserId,
     Guid TenantId,
     string Username,
+    string TenantKey,
     string Email,
     string FirstName,
     string LastName,

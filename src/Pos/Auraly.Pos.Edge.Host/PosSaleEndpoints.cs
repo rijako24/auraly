@@ -22,21 +22,24 @@ public sealed record CompleteDraftRequest(
     PosSaleUblSnapshotContract? UblSnapshot = null,
     string DocumentType = PosSaleDocumentTypes.Invoice);
 
+internal sealed record PosFiscalHostSettings(
+    string SupplierTaxId,
+    FiscalTechnicalKey TechnicalKey,
+    FiscalEnvironment Environment,
+    string QrValidationUrl,
+    PosEdgeSeriesProvision Series);
+
 internal sealed record PosSaleHostSettings(
     TenantId TenantId,
     BusinessId BusinessId,
     WarehouseId WarehouseId,
     DeviceId DeviceId,
     bool WarehouseAllowsNegativeStock,
-    string SupplierTaxId,
     string DefaultCustomerIdentification,
-    FiscalTechnicalKey TechnicalKey,
-    FiscalEnvironment Environment,
-    string QrValidationUrl,
     int PaperWidthMillimeters,
     PosEdgeDocumentSeriesProvision DocumentSeries,
     PosEdgeDocumentSeriesProvision ReceiptDocumentSeries,
-    PosEdgeSeriesProvision FiscalSeries)
+    PosFiscalHostSettings? Fiscal)
 {
     public SalesExecutionContext ContextFor(PosLocalUserSession session) => new(
         TenantId,
@@ -53,28 +56,20 @@ internal static class PosSaleHostModule
         this IServiceCollection services,
         IConfiguration configuration,
         string connectionString,
+        string databasePath,
         PosEdgeRuntimeContext runtime,
         PosDeviceCredentials device)
     {
         var tenantId = new TenantId(RequiredGuid(configuration, "PosEdge:TenantId"));
         _ = ReadPermissions(configuration);
+        var fiscal = ReadFiscalSettings(configuration, runtime.DeviceId);
         var settings = new PosSaleHostSettings(
             tenantId,
             runtime.BusinessId,
             runtime.WarehouseId,
             runtime.DeviceId,
             runtime.WarehouseAllowsNegativeStock,
-            Required(configuration, "PosEdge:SupplierTaxId"),
             configuration["PosEdge:DefaultCustomerIdentification"] ?? "222222222222",
-            new FiscalTechnicalKey(
-                PosEdgeProtectedSecret.UnprotectTechnicalKey(
-                    Required(configuration, "PosEdge:SecretKeyDirectory"),
-                    Required(configuration, "PosEdge:Fiscal:ProtectedTechnicalKey")),
-                Required(configuration, "PosEdge:Fiscal:TechnicalKeyVersion")),
-            Enum.Parse<FiscalEnvironment>(
-                Required(configuration, "PosEdge:Fiscal:Environment"),
-                ignoreCase: true),
-            Required(configuration, "PosEdge:Fiscal:QrValidationUrl"),
             RequiredPaperWidth(configuration),
             new PosEdgeDocumentSeriesProvision(
                 RequiredGuid(configuration, "PosEdge:Documents:SalesInvoice:SeriesId"),
@@ -94,15 +89,7 @@ internal static class PosSaleHostModule
                 RequiredInt(configuration, "PosEdge:Documents:SalesReceipt:Padding"),
                 RequiredLong(configuration, "PosEdge:Documents:SalesReceipt:RangeStart"),
                 RequiredLong(configuration, "PosEdge:Documents:SalesReceipt:RangeEnd")),
-            new PosEdgeSeriesProvision(
-                RequiredGuid(configuration, "PosEdge:Fiscal:SeriesId"),
-                runtime.DeviceId,
-                Required(configuration, "PosEdge:Fiscal:Prefix"),
-                Required(configuration, "PosEdge:Fiscal:AuthorizationNumber"),
-                RequiredLong(configuration, "PosEdge:Fiscal:RangeStart"),
-                RequiredLong(configuration, "PosEdge:Fiscal:RangeEnd"),
-                RequiredDate(configuration, "PosEdge:Fiscal:ValidUntil"),
-                RequiredGuid(configuration, "PosEdge:Fiscal:FiscalAuthorizationId")));
+            fiscal);
         services.AddSingleton(settings);
         services.AddSingleton(sp => new PosEdgeSaleStore(
             connectionString,
@@ -117,32 +104,12 @@ internal static class PosSaleHostModule
         services.AddSingleton<EscPosReceiptRenderer>();
         services.AddSingleton<HtmlReceiptPreviewRenderer>();
         services.AddSingleton<IReceiptPreviewLauncher, ShellReceiptPreviewLauncher>();
-        services.AddSingleton<IPosReceiptPrinter>(sp =>
-        {
-            var renderer = sp.GetRequiredService<EscPosReceiptRenderer>();
-            var outputDirectory = configuration["PosEdge:ReceiptOutputDirectory"];
-            var mode = configuration["PosEdge:PrinterMode"]?.Trim();
-            return mode switch
-            {
-                "BrowserPreview" => new HtmlReceiptPreviewPrinter(
-                    Required(configuration, "PosEdge:ReceiptOutputDirectory"),
-                    sp.GetRequiredService<HtmlReceiptPreviewRenderer>(),
-                    sp.GetRequiredService<IReceiptPreviewLauncher>()),
-                "File" => new FileReceiptPrinter(
-                    Required(configuration, "PosEdge:ReceiptOutputDirectory"),
-                    renderer),
-                "WindowsRaw" => new WindowsRawReceiptPrinter(
-                    Required(configuration, "PosEdge:PrinterName"),
-                    renderer),
-                null or "" => string.IsNullOrWhiteSpace(outputDirectory)
-                    ? new WindowsRawReceiptPrinter(
-                        Required(configuration, "PosEdge:PrinterName"),
-                        renderer)
-                    : new FileReceiptPrinter(outputDirectory, renderer),
-                _ => throw new InvalidOperationException(
-                    "PosEdge:PrinterMode must be BrowserPreview, File or WindowsRaw.")
-            };
-        });
+        var dataDirectory = Path.GetDirectoryName(Path.GetFullPath(databasePath))!;
+        services.AddSingleton(new PosPrinterConfigurationStore(
+            Path.Combine(dataDirectory, "printer-settings.json"),
+            configuration["PosEdge:ReceiptOutputDirectory"]
+                ?? Path.Combine(dataDirectory, "receipts")));
+        services.AddSingleton<IPosReceiptPrinter, ConfigurablePosReceiptPrinter>();
         services.AddSingleton<PosSaleCompletionService>();
         services.AddHostedService<PosSaleStorageInitializer>();
         return services;
@@ -195,13 +162,13 @@ internal static class PosSaleHostModule
                         new UserId(session.UserId),
                         settings.ContextFor(session),
                         DateTimeOffset.Now,
-                        settings.SupplierTaxId,
+                        settings.Fiscal?.SupplierTaxId,
                         string.IsNullOrWhiteSpace(request.CustomerIdentification)
                             ? settings.DefaultCustomerIdentification
                             : request.CustomerIdentification.Trim(),
-                        settings.TechnicalKey,
-                        settings.Environment,
-                        settings.QrValidationUrl,
+                        settings.Fiscal?.TechnicalKey,
+                        settings.Fiscal?.Environment,
+                        settings.Fiscal?.QrValidationUrl,
                         payments,
                         settings.PaperWidthMillimeters,
                         request.UblSnapshot,
@@ -259,6 +226,34 @@ internal static class PosSaleHostModule
             }
         });
         return edge;
+    }
+
+    private static PosFiscalHostSettings? ReadFiscalSettings(
+        IConfiguration configuration,
+        DeviceId deviceId)
+    {
+        if (string.IsNullOrWhiteSpace(configuration["PosEdge:Fiscal:SeriesId"]))
+            return null;
+        return new PosFiscalHostSettings(
+            Required(configuration, "PosEdge:SupplierTaxId"),
+            new FiscalTechnicalKey(
+                PosEdgeProtectedSecret.UnprotectTechnicalKey(
+                    Required(configuration, "PosEdge:SecretKeyDirectory"),
+                    Required(configuration, "PosEdge:Fiscal:ProtectedTechnicalKey")),
+                Required(configuration, "PosEdge:Fiscal:TechnicalKeyVersion")),
+            Enum.Parse<FiscalEnvironment>(
+                Required(configuration, "PosEdge:Fiscal:Environment"),
+                ignoreCase: true),
+            Required(configuration, "PosEdge:Fiscal:QrValidationUrl"),
+            new PosEdgeSeriesProvision(
+                RequiredGuid(configuration, "PosEdge:Fiscal:SeriesId"),
+                deviceId,
+                Required(configuration, "PosEdge:Fiscal:Prefix"),
+                Required(configuration, "PosEdge:Fiscal:AuthorizationNumber"),
+                RequiredLong(configuration, "PosEdge:Fiscal:RangeStart"),
+                RequiredLong(configuration, "PosEdge:Fiscal:RangeEnd"),
+                RequiredDate(configuration, "PosEdge:Fiscal:ValidUntil"),
+                RequiredGuid(configuration, "PosEdge:Fiscal:FiscalAuthorizationId")));
     }
 
     private static string Required(IConfiguration configuration, string key) =>
@@ -331,7 +326,8 @@ internal sealed class PosSaleStorageInitializer(
         await sales.InitializeAsync(cancellationToken);
         await issuance.InitializeAsync(cancellationToken);
         await sales.ProvisionDocumentSeriesAsync(settings.DocumentSeries, cancellationToken);
-        await sales.ProvisionSeriesAsync(settings.FiscalSeries, cancellationToken);
+        if (settings.Fiscal is { } fiscal)
+            await sales.ProvisionSeriesAsync(fiscal.Series, cancellationToken);
         await sales.ProvisionDocumentSeriesAsync(settings.ReceiptDocumentSeries, cancellationToken);
     }
 

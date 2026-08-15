@@ -25,6 +25,7 @@ export interface ApiError {
 export interface AuthUser {
   userId: string;
   tenantId: string;
+  tenantKey: string;
   username: string;
   email: string;
   firstName: string;
@@ -50,6 +51,7 @@ export interface AuthBffResponse {
 
 export interface LoginRequest {
   username: string;
+  tenantKey: string;
   password: string;
 }
 

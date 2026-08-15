@@ -132,14 +132,10 @@ public sealed class PricingService(
         var costBasisType = request.CostBasisAmount.HasValue
             ? "Manual"
             : context.CostBasisOrigin;
-        var calculation = CalculateCore(new(
-            costBasis ?? 0m,
-            request.InputMode,
-            request.TargetMarginPercent,
-            request.SalePrice,
-            request.RoundingIncrement,
-            request.RoundingMode,
-            context.SalesTaxRate));
+        var calculation = CalculateForOptionalCost(
+            costBasis, context.SalesTaxRate, request.InputMode,
+            request.TargetMarginPercent, request.SalePrice,
+            request.RoundingIncrement, request.RoundingMode);
         var prepared = await store.SavePreparedProductAsync(user, new(
             productId,
             costBasis,
@@ -197,10 +193,19 @@ public sealed class PricingService(
         PriceProposalSource source, string inputMode, decimal? targetMarginPercent,
         decimal? salePrice, decimal roundingIncrement, string roundingMode)
     {
-        if (source.ObservedUnitCost is not null)
-            return CalculateCore(new(source.ObservedUnitCost.Value, inputMode,
-                targetMarginPercent, salePrice, roundingIncrement, roundingMode,
-                source.SalesTaxRate));
+        return CalculateForOptionalCost(
+            source.ObservedUnitCost, source.SalesTaxRate, inputMode,
+            targetMarginPercent, salePrice, roundingIncrement, roundingMode);
+    }
+
+    private static PriceCalculationResult CalculateForOptionalCost(
+        decimal? costBasisAmount, decimal salesTaxRate, string inputMode,
+        decimal? targetMarginPercent, decimal? salePrice,
+        decimal roundingIncrement, string roundingMode)
+    {
+        if (costBasisAmount is { } costBasis)
+            return CalculateCore(new(costBasis, inputMode, targetMarginPercent,
+                salePrice, roundingIncrement, roundingMode, salesTaxRate));
 
         if (inputMode != PriceInputModes.SalePrice || salePrice is null)
             throw new PricingValidationException(

@@ -1,3 +1,5 @@
+using Auraly.Commerce.Taxation.Contracts;
+
 using System.Text.Json;
 using Auraly.BuildingBlocks.Domain.Documents;
 
@@ -53,7 +55,9 @@ public sealed record ConfirmGoodsReceiptRequest(
     string CurrencyCode,
     string? Notes,
     IReadOnlyCollection<GoodsReceiptLineRequest> Lines,
-    string? DraftConcurrencyToken = null);
+    string? DraftConcurrencyToken = null,
+    string? WithholdingConceptCode = null,
+    string? WithholdingJurisdictionCode = null);
 
 public sealed record GoodsReceiptLineSnapshot(
     int LineNumber,
@@ -94,7 +98,8 @@ public sealed record GoodsReceiptDocumentPayload(
     decimal NetAmount,
     decimal TaxAmount,
     decimal GrandTotal,
-    IReadOnlyList<GoodsReceiptLineSnapshot> Lines);
+    IReadOnlyList<GoodsReceiptLineSnapshot> Lines,
+    WithholdingCalculationSnapshot Withholding);
 
 public sealed record GoodsReceiptAcceptance(
     Guid DocumentId,

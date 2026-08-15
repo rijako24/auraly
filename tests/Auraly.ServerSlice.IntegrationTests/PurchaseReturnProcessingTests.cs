@@ -145,9 +145,10 @@ public sealed class PurchaseReturnProcessingTests(ServerSliceFixture fixture)
                N'COP',1,1,SYSDATETIMEOFFSET());
             INSERT dbo.ProductPrices
               (ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,
-               ValidFrom,IsActive,CreatedAt)
+               ValidFrom,TargetMarginPercent,RoundingIncrement,RoundingMode,
+               IsActive,CreatedAt)
             VALUES(NEWID(),@BusinessId,@ProductId,10000,N'COP','2026-01-01',
-               1,SYSDATETIMEOFFSET());
+               20,1,N'Nearest',1,SYSDATETIMEOFFSET());
             INSERT dbo.SupplierProducts
               (SupplierProductId,BusinessId,ProductId,SupplierId,SupplierProductCode,
                IsPrimary,IsActive,CreatedAt)

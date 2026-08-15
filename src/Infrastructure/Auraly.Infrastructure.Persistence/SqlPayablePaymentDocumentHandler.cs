@@ -34,9 +34,45 @@ public sealed class SqlPayablePaymentDocumentHandler(
         foreach (var allocation in payment.Allocations.OrderBy(item => item.LineNumber))
             await ApplyAsync(session, payment, allocation, cancellationToken);
         await CompletePaymentAsync(session, payment, cancellationToken);
+        await RecordCashDrawerMovementAsync(session, payment, cancellationToken);
         await SqlAccountingPostingJobWriter.InsertAsync(
             session, document, payment.PaidAt, ids, timeProvider, cancellationToken);
         await InsertOutboxAsync(session, payment, document.Payload, cancellationToken);
+    }
+
+    private async Task RecordCashDrawerMovementAsync(
+        SqlDocumentProcessingSessionAccessor.Session session,
+        SupplierPaymentDocumentPayload payment,
+        CancellationToken cancellationToken)
+    {
+        if (!string.Equals(payment.PaymentMethod, "Cash", StringComparison.Ordinal) ||
+            payment.WorkSessionId is null)
+            return;
+
+        await using var command = new SqlCommand("""
+            IF NOT EXISTS(
+              SELECT 1 FROM dbo.WorkSessions
+              WHERE WorkSessionId=@WorkSessionId AND BusinessId=@BusinessId
+                AND UserId=@UserId)
+              THROW 51220,'The supplier payment work session is invalid.',1;
+
+            INSERT dbo.WorkSessionMovements
+              (WorkSessionMovementId,WorkSessionId,DocumentId,PaymentNumber,BusinessDate,
+               MovementType,PaymentMethodCode,Amount,Reference,SourceKey,OccurredAt,RecordedByUserId)
+            VALUES(@MovementId,@WorkSessionId,@PaymentId,NULL,@BusinessDate,
+               N'PayablePayment',N'Cash',-@Amount,@Reference,@SourceKey,@PaidAt,@UserId);
+            """, session.Connection, session.Transaction);
+        command.Parameters.AddWithValue("@MovementId", ids.NewId());
+        command.Parameters.AddWithValue("@WorkSessionId", payment.WorkSessionId.Value);
+        command.Parameters.AddWithValue("@UserId", payment.ConfirmedByUserId);
+        command.Parameters.AddWithValue("@BusinessId", payment.BusinessId);
+        command.Parameters.AddWithValue("@Amount", payment.TotalAmount);
+        command.Parameters.AddWithValue("@PaymentId", payment.PaymentId);
+        command.Parameters.AddWithValue("@BusinessDate", payment.PaidAt.Date);
+        command.Parameters.AddWithValue("@Reference", (object?)payment.Reference ?? DBNull.Value);
+        command.Parameters.AddWithValue("@SourceKey", $"payable-payment:{payment.PaymentId:N}");
+        command.Parameters.AddWithValue("@PaidAt", payment.PaidAt);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task LockPaymentAsync(

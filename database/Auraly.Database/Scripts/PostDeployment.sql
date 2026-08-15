@@ -60,6 +60,7 @@
 :r .\Seeds\SeedWorkSessionPermissions.sql
 :r .\Seeds\SeedSalesReturnPermissions.sql
 :r .\Seeds\SeedAccountingPermissions.sql
+:r .\Seeds\SeedTaxationPermissions.sql
 :r .\Seeds\SeedPayablesPermissions.sql
 :r .\Seeds\SeedReceivablesPermissions.sql
 :r .\Seeds\SeedPurchasingPermissions.sql

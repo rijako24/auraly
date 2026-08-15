@@ -1,8 +1,15 @@
 "use client";
 
 import { Check, FileText, Loader2, Receipt, X } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
+import { FiscalResolutionForm } from "@/components/fiscal/fiscal-resolution-form";
+import { InvoiceNumberingCard } from "@/components/fiscal/invoice-numbering-card";
+import {
+  fiscalConfigurationApi,
+  type FiscalResolutionConfiguration,
+  type SaveFiscalResolutionConfiguration,
+} from "@/services/api/fiscal-configuration";
 import type { PosSaleDocumentType } from "@/services/pos/pos-edge-client";
 
 const options: ReadonlyArray<{
@@ -27,15 +34,31 @@ const options: ReadonlyArray<{
 
 export function PosDocumentTypeDialog({
   value,
+  businessId,
+  edgeMode,
+  edgeFiscalReady,
   busy,
+  onFiscalEnrollmentRequired,
   onSelect,
   onCancel,
 }: {
   value: PosSaleDocumentType;
+  businessId: string;
+  edgeMode: boolean;
+  edgeFiscalReady: boolean;
   busy: boolean;
+  onFiscalEnrollmentRequired: () => void;
   onSelect: (value: PosSaleDocumentType) => Promise<void>;
   onCancel: () => void;
 }) {
+  const [configuration, setConfiguration] =
+    useState<FiscalResolutionConfiguration | null>(null);
+  const [numberingReady, setNumberingReady] = useState(false);
+  const [configuringInvoice, setConfiguringInvoice] = useState(false);
+  const [checkingFiscal, setCheckingFiscal] = useState(false);
+  const [savingFiscal, setSavingFiscal] = useState(false);
+  const [fiscalError, setFiscalError] = useState<string | null>(null);
+
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !busy) {
@@ -47,6 +70,72 @@ export function PosDocumentTypeDialog({
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
   }, [busy, onCancel]);
+
+  async function loadFiscalState() {
+    const [nextConfiguration, numbering] = await Promise.all([
+      fiscalConfigurationApi.get(businessId),
+      fiscalConfigurationApi.getNumbering(businessId),
+    ]);
+    const hasNumbering = numbering.initialConsecutive !== null;
+    setConfiguration(nextConfiguration);
+    setNumberingReady(hasNumbering);
+    return { configuration: nextConfiguration, hasNumbering };
+  }
+
+  async function selectDocument(next: PosSaleDocumentType) {
+    setFiscalError(null);
+    if (next === "SalesReceipt") {
+      await onSelect(next);
+      return;
+    }
+    if (!businessId) {
+      setFiscalError("No se pudo identificar la sede de esta caja.");
+      return;
+    }
+    setCheckingFiscal(true);
+    try {
+      const state = await loadFiscalState();
+      const serverReady =
+        state.hasNumbering &&
+        (edgeMode
+          ? state.configuration.isReadyForEnrollment
+          : state.configuration.isReadyForOnlineSales);
+      if (!serverReady) {
+        setConfiguringInvoice(true);
+        return;
+      }
+      if (edgeMode && !edgeFiscalReady) {
+        onFiscalEnrollmentRequired();
+        return;
+      }
+      await onSelect(next);
+    } catch (caught) {
+      setFiscalError(
+        caught instanceof Error
+          ? caught.message
+          : "No fue posible verificar la configuración fiscal.",
+      );
+      setConfiguringInvoice(true);
+    } finally {
+      setCheckingFiscal(false);
+    }
+  }
+
+  async function saveFiscal(request: SaveFiscalResolutionConfiguration) {
+    setSavingFiscal(true);
+    setFiscalError(null);
+    try {
+      setConfiguration(await fiscalConfigurationApi.save(businessId, request));
+    } catch (caught) {
+      setFiscalError(
+        caught instanceof Error
+          ? caught.message
+          : "No fue posible guardar la resolución fiscal.",
+      );
+    } finally {
+      setSavingFiscal(false);
+    }
+  }
 
   return (
     <div
@@ -60,7 +149,7 @@ export function PosDocumentTypeDialog({
         aria-modal="true"
         aria-labelledby="pos-document-type-title"
         aria-describedby="pos-document-type-description"
-        className="w-full max-w-lg overflow-hidden rounded-3xl bg-white shadow-2xl"
+        className="w-full max-w-3xl overflow-hidden rounded-3xl bg-white shadow-2xl"
       >
         <header className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
           <div>
@@ -77,7 +166,7 @@ export function PosDocumentTypeDialog({
           <button
             type="button"
             onClick={onCancel}
-            disabled={busy}
+            disabled={busy || checkingFiscal || savingFiscal}
             className="grid h-10 w-10 shrink-0 place-items-center rounded-xl text-slate-500 outline-none transition hover:bg-slate-100 hover:text-slate-900 focus:ring-2 focus:ring-teal-500/30 disabled:opacity-50"
             aria-label="Cerrar"
           >
@@ -94,8 +183,8 @@ export function PosDocumentTypeDialog({
                 key={option.value}
                 autoFocus={selected}
                 type="button"
-                disabled={busy}
-                onClick={() => void onSelect(option.value)}
+                disabled={busy || checkingFiscal || savingFiscal}
+                onClick={() => void selectDocument(option.value)}
                 className={`relative min-h-40 rounded-2xl border-2 p-5 text-left outline-none transition focus:ring-4 focus:ring-teal-500/20 disabled:cursor-wait disabled:opacity-60 ${
                   selected
                     ? "border-teal-500 bg-teal-50 shadow-sm"
@@ -107,7 +196,7 @@ export function PosDocumentTypeDialog({
                     selected ? "bg-teal-600 text-white" : "bg-slate-100 text-slate-700"
                   }`}
                 >
-                  {busy && selected ? (
+                  {(busy || checkingFiscal) && option.value === "SalesInvoice" ? (
                     <Loader2 className="h-5 w-5 animate-spin" />
                   ) : (
                     <Icon className="h-5 w-5" />
@@ -126,6 +215,53 @@ export function PosDocumentTypeDialog({
             );
           })}
         </div>
+        {fiscalError && !configuringInvoice && (
+          <p className="mx-6 mb-6 rounded-xl bg-red-50 p-3 text-sm text-red-700">
+            {fiscalError}
+          </p>
+        )}
+        {configuringInvoice && (
+          <div className="max-h-[55vh] space-y-4 overflow-y-auto border-t border-slate-200 bg-slate-50 p-6">
+            <div>
+              <h3 className="font-bold text-slate-950">Configurar factura electrónica</h3>
+              <p className="mt-1 text-sm text-slate-600">
+                Completa únicamente la numeración y la resolución fiscal. El comprobante de
+                venta sigue disponible mientras terminas.
+              </p>
+            </div>
+            <InvoiceNumberingCard
+              businessId={businessId}
+              onChanged={() => void loadFiscalState()}
+            />
+            {configuration &&
+              !(edgeMode
+                ? configuration.isReadyForEnrollment
+                : configuration.isReadyForOnlineSales) && (
+                <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                  <FiscalResolutionForm
+                    value={configuration}
+                    saving={savingFiscal}
+                    onSave={saveFiscal}
+                  />
+                </div>
+              )}
+            {fiscalError && (
+              <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{fiscalError}</p>
+            )}
+            <button
+              type="button"
+              disabled={busy || checkingFiscal || savingFiscal}
+              onClick={() => void selectDocument("SalesInvoice")}
+              className="h-12 w-full rounded-xl bg-teal-600 font-bold text-white disabled:opacity-50"
+            >
+              {checkingFiscal
+                ? "Verificando..."
+                : edgeMode && !edgeFiscalReady && numberingReady
+                  ? "Preparar serie fiscal en este equipo"
+                  : "Activar factura electrónica"}
+            </button>
+          </div>
+        )}
       </section>
     </div>
   );

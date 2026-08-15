@@ -201,8 +201,10 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
                   (ProductId,BusinessId,Source,Sku,Name,UnitPrice,Currency,ManageStock,IsActive,CreatedAt)
                 VALUES(@ProductId,@BusinessId,0,@Sku,N'Producto aislado de cartera',10000,N'COP',1,1,SYSUTCDATETIME());
                 INSERT dbo.ProductPrices
-                  (ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
-                VALUES(NEWID(),@BusinessId,@ProductId,10000,N'COP','2026-01-01',1,SYSDATETIMEOFFSET());
+                  (ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,
+                   TargetMarginPercent,RoundingIncrement,RoundingMode,IsActive,CreatedAt)
+                VALUES(NEWID(),@BusinessId,@ProductId,10000,N'COP','2026-01-01',
+                       20,1,N'Nearest',1,SYSDATETIMEOFFSET());
                 INSERT dbo.SupplierProducts
                   (SupplierProductId,BusinessId,ProductId,SupplierId,SupplierProductCode,IsPrimary,IsActive,CreatedAt)
                 VALUES(NEWID(),@BusinessId,@ProductId,@SupplierId,@SupplierCode,1,1,SYSDATETIMEOFFSET());

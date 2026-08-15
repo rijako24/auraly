@@ -18,6 +18,7 @@ import type { AgentBotType } from "./agent-bot-type";
 
 export interface Tenant {
   tenantId: string;
+  tenantKey: string;
   name: string;
   email: string;
   isActive: boolean;

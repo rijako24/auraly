@@ -1,3 +1,4 @@
+using Auraly.Commerce.Taxation.Contracts;
 using System.Data;
 using System.Security.Cryptography;
 using System.Text;
@@ -21,9 +22,10 @@ public sealed class SqlGoodsReceiptStore(
         string idempotencyKey,
         ConfirmGoodsReceiptRequest request,
         GoodsReceiptCalculation calculation,
+        WithholdingCalculationSnapshot withholding,
         CancellationToken cancellationToken)
     {
-        var requestHash = HashRequest(request, calculation);
+        var requestHash = HashRequest(request, calculation, withholding);
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
@@ -78,7 +80,8 @@ public sealed class SqlGoodsReceiptStore(
                         line.UnitCost, line.DiscountAmount, line.TaxCode, line.TaxRate,
                         line.TaxTreatment.ToString(), line.NetAmount, line.TaxAmount, line.LineTotal,
                         source.PresentationName, source.PresentationQuantity, source.UnitsPerPresentation);
-                }).ToArray());
+                }).ToArray(),
+                withholding);
             var payloadJson = GoodsReceiptContractSerializer.Serialize(payload);
             var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(payloadJson));
 
@@ -414,7 +417,8 @@ public sealed class SqlGoodsReceiptStore(
         if (!stored.AsSpan().SequenceEqual(expected))
             throw new PurchasingConflictException("The draft changed in another session.");
     }
-    private static byte[] HashRequest(ConfirmGoodsReceiptRequest request, GoodsReceiptCalculation calculation) =>
+    private static byte[] HashRequest(ConfirmGoodsReceiptRequest request, GoodsReceiptCalculation calculation,
+        WithholdingCalculationSnapshot withholding) =>
         SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
         {
             request.DocumentId,
@@ -431,7 +435,8 @@ public sealed class SqlGoodsReceiptStore(
             calculation.NetAmount,
             calculation.TaxAmount,
             calculation.GrandTotal,
-            Lines = calculation.Lines
+            Lines = calculation.Lines,
+            Withholding = withholding
         }));
 
     private static void AddDecimal(SqlCommand command, string name, decimal value, byte precision, byte scale)

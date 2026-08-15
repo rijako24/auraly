@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Auraly.Contracts.Authentication;
+using Auraly.BuildingBlocks.Domain.Identity;
 using Auraly.Contracts.Authorization;
 
 namespace Auraly.Application.Authentication;
@@ -9,6 +10,7 @@ public sealed record AuthenticationUserRecord(
     Guid UserId,
     Guid TenantId,
     string Username,
+    string TenantKey,
     string Email,
     string FirstName,
     string LastName,
@@ -51,7 +53,11 @@ public sealed record ParsedAuthenticationToken(
 public interface IAuthenticationSessionStore
 {
     Task<AuthenticationUserRecord?> FindUserAsync(
-        string normalizedUsername,
+        Guid tenantId, string normalizedUsername,
+        CancellationToken cancellationToken);
+
+    Task<AuthenticationUserRecord?> FindUserAsync(
+        string tenantKey, string normalizedUsername,
         CancellationToken cancellationToken);
 
     Task RecordFailedLoginAsync(
@@ -129,7 +135,8 @@ public sealed class AuthenticationService(
         string correlationId,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(request.Username) ||
+        if (string.IsNullOrWhiteSpace(request.TenantKey) ||
+            string.IsNullOrWhiteSpace(request.Username) ||
             string.IsNullOrWhiteSpace(request.Password))
             throw new AuthenticationValidationException(
                 "Username and password are required.");
@@ -137,6 +144,7 @@ public sealed class AuthenticationService(
 
         var now = timeProvider.GetUtcNow();
         var user = await store.FindUserAsync(
+            TenantKey.Parse(request.TenantKey).Value,
             request.Username.Trim().ToUpperInvariant(), cancellationToken);
         if (user is null || !user.IsActive || string.IsNullOrWhiteSpace(user.PasswordHash))
             throw new AuthenticationDeniedException("Invalid credentials.");
@@ -245,6 +253,7 @@ public sealed class AuthenticationService(
             user.UserId,
             user.TenantId,
             user.Username,
+            user.TenantKey,
             user.Email,
             user.FirstName,
             user.LastName,

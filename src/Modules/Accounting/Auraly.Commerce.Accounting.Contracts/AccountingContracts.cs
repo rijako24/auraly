@@ -26,6 +26,30 @@ public static class AccountingCategories
     public const string SupplierCreditsReceivable = "SupplierCreditsReceivable";
     public const string InputVat = "InputVat";
     public const string PurchasesExpense = "PurchasesExpense";
+    public const string WithholdingIncomeTaxPayable = "WithholdingIncomeTaxPayable";
+    public const string WithholdingVatPayable = "WithholdingVatPayable";
+    public const string WithholdingIcaPayable = "WithholdingIcaPayable";
+    public const string WithholdingIncomeTaxReceivable = "WithholdingIncomeTaxReceivable";
+    public const string WithholdingVatReceivable = "WithholdingVatReceivable";
+    public const string WithholdingIcaReceivable = "WithholdingIcaReceivable";
+    public const string OtherIncome = "OtherIncome";
+    public const string OwnerContributions = "OwnerContributions";
+    public const string OperatingExpense = "OperatingExpense";
+    public const string OtherExpense = "OtherExpense";
+
+    private static readonly IReadOnlySet<string> Supported = new HashSet<string>(
+    [
+        Cash, Bank, DebitCardClearing, CreditCardClearing, TransferClearing,
+        AccountsReceivable, SalesRevenue, SalesReturns, OutputVat, Inventory,
+        CostOfGoodsSold, CustomerCreditsPayable, AccountsPayable,
+        SupplierCreditsReceivable, InputVat, PurchasesExpense,
+        WithholdingIncomeTaxPayable, WithholdingVatPayable,
+        WithholdingIcaPayable, WithholdingIncomeTaxReceivable,
+        WithholdingVatReceivable, WithholdingIcaReceivable,
+        OtherIncome, OwnerContributions, OperatingExpense, OtherExpense
+    ], StringComparer.Ordinal);
+
+    public static bool IsSupported(string category) => Supported.Contains(category);
 
     public static string ForPaymentMethod(string methodCode) => methodCode switch
     {
@@ -101,6 +125,14 @@ public sealed record AccountingPeriodView(
     string Status);
 
 public sealed record SetAccountMappingRequest(
+    Guid TenantId,
+    Guid? BusinessId,
+    string Category,
+    Guid AccountId,
+    DateOnly EffectiveFrom,
+    DateOnly? EffectiveTo);
+public sealed record AccountingMappingView(
+    Guid MappingId,
     Guid TenantId,
     Guid? BusinessId,
     string Category,

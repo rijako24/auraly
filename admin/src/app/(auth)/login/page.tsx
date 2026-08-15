@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { User, Lock, Eye, EyeOff, AlertCircle } from "lucide-react";
+import { Building2, User, Lock, Eye, EyeOff, AlertCircle } from "lucide-react";
 import { authApi } from "@/services/api/auth";
 import { useAuthStore } from "@/stores/auth-store";
 import { readEdgeTokenFromLaunch } from "@/services/pos/pos-edge-client";
@@ -25,6 +25,8 @@ function LoginForm() {
   const searchParams = useSearchParams();
   const setAuth = useAuthStore((s) => s.setAuth);
   const [username, setUsername] = useState("");
+  const tenantFromUrl = searchParams.get("tenant")?.trim() ?? "";
+  const [tenantKey, setTenantKey] = useState(tenantFromUrl);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -42,7 +44,7 @@ function LoginForm() {
     setIsLoading(true);
 
     try {
-      const response = await authApi.login({ username, password });
+      const response = await authApi.login({ tenantKey, username, password });
       setAuth(response.user);
       const redirect = searchParams.get("redirect") ?? "/dashboard";
       router.push(redirect.startsWith("/") ? redirect : "/dashboard");
@@ -72,6 +74,30 @@ function LoginForm() {
               <span>{error}</span>
             </div>
           )}
+          <div className="space-y-2">
+            <Label htmlFor="tenantKey" className="text-[#151515]">Empresa</Label>
+            <div className="relative">
+              <Building2 className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#667085]" />
+              <Input
+                id="tenantKey"
+                type="text"
+                placeholder="@mimos"
+                className="border-[#101828] bg-white pl-10 text-[#151515] placeholder:text-[#667085]"
+                value={tenantKey}
+                onChange={(event) => setTenantKey(event.target.value)}
+                required
+                autoComplete="organization"
+                disabled={!isHydrated || isLoading || Boolean(tenantFromUrl)}
+                aria-describedby="tenant-key-help"
+              />
+            </div>
+            <p id="tenant-key-help" className="text-xs text-[#667085]">
+              {tenantFromUrl
+                ? "Este enlace ya identifica tu empresa."
+                : "Usa la clave que aparece en el enlace de acceso de tu empresa."}
+            </p>
+          </div>
+
 
           <div className="space-y-2">
             <Label htmlFor="username" className="text-[#151515]">Usuario</Label>

@@ -74,6 +74,8 @@ export const navigation: NavEntry[] = [
   { name: "Leads", href: "/dashboard/leads", icon: UserPlus, permission: "leads.read" },
   { name: "Campanas", href: "/dashboard/campaigns", icon: Megaphone, permission: "campaigns.read" },
   { type: "separator", label: "Finanzas" },
+  { name: "Contabilidad", href: "/dashboard/accounting", icon: Library, permission: "accounting.read" },
+  { name: "Retenciones", href: "/dashboard/accounting/withholdings", icon: ReceiptText, permission: "commerce.taxation.withholdings.view" },
   { name: "Suscripcion", href: "/dashboard/subscription", icon: Gem, permission: "dashboard.read" },
   { name: "Pedidos", href: "/dashboard/orders", icon: ShoppingCart, permission: "orders.read" },
   { name: "Pagos", href: "/dashboard/payments", icon: CreditCard, permission: "payments.read" },

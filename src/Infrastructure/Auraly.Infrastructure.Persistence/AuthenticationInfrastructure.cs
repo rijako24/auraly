@@ -164,13 +164,32 @@ public sealed class SqlAuthenticationSessionStore(
     IAuralyIdGenerator ids) : IAuthenticationSessionStore
 {
     public async Task<AuthenticationUserRecord?> FindUserAsync(
-        string normalizedUsername,
+        string tenantKey, string normalizedUsername,
         CancellationToken cancellationToken)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         return await ReadUserByUsernameAsync(
-            connection, null, normalizedUsername, cancellationToken);
+            connection, null, tenantKey, normalizedUsername, cancellationToken);
+    }
+
+    public async Task<AuthenticationUserRecord?> FindUserAsync(
+        Guid tenantId,
+        string normalizedUsername,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand("""
+            SELECT u.UserId,u.TenantId,t.TenantKey,u.Username,u.Email,u.FirstName,u.LastName,u.AvatarUrl,
+                   u.PasswordHash,u.IsActive,u.AccessFailedCount,u.LockoutEnd
+            FROM dbo.AppUsers u
+            INNER JOIN dbo.Tenants t ON t.TenantId=u.TenantId AND t.IsActive=1
+            WHERE u.TenantId=@TenantId AND u.NormalizedUsername=@Username;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@Username", normalizedUsername);
+        return await ReadUserAsync(connection, null, command, cancellationToken);
     }
 
     public async Task RecordFailedLoginAsync(
@@ -402,17 +421,19 @@ public sealed class SqlAuthenticationSessionStore(
     private static async Task<AuthenticationUserRecord?> ReadUserByUsernameAsync(
         SqlConnection connection,
         SqlTransaction? transaction,
-        string normalizedUsername,
+        string tenantKey, string normalizedUsername,
         CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
-            SELECT userAccount.UserId,userAccount.TenantId,userAccount.Username,userAccount.Email,userAccount.FirstName,userAccount.LastName,userAccount.AvatarUrl,
-                   userAccount.PasswordHash,userAccount.IsActive,userAccount.AccessFailedCount,userAccount.LockoutEnd
-            FROM dbo.AppUsers userAccount
-            INNER JOIN dbo.Tenants tenant ON tenant.TenantId=userAccount.TenantId AND tenant.IsActive=1
-            WHERE userAccount.NormalizedUsername=@Username;
+            SELECT u.UserId,u.TenantId,t.TenantKey,u.Username,u.Email,u.FirstName,u.LastName,u.AvatarUrl,
+                   u.PasswordHash,u.IsActive,u.AccessFailedCount,u.LockoutEnd
+            FROM dbo.AppUsers u
+            INNER JOIN dbo.Tenants t ON t.TenantId=u.TenantId AND t.IsActive=1
+            WHERE t.TenantKey=@TenantKey AND u.NormalizedUsername=@Username;
+
             """, connection, transaction);
         command.Parameters.AddWithValue("@Username", normalizedUsername);
+        command.Parameters.AddWithValue("@TenantKey", tenantKey);
         return await ReadUserAsync(connection, transaction, command, cancellationToken);
     }
 
@@ -424,11 +445,12 @@ public sealed class SqlAuthenticationSessionStore(
         CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
-            SELECT userAccount.UserId,userAccount.TenantId,userAccount.Username,userAccount.Email,userAccount.FirstName,userAccount.LastName,userAccount.AvatarUrl,
-                   userAccount.PasswordHash,userAccount.IsActive,userAccount.AccessFailedCount,userAccount.LockoutEnd
-            FROM dbo.AppUsers userAccount
-            INNER JOIN dbo.Tenants tenant ON tenant.TenantId=userAccount.TenantId AND tenant.IsActive=1
-            WHERE userAccount.UserId=@UserId AND userAccount.TenantId=@TenantId AND userAccount.IsActive=1;
+            SELECT u.UserId,u.TenantId,t.TenantKey,u.Username,u.Email,u.FirstName,u.LastName,u.AvatarUrl,
+                   u.PasswordHash,u.IsActive,u.AccessFailedCount,u.LockoutEnd
+            FROM dbo.AppUsers u
+            INNER JOIN dbo.Tenants t ON t.TenantId=u.TenantId AND t.IsActive=1
+            WHERE u.UserId=@UserId AND u.TenantId=@TenantId AND u.IsActive=1;
+
             """, connection, transaction);
         command.Parameters.AddWithValue("@UserId", userId);
         command.Parameters.AddWithValue("@TenantId", tenantId);
@@ -444,6 +466,7 @@ public sealed class SqlAuthenticationSessionStore(
         Guid userId;
         Guid tenantId;
         string username;
+        string tenantKey;
         string email;
         string firstName;
         string lastName;
@@ -458,15 +481,16 @@ public sealed class SqlAuthenticationSessionStore(
                 return null;
             userId = reader.GetGuid(0);
             tenantId = reader.GetGuid(1);
-            username = reader.GetString(2);
-            email = reader.GetString(3);
-            firstName = reader.GetString(4);
-            lastName = reader.GetString(5);
-            avatar = reader.IsDBNull(6) ? null : reader.GetString(6);
-            passwordHash = reader.IsDBNull(7) ? null : reader.GetString(7);
-            active = reader.GetBoolean(8);
-            failures = reader.GetInt32(9);
-            lockout = reader.IsDBNull(10) ? null : reader.GetDateTimeOffset(10);
+            tenantKey = reader.GetString(2);
+            username = reader.GetString(3);
+            email = reader.GetString(4);
+            firstName = reader.GetString(5);
+            lastName = reader.GetString(6);
+            avatar = reader.IsDBNull(7) ? null : reader.GetString(7);
+            passwordHash = reader.IsDBNull(8) ? null : reader.GetString(8);
+            active = reader.GetBoolean(9);
+            failures = reader.GetInt32(10);
+            lockout = reader.IsDBNull(11) ? null : reader.GetDateTimeOffset(11);
         }
         var roles = await ReadStringsAsync(
             connection, transaction,
@@ -491,7 +515,7 @@ public sealed class SqlAuthenticationSessionStore(
             ORDER BY p.Resource;
             """, userId, tenantId, cancellationToken);
         return new AuthenticationUserRecord(
-            userId, tenantId, username, email, firstName, lastName, avatar,
+            userId, tenantId, username, tenantKey, email, firstName, lastName, avatar,
             passwordHash, active, failures, lockout, roles, permissions);
     }
 

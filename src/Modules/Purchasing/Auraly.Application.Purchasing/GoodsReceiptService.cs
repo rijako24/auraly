@@ -1,3 +1,5 @@
+using Auraly.Commerce.Taxation.Application;
+using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Application.DocumentProcessing;
 using Auraly.Contracts.Purchasing;
 using Auraly.Domain.Purchasing;
@@ -11,12 +13,14 @@ public interface IGoodsReceiptStore
         string idempotencyKey,
         ConfirmGoodsReceiptRequest request,
         GoodsReceiptCalculation calculation,
+        WithholdingCalculationSnapshot withholding,
         CancellationToken cancellationToken);
 }
 
 public sealed class GoodsReceiptService(
     IGoodsReceiptStore store,
-    IDocumentProcessingSignalPublisher signalPublisher)
+    IDocumentProcessingSignalPublisher signalPublisher,
+    WithholdingService withholdingService)
 {
     public async Task<GoodsReceiptAcceptance> ConfirmAsync(
         PurchasingUserIdentity user,
@@ -62,6 +66,13 @@ public sealed class GoodsReceiptService(
         {
             throw new PurchasingValidationException(exception.Message, exception);
         }
+        var withholding = await withholdingService.CalculateAsync(user.TenantId, user.BusinessId,
+            new WithholdingPreviewRequest(user.BusinessId, WithholdingDirections.Purchase,
+                "Accrual", request.SupplierId, request.WithholdingConceptCode,
+                request.WithholdingJurisdictionCode, calculation.NetAmount,
+                calculation.TaxAmount, request.ReceivedAt),
+            cancellationToken);
+
 
         var acceptance = await store.AcceptAsync(user, idempotencyKey.Trim(), request with
         {
@@ -69,7 +80,7 @@ public sealed class GoodsReceiptService(
             SupplierInvoiceNumber = Normalize(request.SupplierInvoiceNumber, 80),
             Notes = Normalize(request.Notes, 1000),
             Lines = normalizedLines
-        }, calculation, cancellationToken);
+        }, calculation, withholding, cancellationToken);
         await signalPublisher.PublishAsync(
             new DocumentProcessingSignal(
                 acceptance.MovementId,
