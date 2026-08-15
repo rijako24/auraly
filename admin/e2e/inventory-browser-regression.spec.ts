@@ -93,7 +93,7 @@ async function waitForProcessed(page: Page, expectedReason?: string) {
   await page.reload();
   await page.getByRole("tab", { name: "Historial" }).click();
   const row = page.getByRole("row").filter({ hasText: documentNumber! });
-  await expect(row).toContainText("Processed", { timeout: 30_000 });
+  await expect(row).toContainText("Procesado", { timeout: 30_000 });
   if (expectedReason) await expect(row).toContainText(expectedReason);
 }
 
