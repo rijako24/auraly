@@ -103,6 +103,14 @@
           "OpenAI": "2.1.0"
         }
       },
+      "Azure.Communication.Email": {
+        "type": "Transitive",
+        "resolved": "1.1.0",
+        "contentHash": "yR0QWbrvM/RvOxrkFWaPqzltAiF/MGoVhjm++UkEpXvN00Brc/LevJXeg2BUVbIucoxx+kKW7HTAzGKspFh8Vg==",
+        "dependencies": {
+          "Azure.Core": "1.49.0"
+        }
+      },
       "Azure.Core": {
         "type": "Transitive",
         "resolved": "1.50.0",
@@ -2273,6 +2281,7 @@
           "Auraly.Infrastructure.Routes": "[1.0.0, )",
           "Auraly.Platform.Application": "[1.0.0, )",
           "Auraly.Platform.Infrastructure": "[1.0.0, )",
+          "Azure.Communication.Email": "[1.1.0, )",
           "Azure.Identity": "[1.17.2, )",
           "Azure.Messaging.ServiceBus": "[7.19.0, )",
           "Azure.Messaging.WebPubSub": "[1.6.0, )",

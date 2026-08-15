@@ -92,6 +92,60 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Administrator_email_and_identification_are_unique_per_tenant()
+    {
+        var geography = await ReadGeographyAsync();
+        var sharedEmail = $"shared-admin-{Guid.NewGuid():N}@auraly.test";
+        var sharedIdentification = $"10{Random.Shared.NextInt64(100000000, 999999999)}";
+        using var admin = fixture.CreateAdminClient("tenants.create");
+
+        async Task<(ProvisionTenantResult Result, string Token)> ProvisionAsync(string suffix)
+        {
+            var request = new ProvisionTenantRequest(
+                Guid.NewGuid(), $"Empresa {suffix} SAS", $"Empresa {suffix}",
+                $"9{Random.Shared.NextInt64(100000000, 999999999)}", "1",
+                geography.CountryId, geography.DivisionId, geography.CityId,
+                "Calle 1 # 2-3", "3001234567", $"empresa-{suffix}@auraly.test", "R-99-PN",
+                "Sede principal", "Calle 1 # 2-3", "3001234567", $"sede-{suffix}@auraly.test",
+                "America/Bogota", "LatestReceiptCost", sharedEmail, 10, 3);
+            using var response = await admin.PostAsJsonAsync("/api/v1/tenants", request);
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.True(
+                response.StatusCode == HttpStatusCode.Created,
+                $"Expected Created but received {response.StatusCode}: {body}");
+            var result = await response.Content.ReadFromJsonAsync<ProvisionTenantResult>();
+            Assert.NotNull(result);
+            return (result!, await ReadInvitationTokenAsync(result!.TenantId));
+        }
+
+        var first = await ProvisionAsync($"one-{Guid.NewGuid():N}"[..14]);
+        var second = await ProvisionAsync($"two-{Guid.NewGuid():N}"[..14]);
+        Assert.NotEqual(first.Result.TenantId, second.Result.TenantId);
+
+        using var publicClient = fixture.CreateClient();
+        async Task<AcceptTenantInvitationResult> AcceptAsync(string token, string lastName)
+        {
+            using var response = await publicClient.PostAsJsonAsync(
+                "/api/v1/auth/invitations/accept",
+                new AcceptTenantInvitationRequest(
+                    token, "CC", sharedIdentification, "Administrador", lastName,
+                    sharedEmail, "3007654321", "Calle 1 # 2-3", Password, Password));
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.True(
+                response.StatusCode == HttpStatusCode.OK,
+                $"Expected OK but received {response.StatusCode}: {body}");
+            return await response.Content.ReadFromJsonAsync<AcceptTenantInvitationResult>()
+                ?? throw new InvalidOperationException("Invitation acceptance response is missing.");
+        }
+
+        var firstAccepted = await AcceptAsync(first.Token, "Primer tenant");
+        var secondAccepted = await AcceptAsync(second.Token, "Segundo tenant");
+        Assert.True((await ReadProvisionedStateAsync(
+            first.Result.TenantId, firstAccepted.UserId)).UserActive);
+        Assert.True((await ReadProvisionedStateAsync(
+            second.Result.TenantId, secondAccepted.UserId)).UserActive);
+    }
+    [Fact]
     public async Task Creating_any_later_business_also_provisions_sales_and_orders_warehouses()
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
