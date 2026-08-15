@@ -13,7 +13,7 @@ import { ProductMerchandisingEditor, type ProductMerchandisingEditorHandle } fro
 import { ProductSupplierEditor, type ProductSupplierEditorHandle } from "@/components/products/product-supplier-editor";
 import { ProductTaxEditor, type ProductTaxEditorHandle } from "@/components/products/product-tax-editor";
 import { ProductRecognitionSections, type ProductRecognitionSectionsHandle } from "@/components/products/product-recognition-sections";
-import { ProductImageGallery } from "@/components/products/product-image-gallery";
+import { ProductImageEditor, type ProductImageEditorHandle } from "@/components/products/product-image-gallery";
 import { DataTable } from "@/components/tables/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -91,6 +91,7 @@ export default function ProductsPage() {
   const updateStatus = useUpdateProductStatus();
   const merchandisingEditorRef = useRef<ProductMerchandisingEditorHandle>(null);
   const pricingEditorRef = useRef<ProductPricingEditorHandle>(null);
+  const imageEditorRef = useRef<ProductImageEditorHandle>(null);
   const taxEditorRef = useRef<ProductTaxEditorHandle>(null);
   const supplierEditorRef = useRef<ProductSupplierEditorHandle>(null);
   const recognitionEditorRef = useRef<ProductRecognitionSectionsHandle>(null);
@@ -194,6 +195,7 @@ export default function ProductsPage() {
       });
       await merchandisingEditorRef.current?.save();
       await taxEditorRef.current?.save();
+      await imageEditorRef.current?.save();
       await pricingEditorRef.current?.save();
       await supplierEditorRef.current?.save();
       await recognitionEditorRef.current?.save();
@@ -201,6 +203,7 @@ export default function ProductsPage() {
       await refetch();
       setProductValidationError(undefined);
       toast.success("Producto guardado completamente");
+      closeModal();
     } catch (error) {
       const message = error instanceof Error ? error.message : "No se pudo guardar el producto";
       setProductValidationError(message);
@@ -436,6 +439,10 @@ export default function ProductsPage() {
                   </div>
                 </ProductFormSection>
 
+                <ProductFormSection id="product-images" icon={Images} title="Imágenes del producto" description="Carga varias imágenes, revisa su vista previa y elige una portada. Se guardarán junto con el producto.">
+                  <ProductImageEditor ref={imageEditorRef} productId={selectedProduct.productId} />
+                </ProductFormSection>
+
                 <ProductMerchandisingEditor ref={merchandisingEditorRef} embedded productId={selectedProduct.productId} />
 
                 <ProductFormSection id="product-supplier" icon={Truck} title="Proveedor principal y empaque habitual" description="Opcional. Permite recibir por caja, bulto o paquete y convertir a la unidad del producto.">
@@ -448,11 +455,6 @@ export default function ProductsPage() {
                     <ProductPricingEditor ref={pricingEditorRef} embedded productId={selectedProduct.productId} productName={selectedProduct.name} salesTaxRateOverride={editingSalesTaxRate} />
                   </div>
                 </ProductFormSection>
-
-                <ProductFormSection id="product-images" icon={Images} title="Im?genes del producto" description="Carga varias im?genes y elige una portada. Cada producto vinculado conserva su propia galer?a.">
-                  <ProductImageGallery productId={selectedProduct.productId} />
-                </ProductFormSection>
-
                 <details id="product-recognition" className="group scroll-mt-5 rounded-xl border bg-muted/10">
                   <summary className="cursor-pointer list-none p-5 font-semibold">Reconocimiento, alias y aprendizaje <span className="ml-2 text-xs font-normal text-muted-foreground">Información avanzada</span></summary>
                   <div className="space-y-5 border-t p-5"><ProductRecognitionSections ref={recognitionEditorRef} productId={selectedProduct.productId} editable aliases={configurationQuery.data?.aliases ?? []} searchTerms={configurationQuery.data?.searchTerms ?? []} isLoading={configurationQuery.isLoading} isError={configurationQuery.isError} /><ProductLearningSection aliases={configurationQuery.data?.aliases ?? []} isLoading={configurationQuery.isLoading} isError={configurationQuery.isError} isPending={reviewAlias.isPending || promoteAlias.isPending} onReview={handleReviewLearning} onPromote={handlePromoteLearning} /></div>

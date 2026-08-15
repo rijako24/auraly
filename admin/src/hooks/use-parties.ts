@@ -26,7 +26,7 @@ export function useCities(divisionId:string){return useQuery({queryKey:["geograp
 export function useCustomerPricingOptions(enabled=true){return useQuery({queryKey:["parties","pricing-options"],queryFn:()=>partiesApi.pricingOptions(),enabled});}
 
 export function usePartyIdentity(
-  params: { countryId: string; identificationTypeCode: string; identification: string; requestedRole: "Customer"|"Supplier"|"Seller"|"Carrier" },
+  params: { countryId: string; identificationTypeCode: string; identification: string; requestedRole: import("@/services/api/parties").PartyRole },
   enabled: boolean,
 ) {
   const businessId=useBusinessContextStore((state)=>state.selectedBusinessId);

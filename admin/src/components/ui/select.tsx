@@ -66,10 +66,14 @@ const SelectScrollDownButton = React.forwardRef<
 SelectScrollDownButton.displayName =
   SelectPrimitive.ScrollDownButton.displayName;
 
+type SelectContentProps = React.ComponentPropsWithoutRef<typeof SelectPrimitive.Content> & {
+  emptyMessage?: React.ReactNode;
+};
+
 const SelectContent = React.forwardRef<
   React.ComponentRef<typeof SelectPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof SelectPrimitive.Content>
->(({ className, children, position = "popper", ...props }, ref) => (
+  SelectContentProps
+>(({ className, children, position = "popper", emptyMessage = "Sin datos", ...props }, ref) => (
   <SelectPrimitive.Portal>
     <SelectPrimitive.Content
       ref={ref}
@@ -90,7 +94,9 @@ const SelectContent = React.forwardRef<
             "h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]"
         )}
       >
-        {children}
+        {React.Children.count(children) > 0 ? children : (
+          <div role="status" className="px-3 py-2 text-sm text-muted-foreground">{emptyMessage}</div>
+        )}
       </SelectPrimitive.Viewport>
       <SelectScrollDownButton />
     </SelectPrimitive.Content>

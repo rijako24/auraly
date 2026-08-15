@@ -2,7 +2,7 @@
 import { useMemo } from "react";
 import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
-import { MoreHorizontal, Plus, Eye, Pencil } from "lucide-react";
+import { MoreHorizontal, Plus, Eye } from "lucide-react";
 import { DataTable } from "@/components/tables/data-table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -20,9 +20,11 @@ export default function TenantsPage() {
     { accessorKey: "name", header: "Nombre", cell: ({ row }) => <div className="font-medium">{row.original.name}</div> },
     { accessorKey: "email", header: "Email" },
     { accessorKey: "isActive", header: "Estado", cell: ({ row }) => <Badge variant={row.original.isActive ? "default" : "secondary"}>{row.original.isActive ? "Activo" : "Inactivo"}</Badge> },
-    { accessorKey: "businesses", header: "Negocios", cell: ({ row }) => row.original.businesses?.length ?? 0 },
+    { accessorKey: "businessCount", header: "Negocios" },
+    { id: "users", header: "Usuarios", cell: ({ row }) => `${row.original.activeUserCount} / ${row.original.maximumUsers}` },
+    { id: "devices", header: "Cajas", cell: ({ row }) => `${row.original.activeEnrolledDeviceCount} / ${row.original.maximumEnrolledDevices}` },
     { accessorKey: "createdAt", header: "Creado", cell: ({ row }) => formatDate(row.original.createdAt) },
-    { id: "actions", cell: ({ row }) => { const t = row.original; return (<DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem asChild><Link href={`/dashboard/tenants/${t.tenantId}`}><Eye className="mr-2 h-4 w-4" />Ver</Link></DropdownMenuItem><DropdownMenuItem asChild><Link href={`/dashboard/tenants/${t.tenantId}/edit`}><Pencil className="mr-2 h-4 w-4" />Editar</Link></DropdownMenuItem></DropdownMenuContent></DropdownMenu>); } },
+    { id: "actions", cell: ({ row }) => { const t = row.original; return (<DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem asChild><Link href={`/dashboard/tenants/${t.tenantId}`}><Eye className="mr-2 h-4 w-4" />Ver</Link></DropdownMenuItem></DropdownMenuContent></DropdownMenu>); } },
   ], []);
 
   if (isLoading) return <PageLoading cards={0} />;

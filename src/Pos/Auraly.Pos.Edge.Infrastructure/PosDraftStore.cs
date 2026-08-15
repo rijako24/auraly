@@ -240,30 +240,16 @@ public sealed class PosDraftStore
             await RequireActiveAsync(connection, transaction, draftId.Value, cancellationToken);
         }
 
-        var mergeLineId = await FindMergeableLineAsync(
-            connection, transaction, draftId.Value, input, cancellationToken);
-        if (mergeLineId is null)
-        {
-            var position = await NextPositionAsync(connection, transaction, draftId.Value, cancellationToken);
-            await InsertLineAsync(
-                connection,
-                transaction,
-                draftId.Value,
-                _idGenerator.NewId(),
-                input,
-                position,
-                cancellationToken);
-        }
-        else
-        {
-            await ExecuteAsync(connection, transaction, """
-                UPDATE PosDraftLines
-                SET Quantity=CAST(Quantity AS NUMERIC)+CAST(@Quantity AS NUMERIC)
-                WHERE LineId=@LineId;
-                """,
-                [P("@Quantity", input.Quantity), P("@LineId", mergeLineId.Value)],
-                cancellationToken);
-        }
+        var position = await NextPositionAsync(
+            connection, transaction, draftId.Value, cancellationToken);
+        await InsertLineAsync(
+            connection,
+            transaction,
+            draftId.Value,
+            _idGenerator.NewId(),
+            input,
+            position,
+            cancellationToken);
         await TouchAsync(connection, transaction, draftId.Value, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return await GetRequiredAsync(draftId.Value, cancellationToken);

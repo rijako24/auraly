@@ -12,7 +12,7 @@ namespace Auraly.Api.Controllers;
 [ApiController]
 [Route("api/v1/tenants")]
 [Authorize]
-public sealed class TenantsController(ITenantService tenantService) : ControllerBase
+public sealed class TenantsController(ITenantService tenantService, ITenantDeviceAdminStore deviceAdmin) : ControllerBase
 {
     [HttpGet]
     [PermissionAuthorize("tenants.read")]
@@ -37,7 +37,27 @@ public sealed class TenantsController(ITenantService tenantService) : Controller
     [HttpPut("{tenantId:guid}")]
     [PermissionAuthorize("tenants.update")]
     public async Task<ActionResult<TenantDto>> Update(Guid tenantId, [FromBody] UpdateTenantRequest request, CancellationToken ct) =>
-        Ok(await tenantService.UpdateAsync(tenantId, request.Name, request.Email, ct));
+        Ok(await tenantService.UpdateAsync(tenantId, request.Name, request.Email, request.MaximumUsers, request.MaximumEnrolledDevices, ct));
+
+    [HttpGet("{tenantId:guid}/devices")]
+    [PermissionAuthorize("tenants.read")]
+    public async Task<ActionResult<IReadOnlyList<TenantEnrolledDeviceDto>>> GetDevices(Guid tenantId, CancellationToken ct) =>
+        Ok(await deviceAdmin.ListAsync(tenantId, ct));
+
+    [HttpDelete("{tenantId:guid}/devices/{deviceId:guid}")]
+    [PermissionAuthorize("tenants.update")]
+    public async Task<IActionResult> DeactivateDevice(Guid tenantId, Guid deviceId, CancellationToken ct)
+    {
+        await deviceAdmin.DeactivateAsync(tenantId, deviceId, ct);
+        return NoContent();
+    }
+    [HttpPost("{tenantId:guid}/activate")]
+    [PermissionAuthorize("tenants.update")]
+    public async Task<IActionResult> Activate(Guid tenantId, CancellationToken ct)
+    {
+        await tenantService.ActivateAsync(tenantId, ct);
+        return NoContent();
+    }
 
     [HttpDelete("{tenantId:guid}")]
     [PermissionAuthorize("tenants.update")]

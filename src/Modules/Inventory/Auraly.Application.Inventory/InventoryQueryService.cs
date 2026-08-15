@@ -13,6 +13,7 @@ public interface IInventoryQueryStore
     Task<InventoryBalancePage> GetBalancesAsync(InventoryUserIdentity user, InventoryBalanceQuery query, bool includeCosts, CancellationToken token);
     Task<InventoryMovementPage> GetMovementsAsync(InventoryUserIdentity user, InventoryMovementQuery query, bool includeCosts, CancellationToken token);
     Task<InventoryOperationPage> GetOperationsAsync(InventoryUserIdentity user, InventoryOperationQuery query, bool includeCosts, CancellationToken token);
+    Task<InventoryOperationDetail?> GetOperationDetailAsync(InventoryUserIdentity user, Guid documentId, bool includeCosts, CancellationToken token);
 }
 
 public sealed class InventoryQueryService(IInventoryQueryStore store)
@@ -84,6 +85,16 @@ public sealed class InventoryQueryService(IInventoryQueryStore store)
         if (query.From is not null && query.To is not null && query.From > query.To) throw new InventoryValidationException("The starting date cannot be after the ending date.");
         return store.GetOperationsAsync(user, query with { Search = Normalize(query.Search), DocumentType = Normalize(query.DocumentType), Status = Normalize(query.Status) }, user.Permissions.Contains(InventoryPermissionCodes.ReadCosts), token);
     }
+    public Task<InventoryOperationDetail?> GetOperationDetailAsync(
+        InventoryUserIdentity user, Guid documentId, CancellationToken token = default)
+    {
+        Validate(user, user.BusinessId, 1, 1);
+        if (documentId == Guid.Empty)
+            throw new InventoryValidationException("DocumentId is required.");
+        return store.GetOperationDetailAsync(
+            user, documentId, user.Permissions.Contains(InventoryPermissionCodes.ReadCosts), token);
+    }
+
 
     private static void RequireWarehouseManagement(InventoryUserIdentity user)
     {

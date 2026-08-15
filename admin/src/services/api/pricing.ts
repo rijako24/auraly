@@ -16,6 +16,7 @@ export interface PriceRevisionListItem {
   previousObservedUnitCost: number | null;
   observedUnitCost: number;
   currentSalePrice: number;
+  currentPricePublishedAt: string | null;
   currentMarginPercent: number | null;
   salesTaxRate: number;
   targetMarginPercent: number | null;

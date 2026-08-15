@@ -14,6 +14,7 @@ public static class PriceSegmentsApi
         group.MapPost("/", SaveAsync);
         group.MapGet("/{kind}/{id:guid}/items", ItemsAsync);
         group.MapPut("/{kind}/{id:guid}/items/{productId:guid}", SaveItemAsync);
+        group.MapDelete("/{kind}/{id:guid}/items/{productId:guid}", DeleteItemAsync);
         return endpoints;
     }
 
@@ -21,6 +22,7 @@ public static class PriceSegmentsApi
         HttpContext context, SqlServerConnectionFactory connections, CancellationToken ct)
     {
         var identity = context.User.ToPricingIdentity();
+        if (!identity.Permissions.Contains("pricing.segments.read")) return Results.Forbid();
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         const string sql = """
@@ -51,7 +53,7 @@ public static class PriceSegmentsApi
         SqlServerConnectionFactory connections, CancellationToken ct)
     {
         var identity = context.User.ToPricingIdentity();
-        if (!identity.Permissions.Contains("pricing.prices.prepare")) return Results.Forbid();
+        if (!identity.Permissions.Contains("pricing.segments.manage")) return Results.Forbid();
         var kind = NormalizeKind(request.Kind);
         var code = request.Code?.Trim().ToUpperInvariant();
         var name = request.Name?.Trim();
@@ -81,6 +83,7 @@ public static class PriceSegmentsApi
         CancellationToken ct)
     {
         var identity = context.User.ToPricingIdentity();
+        if (!identity.Permissions.Contains("pricing.segments.read")) return Results.Forbid();
         kind = NormalizeKind(kind);
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
@@ -120,7 +123,7 @@ public static class PriceSegmentsApi
         SavePriceSegmentItemRequest request, SqlServerConnectionFactory connections, CancellationToken ct)
     {
         var identity = context.User.ToPricingIdentity();
-        if (!identity.Permissions.Contains("pricing.prices.prepare")) return Results.Forbid();
+        if (!identity.Permissions.Contains("pricing.segments.manage")) return Results.Forbid();
         kind = NormalizeKind(kind);
         if (request.Amount <= 0 || request.MinimumQuantity <= 0)
             return Results.Problem("Precio y cantidad mínima deben ser mayores que cero.", statusCode: 400);
@@ -129,11 +132,13 @@ public static class PriceSegmentsApi
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(ct);
         var sql = kind == "PriceList" ? """
             IF NOT EXISTS(SELECT 1 FROM dbo.PriceLists WHERE PriceListId=@Id AND BusinessId=@BusinessId) THROW 51004,'Segment not found',1;
+            IF NOT EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ProductId AND BusinessId=@BusinessId AND IsActive=1) THROW 51004,'Product not found',1;
             UPDATE dbo.PriceListItems SET IsActive=0 WHERE PriceListId=@Id AND ProductId=@ProductId AND MinimumQuantity=@MinimumQuantity AND IsActive=1;
             INSERT dbo.PriceListItems(PriceListItemId,PriceListId,ProductId,MinimumQuantity,Amount,CurrencyCode,ValidFrom,ValidUntil,IsActive,CreatedAt)
             VALUES(NEWID(),@Id,@ProductId,@MinimumQuantity,@Amount,N'COP',@ValidFrom,@ValidUntil,1,SYSUTCDATETIME());
             """ : """
             IF NOT EXISTS(SELECT 1 FROM dbo.PriceChannels WHERE PriceChannelId=@Id AND BusinessId=@BusinessId) THROW 51004,'Segment not found',1;
+            IF NOT EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ProductId AND BusinessId=@BusinessId AND IsActive=1) THROW 51004,'Product not found',1;
             UPDATE dbo.ResolvedPriceChannelItems SET IsActive=0 WHERE PriceChannelId=@Id AND ProductId=@ProductId AND IsActive=1;
             INSERT dbo.ResolvedPriceChannelItems(ResolvedPriceChannelItemId,PriceChannelId,ProductId,Amount,CurrencyCode,ValidFrom,ValidUntil,IsActive,CreatedAt)
             VALUES(NEWID(),@Id,@ProductId,@Amount,N'COP',@ValidFrom,@ValidUntil,1,SYSUTCDATETIME());
@@ -152,6 +157,45 @@ public static class PriceSegmentsApi
         try { await command.ExecuteNonQueryAsync(ct); await transaction.CommitAsync(ct); }
         catch (SqlException exception) when (exception.Number == 51004)
         { await transaction.RollbackAsync(ct); return Results.NotFound(); }
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> DeleteItemAsync(
+        HttpContext context, string kind, Guid id, Guid productId, decimal? minimumQuantity,
+        SqlServerConnectionFactory connections, CancellationToken ct)
+    {
+        var identity = context.User.ToPricingIdentity();
+        if (!identity.Permissions.Contains("pricing.segments.manage")) return Results.Forbid();
+        kind = NormalizeKind(kind);
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        var sql = kind == "PriceList" ? """
+            UPDATE item
+            SET IsActive=0
+            FROM dbo.PriceListItems item
+            JOIN dbo.PriceLists listValue ON listValue.PriceListId=item.PriceListId
+            WHERE item.PriceListId=@Id AND item.ProductId=@ProductId
+              AND item.MinimumQuantity=@MinimumQuantity
+              AND listValue.BusinessId=@BusinessId AND item.IsActive=1;
+            """ : """
+            UPDATE item
+            SET IsActive=0
+            FROM dbo.ResolvedPriceChannelItems item
+            JOIN dbo.PriceChannels channelValue ON channelValue.PriceChannelId=item.PriceChannelId
+            WHERE item.PriceChannelId=@Id AND item.ProductId=@ProductId
+              AND channelValue.BusinessId=@BusinessId AND item.IsActive=1;
+            DELETE exclusion
+            FROM dbo.PriceChannelExclusions exclusion
+            JOIN dbo.PriceChannels channelValue ON channelValue.PriceChannelId=exclusion.PriceChannelId
+            WHERE exclusion.PriceChannelId=@Id AND exclusion.ProductId=@ProductId
+              AND channelValue.BusinessId=@BusinessId;
+            """;
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@Id", id);
+        command.Parameters.AddWithValue("@ProductId", productId);
+        command.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
+        command.Parameters.AddWithValue("@MinimumQuantity", minimumQuantity ?? 1m);
+        await command.ExecuteNonQueryAsync(ct);
         return Results.NoContent();
     }
 

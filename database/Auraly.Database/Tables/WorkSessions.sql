@@ -26,11 +26,11 @@ CREATE TABLE [dbo].[WorkSessions]
 GO
 
 CREATE UNIQUE INDEX [UX_WorkSessions_User_Open]
-    ON [dbo].[WorkSessions] ([UserId]) WHERE [Status]=N'Open';
+    ON [dbo].[WorkSessions] ([UserId], [BusinessId]) WHERE [Status]=N'Open';
 GO
 
 CREATE UNIQUE INDEX [UX_WorkSessions_Device_Open]
-    ON [dbo].[WorkSessions] ([DeviceId])
+    ON [dbo].[WorkSessions] ([DeviceId], [BusinessId])
     WHERE [Status]=N'Open' AND [DeviceId] IS NOT NULL;
 GO
 

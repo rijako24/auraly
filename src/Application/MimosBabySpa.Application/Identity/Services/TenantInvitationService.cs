@@ -28,6 +28,21 @@ public sealed class TenantInvitationService(
         if (!string.Equals(request.Password, request.PasswordConfirmation, StringComparison.Ordinal))
             throw new TenantInvitationException("PasswordMismatch", "Las contraseñas no coinciden.");
 
+        if (request.IdentificationType is not ("CC" or "CE" or "PAS"))
+            throw new TenantInvitationException("InvalidIdentificationType", "Selecciona un tipo de identificación válido.");
+        if (string.IsNullOrWhiteSpace(request.Identification))
+            throw new TenantInvitationException("IdentificationRequired", "La identificación es obligatoria.");
+        if (string.IsNullOrWhiteSpace(request.FirstName))
+            throw new TenantInvitationException("FirstNameRequired", "Los nombres son obligatorios.");
+        if (string.IsNullOrWhiteSpace(request.LastName))
+            throw new TenantInvitationException("LastNameRequired", "Los apellidos son obligatorios.");
+        if (string.IsNullOrWhiteSpace(request.Email) || !request.Email.Contains('@'))
+            throw new TenantInvitationException("EmailRequired", "Escribe un correo válido.");
+        if (string.IsNullOrWhiteSpace(request.Phone))
+            throw new TenantInvitationException("PhoneRequired", "El teléfono es obligatorio.");
+        if (string.IsNullOrWhiteSpace(request.Address))
+            throw new TenantInvitationException("AddressRequired", "La dirección es obligatoria.");
+
         var now = clock.GetUtcNow();
         var offline = PosOfflinePasswordHasher.Hash(request.Password, now);
         var material = new TenantInvitationPasswordMaterial(
@@ -37,6 +52,14 @@ public sealed class TenantInvitationService(
             offline.Iterations,
             offline.ChangedAt);
         var tokenHash = SHA256.HashData(Encoding.UTF8.GetBytes(token));
-        return await store.AcceptInvitationAsync(tokenHash, material, now, cancellationToken);
+        var profile = new TenantInvitationAdministratorProfile(
+            request.IdentificationType.Trim(),
+            request.Identification.Trim(),
+            request.FirstName.Trim(),
+            request.LastName.Trim(),
+            request.Email.Trim(),
+            request.Phone.Trim(),
+            request.Address.Trim());
+        return await store.AcceptInvitationAsync(tokenHash, profile, material, now, cancellationToken);
     }
 }

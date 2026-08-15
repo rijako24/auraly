@@ -9,4 +9,5 @@ export const priceSegmentsApi = {
   create: (data:{kind:PriceSegmentKind;code:string;name:string}) => apiClient.post<{id:string}>("/commerce/v1/pricing/segments",data),
   items: (kind:PriceSegmentKind,id:string) => apiClient.get<PriceSegmentItem[]>(`/commerce/v1/pricing/segments/${kind}/${id}/items`),
   saveItem: (kind:PriceSegmentKind,id:string,productId:string,data:{amount:number;minimumQuantity:number;validFrom:string|null;validUntil:string|null;excluded:boolean}) => apiClient.put<void>(`/commerce/v1/pricing/segments/${kind}/${id}/items/${productId}`,data),
+  deleteItem: (kind:PriceSegmentKind,id:string,productId:string,minimumQuantity:number) => apiClient.delete<void>(`/commerce/v1/pricing/segments/${kind}/${id}/items/${productId}?minimumQuantity=${encodeURIComponent(minimumQuantity)}`),
 };

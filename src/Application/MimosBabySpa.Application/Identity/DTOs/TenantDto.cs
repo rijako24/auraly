@@ -6,4 +6,8 @@ public record TenantDto(
     string Email,
     bool IsActive,
     DateTime CreatedAt,
-    int BusinessCount);
+    int BusinessCount,
+    int MaximumUsers,
+    int MaximumEnrolledDevices,
+    int ActiveUserCount,
+    int ActiveEnrolledDeviceCount);

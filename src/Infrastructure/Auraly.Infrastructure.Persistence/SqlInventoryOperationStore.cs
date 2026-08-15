@@ -388,7 +388,22 @@ public sealed class SqlInventoryOperationStore(
 
     private static async Task<AuralyDocumentNumberAssignment> AllocateNumberAsync(SqlConnection connection, SqlTransaction transaction, Guid businessId, string documentType, CancellationToken cancellationToken)
     {
-        const string selectSql = """
+        var defaultPrefix = AuralyDocumentTypes.DefaultPrefix(documentType);
+        const string ensureSql = """
+            IF NOT EXISTS (
+              SELECT 1 FROM dbo.DocumentSeries WITH(UPDLOCK,HOLDLOCK)
+              WHERE BusinessId=@BusinessId AND DocumentType=@Type AND DeviceId IS NULL AND IsActive=1)
+              INSERT dbo.DocumentSeries
+                (DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
+              VALUES(NEWID(),@BusinessId,NULL,@Type,@Prefix,N'00',8,1,99999999,0,1,SYSDATETIMEOFFSET());
+            """;
+        await using (var ensure = new SqlCommand(ensureSql, connection, transaction))
+        {
+            ensure.Parameters.AddWithValue("@BusinessId", businessId);
+            ensure.Parameters.AddWithValue("@Type", documentType);
+            ensure.Parameters.AddWithValue("@Prefix", defaultPrefix);
+            await ensure.ExecuteNonQueryAsync(cancellationToken);
+        }        const string selectSql = """
             SELECT TOP(1) ds.DocumentSeriesId,ds.Prefix,ds.SeriesCode,ds.Padding,ds.RangeEnd,COALESCE(c.NextConsecutive,ds.RangeStart)
             FROM dbo.DocumentSeries ds WITH(UPDLOCK,HOLDLOCK)
             LEFT JOIN dbo.DocumentSeriesCursors c WITH(UPDLOCK,HOLDLOCK) ON c.DocumentSeriesId=ds.DocumentSeriesId
@@ -399,10 +414,10 @@ public sealed class SqlInventoryOperationStore(
         {
             command.Parameters.AddWithValue("@BusinessId", businessId); command.Parameters.AddWithValue("@Type", documentType);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            if(!await reader.ReadAsync(cancellationToken)) throw new InventoryValidationException($"No active {documentType} document series is configured for the business.");
+            if(!await reader.ReadAsync(cancellationToken)) throw new InventoryValidationException("La serie de este movimiento de inventario no está activa para la sede.");
             seriesId=reader.GetGuid(0); prefix=reader.GetString(1); code=reader.GetString(2); padding=reader.GetByte(3); rangeEnd=reader.GetInt64(4); consecutive=reader.GetInt64(5);
         }
-        if(consecutive>rangeEnd) throw new InventoryValidationException($"The {documentType} document series is exhausted.");
+        if(consecutive>rangeEnd) throw new InventoryValidationException("La numeración de este movimiento de inventario se agotó.");
         const string update="""
             IF EXISTS(SELECT 1 FROM dbo.DocumentSeriesCursors WHERE DocumentSeriesId=@Id)
               UPDATE dbo.DocumentSeriesCursors SET NextConsecutive=@Next,UpdatedAt=@Now WHERE DocumentSeriesId=@Id;

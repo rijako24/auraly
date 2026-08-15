@@ -10,6 +10,7 @@ public interface IGoodsReceiptWorkspaceStore
     Task<GoodsReceiptProductOption> AssociateProductAsync(PurchasingUserIdentity user, AssociateGoodsReceiptProductRequest request, CancellationToken cancellationToken);
     Task<GoodsReceiptPage> ListAsync(PurchasingUserIdentity user, string? search, string? status, int page, int pageSize, CancellationToken cancellationToken);
     Task<GoodsReceiptDraft?> GetDraftAsync(PurchasingUserIdentity user, Guid draftId, CancellationToken cancellationToken);
+    Task<GoodsReceiptDetail?> GetDetailAsync(PurchasingUserIdentity user, Guid documentId, CancellationToken cancellationToken);
     Task<GoodsReceiptDraft> SaveDraftAsync(PurchasingUserIdentity user, SaveGoodsReceiptDraftRequest request, GoodsReceiptCalculation? calculation, CancellationToken cancellationToken);
     Task DeleteDraftAsync(PurchasingUserIdentity user, Guid draftId, string concurrencyToken, CancellationToken cancellationToken);
 }
@@ -71,6 +72,15 @@ public sealed class GoodsReceiptWorkspaceService(IGoodsReceiptWorkspaceStore sto
         if (draftId == Guid.Empty) throw new PurchasingValidationException("DraftId is required.");
         return store.GetDraftAsync(user, draftId, cancellationToken);
     }
+    public Task<GoodsReceiptDetail?> GetDetailAsync(
+        PurchasingUserIdentity user, Guid documentId, CancellationToken cancellationToken = default)
+    {
+        Require(user, PurchasingPermissionCodes.ReadGoodsReceipts);
+        if (documentId == Guid.Empty)
+            throw new PurchasingValidationException("DocumentId is required.");
+        return store.GetDetailAsync(user, documentId, cancellationToken);
+    }
+
 
     public Task<GoodsReceiptDraft> SaveDraftAsync(
         PurchasingUserIdentity user, SaveGoodsReceiptDraftRequest request,

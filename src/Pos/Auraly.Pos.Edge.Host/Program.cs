@@ -559,7 +559,7 @@ public static class PosEdgeHostApplication
             var result = await capture.CaptureAsync(
                 request.Value,
                 context.ScopeFor(sessions.Required()),
-                request.CustomerId,
+                null,
                 context.WarehouseAllowsNegativeStock,
                 ids.NewId(),
                 ct);

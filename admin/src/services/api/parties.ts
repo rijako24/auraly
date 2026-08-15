@@ -34,6 +34,7 @@ export interface PartyWorkspaceDetail {
   employee: EmployeeRoleDetail | null; user: UserRoleDetail | null; rowVersion: string;
 }
 export interface PartyIdentityLookupResult { exists: boolean; hasRequestedRole: boolean; party: PartyWorkspaceDetail | null; }
+export interface PartyIdentityAcceptance { partyId: string; existingIdentity: boolean; }
 export interface GeographyItem { countryId: string; code: string; name: string; isActive: boolean; }
 export interface DivisionItem { administrativeDivisionId: string; countryId: string; code: string; name: string; divisionType: string; isActive: boolean; }
 export interface CityItem { cityId: string; administrativeDivisionId: string; code: string; name: string; isActive: boolean; }
@@ -47,6 +48,7 @@ export interface CustomerPricingOptions { priceLists: CustomerPricingOption[]; p
 export const partiesApi = {
   page: (params: { page: number; pageSize: number; search?: string; role?: string; isActive?: boolean; isIncomplete?: boolean }) =>
     apiClient.get<PartyWorkspacePage>("/commerce/v1/parties", params),
+  createIdentity: (request: CreateThirdPartyRequest & { targetRole: "Employee" | "User" }) => apiClient.post<PartyIdentityAcceptance>("/commerce/v1/parties/identity", request),
   createCustomer: (request: CreateThirdPartyRequest) => apiClient.post("/commerce/v1/customers", request),
   createSupplier: (request: CreateThirdPartyRequest) => apiClient.post("/commerce/v1/suppliers", request),
   createSeller: (request: CreateThirdPartyRequest) => apiClient.post("/commerce/v1/sellers", request),

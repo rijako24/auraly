@@ -2,6 +2,15 @@
   "version": 1,
   "dependencies": {
     "net8.0": {
+      "Azure.Communication.Email": {
+        "type": "Direct",
+        "requested": "[1.1.0, )",
+        "resolved": "1.1.0",
+        "contentHash": "yR0QWbrvM/RvOxrkFWaPqzltAiF/MGoVhjm++UkEpXvN00Brc/LevJXeg2BUVbIucoxx+kKW7HTAzGKspFh8Vg==",
+        "dependencies": {
+          "Azure.Core": "1.49.0"
+        }
+      },
       "Azure.Identity": {
         "type": "Direct",
         "requested": "[1.17.2, )",

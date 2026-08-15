@@ -367,7 +367,8 @@ public sealed class SqlAuthenticationSessionStore(
             OUTPUT inserted.AuthenticationSessionId
             WHERE AuthenticationSessionId=@SessionId
               AND UserId=@UserId AND TenantId=@TenantId
-              AND Status=N'Active' AND ExpiresAt>@Now;
+              AND Status=N'Active' AND ExpiresAt>@Now
+              AND EXISTS(SELECT 1 FROM dbo.Tenants tenant WHERE tenant.TenantId=@TenantId AND tenant.IsActive=1);
             """, connection);
         command.Parameters.AddWithValue("@SessionId", token.AuthenticationSessionId);
         command.Parameters.AddWithValue("@UserId", token.UserId);
@@ -405,10 +406,11 @@ public sealed class SqlAuthenticationSessionStore(
         CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
-            SELECT UserId,TenantId,Username,Email,FirstName,LastName,AvatarUrl,
-                   PasswordHash,IsActive,AccessFailedCount,LockoutEnd
-            FROM dbo.AppUsers
-            WHERE NormalizedUsername=@Username;
+            SELECT userAccount.UserId,userAccount.TenantId,userAccount.Username,userAccount.Email,userAccount.FirstName,userAccount.LastName,userAccount.AvatarUrl,
+                   userAccount.PasswordHash,userAccount.IsActive,userAccount.AccessFailedCount,userAccount.LockoutEnd
+            FROM dbo.AppUsers userAccount
+            INNER JOIN dbo.Tenants tenant ON tenant.TenantId=userAccount.TenantId AND tenant.IsActive=1
+            WHERE userAccount.NormalizedUsername=@Username;
             """, connection, transaction);
         command.Parameters.AddWithValue("@Username", normalizedUsername);
         return await ReadUserAsync(connection, transaction, command, cancellationToken);
@@ -422,10 +424,11 @@ public sealed class SqlAuthenticationSessionStore(
         CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
-            SELECT UserId,TenantId,Username,Email,FirstName,LastName,AvatarUrl,
-                   PasswordHash,IsActive,AccessFailedCount,LockoutEnd
-            FROM dbo.AppUsers
-            WHERE UserId=@UserId AND TenantId=@TenantId AND IsActive=1;
+            SELECT userAccount.UserId,userAccount.TenantId,userAccount.Username,userAccount.Email,userAccount.FirstName,userAccount.LastName,userAccount.AvatarUrl,
+                   userAccount.PasswordHash,userAccount.IsActive,userAccount.AccessFailedCount,userAccount.LockoutEnd
+            FROM dbo.AppUsers userAccount
+            INNER JOIN dbo.Tenants tenant ON tenant.TenantId=userAccount.TenantId AND tenant.IsActive=1
+            WHERE userAccount.UserId=@UserId AND userAccount.TenantId=@TenantId AND userAccount.IsActive=1;
             """, connection, transaction);
         command.Parameters.AddWithValue("@UserId", userId);
         command.Parameters.AddWithValue("@TenantId", tenantId);

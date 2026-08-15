@@ -276,13 +276,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
             <Button type="button" size="sm" variant="ghost" onClick={() => setForm({ ...form, barcodes: form.barcodes.filter((_, current) => current !== index).map((code, current) => ({ ...code, isPrimary: current === 0 })) })}>Quitar</Button>
           </div>)}
         </div>
-      <div className="mt-5 space-y-3 border-t pt-5">
-        <Toggle
-          label="Maneja inventario"
-          detail="Incluye este producto en conteos, entradas, ajustes, traslados, conversiones y averías."
-          checked={form.manageInventory}
-          onChange={(checked) => setForm({ ...form, manageInventory: checked })}
-        />
+      <div className="mt-5 grid gap-3 border-t pt-5 md:grid-cols-3">
         <Toggle
           label="Permitir venta fraccionada"
           detail={`Permite cantidades decimales para este producto vendido en ${selectedUnit?.name ?? "la unidad seleccionada"}.`}
@@ -296,7 +290,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
           disabled={!form.allowsFractionalSale}
           onChange={(checked) => setForm({ ...form, isWeighable: checked, scale: checked ? form.scale ?? emptyScale : null })}
         />
-        {form.isWeighable && form.scale && <div className="mt-3 grid gap-4 rounded-xl bg-muted/30 p-4 sm:grid-cols-3">
+        {form.isWeighable && form.scale && <div className="mt-3 grid gap-4 rounded-xl bg-muted/30 p-4 sm:col-span-3 sm:grid-cols-3">
           <div className="space-y-2"><Label className="flex min-h-10 items-center">Código del producto en la balanza</Label><Input value={form.scale.scaleCode} onChange={(event) => setForm({ ...form, scale: { ...form.scale!, scaleCode: event.target.value } })} placeholder="Ej. 125" /><p className="min-h-8 text-xs text-muted-foreground">También conocido como PLU.</p></div>
           <div className="space-y-2"><Label className="flex min-h-10 items-center">Inicio del código de balanza</Label><Input value={form.scale.barcodePrefix} onChange={(event) => setForm({ ...form, scale: { ...form.scale!, barcodePrefix: event.target.value } })} placeholder="Ej. 20" /><p className="min-h-8 text-xs text-muted-foreground">Prefijo que identifica una etiqueta generada por la balanza.</p></div>
           <div className="space-y-2"><Label className="flex min-h-10 items-center">Decimales del peso</Label><Input type="number" min="0" max="6" value={form.scale.decimalPlaces} onChange={(event) => setForm({ ...form, scale: { ...form.scale!, decimalPlaces: Number(event.target.value) } })} /><p className="min-h-8 text-xs text-muted-foreground">3 interpreta, por ejemplo, 1250 como 1,250 kg.</p></div>

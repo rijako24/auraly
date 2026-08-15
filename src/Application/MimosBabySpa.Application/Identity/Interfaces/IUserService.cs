@@ -9,6 +9,7 @@ public interface IUserService
     Task<PagedResponse<UserDto>> GetPagedAsync(Guid tenantId, PagedRequest request, CancellationToken ct = default);
     Task<UserDto> CreateAsync(Guid tenantId, CreateUserRequest request, Guid createdByUserId, CancellationToken ct = default);
     Task<UserDto> UpdateAsync(Guid userId, UpdateUserRequest request, CancellationToken ct = default);
+    Task ResetPasswordAsync(Guid userId, ResetUserPasswordRequest request, CancellationToken ct = default);
     Task DeactivateAsync(Guid userId, CancellationToken ct = default);
     Task ActivateAsync(Guid userId, CancellationToken ct = default);
     Task AssignRoleAsync(Guid userId, AssignRoleRequest request, Guid assignedByUserId, CancellationToken ct = default);

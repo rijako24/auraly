@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Azure.Identity" Version="1.17.2" />
+    <PackageReference Include="Azure.Communication.Email" Version="1.1.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.AzureAppConfiguration" Version="8.5.0" />
     <PackageReference Include="Azure.Messaging.WebPubSub" Version="1.6.0" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.12" />
@@ -14,6 +15,9 @@
     <PackageReference Include="RabbitMQ.Client" Version="7.2.1" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.12" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\auraly-mark.png" LogicalName="Auraly.Api.Assets.auraly-mark.png" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\Application\MimosBabySpa.Application\MimosBabySpa.Application.csproj" />

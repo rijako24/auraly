@@ -32,7 +32,15 @@ public static class InventoryApi
         {
             var identity = principal.ToInventoryIdentity();
             return await ExecuteAsync(() => service.GetOperationsAsync(identity, new(identity.BusinessId, warehouseId, search, documentType, status, from, to, page == 0 ? 1 : page, pageSize == 0 ? 50 : pageSize), token), Results.Ok);
-        }).RequireAuthorization("inventory.user");        endpoints.MapPost("/api/commerce/v1/stock-counts/start", async (ClaimsPrincipal user, StartStockCountRequest request, InventoryOperationService service, CancellationToken token) => await ExecuteAsync(() => service.StartCountAsync(user.ToInventoryIdentity(), request, token), Results.Ok)).RequireAuthorization("inventory.user");
+        }).RequireAuthorization("inventory.user");
+        endpoints.MapGet("/api/commerce/v1/inventory/operations/{documentId:guid}",
+            async (ClaimsPrincipal principal, Guid documentId, InventoryQueryService service, CancellationToken token) =>
+            {
+                var result = await service.GetOperationDetailAsync(
+                    principal.ToInventoryIdentity(), documentId, token);
+                return result is null ? Results.NotFound() : Results.Ok(result);
+            }).RequireAuthorization("inventory.user");
+        endpoints.MapPost("/api/commerce/v1/stock-counts/start", async (ClaimsPrincipal user, StartStockCountRequest request, InventoryOperationService service, CancellationToken token) => await ExecuteAsync(() => service.StartCountAsync(user.ToInventoryIdentity(), request, token), Results.Ok)).RequireAuthorization("inventory.user");
         endpoints.MapPost("/api/commerce/v1/stock-counts/{documentId:guid}/confirm", async (HttpContext context, Guid documentId, ConfirmStockCountRequest request, InventoryOperationService service, CancellationToken token) => await AcceptedAsync(() => service.ConfirmCountAsync(context.User.ToInventoryIdentity(), documentId, Key(context), request, token))).RequireAuthorization("inventory.user");
         endpoints.MapPost("/api/commerce/v1/inventory-adjustments/confirm", async (HttpContext context, ConfirmInventoryAdjustmentRequest request, InventoryOperationService service, CancellationToken token) => await AcceptedAsync(() => service.ConfirmAdjustmentAsync(context.User.ToInventoryIdentity(), Key(context), request, token))).RequireAuthorization("inventory.user");
         endpoints.MapPost("/api/commerce/v1/warehouse-transfers/confirm", async (HttpContext context, ConfirmWarehouseTransferRequest request, InventoryOperationService service, CancellationToken token) => await AcceptedAsync(() => service.ConfirmTransferAsync(context.User.ToInventoryIdentity(), Key(context), request, token))).RequireAuthorization("inventory.user");

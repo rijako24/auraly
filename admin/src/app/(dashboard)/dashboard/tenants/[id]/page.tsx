@@ -6,11 +6,11 @@ import { ArrowLeft } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { TenantProvisioningSummary } from "@/components/tenants/tenant-provisioning-summary";
+import { TenantGovernancePanel } from "@/components/tenants/tenant-governance-panel";
 import { PageError } from "@/components/ui/page-error";
 import { PageLoading } from "@/components/ui/page-loading";
 import { useTenant } from "@/hooks/use-tenants";
-import { formatDate } from "@/lib/utils";
 
 export default function TenantDetailPage() {
   const params = useParams();
@@ -34,16 +34,9 @@ export default function TenantDetailPage() {
           {tenant.isActive ? "Activo" : "Inactivo"}
         </Badge>
       </div>
+      <TenantGovernancePanel tenant={tenant} />
 
-      <Card>
-        <CardHeader><CardTitle>Informacion del tenant</CardTitle></CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
-          <div><p className="text-sm font-medium text-muted-foreground">Nombre</p><p>{tenant.name}</p></div>
-          <div><p className="text-sm font-medium text-muted-foreground">Email</p><p>{tenant.email}</p></div>
-          <div><p className="text-sm font-medium text-muted-foreground">Estado</p><p>{tenant.isActive ? "Activo" : "Inactivo"}</p></div>
-          <div><p className="text-sm font-medium text-muted-foreground">Creado</p><p>{formatDate(tenant.createdAt)}</p></div>
-        </CardContent>
-      </Card>
+      <TenantProvisioningSummary tenant={tenant} />
     </div>
   );
 }

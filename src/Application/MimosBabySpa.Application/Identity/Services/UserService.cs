@@ -51,6 +51,8 @@ public class UserService : IUserService
     public async Task<UserDto> CreateAsync(Guid tenantId, CreateUserRequest request, Guid createdByUserId, CancellationToken ct)
     {
         var normalizedUsername = request.Username.ToUpperInvariant();
+        await EnsureTenantCanAddActiveUserAsync(tenantId, ct);
+
         var normalizedEmail = request.Email.ToUpperInvariant();
 
         if (await _unitOfWork.AppUsers.ExistsWithUsernameAsync(normalizedUsername, ct: ct))
@@ -110,6 +112,26 @@ public class UserService : IUserService
         return MapToDto(user);
     }
 
+    public async Task ResetPasswordAsync(Guid userId, ResetUserPasswordRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Password) || request.Password.Length < 10)
+            throw new DomainValidationException("password", "La contraseña debe tener al menos 10 caracteres.");
+
+        var user = await _unitOfWork.AppUsers.GetByIdAsync(userId, ct)
+            ?? throw new NotFoundException(nameof(AppUser), userId);
+        var offlinePassword = PosOfflinePasswordHasher.Hash(request.Password, DateTimeOffset.UtcNow);
+        user.PasswordHash = _passwordHasher.Hash(request.Password);
+        user.PosOfflinePasswordSalt = offlinePassword.Salt;
+        user.PosOfflinePasswordHash = offlinePassword.Hash;
+        user.PosOfflinePasswordIterations = offlinePassword.Iterations;
+        user.PosOfflinePasswordChangedAt = offlinePassword.ChangedAt;
+        user.AccessFailedCount = 0;
+        user.LockoutEnd = null;
+        user.UpdatedAt = DateTime.UtcNow;
+        _unitOfWork.AppUsers.Update(user);
+        await _unitOfWork.RefreshTokens.RevokeAllByUserIdAsync(userId, ct);
+        await _unitOfWork.SaveChangesAsync(ct);
+    }
     public async Task DeactivateAsync(Guid userId, CancellationToken ct)
     {
         var user = await _unitOfWork.AppUsers.GetByIdAsync(userId, ct)
@@ -127,6 +149,11 @@ public class UserService : IUserService
     {
         var user = await _unitOfWork.AppUsers.GetByIdAsync(userId, ct)
             ?? throw new NotFoundException(nameof(AppUser), userId);
+
+        if (user.IsActive)
+            return;
+
+        await EnsureTenantCanAddActiveUserAsync(user.TenantId, ct);
 
         user.IsActive = true;
         user.AccessFailedCount = 0;
@@ -174,8 +201,20 @@ public class UserService : IUserService
         return await _unitOfWork.Permissions.GetResourcesByUserIdAsync(userId, businessId, ct);
     }
 
+    private async Task EnsureTenantCanAddActiveUserAsync(Guid tenantId, CancellationToken ct)
+    {
+        var tenant = await _unitOfWork.Tenants.GetByIdAsync(tenantId, ct)
+            ?? throw new NotFoundException(nameof(Tenant), tenantId);
+        if (!tenant.IsActive)
+            throw new ConflictException("La organizaci\u00f3n est\u00e1 inactiva. Act\u00edvala antes de crear o reactivar usuarios.");
+
+        var activeUsers = await _unitOfWork.AppUsers.CountActiveByTenantAsync(tenantId, ct);
+        if (activeUsers >= tenant.MaximumUsers)
+            throw new ConflictException($"La organizaci\u00f3n alcanz\u00f3 su capacidad de {tenant.MaximumUsers} usuarios activos. Inactiva un usuario o solicita a un administrador de Auraly ampliar el cupo.");
+    }
+
     private static UserDto MapToDto(AppUser user) => new(
-        user.UserId, user.TenantId, user.Username, user.Email,
+        user.UserId, user.TenantId, user.PartyId, user.Username, user.Email,
         user.FirstName, user.LastName, user.PhoneNumber, user.AvatarUrl,
         user.IsActive, user.EmailConfirmed, user.LastLoginAt, user.CreatedAt,
         user.UserRoles.Select(ur => new UserRoleDto(

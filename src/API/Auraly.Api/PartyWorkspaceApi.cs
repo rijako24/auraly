@@ -12,6 +12,13 @@ public static class PartyWorkspaceApi
             string? search,string? role,bool? isActive,bool? isIncomplete,CancellationToken ct)=>
             await Handle(async()=>Results.Ok(await service.PageAsync(context.User.ToPartyUserIdentity(),page??1,
                 new PartyWorkspaceQuery(pageSize??25,search,role,isActive,isIncomplete),ct))));
+        parties.MapPost("/identity", async(
+            HttpContext context,
+            PartyWorkspaceService service,
+            CreatePartyIdentityRequest request,
+            CancellationToken ct) =>
+            await Handle(async () => Results.Created("/api/commerce/v1/parties",
+                await service.CreateIdentityAsync(context.User.ToPartyUserIdentity(), request, ct))));
         parties.MapGet("/identity", async(
             HttpContext context,
             PartyWorkspaceService service,

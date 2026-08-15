@@ -19,12 +19,9 @@ public sealed record ProvisionTenantRequest(
     string BusinessEmail,
     string TimeZone,
     string InventoryCostBasis,
-    string AdministratorIdentificationType,
-    string AdministratorIdentification,
-    string AdministratorFirstName,
-    string AdministratorLastName,
-    string AdministratorEmail,
-    string AdministratorPhone);
+    string InvitationEmail,
+    int MaximumUsers,
+    int MaximumEnrolledDevices);
 
 public sealed record ProvisionTenantResult(
     Guid ProvisioningRequestId,
@@ -33,13 +30,30 @@ public sealed record ProvisionTenantResult(
     Guid SalesWarehouseId,
     Guid OrdersWarehouseId,
     Guid DefaultCustomerId,
-    Guid AdministratorUserId,
+    Guid? AdministratorUserId,
     string Status);
 
 public sealed record AcceptTenantInvitationRequest(
     string Token,
+    string IdentificationType,
+    string Identification,
+    string FirstName,
+    string LastName,
+    string Email,
+    string Phone,
+    string Address,
     string Password,
     string PasswordConfirmation);
+
+
+public sealed record TenantInvitationAdministratorProfile(
+    string IdentificationType,
+    string Identification,
+    string FirstName,
+    string LastName,
+    string Email,
+    string Phone,
+    string Address);
 
 public sealed record AcceptTenantInvitationResult(
     Guid TenantId,
@@ -63,6 +77,7 @@ public interface ITenantProvisioningStore
 
     Task<AcceptTenantInvitationResult> AcceptInvitationAsync(
         byte[] tokenHash,
+        TenantInvitationAdministratorProfile profile,
         TenantInvitationPasswordMaterial password,
         DateTimeOffset now,
         CancellationToken cancellationToken);

@@ -53,6 +53,8 @@ var webPubSubName = 'wps-auraly-${compactEnvironment}-${suffix}'
 var functionName = 'func-auraly-${compactEnvironment}-${suffix}'
 var apiName = 'api-auraly-${compactEnvironment}-${suffix}'
 var adminName = 'admin-auraly-${compactEnvironment}-${suffix}'
+var emailServiceName = 'email-auraly-${compactEnvironment}-${suffix}'
+var communicationServiceName = 'acs-auraly-${compactEnvironment}-${suffix}'
 
 var blobDataOwnerRoleId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
@@ -83,6 +85,37 @@ resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' 
   name: identityName
   location: location
   tags: tags
+}
+resource emailService 'Microsoft.Communication/emailServices@2025-05-01' = {
+  name: emailServiceName
+  location: 'global'
+  tags: tags
+  properties: {
+    dataLocation: 'United States'
+  }
+}
+
+resource emailDomain 'Microsoft.Communication/emailServices/domains@2025-05-01' = {
+  parent: emailService
+  name: 'AzureManagedDomain'
+  location: 'global'
+  tags: tags
+  properties: {
+    domainManagement: 'AzureManaged'
+    userEngagementTracking: 'Disabled'
+  }
+}
+
+resource communicationService 'Microsoft.Communication/communicationServices@2025-05-01' = {
+  name: communicationServiceName
+  location: 'global'
+  tags: tags
+  properties: {
+    dataLocation: 'United States'
+    linkedDomains: [
+      emailDomain.id
+    ]
+  }
 }
 
 @description('Grants this environment access to the one shared Azure OpenAI account.')
@@ -612,6 +645,26 @@ resource apiApp 'Microsoft.Web/sites@2024-04-01' = {
         {
           name: 'WhatsApp__Webhook__VerifyToken'
           value: whatsAppVerifyToken
+        }
+        {
+          name: 'Auraly__Email__ConnectionString'
+          value: communicationService.listKeys().primaryConnectionString
+        }
+        {
+          name: 'Auraly__Email__SenderAddress'
+          value: 'DoNotReply@${emailDomain.properties.mailFromSenderDomain}'
+        }
+        {
+          name: 'Auraly__Email__PublicAppUrl'
+          value: 'https://auralyapp.co'
+        }
+        {
+          name: 'Auraly__Email__LogoUrl'
+          value: 'https://auralyapp.co/brand/auraly-mark.png'
+        }
+        {
+          name: 'Auraly__Email__SupportEmail'
+          value: 'soporte@auralyapp.co'
         }
         {
           name: 'Release__Version'

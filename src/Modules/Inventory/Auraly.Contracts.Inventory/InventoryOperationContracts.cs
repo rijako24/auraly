@@ -169,6 +169,21 @@ public sealed record InventoryMovementPage(IReadOnlyList<InventoryMovementItem> 
 
 public sealed record InventoryOperationQuery(Guid BusinessId, Guid? WarehouseId, string? Search, string? DocumentType, string? Status, DateTimeOffset? From, DateTimeOffset? To, int Page = 1, int PageSize = 50);
 public sealed record InventoryOperationItem(Guid DocumentId, string DocumentType, string? DocumentNumber, Guid WarehouseId, string WarehouseName, Guid? DestinationWarehouseId, string? DestinationWarehouseName, string ReasonCode, string Status, DateTimeOffset OccurredAt, int LineCount, decimal? TotalValueChange);
+public sealed record InventoryOperationDetailLine(
+    int LineNumber, string Direction, Guid ProductId, string ProductCode,
+    string ProductName, decimal? Quantity, decimal? SystemQuantityAtBase,
+    decimal? ExplicitUnitCost, decimal? AllocationWeight,
+    decimal? ProcessedUnitCost, decimal? ProcessedValue);
+
+public sealed record InventoryOperationDetail(
+    Guid DocumentId, string DocumentType, string? DocumentNumber,
+    Guid WarehouseId, string WarehouseName, Guid? DestinationWarehouseId,
+    string? DestinationWarehouseName, string ReasonCode, string ReasonDescription,
+    string? ConversionType, long? BaseInventorySequence, string? Notes, string Status,
+    DateTimeOffset OccurredAt, DateTimeOffset CreatedAt, DateTimeOffset? AcceptedAt,
+    DateTimeOffset? ProcessedAt, decimal? TotalValueChange,
+    IReadOnlyList<InventoryOperationDetailLine> Lines);
+
 public sealed record InventoryOperationPage(IReadOnlyList<InventoryOperationItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);
 public static class InventoryOperationContractSerializer
 {

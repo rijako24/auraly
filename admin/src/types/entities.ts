@@ -23,6 +23,11 @@ export interface Tenant {
   isActive: boolean;
   createdAt: string;
   updatedAt: string | null;
+  maximumUsers: number;
+  maximumEnrolledDevices: number;
+  businessCount: number;
+  activeUserCount: number;
+  activeEnrolledDeviceCount: number;
   businesses?: Business[];
 }
 

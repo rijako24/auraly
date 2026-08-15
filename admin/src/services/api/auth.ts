@@ -9,6 +9,13 @@ import type {
 export interface AcceptTenantInvitationRequest {
   token: string;
   password: string;
+  identificationType: string;
+  identification: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  address: string;
   passwordConfirmation: string;
 }
 

@@ -13,9 +13,13 @@ import {
 export function InvoiceNumberingCard({
   businessId,
   onChanged,
+  onStateChange,
+  showSaveButton = true,
 }: {
   businessId: string;
   onChanged?: (value: SalesInvoiceNumberingConfiguration) => void;
+  onStateChange?: (value: SalesInvoiceNumberingConfiguration, initialConsecutive: number) => void;
+  showSaveButton?: boolean;
 }) {
   const [value, setValue] = useState<SalesInvoiceNumberingConfiguration | null>(null);
   const [initial, setInitial] = useState(1);
@@ -32,13 +36,14 @@ export function InvoiceNumberingCard({
         if (!active) return;
         setValue(result);
         setInitial(result.initialConsecutive ?? 1);
+        onStateChange?.(result, result.initialConsecutive ?? 1);
       })
       .catch((caught: unknown) => {
         if (active) setError(caught instanceof Error ? caught.message : "No fue posible cargar la numeración.");
       })
       .finally(() => active && setLoading(false));
     return () => { active = false; };
-  }, [businessId]);
+  }, [businessId, onStateChange]);
 
   async function save() {
     setSaving(true);
@@ -79,10 +84,14 @@ export function InvoiceNumberingCard({
               value={value?.canSetInitialConsecutive ? initial : (value?.nextConsecutive ?? initial)}
               disabled={!value?.canSetInitialConsecutive || saving}
               onFocus={(event) => event.currentTarget.select()}
-              onChange={(event) => setInitial(event.currentTarget.valueAsNumber || 0)}
+              onChange={(event) => {
+                const next = event.currentTarget.valueAsNumber || 0;
+                setInitial(next);
+                if (value) onStateChange?.(value, next);
+              }}
             />
           </label>
-          {value?.canSetInitialConsecutive && (
+          {showSaveButton && value?.canSetInitialConsecutive && (
             <Button type="button" onClick={() => void save()} disabled={saving || initial < 1}>
               {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}Guardar numeración
             </Button>

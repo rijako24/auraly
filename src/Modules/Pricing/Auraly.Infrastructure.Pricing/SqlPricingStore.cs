@@ -20,13 +20,21 @@ public sealed class SqlPricingStore(
               SELECT p.PriceRevisionProposalId AS CandidateId,p.ProductId,
                 COALESCE(x.ProductCode,x.Sku,CONVERT(nvarchar(36),x.ProductId)) AS ProductCode,x.Name AS ProductName,
                 p.SourceDocumentId,p.SourceLineNumber,s.Name AS SupplierName,s.SupplierId,
-                p.PreviousObservedUnitCost,p.ObservedUnitCost,p.CurrentSalePrice,p.CurrentMarginPercent,
+                p.PreviousObservedUnitCost,p.ObservedUnitCost,p.CurrentSalePrice,currentPrice.CurrentPricePublishedAt,p.CurrentMarginPercent,
                 p.TargetMarginPercent,p.SuggestedSalePrice,COALESCE(tax.Rate,0) AS SalesTaxRate,
                 p.EffectiveMarginAfterRounding,p.Status,p.CreatedAt,p.RowVersion,
                 CAST(0 AS bit) AS IsManual,N'GoodsReceipt' AS Origin
               FROM dbo.PriceRevisionProposals p
               INNER JOIN dbo.Products x ON x.ProductId=p.ProductId AND x.BusinessId=p.BusinessId
               LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=x.TaxProfileId AND tax.BusinessId=x.BusinessId
+              OUTER APPLY (
+                SELECT TOP(1)
+                  COALESCE(history.PublishedAt,history.ValidFrom,history.CreatedAt) AS CurrentPricePublishedAt
+                FROM dbo.ProductPrices history
+                WHERE history.BusinessId=p.BusinessId AND history.ProductId=p.ProductId
+                  AND history.Amount=p.CurrentSalePrice AND history.IsActive=1
+                ORDER BY history.ValidFrom DESC,history.CreatedAt DESC
+              ) currentPrice
               INNER JOIN dbo.GoodsReceipts g ON g.GoodsReceiptId=p.SourceDocumentId
               INNER JOIN dbo.Suppliers s ON s.SupplierId=g.SupplierId
               WHERE p.BusinessId=@BusinessId
@@ -37,7 +45,7 @@ public sealed class SqlPricingStore(
                 COALESCE(x.ProductCode,x.Sku,CONVERT(nvarchar(36),x.ProductId)),x.Name,
                 CAST('00000000-0000-0000-0000-000000000000' AS uniqueidentifier),0,
                 COALESCE(supplier.Name,N'Ajuste desde producto'),supplier.SupplierId,
-                NULL,COALESCE(pp.CostBasisAmount,0),pp.Amount,pp.EffectiveMarginPercent,
+                NULL,COALESCE(pp.CostBasisAmount,0),pp.Amount,COALESCE(pp.PublishedAt,pp.ValidFrom,pp.CreatedAt),pp.EffectiveMarginPercent,
                 pp.TargetMarginPercent,pp.PreparedAmount,COALESCE(tax.Rate,0),
                 pp.EffectiveMarginPercent,N'Approved',pp.CreatedAt,pp.RowVersion,
                 CAST(1 AS bit),N'Product'
@@ -75,7 +83,7 @@ public sealed class SqlPricingStore(
         }
         await using var command = new SqlCommand("""
             SELECT CandidateId,ProductId,ProductCode,ProductName,SourceDocumentId,SourceLineNumber,
-              SupplierName,PreviousObservedUnitCost,ObservedUnitCost,CurrentSalePrice,CurrentMarginPercent,
+              SupplierName,PreviousObservedUnitCost,ObservedUnitCost,CurrentSalePrice,CurrentPricePublishedAt,CurrentMarginPercent,
               TargetMarginPercent,SuggestedSalePrice,SalesTaxRate,EffectiveMarginAfterRounding,
               candidate.Status,candidate.CreatedAt,candidate.RowVersion,candidate.Origin
             """ + Environment.NewLine + rows + Environment.NewLine + """
@@ -92,10 +100,11 @@ public sealed class SqlPricingStore(
                 reader.GetGuid(0),reader.GetGuid(1),reader.GetString(2),reader.GetString(3),
                 reader.GetGuid(4),reader.GetInt32(5),reader.GetString(6),
                 reader.IsDBNull(7) ? null : reader.GetDecimal(7),reader.GetDecimal(8),reader.GetDecimal(9),
-                reader.IsDBNull(10) ? null : reader.GetDecimal(10),
-                reader.IsDBNull(11) ? null : reader.GetDecimal(11),reader.GetDecimal(12),reader.GetDecimal(13),
-                reader.IsDBNull(14) ? null : reader.GetDecimal(14),reader.GetString(15),
-                reader.GetDateTimeOffset(16),Convert.ToBase64String(reader.GetFieldValue<byte[]>(17)),reader.GetString(18)));
+                reader.IsDBNull(10) ? null : reader.GetDateTimeOffset(10),
+                reader.IsDBNull(11) ? null : reader.GetDecimal(11),
+                reader.IsDBNull(12) ? null : reader.GetDecimal(12),reader.GetDecimal(13),reader.GetDecimal(14),
+                reader.IsDBNull(15) ? null : reader.GetDecimal(15),reader.GetString(16),
+                reader.GetDateTimeOffset(17),Convert.ToBase64String(reader.GetFieldValue<byte[]>(18)),reader.GetString(19)));
         return new(items, query.Page, query.PageSize, total);
     }
     public async Task<PriceProposalSource?> GetProposalAsync(

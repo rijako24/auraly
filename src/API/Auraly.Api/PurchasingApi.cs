@@ -72,6 +72,17 @@ public static class PurchasingApi
             .RequireAuthorization("purchasing.user");
 
         endpoints.MapGet(
+                "/api/commerce/v1/goods-receipts/{documentId:guid}",
+                async (HttpContext context, Guid documentId, GoodsReceiptWorkspaceService service,
+                    CancellationToken cancellationToken) =>
+                {
+                    var result = await service.GetDetailAsync(
+                        context.User.ToPurchasingIdentity(), documentId, cancellationToken);
+                    return result is null ? Results.NotFound() : Results.Ok(result);
+                })
+            .RequireAuthorization("purchasing.user");
+
+        endpoints.MapGet(
                 "/api/commerce/v1/goods-receipts/drafts/{draftId:guid}",
                 async (HttpContext context, Guid draftId, GoodsReceiptWorkspaceService service,
                     CancellationToken cancellationToken) =>

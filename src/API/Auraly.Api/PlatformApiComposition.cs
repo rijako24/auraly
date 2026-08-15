@@ -449,6 +449,7 @@ public static class PlatformApiComposition
         builder.Services.AddScoped<IBusinessDefaultsProvisioner, SqlBusinessDefaultsProvisioner>();
         builder.Services.AddScoped<Auraly.Application.Tenants.TenantInvitationService>();
         builder.Services.AddScoped<ITenantService, TenantService>();
+        builder.Services.AddScoped<ITenantDeviceAdminStore, SqlTenantDeviceAdminStore>();
 
         builder.Services.AddScoped<IBusinessAdminService, BusinessAdminService>();
 

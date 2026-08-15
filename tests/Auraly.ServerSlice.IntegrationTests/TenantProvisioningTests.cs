@@ -24,8 +24,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             geography.CountryId, geography.DivisionId, geography.CityId,
             "Calle 1 # 2-3", "3001234567", $"empresa-{suffix}@auraly.test", "R-99-PN",
             "Sede principal", "Calle 1 # 2-3", "3001234567", $"sede-{suffix}@auraly.test",
-            "America/Bogota", "LatestReceiptCost", "CC", $"10{Random.Shared.Next(10000000, 99999999)}",
-            "Administrador", suffix, email, "3007654321");
+            "America/Bogota", "LatestReceiptCost", email, 10, 3);
 
         using var admin = fixture.CreateAdminClient("tenants.create");
         using var created = await admin.PostAsJsonAsync("/api/v1/tenants", request);
@@ -34,15 +33,16 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         var result = await created.Content.ReadFromJsonAsync<ProvisionTenantResult>();
         Assert.NotNull(result);
 
-        var state = await ReadProvisionedStateAsync(result!.TenantId, result.AdministratorUserId);
+        Assert.Null(result!.AdministratorUserId);
+        var state = await ReadProvisionedStateAsync(result.TenantId, null);
         Assert.Equal(1, state.Businesses);
         Assert.Equal(2, state.Warehouses);
         Assert.Equal(12, state.InventoryReasons);
         Assert.Equal(4, state.ProductUnits);
         Assert.Equal(1, state.DefaultCustomers);
         Assert.Equal(4, state.Roles);
-        Assert.Equal(1, state.UserRoles);
-        Assert.False(state.UserActive);
+        Assert.Equal(0, state.UserRoles);
+        Assert.Null(state.UserActive);
         Assert.Null(state.PasswordHash);
         Assert.Equal("Pending", state.InvitationStatus);
 
@@ -50,17 +50,25 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         using var publicClient = fixture.CreateClient();
         using var accepted = await publicClient.PostAsJsonAsync(
             "/api/v1/auth/invitations/accept",
-            new AcceptTenantInvitationRequest(token, Password, Password));
+            new AcceptTenantInvitationRequest(
+                token, "CC", $"10{Random.Shared.Next(10000000, 99999999)}",
+                "Administrador", suffix, email, "3007654321", "Calle 1 # 2-3",
+                Password, Password));
         Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
 
-        var acceptedState = await ReadProvisionedStateAsync(result.TenantId, result.AdministratorUserId);
+        var acceptedResult = await accepted.Content.ReadFromJsonAsync<AcceptTenantInvitationResult>();
+        Assert.NotNull(acceptedResult);
+        var acceptedState = await ReadProvisionedStateAsync(result.TenantId, acceptedResult!.UserId);
         Assert.True(acceptedState.UserActive);
         Assert.NotNull(acceptedState.PasswordHash);
         Assert.Equal("Accepted", acceptedState.InvitationStatus);
 
         using var reused = await publicClient.PostAsJsonAsync(
             "/api/v1/auth/invitations/accept",
-            new AcceptTenantInvitationRequest(token, Password, Password));
+            new AcceptTenantInvitationRequest(
+                token, "CC", $"10{Random.Shared.Next(10000000, 99999999)}",
+                "Administrador", suffix, email, "3007654321", "Calle 1 # 2-3",
+                Password, Password));
         Assert.Equal(HttpStatusCode.Conflict, reused.StatusCode);
 
         using var loginRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/login")
@@ -73,7 +81,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         var authentication = await login.Content.ReadFromJsonAsync<AuthenticationResponse>();
         Assert.NotNull(authentication);
         Assert.Equal(result.TenantId, authentication!.User.TenantId);
-        Assert.Equal(result.AdministratorUserId, authentication.User.UserId);
+        Assert.Equal(acceptedResult.UserId, authentication.User.UserId);
         Assert.Contains("Administrador", authentication.User.Roles);
         Assert.DoesNotContain(authentication.User.Permissions, permission =>
             permission.StartsWith("tenants.", StringComparison.OrdinalIgnoreCase));
@@ -121,7 +129,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         return (reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2));
     }
 
-    private async Task<ProvisionedState> ReadProvisionedStateAsync(Guid tenantId, Guid userId)
+    private async Task<ProvisionedState> ReadProvisionedStateAsync(Guid tenantId, Guid? userId)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -132,21 +140,21 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
               (SELECT COUNT(*) FROM dbo.InventoryReasons r INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId WHERE b.TenantId=@TenantId),
               (SELECT COUNT(*) FROM dbo.ProductUnits u INNER JOIN dbo.Businesses b ON b.BusinessId=u.BusinessId WHERE b.TenantId=@TenantId),
               (SELECT COUNT(*) FROM dbo.Customers c INNER JOIN dbo.Parties p ON p.PartyId=c.PartyId WHERE p.TenantId=@TenantId AND p.DisplayName=N'Consumidor final'),
-              (SELECT COUNT(*) FROM dbo.AppRoles WHERE TenantId=@TenantId AND NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'TENANTADMINISTRATOR')),
+              (SELECT COUNT(*) FROM dbo.AppRoles WHERE TenantId=@TenantId AND NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'ADMINISTRATOR')),
               (SELECT COUNT(*) FROM dbo.UserRoles WHERE UserId=@UserId),
-              u.IsActive,u.PasswordHash,i.Status
-            FROM dbo.AppUsers u
-            INNER JOIN dbo.TenantUserInvitations i ON i.UserId=u.UserId AND i.TenantId=u.TenantId
-            WHERE u.TenantId=@TenantId AND u.UserId=@UserId;
+              (SELECT IsActive FROM dbo.AppUsers WHERE TenantId=@TenantId AND UserId=@UserId),
+              (SELECT PasswordHash FROM dbo.AppUsers WHERE TenantId=@TenantId AND UserId=@UserId),
+              (SELECT TOP(1) Status FROM dbo.TenantUserInvitations WHERE TenantId=@TenantId ORDER BY CreatedAt DESC);
             """, connection);
         command.Parameters.AddWithValue("@TenantId", tenantId);
-        command.Parameters.AddWithValue("@UserId", userId);
+        command.Parameters.AddWithValue("@UserId", userId.HasValue ? userId.Value : DBNull.Value);
         await using var reader = await command.ExecuteReaderAsync();
         Assert.True(await reader.ReadAsync());
         return new ProvisionedState(
             reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2), reader.GetInt32(3),
             reader.GetInt32(4), reader.GetInt32(5), reader.GetInt32(6),
-            reader.GetBoolean(7), reader.IsDBNull(8) ? null : reader.GetString(8), reader.GetString(9));
+            reader.IsDBNull(7) ? null : reader.GetBoolean(7),
+            reader.IsDBNull(8) ? null : reader.GetString(8), reader.GetString(9));
     }
 
     private async Task<string> ReadInvitationTokenAsync(Guid tenantId)
@@ -186,5 +194,5 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
     private sealed record ProvisionedState(
         int Businesses, int Warehouses, int InventoryReasons, int ProductUnits,
         int DefaultCustomers, int Roles, int UserRoles,
-        bool UserActive, string? PasswordHash, string InvitationStatus);
+        bool? UserActive, string? PasswordHash, string InvitationStatus);
 }

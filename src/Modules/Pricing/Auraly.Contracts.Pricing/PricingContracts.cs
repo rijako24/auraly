@@ -71,6 +71,7 @@ public sealed record PriceRevisionListItem(
     decimal? PreviousObservedUnitCost,
     decimal ObservedUnitCost,
     decimal CurrentSalePrice,
+    DateTimeOffset? CurrentPricePublishedAt,
     decimal? CurrentMarginPercent,
     decimal? TargetMarginPercent,
     decimal SuggestedSalePrice,

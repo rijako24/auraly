@@ -9,7 +9,18 @@ public static class PartyWorkspacePermissionCodes
     public const string SupplierCreate = "suppliers.create";
     public const string SellerCreate = "sellers.create";
     public const string CarrierCreate = "carriers.create";
+    public const string EmployeeCreate = "employees.create";
+    public const string UserCreate = "users.create";
 }
+
+public sealed record CreatePartyIdentityRequest(
+    Guid OperationId,
+    Guid BusinessId,
+    string TargetRole,
+    PartyInput Party,
+    PartySiteInput PrimarySite);
+
+public sealed record PartyIdentityAcceptance(Guid PartyId, bool ExistingIdentity);
 
 public sealed record CreateSupplierRequest(
     Guid OperationId,

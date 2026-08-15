@@ -3,6 +3,7 @@ namespace MimosBabySpa.Application.Identity.DTOs;
 public record UserDto(
     Guid UserId,
     Guid TenantId,
+    Guid? PartyId,
     string Username,
     string Email,
     string FirstName,

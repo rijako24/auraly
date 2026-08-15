@@ -312,6 +312,73 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         return new(items, page, pageSize, total, (int)Math.Ceiling(total / (double)pageSize));
     }
 
+    public async Task<GoodsReceiptDetail?> GetDetailAsync(
+        PurchasingUserIdentity user, Guid documentId, CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        const string sql = """
+            SELECT r.DocumentNumber,r.Status,r.WarehouseId,w.Name,r.SupplierId,s.Name,
+                   r.SupplierInvoiceNumber,r.SupplierInvoiceDate,r.ReceivedAt,r.CreatesPayable,
+                   r.DueDate,r.CurrencyCode,r.Notes,r.NetAmount,r.TaxAmount,r.GrandTotal,
+                   r.AcceptedAt,r.ProcessedAt
+            FROM dbo.GoodsReceipts r
+            INNER JOIN dbo.Businesses b
+              ON b.BusinessId=r.BusinessId AND b.TenantId=@TenantId
+            INNER JOIN dbo.Warehouses w ON w.WarehouseId=r.WarehouseId
+            INNER JOIN dbo.Suppliers s ON s.SupplierId=r.SupplierId
+            WHERE r.GoodsReceiptId=@DocumentId AND r.BusinessId=@BusinessId;
+
+            SELECT l.LineNumber,l.ProductId,l.DescriptionSnapshot,l.Quantity,l.UnitCost,
+                   l.DiscountAmount,l.TaxCode,l.TaxRate,l.TaxTreatment,l.NetAmount,
+                   l.TaxAmount,l.LineTotal,l.PresentationNameSnapshot,
+                   l.PresentationQuantity,l.UnitsPerPresentation
+            FROM dbo.GoodsReceiptLines l
+            WHERE l.GoodsReceiptId=@DocumentId
+            ORDER BY l.LineNumber;
+            """;
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@TenantId", user.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+
+        var number = reader.GetString(0);
+        var status = reader.GetString(1);
+        var warehouseId = reader.GetGuid(2);
+        var warehouseName = reader.GetString(3);
+        var supplierId = reader.GetGuid(4);
+        var supplierName = reader.GetString(5);
+        var supplierInvoiceNumber = reader.IsDBNull(6) ? null : reader.GetString(6);
+        DateTimeOffset? supplierInvoiceDate = reader.IsDBNull(7) ? null : reader.GetDateTimeOffset(7);
+        var receivedAt = reader.GetDateTimeOffset(8);
+        var createsPayable = reader.GetBoolean(9);
+        DateTimeOffset? dueDate = reader.IsDBNull(10) ? null : reader.GetDateTimeOffset(10);
+        var currencyCode = reader.GetString(11);
+        var notes = reader.IsDBNull(12) ? null : reader.GetString(12);
+        var netAmount = reader.GetDecimal(13);
+        var taxAmount = reader.GetDecimal(14);
+        var grandTotal = reader.GetDecimal(15);
+        var acceptedAt = reader.GetDateTimeOffset(16);
+        DateTimeOffset? processedAt = reader.IsDBNull(17) ? null : reader.GetDateTimeOffset(17);
+
+        await reader.NextResultAsync(cancellationToken);
+        var lines = new List<GoodsReceiptLineSnapshot>();
+        while (await reader.ReadAsync(cancellationToken))
+            lines.Add(new(
+                reader.GetInt32(0), reader.GetGuid(1), reader.GetString(2),
+                reader.GetDecimal(3), reader.GetDecimal(4), reader.GetDecimal(5),
+                reader.GetString(6), reader.GetDecimal(7), reader.GetString(8),
+                reader.GetDecimal(9), reader.GetDecimal(10), reader.GetDecimal(11),
+                reader.GetString(12), reader.GetDecimal(13), reader.GetDecimal(14)));
+
+        return new GoodsReceiptDetail(
+            documentId, number, status, warehouseId, warehouseName, supplierId,
+            supplierName, supplierInvoiceNumber, supplierInvoiceDate, receivedAt,
+            createsPayable, dueDate, currencyCode, notes, netAmount, taxAmount,
+            grandTotal, acceptedAt, processedAt, lines);
+    }
     public async Task<GoodsReceiptDraft?> GetDraftAsync(
         PurchasingUserIdentity user, Guid draftId, CancellationToken cancellationToken)
     {

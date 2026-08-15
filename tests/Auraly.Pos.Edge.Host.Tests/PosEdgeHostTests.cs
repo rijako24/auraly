@@ -358,7 +358,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
 
         var captureResponse = await Client.PostAsJsonAsync(
             "/edge/v1/capture",
-            new CaptureRequest("770123", customer.CustomerId));
+            new CaptureRequest("770123", null));
         captureResponse.EnsureSuccessStatusCode();
         var captured = await captureResponse.Content.ReadFromJsonAsync<PosCaptureResult>();
         var line = Assert.Single(captured!.Draft!.Lines);
@@ -409,7 +409,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
 
         var capture = await Client.PostAsJsonAsync(
             "/edge/v1/capture",
-            new CaptureRequest("770123", customer.CustomerId));
+            new CaptureRequest("770123", null));
         capture.EnsureSuccessStatusCode();
         var captured = await capture.Content.ReadFromJsonAsync<PosCaptureResult>();
         var line = Assert.Single(captured!.Draft!.Lines);
@@ -433,6 +433,75 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         Assert.Null(consumer!.Draft.CustomerId);
         Assert.Equal(100m, Assert.Single(consumer.Draft.Lines).UnitPrice);
         Assert.Null(consumer.Customer);
+    }
+
+    [Fact]
+    public async Task Selected_customer_price_list_reprices_separate_scan_lines_by_total_quantity()
+    {
+        var customers = await Client.GetFromJsonAsync<CustomerSearchPageContract>(
+            "/edge/v1/customers?search=400&take=50");
+        var customer = Assert.Single(customers!.Items);
+        Assert.Equal("Cliente lista POS", customer.Name);
+        Assert.NotNull(customer.PriceListId);
+
+        var active = await Client.GetFromJsonAsync<PosDraft>("/edge/v1/drafts/active");
+        var selectedResponse = await Client.PutAsJsonAsync(
+            $"/edge/v1/drafts/{active!.DraftId.Value:D}/customer",
+            new SelectCustomerRequest(customer.CustomerId));
+        selectedResponse.EnsureSuccessStatusCode();
+
+        var firstResponse = await Client.PostAsJsonAsync(
+            "/edge/v1/capture",
+            new CaptureRequest("770123", null));
+        firstResponse.EnsureSuccessStatusCode();
+        var first = await firstResponse.Content.ReadFromJsonAsync<PosCaptureResult>();
+        var firstLine = Assert.Single(first!.Draft!.Lines);
+        Assert.Equal(1m, firstLine.Quantity);
+        Assert.Equal(90m, firstLine.UnitPrice);
+        Assert.Equal("PriceList", firstLine.PriceSource);
+
+        var secondResponse = await Client.PostAsJsonAsync(
+            "/edge/v1/capture",
+            new CaptureRequest("770123", null));
+        secondResponse.EnsureSuccessStatusCode();
+        var second = await secondResponse.Content.ReadFromJsonAsync<PosCaptureResult>();
+        Assert.Equal(2, second!.Draft!.Lines.Count);
+        Assert.All(second.Draft.Lines, line => Assert.Equal(1m, line.Quantity));
+        Assert.All(second.Draft.Lines, line => Assert.Equal(90m, line.UnitPrice));
+        Assert.Equal(2, second.Draft.Lines.Select(line => line.LineId).Distinct().Count());
+
+        var quantityResponse = await Client.PutAsJsonAsync(
+            $"/edge/v1/drafts/{second.Draft.DraftId.Value:D}/lines/{firstLine.LineId:D}/quantity",
+            new QuantityRequest(2m));
+        quantityResponse.EnsureSuccessStatusCode();
+        var repriced = await quantityResponse.Content.ReadFromJsonAsync<PosCaptureResult>();
+        Assert.Equal(new[] { 1m, 2m }, repriced!.Draft!.Lines.Select(line => line.Quantity).Order().ToArray());
+        Assert.All(repriced.Draft.Lines, line => Assert.Equal(70m, line.UnitPrice));
+        Assert.All(repriced.Draft.Lines, line => Assert.Equal("PriceList", line.PriceSource));
+    }
+
+    [Fact]
+    public async Task Channel_exclusion_keeps_product_sellable_at_public_price()
+    {
+        var customers = await Client.GetFromJsonAsync<CustomerSearchPageContract>(
+            "/edge/v1/customers?search=500&take=50");
+        var customer = Assert.Single(customers!.Items);
+        Assert.NotNull(customer.PriceChannelId);
+
+        var active = await Client.GetFromJsonAsync<PosDraft>("/edge/v1/drafts/active");
+        var selectedResponse = await Client.PutAsJsonAsync(
+            $"/edge/v1/drafts/{active!.DraftId.Value:D}/customer",
+            new SelectCustomerRequest(customer.CustomerId));
+        selectedResponse.EnsureSuccessStatusCode();
+
+        var captureResponse = await Client.PostAsJsonAsync(
+            "/edge/v1/capture",
+            new CaptureRequest("770123", null));
+        captureResponse.EnsureSuccessStatusCode();
+        var captured = await captureResponse.Content.ReadFromJsonAsync<PosCaptureResult>();
+        var line = Assert.Single(captured!.Draft!.Lines);
+        Assert.Equal(100m, line.UnitPrice);
+        Assert.Equal("Base", line.PriceSource);
     }
 
     [Fact]
@@ -487,6 +556,10 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     {
         var customerId = Guid.NewGuid();
         var priceChannelId = Guid.NewGuid();
+        var listCustomerId = Guid.NewGuid();
+        var priceListId = Guid.NewGuid();
+        var excludedCustomerId = Guid.NewGuid();
+        var excludedChannelId = Guid.NewGuid();
         var userId = Guid.NewGuid();
         var tenantId = Guid.NewGuid();
         var deviceId = Guid.NewGuid();
@@ -629,14 +702,33 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             new CatalogBootstrapPage(sessionId, 0, null, false, hash, items));
         await store.PromoteBootstrapAsync();
         await store.ApplyPricingSnapshotAsync(new PosPricingSnapshot(
-            [],
+            [
+                new PosPriceListItem(
+                    priceListId,
+                    product.ProductId,
+                    1m,
+                    90m,
+                    "COP"),
+                new PosPriceListItem(
+                    priceListId,
+                    product.ProductId,
+                    3m,
+                    70m,
+                    "COP")
+            ],
             [
                 new PosPriceChannelItem(
                     priceChannelId,
                     product.ProductId,
                     80m,
                     "COP",
-                    false)
+                    false),
+                new PosPriceChannelItem(
+                    excludedChannelId,
+                    product.ProductId,
+                    60m,
+                    "COP",
+                    true)
             ],
             [
                 new PosCustomerPricing(
@@ -645,6 +737,20 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                     "Cliente POS",
                     null,
                     priceChannelId,
+                    true),
+                new PosCustomerPricing(
+                    listCustomerId,
+                    "4001234567",
+                    "Cliente lista POS",
+                    priceListId,
+                    null,
+                    true),
+                new PosCustomerPricing(
+                    excludedCustomerId,
+                    "5001234567",
+                    "Cliente canal excluido",
+                    null,
+                    excludedChannelId,
                     true)
             ]));
     }

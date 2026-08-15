@@ -16,6 +16,7 @@ import {
 } from "@tanstack/react-query";
 import {
   ArrowLeftRight,
+  Barcode,
   Check,
   ClipboardCheck,
   Loader2,
@@ -23,7 +24,6 @@ import {
   Plus,
   RefreshCw,
   Scale,
-  Search,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -639,6 +639,7 @@ function InventoryProductPicker({
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+  const pickerRef = useRef<HTMLDivElement>(null);
 
   const query = useInfiniteQuery({
     queryKey: ["inventory-operation-products", businessId, warehouseId, search.trim()],
@@ -651,6 +652,15 @@ function InventoryProductPicker({
   const totalCount = query.data?.pages[0]?.totalCount ?? 0;
 
   useEffect(() => { setActiveIndex(0); listRef.current?.scrollTo({ top: 0 }); }, [search, warehouseId]);
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!pickerRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer, true);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
+  }, [open]);
+
   useEffect(() => { if (activeIndex >= products.length) setActiveIndex(Math.max(0, products.length - 1)); }, [activeIndex, products.length]);
 
   function choose(product: InventoryProductItem) { onSelect(product); setSearch(""); setOpen(false); }
@@ -682,12 +692,12 @@ function InventoryProductPicker({
   }
 
   return (
-    <div className="relative [&_strong]:font-normal">
+    <div ref={pickerRef} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false); }} className="relative [&_strong]:font-normal">
       <Label htmlFor="inventory-product-search">Agregar productos</Label>
       <div className="mt-2 flex gap-2">
         <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-          <Input id="inventory-product-search" data-testid="inventory-product-search" className="pl-9" disabled={disabled} value={search} onFocus={() => setOpen(true)} onChange={(event) => { setSearch(event.target.value); setOpen(true); }} onKeyDown={keyDown} autoComplete="off" aria-autocomplete="list" aria-expanded={open} aria-controls="inventory-product-results" placeholder="Código interno, código de barras, referencia o nombre" />
+          <Barcode className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-primary" />
+          <Input id="inventory-product-search" data-testid="inventory-product-search" className="pl-9" disabled={disabled} value={search} onFocus={() => setOpen(true)} onClick={() => setOpen(true)} onChange={(event) => { setSearch(event.target.value); setOpen(true); }} onKeyDown={keyDown} autoComplete="off" aria-autocomplete="list" aria-expanded={open} aria-controls="inventory-product-results" placeholder="Código interno, código de barras, referencia o nombre" />
         </div>
         <Button type="button" disabled={disabled || query.isFetching || products.length === 0} onMouseDown={(event) => event.preventDefault()} onClick={() => void chooseActive()}>
           {query.isFetching && !query.isFetchingNextPage ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />} Agregar

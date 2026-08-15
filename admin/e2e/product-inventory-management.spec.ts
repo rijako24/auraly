@@ -47,12 +47,11 @@ async function editInventoryManagement(page: Page, productName: string, enabled:
   await expect(row).toBeVisible({ timeout: 20_000 });
   await row.getByRole("button", { name: "Editar" }).click();
   const dialog = page.getByRole("dialog");
-  const inventorySwitch = dialog.getByText("Maneja inventario", { exact: true }).locator("..").locator("..").getByRole("switch");
+  const inventorySwitch = dialog.getByText("Controla inventario", { exact: true }).locator("..").locator("..").getByRole("switch");
   await expect(inventorySwitch).toBeVisible({ timeout: 20_000 });
   if ((await inventorySwitch.isChecked()) !== enabled) await inventorySwitch.click();
   await dialog.getByRole("button", { name: "Guardar producto" }).click();
   await expect(page.getByText("Producto guardado completamente", { exact: true })).toBeVisible({ timeout: 20_000 });
-  await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
 }
 
@@ -69,7 +68,7 @@ async function openInventoryProductSearch(page: Page) {
   return search;
 }
 
-test("editar Maneja inventario controla la busqueda de productos", async ({ page }) => {
+test("editar Controla inventario controla la búsqueda de productos", async ({ page }) => {
   test.setTimeout(150_000);
   await login(page);
   const productName = await createInventoryTestProduct(page);

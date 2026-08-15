@@ -190,7 +190,19 @@ public sealed class SqlGoodsReceiptStore(
         Guid businessId,
         CancellationToken cancellationToken)
     {
-        const string sql = """
+        const string ensureSql = """
+            IF NOT EXISTS (
+              SELECT 1 FROM dbo.DocumentSeries WITH (UPDLOCK,HOLDLOCK)
+              WHERE BusinessId=@BusinessId AND DocumentType=N'GoodsReceipt' AND DeviceId IS NULL AND IsActive=1)
+              INSERT dbo.DocumentSeries
+                (DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
+              VALUES(NEWID(),@BusinessId,NULL,N'GoodsReceipt',N'EMC',N'00',8,1,99999999,0,1,SYSDATETIMEOFFSET());
+            """;
+        await using (var ensure = new SqlCommand(ensureSql, connection, transaction))
+        {
+            ensure.Parameters.AddWithValue("@BusinessId", businessId);
+            await ensure.ExecuteNonQueryAsync(cancellationToken);
+        }        const string sql = """
             SELECT TOP (1) ds.DocumentSeriesId,ds.Prefix,ds.SeriesCode,ds.Padding,
                    ds.RangeStart,ds.RangeEnd,COALESCE(c.NextConsecutive,ds.RangeStart)
             FROM dbo.DocumentSeries ds WITH (UPDLOCK,HOLDLOCK)
@@ -211,7 +223,7 @@ public sealed class SqlGoodsReceiptStore(
             select.Parameters.AddWithValue("@BusinessId", businessId);
             await using var reader = await select.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken))
-                throw new PurchasingValidationException("No active GoodsReceipt document series is configured for the business.");
+                throw new PurchasingValidationException("La serie de entradas de mercancía no está activa para esta sede.");
             seriesId = reader.GetGuid(0);
             prefix = reader.GetString(1);
             seriesCode = reader.GetString(2);
@@ -219,7 +231,7 @@ public sealed class SqlGoodsReceiptStore(
             rangeEnd = reader.GetInt64(5);
             consecutive = reader.GetInt64(6);
         }
-        if (consecutive > rangeEnd) throw new PurchasingValidationException("The GoodsReceipt document series is exhausted.");
+        if (consecutive > rangeEnd) throw new PurchasingValidationException("La numeración de entradas de mercancía se agotó.");
         const string update = """
             IF EXISTS (SELECT 1 FROM dbo.DocumentSeriesCursors WHERE DocumentSeriesId=@SeriesId)
               UPDATE dbo.DocumentSeriesCursors SET NextConsecutive=@Next,UpdatedAt=@Now WHERE DocumentSeriesId=@SeriesId;

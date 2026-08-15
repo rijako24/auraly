@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MimosBabySpa.Application.Common.DTOs;
+using MimosBabySpa.Application.Common.Exceptions;
 using MimosBabySpa.Application.Identity.DTOs;
 using MimosBabySpa.Application.Identity.Interfaces;
 using Auraly.Api.Authorization;
@@ -23,16 +24,22 @@ public class UsersController : ControllerBase
     [HttpGet]
     [PermissionAuthorize("users.read")]
     public async Task<ActionResult<PagedResponse<UserDto>>> GetAll(
-        [FromQuery] PagedRequest request, CancellationToken ct)
+        [FromQuery] PagedRequest request, [FromQuery] Guid? tenantId, CancellationToken ct)
     {
-        return Ok(await _userService.GetPagedAsync(User.GetTenantId(), request, ct));
+        var ownTenantId = User.GetTenantId();
+        var requestedTenantId = tenantId ?? ownTenantId;
+        if (requestedTenantId != ownTenantId && !User.HasPermission("tenants.read"))
+            throw new ForbiddenException();
+        return Ok(await _userService.GetPagedAsync(requestedTenantId, request, ct));
     }
 
     [HttpGet("{userId:guid}")]
     [PermissionAuthorize("users.read")]
     public async Task<ActionResult<UserDto>> GetById(Guid userId, CancellationToken ct)
     {
-        return Ok(await _userService.GetByIdAsync(userId, ct));
+        var user = await _userService.GetByIdAsync(userId, ct);
+        EnsureScope(user);
+        return Ok(user);
     }
 
     [HttpPost]
@@ -49,13 +56,24 @@ public class UsersController : ControllerBase
     public async Task<ActionResult<UserDto>> Update(
         Guid userId, [FromBody] UpdateUserRequest request, CancellationToken ct)
     {
+        await EnsureScopeAsync(userId, ct);
         return Ok(await _userService.UpdateAsync(userId, request, ct));
     }
 
+    [HttpPost("{userId:guid}/reset-password")]
+    [PermissionAuthorize("users.update")]
+    public async Task<IActionResult> ResetPassword(
+        Guid userId, [FromBody] ResetUserPasswordRequest request, CancellationToken ct)
+    {
+        await EnsureScopeAsync(userId, ct);
+        await _userService.ResetPasswordAsync(userId, request, ct);
+        return NoContent();
+    }
     [HttpPost("{userId:guid}/deactivate")]
     [PermissionAuthorize("users.delete")]
     public async Task<IActionResult> Deactivate(Guid userId, CancellationToken ct)
     {
+        await EnsureScopeAsync(userId, ct);
         await _userService.DeactivateAsync(userId, ct);
         return NoContent();
     }
@@ -64,6 +82,7 @@ public class UsersController : ControllerBase
     [PermissionAuthorize("users.delete")]
     public async Task<IActionResult> Activate(Guid userId, CancellationToken ct)
     {
+        await EnsureScopeAsync(userId, ct);
         await _userService.ActivateAsync(userId, ct);
         return NoContent();
     }
@@ -73,6 +92,7 @@ public class UsersController : ControllerBase
     public async Task<IActionResult> AssignRole(
         Guid userId, [FromBody] AssignRoleRequest request, CancellationToken ct)
     {
+        await EnsureScopeAsync(userId, ct);
         await _userService.AssignRoleAsync(userId, request, User.GetUserId(), ct);
         return NoContent();
     }
@@ -82,6 +102,7 @@ public class UsersController : ControllerBase
     public async Task<IActionResult> RemoveRole(
         Guid userId, Guid roleId, [FromQuery] Guid? businessId, CancellationToken ct)
     {
+        await EnsureScopeAsync(userId, ct);
         await _userService.RemoveRoleAsync(userId, roleId, businessId, ct);
         return NoContent();
     }
@@ -91,6 +112,18 @@ public class UsersController : ControllerBase
     public async Task<ActionResult<IReadOnlyList<string>>> GetPermissions(
         Guid userId, [FromQuery] Guid? businessId, CancellationToken ct)
     {
+        await EnsureScopeAsync(userId, ct);
         return Ok(await _userService.GetUserPermissionsAsync(userId, businessId, ct));
+    }
+
+    private async Task EnsureScopeAsync(Guid userId, CancellationToken ct) =>
+        EnsureScope(await _userService.GetByIdAsync(userId, ct));
+
+    private void EnsureScope(UserDto user)
+    {
+        if (user.TenantId == User.GetTenantId() || User.HasPermission("tenants.read"))
+            return;
+
+        throw new ForbiddenException("No puede administrar usuarios de otra organizaci\u00f3n.");
     }
 }

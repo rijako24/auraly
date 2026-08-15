@@ -40,8 +40,6 @@ public sealed class SqlTenantProvisioningStore(
             var ordersWarehouseId = ids.NewId();
             var consumerPartyId = ids.NewId();
             var customerId = ids.NewId();
-            var adminPartyId = ids.NewId();
-            var adminUserId = ids.NewId();
             var cashierRoleId = ids.NewId();
             var supervisorRoleId = ids.NewId();
             var administrativeRoleId = ids.NewId();
@@ -61,11 +59,9 @@ public sealed class SqlTenantProvisioningStore(
                     THROW 51021,'La ciudad no pertenece al departamento seleccionado.',1;
                 IF EXISTS (SELECT 1 FROM dbo.TenantLegalProfiles WHERE NormalizedNit=@NormalizedNit)
                     THROW 51022,'Ya existe una empresa con este NIT.',1;
-                IF EXISTS (SELECT 1 FROM dbo.AppUsers WHERE NormalizedEmail=@NormalizedAdminEmail OR NormalizedUsername=@NormalizedAdminEmail)
-                    THROW 51022,'Ya existe un usuario con el correo del administrador.',1;
 
-                INSERT dbo.Tenants(TenantId,Name,Email,IsActive,CreatedAt)
-                VALUES(@TenantId,@TradeName,@CompanyEmail,1,@Now);
+                INSERT dbo.Tenants(TenantId,Name,Email,IsActive,MaximumUsers,MaximumEnrolledDevices,CreatedAt)
+                VALUES(@TenantId,@TradeName,@CompanyEmail,1,@MaximumUsers,@MaximumEnrolledDevices,@Now);
 
                 INSERT dbo.Businesses
                   (BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,TimeZone,IsActive,CreatedAt)
@@ -80,6 +76,14 @@ public sealed class SqlTenantProvisioningStore(
                 VALUES
                   (@SalesWarehouseId,@BusinessId,N'VEN',N'Bodega de venta',0,@CostBasis,1,@Now),
                   (@OrdersWarehouseId,@BusinessId,N'PED',N'Bodega de pedidos',0,@CostBasis,1,@Now);
+
+                DECLARE @DocumentSeries TABLE(DocumentType nvarchar(64),Prefix nvarchar(8));
+                INSERT @DocumentSeries VALUES
+                  (N'GoodsReceipt',N'EMC'),(N'StockCount',N'CTI'),
+                  (N'InventoryAdjustment',N'AJI'),(N'WarehouseTransfer',N'TRB'),
+                  (N'ProductConversion',N'CNV'),(N'Damage',N'AVE');
+                INSERT dbo.DocumentSeries(DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
+                SELECT NEWID(),@BusinessId,NULL,DocumentType,Prefix,N'00',8,1,99999999,0,1,@Now FROM @DocumentSeries;
 
                 DECLARE @Reasons TABLE(
                     OperationType nvarchar(64),Code nvarchar(40),Name nvarchar(120),DisplayOrder int);
@@ -112,23 +116,11 @@ public sealed class SqlTenantProvisioningStore(
                   (NEWID(),@BusinessId,N'L',N'Litro',N'L',1,3,1,@Now);
 
                 INSERT dbo.Parties
-                  (PartyId,TenantId,PartyType,DisplayName,LegalName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
-                VALUES(@ConsumerPartyId,@TenantId,N'Organization',N'Consumidor final',N'Consumidor final',N'Incomplete',1,@ActorUserId,@Now);
+                  (PartyId,TenantId,PartyType,IdentificationCountryId,IdentificationTypeCode,Identification,NormalizedIdentification,DisplayName,LegalName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
+                VALUES(@ConsumerPartyId,@TenantId,N'Organization',@CountryId,N'CC',N'222222222222',N'222222222222',N'Consumidor final',N'Consumidor final',N'Complete',1,@ActorUserId,@Now);
                 INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
                 VALUES(@CustomerId,@ConsumerPartyId,@BusinessId,1,@ActorUserId,@Now);
 
-                INSERT dbo.Parties
-                  (PartyId,TenantId,PartyType,IdentificationCountryId,IdentificationTypeCode,Identification,NormalizedIdentification,DisplayName,FirstName,LastName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
-                VALUES(@AdminPartyId,@TenantId,N'NaturalPerson',@CountryId,@AdminIdentificationType,@AdminIdentification,@NormalizedAdminIdentification,@AdminDisplayName,@AdminFirstName,@AdminLastName,N'Complete',1,@ActorUserId,@Now);
-
-                INSERT dbo.PartyContacts(PartyContactId,PartyId,ContactType,Value,NormalizedValue,IsPrimary,IsActive,CreatedAt)
-                VALUES
-                  (@AdminEmailContactId,@AdminPartyId,N'Email',@AdminEmail,@NormalizedAdminEmail,1,1,@Now),
-                  (@AdminPhoneContactId,@AdminPartyId,N'Phone',@AdminPhone,@NormalizedAdminPhone,1,1,@Now);
-
-                INSERT dbo.AppUsers
-                  (UserId,TenantId,PartyId,CreatedByUserId,Username,NormalizedUsername,Email,NormalizedEmail,PasswordHash,FirstName,LastName,PhoneNumber,EmailConfirmed,IsActive,CreatedAt)
-                VALUES(@AdminUserId,@TenantId,@AdminPartyId,@ActorUserId,@AdminEmail,@NormalizedAdminEmail,@AdminEmail,@NormalizedAdminEmail,NULL,@AdminFirstName,@AdminLastName,@AdminPhone,0,0,@Now);
 
                 INSERT dbo.AppRoles(RoleId,TenantId,Name,NormalizedName,Description,IsActive,IsSystemRole,CreatedAt)
                 VALUES
@@ -161,19 +153,17 @@ public sealed class SqlTenantProvisioningStore(
                 FROM dbo.Permissions
                 WHERE Resource IN(
                   N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read');
-                INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt,AssignedByUserId)
-                VALUES(@UserRoleId,@AdminUserId,@AdminRoleId,NULL,@Now,@ActorUserId);
 
                 INSERT dbo.TenantUserInvitations
-                  (InvitationId,TenantId,UserId,TokenHash,ExpiresAt,Status,CreatedAt)
-                VALUES(@InvitationId,@TenantId,@AdminUserId,@ActivationHash,DATEADD(day,2,@Now),N'Pending',@Now);
+                  (InvitationId,TenantId,UserId,DeliveryEmail,TokenHash,ExpiresAt,Status,CreatedAt)
+                VALUES(@InvitationId,@TenantId,NULL,@InvitationEmail,@ActivationHash,DATEADD(day,2,@Now),N'Pending',@Now);
                 INSERT dbo.TenantProvisioningOutboxMessages
                   (MessageId,TenantId,Type,Payload,OccurredAt,AttemptCount)
                 VALUES(@OutboxId,@TenantId,N'TenantAdministratorInvitation',@InvitationPayload,@Now,0);
 
                 INSERT dbo.TenantProvisioningRequests
                   (ProvisioningRequestId,TenantId,BusinessId,SalesWarehouseId,OrdersWarehouseId,DefaultCustomerId,AdministratorUserId,Status,CreatedAt,CompletedAt)
-                VALUES(@RequestId,@TenantId,@BusinessId,@SalesWarehouseId,@OrdersWarehouseId,@CustomerId,@AdminUserId,N'Completed',@Now,@Now);
+                VALUES(@RequestId,@TenantId,@BusinessId,@SalesWarehouseId,@OrdersWarehouseId,@CustomerId,NULL,N'Completed',@Now,@Now);
 
                 INSERT dbo.AuditLogs(AuditLogId,UserId,TenantId,BusinessId,Action,EntityType,EntityId,NewValues,Timestamp)
                 VALUES(@AuditLogId,@ActorUserId,@TenantId,@BusinessId,N'TenantProvisioned',N'Tenant',CONVERT(nvarchar(100),@TenantId),@AuditPayload,@Now);
@@ -185,11 +175,9 @@ public sealed class SqlTenantProvisioningStore(
             Add("@TenantId", tenantId); Add("@BusinessId", businessId);
             Add("@SalesWarehouseId", salesWarehouseId); Add("@OrdersWarehouseId", ordersWarehouseId);
             Add("@ConsumerPartyId", consumerPartyId); Add("@CustomerId", customerId);
-            Add("@AdminPartyId", adminPartyId); Add("@AdminUserId", adminUserId);
             Add("@CashierRoleId", cashierRoleId); Add("@SupervisorRoleId", supervisorRoleId);
             Add("@AdministrativeRoleId", administrativeRoleId); Add("@AdminRoleId", adminRoleId);
             Add("@InvitationId", invitationId); Add("@OutboxId", outboxId); Add("@AuditLogId", ids.NewId());
-            Add("@AdminEmailContactId", ids.NewId()); Add("@AdminPhoneContactId", ids.NewId()); Add("@UserRoleId", ids.NewId());
             Add("@ActorUserId", actorUserId); Add("@Now", now);
             Add("@LegalName", request.LegalName); Add("@TradeName", request.TradeName);
             Add("@Nit", request.Nit); Add("@NormalizedNit", NormalizeDigits(request.Nit)); Add("@VerificationDigit", request.VerificationDigit);
@@ -197,16 +185,13 @@ public sealed class SqlTenantProvisioningStore(
             Add("@CompanyAddress", request.Address); Add("@CompanyPhone", request.Phone); Add("@CompanyEmail", request.Email.Trim()); Add("@TaxResponsibilities", request.TaxResponsibilities);
             Add("@BusinessName", request.BusinessName); Add("@BusinessAddress", request.BusinessAddress); Add("@BusinessPhone", request.BusinessPhone); Add("@BusinessEmail", request.BusinessEmail.Trim());
             Add("@TimeZone", request.TimeZone); Add("@CostBasis", request.InventoryCostBasis);
-            Add("@AdminIdentificationType", request.AdministratorIdentificationType); Add("@AdminIdentification", request.AdministratorIdentification); Add("@NormalizedAdminIdentification", NormalizeDigits(request.AdministratorIdentification));
-            Add("@AdminFirstName", request.AdministratorFirstName); Add("@AdminLastName", request.AdministratorLastName);
-            Add("@AdminDisplayName", $"{request.AdministratorFirstName.Trim()} {request.AdministratorLastName.Trim()}".Trim());
-            Add("@AdminEmail", request.AdministratorEmail.Trim()); Add("@NormalizedAdminEmail", request.AdministratorEmail.Trim().ToUpperInvariant());
-            Add("@AdminPhone", request.AdministratorPhone); Add("@NormalizedAdminPhone", NormalizeDigits(request.AdministratorPhone)); Add("@ActivationHash", activationHash);
-            Add("@InvitationPayload", JsonSerializer.Serialize(new { invitationId, tenantId, userId = adminUserId, email = request.AdministratorEmail.Trim(), activationToken }));
-            Add("@AuditPayload", JsonSerializer.Serialize(new { request.ProvisioningRequestId, businessId, salesWarehouseId, ordersWarehouseId, administratorUserId = adminUserId }));
+            Add("@InvitationEmail", request.InvitationEmail.Trim()); Add("@ActivationHash", activationHash);
+            Add("@MaximumUsers", request.MaximumUsers); Add("@MaximumEnrolledDevices", request.MaximumEnrolledDevices);
+            Add("@InvitationPayload", JsonSerializer.Serialize(new { invitationId, tenantId, email = request.InvitationEmail.Trim(), activationToken }));
+            Add("@AuditPayload", JsonSerializer.Serialize(new { request.ProvisioningRequestId, businessId, salesWarehouseId, ordersWarehouseId, request.MaximumUsers, request.MaximumEnrolledDevices }));
             await command.ExecuteNonQueryAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            return new(request.ProvisioningRequestId, tenantId, businessId, salesWarehouseId, ordersWarehouseId, customerId, adminUserId, "Completed");
+            return new(request.ProvisioningRequestId, tenantId, businessId, salesWarehouseId, ordersWarehouseId, customerId, null, "Completed");
         }
         catch
         {
@@ -217,6 +202,7 @@ public sealed class SqlTenantProvisioningStore(
 
     public async Task<AcceptTenantInvitationResult> AcceptInvitationAsync(
         byte[] tokenHash,
+        TenantInvitationAdministratorProfile profile,
         TenantInvitationPasswordMaterial password,
         DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -229,12 +215,17 @@ public sealed class SqlTenantProvisioningStore(
         try
         {
             await using var command = new SqlCommand("""
-                DECLARE @InvitationId uniqueidentifier,@TenantId uniqueidentifier,@UserId uniqueidentifier,
-                        @Email nvarchar(256),@Status nvarchar(16),@ExpiresAt datetimeoffset(7);
-                SELECT @InvitationId=i.InvitationId,@TenantId=i.TenantId,@UserId=i.UserId,
-                       @Email=u.Email,@Status=i.Status,@ExpiresAt=i.ExpiresAt
+                DECLARE @InvitationId uniqueidentifier,@TenantId uniqueidentifier,
+                        @Status nvarchar(16),@ExpiresAt datetimeoffset(7),
+                        @CountryId uniqueidentifier,@DivisionId uniqueidentifier,
+                        @CityId uniqueidentifier,@BusinessId uniqueidentifier,
+                        @AdminRoleId uniqueidentifier;
+                SELECT @InvitationId=i.InvitationId,@TenantId=i.TenantId,
+                       @Status=i.Status,@ExpiresAt=i.ExpiresAt,
+                       @CountryId=p.CountryId,@DivisionId=p.AdministrativeDivisionId,
+                       @CityId=p.CityId,@BusinessId=p.PrimaryBusinessId
                 FROM dbo.TenantUserInvitations i WITH (UPDLOCK,HOLDLOCK)
-                INNER JOIN dbo.AppUsers u WITH (UPDLOCK,HOLDLOCK) ON u.UserId=i.UserId AND u.TenantId=i.TenantId
+                INNER JOIN dbo.TenantLegalProfiles p ON p.TenantId=i.TenantId
                 WHERE i.TokenHash=@TokenHash;
                 IF @InvitationId IS NULL THROW 51031,'La invitación no existe.',1;
                 IF @Status<>N'Pending' THROW 51032,'La invitación ya no está disponible.',1;
@@ -243,17 +234,52 @@ public sealed class SqlTenantProvisioningStore(
                     UPDATE dbo.TenantUserInvitations SET Status=N'Expired' WHERE InvitationId=@InvitationId;
                     THROW 51033,'La invitación expiró.',1;
                 END;
-                UPDATE dbo.AppUsers
-                SET PasswordHash=@PasswordHash,PosOfflinePasswordSalt=@OfflineSalt,
-                    PosOfflinePasswordHash=@OfflineHash,PosOfflinePasswordIterations=@OfflineIterations,
-                    PosOfflinePasswordChangedAt=@ChangedAt,EmailConfirmed=1,IsActive=1,
-                    AccessFailedCount=0,LockoutEnd=NULL,UpdatedAt=@Now
-                WHERE UserId=@UserId AND TenantId=@TenantId AND IsActive=0;
-                IF @@ROWCOUNT<>1 THROW 51034,'El usuario invitado no puede activarse.',1;
+                IF EXISTS(SELECT 1 FROM dbo.AppUsers WITH(UPDLOCK,HOLDLOCK)
+                          WHERE NormalizedEmail=@NormalizedEmail OR NormalizedUsername=@NormalizedEmail)
+                    THROW 51034,'Ya existe un usuario con este correo.',1;
+                IF EXISTS(SELECT 1 FROM dbo.Parties WITH(UPDLOCK,HOLDLOCK)
+                          WHERE TenantId=@TenantId AND IdentificationCountryId=@CountryId
+                            AND IdentificationTypeCode=@IdentificationType
+                            AND NormalizedIdentification=@NormalizedIdentification)
+                    THROW 51034,'Ya existe un tercero con esta identificación en la organización.',1;
+                SELECT @AdminRoleId=RoleId FROM dbo.AppRoles WITH(UPDLOCK,HOLDLOCK)
+                WHERE TenantId=@TenantId AND NormalizedName=N'ADMINISTRATOR' AND IsActive=1;
+                IF @AdminRoleId IS NULL THROW 51034,'El rol Administrador no está configurado.',1;
+
+                INSERT dbo.Parties
+                  (PartyId,TenantId,PartyType,IdentificationCountryId,IdentificationTypeCode,
+                   Identification,NormalizedIdentification,DisplayName,FirstName,LastName,
+                   CompletionStatus,IsActive,CreatedBy,CreatedAt)
+                VALUES(@PartyId,@TenantId,N'NaturalPerson',@CountryId,@IdentificationType,
+                       @Identification,@NormalizedIdentification,@DisplayName,@FirstName,@LastName,
+                       N'Complete',1,@UserId,@Now);
+                INSERT dbo.PartyContacts(PartyContactId,PartyId,ContactType,Value,NormalizedValue,IsPrimary,IsActive,CreatedAt)
+                VALUES
+                  (@EmailContactId,@PartyId,N'Email',@Email,@NormalizedEmail,1,1,@Now),
+                  (@PhoneContactId,@PartyId,N'Phone',@Phone,@NormalizedPhone,1,1,@Now);
+                INSERT dbo.AppUsers
+                  (UserId,TenantId,PartyId,Username,NormalizedUsername,Email,NormalizedEmail,
+                   PasswordHash,PosOfflinePasswordSalt,PosOfflinePasswordHash,PosOfflinePasswordIterations,
+                   PosOfflinePasswordChangedAt,FirstName,LastName,PhoneNumber,
+                   EmailConfirmed,IsActive,CreatedAt)
+                VALUES(@UserId,@TenantId,@PartyId,@Email,@NormalizedEmail,@Email,@NormalizedEmail,
+                       @PasswordHash,@OfflineSalt,@OfflineHash,@OfflineIterations,@ChangedAt,
+                       @FirstName,@LastName,@Phone,1,1,@Now);
+                INSERT dbo.PartySites
+                  (PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,
+                   AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+                VALUES(@SiteId,@PartyId,N'PRINCIPAL',N'Principal',@CountryId,@DivisionId,@CityId,
+                       @Address,1,1,@UserId,@Now);
+                INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt,AssignedByUserId)
+                VALUES(@UserRoleId,@UserId,@AdminRoleId,NULL,@Now,@UserId);
                 UPDATE dbo.TenantUserInvitations
-                SET Status=N'Accepted',AcceptedAt=@Now WHERE InvitationId=@InvitationId AND Status=N'Pending';
-                INSERT dbo.AuditLogs(AuditLogId,UserId,TenantId,Action,EntityType,EntityId,Timestamp)
-                VALUES(@AuditLogId,@UserId,@TenantId,N'TenantInvitationAccepted',N'AppUser',CONVERT(nvarchar(100),@UserId),@Now);
+                SET UserId=@UserId,Status=N'Accepted',AcceptedAt=@Now
+                WHERE InvitationId=@InvitationId AND Status=N'Pending';
+                UPDATE dbo.TenantProvisioningRequests
+                SET AdministratorUserId=@UserId
+                WHERE TenantId=@TenantId AND AdministratorUserId IS NULL;
+                INSERT dbo.AuditLogs(AuditLogId,UserId,TenantId,BusinessId,Action,EntityType,EntityId,Timestamp)
+                VALUES(@AuditLogId,@UserId,@TenantId,@BusinessId,N'TenantInvitationAccepted',N'AppUser',CONVERT(nvarchar(100),@UserId),@Now);
                 SELECT @TenantId,@UserId,@Email,N'Accepted';
                 """, connection, transaction);
             command.Parameters.Add("@TokenHash", SqlDbType.VarBinary, 32).Value = tokenHash;
@@ -264,6 +290,23 @@ public sealed class SqlTenantProvisioningStore(
             command.Parameters.AddWithValue("@ChangedAt", password.ChangedAt);
             command.Parameters.AddWithValue("@Now", now);
             command.Parameters.AddWithValue("@AuditLogId", ids.NewId());
+            command.Parameters.AddWithValue("@UserId", ids.NewId());
+            command.Parameters.AddWithValue("@PartyId", ids.NewId());
+            command.Parameters.AddWithValue("@EmailContactId", ids.NewId());
+            command.Parameters.AddWithValue("@PhoneContactId", ids.NewId());
+            command.Parameters.AddWithValue("@SiteId", ids.NewId());
+            command.Parameters.AddWithValue("@UserRoleId", ids.NewId());
+            command.Parameters.AddWithValue("@IdentificationType", profile.IdentificationType.ToUpperInvariant());
+            command.Parameters.AddWithValue("@Identification", profile.Identification);
+            command.Parameters.AddWithValue("@NormalizedIdentification", NormalizeIdentity(profile.Identification));
+            command.Parameters.AddWithValue("@FirstName", profile.FirstName);
+            command.Parameters.AddWithValue("@LastName", profile.LastName);
+            command.Parameters.AddWithValue("@DisplayName", $"{profile.FirstName} {profile.LastName}".Trim());
+            command.Parameters.AddWithValue("@Email", profile.Email);
+            command.Parameters.AddWithValue("@NormalizedEmail", profile.Email.ToUpperInvariant());
+            command.Parameters.AddWithValue("@Phone", profile.Phone);
+            command.Parameters.AddWithValue("@NormalizedPhone", NormalizeDigits(profile.Phone));
+            command.Parameters.AddWithValue("@Address", profile.Address);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken))
                 throw new InvalidOperationException("La activación no devolvió un recibo.");
@@ -289,10 +332,11 @@ public sealed class SqlTenantProvisioningStore(
         command.Parameters.AddWithValue("@RequestId", requestId);
         await using var reader = await command.ExecuteReaderAsync(ct);
         return await reader.ReadAsync(ct)
-            ? new(reader.GetGuid(0),reader.GetGuid(1),reader.GetGuid(2),reader.GetGuid(3),reader.GetGuid(4),reader.GetGuid(5),reader.GetGuid(6),reader.GetString(7))
+            ? new(reader.GetGuid(0),reader.GetGuid(1),reader.GetGuid(2),reader.GetGuid(3),reader.GetGuid(4),reader.GetGuid(5),reader.IsDBNull(6)?null:reader.GetGuid(6),reader.GetString(7))
             : null;
     }
 
     private static string NormalizeDigits(string value) => new(value.Where(char.IsDigit).ToArray());
+    private static string NormalizeIdentity(string value) => new(value.Where(char.IsLetterOrDigit).Select(char.ToUpperInvariant).ToArray());
 }
 

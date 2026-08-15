@@ -127,6 +127,15 @@ public sealed record GoodsReceiptDraft(
     decimal GrandTotal, IReadOnlyList<GoodsReceiptLineSnapshot> Lines,
     DateTimeOffset UpdatedAt, string ConcurrencyToken);
 
+public sealed record GoodsReceiptDetail(
+    Guid DocumentId, string DocumentNumber, string Status,
+    Guid WarehouseId, string WarehouseName, Guid SupplierId, string SupplierName,
+    string? SupplierInvoiceNumber, DateTimeOffset? SupplierInvoiceDate,
+    DateTimeOffset ReceivedAt, bool CreatesPayable, DateTimeOffset? DueDate,
+    string CurrencyCode, string? Notes, decimal NetAmount, decimal TaxAmount,
+    decimal GrandTotal, DateTimeOffset AcceptedAt, DateTimeOffset? ProcessedAt,
+    IReadOnlyList<GoodsReceiptLineSnapshot> Lines);
+
 public sealed record GoodsReceiptListItem(
     Guid DocumentId, string? DocumentNumber, string Status,
     Guid? WarehouseId, string? WarehouseName, Guid? SupplierId, string? SupplierName,

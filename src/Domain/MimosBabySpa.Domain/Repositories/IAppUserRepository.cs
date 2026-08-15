@@ -9,6 +9,7 @@ public interface IAppUserRepository
     Task<AppUser?> GetByEmailAsync(string normalizedEmail, CancellationToken ct = default);
     Task<AppUser?> GetByExternalLoginAsync(string provider, string providerKey, CancellationToken ct = default);
     Task<AppUser?> GetWithRolesAndPermissionsAsync(Guid userId, CancellationToken ct = default);
+    Task<int> CountActiveByTenantAsync(Guid tenantId, CancellationToken ct = default);
     Task<(IReadOnlyList<AppUser> Items, int TotalCount)> GetPagedByTenantAsync(
         Guid tenantId, int page, int pageSize, string? search = null, CancellationToken ct = default);
     Task<bool> ExistsWithUsernameAsync(string normalizedUsername, Guid? excludeUserId = null, CancellationToken ct = default);

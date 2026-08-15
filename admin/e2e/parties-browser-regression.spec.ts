@@ -50,6 +50,10 @@ async function createAndEdit(page: Page, role: Role) {
   await dialog.getByRole("button", { name: "Guardar tercero" }).click();
   await expect(dialog).toBeHidden({ timeout: 20_000 });
 
+  if (role === "Proveedor") {
+    await expect(page.getByRole("row").filter({ hasText: "Consumidor final" })).toBeVisible({ timeout: 20_000 });
+  }
+
   const search = page.getByPlaceholder(/Nombre, documento, correo o/);
   await search.fill(name);
   const row = page.getByRole("row").filter({ hasText: name });

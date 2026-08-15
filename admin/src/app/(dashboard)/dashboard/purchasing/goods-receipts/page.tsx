@@ -18,6 +18,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
+import { DatePicker } from "@/components/ui/date-picker";
+import { DateTimePicker } from "@/components/ui/date-time-picker";
 import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -29,7 +31,7 @@ import {
   useSaveGoodsReceiptDraft,
 } from "@/hooks/use-goods-receipts";
 import {
-  goodsReceiptsApi, type GoodsReceiptDraft, type GoodsReceiptLine,
+  goodsReceiptsApi, type GoodsReceiptDetail, type GoodsReceiptDraft, type GoodsReceiptLine,
   type GoodsReceiptListItem, type GoodsReceiptProduct, type GoodsReceiptStatus,
   type SaveGoodsReceiptDraftRequest,
 } from "@/services/api/goods-receipts";
@@ -50,6 +52,12 @@ type EditorDraft = {
 const statusLabels: Record<GoodsReceiptStatus, string> = {
   Draft: "Borrador", Accepted: "En proceso", Processed: "Procesada",
 };
+const purchaseTaxTreatmentLabels: Record<string, string> = {
+  DeductibleInputVat: "IVA descontable",
+  CapitalizedCost: "Mayor valor del costo",
+  NotApplicable: "No aplica",
+};
+
 
 export default function GoodsReceiptsPage() {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
@@ -62,6 +70,7 @@ export default function GoodsReceiptsPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<GoodsReceiptStatus | "all">("all");
   const [editor, setEditor] = useState<EditorDraft>();
+  const [detail, setDetail] = useState<GoodsReceiptDetail>();
   const list = useGoodsReceipts({
     page, pageSize, search: search.trim() || undefined,
     status: status === "all" ? undefined : status,
@@ -109,14 +118,16 @@ export default function GoodsReceiptsPage() {
   };
 
   const openEntry = async (item: GoodsReceiptListItem) => {
-    if (item.status !== "Draft") {
-      toast.info("La entrada confirmada es inmutable. Consulta su trazabilidad en inventario y cuentas por pagar.");
-      return;
-    }
     try {
-      setEditor(fromDraft(await goodsReceiptsApi.getDraft(item.documentId)));
+      if (item.status === "Draft") {
+        setEditor(fromDraft(await goodsReceiptsApi.getDraft(item.documentId)));
+      } else {
+        setDetail(await goodsReceiptsApi.getDetail(item.documentId));
+      }
     } catch {
-      toast.error("No fue posible recuperar el borrador.");
+      toast.error(item.status === "Draft"
+        ? "No fue posible recuperar el borrador."
+        : "No fue posible consultar el detalle de la entrada.");
     }
   };
 
@@ -168,6 +179,99 @@ export default function GoodsReceiptsPage() {
     <ReceiptEditor open={!!editor} draft={editor} businessId={businessId}
       canConfirm={canConfirm} canAssociateProducts={canAssociateProducts} onChange={setEditor}
       onClose={() => setEditor(undefined)} />
+    <ReceiptDetailDialog detail={detail} onClose={() => setDetail(undefined)} />
+
+  </div>;
+}
+
+function ReceiptDetailDialog({
+  detail, onClose,
+}: {
+  detail?: GoodsReceiptDetail;
+  onClose: () => void;
+}) {
+  if (!detail) return null;
+  return <Dialog open onOpenChange={(value) => !value && onClose()}>
+    <DialogContent className="flex max-h-[92dvh] max-w-5xl flex-col overflow-hidden p-0">
+      <DialogHeader className="border-b px-6 py-5">
+        <DialogTitle className="flex items-center gap-2">
+          <Truck className="h-5 w-5 text-primary" /> {detail.documentNumber}
+        </DialogTitle>
+        <DialogDescription>
+          Entrada de mercancía confirmada. Este documento es inmutable y conserva su trazabilidad completa.
+        </DialogDescription>
+      </DialogHeader>
+      <div className="space-y-5 overflow-y-auto px-6 py-5">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <DetailValue label="Proveedor" value={detail.supplierName} />
+          <DetailValue label="Bodega" value={detail.warehouseName} />
+          <DetailValue label="Estado" value={statusLabels[detail.status]} />
+          <DetailValue label="Recibida" value={formatDateTime(detail.receivedAt)} />
+          <DetailValue label="Factura del proveedor" value={detail.supplierInvoiceNumber ?? "Sin factura"} />
+          <DetailValue label="Fecha de factura" value={detail.supplierInvoiceDate ? formatDateTime(detail.supplierInvoiceDate) : "Sin fecha"} />
+          <DetailValue label="Forma de pago" value={detail.createsPayable ? "Crédito" : "Contado"} />
+          <DetailValue label="Vencimiento" value={detail.dueDate ? formatDateTime(detail.dueDate) : "No aplica"} />
+        </div>
+        <div className="overflow-hidden rounded-2xl border">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[850px] text-sm">
+              <thead className="bg-muted/60 text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-3 text-left">Producto</th>
+                  <th className="px-4 py-3 text-left">Presentación</th>
+                  <th className="px-4 py-3 text-right">Cantidad</th>
+                  <th className="px-4 py-3 text-right">Costo unitario</th>
+                  <th className="px-4 py-3 text-right">IVA</th>
+                  <th className="px-4 py-3 text-right">Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {detail.lines.map((line) => <tr key={line.lineNumber}>
+                  <td className="px-4 py-3">
+                    <p>{line.description}</p>
+                    <p className="text-xs text-muted-foreground">Línea {line.lineNumber}</p>
+                  </td>
+                  <td className="px-4 py-3">
+                    <p>{line.presentationName}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {line.presentationQuantity} × {line.unitsPerPresentation}
+                    </p>
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">{line.quantity}</td>
+                  <td className="px-4 py-3 text-right tabular-nums">{formatCurrency(line.unitCost)}</td>
+                  <td className="px-4 py-3 text-right">
+                    <p className="tabular-nums">{line.taxRate}%</p>
+                    <p className="text-xs text-muted-foreground">
+                      {purchaseTaxTreatmentLabels[line.taxTreatment] ?? line.taxTreatment}
+                    </p>
+                  </td>
+                  <td className="px-4 py-3 text-right font-medium tabular-nums">{formatCurrency(line.lineTotal)}</td>
+                </tr>)}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div className="ml-auto grid w-full max-w-sm gap-2 rounded-2xl bg-slate-950 p-5 text-white">
+          <Amount label="Subtotal" value={detail.netAmount} />
+          <Amount label="IVA" value={detail.taxAmount} />
+          <Amount label="Total" value={detail.grandTotal} strong />
+        </div>
+        {detail.notes && <div className="rounded-2xl border bg-muted/30 p-4">
+          <p className="text-xs font-medium uppercase text-muted-foreground">Notas</p>
+          <p className="mt-1 text-sm">{detail.notes}</p>
+        </div>}
+      </div>
+      <DialogFooter className="border-t px-6 py-4">
+        <Button type="button" onClick={onClose}>Cerrar</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>;
+}
+
+function DetailValue({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-2xl border bg-muted/20 p-4">
+    <p className="text-xs font-medium uppercase text-muted-foreground">{label}</p>
+    <p className="mt-1 text-sm">{value}</p>
   </div>;
 }
 
@@ -181,6 +285,7 @@ function ReceiptEditor({
   const options = useGoodsReceiptOptions();
   const [productSearch, setProductSearch] = useState("");
   const [includeUnassociated, setIncludeUnassociated] = useState(false);
+  const [productMenuOpen, setProductMenuOpen] = useState(false);
   const [pendingAssociation, setPendingAssociation] = useState<GoodsReceiptProduct>();
   const [supplierProductCode, setSupplierProductCode] = useState("");
   const [purchasePresentationName, setPurchasePresentationName] = useState("Unidad");
@@ -195,11 +300,21 @@ function ReceiptEditor({
   const router = useRouter();
   const scanRef = useRef<HTMLInputElement>(null);
   const productListRef = useRef<HTMLDivElement>(null);
+  const productPickerRef = useRef<HTMLDivElement>(null);
   const [activeProductIndex, setActiveProductIndex] = useState(0);
   const quantityRefs = useRef(new Map<string, HTMLInputElement>());
   const productItems = useMemo(
     () => products.data?.pages.flatMap((page) => page.items) ?? [], [products.data],
   );
+  useEffect(() => {
+    if (!productMenuOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!productPickerRef.current?.contains(event.target as Node)) setProductMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer, true);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
+  }, [productMenuOpen]);
+
   useEffect(() => setActiveProductIndex(0), [productSearch, includeUnassociated, draft?.supplierId]);
 
   if (!draft || !businessId) return null;
@@ -221,7 +336,10 @@ function ReceiptEditor({
     try {
       const saved = await save.mutateAsync(request());
       change({ concurrencyToken: saved.concurrencyToken });
-      if (notify) toast.success("Borrador guardado y disponible para recuperar.");
+      if (notify) {
+        toast.success("Borrador guardado y disponible para recuperar.");
+        onClose();
+      }
       return saved;
     } catch {
       toast.error("No fue posible guardar. El borrador pudo cambiar en otra sesión.");
@@ -262,6 +380,7 @@ function ReceiptEditor({
   };
 
   const selectProduct = (product: GoodsReceiptProduct) => {
+    setProductMenuOpen(false);
     if (product.isAssociated) {
       addProduct(product);
       return;
@@ -308,13 +427,21 @@ function ReceiptEditor({
   };
 
   const capture = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setProductMenuOpen(false);
+      return;
+    }
     if (event.key === "ArrowDown" && productItems.length > 0) {
       event.preventDefault();
+      setProductMenuOpen(true);
       setActiveProductIndex((current) => Math.min(current + 1, productItems.length - 1));
       return;
     }
     if (event.key === "ArrowUp" && productItems.length > 0) {
       event.preventDefault();
+      setProductMenuOpen(true);
       setActiveProductIndex((current) => Math.max(current - 1, 0));
       return;
     }
@@ -376,7 +503,7 @@ function ReceiptEditor({
   };
 
   return <Dialog open={open} onOpenChange={(value) => !value && onClose()}>
-    <DialogContent className="flex max-h-[96dvh] max-w-[96vw] flex-col overflow-hidden p-0">
+    <DialogContent onEscapeKeyDown={(event) => { if (productMenuOpen) { event.preventDefault(); setProductMenuOpen(false); } }} className="flex max-h-[96dvh] max-w-[96vw] flex-col overflow-hidden p-0">
       <DialogHeader className="border-b px-6 py-5">
         <DialogTitle className="flex items-center gap-2">
           <Truck className="h-5 w-5 text-primary" /> Entrada de mercancía
@@ -416,12 +543,10 @@ function ReceiptEditor({
               placeholder="Opcional" maxLength={80} />
           </Field>
           <Field label="Fecha factura">
-            <Input type="date" value={draft.supplierInvoiceDate}
-              onChange={(event) => change({ supplierInvoiceDate: event.target.value })} />
+            <DatePicker value={draft.supplierInvoiceDate} onChange={(value) => change({ supplierInvoiceDate: value })} />
           </Field>
           <Field label="Fecha de recepción">
-            <Input type="datetime-local" value={draft.receivedAt}
-              onChange={(event) => change({ receivedAt: event.target.value })} />
+            <DateTimePicker value={draft.receivedAt} onChange={(value) => change({ receivedAt: value })} />
           </Field>
           <Field label="Condición">
             <Select value={draft.createsPayable ? "Credit" : "Cash"}
@@ -437,8 +562,7 @@ function ReceiptEditor({
             </Select>
           </Field>
           <Field label="Vencimiento">
-            <Input type="date" disabled={!draft.createsPayable} value={draft.dueDate}
-              onChange={(event) => change({ dueDate: event.target.value })} />
+            <DatePicker disabled={!draft.createsPayable} value={draft.dueDate} onChange={(value) => change({ dueDate: value })} />
           </Field>
           <Field label="Notas">
             <Input value={draft.notes} onChange={(event) => change({ notes: event.target.value })}
@@ -447,12 +571,15 @@ function ReceiptEditor({
         </section>
 
         <section className="rounded-2xl border">
+          <div ref={productPickerRef} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setProductMenuOpen(false); }}>
           <div className="grid gap-3 border-b p-4 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
             <div className="relative">
               <Barcode className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-primary" />
               <Input ref={scanRef} className="pl-9" value={productSearch}
                 disabled={!draft.supplierId}
-                onChange={(event) => setProductSearch(event.target.value)}
+                onFocus={() => setProductMenuOpen(true)}
+                onClick={() => setProductMenuOpen(true)}
+                onChange={(event) => { setProductSearch(event.target.value); setProductMenuOpen(true); }}
                 onKeyDown={capture}
                 placeholder={draft.supplierId
                   ? "Escanea o busca por código, referencia, nombre o código del proveedor"
@@ -460,7 +587,7 @@ function ReceiptEditor({
             </div>
             <Button type="button" variant={includeUnassociated ? "secondary" : "outline"}
               disabled={!draft.supplierId}
-              onClick={() => setIncludeUnassociated((current) => !current)}>
+              onClick={() => { setIncludeUnassociated((current) => !current); setProductMenuOpen(true); }}>
               <Search className="mr-2 h-4 w-4" />
               {includeUnassociated ? "Ver productos del proveedor" : "Buscar en todo el catálogo"}
             </Button>
@@ -470,8 +597,8 @@ function ReceiptEditor({
               <Plus className="mr-2 h-4 w-4" /> Agregar
             </Button>
           </div>
-          {(productSearch || includeUnassociated) && productItems.length > 0 &&
-            <div ref={productListRef} className="max-h-56 overflow-y-auto border-b bg-background p-2 [&_strong]:font-normal"
+          {productMenuOpen && productItems.length > 0 &&
+            <div ref={productListRef} role="listbox" className="max-h-56 overflow-y-auto border-b bg-background p-2 [&_strong]:font-normal"
               onScroll={(event) => {
                 const target = event.currentTarget;
                 if (target.scrollHeight - target.scrollTop - target.clientHeight < 80 && products.hasNextPage && !products.isFetchingNextPage) {
@@ -479,10 +606,11 @@ function ReceiptEditor({
                 }
               }}>
               {productItems.map((product, index) =>
-                <button key={product.productId} type="button"
+                <button key={product.productId} type="button" role="option" aria-selected={index === activeProductIndex}
                   className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left ${index === activeProductIndex ? "bg-emerald-50" : "hover:bg-muted"}`}
                   onMouseEnter={() => setActiveProductIndex(index)}
-                  onClick={() => selectProduct(product)}>
+                  onClick={() => selectProduct(product)}
+                  onMouseDown={(event) => event.preventDefault()}>
                   <span>
                     <span className="flex items-center gap-2">
                       <strong>{product.name}</strong>
@@ -502,9 +630,11 @@ function ReceiptEditor({
                 {products.isFetchingNextPage ? "Cargando..." : "Cargar 50 más"}
               </Button>}
             </div>}
+          {productMenuOpen && draft.supplierId && !products.isLoading && productItems.length === 0 && <div role="listbox" className="border-b px-4 py-3 text-sm text-muted-foreground">Sin datos</div>}
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[900px] text-sm">
-              <thead className="bg-muted/50 text-left">
+              <thead className="bg-muted/50 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 <tr><th className="px-4 py-3">Producto</th><th className="w-44 px-3 py-3">Cantidad recibida</th>
                   <th className="w-40 px-3 py-3">Costo unitario</th><th className="w-36 px-3 py-3">Descuento</th>
                   <th className="w-28 px-3 py-3">IVA</th><th className="w-36 px-3 py-3 text-right">Total</th>
@@ -512,9 +642,9 @@ function ReceiptEditor({
               </thead>
               <tbody>{draft.lines.map((line) => {
                 const lineTotal = calculateGoodsReceiptLine(line).total;
-                return <tr key={line.productId} className="border-t">
+                return <tr key={line.productId} className="border-t align-middle">
                   <td className="px-4 py-3"><p className="font-semibold">{line.description}</p>
-                    <p className="text-xs text-muted-foreground">IVA compra {line.taxRate} % · {line.taxTreatment}</p>
+                    <p className="text-xs text-muted-foreground">IVA de compra {line.taxRate} % · {purchaseTaxTreatmentLabels[line.taxTreatment] ?? line.taxTreatment}</p>
                     <p className="text-xs text-muted-foreground">{line.presentationQuantity} {line.presentationName.toLowerCase()} × {line.unitsPerPresentation} = {line.quantity} {line.baseUnitCode ?? "unidades"}</p></td>
                   <td className="px-3 py-2"><Input type="number" min="0.000001" step="0.001"
                     ref={(element) => {

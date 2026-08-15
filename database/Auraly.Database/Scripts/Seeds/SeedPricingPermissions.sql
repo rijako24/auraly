@@ -11,6 +11,8 @@ INSERT @PricingPermissions VALUES
     (N'Publish',N'pricing.prices.publish',N'Publicar precios de venta'),
     (N'BulkPublish',N'pricing.bulk-publish',N'Publicar varios precios en una operacion'),
     (N'ManageRounding',N'pricing.rounding.manage',N'Configurar reglas de redondeo'),
+    (N'ReadSegments',N'pricing.segments.read',N'Consultar listas de precios y canales comerciales'),
+    (N'ManageSegments',N'pricing.segments.manage',N'Crear y administrar productos, escalas y exclusiones de listas y canales'),
     (N'ReadHistory',N'pricing.history.read',N'Consultar historial de precios');
 INSERT dbo.Permissions(PermissionId,Module,Action,Resource,Description,CreatedAt)
 SELECT NEWID(),N'Pricing',p.Action,p.Resource,p.Description,SYSUTCDATETIME()

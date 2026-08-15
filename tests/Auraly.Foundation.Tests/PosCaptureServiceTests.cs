@@ -130,6 +130,8 @@ public sealed class PosCaptureServiceTests
                 new DeviceId(Guid.NewGuid()),
                 new WorkSessionId(Guid.NewGuid()),
                 new UserId(Guid.NewGuid()));
+            var active = await drafts.GetOrCreateActiveAsync(scope);
+            await drafts.AssignPartiesAsync(active.DraftId, customerId, null);
             await test(service, drafts, scope, productId, customerId, availability);
         }
         finally

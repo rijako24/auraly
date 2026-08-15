@@ -34,7 +34,7 @@ CREATE TABLE [dbo].[TenantProvisioningRequests]
     [SalesWarehouseId] UNIQUEIDENTIFIER NOT NULL,
     [OrdersWarehouseId] UNIQUEIDENTIFIER NOT NULL,
     [DefaultCustomerId] UNIQUEIDENTIFIER NOT NULL,
-    [AdministratorUserId] UNIQUEIDENTIFIER NOT NULL,
+    [AdministratorUserId] UNIQUEIDENTIFIER NULL,
     [Status] NVARCHAR(24) NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [CompletedAt] DATETIMEOFFSET(7) NULL,
@@ -50,7 +50,8 @@ CREATE TABLE [dbo].[TenantUserInvitations]
 (
     [InvitationId] UNIQUEIDENTIFIER NOT NULL,
     [TenantId] UNIQUEIDENTIFIER NOT NULL,
-    [UserId] UNIQUEIDENTIFIER NOT NULL,
+    [UserId] UNIQUEIDENTIFIER NULL,
+    [DeliveryEmail] NVARCHAR(254) NOT NULL CONSTRAINT [DF_TenantUserInvitations_DeliveryEmail] DEFAULT (N''),
     [TokenHash] VARBINARY(32) NOT NULL,
     [ExpiresAt] DATETIMEOFFSET(7) NOT NULL,
     [Status] NVARCHAR(16) NOT NULL,
@@ -72,11 +73,14 @@ CREATE TABLE [dbo].[TenantProvisioningOutboxMessages]
     [Payload] NVARCHAR(MAX) NOT NULL,
     [OccurredAt] DATETIMEOFFSET(7) NOT NULL,
     [ProcessedAt] DATETIMEOFFSET(7) NULL,
+    [AvailableAt] DATETIMEOFFSET(7) NOT NULL CONSTRAINT [DF_TenantProvisioningOutbox_AvailableAt] DEFAULT SYSDATETIMEOFFSET(),
+    [LeaseId] UNIQUEIDENTIFIER NULL,
+    [LeaseExpiresAt] DATETIMEOFFSET(7) NULL,
     [AttemptCount] INT NOT NULL CONSTRAINT [DF_TenantProvisioningOutbox_AttemptCount] DEFAULT 0,
     [LastError] NVARCHAR(2000) NULL,
     CONSTRAINT [PK_TenantProvisioningOutboxMessages] PRIMARY KEY ([MessageId]),
     CONSTRAINT [FK_TenantProvisioningOutboxMessages_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId])
 );
 GO
-CREATE INDEX [IX_TenantProvisioningOutbox_Pending] ON [dbo].[TenantProvisioningOutboxMessages]([ProcessedAt],[OccurredAt]);
+CREATE INDEX [IX_TenantProvisioningOutbox_Pending] ON [dbo].[TenantProvisioningOutboxMessages]([ProcessedAt],[AvailableAt],[LeaseExpiresAt],[OccurredAt]);
 GO

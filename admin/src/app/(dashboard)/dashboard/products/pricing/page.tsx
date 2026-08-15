@@ -6,7 +6,6 @@ import { useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { PackageCheck, Search, Send, TrendingUp, XCircle } from "lucide-react";
 import { toast } from "sonner";
-import { PriceSegmentsWorkspace } from "@/components/pricing/price-segments-workspace";
 import { DataTable } from "@/components/tables/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,7 +23,7 @@ import {
   createPricePublicationDraft,
   type PricePublicationDraft,
 } from "@/lib/pricing-publication-draft";
-import { formatCurrency, formatDateTime } from "@/lib/utils";
+import { formatCurrency, formatDateTime, formatRelativeTime } from "@/lib/utils";
 import { goodsReceiptsApi } from "@/services/api/goods-receipts";
 import type { PriceProposalStatus, PriceRevisionListItem } from "@/services/api/pricing";
 import { useAuthStore } from "@/stores/auth-store";
@@ -34,7 +33,7 @@ const statuses: Record<PriceProposalStatus, string> = {
   Approved: "Preparada",
   Published: "Publicada",
   Rejected: "Rechazada",
-  Superseded: "Superada",
+  Superseded: "Reemplazada",
 };
 
 export default function PricingPage() {
@@ -191,7 +190,7 @@ export default function PricingPage() {
     {
       accessorKey: "productName",
       header: "Producto",
-      cell: ({ row }) => <div className="min-w-52">
+      cell: ({ row }) => <div className="flex min-h-16 min-w-52 flex-col justify-center">
         <p className="font-semibold">{row.original.productName}</p>
         <p className="text-xs text-muted-foreground">
           {row.original.productCode} · {row.original.origin === "Product"
@@ -206,7 +205,7 @@ export default function PricingPage() {
     {
       accessorKey: "observedUnitCost",
       header: "Costo base",
-      cell: ({ row }) => <div className="min-w-28">
+      cell: ({ row }) => <div className="flex min-h-16 min-w-28 flex-col justify-center">
         <p className="font-medium">{formatCurrency(row.original.observedUnitCost)}</p>
         {row.original.previousObservedUnitCost !== null && <p className="text-xs text-muted-foreground">
           Antes {formatCurrency(row.original.previousObservedUnitCost)}
@@ -216,9 +215,9 @@ export default function PricingPage() {
     {
       accessorKey: "currentSalePrice",
       header: "Precio público actual",
-      cell: ({ row }) => <div className="min-w-28">
+      cell: ({ row }) => <div className="flex min-h-16 min-w-28 flex-col justify-center">
         <p className="font-medium">{formatCurrency(row.original.currentSalePrice)}</p>
-        <p className="text-xs text-muted-foreground">Publicado hoy</p>
+        <p className="text-xs text-muted-foreground">{publicationLabel(row.original.currentPricePublishedAt)}</p>
       </div>,
     },
     {
@@ -226,7 +225,7 @@ export default function PricingPage() {
       header: "Margen preparado",
       cell: ({ row }) => {
         const draft = draftFor(row.original);
-        return <div className="min-w-32">
+        return <div className="flex min-h-16 min-w-32 flex-col justify-center" title={proposalDisabledReason(row.original)}>
           <FormattedNumberInput
             id={`pricing-margin-${row.original.proposalId}`}
             kind="percent"
@@ -246,7 +245,7 @@ export default function PricingPage() {
       header: "Precio a publicar",
       cell: ({ row }) => {
         const draft = draftFor(row.original);
-        return <div className="min-w-40">
+        return <div className="flex min-h-16 min-w-40 flex-col justify-center" title={proposalDisabledReason(row.original)}>
           <FormattedNumberInput
             id={`pricing-price-${row.original.proposalId}`}
             kind="currency"
@@ -264,10 +263,15 @@ export default function PricingPage() {
     {
       accessorKey: "status",
       header: "Estado",
-      cell: ({ row }) => <Badge variant={
-        row.original.status === "Published" ? "secondary" :
-          row.original.status === "Rejected" ? "destructive" : "outline"
-      }>{statuses[row.original.status]}</Badge>,
+      cell: ({ row }) => <div className="flex min-h-16 min-w-36 flex-col justify-center gap-1" title={proposalDisabledReason(row.original)}>
+        <Badge className="w-fit" variant={
+          row.original.status === "Published" ? "secondary" :
+            row.original.status === "Rejected" ? "destructive" : "outline"
+        }>{statuses[row.original.status]}</Badge>
+        {row.original.status === "Superseded" && <p className="text-xs text-muted-foreground">
+          Existe una propuesta más reciente.
+        </p>}
+      </div>,
     },
     {
       id: "actions",
@@ -305,7 +309,6 @@ export default function PricingPage() {
   }, [canBulk, canPublish, canReview, publish.isPending, publishRows, rejectRows]);
 
   return <div className="space-y-6">
-    <PriceSegmentsWorkspace />
     <header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
       <div>
         <p className="text-sm font-medium text-primary">Productos</p>
@@ -377,6 +380,19 @@ export default function PricingPage() {
       bulkActions={bulkActions}
     />}
   </div>;
+}
+
+function proposalDisabledReason(row: PriceRevisionListItem) {
+  if (row.status === "Superseded") return "No se puede editar porque esta propuesta fue reemplazada por otra más reciente.";
+  if (row.status === "Published") return "Este precio ya fue publicado y se conserva como historial.";
+  if (row.status === "Rejected") return "Esta propuesta fue descartada y se conserva como historial.";
+  return undefined;
+}
+
+function publicationLabel(value: string | null) {
+  if (!value) return "Fecha de publicación no disponible";
+  const relative = formatRelativeTime(value);
+  return relative === "Ahora" ? "Publicado ahora" : `Publicado ${relative.toLocaleLowerCase("es-CO")}`;
 }
 
 function isPublishable(row: PriceRevisionListItem) {

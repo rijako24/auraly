@@ -1,13 +1,13 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ImageIcon, Images, Loader2, Star, Trash2, UploadCloud } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { productOffersApi, type ProductImage } from "@/services/api/product-offers";
+import { productOffersApi } from "@/services/api/product-offers";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
 export interface PendingProductImage {
@@ -25,7 +25,7 @@ export function PendingProductImagePicker({ images, onChange }: {
 
   function addFiles(files: FileList | null) {
     if (!files) return;
-    const accepted = Array.from(files).filter((file) => file.type.startsWith("image/"));
+    const accepted = validImageFiles(Array.from(files));
     const additions = accepted.map((file, index) => ({
       id: crypto.randomUUID(),
       file,
@@ -57,6 +57,132 @@ export function PendingProductImagePicker({ images, onChange }: {
     </>}
   />;
 }
+
+export interface ProductImageEditorHandle {
+  save: () => Promise<void>;
+}
+
+export const ProductImageEditor = forwardRef<ProductImageEditorHandle, { productId: string }>(
+  function ProductImageEditor({ productId }, ref) {
+    const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
+    const queryClient = useQueryClient();
+    const inputRef = useRef<HTMLInputElement>(null);
+    const pendingRef = useRef<PendingProductImage[]>([]);
+    const queryKey = useMemo(() => ["product-images", businessId, productId], [businessId, productId]);
+    const query = useQuery({
+      queryKey,
+      queryFn: () => productOffersApi.images(businessId!, productId),
+      enabled: !!businessId,
+    });
+    const [pending, setPending] = useState<PendingProductImage[]>([]);
+    const [removedIds, setRemovedIds] = useState<string[]>([]);
+    const [primaryId, setPrimaryId] = useState<string>();
+    pendingRef.current = pending;
+
+    useEffect(() => {
+      if (!pending.length && !removedIds.length) {
+        setPrimaryId(query.data?.find((image) => image.isPrimary)?.productImageId);
+      }
+    }, [pending.length, query.data, removedIds.length]);
+
+    useEffect(() => () => {
+      pendingRef.current.forEach((image) => URL.revokeObjectURL(image.previewUrl));
+    }, []);
+
+    const remoteImages = useMemo(
+      () => [...(query.data ?? [])]
+        .filter((image) => !removedIds.includes(image.productImageId))
+        .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.displayOrder - b.displayOrder),
+      [query.data, removedIds],
+    );
+    const displayImages = useMemo<DisplayImage[]>(() => [
+      ...remoteImages.map((image) => ({
+        id: image.productImageId,
+        url: image.mediaUrl,
+        isPrimary: image.productImageId === primaryId,
+        alt: image.altText ?? "Imagen del producto",
+      })),
+      ...pending.map((image) => ({
+        id: image.id,
+        url: image.previewUrl,
+        isPrimary: image.id === primaryId,
+        alt: image.file.name,
+      })),
+    ], [pending, primaryId, remoteImages]);
+
+    function addFiles(files: FileList | null) {
+      if (!files) return;
+      const accepted = validImageFiles(Array.from(files));
+      const additions = accepted.map((file) => ({
+        id: crypto.randomUUID(),
+        file,
+        previewUrl: URL.createObjectURL(file),
+        isPrimary: false,
+      }));
+      if (!additions.length) return;
+      const nextPrimary = primaryId ?? displayImages[0]?.id ?? additions[0].id;
+      setPending((current) => [...current, ...additions]);
+      setPrimaryId(nextPrimary);
+    }
+
+    function removeImage(id: string) {
+      const pendingImage = pending.find((image) => image.id === id);
+      if (pendingImage) {
+        URL.revokeObjectURL(pendingImage.previewUrl);
+        setPending((current) => current.filter((image) => image.id !== id));
+      } else {
+        setRemovedIds((current) => current.includes(id) ? current : [...current, id]);
+      }
+      if (primaryId === id) {
+        setPrimaryId(displayImages.find((image) => image.id !== id)?.id);
+      }
+    }
+
+    useImperativeHandle(ref, () => ({
+      save: async () => {
+        if (!businessId) throw new Error("Selecciona un negocio antes de guardar las imágenes.");
+        let savedPrimaryId = primaryId;
+        for (const imageId of removedIds) {
+          await productOffersApi.deleteImage(businessId, productId, imageId);
+        }
+        for (const image of pending) {
+          const uploaded = await productOffersApi.uploadImage(
+            businessId,
+            productId,
+            image.file,
+            null,
+            image.id === primaryId,
+          );
+          if (image.id === primaryId) savedPrimaryId = uploaded.productImageId;
+        }
+        if (savedPrimaryId && remoteImages.some((image) => image.productImageId === savedPrimaryId)) {
+          await productOffersApi.setPrimaryImage(businessId, productId, savedPrimaryId);
+        }
+        pending.forEach((image) => URL.revokeObjectURL(image.previewUrl));
+        setPending([]);
+        setRemovedIds([]);
+        setPrimaryId(savedPrimaryId);
+        await queryClient.invalidateQueries({ queryKey });
+      },
+    }), [businessId, pending, primaryId, productId, queryClient, queryKey, remoteImages, removedIds]);
+
+    if (query.isLoading) return <div className="grid min-h-48 place-items-center rounded-2xl border bg-muted/10"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>;
+
+    return <ProductImagePanel
+      images={displayImages}
+      emptyAction={() => inputRef.current?.click()}
+      actions={(image) => <>
+        {!image.isPrimary && <IconButton label="Marcar como principal" onClick={() => setPrimaryId(image.id)}><Star className="h-4 w-4" /></IconButton>}
+        <IconButton label="Quitar imagen" danger onClick={() => removeImage(image.id)}><Trash2 className="h-4 w-4" /></IconButton>
+      </>}
+      footer={<>
+        <input ref={inputRef} className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => { addFiles(event.target.files); event.currentTarget.value = ""; }} />
+        <Button type="button" variant="outline" onClick={() => inputRef.current?.click()}><UploadCloud className="mr-2 h-4 w-4" />{displayImages.length ? "Agregar más imágenes" : "Seleccionar imágenes"}</Button>
+        <p className="text-xs text-muted-foreground">Vista previa local. Los cambios se enviarán al Blob Storage de este negocio únicamente al guardar el producto.</p>
+      </>}
+    />;
+  },
+);
 
 export function ProductImageGallery({ productId, readOnly = false }: { productId: string; readOnly?: boolean }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
@@ -141,6 +267,19 @@ function ProductImagePanel({ images, actions, footer, emptyAction }: {
     </div>
     {footer && <div className="flex flex-col gap-3 border-t bg-background/80 px-4 py-4 sm:flex-row sm:items-center">{footer}</div>}
   </div>;
+}
+
+const allowedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
+const maximumImageBytes = 8 * 1024 * 1024;
+
+function validImageFiles(files: File[]) {
+  const accepted = files.filter((file) => allowedImageTypes.has(file.type) && file.size <= maximumImageBytes);
+  if (accepted.length !== files.length) {
+    toast.error(
+      "Solo se admiten imágenes JPG, PNG o WEBP de máximo 8 MB por archivo.",
+    );
+  }
+  return accepted;
 }
 
 function IconButton({ label, danger = false, onClick, children }: { label: string; danger?: boolean; onClick: () => void; children: React.ReactNode }) {

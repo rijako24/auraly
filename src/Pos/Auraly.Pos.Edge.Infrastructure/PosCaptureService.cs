@@ -35,7 +35,7 @@ public sealed class PosCaptureService(
     public async Task<PosCaptureResult> CaptureAsync(
         string scannedValue,
         PosDraftScope scope,
-        Guid? customerId,
+        Guid? requestedCustomerId,
         bool warehouseAllowsNegativeStock,
         Guid operationId,
         CancellationToken cancellationToken = default)
@@ -60,7 +60,7 @@ public sealed class PosCaptureService(
 
         var price = await catalog.ResolvePriceAsync(
             captured.Product.ProductId,
-            customerId,
+            active.CustomerId,
             totalQuantity,
             cancellationToken);
         var updated = await drafts.AddOrIncrementLineAsync(
@@ -79,6 +79,11 @@ public sealed class PosCaptureService(
                 price.Source,
                 price.PriceListId,
                 price.PriceChannelId),
+            cancellationToken);
+        updated = await RepriceAsync(
+            updated,
+            catalog,
+            drafts,
             cancellationToken);
         return new PosCaptureResult(PosCaptureStatus.Added, updated, captured, inventory.Response);
     }
@@ -113,7 +118,50 @@ public sealed class PosCaptureService(
             lineId,
             quantity,
             cancellationToken);
+        updated = await RepriceAsync(
+            updated,
+            catalog,
+            drafts,
+            cancellationToken);
         return new PosCaptureResult(PosCaptureStatus.Added, updated, null, inventory.Response);
+    }
+
+    private static async Task<PosDraft> RepriceAsync(
+        PosDraft draft,
+        PosCatalogStore catalog,
+        PosDraftStore drafts,
+        CancellationToken cancellationToken)
+    {
+        var quantities = draft.Lines
+            .GroupBy(line => line.ProductId)
+            .ToDictionary(group => group.Key, group => group.Sum(line => line.Quantity));
+        var resolved = new Dictionary<ProductId, PosResolvedPrice>();
+        var updates = new List<PosDraftLinePriceUpdate>(draft.Lines.Count);
+        foreach (var line in draft.Lines)
+        {
+            if (!resolved.TryGetValue(line.ProductId, out var price))
+            {
+                price = await catalog.ResolvePriceAsync(
+                    line.ProductId.Value,
+                    draft.CustomerId,
+                    quantities[line.ProductId],
+                    cancellationToken);
+                resolved[line.ProductId] = price;
+            }
+            updates.Add(new PosDraftLinePriceUpdate(
+                line.LineId,
+                price.BaseAmount,
+                price.Amount,
+                price.CurrencyCode,
+                price.Source,
+                price.PriceListId,
+                price.PriceChannelId));
+        }
+        return await drafts.AssignCustomerAndPricesAsync(
+            draft.DraftId,
+            draft.CustomerId,
+            updates,
+            cancellationToken);
     }
 
     private async Task<(string Status, InventoryAvailabilityResponse? Response)> ValidateAsync(

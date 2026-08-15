@@ -17,6 +17,8 @@ type Props = {
   value: FiscalResolutionConfiguration | null;
   saving?: boolean;
   onSave: (request: SaveFiscalResolutionConfiguration) => Promise<void>;
+  onChange?: (request: SaveFiscalResolutionConfiguration) => void;
+  showSaveButton?: boolean;
 };
 
 const text = {
@@ -46,17 +48,23 @@ const text = {
 
 const today = new Date().toISOString().slice(0, 10);
 
-export function FiscalResolutionForm({ value, saving = false, onSave }: Props) {
+export function FiscalResolutionForm({ value, saving = false, onSave, onChange, showSaveButton = true }: Props) {
   const [form, setForm] = useState(() => buildFiscalResolutionFormState(value, today));
 
   useEffect(() => {
-    setForm(buildFiscalResolutionFormState(value, today));
-  }, [value]);
+    const next = buildFiscalResolutionFormState(value, today);
+    setForm(next);
+    onChange?.(next);
+  }, [value, onChange]);
 
   const set = <K extends keyof SaveFiscalResolutionConfiguration>(
     key: K,
     next: SaveFiscalResolutionConfiguration[K],
-  ) => setForm((current) => ({ ...current, [key]: next }));
+  ) => setForm((current) => {
+    const updated = { ...current, [key]: next };
+    onChange?.(updated);
+    return updated;
+  });
 
   const numberingLocked = value?.canSetInitialConsecutive === false;
 
@@ -134,10 +142,12 @@ export function FiscalResolutionForm({ value, saving = false, onSave }: Props) {
           </p>
         )}
       </div>
-      <Button className="w-full" type="submit" disabled={saving}>
-        {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
-        {text.save}
-      </Button>
+      {showSaveButton && (
+        <Button className="w-full" type="submit" disabled={saving}>
+          {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
+          {text.save}
+        </Button>
+      )}
     </form>
   );
 }

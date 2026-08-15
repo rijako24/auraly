@@ -72,6 +72,9 @@ public class AppUserRepository : IAppUserRepository
 
         return (items, totalCount);
     }
+    public Task<int> CountActiveByTenantAsync(Guid tenantId, CancellationToken ct = default) =>
+        _context.AppUsers.CountAsync(user => user.TenantId == tenantId && user.IsActive, ct);
+
 
     public async Task<bool> ExistsWithUsernameAsync(string normalizedUsername, Guid? excludeUserId = null, CancellationToken ct = default)
     {

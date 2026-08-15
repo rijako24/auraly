@@ -7,7 +7,7 @@ namespace Auraly.Foundation.Tests;
 public sealed class PosDraftStoreTests
 {
     [Fact]
-    public async Task Active_sale_survives_restart_and_identical_scans_increment_one_line()
+    public async Task Active_sale_survives_restart_and_identical_scans_create_separate_lines()
     {
         await WithStoreAsync(async (store, path, scope, ids) =>
         {
@@ -16,15 +16,17 @@ public sealed class PosDraftStoreTests
             var second = await store.AddOrIncrementLineAsync(scope, input);
 
             Assert.Equal(first.DraftId, second.DraftId);
-            Assert.Single(second.Lines);
-            Assert.Equal(2m, second.Lines[0].Quantity);
+            Assert.Equal(2, second.Lines.Count);
+            Assert.All(second.Lines, line => Assert.Equal(1m, line.Quantity));
+            Assert.Equal(2, second.Lines.Select(line => line.LineId).Distinct().Count());
             Assert.Equal(20_000m, second.PayableAmount);
 
             var reopened = Store(path, ids);
             await reopened.InitializeAsync();
             var recovered = await reopened.GetOrCreateActiveAsync(scope);
             Assert.Equal(first.DraftId, recovered.DraftId);
-            Assert.Equal(2m, recovered.Lines.Single().Quantity);
+            Assert.Equal(2, recovered.Lines.Count);
+            Assert.All(recovered.Lines, line => Assert.Equal(1m, line.Quantity));
         });
     }
 

@@ -47,6 +47,29 @@ export interface GoodsReceiptDraft {
   concurrencyToken: string;
 }
 
+export interface GoodsReceiptDetail {
+  documentId: string;
+  documentNumber: string;
+  status: Exclude<GoodsReceiptStatus, "Draft">;
+  warehouseId: string;
+  warehouseName: string;
+  supplierId: string;
+  supplierName: string;
+  supplierInvoiceNumber: string | null;
+  supplierInvoiceDate: string | null;
+  receivedAt: string;
+  createsPayable: boolean;
+  dueDate: string | null;
+  currencyCode: string;
+  notes: string | null;
+  netAmount: number;
+  taxAmount: number;
+  grandTotal: number;
+  acceptedAt: string;
+  processedAt: string | null;
+  lines: GoodsReceiptLineSnapshot[];
+}
+
 export interface SaveGoodsReceiptDraftRequest {
   draftId: string;
   businessId: string;
@@ -141,6 +164,8 @@ export const goodsReceiptsApi = {
     apiClient.get<GoodsReceiptPage>("/commerce/v1/goods-receipts", withPagedDefaults(params)),
   getDraft: (draftId: string) =>
     apiClient.get<GoodsReceiptDraft>(`/commerce/v1/goods-receipts/drafts/${draftId}`),
+  getDetail: (documentId: string) =>
+    apiClient.get<GoodsReceiptDetail>(`/commerce/v1/goods-receipts/${documentId}`),
   saveDraft: (request: SaveGoodsReceiptDraftRequest) =>
     apiClient.put<GoodsReceiptDraft>(`/commerce/v1/goods-receipts/drafts/${request.draftId}`, request),
   deleteDraft: (draftId: string, concurrencyToken: string) =>

@@ -22,6 +22,7 @@ public sealed class SqlPosDeviceAuthenticator(SqlServerConnectionFactory connect
                    p.PermissionCode,
                    p.IsGranted
             FROM dbo.EnrolledDevices d
+            INNER JOIN dbo.Tenants tenant ON tenant.TenantId=d.TenantId AND tenant.IsActive=1
             LEFT JOIN dbo.PosDevicePermissions p ON p.DeviceId=d.DeviceId
             WHERE d.DeviceId=@DeviceId
               AND d.IsActive=1;
