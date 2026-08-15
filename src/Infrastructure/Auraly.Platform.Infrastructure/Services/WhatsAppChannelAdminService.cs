@@ -15,15 +15,13 @@ namespace Auraly.Platform.Infrastructure.Services;
 public sealed class WhatsAppChannelAdminService : IWhatsAppChannelAdminService
 {
     private readonly ApplicationDbContext _db;
-    private readonly IAuditService _auditService;
     private readonly HttpClient _httpClient;
     private readonly string? _apiBaseUrl;
 
-    public WhatsAppChannelAdminService(ApplicationDbContext db, IAuditService auditService,
+    public WhatsAppChannelAdminService(ApplicationDbContext db,
         HttpClient httpClient, IOptions<WhatsAppWebhookOptions> options)
     {
         _db = db;
-        _auditService = auditService;
         _httpClient = httpClient;
         _apiBaseUrl = string.IsNullOrWhiteSpace(options.Value.ApiBaseUrl)
             ? null
@@ -57,7 +55,6 @@ public sealed class WhatsAppChannelAdminService : IWhatsAppChannelAdminService
         _db.BusinessWhatsAppNumbers.Add(channel);
         await _db.SaveChangesAsync(ct);
         var result = Map(channel);
-        await _auditService.LogAsync("Create", "WhatsAppChannel", channel.BusinessWhatsAppNumberId.ToString(), null, result, ct);
         return result;
     }
 
@@ -77,7 +74,6 @@ public sealed class WhatsAppChannelAdminService : IWhatsAppChannelAdminService
         channel.IsActive = request.IsActive;
         await _db.SaveChangesAsync(ct);
         var result = Map(channel);
-        await _auditService.LogAsync("Update", "WhatsAppChannel", channelId.ToString(), oldState, result, ct);
         return result;
     }
 
@@ -87,7 +83,6 @@ public sealed class WhatsAppChannelAdminService : IWhatsAppChannelAdminService
         var channel = await GetChannelAsync(businessId, channelId, ct);
         channel.IsActive = false;
         await _db.SaveChangesAsync(ct);
-        await _auditService.LogAsync("Deactivate", "WhatsAppChannel", channelId.ToString(), null, null, ct);
     }
 
     public async Task<WhatsAppChannelConnectionStatusDto> ValidateAsync(Guid tenantId, bool allTenants, Guid businessId, Guid channelId, CancellationToken ct = default)

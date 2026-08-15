@@ -9,7 +9,7 @@ Base: `a1eed12aeebc47bf3a7f37e2d2c372e67af691fc`
 ## Aislamiento
 
 La implementación se realizó en
-`C:\Proyectos\Talkio-AI\talkio-ai\.tmp\auraly-edit` con índice Git separado. El
+`<workspace>\.tmp\auraly-edit` con índice Git separado. El
 workspace principal permaneció en su rama original, con sus cambios locales
 intactos; no se hizo `reset`, `stash` ni cambio de rama en ese workspace.
 

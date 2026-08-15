@@ -13,20 +13,17 @@ public sealed class CatalogImportAdminService : ICatalogImportAdminService
     private readonly IUnitOfWork _unitOfWork;
     private readonly ICatalogDocumentTextExtractor _textExtractor;
     private readonly ICatalogDraftParser _draftParser;
-    private readonly IAuditService _auditService;
     private readonly ILogger<CatalogImportAdminService> _logger;
 
     public CatalogImportAdminService(
         IUnitOfWork unitOfWork,
         ICatalogDocumentTextExtractor textExtractor,
         ICatalogDraftParser draftParser,
-        IAuditService auditService,
         ILogger<CatalogImportAdminService> logger)
     {
         _unitOfWork = unitOfWork;
         _textExtractor = textExtractor;
         _draftParser = draftParser;
-        _auditService = auditService;
         _logger = logger;
     }
 
@@ -130,14 +127,6 @@ public sealed class CatalogImportAdminService : ICatalogImportAdminService
         }
 
         await _unitOfWork.SaveChangesAsync(ct);
-
-        await _auditService.LogAsync(
-            "Import",
-            "ServiceCatalog",
-            businessId.ToString(),
-            null,
-            new { servicesCreated, categoriesCreated, servicesSkipped },
-            ct);
 
         _logger.LogInformation(
             "Catalog import for business {BusinessId}: created={Created}, skipped={Skipped}",

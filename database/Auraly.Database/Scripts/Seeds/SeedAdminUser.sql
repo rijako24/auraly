@@ -198,7 +198,9 @@ BEGIN
 
     INSERT INTO [dbo].[RolePermissions] ([RolePermissionId], [RoleId], [PermissionId], [AssignedAt])
 
-    SELECT NEWID(), @AdminRoleId, [PermissionId], GETUTCDATE() FROM [dbo].[Permissions];
+    SELECT NEWID(), @AdminRoleId, [PermissionId], GETUTCDATE()
+    FROM [dbo].[Permissions]
+    WHERE [Resource] NOT LIKE N'tenants.%' AND [Resource] NOT LIKE N'platform.%';
 
 END
 
@@ -214,7 +216,8 @@ BEGIN
 
     FROM [dbo].[Permissions] p
 
-    WHERE NOT EXISTS (SELECT 1 FROM [dbo].[RolePermissions] rp WHERE rp.[RoleId] = @AdminRoleId AND rp.[PermissionId] = p.[PermissionId]);
+    WHERE p.[Resource] NOT LIKE N'tenants.%' AND p.[Resource] NOT LIKE N'platform.%'
+      AND NOT EXISTS (SELECT 1 FROM [dbo].[RolePermissions] rp WHERE rp.[RoleId] = @AdminRoleId AND rp.[PermissionId] = p.[PermissionId]);
 
 END
 
@@ -226,7 +229,7 @@ IF @PasswordHash IS NULL
 
     PRINT N'Usuario admin no creado: suministre BootstrapAdminPasswordHash de forma segura.';
 
-ELSE IF NOT EXISTS (SELECT 1 FROM [dbo].[AppUsers] WHERE [NormalizedUsername] = N'ADMIN')
+ELSE IF NOT EXISTS (SELECT 1 FROM [dbo].[AppUsers] WHERE [TenantId] = @TenantId AND [NormalizedUsername] = N'ADMIN')
 
 BEGIN
 

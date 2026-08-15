@@ -1,3 +1,5 @@
+using Azure;
+using Azure.Storage.Blobs;
 using Microsoft.Extensions.Options;
 
 namespace Auraly.Api;
@@ -5,23 +7,25 @@ namespace Auraly.Api;
 public sealed class PosInstallerOptions
 {
     public const string SectionName = "PosInstaller";
-    public string DownloadUrl { get; init; } = string.Empty;
+    public string ContainerName { get; init; } = "downloads";
+    public string BlobName { get; init; } = "Auraly-POS-Setup.exe";
     public string Version { get; init; } = string.Empty;
     public string Sha256 { get; init; } = string.Empty;
 
     public bool TryCreateView(out PosInstallerView? view)
     {
-        var url = DownloadUrl.Trim();
+        var containerName = ContainerName.Trim();
+        var blobName = BlobName.Trim();
         var version = Version.Trim();
         var sha256 = Sha256.Trim().ToUpperInvariant();
-        var valid = Uri.TryCreate(url, UriKind.Absolute, out var parsed) &&
-                    parsed.Scheme == Uri.UriSchemeHttps &&
+        var valid = containerName is { Length: > 0 and <= 63 } &&
+                    blobName is { Length: > 0 and <= 1024 } &&
                     version is { Length: > 0 and <= 64 } &&
                     sha256.Length == 64 &&
                     sha256.All(Uri.IsHexDigit);
         view = valid
             ? new PosInstallerView(
-                url,
+                "/api/commerce/v1/pos/installer/download",
                 version,
                 sha256,
                 TenantPreconfigured: false)
@@ -38,35 +42,56 @@ public sealed record PosInstallerView(
 
 public static class PosInstallerApi
 {
-    public static IEndpointRouteBuilder MapPosInstallerApi(
-        this IEndpointRouteBuilder endpoints)
+    public static IEndpointRouteBuilder MapPosInstallerApi(this IEndpointRouteBuilder endpoints)
     {
         var group = endpoints.MapGroup("/api/commerce/v1/pos/installer")
-            .RequireAuthorization("pos.user");
+            .RequireAuthorization();
 
         group.MapGet("", (IOptions<PosInstallerOptions> configured) =>
         {
-            var options = configured.Value;
-            if (!options.TryCreateView(out var installer))
-                return Results.Problem(
-                    "El instalador generico del POS aun no ha sido publicado.",
-                    statusCode: StatusCodes.Status503ServiceUnavailable,
-                    title: "PosInstallerUnavailable");
-
-            return Results.Ok(installer);
+            return configured.Value.TryCreateView(out var installer)
+                ? Results.Ok(installer)
+                : Unavailable();
         });
 
-        group.MapGet("/download", (IOptions<PosInstallerOptions> configured) =>
+        group.MapGet("/download", async (
+            IOptions<PosInstallerOptions> configured,
+            BlobServiceClient blobs,
+            ILoggerFactory loggerFactory,
+            CancellationToken cancellationToken) =>
         {
             var options = configured.Value;
-            return !options.TryCreateView(out var installer)
-                ? Results.Problem(
-                    "El instalador generico del POS aun no ha sido publicado.",
-                    statusCode: StatusCodes.Status503ServiceUnavailable,
-                    title: "PosInstallerUnavailable")
-                : Results.Redirect(installer!.DownloadUrl, permanent: false, preserveMethod: false);
+            if (!options.TryCreateView(out _)) return Unavailable();
+
+            var logger = loggerFactory.CreateLogger("PosInstaller");
+            var blob = blobs.GetBlobContainerClient(options.ContainerName.Trim())
+                .GetBlobClient(options.BlobName.Trim());
+            try
+            {
+                var download = await blob.DownloadStreamingAsync(cancellationToken: cancellationToken);
+                return Results.Stream(
+                    download.Value.Content,
+                    download.Value.Details.ContentType ?? "application/vnd.microsoft.portable-executable",
+                    "Auraly-POS-Setup.exe");
+            }
+            catch (RequestFailedException exception) when (exception.Status == StatusCodes.Status404NotFound)
+            {
+                logger.LogWarning(
+                    "The POS installer blob {Container}/{Blob} was not found.",
+                    options.ContainerName,
+                    options.BlobName);
+                return Results.Problem(
+                    "Auraly está preparando la versión más reciente. Intenta nuevamente en unos minutos.",
+                    statusCode: StatusCodes.Status404NotFound,
+                    title: "El instalador todavía no está disponible");
+            }
         });
 
         return endpoints;
     }
+
+    private static IResult Unavailable() => Results.Problem(
+        "El instalador genérico del POS aún no ha sido publicado.",
+        statusCode: StatusCodes.Status503ServiceUnavailable,
+        title: "PosInstallerUnavailable");
 }

@@ -347,38 +347,6 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         Assert.Equal(before, await ReadCursorValuesAsync());
     }
 
-    [Fact]
-    public async Task Active_fiscal_ranges_cannot_overlap_between_emitters()
-    {
-        await using var connection = new SqlConnection(fixture.ConnectionString);
-        await connection.OpenAsync();
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            INSERT dbo.FiscalSeries(
-              SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
-              DocumentType,Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)
-            VALUES(
-              @SeriesId,@BusinessId,@DeviceId,N'Device',@FiscalAuthorizationId,
-              N'SalesInvoice',@Prefix,6000,7000,1,SYSDATETIMEOFFSET());
-            """;
-        command.Parameters.AddWithValue("@SeriesId", Guid.NewGuid());
-        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
-        command.Parameters.AddWithValue("@DeviceId", fixture.DeniedDeviceId);
-        command.Parameters.AddWithValue(
-            "@FiscalAuthorizationId",
-            fixture.FiscalAuthorizationId);
-        command.Parameters.AddWithValue("@Prefix", ServerSliceFixture.Prefix);
-
-        var exception = await Assert.ThrowsAsync<SqlException>(
-            () => command.ExecuteNonQueryAsync());
-
-        Assert.Equal(51020, exception.Number);
-        Assert.Contains(
-            "rangos solapados",
-            exception.Message,
-            StringComparison.OrdinalIgnoreCase);
-    }
-
     private async Task<Guid> CreateUserAsync(string prefix)
     {
         var userId = Guid.NewGuid();

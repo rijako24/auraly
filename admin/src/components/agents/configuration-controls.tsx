@@ -83,7 +83,7 @@ interface ConfigurationSelectProps {
   emptyLabel?: string;
 }
 
-const EMPTY_VALUE = "__talkio_empty_value__";
+const EMPTY_VALUE = "__auraly_empty_value__";
 
 export function ConfigurationSelect({
   value,

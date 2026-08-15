@@ -393,13 +393,13 @@ builder.Services.AddScoped<SalesReturnService>();
 builder.Services.AddScoped<ISalesReturnQueryStore, SqlSalesReturnQueryStore>();
 builder.Services.AddScoped<SalesReturnQueryService>();
 builder.Services.AddResponseCompression(options => options.EnableForHttps = true);
-builder.Services.AddSingleton(new TenantInvitationEmailOptions(
+builder.Services.AddSingleton(new AuthenticationEmailOptions(
     builder.Configuration["Auraly:Email:ConnectionString"],
     builder.Configuration["Auraly:Email:SenderAddress"] ?? "DoNotReply@auralyapp.co",
     builder.Configuration["Auraly:Email:PublicAppUrl"] ?? "https://auralyapp.co",
     builder.Configuration["Auraly:Email:LogoUrl"] ?? "https://auralyapp.co/brand/auraly-mark.png",
     builder.Configuration["Auraly:Email:SupportEmail"] ?? "soporte@auralyapp.co"));
-builder.Services.AddHostedService<TenantInvitationEmailHostedService>();
+builder.Services.AddHostedService<AuthenticationEmailHostedService>();
 
 
 var jwtIssuer = builder.Configuration["Authentication:Jwt:Issuer"];
@@ -604,7 +604,6 @@ app.UseAuralyPlatformBeforeAuthentication();
 app.UseAuthentication();
 app.UseAuralyExecutionContext();
 app.UseAuthorization();
-app.UseAuralyPlatformAudit();
 
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }));
 app.MapControllers();

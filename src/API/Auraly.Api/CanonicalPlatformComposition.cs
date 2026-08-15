@@ -31,12 +31,6 @@ public static class CanonicalPlatformComposition
     public static void UseAuralyExecutionContext(this WebApplication app) =>
         app.UseMiddleware<ExecutionContextMiddleware>();
 
-    public static void UseAuralyPlatformAudit(this WebApplication app) =>
-        app.UseWhen(
-            context => !context.Request.Path.StartsWithSegments("/api/pos") &&
-                       !context.Request.Path.StartsWithSegments("/api/commerce"),
-            branch => branch.UseMiddleware<AuditLogMiddleware>());
-
     public static Task SeedAuralyPlatformPermissionsAsync(this WebApplication app) =>
         app.SeedPlatformPermissionsAsync();
 }

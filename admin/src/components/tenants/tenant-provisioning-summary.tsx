@@ -7,6 +7,7 @@ import { Building2, CheckCircle2, Download, Mail, MonitorSmartphone, PackageChec
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { ProvisionTenantRequest, ProvisionTenantResult } from "@/services/api/tenants";
+import { loadPosInstaller } from "@/services/pos/pos-installer";
 import { useTenantContextStore } from "@/stores/tenant-context-store";
 import type { Tenant } from "@/types/entities";
 import { formatDate } from "@/lib/utils";
@@ -18,6 +19,8 @@ export function TenantProvisioningSummary({ tenant }: { tenant: Tenant }) {
   const selectTenant = useTenantContextStore((state) => state.selectTenant);
   const tenants = useTenantContextStore((state) => state.tenants);
   const [summary, setSummary] = useState<StoredSummary | null>(null);
+  const [installerBusy, setInstallerBusy] = useState(false);
+  const [installerError, setInstallerError] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -31,6 +34,19 @@ export function TenantProvisioningSummary({ tenant }: { tenant: Tenant }) {
   const openOrganization = () => {
     if (tenants.some((item) => item.tenantId === tenant.tenantId)) selectTenant(tenant.tenantId);
     router.push("/dashboard");
+  };
+
+  const downloadInstaller = async () => {
+    setInstallerBusy(true);
+    setInstallerError(null);
+    try {
+      const installer = await loadPosInstaller();
+      window.location.assign(installer.downloadUrl);
+    } catch (error) {
+      setInstallerError(error instanceof Error ? error.message : "No fue posible consultar el instalador.");
+    } finally {
+      setInstallerBusy(false);
+    }
   };
 
   return (
@@ -98,7 +114,12 @@ export function TenantProvisioningSummary({ tenant }: { tenant: Tenant }) {
           <span className="rounded-xl bg-primary/10 p-2 text-primary"><MonitorSmartphone className="h-5 w-5" /></span>
           <div><h2 className="font-semibold">Instalar caja Auraly</h2><p className="text-sm text-muted-foreground">Descarga el instalador para Windows. Después podrás enrolar la caja en una sede disponible.</p></div>
         </div>
-        <Button asChild><a href={process.env.NEXT_PUBLIC_AURALY_POS_INSTALLER_URL ?? "/api/v1/pos/installer"}><Download className="mr-2 h-4 w-4" />Descargar instalador</a></Button>
+        <div className="text-right">
+          <Button disabled={installerBusy} onClick={() => void downloadInstaller()}>
+            <Download className="mr-2 h-4 w-4" />{installerBusy ? "Consultando..." : "Descargar instalador"}
+          </Button>
+          {installerError && <p className="mt-2 max-w-sm text-xs text-destructive">{installerError}</p>}
+        </div>
       </section>
 
       {summary && <section className="rounded-2xl border bg-muted/20 p-5">

@@ -5,7 +5,7 @@ Entorno: MantisFiccCasalinsPruWeb
 ALCANCE
 -------
 Este documento contiene únicamente fallos de Mantis que aún no cuentan con una
-prueba end-to-end exitosa. No incluye errores de Talkio, credenciales, teléfonos
+prueba end-to-end exitosa. No incluye errores de Auraly, credenciales, teléfonos
 ni cadenas de conexión.
 
 

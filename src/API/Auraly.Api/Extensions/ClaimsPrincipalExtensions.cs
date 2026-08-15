@@ -27,7 +27,6 @@ public static class ClaimsPrincipalExtensions
 
     public static bool HasPermission(this ClaimsPrincipal principal, string permission)
     {
-        return principal.FindAll("permission").Any(c => c.Value == permission)
-            || principal.IsInRole("SuperAdmin");
+        return principal.FindAll("permission").Any(c => c.Value == permission);
     }
 }

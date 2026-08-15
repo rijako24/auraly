@@ -39,8 +39,8 @@ public sealed class WhatsAppChannelAdminServiceTests
         await using var db = CreateDb();
         var (tenantId, businessId, agentId) = await SeedAsync(db);
         var handler = new QueueHandler(
-            """{"id":"phone-1","display_phone_number":"+57 300 111 2233","verified_name":"Talkio Demo","quality_rating":"GREEN"}""",
-            """{"id":"waba-1","name":"Talkio WABA"}""");
+            """{"id":"phone-1","display_phone_number":"+57 300 111 2233","verified_name":"Auraly Demo","quality_rating":"GREEN"}""",
+            """{"id":"waba-1","name":"Auraly WABA"}""");
         var service = CreateService(db, handler);
         var channel = await service.CreateAsync(tenantId, false, businessId,
             new CreateWhatsAppChannelRequest(agentId, "+573001112233", "phone-1", "waba-1", "secret-token"));
@@ -48,8 +48,8 @@ public sealed class WhatsAppChannelAdminServiceTests
         var status = await service.ValidateAsync(tenantId, false, businessId, channel.BusinessWhatsAppNumberId);
 
         status.IsConnected.Should().BeTrue();
-        status.VerifiedName.Should().Be("Talkio Demo");
-        status.BusinessAccountName.Should().Be("Talkio WABA");
+        status.VerifiedName.Should().Be("Auraly Demo");
+        status.BusinessAccountName.Should().Be("Auraly WABA");
         handler.Requests.Should().HaveCount(2);
         handler.Requests.Should().OnlyContain(authorization => authorization != null && authorization.Scheme == "Bearer");
     }
@@ -74,10 +74,7 @@ public sealed class WhatsAppChannelAdminServiceTests
 
     private static WhatsAppChannelAdminService CreateService(ApplicationDbContext db, HttpMessageHandler handler)
     {
-        var audit = new Mock<IAuditService>();
-        audit.Setup(x => x.LogAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
-            It.IsAny<object?>(), It.IsAny<object?>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        return new WhatsAppChannelAdminService(db, audit.Object, new HttpClient(handler),
+        return new WhatsAppChannelAdminService(db, new HttpClient(handler),
             Options.Create(new WhatsAppWebhookOptions { ApiBaseUrl = "https://graph.facebook.test/v25.0/" }));
     }
 

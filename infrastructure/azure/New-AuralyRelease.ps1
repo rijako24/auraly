@@ -10,6 +10,9 @@ param(
 
     [switch]$AllowDirty,
 
+    [ValidatePattern('^https://')]
+    [string]$PosApiUrl,
+
     [switch]$SkipAdmin
 )
 
@@ -167,6 +170,20 @@ try {
         }
     }
 
+    if ($PosApiUrl) {
+        $posArtifactPath = Join-Path $temporaryPath 'pos-installer'
+        & (Join-Path $repoRoot 'scripts\Build-AuralyPosInstaller.ps1') `
+            -ApiUrl $PosApiUrl `
+            -Configuration Release `
+            -ArtifactPath $posArtifactPath
+        if ($LASTEXITCODE) { throw 'La construcción del instalador POS falló.' }
+        $posSetup = Join-Path $posArtifactPath 'Auraly POS Setup.exe'
+        if (-not (Test-Path -LiteralPath $posSetup)) {
+            throw 'La construcción no produjo Auraly POS Setup.exe.'
+        }
+        Copy-Item -LiteralPath $posSetup `
+            -Destination (Join-Path $releasePath "auraly-pos-$Version.exe")
+    }
     New-DeterministicZip `
         -SourceDirectory $functionPublish `
         -DestinationPath (Join-Path $releasePath "auraly-function-$Version.zip")

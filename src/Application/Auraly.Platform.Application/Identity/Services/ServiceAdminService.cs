@@ -12,18 +12,15 @@ namespace Auraly.Platform.Application.Identity.Services;
 public class ServiceAdminService : IServiceAdminService
 {
     private readonly IUnitOfWork _unitOfWork;
-    private readonly IAuditService _auditService;
     private readonly ICorrelationIdProvider _correlationIdProvider;
     private readonly ILogger<ServiceAdminService> _logger;
 
     public ServiceAdminService(
         IUnitOfWork unitOfWork,
-        IAuditService auditService,
         ICorrelationIdProvider correlationIdProvider,
         ILogger<ServiceAdminService> logger)
     {
         _unitOfWork = unitOfWork;
-        _auditService = auditService;
         _correlationIdProvider = correlationIdProvider;
         _logger = logger;
     }
@@ -107,8 +104,6 @@ public class ServiceAdminService : IServiceAdminService
 
         await _unitOfWork.Services.CreateAsync(service);
         await _unitOfWork.SaveChangesAsync(ct);
-
-        await _auditService.LogAsync("Create", "Service", service.ServiceId.ToString(), null, service, ct);
         _logger.LogInformation("Service '{Name}' created for business {BusinessId} [CorrelationId: {CorrelationId}]",
             service.ServiceName, request.BusinessId, _correlationIdProvider.CorrelationId);
 
@@ -142,7 +137,6 @@ public class ServiceAdminService : IServiceAdminService
         await _unitOfWork.SaveChangesAsync(ct);
 
         var updated = await _unitOfWork.Services.GetByIdAsync(serviceId);
-        await _auditService.LogAsync("Update", "Service", serviceId.ToString(), oldState, MapToDto(updated!), ct);
         return MapToDto(updated!);
     }
 
@@ -156,8 +150,6 @@ public class ServiceAdminService : IServiceAdminService
         service.UpdatedAt = DateTime.UtcNow;
         await _unitOfWork.Services.UpdateAsync(service);
         await _unitOfWork.SaveChangesAsync(ct);
-
-        await _auditService.LogAsync("Deactivate", "Service", serviceId.ToString(), null, null, ct);
     }
 
     private async Task EnsureBusinessBelongsToTenantAsync(Guid tenantId, Guid businessId, CancellationToken ct)

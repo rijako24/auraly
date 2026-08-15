@@ -1,15 +1,16 @@
 import { defineConfig } from "@playwright/test";
 
 const manageServers = process.env.AURALY_E2E_MANAGE_SERVERS === "1";
+const manageApi = process.env.AURALY_E2E_MANAGE_API !== "0";
 
 export default defineConfig({
   webServer: manageServers ? [
-    {
-      command: "dotnet run --no-build --configuration Release --no-launch-profile --project ../src/API/Auraly.Api/Auraly.Api.csproj --urls http://127.0.0.1:5097",
+    ...(manageApi ? [{
+      command: "dotnet ../src/API/Auraly.Api/bin/Release/net8.0/Auraly.Api.dll --urls http://127.0.0.1:5097",
       url: "http://127.0.0.1:5097/health",
       reuseExistingServer: false,
       timeout: 120_000,
-    },
+    }] : []),
     {
       command: "node .next/standalone/server.js",
       url: "http://127.0.0.1:3001/login",

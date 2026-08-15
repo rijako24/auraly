@@ -108,6 +108,9 @@ public sealed class SqlPosEnrollmentStore(
             !FixedEquals(data.CodeHash, redemptionCodeHash))
             throw new PosEnrollmentValidationException(
                 "El código de enrolamiento es inválido, expiró o ya fue utilizado.");
+        if (existing is null)
+            await EnsureDeviceCapacityAsync(connection, transaction, data.TenantId, cancellationToken);
+
         if (existing is not null &&
             (existing.TenantId != data.TenantId || existing.BusinessId != data.BusinessId))
             throw new PosEnrollmentConflictException(
@@ -184,7 +187,37 @@ public sealed class SqlPosEnrollmentStore(
             now);
     }
 
-    private static async Task<ExistingDevice?> ReadExistingDeviceAsync(
+    private static async Task EnsureDeviceCapacityAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid tenantId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT t.MaximumEnrolledDevices,
+                   (SELECT COUNT_BIG(1)
+                    FROM dbo.EnrolledDevices devices WITH (UPDLOCK,HOLDLOCK)
+                    WHERE devices.TenantId=t.TenantId AND devices.IsActive=1)
+            FROM dbo.Tenants t WITH (UPDLOCK,HOLDLOCK)
+            WHERE t.TenantId=@TenantId AND t.IsActive=1;
+            """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        Add(command, "@TenantId", tenantId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            throw new PosEnrollmentConflictException(
+                "La organización no existe o está inactiva.");
+        }
+
+        var maximumDevices = reader.GetInt32(0);
+        var activeDevices = reader.GetInt64(1);
+        if (activeDevices >= maximumDevices)
+        {
+            throw new PosEnrollmentConflictException(
+                $"La organización alcanzó el máximo de {maximumDevices} cajas enroladas permitido. Desactiva una caja o solicita a Auraly una ampliación de capacidad.");
+        }
+    }    private static async Task<ExistingDevice?> ReadExistingDeviceAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         Guid deviceId,

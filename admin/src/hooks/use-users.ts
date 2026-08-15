@@ -13,10 +13,11 @@ export const userKeys = {
   detail: (id: string) => [...userKeys.details(), id] as const,
 };
 
-export function useUsers(params?: Partial<PagedRequest> & { tenantId?: string }) {
+export function useUsers(params?: Partial<PagedRequest> & { tenantId?: string }, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: userKeys.list(params),
     queryFn: () => usersApi.list(params),
+    enabled: options?.enabled ?? true,
   });
 }
 

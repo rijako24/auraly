@@ -43,6 +43,9 @@ test("recibe mercancia por UI, conserva el foco y procesa inventario", async ({ 
   const dialog = page.getByRole("dialog", { name: /Entrada de mercanc.a/ });
   await selectFirst(page, dialog, "Proveedor");
   await selectFirst(page, dialog, "Bodega");
+  await dialog.getByTestId("goods-receipt-continue").click();
+  await expect(dialog.getByTestId("goods-receipt-readonly-details")).toContainText("Proveedor:");
+  await expect(dialog.getByRole("button", { name: "Editar datos" })).toBeVisible();
 
   const search = dialog.getByPlaceholder(/Escanea o busca por c.digo/);
   await dialog.getByRole("button", { name: /Buscar en todo el cat.logo/ }).click();

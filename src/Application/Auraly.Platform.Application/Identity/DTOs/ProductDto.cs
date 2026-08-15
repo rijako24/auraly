@@ -21,11 +21,13 @@ public record ProductDto(
     DateTime? UpdatedAt,
     DateTime? LastSyncedAt,
     string? ProductCode = null,
-    string? AreaName = null);
+    string? AreaName = null,
+    string? Reference = null);
 
 public record UpdateProductStatusRequest(bool IsActive);
 public record UpdateProductRequest(
     string Name,
+    string? Reference,
     string? Description,
     string? CategoryName,
     decimal UnitPrice,

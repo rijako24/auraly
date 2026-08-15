@@ -15,8 +15,8 @@ Para Vinos Artesanales Solorzano:
 
 ```powershell
 $businessId = 'FCEE3BA9-E6BF-43E2-8C1A-560CB724688B'
-$resourceGroup = 'RG-TALKIOAI-DEV'
-$webAppName = 'az-talkioai-dev'
+$resourceGroup = 'RG-AURALY-DEV'
+$webAppName = 'api-auraly-dev-w5usmo6w'
 ```
 
 ## Obtener token y WABA desde Azure

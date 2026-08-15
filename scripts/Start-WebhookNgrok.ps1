@@ -24,11 +24,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ApiPort = 7071
-$VerifyToken = "mimos-meta-verify-2024"
+$VerifyToken = "auraly-meta-verify-2024"
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  Webhook Meta + ngrok - Mimos Baby Spa" -ForegroundColor Cyan
+Write-Host "  Webhook Meta + ngrok - Auraly" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 

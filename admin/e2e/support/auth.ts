@@ -8,7 +8,7 @@ export type E2eLoginCredentials = {
 
 const defaultCredentials: E2eLoginCredentials = {
   tenantKey: process.env.AURALY_E2E_TENANT_KEY ?? "",
-  username: process.env.AURALY_E2E_USERNAME ?? "admin2222",
+  username: process.env.AURALY_E2E_USERNAME ?? "admin",
   password: process.env.AURALY_E2E_PASSWORD ?? "Admin123!",
 };
 

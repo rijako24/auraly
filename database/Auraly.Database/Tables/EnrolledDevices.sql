@@ -19,17 +19,3 @@ GO
 CREATE INDEX [IX_EnrolledDevices_Tenant_Active]
     ON [dbo].[EnrolledDevices] ([TenantId], [IsActive], [Name]);
 GO
-CREATE TRIGGER [dbo].[TR_EnrolledDevices_EnforceTenantCapacity]
-ON [dbo].[EnrolledDevices]
-AFTER INSERT, UPDATE
-AS
-BEGIN
-    SET NOCOUNT ON;
-    IF EXISTS(
-        SELECT 1
-        FROM dbo.Tenants t
-        JOIN (SELECT DISTINCT TenantId FROM inserted) changed ON changed.TenantId=t.TenantId
-        WHERE (SELECT COUNT_BIG(1) FROM dbo.EnrolledDevices d WHERE d.TenantId=t.TenantId AND d.IsActive=1)>t.MaximumEnrolledDevices)
-        THROW 51082, N'La organización alcanzó el máximo de cajas enroladas permitido. Desactiva una caja o solicita a Auraly una ampliación de capacidad.', 1;
-END;
-GO

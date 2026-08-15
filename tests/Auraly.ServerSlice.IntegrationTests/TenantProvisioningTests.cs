@@ -26,7 +26,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             "Sede principal", "Calle 1 # 2-3", "3001234567", $"sede-{suffix}@auraly.test",
             "America/Bogota", "LatestReceiptCost", email, 10, 3);
 
-        using var admin = fixture.CreateAdminClient("tenants.create");
+        using var admin = fixture.CreateAdminClient("tenants.create", "tenants.update");
         using var created = await admin.PostAsJsonAsync("/api/v1/tenants", request);
         var creationBody = await created.Content.ReadAsStringAsync();
         Assert.True(created.StatusCode == HttpStatusCode.Created, $"Expected Created but received {created.StatusCode}: {creationBody}");
@@ -46,9 +46,12 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.Null(state.PasswordHash);
         Assert.Equal("Pending", state.InvitationStatus);
 
-        var immutableKeyError = await Assert.ThrowsAsync<SqlException>(
-            () => TryChangeTenantKeyAsync(result.TenantId, $"@changed-{suffix}"));
-        Assert.Equal(51040, immutableKeyError.Number);
+        using var attemptedKeyChange = await admin.PutAsJsonAsync(
+            $"/api/v1/tenants/{result.TenantId:D}",
+            new { tenantKey = $"@changed-{suffix}" });
+        Assert.Equal(HttpStatusCode.OK, attemptedKeyChange.StatusCode);
+        var unchangedTenant = await attemptedKeyChange.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(result.TenantKey, unchangedTenant.GetProperty("tenantKey").GetString());
 
         var token = await ReadInvitationTokenAsync(result.TenantId);
         using var publicClient = fixture.CreateClient();
@@ -97,7 +100,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         var geography = await ReadGeographyAsync();
         var sharedEmail = $"shared-admin-{Guid.NewGuid():N}@auraly.test";
         var sharedIdentification = $"10{Random.Shared.NextInt64(100000000, 999999999)}";
-        using var admin = fixture.CreateAdminClient("tenants.create");
+        using var admin = fixture.CreateAdminClient("tenants.create", "tenants.update");
 
         async Task<(ProvisionTenantResult Result, string Token)> ProvisionAsync(string suffix)
         {
@@ -231,17 +234,6 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             ?? throw new InvalidOperationException("Invitation token is missing.");
     }
 
-    private async Task TryChangeTenantKeyAsync(Guid tenantId, string tenantKey)
-    {
-        await using var connection = new SqlConnection(fixture.ConnectionString);
-        await connection.OpenAsync();
-        await using var command = new SqlCommand(
-            "UPDATE dbo.Tenants SET TenantKey=@TenantKey WHERE TenantId=@TenantId;",
-            connection);
-        command.Parameters.AddWithValue("@TenantId", tenantId);
-        command.Parameters.AddWithValue("@TenantKey", tenantKey);
-        await command.ExecuteNonQueryAsync();
-    }
 
     private async Task<int> CountDefaultWarehousesAsync(Guid tenantId, Guid businessId)
     {

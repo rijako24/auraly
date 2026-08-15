@@ -42,8 +42,10 @@ export function ProductOverview({ product }: { product: Product }) {
 
     <ProductFormSection id="product-view-identity" icon={PackagePlus} title="Identidad" description="Lo que el equipo usa para encontrar y reconocer el producto.">
       <div className="grid gap-4 md:grid-cols-3">
-        <Summary label="Codigo interno" value={product.sku || "Generado por Auraly"} />
-        <Summary label="Referencia" value={info?.reference ?? "Sin referencia"} />
+        <Summary label="Nombre" value={product.name} />
+        <Summary label="Referencia" value={info?.reference ?? product.reference ?? product.sku ?? "Sin referencia"} />
+        <Summary label="Descripción" value={info?.description ?? product.description ?? "Sin descripción"} />
+        <Summary label="Código interno" value={product.productCode || "Generado por Auraly"} />
         <Summary label="Estado" value={product.isActive ? "Activo" : "Inactivo"} />
       </div>
     </ProductFormSection>

@@ -4,7 +4,7 @@
 
 Este documento complementa las decisiones anteriores y reemplaza cualquier instrucción que:
 
-- conserve nombres `Auraly`, `Mimos`, `Talkio` o `TalkioAI`;
+- conserve nombres de marcas heredadas en componentes canónicos;
 - use migraciones de Entity Framework para modificar la base;
 - trate Pedidos únicamente como integración externa o listado de consulta;
 - proponga copiar visualmente las pantallas WinForms de Xion.
@@ -58,7 +58,7 @@ La revisión debe cubrir:
 - namespaces, `using` y nombres completamente calificados;
 - referencias entre proyectos;
 - nombres de paquetes;
-- textos como `Creado por Talkio`;
+- textos con atribución a una marca heredada;
 - configuración, variables y secretos cuyos nombres contengan la marca anterior;
 - Dockerfiles y archivos de despliegue;
 - workflows de CI/CD;
@@ -72,7 +72,7 @@ La revisión debe cubrir:
 El criterio de aceptación será:
 
 ```powershell
-rg -i "mimos|mimosbabyspa|talkio|talkioai" .
+Ejecutar la auditoría de marca sobre código, configuración y artefactos versionados.
 ```
 
 El resultado debe quedar vacío, exceptuando únicamente archivos históricos que se hayan decidido conservar fuera de compilación y que estén expresamente documentados. La preferencia es no conservar excepciones.
@@ -602,7 +602,7 @@ Orders entra antes de facturación porque permite validar catálogo, precios, cl
 ## 10. Criterios de aceptación
 
 - La solución principal se llama `Auraly.Commerce.sln`.
-- Ningún proyecto, namespace o ensamblado conserva `Mimos` o `Talkio`.
+- Ningún proyecto, namespace o ensamblado conserva marcas heredadas.
 - Azure Functions se identifica como `Auraly.Functions`, no como API.
 - El frontend conserva el nombre `auraly-admin`.
 - La base se compila y publica únicamente desde `Auraly.Database.sqlproj`.

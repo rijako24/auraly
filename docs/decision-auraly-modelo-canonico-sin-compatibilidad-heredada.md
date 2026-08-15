@@ -10,7 +10,7 @@ compatibilidad permanente con nombres, tablas, contratos o componentes heredados
 
 La versión liberada de Auraly no contendrá componentes legacy.
 
-Xion, Pedidos OK, Xion Web, Talkio y Auraly se usan únicamente para:
+Los sistemas de referencia y productos anteriores se usan únicamente para:
 
 - entender reglas del negocio;
 - contrastar comportamientos;
@@ -407,7 +407,7 @@ La consulta anterior se elimina al aprobar la conciliación.
 
 ## 12. Despliegues existentes de Auraly
 
-La solución actual todavía contiene nombres Talkio/Mimos. La migración a la nueva
+La solución actual todavía contiene nombres de marcas heredadas. La migración a la nueva
 solución debe ser completa:
 
 - `.sln`;
@@ -462,9 +462,7 @@ parcialmente con el producto nuevo.
 CI analiza código y artefactos desplegables buscando:
 
 ```text
-Talkio
-Mimos
-Auraly
+Marcas heredadas
 Xion
 PedidosOK
 PedidoOk

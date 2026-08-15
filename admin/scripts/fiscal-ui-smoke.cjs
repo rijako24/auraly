@@ -97,7 +97,7 @@ async function main() {
   await cdp.navigate(`${baseUrl}/login`);
   await retry(() => cdp.evaluate("Boolean(document.querySelector('#username'))"));
   await cdp.evaluate(`localStorage.setItem('selected_tenant_id','2368D79B-FE40-465F-B43D-E69332EE979C'); localStorage.setItem('selected_business_id','22222222-2222-2222-2222-222222222222'); true`);
-  assert.equal(await cdp.evaluate(setInput("#username", "admin2222")), true);
+  assert.equal(await cdp.evaluate(setInput("#username", "admin")), true);
   assert.equal(await cdp.evaluate(setInput("#password", "Admin123!")), true);
   await cdp.evaluate("document.querySelector('button[type=submit]').click(); true");
   await retry(() => cdp.evaluate("location.pathname.startsWith('/dashboard')"));

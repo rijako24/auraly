@@ -594,7 +594,7 @@ public sealed class MantisCommerceAdapter :
             Articulos = articles,
             bodega = Clean(ctx.WarehouseCode) ?? settings.Order.Warehouse,
             PedObs = string.IsNullOrWhiteSpace(order.Notes)
-                ? $"Creado por Talkio. Ref {order.OrderId:N}"
+                ? $"Creado por Auraly. Ref {order.OrderId:N}"
                 : order.Notes.Trim()
         };
 

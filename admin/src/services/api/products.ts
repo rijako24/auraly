@@ -17,6 +17,7 @@ export interface Product {
   source?: ProductSource;
   sku?: string | null;
   productCode?: string | null;
+  reference?: string | null;
   name: string;
   description?: string | null;
   categoryName?: string | null;
@@ -71,7 +72,7 @@ export interface ProductAlias {
 }
 
 export interface ProductConfiguration { aliases: ProductAlias[]; searchTerms: string[] }
-export interface UpdateProductRequest { name: string; description: string | null; categoryName: string | null; unitPrice: number; currency: string }
+export interface UpdateProductRequest { name: string; reference: string | null; description: string | null; categoryName: string | null; unitPrice: number; currency: string }
 
 export interface CreateCatalogProductRequest {
   businessId: string;

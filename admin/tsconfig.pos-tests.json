@@ -32,6 +32,8 @@
     "src/lib/auth-session.ts",
     "src/lib/auth-session.test.ts",
     "src/lib/login-redirect.test.ts",
+    "src/lib/remembered-tenant-key.ts",
+    "src/lib/remembered-tenant-key.test.ts",
     "src/lib/execution-context-selection.ts",
     "src/lib/execution-context-selection.test.ts",
     "src/lib/api-execution-context.ts",

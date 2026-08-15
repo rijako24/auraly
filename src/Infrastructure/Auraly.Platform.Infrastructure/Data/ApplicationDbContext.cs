@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Auraly.Platform.Application.Common.Interfaces;
 using Auraly.Platform.Domain.Entities;
 using Auraly.Platform.Domain.Enums;
 using Auraly.Platform.Domain.Models;
@@ -7,8 +8,56 @@ namespace Auraly.Platform.Infrastructure.Data;
 
 public class ApplicationDbContext : DbContext
 {
-    public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : base(options)
+    private readonly CentralAuditPolicy _centralAuditPolicy;
+
+    public ApplicationDbContext(
+        DbContextOptions<ApplicationDbContext> options,
+        ITenantContext? tenantContext = null,
+        ICorrelationIdProvider? correlationIdProvider = null) : base(options)
     {
+        _centralAuditPolicy = new CentralAuditPolicy(tenantContext, correlationIdProvider);
+    }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        var autoDetectChangesEnabled = ChangeTracker.AutoDetectChangesEnabled;
+        try
+        {
+            if (autoDetectChangesEnabled)
+            {
+                ChangeTracker.DetectChanges();
+            }
+
+            ChangeTracker.AutoDetectChangesEnabled = false;
+            _centralAuditPolicy.AppendAuditEntries(this);
+            return base.SaveChanges(acceptAllChangesOnSuccess);
+        }
+        finally
+        {
+            ChangeTracker.AutoDetectChangesEnabled = autoDetectChangesEnabled;
+        }
+    }
+
+    public override async Task<int> SaveChangesAsync(
+        bool acceptAllChangesOnSuccess,
+        CancellationToken cancellationToken = default)
+    {
+        var autoDetectChangesEnabled = ChangeTracker.AutoDetectChangesEnabled;
+        try
+        {
+            if (autoDetectChangesEnabled)
+            {
+                ChangeTracker.DetectChanges();
+            }
+
+            ChangeTracker.AutoDetectChangesEnabled = false;
+            _centralAuditPolicy.AppendAuditEntries(this);
+            return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        }
+        finally
+        {
+            ChangeTracker.AutoDetectChangesEnabled = autoDetectChangesEnabled;
+        }
     }
 
     public DbSet<Conversation> Conversations { get; set; }
@@ -551,6 +600,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.ExternalProductId).HasMaxLength(300);
             entity.Property(e => e.Sku).HasMaxLength(100);
             entity.Property(e => e.ProductCode).HasMaxLength(64);
+            entity.Property(e => e.Reference).HasMaxLength(120);
             entity.Property(e => e.Name).IsRequired().HasMaxLength(250);
             entity.Property(e => e.CategoryName).HasMaxLength(150);
             entity.Property(e => e.UnitPrice).HasPrecision(18, 2);

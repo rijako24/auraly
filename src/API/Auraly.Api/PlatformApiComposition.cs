@@ -60,6 +60,7 @@ using Auraly.Platform.Application.Commerce;
 using Auraly.Platform.Application.Configuration;
 
 using Auraly.Platform.Application.Identity.Interfaces;
+using Auraly.Platform.Application.Identity.DTOs;
 
 using Auraly.Platform.Application.Identity.Services;
 
@@ -446,6 +447,8 @@ public static class PlatformApiComposition
         builder.Services.AddScoped<IAuditService, AuditService>();
 
         builder.Services.AddScoped<ITenantProvisioningStore, SqlTenantProvisioningStore>();
+        builder.Services.AddScoped<IPasswordRecoveryStore, SqlPasswordRecoveryStore>();
+        builder.Services.AddScoped<PasswordRecoveryService>();
         builder.Services.AddScoped<IBusinessDefaultsProvisioner, SqlBusinessDefaultsProvisioner>();
         builder.Services.AddScoped<Auraly.Application.Tenants.TenantInvitationService>();
         builder.Services.AddScoped<ITenantService, TenantService>();

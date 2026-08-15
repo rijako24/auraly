@@ -31,6 +31,7 @@ $webPubSubName = "wps-auraly-$compactEnvironment-$suffix"
 $staticAdminName = "admin-auraly-$compactEnvironment-$suffix"
 $requiredQueues = @(
     'auraly-document-processing',
+    'auraly-accounting-processing',
     'auraly-fiscal-processing',
     'auraly-external-customer-reconciliation'
 )
@@ -114,6 +115,11 @@ function Test-RemoteEnvironment {
         'ServiceBusConnection__fullyQualifiedNamespace',
         'ServiceBusConnection__clientId',
         'Auraly__DocumentProcessing__ServiceBus__QueueName',
+        'Auraly__Accounting__ServiceBus__QueueName',
+        'PosInstaller__ContainerName',
+        'PosInstaller__BlobName',
+        'PosInstaller__Version',
+        'PosInstaller__Sha256',
         'Auraly__Fiscal__ServiceBus__QueueName',
         'Auraly__ExternalCustomerReconciliation__QueueName',
         'Auraly__Fiscal__SecretProtectionKey',
@@ -145,6 +151,10 @@ function Test-RemoteEnvironment {
         'Authentication__Jwt__SigningKey debe contener al menos 32 bytes.'
     Assert-Condition ($settings['Release__Version'] -eq $ReleaseVersion) `
         'La version configurada en la API no coincide con el release solicitado.'
+    Assert-Condition ($settings['PosInstaller__Version'] -eq $ReleaseVersion) `
+        'La version del instalador POS no coincide con el release solicitado.'
+    Assert-Condition ($settings['PosInstaller__Sha256'] -match '^[0-9A-Fa-f]{64}$') `
+        'PosInstaller__Sha256 debe ser un SHA-256 valido.'
 
     $queues = @(
         Get-AzServiceBusQueue `

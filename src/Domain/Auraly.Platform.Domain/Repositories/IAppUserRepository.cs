@@ -5,8 +5,8 @@ namespace Auraly.Platform.Domain.Repositories;
 public interface IAppUserRepository
 {
     Task<AppUser?> GetByIdAsync(Guid userId, CancellationToken ct = default);
-    Task<AppUser?> GetByUsernameAsync(string normalizedUsername, CancellationToken ct = default);
-    Task<AppUser?> GetByEmailAsync(string normalizedEmail, CancellationToken ct = default);
+    Task<AppUser?> GetByUsernameAsync(Guid tenantId, string normalizedUsername, CancellationToken ct = default);
+    Task<AppUser?> GetByEmailAsync(Guid tenantId, string normalizedEmail, CancellationToken ct = default);
     Task<AppUser?> GetByExternalLoginAsync(string provider, string providerKey, CancellationToken ct = default);
     Task<AppUser?> GetWithRolesAndPermissionsAsync(Guid userId, CancellationToken ct = default);
     Task<int> CountActiveByTenantAsync(Guid tenantId, CancellationToken ct = default);

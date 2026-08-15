@@ -15,10 +15,7 @@ public class RoleService : IRoleService
     private readonly ICorrelationIdProvider _correlationIdProvider;
     private readonly ILogger<RoleService> _logger;
 
-    public RoleService(
-        IUnitOfWork unitOfWork,
-        ICorrelationIdProvider correlationIdProvider,
-        ILogger<RoleService> logger)
+    public RoleService(IUnitOfWork unitOfWork, ICorrelationIdProvider correlationIdProvider, ILogger<RoleService> logger)
     {
         _unitOfWork = unitOfWork;
         _correlationIdProvider = correlationIdProvider;
@@ -27,9 +24,7 @@ public class RoleService : IRoleService
 
     public async Task<RoleDto> GetByIdAsync(Guid roleId, CancellationToken ct)
     {
-        var role = await _unitOfWork.AppRoles.GetWithPermissionsAsync(roleId, ct)
-            ?? throw new NotFoundException(nameof(AppRole), roleId);
-
+        var role = await GetRoleAsync(roleId, includePermissions: true, ct);
         return MapToDto(role);
     }
 
@@ -39,119 +34,113 @@ public class RoleService : IRoleService
         return roles.Select(MapToDto).ToList();
     }
 
-    public async Task<PagedResponse<RoleDto>> GetPagedByTenantAsync(
-        Guid? tenantId, PagedRequest request, CancellationToken ct)
+    public async Task<PagedResponse<RoleDto>> GetPagedByTenantAsync(Guid? tenantId, PagedRequest request, CancellationToken ct)
     {
-        var (items, totalCount) = await _unitOfWork.AppRoles.GetPagedByTenantAsync(
-            tenantId, request.Page, request.PageSize, request.Search, ct);
-        return new PagedResponse<RoleDto>(
-            items.Select(MapToDto).ToList(), totalCount, request.Page, request.PageSize);
+        var (items, totalCount) = await _unitOfWork.AppRoles.GetPagedByTenantAsync(tenantId, request.Page, request.PageSize, request.Search, ct);
+        return new PagedResponse<RoleDto>(items.Select(MapToDto).ToList(), totalCount, request.Page, request.PageSize);
     }
 
-    public async Task<RoleDto> CreateAsync(CreateRoleRequest request, CancellationToken ct)
+    public async Task<RoleDto> CreateAsync(Guid tenantId, CreateRoleRequest request, CancellationToken ct)
     {
         var normalizedName = request.Name.ToUpperInvariant();
-
-        if (await _unitOfWork.AppRoles.ExistsWithNameAsync(request.TenantId, normalizedName, ct: ct))
+        if (await _unitOfWork.AppRoles.ExistsWithNameAsync(tenantId, normalizedName, ct: ct))
             throw new ConflictException($"Ya existe un rol con el nombre '{request.Name}'.");
 
         var role = new AppRole
         {
-            RoleId = Guid.NewGuid(),
-            TenantId = request.TenantId,
-            Name = request.Name,
-            NormalizedName = normalizedName,
-            Description = request.Description,
-            IsSystemRole = false,
-            IsActive = true,
-            CreatedAt = DateTime.UtcNow
+            RoleId = Guid.NewGuid(), TenantId = tenantId, Name = request.Name,
+            NormalizedName = normalizedName, Description = request.Description,
+            IsSystemRole = false, IsActive = true, CreatedAt = DateTime.UtcNow
         };
-
         await _unitOfWork.AppRoles.AddAsync(role, ct);
         await _unitOfWork.SaveChangesAsync(ct);
-
-        _logger.LogInformation("Role '{RoleName}' created [CorrelationId: {CorrelationId}]",
-            role.Name, _correlationIdProvider.CorrelationId);
-
+        _logger.LogInformation("Role '{RoleName}' created [CorrelationId: {CorrelationId}]", role.Name, _correlationIdProvider.CorrelationId);
         return MapToDto(role);
     }
 
     public async Task<RoleDto> UpdateAsync(Guid roleId, UpdateRoleRequest request, CancellationToken ct)
     {
-        var role = await _unitOfWork.AppRoles.GetByIdAsync(roleId, ct)
-            ?? throw new NotFoundException(nameof(AppRole), roleId);
-
-        if (role.IsSystemRole)
-            throw new ForbiddenException("No se pueden modificar roles de sistema.");
-
+        var role = await GetRoleAsync(roleId, includePermissions: false, ct);
+        EnsureMutable(role);
         if (request.Name is not null)
         {
             var normalizedName = request.Name.ToUpperInvariant();
             if (await _unitOfWork.AppRoles.ExistsWithNameAsync(role.TenantId, normalizedName, roleId, ct))
                 throw new ConflictException($"Ya existe un rol con el nombre '{request.Name}'.");
-
             role.Name = request.Name;
             role.NormalizedName = normalizedName;
         }
-
-        if (request.Description is not null)
-            role.Description = request.Description;
-
+        if (request.Description is not null) role.Description = request.Description;
         role.UpdatedAt = DateTime.UtcNow;
         _unitOfWork.AppRoles.Update(role);
         await _unitOfWork.SaveChangesAsync(ct);
-
         return MapToDto(role);
     }
 
     public async Task DeactivateAsync(Guid roleId, CancellationToken ct)
     {
-        var role = await _unitOfWork.AppRoles.GetByIdAsync(roleId, ct)
-            ?? throw new NotFoundException(nameof(AppRole), roleId);
-
-        if (role.IsSystemRole)
-            throw new ForbiddenException("No se pueden desactivar roles de sistema.");
-
+        var role = await GetRoleAsync(roleId, includePermissions: false, ct);
+        EnsureMutable(role);
         role.IsActive = false;
         role.UpdatedAt = DateTime.UtcNow;
         _unitOfWork.AppRoles.Update(role);
         await _unitOfWork.SaveChangesAsync(ct);
     }
 
-    public async Task AssignPermissionsAsync(Guid roleId, AssignPermissionsRequest request, CancellationToken ct)
+    public async Task AssignPermissionsAsync(Guid roleId, AssignPermissionsRequest request, Guid actorUserId, CancellationToken ct)
     {
-        var role = await _unitOfWork.AppRoles.GetWithPermissionsAsync(roleId, ct)
-            ?? throw new NotFoundException(nameof(AppRole), roleId);
+        var role = await GetRoleAsync(roleId, includePermissions: true, ct);
+        EnsureMutable(role);
+        var actor = await _unitOfWork.AppUsers.GetByIdAsync(actorUserId, ct)
+            ?? throw new NotFoundException(nameof(AppUser), actorUserId);
+        if (role.TenantId != actor.TenantId)
+            throw new ForbiddenException("No puede administrar roles de otra organización.");
 
-        if (role.IsSystemRole)
-            throw new ForbiddenException("No se pueden modificar permisos de roles de sistema.");
+        var requestedIds = request.PermissionIds.Distinct().ToArray();
+        var permissions = await _unitOfWork.Permissions.GetByIdsAsync(requestedIds, ct);
+        if (permissions.Count != requestedIds.Length)
+            throw new DomainValidationException("permissionIds", "Uno o más permisos no existen.");
+
+        var actorPermissions = (await _unitOfWork.Permissions.GetResourcesByUserIdAsync(actorUserId, null, ct)).ToHashSet(StringComparer.Ordinal);
+        var unauthorized = permissions.FirstOrDefault(permission => !actorPermissions.Contains(permission.Resource));
+        if (unauthorized is not null)
+            throw new ForbiddenException($"No puede delegar el permiso '{unauthorized.Resource}' porque no lo posee.");
+
+        if (permissions.Any(permission => PlatformPermissions.IsPlatformPermission(permission.Resource)))
+        {
+            var tenant = await _unitOfWork.Tenants.GetByIdAsync(actor.TenantId, ct)
+                ?? throw new NotFoundException(nameof(Tenant), actor.TenantId);
+            if (!string.Equals(tenant.TenantKey, PlatformPermissions.PlatformTenantKey, StringComparison.OrdinalIgnoreCase)
+                || !actorPermissions.Contains(PlatformPermissions.Assign))
+                throw new ForbiddenException("Los permisos de plataforma solo se pueden delegar dentro de @auraly por un usuario autorizado.");
+        }
 
         var existingPermissions = await _unitOfWork.RolePermissions.GetByRoleIdAsync(roleId, ct);
         _unitOfWork.RolePermissions.DeleteRange(existingPermissions);
-
-        var permissions = await _unitOfWork.Permissions.GetByIdsAsync(request.PermissionIds, ct);
-
-        var newRolePermissions = permissions.Select(p => new RolePermission
+        await _unitOfWork.RolePermissions.AddRangeAsync(permissions.Select(permission => new RolePermission
         {
-            RolePermissionId = Guid.NewGuid(),
-            RoleId = roleId,
-            PermissionId = p.PermissionId,
-            AssignedAt = DateTime.UtcNow
-        });
-
-        await _unitOfWork.RolePermissions.AddRangeAsync(newRolePermissions, ct);
+            RolePermissionId = Guid.NewGuid(), RoleId = roleId,
+            PermissionId = permission.PermissionId, AssignedAt = DateTime.UtcNow
+        }), ct);
         await _unitOfWork.SaveChangesAsync(ct);
-
-        _logger.LogInformation(
-            "Permissions updated for role {RoleId}: {Count} permissions [CorrelationId: {CorrelationId}]",
-            roleId, permissions.Count, _correlationIdProvider.CorrelationId);
+        _logger.LogInformation("Permissions updated for role {RoleId}: {Count} permissions [CorrelationId: {CorrelationId}]", roleId, permissions.Count, _correlationIdProvider.CorrelationId);
     }
 
     public async Task<IReadOnlyList<PermissionDto>> GetRolePermissionsAsync(Guid roleId, CancellationToken ct)
     {
         var permissions = await _unitOfWork.Permissions.GetByRoleIdAsync(roleId, ct);
-        return permissions.Select(p => new PermissionDto(
-            p.PermissionId, p.Module, p.Action, p.Resource, p.Description)).ToList();
+        return permissions.Select(p => new PermissionDto(p.PermissionId, p.Module, p.Action, p.Resource, p.Description)).ToList();
+    }
+
+    private async Task<AppRole> GetRoleAsync(Guid roleId, bool includePermissions, CancellationToken ct) =>
+        (includePermissions
+            ? await _unitOfWork.AppRoles.GetWithPermissionsAsync(roleId, ct)
+            : await _unitOfWork.AppRoles.GetByIdAsync(roleId, ct))
+        ?? throw new NotFoundException(nameof(AppRole), roleId);
+
+    private static void EnsureMutable(AppRole role)
+    {
+        if (role.IsSystemRole) throw new ForbiddenException("No se pueden modificar roles de sistema.");
     }
 
     private static RoleDto MapToDto(AppRole role) => new(

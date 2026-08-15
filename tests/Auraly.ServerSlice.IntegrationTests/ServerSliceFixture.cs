@@ -308,6 +308,63 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         client.DefaultRequestHeaders.Add("X-Business-Id", BusinessId.ToString("D"));
         return client;
     }
+    public HttpClient CreateTenantUserClient(Guid tenantId, Guid userId, params string[] permissions)
+    {
+        var session = EnsureExistingUserAuthenticationSession(tenantId, userId);
+        var executionAccessId = RegisterExecutionPermissions(permissions);
+        var claims = new List<Claim>
+        {
+            new(JwtRegisteredClaimNames.Sub, userId.ToString("D")),
+            new(ClaimTypes.NameIdentifier, userId.ToString("D")),
+            new("tenant_id", tenantId.ToString("D")),
+            new(AuthenticationDefaults.SessionIdClaim, session.AuthenticationSessionId.ToString("D")),
+            new(TestExecutionAccessResolver.AccessProfileClaim, executionAccessId.ToString("D"))
+        };
+        claims.AddRange(permissions.Select(permission => new Claim("permission", permission)));
+        var token = new JwtSecurityToken(
+            JwtIssuer, JwtAudience, claims, expires: DateTime.UtcNow.AddMinutes(10),
+            signingCredentials: new SigningCredentials(
+                new SymmetricSecurityKey(Encoding.UTF8.GetBytes(JwtSigningKey)),
+                SecurityAlgorithms.HmacSha256));
+        var client = CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+            "Bearer", new JwtSecurityTokenHandler().WriteToken(token));
+        client.DefaultRequestHeaders.Add(AuthenticationDefaults.ClientIdHeader, session.ClientId.ToString("D"));
+        return client;
+    }
+
+    private TestAuthenticationSession EnsureExistingUserAuthenticationSession(Guid tenantId, Guid userId)
+    {
+        lock (_authenticationSessionLock)
+        {
+            if (_authenticationSessions.TryGetValue(userId, out var existing)) return existing;
+            var session = new TestAuthenticationSession(Guid.NewGuid(), Guid.NewGuid());
+            var now = DateTimeOffset.UtcNow;
+            using var connection = new SqlConnection(ConnectionString);
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                IF NOT EXISTS(SELECT 1 FROM dbo.AppUsers WHERE UserId=@UserId AND TenantId=@TenantId)
+                    THROW 51000,N'El usuario de prueba no pertenece al tenant solicitado.',1;
+                INSERT dbo.AuthenticationSessions
+                  (AuthenticationSessionId,TenantId,UserId,ClientId,ClientDescription,
+                   RefreshTokenHash,IssuedAt,ExpiresAt,LastSeenAt,Status)
+                VALUES
+                  (@SessionId,@TenantId,@UserId,@ClientId,N'Platform authorization integration test',
+                   @Hash,@Now,@ExpiresAt,@Now,N'Active');
+                """;
+            command.Parameters.AddWithValue("@SessionId", session.AuthenticationSessionId);
+            command.Parameters.AddWithValue("@TenantId", tenantId);
+            command.Parameters.AddWithValue("@UserId", userId);
+            command.Parameters.AddWithValue("@ClientId", session.ClientId);
+            command.Parameters.Add("@Hash", System.Data.SqlDbType.VarBinary, 32).Value = SHA256.HashData(session.AuthenticationSessionId.ToByteArray());
+            command.Parameters.AddWithValue("@Now", now);
+            command.Parameters.AddWithValue("@ExpiresAt", now.AddHours(1));
+            command.ExecuteNonQuery();
+            _authenticationSessions.Add(userId, session);
+            return session;
+        }
+    }
     public async Task<WorkSessionView> OpenWorkSessionAsync(
         HttpClient client,
         Guid? deviceId = null)
@@ -925,6 +982,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                 dacpac);
         }
 
+        EnsureDacpacIsCurrent(root, dacpac);
+
         var sqlPackage = FindSqlPackage();
         var process = new Process
         {
@@ -946,6 +1005,28 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         {
             throw new InvalidOperationException(
                 $"SqlPackage failed with exit code {process.ExitCode} while deploying the isolated SQL Server test database.");
+        }
+    }
+
+    private static void EnsureDacpacIsCurrent(string root, string dacpac)
+    {
+        var databaseProject = Path.Combine(root, "database", "Auraly.Database");
+        var latestSchemaWrite = Directory
+            .EnumerateFiles(databaseProject, "*", SearchOption.AllDirectories)
+            .Where(path =>
+                !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) &&
+                !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) &&
+                (path.EndsWith(".sql", StringComparison.OrdinalIgnoreCase) ||
+                 path.EndsWith(".sqlproj", StringComparison.OrdinalIgnoreCase)))
+            .Select(File.GetLastWriteTimeUtc)
+            .DefaultIfEmpty(DateTime.MinValue)
+            .Max();
+
+        if (File.GetLastWriteTimeUtc(dacpac) < latestSchemaWrite)
+        {
+            throw new InvalidOperationException(
+                "Auraly.Database.dacpac is older than the database schema sources. " +
+                "Rebuild Auraly.Database in Release before running integration tests.");
         }
     }
 

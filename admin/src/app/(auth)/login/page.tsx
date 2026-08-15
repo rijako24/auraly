@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { authApi } from "@/services/api/auth";
 import { readEdgeTokenFromLaunch } from "@/services/pos/pos-edge-client";
+import { readRememberedTenantKey, rememberTenantKey } from "@/lib/remembered-tenant-key";
 import { useAuthStore } from "@/stores/auth-store";
 import type { ApiError } from "@/types/api";
 
@@ -37,20 +38,28 @@ function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isHydrated, setIsHydrated] = useState(false);
+  const [wasTenantRemembered, setWasTenantRemembered] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!tenantFromUrl) {
+      const rememberedTenantKey = readRememberedTenantKey();
+      if (rememberedTenantKey) {
+        setTenantKey(rememberedTenantKey);
+        setWasTenantRemembered(true);
+      }
+    }
     setIsHydrated(true);
     readEdgeTokenFromLaunch();
-  }, []);
-
+  }, [tenantFromUrl]);
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
     setIsLoading(true);
 
     try {
-      const response = await authApi.login({ tenantKey, username, password });
+      const response = await authApi.login({ tenantKey: tenantKey.trim(), username, password });
+      rememberTenantKey(response.user.tenantKey || tenantKey);
       setAuth(response.user);
       const redirect = searchParams.get("redirect") ?? "/dashboard";
       router.push(redirect.startsWith("/") ? redirect : "/dashboard");
@@ -113,7 +122,7 @@ function LoginForm() {
               placeholder="@auraly"
               className={fieldClassName}
               value={tenantKey}
-              onChange={(event) => setTenantKey(event.target.value)}
+              onChange={(event) => { setTenantKey(event.target.value); setWasTenantRemembered(false); }}
               required
               autoCapitalize="none"
               autoComplete="organization"
@@ -125,7 +134,9 @@ function LoginForm() {
           <p id="tenant-key-help" className="text-xs leading-5 text-[#718986]">
             {tenantFromUrl
               ? "Este enlace ya está conectado con tu empresa."
-              : "Escribe la clave incluida en el enlace de acceso de tu empresa."}
+              : wasTenantRemembered
+                ? "Recordamos esta empresa en este dispositivo. Puedes cambiarla si lo necesitas."
+                : "Escribe la clave incluida en el enlace de acceso de tu empresa."}
           </p>
         </div>
 
@@ -181,7 +192,7 @@ function LoginForm() {
           </div>
           <div className="flex justify-end">
             <Link
-              href="/forgot-password"
+              href={`/forgot-password${tenantKey ? `?tenant=${encodeURIComponent(tenantKey.trim())}` : ""}`}
               className="text-xs font-semibold text-[#176f6a] underline-offset-4 hover:underline"
             >
               ¿Olvidaste tu contraseña?

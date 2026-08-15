@@ -45,6 +45,7 @@
 :r .\Migrations\MigrateBusinessTimeZone.sql
 :r .\Migrations\AlterConversationContextsValueToMax.sql
 :r .\Migrations\MigrateSuppliersToParties.sql
+:r .\Migrations\RemoveLegacyTriggers.sql
 :r .\Migrations\MigrateProductsToCanonicalPrices.sql
 :r .\Migrations\BackfillPreparedProductPrices.sql
 :r .\Migrations\MigratePricePublicationAuditOrigins.sql
@@ -69,6 +70,7 @@
 :r .\Seeds\SeedBillingPlans.sql
 :r .\Seeds\SeedRadaConcept.sql
 :r .\Seeds\SeedAuraly.sql
+:r .\Seeds\SeedAuralyPlatformAdministration.sql
 :r .\Seeds\SeedInmobiliariaDemo.sql
 :r .\Seeds\SeedLuisPetitBarber.sql
 :r .\Seeds\SeedPricingPermissions.sql

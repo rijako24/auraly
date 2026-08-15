@@ -185,6 +185,21 @@ public sealed class SqlFiscalConfigurationStore(
                     VALUES(@OfflineSeriesId,@BusinessId,NULL,N'Device',@AuthorizationId,
                         N'SalesInvoice',@Prefix,@OfflineRangeStart,@RangeEnd,1,@Now);
             END;
+
+            IF EXISTS (
+                SELECT 1
+                FROM dbo.FiscalSeries candidate WITH (UPDLOCK,HOLDLOCK)
+                JOIN dbo.FiscalSeries other WITH (UPDLOCK,HOLDLOCK)
+                  ON other.SeriesId<>candidate.SeriesId
+                 AND other.BusinessId=candidate.BusinessId
+                 AND other.FiscalAuthorizationId=candidate.FiscalAuthorizationId
+                 AND other.DocumentType=candidate.DocumentType
+                 AND other.Prefix=candidate.Prefix
+                 AND other.IsActive=1
+                 AND candidate.RangeStart<=other.RangeEnd
+                 AND other.RangeStart<=candidate.RangeEnd
+                WHERE candidate.FiscalAuthorizationId=@AuthorizationId AND candidate.IsActive=1)
+                THROW 51020,N'Las series fiscales activas del mismo negocio, autorización, tipo y prefijo no pueden tener rangos solapados.',1;
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);

@@ -12,18 +12,15 @@ public sealed class ProductOfferAdminService : IProductOfferAdminService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IBlobStorageService _blobStorage;
-    private readonly IAuditService _audit;
     private readonly IMediaUrlResolver _mediaUrlResolver;
 
     public ProductOfferAdminService(
         IUnitOfWork unitOfWork,
         IBlobStorageService blobStorage,
-        IAuditService audit,
         IMediaUrlResolver mediaUrlResolver)
     {
         _unitOfWork = unitOfWork;
         _blobStorage = blobStorage;
-        _audit = audit;
         _mediaUrlResolver = mediaUrlResolver;
     }
 
@@ -55,7 +52,6 @@ public sealed class ProductOfferAdminService : IProductOfferAdminService
         Apply(offer, normalized);
         await _unitOfWork.Products.CreateOfferAsync(offer, ct);
         await _unitOfWork.SaveChangesAsync(ct);
-        await _audit.LogAsync("Create", "ProductOffer", offer.ProductOfferId.ToString(), null, MapOffer(offer), ct);
         return MapOffer(offer);
     }
 
@@ -77,7 +73,6 @@ public sealed class ProductOfferAdminService : IProductOfferAdminService
         offer.UpdatedAt = DateTime.UtcNow;
         await _unitOfWork.Products.UpdateOfferAsync(offer, ct);
         await _unitOfWork.SaveChangesAsync(ct);
-        await _audit.LogAsync("Update", "ProductOffer", offer.ProductOfferId.ToString(), before, MapOffer(offer), ct);
         return MapOffer(offer);
     }
 
@@ -159,7 +154,6 @@ public sealed class ProductOfferAdminService : IProductOfferAdminService
 
         await _unitOfWork.Products.DeleteImageAsync(image, ct);
         await _unitOfWork.SaveChangesAsync(ct);
-        await _audit.LogAsync("Delete", "ProductImage", productImageId.ToString(), MapImage(image), null, ct);
     }
 
 
@@ -189,7 +183,6 @@ public sealed class ProductOfferAdminService : IProductOfferAdminService
         }
 
         await _unitOfWork.SaveChangesAsync(ct);
-        await _audit.LogAsync("SetPrimary", "ProductImage", productImageId.ToString(), before, MapImage(selected), ct);
         return MapImage(selected);
     }
     private async Task<ProductImageDto> AddImageAsync(
@@ -230,7 +223,6 @@ public sealed class ProductOfferAdminService : IProductOfferAdminService
         };
         await _unitOfWork.Products.CreateImageAsync(entity, ct);
         await _unitOfWork.SaveChangesAsync(ct);
-        await _audit.LogAsync("Create", "ProductImage", entity.ProductImageId.ToString(), null, MapImage(entity), ct);
         return MapImage(entity);
     }
 

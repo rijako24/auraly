@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { AUTH_COOKIE_NAMES } from "@/lib/auth-cookies";
 
-const PUBLIC_PATHS = ["/login", "/register", "/forgot-password", "/activate", "/pos"];
+const PUBLIC_PATHS = ["/login", "/register", "/forgot-password", "/reset-password", "/activate", "/pos"];
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;

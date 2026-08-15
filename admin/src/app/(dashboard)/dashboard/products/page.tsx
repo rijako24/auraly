@@ -21,17 +21,14 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  useProductCategories,
   useProductConfiguration,
   usePromoteProductAlias,
   useReviewProductAlias,
@@ -49,6 +46,7 @@ import {
 
 interface ProductFormState {
   name: string;
+  reference: string;
   description: string;
   categoryName: string;
 }
@@ -57,6 +55,7 @@ type ModalMode = "details" | "edit";
 
 const emptyForm: ProductFormState = {
   name: "",
+  reference: "",
   description: "",
   categoryName: "",
 };
@@ -64,6 +63,7 @@ const emptyForm: ProductFormState = {
 function productToForm(product: Product): ProductFormState {
   return {
     name: product.name,
+    reference: product.reference ?? product.sku ?? "",
     description: product.description ?? "",
     categoryName: product.categoryName ?? "",
   };
@@ -83,7 +83,6 @@ export default function ProductsPage() {
     search: search || undefined,
     includeInactive,
   });
-  const categoriesQuery = useProductCategories(false);
   const configurationQuery = useProductConfiguration(selectedProduct?.productId);
   const reviewAlias = useReviewProductAlias();
   const promoteAlias = usePromoteProductAlias();
@@ -187,6 +186,7 @@ export default function ProductsPage() {
         productId: selectedProduct.productId,
         request: {
           name: form.name.trim(),
+          reference: form.reference.trim() || null,
           description: form.description.trim() || null,
           categoryName: selectedProduct.categoryName ?? null,
           unitPrice: selectedProduct.unitPrice,
@@ -219,7 +219,8 @@ export default function ProductsPage() {
       cell: ({ row }) => (
         <div>
           <p className="font-medium">{row.original.name}</p>
-          <p className="text-xs text-muted-foreground">{row.original.productCode || row.original.sku || "Sin código"}</p>
+          <p className="text-xs text-muted-foreground">{row.original.reference || row.original.sku || "Sin referencia"}</p>
+          <p className="max-w-md truncate text-xs text-muted-foreground">{row.original.description || "Sin descripción"}</p>
         </div>
       ),
     },
@@ -294,7 +295,8 @@ export default function ProductsPage() {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="break-words font-semibold">{product.name}</h2>
-          <p className="text-xs text-muted-foreground">{product.sku || "Sin SKU"}</p>
+          <p className="text-xs text-muted-foreground">{product.reference || product.sku || "Sin referencia"}</p>
+          <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">{product.description || "Sin descripción"}</p>
         </div>
         <Badge variant={product.isActive ? "default" : "secondary"}>
           {product.isActive ? "Activo" : "Inactivo"}
@@ -310,9 +312,6 @@ export default function ProductsPage() {
           <dd className="font-medium">{formatCurrency(product.unitPrice, product.currency || "COP")}</dd>
         </div>
       </dl>
-      {product.description && (
-        <p className="line-clamp-3 text-sm text-muted-foreground">{product.description}</p>
-      )}
       <div className="grid grid-cols-2 gap-2 border-t pt-3" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
         <Button type="button" variant="outline" size="sm" onClick={() => openEditor(product)}>
           <Pencil className="mr-2 h-4 w-4" />
@@ -435,7 +434,8 @@ export default function ProductsPage() {
                 <ProductFormSection id="product-identity" icon={PackagePlus} title="Identidad" description="Lo que el equipo vera al buscar y vender.">
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2 md:col-span-2"><Label htmlFor="product-name">Nombre <span className="text-destructive">*</span></Label><Input id="product-name" aria-invalid={Boolean(productValidationError && !form.name.trim())} className={productValidationError && !form.name.trim() ? "border-destructive ring-1 ring-destructive/20" : ""} value={form.name} maxLength={200} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />{productValidationError && !form.name.trim() && <p className="text-sm text-destructive">Este campo es requerido</p>}</div>
-                    <div className="space-y-2 md:col-span-2"><Label htmlFor="product-description">Descripcion</Label><Textarea id="product-description" className="min-h-24" value={form.description} maxLength={2000} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} /></div>
+                    <div className="space-y-2 md:col-span-2"><Label htmlFor="product-reference">Referencia</Label><Input id="product-reference" value={form.reference} maxLength={120} onChange={(event) => setForm((current) => ({ ...current, reference: event.target.value }))} placeholder="Referencia del fabricante" /></div>
+                    <div className="space-y-2 md:col-span-2"><Label htmlFor="product-description">Descripción</Label><Textarea id="product-description" className="min-h-24" value={form.description} maxLength={2000} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} /></div>
                   </div>
                 </ProductFormSection>
 
@@ -477,8 +477,4 @@ export default function ProductsPage() {
 
     </div>
   );
-}
-
-function Summary({ label, value }: { label: string; value: string }) {
-  return <div className="rounded-xl border bg-muted/10 p-4"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1 font-semibold">{value}</p></div>;
 }

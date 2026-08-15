@@ -1,4 +1,4 @@
-# Contexto rapido para Codex - Talkio AI / Mimos Baby Spa
+# Contexto rapido para Codex - Auraly
 
 Este archivo reemplaza las bitacoras antiguas de arquitectura/refactor. Usalo como primer punto de lectura para ahorrar tokens; si hay duda, valida contra el codigo actual.
 

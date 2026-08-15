@@ -13,18 +13,15 @@ namespace Auraly.Platform.Application.Identity.Services;
 public sealed class PromotionAdminService : IPromotionAdminService
 {
     private readonly IUnitOfWork _unitOfWork;
-    private readonly IAuditService _auditService;
     private readonly ICorrelationIdProvider _correlationIdProvider;
     private readonly ILogger<PromotionAdminService> _logger;
 
     public PromotionAdminService(
         IUnitOfWork unitOfWork,
-        IAuditService auditService,
         ICorrelationIdProvider correlationIdProvider,
         ILogger<PromotionAdminService> logger)
     {
         _unitOfWork = unitOfWork;
-        _auditService = auditService;
         _correlationIdProvider = correlationIdProvider;
         _logger = logger;
     }
@@ -72,7 +69,6 @@ public sealed class PromotionAdminService : IPromotionAdminService
 
         await _unitOfWork.Promotions.CreateAsync(promotion, ct);
         await _unitOfWork.SaveChangesAsync(ct);
-        await _auditService.LogAsync("Create", "Promotion", promotion.PromotionId.ToString(), null, Map(promotion), ct);
         _logger.LogInformation("Promotion '{Name}' created for business {BusinessId} [CorrelationId: {CorrelationId}]",
             promotion.Name, promotion.BusinessId, _correlationIdProvider.CorrelationId);
         return Map(promotion);
@@ -118,7 +114,6 @@ public sealed class PromotionAdminService : IPromotionAdminService
         await _unitOfWork.Promotions.UpdateAsync(promotion, ct);
         await _unitOfWork.SaveChangesAsync(ct);
         var updated = await _unitOfWork.Promotions.GetByIdAsync(businessId, promotionId, ct) ?? promotion;
-        await _auditService.LogAsync("Update", "Promotion", promotionId.ToString(), oldState, Map(updated), ct);
         return Map(updated);
     }
 
@@ -131,7 +126,6 @@ public sealed class PromotionAdminService : IPromotionAdminService
         promotion.UpdatedAt = DateTime.UtcNow;
         await _unitOfWork.Promotions.UpdateAsync(promotion, ct);
         await _unitOfWork.SaveChangesAsync(ct);
-        await _auditService.LogAsync("Deactivate", "Promotion", promotionId.ToString(), null, null, ct);
     }
 
     private async Task EnsureBusinessBelongsToTenantAsync(Guid tenantId, Guid businessId, CancellationToken ct)

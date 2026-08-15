@@ -1,4 +1,4 @@
-# Pruebas Unitarias - Mimos Baby Spa
+# Pruebas Unitarias - Auraly
 
 Este proyecto contiene las pruebas unitarias para validar el flujo mínimo del sistema de chatbot de WhatsApp.
 

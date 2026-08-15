@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
-  ArchiveRestore, Barcode, CircleDollarSign, PackagePlus, Plus, Save,
+  ArchiveRestore, ArrowRight, Barcode, CircleDollarSign, PackagePlus, Pencil, Plus, Save,
   Search, Trash2, Truck, Warehouse,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -41,6 +41,10 @@ import { formatCurrency, formatDateTime } from "@/lib/utils";
 import {
   calculateBaseQuantity, calculateGoodsReceiptLine, calculateGoodsReceiptTotals, nextGoodsReceiptQuantityIndex,
 } from "@/lib/goods-receipt-calculator";
+
+type ReceiptEditorStep = "details" | "products";
+
+type PendingSupplierChange = { supplierId: string; supplierName: string };
 
 type EditorDraft = {
   draftId: string; warehouseId: string; supplierId: string;
@@ -177,7 +181,7 @@ export default function GoodsReceiptsPage() {
       onPaginationChange={(next, size) => { setPage(next); setPageSize(size); }}
       onRowClick={openEntry} enableRowSelection={false} />
 
-    <ReceiptEditor open={!!editor} draft={editor} businessId={businessId}
+    <ReceiptEditor key={editor?.draftId ?? "closed"} open={!!editor} draft={editor} businessId={businessId}
       canConfirm={canConfirm} canAssociateProducts={canAssociateProducts} onChange={setEditor}
       onClose={() => setEditor(undefined)} />
     <ReceiptDetailDialog detail={detail} onClose={() => setDetail(undefined)} />
@@ -291,6 +295,8 @@ function ReceiptEditor({
   const [supplierProductCode, setSupplierProductCode] = useState("");
   const [purchasePresentationName, setPurchasePresentationName] = useState("Unidad");
   const [unitsPerPresentation, setUnitsPerPresentation] = useState(1);
+  const [step, setStep] = useState<ReceiptEditorStep>(() => draft?.lines.length ? "products" : "details");
+  const [pendingSupplierChange, setPendingSupplierChange] = useState<PendingSupplierChange>();
   const products = useGoodsReceiptProducts(
     draft?.supplierId || undefined, productSearch, includeUnassociated,
   );
@@ -322,6 +328,25 @@ function ReceiptEditor({
   const totals = calculateGoodsReceiptTotals(draft.lines);
 
   const change = (values: Partial<EditorDraft>) => onChange({ ...draft, ...values });
+  const supplierName = options.data?.suppliers.find((item) => item.supplierId === draft.supplierId)?.name ?? "Sin proveedor";
+  const warehouseName = options.data?.warehouses.find((item) => item.warehouseId === draft.warehouseId)?.name ?? "Sin bodega";
+
+  const applySupplierChange = (supplierId: string) => {
+    change({ supplierId, lines: [] });
+    setPendingSupplierChange(undefined);
+    setIncludeUnassociated(false);
+    setProductSearch("");
+  };
+
+  const requestSupplierChange = (supplierId: string) => {
+    if (supplierId === draft.supplierId) return;
+    if (draft.lines.length === 0) {
+      applySupplierChange(supplierId);
+      return;
+    }
+    const supplierName = options.data?.suppliers.find((item) => item.supplierId === supplierId)?.name ?? "el nuevo proveedor";
+    setPendingSupplierChange({ supplierId, supplierName });
+  };
   const request = (): SaveGoodsReceiptDraftRequest => ({
     draftId: draft.draftId, businessId,
     warehouseId: draft.warehouseId || null, supplierId: draft.supplierId || null,
@@ -346,6 +371,17 @@ function ReceiptEditor({
       toast.error("No fue posible guardar. El borrador pudo cambiar en otra sesión.");
       return null;
     }
+  };
+
+  const continueToProducts = async () => {
+    if (!draft.supplierId || !draft.warehouseId) {
+      toast.error("Selecciona el proveedor y la bodega antes de continuar.");
+      return;
+    }
+    const saved = await persist(false);
+    if (!saved) return;
+    setStep("products");
+    requestAnimationFrame(() => scanRef.current?.focus());
   };
 
   const addProduct = (product: GoodsReceiptProduct) => {
@@ -517,13 +553,10 @@ function ReceiptEditor({
       </DialogHeader>
 
       <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+        {step === "details" ? <>
         <section className="grid gap-4 rounded-2xl border bg-muted/20 p-4 md:grid-cols-4">
           <Field label="Proveedor">
-            <Select value={draft.supplierId} onValueChange={(value) => {
-              change({ supplierId: value, lines: [] });
-              setIncludeUnassociated(false);
-              setProductSearch("");
-            }}>
+            <Select value={draft.supplierId} onValueChange={requestSupplierChange}>
               <SelectTrigger><SelectValue placeholder="Seleccionar proveedor" /></SelectTrigger>
               <SelectContent>{options.data?.suppliers.map((item) =>
                 <SelectItem key={item.supplierId} value={item.supplierId}>
@@ -571,6 +604,23 @@ function ReceiptEditor({
             <Input value={draft.notes} onChange={(event) => change({ notes: event.target.value })}
               placeholder="Recepción, estado o referencia" maxLength={1000} />
           </Field>
+        </section>
+        </> : <>
+        <section className="rounded-2xl border bg-muted/20 p-4" data-testid="goods-receipt-readonly-details">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Datos de la recepción</p>
+              <div className="mt-2 flex flex-wrap gap-x-6 gap-y-2 text-sm">
+                <span><strong>Proveedor:</strong> {supplierName}</span>
+                <span><strong>Bodega:</strong> {warehouseName}</span>
+                <span><strong>Factura:</strong> {draft.supplierInvoiceNumber || "Sin número"}</span>
+                <span><strong>Condición:</strong> {draft.createsPayable ? "Crédito" : "Contado"}</span>
+              </div>
+            </div>
+            <Button type="button" variant="outline" size="sm" onClick={() => setStep("details")}>
+              <Pencil className="mr-2 h-4 w-4" /> Editar datos
+            </Button>
+          </div>
         </section>
 
         <section className="rounded-2xl border">
@@ -718,7 +768,7 @@ function ReceiptEditor({
             <Amount label="Total recibido" value={totals.total} strong />
           </dl>
         </section>
-      </div>
+
         <section className="grid gap-3 rounded-2xl border p-4 md:grid-cols-2">
               <Field label="Concepto de retención">
             <Input value={draft.withholdingConceptCode} onChange={(event) => change({ withholdingConceptCode: event.target.value })} placeholder="Ej. MERCANCIA (opcional)" />
@@ -728,6 +778,27 @@ function ReceiptEditor({
           </Field>
               <p className="text-xs text-muted-foreground md:col-span-2">Al confirmar, el motor tributario aplica las reglas vigentes del proveedor y congela el cálculo en el documento.</p>
         </section>
+        </>}
+      </div>
+
+      <Dialog open={!!pendingSupplierChange} onOpenChange={(value) => !value && setPendingSupplierChange(undefined)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Cambiar proveedor</DialogTitle>
+            <DialogDescription>
+              Esta recepción ya tiene {draft.lines.length} {draft.lines.length === 1 ? "producto agregado" : "productos agregados"}.
+              Al cambiar a {pendingSupplierChange?.supplierName}, limpiaremos esas líneas para evitar mezclar productos, costos o códigos de proveedores distintos.
+            </DialogDescription>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">Los demás datos de la recepción se conservarán.</p>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setPendingSupplierChange(undefined)}>Conservar proveedor actual</Button>
+            <Button type="button" variant="destructive" onClick={() => pendingSupplierChange && applySupplierChange(pendingSupplierChange.supplierId)}>
+              Cambiar y limpiar productos
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!pendingAssociation} onOpenChange={(value) => {
         if (!value) { setPendingAssociation(undefined); setSupplierProductCode(""); setPurchasePresentationName("Unidad"); setUnitsPerPresentation(1); }
@@ -772,14 +843,18 @@ function ReceiptEditor({
         <Button type="button" variant="ghost" className="text-destructive" onClick={deleteDraft}>
           <Trash2 className="mr-2 h-4 w-4" /> Eliminar borrador
         </Button>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           <Button type="button" variant="outline" onClick={onClose}>Cerrar</Button>
           <Button type="button" variant="secondary" disabled={save.isPending} onClick={() => persist()}>
             <Save className="mr-2 h-4 w-4" /> Guardar borrador
           </Button>
-          {canConfirm && <Button type="button" disabled={confirm.isPending} onClick={confirmEntry}>
-            <ArchiveRestore className="mr-2 h-4 w-4" /> Confirmar entrada
-          </Button>}
+          {step === "details" ?
+            <Button type="button" disabled={save.isPending} onClick={continueToProducts} data-testid="goods-receipt-continue">
+              Continuar a productos <ArrowRight className="ml-2 h-4 w-4" />
+            </Button> :
+            canConfirm && <Button type="button" disabled={confirm.isPending} onClick={confirmEntry}>
+              <ArchiveRestore className="mr-2 h-4 w-4" /> Confirmar entrada
+            </Button>}
         </div>
       </DialogFooter>
     </DialogContent>

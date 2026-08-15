@@ -1,4 +1,4 @@
-# Mimos Baby Spa - Aplicación de Consola
+# Auraly - Aplicación de Consola
 
 Aplicación de consola para interactuar con la IA como si los mensajes llegaran de WhatsApp. Esta aplicación utiliza los mismos servicios que la API de Azure Functions, permitiendo probar y desarrollar la lógica de negocio sin necesidad de configurar WhatsApp.
 

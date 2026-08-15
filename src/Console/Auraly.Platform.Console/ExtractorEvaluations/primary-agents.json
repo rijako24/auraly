@@ -2,7 +2,7 @@
     "repetitions":  3,
     "cases":  [
                   {
-                      "id":  "mimos_future_service_age",
+                      "id":  "baby_spa_future_service_age",
                       "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedAgenticConfiguration.sql",
                       "stage":  "discovery",
                       "message":  "Mi bebé tiene 2 meses y en dos días cumple 3; quiero llevarlo por su cumplemes de 3 meses.",
@@ -116,7 +116,7 @@
                                                   ]
                   },
                   {
-                      "id":  "mimos_unclear_age_is_not_invented",
+                      "id":  "baby_spa_unclear_age_is_not_invented",
                       "seed":  "../../../../database/Auraly.Database/Scripts/Seeds/SeedAgenticConfiguration.sql",
                       "stage":  "discovery",
                       "message":  "Quiero llevar a mi bebé por su cumplemes, pero todavía no sé si será este mes o el próximo.",

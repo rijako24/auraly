@@ -12,18 +12,15 @@ namespace Auraly.Platform.Application.Identity.Services;
 public class LeadAdminService : ILeadAdminService
 {
     private readonly IUnitOfWork _unitOfWork;
-    private readonly IAuditService _auditService;
     private readonly ICorrelationIdProvider _correlationIdProvider;
     private readonly ILogger<LeadAdminService> _logger;
 
     public LeadAdminService(
         IUnitOfWork unitOfWork,
-        IAuditService auditService,
         ICorrelationIdProvider correlationIdProvider,
         ILogger<LeadAdminService> logger)
     {
         _unitOfWork = unitOfWork;
-        _auditService = auditService;
         _correlationIdProvider = correlationIdProvider;
         _logger = logger;
     }
@@ -79,8 +76,6 @@ public class LeadAdminService : ILeadAdminService
 
         await _unitOfWork.Leads.CreateAsync(lead);
         await _unitOfWork.SaveChangesAsync(ct);
-
-        await _auditService.LogAsync("Create", "Lead", lead.LeadId.ToString(), null, lead, ct);
         _logger.LogInformation("Lead created for business {BusinessId}, UserNumber {UserNumber} [CorrelationId: {CorrelationId}]",
             request.BusinessId, request.UserNumber, _correlationIdProvider.CorrelationId);
 
@@ -101,8 +96,6 @@ public class LeadAdminService : ILeadAdminService
 
         await _unitOfWork.Leads.UpdateAsync(lead);
         await _unitOfWork.SaveChangesAsync(ct);
-
-        await _auditService.LogAsync("Update", "Lead", leadId.ToString(), oldState, MapToDto(lead), ct);
         return MapToDto(lead);
     }
 

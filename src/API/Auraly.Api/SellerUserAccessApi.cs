@@ -128,7 +128,7 @@ public sealed class SellerUserAccessService(
                   THROW 51910,'El tercero no es un vendedor activo de este negocio.',1;
                 IF EXISTS(SELECT 1 FROM dbo.AppUsers WHERE PartyId=@PartyId)
                   THROW 51911,'El vendedor ya tiene una cuenta de acceso.',1;
-                IF EXISTS(SELECT 1 FROM dbo.AppUsers WHERE NormalizedUsername=@NormalizedUsername OR NormalizedEmail=@NormalizedEmail)
+                IF EXISTS(SELECT 1 FROM dbo.AppUsers WHERE TenantId=@TenantId AND (NormalizedUsername=@NormalizedUsername OR NormalizedEmail=@NormalizedEmail))
                   THROW 51912,'El usuario o el correo ya están registrados.',1;
 
                 INSERT dbo.AppUsers

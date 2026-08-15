@@ -1,5 +1,5 @@
 -- Crea la tabla PaymentTransactions para auditoría e idempotencia del webhook Wompi.
--- Ejecutar con: sqlcmd -S .\LOCAL -d talkioai -U admin -P masterkey -i CreatePaymentTransactionsTable.sql
+-- Ejecutar con: sqlcmd -S .\LOCAL -d auraly -U admin -P masterkey -i CreatePaymentTransactionsTable.sql
 
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'PaymentTransactions')
 BEGIN

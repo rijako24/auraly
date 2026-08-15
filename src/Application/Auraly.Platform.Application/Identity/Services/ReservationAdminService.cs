@@ -13,18 +13,15 @@ namespace Auraly.Platform.Application.Identity.Services;
 public class ReservationAdminService : IReservationAdminService
 {
     private readonly IUnitOfWork _unitOfWork;
-    private readonly IAuditService _auditService;
     private readonly ICorrelationIdProvider _correlationIdProvider;
     private readonly ILogger<ReservationAdminService> _logger;
 
     public ReservationAdminService(
         IUnitOfWork unitOfWork,
-        IAuditService auditService,
         ICorrelationIdProvider correlationIdProvider,
         ILogger<ReservationAdminService> logger)
     {
         _unitOfWork = unitOfWork;
-        _auditService = auditService;
         _correlationIdProvider = correlationIdProvider;
         _logger = logger;
     }
@@ -104,8 +101,6 @@ public class ReservationAdminService : IReservationAdminService
 
         await _unitOfWork.Reservations.CreateAsync(reservation);
         await _unitOfWork.SaveChangesAsync(ct);
-
-        await _auditService.LogAsync("Create", "Reservation", reservation.ReservationId.ToString(), null, reservation, ct);
         _logger.LogInformation("Reservation created for business {BusinessId} at {DateTime} [CorrelationId: {CorrelationId}]",
             request.BusinessId, request.ReservationDateTime, _correlationIdProvider.CorrelationId);
 
@@ -165,8 +160,6 @@ public class ReservationAdminService : IReservationAdminService
         reservation.UpdatedAt = DateTime.UtcNow;
         await _unitOfWork.Reservations.UpdateAsync(reservation);
         await _unitOfWork.SaveChangesAsync(ct);
-
-        await _auditService.LogAsync("Update", "Reservation", reservationId.ToString(), oldState, MapToDto(reservation), ct);
         return MapToDto(reservation);
     }
 
@@ -183,8 +176,6 @@ public class ReservationAdminService : IReservationAdminService
         reservation.UpdatedAt = DateTime.UtcNow;
         await _unitOfWork.Reservations.UpdateAsync(reservation);
         await _unitOfWork.SaveChangesAsync(ct);
-
-        await _auditService.LogAsync("Cancel", "Reservation", reservationId.ToString(), null, null, ct);
     }
 
     private async Task EnsureBusinessBelongsToTenantAsync(Guid tenantId, Guid businessId, CancellationToken ct)

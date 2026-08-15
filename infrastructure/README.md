@@ -1,4 +1,4 @@
-# Infraestructura Azure - Mimos Baby Spa
+# Infraestructura Azure - Auraly
 
 Este directorio contiene scripts para desplegar toda la infraestructura necesaria en Azure.
 
@@ -114,10 +114,10 @@ Todas las configuraciones sensibles se almacenan como Application Settings en la
 
 El script sigue estas convenciones de nombres:
 
-- **Storage Account**: `mimosbabyspa{env}stg{unique}`
-- **SQL Server**: `mimosbabyspa-sql-{env}-{unique}`
-- **Function App**: `mimosbabyspa-func-{env}-{unique}`
-- **OpenAI**: `mimosbabyspa-openai-{env}-{unique}`
+- **Storage Account**: `auraly{env}stg{unique}`
+- **SQL Server**: `auraly-sql-{env}-{unique}`
+- **Function App**: `auraly-func-{env}-{unique}`
+- **OpenAI**: `auraly-openai-{env}-{unique}`
 
 Donde:
 - `{env}` = dev, staging, o prod
@@ -167,7 +167,7 @@ La contraseña debe cumplir:
 2. **Publicar Function App:**
    ```powershell
    cd ..\..\src\API\Auraly.Platform.Worker
-   func azure functionapp publish mimosbabyspa-func-dev-xxxxx
+   func azure functionapp publish auraly-func-dev-xxxxx
    ```
 
 3. **Configurar WhatsApp Cloud API (Recomendado):**
@@ -175,7 +175,7 @@ La contraseña debe cumplir:
    .\Setup-WhatsAppCloud.ps1 `
        -AppId "tu-app-id" `
        -AppSecret (ConvertTo-SecureString "tu-app-secret" -AsPlainText -Force) `
-       -FunctionAppName "mimosbabyspa-func-dev-xxxxx" `
+       -FunctionAppName "auraly-func-dev-xxxxx" `
        -ResourceGroupName "Auraly-RG" `
        -VerifyToken "mi-token-secreto"
    ```
@@ -186,12 +186,12 @@ La contraseña debe cumplir:
    ```powershell
    # Obtener Function Key
    az functionapp function keys list `
-       --name mimosbabyspa-func-dev-xxxxx `
+       --name auraly-func-dev-xxxxx `
        --resource-group Auraly-RG `
        --function-name WhatsAppWebhook
    
    # Configurar en Meta for Developers:
-   # URL: https://mimosbabyspa-func-dev-xxxxx.azurewebsites.net/api/WhatsAppWebhook?code=TU_FUNCTION_KEY
+   # URL: https://auraly-func-dev-xxxxx.azurewebsites.net/api/WhatsAppWebhook?code=TU_FUNCTION_KEY
    # Verify Token: (configura uno personalizado)
    ```
 
@@ -210,7 +210,7 @@ Get-AzResource -ResourceGroupName "Auraly-RG" | Format-Table Name, ResourceType,
 
 # Verificar configuración de Function App
 az functionapp config appsettings list `
-    --name mimosbabyspa-func-dev-xxxxx `
+    --name auraly-func-dev-xxxxx `
     --resource-group Auraly-RG
 
 # Probar conexión a SQL
