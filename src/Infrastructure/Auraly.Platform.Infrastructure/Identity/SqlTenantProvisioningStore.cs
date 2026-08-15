@@ -248,7 +248,7 @@ public sealed class SqlTenantProvisioningStore(
                     THROW 51033,'La invitación expiró.',1;
                 END;
                 IF EXISTS(SELECT 1 FROM dbo.AppUsers WITH(UPDLOCK,HOLDLOCK)
-                          WHERE NormalizedEmail=@NormalizedEmail OR NormalizedUsername=@NormalizedEmail)
+                          WHERE TenantId=@TenantId AND (NormalizedEmail=@NormalizedEmail OR NormalizedUsername=@NormalizedEmail))
                     THROW 51034,'Ya existe un usuario con este correo.',1;
                 IF EXISTS(SELECT 1 FROM dbo.Parties WITH(UPDLOCK,HOLDLOCK)
                           WHERE TenantId=@TenantId AND IdentificationCountryId=@CountryId

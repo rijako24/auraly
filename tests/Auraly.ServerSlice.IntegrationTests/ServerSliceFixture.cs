@@ -697,7 +697,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         var deniedCredential = PosDeviceCredentialHasher.Create(DeniedDeviceSecret);
         const string sql = """
             INSERT INTO dbo.Tenants (TenantId, TenantKey, Name, Email, IsActive, MaximumUsers, MaximumEnrolledDevices, CreatedAt)
-            VALUES (@TenantId, N'@auraly-e2e', N'Auraly E2E', @TenantEmail, 1, 20, 4, SYSUTCDATETIME());
+            VALUES (@TenantId, N'@auraly-e2e', N'Auraly E2E', @TenantEmail, 1, 512, 4, SYSUTCDATETIME());
 
             INSERT INTO dbo.Businesses
             (BusinessId, TenantId, Name, Description, Address, Phone, Email, Website, IsActive, CreatedAt)

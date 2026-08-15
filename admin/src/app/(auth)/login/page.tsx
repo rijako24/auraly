@@ -3,30 +3,36 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import {
+  AlertCircle,
+  ArrowRight,
+  Building2,
+  CheckCircle2,
+  Eye,
+  EyeOff,
+  Lock,
+  ShieldCheck,
+  User,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Building2, User, Lock, Eye, EyeOff, AlertCircle } from "lucide-react";
 import { authApi } from "@/services/api/auth";
-import { useAuthStore } from "@/stores/auth-store";
 import { readEdgeTokenFromLaunch } from "@/services/pos/pos-edge-client";
+import { useAuthStore } from "@/stores/auth-store";
 import type { ApiError } from "@/types/api";
+
+const fieldClassName =
+  "h-12 rounded-xl border-[#cddbd9] bg-white pl-11 pr-4 text-[#102a2f] shadow-[0_1px_2px_rgba(7,22,26,.03)] placeholder:text-[#8ba19f] hover:border-[#9ebfbb] focus-visible:border-[#2a7a82] focus-visible:ring-4 focus-visible:ring-[#69d9d0]/15 disabled:bg-[#f1f6f5] disabled:text-[#31555a] disabled:opacity-100 [--autofill-background:#fff] [--autofill-foreground:#102a2f]";
 
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const setAuth = useAuthStore((s) => s.setAuth);
-  const [username, setUsername] = useState("");
+  const setAuth = useAuthStore((state) => state.setAuth);
   const tenantFromUrl = searchParams.get("tenant")?.trim() ?? "";
   const [tenantKey, setTenantKey] = useState(tenantFromUrl);
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -38,8 +44,8 @@ function LoginForm() {
     readEdgeTokenFromLaunch();
   }, []);
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     setError(null);
     setIsLoading(true);
 
@@ -51,7 +57,7 @@ function LoginForm() {
     } catch (err) {
       const apiError = err as ApiError;
       setError(
-        apiError?.message || "Error al iniciar sesión. Verifica tus credenciales."
+        apiError?.message || "Error al iniciar sesión. Verifica tus credenciales.",
       );
     } finally {
       setIsLoading(false);
@@ -59,136 +65,166 @@ function LoginForm() {
   };
 
   return (
-    <Card className="border-0 bg-transparent text-[#151515] shadow-none">
-      <CardHeader className="px-0">
-        <CardTitle className="text-2xl text-[#151515]">Bienvenido de vuelta</CardTitle>
-        <CardDescription className="text-[#667085]">
-          Ingresa tus credenciales para acceder
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="px-0">
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {error && (
-            <div className="flex items-center gap-2 rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-              <AlertCircle className="h-4 w-4 shrink-0" />
-              <span>{error}</span>
-            </div>
-          )}
-          <div className="space-y-2">
-            <Label htmlFor="tenantKey" className="text-[#151515]">Empresa</Label>
-            <div className="relative">
-              <Building2 className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#667085]" />
-              <Input
-                id="tenantKey"
-                type="text"
-                placeholder="@mimos"
-                className="border-[#101828] bg-white pl-10 text-[#151515] placeholder:text-[#667085]"
-                value={tenantKey}
-                onChange={(event) => setTenantKey(event.target.value)}
-                required
-                autoComplete="organization"
-                disabled={!isHydrated || isLoading || Boolean(tenantFromUrl)}
-                aria-describedby="tenant-key-help"
-              />
-            </div>
-            <p id="tenant-key-help" className="text-xs text-[#667085]">
-              {tenantFromUrl
-                ? "Este enlace ya identifica tu empresa."
-                : "Usa la clave que aparece en el enlace de acceso de tu empresa."}
-            </p>
+    <div className="rounded-[1.75rem] border border-white/70 bg-white px-5 py-7 text-[#102a2f] shadow-[0_24px_80px_rgba(3,16,19,.28)] sm:px-8 sm:py-9 lg:border-[#dce9e7] lg:shadow-[0_22px_65px_rgba(15,44,51,.11)]">
+      <div className="mb-7">
+        <div className="mb-5 flex items-center justify-between gap-4">
+          <span className="inline-flex items-center gap-2 rounded-full bg-[#e9f8f5] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#176a65]">
+            <ShieldCheck className="h-3.5 w-3.5" />
+            Acceso seguro
+          </span>
+          <span className="text-xs text-[#77918f]">Auraly Cloud</span>
+        </div>
+        <h2 className="text-3xl font-semibold tracking-[-0.035em] text-[#07161a]">
+          Bienvenido de vuelta
+        </h2>
+        <p className="mt-2 text-sm leading-6 text-[#667f7d]">
+          Ingresa a tu espacio de trabajo empresarial.
+        </p>
+      </div>
+
+      <form onSubmit={handleSubmit} className="space-y-5">
+        {error && (
+          <div
+            role="alert"
+            className="flex items-start gap-2.5 rounded-xl border border-[#d86c6c]/25 bg-[#d86c6c]/[0.08] p-3.5 text-sm text-[#a63f3f]"
+          >
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{error}</span>
           </div>
+        )}
 
-
-          <div className="space-y-2">
-            <Label htmlFor="username" className="text-[#151515]">Usuario</Label>
-            <div className="relative">
-              <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#667085]" />
-              <Input
-                id="username"
-                type="text"
-                placeholder="tu_usuario"
-                className="border-[#101828] bg-white pl-10 text-[#151515] placeholder:text-[#667085] [--autofill-background:#fff] [--autofill-foreground:#151515]"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                required
-                autoComplete="username"
-                disabled={!isHydrated || isLoading}
-              />
-            </div>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <Label htmlFor="tenantKey" className="font-medium text-[#17383c]">
+              Empresa
+            </Label>
+            {tenantFromUrl && (
+              <span className="flex items-center gap-1.5 text-xs font-medium text-[#17836f]">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Empresa identificada
+              </span>
+            )}
           </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="password">Contraseña</Label>
-            <div className="relative">
-              <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#667085]" />
-              <Input
-                id="password"
-                type={showPassword ? "text" : "password"}
-                placeholder="••••••••"
-                className="border-[#101828] bg-white pl-10 pr-10 text-[#151515] placeholder:text-[#667085] [--autofill-background:#fff] [--autofill-foreground:#151515]"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                autoComplete="current-password"
-                disabled={!isHydrated || isLoading}
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#667085] hover:text-[#151515]"
-              >
-                {showPassword ? (
-                  <EyeOff className="h-4 w-4" />
-                ) : (
-                  <Eye className="h-4 w-4" />
-                )}
-              </button>
-            </div>
+          <div className="relative">
+            <Building2 className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#668c89]" />
+            <Input
+              id="tenantKey"
+              type="text"
+              placeholder="@auraly"
+              className={fieldClassName}
+              value={tenantKey}
+              onChange={(event) => setTenantKey(event.target.value)}
+              required
+              autoCapitalize="none"
+              autoComplete="organization"
+              spellCheck={false}
+              disabled={!isHydrated || isLoading || Boolean(tenantFromUrl)}
+              aria-describedby="tenant-key-help"
+            />
           </div>
+          <p id="tenant-key-help" className="text-xs leading-5 text-[#718986]">
+            {tenantFromUrl
+              ? "Este enlace ya está conectado con tu empresa."
+              : "Escribe la clave incluida en el enlace de acceso de tu empresa."}
+          </p>
+        </div>
 
+        <div className="space-y-2">
+          <Label htmlFor="username" className="font-medium text-[#17383c]">
+            Usuario
+          </Label>
+          <div className="relative">
+            <User className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#668c89]" />
+            <Input
+              id="username"
+              type="text"
+              placeholder="tu_usuario"
+              className={fieldClassName}
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              required
+              autoComplete="username"
+              disabled={!isHydrated || isLoading}
+            />
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="password" className="font-medium text-[#17383c]">
+            Contraseña
+          </Label>
+          <div className="relative">
+            <Lock className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#668c89]" />
+            <Input
+              id="password"
+              type={showPassword ? "text" : "password"}
+              placeholder="••••••••"
+              className={`${fieldClassName} pr-12`}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              required
+              autoComplete="current-password"
+              disabled={!isHydrated || isLoading}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((current) => !current)}
+              className="absolute right-2.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-[#668c89] transition-colors hover:bg-[#e9f4f2] hover:text-[#17383c] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2a7a82]"
+              aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+            >
+              {showPassword ? (
+                <EyeOff className="h-4 w-4" />
+              ) : (
+                <Eye className="h-4 w-4" />
+              )}
+            </button>
+          </div>
           <div className="flex justify-end">
             <Link
               href="/forgot-password"
-              className="text-sm text-[#1A5860] hover:underline"
+              className="text-xs font-semibold text-[#176f6a] underline-offset-4 hover:underline"
             >
               ¿Olvidaste tu contraseña?
             </Link>
           </div>
+        </div>
 
-          <Button type="submit" className="w-full bg-[#151515] text-white hover:bg-black" disabled={!isHydrated || isLoading}>
-            {isLoading ? "Iniciando sesión..." : "Iniciar sesión"}
-          </Button>
-        </form>
+        <Button
+          type="submit"
+          className="group h-12 w-full rounded-xl bg-gradient-to-r from-[#0f5f5b] via-[#147a73] to-[#23988d] text-sm font-semibold text-white shadow-[0_10px_24px_rgba(20,122,115,.25)] transition-all hover:-translate-y-0.5 hover:from-[#0d5652] hover:to-[#1d897f] hover:shadow-[0_14px_30px_rgba(20,122,115,.3)]"
+          disabled={!isHydrated || isLoading}
+        >
+          {isLoading ? "Iniciando sesión..." : "Iniciar sesión"}
+          {!isLoading && (
+            <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+          )}
+        </Button>
+      </form>
 
-        <p className="mt-6 text-center text-sm text-[#667085]">
-          ¿No tienes cuenta?{" "}
-          <Link
-            href="/register"
-            className="font-medium text-[#1A5860] hover:underline"
-          >
-            Regístrate
-          </Link>
-        </p>
-      </CardContent>
-    </Card>
+      <p className="mt-7 text-center text-sm text-[#718986]">
+        ¿Aún no tienes cuenta?{" "}
+        <Link
+          href="/register"
+          className="font-semibold text-[#176f6a] underline-offset-4 hover:underline"
+        >
+          Crea tu empresa
+        </Link>
+      </p>
+    </div>
+  );
+}
+
+function LoginSkeleton() {
+  return (
+    <div className="rounded-[1.75rem] border border-white/70 bg-white p-8 shadow-[0_24px_80px_rgba(3,16,19,.28)] lg:border-[#dce9e7] lg:shadow-[0_22px_65px_rgba(15,44,51,.11)]">
+      <div className="h-[420px] animate-pulse rounded-2xl bg-[#eef5f4]" />
+    </div>
   );
 }
 
 export default function LoginPage() {
   return (
-    <Suspense
-      fallback={
-        <Card className="border-0 shadow-none bg-transparent">
-          <CardHeader>
-            <CardTitle className="text-2xl">Bienvenido de vuelta</CardTitle>
-            <CardDescription>Ingresa tus credenciales para acceder</CardDescription>
-          </CardHeader>
-          <CardContent className="px-0">
-            <div className="h-64 animate-pulse bg-muted/30 rounded" />
-          </CardContent>
-        </Card>
-      }
-    >
+    <Suspense fallback={<LoginSkeleton />}>
       <LoginForm />
     </Suspense>
   );
