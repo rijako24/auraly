@@ -155,7 +155,17 @@ builder.Services.AddScoped<WithholdingService>();
 builder.Services.AddSingleton<AccountingProcessingCoordinator>();
 builder.Services.AddSingleton<FiscalProcessingCoordinator>();
 builder.Services.AddScoped<ReceivePosSaleService>();
-if (!builder.Environment.IsEnvironment("Testing"))
+if (builder.Environment.IsEnvironment("Testing"))
+{
+    builder.Services.AddSingleton<InProcessTestingProcessingTransport>();
+    builder.Services.AddSingleton<IDocumentProcessingSignalPublisher>(provider =>
+        provider.GetRequiredService<InProcessTestingProcessingTransport>());
+    builder.Services.AddSingleton<IFiscalProcessingSignalPublisher>(provider =>
+        provider.GetRequiredService<InProcessTestingProcessingTransport>());
+    builder.Services.AddSingleton<IAccountingProcessingSignalPublisher>(provider =>
+        provider.GetRequiredService<InProcessTestingProcessingTransport>());
+}
+else
 {
     var processingTransport = builder.Configuration[
         "Auraly:Processing:Transport"] ?? "ServiceBus";
