@@ -23,6 +23,28 @@ public sealed class SqlSalesReturnStore(
         CancellationToken cancellationToken)
     {
         var requestHash = SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(request));
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await AcceptAttemptAsync(
+                    user, idempotencyKey, request, requestHash, cancellationToken);
+            }
+            catch (SqlException exception) when (exception.Number == 1205 && attempt < 4)
+            {
+                await Task.Delay(
+                    TimeSpan.FromMilliseconds(25 * attempt), timeProvider, cancellationToken);
+            }
+        }
+    }
+
+    private async Task<SalesReturnAcceptance> AcceptAttemptAsync(
+        SalesReturnUserIdentity user,
+        string idempotencyKey,
+        ConfirmSalesReturnRequest request,
+        byte[] requestHash,
+        CancellationToken cancellationToken)
+    {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
@@ -109,6 +131,14 @@ public sealed class SqlSalesReturnStore(
         catch (SalesReturnConflictException)
         {
             await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+        catch (SqlException exception) when (exception.Number == 1205)
+        {
+            if (transaction.Connection is not null)
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+            }
             throw;
         }
         catch (SqlException exception) when (exception.Number is 2601 or 2627)
