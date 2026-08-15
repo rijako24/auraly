@@ -143,7 +143,7 @@ test.describe.serial("regresión comercial desde navegador", () => {
     await page.waitForTimeout(1_500);
     await page.reload();
     await page.getByRole("tab", { name: "Historial" }).click();
-    await expect(page.getByText("Processed", { exact: true }).first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("Procesado", { exact: true }).first()).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText("Conteo físico programado", { exact: true }).first()).toBeVisible();
   });
 });
