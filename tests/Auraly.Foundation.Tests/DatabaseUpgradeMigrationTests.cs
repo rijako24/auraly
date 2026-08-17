@@ -18,6 +18,21 @@ public sealed class DatabaseUpgradeMigrationTests
         Assert.Contains("d.FiscalStatus IS NOT NULL", migration, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Canonical_platform_tenant_migration_preserves_key_uniqueness()
+    {
+        var migration = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "database",
+            "Auraly.Database",
+            "Scripts",
+            "Migrations",
+            "20260817_NormalizeAuralyPlatformTenantKey.sql"));
+
+        Assert.Contains("TenantKey = N'@auraly'", migration, StringComparison.Ordinal);
+        Assert.Contains("TenantId <> @AuralyTenantId", migration, StringComparison.Ordinal);
+        Assert.Contains("UPDATE dbo.Tenants", migration, StringComparison.Ordinal);
+    }
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
