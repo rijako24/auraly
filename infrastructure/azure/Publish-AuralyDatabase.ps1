@@ -11,6 +11,7 @@ param(
     [Parameter(Mandatory)][string]$ManagedIdentityName,
     [Parameter(Mandatory)][guid]$ManagedIdentityClientId,
     [Parameter(Mandatory)][string]$DacpacPath,
+    [string]$BootstrapAdminPasswordHash,
     [string]$SqlPackagePath = "$env:USERPROFILE\.dotnet\tools\sqlpackage.exe"
 )
 
@@ -57,6 +58,7 @@ try {
         '/p:BlockOnPossibleDataLoss=True'
         '/p:DropObjectsNotInSource=False'
         '/p:ScriptDatabaseOptions=True'
+        "/v:BootstrapAdminPasswordHash=$BootstrapAdminPasswordHash"
     )
     & $SqlPackagePath $publishArguments
     if ($LASTEXITCODE) {
