@@ -231,6 +231,7 @@ try {
                 location = $Location
                 releaseVersion = $ReleaseVersion
                 posInstallerSha256 = $PosInstallerSha256
+                deployStaticAdminSettings = $Mode -ne 'WhatIf'
                 sqlAdministratorLogin = $SqlAdministratorLogin
                 sqlAdministratorPassword = $SqlAdministratorPassword
                 sqlEntraAdministratorLogin = $SqlEntraAdministratorLogin
