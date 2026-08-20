@@ -29,8 +29,8 @@ public sealed class DatabaseUpgradeMigrationTests
             "Migrations",
             "20260817_NormalizeAuralyPlatformTenantKey.sql"));
 
-        Assert.Contains("TenantKey = N'@auraly'", migration, StringComparison.Ordinal);
-        Assert.Contains("TenantId <> @AuralyTenantId", migration, StringComparison.Ordinal);
+        Assert.Contains("TenantKey=N''@auraly''", migration, StringComparison.Ordinal);
+        Assert.Contains("TenantId<>@AuralyTenantId", migration, StringComparison.Ordinal);
         Assert.Contains("UPDATE dbo.Tenants", migration, StringComparison.Ordinal);
     }
     private static string FindRepositoryRoot()
