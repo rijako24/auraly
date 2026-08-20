@@ -89,6 +89,7 @@ internal sealed class FiscalSeriesCursorRow
     public long RangeStart { get; set; }
     public long NextConsecutive { get; set; }
     public long RangeEnd { get; set; }
+    public DateOnly ValidFrom { get; set; }
     public DateOnly ValidUntil { get; set; }
     public bool IsActive { get; set; }
 }

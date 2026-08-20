@@ -35,7 +35,7 @@ public sealed class SqlSalesWorkspaceDirectory(SqlServerConnectionFactory connec
                    ) THEN 1 ELSE 0 END)
             FROM dbo.Businesses b
             INNER JOIN dbo.Warehouses w
-              ON w.BusinessId=b.BusinessId AND w.IsActive=1
+              ON w.BusinessId=b.BusinessId AND w.IsActive=1 AND w.UseForSales=1
             WHERE b.TenantId=@TenantId AND b.IsActive=1
             ORDER BY b.Name,w.Code,w.WarehouseId;
             """;
@@ -65,7 +65,7 @@ public sealed class SqlSalesWorkspaceDirectory(SqlServerConnectionFactory connec
                    w.AllowNegativeStockSales
             FROM dbo.Businesses b
             INNER JOIN dbo.Warehouses w
-              ON w.BusinessId=b.BusinessId AND w.IsActive=1
+              ON w.BusinessId=b.BusinessId AND w.IsActive=1 AND w.UseForSales=1
             WHERE b.TenantId=@TenantId
               AND b.BusinessId=@BusinessId
               AND w.WarehouseId=@WarehouseId

@@ -49,11 +49,13 @@ public sealed record SaveWithholdingRuleRequest(
 
 public sealed record CounterpartyTaxProfileView(
     Guid BusinessId, Guid CounterpartyId,
+    bool AppliesWithholding,
     IReadOnlyList<string> Responsibilities, string? JurisdictionCode,
     DateTimeOffset UpdatedAt);
 
 public sealed record SaveCounterpartyTaxProfileRequest(
     Guid BusinessId, Guid CounterpartyId,
+    bool AppliesWithholding,
     IReadOnlyCollection<string> Responsibilities, string? JurisdictionCode);
 
 public sealed record WithholdingPreviewRequest(

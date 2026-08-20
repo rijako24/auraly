@@ -112,7 +112,8 @@ public sealed class WithholdingService(IWithholdingRuleStore store, WithholdingE
             businessId, Parse<WithholdingDirection>(request.Direction, nameof(request.Direction)),
             Parse<WithholdingRecognitionMoment>(request.Moment, nameof(request.Moment)),
             request.CounterpartyId, request.ConceptCode, jurisdictionCode,
-            request.TaxExclusiveAmount, request.VatAmount, request.OccurredAt, responsibilities,
+            request.TaxExclusiveAmount, request.VatAmount, request.OccurredAt,
+            profile?.AppliesWithholding ?? false, responsibilities,
             new HashSet<Guid>(request.PreviouslyRecognizedRuleIds ?? []));
         var rules = await store.ListAsync(tenantId, businessId, false, ct);
         return ToSnapshot(engine.Calculate(context, rules));

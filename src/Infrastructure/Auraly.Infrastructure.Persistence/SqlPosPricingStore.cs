@@ -43,7 +43,7 @@ public sealed partial class SqlCatalogStore
             SELECT c.CustomerId,
               COALESCE(p.NormalizedIdentification,p.Identification,N''),
               COALESCE(p.DisplayName,p.LegalName,p.Identification,N''),
-              s.PriceListId,s.PriceChannelId,c.IsActive
+              s.PriceListId,s.PriceChannelId,c.RequiresElectronicInvoice,c.IsActive
             FROM dbo.Customers c
             JOIN dbo.Parties p ON p.PartyId=c.PartyId AND p.TenantId=@TenantId
             LEFT JOIN dbo.CustomerPricingSettings s ON s.CustomerId=c.CustomerId
@@ -74,7 +74,7 @@ public sealed partial class SqlCatalogStore
                 reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
                 reader.IsDBNull(3) ? null : reader.GetGuid(3),
                 reader.IsDBNull(4) ? null : reader.GetGuid(4),
-                reader.GetBoolean(5)));
+                reader.GetBoolean(6), reader.GetBoolean(5)));
         return new PosPricingSnapshot(lists, channels, customers);
     }
 }

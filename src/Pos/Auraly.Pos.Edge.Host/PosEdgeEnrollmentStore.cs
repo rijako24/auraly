@@ -115,6 +115,8 @@ public sealed class PosEdgeEnrollmentStore(
             values["PosEdge:Fiscal:RangeEnd"] = fiscal.RangeEnd.ToString();
             values["PosEdge:Fiscal:ValidUntil"] =
                 fiscal.ValidUntil.ToString("yyyy-MM-dd");
+            values["PosEdge:Fiscal:ValidFrom"] =
+                (fiscal.ValidFrom ?? DateOnly.MinValue).ToString("yyyy-MM-dd");
         }
 
         foreach (var key in package.OfflineLeaseTrustedPublicKeys ??

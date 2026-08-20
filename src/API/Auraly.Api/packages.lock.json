@@ -875,6 +875,15 @@
           "Auraly.Contracts.DocumentProcessing": "[1.0.0, )"
         }
       },
+      "auraly.application.expenses": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.Application.DocumentProcessing": "[1.0.0, )",
+          "Auraly.Commerce.Taxation.Application": "[1.0.0, )",
+          "Auraly.Contracts.Expenses": "[1.0.0, )",
+          "Auraly.Domain.Expenses": "[1.0.0, )"
+        }
+      },
       "auraly.application.fiscal": {
         "type": "Project",
         "dependencies": {
@@ -1076,6 +1085,13 @@
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
         }
       },
+      "auraly.contracts.expenses": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )"
+        }
+      },
       "auraly.contracts.fiscal": {
         "type": "Project",
         "dependencies": {
@@ -1156,6 +1172,9 @@
         "dependencies": {
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
         }
+      },
+      "auraly.domain.expenses": {
+        "type": "Project"
       },
       "auraly.domain.fiscal": {
         "type": "Project",
@@ -1240,6 +1259,7 @@
           "Auraly.Application.Authorization": "[1.0.0, )",
           "Auraly.Application.Catalog": "[1.0.0, )",
           "Auraly.Application.DocumentProcessing": "[1.0.0, )",
+          "Auraly.Application.Expenses": "[1.0.0, )",
           "Auraly.Application.Fiscal": "[1.0.0, )",
           "Auraly.Application.Inventory": "[1.0.0, )",
           "Auraly.Application.Orders": "[1.0.0, )",
@@ -1260,6 +1280,7 @@
           "Auraly.Contracts.Authorization": "[1.0.0, )",
           "Auraly.Contracts.Catalog": "[1.0.0, )",
           "Auraly.Contracts.DocumentProcessing": "[1.0.0, )",
+          "Auraly.Contracts.Expenses": "[1.0.0, )",
           "Auraly.Contracts.Fiscal": "[1.0.0, )",
           "Auraly.Contracts.Inventory": "[1.0.0, )",
           "Auraly.Contracts.Orders": "[1.0.0, )",
@@ -1271,6 +1292,7 @@
           "Auraly.Contracts.Returns": "[1.0.0, )",
           "Auraly.Contracts.Sales": "[1.0.0, )",
           "Auraly.Contracts.WorkSessions": "[1.0.0, )",
+          "Auraly.Domain.Expenses": "[1.0.0, )",
           "Auraly.Domain.Inventory": "[1.0.0, )",
           "Auraly.Domain.Orders": "[1.0.0, )",
           "Auraly.Domain.Payables": "[1.0.0, )",

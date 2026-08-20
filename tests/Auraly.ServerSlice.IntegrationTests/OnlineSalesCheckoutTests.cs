@@ -244,6 +244,51 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         Assert.Equal(1, counts.GetInt32(2));
     }
 
+    [Fact]
+    public async Task Customer_configured_for_electronic_invoicing_cannot_be_completed_as_a_commercial_receipt()
+    {
+        var userId = await CreateUserAsync("required-invoice");
+        var customerId = await CreateElectronicInvoiceCustomerAsync(userId);
+        using var client = fixture.CreateUserClient(
+            userId,
+            CommercePermissionCodes.SalesCreate,
+            WorkSessionPermissionCodes.Open);
+
+        var draft = await OpenAsync(client);
+        using (var select = new HttpRequestMessage(
+                   HttpMethod.Put,
+                   $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/customer")
+               {
+                   Content = JsonContent.Create(
+                       new SelectOnlineSalesDraftCustomerRequest(customerId, draft.Version))
+               })
+        {
+            select.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+            using var selectedResponse = await client.SendAsync(select);
+            selectedResponse.EnsureSuccessStatusCode();
+            var selection = await selectedResponse.Content
+                .ReadFromJsonAsync<OnlineSalesCustomerSelection>();
+            Assert.NotNull(selection);
+            Assert.True(selection.Customer?.RequiresElectronicInvoice);
+            draft = selection.Draft;
+        }
+
+        var captured = await CaptureAsync(client, draft);
+        using var request = Mutation(
+            captured.DraftId,
+            new CompleteOnlineSalesDraftRequest(
+                captured.Version,
+                [new OnlineSalesPayment("Cash", captured.PayableAmount, null)],
+                DocumentType: PosSaleDocumentTypes.Receipt),
+            $"required-invoice-{Guid.NewGuid():N}");
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("factura electronica", await response.Content.ReadAsStringAsync(),
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, await CountCustomerDocumentsAsync(customerId));
+    }
+
 
 
     [Fact]
@@ -371,6 +416,43 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             new("@Username", $"{prefix}-{userId:N}"),
             new("@Email", $"{prefix}-{userId:N}@test.local"));
         return userId;
+    }
+
+    private async Task<Guid> CreateElectronicInvoiceCustomerAsync(Guid userId)
+    {
+        var partyId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+        await ExecuteAsync(
+            """
+            INSERT dbo.Parties(
+              PartyId,TenantId,PartyType,DisplayName,LegalName,
+              CompletionStatus,IsActive,CreatedBy,CreatedAt)
+            VALUES(
+              @PartyId,@TenantId,N'Organization',N'Cliente factura requerida',
+              N'Cliente factura requerida',N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.Customers(
+              CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,
+              IsActive,CreatedBy,CreatedAt)
+            VALUES(
+              @CustomerId,@PartyId,@BusinessId,1,1,@UserId,SYSDATETIMEOFFSET());
+            """,
+            new("@PartyId", partyId),
+            new("@CustomerId", customerId),
+            new("@TenantId", fixture.TenantId),
+            new("@BusinessId", fixture.BusinessId),
+            new("@UserId", userId));
+        return customerId;
+    }
+
+    private async Task<int> CountCustomerDocumentsAsync(Guid customerId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(
+            "SELECT COUNT(*) FROM dbo.SalesDocuments WHERE CustomerId=@CustomerId;",
+            connection);
+        command.Parameters.AddWithValue("@CustomerId", customerId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
     private async Task<OnlineSalesDraft> OpenAsync(HttpClient client)

@@ -10,6 +10,54 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class GoodsReceiptWorkspaceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Warehouse_not_enabled_for_receipts_is_hidden_and_rejected_by_the_server()
+    {
+        var warehouseId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var insert = new SqlCommand("""
+                INSERT dbo.Warehouses(
+                  WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,
+                  IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,
+                  IsActive,CreatedAt)
+                VALUES(
+                  @WarehouseId,@BusinessId,N'PED-REC',N'Pedidos internos',0,
+                  1,0,0,0,1,SYSDATETIMEOFFSET());
+                """, connection);
+            insert.Parameters.AddWithValue("@WarehouseId", warehouseId);
+            insert.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            await insert.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            using var client = fixture.CreateAdminClient(
+                PurchasingPermissionCodes.ReadGoodsReceipts,
+                PurchasingPermissionCodes.CreateGoodsReceipts);
+            var options = await client.GetFromJsonAsync<GoodsReceiptWorkspaceOptions>(
+                "/api/commerce/v1/goods-receipts/options");
+            Assert.NotNull(options);
+            Assert.DoesNotContain(options.Warehouses,
+                warehouse => warehouse.WarehouseId == warehouseId);
+
+            var request = CreateDraft() with { WarehouseId = warehouseId };
+            using var response = await client.PutAsJsonAsync(
+                $"/api/commerce/v1/goods-receipts/drafts/{request.DraftId:D}", request);
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+        finally
+        {
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var delete = new SqlCommand(
+                "DELETE dbo.Warehouses WHERE WarehouseId=@WarehouseId;", connection);
+            delete.Parameters.AddWithValue("@WarehouseId", warehouseId);
+            await delete.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Fact]
     public async Task Draft_is_durable_concurrent_and_visible_in_the_workspace()
     {
         using var client = fixture.CreateAdminClient(

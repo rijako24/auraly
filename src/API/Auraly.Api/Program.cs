@@ -21,6 +21,7 @@ using Auraly.Application.Orders;
 using Auraly.Application.WorkSessions;
 using Auraly.Application.Purchasing;
 using Auraly.Application.Payables;
+using Auraly.Application.Expenses;
 using Auraly.Application.Receivables;
 using Auraly.Application.Pricing;
 using Auraly.Application.Inventory;
@@ -98,6 +99,8 @@ builder.Services.AddSingleton<IFiscalTechnicalKeySecretWriter>(sp =>
 builder.Services.AddSingleton<IFiscalTechnicalKeyProvider, CompositeFiscalTechnicalKeyProvider>();
 builder.Services.AddScoped<IFiscalConfigurationStore, SqlFiscalConfigurationStore>();
 builder.Services.AddScoped<FiscalConfigurationService>();
+builder.Services.AddScoped<IFiscalDeviceSeriesStore, SqlFiscalDeviceSeriesStore>();
+builder.Services.AddScoped<FiscalDeviceSeriesService>();
 builder.Services.AddScoped<IFiscalIssuerConnectionStore, SqlFiscalIssuerConnectionStore>();
 builder.Services.AddScoped<FiscalIssuerConnectionService>();
 builder.Services.AddScoped<ISalesInvoiceNumberingConfigurationStore,
@@ -133,6 +136,7 @@ builder.Services.AddScoped<SqlPosSaleDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler>(services => services.GetRequiredService<SqlPosSaleDocumentHandler>());
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlSalesReceiptDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlGoodsReceiptDocumentHandler>();
+builder.Services.AddScoped<IConfirmedDocumentHandler, SqlExpenseDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPurchaseReturnDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlPayablePaymentDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlCashReceiptDocumentHandler>();
@@ -370,6 +374,8 @@ builder.Services.AddScoped<IPurchaseReturnStore, SqlPurchaseReturnStore>();
 builder.Services.AddScoped<PurchaseReturnService>();
 builder.Services.AddScoped<IPayablesStore, SqlPayablesStore>();
 builder.Services.AddScoped<PayablesService>();
+builder.Services.AddScoped<IExpenseStore, SqlExpenseStore>();
+builder.Services.AddScoped<ExpenseService>();
 builder.Services.AddScoped<IReceivablesStore, SqlReceivablesStore>();
 builder.Services.AddScoped<ReceivablesService>();
 builder.Services.AddScoped<IPricingStore, SqlPricingStore>();
@@ -484,6 +490,11 @@ builder.Services.AddAuthorization(options =>
         policy.RequireAuthenticatedUser();
     });
     options.AddPolicy("payables.user", policy =>
+    {
+        policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
+        policy.RequireAuthenticatedUser();
+    });
+    options.AddPolicy("expenses.user", policy =>
     {
         policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
         policy.RequireAuthenticatedUser();
@@ -634,6 +645,7 @@ app.MapPosOrdersApi();
 app.MapPurchasingApi();
 app.MapReceivablesApi();
 app.MapPayablesApi();
+app.MapExpensesApi();
 app.MapReturnsApi();
 app.MapSalesReturnQueryApi();
 app.MapInventoryApi();

@@ -323,6 +323,32 @@ public sealed partial class SqlPartyWorkspaceStore(
         catch { await transaction.RollbackAsync(ct); throw; }
     }
 
+    public async Task<CustomerRoleDetail> SaveCustomerBillingAsync(
+        PartyActorIdentity actor, Guid partyId, SaveCustomerBillingRequest request,
+        DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection=connections.Create(); await connection.OpenAsync(ct);
+        await using var transaction=(SqlTransaction)await connection.BeginTransactionAsync(ct);
+        await using var command=connection.CreateCommand(); command.Transaction=transaction;
+        command.CommandText="""
+            UPDATE customer
+            SET RequiresElectronicInvoice=@Required,UpdatedBy=@ActorId,UpdatedAt=@Now
+            FROM dbo.Customers customer
+            JOIN dbo.Parties party ON party.PartyId=customer.PartyId AND party.TenantId=@TenantId
+            WHERE customer.PartyId=@PartyId AND customer.BusinessId=@BusinessId;
+            IF @@ROWCOUNT=0 THROW 51063,'The Party is not a customer in the authenticated business.',1;
+            """;
+        command.Parameters.AddRange([
+            P("@PartyId",partyId),P("@TenantId",actor.TenantId),P("@BusinessId",actor.BusinessId),
+            P("@Required",request.RequiresElectronicInvoice),P("@ActorId",actor.ActorId),P("@Now",now)]);
+        try { await command.ExecuteNonQueryAsync(ct); }
+        catch(SqlException ex) when(ex.Number==51063) { throw new PartyValidationException(ex.Message); }
+        await EnqueueCustomerChangeAsync(connection,transaction,actor.BusinessId,partyId,now,ct);
+        await transaction.CommitAsync(ct);
+        var detail=await GetDetailAsync(actor,partyId,ct);
+        return detail?.Customer ?? throw new PartyValidationException("Customer configuration was not found.");
+    }
+
     private async Task<PartyWorkspaceItem> RequiredItemAsync(PartyActorIdentity actor,Guid partyId,CancellationToken ct)
     {
         await using var connection=connections.Create(); await connection.OpenAsync(ct);

@@ -51,6 +51,8 @@ public sealed partial class SqlOnlineSalesDraftStore
         }
 
         DemandActiveVersion(state, request.ExpectedVersion);
+        await DemandCustomerAllowsSalesReceiptAsync(
+            connection, transaction, state.BusinessId, state.CustomerId, ct);
         var draft = await ReadDraftAsync(connection, transaction, draftId, ct);
         if (draft.Lines.Count == 0)
             throw new OnlineSalesDraftValidationException(
@@ -144,6 +146,22 @@ public sealed partial class SqlOnlineSalesDraftStore
         var nextDraft = await ReadDraftAsync(connection, transaction, nextDraftId, ct);
         await transaction.CommitAsync(ct);
         return new PreparedOnlineSalesCheckout(upload, nextDraft, false);
+    }
+
+    private static async Task DemandCustomerAllowsSalesReceiptAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid businessId,
+        Guid? customerId, CancellationToken ct)
+    {
+        if (customerId is null) return;
+        await using var command=connection.CreateCommand(); command.Transaction=transaction;
+        command.CommandText="""
+            SELECT RequiresElectronicInvoice FROM dbo.Customers
+            WHERE CustomerId=@CustomerId AND BusinessId=@BusinessId AND IsActive=1;
+            """;
+        command.Parameters.AddRange([P("@CustomerId",customerId),P("@BusinessId",businessId)]);
+        if (await command.ExecuteScalarAsync(ct) is true)
+            throw new OnlineSalesDraftValidationException(
+                "Este cliente esta configurado para recibir siempre factura electronica.");
     }
 
     private static async Task<SalesReceiptSeries> ReadSalesReceiptSeriesAsync(

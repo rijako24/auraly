@@ -181,7 +181,7 @@ public sealed class SqlPosEnrollmentStore(
                 data.FiscalRangeStart!.Value, data.FiscalRangeEnd!.Value,
                 data.ValidUntil!.Value, data.Environment!.Value, data.SupplierTaxId!,
                 new string(material.TechnicalKey.Reveal()), data.TechnicalKeyVersion!,
-                data.QrValidationUrl!),
+                data.QrValidationUrl!, data.ValidFrom),
             receiptDocumentSeries,
             offlineLeaseTrust.TrustedPublicKeys,
             now);
@@ -305,7 +305,7 @@ public sealed class SqlPosEnrollmentStore(
               w.AllowNegativeStockSales,e.RequestedByUserId,e.RequestedByDisplayName,
               e.RedemptionCodeHash,e.ExpiresAt,e.RedeemedAt,
               fs.SeriesId,fs.FiscalAuthorizationId,fs.Prefix,fs.RangeStart,fs.RangeEnd,
-              fa.AuthorizationNumber,fa.ValidUntil,fa.Environment,fa.SupplierTaxId,
+              fa.AuthorizationNumber,fa.ValidFrom,fa.ValidUntil,fa.Environment,fa.SupplierTaxId,
               fa.TechnicalKeyVersion,fa.QrValidationUrl
             FROM dbo.PosEnrollmentSessions e WITH (UPDLOCK,HOLDLOCK)
             JOIN dbo.Businesses b ON b.BusinessId=e.BusinessId AND b.IsActive=1
@@ -313,9 +313,7 @@ public sealed class SqlPosEnrollmentStore(
             LEFT JOIN dbo.FiscalSeries fs WITH (UPDLOCK,HOLDLOCK)
               ON fs.BusinessId=e.BusinessId AND fs.DocumentType=N'SalesInvoice'
              AND fs.EmitterKind=N'Device' AND fs.IsActive=1
-             AND ((@ExistingDeviceId IS NULL AND fs.DeviceId IS NULL)
-               OR (@ExistingDeviceId IS NOT NULL
-                   AND (fs.DeviceId=@ExistingDeviceId OR fs.DeviceId IS NULL)))
+             AND @ExistingDeviceId IS NOT NULL AND fs.DeviceId=@ExistingDeviceId
              AND EXISTS (
                  SELECT 1 FROM dbo.FiscalAuthorizations eligible
                  WHERE eligible.FiscalAuthorizationId=fs.FiscalAuthorizationId
@@ -346,10 +344,11 @@ public sealed class SqlPosEnrollmentStore(
             reader.IsDBNull(16) ? null : reader.GetInt64(16),
             reader.IsDBNull(17) ? null : reader.GetString(17),
             reader.IsDBNull(18) ? null : DateOnly.FromDateTime(reader.GetDateTime(18)),
-            reader.IsDBNull(19) ? null : reader.GetByte(19),
-            reader.IsDBNull(20) ? null : reader.GetString(20),
+            reader.IsDBNull(19) ? null : DateOnly.FromDateTime(reader.GetDateTime(19)),
+            reader.IsDBNull(20) ? null : reader.GetByte(20),
             reader.IsDBNull(21) ? null : reader.GetString(21),
-            reader.IsDBNull(22) ? null : reader.GetString(22));
+            reader.IsDBNull(22) ? null : reader.GetString(22),
+            reader.IsDBNull(23) ? null : reader.GetString(23));
     }
 
     private static async Task<string> AllocateSeriesCodeAsync(
@@ -554,6 +553,7 @@ public sealed class SqlPosEnrollmentStore(
         long? FiscalRangeStart,
         long? FiscalRangeEnd,
         string? AuthorizationNumber,
+        DateOnly? ValidFrom,
         DateOnly? ValidUntil,
         byte? Environment,
         string? SupplierTaxId,

@@ -16,12 +16,12 @@ export interface WithholdingRule {
 
 
 export interface CounterpartyTaxProfile {
-  businessId: string; counterpartyId: string; responsibilities: string[];
+  businessId: string; counterpartyId: string; appliesWithholding: boolean; responsibilities: string[];
   jurisdictionCode: string | null; updatedAt: string;
 }
 
 export interface SaveCounterpartyTaxProfile {
-  businessId: string; counterpartyId: string; responsibilities: string[];
+  businessId: string; counterpartyId: string; appliesWithholding: boolean; responsibilities: string[];
   jurisdictionCode: string | null;
 }
 export type SaveWithholdingRule = Omit<WithholdingRule, "ruleId" | "version">;

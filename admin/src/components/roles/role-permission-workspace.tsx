@@ -16,7 +16,7 @@ import { PageLoading } from "@/components/ui/page-loading";
 import { Textarea } from "@/components/ui/textarea";
 import { rolesApi } from "@/services/api/roles";
 import { useTenantContextStore } from "@/stores/tenant-context-store";
-import type { AppRole, Permission } from "@/types/entities";
+import type { Permission } from "@/types/entities";
 
 type MenuRow = { section: string; name: string; href: string; permission: string };
 
@@ -45,11 +45,13 @@ const permissionScopes: Record<string, string[]> = {
   "/dashboard/payments": ["payments."],
   "/dashboard/payables": ["payables."],
   "/dashboard/receivables": ["receivables."],
+  "/dashboard/expenses": ["expenses."],
   "/dashboard/tenants": ["tenants."],
   "/dashboard/businesses": ["businesses."],
   "/dashboard/roles": ["roles.", "permissions."],
   "/dashboard/audit-logs": ["audit_logs."],
   "/dashboard/settings/masters": ["masters."],
+  "/dashboard/settings/fiscal": ["fiscal.configuration."],
   "/dashboard/settings": ["business_config.", "fiscal.configuration."],
 };
 

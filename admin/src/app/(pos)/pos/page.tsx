@@ -1034,9 +1034,11 @@ export default function PosPage() {
     if (!draft?.lines.length || busy) return;
     setError(null);
     setPaymentOpen(true);
+    if (selectedCustomer?.requiresElectronicInvoice && documentType !== "SalesInvoice")
+      setDocumentTypeOpen(true);
   }
   async function changeDocumentType(value: PosSaleDocumentType) {
-    if (!client || busy || draft?.lines.length) return;
+    if (!client || busy) return;
     if (value === documentType) {
       setDocumentTypeOpen(false);
       focusScanner();
@@ -1563,29 +1565,6 @@ edgeCapable={edgeEnrollmentRequired}
               <span>{synchronization.inProgress ? "Sincronizando" : synchronization.failed ? "Reintentar sync" : "Datos al día"}</span>
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => setDocumentTypeOpen(true)}
-            disabled={busy || Boolean(draft?.lines.length)}
-            title={
-              draft?.lines.length
-                ? "Finaliza o reinicia la venta para cambiar el tipo de documento"
-                : "Cambiar tipo de documento"
-            }
-            aria-label={`Tipo de documento: ${
-              documentType === "SalesInvoice"
-                ? "Factura electrónica"
-                : "Comprobante de venta"
-            }. Cambiar tipo de documento`}
-            className="flex h-9 items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 text-xs font-semibold text-auraly-text outline-none transition hover:border-auraly-accent/60 hover:bg-white/10 focus:ring-2 focus:ring-auraly-accent/35 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <ClipboardList className="h-4 w-4 text-auraly-light" />
-            <span className="hidden sm:inline">
-              {documentType === "SalesInvoice"
-                ? "Factura electrónica"
-                : "Comprobante de venta"}
-            </span>
-          </button>
         </div>
         <div className="flex min-w-0 items-center gap-3 text-sm">
           <span className="min-w-0 truncate font-bold tracking-tight">{workstation.businessName || "Sede"} · {workstation.warehouseName || "Bodega"}</span>
@@ -1973,38 +1952,6 @@ edgeCapable={edgeEnrollmentRequired}
               <span className="rounded-lg bg-white/10 px-2 py-1 text-xs">
                 {draft?.lines.length ?? 0} líneas
               </span>
-            <fieldset className="hidden" disabled={busy || Boolean(draft?.lines.length)}>
-              <legend className="mb-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-auraly-secondary">
-                Tipo de documento
-              </legend>
-              <div className="grid grid-cols-2 gap-1 rounded-xl bg-white/10 p-1">
-                {([
-                  ["SalesInvoice", "Factura electrónica"],
-                  ["SalesReceipt", "Comprobante de venta"],
-                ] as const).map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={async () => {
-                      setDocumentType(value);
-                      try {
-                        const numbers = await client?.nextNumbers(value);
-                        setNextNumber(numbers?.document ?? null);
-                      } catch {
-                        setNextNumber(null);
-                      }
-                    }}
-                    className={`min-h-9 rounded-lg px-2 text-xs font-semibold transition ${
-                      documentType === value
-                        ? "bg-auraly-accent text-auraly-background shadow-sm"
-                        : "text-auraly-text hover:bg-white/10"
-                    } disabled:cursor-not-allowed disabled:opacity-55`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </fieldset>
             </div>
             <button
               type="button"
@@ -2291,6 +2238,10 @@ edgeCapable={edgeEnrollmentRequired}
         <PosPaymentDialog
           total={draft.payableAmount}
           busy={busy}
+          documentType={selectedCustomer?.requiresElectronicInvoice ? "SalesInvoice" : documentType}
+          documentTypeLocked={selectedCustomer?.requiresElectronicInvoice ?? false}
+          documentTypeReady={!selectedCustomer?.requiresElectronicInvoice || documentType === "SalesInvoice"}
+          onChangeDocumentType={() => setDocumentTypeOpen(true)}
           onCancel={() => {
             setPaymentOpen(false);
             focusScanner();
@@ -2319,6 +2270,7 @@ edgeCapable={edgeEnrollmentRequired}
       {documentTypeOpen && (
         <PosDocumentTypeDialog
           value={documentType}
+          invoiceRequired={selectedCustomer?.requiresElectronicInvoice ?? false}
           businessId={workstation.businessId}
           edgeMode={client.mode === "edge"}
           edgeFiscalReady={workstation.fiscalReady}

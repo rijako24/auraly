@@ -46,6 +46,7 @@
 :r .\Migrations\AlterConversationContextsValueToMax.sql
 :r .\Migrations\MigrateSuppliersToParties.sql
 :r .\Migrations\RemoveLegacyTriggers.sql
+:r .\Migrations\ClassifySystemWarehouses.sql
 :r .\Migrations\MigrateProductsToCanonicalPrices.sql
 :r .\Migrations\BackfillPreparedProductPrices.sql
 :r .\Migrations\MigratePricePublicationAuditOrigins.sql
@@ -66,6 +67,7 @@
 :r .\Seeds\SeedReceivablesPermissions.sql
 :r .\Seeds\SeedPurchasingPermissions.sql
 :r .\Seeds\SeedFiscalConfigurationPermissions.sql
+:r .\Seeds\SeedExpensePermissions.sql
 :r .\Seeds\SeedPartyWorkspacePermissions.sql
 :r .\Seeds\SeedBillingPlans.sql
 :r .\Seeds\SeedRadaConcept.sql

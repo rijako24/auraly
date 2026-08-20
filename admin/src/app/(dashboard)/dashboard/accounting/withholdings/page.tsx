@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 
 const kindLabels: Record<WithholdingKind, string> = { IncomeTax: "Retefuente", Vat: "ReteIVA", IndustryCommerce: "ReteICA" };
 
@@ -31,6 +32,7 @@ export default function WithholdingRulesPage() {
   const [supplierId, setSupplierId] = useState("");
   const [profileResponsibilities, setProfileResponsibilities] = useState("");
   const [profileJurisdiction, setProfileJurisdiction] = useState("");
+  const [appliesWithholding, setAppliesWithholding] = useState(false);
 
   const suppliers = useQuery({ queryKey: ["withholding-suppliers", businessId], queryFn: goodsReceiptsApi.options, enabled: Boolean(businessId) });
   const rules = useQuery({ queryKey: ["withholding-rules", businessId], queryFn: () => taxationApi.listRules(true), enabled: Boolean(businessId) });
@@ -53,6 +55,7 @@ export default function WithholdingRulesPage() {
   const saveProfile = useMutation({
     mutationFn: () => taxationApi.saveProfile({
       businessId: businessId!, counterpartyId: supplierId,
+      appliesWithholding,
       responsibilities: profileResponsibilities.split(",").map((value) => value.trim()).filter(Boolean),
       jurisdictionCode: profileJurisdiction.trim() || null,
     }),
@@ -67,14 +70,17 @@ export default function WithholdingRulesPage() {
     if (!supplierId) {
       setProfileResponsibilities("");
       setProfileJurisdiction("");
+      setAppliesWithholding(false);
       return;
     }
     if (profile.data) {
       setProfileResponsibilities(profile.data.responsibilities.join(", "));
       setProfileJurisdiction(profile.data.jurisdictionCode ?? "");
+      setAppliesWithholding(profile.data.appliesWithholding);
     } else if (!profile.isFetching) {
       setProfileResponsibilities("");
       setProfileJurisdiction("");
+      setAppliesWithholding(false);
     }
   }, [profile.data, profile.isFetching, supplierId]);
 
@@ -119,10 +125,14 @@ export default function WithholdingRulesPage() {
         <Field label="Responsabilidades"><Input value={profileResponsibilities} onChange={(event) => setProfileResponsibilities(event.target.value)} placeholder="Separadas por coma" /></Field>
         <Field label="Municipio / jurisdicción"><Input value={profileJurisdiction} onChange={(event) => setProfileJurisdiction(event.target.value)} placeholder="Ej. 11001" /></Field>
       </div>
+      <div className="mt-4 flex items-center justify-between rounded-xl border bg-muted/20 p-4">
+        <div><p className="text-sm font-medium">Aplica retención</p><p className="text-xs text-muted-foreground">Al causarle compras o gastos, el motor calculará automáticamente las reglas que correspondan.</p></div>
+        <Switch checked={appliesWithholding} onCheckedChange={setAppliesWithholding} disabled={!supplierId} aria-label="Aplicar retenciones al proveedor" />
+      </div>
       <div className="mt-4 flex justify-end"><Button type="button" disabled={!supplierId || saveProfile.isPending} onClick={() => saveProfile.mutate()}>
         Guardar perfil tributario
       </Button></div>
-      <p className="mt-3 text-xs text-muted-foreground">Las responsabilidades determinan qué reglas aplican. La factura conserva una copia de la regla y tarifa efectivamente usadas.</p>
+      <p className="mt-3 text-xs text-muted-foreground">Si “Aplica retención” está apagado no se descontará ninguna regla. Si está encendido, responsabilidades, concepto, topes y jurisdicción determinan cuáles aplican.</p>
     </CardContent></Card>
 
     <Card><CardHeader><CardTitle>Reglas configuradas</CardTitle></CardHeader><CardContent>

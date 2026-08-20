@@ -29,6 +29,14 @@ internal sealed record PosFiscalHostSettings(
     string QrValidationUrl,
     PosEdgeSeriesProvision Series);
 
+internal sealed class PosFiscalRuntimeSettings(PosFiscalHostSettings? initial)
+{
+    private PosFiscalHostSettings? current = initial;
+    public PosFiscalHostSettings? Current => Volatile.Read(ref current);
+    public void Replace(PosFiscalHostSettings value) =>
+        Volatile.Write(ref current, value ?? throw new ArgumentNullException(nameof(value)));
+}
+
 internal sealed record PosSaleHostSettings(
     TenantId TenantId,
     BusinessId BusinessId,
@@ -91,6 +99,7 @@ internal static class PosSaleHostModule
                 RequiredLong(configuration, "PosEdge:Documents:SalesReceipt:RangeEnd")),
             fiscal);
         services.AddSingleton(settings);
+        services.AddSingleton(new PosFiscalRuntimeSettings(fiscal));
         services.AddSingleton(sp => new PosEdgeSaleStore(
             connectionString,
             new ConfirmOfflineSaleService(
@@ -143,6 +152,7 @@ internal static class PosSaleHostModule
             CompleteDraftRequest request,
             PosSaleCompletionService completion,
             PosSaleHostSettings settings,
+            PosFiscalRuntimeSettings fiscalRuntime,
             PosSynchronizationSignal synchronization,
             PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
@@ -162,13 +172,13 @@ internal static class PosSaleHostModule
                         new UserId(session.UserId),
                         settings.ContextFor(session),
                         DateTimeOffset.Now,
-                        settings.Fiscal?.SupplierTaxId,
+                        fiscalRuntime.Current?.SupplierTaxId,
                         string.IsNullOrWhiteSpace(request.CustomerIdentification)
                             ? settings.DefaultCustomerIdentification
                             : request.CustomerIdentification.Trim(),
-                        settings.Fiscal?.TechnicalKey,
-                        settings.Fiscal?.Environment,
-                        settings.Fiscal?.QrValidationUrl,
+                        fiscalRuntime.Current?.TechnicalKey,
+                        fiscalRuntime.Current?.Environment,
+                        fiscalRuntime.Current?.QrValidationUrl,
                         payments,
                         settings.PaperWidthMillimeters,
                         request.UblSnapshot,
@@ -253,7 +263,8 @@ internal static class PosSaleHostModule
                 RequiredLong(configuration, "PosEdge:Fiscal:RangeStart"),
                 RequiredLong(configuration, "PosEdge:Fiscal:RangeEnd"),
                 RequiredDate(configuration, "PosEdge:Fiscal:ValidUntil"),
-                RequiredGuid(configuration, "PosEdge:Fiscal:FiscalAuthorizationId")));
+                RequiredGuid(configuration, "PosEdge:Fiscal:FiscalAuthorizationId"),
+                RequiredDate(configuration, "PosEdge:Fiscal:ValidFrom")));
     }
 
     private static string Required(IConfiguration configuration, string key) =>
@@ -319,14 +330,15 @@ internal static class PosSaleHostModule
 internal sealed class PosSaleStorageInitializer(
     PosEdgeSaleStore sales,
     PosDraftIssuanceStore issuance,
-    PosSaleHostSettings settings) : IHostedService
+    PosSaleHostSettings settings,
+    PosFiscalRuntimeSettings fiscalRuntime) : IHostedService
 {
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         await sales.InitializeAsync(cancellationToken);
         await issuance.InitializeAsync(cancellationToken);
         await sales.ProvisionDocumentSeriesAsync(settings.DocumentSeries, cancellationToken);
-        if (settings.Fiscal is { } fiscal)
+        if (fiscalRuntime.Current is { } fiscal)
             await sales.ProvisionSeriesAsync(fiscal.Series, cancellationToken);
         await sales.ProvisionDocumentSeriesAsync(settings.ReceiptDocumentSeries, cancellationToken);
     }

@@ -23,6 +23,7 @@ public static class AuralyDocumentTypes
     public const string CashDisbursement = "CashDisbursement";
     public const string ReceivablePayment = "ReceivablePayment";
     public const string PayablePayment = "PayablePayment";
+    public const string Expense = "Expense";
 
     public static string DefaultPrefix(string documentType) => documentType switch
     {
@@ -47,6 +48,7 @@ public static class AuralyDocumentTypes
         CashDisbursement => "EGR",
         ReceivablePayment => "RCC",
         PayablePayment => "PGP",
+        Expense => "GTO",
         _ => throw new ArgumentOutOfRangeException(
             nameof(documentType),
             documentType,

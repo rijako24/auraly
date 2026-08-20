@@ -11,6 +11,7 @@ import {
   type SaveFiscalResolutionConfiguration,
 } from "@/services/api/fiscal-configuration";
 import type { PosSaleDocumentType } from "@/services/pos/pos-edge-client";
+import { useAuthStore } from "@/stores/auth-store";
 
 const options: ReadonlyArray<{
   value: PosSaleDocumentType;
@@ -34,6 +35,7 @@ const options: ReadonlyArray<{
 
 export function PosDocumentTypeDialog({
   value,
+  invoiceRequired = false,
   businessId,
   edgeMode,
   edgeFiscalReady,
@@ -43,6 +45,7 @@ export function PosDocumentTypeDialog({
   onCancel,
 }: {
   value: PosSaleDocumentType;
+  invoiceRequired?: boolean;
   businessId: string;
   edgeMode: boolean;
   edgeFiscalReady: boolean;
@@ -51,6 +54,9 @@ export function PosDocumentTypeDialog({
   onSelect: (value: PosSaleDocumentType) => Promise<void>;
   onCancel: () => void;
 }) {
+  const canManageFiscal = useAuthStore(state =>
+    state.user?.permissions.includes("fiscal.configuration.manage") ?? false,
+  );
   const [configuration, setConfiguration] =
     useState<FiscalResolutionConfiguration | null>(null);
   const [numberingReady, setNumberingReady] = useState(false);
@@ -101,6 +107,10 @@ export function PosDocumentTypeDialog({
           ? state.configuration.isReadyForEnrollment
           : state.configuration.isReadyForOnlineSales);
       if (!serverReady) {
+        if (!canManageFiscal) {
+          setFiscalError("La factura electrónica no está lista en esta sede. Solicita a un usuario con permiso de configuración fiscal que complete la resolución y la numeración; esta venta permanecerá guardada.");
+          return;
+        }
         setConfiguringInvoice(true);
         return;
       }
@@ -111,11 +121,13 @@ export function PosDocumentTypeDialog({
       await onSelect(next);
     } catch (caught) {
       setFiscalError(
-        caught instanceof Error
+        !canManageFiscal
+          ? "No tienes permiso para consultar o configurar la resolución fiscal. Solicita apoyo a un administrador; esta venta permanecerá guardada."
+          : caught instanceof Error
           ? caught.message
           : "No fue posible verificar la configuración fiscal.",
       );
-      setConfiguringInvoice(true);
+      setConfiguringInvoice(canManageFiscal);
     } finally {
       setCheckingFiscal(false);
     }
@@ -160,7 +172,9 @@ export function PosDocumentTypeDialog({
               Tipo de documento
             </h2>
             <p id="pos-document-type-description" className="mt-1 text-sm text-slate-600">
-              Elige el documento que emitirá esta venta.
+              {invoiceRequired
+                ? "El cliente requiere factura electrónica. Verifica la configuración fiscal para continuar."
+                : "Elige el documento que emitirá esta venta."}
             </p>
           </div>
           <button
@@ -175,7 +189,7 @@ export function PosDocumentTypeDialog({
         </header>
 
         <div className="grid gap-3 p-6 sm:grid-cols-2">
-          {options.map((option) => {
+          {options.filter(option => !invoiceRequired || option.value === "SalesInvoice").map((option) => {
             const selected = option.value === value;
             const Icon = option.icon;
             return (

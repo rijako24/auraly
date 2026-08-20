@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Contracts.Purchasing;
+using Auraly.Contracts.Expenses;
 using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
@@ -49,6 +50,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             WorkSessionPermissionCodes.Open,
             WorkSessionPermissionCodes.Close,
             WorkSessionPermissionCodes.ManageCash);
+        // Expense permissions exercise the complete concept -> expense -> AP -> accounting flow below.
         await ConfigureAsync(accounting);
 
 
@@ -205,7 +207,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         using (var profile = await accounting.PutAsJsonAsync(
             $"/api/commerce/v1/taxation/counterparty-profiles/{fixture.SupplierId:D}",
             new SaveCounterpartyTaxProfileRequest(
-                fixture.BusinessId, fixture.SupplierId, ["O-23"], "11001")))
+                fixture.BusinessId, fixture.SupplierId, true, ["O-23"], "11001")))
             Assert.Equal(HttpStatusCode.OK, profile.StatusCode);
         foreach (var rule in withholdingRules)
         {
@@ -213,6 +215,74 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                 "/api/commerce/v1/taxation/withholding-rules", rule);
             Assert.True(response.StatusCode == HttpStatusCode.Created,
                 await response.Content.ReadAsStringAsync());
+        }
+
+        using var expenseUser = fixture.CreateAdminClient(
+            ExpensePermissionCodes.Read,
+            ExpensePermissionCodes.Create,
+            ExpensePermissionCodes.Configure);
+        ExpenseWorkspaceOptions expenseOptions;
+        using (var optionsResponse = await expenseUser.GetAsync(
+                   "/api/commerce/v1/expenses/options"))
+        {
+            optionsResponse.EnsureSuccessStatusCode();
+            expenseOptions = await optionsResponse.Content
+                .ReadFromJsonAsync<ExpenseWorkspaceOptions>()
+                ?? throw new InvalidOperationException("Expense options are empty.");
+        }
+        var expenseAccount = Assert.Single(
+            expenseOptions.ExpenseAccounts, account => account.Code == "519595");
+        var expenseCenter = Assert.Single(
+            expenseOptions.CostCenters, center => center.IsDefault);
+        var expenseConceptId = Guid.NewGuid();
+        using (var conceptResponse = await expenseUser.PutAsJsonAsync(
+                   $"/api/commerce/v1/expenses/concepts/{expenseConceptId:D}",
+                   new SaveExpenseConceptRequest(
+                       expenseConceptId, fixture.BusinessId, "SERVICIOS",
+                       "Servicios operativos", expenseAccount.AccountId,
+                       expenseCenter.CostCenterId, "MERCANCIA", true)))
+            Assert.Equal(HttpStatusCode.OK, conceptResponse.StatusCode);
+
+        var expenseId = Guid.NewGuid();
+        using (var expenseMessage = new HttpRequestMessage(
+                   HttpMethod.Post, "/api/commerce/v1/expenses/confirm")
+               {
+                   Content = JsonContent.Create(new ConfirmExpenseRequest(
+                       expenseId, fixture.BusinessId, fixture.SupplierId,
+                       expenseConceptId, null, $"GASTO-{Guid.NewGuid():N}",
+                       receivedAt.AddHours(3), receivedAt.AddDays(30), "COP",
+                       "Servicio con retenciones y centro de costo", 100_000m,
+                       19_000m, "11001", null))
+               })
+        {
+            expenseMessage.Headers.Add("Idempotency-Key", $"expense-{expenseId:N}");
+            using var expenseResponse = await expenseUser.SendAsync(expenseMessage);
+            Assert.Equal(HttpStatusCode.Accepted, expenseResponse.StatusCode);
+        }
+        Assert.Equal(AccountingPostingStatuses.Posted,
+            await ScalarAsync<string>(
+                "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",
+                expenseId));
+        await AssertBalancedAsync(expenseId);
+        Assert.Equal(119_000m, await ScalarAsync<decimal>(
+            "SELECT GrossAmount FROM dbo.Expenses WHERE ExpenseId=@Id", expenseId));
+        Assert.Equal(6_350m, await ScalarAsync<decimal>(
+            "SELECT WithholdingAmount FROM dbo.Expenses WHERE ExpenseId=@Id", expenseId));
+        Assert.Equal(112_650m, await ScalarAsync<decimal>(
+            "SELECT OriginalAmount FROM dbo.Payables WHERE SourceDocumentId=@Id", expenseId));
+        Assert.Equal(100_000m, await AccountAmountAsync(expenseId, "519595", debit: true));
+        Assert.Equal(19_000m, await AccountAmountAsync(expenseId, "240810", debit: true));
+        Assert.Equal(112_650m, await AccountAmountAsync(expenseId, "220505", debit: false));
+        Assert.Equal(2_500m, await AccountAmountAsync(expenseId, "236540", debit: false));
+        Assert.Equal(2_850m, await AccountAmountAsync(expenseId, "236701", debit: false));
+        Assert.Equal(1_000m, await AccountAmountAsync(expenseId, "236805", debit: false));
+        using (var expenseList = await expenseUser.GetAsync(
+                   "/api/commerce/v1/expenses?page=1&pageSize=25"))
+        {
+            expenseList.EnsureSuccessStatusCode();
+            var page = await expenseList.Content.ReadFromJsonAsync<ExpensePage>();
+            Assert.Contains(page!.Items, item => item.ExpenseId == expenseId &&
+                item.NetPayable == 112_650m);
         }
 
         var withheldReceipt = new ConfirmGoodsReceiptRequest(

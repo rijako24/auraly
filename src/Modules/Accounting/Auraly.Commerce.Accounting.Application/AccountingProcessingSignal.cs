@@ -49,7 +49,8 @@ public static class AccountingProcessingPolicy
         "PayablePayment",
         "ReceivablePayment",
         "CashReceipt",
-        "CashDisbursement"
+        "CashDisbursement",
+        "Expense"
     ];
 
 

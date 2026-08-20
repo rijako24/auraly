@@ -22,6 +22,8 @@ export function MasterHierarchyExplorer({
   levels,
   nodes,
   loading,
+  error,
+  onRetry,
   canManage,
   onCreate,
   onEdit,
@@ -32,6 +34,8 @@ export function MasterHierarchyExplorer({
   levels: readonly string[];
   nodes: MasterHierarchyNode[];
   loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
   canManage: boolean;
   onCreate: (level: number, parent: MasterHierarchyNode | null) => void;
   onEdit: (node: MasterHierarchyNode) => void;
@@ -107,7 +111,7 @@ export function MasterHierarchyExplorer({
       {levels.map((level, index) => <span key={level} className="flex items-center gap-2"><span className="grid h-6 w-6 place-items-center rounded-full bg-teal-100 text-teal-800">{index + 1}</span>{level}</span>)}
     </div>
     <div className="min-h-64 p-3">
-      {loading ? <p className="p-12 text-center text-sm text-muted-foreground">Cargando jerarquía…</p> : visible.length === 0 ? <p className="p-12 text-center text-sm text-muted-foreground">{query ? "No hay coincidencias." : "Aún no hay registros."}</p> : visible.map((node) => {
+      {loading ? <p className="p-12 text-center text-sm text-muted-foreground">Cargando jerarquía…</p> : error ? <div className="grid place-items-center gap-3 p-12 text-center"><p className="text-sm font-medium text-destructive">{error}</p>{onRetry&&<Button variant="outline" onClick={onRetry}>Reintentar</Button>}</div> : visible.length === 0 ? <p className="p-12 text-center text-sm text-muted-foreground">{query ? "No hay coincidencias." : "Aún no hay registros."}</p> : visible.map((node) => {
         const childCount = (children.get(node.id) ?? []).filter((child) => showInactive || child.active).length;
         const isExpanded = matching ? true : expanded.has(node.id);
         return <div key={node.id} data-testid={`master-node-${node.id}`} className="group mb-1 grid min-h-12 items-center rounded-xl border border-transparent hover:border-teal-200 hover:bg-teal-50/60" style={{ gridTemplateColumns: `repeat(${levels.length}, minmax(0, 1fr))` }}>

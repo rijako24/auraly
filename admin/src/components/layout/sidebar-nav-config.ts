@@ -10,6 +10,7 @@ import {
   ContactRound,
   Library,
   FileSearch,
+  FileKey2,
   Gem,
   Landmark,
   LayoutDashboard,
@@ -83,6 +84,7 @@ export const navigation: NavEntry[] = [
   { name: "Pagos", href: "/dashboard/payments", icon: CreditCard, permission: "payments.read" },
   { name: "Cuentas por pagar", href: "/dashboard/payables", icon: Landmark, permission: "payables.read" },
   { name: "Cuentas por cobrar", href: "/dashboard/receivables", icon: CircleDollarSign, permission: "receivables.read" },
+  { name: "Gastos", href: "/dashboard/expenses", icon: ReceiptText, permission: "expenses.read" },
   { type: "separator", label: "Administracion" },
   { name: "Tenants", href: "/dashboard/tenants", icon: Building2, permission: "tenants.read" },
   { name: "Negocios", href: "/dashboard/businesses", icon: Store, permission: "businesses.read" },
@@ -91,5 +93,6 @@ export const navigation: NavEntry[] = [
   { name: "Auditoria", href: "/dashboard/audit-logs", icon: FileSearch, permission: "audit_logs.read" },
   { type: "separator", label: "Configuracion" },
   { name: "Maestros", href: "/dashboard/settings/masters", icon: Library, permission: "masters.geography.read" },
+  { name: "Facturación electrónica", href: "/dashboard/settings/fiscal", icon: FileKey2, permission: "fiscal.configuration.read" },
   { name: "Configuracion", href: "/dashboard/settings", icon: Settings, permission: "business_config.read" },
 ];

@@ -18,7 +18,7 @@ public sealed partial class PosCatalogStore
         await connection.OpenAsync(ct);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT CustomerId,Identification,Name,PriceListId,PriceChannelId,IsActive
+            SELECT CustomerId,Identification,Name,PriceListId,PriceChannelId,RequiresElectronicInvoice,IsActive
             FROM PosPricingCustomers
             WHERE IsActive=1
               AND (@Term='' OR Identification LIKE @Prefix OR Name LIKE @Name)
@@ -48,7 +48,7 @@ public sealed partial class PosCatalogStore
         await connection.OpenAsync(ct);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT CustomerId,Identification,Name,PriceListId,PriceChannelId,IsActive
+            SELECT CustomerId,Identification,Name,PriceListId,PriceChannelId,RequiresElectronicInvoice,IsActive
             FROM PosPricingCustomers
             WHERE CustomerId=@CustomerId AND IsActive=1;
             """;
@@ -87,12 +87,14 @@ public sealed partial class PosCatalogStore
                  Q("@IsExcluded", item.IsExcluded ? 1 : 0)], ct);
         foreach (var customer in snapshot.Customers)
             await ExecutePricingAsync(connection, transaction, """
-                INSERT INTO PosPricingCustomers(CustomerId,Identification,Name,PriceListId,PriceChannelId,IsActive)
-                VALUES(@CustomerId,@Identification,@Name,@PriceListId,@PriceChannelId,@IsActive);
+                INSERT INTO PosPricingCustomers(CustomerId,Identification,Name,PriceListId,PriceChannelId,RequiresElectronicInvoice,IsActive)
+                VALUES(@CustomerId,@Identification,@Name,@PriceListId,@PriceChannelId,@RequiresElectronicInvoice,@IsActive);
                 """,
                 [Q("@CustomerId", customer.CustomerId), Q("@Identification", customer.Identification),
                  Q("@Name", customer.Name), Q("@PriceListId", customer.PriceListId),
-                 Q("@PriceChannelId", customer.PriceChannelId), Q("@IsActive", customer.IsActive ? 1 : 0)], ct);
+                 Q("@PriceChannelId", customer.PriceChannelId),
+                 Q("@RequiresElectronicInvoice", customer.RequiresElectronicInvoice ? 1 : 0),
+                 Q("@IsActive", customer.IsActive ? 1 : 0)], ct);
         await transaction.CommitAsync(ct);
     }
 
@@ -171,7 +173,7 @@ public sealed partial class PosCatalogStore
         command.CommandText = """
             CREATE TABLE IF NOT EXISTS PosPricingCustomers(
               CustomerId TEXT PRIMARY KEY,Identification TEXT NOT NULL,Name TEXT NOT NULL,
-              PriceListId TEXT NULL,PriceChannelId TEXT NULL,IsActive INTEGER NOT NULL,
+              PriceListId TEXT NULL,PriceChannelId TEXT NULL,RequiresElectronicInvoice INTEGER NOT NULL DEFAULT 0,IsActive INTEGER NOT NULL,
               CHECK(PriceListId IS NULL OR PriceChannelId IS NULL));
             CREATE INDEX IF NOT EXISTS IX_PosPricingCustomers_Identification ON PosPricingCustomers(Identification);
             CREATE TABLE IF NOT EXISTS PosPriceListItems(
@@ -184,6 +186,16 @@ public sealed partial class PosCatalogStore
               PRIMARY KEY(PriceChannelId,ProductId));
             """;
         await command.ExecuteNonQueryAsync(ct);
+        command.CommandText = "PRAGMA table_info(PosPricingCustomers);";
+        var hasBillingColumn = false;
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+            while (await reader.ReadAsync(ct))
+                hasBillingColumn |= string.Equals(reader.GetString(1), "RequiresElectronicInvoice", StringComparison.Ordinal);
+        if (!hasBillingColumn)
+        {
+            command.CommandText = "ALTER TABLE PosPricingCustomers ADD COLUMN RequiresElectronicInvoice INTEGER NOT NULL DEFAULT 0;";
+            await command.ExecuteNonQueryAsync(ct);
+        }
     }
 
     private static async Task ExecutePricingAsync(
@@ -207,5 +219,6 @@ public sealed partial class PosCatalogStore
             reader.GetString(2),
             reader.IsDBNull(3) ? null : Guid.Parse(reader.GetString(3)),
             reader.IsDBNull(4) ? null : Guid.Parse(reader.GetString(4)),
+            reader.GetInt32(6) == 1,
             reader.GetInt32(5) == 1);
 }

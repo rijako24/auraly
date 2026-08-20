@@ -88,5 +88,6 @@ public sealed class WithholdingEngineTests
             BusinessId, WithholdingDirection.Purchase, WithholdingRecognitionMoment.Accrual,
             CounterpartyId, null, jurisdiction, subtotal, vat,
             new DateTimeOffset(2026, 8, 14, 12, 0, 0, TimeSpan.Zero),
+            true,
             new HashSet<string>(StringComparer.OrdinalIgnoreCase), new HashSet<Guid>());
 }

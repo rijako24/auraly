@@ -60,7 +60,8 @@ public sealed class PosEdgeSchemaUpgradeTests
                     EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='SalesDocumentTaxSummaries'),
                     EXISTS(SELECT 1 FROM pragma_table_info('IssuedSales') WHERE name='RemoteFiscalStatus'),
                     EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='PosSyncState'),
-                    EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='PosPrintAudit')
+                    EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='PosPrintAudit'),
+                    EXISTS(SELECT 1 FROM pragma_table_info('FiscalSeriesCursors') WHERE name='ValidFrom')
                 FROM FiscalSeriesCursors;
                 """;
             await using var reader = await command.ExecuteReaderAsync();
@@ -72,7 +73,40 @@ public sealed class PosEdgeSchemaUpgradeTests
             Assert.Equal(1L, reader.GetInt64(5));
             Assert.Equal(1L, reader.GetInt64(6));
             Assert.Equal(1L, reader.GetInt64(7));
+            Assert.Equal(1L, reader.GetInt64(8));
             Assert.Equal(0L, reader.GetInt64(4));
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            DeleteIfPresent(databasePath);
+            DeleteIfPresent($"{databasePath}-wal");
+            DeleteIfPresent($"{databasePath}-shm");
+        }
+    }
+
+    [Fact]
+    public async Task Fiscal_preview_is_unavailable_before_valid_from()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"auraly-pos-fiscal-validity-{Guid.NewGuid():N}.db");
+        var connectionString = new SqliteConnectionStringBuilder { DataSource = databasePath, Pooling = false }.ToString();
+        var deviceId = new DeviceId(Guid.NewGuid());
+        try
+        {
+            var userId = new UserId(Guid.NewGuid());
+            var permissions = new UserPermissionSet(new TenantId(Guid.NewGuid()), userId, [CommercePermissionCodes.SalesCreate]);
+            var store = new PosEdgeSaleStore(connectionString,
+                new ConfirmOfflineSaleService(new PermissionAuthorizer(new FixedPermissionProvider(permissions))));
+            await store.InitializeAsync();
+            await store.ProvisionSeriesAsync(new PosEdgeSeriesProvision(
+                Guid.NewGuid(), deviceId, "FV", "18760000001", 10, 10,
+                new DateOnly(2027, 12, 31), Guid.NewGuid(), new DateOnly(2027, 1, 1)));
+
+            var before = await store.PreviewNextFiscalNumberAsync(deviceId, new DateTimeOffset(2026, 12, 31, 12, 0, 0, TimeSpan.Zero));
+            var during = await store.PreviewNextFiscalNumberAsync(deviceId, new DateTimeOffset(2027, 1, 1, 12, 0, 0, TimeSpan.Zero));
+
+            Assert.False(before.IsAvailable);
+            Assert.True(during.IsAvailable);
         }
         finally
         {

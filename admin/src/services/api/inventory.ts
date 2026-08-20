@@ -10,13 +10,13 @@ export interface InventoryAcceptance { documentId:string; movementId:string; doc
 export interface InventoryProductItem { productId:string; productCode:string; reference:string|null; productName:string; unitCode:string; quantityOnHand:number; averageUnitCost:number|null; saleUnitPrice:number|null; }
 export interface StockCountDraft { documentId:string; status:string; baseInventorySequence:number; lines:Array<{lineNumber:number;direction:string;productId:string;productCode:string;description:string;quantity:number;systemQuantityAtBase:number|null;explicitUnitCost:number|null;allocationWeight:number|null}>; }
 
-export interface WarehouseMasterItem { warehouseId:string; code:string; name:string; allowNegativeStockSales:boolean; priceFormationCostBasis:string; isActive:boolean; }
+export interface WarehouseMasterItem { warehouseId:string; code:string; name:string; allowNegativeStockSales:boolean; priceFormationCostBasis:string; isSystem:boolean; useForSales:boolean; useForGoodsReceipts:boolean; isInventoryVisible:boolean; isActive:boolean; }
 export interface InventoryReasonItem { inventoryReasonId:string; operationType:string; code:string; name:string; isSystem:boolean; isActive:boolean; displayOrder:number; }
 
 export const inventoryApi = {
   warehouses: () => apiClient.get<Array<{warehouseId:string;code:string;name:string}>>("/commerce/v1/inventory/warehouses"),
   warehouseMasters: () => apiClient.get<WarehouseMasterItem[]>("/commerce/v1/inventory/warehouse-masters"),
-  saveWarehouse: (warehouseId:string|null, request:{name:string;allowNegativeStockSales:boolean;priceFormationCostBasis:string;isActive:boolean}) => warehouseId ? apiClient.put<WarehouseMasterItem>(`/commerce/v1/inventory/warehouse-masters/${warehouseId}`,request) : apiClient.post<WarehouseMasterItem>("/commerce/v1/inventory/warehouse-masters",request),
+  saveWarehouse: (warehouseId:string|null, request:{name:string;allowNegativeStockSales:boolean;priceFormationCostBasis:string;useForSales:boolean;useForGoodsReceipts:boolean;isInventoryVisible:boolean;isActive:boolean}) => warehouseId ? apiClient.put<WarehouseMasterItem>(`/commerce/v1/inventory/warehouse-masters/${warehouseId}`,request) : apiClient.post<WarehouseMasterItem>("/commerce/v1/inventory/warehouse-masters",request),
   reasons: (params:{operationType?:string;includeInactive?:boolean;search?:string}={}) => apiClient.get<InventoryReasonItem[]>("/commerce/v1/inventory/reasons",params),
   saveReason: (inventoryReasonId:string|null, request:{operationType:string;name:string;isActive:boolean;displayOrder:number}) => inventoryReasonId ? apiClient.put<InventoryReasonItem>(`/commerce/v1/inventory/reasons/${inventoryReasonId}`,request) : apiClient.post<InventoryReasonItem>("/commerce/v1/inventory/reasons",request),
   products: (params:{warehouseId:string;search?:string;page?:number;pageSize?:number}) => apiClient.get<Page<InventoryProductItem>>("/commerce/v1/inventory/products",withPagedDefaults(params)),

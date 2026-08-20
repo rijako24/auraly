@@ -7,7 +7,8 @@ public sealed record PosPriceChannelItem(
     Guid PriceChannelId, Guid ProductId, decimal Amount, string CurrencyCode, bool IsExcluded);
 
 public sealed record PosCustomerPricing(
-    Guid CustomerId, string Identification, string Name, Guid? PriceListId, Guid? PriceChannelId, bool IsActive);
+    Guid CustomerId, string Identification, string Name, Guid? PriceListId, Guid? PriceChannelId,
+    bool IsActive, bool RequiresElectronicInvoice = false);
 
 public sealed record PosPricingSnapshot(
     IReadOnlyCollection<PosPriceListItem> PriceListItems,
