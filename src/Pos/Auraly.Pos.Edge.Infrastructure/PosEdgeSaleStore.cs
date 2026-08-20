@@ -22,7 +22,8 @@ public sealed record PosEdgeSeriesProvision(
     long RangeStart,
     long RangeEnd,
     DateOnly ValidUntil,
-    Guid FiscalAuthorizationId = default);
+    Guid FiscalAuthorizationId = default,
+    DateOnly? ValidFrom = null);
 
 public sealed record PosEdgeDocumentSeriesProvision(
     Guid SeriesId,
@@ -162,7 +163,13 @@ public sealed class PosEdgeSaleStore
             .SingleOrDefaultAsync(cancellationToken);
         if (current is not null && current.SeriesId != provision.SeriesId)
         {
-            throw new InvalidOperationException("The device already has another provisioned fiscal series.");
+            var today = DateOnly.FromDateTime(DateTime.Now);
+            if (current.NextConsecutive <= current.RangeEnd && today <= current.ValidUntil)
+                throw new InvalidOperationException(
+                    "El equipo todavía tiene una serie fiscal vigente con numeración disponible.");
+            context.FiscalSeriesCursors.Remove(current);
+            await context.SaveChangesAsync(cancellationToken);
+            current = null;
         }
 
         if (current is null)
@@ -191,6 +198,7 @@ public sealed class PosEdgeSaleStore
                 RangeStart = provision.RangeStart,
                 NextConsecutive = provision.RangeStart,
                 RangeEnd = provision.RangeEnd,
+                ValidFrom = provision.ValidFrom ?? DateOnly.MinValue,
                 ValidUntil = provision.ValidUntil,
                 IsActive = true
             });
@@ -332,6 +340,7 @@ public sealed class PosEdgeSaleStore
             .SingleAsync(row => row.DeviceId == deviceId.Value, cancellationToken);
         var issueDate = DateOnly.FromDateTime(issuedAt.Date);
         var available = cursor.IsActive &&
+                        issueDate >= cursor.ValidFrom &&
                         issueDate <= cursor.ValidUntil &&
                         cursor.NextConsecutive <= cursor.RangeEnd;
         return new PosFiscalNumberPreview(
@@ -421,10 +430,12 @@ public sealed class PosEdgeSaleStore
                 row => row.DeviceId == deviceId,
                 cancellationToken);
             var issueDate = DateOnly.FromDateTime(command.IssuedAt.Date);
-            if (!cursor.IsActive || issueDate > cursor.ValidUntil)
-                throw new InvalidOperationException("The fiscal series is inactive or expired.");
+            if (!cursor.IsActive || issueDate < cursor.ValidFrom || issueDate > cursor.ValidUntil)
+                throw new InvalidOperationException(
+                    "La resolución fiscal no está vigente para la fecha de emisión.");
             if (cursor.NextConsecutive > cursor.RangeEnd)
-                throw new InvalidOperationException("The fiscal series is exhausted.");
+                throw new InvalidOperationException(
+                    "La numeración DIAN asignada a esta caja está agotada. Un administrador debe asignar una nueva resolución antes de facturar electrónicamente.");
 
             ValidateUblSnapshot(command, cursor);
             var consecutive = cursor.NextConsecutive++;
@@ -1099,6 +1110,13 @@ public sealed class PosEdgeSaleStore
             await using var command = connection.CreateCommand();
             command.CommandText =
                 "ALTER TABLE FiscalSeriesCursors ADD COLUMN RangeStart INTEGER NOT NULL DEFAULT 1;";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        if (!columns.Contains("ValidFrom"))
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                "ALTER TABLE FiscalSeriesCursors ADD COLUMN ValidFrom TEXT NOT NULL DEFAULT '0001-01-01';";
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
     }

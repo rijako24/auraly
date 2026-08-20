@@ -21,7 +21,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         const string sql = """
             SELECT WarehouseId,Code,Name
             FROM dbo.Warehouses
-            WHERE BusinessId=@BusinessId AND IsActive=1
+            WHERE BusinessId=@BusinessId AND IsActive=1 AND UseForGoodsReceipts=1
             ORDER BY Name,Code;
             SELECT SupplierId,Identification,Name
             FROM dbo.Suppliers
@@ -452,7 +452,8 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             IF NOT EXISTS (SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
               THROW 51121,'The business is outside the authenticated tenant.',1;
             IF @WarehouseId IS NOT NULL AND NOT EXISTS (
-              SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId AND IsActive=1)
+              SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId
+                AND IsActive=1 AND UseForGoodsReceipts=1)
               THROW 51122,'The warehouse is outside the authenticated business.',1;
             IF @SupplierId IS NOT NULL AND NOT EXISTS (
               SELECT 1 FROM dbo.Suppliers WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1)

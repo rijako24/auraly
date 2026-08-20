@@ -42,6 +42,7 @@ CREATE TABLE [dbo].[CounterpartyTaxProfiles]
 (
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [CounterpartyId] UNIQUEIDENTIFIER NOT NULL,
+    [AppliesWithholding] BIT NOT NULL CONSTRAINT [DF_CounterpartyTaxProfiles_AppliesWithholding] DEFAULT (0),
     [Responsibilities] NVARCHAR(1000) NOT NULL,
     [JurisdictionCode] NVARCHAR(16) NULL,
     [UpdatedAt] DATETIMEOFFSET(7) NOT NULL,

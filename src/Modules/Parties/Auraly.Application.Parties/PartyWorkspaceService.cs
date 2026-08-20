@@ -30,6 +30,9 @@ public interface IPartyWorkspaceStore
     Task<PartyWorkspaceItem> SetStatusAsync(
         PartyActorIdentity actor, Guid partyId, SetPartyBusinessStatusRequest request,
         byte[] rowVersion, DateTimeOffset now, CancellationToken ct);
+    Task<CustomerRoleDetail> SaveCustomerBillingAsync(
+        PartyActorIdentity actor, Guid partyId, SaveCustomerBillingRequest request,
+        DateTimeOffset now, CancellationToken ct);
 }
 
 public sealed class PartyWorkspaceService(
@@ -156,6 +159,17 @@ public sealed class PartyWorkspaceService(
         Require(actor, PartyWorkspacePermissionCodes.Deactivate);
         if (partyId == Guid.Empty) throw new PartyValidationException("PartyId is required.");
         var updated = await store.SetStatusAsync(actor, partyId, request, RowVersion(request.RowVersion), time.GetUtcNow(), ct);
+        await synchronization.DispatchPendingAsync(actor.TenantId, actor.BusinessId, CancellationToken.None);
+        return updated;
+    }
+
+    public async Task<CustomerRoleDetail> SaveCustomerBillingAsync(
+        PartyActorIdentity actor, Guid partyId, SaveCustomerBillingRequest request, CancellationToken ct)
+    {
+        Require(actor, PartyWorkspacePermissionCodes.Update);
+        if (partyId == Guid.Empty) throw new PartyValidationException("PartyId is required.");
+        var updated = await store.SaveCustomerBillingAsync(
+            actor, partyId, request, time.GetUtcNow(), ct);
         await synchronization.DispatchPendingAsync(actor.TenantId, actor.BusinessId, CancellationToken.None);
         return updated;
     }

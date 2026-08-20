@@ -18,7 +18,7 @@ CREATE TABLE [dbo].[PosSynchronizationOutboxMessages]
         UNIQUE ([BusinessId], [Stream], [AvailableThroughCursor]),
     CONSTRAINT [CK_PosSynchronizationOutboxMessages_Stream]
         CHECK ([Stream] IN
-            (N'Catalog', N'Customers', N'Security', N'FiscalStatus', N'Approvals')),
+            (N'Catalog', N'Customers', N'Security', N'FiscalStatus', N'FiscalProvisioning', N'Approvals')),
     CONSTRAINT [CK_PosSynchronizationOutboxMessages_Cursor]
         CHECK ([AvailableThroughCursor] >= 0)
 );

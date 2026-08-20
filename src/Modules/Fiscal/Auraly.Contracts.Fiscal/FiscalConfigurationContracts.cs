@@ -48,6 +48,43 @@ public sealed record SaveFiscalResolutionConfiguration(
     bool PrepareOnlineSeries,
     bool PrepareOfflineSeries);
 
+public sealed record FiscalDeviceSeriesAssignment(
+    Guid DeviceId,
+    string DeviceName,
+    bool DeviceIsActive,
+    DateTimeOffset? LastSeenAt,
+    Guid BusinessId,
+    string BusinessName,
+    Guid? SeriesId,
+    string? Prefix,
+    long? RangeStart,
+    long? RangeEnd,
+    bool IsProvisioned);
+
+public sealed record FiscalDeviceSeriesWorkspace(
+    Guid BusinessId,
+    long AvailableConsecutives,
+    IReadOnlyList<FiscalDeviceSeriesAssignment> Devices);
+
+public sealed record AssignFiscalDeviceSeriesRequest(
+    Guid DeviceId,
+    long ConsecutiveCount);
+
+public sealed record PosFiscalSeriesProvisioning(
+    Guid SeriesId,
+    Guid FiscalAuthorizationId,
+    string Prefix,
+    string AuthorizationNumber,
+    long RangeStart,
+    long RangeEnd,
+    DateOnly ValidUntil,
+    int Environment,
+    string SupplierTaxId,
+    string TechnicalKey,
+    string TechnicalKeyVersion,
+    string QrValidationUrl,
+    DateOnly ValidFrom);
+
 public interface IFiscalTechnicalKeySecretWriter
 {
     Task SaveAsync(

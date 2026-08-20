@@ -186,7 +186,8 @@ public sealed class PosSaleCompletionService(
     PosDraftIssuanceStore issuance,
     PosEdgeSaleStore sales,
     IPosReceiptPrinter printer,
-    TimeProvider? timeProvider = null)
+    TimeProvider? timeProvider = null,
+    PosCatalogStore? catalog = null)
 {
     public async Task<CompletePosSaleResult> CompleteAsync(
         DraftId draftId,
@@ -202,6 +203,13 @@ public sealed class PosSaleCompletionService(
         if (command.Payments.Count == 0 ||
             command.Payments.Sum(payment => payment.Amount) != draft.PayableAmount)
             throw new InvalidOperationException("Payments must equal the payable amount.");
+        if (command.DocumentType == PosSaleDocumentTypes.Receipt && draft.CustomerId is not null)
+        {
+            var customer = catalog is null ? null : await catalog.GetCustomerAsync(draft.CustomerId.Value, ct);
+            if (customer?.RequiresElectronicInvoice == true)
+                throw new InvalidOperationException(
+                    "Este cliente esta configurado para recibir siempre factura electronica.");
+        }
 
         var identity = await issuance.GetOrCreateAsync(draftId, ct);
         var lines = draft.Lines.Select(line => new OfflineSaleLine(

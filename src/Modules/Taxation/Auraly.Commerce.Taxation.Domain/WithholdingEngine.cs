@@ -82,6 +82,7 @@ public sealed record WithholdingCalculationContext(
     decimal TaxExclusiveAmount,
     decimal VatAmount,
     DateTimeOffset OccurredAt,
+    bool AppliesWithholding,
     IReadOnlySet<string> CounterpartyResponsibilities,
     IReadOnlySet<Guid> PreviouslyRecognizedRuleIds);
 
@@ -111,6 +112,11 @@ public sealed class WithholdingEngine
             throw new WithholdingRuleException("Business and counterparty are required.");
         if (context.TaxExclusiveAmount < 0 || context.VatAmount < 0)
             throw new WithholdingRuleException("Tax bases cannot be negative.");
+
+        if (!context.AppliesWithholding)
+            return new WithholdingCalculation(
+                Money(context.TaxExclusiveAmount + context.VatAmount), 0,
+                Money(context.TaxExclusiveAmount + context.VatAmount), []);
 
         var date = DateOnly.FromDateTime(context.OccurredAt.UtcDateTime);
         var lines = candidateRules

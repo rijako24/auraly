@@ -51,6 +51,9 @@ public static class PartyWorkspaceApi
         parties.MapPost("/{partyId:guid}/status", async(HttpContext context,PartyWorkspaceService service,Guid partyId,
             SetPartyBusinessStatusRequest request,CancellationToken ct)=>
             await Handle(async()=>Results.Ok(await service.SetStatusAsync(context.User.ToPartyUserIdentity(),partyId,request,ct))));
+        parties.MapPut("/{partyId:guid}/customer-billing", async(HttpContext context,PartyWorkspaceService service,Guid partyId,
+            SaveCustomerBillingRequest request,CancellationToken ct)=>
+            await Handle(async()=>Results.Ok(await service.SaveCustomerBillingAsync(context.User.ToPartyUserIdentity(),partyId,request,ct))));
 
         var suppliers=endpoints.MapGroup("/api/commerce/v1/suppliers").RequireAuthorization("parties.user");
         suppliers.MapPost("/", async(HttpContext context,PartyWorkspaceService service,CreateSupplierRequest request,CancellationToken ct)=>

@@ -20,7 +20,7 @@ public sealed class SqlAccountingPostingProcessor(
     TimeProvider timeProvider)
 {
     private static readonly HashSet<string> SupportedTypes =
-        ["SalesInvoice", "SalesReceipt", "SalesReturn", "GoodsReceipt", "PurchaseReturn",
+        ["SalesInvoice", "SalesReceipt", "SalesReturn", "GoodsReceipt", "Expense", "PurchaseReturn",
          "PayablePayment", "ReceivablePayment", "CashReceipt", "CashDisbursement"];
 
     public async Task ProcessAsync(
@@ -76,6 +76,8 @@ public sealed class SqlAccountingPostingProcessor(
                     await LoadReturnFactsAsync(
                         connection, transaction, source, cancellationToken)),
                 "GoodsReceipt" => await LoadGoodsReceiptFactsAsync(
+                    connection, transaction, source, cancellationToken),
+                "Expense" => await LoadExpenseFactsAsync(
                     connection, transaction, source, cancellationToken),
                 "PurchaseReturn" => await LoadPurchaseReturnFactsAsync(
                     connection, transaction, source, cancellationToken),
@@ -424,12 +426,13 @@ public sealed class SqlAccountingPostingProcessor(
         decimal? netAmount;
         await using (var command = new SqlCommand("""
             SELECT NetAmount FROM dbo.DocumentWithholdingSnapshots
-            WHERE DocumentId=@DocumentId AND DocumentType=N'GoodsReceipt'
+            WHERE DocumentId=@DocumentId AND DocumentType=@DocumentType
               AND BusinessId=@BusinessId;
             """, connection, transaction))
         {
             command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
             command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+            command.Parameters.AddWithValue("@DocumentType", source.DocumentType);
             var value = await command.ExecuteScalarAsync(cancellationToken);
             netAmount = value is null or DBNull ? null : Convert.ToDecimal(value);
         }
@@ -441,11 +444,12 @@ public sealed class SqlAccountingPostingProcessor(
             settlements.Add((AccountingCategories.AccountsPayable, netAmount.Value));
         await using (var command = new SqlCommand("""
             SELECT Kind,SUM(Amount) FROM dbo.DocumentWithholdingLines
-            WHERE DocumentId=@DocumentId AND DocumentType=N'GoodsReceipt'
+            WHERE DocumentId=@DocumentId AND DocumentType=@DocumentType
             GROUP BY Kind ORDER BY Kind;
             """, connection, transaction))
         {
             command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
+            command.Parameters.AddWithValue("@DocumentType", source.DocumentType);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
@@ -463,6 +467,37 @@ public sealed class SqlAccountingPostingProcessor(
         if (decimal.Round(settlements.Sum(item => item.Amount), 4) != decimal.Round(grossTotal, 4))
             throw new InvalidOperationException("The payable and withholding settlements do not reconcile.");
         return settlements;
+    }
+
+    private static async Task<FinancialFactsResult> LoadExpenseFactsAsync(
+        SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            SELECT e.DocumentNumber,e.TaxExclusiveAmount,e.VatAmount,e.GrossAmount,
+                   e.ExpenseAccountId,e.CostCenterId,s.PartyId
+            FROM
+            (
+              SELECT x.DocumentNumber,x.TaxExclusiveAmount,x.VatAmount,x.GrossAmount,
+                     c.ExpenseAccountId,x.CostCenterId,x.SupplierId,x.BusinessId,x.ExpenseId
+              FROM dbo.Expenses x
+              JOIN dbo.ExpenseConcepts c ON c.ExpenseConceptId=x.ExpenseConceptId
+            ) e
+            JOIN dbo.Suppliers s ON s.SupplierId=e.SupplierId
+            WHERE e.ExpenseId=@DocumentId AND e.BusinessId=@BusinessId;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
+        command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            throw new InvalidOperationException("The expense was not found for accounting.");
+        var number=reader.GetString(0);var untaxed=reader.GetDecimal(1);var vat=reader.GetDecimal(2);
+        var total=reader.GetDecimal(3);var accountId=reader.GetGuid(4);
+        Guid? center=reader.IsDBNull(5)?null:reader.GetGuid(5);Guid? party=reader.IsDBNull(6)?null:reader.GetGuid(6);
+        await reader.DisposeAsync();
+        var settlements=await LoadPurchaseWithholdingSettlementsAsync(connection,transaction,source,total,cancellationToken);
+        return FinancialFactsResult.Ready(FinancialFacts.Expense(number,party,untaxed,vat,total,
+            settlements,accountId,center));
     }
 
     private static async Task<FinancialFactsResult> LoadPurchaseReturnFactsAsync(
@@ -767,7 +802,8 @@ public sealed class SqlAccountingPostingProcessor(
         decimal Untaxed, decimal Tax, decimal Total, decimal Cost,
         IReadOnlyList<(string Category, decimal Amount)> Settlements,
         bool IsReturn, bool IsPurchase, bool IsPayablePayment, bool IsReceivablePayment,
-        bool IsCashMovement = false, bool CashIsIn = false, Guid? PreferredCostCenterId = null)
+        bool IsCashMovement = false, bool CashIsIn = false, Guid? PreferredCostCenterId = null,
+        Guid? DirectExpenseAccountId = null)
     {
         public IReadOnlySet<string> RequiredCategories
         {
@@ -792,7 +828,7 @@ public sealed class SqlAccountingPostingProcessor(
                 if (IsPurchase)
                 {
                     if (Cost > 0) values.Add(AccountingCategories.Inventory);
-                    if (Untaxed > 0) values.Add(AccountingCategories.PurchasesExpense);
+                    if (Untaxed > 0 && DirectExpenseAccountId is null) values.Add(AccountingCategories.PurchasesExpense);
                     if (Tax > 0) values.Add(AccountingCategories.InputVat);
                     foreach (var settlement in Settlements) values.Add(settlement.Category);
                     return values;
@@ -842,19 +878,20 @@ public sealed class SqlAccountingPostingProcessor(
 
             if (IsPurchase)
             {
+                var effectiveCostCenter = PreferredCostCenterId ?? costCenter;
                 if (IsReturn)
                 {
                     foreach (var settlement in Settlements)
                         yield return new(accounts[settlement.Category], settlement.Amount, 0, PartyId, costCenter, Description);
                     if (Cost > 0) yield return new(accounts[AccountingCategories.Inventory], 0, Cost, PartyId, costCenter, Description);
-                    if (Untaxed > 0) yield return new(accounts[AccountingCategories.PurchasesExpense], 0, Untaxed, PartyId, costCenter, Description);
+                    if (Untaxed > 0) yield return new(DirectExpenseAccountId ?? accounts[AccountingCategories.PurchasesExpense], 0, Untaxed, PartyId, effectiveCostCenter, Description);
                     if (Tax > 0) yield return new(accounts[AccountingCategories.InputVat], 0, Tax, PartyId, costCenter, Description);
                 }
                 else
                 {
                     if (Cost > 0) yield return new(accounts[AccountingCategories.Inventory], Cost, 0, PartyId, costCenter, Description);
-                    if (Untaxed > 0) yield return new(accounts[AccountingCategories.PurchasesExpense], Untaxed, 0, PartyId, costCenter, Description);
-                    if (Tax > 0) yield return new(accounts[AccountingCategories.InputVat], Tax, 0, PartyId, costCenter, Description);
+                    if (Untaxed > 0) yield return new(DirectExpenseAccountId ?? accounts[AccountingCategories.PurchasesExpense], Untaxed, 0, PartyId, effectiveCostCenter, Description);
+                    if (Tax > 0) yield return new(accounts[AccountingCategories.InputVat], Tax, 0, PartyId, effectiveCostCenter, Description);
                     foreach (var settlement in Settlements)
                         yield return new(accounts[settlement.Category], 0, settlement.Amount, PartyId, costCenter, Description);
                 }
@@ -879,6 +916,10 @@ public sealed class SqlAccountingPostingProcessor(
         public static FinancialFacts Return(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Devolucion de venta {number}", party, untaxed, tax, total, cost, settlements, true, false, false, false);
         public static FinancialFacts Purchase(string number, decimal inventory, decimal expense, decimal deductibleVat, decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements) =>
             new($"Entrada de mercancia {number}", null, expense, deductibleVat, total, inventory, settlements, false, true, false, false);
+        public static FinancialFacts Expense(string number, Guid? party, decimal untaxed, decimal vat,
+            decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements,
+            Guid accountId, Guid? costCenter) => new($"Gasto {number}", party, untaxed, vat,
+                total, 0, settlements, false, true, false, false, false, false, costCenter, accountId);
         public static FinancialFacts PurchaseReturn(string number, decimal inventory, decimal expense, decimal deductibleVat, decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Devolucion de compra {number}", null, expense, deductibleVat, total, inventory, settlements, true, true, false, false);
         public static FinancialFacts PayablePayment(string number, decimal total, string settlement) => new($"Pago a proveedor {number}", null, 0, 0, total, 0, [(settlement, total)], false, false, true, false);
         public static FinancialFacts ReceivablePayment(string number, Guid partyId, decimal total, string settlement) => new($"Recaudo de cartera {number}", partyId, 0, 0, total, 0, [(settlement, total)], false, false, false, true);

@@ -1,6 +1,6 @@
 "use client";
 
-import { CreditCard, Loader2, Trash2 } from "lucide-react";
+import { CreditCard, FileText, Loader2, Receipt, Trash2 } from "lucide-react";
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PosPaymentInput } from "@/services/pos/pos-edge-client";
+import { PosPaymentInput, type PosSaleDocumentType } from "@/services/pos/pos-edge-client";
 import {
   calculatePaymentSettlement,
   PosPaymentSettlement,
@@ -40,11 +40,19 @@ type PaymentRow = PosPaymentInput & { id: string };
 export function PosPaymentDialog({
   total,
   busy,
+  documentType,
+  documentTypeLocked,
+  documentTypeReady,
+  onChangeDocumentType,
   onCancel,
   onConfirm,
 }: {
   total: number;
   busy: boolean;
+  documentType: PosSaleDocumentType;
+  documentTypeLocked: boolean;
+  documentTypeReady: boolean;
+  onChangeDocumentType: () => void;
   onCancel: () => void;
   onConfirm: (
     payments: PosPaymentInput[],
@@ -133,7 +141,7 @@ export function PosPaymentDialog({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!settlement.isValid || busy) return;
+    if (!settlement.isValid || busy || !documentTypeReady) return;
     await onConfirm(
       settlement.appliedPayments.map(({ methodCode, amount, reference }) => ({
         methodCode,
@@ -172,6 +180,14 @@ export function PosPaymentDialog({
             <span className="text-2xl font-bold text-teal-800">{money.format(total)}</span>
           </p>
         </div>
+
+        <section className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+            <div><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Documento de venta</p><p className="mt-1 flex items-center gap-2 font-semibold text-slate-950">{documentType==="SalesInvoice"?<FileText className="h-4 w-4 text-teal-700"/>:<Receipt className="h-4 w-4 text-teal-700"/>}{documentType==="SalesInvoice"?"Factura electrónica":"Comprobante de venta"}</p><p className="mt-1 text-xs text-slate-500">{documentTypeLocked?"Este cliente requiere factura electrónica; la selección está protegida.":"Puedes elegir el documento antes de confirmar el pago."}</p></div>
+            <button type="button" onClick={onChangeDocumentType} disabled={busy||(documentTypeLocked&&documentTypeReady)} className="h-10 rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:border-teal-500 disabled:cursor-not-allowed disabled:opacity-50">{documentTypeLocked?(documentTypeReady?"Factura obligatoria":"Configurar factura"):"Cambiar documento"}</button>
+          </div>
+          {!documentTypeReady&&<p className="mt-3 rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900">Completa la configuración de factura electrónica para poder emitir esta venta.</p>}
+        </section>
 
         <div className="mt-5 grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5">
           {methods.map((method) => (
@@ -297,7 +313,7 @@ export function PosPaymentDialog({
           </button>
           <button
             type="submit"
-            disabled={!settlement.isValid || busy}
+            disabled={!settlement.isValid || busy || !documentTypeReady}
             className="flex h-11 min-w-48 items-center justify-center gap-2 rounded-lg bg-teal-700 px-5 font-semibold text-white focus:outline-none focus:ring-4 focus:ring-teal-600/20 disabled:opacity-45"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}

@@ -179,6 +179,7 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton<PosEdgeOutboxUploader>();
         builder.Services.AddSingleton<IPosFiscalStatusClient, HttpPosFiscalStatusClient>();
         builder.Services.AddSingleton<PosFiscalStatusSynchronizer>();
+        builder.Services.AddSingleton<PosFiscalProvisioningSynchronizer>();
         builder.Services.AddHostedService<PosEdgeStorageInitializer>();
         builder.Services.AddSingleton<PosSynchronizationSignal>();
         builder.Services.AddSingleton<PosUiStateSignal>();

@@ -122,6 +122,7 @@ CREATE TABLE [dbo].[Customers] (
     [CustomerId] UNIQUEIDENTIFIER NOT NULL,
     [PartyId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [RequiresElectronicInvoice] BIT NOT NULL CONSTRAINT [DF_Customers_RequiresElectronicInvoice] DEFAULT (0),
     [IsActive] BIT NOT NULL,
     [CreatedBy] UNIQUEIDENTIFIER NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,

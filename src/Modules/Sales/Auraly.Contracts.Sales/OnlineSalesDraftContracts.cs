@@ -73,7 +73,8 @@ public sealed record OnlineSalesCustomer(
     string Identification,
     string Name,
     Guid? PriceListId,
-    Guid? PriceChannelId);
+    Guid? PriceChannelId,
+    bool RequiresElectronicInvoice);
 
 public sealed record OnlineSalesCustomerSelection(
     OnlineSalesDraft Draft,

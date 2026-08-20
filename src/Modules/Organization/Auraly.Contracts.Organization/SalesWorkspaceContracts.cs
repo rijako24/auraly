@@ -67,7 +67,8 @@ public sealed record PosEnrollmentFiscalSeries(
     string SupplierTaxId,
     string TechnicalKey,
     string TechnicalKeyVersion,
-    string QrValidationUrl);
+    string QrValidationUrl,
+    DateOnly? ValidFrom = null);
 
 public sealed record PosEnrollmentPackage(
     Guid DeviceId,

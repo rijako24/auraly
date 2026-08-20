@@ -1,12 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { Building2, Plug, User } from "lucide-react";
+import { Building2, FileKey2, Plug, User } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
 const SETTINGS_CARDS = [
+  {
+    title: "Facturación electrónica",
+    description: "Resoluciones DIAN, vigencia, numeración y asignación central a cajas enroladas",
+    href: "/dashboard/settings/fiscal",
+    icon: FileKey2,
+  },
   {
     title: "Configuración del negocio",
     description: "Horarios, disponibilidad y reglas operativas del negocio seleccionado",

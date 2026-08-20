@@ -81,12 +81,14 @@ public sealed partial class SqlPartyStore(
             {
                 await ExecuteAsync(connection, transaction, """
                     INSERT dbo.Customers
-                      (CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
-                    VALUES (@CustomerId,@PartyId,@BusinessId,1,@ActorId,@Now);
+                      (CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,IsActive,CreatedBy,CreatedAt)
+                    VALUES (@CustomerId,@PartyId,@BusinessId,@RequiresElectronicInvoice,1,@ActorId,@Now);
                     """,
                     [
                         P("@CustomerId", resolvedCustomerId), P("@PartyId", resolvedPartyId),
-                        P("@BusinessId", actor.BusinessId), P("@ActorId", actor.ActorId), P("@Now", now)
+                        P("@BusinessId", actor.BusinessId),
+                        P("@RequiresElectronicInvoice", request.RequiresElectronicInvoice),
+                        P("@ActorId", actor.ActorId), P("@Now", now)
                     ],
                     ct);
                 if (existingPartyId is null || !await PartyHasSiteAsync(connection, transaction, resolvedPartyId, ct))
@@ -508,7 +510,7 @@ public sealed partial class SqlPartyStore(
               (SELECT TOP(1) Value FROM dbo.PartyContacts x
                  WHERE x.PartyId=p.PartyId AND x.ContactType=N'Phone' AND x.IsActive=1
                  ORDER BY x.IsPrimary DESC,x.CreatedAt),
-              ps.PriceListId,ps.PriceChannelId,c.IsActive
+              ps.PriceListId,ps.PriceChannelId,c.RequiresElectronicInvoice,c.IsActive
             FROM dbo.Customers c
             JOIN dbo.Parties p ON p.PartyId=c.PartyId
             JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId AND b.TenantId=@TenantId
@@ -531,7 +533,7 @@ public sealed partial class SqlPartyStore(
         ]);
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct)) return null;
-        var header = new object?[17];
+        var header = new object?[18];
         reader.GetValues(header);
         var sites = new List<PartySiteDetail>();
         await reader.NextResultAsync(ct);
@@ -554,7 +556,7 @@ public sealed partial class SqlPartyStore(
             header[10] as string, header[11] as string, header[12] as string, header[13] as string,
             header[14] is DBNull ? null : (Guid?)header[14],
             header[15] is DBNull ? null : (Guid?)header[15],
-            (bool)header[16]!, sites);
+            (bool)header[17]!, sites, (bool)header[16]!);
     }
 
     private static async Task ValidateScopeAndGeographyAsync(

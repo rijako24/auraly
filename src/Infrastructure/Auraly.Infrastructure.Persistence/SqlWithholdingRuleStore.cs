@@ -74,7 +74,7 @@ public sealed class SqlWithholdingRuleStore(
         await using var command = new SqlCommand("""
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
               THROW 51300,'The business is outside the tenant.',1;
-            SELECT BusinessId,CounterpartyId,Responsibilities,JurisdictionCode,UpdatedAt
+            SELECT BusinessId,CounterpartyId,AppliesWithholding,Responsibilities,JurisdictionCode,UpdatedAt
             FROM dbo.CounterpartyTaxProfiles
             WHERE BusinessId=@BusinessId AND CounterpartyId=@CounterpartyId;
             """, connection);
@@ -87,9 +87,9 @@ public sealed class SqlWithholdingRuleStore(
             if (!await reader.ReadAsync(ct)) return null;
             return new CounterpartyTaxProfileView(
                 reader.GetGuid(0), reader.GetGuid(1),
-                DeserializeResponsibilities(reader.GetString(2)),
-                reader.IsDBNull(3) ? null : reader.GetString(3),
-                reader.GetDateTimeOffset(4));
+                reader.GetBoolean(2), DeserializeResponsibilities(reader.GetString(3)),
+                reader.IsDBNull(4) ? null : reader.GetString(4),
+                reader.GetDateTimeOffset(5));
         }
         catch (SqlException exception) when (exception.Number == 51300)
         {
@@ -115,16 +115,17 @@ public sealed class SqlWithholdingRuleStore(
                 .Where(value => value.Length > 0).Distinct(StringComparer.Ordinal).ToArray();
             await using var command = new SqlCommand("""
                 UPDATE dbo.CounterpartyTaxProfiles WITH(UPDLOCK,HOLDLOCK)
-                SET Responsibilities=@Responsibilities,JurisdictionCode=@Jurisdiction,
+                SET AppliesWithholding=@AppliesWithholding,Responsibilities=@Responsibilities,JurisdictionCode=@Jurisdiction,
                     UpdatedAt=@Now,UpdatedByUserId=@UserId
                 WHERE BusinessId=@BusinessId AND CounterpartyId=@CounterpartyId;
                 IF @@ROWCOUNT=0
                   INSERT dbo.CounterpartyTaxProfiles
-                    (BusinessId,CounterpartyId,Responsibilities,JurisdictionCode,UpdatedAt,UpdatedByUserId)
-                  VALUES(@BusinessId,@CounterpartyId,@Responsibilities,@Jurisdiction,@Now,@UserId);
+                    (BusinessId,CounterpartyId,AppliesWithholding,Responsibilities,JurisdictionCode,UpdatedAt,UpdatedByUserId)
+                  VALUES(@BusinessId,@CounterpartyId,@AppliesWithholding,@Responsibilities,@Jurisdiction,@Now,@UserId);
                 """, connection, transaction);
             command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
             command.Parameters.AddWithValue("@CounterpartyId", request.CounterpartyId);
+            command.Parameters.AddWithValue("@AppliesWithholding", request.AppliesWithholding);
             command.Parameters.AddWithValue("@Responsibilities", JsonSerializer.Serialize(responsibilities));
             command.Parameters.AddWithValue("@Jurisdiction", (object?)request.JurisdictionCode ?? DBNull.Value);
             command.Parameters.AddWithValue("@Now", now);
@@ -132,7 +133,7 @@ public sealed class SqlWithholdingRuleStore(
             await command.ExecuteNonQueryAsync(ct);
             await transaction.CommitAsync(ct);
             return new CounterpartyTaxProfileView(
-                request.BusinessId, request.CounterpartyId, responsibilities,
+                request.BusinessId, request.CounterpartyId, request.AppliesWithholding, responsibilities,
                 request.JurisdictionCode, now);
         }
         catch

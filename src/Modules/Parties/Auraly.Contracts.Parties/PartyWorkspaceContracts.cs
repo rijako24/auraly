@@ -112,7 +112,8 @@ public sealed record CustomerRoleDetail(
     Guid CustomerId,
     Guid? PriceListId,
     Guid? PriceChannelId,
-    bool IsActive);
+    bool IsActive,
+    bool RequiresElectronicInvoice = false);
 
 public sealed record SupplierRoleDetail(Guid SupplierId, bool IsActive);
 

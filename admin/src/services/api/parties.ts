@@ -20,7 +20,7 @@ export interface PartySiteDetail {
   email: string | null; phone: string | null; isPrimary: boolean; isActive: boolean;
   googleMapsUrl: string | null; googlePlaceId: string | null; latitude: number | null; longitude: number | null; rowVersion: string;
 }
-export interface CustomerRoleDetail { customerId: string; priceListId: string | null; priceChannelId: string | null; isActive: boolean; }
+export interface CustomerRoleDetail { customerId: string; priceListId: string | null; priceChannelId: string | null; requiresElectronicInvoice: boolean; isActive: boolean; }
 export interface SupplierRoleDetail { supplierId: string; isActive: boolean; }
 export interface SellerRoleDetail { sellerId: string; code: string; defaultCommissionPercent: number | null; commissionBasis: string; commissionTrigger: string; isActive: boolean; }
 export interface CarrierRoleDetail { carrierId: string; code: string; transportationMode: string; isActive: boolean; }
@@ -44,7 +44,7 @@ export interface CityItem { cityId: string; administrativeDivisionId: string; co
 export interface GeographyHierarchyItem { id: string; parentId: string | null; level: "Country" | "Division" | "City"; code: string; name: string; isActive: boolean; }
 export interface PartyInput { partyType: string; identificationCountryId: string; identificationTypeCode: string; identification: string; verificationDigit: string | null; displayName: string; legalName: string | null; firstName: string | null; lastName: string | null; email: string | null; phone: string | null; }
 export interface PartySiteInput { code: string; name: string; countryId: string; administrativeDivisionId: string; cityId: string; addressLine: string; neighborhood: string | null; postalCode: string | null; email: string | null; phone: string | null; isPrimary: boolean; googleMapsUrl: string | null; googlePlaceId: string | null; latitude: number | null; longitude: number | null; }
-export interface CreateThirdPartyRequest { operationId: string; businessId: string; party: PartyInput; primarySite: PartySiteInput; pricing?: { priceListId: string | null; priceChannelId: string | null } | null; code?: string; defaultCommissionPercent?: number | null; commissionBasis?: string; commissionTrigger?: string; transportationMode?: string; }
+export interface CreateThirdPartyRequest { operationId: string; businessId: string; party: PartyInput; primarySite: PartySiteInput; pricing?: { priceListId: string | null; priceChannelId: string | null } | null; requiresElectronicInvoice?: boolean; code?: string; defaultCommissionPercent?: number | null; commissionBasis?: string; commissionTrigger?: string; transportationMode?: string; }
 export interface CustomerPricingOption { id: string; code: string; name: string; }
 export interface CustomerPricingOptions { priceLists: CustomerPricingOption[]; priceChannels: CustomerPricingOption[]; }
 export interface SellerUserAccess { userId:string; partyId:string; username:string; email:string; isActive:boolean; roleName:string; businessId:string; }
@@ -71,6 +71,8 @@ export const partiesApi = {
     apiClient.put<PartyWorkspaceItem>(`/commerce/v1/parties/${partyId}`, request),
   setStatus: (partyId: string, isActive: boolean, rowVersion: string) =>
     apiClient.post<PartyWorkspaceItem>(`/commerce/v1/parties/${partyId}/status`, { isActive, rowVersion }),
+  saveCustomerBilling: (partyId:string, requiresElectronicInvoice:boolean) =>
+    apiClient.put<CustomerRoleDetail>(`/commerce/v1/parties/${partyId}/customer-billing`, { requiresElectronicInvoice }),
   countries: (includeInactive = false) => apiClient.get<GeographyItem[]>("/commerce/v1/masters/geography/countries", { includeInactive }),
   geographyHierarchy: (includeInactive = false) => apiClient.get<GeographyHierarchyItem[]>("/commerce/v1/masters/geography/hierarchy", { includeInactive }),
   divisions: (countryId: string, includeInactive = false) => apiClient.get<DivisionItem[]>(`/commerce/v1/masters/geography/countries/${countryId}/divisions`, { includeInactive }),

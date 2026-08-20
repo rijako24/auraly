@@ -65,6 +65,7 @@ public sealed partial class SqlPartyWorkspaceStore
               site.AdministrativeDivisionId,site.CityId,site.AddressLine,
               site.Neighborhood,site.PostalCode,site.Email,site.Phone,site.IsPrimary,
               customer.CustomerId,customer.IsActive,pricing.PriceListId,pricing.PriceChannelId,
+              customer.RequiresElectronicInvoice,
               supplier.SupplierId,supplier.IsActive,
               seller.SellerId,seller.Code,seller.DefaultCommissionPercent,
               seller.CommissionBasis,seller.CommissionTrigger,seller.IsActive,
@@ -132,36 +133,37 @@ public sealed partial class SqlPartyWorkspaceStore
                 reader.GetGuid(24),
                 G(reader, 26),
                 G(reader, 27),
-                reader.GetBoolean(25));
-        var supplier = reader.IsDBNull(28)
+                reader.GetBoolean(25),
+                reader.GetBoolean(28));
+        var supplier = reader.IsDBNull(29)
             ? null
-            : new SupplierRoleDetail(reader.GetGuid(28), reader.GetBoolean(29));
-        var seller = reader.IsDBNull(30)
+            : new SupplierRoleDetail(reader.GetGuid(29), reader.GetBoolean(30));
+        var seller = reader.IsDBNull(31)
             ? null
             : new SellerRoleDetail(
-                reader.GetGuid(30),
-                reader.GetString(31),
-                D(reader, 32),
-                reader.GetString(33),
+                reader.GetGuid(31),
+                reader.GetString(32),
+                D(reader, 33),
                 reader.GetString(34),
-                reader.GetBoolean(35));
-        var carrier = reader.IsDBNull(36)
+                reader.GetString(35),
+                reader.GetBoolean(36));
+        var carrier = reader.IsDBNull(37)
             ? null
             : new CarrierRoleDetail(
-                reader.GetGuid(36),
-                reader.GetString(37),
+                reader.GetGuid(37),
                 reader.GetString(38),
-                reader.GetBoolean(39));
-        var employee = reader.IsDBNull(40)
+                reader.GetString(39),
+                reader.GetBoolean(40));
+        var employee = reader.IsDBNull(41)
             ? null
-            : new EmployeeRoleDetail(reader.GetGuid(40), reader.GetBoolean(41));
-        var user = reader.IsDBNull(42)
+            : new EmployeeRoleDetail(reader.GetGuid(41), reader.GetBoolean(42));
+        var user = reader.IsDBNull(43)
             ? null
             : new UserRoleDetail(
-                reader.GetGuid(42),
-                reader.GetString(43),
+                reader.GetGuid(43),
                 reader.GetString(44),
-                reader.GetBoolean(45));
+                reader.GetString(45),
+                reader.GetBoolean(46));
         var roles = new List<string>(6);
         if (customer is not null) roles.Add("Customer");
         if (supplier is not null) roles.Add("Supplier");
@@ -207,7 +209,7 @@ public sealed partial class SqlPartyWorkspaceStore
             carrier,
             employee,
             user,
-            Convert.ToBase64String((byte[])reader[46]));
+            Convert.ToBase64String((byte[])reader[47]));
         await reader.CloseAsync();
         var sites = await LoadSitesAsync(connection, detail.PartyId, ct);
         return detail with

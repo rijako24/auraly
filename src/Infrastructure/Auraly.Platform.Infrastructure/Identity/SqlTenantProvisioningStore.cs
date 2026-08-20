@@ -76,10 +76,10 @@ public sealed class SqlTenantProvisioningStore(
                 VALUES
                   (@TenantId,@LegalName,@TradeName,@Nit,@NormalizedNit,@VerificationDigit,@CountryId,@DivisionId,@CityId,@CompanyAddress,@CompanyPhone,@CompanyEmail,@TaxResponsibilities,@BusinessId,@Now);
 
-                INSERT dbo.Warehouses(WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,PriceFormationCostBasis,IsActive,CreatedAt)
+                INSERT dbo.Warehouses(WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,PriceFormationCostBasis,IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,IsActive,CreatedAt)
                 VALUES
-                  (@SalesWarehouseId,@BusinessId,N'VEN',N'Bodega de venta',0,@CostBasis,1,@Now),
-                  (@OrdersWarehouseId,@BusinessId,N'PED',N'Bodega de pedidos',0,@CostBasis,1,@Now);
+                  (@SalesWarehouseId,@BusinessId,N'VEN',N'Bodega de venta',0,@CostBasis,0,1,1,1,1,@Now),
+                  (@OrdersWarehouseId,@BusinessId,N'PED',N'Bodega de pedidos',0,@CostBasis,1,0,0,0,1,@Now);
 
                 DECLARE @DocumentSeries TABLE(DocumentType nvarchar(64),Prefix nvarchar(8));
                 INSERT @DocumentSeries VALUES

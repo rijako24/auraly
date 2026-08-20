@@ -64,7 +64,10 @@ public sealed record CreateCustomerRequest(
     Guid BusinessId,
     PartyInput Party,
     PartySiteInput PrimarySite,
-    CustomerPricingInput? Pricing);
+    CustomerPricingInput? Pricing,
+    bool RequiresElectronicInvoice = false);
+
+public sealed record SaveCustomerBillingRequest(bool RequiresElectronicInvoice);
 
 public sealed record AddPartySiteRequest(Guid OperationId, PartySiteInput Site);
 public sealed record LinkPartyUserAccountRequest(Guid UserId);
@@ -116,7 +119,8 @@ public sealed record CustomerDetail(
     Guid? PriceListId,
     Guid? PriceChannelId,
     bool IsActive,
-    IReadOnlyCollection<PartySiteDetail> Sites);
+    IReadOnlyCollection<PartySiteDetail> Sites,
+    bool RequiresElectronicInvoice = false);
 
 public sealed record CustomerPageRequest(int PageSize = 50, string? Search = null, bool? IsActive = null);
 public sealed record CustomerPage(IReadOnlyCollection<CustomerDetail> Items, int Page, int PageSize, int TotalCount);

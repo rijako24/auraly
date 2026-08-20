@@ -35,6 +35,7 @@ export type PosCustomer = {
   name: string;
   priceListId: string | null;
   priceChannelId: string | null;
+  requiresElectronicInvoice: boolean;
   isActive: boolean;
 };
 

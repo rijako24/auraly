@@ -634,7 +634,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
             FROM dbo.Businesses b
             JOIN dbo.Warehouses w
               ON w.WarehouseId=@WarehouseId AND w.BusinessId=b.BusinessId
-             AND w.IsActive=1
+             AND w.IsActive=1 AND w.UseForSales=1
             JOIN dbo.WorkSessions s
               ON s.WorkSessionId=@WorkSessionId
              AND s.BusinessId=b.BusinessId
@@ -911,7 +911,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
             SELECT c.CustomerId,COALESCE(p.Identification,N''),
                    COALESCE(p.DisplayName,p.LegalName,
                             CONCAT(p.FirstName,N' ',p.LastName),N'Sin nombre'),
-                   s.PriceListId,s.PriceChannelId
+                   s.PriceListId,s.PriceChannelId,c.RequiresElectronicInvoice
             FROM dbo.Customers c
             JOIN dbo.Parties p ON p.PartyId=c.PartyId
             LEFT JOIN dbo.CustomerPricingSettings s ON s.CustomerId=c.CustomerId
@@ -926,7 +926,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
             ? new(
                 reader.GetGuid(0), reader.GetString(1), reader.GetString(2).Trim(),
                 reader.IsDBNull(3) ? null : reader.GetGuid(3),
-                reader.IsDBNull(4) ? null : reader.GetGuid(4))
+                reader.IsDBNull(4) ? null : reader.GetGuid(4),
+                reader.GetBoolean(5))
             : null;
     }
 

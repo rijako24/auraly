@@ -155,8 +155,11 @@ public sealed record InventoryProductQuery(Guid BusinessId, Guid WarehouseId, st
 public sealed record InventoryProductItem(Guid ProductId, string ProductCode, string? Reference, string ProductName, string UnitCode, decimal QuantityOnHand, decimal? AverageUnitCost, decimal? SaleUnitPrice);
 public sealed record InventoryProductPage(IReadOnlyList<InventoryProductItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);
 public sealed record InventoryWarehouseOption(Guid WarehouseId, string Code, string Name);
-public sealed record WarehouseMasterItem(Guid WarehouseId, string Code, string Name, bool AllowNegativeStockSales, string PriceFormationCostBasis, bool IsActive);
-public sealed record SaveWarehouseRequest(string Name, bool AllowNegativeStockSales, string PriceFormationCostBasis, bool IsActive);
+public sealed record WarehouseMasterItem(Guid WarehouseId, string Code, string Name, bool AllowNegativeStockSales,
+    string PriceFormationCostBasis, bool IsSystem, bool UseForSales, bool UseForGoodsReceipts,
+    bool IsInventoryVisible, bool IsActive);
+public sealed record SaveWarehouseRequest(string Name, bool AllowNegativeStockSales, string PriceFormationCostBasis,
+    bool UseForSales, bool UseForGoodsReceipts, bool IsInventoryVisible, bool IsActive);
 public sealed record InventoryReasonItem(Guid InventoryReasonId, string OperationType, string Code, string Name, bool IsSystem, bool IsActive, int DisplayOrder);
 public sealed record SaveInventoryReasonRequest(string OperationType, string Name, bool IsActive, int DisplayOrder);
 public sealed record InventoryBalanceQuery(Guid BusinessId, Guid? WarehouseId, string? Search, bool OnlyWithStock, int Page = 1, int PageSize = 50, Guid? ProductId = null);

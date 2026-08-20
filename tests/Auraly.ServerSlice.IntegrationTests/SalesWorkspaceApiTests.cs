@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Organization;
+using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -82,5 +83,51 @@ public sealed class SalesWorkspaceApiTests(ServerSliceFixture fixture)
                 fixture.WarehouseId));
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task System_warehouse_not_enabled_for_sales_is_hidden_and_cannot_be_selected()
+    {
+        var warehouseId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var insert = new SqlCommand("""
+                INSERT dbo.Warehouses(
+                  WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,
+                  IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,
+                  IsActive,CreatedAt)
+                VALUES(
+                  @WarehouseId,@BusinessId,N'PED-TEST',N'Pedidos internos',0,
+                  1,0,0,0,1,SYSDATETIMEOFFSET());
+                """, connection);
+            insert.Parameters.AddWithValue("@WarehouseId", warehouseId);
+            insert.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            await insert.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            using var client = fixture.CreateAdminClient(
+                CommercePermissionCodes.SalesCreate);
+            var options = await client.GetFromJsonAsync<SalesWorkspaceOption[]>(
+                "/api/commerce/v1/pos/workspace/options");
+            Assert.NotNull(options);
+            Assert.DoesNotContain(options, option => option.WarehouseId == warehouseId);
+
+            using var response = await client.PostAsJsonAsync(
+                "/api/commerce/v1/pos/workspace/select",
+                new SalesWorkspaceSelection(fixture.BusinessId, warehouseId));
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+        finally
+        {
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var delete = new SqlCommand(
+                "DELETE dbo.Warehouses WHERE WarehouseId=@WarehouseId;", connection);
+            delete.Parameters.AddWithValue("@WarehouseId", warehouseId);
+            await delete.ExecuteNonQueryAsync();
+        }
     }
 }

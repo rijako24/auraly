@@ -48,6 +48,19 @@ export type SaveFiscalResolutionConfiguration = {
   prepareOfflineSeries: boolean;
 };
 
+export type FiscalDeviceSeriesAssignment = {
+  deviceId: string; deviceName: string; deviceIsActive: boolean;
+  lastSeenAt: string | null; businessId: string; businessName: string;
+  seriesId: string | null; prefix: string | null; rangeStart: number | null;
+  rangeEnd: number | null; isProvisioned: boolean;
+};
+
+export type FiscalDeviceSeriesWorkspace = {
+  businessId: string;
+  availableConsecutives: number;
+  devices: FiscalDeviceSeriesAssignment[];
+};
+
 export type FiscalIssuerConnectionConfiguration = {
   businessId: string;
   fiscalIssuerConfigurationId: string | null;
@@ -145,5 +158,13 @@ export const fiscalConfigurationApi = {
     apiClient.put<FiscalResolutionConfiguration>(
       `/commerce/v1/fiscal/configuration?businessId=${encodeURIComponent(businessId)}`,
       request,
+    ),
+  getDevices: (businessId: string) =>
+    apiClient.get<FiscalDeviceSeriesWorkspace>(
+      "/commerce/v1/fiscal/configuration/devices", { businessId }),
+  assignDeviceSeries: (businessId: string, deviceId: string, consecutiveCount: number) =>
+    apiClient.post<FiscalDeviceSeriesWorkspace>(
+      `/commerce/v1/fiscal/configuration/devices/assign?businessId=${encodeURIComponent(businessId)}`,
+      { deviceId, consecutiveCount },
     ),
 };

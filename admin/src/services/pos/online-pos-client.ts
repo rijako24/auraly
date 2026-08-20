@@ -108,6 +108,7 @@ type OnlineCustomerPage = {
     name: string;
     priceListId: string | null;
     priceChannelId: string | null;
+    requiresElectronicInvoice: boolean;
   }>;
   hasMore: boolean;
   nextOffset: number | null;
@@ -305,7 +306,7 @@ export class OnlinePosClient implements PosClient {
   async createCustomer(input: PosCreateCustomerInput) {
     const created = await request<{
       customerId: string; identification: string; displayName: string;
-      priceListId: string | null; priceChannelId: string | null; isActive: boolean;
+      priceListId: string | null; priceChannelId: string | null; requiresElectronicInvoice: boolean; isActive: boolean;
     }>("/api/commerce/v1/customers", this.post({
       operationId: crypto.randomUUID(),
       businessId: this.context.businessId,
@@ -331,6 +332,7 @@ export class OnlinePosClient implements PosClient {
       name: created.displayName,
       priceListId: created.priceListId,
       priceChannelId: created.priceChannelId,
+      requiresElectronicInvoice: created.requiresElectronicInvoice,
       isActive: created.isActive,
     } satisfies PosCustomer;
   }

@@ -15,7 +15,8 @@ public enum PosSynchronizationTrigger
     FiscalStatus = 4,
     LocalOutbox = 8,
     Authentication = 16,
-    All = Catalog | Security | FiscalStatus | LocalOutbox | Authentication
+    FiscalProvisioning = 32,
+    All = Catalog | Security | FiscalStatus | LocalOutbox | Authentication | FiscalProvisioning
 }
 
 public sealed class PosSynchronizationSignal
@@ -44,12 +45,13 @@ public sealed class PosSynchronizationSignal
     }
 }
 
-public sealed class PosSynchronizationWork(
+internal sealed class PosSynchronizationWork(
     PosIdentitySynchronizer identities,
     PosCatalogSynchronizer catalog,
     PosEdgeOutboxUploader uploader,
     PosCashMovementServerClient cashMovements,
     PosFiscalStatusSynchronizer fiscalStatuses,
+    PosFiscalProvisioningSynchronizer fiscalProvisioning,
     PosEdgeAuthenticationService authentication,
     PosUiStateSignal uiState,
     PosSynchronizationState state)
@@ -93,6 +95,8 @@ public sealed class PosSynchronizationWork(
         }
         if (trigger.HasFlag(PosSynchronizationTrigger.FiscalStatus))
             await fiscalStatuses.SynchronizeAsync(cancellationToken);
+        if (trigger.HasFlag(PosSynchronizationTrigger.FiscalProvisioning))
+            await fiscalProvisioning.SynchronizeAsync(cancellationToken);
 
         uiState.Publish();
     }
@@ -213,6 +217,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
             PosSynchronizationStreams.Customers => PosSynchronizationTrigger.Catalog,
             PosSynchronizationStreams.Security => PosSynchronizationTrigger.Security,
             PosSynchronizationStreams.FiscalStatus => PosSynchronizationTrigger.FiscalStatus,
+            PosSynchronizationStreams.FiscalProvisioning => PosSynchronizationTrigger.FiscalProvisioning,
             PosSynchronizationStreams.LocalOutbox => PosSynchronizationTrigger.LocalOutbox,
             PosSynchronizationStreams.Authentication => PosSynchronizationTrigger.Authentication,
             _ => PosSynchronizationTrigger.None
