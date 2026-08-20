@@ -615,6 +615,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             ["PosEdge:Fiscal:AuthorizationNumber"] = "18760000001",
             ["PosEdge:Fiscal:RangeStart"] = "1",
             ["PosEdge:Fiscal:RangeEnd"] = "100",
+            ["PosEdge:Fiscal:ValidFrom"] = "2025-01-01",
             ["PosEdge:Fiscal:ValidUntil"] = "2027-07-28"
         };
         foreach (var setting in ids)
