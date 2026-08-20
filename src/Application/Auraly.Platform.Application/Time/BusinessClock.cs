@@ -14,15 +14,18 @@ public sealed class BusinessClock : IBusinessClock
     private readonly IUnitOfWork _unitOfWork;
     private readonly IIntegrationsConfigProvider _integrations;
     private readonly ILogger<BusinessClock> _logger;
+    private readonly TimeProvider _timeProvider;
 
     public BusinessClock(
         IUnitOfWork unitOfWork,
         IIntegrationsConfigProvider integrations,
-        ILogger<BusinessClock> logger)
+        ILogger<BusinessClock> logger,
+        TimeProvider timeProvider)
     {
         _unitOfWork = unitOfWork;
         _integrations = integrations;
         _logger = logger;
+        _timeProvider = timeProvider;
     }
 
     public async Task<BusinessClockSnapshot> GetSnapshotAsync(
@@ -56,7 +59,7 @@ public sealed class BusinessClock : IBusinessClock
                 businessId);
         }
 
-        var now = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, timeZone);
+        var now = TimeZoneInfo.ConvertTime(_timeProvider.GetUtcNow(), timeZone);
         var today = DateOnly.FromDateTime(now.DateTime);
 
         return new BusinessClockSnapshot(businessId, now, today, timeZone);

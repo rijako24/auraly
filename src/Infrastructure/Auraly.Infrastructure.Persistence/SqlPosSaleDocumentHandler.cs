@@ -11,15 +11,18 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
 {
     private readonly SqlDocumentProcessingSessionAccessor _sessions;
     private readonly IAuralyIdGenerator _idGenerator;
+    private readonly SqlInventoryLedgerWriter _inventoryWriter;
     private readonly TimeProvider _timeProvider;
 
     public SqlPosSaleDocumentHandler(
         SqlDocumentProcessingSessionAccessor sessions,
         IAuralyIdGenerator idGenerator,
+        SqlInventoryLedgerWriter inventoryWriter,
         TimeProvider timeProvider)
     {
         _sessions = sessions;
         _idGenerator = idGenerator;
+        _inventoryWriter = inventoryWriter;
         _timeProvider = timeProvider;
     }
 
@@ -137,117 +140,26 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         }
     }
 
-    private async Task InsertInventoryMovementAsync(
+    private Task InsertInventoryMovementAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
         PosSaleUploadRequest request,
         PosSaleLineContract line,
-        CancellationToken cancellationToken)
-    {
-        const string sql = """
-            DECLARE @ManageStock BIT;
-            DECLARE @InventoryFactor DECIMAL(19,6)=1;
-            SELECT @ProductId=l.ParentProductId,@InventoryFactor=l.InventoryFactor
-            FROM dbo.ProductLinks l WITH(UPDLOCK,HOLDLOCK)
-            WHERE l.BusinessId=@BusinessId AND l.ChildProductId=@ProductId AND l.SharesInventory=1 AND l.IsActive=1;
-            SET @QuantityChange=CAST(@QuantityChange*@InventoryFactor AS DECIMAL(19,6));
-
-            SELECT @ManageStock = p.ManageStock
-            FROM dbo.Products p WITH (UPDLOCK, HOLDLOCK)
-            INNER JOIN dbo.Warehouses w WITH (UPDLOCK, HOLDLOCK)
-                ON w.WarehouseId = @WarehouseId
-               AND w.BusinessId = @BusinessId
-            WHERE p.ProductId = @ProductId
-              AND p.BusinessId = @BusinessId;
-
-            IF @ManageStock IS NULL
-                THROW 51000, 'El producto o la bodega no pertenecen al negocio del documento.', 1;
-
-            DECLARE @QuantityBefore DECIMAL(19,6) = NULL;
-            DECLARE @QuantityAfter DECIMAL(19,6) = NULL;
-            DECLARE @AverageCost DECIMAL(19,6) = NULL;
-            DECLARE @ValueBefore DECIMAL(19,4) = NULL;
-            DECLARE @ValueAfter DECIMAL(19,4) = NULL;
-            DECLARE @ValueChange DECIMAL(19,4) = NULL;
-
-            IF @ManageStock = 1
-            BEGIN
-            IF NOT EXISTS
-            (
-                SELECT 1
-                FROM dbo.InventoryBalances WITH (UPDLOCK, HOLDLOCK)
-                WHERE BusinessId = @BusinessId
-                  AND WarehouseId = @WarehouseId
-                  AND ProductId = @ProductId
-            )
-            BEGIN
-                INSERT INTO dbo.InventoryBalances
-                (
-                    BusinessId, WarehouseId, ProductId, QuantityOnHand,
-                    AverageUnitCost, InventoryValue, LastProcessingSequence, UpdatedAt
-                )
-                VALUES
-                (
-                    @BusinessId, @WarehouseId, @ProductId, 0,
-                    0, 0, @ProcessingSequence, @PostedAt
-                );
-            END;
-
-            SELECT @QuantityBefore = QuantityOnHand,
-                   @AverageCost = AverageUnitCost,
-                   @ValueBefore = InventoryValue
-            FROM dbo.InventoryBalances WITH (UPDLOCK, HOLDLOCK)
-            WHERE BusinessId = @BusinessId
-              AND WarehouseId = @WarehouseId
-              AND ProductId = @ProductId;
-
-            SET @QuantityAfter = @QuantityBefore + @QuantityChange;
-            SET @ValueChange = CAST(@QuantityChange * @AverageCost AS DECIMAL(19,4));
-            SET @ValueAfter = @ValueBefore + @ValueChange;
-
-            UPDATE dbo.InventoryBalances
-            SET QuantityOnHand = @QuantityAfter,
-                InventoryValue = @ValueAfter,
-                LastProcessingSequence = @ProcessingSequence,
-                UpdatedAt = @PostedAt
-            WHERE BusinessId = @BusinessId
-              AND WarehouseId = @WarehouseId
-              AND ProductId = @ProductId;
-            END;
-
-            IF @ManageStock = 0
-                RETURN;
-
-            INSERT INTO dbo.InventoryMovements
-            (
-                InventoryMovementId, BusinessId, WarehouseId,
-                DocumentId, DocumentType, LineNumber, ProductId, MovementType,
-                QuantityChange, ProcessingSequence, QuantityBefore, QuantityAfter,
-                AverageUnitCostBefore, AverageUnitCostAfter, RecognizedUnitCost,
-                ValueChange, OccurredAt, PostedAt, CreatedAt
-            )
-            VALUES
-            (
-                @InventoryMovementId, @BusinessId, @WarehouseId,
-                @DocumentId, @DocumentType, @LineNumber, @ProductId, 'Sale',
-                @QuantityChange, @ProcessingSequence, @QuantityBefore, @QuantityAfter,
-                @AverageCost, @AverageCost, @AverageCost,
-                @ValueChange, @OccurredAt, @PostedAt, @PostedAt
-            );
-            """;
-        await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
-        command.Parameters.AddWithValue("@InventoryMovementId", _idGenerator.NewId());
-        command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
-        command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
-        command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
-        command.Parameters.AddWithValue("@DocumentType", request.CommercialSnapshot.DocumentType);
-        command.Parameters.AddWithValue("@LineNumber", line.LineNumber);
-        command.Parameters.AddWithValue("@ProductId", line.ProductId);
-        AddDecimal(command, "@QuantityChange", -line.Quantity, 19, 6);
-        command.Parameters.AddWithValue("@ProcessingSequence", session.ProcessingSequence);
-        command.Parameters.AddWithValue("@OccurredAt", request.CommercialSnapshot.IssuedAt);
-        command.Parameters.AddWithValue("@PostedAt", _timeProvider.GetUtcNow());
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
+        CancellationToken cancellationToken) =>
+        _inventoryWriter.PostAsync(
+            session,
+            new InventoryLedgerPosting(
+                request.BusinessId,
+                request.WarehouseId,
+                line.ProductId,
+                request.DocumentId,
+                request.CommercialSnapshot.DocumentType,
+                line.LineNumber,
+                "Sale",
+                -line.Quantity,
+                null,
+                InventoryValuationModes.AverageCost,
+                request.CommercialSnapshot.IssuedAt),
+            cancellationToken);
 
     private async Task LinkSourceOrderAsync(
         SqlDocumentProcessingSessionAccessor.Session session,

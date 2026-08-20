@@ -20,20 +20,13 @@ import {
   formatMoneyValue,
   parseMoneyDraft,
 } from "./pos-money-input";
+import { useReferenceOptions } from "@/hooks/use-reference-options";
 
 const money = new Intl.NumberFormat("es-CO", {
   style: "currency",
   currency: "COP",
   maximumFractionDigits: 0,
 });
-
-const methods = [
-  { code: "Cash", label: "Efectivo", shortcut: "F1" },
-  { code: "DebitCard", label: "Tarjeta d\u00e9bito", shortcut: "F2" },
-  { code: "CreditCard", label: "Tarjeta cr\u00e9dito", shortcut: "F3" },
-  { code: "Transfer", label: "Transferencia", shortcut: "F4" },
-  { code: "Credit", label: "Cr\u00e9dito cliente", shortcut: "F5" },
-];
 
 type PaymentRow = PosPaymentInput & { id: string };
 
@@ -59,9 +52,16 @@ export function PosPaymentDialog({
     settlement: PosPaymentSettlement,
   ) => Promise<void>;
 }) {
-  const [payments, setPayments] = useState<PaymentRow[]>([
-    { id: crypto.randomUUID(), methodCode: "Cash", amount: total, reference: null },
-  ]);
+  const paymentMethods = useReferenceOptions("payment-method");
+  const methods = useMemo(
+    () => (paymentMethods.data ?? []).slice(0, 5).map((option, index) => ({
+      code: option.code,
+      label: option.label,
+      shortcut: `F${index + 1}`,
+    })),
+    [paymentMethods.data],
+  );
+  const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [amountDrafts, setAmountDrafts] = useState<Record<string, string>>({});
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
   const amountRefs = useRef(new Map<string, HTMLInputElement>());
@@ -69,6 +69,12 @@ export function PosPaymentDialog({
     () => calculatePaymentSettlement(total, payments),
     [payments, total],
   );
+
+  useEffect(() => {
+    const defaultMethod = methods[0];
+    if (!defaultMethod || payments.length > 0) return;
+    setPayments([{ id: crypto.randomUUID(), methodCode: defaultMethod.code, amount: total, reference: null }]);
+  }, [methods, payments.length, total]);
 
   function update(id: string, value: Partial<PaymentRow>) {
     setPayments((current) =>
@@ -116,7 +122,7 @@ export function PosPaymentDialog({
       },
     ]);
     setPendingFocusId(id);
-  }, [busy, focusAmount, payments, settlement.change, settlement.isValid, settlement.missing]);
+  }, [busy, focusAmount, methods, payments, settlement.change, settlement.isValid, settlement.missing]);
 
   useEffect(() => {
     if (!pendingFocusId) return;
@@ -137,11 +143,12 @@ export function PosPaymentDialog({
     };
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
-  }, [addPayment, busy, onCancel]);
+  }, [addPayment, busy, methods, onCancel]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!settlement.isValid || busy || !documentTypeReady) return;
+    if (!settlement.isValid || busy || !documentTypeReady ||
+        paymentMethods.isLoading || paymentMethods.isError) return;
     await onConfirm(
       settlement.appliedPayments.map(({ methodCode, amount, reference }) => ({
         methodCode,
@@ -203,6 +210,14 @@ export function PosPaymentDialog({
             </button>
           ))}
         </div>
+        {paymentMethods.isLoading && (
+          <p className="mt-3 text-sm text-slate-500">Cargando medios de pago...</p>
+        )}
+        {paymentMethods.isError && (
+          <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+            No fue posible cargar los medios de pago. Cierra e intenta nuevamente.
+          </p>
+        )}
 
         <div className="mt-4 space-y-3">
           {payments.map((payment, index) => (
@@ -297,7 +312,7 @@ export function PosPaymentDialog({
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs text-slate-500">
-            Selecciona el medio con F1-F5; al agregarlo el foco pasa al valor.
+            Los atajos se asignan según el orden del catálogo; al agregar un medio el foco pasa al valor.
           </p>
           <PaymentStatus settlement={settlement} />
         </div>
@@ -313,7 +328,8 @@ export function PosPaymentDialog({
           </button>
           <button
             type="submit"
-            disabled={!settlement.isValid || busy || !documentTypeReady}
+            disabled={!settlement.isValid || busy || !documentTypeReady ||
+              paymentMethods.isLoading || paymentMethods.isError}
             className="flex h-11 min-w-48 items-center justify-center gap-2 rounded-lg bg-teal-700 px-5 font-semibold text-white focus:outline-none focus:ring-4 focus:ring-teal-600/20 disabled:opacity-45"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}

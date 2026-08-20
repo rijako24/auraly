@@ -12,18 +12,13 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { inventoryApi, type InventoryReasonItem } from "@/services/api/inventory";
-
-const operationTypes = [
-  { value: "StockCount", label: "Conteo físico" },
-  { value: "InventoryAdjustment", label: "Ajuste" },
-  { value: "WarehouseTransfer", label: "Traslado" },
-  { value: "ProductConversion", label: "Conversión" },
-  { value: "Damage", label: "Avería" },
-] as const;
+import { useReferenceOptions } from "@/hooks/use-reference-options";
 const emptyForm = { operationType: "StockCount", name: "", isActive: true, displayOrder: 10 };
 
 export function InventoryReasonMaster({ canManage }: { canManage: boolean }) {
   const queryClient = useQueryClient();
+  const operationTypeCatalog = useReferenceOptions("inventory-operation-type");
+  const operationTypes = (operationTypeCatalog.data ?? []).map((option) => ({ value: option.code, label: option.label }));
   const query = useQuery({ queryKey: ["inventory-reasons", "master"], queryFn: () => inventoryApi.reasons({ includeInactive: true }) });
   const [search, setSearch] = useState("");
   const [showInactive, setShowInactive] = useState(false);

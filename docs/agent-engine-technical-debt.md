@@ -54,8 +54,8 @@ The following items came from the PR/design review and should stay visible beyon
 
 ### P0 - Keep stable before publish
 
-- Console critical flow must remain the release gate for Luis. It should keep covering booking happy path, payment summary regeneration, post-payment reservation changes, service-change escalation, flow switching, and return to booking after a new greeting.
-- Integration scenarios must remain at 51/51 or better before publishing. If a new deterministic rule is added, add a scenario before deploying.
+- The behavior-named critical flow suite must remain a release gate. It covers booking happy path, payment summary regeneration, post-payment reservation changes, service-change escalation, flow switching, and return to booking after a new greeting.
+- All configured integration scenarios must pass before publishing; the gate does not depend on a fixed historical count. If a deterministic rule is added, add its scenario before deploying.
 - `set_fact(service)` must stay blocked while `resolve_service_selection` exists. Otherwise the engine can persist non-canonical service names and break pricing, availability, checkout, and add-ons.
 - Checkout and availability verifications must stay dependency-based. If service/date/time/add-ons change, stale summaries must not be reused silently.
 
@@ -87,5 +87,5 @@ The following items came from the PR/design review and should stay visible beyon
 ### P2 - Test data and readability
 
 - Normalize test strings to ASCII where accents are not part of the assertion. This avoids encoding noise in diffs and console output.
-- Keep Luis console scenarios named around behavior, not incident numbers, except when preserving a known regression history is useful.
+- Keep console scenarios named around behavior, not tenant/person names or incident numbers, except when preserving a known regression history is useful.
 - Add a small PR checklist for release review: no hardcoded tenant names in engine, no unknown allowed actions, no stale checkout reuse, no hidden catalog full scans.

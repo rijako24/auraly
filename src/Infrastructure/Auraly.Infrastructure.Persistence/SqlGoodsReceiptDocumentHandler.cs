@@ -13,6 +13,7 @@ namespace Auraly.Infrastructure.Persistence;
 public sealed class SqlGoodsReceiptDocumentHandler(
     SqlDocumentProcessingSessionAccessor sessions,
     IAuralyIdGenerator ids,
+    SqlInventoryLedgerWriter inventoryWriter,
     TimeProvider timeProvider) : IConfirmedDocumentHandler
 {
     public string DocumentType => PurchasingDocumentTypes.GoodsReceipt;
@@ -115,7 +116,7 @@ public sealed class SqlGoodsReceiptDocumentHandler(
                 state.QuantityOnHand, state.InventoryValue, inventoryLine.Quantity,
                 acquisitionUnitCost / inventoryTarget.Factor);
             await ApplyInventoryReceiptAsync(
-                session, receipt, inventoryLine, acquisitionUnitCost / inventoryTarget.Factor, state, cancellationToken);
+                session, receipt, inventoryLine, acquisitionUnitCost / inventoryTarget.Factor, cancellationToken);
             if (state.PriceFormationCostBasis == "WeightedAverageCost")
                 priceFormationCost = projectedValuation.AverageUnitCostAfter * inventoryTarget.Factor;
         }
@@ -177,77 +178,27 @@ public sealed class SqlGoodsReceiptDocumentHandler(
             reader.GetDecimal(9),reader.GetString(10));
     }
 
-    private async Task ApplyInventoryReceiptAsync(
+    private Task ApplyInventoryReceiptAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
         GoodsReceiptDocumentPayload receipt,
         GoodsReceiptLineSnapshot line,
         decimal acquisitionUnitCost,
-        ReceiptLineState state,
-        CancellationToken cancellationToken)
-    {
-        var valuation = WeightedAverageCost.ApplyReceipt(
-            state.QuantityOnHand,
-            state.InventoryValue,
-            line.Quantity,
-            acquisitionUnitCost);
-        var now = timeProvider.GetUtcNow();
-        if (state.HasInventoryBalance)
-        {
-            const string update = """
-                UPDATE dbo.InventoryBalances
-                SET QuantityOnHand=@QuantityAfter,AverageUnitCost=@AverageAfter,
-                    InventoryValue=@ValueAfter,LastProcessingSequence=@Sequence,UpdatedAt=@Now
-                WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
-                """;
-            await using var command = new SqlCommand(update, session.Connection, session.Transaction);
-            AddInventoryParameters(command, session, receipt, line, valuation, now);
-            if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
-                throw new DBConcurrencyException("The inventory balance could not be updated.");
-        }
-        else
-        {
-            const string insert = """
-                INSERT dbo.InventoryBalances
-                  (BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,
-                   InventoryValue,LastProcessingSequence,UpdatedAt)
-                VALUES(@BusinessId,@WarehouseId,@ProductId,@QuantityAfter,@AverageAfter,
-                       @ValueAfter,@Sequence,@Now);
-                """;
-            await using var command = new SqlCommand(insert, session.Connection, session.Transaction);
-            AddInventoryParameters(command, session, receipt, line, valuation, now);
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
-
-        const string movement = """
-            INSERT dbo.InventoryMovements
-              (InventoryMovementId,BusinessId,WarehouseId,DocumentId,DocumentType,LineNumber,
-               ProductId,MovementType,QuantityChange,ProcessingSequence,QuantityBefore,QuantityAfter,
-               AverageUnitCostBefore,AverageUnitCostAfter,RecognizedUnitCost,ValueChange,
-               OccurredAt,PostedAt,CreatedAt)
-            VALUES(@Id,@BusinessId,@WarehouseId,@DocumentId,N'GoodsReceipt',@LineNumber,
-               @ProductId,N'GoodsReceipt',@Quantity,@Sequence,@QuantityBefore,@QuantityAfter,
-               @AverageBefore,@AverageAfter,@RecognizedCost,@ValueChange,@OccurredAt,@Now,@Now);
-            """;
-        await using var movementCommand = new SqlCommand(
-            movement, session.Connection, session.Transaction);
-        movementCommand.Parameters.AddWithValue("@Id", ids.NewId());
-        movementCommand.Parameters.AddWithValue("@BusinessId", receipt.BusinessId);
-        movementCommand.Parameters.AddWithValue("@WarehouseId", receipt.WarehouseId);
-        movementCommand.Parameters.AddWithValue("@DocumentId", receipt.DocumentId);
-        movementCommand.Parameters.AddWithValue("@LineNumber", line.LineNumber);
-        movementCommand.Parameters.AddWithValue("@ProductId", line.ProductId);
-        AddDecimal(movementCommand, "@Quantity", line.Quantity, 19, 6);
-        movementCommand.Parameters.AddWithValue("@Sequence", session.ProcessingSequence);
-        AddDecimal(movementCommand, "@QuantityBefore", state.QuantityOnHand, 19, 6);
-        AddDecimal(movementCommand, "@QuantityAfter", valuation.QuantityAfter, 19, 6);
-        AddDecimal(movementCommand, "@AverageBefore", state.AverageUnitCost, 19, 6);
-        AddDecimal(movementCommand, "@AverageAfter", valuation.AverageUnitCostAfter, 19, 6);
-        AddDecimal(movementCommand, "@RecognizedCost", acquisitionUnitCost, 19, 6);
-        AddDecimal(movementCommand, "@ValueChange", valuation.ReceiptValue, 19, 4);
-        movementCommand.Parameters.AddWithValue("@OccurredAt", receipt.ReceivedAt);
-        movementCommand.Parameters.AddWithValue("@Now", now);
-        await movementCommand.ExecuteNonQueryAsync(cancellationToken);
-    }
+        CancellationToken cancellationToken) =>
+        inventoryWriter.PostAsync(
+            session,
+            new InventoryLedgerPosting(
+                receipt.BusinessId,
+                receipt.WarehouseId,
+                line.ProductId,
+                receipt.DocumentId,
+                PurchasingDocumentTypes.GoodsReceipt,
+                line.LineNumber,
+                "GoodsReceipt",
+                line.Quantity,
+                acquisitionUnitCost,
+                InventoryValuationModes.WeightedAverageReceipt,
+                receipt.ReceivedAt),
+            cancellationToken);
 
     private async Task RecordSupplierCostAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
@@ -418,24 +369,6 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
         if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
             throw new DBConcurrencyException("The goods receipt could not be marked as processed.");
-    }
-
-    private static void AddInventoryParameters(
-        SqlCommand command,
-        SqlDocumentProcessingSessionAccessor.Session session,
-        GoodsReceiptDocumentPayload receipt,
-        GoodsReceiptLineSnapshot line,
-        InventoryReceiptValuation valuation,
-        DateTimeOffset now)
-    {
-        command.Parameters.AddWithValue("@BusinessId", receipt.BusinessId);
-        command.Parameters.AddWithValue("@WarehouseId", receipt.WarehouseId);
-        command.Parameters.AddWithValue("@ProductId", line.ProductId);
-        AddDecimal(command, "@QuantityAfter", valuation.QuantityAfter, 19, 6);
-        AddDecimal(command, "@AverageAfter", valuation.AverageUnitCostAfter, 19, 6);
-        AddDecimal(command, "@ValueAfter", valuation.InventoryValueAfter, 19, 4);
-        command.Parameters.AddWithValue("@Sequence", session.ProcessingSequence);
-        command.Parameters.AddWithValue("@Now", now);
     }
 
     private static void AddDecimal(SqlCommand command, string name, decimal value, byte precision, byte scale)

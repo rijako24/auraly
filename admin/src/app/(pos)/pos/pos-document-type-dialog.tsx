@@ -10,28 +10,15 @@ import {
   type FiscalResolutionConfiguration,
   type SaveFiscalResolutionConfiguration,
 } from "@/services/api/fiscal-configuration";
+import { useReferenceOptions } from "@/hooks/use-reference-options";
 import type { PosSaleDocumentType } from "@/services/pos/pos-edge-client";
 import { useAuthStore } from "@/stores/auth-store";
 
-const options: ReadonlyArray<{
-  value: PosSaleDocumentType;
-  title: string;
-  description: string;
-  icon: typeof FileText;
-}> = [
-  {
-    value: "SalesInvoice",
-    title: "Factura electrónica",
-    description: "Usa numeración DIAN, CUFE y código QR.",
-    icon: FileText,
-  },
-  {
-    value: "SalesReceipt",
-    title: "Comprobante de venta",
-    description: "Usa la numeración operativa CVI.",
-    icon: Receipt,
-  },
-];
+const documentVisuals: Record<PosSaleDocumentType, { icon: typeof FileText }> = {
+  SalesInvoice: { icon: FileText },
+  SalesReceipt: { icon: Receipt },
+};
+
 
 export function PosDocumentTypeDialog({
   value,
@@ -57,6 +44,12 @@ export function PosDocumentTypeDialog({
   const canManageFiscal = useAuthStore(state =>
     state.user?.permissions.includes("fiscal.configuration.manage") ?? false,
   );
+  const documentTypes = useReferenceOptions("sales-document-type");
+  const options = (documentTypes.data ?? []).flatMap((option) => {
+    if (option.code !== "SalesInvoice" && option.code !== "SalesReceipt") return [];
+    const documentType = option.code as PosSaleDocumentType;
+    return [{ value: documentType, title: option.label, description: option.description ?? "", ...documentVisuals[documentType] }];
+  });
   const [configuration, setConfiguration] =
     useState<FiscalResolutionConfiguration | null>(null);
   const [numberingReady, setNumberingReady] = useState(false);
@@ -229,6 +222,14 @@ export function PosDocumentTypeDialog({
             );
           })}
         </div>
+        {documentTypes.isLoading && (
+          <p className="mx-6 mb-6 text-sm text-slate-500">Cargando tipos de documento...</p>
+        )}
+        {documentTypes.isError && (
+          <p role="alert" className="mx-6 mb-6 rounded-xl bg-red-50 p-3 text-sm text-red-700">
+            No fue posible cargar los tipos de documento. Cierra e intenta nuevamente.
+          </p>
+        )}
         {fiscalError && !configuringInvoice && (
           <p className="mx-6 mb-6 rounded-xl bg-red-50 p-3 text-sm text-red-700">
             {fiscalError}

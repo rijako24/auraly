@@ -1,155 +1,68 @@
 # Contexto rapido para Codex - Auraly
 
-Este archivo reemplaza las bitacoras antiguas de arquitectura/refactor. Usalo como primer punto de lectura para ahorrar tokens; si hay duda, valida contra el codigo actual.
+Este es el punto de entrada corto al repositorio. Las reglas obligatorias viven en `AGENTS.md`, `docs/estandares-de-ingenieria.md` y `docs/invariantes-arquitectonicas-auraly.md`. El mapa operativo para ubicar cualquier cambio está en `docs/mapa-motores-flujos-y-extensiones.md`.
 
-## Proposito
+## Proposito y stack
 
-Backend .NET 8 para automatizar conversaciones de WhatsApp de Mimo's Baby Spa: ventas, catalogo, reservas, pagos, handoff humano y administracion multi-tenant. La entrada principal de mensajeria son Azure Functions.
+Auraly es una plataforma comercial multi-tenant: catálogo, ventas/POS, compras, inventario, cartera, pagos, despacho, facturación electrónica DIAN, contabilidad y agentes conversacionales.
 
-## Stack
+- Backend .NET 8/C#, Minimal API y workers.
+- SQL Server/Azure SQL con proyecto schema-first en `database/Auraly.Database`.
+- Admin/POS en Next.js 16, React 19 y TypeScript.
+- Azure Service Bus o RabbitMQ como transportes; SQL conserva el trabajo durable.
+- Integraciones fiscales, pagos, WhatsApp, Azure OpenAI y almacenamiento externo mediante adapters.
 
-- .NET 8, C#.
-- Azure Functions isolated worker.
-- Entity Framework Core con SQL Server/Azure SQL.
-- Azure OpenAI: texto para agente conversacional, audio/Whisper para transcripcion.
-- WhatsApp Cloud API.
-- Wompi para links/webhooks de pago.
-- Azure Blob Storage para adjuntos/media.
+## Estructura vigente
 
-## Estructura principal
+- `Auraly.Commerce.sln`: solución comercial principal.
+- `src/API/Auraly.Api`: composición y superficie HTTP.
+- `src/API/Auraly.Platform.Worker`: entrada conversacional y procesos alojados como Functions.
+- `src/Modules/*`: contratos, dominio, aplicación e infraestructura por capacidad.
+- `src/Infrastructure/Auraly.Infrastructure.Persistence`: persistencia compartida heredada y writers canónicos en migración hacia módulos.
+- `src/Pos/*`: host e infraestructura del POS edge.
+- `src/Application`, `src/Domain`, `src/Infrastructure/Auraly.Platform.*`: plataforma conversacional.
+- `database/Auraly.Database`: schemas, tablas y seeds idempotentes.
+- `admin`: admin y POS web.
+- `tests` y `src/Tests`: pruebas comerciales, arquitectura, integración y motor conversacional.
 
-- `Auraly.Commerce.sln`: solucion principal.
-- `src/API/Auraly.Platform.Worker`: Azure Functions productivas.
-- `src/API/Auraly.WebAPI`: API web/admin si se necesita superficie HTTP tradicional.
-- `src/Application/Auraly.Platform.Application`: casos de uso, servicios, motor agentic, DTOs, reglas.
-- `src/Domain/Auraly.Platform.Domain`: entidades, enums e interfaces de repositorios.
-- `src/Infrastructure/Auraly.Platform.Infrastructure`: EF Core, repositorios, servicios externos.
-- `src/Console/Auraly.Platform.Console`: utilidades/runner de consola.
-- `src/Tests`: pruebas unitarias/integracion y utilidades de testing.
-- `database/Auraly.Database`: proyecto SQL y scripts de seed/tablas.
-- `admin`: frontend/admin separado si aplica.
+## Fuentes de verdad
 
-## Entradas runtime importantes
+- Motores, colas, writers y catálogos: `docs/invariantes-arquitectonicas-auraly.md`.
+- Flujo y lugar correcto de extensión: `docs/mapa-motores-flujos-y-extensiones.md`.
+- Prácticas de implementación: `docs/estandares-de-ingenieria.md`.
+- Motor conversacional: `docs/agent-engine-manual.md`. DT-009 está aplazada; no se cambia su diseño por inferencia.
+- Esquema desplegable: `database/Auraly.Database`; no crear tablas desde startup.
+- Opciones visibles de negocio: tablas de catálogo + API; los enums solo tipan conjuntos cerrados.
 
-Azure Functions actuales en `src/API/Auraly.Platform.Worker/Functions`:
+## Reglas rápidas
 
-- `WhatsAppWebhookFunction`: recibe mensajes/eventos de WhatsApp.
-- `WompiWebhookFunction`: recibe confirmaciones/eventos de pago.
-- `PaymentLinkPollerFunction`: consulta links de pago pendientes.
-- Confirmacion manual de pagos: accion autenticada en admin (`POST /api/payments/{id}/confirm-manual`).
-- `ReleaseConversationFunction`: libera conversaciones escaladas a humano.
+1. Buscar el propietario existente antes de crear servicio, processor, engine, worker, cola, writer, tabla o lista.
+2. Inventario se escribe únicamente mediante `SqlInventoryLedgerWriter`, invocado desde handlers del motor documental.
+3. Fiscal/DIAN converge en `FiscalProcessingCoordinator`; contabilidad en `AccountingProcessingCoordinator` y `SqlAccountingPostingProcessor`.
+4. Un transporte activa el mismo proceso: no contiene reglas ni crea otro motor.
+5. API autentica, autoriza, valida el contrato y llama casos de uso; SQL pertenece a persistencia.
+6. Usar `IBusinessClock`/`TimeProvider` en reglas dependientes del tiempo.
+7. Todo dropdown de negocio consume catálogo persistido. Mapas de iconos/colores son presentación, no catálogo.
 
-La DI principal esta en `src/API/Auraly.Platform.Worker/Program.cs`. Antes de asumir que un servicio existe, confirmar ahi o en el proyecto WebAPI si se trabaja esa superficie.
+## Motor conversacional
 
-## Motor agentic
+Ruta principal: `WhatsAppMessageProcessorService` → `AgentConversationService` → compilación de `Agents.SettingsJson` → posición/plan determinista → `DeterministicTurnCoordinator` → `DeterministicStageExecutor`/`IAgentOperation` → renderer y efectos.
 
-Carpeta principal: `src/Application/Auraly.Platform.Application/Agents`.
+Las reglas de tenant viven en configuración/seed, no en el motor ni en prompts globales. Catálogo, precios, disponibilidad, reservas y pagos se consultan mediante sus servicios propietarios. Para cualquier cambio leer completo el manual antes de actuar.
 
-Flujo actual:
-
-1. `WhatsAppMessageProcessorService` resuelve negocio, conversacion y agente; inbound controla recibos, idempotencia y debounce.
-2. `AgentConversationService` carga configuracion, historial, facts, memoria y estado.
-3. `AgentConfigProvider` y `AgentConfigurationCompiler` deserializan y validan `Agents.SettingsJson`.
-4. `DeterministicConversationPosition` y `TurnPlanScopeBuilder` determinan flow, etapa y contrato permitido.
-5. `LlmTurnPlanner` propone un `TurnPlan` estructurado con facts, signals, decision y directiva de respuesta; no cambia estado directamente.
-6. `DeterministicTurnCoordinator` valida el plan, aplica protecciones, gobierna facts, selecciones pendientes y transiciones.
-7. `DeterministicStageExecutor` ejecuta las `IAgentOperation` registradas en `Agents/Operations`.
-8. Los outcomes agregan efectos y presentaciones autoritativas. `DeterministicResponseRenderer` compone la respuesta y `DeterministicTurnEffectProcessor` persiste/envia efectos.
-
-Configuracion del agente:
-
-- Fuente de verdad: `Agents.SettingsJson` en base de datos.
-- Seeds por tenant: `database/Auraly.Database/Scripts/Seeds`.
-- `SystemPromptMarkdown` es legacy/fallback; no debe gobernar reglas deterministas.
-- Persona, policies, flows, facts, signals, operaciones, outcomes, templates, checkout, commerce y webhooks viven en `SettingsJson`.
-- El catalogo no se duplica en prompts: operaciones y adapters lo consultan desde tablas o integraciones.
-- La memoria efimera `system.pending_cart_commands` conserva lotes que necesitan aclaracion; el cierre principal se extrae semanticamente mediante el fact con rol `order.finalized`, mientras `commerce.pendingCart` define respaldos deterministas, descartes contextuales y si una finalizacion explicita puede excluir todos los pendientes. `cartReviewRules` protege consultas de solo lectura. Los reemplazos se enlazan semanticamente mediante `replacement_reference`; `productReplacementRules` solo actua como respaldo, el retiro del producto anterior se difiere hasta elegir una opcion inequivoca con cantidad y nunca se inventa cantidad al responder solo “agregame”.
-
-Manual detallado: `docs/agent-engine-manual.md`.
-
-## Datos y dominio
-
-`ApplicationDbContext` expone, entre otras, estas familias:
-
-- Conversacion: `Conversations`, `Messages`, `ConversationContexts`, `ConversationStates`, `CustomerMemory`.
-- Comercial/reservas: `Leads`, `Reservations`, `ReservationAddOns`, `Services`, `ServiceCategories`, `ServiceBundleItems`, `ServiceAddOnRules`.
-- Recursos/capacidad: `BusinessResources`, `ServiceResourceUsages`, `Employees`, `EmployeeServices`.
-- Pagos/inscripciones: `PaymentTransactions`, `Enrollments`.
-- Multi-tenant/admin: `Tenants`, `Businesses`, `BusinessWhatsAppNumbers`, `BusinessConfigurations`, `SystemConfigurations`.
-- Auth/admin: `AppUsers`, `AppRoles`, `Permissions`, `UserRoles`, `RolePermissions`, `RefreshTokens`, `AuditLogs`.
-- Agentic: `AgentTypes`, `Agents`.
-
-Cuando agregues entidad:
-
-1. Crear entidad/enums en Domain.
-2. Agregar interfaz de repo si aplica.
-3. Registrar `DbSet` y configuracion EF.
-4. Implementar repositorio en Infrastructure.
-5. Actualizar `UnitOfWork` e interfaces.
-6. Actualizar proyecto SQL en `database` si se mantiene schema-first para deploy.
-7. Registrar DI en `Program.cs`.
-8. Ajustar tests/in-memory repos si existen.
-
-## Pagos y checkout
-
-- Wompi esta detras de `IPaymentLinkService` / `WompiPaymentLinkService`.
-- Confirmaciones pasan por `IPaymentConfirmationHandler` y `PaymentLifecycleService`.
-- `CheckoutQuoteService`, `PrepareCheckoutTool` y `ResolveCheckoutQuoteTool` manejan cotizaciones/modos.
-- El seed de agente define modos de checkout: reservas y enrollments/clases/talleres.
-- No marcar reserva como confirmada antes de pago cuando el flujo requiere deposito.
-
-## Reglas importantes del agente
-
-- Responder siempre en espanol al cliente final.
-- No inventar precios, disponibilidad, horarios ni servicios: consultar tools/backend.
-- Fechas: usar reloj del negocio (`IBusinessClock`, `BusinessToday`) y normalizar a `YYYY-MM-DD` / `HH:mm`.
-- Antes de crear o asignar slots, validar fecha no pasada y disponibilidad.
-- No decir "confirmado" o "reserve" si aun no hay reserva confirmada.
-- Escalar a humano con phrases de kill switch o errores consecutivos segun configuracion.
-
-## Comandos utiles
-
-Build principal:
+## Verificación
 
 ```powershell
 dotnet build Auraly.Commerce.sln
+dotnet test tests/Auraly.Foundation.Tests/Auraly.Foundation.Tests.csproj
+cd admin
+npm run lint
+npm run test:pos
+npm run build
 ```
 
-Tests de integracion del motor:
+La publicación de base de datos usa la conexión explícita del entorno objetivo. No asumir `localhost/Auraly` ni publicar sin autorización.
 
-```powershell
-dotnet run --project src/Tests/Auraly.IntegrationTests/Auraly.IntegrationTests.csproj
-```
+## Higiene documental
 
-Publicacion de base de datos:
-
-- Para publicar BD, usar la cadena `ConnectionStrings:DefaultConnection` de `src/Console/Auraly.Platform.Console/appsettings.json`.
-- No asumir defaults de `database/Auraly.Database/Scripts/config.json` (`localhost/Auraly`) salvo que el usuario lo pida explicitamente.
-- Si se usa el proyecto SQL/DACPAC, derivar `ServerInstance`, `DatabaseName` y credenciales desde ese connection string antes de ejecutar `Publish.ps1`/`SqlPackage`.
-
-Azure Functions local:
-
-```powershell
-cd src/API/Auraly.Platform.Worker
-func start
-```
-
-Migraciones EF manuales, si se usan:
-
-```powershell
-cd src/Infrastructure/Auraly.Platform.Infrastructure
-dotnet ef database update --startup-project ../../API/Auraly.Platform.Worker/Auraly.Platform.Worker.csproj --context ApplicationDbContext
-```
-
-## Documentacion que se conserva
-
-- `README.md`: onboarding general, aunque puede estar algo desactualizado.
-- `DEPLOY.md`: notas de despliegue.
-- `CONFIGURACION_SECRETOS.md`: claves/settings esperados.
-- README especificos dentro de `database`, `infrastructure`, `scripts`, `src` y `docs`.
-
-## Higiene para futuras sesiones
-
-- Evitar crear bitacoras tipo `*_COMPLETADO.md`, `REFACTOR_*.md`, `FIX_*.md` en la raiz.
-- Si una decision de arquitectura sigue vigente, actualizar este archivo en lugar de crear otro documento largo.
-- Si es una nota temporal, ponerla en el issue/PR o borrarla al terminar.
+No crear bitácoras `*_COMPLETADO.md` o documentos duplicados. Actualizar el documento propietario. Las notas temporales pertenecen al issue/PR.

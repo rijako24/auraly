@@ -145,13 +145,14 @@ public sealed class PosArchitectureTests
             page,
             StringComparison.Ordinal);
 
-        foreach (var shortcut in new[] { "F1", "F2", "F3", "F4", "F5" })
-        {
-            Assert.Contains(
-                $"shortcut: \"{shortcut}\"",
-                paymentDialog,
-                StringComparison.Ordinal);
-        }
+        Assert.Contains(
+            "useReferenceOptions(\"payment-method\")",
+            paymentDialog,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "shortcut: `F${index + 1}`",
+            paymentDialog,
+            StringComparison.Ordinal);
 
         Assert.Contains(
             "onSearch={searchProducts}",

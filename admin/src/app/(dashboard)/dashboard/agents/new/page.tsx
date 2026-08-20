@@ -12,45 +12,29 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useCreateAgent } from "@/hooks/use-agents";
+import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import type { ApiError } from "@/types/api";
 import { AgentBotType } from "@/types/agent-bot-type";
 
-const BOT_TYPES = [
-  {
-    value: AgentBotType.Reservation,
-    title: "Reservas",
-    description: "Agenda servicios, consulta disponibilidad y confirma citas.",
-    icon: CalendarDays,
-    accent: "from-cyan-500/20 via-cyan-500/5 to-transparent",
-  },
-  {
-    value: AgentBotType.Order,
-    title: "Pedidos",
-    description: "Vende productos, arma pedidos y gestiona entrega y pago.",
-    icon: ShoppingCart,
-    accent: "from-emerald-500/20 via-emerald-500/5 to-transparent",
-  },
-  {
-    value: AgentBotType.Delivery,
-    title: "Domicilios",
-    description: "Recibe, acepta y actualiza pedidos asignados a domiciliarios.",
-    icon: MapPinned,
-    accent: "from-amber-500/20 via-amber-500/5 to-transparent",
-  },
-  {
-    value: AgentBotType.PaymentValidator,
-    title: "Validador de pagos",
-    description: "Consulta pagos pendientes y confirma transacciones autorizadas.",
-    icon: CreditCard,
-    accent: "from-violet-500/20 via-violet-500/5 to-transparent",
-  },
-] as const;
+const BOT_TYPE_VISUALS: Record<AgentBotType, { icon: typeof CalendarDays; accent: string }> = {
+  [AgentBotType.Reservation]: { icon: CalendarDays, accent: "from-cyan-500/20 via-cyan-500/5 to-transparent" },
+  [AgentBotType.Order]: { icon: ShoppingCart, accent: "from-emerald-500/20 via-emerald-500/5 to-transparent" },
+  [AgentBotType.Delivery]: { icon: MapPinned, accent: "from-amber-500/20 via-amber-500/5 to-transparent" },
+  [AgentBotType.PaymentValidator]: { icon: CreditCard, accent: "from-violet-500/20 via-violet-500/5 to-transparent" },
+};
+
 
 export default function NewAgentPage() {
   const router = useRouter();
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const createAgent = useCreateAgent();
+  const botTypeCatalog = useReferenceOptions("agent-bot-type");
+  const botTypes = (botTypeCatalog.data ?? []).flatMap((option) => {
+    const value = Number(option.code) as AgentBotType;
+    const visual = BOT_TYPE_VISUALS[value];
+    return visual ? [{ value, title: option.label, description: option.description ?? "", ...visual }] : [];
+  });
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [botType, setBotType] = useState<AgentBotType | null>(null);
@@ -84,6 +68,14 @@ export default function NewAgentPage() {
     );
   }
 
+  if (botTypeCatalog.isLoading) {
+    return <p className="text-sm text-muted-foreground">Cargando tipos de agente...</p>;
+  }
+
+  if (botTypeCatalog.isError) {
+    return <p role="alert" className="text-sm text-destructive">No fue posible cargar los tipos de agente.</p>;
+  }
+
   if (botType === null) {
     return (
       <div className="mx-auto max-w-6xl space-y-6">
@@ -101,7 +93,7 @@ export default function NewAgentPage() {
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {BOT_TYPES.map((type) => {
+          {botTypes.map((type) => {
             const Icon = type.icon;
             return (
               <button
@@ -158,7 +150,7 @@ export default function NewAgentPage() {
             <div className="flex items-center justify-between rounded-xl border bg-muted/30 p-4">
               <div>
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Tipo de agente</p>
-                <p className="font-semibold">{BOT_TYPES.find((type) => type.value === botType)?.title}</p>
+                <p className="font-semibold">{botTypes.find((type) => type.value === botType)?.title}</p>
               </div>
               <Button type="button" variant="outline" size="sm" onClick={() => setBotType(null)}>Cambiar tipo</Button>
             </div>

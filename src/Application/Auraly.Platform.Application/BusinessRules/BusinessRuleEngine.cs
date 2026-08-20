@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using Auraly.Platform.Domain.Repositories;
+using Auraly.Platform.Application.Time;
 
 namespace Auraly.Platform.Application.BusinessRules;
 
@@ -11,13 +12,16 @@ public class BusinessRuleEngine : IBusinessRuleEngine
 {
     private readonly ILogger<BusinessRuleEngine> _logger;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IBusinessClock _businessClock;
 
     public BusinessRuleEngine(
         ILogger<BusinessRuleEngine> logger,
-        IUnitOfWork unitOfWork)
+        IUnitOfWork unitOfWork,
+        IBusinessClock businessClock)
     {
         _logger = logger;
         _unitOfWork = unitOfWork;
+        _businessClock = businessClock;
     }
 
     public async Task<BusinessRuleValidationResult> ValidateReservationAsync(
@@ -51,7 +55,10 @@ public class BusinessRuleEngine : IBusinessRuleEngine
                 }
             }
 
-            var today = DateOnly.FromDateTime(DateTime.Today);
+            var clock = await _businessClock.GetSnapshotAsync(
+                businessId,
+                cancellationToken);
+            var today = clock.Today;
             if (desiredDate < today)
             {
                 result.IsValid = false;
@@ -59,20 +66,6 @@ public class BusinessRuleEngine : IBusinessRuleEngine
                 result.ErrorCode = "DATE_IN_PAST";
                 return result;
             }
-
-            var maxAdvanceDate = today.AddMonths(3);
-            if (desiredDate > maxAdvanceDate)
-            {
-                result.Warnings.Add(
-                    "La fecha seleccionada es en mÃ¡s de 3 meses. Considera que las polÃ­ticas pueden cambiar");
-            }
-
-            var hour = desiredTime.Hour;
-            if (hour < 8 || hour >= 20)
-                result.Warnings.Add("El horario seleccionado puede estar fuera del horario de atenciÃ³n habitual");
-
-            if (desiredDate.DayOfWeek == DayOfWeek.Sunday)
-                result.Warnings.Add("El dÃ­a seleccionado es domingo. Verifica que el negocio estÃ© abierto");
 
             return result;
         }
@@ -113,43 +106,6 @@ public class BusinessRuleEngine : IBusinessRuleEngine
         {
             _logger.LogError(ex, "Error al obtener contexto de negocio");
             return Task.FromResult(context);
-        }
-    }
-
-    public BusinessRuleValidationResult ValidateBusinessAttribute(
-        Guid businessId,
-        string attributeName,
-        string attributeValue)
-    {
-        var result = new BusinessRuleValidationResult { IsValid = true };
-
-        try
-        {
-            // IMPORTANTE: Las validaciones deben venir de AttributeDefinition configurado
-            // NO hardcodear validaciones especÃ­ficas aquÃ­
-            
-            // TODO: Obtener AttributeDefinition desde configuration provider
-            // y validar segÃºn:
-            // - definition.Type (Number, Text, Date, etc.)
-            // - definition.ValidationPattern (regex)
-            // - definition.AllowedValues (lista)
-            
-            _logger.LogDebug(
-                "ValidaciÃ³n genÃ©rica de atributo: {AttributeName} = {Value}",
-                attributeName, attributeValue);
-
-            return result;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error al validar atributo de negocio");
-            
-            return new BusinessRuleValidationResult
-            {
-                IsValid = false,
-                Reason = "Error al validar el atributo",
-                ErrorCode = "VALIDATION_ERROR"
-            };
         }
     }
 }

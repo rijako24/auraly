@@ -1,6 +1,7 @@
 using System.Data;
 using Auraly.Application.DocumentProcessing;
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Commerce.Accounting.Domain;
 using Microsoft.Data.SqlClient;
@@ -19,17 +20,13 @@ public sealed class SqlAccountingPostingProcessor(
     IAuralyIdGenerator ids,
     TimeProvider timeProvider)
 {
-    private static readonly HashSet<string> SupportedTypes =
-        ["SalesInvoice", "SalesReceipt", "SalesReturn", "GoodsReceipt", "Expense", "PurchaseReturn",
-         "PayablePayment", "ReceivablePayment", "CashReceipt", "CashDisbursement"];
-
     public async Task ProcessAsync(
         Guid documentId,
         string documentType,
         Guid businessId,
         CancellationToken cancellationToken)
     {
-        if (!SupportedTypes.Contains(documentType)) return;
+        if (!AccountingProcessingPolicy.Supports(documentType)) return;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
@@ -171,32 +168,6 @@ public sealed class SqlAccountingPostingProcessor(
         return new SourceEnvelope(
             reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
             reader.GetString(3), (byte[])reader[4], reader.GetDateTimeOffset(5));
-    }
-
-    private async Task EnsurePostingJobAsync(
-        SqlConnection connection,
-        SqlTransaction transaction,
-        SourceEnvelope source,
-        CancellationToken cancellationToken)
-    {
-        const string sql = """
-            IF NOT EXISTS
-            (
-                SELECT 1 FROM dbo.AccountingPostingJobs WITH (UPDLOCK,HOLDLOCK)
-                WHERE SourceDocumentId=@DocumentId AND SourceDocumentType=@DocumentType
-            )
-            INSERT dbo.AccountingPostingJobs
-            (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,
-             SourceDocumentType,SourcePayloadHash,OccurredAt,Status,AttemptCount,
-             CreatedAt)
-            VALUES(@JobId,@TenantId,@BusinessId,@DocumentId,@DocumentType,
-                   @PayloadHash,@OccurredAt,N'Pending',0,@Now);
-            """;
-        await using var command = new SqlCommand(sql, connection, transaction);
-        command.Parameters.AddWithValue("@JobId", ids.NewId());
-        AddSource(command, source);
-        command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
-        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task<string> LockPostingStatusAsync(

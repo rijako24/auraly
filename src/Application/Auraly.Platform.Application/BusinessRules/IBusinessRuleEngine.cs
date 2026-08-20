@@ -14,9 +14,4 @@ public interface IBusinessRuleEngine
         string phone,
         string? service,
         CancellationToken cancellationToken = default);
-
-    BusinessRuleValidationResult ValidateBusinessAttribute(
-        Guid businessId,
-        string attributeName,
-        string attributeValue);
 }
