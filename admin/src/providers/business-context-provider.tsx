@@ -1,14 +1,15 @@
 "use client";
 
 import { useEffect, type ReactNode } from "react";
+import Image from "next/image";
+import { LoaderCircle } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { defaultStartRoute, shouldApplyDefaultStart } from "@/lib/default-start-route";
+import { defaultStartRoute, shouldRestoreOperationalStart } from "@/lib/default-start-route";
 import { executionContextApi } from "@/services/api/execution-context";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { useTenantContextStore } from "@/stores/tenant-context-store";
-import { PageLoading } from "@/components/ui/page-loading";
 import { PageError } from "@/components/ui/page-error";
 
 export function BusinessContextProvider({ children }: { children: ReactNode }) {
@@ -63,12 +64,28 @@ export function BusinessContextProvider({ children }: { children: ReactNode }) {
   }, [accessQuery.data, setExecutionAccess]);
 
   useEffect(() => {
-    if (!accessQuery.data || !shouldApplyDefaultStart(pathname)) return;
+    if (!accessQuery.data) return;
     const target = defaultStartRoute(accessQuery.data.roles, accessQuery.data.permissions);
-    if (target !== "/dashboard") router.replace(target);
+    if (shouldRestoreOperationalStart(pathname, target)) router.replace(target);
   }, [accessQuery.data, pathname, router]);
 
   if (!isAuthenticated) return null;
+
+  const failed = tenantsQuery.isError || businessesQuery.isError || accessQuery.isError;
+  if (failed) {
+    return (
+      <div className="flex h-screen items-center justify-center p-8">
+        <PageError
+          message="No se pudo cargar el contexto autorizado de trabajo."
+          onRetry={() => {
+            void tenantsQuery.refetch();
+            if (selectedTenantId) void businessesQuery.refetch();
+            if (selectedBusinessId) void accessQuery.refetch();
+          }}
+        />
+      </div>
+    );
+  }
 
   const loading =
     tenantsQuery.isLoading ||
@@ -78,21 +95,23 @@ export function BusinessContextProvider({ children }: { children: ReactNode }) {
 
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center">
-        <PageLoading cards={0} />
+      <div className="flex min-h-[65dvh] items-center justify-center px-6">
+        <div className="flex max-w-sm flex-col items-center text-center">
+          <Image src="/brand/auraly-symbol.png" alt="Auraly" width={132} height={88} priority className="h-auto drop-shadow-[0_16px_28px_rgba(15,118,110,.18)]" />
+          <h1 className="mt-5 text-xl font-black tracking-tight">Preparando tu espacio</h1>
+          <p className="mt-2 text-sm text-muted-foreground">Estamos cargando el negocio, tus permisos y la operación asignada.</p>
+          <LoaderCircle className="mt-5 h-6 w-6 animate-spin text-teal-600" aria-label="Cargando" />
+        </div>
       </div>
     );
   }
 
-  const failed = tenantsQuery.isError || businessesQuery.isError || accessQuery.isError;
-  if (failed || !selectedTenantId || !selectedBusinessId) {
+  if (!selectedTenantId || !selectedBusinessId) {
     return (
       <div className="flex h-screen items-center justify-center p-8">
         <PageError
           message={
-            failed
-              ? "No se pudo cargar el contexto autorizado de trabajo."
-              : !selectedTenantId
+            !selectedTenantId
                 ? "Este usuario no tiene acceso a ningún tenant activo."
                 : "Este usuario no tiene acceso a ningún negocio activo del tenant."
           }

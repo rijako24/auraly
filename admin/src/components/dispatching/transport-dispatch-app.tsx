@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowLeft, ArrowUp, Banknote, Camera, Check, ChevronRight, CircleDollarSign, Map, MapPin, PackageCheck, ReceiptText, Route, ShieldCheck, Truck } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, Banknote, Camera, Check, ChevronRight, CircleDollarSign, Map, MapPin, PackageCheck, PackageX, Plus, ReceiptText, Route, ShieldCheck, Trash2, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { dispatchesApi, type DeliveryDocument, type DeliveryResultInput, type DispatchExecution, type DispatchListItem } from "@/services/api/dispatches";
 
 const money=new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maximumFractionDigits:0});
@@ -20,7 +21,6 @@ const executionKey=(id:string)=>["dispatches","execution",id] as const;
 export function TransportDispatchApp({canSettle=false}:{canSettle?:boolean}){
   const [selected,setSelected]=useState<DispatchListItem|null>(null);
   const query=useQuery({queryKey:["dispatches","my-deliveries"],queryFn:()=>dispatchesApi.page({page:1,pageSize:50})});
-  useEffect(()=>{if(!selected&&query.data?.items.length===1)setSelected(query.data.items[0])},[query.data,selected]);
   if(selected)return <DispatchExecutionWorkspace dispatch={selected} canSettle={canSettle} onBack={()=>setSelected(null)}/>;
   return <div className="mx-auto max-w-5xl space-y-5 pb-24">
     <section className="overflow-hidden rounded-[2rem] bg-gradient-to-br from-slate-950 via-teal-950 to-teal-700 p-6 text-white shadow-xl md:p-8">
@@ -36,6 +36,7 @@ export function DispatchExecutionWorkspace({dispatch,canSettle,onBack}:{dispatch
   const cache=useQueryClient();const query=useQuery({queryKey:executionKey(dispatch.dispatchId),queryFn:()=>dispatchesApi.execution(dispatch.dispatchId)});
   const [tab,setTab]=useState<"list"|"map"|"settlement">("list"),[active,setActive]=useState<DeliveryDocument|null>(null),[expenseOpen,setExpenseOpen]=useState(false);
   const data=query.data;const completed=data?.documents.filter(x=>x.deliveryStatus!=="Pending").length??0;const total=data?.documents.length??0;
+  const deliveryEnabled=data?.status==="Released"||data?.status==="InDelivery";
   const move=async(documentId:string,direction:-1|1)=>{if(!data)return;const ids=data.documents.map(x=>x.dispatchSourceDocumentId),index=ids.indexOf(documentId),target=index+direction;if(target<0||target>=ids.length)return;[ids[index],ids[target]]=[ids[target],ids[index]];try{await dispatchesApi.reorder(data.dispatchId,ids,dispatch.rowVersion);await query.refetch()}catch(error){toast.error(errorMessage(error,"No fue posible cambiar el orden."))}};
   return <div className="mx-auto max-w-6xl space-y-4 pb-28">
     <section className="sticky top-0 z-20 -mx-4 border-b bg-background/95 px-4 pb-4 pt-2 backdrop-blur md:static md:mx-0 md:rounded-3xl md:border md:p-5">
@@ -44,17 +45,18 @@ export function DispatchExecutionWorkspace({dispatch,canSettle,onBack}:{dispatch
       <div className="mt-4 grid grid-cols-3 gap-2 rounded-2xl bg-muted p-1"><Tab active={tab==="list"} onClick={()=>setTab("list")} icon={ReceiptText}>Lista</Tab><Tab active={tab==="map"} onClick={()=>setTab("map")} icon={Map}>Mapa</Tab><Tab active={tab==="settlement"} onClick={()=>setTab("settlement")} icon={CircleDollarSign}>Cierre</Tab></div>
     </section>
     {query.isLoading&&<p className="p-10 text-center text-muted-foreground">Cargando despacho…</p>}
-    {data&&tab==="list"&&<div className="space-y-3">{data.documents.map((document,index)=><DeliveryCard key={document.dispatchSourceDocumentId} document={document} index={index} total={data.documents.length} onOpen={()=>setActive(document)} onMove={direction=>move(document.dispatchSourceDocumentId,direction)}/>)}</div>}
-    {data&&tab==="map"&&<DispatchMap data={data} onOpen={setActive}/>}
+    {data&&!deliveryEnabled&&<div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><strong className="block">Este despacho todavía no está liberado</strong>Termina la verificación y pulsa “Liberar despacho”. Las entregas se habilitarán cuando quede listo para salir.</div>}
+    {data&&tab==="list"&&<div className="space-y-3">{data.documents.map((document,index)=><DeliveryCard key={document.dispatchSourceDocumentId} document={document} index={index} total={data.documents.length} enabled={deliveryEnabled} onOpen={()=>deliveryEnabled&&setActive(document)} onMove={direction=>move(document.dispatchSourceDocumentId,direction)}/>)}</div>}
+    {data&&tab==="map"&&<DispatchMap data={data} onOpen={document=>deliveryEnabled&&setActive(document)}/>}
     {data&&tab==="settlement"&&<SettlementPanel data={data} canSettle={canSettle} onChanged={()=>query.refetch()} onExpense={()=>setExpenseOpen(true)}/>}
     {active&&data&&<DeliveryDialog dispatchId={data.dispatchId} document={active} onClose={()=>setActive(null)} onSaved={async()=>{setActive(null);await cache.invalidateQueries({queryKey:executionKey(data.dispatchId)});await query.refetch()}}/>}
     {expenseOpen&&data&&<ExpenseDialog dispatchId={data.dispatchId} onClose={()=>setExpenseOpen(false)} onSaved={async()=>{setExpenseOpen(false);await query.refetch()}}/>}
   </div>;
 }
 
-function DeliveryCard({document,index,total,onOpen,onMove}:{document:DeliveryDocument;index:number;total:number;onOpen:()=>void;onMove:(direction:-1|1)=>void}){
+function DeliveryCard({document,index,total,enabled,onOpen,onMove}:{document:DeliveryDocument;index:number;total:number;enabled:boolean;onOpen:()=>void;onMove:(direction:-1|1)=>void}){
   const done=document.deliveryStatus!=="Pending";
-  return <Card className={`overflow-hidden rounded-3xl transition ${done?"border-emerald-200 bg-emerald-50/30":"hover:border-teal-300 hover:shadow-md"}`}><CardContent className="p-0"><div className="flex gap-3 p-4"><span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl font-black ${done?"bg-emerald-500 text-white":"bg-slate-900 text-white"}`}>{done?<Check className="h-5 w-5"/>:index+1}</span><button onClick={onOpen} className="min-w-0 flex-1 text-left"><div className="flex items-start justify-between gap-2"><span><strong className="block truncate text-base">{document.customerName}</strong><small className="text-muted-foreground">{document.documentNumber} · {money.format(document.documentTotal)}</small></span><DeliveryBadge status={document.deliveryStatus}/></div><p className="mt-2 flex items-start gap-1 text-sm text-muted-foreground"><MapPin className="mt-0.5 h-4 w-4 shrink-0"/>{document.deliveryAddress??"Ubicación pendiente"}</p></button></div><div className="flex border-t bg-background/70"><Button variant="ghost" className="flex-1 rounded-none" disabled={index===0||done} onClick={()=>onMove(-1)}><ArrowUp className="mr-1 h-4 w-4"/>Subir</Button><Button variant="ghost" className="flex-1 rounded-none" disabled={index===total-1||done} onClick={()=>onMove(1)}><ArrowDown className="mr-1 h-4 w-4"/>Bajar</Button><Button variant="ghost" className="flex-1 rounded-none text-teal-700" onClick={onOpen}>{done?"Ver":"Entregar"}<ChevronRight className="ml-1 h-4 w-4"/></Button></div></CardContent></Card>;
+  return <Card className={`overflow-hidden rounded-3xl transition ${done?"border-emerald-200 bg-emerald-50/30":enabled?"hover:border-teal-300 hover:shadow-md":"opacity-75"}`}><CardContent className="p-0"><div className="flex gap-3 p-4"><span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl font-black ${done?"bg-emerald-500 text-white":"bg-slate-900 text-white"}`}>{done?<Check className="h-5 w-5"/>:index+1}</span><button disabled={!enabled} onClick={onOpen} className="min-w-0 flex-1 text-left disabled:cursor-not-allowed"><div className="flex items-start justify-between gap-2"><span><strong className="block truncate text-base">{document.customerName}</strong><small className="text-muted-foreground">{document.documentNumber} · {money.format(document.documentTotal)}</small></span><DeliveryBadge status={document.deliveryStatus}/></div><p className="mt-2 flex items-start gap-1 text-sm text-muted-foreground"><MapPin className="mt-0.5 h-4 w-4 shrink-0"/>{document.deliveryAddress??"Ubicación pendiente"}</p></button></div><div className="flex border-t bg-background/70"><Button variant="ghost" className="flex-1 rounded-none" disabled={!enabled||index===0||done} onClick={()=>onMove(-1)}><ArrowUp className="mr-1 h-4 w-4"/>Subir</Button><Button variant="ghost" className="flex-1 rounded-none" disabled={!enabled||index===total-1||done} onClick={()=>onMove(1)}><ArrowDown className="mr-1 h-4 w-4"/>Bajar</Button><Button variant="ghost" disabled={!enabled} className="flex-1 rounded-none text-teal-700" onClick={onOpen}>{done?"Ver":enabled?"Entregar":"Pendiente"}<ChevronRight className="ml-1 h-4 w-4"/></Button></div></CardContent></Card>;
 }
 
 function DispatchMap({data,onOpen}:{data:DispatchExecution;onOpen:(document:DeliveryDocument)=>void}){
@@ -63,34 +65,72 @@ function DispatchMap({data,onOpen}:{data:DispatchExecution;onOpen:(document:Deli
 }
 function DeliveryDialog({dispatchId,document,onClose,onSaved}:{dispatchId:string;document:DeliveryDocument;onClose:()=>void;onSaved:()=>void}){
   const [status,setStatus]=useState<"Delivered"|"PartiallyDelivered"|"NotDelivered">(document.deliveryStatus==="Pending"?"Delivered":document.deliveryStatus as "Delivered"|"PartiallyDelivered"|"NotDelivered");
-  const [cash,setCash]=useState(""),[deposit,setDeposit]=useState(""),[reason,setReason]=useState(document.reason??""),[notes,setNotes]=useState(document.notes??"");
+  const [paymentMethod,setPaymentMethod]=useState<"Cash"|"Deposit"|null>(document.creditAmount>0?null:"Cash");
+  const [reason,setReason]=useState(document.reason??""),[notes,setNotes]=useState(document.notes??"");
   const [depositProof,setDepositProof]=useState<File|null>(null),[signedProof,setSignedProof]=useState<File|null>(null),[returns,setReturns]=useState<Record<number,string>>({});
+  const [returnsOpen,setReturnsOpen]=useState(false);
+  const returnedTotal=document.lines.reduce((sum,line)=>sum+line.lineTotal/line.quantity*Number(returns[line.originalLineNumber]||0),0);
+  const net=Math.max(0,document.documentTotal-returnedTotal);
+  const immediateAmount=document.creditAmount>0?Math.max(0,net-document.creditAmount):net;
+  const selectedReturns=Object.values(returns).filter(value=>Number(value)>0).length;
   const mutation=useMutation({mutationFn:async()=>{
     const returnInputs=document.lines.flatMap(line=>{const quantity=Number(returns[line.originalLineNumber]||0);return quantity>0?[{originalLineNumber:line.originalLineNumber,quantity,inventoryDisposition:"Sellable" as const,reasonCode:"CustomerReturn",reasonDescription:"Devuelto durante la entrega"}]:[]});
-    const depositValue=Number(deposit||0),cashValue=Number(cash||0);let depositUrl:string|null=null,signedUrl:string|null=null;
+    let depositUrl:string|null=null,signedUrl:string|null=null;
     if(depositProof)depositUrl=(await dispatchesApi.uploadEvidence(dispatchId,depositProof)).url;
     if(signedProof)signedUrl=(await dispatchesApi.uploadEvidence(dispatchId,signedProof)).url;
     const payments:DeliveryResultInput["payments"]=[];
     if(status!=="NotDelivered"){
       const application=document.creditAmount>0?"CreditAdvance":"InvoicePayment";
-      if(cashValue>0)payments.push({applicationType:application,paymentMethod:"Cash",amount:cashValue,reference:null,evidenceUrl:null});
-      if(depositValue>0)payments.push({applicationType:application,paymentMethod:"Deposit",amount:depositValue,reference:null,evidenceUrl:depositUrl});
+      if(paymentMethod&&immediateAmount>0)payments.push({applicationType:application,paymentMethod,amount:immediateAmount,reference:null,evidenceUrl:paymentMethod==="Deposit"?depositUrl:null});
       if(document.creditAmount>0)payments.push({applicationType:"CreditDocument",paymentMethod:null,amount:0,reference:null,evidenceUrl:signedUrl});
     }
     const position=await currentPosition();
     return dispatchesApi.recordDelivery(dispatchId,{dispatchSourceDocumentId:document.dispatchSourceDocumentId,deliveryStatus:status,reason:reason||null,notes:notes||null,latitude:position?.latitude??null,longitude:position?.longitude??null,occurredAt:new Date().toISOString(),idempotencyKey:crypto.randomUUID(),payments,returns:returnInputs});
   },onSuccess:()=>{toast.success("Resultado de entrega guardado");onSaved()},onError:error=>toast.error(errorMessage(error,"No fue posible guardar la entrega."))});
-  const returnedTotal=document.lines.reduce((sum,line)=>sum+line.lineTotal/line.quantity*Number(returns[line.originalLineNumber]||0),0),net=Math.max(0,document.documentTotal-returnedTotal),paid=Number(cash||0)+Number(deposit||0),difference=document.creditAmount>0?0:net-paid;
-  useEffect(()=>{if(status!=="NotDelivered"&&document.creditAmount===0&&cash===""&&deposit==="")setCash(String(Math.round(net)))},[status,document.creditAmount,net,cash,deposit]);
-  return <Dialog open onOpenChange={open=>!open&&onClose()}><DialogContent className="max-h-[96vh] max-w-3xl overflow-y-auto rounded-3xl"><DialogHeader><DialogTitle>Resultado de entrega</DialogTitle><DialogDescription>{document.customerName} · {document.documentNumber} · {money.format(document.documentTotal)}</DialogDescription></DialogHeader><div className="space-y-5"><Field label="¿Cómo terminó la visita?"><Select value={status} onValueChange={value=>setStatus(value as typeof status)}><SelectTrigger className="h-12 rounded-xl"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="Delivered">Entrega completa</SelectItem><SelectItem value="PartiallyDelivered">Entrega con devolución</SelectItem><SelectItem value="NotDelivered">No se pudo entregar</SelectItem></SelectContent></Select></Field>{status!=="Delivered"&&<Field label="Motivo"><Input value={reason} onChange={event=>setReason(event.target.value)} placeholder="Describe qué ocurrió"/></Field>}{status!=="NotDelivered"&&<><section className="rounded-2xl border p-4"><h3 className="font-bold">Productos devueltos</h3><p className="mb-3 text-xs text-muted-foreground">Déjalo en cero si se entregó completo.</p><div className="space-y-2">{document.lines.map(line=><div key={line.originalLineNumber} className="grid grid-cols-[1fr_6rem] items-center gap-3"><span className="min-w-0"><strong className="block truncate text-sm">{line.productCode} · {line.description}</strong><small className="text-muted-foreground">Facturado: {line.quantity}</small></span><Input type="number" min="0" max={line.quantity} step="any" value={returns[line.originalLineNumber]??""} onChange={event=>{setReturns(current=>({...current,[line.originalLineNumber]:event.target.value}));if(Number(event.target.value)>0)setStatus("PartiallyDelivered")}} placeholder="0"/></div>)}</div></section><section className="rounded-2xl bg-slate-950 p-4 text-white"><div className="grid grid-cols-3 gap-2 text-center"><MiniMoney label="Neto" value={net}/><MiniMoney label="Registrado" value={paid}/><MiniMoney label="Diferencia" value={difference}/></div></section><div className="grid gap-3 sm:grid-cols-2"><Field label={document.creditAmount>0?"Abono en efectivo":"Efectivo recibido"}><Input inputMode="numeric" value={cash} onChange={event=>setCash(event.target.value)} placeholder="$ 0"/></Field><Field label={document.creditAmount>0?"Abono consignado":"Consignación"}><Input inputMode="numeric" value={deposit} onChange={event=>setDeposit(event.target.value)} placeholder="$ 0"/></Field></div>{Number(deposit)>0&&<PhotoInput label="Foto de la consignación" file={depositProof} onChange={setDepositProof}/>} {document.creditAmount>0&&<PhotoInput label="Factura firmada por el cliente" file={signedProof} onChange={setSignedProof}/>}</>}<Field label="Observaciones"><Input value={notes} onChange={event=>setNotes(event.target.value)} placeholder="Opcional"/></Field></div><DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button className="bg-teal-600 hover:bg-teal-700" disabled={mutation.isPending||status!=="NotDelivered"&&document.creditAmount===0&&Math.abs(difference)>0.009||status!=="Delivered"&&!reason.trim()||Number(deposit)>0&&!depositProof||document.creditAmount>0&&!signedProof} onClick={()=>mutation.mutate()}>{mutation.isPending?"Guardando…":"Confirmar entrega"}</Button></DialogFooter></DialogContent></Dialog>;
+  const paymentRequired=status!=="NotDelivered"&&immediateAmount>0;
+  const invalid=status!=="Delivered"&&!reason.trim()||paymentRequired&&!paymentMethod||paymentMethod==="Deposit"&&!depositProof||document.creditAmount>0&&status!=="NotDelivered"&&!signedProof;
+  return <>
+    <Dialog open onOpenChange={open=>!open&&onClose()}><DialogContent className="max-h-[96dvh] max-w-3xl overflow-y-auto rounded-3xl">
+      <DialogHeader><DialogTitle>Confirmar entrega</DialogTitle><DialogDescription>{document.customerName} · {document.documentNumber}</DialogDescription></DialogHeader>
+      <div className="space-y-5">
+        <section className="grid grid-cols-3 gap-2 rounded-2xl bg-slate-950 p-4 text-center text-white"><MiniMoney label="Factura" value={document.documentTotal}/><MiniMoney label="Devolución" value={returnedTotal}/><MiniMoney label="A recibir" value={net}/></section>
+        <Field label="¿Cómo terminó la visita?"><Select value={status} onValueChange={value=>setStatus(value as typeof status)}><SelectTrigger className="h-12 rounded-xl"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="Delivered">Entrega completa</SelectItem><SelectItem value="PartiallyDelivered">Entrega con devolución</SelectItem><SelectItem value="NotDelivered">No se pudo entregar</SelectItem></SelectContent></Select></Field>
+        {status!=="Delivered"&&<Field label="Motivo"><Input value={reason} onChange={event=>setReason(event.target.value)} placeholder="Describe qué ocurrió"/></Field>}
+        {status!=="NotDelivered"&&<>
+          <section className="flex items-center justify-between gap-3 rounded-2xl border p-4"><span><strong className="block">Devolución de productos</strong><small className="text-muted-foreground">{selectedReturns?`${selectedReturns} producto(s) · ${money.format(returnedTotal)}`:"La entrega no tiene devoluciones"}</small></span><Button type="button" variant={selectedReturns?"secondary":"outline"} onClick={()=>setReturnsOpen(true)}>{selectedReturns?<><PackageX className="mr-2 h-4 w-4"/>Editar</>:<><Plus className="mr-2 h-4 w-4"/>Agregar devolución</>}</Button></section>
+          {immediateAmount>0?<Field label={`Pago recibido · ${money.format(immediateAmount)}`}><div className="grid grid-cols-2 gap-3"><PaymentButton active={paymentMethod==="Cash"} icon={Banknote} title="Efectivo" onClick={()=>{setPaymentMethod("Cash");setDepositProof(null)}}/><PaymentButton active={paymentMethod==="Deposit"} icon={ReceiptText} title="Consignación" onClick={()=>setPaymentMethod("Deposit")}/></div></Field>:<div className="rounded-2xl border bg-muted/30 p-4 text-sm"><strong className="block">Venta a crédito</strong>No se registra recaudo en esta entrega.</div>}
+          {paymentMethod==="Deposit"&&immediateAmount>0&&<PhotoInput label="Foto de la consignación" file={depositProof} onChange={setDepositProof}/>}
+          {document.creditAmount>0&&<PhotoInput label="Factura firmada por el cliente" file={signedProof} onChange={setSignedProof}/>}
+        </>}
+        <Field label="Observaciones"><Textarea rows={2} className="min-h-20 resize-y" value={notes} onChange={event=>setNotes(event.target.value)} placeholder="Novedades de la entrega (opcional)" maxLength={500}/></Field>
+      </div>
+      <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button className="bg-teal-600 hover:bg-teal-700" disabled={mutation.isPending||invalid} onClick={()=>mutation.mutate()}>{mutation.isPending?"Guardando…":"Confirmar entrega"}</Button></DialogFooter>
+    </DialogContent></Dialog>
+    <ReturnsDialog document={document} open={returnsOpen} values={returns} onClose={()=>setReturnsOpen(false)} onSave={values=>{setReturns(values);setReturnsOpen(false);if(Object.values(values).some(value=>Number(value)>0))setStatus("PartiallyDelivered");else if(status==="PartiallyDelivered")setStatus("Delivered")}}/>
+  </>;
 }
+
+function ReturnsDialog({document,open,values,onClose,onSave}:{document:DeliveryDocument;open:boolean;values:Record<number,string>;onClose:()=>void;onSave:(values:Record<number,string>)=>void}){
+  const [draft,setDraft]=useState(values);
+  useEffect(()=>{if(open)setDraft(values)},[open,values]);
+  const selected=Object.values(draft).filter(value=>Number(value)>0).length;
+  const amount=document.lines.reduce((sum,line)=>sum+line.lineTotal/line.quantity*Number(draft[line.originalLineNumber]||0),0);
+  return <Dialog open={open} onOpenChange={value=>!value&&onClose()}><DialogContent className="max-h-[92dvh] max-w-2xl overflow-y-auto rounded-3xl"><DialogHeader><DialogTitle>Agregar productos devueltos</DialogTitle><DialogDescription>Busca únicamente las líneas que el cliente realmente devuelve.</DialogDescription></DialogHeader><div className="space-y-2">{document.lines.map(line=><div key={line.originalLineNumber} className="grid grid-cols-[minmax(0,1fr)_6rem] items-center gap-3 rounded-2xl border p-3"><span className="min-w-0"><strong className="block truncate text-sm">{line.productCode} · {line.description}</strong><small className="text-muted-foreground">Facturado: {line.quantity} · {money.format(line.lineTotal)}</small></span><Input aria-label={`Cantidad devuelta de ${line.description}`} type="number" min="0" max={line.quantity} step="any" value={draft[line.originalLineNumber]??""} onChange={event=>setDraft(current=>({...current,[line.originalLineNumber]:event.target.value}))} placeholder="0"/></div>)}</div><div className="flex items-center justify-between rounded-2xl bg-muted p-3"><span><small className="block text-muted-foreground">Devolución seleccionada</small><strong>{selected} producto(s) · {money.format(amount)}</strong></span>{selected>0&&<Button variant="ghost" size="sm" onClick={()=>setDraft({})}><Trash2 className="mr-1 h-4 w-4"/>Limpiar</Button>}</div><DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button onClick={()=>onSave(draft)}>Aplicar devolución</Button></DialogFooter></DialogContent></Dialog>;
+}
+
+function PaymentButton({active,icon:Icon,title,onClick}:{active:boolean;icon:typeof Banknote;title:string;onClick:()=>void}){return <button type="button" onClick={onClick} className={`flex h-16 items-center justify-center gap-2 rounded-2xl border-2 font-bold transition ${active?"border-teal-500 bg-teal-50 text-teal-800":"border-border bg-background hover:border-teal-300"}`}><Icon className="h-5 w-5"/>{title}{active&&<Check className="h-4 w-4"/>}</button>}
 
 function SettlementPanel({data,canSettle,onChanged,onExpense}:{data:DispatchExecution;canSettle:boolean;onChanged:()=>void;onExpense:()=>void}){
   const summary=data.settlement;
-  const [cash,setCash]=useState(summary?String(summary.expectedCash):"");
+  const cashCollected=data.documents.flatMap(item=>item.payments).filter(item=>item.paymentMethod==="Cash").reduce((sum,item)=>sum+item.amount,0);
+  const depositsCollected=data.documents.flatMap(item=>item.payments).filter(item=>item.paymentMethod==="Deposit").reduce((sum,item)=>sum+item.amount,0);
+  const returnsTotal=data.documents.reduce((documentSum,document)=>documentSum+document.returns.reduce((returnSum,item)=>{const line=document.lines.find(line=>line.originalLineNumber===item.originalLineNumber);return returnSum+(line?line.lineTotal/line.quantity*item.quantity:0)},0),0);
+  const expectedCash=summary?.expectedCash??cashCollected;
+  const [cash,setCash]=useState(String(expectedCash));
   const [notes,setNotes]=useState("");
   const [reviewing,setReviewing]=useState<string|null>(null);
-  const difference=Number(cash||0)-(summary?.expectedCash??0);
+  const difference=Number(cash||0)-expectedCash;
+  useEffect(()=>setCash(String(expectedCash)),[expectedCash]);
   const close=async()=>{try{await dispatchesApi.closeRoute(data.dispatchId,Number(cash||0),difference===0?null:notes);toast.success("Recorrido cerrado y enviado a liquidación");onChanged()}catch(error){toast.error(errorMessage(error,"No fue posible cerrar el recorrido."))}};
   const settle=async()=>{try{await dispatchesApi.settle(data.dispatchId,Number(cash||0),difference===0?notes||null:notes);toast.success("Liquidación aceptada; el motor está procesando los documentos");onChanged()}catch(error){toast.error(errorMessage(error,"No fue posible aceptar la liquidación."))}};
   const review=async(expenseId:string,decision:"Approved"|"Rejected",amount:number)=>{setReviewing(expenseId);try{await dispatchesApi.reviewExpense(data.dispatchId,expenseId,{decision,approvedAmount:decision==="Approved"?amount:null,notes:null,idempotencyKey:crypto.randomUUID()});toast.success(decision==="Approved"?"Gasto aprobado":"Gasto rechazado");onChanged()}catch(error){toast.error(errorMessage(error,"No fue posible revisar el gasto."))}finally{setReviewing(null)}};
@@ -98,9 +138,9 @@ function SettlementPanel({data,canSettle,onChanged,onExpense}:{data:DispatchExec
   const processing=summary?.status==="Processing"||data.status==="SettlementProcessing";
   return <div className="space-y-4">
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <MoneyCard icon={Banknote} label="Efectivo recaudado" value={summary?.grossCash??data.documents.flatMap(item=>item.payments).filter(item=>item.paymentMethod==="Cash").reduce((sum,item)=>sum+item.amount,0)}/>
-      <MoneyCard icon={ReceiptText} label="Consignaciones" value={summary?.depositTotal??data.documents.flatMap(item=>item.payments).filter(item=>item.paymentMethod==="Deposit").reduce((sum,item)=>sum+item.amount,0)}/>
-      <MoneyCard icon={PackageCheck} label="Devoluciones" value={summary?.returnTotal??0}/>
+      <MoneyCard icon={Banknote} label="Efectivo recaudado" value={summary?.grossCash??cashCollected}/>
+      <MoneyCard icon={ReceiptText} label="Consignaciones" value={summary?.depositTotal??depositsCollected}/>
+      <MoneyCard icon={PackageCheck} label="Devoluciones" value={summary?.returnTotal??returnsTotal}/>
       <MoneyCard icon={CircleDollarSign} label="Gastos aprobados" value={summary?.approvedCashExpenses??0}/>
     </div>
     <Card className="overflow-hidden rounded-3xl"><CardContent className="space-y-5 p-5">

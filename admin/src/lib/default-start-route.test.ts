@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { defaultStartRoute, ordersLandingView, shouldApplyDefaultStart } from "./default-start-route";
+import { defaultStartRoute, ordersLandingView, shouldApplyDefaultStart, shouldRestoreOperationalStart } from "./default-start-route";
 
 test("seller-only users start in today's route", () => {
   assert.equal(defaultStartRoute(["Vendedor"], ["orders.read"]), "/dashboard/orders?view=today-route");
@@ -8,8 +8,8 @@ test("seller-only users start in today's route", () => {
 });
 
 test("transporter-only users start in assigned dispatches", () => {
-  assert.equal(defaultStartRoute(["Transportador"], ["dispatches.delivery.execute"]), "/dashboard/dispatches?view=my-deliveries");
-  assert.equal(defaultStartRoute(["driver"], ["dispatches.delivery.execute"]), "/dashboard/dispatches?view=my-deliveries");
+  assert.equal(defaultStartRoute(["Transportador"], ["dispatches.delivery.execute"]), "/dashboard/deliveries");
+  assert.equal(defaultStartRoute(["driver"], ["dispatches.delivery.execute"]), "/dashboard/deliveries");
 });
 
 test("mixed roles and users without operational access keep the dashboard", () => {
@@ -21,6 +21,13 @@ test("mixed roles and users without operational access keep the dashboard", () =
 test("the automatic redirect only owns the dashboard root", () => {
   assert.equal(shouldApplyDefaultStart("/dashboard"), true);
   assert.equal(shouldApplyDefaultStart("/dashboard/orders"), false);
+});
+
+test("exclusive operational profiles recover from a route restored for another user", () => {
+  assert.equal(shouldRestoreOperationalStart("/dashboard/orders?view=today-route", "/dashboard/deliveries"), true);
+  assert.equal(shouldRestoreOperationalStart("/dashboard/deliveries", "/dashboard/orders?view=today-route"), true);
+  assert.equal(shouldRestoreOperationalStart("/dashboard/orders", "/dashboard"), false);
+  assert.equal(shouldRestoreOperationalStart("/dashboard/deliveries", "/dashboard"), false);
 });
 
 

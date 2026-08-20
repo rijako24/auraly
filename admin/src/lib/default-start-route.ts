@@ -24,7 +24,7 @@ export function defaultStartRoute(roles: readonly string[], permissions: readonl
   const normalizedRoles = roles.map((role) => role.trim().toLocaleLowerCase("es"));
   const isTransporterOnly = normalizedRoles.length > 0 && normalizedRoles.every((role) => transporterRoles.has(role));
   if (isTransporterOnly && permissions.includes("dispatches.delivery.execute"))
-    return "/dashboard/dispatches?view=my-deliveries";
+    return "/dashboard/deliveries";
   return isSellerOperationalProfile(roles, permissions)
     ? "/dashboard/orders?view=today-route"
     : "/dashboard";
@@ -32,4 +32,13 @@ export function defaultStartRoute(roles: readonly string[], permissions: readonl
 
 export function shouldApplyDefaultStart(pathname: string): boolean {
   return pathname === "/dashboard" || pathname === "/dashboard/";
+}
+
+export function shouldRestoreOperationalStart(pathname: string, target: string): boolean {
+  if (shouldApplyDefaultStart(pathname)) return target !== "/dashboard";
+  if (target === "/dashboard/deliveries")
+    return pathname.startsWith("/dashboard/orders");
+  if (target.startsWith("/dashboard/orders"))
+    return pathname.startsWith("/dashboard/deliveries");
+  return false;
 }

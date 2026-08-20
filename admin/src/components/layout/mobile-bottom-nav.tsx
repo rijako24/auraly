@@ -11,6 +11,7 @@ const items = [
   { label: "Inicio", href: "/dashboard", icon: Home, permission: "dashboard.read", exact: true },
   { label: "Pedidos", href: "/dashboard/orders", icon: ShoppingCart, permission: "orders.read", exact: false },
   { label: "Despachos", href: "/dashboard/dispatches", icon: Truck, permission: "dispatches.read", exact: false },
+  { label: "Entregas", href: "/dashboard/deliveries", icon: Truck, permission: "dispatches.delivery.execute", exact: false },
   { label: "Terceros", href: "/dashboard/parties", icon: ContactRound, permission: "parties.read", exact: false },
 ] as const;
 

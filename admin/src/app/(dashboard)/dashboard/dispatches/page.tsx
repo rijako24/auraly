@@ -3,7 +3,6 @@
 import { useMemo, useState } from "react";
 import { ClipboardCheck, Download, PackageCheck, Plus, Search, Truck, XCircle } from "lucide-react";
 import { toast } from "sonner";
-import { DispatchExecutionWorkspace, TransportDispatchApp } from "@/components/dispatching/transport-dispatch-app";
 import { ReportViewer } from "@/components/reports/report-viewer";
 import { buildDispatchReportRows, dispatchReportColumns, type DispatchReportGroup } from "@/lib/dispatch-report";
 import { Badge } from "@/components/ui/badge";
@@ -28,15 +27,11 @@ export default function DispatchesPage(){
   const permissions=useMemo(()=>new Set(useAuthStore.getState().user?.permissions??[]),[]);
   const [page,setPage]=useState(1),[search,setSearch]=useState(""),[status,setStatus]=useState("all");
   const [selectedId,setSelectedId]=useState<string>(),[createOpen,setCreateOpen]=useState(false);
-  const [executionSelected,setExecutionSelected]=useState<import("@/services/api/dispatches").DispatchListItem|null>(null);
   const query=useDispatches({page,pageSize:25,search:search||undefined,status:status==="all"?undefined:status});
   if(!businessId)return <p className="p-8 text-center text-muted-foreground">Selecciona una sede para administrar despachos.</p>;
-  const transporterOnly=permissions.has("dispatches.delivery.execute")&&!permissions.has("dispatches.create")&&!permissions.has("dispatches.read-all");
-  if(transporterOnly)return <TransportDispatchApp canSettle={permissions.has("dispatches.settle")}/>;
-  if(executionSelected)return <DispatchExecutionWorkspace dispatch={executionSelected} canSettle={permissions.has("dispatches.settle")} onBack={()=>setExecutionSelected(null)}/>;
-  const openItem=(item:import("@/services/api/dispatches").DispatchListItem)=>["Released","InDelivery","PendingSettlement","SettlementProcessing","SettlementAttention","Closed"].includes(item.status)?setExecutionSelected(item):setSelectedId(item.dispatchId);
+  const openItem=(item:import("@/services/api/dispatches").DispatchListItem)=>setSelectedId(item.dispatchId);
   return <div className="space-y-5">
-    <header className="flex flex-col justify-between gap-4 md:flex-row md:items-end"><div><h1 className="text-2xl font-semibold tracking-tight">Despachos</h1><p className="text-muted-foreground">Agrupa facturas y comprobantes, verifica el cargue, ejecuta entregas y liquida con trazabilidad.</p></div><Button disabled={!permissions.has("dispatches.create")} onClick={()=>setCreateOpen(true)}><Plus className="mr-2 h-4 w-4"/>Nuevo cargue</Button></header>
+    <header className="flex flex-col justify-between gap-4 md:flex-row md:items-end"><div><h1 className="text-2xl font-semibold tracking-tight">Despachos</h1><p className="text-muted-foreground">Administra cargues, verificación, liberación y seguimiento. La ejecución del transportador está en “Mis entregas”.</p></div><Button disabled={!permissions.has("dispatches.create")} onClick={()=>setCreateOpen(true)}><Plus className="mr-2 h-4 w-4"/>Nuevo cargue</Button></header>
     <section className="grid gap-3 sm:grid-cols-3"><Metric icon={Truck} label="Cargues encontrados" value={String(query.data?.totalCount??0)}/><Metric icon={PackageCheck} label="Documentos visibles" value={String(query.data?.items.reduce((sum,item)=>sum+item.documentCount,0)??0)}/><Metric icon={ClipboardCheck} label="Faltantes" value={quantity.format(query.data?.items.reduce((sum,item)=>sum+item.shortageQuantity,0)??0)}/></section>
     <div className="grid gap-3 rounded-2xl border bg-card p-4 md:grid-cols-[1fr_14rem]"><label className="relative"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground"/><Input className="pl-9" value={search} onChange={event=>{setSearch(event.target.value);setPage(1)}} placeholder="Número, transportador o placa"/></label><Select value={status} onValueChange={value=>{setStatus(value);setPage(1)}}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="all">Todos los estados</SelectItem>{Object.entries(statusLabels).map(([value,label])=><SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
     <div className="grid gap-3 md:hidden">{query.data?.items.map(item=><button type="button" key={item.dispatchId} onClick={()=>openItem(item)} className="rounded-2xl border bg-card p-4 text-left"><div className="flex justify-between gap-3"><strong>{item.dispatchNumber}</strong><Status value={item.status}/></div><p className="mt-2 text-sm">{item.driverName}{item.vehiclePlate?` · ${item.vehiclePlate}`:""}</p><p className="mt-1 text-xs text-muted-foreground">{item.documentCount} documentos · {quantity.format(item.verifiedQuantity)} / {quantity.format(item.expectedQuantity)} verificado</p></button>)}</div>
