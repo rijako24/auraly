@@ -8,8 +8,18 @@ INSERT @SellerPermissions ([Resource]) VALUES
   (N'routes.read'),
   (N'routes.visits.record'),
   (N'customers.read'),
-  (N'parties.read'),
-  (N'inventory.read');
+  (N'parties.read');
+
+UPDATE dbo.AppRoles
+SET IsSystemRole=0
+WHERE NormalizedName=N'SELLER';
+
+DELETE assignment
+FROM dbo.RolePermissions assignment
+JOIN dbo.AppRoles roleValue ON roleValue.RoleId=assignment.RoleId
+JOIN dbo.Permissions permissionValue ON permissionValue.PermissionId=assignment.PermissionId
+WHERE roleValue.NormalizedName=N'SELLER'
+  AND permissionValue.Resource NOT IN (SELECT [Resource] FROM @SellerPermissions);
 
 INSERT dbo.AppRoles
   (RoleId,TenantId,Name,NormalizedName,Description,IsActive,IsSystemRole,CreatedAt)

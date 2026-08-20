@@ -68,7 +68,10 @@ public class PermissionService : IPermissionService
         var permissions = await _unitOfWork.Permissions.GetAllAsync(ct);
         var systemRoles = await _unitOfWork.AppRoles.GetActiveSystemRolesAsync(ct);
 
-        foreach (var role in systemRoles)
+        // IsSystemRole protects built-in roles from being edited/deleted; it does not
+        // mean that every built-in operational role is an administrator. Only the
+        // administrator templates are allowed to receive the complete catalog.
+        foreach (var role in systemRoles.Where(IsAdministratorRole))
         {
             var assignedPermissionIds = role.RolePermissions
                 .Select(rp => rp.PermissionId)
@@ -90,6 +93,9 @@ public class PermissionService : IPermissionService
 
         await _unitOfWork.SaveChangesAsync(ct);
     }
+
+    private static bool IsAdministratorRole(AppRole role) =>
+        role.NormalizedName is "ADMINISTRATOR" or "TENANTADMINISTRATOR";
 
     private static PermissionDto MapToDto(Domain.Entities.Permission p) => new(
         p.PermissionId, p.Module, p.Action, p.Resource, p.Description);

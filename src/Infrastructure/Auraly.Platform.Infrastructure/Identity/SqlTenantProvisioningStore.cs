@@ -158,7 +158,7 @@ public sealed class SqlTenantProvisioningStore(
                 FROM dbo.Permissions
                 WHERE Resource IN(
                   N'orders.read',N'orders.create',N'orders.update',N'routes.read',N'routes.visits.record',
-                  N'customers.read',N'parties.read',N'inventory.read');
+                  N'customers.read',N'parties.read');
                 INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
                 SELECT NEWID(),@CashierRoleId,PermissionId,@Now
                 FROM dbo.Permissions
