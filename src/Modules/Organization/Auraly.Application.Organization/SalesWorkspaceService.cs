@@ -23,6 +23,7 @@ public sealed class SalesWorkspaceValidationException(string message) : Exceptio
 
 public sealed class SalesWorkspaceService(ISalesWorkspaceDirectory directory)
 {
+    private const string SellerOrderCreatePermission = "orders.create";
     public async Task<string> TenantNameAsync(
         SalesWorkspaceUserIdentity user,
         CancellationToken cancellationToken = default)
@@ -59,8 +60,9 @@ public sealed class SalesWorkspaceService(ISalesWorkspaceDirectory directory)
     private static void DemandSalesPermission(SalesWorkspaceUserIdentity user)
     {
         ArgumentNullException.ThrowIfNull(user);
-        if (!user.Permissions.Contains(CommercePermissionCodes.SalesCreate))
+        if (!user.Permissions.Contains(CommercePermissionCodes.SalesCreate)
+            && !user.Permissions.Contains(SellerOrderCreatePermission))
             throw new SalesWorkspaceForbiddenException(
-                $"Permission '{CommercePermissionCodes.SalesCreate}' is required.");
+                $"Permission '{CommercePermissionCodes.SalesCreate}' or '{SellerOrderCreatePermission}' is required.");
     }
 }
