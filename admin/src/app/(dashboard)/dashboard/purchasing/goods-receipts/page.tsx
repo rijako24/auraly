@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
-  ArchiveRestore, ArrowRight, Barcode, CircleDollarSign, PackagePlus, Pencil, Plus, Save,
+  ArchiveRestore, Barcode, ChevronDown, CircleDollarSign, PackagePlus, Pencil, Plus, Save,
   Search, Trash2, Truck, Warehouse,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -42,8 +42,6 @@ import {
   calculateBaseQuantity, calculateGoodsReceiptLine, calculateGoodsReceiptTotals, nextGoodsReceiptQuantityIndex,
 } from "@/lib/goods-receipt-calculator";
 
-type ReceiptEditorStep = "details" | "products";
-
 type PendingSupplierChange = { supplierId: string; supplierName: string };
 
 type EditorDraft = {
@@ -80,6 +78,16 @@ export default function GoodsReceiptsPage() {
     page, pageSize, search: search.trim() || undefined,
     status: status === "all" ? undefined : status,
   });
+  const localDraftKey = businessId ? `auraly.goods-receipt.entry.${businessId}` : null;
+
+  const rememberLocalDraft = (next: EditorDraft) => {
+    setEditor(next);
+    if (localDraftKey && !next.concurrencyToken) localStorage.setItem(localDraftKey, JSON.stringify(next));
+  };
+  const clearLocalDraft = () => {
+    if (localDraftKey) localStorage.removeItem(localDraftKey);
+    setEditor(undefined);
+  };
 
   const columns = useMemo<ColumnDef<GoodsReceiptListItem>[]>(() => [
     {
@@ -119,7 +127,13 @@ export default function GoodsReceiptsPage() {
 
   const newEntry = () => {
     if (!businessId) return;
-    setEditor(emptyDraft());
+    if (localDraftKey) {
+      try {
+        const remembered = localStorage.getItem(localDraftKey);
+        if (remembered) { setEditor(JSON.parse(remembered) as EditorDraft); return; }
+      } catch { localStorage.removeItem(localDraftKey); }
+    }
+    rememberLocalDraft(emptyDraft());
   };
 
   const openEntry = async (item: GoodsReceiptListItem) => {
@@ -182,8 +196,8 @@ export default function GoodsReceiptsPage() {
       onRowClick={openEntry} enableRowSelection={false} />
 
     <ReceiptEditor key={editor?.draftId ?? "closed"} open={!!editor} draft={editor} businessId={businessId}
-      canConfirm={canConfirm} canAssociateProducts={canAssociateProducts} onChange={setEditor}
-      onClose={() => setEditor(undefined)} />
+      canConfirm={canConfirm} canAssociateProducts={canAssociateProducts} onChange={rememberLocalDraft}
+      onClose={() => setEditor(undefined)} onClear={clearLocalDraft} />
     <ReceiptDetailDialog detail={detail} onClose={() => setDetail(undefined)} />
 
   </div>;
@@ -281,11 +295,11 @@ function DetailValue({ label, value }: { label: string; value: string }) {
 }
 
 function ReceiptEditor({
-  open, draft, businessId, canConfirm, canAssociateProducts, onChange, onClose,
+  open, draft, businessId, canConfirm, canAssociateProducts, onChange, onClose, onClear,
 }: {
   open: boolean; draft?: EditorDraft; businessId: string | null; canConfirm: boolean;
   canAssociateProducts: boolean;
-  onChange: (draft: EditorDraft) => void; onClose: () => void;
+  onChange: (draft: EditorDraft) => void; onClose: () => void; onClear: () => void;
 }) {
   const options = useGoodsReceiptOptions();
   const [productSearch, setProductSearch] = useState("");
@@ -295,7 +309,7 @@ function ReceiptEditor({
   const [supplierProductCode, setSupplierProductCode] = useState("");
   const [purchasePresentationName, setPurchasePresentationName] = useState("Unidad");
   const [unitsPerPresentation, setUnitsPerPresentation] = useState(1);
-  const [step, setStep] = useState<ReceiptEditorStep>(() => draft?.lines.length ? "products" : "details");
+  const [detailsExpanded, setDetailsExpanded] = useState(() => !draft?.lines.length);
   const [pendingSupplierChange, setPendingSupplierChange] = useState<PendingSupplierChange>();
   const products = useGoodsReceiptProducts(
     draft?.supplierId || undefined, productSearch, includeUnassociated,
@@ -364,7 +378,7 @@ function ReceiptEditor({
       change({ concurrencyToken: saved.concurrencyToken });
       if (notify) {
         toast.success("Borrador guardado y disponible para recuperar.");
-        onClose();
+        onClear();
       }
       return saved;
     } catch {
@@ -373,14 +387,12 @@ function ReceiptEditor({
     }
   };
 
-  const continueToProducts = async () => {
+  const continueToProducts = () => {
     if (!draft.supplierId || !draft.warehouseId) {
       toast.error("Selecciona el proveedor y la bodega antes de continuar.");
       return;
     }
-    const saved = await persist(false);
-    if (!saved) return;
-    setStep("products");
+    setDetailsExpanded(false);
     requestAnimationFrame(() => scanRef.current?.focus());
   };
 
@@ -553,7 +565,13 @@ function ReceiptEditor({
       </DialogHeader>
 
       <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
-        {step === "details" ? <>
+        <button type="button" onClick={() => setDetailsExpanded((current) => !current)}
+          className="flex w-full items-center justify-between rounded-2xl border bg-muted/20 px-4 py-3 text-left"
+          aria-expanded={detailsExpanded}>
+          <span><strong className="block">Datos de la recepción</strong><small className="text-muted-foreground">Proveedor, bodega, factura y condición de pago</small></span>
+          <ChevronDown className={`h-5 w-5 transition-transform ${detailsExpanded ? "rotate-180" : ""}`} />
+        </button>
+        {detailsExpanded && <>
         <section className="grid gap-4 rounded-2xl border bg-muted/20 p-4 md:grid-cols-4">
           <Field label="Proveedor">
             <Select value={draft.supplierId} onValueChange={requestSupplierChange}>
@@ -605,7 +623,8 @@ function ReceiptEditor({
               placeholder="Recepción, estado o referencia" maxLength={1000} />
           </Field>
         </section>
-        </> : <>
+        </>}
+        {!detailsExpanded &&
         <section className="rounded-2xl border bg-muted/20 p-4" data-testid="goods-receipt-readonly-details">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
@@ -617,11 +636,11 @@ function ReceiptEditor({
                 <span><strong>Condición:</strong> {draft.createsPayable ? "Crédito" : "Contado"}</span>
               </div>
             </div>
-            <Button type="button" variant="outline" size="sm" onClick={() => setStep("details")}>
+            <Button type="button" variant="outline" size="sm" onClick={() => setDetailsExpanded(true)}>
               <Pencil className="mr-2 h-4 w-4" /> Editar datos
             </Button>
           </div>
-        </section>
+        </section>}
 
         <section className="rounded-2xl border">
           <div ref={productPickerRef} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setProductMenuOpen(false); }}>
@@ -778,7 +797,6 @@ function ReceiptEditor({
           </Field>
               <p className="text-xs text-muted-foreground md:col-span-2">Al confirmar, el motor tributario aplica las reglas vigentes del proveedor y congela el cálculo en el documento.</p>
         </section>
-        </>}
       </div>
 
       <Dialog open={!!pendingSupplierChange} onOpenChange={(value) => !value && setPendingSupplierChange(undefined)}>
@@ -844,15 +862,15 @@ function ReceiptEditor({
           <Trash2 className="mr-2 h-4 w-4" /> Eliminar borrador
         </Button>
         <div className="flex flex-wrap justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={onClear}>Cancelar entrada</Button>
           <Button type="button" variant="outline" onClick={onClose}>Cerrar</Button>
           <Button type="button" variant="secondary" disabled={save.isPending} onClick={() => persist()}>
             <Save className="mr-2 h-4 w-4" /> Guardar borrador
           </Button>
-          {step === "details" ?
-            <Button type="button" disabled={save.isPending} onClick={continueToProducts} data-testid="goods-receipt-continue">
-              Continuar a productos <ArrowRight className="ml-2 h-4 w-4" />
-            </Button> :
-            canConfirm && <Button type="button" disabled={confirm.isPending} onClick={confirmEntry}>
+          {detailsExpanded && <Button type="button" disabled={save.isPending} onClick={continueToProducts} data-testid="goods-receipt-continue">
+              Guardar datos y contraer
+            </Button>}
+          {canConfirm && <Button type="button" disabled={confirm.isPending} onClick={confirmEntry}>
               <ArchiveRestore className="mr-2 h-4 w-4" /> Confirmar entrada
             </Button>}
         </div>

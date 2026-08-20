@@ -329,6 +329,7 @@ export function InventoryOperationWorkspace({
     mutationFn: async () => {
       const now = new Date().toISOString();
       if (kind === "count" && !countDocumentId) {
+        const countedByProduct = new Map(lines.map((line) => [line.productId, line.quantity]));
         const draft = await inventoryApi.startCount({
           documentId,
           businessId,
@@ -342,6 +343,7 @@ export function InventoryOperationWorkspace({
         setLines((current) =>
           current.map((line) => ({
             ...line,
+            quantity: countedByProduct.get(line.productId) ?? line.quantity,
             systemQuantity:
               draft.lines.find((candidate) => candidate.productId === line.productId)
                 ?.systemQuantityAtBase ?? 0,

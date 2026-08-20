@@ -1034,8 +1034,6 @@ export default function PosPage() {
     if (!draft?.lines.length || busy) return;
     setError(null);
     setPaymentOpen(true);
-    if (selectedCustomer?.requiresElectronicInvoice && documentType !== "SalesInvoice")
-      setDocumentTypeOpen(true);
   }
   async function changeDocumentType(value: PosSaleDocumentType) {
     if (!client || busy) return;
@@ -1071,6 +1069,9 @@ export default function PosPage() {
     settlement: PosPaymentSettlement,
   ) {
     if (!client || !draft || busy) return;
+    const effectiveDocumentType = selectedCustomer?.requiresElectronicInvoice
+      ? "SalesInvoice"
+      : documentType;
     setBusy(true);
     setError(null);
     try {
@@ -1078,7 +1079,7 @@ export default function PosPage() {
         draft.draftId.value,
         selectedCustomer?.identification ?? null,
         payments,
-        documentType,
+        effectiveDocumentType,
       );
       setDraft(result.nextDraft);
       setNextNumber(result.nextDocumentNumber);
@@ -1100,7 +1101,7 @@ export default function PosPage() {
       setMessage(
         settlement.change > 0
           ? `${result.issuedSale.documentNumber} ${issuedLabel}. Entregar ${money.format(settlement.change)} de cambio. Nueva venta lista.`
-          : documentType === "SalesInvoice"
+          : effectiveDocumentType === "SalesInvoice"
             ? `${result.issuedSale.documentNumber} ${issuedLabel} (DIAN ${result.issuedSale.fiscalNumber}). Pago registrado. Nueva venta lista.`
             : `${result.issuedSale.documentNumber} ${issuedLabel}. Pago registrado. Nueva venta lista.`,
       );
@@ -2240,7 +2241,7 @@ edgeCapable={edgeEnrollmentRequired}
           busy={busy}
           documentType={selectedCustomer?.requiresElectronicInvoice ? "SalesInvoice" : documentType}
           documentTypeLocked={selectedCustomer?.requiresElectronicInvoice ?? false}
-          documentTypeReady={!selectedCustomer?.requiresElectronicInvoice || documentType === "SalesInvoice"}
+          documentTypeReady
           onChangeDocumentType={() => setDocumentTypeOpen(true)}
           onCancel={() => {
             setPaymentOpen(false);

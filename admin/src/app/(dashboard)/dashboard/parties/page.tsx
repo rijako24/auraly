@@ -248,7 +248,7 @@ function CustomerBillingCard({detail,onSaved}:{detail:PartyWorkspaceDetail;onSav
   const [saving,setSaving]=useState(false);
   const required=detail.customer?.requiresElectronicInvoice??false;
   const change=async(value:boolean)=>{setSaving(true);try{await partiesApi.saveCustomerBilling(detail.partyId,value);await onSaved();toast.success("Preferencia de facturación actualizada y enviada al POS.")}catch(error){toast.error(error instanceof Error?error.message:"No fue posible actualizar la facturación del cliente.")}finally{setSaving(false)}};
-  return <section className="rounded-2xl border border-primary/20 bg-primary/5 p-5"><div className="flex items-center justify-between gap-4"><div><h3 className="font-semibold">Documento de venta</h3><p className="mt-1 text-sm text-muted-foreground">Si está activo, en el pago se fuerza factura electrónica. Si está inactivo, el cajero puede elegir factura o comprobante.</p></div><Switch checked={required} onCheckedChange={value=>void change(value)} disabled={!canManage||saving}/></div></section>;
+  return <section className="rounded-2xl border border-primary/20 bg-primary/5 p-5"><div className="flex items-center justify-between gap-4"><div><h3 className="font-semibold">Siempre emitir factura electrónica</h3><p className="mt-1 text-sm text-muted-foreground">Al seleccionar este cliente en caja, el documento cambia automáticamente a factura electrónica.</p></div><Switch checked={required} onCheckedChange={value=>void change(value)} disabled={!canManage||saving}/></div></section>;
 }
 
 function SellerAccessCard({detail}:{detail:PartyWorkspaceDetail}){

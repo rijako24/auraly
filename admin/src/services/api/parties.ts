@@ -60,6 +60,7 @@ export const partiesApi = {
   createSeller: (request: CreateThirdPartyRequest) => apiClient.post("/commerce/v1/sellers", request),
   createCarrier: (request: CreateThirdPartyRequest) => apiClient.post("/commerce/v1/carriers", request),
   addSite: (customerId: string, request: { operationId: string; site: PartySiteInput }) => apiClient.post<PartySiteDetail>(`/commerce/v1/customers/${customerId}/sites`, request),
+  updateSite: (customerId:string,siteId:string,request:{site:PartySiteInput;rowVersion:string}) => apiClient.put<PartySiteDetail>(`/commerce/v1/customers/${customerId}/sites/${siteId}`,request),
   identity: (params: { countryId: string; identificationTypeCode: string; identification: string; requestedRole: PartyRole }) =>
     apiClient.get<PartyIdentityLookupResult>("/commerce/v1/parties/identity", params),
   detail: (partyId: string) =>

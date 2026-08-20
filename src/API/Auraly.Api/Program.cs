@@ -652,6 +652,7 @@ app.MapInventoryApi();
 app.MapRoutesApi();
 app.MapDispatchingApi();
 app.MapPricingApi();
+app.MapPriceSegmentsApi();
 app.MapAccountingApi();
 app.MapTaxationApi();
 app.MapPost(

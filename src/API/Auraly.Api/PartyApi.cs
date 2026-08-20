@@ -55,6 +55,12 @@ public static class PartyApi
                 await service.AddSiteAsync(
                     context.User.ToPartyUserIdentity(), customerId, request, ct))));
 
+        customers.MapPut("/{customerId:guid}/sites/{siteId:guid}", async (
+            HttpContext context, PartyService service, Guid customerId, Guid siteId,
+            UpdatePartySiteRequest request, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.UpdateSiteAsync(
+                context.User.ToPartyUserIdentity(), customerId, siteId, request, ct))));
+
         var geography = endpoints.MapGroup("/api/commerce/v1/masters/geography")
             .RequireAuthorization("parties.user");
 

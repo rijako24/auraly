@@ -53,7 +53,7 @@ export interface DataTableProps<TData, TValue> {
   onSearch?: (value: string) => void;
   bulkActions?: {
     label: string;
-    onClick: (rows: TData[]) => void;
+    onClick: (rows: TData[]) => void | Promise<void>;
     variant?: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link";
   }[];
   facetedFilters?: FacetedFilterConfig[];
@@ -285,7 +285,10 @@ export function DataTable<TData, TValue>({
               key={action.label}
               variant={action.variant ?? "default"}
               size="sm"
-              onClick={() => action.onClick(selectedRows)}
+              onClick={async () => {
+                await action.onClick(selectedRows);
+                setRowSelection({});
+              }}
             >
               {action.label}
             </Button>

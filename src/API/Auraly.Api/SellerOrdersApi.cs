@@ -158,9 +158,11 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Inv
 
     private static async Task<CustomerContext> LoadContextAsync(SqlConnection connection,SqlTransaction transaction,SellerOrderActor actor,SellerOrdersApi.CreateSellerOrderRequest request,CancellationToken token)
     {await using var command=new SqlCommand("""
-        SELECT COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName)),p.Identification,p.Email,p.Phone,
+        SELECT COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName)),p.Identification,email.Value,phone.Value,
                COALESCE(site.AddressLine,N''),orders.WarehouseId
         FROM dbo.Customers customer INNER JOIN dbo.Parties p ON p.PartyId=customer.PartyId
+        OUTER APPLY(SELECT TOP(1) contact.Value FROM dbo.PartyContacts contact WHERE contact.PartyId=p.PartyId AND contact.ContactType=N'Email' AND contact.IsActive=1 ORDER BY contact.IsPrimary DESC,contact.CreatedAt) email
+        OUTER APPLY(SELECT TOP(1) contact.Value FROM dbo.PartyContacts contact WHERE contact.PartyId=p.PartyId AND contact.ContactType=N'Phone' AND contact.IsActive=1 ORDER BY contact.IsPrimary DESC,contact.CreatedAt) phone
         LEFT JOIN dbo.PartySites site ON site.PartySiteId=@SiteId AND site.PartyId=p.PartyId AND site.IsActive=1
         CROSS APPLY(SELECT TOP(1) WarehouseId FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND Code=N'PED' AND IsActive=1 ORDER BY CreatedAt) orders
         INNER JOIN dbo.Businesses business ON business.BusinessId=customer.BusinessId AND business.TenantId=@TenantId
@@ -203,7 +205,11 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Inv
         LEFT JOIN dbo.CustomerPricingSettings setting ON setting.CustomerId=@CustomerId
         OUTER APPLY(SELECT TOP(1)i.Amount FROM dbo.PriceListItems i JOIN dbo.PriceLists l ON l.PriceListId=i.PriceListId WHERE i.PriceListId=setting.PriceListId AND l.BusinessId=@BusinessId AND l.IsActive=1 AND i.ProductId=p.ProductId AND i.IsActive=1 AND i.MinimumQuantity<=1 AND i.ValidFrom<=SYSDATETIMEOFFSET() AND(i.ValidUntil IS NULL OR i.ValidUntil>SYSDATETIMEOFFSET()) ORDER BY i.MinimumQuantity DESC,i.ValidFrom DESC)listPrice
         OUTER APPLY(SELECT TOP(1)i.Amount FROM dbo.ResolvedPriceChannelItems i JOIN dbo.PriceChannels c ON c.PriceChannelId=i.PriceChannelId WHERE i.PriceChannelId=setting.PriceChannelId AND c.BusinessId=@BusinessId AND c.IsActive=1 AND i.ProductId=p.ProductId AND i.IsActive=1 AND i.ValidFrom<=SYSDATETIMEOFFSET() AND(i.ValidUntil IS NULL OR i.ValidUntil>SYSDATETIMEOFFSET()) AND NOT EXISTS(SELECT 1 FROM dbo.PriceChannelExclusions e WHERE e.PriceChannelId=i.PriceChannelId AND e.ProductId=i.ProductId))channelPrice
-        WHERE p.BusinessId=@BusinessId AND p.IsActive=1 AND(@Search=N'' OR p.Name LIKE @Contains OR p.ProductCode LIKE @Prefix OR p.Sku LIKE @Prefix OR p.Reference LIKE @Prefix)
+        WHERE p.BusinessId=@BusinessId AND p.IsActive=1 AND(@Search=N''
+          OR p.Name COLLATE Latin1_General_100_CI_AI LIKE @Contains COLLATE Latin1_General_100_CI_AI
+          OR p.ProductCode COLLATE Latin1_General_100_CI_AI LIKE @Prefix COLLATE Latin1_General_100_CI_AI
+          OR p.Sku COLLATE Latin1_General_100_CI_AI LIKE @Prefix COLLATE Latin1_General_100_CI_AI
+          OR p.Reference COLLATE Latin1_General_100_CI_AI LIKE @Prefix COLLATE Latin1_General_100_CI_AI)
         ORDER BY CASE WHEN p.ProductCode=@Search OR p.Sku=@Search THEN 0 ELSE 1 END,p.Name,p.ProductId OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
         """;
 }

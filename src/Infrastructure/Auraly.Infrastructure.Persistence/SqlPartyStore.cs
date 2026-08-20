@@ -307,6 +307,41 @@ public sealed partial class SqlPartyStore(
         }
     }
 
+    public async Task<PartySiteDetail> UpdateSiteAsync(
+        PartyActorIdentity actor, Guid customerId, Guid siteId,
+        UpdatePartySiteRequest request, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct);
+        try
+        {
+            await ValidateScopeAndGeographyAsync(connection, transaction, actor, request.Site, ct);
+            var rowVersion = Convert.FromBase64String(request.RowVersion);
+            await using var command = new SqlCommand("""
+                DECLARE @PartyId uniqueidentifier=(SELECT c.PartyId FROM dbo.Customers c JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId AND b.TenantId=@TenantId WHERE c.CustomerId=@CustomerId AND c.BusinessId=@BusinessId);
+                IF @PartyId IS NULL THROW 51030,'Customer is outside the authenticated business.',1;
+                IF @Primary=1 UPDATE dbo.PartySites SET IsPrimary=0,UpdatedAt=@Now WHERE PartyId=@PartyId AND PartySiteId<>@SiteId AND IsPrimary=1;
+                UPDATE dbo.PartySites SET Code=@Code,Name=@Name,CountryId=@CountryId,AdministrativeDivisionId=@DivisionId,CityId=@CityId,
+                  AddressLine=@Address,Neighborhood=@Neighborhood,PostalCode=@PostalCode,Email=@Email,Phone=@Phone,
+                  GoogleMapsUrl=@GoogleMapsUrl,GooglePlaceId=@GooglePlaceId,Latitude=@Latitude,Longitude=@Longitude,
+                  IsPrimary=@Primary,UpdatedAt=@Now
+                WHERE PartySiteId=@SiteId AND PartyId=@PartyId AND RowVersion=@RowVersion;
+                IF @@ROWCOUNT=0 THROW 51036,'The site changed or no longer exists.',1;
+                """, connection, transaction);
+            command.Parameters.AddRange([
+                P("@TenantId",actor.TenantId),P("@BusinessId",actor.BusinessId),P("@CustomerId",customerId),P("@SiteId",siteId),P("@RowVersion",rowVersion),
+                P("@Code",request.Site.Code.Trim().ToUpperInvariant()),P("@Name",request.Site.Name.Trim()),P("@CountryId",request.Site.CountryId),P("@DivisionId",request.Site.AdministrativeDivisionId),P("@CityId",request.Site.CityId),P("@Address",request.Site.AddressLine.Trim()),P("@Neighborhood",request.Site.Neighborhood?.Trim()),P("@PostalCode",request.Site.PostalCode?.Trim()),P("@Email",request.Site.Email?.Trim()),P("@Phone",request.Site.Phone?.Trim()),P("@GoogleMapsUrl",request.Site.GoogleMapsUrl?.Trim()),P("@GooglePlaceId",request.Site.GooglePlaceId?.Trim()),P("@Latitude",request.Site.Latitude),P("@Longitude",request.Site.Longitude),P("@Primary",request.Site.IsPrimary),P("@ActorId",actor.ActorId),P("@Now",now)]);
+            await command.ExecuteNonQueryAsync(ct);
+            await transaction.CommitAsync(ct);
+            return (await RequiredCustomerAsync(actor.TenantId, actor.BusinessId, customerId, ct)).Sites.Single(site=>site.PartySiteId==siteId);
+        }
+        catch (FormatException) { await transaction.RollbackAsync(ct); throw new PartyValidationException("The site row version is invalid."); }
+        catch (SqlException exception) when (exception.Number is 2601 or 2627) { await transaction.RollbackAsync(ct); throw new PartyConflictException("The site code is already in use."); }
+        catch (SqlException exception) when (exception.Number==51036) { await transaction.RollbackAsync(ct); throw new PartyConflictException(exception.Message); }
+        catch { await transaction.RollbackAsync(ct); throw; }
+    }
+
     public Task<IReadOnlyCollection<CountryItem>> CountriesAsync(
         bool includeInactive, CancellationToken ct) =>
         QueryAsync(

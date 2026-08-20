@@ -70,6 +70,7 @@ public sealed record CreateCustomerRequest(
 public sealed record SaveCustomerBillingRequest(bool RequiresElectronicInvoice);
 
 public sealed record AddPartySiteRequest(Guid OperationId, PartySiteInput Site);
+public sealed record UpdatePartySiteRequest(PartySiteInput Site, string RowVersion);
 public sealed record LinkPartyUserAccountRequest(Guid UserId);
 public sealed record PartyUserAccountLink(
     Guid UserId, Guid PartyId, string Username, string Email, bool IsActive);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Building2, Check, LocateFixed, MapPinOff, Navigation, Search, SkipForward, ZoomIn, ZoomOut } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,8 @@ export function RouteLocationMap<T extends RouteLocationStop>({
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [pan,setPan]=useState({x:0,y:0});
+  const drag=useRef<{x:number;y:number;originX:number;originY:number}|null>(null);
   const normalized = search.trim().toLocaleLowerCase("es");
   const visible = useMemo(
     () => stops.filter((stop) => !normalized || `${stop.customerName} ${stop.siteName} ${stop.addressLine} ${stop.cityName}`.toLocaleLowerCase("es").includes(normalized)),
@@ -45,33 +47,22 @@ export function RouteLocationMap<T extends RouteLocationStop>({
   const bounds = mapBounds(located, zoom);
 
   return <div className={`grid min-h-0 gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(19rem,.75fr)] ${className}`}>
-    <section className="relative min-h-[32rem] overflow-hidden rounded-[2rem] border bg-slate-100 shadow-sm">
+    <section className="relative min-h-[32rem] touch-none overflow-hidden rounded-[2rem] border bg-slate-100 shadow-sm active:cursor-grabbing" onPointerDown={event=>{if((event.target as HTMLElement).closest("button,input,a"))return;drag.current={x:event.clientX,y:event.clientY,originX:pan.x,originY:pan.y};event.currentTarget.setPointerCapture(event.pointerId)}} onPointerMove={event=>{if(!drag.current)return;setPan({x:Math.max(-260,Math.min(260,drag.current.originX+event.clientX-drag.current.x)),y:Math.max(-220,Math.min(220,drag.current.originY+event.clientY-drag.current.y))})}} onPointerUp={()=>{drag.current=null}} onPointerCancel={()=>{drag.current=null}}>
+      <div className="absolute inset-0 transition-transform duration-75" style={{transform:`translate3d(${pan.x}px,${pan.y}px,0)`}}>
       {bounds ? <iframe
         title="Mapa de establecimientos de la ruta"
         className="pointer-events-none absolute inset-0 h-full w-full border-0 grayscale-[8%] contrast-[.96]"
         loading="lazy"
         src={`https://www.openstreetmap.org/export/embed.html?bbox=${bounds.west}%2C${bounds.south}%2C${bounds.east}%2C${bounds.north}&layer=mapnik`}
       /> : <div className="absolute inset-0 grid place-items-center bg-[radial-gradient(circle_at_20%_20%,#ccfbf1,transparent_34%),linear-gradient(135deg,#f8fafc,#e2e8f0)] p-8 text-center"><div><MapPinOff className="mx-auto h-12 w-12 text-slate-500"/><h3 className="mt-3 text-lg font-bold">Sin ubicaciones verificadas</h3><p className="mt-1 max-w-sm text-sm text-muted-foreground">Captura la ubicación de las sedes para verlas en el mapa. Nunca se dibujan coordenadas inventadas.</p></div></div>}
+      {bounds && located.map((stop) => {
+        const position = pointPosition(stop, bounds), status = statusOf(stop), active = selectedId === stop.routeStopId;
+        return <button key={stop.routeStopId} type="button" aria-label={`${stop.sequence}. ${stop.customerName}, ${statusLabel(status)}`} onPointerDown={event=>event.stopPropagation()} onClick={()=>setSelectedId(stop.routeStopId)} className={`group absolute -translate-x-1/2 -translate-y-full transition hover:z-20 hover:scale-110 focus:z-20 focus:outline-none ${active?"z-20 scale-110":"z-10"}`} style={{left:`${position.x}%`,top:`${position.y}%`}}><span className={`relative grid h-12 w-12 place-items-center rounded-2xl border-[3px] border-white text-white shadow-xl ${statusClass(status)}`}><Building2 className="h-5 w-5"/><span className="absolute -right-2 -top-2 grid h-6 min-w-6 place-items-center rounded-full bg-slate-950 px-1 text-[11px] font-black text-white ring-2 ring-white">{stop.sequence}</span></span><span className="mx-auto block h-3 w-3 -translate-y-2 rotate-45 border-b-[3px] border-r-[3px] border-white bg-inherit shadow-sm"/></button>;
+      })}</div>
       <div className="absolute left-4 right-4 top-4 flex items-start justify-between gap-3">
         <div className="relative w-full max-w-sm rounded-xl bg-white/95 shadow-lg backdrop-blur"><Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted-foreground"/><Input value={search} onChange={(event) => setSearch(event.target.value)} className="h-11 border-white bg-transparent pl-9" placeholder="Buscar un cliente o sede"/></div>
-        <div className="flex rounded-xl bg-white/95 p-1 shadow-lg backdrop-blur"><Button size="icon" variant="ghost" aria-label="Alejar mapa" disabled={zoom <= .45} onClick={() => setZoom((value) => Math.max(.45, value / 1.5))}><ZoomOut className="h-4 w-4"/></Button><Button size="icon" variant="ghost" aria-label="Acercar mapa" disabled={zoom >= 4} onClick={() => setZoom((value) => Math.min(4, value * 1.5))}><ZoomIn className="h-4 w-4"/></Button></div>
+        <div className="flex rounded-xl bg-white/95 p-1 shadow-lg backdrop-blur"><Button size="icon" variant="ghost" aria-label="Centrar mapa" onClick={()=>setPan({x:0,y:0})}><LocateFixed className="h-4 w-4"/></Button><Button size="icon" variant="ghost" aria-label="Alejar mapa" disabled={zoom <= .45} onClick={() => setZoom((value) => Math.max(.45, value / 1.5))}><ZoomOut className="h-4 w-4"/></Button><Button size="icon" variant="ghost" aria-label="Acercar mapa" disabled={zoom >= 4} onClick={() => setZoom((value) => Math.min(4, value * 1.5))}><ZoomIn className="h-4 w-4"/></Button></div>
       </div>
-      {bounds && located.map((stop) => {
-        const position = pointPosition(stop, bounds);
-        const status = statusOf(stop);
-        const active = selectedId === stop.routeStopId;
-        return <button
-          key={stop.routeStopId}
-          type="button"
-          aria-label={`${stop.sequence}. ${stop.customerName}, ${statusLabel(status)}`}
-          onClick={() => setSelectedId(stop.routeStopId)}
-          className={`group absolute -translate-x-1/2 -translate-y-full transition hover:z-20 hover:scale-110 focus:z-20 focus:outline-none ${active ? "z-20 scale-110" : "z-10"}`}
-          style={{ left: `${position.x}%`, top: `${position.y}%` }}
-        >
-          <span className={`relative grid h-12 w-12 place-items-center rounded-2xl border-[3px] border-white text-white shadow-xl ${statusClass(status)}`}><Building2 className="h-5 w-5"/><span className="absolute -right-2 -top-2 grid h-6 min-w-6 place-items-center rounded-full bg-slate-950 px-1 text-[11px] font-black text-white ring-2 ring-white">{stop.sequence}</span></span>
-          <span className="mx-auto block h-3 w-3 -translate-y-2 rotate-45 border-b-[3px] border-r-[3px] border-white bg-inherit shadow-sm"/>
-        </button>;
-      })}
       <div className="absolute bottom-4 left-4 flex flex-wrap gap-2 rounded-xl bg-white/95 p-2 text-xs shadow-lg backdrop-blur"><Legend color="bg-slate-950" label="Pendiente"/><Legend color="bg-emerald-500" label="Visitado"/><Legend color="bg-amber-500" label="Omitido"/></div>
     </section>
     <aside className="min-h-0 space-y-3 overflow-y-auto pr-1 xl:max-h-[38rem]">

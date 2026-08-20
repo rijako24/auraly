@@ -20,6 +20,9 @@ public interface IPartyStore
     Task<PartySiteDetail> AddSiteAsync(
         PartyActorIdentity actor, Guid customerId, Guid siteId,
         AddPartySiteRequest request, DateTimeOffset now, CancellationToken ct);
+    Task<PartySiteDetail> UpdateSiteAsync(
+        PartyActorIdentity actor, Guid customerId, Guid siteId,
+        UpdatePartySiteRequest request, DateTimeOffset now, CancellationToken ct);
     Task<PartyUserAccountLink?> GetUserAccountAsync(
         Guid tenantId, Guid partyId, CancellationToken ct);
     Task<PartyUserAccountLink> LinkUserAccountAsync(
@@ -113,6 +116,17 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
         Require(actor, actor.IsDevice ? PartyPermissionCodes.PosCustomerCreate : PartyPermissionCodes.ManageSites);
         ValidateSite(request.Site);
         return store.AddSiteAsync(actor, customerId, ids.NewId(), request, time.GetUtcNow(), ct);
+    }
+
+    public Task<PartySiteDetail> UpdateSiteAsync(
+        PartyActorIdentity actor, Guid customerId, Guid siteId,
+        UpdatePartySiteRequest request, CancellationToken ct)
+    {
+        Require(actor, PartyPermissionCodes.ManageSites);
+        if (customerId == Guid.Empty || siteId == Guid.Empty || string.IsNullOrWhiteSpace(request.RowVersion))
+            throw new PartyValidationException("Customer, site and row version are required.");
+        ValidateSite(request.Site);
+        return store.UpdateSiteAsync(actor, customerId, siteId, request, time.GetUtcNow(), ct);
     }
 
     public Task<PartyUserAccountLink?> GetUserAccountAsync(

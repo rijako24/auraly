@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Minus, PackagePlus, Plus, Search, ShoppingBag, Trash2 } from "lucide-react";
+import { ArrowLeft, Minus, PackagePlus, Plus, Search, ShoppingBag, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,12 +12,9 @@ import type { SalesRouteDetail, SalesRouteStop } from "@/services/api/routes";
 import { sellerOrdersApi, type SellerCatalogItem, type SellerOrderRequest } from "@/services/api/seller-orders";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
-type View = "cart" | "search";
-
 export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop, onClose, onCreated }: { businessId: string; warehouseId: string; route: SalesRouteDetail | null; stop: SalesRouteStop; onClose: () => void; onCreated: (orderId: string) => Promise<void> }) {
   const key = `${businessId}:${warehouseId}:${route?.routeId ?? "outside-route"}:${stop.routeStopId}`;
   const searchRef = useRef<HTMLInputElement>(null);
-  const [view, setView] = useState<View>("cart");
   const [query, setQuery] = useState("");
   const [searched, setSearched] = useState(false);
   const [results, setResults] = useState<SellerCatalogItem[]>([]);
@@ -60,7 +57,6 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
   const online = navigatorOnline();
   const invalid = online && selected.some((value) => value.item.manageStock && value.quantity > value.item.quantityOnHand);
 
-  const openSearch = () => { setView("search"); requestAnimationFrame(() => searchRef.current?.focus()); };
   const search = async () => {
     const term = query.trim();
     if (term.length < 2) { toast.info("Escribe al menos dos letras o el código del producto."); return; }
@@ -79,7 +75,23 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
       if (!filtered.length) toast.info("No encontramos coincidencias en el catálogo guardado.");
     } finally { setLoading(false); }
   };
+  useEffect(() => {
+    if (query.trim().length < 2) return;
+    const timer = window.setTimeout(() => void search(), 250);
+    return () => window.clearTimeout(timer);
+    // The query is the only trigger; workspace and customer changes remount the dialog.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query]);
   const change = (item: SellerCatalogItem, delta: number) => { setKnownItems((current) => ({ ...current, [item.productId]: item })); setQuantities((current) => ({ ...current, [item.productId]: Math.max(0, (current[item.productId] ?? 0) + delta) })); };
+  const addFromSearch = (item: SellerCatalogItem, delta: number) => {
+    change(item, delta);
+    if (delta > 0) {
+      setQuery("");
+      setResults([]);
+      setSearched(false);
+      requestAnimationFrame(() => searchRef.current?.focus());
+    }
+  };
   const setQuantity = (item: SellerCatalogItem, value: number) => { setKnownItems((current) => ({ ...current, [item.productId]: item })); setQuantities((current) => ({ ...current, [item.productId]: Math.max(0, value) })); };
   const submit = async () => {
     setSaving(true);
@@ -94,11 +106,11 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
   };
 
   return <><Dialog open onOpenChange={(open) => !open && onClose()}><DialogContent className="flex h-[100dvh] max-h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none p-0 sm:h-[min(90dvh,760px)] sm:max-w-4xl sm:rounded-[2rem]">
-    <DialogHeader className="shrink-0 border-b bg-background px-4 pb-4 pt-5 text-left sm:px-6"><div className="flex items-start gap-3"><Button type="button" size="icon" variant="ghost" className="-ml-2 shrink-0" onClick={onClose}><ArrowLeft className="h-5 w-5"/></Button><div className="min-w-0"><DialogTitle className="truncate">{stop.customerName}</DialogTitle><DialogDescription className="line-clamp-1">{stop.siteName} · {stop.addressLine}</DialogDescription></div></div><div className="mt-4 grid grid-cols-2 gap-1 rounded-2xl bg-muted p-1"><ModeButton active={view === "cart"} onClick={() => setView("cart")} icon={ShoppingBag}>Mi pedido <Badge className="ml-1.5 rounded-full bg-teal-600">{selected.length}</Badge></ModeButton><ModeButton active={view === "search"} onClick={openSearch} icon={Search}>Buscar productos</ModeButton></div></DialogHeader>
+    <DialogHeader className="shrink-0 border-b bg-background px-4 pb-4 pt-5 text-left sm:px-6"><div className="flex items-start gap-3"><Button type="button" size="icon" variant="ghost" className="-ml-2 shrink-0" onClick={onClose}><ArrowLeft className="h-5 w-5"/></Button><div className="min-w-0 flex-1"><DialogTitle className="truncate">{stop.customerName}</DialogTitle><DialogDescription className="line-clamp-1">{stop.siteName} · {stop.addressLine}</DialogDescription></div><Badge className="rounded-full bg-teal-600">{selected.length}</Badge></div><div className="relative mt-4"><Search className="pointer-events-none absolute left-3 top-3.5 h-5 w-5 text-teal-700"/><Input ref={searchRef} enterKeyHint="search" autoComplete="off" className="h-12 rounded-2xl border-teal-300 bg-white pl-10 pr-12 text-base" value={query} onChange={(event)=>{setQuery(event.target.value);setSearched(false)}} onKeyDown={(event)=>{if(event.key==="Enter"){event.preventDefault();void search()}}} placeholder="Buscar por nombre o código"/>{query&&<Button type="button" size="icon" variant="ghost" className="absolute right-1.5 top-1.5 h-9 w-9 rounded-xl" onClick={()=>{setQuery("");setResults([]);setSearched(false);searchRef.current?.focus()}}><X className="h-4 w-4"/></Button>}</div></DialogHeader>
     <main className="min-h-0 flex-1 overflow-y-auto bg-slate-50/70 px-3 py-4 sm:px-6">
-      {view === "cart" ? <Cart items={selected} online={online} onChange={change} onEdit={setQuantityItem} onSearch={openSearch}/> : <SearchCatalog query={query} setQuery={(value) => { setQuery(value); setSearched(false); }} searchRef={searchRef} searching={loading} searched={searched} results={results} quantities={quantities} online={online} onSearch={search} onChange={change} onEdit={setQuantityItem}/>}
+      {query.trim().length>=2||searched||loading?<SearchResults searching={loading} searched={searched} results={results} quantities={quantities} online={online} onChange={addFromSearch} onEdit={setQuantityItem}/>:<Cart items={selected} online={online} onChange={change} onEdit={setQuantityItem} onSearch={()=>searchRef.current?.focus()}/>}
     </main>
-    <footer className="shrink-0 border-t bg-background/95 px-3 pb-[max(.75rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-12px_35px_-24px_rgba(15,118,110,.7)] backdrop-blur sm:px-6"><div className="mb-3 flex items-center justify-between gap-3"><button type="button" onClick={() => setView("cart")} className="text-left"><small className="block text-muted-foreground">{selected.length} productos · {units.toLocaleString("es-CO", { maximumFractionDigits: 3 })} unidades</small><strong className="text-xl">{money.format(total)}</strong></button>{view === "search" && <Button type="button" variant="outline" onClick={() => setView("cart")}>Ver pedido</Button>}</div>{view === "cart" && <Input value={notes} onChange={(event) => setNotes(event.target.value)} className="mb-3" placeholder="Nota para este pedido (opcional)"/>}<Button className="h-12 w-full bg-teal-600 text-base font-bold hover:bg-teal-700" disabled={saving || selected.length === 0 || invalid} onClick={submit}><PackagePlus className="mr-2 h-5 w-5"/>{saving ? "Guardando…" : online ? `Crear pedido · ${money.format(total)}` : "Guardar para sincronizar"}</Button></footer>
+    <footer className="shrink-0 border-t bg-background/95 px-3 pb-[max(.75rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-12px_35px_-24px_rgba(15,118,110,.7)] backdrop-blur sm:px-6"><div className="mb-3 flex items-center justify-between gap-3"><button type="button" onClick={()=>{setQuery("");setResults([]);setSearched(false)}} className="text-left"><small className="block text-muted-foreground">{selected.length} productos · {units.toLocaleString("es-CO", { maximumFractionDigits: 3 })} unidades</small><strong className="text-xl">{money.format(total)}</strong></button>{(query||searched)&&<Button type="button" variant="outline" onClick={()=>{setQuery("");setResults([]);setSearched(false)}}><ShoppingBag className="mr-2 h-4 w-4"/>Ver pedido</Button>}</div><Input value={notes} onChange={(event) => setNotes(event.target.value)} className="mb-3" placeholder="Nota para este pedido (opcional)"/><Button className="h-12 w-full bg-teal-600 text-base font-bold hover:bg-teal-700" disabled={saving || selected.length === 0 || invalid} onClick={submit}><PackagePlus className="mr-2 h-5 w-5"/>{saving ? "Guardando…" : online ? `Crear pedido · ${money.format(total)}` : "Guardar para sincronizar"}</Button></footer>
   </DialogContent></Dialog>{quantityItem && <QuantityDialog item={quantityItem} current={quantities[quantityItem.productId] ?? 0} online={online} onClose={() => setQuantityItem(null)} onConfirm={(quantity) => { setQuantity(quantityItem, quantity); setQuantityItem(null); }}/>}</>;
 }
 
@@ -107,8 +119,8 @@ function Cart({ items, online, onChange, onEdit, onSearch }: { items: Array<{ it
   return <div className="space-y-3"><div className="flex items-center justify-between"><div><h2 className="font-black">Productos agregados</h2><p className="text-xs text-muted-foreground">Revisa cantidades antes de guardar.</p></div><Button size="sm" variant="outline" onClick={onSearch}><Plus className="mr-1 h-4 w-4"/>Agregar</Button></div>{items.map(({ item, quantity }) => <ProductRow key={item.productId} item={item} quantity={quantity} online={online} selected onChange={onChange} onEdit={onEdit}/>)}</div>;
 }
 
-function SearchCatalog({ query, setQuery, searchRef, searching, searched, results, quantities, online, onSearch, onChange, onEdit }: { query: string; setQuery: (value: string) => void; searchRef: React.RefObject<HTMLInputElement | null>; searching: boolean; searched: boolean; results: SellerCatalogItem[]; quantities: Record<string, number>; online: boolean; onSearch: () => void; onChange: (item: SellerCatalogItem, delta: number) => void; onEdit: (item: SellerCatalogItem) => void }) {
-  return <div className="space-y-4"><form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); void onSearch(); }}><div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-3 top-3.5 h-5 w-5 text-teal-700"/><Input ref={searchRef} enterKeyHint="search" autoComplete="off" className="h-12 rounded-2xl border-teal-300 bg-white pl-10 text-base" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Nombre o código"/></div><Button type="submit" className="h-12 rounded-2xl bg-slate-950 px-5" disabled={searching}>{searching ? "Buscando…" : "Buscar"}</Button></form>{!searched && !searching && <div className="rounded-3xl border border-dashed bg-white p-10 text-center"><Search className="mx-auto h-9 w-9 text-teal-600"/><h2 className="mt-3 font-bold">Busca cuando lo necesites</h2><p className="mt-1 text-sm text-muted-foreground">El catálogo aparece únicamente después de pulsar Buscar.</p></div>} {searched && !searching && !results.length && <p className="rounded-3xl border border-dashed bg-white p-10 text-center text-sm text-muted-foreground">No encontramos productos con esa búsqueda.</p>}<div className="space-y-3">{results.map((item) => <ProductRow key={item.productId} item={item} quantity={quantities[item.productId] ?? 0} online={online} selected={(quantities[item.productId] ?? 0) > 0} onChange={onChange} onEdit={onEdit}/>)}</div></div>;
+function SearchResults({ searching, searched, results, quantities, online, onChange, onEdit }: { searching: boolean; searched: boolean; results: SellerCatalogItem[]; quantities: Record<string, number>; online: boolean; onChange: (item: SellerCatalogItem, delta: number) => void; onEdit: (item: SellerCatalogItem) => void }) {
+  return <div className="space-y-3">{searching&&<p className="rounded-3xl border bg-white p-8 text-center text-sm text-muted-foreground">Buscando productos…</p>}{searched&&!searching&&!results.length&&<p className="rounded-3xl border border-dashed bg-white p-10 text-center text-sm text-muted-foreground">No encontramos productos con esa búsqueda.</p>}{results.map((item)=><ProductRow key={item.productId} item={item} quantity={quantities[item.productId]??0} online={online} selected={(quantities[item.productId]??0)>0} onChange={onChange} onEdit={onEdit}/>)}</div>;
 }
 
 function ProductRow({ item, quantity, online, selected, onChange, onEdit }: { item: SellerCatalogItem; quantity: number; online: boolean; selected: boolean; onChange: (item: SellerCatalogItem, delta: number) => void; onEdit: (item: SellerCatalogItem) => void }) {
@@ -117,7 +129,6 @@ function ProductRow({ item, quantity, online, selected, onChange, onEdit }: { it
 }
 
 function QuantityDialog({ item, current, online, onClose, onConfirm }: { item: SellerCatalogItem; current: number; online: boolean; onClose: () => void; onConfirm: (quantity: number) => void }) { const [value, setValue] = useState(String(current || 1)); const quantity = Math.max(0, Number(value) || 0); const overStock = online && item.manageStock && quantity > item.quantityOnHand; return <Dialog open onOpenChange={(open) => !open && onClose()}><DialogContent className="w-[calc(100%-1.5rem)] rounded-3xl p-5 sm:max-w-sm"><DialogHeader><DialogTitle>Cantidad</DialogTitle><DialogDescription>{item.name} · disponible {item.quantityOnHand}</DialogDescription></DialogHeader><Input autoFocus className="h-16 rounded-2xl text-center text-3xl font-black" inputMode="decimal" value={value} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && quantity > 0 && !overStock) onConfirm(quantity); }}/>{overStock && <p className="text-sm font-medium text-red-700">La cantidad supera la existencia disponible.</p>}<DialogFooter className="grid grid-cols-2 gap-2 sm:grid-cols-2"><Button variant="outline" onClick={onClose}>Cancelar</Button><Button className="bg-teal-600" disabled={quantity <= 0 || overStock} onClick={() => onConfirm(quantity)}>Aplicar</Button></DialogFooter></DialogContent></Dialog>; }
-function ModeButton({ active, onClick, icon: Icon, children }: { active: boolean; onClick: () => void; icon: typeof Search; children: React.ReactNode }) { return <button type="button" onClick={onClick} className={`flex h-10 items-center justify-center rounded-xl px-3 text-sm font-semibold transition ${active ? "bg-background text-foreground shadow" : "text-muted-foreground"}`}><Icon className="mr-2 h-4 w-4"/>{children}</button>; }
 function localDateKey(value = new Date()) { return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`; }
 function navigatorOnline() { return typeof navigator === "undefined" || navigator.onLine; }
 function errorMessage(error: unknown, fallback: string) { return error && typeof error === "object" && "message" in error && typeof error.message === "string" ? error.message : fallback; }
