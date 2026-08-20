@@ -3,6 +3,7 @@ using Xunit;
 
 namespace Auraly.Platform.Tests.Services;
 
+[Collection(TypingIndicatorHeartbeatTestCollection.Name)]
 public sealed class TypingIndicatorHeartbeatTests
 {
     [Fact]
@@ -49,4 +50,10 @@ public sealed class TypingIndicatorHeartbeatTests
 
         Assert.True(Volatile.Read(ref refreshCount) >= 2);
     }
+}
+
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class TypingIndicatorHeartbeatTestCollection
+{
+    public const string Name = "Typing indicator heartbeat";
 }
