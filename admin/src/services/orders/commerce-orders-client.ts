@@ -68,6 +68,10 @@ export type CommerceOrderFilters = {
   createdFrom?: string;
   createdTo?: string;
   hasPendingBalance?: boolean;
+  source?: number;
+  warehouseId?: string;
+  routeId?: string;
+  onlyMine?: boolean;
 };
 
 export type InvoiceOrderResult = {

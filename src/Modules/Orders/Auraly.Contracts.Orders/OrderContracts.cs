@@ -22,7 +22,10 @@ public sealed record OrderPageRequest(
     DateTimeOffset? CreatedFrom = null,
     DateTimeOffset? CreatedTo = null,
     bool? HasPendingBalance = null,
-    bool IncludeClaimedByOthers = true);
+    bool IncludeClaimedByOthers = true,
+    Guid? WarehouseId = null,
+    Guid? RouteId = null,
+    bool OnlyCreatedByActor = false);
 
 public sealed record OrderClaimSummary(
     Guid ClaimId,

@@ -21,6 +21,8 @@ import {
 } from "@/services/pos/online-pos-client";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
+import { isSellerOperationalProfile, ordersLandingView } from "@/lib/default-start-route";
+import { routesApi, type SalesRouteListItem } from "@/services/api/routes";
 
 export default function OrdersPage() {
   const router = useRouter();
@@ -28,11 +30,20 @@ export default function OrdersPage() {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const [workspaces, setWorkspaces] = useState<SalesWorkspaceOption[]>([]);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [routeOptions, setRouteOptions] = useState<SalesRouteListItem[]>([]);
   const [routeMode, setRouteMode] = useState(
     () =>
       typeof window !== "undefined" &&
       new URLSearchParams(window.location.search).get("view") === "today-route",
   );
+
+  useEffect(() => {
+    if (!user || typeof window === "undefined") return;
+    const view = ordersLandingView(window.location.search, user.roles ?? [], user.permissions ?? []);
+    setRouteMode(view === "today-route");
+    if (view === "today-route" && new URLSearchParams(window.location.search).get("view") !== "today-route")
+      router.replace("/dashboard/orders?view=today-route");
+  }, [router, user]);
 
   useEffect(() => {
     let active = true;
@@ -54,6 +65,14 @@ export default function OrdersPage() {
     };
   }, [businessId]);
 
+  useEffect(() => {
+    let active = true;
+    void routesApi.page({ page: 1, pageSize: 100, isActive: true })
+      .then((value) => { if (active) setRouteOptions(value.items); })
+      .catch(() => { if (active) setRouteOptions([]); });
+    return () => { active = false; };
+  }, [businessId]);
+
   const workspace = useMemo(() => {
     const remembered = rememberedSalesWorkspaceKey();
     return (
@@ -73,7 +92,7 @@ export default function OrdersPage() {
         businessId={businessId}
         onAdministrative={() => {
           setRouteMode(false);
-          router.replace("/dashboard/orders");
+          router.replace("/dashboard/orders?view=all");
         }}
       />
     );
@@ -103,6 +122,9 @@ export default function OrdersPage() {
       )}
       <OrdersWorkspace
         showHeader={false}
+        routeOptions={routeOptions.map((route) => ({ routeId: route.routeId, name: route.name }))}
+        onlyMine={!!user && isSellerOperationalProfile(user.roles ?? [], user.permissions ?? [])}
+        source={user && isSellerOperationalProfile(user.roles ?? [], user.permissions ?? []) ? 1 : undefined}
         loadPage={loadCommerceOrders}
         loadDetail={loadCommerceOrder}
         onRecover={

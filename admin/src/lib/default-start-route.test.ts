@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { defaultStartRoute, shouldApplyDefaultStart } from "./default-start-route";
+import { defaultStartRoute, ordersLandingView, shouldApplyDefaultStart } from "./default-start-route";
 
 test("seller-only users start in today's route", () => {
   assert.equal(defaultStartRoute(["Vendedor"], ["orders.read"]), "/dashboard/orders?view=today-route");
@@ -21,4 +21,12 @@ test("mixed roles and users without operational access keep the dashboard", () =
 test("the automatic redirect only owns the dashboard root", () => {
   assert.equal(shouldApplyDefaultStart("/dashboard"), true);
   assert.equal(shouldApplyDefaultStart("/dashboard/orders"), false);
+});
+
+
+test("seller order navigation always opens the operational route unless all orders was requested explicitly", () => {
+  assert.equal(ordersLandingView("", ["Vendedor"], ["orders.read"]), "today-route");
+  assert.equal(ordersLandingView("?view=today-route", ["Vendedor"], ["orders.read"]), "today-route");
+  assert.equal(ordersLandingView("?view=all", ["Vendedor"], ["orders.read"]), "all");
+  assert.equal(ordersLandingView("", ["Administrador"], ["orders.read"]), "all");
 });

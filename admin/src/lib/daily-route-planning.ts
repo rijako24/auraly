@@ -15,3 +15,11 @@ export function pendingRouteStops<T extends IdentifiedStop>(stops: readonly T[],
 export function firstPendingRouteStop<T extends IdentifiedStop>(stops: readonly T[], visits: readonly IdentifiedVisit[]) {
   return pendingRouteStops(stops, visits)[0] ?? null;
 }
+
+export type SellerWorkspaceIdentity = { businessId: string; warehouseId: string };
+
+export function resolveSellerWorkspace<T extends SellerWorkspaceIdentity>(options: readonly T[], businessId: string, rememberedKey: string | null) {
+  const scoped = options.filter((option) => option.businessId === businessId);
+  return scoped.find((option) => `${option.businessId}:${option.warehouseId}` === rememberedKey)
+    ?? (scoped.length === 1 ? scoped[0] : null);
+}

@@ -70,6 +70,22 @@ public sealed class SqlOrderStore(
         else if (request.HasPendingBalance is false)
             filters.Add("(o.PaymentTransactionId IS NOT NULL AND pt.Status=2)");
 
+        if (request.WarehouseId is not null)
+        {
+            filters.Add("ISJSON(o.CustomAttributesJson)=1 AND TRY_CONVERT(uniqueidentifier,JSON_VALUE(o.CustomAttributesJson,'$.WarehouseId'))=@WarehouseId");
+            parameters.Add(P("@WarehouseId", request.WarehouseId.Value));
+        }
+        if (request.RouteId is not null)
+        {
+            filters.Add("ISJSON(o.CustomAttributesJson)=1 AND TRY_CONVERT(uniqueidentifier,JSON_VALUE(o.CustomAttributesJson,'$.RouteId'))=@RouteId");
+            parameters.Add(P("@RouteId", request.RouteId.Value));
+        }
+        if (request.OnlyCreatedByActor)
+        {
+            filters.Add("ISJSON(o.CustomAttributesJson)=1 AND TRY_CONVERT(uniqueidentifier,JSON_VALUE(o.CustomAttributesJson,'$.createdBy'))=@CreatedByActor");
+            parameters.Add(P("@CreatedByActor", actor.UserId));
+        }
+
         AddStatusFilter(filters, parameters, request.Status);
         if (!request.IncludeClaimedByOthers)
         {

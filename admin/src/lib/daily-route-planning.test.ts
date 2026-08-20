@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { firstPendingRouteStop, isoScheduleDay, pendingRouteStops } from "./daily-route-planning";
+import { firstPendingRouteStop, isoScheduleDay, pendingRouteStops, resolveSellerWorkspace } from "./daily-route-planning";
 
 const stops = ["first", "second", "third"].map((routeStopId) => ({ routeStopId }));
 
@@ -24,4 +24,25 @@ test("an out-of-order map visit returns to the earliest configured pending custo
 
 test("returns no next customer when the route is complete", () => {
   assert.equal(firstPendingRouteStop(stops, stops), null);
+});
+
+test("restores the seller warehouse remembered on this device", () => {
+  const options = [
+    { businessId: "business-1", warehouseId: "warehouse-1" },
+    { businessId: "business-1", warehouseId: "warehouse-2" },
+  ];
+  assert.equal(resolveSellerWorkspace(options, "business-1", "business-1:warehouse-2")?.warehouseId, "warehouse-2");
+});
+
+test("automatically configures the only seller warehouse", () => {
+  const options = [{ businessId: "business-1", warehouseId: "warehouse-1" }];
+  assert.equal(resolveSellerWorkspace(options, "business-1", null)?.warehouseId, "warehouse-1");
+});
+
+test("requires the warehouse popup when several choices exist and none was remembered", () => {
+  const options = [
+    { businessId: "business-1", warehouseId: "warehouse-1" },
+    { businessId: "business-1", warehouseId: "warehouse-2" },
+  ];
+  assert.equal(resolveSellerWorkspace(options, "business-1", null), null);
 });

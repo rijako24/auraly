@@ -58,6 +58,9 @@ type OrdersWorkspaceProps = {
     status?: string;
     createdFrom?: string;
     createdTo?: string;
+    source?: number;
+    routeId?: string;
+    onlyMine?: boolean;
   }) => Promise<CommerceOrderPage>;
   loadDetail: (orderId: string) => Promise<CommerceOrderDetail>;
   onRecover?: (order: CommerceOrderListItem) => Promise<void>;
@@ -66,6 +69,9 @@ type OrdersWorkspaceProps = {
     paymentMethodCode: string,
   ) => Promise<{ completedCount: number; failedCount: number }>;
   onExpand?: () => void;
+  routeOptions?: Array<{ routeId: string; name: string }>;
+  onlyMine?: boolean;
+  source?: number;
 };
 
 export function OrdersWorkspace({
@@ -77,6 +83,9 @@ export function OrdersWorkspace({
   onRecover,
   onInvoiceSelected,
   onExpand,
+  routeOptions = [],
+  onlyMine = false,
+  source,
 }: OrdersWorkspaceProps) {
   const [page, setPage] = useState(1);
   const [data, setData] = useState<CommerceOrderPage | null>(null);
@@ -86,6 +95,7 @@ export function OrdersWorkspace({
   const [status, setStatus] = useState("Available");
   const [createdFrom, setCreatedFrom] = useState("");
   const [createdTo, setCreatedTo] = useState("");
+  const [routeId, setRouteId] = useState("All");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [detail, setDetail] = useState<CommerceOrderDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -116,6 +126,9 @@ export function OrdersWorkspace({
         createdTo: createdTo
           ? new Date(`${createdTo}T23:59:59.999`).toISOString()
           : undefined,
+        routeId: routeId === "All" ? undefined : routeId,
+        onlyMine: onlyMine || undefined,
+        source,
       });
       setData(next);
       setSelected((current) => {
@@ -137,6 +150,9 @@ export function OrdersWorkspace({
     pageSize,
     product,
     query,
+    routeId,
+    onlyMine,
+    source,
     status,
   ]);
 
@@ -295,6 +311,20 @@ export function OrdersWorkspace({
             <SelectItem value="All">Todos</SelectItem>
           </SelectContent>
         </Select>
+        {!compact && routeOptions.length > 0 && (
+          <Select value={routeId} onValueChange={(next) => { setRouteId(next); setPage(1); }}>
+            <SelectTrigger><SelectValue placeholder="Todas las rutas" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="All">Todas las rutas</SelectItem>
+              {routeOptions.map((route) => <SelectItem key={route.routeId} value={route.routeId}>{route.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        )}
+        {!compact && onlyMine && (
+          <div className="flex items-center rounded-xl border bg-teal-50 px-3 text-sm font-semibold text-teal-800">
+            <UserRound className="mr-2 h-4 w-4" />Vendedor: mis pedidos
+          </div>
+        )}
         {!compact && (
           <div className="flex gap-2 xl:col-span-2">
             <label className="relative flex-1">

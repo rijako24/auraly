@@ -27,6 +27,9 @@ public static class OrdersApi
             DateTimeOffset? createdTo,
             bool? hasPendingBalance,
             bool? includeClaimedByOthers,
+            Guid? warehouseId,
+            Guid? routeId,
+            bool? onlyMine,
             CancellationToken ct) =>
             await Handle(() => service.PageAsync(
                 context.User.ToOrderUserActor(),
@@ -41,7 +44,10 @@ public static class OrdersApi
                     createdFrom,
                     createdTo,
                     hasPendingBalance,
-                    includeClaimedByOthers ?? true),
+                    includeClaimedByOthers ?? true,
+                    WarehouseId: warehouseId,
+                    RouteId: routeId,
+                    OnlyCreatedByActor: onlyMine ?? false),
                 ct)));
 
         group.MapGet("/{orderId:guid}", async (
