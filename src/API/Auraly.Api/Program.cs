@@ -130,6 +130,9 @@ builder.Services.AddScoped<IPosDeviceAuthenticator, SqlPosDeviceAuthenticator>()
 builder.Services.AddScoped<IPosSaleServerStore, SqlPosSaleServerStore>();
 builder.Services.AddScoped<IPosSaleCustomerResolver, SqlPosSaleCustomerResolver>();
 builder.Services.AddScoped<SqlDocumentProcessingSessionAccessor>();
+builder.Services.AddScoped<SqlInventoryLedgerWriter>();
+builder.Services.AddScoped<IReferenceOptionStore, SqlReferenceOptionStore>();
+builder.Services.AddScoped<ReferenceOptionService>();
 builder.Services.AddScoped<IDocumentProcessingJobStore, SqlDocumentProcessingJobStore>();
 builder.Services.AddScoped<IDocumentProcessingWorkSource, SqlDocumentProcessingWorkSource>();
 builder.Services.AddScoped<SqlPosSaleDocumentHandler>();
@@ -621,6 +624,7 @@ app.MapControllers();
 app.MapAuthenticationApi();
 app.MapExecutionContextApi();
 app.MapCatalogApi();
+app.MapReferenceOptionsApi();
 app.MapProductMerchandisingApi();
 app.MapPartyApi();
 app.MapPartyWorkspaceApi();

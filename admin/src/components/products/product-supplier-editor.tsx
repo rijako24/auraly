@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useGoodsReceiptOptions } from "@/hooks/use-goods-receipts";
-import { purchasePresentationOptions } from "@/lib/purchase-presentations";
+import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { goodsReceiptsApi } from "@/services/api/goods-receipts";
 
 export interface ProductSupplierEditorHandle { save: () => Promise<void> }
@@ -22,6 +22,7 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
 }>(function ProductSupplierEditor({ productId, productName, saleUnitName = "unidad de venta", embedded = false }, ref) {
   const client = useQueryClient();
   const options = useGoodsReceiptOptions();
+  const purchasePresentations = useReferenceOptions("purchase-presentation");
   const [supplierId, setSupplierId] = useState("");
   const [supplierProductCode, setSupplierProductCode] = useState("");
   const [packageName, setPackageName] = useState("Unidad");
@@ -107,9 +108,9 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
         <Select value={packageName} onValueChange={setPackageName}>
           <SelectTrigger><SelectValue placeholder="Selecciona el empaque" /></SelectTrigger>
           <SelectContent>
-            {!purchasePresentationOptions.includes(packageName as typeof purchasePresentationOptions[number]) && packageName &&
+            {!(purchasePresentations.data ?? []).some((option) => option.code === packageName) && packageName &&
               <SelectItem value={packageName}>{packageName}</SelectItem>}
-            {purchasePresentationOptions.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}
+            {(purchasePresentations.data ?? []).map((option) => <SelectItem key={option.id} value={option.code}>{option.label}</SelectItem>)}
           </SelectContent>
         </Select>
       </div>

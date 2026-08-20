@@ -19,7 +19,9 @@
     <None Include="Scripts\Seeds\*.sql" />
   </ItemGroup>
   <ItemGroup>
+    <Build Include="Schemas\Reference.sql" />
     <Build Include="Types\GuidIdList.sql" />
+    <Build Include="Tables\ReferenceOptions.sql" />
     <Build Include="Tables\Tenants.sql" />
     <Build Include="Tables\Permissions.sql" />
     <Build Include="Tables\SystemConfigurations.sql" />

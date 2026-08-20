@@ -14,6 +14,7 @@ namespace Auraly.Infrastructure.Persistence;
 public sealed class SqlSalesReturnDocumentHandler(
     SqlDocumentProcessingSessionAccessor sessions,
     IAuralyIdGenerator ids,
+    SqlInventoryLedgerWriter inventoryWriter,
     TimeProvider timeProvider) : IConfirmedDocumentHandler
 {
     public string DocumentType => SalesReturnDocumentTypes.SalesReturn;
@@ -40,78 +41,31 @@ public sealed class SqlSalesReturnDocumentHandler(
         await MarkProcessedAsync(session, value, cancellationToken);
     }
 
-    private async Task ApplyInventoryAsync(
+    private Task ApplyInventoryAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
         SalesReturnDocumentPayload value,
         SalesReturnLineSnapshot line,
         CancellationToken cancellationToken)
     {
-        if (line.InventoryDisposition != ReturnInventoryDispositions.Sellable) return;
-        const string sql = """
-            DECLARE @ManageStock BIT;
-            DECLARE @InventoryFactor DECIMAL(19,6)=1;
-            SELECT @ProductId=l.ParentProductId,@InventoryFactor=l.InventoryFactor
-            FROM dbo.ProductLinks l WITH(UPDLOCK,HOLDLOCK)
-            WHERE l.BusinessId=@BusinessId AND l.ChildProductId=@ProductId AND l.SharesInventory=1 AND l.IsActive=1;
-            SET @Quantity=CAST(@Quantity*@InventoryFactor AS DECIMAL(19,6));
+        if (line.InventoryDisposition != ReturnInventoryDispositions.Sellable)
+            return Task.CompletedTask;
 
-            SET @RecognizedUnitCost=CAST(@RecognizedUnitCost/@InventoryFactor AS DECIMAL(19,6));
-            DECLARE @QuantityBefore DECIMAL(19,6);
-            DECLARE @AverageCost DECIMAL(19,6);
-            DECLARE @ValueBefore DECIMAL(19,4);
-            SELECT @ManageStock=p.ManageStock
-            FROM dbo.Products p WITH (UPDLOCK,HOLDLOCK)
-            INNER JOIN dbo.Warehouses w WITH (UPDLOCK,HOLDLOCK)
-              ON w.WarehouseId=@WarehouseId AND w.BusinessId=@BusinessId
-            WHERE p.ProductId=@ProductId AND p.BusinessId=@BusinessId;
-            IF @ManageStock IS NULL
-              THROW 51210,'The return product or warehouse is outside the business.',1;
-            IF @ManageStock=0 RETURN;
-            IF NOT EXISTS
-              (SELECT 1 FROM dbo.InventoryBalances WITH (UPDLOCK,HOLDLOCK)
-               WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId)
-              INSERT dbo.InventoryBalances
-                (BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,
-                 InventoryValue,LastProcessingSequence,UpdatedAt)
-              VALUES(@BusinessId,@WarehouseId,@ProductId,0,0,0,@Sequence,@Now);
-            SELECT @QuantityBefore=QuantityOnHand,@AverageCost=AverageUnitCost,
-                   @ValueBefore=InventoryValue
-            FROM dbo.InventoryBalances WITH (UPDLOCK,HOLDLOCK)
-            WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
-            DECLARE @QuantityAfter DECIMAL(19,6)=@QuantityBefore+@Quantity;
-            DECLARE @ValueChange DECIMAL(19,4)=CAST(@Quantity*@RecognizedUnitCost AS DECIMAL(19,4));
-            DECLARE @ValueAfter DECIMAL(19,4)=@ValueBefore+@ValueChange;
-            DECLARE @AverageCostAfter DECIMAL(19,6)=CASE WHEN @QuantityAfter=0 THEN 0
-              ELSE CAST(@ValueAfter/@QuantityAfter AS DECIMAL(19,6)) END;
-            UPDATE dbo.InventoryBalances
-            SET QuantityOnHand=@QuantityAfter,InventoryValue=@ValueAfter,AverageUnitCost=@AverageCostAfter,
-                LastProcessingSequence=@Sequence,UpdatedAt=@Now
-            WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
-            INSERT dbo.InventoryMovements
-              (InventoryMovementId,BusinessId,WarehouseId,DocumentId,DocumentType,
-               LineNumber,ProductId,MovementType,QuantityChange,ProcessingSequence,
-               QuantityBefore,QuantityAfter,AverageUnitCostBefore,AverageUnitCostAfter,
-               RecognizedUnitCost,ValueChange,OccurredAt,PostedAt,CreatedAt)
-            VALUES(@MovementId,@BusinessId,@WarehouseId,@DocumentId,N'SalesReturn',
-               @LineNumber,@ProductId,N'SalesReturn',@Quantity,@Sequence,@QuantityBefore,
-               @QuantityAfter,@AverageCost,@AverageCostAfter,@RecognizedUnitCost,@ValueChange,
-               @OccurredAt,@Now,@Now);
-            """;
-        await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
-        command.Parameters.AddWithValue("@MovementId", ids.NewId());
-        command.Parameters.AddWithValue("@BusinessId", value.BusinessId);
-        command.Parameters.AddWithValue("@WarehouseId", value.WarehouseId);
-        command.Parameters.AddWithValue("@ProductId", line.ProductId);
-        command.Parameters.AddWithValue("@DocumentId", value.ReturnId);
-        command.Parameters.AddWithValue("@LineNumber", line.LineNumber);
-        AddDecimal(command, "@Quantity", line.Quantity, 19, 6);
-        AddDecimal(command, "@RecognizedUnitCost", line.RecognizedUnitCost, 19, 6);
-        command.Parameters.AddWithValue("@Sequence", session.ProcessingSequence);
-        command.Parameters.AddWithValue("@OccurredAt", value.ReturnedAt);
-        command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        return inventoryWriter.PostAsync(
+            session,
+            new InventoryLedgerPosting(
+                value.BusinessId,
+                value.WarehouseId,
+                line.ProductId,
+                value.ReturnId,
+                SalesReturnDocumentTypes.SalesReturn,
+                line.LineNumber,
+                "SalesReturn",
+                line.Quantity,
+                line.RecognizedUnitCost,
+                InventoryValuationModes.WeightedAverageReceipt,
+                value.ReturnedAt),
+            cancellationToken);
     }
-
 
     private async Task InsertTaxSummariesAsync(
         SqlDocumentProcessingSessionAccessor.Session session,

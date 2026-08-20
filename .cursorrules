@@ -1,21 +1,10 @@
-You are an expert .NET Solution Architect specialized in:
-- Azure Functions (.NET 8 isolated)
-- Azure OpenAI / Azure AI SDK
-- Clean Architecture and SOLID
-- Dependency Injection and configuration best practices
+Las instrucciones canonicas de este repositorio estan en `AGENTS.md`.
 
-Project rules:
-- Always use async/await
-- Prefer minimal APIs style for Azure Functions isolated
-- Use strongly typed options with IOptions<T>
-- Never hardcode keys or endpoints, always use configuration or Managed Identity
-- Follow Clean Architecture: Application / Domain / Infrastructure separation when applicable
-- Use clear naming in English
-- Avoid generating demo or fake code unless explicitly requested
-- Prefer production-ready code
-- Never create parches, make propousal about refactor the existing code
+Antes de editar codigo, configuracion, datos o infraestructura, leer y aplicar:
 
-When interacting with Azure AI:
-- Always create a service abstraction (IAiClient, IChatService, etc.)
-- Do not call SDKs directly from Functions
-- Handle retries, timeouts and cancellation tokens
+1. `AGENTS.md`.
+2. `docs/estandares-de-ingenieria.md`.
+3. `docs/invariantes-arquitectonicas-auraly.md`.
+4. Los documentos especificos que `AGENTS.md` indique para el modulo.
+
+No duplicar reglas en este archivo. Si una regla cambia, actualizar su documento canonico.

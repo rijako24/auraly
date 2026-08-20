@@ -1,0 +1,95 @@
+# Mapa de motores, flujos y puntos de extension
+
+Este documento responde qué componente es dueño de cada efecto y dónde se agrega una capacidad sin duplicar código. Es operativo; las decisiones detalladas enlazadas siguen siendo la autoridad de diseño.
+
+## Regla de navegación
+
+| Necesidad | Extender | No crear ni escribir directamente |
+| --- | --- | --- |
+| Nuevo documento definitivo | contrato documental, `IConfirmedDocumentHandler` y registro DI del motor documental | otro engine, poller, job table o escritura desde endpoint |
+| Efecto de inventario | handler documental → `SqlInventoryLedgerWriter`; operaciones dedicadas además usan `SqlInventoryOperationProcessor` | SQL a `InventoryBalances`/`InventoryMovements`, segundo kardex o motor |
+| Nuevo documento fiscal DIAN | snapshot/regla del `FiscalProcessingCoordinator` y workers fiscales existentes | worker DIAN por módulo, tenant o tipo |
+| Nuevo asiento automático | política/regla del `AccountingProcessingCoordinator` y `SqlAccountingPostingProcessor` | asiento desde API o segundo posting service |
+| Nueva opción de dropdown | seed/maestro → store de aplicación → endpoint de catálogo → `useReferenceOptions` | array `{value,label}`, switch de labels o prompt |
+| Nuevo endpoint | contrato/caso de uso de aplicación; adapter de persistencia en infraestructura | SQL o reglas de dominio en Minimal API |
+| Regla dependiente de fecha/hora | `IBusinessClock` y `TimeProvider` | `DateTime.Now/UtcNow` dentro de la regla |
+| Nuevo comportamiento conversacional | configuración, fact/signal/action/outcome y operación existentes según el manual | condición de tenant o vocabulario comercial en el engine |
+
+## Documento e inventario
+
+`API/POS/importador` → confirma documento y trabajo durable → `DocumentProcessingWorker` → `DocumentProcessingEngine` → `IConfirmedDocumentHandler` → efectos intrínsecos → `SqlInventoryLedgerWriter` cuando aplica → marca job procesado.
+
+- SQL es la fuente de orden, lease, estado e idempotencia; la cola solo despierta consumidores.
+- Cada tipo documental tiene un handler. El handler no es un motor nuevo.
+- `SqlInventoryLedgerWriter` es el único writer lógico de balances y movimientos. Centraliza bloqueo, existencia, costo, cantidad, valor, upsert y kardex.
+- `SqlInventoryOperationProcessor` calcula conteos, ajustes, traslados, conversiones y averías, pero entrega la escritura al writer común.
+- POS sale, recepción, devolución de venta y devolución de compra usan el mismo writer con la política de valoración correspondiente.
+
+Para agregar un efecto: extender el contrato/handler correcto, elegir una política de valoración existente o modelar una nueva allí, agregar prueba de idempotencia/concurrencia y no tocar las tablas desde otro componente.
+
+## Fiscal/DIAN
+
+Documento operativo confirmado → proceso fiscal durable → `FiscalProcessingCoordinator` → `FiscalGenerationWorker` → artefacto firmado/CUFE-CUDE → `FiscalSubmissionWorker` → consulta/resultado DIAN.
+
+- Generación y envío pueden usar colas diferentes: siguen siendo stages del mismo motor.
+- Service Bus, RabbitMQ e in-process son adapters equivalentes.
+- Un retry fiscal no repite inventario, caja, cartera ni contabilidad.
+- Folios, snapshots, intentos, track IDs, artefactos y estados pertenecen al módulo fiscal.
+
+## Contabilidad
+
+Documento contabilizable → trabajo durable único → `AccountingProcessingCoordinator` → `SqlAccountingPostingProcessor` → entry/lines → estado final o error reintentable.
+
+- `AccountingProcessingPolicy` es la lista canónica de tipos soportados.
+- La unicidad por documento fuente evita doble asiento.
+- Agregar un documento significa extender la política y el posting existente, con prueba; no copiar la lista ni insertar asientos desde el módulo origen.
+
+## Conversacional
+
+Canal inbound → recibo/idempotencia/debounce → conversación y `SettingsJson` → posición determinista → plan estructurado del LLM → coordinación determinista → `IAgentOperation` → outcomes/efectos → persistencia y respuesta.
+
+El LLM propone; el coordinador valida y decide. Reglas comerciales, facts, signals, acciones y copy configurable viven en configuración. Operaciones consultan catálogo, reservas, precios y pagos mediante sus casos de uso propietarios. **DT-009 está diferida:** este documento describe la topología actual, no autoriza una refactorización interna del motor.
+
+## Catálogos y dropdowns
+
+Flujo: `reference.Options`/maestro específico → seed o administración autorizada → `IReferenceOptionStore` → `ReferenceOptionService` → `GET /api/commerce/v1/reference-options/{catalogCode}` → `useReferenceOptions` → selector.
+
+Los códigos son estables; label, descripción, activación y orden pertenecen a tabla. Un enum puede tipar códigos, pero no reemplaza la tabla cuando el usuario elige. Mapas de icono, color y layout pueden quedar en UI porque son presentación.
+
+Catálogos iniciales: medios de pago, tipos de documento de venta, presentaciones de compra, tipos de operación de inventario y tipos de bot. Al tocar otro selector heredado, se agrega su slice completo en esta ruta; no se crea otro endpoint genérico ni otra lista local.
+
+## Fronteras y persistencia
+
+- API: autenticación, autorización, binding, error HTTP y llamada al caso de uso.
+- Application: orquestación y políticas; depende de contratos, no de SQL/HTTP.
+- Domain: invariantes y tipos sin infraestructura.
+- Infrastructure: consultas, transacciones, brokers y proveedores externos.
+- Database: schemas, constraints, índices y seeds desplegables.
+
+La deuda heredada de SQL directo en `Auraly.Api` y tablas en `dbo` está protegida por pruebas ratchet: no puede crecer. Cada cambio que toque esas rutas debe extraerla o migrarla al schema propietario y reducir el baseline. No se hace un renombrado masivo sin compatibilidad, cutover, rollback y medición.
+
+## Colas, retries y observabilidad
+
+Una cola nueva requiere propietario, job durable, clave de orden, idempotency key, retry/backoff, dead-letter, métricas y runbook. El consumidor tolera entrega al menos una vez. Nunca usar una cola paralela para saltarse un bloqueo permanente ni duplicar un motor por ambiente.
+
+Registrar correlation/job/document/business ID, intento, transición, duración y error seguro. No registrar secretos, tokens, payloads fiscales completos ni datos personales innecesarios.
+
+## Checklist para ubicar un cambio
+
+1. Buscar contrato, engine/coordinator, handler, writer, tabla, endpoint, DI y tests existentes.
+2. Nombrar el propietario de la decisión y de cada escritura.
+3. Seguir la tabla de navegación; si la capacidad no existe, escribir una decisión antes de crear motor/cola.
+4. Confirmar tenant/business scope, autorización, idempotencia, orden, tiempo y compatibilidad.
+5. Implementar el slice completo y actualizar este mapa solo si cambió la topología.
+6. Pasar build, pruebas, lint y compuertas de arquitectura.
+
+## Referencias
+
+- `docs/invariantes-arquitectonicas-auraly.md`
+- `docs/estandares-de-ingenieria.md`
+- `docs/decision-motor-documental-ordenado-y-efectos-intrinsecos.md`
+- `docs/decision-motor-documentos-orden-inventario-contabilidad.md`
+- `docs/implementation/inventory-operations-engine-design.md`
+- `docs/implementation/dian-fiscal-engine-design.md`
+- `docs/implementation/accounting-operational-design.md`
+- `docs/agent-engine-manual.md`

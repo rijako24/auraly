@@ -293,6 +293,8 @@ services.AddScoped<IPromotionPricingService, PromotionPricingService>();
 
 services.AddScoped<IServiceCatalogPricingService, ServiceCatalogPricingService>();
 
+services.AddSingleton(TimeProvider.System);
+
 services.AddScoped<IBusinessClock, BusinessClock>();
 
 services.AddSingleton<ITemporalReferenceBuilder, TemporalReferenceBuilder>();

@@ -8,6 +8,19 @@ El motor agentic atiende conversaciones de WhatsApp de forma generica y multiten
 
 El motor no debe depender de un negocio especifico. Cada tenant expresa su comportamiento en configuracion, catalogo, plantillas, secuencias, facts, flows, policies e integraciones.
 
+## Alcance Y Topologia
+
+Este manual gobierna exclusivamente el motor conversacional. Auraly tambien tiene motores documentales, de inventario, fiscales/DIAN y contables con propietarios separados, definidos en `docs/invariantes-arquitectonicas-auraly.md`.
+
+Para decisiones conversacionales existe un solo pipeline canonico. Hoy los turnos inbound convergen en `whatsapp-inbound-debounce`, `WhatsAppInboundDebounceWorkerFunction`, `InboundMessageBatchProcessor`, `WhatsAppMessageProcessorService` y `AgentConversationService`; desde alli se ejecutan planner, coordinador, operaciones y renderer deterministas descritos abajo.
+
+- Un canal nuevo adapta su entrada al pipeline existente; no crea otro message processor, coordinator, planner, renderer ni motor por tenant.
+- Una cola de campanas, outbound u otra responsabilidad auxiliar puede existir, pero no interpreta el turno ni duplica decisiones conversacionales.
+- Varias instancias o transportes pueden escalar el mismo motor conservando idempotencia, orden por conversacion y estado canonico.
+- Una capacidad nueva se agrega mediante los contratos y registros existentes. No se mantiene una ruta legacy y otra nueva activas indefinidamente.
+
+La regla global no es "un motor o una cola para todo Auraly". Es un solo propietario canonico por capacidad de dominio.
+
 ## Flujo Runtime
 
 1. `WhatsAppMessageProcessorService` identifica negocio, numero, conversacion y agente; la capa inbound controla idempotencia, debounce y recibos del proveedor.

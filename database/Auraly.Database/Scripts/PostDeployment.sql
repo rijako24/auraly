@@ -50,6 +50,7 @@
 :r .\Migrations\MigrateProductsToCanonicalPrices.sql
 :r .\Migrations\BackfillPreparedProductPrices.sql
 :r .\Migrations\MigratePricePublicationAuditOrigins.sql
+:r .\Seeds\SeedReferenceOptions.sql
 :r .\Seeds\SeedAuralyGeography.sql
 :r .\Seeds\SeedAdminUser.sql
 :r .\Seeds\SeedAgentPermissions.sql

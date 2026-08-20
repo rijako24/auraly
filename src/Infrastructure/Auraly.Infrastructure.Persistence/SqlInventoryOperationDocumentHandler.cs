@@ -11,6 +11,7 @@ namespace Auraly.Infrastructure.Persistence;
 public sealed class SqlInventoryOperationProcessor(
     SqlDocumentProcessingSessionAccessor sessions,
     IAuralyIdGenerator ids,
+    SqlInventoryLedgerWriter inventoryWriter,
     TimeProvider timeProvider)
 {
     public async Task HandleAsync(ConfirmedDocument document, CancellationToken cancellationToken)
@@ -176,44 +177,27 @@ public sealed class SqlInventoryOperationProcessor(
             afterValue = afterQuantity == 0 ? 0m : InventoryOperationRules.Money(state.Value + valueChange);
             afterAverage = afterQuantity == 0 ? 0m : state.AverageCost;
         }
-        var now = timeProvider.GetUtcNow();
-        if (state.Exists)
-        {
-            const string update = """
-                UPDATE dbo.InventoryBalances SET QuantityOnHand=@Quantity,AverageUnitCost=@Average,InventoryValue=@Value,
-                  LastProcessingSequence=@Sequence,UpdatedAt=@Now WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
-                """;
-            await using var command = new SqlCommand(update, session.Connection, session.Transaction);
-            AddBalanceParameters(command, operation, line.ProductId, warehouseId, afterQuantity, afterAverage, afterValue, session.ProcessingSequence, now);
-            if(await command.ExecuteNonQueryAsync(cancellationToken)!=1) throw new DBConcurrencyException("The inventory balance could not be updated.");
-        }
-        else
-        {
-            const string insert = """
-                INSERT dbo.InventoryBalances(BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,InventoryValue,LastProcessingSequence,UpdatedAt)
-                VALUES(@BusinessId,@WarehouseId,@ProductId,@Quantity,@Average,@Value,@Sequence,@Now);
-                """;
-            await using var command = new SqlCommand(insert, session.Connection, session.Transaction);
-            AddBalanceParameters(command, operation, line.ProductId, warehouseId, afterQuantity, afterAverage, afterValue, session.ProcessingSequence, now);
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
-        const string movement = """
-            INSERT dbo.InventoryMovements(InventoryMovementId,BusinessId,WarehouseId,DocumentId,DocumentType,LineNumber,
-              ProductId,MovementType,QuantityChange,ProcessingSequence,QuantityBefore,QuantityAfter,AverageUnitCostBefore,
-              AverageUnitCostAfter,RecognizedUnitCost,ValueChange,OccurredAt,PostedAt,CreatedAt)
-            VALUES(@Id,@BusinessId,@WarehouseId,@DocumentId,@DocumentType,@Line,@ProductId,@MovementType,@Change,@Sequence,
-              @BeforeQuantity,@AfterQuantity,@BeforeAverage,@AfterAverage,@RecognizedCost,@ValueChange,@OccurredAt,@Now,@Now);
-            """;
-        await using (var command = new SqlCommand(movement, session.Connection, session.Transaction))
-        {
-            command.Parameters.AddWithValue("@Id", ids.NewId()); command.Parameters.AddWithValue("@BusinessId", operation.BusinessId); command.Parameters.AddWithValue("@WarehouseId", warehouseId);
-            command.Parameters.AddWithValue("@DocumentId", operation.DocumentId); command.Parameters.AddWithValue("@DocumentType", operation.DocumentType); command.Parameters.AddWithValue("@Line", line.LineNumber);
-            command.Parameters.AddWithValue("@ProductId", line.ProductId); command.Parameters.AddWithValue("@MovementType", movementType); AddDecimal(command,"@Change",quantityChange,19,6);
-            command.Parameters.AddWithValue("@Sequence",session.ProcessingSequence); AddDecimal(command,"@BeforeQuantity",beforeQuantity,19,6); AddDecimal(command,"@AfterQuantity",afterQuantity,19,6);
-            AddDecimal(command,"@BeforeAverage",beforeAverage,19,6); AddDecimal(command,"@AfterAverage",afterAverage,19,6); AddDecimal(command,"@RecognizedCost",recognizedCost,19,6);
-            AddDecimal(command,"@ValueChange",valueChange,19,4); command.Parameters.AddWithValue("@OccurredAt",operation.OccurredAt); command.Parameters.AddWithValue("@Now",now);
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
+        await inventoryWriter.WriteCalculatedAsync(
+            session,
+            new CalculatedInventoryLedgerPosting(
+                operation.BusinessId,
+                warehouseId,
+                line.ProductId,
+                operation.DocumentId,
+                operation.DocumentType,
+                line.LineNumber,
+                movementType,
+                state.Exists,
+                quantityChange,
+                beforeQuantity,
+                afterQuantity,
+                beforeAverage,
+                afterAverage,
+                recognizedCost,
+                valueChange,
+                afterValue,
+                operation.OccurredAt),
+            cancellationToken);
         state.Quantity=afterQuantity; state.AverageCost=afterAverage; state.Value=afterValue; state.Exists=true;
         if(updateLine) await UpdateLineResultAsync(session,operation.DocumentId,line.LineNumber,recognizedCost,valueChange,cancellationToken);
         return valueChange;
@@ -237,8 +221,6 @@ public sealed class SqlInventoryOperationProcessor(
         await using var command=new SqlCommand(sql,session.Connection,session.Transaction);command.Parameters.AddWithValue("@Id",operation.DocumentId);command.Parameters.AddWithValue("@BusinessId",operation.BusinessId);command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());AddDecimal(command,"@Total",total,19,4);if(await command.ExecuteNonQueryAsync(cancellationToken)!=1)throw new DBConcurrencyException("The inventory operation could not be marked as processed.");
     }
 
-    private static void AddBalanceParameters(SqlCommand command,InventoryOperationDocumentPayload operation,Guid productId,Guid warehouseId,decimal quantity,decimal average,decimal value,long sequence,DateTimeOffset now)
-    {command.Parameters.AddWithValue("@BusinessId",operation.BusinessId);command.Parameters.AddWithValue("@WarehouseId",warehouseId);command.Parameters.AddWithValue("@ProductId",productId);AddDecimal(command,"@Quantity",quantity,19,6);AddDecimal(command,"@Average",average,19,6);AddDecimal(command,"@Value",value,19,4);command.Parameters.AddWithValue("@Sequence",sequence);command.Parameters.AddWithValue("@Now",now);}
     private static void AddDecimal(SqlCommand command,string name,decimal value,byte precision,byte scale){var p=command.Parameters.Add(name,SqlDbType.Decimal);p.Precision=precision;p.Scale=scale;p.Value=value;}
     private sealed class BalanceState(decimal quantity,decimal averageCost,decimal value,bool exists){public decimal Quantity{get;set;}=quantity;public decimal AverageCost{get;set;}=averageCost;public decimal Value{get;set;}=value;public bool Exists{get;set;}=exists;}
 }
