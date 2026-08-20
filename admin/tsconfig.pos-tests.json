@@ -57,6 +57,8 @@
     "src/lib/dispatch-report.ts",
     "src/lib/dispatch-report.test.ts",
     "src/lib/daily-route-planning.ts",
-    "src/lib/daily-route-planning.test.ts"
+    "src/lib/daily-route-planning.test.ts",
+    "src/lib/pwa-install-visibility.ts",
+    "src/lib/pwa-install-visibility.test.ts"
   ]
 }
