@@ -173,6 +173,68 @@ public sealed class ArchitectureTests
     }
 
     [Fact]
+    public void Database_postdeployment_batches_do_not_redeclare_variables()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var postDeploymentPath = Path.Combine(
+            repositoryRoot,
+            "database",
+            "Auraly.Database",
+            "Scripts",
+            "PostDeployment.sql");
+        var scriptsRoot = Path.GetDirectoryName(postDeploymentPath)!;
+        var includeDirective = new Regex(
+            @"^\s*:r\s+(.+?)\s*$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var batchSeparator = new Regex(
+            @"^\s*GO\s*(?:--.*)?$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var declaration = new Regex(
+            @"\bDECLARE\s+(@[A-Za-z_][A-Za-z0-9_]*)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var expandedLines = File.ReadLines(postDeploymentPath).SelectMany(line =>
+        {
+            var include = includeDirective.Match(line);
+            if (!include.Success)
+                return new[] { line };
+
+            var relativePath = include.Groups[1].Value.Trim()
+                .Replace(@".\", string.Empty, StringComparison.Ordinal);
+            return File.ReadLines(Path.Combine(scriptsRoot, relativePath));
+        });
+        var declarations = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var violations = new List<string>();
+        var batchNumber = 1;
+
+        foreach (var line in expandedLines)
+        {
+            if (batchSeparator.IsMatch(line))
+            {
+                declarations.Clear();
+                batchNumber++;
+                continue;
+            }
+
+            foreach (Match match in declaration.Matches(line))
+            {
+                var variable = match.Groups[1].Value;
+                if (declarations.TryGetValue(variable, out var previousDeclaration))
+                {
+                    violations.Add(
+                        $"Batch {batchNumber}: {variable} is declared by both '{previousDeclaration}' and '{line.Trim()}'.");
+                    continue;
+                }
+
+                declarations[variable] = line.Trim();
+            }
+        }
+
+        Assert.True(
+            violations.Count == 0,
+            $"Post-deployment SQL variables must be isolated with GO:{Environment.NewLine}{string.Join(Environment.NewLine, violations)}");
+    }
+
+    [Fact]
     public void Azure_topology_provisions_distinct_operational_accounting_and_fiscal_queues()
     {
         var root = FindRepositoryRoot();
