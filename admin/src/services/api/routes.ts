@@ -52,6 +52,8 @@ export const routesApi = {
   options: () => apiClient.get<RouteOptions>("/commerce/v1/routes/options"),
   candidates: (routeId:string,params:{page?:number;pageSize?:number;search?:string;countryId?:string;administrativeDivisionId?:string;cityId?:string;neighborhood?:string}) =>
     apiClient.get<RouteCandidatePage>(`/commerce/v1/routes/${routeId}/candidate-sites`,withPagedDefaults(params)),
+  customerSites: (params:{page?:number;pageSize?:number;search?:string;countryId?:string;administrativeDivisionId?:string;cityId?:string;neighborhood?:string}) =>
+    apiClient.get<RouteCandidatePage>("/commerce/v1/routes/candidate-sites",withPagedDefaults(params)),
   createZone: (request:{businessId:string;code:string;name:string}) => apiClient.post<SalesZoneItem>("/commerce/v1/route-zones",request),
   create: (request:RouteWrite) => apiClient.post<RouteMutationResult>("/commerce/v1/routes",request),
   update: (routeId:string,request:Omit<RouteWrite,"businessId">&{rowVersion:string}) => apiClient.put<RouteMutationResult>(`/commerce/v1/routes/${routeId}`,request),

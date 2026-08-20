@@ -46,8 +46,9 @@ export function UserMenu({ className }: UserMenuProps) {
   const logout = async () => {
     resetBusinessContext();
     resetTenantSession();
-    await authLogout();
-    router.push("/login");
+    await authLogout().catch(() => undefined);
+    router.replace("/login");
+    router.refresh();
   };
 
   const changeTenant = (tenantId: string) => {

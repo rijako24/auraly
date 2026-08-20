@@ -21,6 +21,14 @@ public static class RoutesApi
         routes.MapGet("/options", async (ClaimsPrincipal principal, RouteService service, CancellationToken token) =>
             await ExecuteAsync(() => service.OptionsAsync(principal.ToRouteIdentity(), token), Results.Ok));
 
+        routes.MapGet("/candidate-sites", async (
+            ClaimsPrincipal principal, int page, int pageSize, string? search,
+            Guid? countryId, Guid? administrativeDivisionId, Guid? cityId, string? neighborhood,
+            RouteService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.CustomerSitesAsync(principal.ToRouteIdentity(),
+                new(page == 0 ? 1 : page, pageSize == 0 ? 50 : pageSize, search, countryId,
+                    administrativeDivisionId, cityId, neighborhood), token), Results.Ok));
+
         routes.MapGet("/{routeId:guid}", async (ClaimsPrincipal principal, Guid routeId, RouteService service, CancellationToken token) =>
             await ExecuteAsync(() => service.GetAsync(principal.ToRouteIdentity(), routeId, token), Results.Ok));
 

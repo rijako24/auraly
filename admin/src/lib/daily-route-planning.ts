@@ -23,3 +23,7 @@ export function resolveSellerWorkspace<T extends SellerWorkspaceIdentity>(option
   return scoped.find((option) => `${option.businessId}:${option.warehouseId}` === rememberedKey)
     ?? (scoped.length === 1 ? scoped[0] : null);
 }
+
+export function canDismissWorkspaceDialog(required: boolean, itemCount: number) {
+  return !required || itemCount === 0;
+}

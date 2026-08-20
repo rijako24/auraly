@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { firstPendingRouteStop, isoScheduleDay, pendingRouteStops, resolveSellerWorkspace } from "./daily-route-planning";
+import { canDismissWorkspaceDialog, firstPendingRouteStop, isoScheduleDay, pendingRouteStops, resolveSellerWorkspace } from "./daily-route-planning";
 
 const stops = ["first", "second", "third"].map((routeStopId) => ({ routeStopId }));
 
@@ -45,4 +45,10 @@ test("requires the warehouse popup when several choices exist and none was remem
     { businessId: "business-1", warehouseId: "warehouse-2" },
   ];
   assert.equal(resolveSellerWorkspace(options, "business-1", null), null);
+});
+
+test("allows closing the required warehouse dialog when there are no choices", () => {
+  assert.equal(canDismissWorkspaceDialog(true, 0), true);
+  assert.equal(canDismissWorkspaceDialog(true, 2), false);
+  assert.equal(canDismissWorkspaceDialog(false, 2), true);
 });

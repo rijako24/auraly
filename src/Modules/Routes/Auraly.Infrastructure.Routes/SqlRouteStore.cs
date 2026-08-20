@@ -169,7 +169,7 @@ public sealed class SqlRouteStore(
         return new(sellers, zones);
     }
 
-    public async Task<RouteCandidatePage> CandidateSitesAsync(RouteActorIdentity actor, Guid routeId, RouteCandidateQuery query, CancellationToken ct)
+    public async Task<RouteCandidatePage> CandidateSitesAsync(RouteActorIdentity actor, Guid? routeId, RouteCandidateQuery query, CancellationToken ct)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
@@ -179,7 +179,7 @@ public sealed class SqlRouteStore(
             INNER JOIN dbo.PartySites site ON site.PartyId=party.PartyId AND site.IsActive=1
             INNER JOIN dbo.Cities city ON city.CityId=site.CityId
             WHERE customer.BusinessId=@BusinessId AND customer.IsActive=1 AND party.IsActive=1
-              AND EXISTS(SELECT 1 FROM dbo.SalesRoutes route WHERE route.RouteId=@RouteId AND route.BusinessId=@BusinessId)
+              AND (@RouteId IS NULL OR EXISTS(SELECT 1 FROM dbo.SalesRoutes route WHERE route.RouteId=@RouteId AND route.BusinessId=@BusinessId))
               AND (@Search IS NULL OR party.DisplayName LIKE '%'+@Search+'%' OR party.Identification LIKE '%'+@Search+'%'
                    OR site.Name LIKE '%'+@Search+'%' OR site.AddressLine LIKE '%'+@Search+'%' OR site.Phone LIKE '%'+@Search+'%')
               AND (@CountryId IS NULL OR site.CountryId=@CountryId)
@@ -200,7 +200,7 @@ public sealed class SqlRouteStore(
                                    WHERE contact.PartyId=party.PartyId AND contact.ContactType=N'Phone' AND contact.IsActive=1
                                    ORDER BY contact.IsPrimary DESC,contact.CreatedAt)),
               site.GoogleMapsUrl,site.Latitude,site.Longitude,
-              CAST(CASE WHEN EXISTS(SELECT 1 FROM dbo.SalesRouteStops ownStop WHERE ownStop.RouteId=@RouteId AND ownStop.PartySiteId=site.PartySiteId AND ownStop.IsActive=1) THEN 1 ELSE 0 END AS bit),
+              CAST(CASE WHEN @RouteId IS NOT NULL AND EXISTS(SELECT 1 FROM dbo.SalesRouteStops ownStop WHERE ownStop.RouteId=@RouteId AND ownStop.PartySiteId=site.PartySiteId AND ownStop.IsActive=1) THEN 1 ELSE 0 END AS bit),
               (SELECT TOP(1) otherRoute.Name FROM dbo.SalesRouteStops otherStop
                INNER JOIN dbo.SalesRoutes otherRoute ON otherRoute.RouteId=otherStop.RouteId AND otherRoute.BusinessId=@BusinessId AND otherRoute.IsActive=1
                WHERE otherStop.PartySiteId=site.PartySiteId AND otherStop.IsActive=1 AND otherRoute.RouteId<>@RouteId
@@ -624,8 +624,8 @@ public sealed class SqlRouteStore(
     }
     private static void AddQuery(SqlCommand command, RouteActorIdentity actor, SalesRouteQuery query)
     { AddScope(command, actor); command.Parameters.AddWithValue("@Search", (object?)query.Search ?? DBNull.Value); command.Parameters.AddWithValue("@SellerId", (object?)query.SellerId ?? DBNull.Value); command.Parameters.AddWithValue("@ZoneId", (object?)query.ZoneId ?? DBNull.Value); command.Parameters.AddWithValue("@DayOfWeek", (object?)query.DayOfWeek ?? DBNull.Value); command.Parameters.AddWithValue("@IsActive", (object?)query.IsActive ?? DBNull.Value); command.Parameters.AddWithValue("@PreparationStatus", (object?)query.PreparationStatus ?? DBNull.Value); }
-    private static void AddCandidate(SqlCommand command, RouteActorIdentity actor, Guid routeId, RouteCandidateQuery query)
-    { AddScope(command, actor); command.Parameters.AddWithValue("@RouteId", routeId); command.Parameters.AddWithValue("@Search", (object?)query.Search ?? DBNull.Value); command.Parameters.AddWithValue("@CountryId", (object?)query.CountryId ?? DBNull.Value); command.Parameters.AddWithValue("@DivisionId", (object?)query.AdministrativeDivisionId ?? DBNull.Value); command.Parameters.AddWithValue("@CityId", (object?)query.CityId ?? DBNull.Value); command.Parameters.AddWithValue("@Neighborhood", (object?)query.Neighborhood ?? DBNull.Value); }
+    private static void AddCandidate(SqlCommand command, RouteActorIdentity actor, Guid? routeId, RouteCandidateQuery query)
+    { AddScope(command, actor); command.Parameters.AddWithValue("@RouteId", (object?)routeId ?? DBNull.Value); command.Parameters.AddWithValue("@Search", (object?)query.Search ?? DBNull.Value); command.Parameters.AddWithValue("@CountryId", (object?)query.CountryId ?? DBNull.Value); command.Parameters.AddWithValue("@DivisionId", (object?)query.AdministrativeDivisionId ?? DBNull.Value); command.Parameters.AddWithValue("@CityId", (object?)query.CityId ?? DBNull.Value); command.Parameters.AddWithValue("@Neighborhood", (object?)query.Neighborhood ?? DBNull.Value); }
     private static IReadOnlyCollection<int> ParseDays(string? value) => string.IsNullOrWhiteSpace(value) ? Array.Empty<int>() : value.Split(',').Select(int.Parse).ToArray();
     private static string Version(SqlDataReader reader, int ordinal) => Convert.ToBase64String(reader.GetFieldValue<byte[]>(ordinal));
     private static async Task SafeRollbackAsync(SqlTransaction transaction, CancellationToken ct) { try { await transaction.RollbackAsync(ct); } catch (InvalidOperationException) { } }

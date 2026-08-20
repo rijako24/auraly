@@ -9,7 +9,7 @@ public interface IRouteStore
     Task<SalesRoutePage> PageAsync(RouteActorIdentity actor, SalesRouteQuery query, CancellationToken ct);
     Task<SalesRouteDetail?> GetAsync(RouteActorIdentity actor, Guid routeId, CancellationToken ct);
     Task<RouteOptions> OptionsAsync(RouteActorIdentity actor, CancellationToken ct);
-    Task<RouteCandidatePage> CandidateSitesAsync(RouteActorIdentity actor, Guid routeId, RouteCandidateQuery query, CancellationToken ct);
+    Task<RouteCandidatePage> CandidateSitesAsync(RouteActorIdentity actor, Guid? routeId, RouteCandidateQuery query, CancellationToken ct);
     Task<SalesZoneItem> CreateZoneAsync(RouteActorIdentity actor, Guid zoneId, string code, string name, DateTimeOffset now, CancellationToken ct);
     Task<RouteMutationResult> CreateAsync(RouteActorIdentity actor, Guid routeId, CreateSalesRouteRequest request, string code, string name, string? notes, IReadOnlyList<RouteScheduleInput> schedules, DateTimeOffset now, CancellationToken ct);
     Task<RouteMutationResult> UpdateAsync(RouteActorIdentity actor, Guid routeId, UpdateSalesRouteRequest request, string code, string name, string? notes, IReadOnlyList<RouteScheduleInput> schedules, byte[] rowVersion, DateTimeOffset now, CancellationToken ct);
@@ -68,6 +68,18 @@ public sealed class RouteService(
         if (query.Page < 1 || query.PageSize is < 1 or > 100)
             throw new RouteValidationException("Page and PageSize are outside the allowed range.");
         return store.CandidateSitesAsync(actor, routeId, query with
+        {
+            Search = query.Search?.Trim(),
+            Neighborhood = query.Neighborhood?.Trim()
+        }, ct);
+    }
+
+    public Task<RouteCandidatePage> CustomerSitesAsync(RouteActorIdentity actor, RouteCandidateQuery query, CancellationToken ct)
+    {
+        Require(actor, RoutePermissionCodes.Read);
+        if (query.Page < 1 || query.PageSize is < 1 or > 100)
+            throw new RouteValidationException("Page and PageSize are outside the allowed range.");
+        return store.CandidateSitesAsync(actor, null, query with
         {
             Search = query.Search?.Trim(),
             Neighborhood = query.Neighborhood?.Trim()
