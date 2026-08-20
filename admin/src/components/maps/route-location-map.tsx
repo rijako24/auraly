@@ -48,7 +48,7 @@ export function RouteLocationMap<T extends RouteLocationStop>({
     <section className="relative min-h-[32rem] overflow-hidden rounded-[2rem] border bg-slate-100 shadow-sm">
       {bounds ? <iframe
         title="Mapa de establecimientos de la ruta"
-        className="absolute inset-0 h-full w-full border-0 grayscale-[8%] contrast-[.96]"
+        className="pointer-events-none absolute inset-0 h-full w-full border-0 grayscale-[8%] contrast-[.96]"
         loading="lazy"
         src={`https://www.openstreetmap.org/export/embed.html?bbox=${bounds.west}%2C${bounds.south}%2C${bounds.east}%2C${bounds.north}&layer=mapnik`}
       /> : <div className="absolute inset-0 grid place-items-center bg-[radial-gradient(circle_at_20%_20%,#ccfbf1,transparent_34%),linear-gradient(135deg,#f8fafc,#e2e8f0)] p-8 text-center"><div><MapPinOff className="mx-auto h-12 w-12 text-slate-500"/><h3 className="mt-3 text-lg font-bold">Sin ubicaciones verificadas</h3><p className="mt-1 max-w-sm text-sm text-muted-foreground">Captura la ubicación de las sedes para verlas en el mapa. Nunca se dibujan coordenadas inventadas.</p></div></div>}

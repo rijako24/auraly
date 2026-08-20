@@ -5,6 +5,7 @@ import { useSidebarStore } from "@/stores/sidebar-store";
 
 import { Header } from "@/components/layout/header";
 import { MobileNav } from "@/components/layout/mobile-nav";
+import { MobileBottomNav } from "@/components/layout/mobile-bottom-nav";
 import { Sidebar } from "@/components/layout/sidebar";
 import { AuthSyncProvider } from "@/providers/auth-sync-provider";
 import { BusinessContextProvider } from "@/providers/business-context-provider";
@@ -38,9 +39,10 @@ export default function DashboardLayout({
         {/* Main content area */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <Header onMobileMenuClick={handleMobileMenuClick} />
-          <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-background px-3 py-4 sm:px-5 lg:px-8 lg:py-7">
+          <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-background px-3 pb-[calc(5.25rem+env(safe-area-inset-bottom))] pt-4 sm:px-5 lg:px-8 lg:py-7">
             <BusinessContextProvider>{children}</BusinessContextProvider>
           </main>
+          <MobileBottomNav />
         </div>
       </div>
     </AuthSyncProvider>

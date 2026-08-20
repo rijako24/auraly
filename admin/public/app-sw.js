@@ -1,7 +1,7 @@
-const VERSION = "auraly-pwa-v1";
+const VERSION = "auraly-pwa-v2";
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
-const APP_SHELL = ["/dashboard", "/login", "/app.webmanifest", "/brand/auraly-mark.png"];
+const APP_SHELL = ["/dashboard", "/login", "/app.webmanifest", "/brand/auraly-mark.png", "/brand/auraly-app-icon-192.png", "/brand/auraly-app-icon-512.png", "/brand/auraly-maskable-512.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.addAll(APP_SHELL)));

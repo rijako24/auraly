@@ -14,7 +14,7 @@ export default function AuthLayout({
   children: React.ReactNode;
 }) {
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#06171b] lg:grid lg:grid-cols-[minmax(0,1.08fr)_minmax(500px,0.92fr)]">
+    <main className="relative grid h-dvh min-h-0 overflow-hidden bg-[#06171b] lg:grid-cols-[minmax(0,1.08fr)_minmax(500px,0.92fr)]">
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 opacity-40"
@@ -34,7 +34,7 @@ export default function AuthLayout({
         className="pointer-events-none absolute bottom-[-18rem] left-[28%] h-[34rem] w-[34rem] rounded-full bg-[#69d9d0]/10 blur-[120px]"
       />
 
-      <section className="relative hidden min-h-screen flex-col justify-between px-10 py-10 lg:flex xl:px-16 xl:py-12">
+      <section className="relative hidden min-h-0 flex-col justify-between overflow-hidden px-10 py-10 lg:flex xl:px-16 xl:py-12">
         <AuralyLogo
           className="[&>span]:text-[#f1fbfa]"
           markClassName="h-9 w-11"
@@ -82,7 +82,7 @@ export default function AuthLayout({
         </div>
       </section>
 
-      <section className="relative flex min-h-screen items-center justify-center px-4 py-6 sm:px-8 lg:bg-[#f4f9f8] lg:px-12 xl:px-20">
+      <section className="relative flex min-h-0 items-center justify-center overflow-y-auto overscroll-contain px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1.5rem,env(safe-area-inset-top))] sm:px-8 lg:bg-[#f4f9f8] lg:px-12 lg:py-10 xl:px-20">
         <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#69d9d0]/50 to-transparent lg:hidden" />
         <div className="w-full max-w-[470px]">
           <AuralyLogo

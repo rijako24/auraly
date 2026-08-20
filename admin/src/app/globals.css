@@ -146,3 +146,15 @@
 }
 
 body.dashboard-shell { overflow: hidden; }
+
+
+@keyframes app-loading {
+  0% { transform: translateX(-110%); }
+  50% { transform: translateX(50%); }
+  100% { transform: translateX(210%); }
+}
+
+@media (display-mode: standalone) {
+  html, body { overscroll-behavior: none; }
+  body { -webkit-tap-highlight-color: transparent; }
+}

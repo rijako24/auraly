@@ -20,7 +20,7 @@ export function Header({ onMobileMenuClick, className }: HeaderProps) {
   return (
     <header
       className={cn(
-        "sticky top-0 z-40 flex min-h-[72px] shrink-0 items-center gap-2 border-b border-border/80 bg-card/95 px-2 py-3 backdrop-blur supports-[backdrop-filter]:bg-card/80 sm:gap-3 sm:px-5 lg:gap-4",
+        "sticky top-0 z-40 flex min-h-[68px] shrink-0 items-center gap-2 border-b border-border/70 bg-card/95 px-3 pb-2 pt-[max(.5rem,env(safe-area-inset-top))] shadow-sm backdrop-blur supports-[backdrop-filter]:bg-card/85 sm:min-h-[72px] sm:gap-3 sm:px-5 sm:py-3 lg:gap-4",
         className
       )}
     >
@@ -28,7 +28,7 @@ export function Header({ onMobileMenuClick, className }: HeaderProps) {
       <Button
         variant="ghost"
         size="icon"
-        className="h-9 w-9 shrink-0 lg:hidden"
+        className="hidden h-9 w-9 shrink-0 sm:inline-flex lg:hidden"
         onClick={onMobileMenuClick}
         aria-label="Abrir menú"
       >
@@ -46,8 +46,7 @@ export function Header({ onMobileMenuClick, className }: HeaderProps) {
         {/* Notifications */}
         <NotificationsDropdown />
 
-        {/* Theme toggle */}
-        <ThemeToggle />
+        <div className="hidden sm:block"><ThemeToggle /></div>
 
         {/* User menu */}
         <UserMenu />

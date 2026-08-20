@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowLeft, ArrowUp, Banknote, Camera, Check, ChevronRight, CircleDollarSign, Map, MapPin, Navigation, PackageCheck, ReceiptText, Route, ShieldCheck, Truck } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, Banknote, Camera, Check, ChevronRight, CircleDollarSign, Map, MapPin, PackageCheck, ReceiptText, Route, ShieldCheck, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { RouteLocationMap } from "@/components/maps/route-location-map";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -57,10 +58,9 @@ function DeliveryCard({document,index,total,onOpen,onMove}:{document:DeliveryDoc
 }
 
 function DispatchMap({data,onOpen}:{data:DispatchExecution;onOpen:(document:DeliveryDocument)=>void}){
-  const located=data.documents.filter(x=>x.latitude!==null&&x.longitude!==null);
-  return <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]"><div className="relative min-h-[420px] overflow-hidden rounded-[2rem] border bg-[radial-gradient(circle_at_20%_20%,#ccfbf1_0,transparent_28%),radial-gradient(circle_at_78%_65%,#dbeafe_0,transparent_30%),linear-gradient(135deg,#f8fafc,#e2e8f0)]"><div className="absolute inset-0 opacity-30" style={{backgroundImage:"linear-gradient(#94a3b8 1px,transparent 1px),linear-gradient(90deg,#94a3b8 1px,transparent 1px)",backgroundSize:"42px 42px"}}/>{data.documents.map((doc,index)=><button key={doc.dispatchSourceDocumentId} onClick={()=>onOpen(doc)} className={`absolute z-10 flex h-11 w-11 items-center justify-center rounded-full border-4 border-white font-black text-white shadow-lg ${doc.deliveryStatus==="Pending"?"bg-slate-900":"bg-emerald-500"}`} style={{left:`${12+(index*37)%76}%`,top:`${12+(index*23)%72}%`}} title={doc.customerName}>{index+1}</button>)}<div className="absolute bottom-4 left-4 right-4 rounded-2xl bg-white/90 p-3 text-sm shadow backdrop-blur"><strong>{located.length} ubicaciones confirmadas por GPS</strong><p className="text-xs text-muted-foreground">Los clientes sin coordenadas conservan su dirección y se abren en el navegador de mapas.</p></div></div><div className="space-y-2">{data.documents.map((doc,index)=><div key={doc.dispatchSourceDocumentId} className="rounded-2xl border bg-card p-3"><button onClick={()=>onOpen(doc)} className="w-full text-left"><strong>{index+1}. {doc.customerName}</strong><small className="block truncate text-muted-foreground">{doc.deliveryAddress??"Sin dirección"}</small></button>{doc.deliveryAddress&&<a className="mt-2 inline-flex items-center text-sm font-semibold text-teal-700" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(doc.deliveryAddress)}`} target="_blank" rel="noreferrer"><Navigation className="mr-1 h-4 w-4"/>Cómo llegar</a>}</div>)}</div></div>;
+  const stops=data.documents.map((document,index)=>({routeStopId:document.dispatchSourceDocumentId,sequence:index+1,customerName:document.customerName,siteName:document.documentNumber,addressLine:document.deliveryAddress??"Dirección pendiente",cityName:"",googleMapsUrl:null,latitude:document.destinationLatitude,longitude:document.destinationLongitude,document}));
+  return <RouteLocationMap stops={stops} onOpen={stop=>onOpen(stop.document)} statusOf={stop=>stop.document.deliveryStatus==="NotDelivered"?"skipped":stop.document.deliveryStatus==="Pending"?"pending":"visited"}/>;
 }
-
 function DeliveryDialog({dispatchId,document,onClose,onSaved}:{dispatchId:string;document:DeliveryDocument;onClose:()=>void;onSaved:()=>void}){
   const [status,setStatus]=useState<"Delivered"|"PartiallyDelivered"|"NotDelivered">(document.deliveryStatus==="Pending"?"Delivered":document.deliveryStatus as "Delivered"|"PartiallyDelivered"|"NotDelivered");
   const [cash,setCash]=useState(""),[deposit,setDeposit]=useState(""),[reason,setReason]=useState(document.reason??""),[notes,setNotes]=useState(document.notes??"");
