@@ -58,6 +58,7 @@ CREATE TABLE [dbo].[InventoryOperationLines]
     [ProductCodeSnapshot] NVARCHAR(80) NOT NULL,
     [DescriptionSnapshot] NVARCHAR(250) NOT NULL,
     [Quantity] DECIMAL(19,6) NULL,
+    [PreCountQuantity] DECIMAL(19,6) NULL,
     [SystemQuantityAtBase] DECIMAL(19,6) NULL,
     [ExplicitUnitCost] DECIMAL(19,6) NULL,
     [AllocationWeight] DECIMAL(9,6) NULL,
@@ -69,6 +70,7 @@ CREATE TABLE [dbo].[InventoryOperationLines]
     CONSTRAINT [CK_InventoryOperationLines_Line] CHECK ([LineNumber]>0),
     CONSTRAINT [CK_InventoryOperationLines_Direction] CHECK ([Direction] IN (N'COUNT',N'ADJUSTMENT',N'TRANSFER',N'INPUT',N'OUTPUT',N'DAMAGE')),
     CONSTRAINT [CK_InventoryOperationLines_Cost] CHECK ([ExplicitUnitCost] IS NULL OR [ExplicitUnitCost]>=0),
+    CONSTRAINT [CK_InventoryOperationLines_PreCount] CHECK ([PreCountQuantity] IS NULL OR [PreCountQuantity]>=0),
     CONSTRAINT [CK_InventoryOperationLines_Weight] CHECK ([AllocationWeight] IS NULL OR [AllocationWeight]>0)
 );
 GO

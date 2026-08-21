@@ -24,4 +24,6 @@ public sealed record InvoiceOrdersResponse(
     int CompletedCount,
     int FailedCount,
     bool IsReplay,
-    IReadOnlyList<InvoiceOrderResult> Results);
+    IReadOnlyList<InvoiceOrderResult> Results,
+    string? PrintStatus = null,
+    string? PrintError = null);

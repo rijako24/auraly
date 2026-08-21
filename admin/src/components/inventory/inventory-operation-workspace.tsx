@@ -49,6 +49,7 @@ import {
   type InventoryAcceptance,
   type InventoryProductItem,
 } from "@/services/api/inventory";
+import { productsApi } from "@/services/api/products";
 import {
   inventoryDraftKey,
   loadInventoryOperationDraft,
@@ -66,6 +67,7 @@ export type InventoryOperationLine = {
   unitCode: string;
   stock: number;
   quantity: string;
+  preCount?: string;
   cost: string;
   direction: Direction;
   salePrice: string;
@@ -280,6 +282,7 @@ export function InventoryOperationWorkspace({
         unitCode: product.unitCode,
         stock: product.quantityOnHand,
         quantity: "",
+        preCount: "",
         cost: product.averageUnitCost?.toString() ?? "",
         salePrice: product.saleUnitPrice?.toString() ?? "",
         direction: kind === "conversion" && current.length > 0 ? "OUTPUT" : "INPUT",
@@ -336,14 +339,20 @@ export function InventoryOperationWorkspace({
           occurredAt: now,
           reasonCode: reason.trim(),
           notes: notes.trim() || null,
-          productIds: lines.map((line) => line.productId),
+          lines: lines.map((line) => ({
+            productId: line.productId,
+            preCountQuantity: Number(line.quantity),
+          })),
         });
         setCountDocumentId(documentId);
         setLines((current) =>
           current.map((line) => ({
             ...line,
-            // Preserve the latest value typed while the server freezes the pre-count.
-            quantity: line.quantity,
+            preCount: String(
+              draft.lines.find((candidate) => candidate.productId === line.productId)
+                ?.preCountQuantity ?? Number(line.quantity),
+            ),
+            quantity: "",
             systemQuantity:
               draft.lines.find((candidate) => candidate.productId === line.productId)
                 ?.systemQuantityAtBase ?? 0,
@@ -431,7 +440,7 @@ export function InventoryOperationWorkspace({
     },
     onSuccess: async (result) => {
       if (!result) {
-        toast.success("Conteo preparado. Ingresa las cantidades encontradas.");
+        toast.success("Preconteo guardado. Ingresa ahora la cantidad contada.");
         focusQuantity(0);
         return;
       }
@@ -476,7 +485,7 @@ export function InventoryOperationWorkspace({
     Boolean(warehouseId) &&
     Boolean(reason.trim()) &&
     lines.length > 0 &&
-    ((kind === "count" && !countDocumentId) || (quantitiesValid && conversionValid && adjustmentValuationValid)) &&
+    quantitiesValid && conversionValid && adjustmentValuationValid &&
     (kind !== "transfer" ||
       (Boolean(destinationId) && destinationId !== warehouseId));
 
@@ -624,18 +633,20 @@ export function InventoryOperationWorkspace({
   );
 }
 
-function InventoryProductPicker({
+export function InventoryProductPicker({
   businessId,
   warehouseId,
   selectedProductIds,
   disabled,
   onSelect,
+  label = "Agregar productos",
 }: {
   businessId: string;
-  warehouseId: string;
+  warehouseId?: string;
   selectedProductIds: ReadonlySet<string>;
   disabled: boolean;
   onSelect: (product: InventoryProductItem) => void;
+  label?: string;
 }) {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
@@ -644,11 +655,15 @@ function InventoryProductPicker({
   const pickerRef = useRef<HTMLDivElement>(null);
 
   const query = useInfiniteQuery({
-    queryKey: ["inventory-operation-products", businessId, warehouseId, search.trim()],
-    queryFn: ({ pageParam }) => inventoryApi.products({ warehouseId, search: search.trim() || undefined, page: pageParam, pageSize: PRODUCT_PAGE_SIZE }),
+    queryKey: ["inventory-product-picker", businessId, warehouseId ?? "catalog", search.trim()],
+    queryFn: async ({ pageParam }) => {
+      if (warehouseId) return inventoryApi.products({ warehouseId, search: search.trim() || undefined, page: pageParam, pageSize: PRODUCT_PAGE_SIZE });
+      const page = await productsApi.list(businessId, { page: pageParam, pageSize: PRODUCT_PAGE_SIZE, search: search.trim() || undefined, includeInactive: false });
+      return { ...page, items: page.items.map((product) => ({ productId: product.productId, productCode: product.productCode ?? product.sku ?? "", reference: product.reference ?? null, productName: product.name, unitCode: "EA", quantityOnHand: product.stockQuantity ?? 0, averageUnitCost: null, saleUnitPrice: product.unitPrice })) };
+    },
     initialPageParam: 1,
     getNextPageParam: (lastPage) => lastPage.page < lastPage.totalPages ? lastPage.page + 1 : undefined,
-    enabled: Boolean(warehouseId) && open && !disabled,
+    enabled: Boolean(businessId) && open && !disabled,
   });
   const products = useMemo(() => query.data?.pages.flatMap((page) => page.items) ?? [], [query.data]);
   const totalCount = query.data?.pages[0]?.totalCount ?? 0;
@@ -695,7 +710,7 @@ function InventoryProductPicker({
 
   return (
     <div ref={pickerRef} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false); }} className="relative [&_strong]:font-normal">
-      <Label htmlFor="inventory-product-search">Agregar productos</Label>
+      <Label htmlFor="inventory-product-search">{label}</Label>
       <div className="mt-2 flex gap-2">
         <div className="relative min-w-0 flex-1">
           <Barcode className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-primary" />
@@ -705,11 +720,11 @@ function InventoryProductPicker({
           {query.isFetching && !query.isFetchingNextPage ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />} Agregar
         </Button>
       </div>
-      {open && warehouseId && (
+      {open && (
         <div id="inventory-product-results" ref={listRef} role="listbox" onScroll={scroll} className="absolute z-30 mt-1 max-h-72 w-full overflow-auto rounded-xl border bg-popover p-1 shadow-xl">
           {query.isLoading ? <p className="flex items-center gap-2 p-4 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Buscando productos…</p>
           : query.isError ? <div className="p-4 text-sm text-red-700"><p>No fue posible cargar los productos.</p><Button className="mt-3" size="sm" variant="outline" onClick={() => void query.refetch()}>Reintentar</Button></div>
-          : products.length === 0 ? <p className="p-4 text-sm text-muted-foreground">No hay productos activos que controlen inventario y coincidan con la búsqueda. Los productos vinculados se mueven desde su producto principal.</p>
+          : products.length === 0 ? <p className="p-4 text-sm text-muted-foreground">No hay productos activos que coincidan con la búsqueda.</p>
           : <><div className="px-3 py-2 text-xs text-muted-foreground">{products.length.toLocaleString("es-CO")} de {totalCount.toLocaleString("es-CO")} productos</div>
             {products.map((product, index) => <button key={product.productId} type="button" role="option" aria-selected={activeIndex === index} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActiveIndex(index)} onClick={() => choose(product)} className={`flex w-full items-center justify-between gap-4 rounded-lg px-3 py-2.5 text-left text-sm ${activeIndex === index ? "bg-emerald-50 text-emerald-950" : "hover:bg-muted"}`}><span className="min-w-0"><strong className="block truncate">{product.productName}</strong><small className="block truncate text-muted-foreground">{product.productCode}{product.reference ? ` · ${product.reference}` : ""}</small></span><span className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">Saldo {product.quantityOnHand}{selectedProductIds.has(product.productId) && <Check className="h-4 w-4 text-emerald-700" aria-label="Agregado" />}</span></button>)}
             {query.hasNextPage && <Button type="button" variant="ghost" className="mt-1 w-full" disabled={query.isFetchingNextPage} onMouseDown={(event) => event.preventDefault()} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Cargar 50 más</Button>}</>}
@@ -720,7 +735,7 @@ function InventoryProductPicker({
 }
 
 function CountCaptureGrid({ prepared, lines, update, remove, onKey }: { prepared: boolean; lines: Line[]; update: (index: number, patch: Partial<Line>) => void; remove: (index: number) => void; onKey: (event: KeyboardEvent<HTMLInputElement>, index: number) => void }) {
-  return <div className="overflow-x-auto rounded-xl border"><table className="w-full min-w-[760px] text-sm"><thead className="bg-muted/60"><tr><th className="px-3 py-3 text-left">Producto</th><th className="px-3 py-3 text-right">Saldo</th>{prepared && <th className="px-3 py-3 text-right">Preconteo</th>}<th className="px-3 py-3 text-left">Cantidad contada</th>{prepared && <th className="px-3 py-3 text-right">Diferencia</th>}<th className="w-14" /></tr></thead><tbody>{lines.length === 0 ? <tr><td colSpan={prepared ? 6 : 4} className="p-10 text-center text-muted-foreground">Selecciona una bodega y agrega los productos del conteo.</td></tr> : lines.map((line, index) => { const preCount = line.systemQuantity ?? line.stock; const difference = Number(line.quantity || 0) - preCount; return <tr key={line.productId} className="border-t focus-within:bg-emerald-50/60"><td className="px-3 py-2"><strong>{line.productName}</strong><span className="block text-xs text-muted-foreground">{line.productCode} · {line.unitCode}</span></td><td className="px-3 py-2 text-right tabular-nums">{line.stock}</td>{prepared && <td className="px-3 py-2 text-right tabular-nums">{preCount}</td>}<td className="px-3 py-2"><Input data-inventory-row={index} data-testid={`inventory-quantity-${index}`} className="w-36 text-right tabular-nums" inputMode="decimal" value={line.quantity} onChange={(event) => update(index, { quantity: event.target.value })} onKeyDown={(event) => onKey(event, index)} aria-label={`Cantidad de ${line.productName}`} /></td>{prepared && <td className={`px-3 py-2 text-right font-semibold tabular-nums ${difference > 0 ? "text-emerald-700" : difference < 0 ? "text-red-700" : "text-muted-foreground"}`}>{difference > 0 ? "+" : ""}{difference}</td>}<td className="px-2 py-2"><Button type="button" size="icon" variant="ghost" disabled={prepared} onClick={() => remove(index)} aria-label={`Eliminar ${line.productName}`}><Trash2 className="h-4 w-4" /></Button></td></tr>; })}</tbody></table></div>;
+  return <div className="overflow-x-auto rounded-xl border"><table className="w-full min-w-[760px] text-sm"><thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-3 py-3 text-left">Producto</th><th className="px-3 py-3 text-right">Existencia sistema</th><th className="px-3 py-3 text-right">Preconteo</th>{prepared && <th className="px-3 py-3 text-left">Cantidad contada</th>}{prepared && <th className="px-3 py-3 text-right">Diferencia</th>}<th className="w-14" /></tr></thead><tbody>{lines.length === 0 ? <tr><td colSpan={prepared ? 6 : 4} className="p-10 text-center text-muted-foreground">Selecciona una bodega y agrega los productos del conteo.</td></tr> : lines.map((line, index) => { const preCount = Number(prepared ? line.preCount ?? 0 : line.quantity || 0); const difference = Number(line.quantity || 0) - preCount; return <tr key={line.productId} className="border-t focus-within:bg-emerald-50/60"><td className="px-3 py-2"><strong>{line.productName}</strong><span className="block text-xs text-muted-foreground">{line.productCode} · {line.unitCode}</span></td><td className="px-3 py-2 text-right tabular-nums">{prepared ? line.systemQuantity ?? line.stock : line.stock}</td><td className="px-3 py-2 text-right tabular-nums">{prepared ? preCount : <Input data-inventory-row={index} data-testid={`inventory-quantity-${index}`} className="ml-auto w-36 text-right tabular-nums" inputMode="decimal" value={line.quantity} onChange={(event) => update(index, { quantity: event.target.value })} onKeyDown={(event) => onKey(event, index)} aria-label={`Preconteo de ${line.productName}`} />}</td>{prepared && <td className="px-3 py-2"><Input data-inventory-row={index} data-testid={`inventory-quantity-${index}`} className="w-36 text-right tabular-nums" inputMode="decimal" value={line.quantity} onChange={(event) => update(index, { quantity: event.target.value })} onKeyDown={(event) => onKey(event, index)} aria-label={`Cantidad contada de ${line.productName}`} /></td>}{prepared && <td className={`px-3 py-2 text-right font-semibold tabular-nums ${difference > 0 ? "text-emerald-700" : difference < 0 ? "text-red-700" : "text-muted-foreground"}`}>{line.quantity === "" ? "—" : <>{difference > 0 ? "+" : ""}{difference}</>}</td>}<td className="px-2 py-2"><Button type="button" size="icon" variant="ghost" disabled={prepared} onClick={() => remove(index)} aria-label={`Eliminar ${line.productName}`}><Trash2 className="h-4 w-4" /></Button></td></tr>; })}</tbody></table></div>;
 }
 
 function CaptureGrid({ kind, prepared, lines, update, remove, onKey }: { kind: OperationKind; prepared: boolean; lines: Line[]; update: (index: number, patch: Partial<Line>) => void; remove: (index: number) => void; onKey: (event: KeyboardEvent<HTMLInputElement>, index: number) => void }) {

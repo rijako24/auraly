@@ -24,7 +24,7 @@ public sealed class InventoryOperationService(
         Required(request.WarehouseId, nameof(request.WarehouseId));
         Required(request.OccurredAt, nameof(request.OccurredAt));
         ValidateReason(request.ReasonCode);
-        if (request.ProductIds.Count == 0 || request.ProductIds.Any(id => id == Guid.Empty) || request.ProductIds.Distinct().Count() != request.ProductIds.Count)
+        if (request.Lines.Count == 0 || request.Lines.Any(line => line.ProductId == Guid.Empty || line.PreCountQuantity < 0) || request.Lines.Select(line => line.ProductId).Distinct().Count() != request.Lines.Count)
             throw new InventoryValidationException("A stock count requires distinct products.");
         return store.StartCountAsync(user, request with { ReasonCode = request.ReasonCode.Trim().ToUpperInvariant(), Notes = Notes(request.Notes) }, cancellationToken);
     }

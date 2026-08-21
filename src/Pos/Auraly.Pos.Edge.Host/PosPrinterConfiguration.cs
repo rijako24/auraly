@@ -14,14 +14,39 @@ public static class PosPrinterModes
         value is BrowserPreview or WindowsRaw or File;
 }
 
+public static class OrderPrinterModes
+{
+    public const string BrowserPreview = "BrowserPreview";
+    public const string WindowsPrint = "WindowsPrint";
+
+    public static bool IsValid(string value) =>
+        value is BrowserPreview or WindowsPrint;
+}
+
+public static class PrintTemplateFormats
+{
+    public const string Receipt = "Receipt";
+    public const string HalfLetter = "HalfLetter";
+}
+
+public sealed record PrintTemplateRoute(
+    string DocumentType,
+    string Format,
+    string? PrinterName);
+
 public sealed record PosPrinterConfiguration(
     string ReceiptMode,
     string? ReceiptPrinterName,
     int ReceiptPaperWidthMillimeters,
-    string? LetterPrinterName)
+    string? LetterPrinterName,
+    string OrderMode = OrderPrinterModes.BrowserPreview,
+    IReadOnlyList<PrintTemplateRoute>? TemplateRoutes = null,
+    string PosOutputFormat = PrintTemplateFormats.Receipt,
+    string OrdersOutputFormat = PrintTemplateFormats.HalfLetter)
 {
     public static PosPrinterConfiguration Default { get; } =
-        new(PosPrinterModes.BrowserPreview, null, 80, null);
+        new(PosPrinterModes.BrowserPreview, null, 80, null,
+            OrderPrinterModes.BrowserPreview);
 }
 
 public sealed record PosPrinterConfigurationView(
@@ -63,11 +88,28 @@ public sealed class PosPrinterConfigurationStore(
             throw new ArgumentException("La tirilla debe ser de 58 u 80 mm.");
         var receipt = Clean(requested.ReceiptPrinterName);
         var letter = Clean(requested.LetterPrinterName);
-        if (mode == PosPrinterModes.WindowsRaw && receipt is null)
-            throw new ArgumentException("Selecciona la impresora de tirilla.");
+        var orderMode = requested.OrderMode?.Trim() ?? string.Empty;
+        if (!OrderPrinterModes.IsValid(orderMode))
+            throw new ArgumentException("El modo de impresion de pedidos no es valido.");
+        if (!IsWorkflowFormat(requested.PosOutputFormat) ||
+            !IsWorkflowFormat(requested.OrdersOutputFormat))
+            throw new ArgumentException("El formato debe ser tirilla o media carta.");
+        var routes = NormalizeRoutes(requested.TemplateRoutes, receipt, letter);
+        if (mode == PosPrinterModes.WindowsRaw && routes.Any(route =>
+                route.Format == PrintTemplateFormats.Receipt &&
+                route.PrinterName is null))
+            throw new ArgumentException(
+                "Selecciona la impresora de cada plantilla de tirilla.");
+        if (orderMode == OrderPrinterModes.WindowsPrint && routes.Any(route =>
+                route.Format == PrintTemplateFormats.HalfLetter &&
+                route.PrinterName is null))
+            throw new ArgumentException(
+                "Selecciona la impresora de cada plantilla de media carta.");
 
         var value = new PosPrinterConfiguration(
-            mode, receipt, requested.ReceiptPaperWidthMillimeters, letter);
+            mode, receipt, requested.ReceiptPaperWidthMillimeters, letter,
+            orderMode, routes,
+            requested.PosOutputFormat, requested.OrdersOutputFormat);
         lock (gate)
         {
             var directory = Path.GetDirectoryName(Path.GetFullPath(settingsPath));
@@ -84,15 +126,139 @@ public sealed class PosPrinterConfigurationStore(
 
     private static string? Clean(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static bool IsWorkflowFormat(string? value) =>
+        value is PrintTemplateFormats.Receipt or PrintTemplateFormats.HalfLetter;
+
+    private static IReadOnlyList<PrintTemplateRoute> NormalizeRoutes(
+        IReadOnlyList<PrintTemplateRoute>? requested,
+        string? receiptFallback,
+        string? letterFallback)
+    {
+        var routes = requested ?? [];
+        return RequiredRoutes.Select(key => new PrintTemplateRoute(
+            key.DocumentType,
+            key.Format,
+            Clean(routes.FirstOrDefault(route =>
+                route.DocumentType == key.DocumentType &&
+                route.Format == key.Format)?.PrinterName) ??
+            (key.Format == PrintTemplateFormats.Receipt
+                ? receiptFallback
+                : letterFallback))).ToArray();
+    }
+
+    private static readonly (string DocumentType, string Format)[] RequiredRoutes =
+    [
+        ("SalesInvoice", PrintTemplateFormats.Receipt),
+        ("SalesReceipt", PrintTemplateFormats.Receipt),
+        ("SalesInvoice", PrintTemplateFormats.HalfLetter),
+        ("SalesReceipt", PrintTemplateFormats.HalfLetter)
+    ];
+}
+
+public static class PosPrinterConfigurationExtensions
+{
+    public static string? PrinterFor(
+        this PosPrinterConfiguration configuration,
+        string documentType,
+        string format)
+    {
+        var route = configuration.TemplateRoutes?.FirstOrDefault(item =>
+            item.DocumentType == documentType && item.Format == format);
+        return route?.PrinterName ??
+               (format == PrintTemplateFormats.Receipt
+                   ? configuration.ReceiptPrinterName
+                   : configuration.LetterPrinterName);
+    }
+}
+
+public sealed class ConfigurableOrderDocumentPrinter(
+    PosPrinterConfigurationStore settings,
+    HalfLetterDocumentRenderer renderer)
+{
+    public async Task PrintAsync(
+        IReadOnlyCollection<Auraly.Contracts.Sales.OnlineSalesReceipt> receipts,
+        CancellationToken cancellationToken = default)
+    {
+        if (receipts.Count == 0) return;
+        var configuration = settings.Load();
+        var directory = Path.Combine(settings.ReceiptOutputDirectory, "media-carta");
+        Directory.CreateDirectory(directory);
+        var batches = configuration.OrderMode == OrderPrinterModes.WindowsPrint
+            ? receipts.GroupBy(receipt => configuration.PrinterFor(
+                receipt.DocumentType, PrintTemplateFormats.HalfLetter))
+            : receipts.GroupBy(_ => (string?)null);
+        foreach (var batch in batches)
+        {
+            var target = Path.Combine(directory, $"media-carta-{Guid.NewGuid():N}.html");
+            await File.WriteAllTextAsync(
+                target, renderer.Render(batch.ToArray()),
+                new System.Text.UTF8Encoding(false), cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!OperatingSystem.IsWindows())
+                throw new PlatformNotSupportedException(
+                    "La impresion local de media carta requiere Windows.");
+            var start = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = Path.GetFullPath(target),
+                UseShellExecute = true
+            };
+            if (configuration.OrderMode == OrderPrinterModes.WindowsPrint)
+            {
+                start.Verb = "printto";
+                start.Arguments = $"\"{batch.Key}\"";
+            }
+            System.Diagnostics.Process.Start(start);
+        }
+    }
+
+    public Task PrintAsync(
+        PosReceipt receipt,
+        CancellationToken cancellationToken = default) =>
+        PrintAsync(
+        [
+            new Auraly.Contracts.Sales.OnlineSalesReceipt(
+                receipt.DocumentId.Value,
+                receipt.DocumentType,
+                receipt.DocumentNumber,
+                receipt.FiscalNumber,
+                receipt.IssuedAt,
+                receipt.CustomerIdentification,
+                receipt.Lines.Select(line =>
+                    new Auraly.Contracts.Sales.OnlineSalesReceiptLine(
+                        line.ProductCode, line.Description, line.Quantity,
+                        line.UnitPrice, line.Discount, line.Tax, line.Total)).ToArray(),
+                receipt.Payments.Select(payment =>
+                    new Auraly.Contracts.Sales.OnlineSalesPayment(
+                        payment.MethodCode, payment.Amount, payment.Reference)).ToArray(),
+                receipt.UntaxedAmount,
+                receipt.TaxAmount,
+                receipt.PayableAmount,
+                receipt.Cufe,
+                receipt.QrPayload,
+                null,
+                receipt.CustomerIdentification)
+        ], cancellationToken);
 }
 
 public sealed class ConfigurablePosReceiptPrinter(
     PosPrinterConfigurationStore settings,
     EscPosReceiptRenderer escPos,
     HtmlReceiptPreviewRenderer html,
-    IReceiptPreviewLauncher preview) : IPosReceiptPrinter
+    IReceiptPreviewLauncher preview,
+    ConfigurableOrderDocumentPrinter halfLetter) : IPosReceiptPrinter
 {
     public Task PrintAsync(
+        PosReceipt receipt,
+        CancellationToken cancellationToken = default)
+    {
+        var configuration = settings.Load();
+        if (configuration.PosOutputFormat == PrintTemplateFormats.HalfLetter)
+            return halfLetter.PrintAsync(receipt, cancellationToken);
+        return PrintReceiptAsync(receipt, cancellationToken);
+    }
+
+    public Task PrintReceiptAsync(
         PosReceipt receipt,
         CancellationToken cancellationToken = default)
     {
@@ -105,7 +271,8 @@ public sealed class ConfigurablePosReceiptPrinter(
             PosPrinterModes.File => new FileReceiptPrinter(
                 settings.ReceiptOutputDirectory, escPos),
             PosPrinterModes.WindowsRaw => new WindowsRawReceiptPrinter(
-                configuration.ReceiptPrinterName
+                configuration.PrinterFor(
+                    receipt.DocumentType, PrintTemplateFormats.Receipt)
                     ?? throw new InvalidOperationException(
                         "La impresora de tirilla no esta configurada."),
                 escPos),
@@ -120,6 +287,32 @@ public sealed class ConfigurablePosReceiptPrinter(
             },
             cancellationToken);
     }
+
+    public Task PrintReceiptAsync(
+        Auraly.Contracts.Sales.OnlineSalesReceipt receipt,
+        CancellationToken cancellationToken = default) =>
+        PrintReceiptAsync(
+            new PosReceipt(
+                Guid.NewGuid(),
+                new Auraly.BuildingBlocks.Domain.Identifiers.DocumentId(
+                    receipt.DocumentId),
+                receipt.DocumentNumber,
+                receipt.FiscalNumber,
+                receipt.IssuedAt,
+                receipt.CustomerIdentification,
+                receipt.Lines.Select(line => new PosReceiptLine(
+                    line.ProductCode, line.Description, line.Quantity,
+                    line.UnitPrice, line.Discount, line.Tax, line.Total)).ToArray(),
+                receipt.Payments.Select(payment => new OfflineSalePayment(
+                    payment.MethodCode, payment.Amount, payment.Reference)).ToArray(),
+                receipt.UntaxedAmount,
+                receipt.TaxAmount,
+                receipt.PayableAmount,
+                receipt.Cufe,
+                receipt.QrPayload,
+                settings.Load().ReceiptPaperWidthMillimeters,
+                receipt.DocumentType),
+            cancellationToken);
 }
 
 internal static class WindowsPrinterDiscovery

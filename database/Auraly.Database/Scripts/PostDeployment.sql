@@ -147,3 +147,4 @@ PRINT 'Post-deployment scripts executed successfully.';
 :r .\Seeds\SeedDefaultBusinessRoles.sql
 :r .\Migrations\MigrateEmployeesAndUsersToParties.sql
 :r .\Seeds\EnsureFinalConsumer.sql
+:r .\Seeds\SeedAccountingDefaults.sql

@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { CalendarDays, KeyRound, Save, Scissors, ShieldCheck, X } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { CalendarDays, KeyRound, ReceiptText, Save, Scissors, ShieldCheck, X } from "lucide-react";
 import { toast } from "sonner";
 import { ScheduleExceptionsEditor } from "@/components/settings/schedule-exceptions-editor";
 import { WorkingHoursEditor } from "@/components/settings/working-hours-editor";
@@ -15,10 +15,53 @@ import { Switch } from "@/components/ui/switch";
 import { useRoles } from "@/hooks/use-roles";
 import { useServices } from "@/hooks/use-services";
 import { employeesApi, usersApi } from "@/services/api";
+import { taxationApi } from "@/services/api/taxation";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import type { WorkingHour } from "@/types/entities";
 
 const defaultHours: WorkingHour[] = [{ dayOfWeek: 1, openTime: "08:00", closeTime: "17:00", isActive: true }];
+
+export function PartySupplierTaxRolePanel({ supplierId }: { supplierId: string }) {
+  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
+  const queryClient = useQueryClient();
+  const profile = useQuery({ queryKey: ["withholding-profile", businessId, supplierId], queryFn: () => taxationApi.getProfile(supplierId), enabled: Boolean(businessId && supplierId), retry: false });
+  const [responsibilities, setResponsibilities] = useState("");
+  const [jurisdiction, setJurisdiction] = useState("");
+  const [applies, setApplies] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setResponsibilities(profile.data?.responsibilities.join(", ") ?? "");
+    setJurisdiction(profile.data?.jurisdictionCode ?? "");
+    setApplies(profile.data?.appliesWithholding ?? false);
+  }, [profile.data]);
+
+  const save = async () => {
+    if (!businessId) return;
+    setSaving(true);
+    try {
+      await taxationApi.saveProfile({ businessId, counterpartyId: supplierId, appliesWithholding: applies, responsibilities: responsibilities.split(",").map((value) => value.trim()).filter(Boolean), jurisdictionCode: jurisdiction.trim() || null });
+      await queryClient.invalidateQueries({ queryKey: ["withholding-profile", businessId, supplierId] });
+      toast.success("Perfil tributario del proveedor guardado");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No fue posible guardar el perfil tributario.");
+    } finally { setSaving(false); }
+  };
+
+  return <div className="space-y-4">
+    <PanelHeader icon={ReceiptText} title="Perfil tributario" description="Define cómo se calculan las retenciones cuando este proveedor emite una compra o un gasto.">
+      <div className="flex items-center gap-3"><span className="text-sm text-slate-200">Sujeto a retención</span><Switch checked={applies} onCheckedChange={setApplies} disabled={profile.isLoading || saving} /></div>
+    </PanelHeader>
+    {profile.isLoading ? <PanelLoading /> : <section className="space-y-4 rounded-2xl border p-5">
+      {!profile.data && <div className="rounded-xl border border-dashed bg-muted/20 p-4 text-sm text-muted-foreground">Este proveedor todavía no tiene perfil tributario. Completa estos datos y guárdalos; las reglas aplicables se resolverán automáticamente en cada documento.</div>}
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-2"><Label>Responsabilidades tributarias</Label><Input value={responsibilities} onChange={(event) => setResponsibilities(event.target.value)} placeholder="Ej. O-13, O-15 (separadas por coma)" /><p className="text-xs text-muted-foreground">Usa los códigos registrados en el RUT.</p></div>
+        <div className="space-y-2"><Label>Municipio o jurisdicción</Label><Input value={jurisdiction} onChange={(event) => setJurisdiction(event.target.value)} placeholder="Ej. 11001" /><p className="text-xs text-muted-foreground">Se usa para resolver ReteICA; déjalo vacío si no corresponde.</p></div>
+      </div>
+      <div className="flex justify-end"><Button onClick={save} disabled={saving}><Save className="mr-2 h-4 w-4" />{saving ? "Guardando..." : "Guardar perfil tributario"}</Button></div>
+    </section>}
+  </div>;
+}
 
 export function PartyEmployeeRolePanel({ employeeId }: { employeeId: string }) {
   const employeeQuery = useQuery({ queryKey: ["employees", employeeId], queryFn: () => employeesApi.getById(employeeId) });

@@ -873,25 +873,25 @@ public sealed partial class SqlOnlineSalesDraftStore(
             await using var channel = connection.CreateCommand();
             channel.Transaction = transaction;
             channel.CommandText = """
-                SELECT TOP(1) i.Amount,i.CurrencyCode
-                FROM dbo.ResolvedPriceChannelItems i
-                JOIN dbo.PriceChannels c ON c.PriceChannelId=i.PriceChannelId
-                WHERE i.PriceChannelId=@SourceId AND c.BusinessId=@BusinessId
-                  AND c.IsActive=1 AND i.ProductId=@ProductId AND i.IsActive=1
-                  AND i.ValidFrom<=SYSDATETIMEOFFSET()
-                  AND (i.ValidUntil IS NULL OR i.ValidUntil>SYSDATETIMEOFFSET())
-                  AND NOT EXISTS(
-                    SELECT 1 FROM dbo.PriceChannelExclusions e
-                    WHERE e.PriceChannelId=i.PriceChannelId AND e.ProductId=i.ProductId);
+                SELECT COALESCE(rule.NumericValue,0)
+                FROM dbo.PriceChannels channel
+                OUTER APPLY(SELECT TOP(1) currentRule.NumericValue
+                            FROM dbo.PriceChannelRules currentRule
+                            WHERE currentRule.PriceChannelId=channel.PriceChannelId
+                              AND currentRule.RuleKind=N'PercentageVariation' AND currentRule.AppliesTo=N'AllProducts'
+                              AND currentRule.IsActive=1 AND currentRule.ValidFrom<=SYSDATETIMEOFFSET()
+                              AND (currentRule.ValidUntil IS NULL OR currentRule.ValidUntil>SYSDATETIMEOFFSET())
+                            ORDER BY currentRule.ValidFrom DESC) rule
+                WHERE channel.PriceChannelId=@SourceId AND channel.BusinessId=@BusinessId AND channel.IsActive=1
+                ;
                 """;
             channel.Parameters.AddRange([
-                P("@SourceId", channelId), P("@BusinessId", businessId),
-                P("@ProductId", productId)
+                P("@SourceId", channelId), P("@BusinessId", businessId)
             ]);
             await using var reader = await channel.ExecuteReaderAsync(ct);
             if (await reader.ReadAsync(ct))
                 return new(
-                    reader.GetDecimal(0), reader.GetString(1),
+                    decimal.Round(baseAmount * (1m + reader.GetDecimal(0) / 100m), 4), baseCurrency,
                     "PriceChannel", null, channelId);
         }
         return new(baseAmount, baseCurrency, "Base", listId, channelId);

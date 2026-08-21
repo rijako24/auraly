@@ -104,15 +104,51 @@ public static class PosOrderEndpoints
         edge.MapPost("/orders/invoice", async (
             InvoicePosOrdersRequest request,
             PosOrderServerClient server,
+            ConfigurableOrderDocumentPrinter printer,
+            ConfigurablePosReceiptPrinter receiptPrinter,
+            PosPrinterConfigurationStore printerSettings,
             PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
-            Results.Ok(await server.InvoiceAsync(
-                sessions.Required(),
+        {
+            var session = sessions.Required();
+            var response = await server.InvoiceAsync(
+                session,
                 request.OrderIds,
                 request.PaymentMethodCode,
                 request.DocumentType,
                 request.IdempotencyKey,
-                ct)));
+                ct);
+            try
+            {
+                var receipts = new List<Auraly.Contracts.Sales.OnlineSalesReceipt>();
+                foreach (var result in response.Results.Where(
+                             result => result.DocumentId.HasValue && result.Error is null))
+                    receipts.Add(await server.ReceiptAsync(
+                        session, result.DocumentId!.Value, ct));
+                if (printerSettings.Load().OrdersOutputFormat ==
+                    PrintTemplateFormats.HalfLetter)
+                    await printer.PrintAsync(receipts, ct);
+                else
+                    foreach (var receipt in receipts)
+                        await receiptPrinter.PrintReceiptAsync(receipt, ct);
+                return Results.Ok(response with
+                {
+                    PrintStatus = receipts.Count == 0 ? "NotRequired" : "Sent"
+                });
+            }
+            catch (Exception error) when (error is IOException or
+                                          InvalidOperationException or
+                                          PlatformNotSupportedException or
+                                          System.ComponentModel.Win32Exception)
+            {
+                return Results.Ok(response with
+                {
+                    PrintStatus = "Failed",
+                    PrintError = "Los pedidos se facturaron, pero no fue posible imprimir: " +
+                                 error.Message
+                });
+            }
+        });
 
         return edge;
     }

@@ -9,6 +9,7 @@ export type DurableOperationLine = {
   unitCode: string;
   stock: number;
   quantity: string;
+  preCount?: string;
   cost: string;
   salePrice?: string;
   direction: "INPUT" | "OUTPUT";

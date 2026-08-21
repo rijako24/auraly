@@ -71,6 +71,27 @@ BEGIN
             CostCenterId,BusinessId,Code,Name,ParentCostCenterId,IsDefault,IsActive,CreatedAt)
         VALUES(NEWID(),@BusinessId,N'PRINCIPAL',N'Operación principal',NULL,1,1,@Now);
 
+    DECLARE @DefaultCostCenterId uniqueidentifier=(SELECT TOP(1) CostCenterId FROM dbo.AccountingCostCenters WHERE BusinessId=@BusinessId AND IsDefault=1 AND IsActive=1 ORDER BY CreatedAt);
+    DECLARE @OperatingExpenseId uniqueidentifier=(SELECT AccountId FROM dbo.AccountingAccounts WHERE TenantId=@TenantId AND Code=N'519510');
+    DECLARE @OtherExpenseId uniqueidentifier=(SELECT AccountId FROM dbo.AccountingAccounts WHERE TenantId=@TenantId AND Code=N'539595');
+    DECLARE @ExpenseConcepts TABLE(Code nvarchar(32),Name nvarchar(120),AccountId uniqueidentifier);
+    INSERT @ExpenseConcepts VALUES
+      (N'PEAJE',N'Peajes',@OperatingExpenseId),
+      (N'PARQUEADERO',N'Parqueaderos',@OperatingExpenseId),
+      (N'COMBUSTIBLE',N'Combustible',@OperatingExpenseId),
+      (N'TRANSPORTE',N'Transporte y mensajería',@OperatingExpenseId),
+      (N'SERVICIOS',N'Servicios operativos',@OperatingExpenseId),
+      (N'OTROS',N'Otros gastos',@OtherExpenseId);
+    INSERT dbo.ExpenseConcepts(ExpenseConceptId,BusinessId,Code,Name,ExpenseAccountId,DefaultCostCenterId,WithholdingConceptCode,IsActive,CreatedAt,UpdatedAt)
+    SELECT NEWID(),@BusinessId,concept.Code,concept.Name,concept.AccountId,@DefaultCostCenterId,NULL,1,@Now,@Now
+    FROM @ExpenseConcepts concept
+    WHERE concept.AccountId IS NOT NULL AND NOT EXISTS(
+      SELECT 1 FROM dbo.ExpenseConcepts currentConcept WHERE currentConcept.BusinessId=@BusinessId AND currentConcept.Code=concept.Code);
+
+    IF NOT EXISTS(SELECT 1 FROM dbo.Suppliers WHERE BusinessId=@BusinessId AND Identification=N'OCASIONAL')
+      INSERT dbo.Suppliers(SupplierId,BusinessId,PartyId,Identification,Name,IsActive,CreatedAt)
+      VALUES(NEWID(),@BusinessId,NULL,N'OCASIONAL',N'Gasto ocasional / sin proveedor',1,@Now);
+
     IF NOT EXISTS (SELECT 1 FROM dbo.AccountingVoucherCursors WHERE TenantId=@TenantId)
         INSERT dbo.AccountingVoucherCursors(TenantId,LastAssignedNumber,UpdatedAt)
         VALUES(@TenantId,0,@Now);

@@ -44,7 +44,8 @@ public sealed record SearchOnlineSalesRequest(
     OnlineSalesDraftContext Context,
     string? Search = null,
     int Skip = 0,
-    int Take = 50);
+    int Take = 50,
+    Guid? CustomerId = null);
 
 public sealed record OnlineSalesProduct(
     Guid ProductId,
@@ -56,7 +57,8 @@ public sealed record OnlineSalesProduct(
     decimal TaxRate,
     decimal UnitPrice,
     string CurrencyCode,
-    bool IsActive);
+    bool IsActive,
+    string PriceSource);
 
 public sealed record OnlineSalesProductPage(
     IReadOnlyList<OnlineSalesProduct> Items,

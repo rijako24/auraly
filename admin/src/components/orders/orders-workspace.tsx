@@ -9,6 +9,7 @@ import {
   FileText,
   Loader2,
   PackageSearch,
+  Printer,
   Receipt,
   RotateCcw,
   Search,
@@ -69,8 +70,13 @@ type OrdersWorkspaceProps = {
     orders: CommerceOrderListItem[],
     paymentMethodCode: string,
     documentType: "SalesInvoice" | "SalesReceipt",
-  ) => Promise<{ completedCount: number; failedCount: number }>;
+  ) => Promise<{
+    completedCount: number;
+    failedCount: number;
+    printError?: string | null;
+  }>;
   onExpand?: () => void;
+  onConfigurePrinting?: () => void;
   routeOptions?: Array<{ routeId: string; name: string }>;
   onlyMine?: boolean;
   source?: number;
@@ -85,6 +91,7 @@ export function OrdersWorkspace({
   onRecover,
   onInvoiceSelected,
   onExpand,
+  onConfigurePrinting,
   routeOptions = [],
   onlyMine = false,
   source,
@@ -215,7 +222,9 @@ export function OrdersWorkspace({
         documentType,
       );
       setNotice(
-        result.failedCount === 0
+        result.printError
+          ? `${result.completedCount} emitidos. ${result.printError}`
+          : result.failedCount === 0
           ? `${result.completedCount} ${result.completedCount === 1 ? "pedido emitido" : "pedidos emitidos"} correctamente.`
           : `${result.completedCount} emitidos y ${result.failedCount} pendientes de revisar.`,
       );
@@ -425,6 +434,14 @@ export function OrdersWorkspace({
                 Los clientes que exigen factura electrónica siempre se facturan.
               </span>
               <div className="ml-auto flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+              {onConfigurePrinting && (
+                <Button type="button" variant="outline" size="icon"
+                  title="Configurar plantillas e impresoras"
+                  aria-label="Configurar plantillas e impresoras"
+                  onClick={onConfigurePrinting}>
+                  <Printer className="h-4 w-4" />
+                </Button>
+              )}
               <Select value={paymentMethod} onValueChange={setPaymentMethod}>
                 <SelectTrigger className="w-full sm:w-44">
                   <SelectValue />

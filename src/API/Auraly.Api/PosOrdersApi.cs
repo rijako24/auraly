@@ -1,5 +1,7 @@
 using Auraly.Application.Orders;
+using Auraly.Application.Sales;
 using Auraly.Contracts.Orders;
+using Auraly.Contracts.Sales;
 
 namespace Auraly.Api;
 
@@ -111,6 +113,32 @@ public static class PosOrdersApi
                     request.DocumentType),
                     context.Request.Headers["Idempotency-Key"].ToString(),
                     ct);
+            }));
+
+        group.MapGet("/documents/{documentId:guid}/receipt", async (
+            HttpContext context,
+            Guid documentId,
+            Guid userId,
+            Guid businessId,
+            Guid warehouseId,
+            Guid workSessionId,
+            OnlineSalesHistoryService history,
+            IPosOrderActorResolver actors,
+            CancellationToken ct) =>
+            await Handle(async () =>
+            {
+                var actor = await actors.ResolveAsync(
+                    context.User.ToPosDeviceIdentity(),
+                    new PosOrderExecutionContext(
+                        userId, businessId, warehouseId, workSessionId), ct);
+                return await history.GetReceiptAsync(
+                    new OnlineSalesUserIdentity(
+                        actor.UserId, actor.TenantId, actor.Permissions),
+                    new OnlineSalesDraftContext(
+                        businessId, warehouseId, workSessionId),
+                    documentId,
+                    ct) ?? throw new OrderNotFoundException(
+                        "No se encontro el documento facturado.");
             }));
 
         return endpoints;

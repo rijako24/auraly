@@ -64,7 +64,22 @@ public sealed class PosConfigurationTests
             Assert.Equal("Tirilla", saved.ReceiptPrinterName);
             Assert.Equal("Carta", saved.LetterPrinterName);
             Assert.Equal(58, reloaded.ReceiptPaperWidthMillimeters);
-            Assert.Equal(saved, reloaded);
+            Assert.Equal(PrintTemplateFormats.Receipt, reloaded.PosOutputFormat);
+            Assert.Equal(PrintTemplateFormats.HalfLetter, reloaded.OrdersOutputFormat);
+            Assert.Equal(4, reloaded.TemplateRoutes?.Count);
+            Assert.All(
+                reloaded.TemplateRoutes!.Where(route =>
+                    route.Format == PrintTemplateFormats.Receipt),
+                route => Assert.Equal("Tirilla", route.PrinterName));
+            Assert.All(
+                reloaded.TemplateRoutes!.Where(route =>
+                    route.Format == PrintTemplateFormats.HalfLetter),
+                route => Assert.Equal("Carta", route.PrinterName));
+            Assert.Equal(
+                saved with { TemplateRoutes = null },
+                reloaded with { TemplateRoutes = null });
+            Assert.Equal<PrintTemplateRoute>(
+                saved.TemplateRoutes!, reloaded.TemplateRoutes!);
         }
         finally
         {

@@ -15,6 +15,7 @@ public static class PriceSegmentsApi
         group.MapGet("/{kind}/{id:guid}/items", ItemsAsync);
         group.MapPut("/{kind}/{id:guid}/items/{productId:guid}", SaveItemAsync);
         group.MapDelete("/{kind}/{id:guid}/items/{productId:guid}", DeleteItemAsync);
+        group.MapPut("/PriceChannel/{id:guid}/settings", SaveChannelSettingsAsync);
         return endpoints;
     }
 
@@ -32,7 +33,7 @@ public static class PriceSegmentsApi
         while (await reader.ReadAsync(ct))
             items.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
                 reader.GetString(3), reader.GetBoolean(4), reader.GetFieldValue<DateTimeOffset>(5),
-                reader.GetInt32(6), reader.GetInt32(7)));
+                reader.GetInt32(6), reader.GetInt32(7), reader.IsDBNull(8) ? null : reader.GetDecimal(8)));
         return Results.Ok(items);
     }
 
@@ -69,6 +70,8 @@ public static class PriceSegmentsApi
         var identity = context.User.ToPricingIdentity();
         if (!identity.Permissions.Contains("pricing.segments.read")) return Results.Forbid();
         kind = NormalizeKind(kind);
+        if (kind != "PriceList")
+            return Results.Problem("Los productos se configuran únicamente en listas de precios.", statusCode: 400);
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var command = Procedure("dbo.PriceSegmentItemsList", connection);
@@ -92,6 +95,8 @@ public static class PriceSegmentsApi
         var identity = context.User.ToPricingIdentity();
         if (!identity.Permissions.Contains("pricing.segments.manage")) return Results.Forbid();
         kind = NormalizeKind(kind);
+        if (kind != "PriceList")
+            return Results.Problem("Los productos se configuran únicamente en listas de precios.", statusCode: 400);
         if (request.Amount <= 0 || request.MinimumQuantity <= 0)
             return Results.Problem("Precio y cantidad mínima deben ser mayores que cero.", statusCode: 400);
         await using var connection = connections.Create();
@@ -113,6 +118,27 @@ public static class PriceSegmentsApi
         return Results.NoContent();
     }
 
+    private static async Task<IResult> SaveChannelSettingsAsync(
+        HttpContext context, Guid id, SavePriceChannelSettingsRequest request,
+        SqlServerConnectionFactory connections, CancellationToken ct)
+    {
+        var identity = context.User.ToPricingIdentity();
+        if (!identity.Permissions.Contains("pricing.segments.manage")) return Results.Forbid();
+        if (request.PriceVariationPercent is < -100 or > 1000)
+            return Results.Problem("La variación debe estar entre -100 % y 1.000 %.", statusCode: 400);
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = Procedure("dbo.PriceChannelSettingsSave", connection);
+        command.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
+        command.Parameters.AddWithValue("@PriceChannelId", id);
+        command.Parameters.AddWithValue("@RuleKind", PriceChannelRuleKind.PercentageVariation.ToString());
+        command.Parameters.AddWithValue("@NumericValue", request.PriceVariationPercent);
+        command.Parameters.AddWithValue("@ValidFrom", DateTimeOffset.UtcNow);
+        try { await command.ExecuteNonQueryAsync(ct); }
+        catch (SqlException exception) when (exception.Number == 51004) { return Results.NotFound(); }
+        return Results.NoContent();
+    }
+
     private static async Task<IResult> DeleteItemAsync(
         HttpContext context, string kind, Guid id, Guid productId, decimal? minimumQuantity,
         SqlServerConnectionFactory connections, CancellationToken ct)
@@ -120,6 +146,8 @@ public static class PriceSegmentsApi
         var identity = context.User.ToPricingIdentity();
         if (!identity.Permissions.Contains("pricing.segments.manage")) return Results.Forbid();
         kind = NormalizeKind(kind);
+        if (kind != "PriceList")
+            return Results.Problem("Los productos se configuran únicamente en listas de precios.", statusCode: 400);
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var command = Procedure("dbo.PriceSegmentItemDelete", connection);
@@ -143,7 +171,9 @@ public static class PriceSegmentsApi
         new(name, connection, transaction) { CommandType = System.Data.CommandType.StoredProcedure };
 }
 
-public sealed record PriceSegmentSummary(Guid Id, string Kind, string Code, string Name, bool IsActive, DateTimeOffset CreatedAt, int ProductCount, int CustomerCount);
+public sealed record PriceSegmentSummary(Guid Id, string Kind, string Code, string Name, bool IsActive, DateTimeOffset CreatedAt, int ProductCount, int CustomerCount, decimal? PriceVariationPercent);
 public sealed record PriceSegmentItem(Guid ProductId, string ProductCode, string ProductName, decimal Amount, string CurrencyCode, decimal MinimumQuantity, DateTimeOffset ValidFrom, DateTimeOffset? ValidUntil, bool Excluded);
 public sealed record SavePriceSegmentRequest(string Kind, string Code, string Name);
 public sealed record SavePriceSegmentItemRequest(decimal Amount, decimal MinimumQuantity, DateTimeOffset? ValidFrom, DateTimeOffset? ValidUntil, bool Excluded);
+public sealed record SavePriceChannelSettingsRequest(decimal PriceVariationPercent);
+public enum PriceChannelRuleKind { PercentageVariation }

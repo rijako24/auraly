@@ -101,6 +101,14 @@
     @apply bg-background text-foreground;
   }
 
+  table thead {
+    @apply bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground;
+  }
+
+  table thead th {
+    @apply font-semibold;
+  }
+
   input[type="checkbox"] {
     width: 1.25rem;
     height: 1.25rem;

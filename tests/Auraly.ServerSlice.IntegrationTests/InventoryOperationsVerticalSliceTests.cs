@@ -31,12 +31,13 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         var countId = Guid.NewGuid();
         using (var response = await client.PostAsJsonAsync("/api/commerce/v1/stock-counts/start",
                    new StartStockCountRequest(countId, fixture.BusinessId, fixture.WarehouseId,
-                       occurred.AddMinutes(1), "PHYSICAL_COUNT", "Conteo ciego", [source])))
+                       occurred.AddMinutes(1), "PHYSICAL_COUNT", "Conteo ciego", [new StartStockCountLineRequest(source, 19m)])))
         {
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             var draft = await response.Content.ReadFromJsonAsync<StockCountDraft>();
             Assert.NotNull(draft);
             Assert.Equal(20m, Assert.Single(draft.Lines).SystemQuantityAtBase);
+            Assert.Equal(19m, Assert.Single(draft.Lines).PreCountQuantity);
         }
 
         await ConfirmAdjustmentAsync(client, new(Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
@@ -110,7 +111,7 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             new StartStockCountRequest(
                 countId, fixture.BusinessId, fixture.WarehouseId,
                 occurred.AddMinutes(1), "PHYSICAL_COUNT", "Conteo de dos líneas",
-                [first, second])))
+                [new StartStockCountLineRequest(first, 9m), new StartStockCountLineRequest(second, 7m)])))
         {
             Assert.Equal(HttpStatusCode.OK, start.StatusCode);
             var draft = await start.Content.ReadFromJsonAsync<StockCountDraft>();

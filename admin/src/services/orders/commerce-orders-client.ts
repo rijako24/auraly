@@ -91,6 +91,8 @@ export type InvoiceOrdersResponse = {
   failedCount: number;
   isReplay: boolean;
   results: InvoiceOrderResult[];
+  printStatus?: "Sent" | "Failed" | "NotRequired" | null;
+  printError?: string | null;
 };
 
 export type RecoverOrderResult = {

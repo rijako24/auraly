@@ -80,7 +80,18 @@ public sealed partial class SqlOnlineSalesDraftStore
                     reader.IsDBNull(2) ? null : reader.GetString(2),
                     reader.GetString(3), reader.GetString(4), reader.GetString(5),
                     reader.GetDecimal(6), reader.GetDecimal(7), reader.GetString(8),
-                    reader.GetBoolean(9)));
+                    reader.GetBoolean(9), "Public"));
+        if (request.CustomerId is not null)
+        {
+            for (var index = 0; index < items.Count; index++)
+            {
+                var item = items[index];
+                var resolved = await ResolvePriceAsync(connection, transaction, scope.BusinessId,
+                    request.CustomerId, item.ProductId, 1m, item.UnitPrice, item.CurrencyCode,
+                    cancellationToken);
+                items[index] = item with { UnitPrice = resolved.Amount, CurrencyCode = resolved.CurrencyCode, PriceSource = resolved.Source };
+            }
+        }
         var hasMore = items.Count > request.Take;
         if (hasMore) items.RemoveAt(items.Count - 1);
         await transaction.CommitAsync(cancellationToken);

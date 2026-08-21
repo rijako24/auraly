@@ -38,7 +38,9 @@ public sealed record StartStockCountRequest(
     DateTimeOffset OccurredAt,
     string ReasonCode,
     string? Notes,
-    IReadOnlyCollection<Guid> ProductIds);
+    IReadOnlyCollection<StartStockCountLineRequest> Lines);
+
+public sealed record StartStockCountLineRequest(Guid ProductId, decimal PreCountQuantity);
 
 public sealed record StockCountLineRequest(int LineNumber, Guid ProductId, decimal CountedQuantity);
 
@@ -111,6 +113,7 @@ public sealed record InventoryOperationLineSnapshot(
     string ProductCode,
     string Description,
     decimal Quantity,
+    decimal? PreCountQuantity,
     decimal? SystemQuantityAtBase,
     decimal? ExplicitUnitCost,
     decimal? AllocationWeight);
@@ -174,7 +177,7 @@ public sealed record InventoryOperationQuery(Guid BusinessId, Guid? WarehouseId,
 public sealed record InventoryOperationItem(Guid DocumentId, string DocumentType, string? DocumentNumber, Guid WarehouseId, string WarehouseName, Guid? DestinationWarehouseId, string? DestinationWarehouseName, string ReasonCode, string Status, DateTimeOffset OccurredAt, int LineCount, decimal? TotalValueChange);
 public sealed record InventoryOperationDetailLine(
     int LineNumber, string Direction, Guid ProductId, string ProductCode,
-    string ProductName, decimal? Quantity, decimal? SystemQuantityAtBase,
+    string ProductName, decimal? Quantity, decimal? PreCountQuantity, decimal? SystemQuantityAtBase,
     decimal? ExplicitUnitCost, decimal? AllocationWeight,
     decimal? ProcessedUnitCost, decimal? ProcessedValue);
 

@@ -66,7 +66,7 @@ public sealed class ExpenseService(IExpenseStore store, WithholdingService withh
         catch (ExpenseRuleException error) { throw new ExpenseValidationException(error.Message); }
         var normalized = request with { CurrencyCode = currency,
             SupplierDocumentNumber = Text(request.SupplierDocumentNumber, 80, "Número del proveedor"),
-            Description = Text(request.Description, 300, "Descripción"), EvidenceUrl = Optional(request.EvidenceUrl, 1000),
+            Description = string.IsNullOrWhiteSpace(request.Description) ? "Gasto operativo" : Text(request.Description, 300, "Descripción"), EvidenceUrl = Optional(request.EvidenceUrl, 1000),
             WithholdingJurisdictionCode = Optional(request.WithholdingJurisdictionCode, 16) };
         var options = await store.GetOptionsAsync(user, ct);
         var concept = options.Concepts.SingleOrDefault(x => x.ConceptId == request.ConceptId && x.IsActive)

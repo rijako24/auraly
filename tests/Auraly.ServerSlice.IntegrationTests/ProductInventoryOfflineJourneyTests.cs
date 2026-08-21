@@ -101,11 +101,12 @@ public sealed class ProductInventoryOfflineJourneyTests(ServerSliceFixture fixtu
                        occurredAt.AddMinutes(1),
                        "PHYSICAL_COUNT",
                        "Conteo físico de ocho unidades",
-                       [product.ProductId])))
+                       [new StartStockCountLineRequest(product.ProductId, 9m)])))
         {
             start.EnsureSuccessStatusCode();
             var draft = await start.Content.ReadFromJsonAsync<StockCountDraft>();
             Assert.Equal(10m, Assert.Single(draft!.Lines).SystemQuantityAtBase);
+            Assert.Equal(9m, Assert.Single(draft.Lines).PreCountQuantity);
         }
         await SendAcceptedAsync(
             inventory,

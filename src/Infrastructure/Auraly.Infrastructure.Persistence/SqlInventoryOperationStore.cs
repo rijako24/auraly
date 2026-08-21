@@ -26,12 +26,14 @@ public sealed class SqlInventoryOperationStore(
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         try
         {
-            await ValidateScopeAsync(connection, transaction, user, request.WarehouseId, null, request.ProductIds, cancellationToken);
+            var productIds = request.Lines.Select(line => line.ProductId).ToArray();
+            var preCounts = request.Lines.ToDictionary(line => line.ProductId, line => line.PreCountQuantity);
+            await ValidateScopeAsync(connection, transaction, user, request.WarehouseId, null, productIds, cancellationToken);
             var reasonDescription = await LoadActiveReasonAsync(connection, transaction, user.BusinessId, InventoryDocumentTypes.StockCount, request.ReasonCode, cancellationToken);
             var baseSequence = await ReadBaseSequenceAsync(connection, transaction, request.BusinessId, cancellationToken);
-            var products = await LoadProductsAsync(connection, transaction, request.BusinessId, request.WarehouseId, request.ProductIds, cancellationToken);
+            var products = await LoadProductsAsync(connection, transaction, request.BusinessId, request.WarehouseId, productIds, cancellationToken);
             var lines = products.OrderBy(product => product.Code, StringComparer.Ordinal).Select((product, index) =>
-                new InventoryOperationLineSnapshot(index + 1, "COUNT", product.Id, product.Code, product.Name, 0m, product.Quantity, null, null)).ToArray();
+                new InventoryOperationLineSnapshot(index + 1, "COUNT", product.Id, product.Code, product.Name, 0m, preCounts[product.Id], product.Quantity, null, null)).ToArray();
             var now = timeProvider.GetUtcNow();
             const string insert = """
                 INSERT dbo.InventoryOperations
@@ -138,7 +140,7 @@ public sealed class SqlInventoryOperationStore(
             request.SourceWarehouseId, inputLines.Select(line => line.ProductId), cancellationToken)).ToDictionary(product => product.Id);
         var lines = inputLines.Select(line => new InventoryOperationLineSnapshot(
             line.LineNumber, line.Direction, line.ProductId, products[line.ProductId].Code,
-            products[line.ProductId].Name, line.Quantity, null, null, null)).ToArray();
+            products[line.ProductId].Name, line.Quantity, null, null, null, null)).ToArray();
         var now = timeProvider.GetUtcNow();
         const string insert = """
             INSERT dbo.InventoryOperations
@@ -198,7 +200,7 @@ public sealed class SqlInventoryOperationStore(
             var products = (await LoadProductsAsync(connection, transaction, user.BusinessId, warehouseId, inputLines.Select(line => line.ProductId), cancellationToken)).ToDictionary(product => product.Id);
             var lines = inputLines.Select(line => new InventoryOperationLineSnapshot(
                 line.LineNumber, line.Direction, line.ProductId, products[line.ProductId].Code,
-                products[line.ProductId].Name, line.Quantity, line.SystemQuantityAtBase,
+                products[line.ProductId].Name, line.Quantity, null, line.SystemQuantityAtBase,
                 line.ExplicitUnitCost, line.AllocationWeight)).ToArray();
             var now = timeProvider.GetUtcNow();
             const string insert = """
@@ -386,8 +388,8 @@ public sealed class SqlInventoryOperationStore(
         const string sql = """
             INSERT dbo.InventoryOperationLines
               (InventoryOperationId,LineNumber,Direction,ProductId,ProductCodeSnapshot,DescriptionSnapshot,
-               Quantity,SystemQuantityAtBase,ExplicitUnitCost,AllocationWeight)
-            VALUES(@Id,@Line,@Direction,@ProductId,@Code,@Description,@Quantity,@SystemAtBase,@UnitCost,@Weight);
+               Quantity,PreCountQuantity,SystemQuantityAtBase,ExplicitUnitCost,AllocationWeight)
+            VALUES(@Id,@Line,@Direction,@ProductId,@Code,@Description,@Quantity,@PreCount,@SystemAtBase,@UnitCost,@Weight);
             """;
         foreach (var line in lines)
         {
@@ -399,6 +401,7 @@ public sealed class SqlInventoryOperationStore(
             command.Parameters.AddWithValue("@Code", line.ProductCode);
             command.Parameters.AddWithValue("@Description", line.Description);
             AddNullableDecimal(command, "@Quantity", line.Direction == "COUNT" ? null : line.Quantity, 19, 6);
+            AddNullableDecimal(command, "@PreCount", line.PreCountQuantity, 19, 6);
             AddNullableDecimal(command, "@SystemAtBase", line.SystemQuantityAtBase, 19, 6);
             AddNullableDecimal(command, "@UnitCost", line.ExplicitUnitCost, 19, 6);
             AddNullableDecimal(command, "@Weight", line.AllocationWeight, 9, 6);
@@ -424,13 +427,18 @@ public sealed class SqlInventoryOperationStore(
             if (!await reader.ReadAsync(cancellationToken)) throw new InventoryValidationException("The stock count draft was not found.");
             warehouseId=reader.GetGuid(0); occurred=reader.GetDateTimeOffset(1); reason=reader.GetString(2); sequence=reader.GetInt64(3); notes=reader.IsDBNull(4)?null:reader.GetString(4);
         }
-        const string detail = "SELECT LineNumber,ProductId,ProductCodeSnapshot,DescriptionSnapshot,SystemQuantityAtBase FROM dbo.InventoryOperationLines WHERE InventoryOperationId=@Id ORDER BY LineNumber;";
+        const string detail = "SELECT LineNumber,ProductId,ProductCodeSnapshot,DescriptionSnapshot,PreCountQuantity,SystemQuantityAtBase FROM dbo.InventoryOperationLines WHERE InventoryOperationId=@Id ORDER BY LineNumber;";
         var lines = new List<InventoryOperationLineSnapshot>();
         await using (var command = new SqlCommand(detail, connection, transaction))
         {
             command.Parameters.AddWithValue("@Id", documentId);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while(await reader.ReadAsync(cancellationToken)) lines.Add(new(reader.GetInt32(0),"COUNT",reader.GetGuid(1),reader.GetString(2),reader.GetString(3),0m,reader.GetDecimal(4),null,null));
+            while(await reader.ReadAsync(cancellationToken))
+            {
+                var systemQuantityAtBase = reader.GetDecimal(5);
+                var preCountQuantity = reader.IsDBNull(4) ? systemQuantityAtBase : reader.GetDecimal(4);
+                lines.Add(new(reader.GetInt32(0),"COUNT",reader.GetGuid(1),reader.GetString(2),reader.GetString(3),0m,preCountQuantity,systemQuantityAtBase,null,null));
+            }
         }
         return new(warehouseId,occurred,reason,sequence,notes,lines);
     }

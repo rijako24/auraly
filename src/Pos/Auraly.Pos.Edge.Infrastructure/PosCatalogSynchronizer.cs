@@ -93,7 +93,15 @@ public sealed class PosCatalogSynchronizer(
         request.Headers.Add("X-Auraly-Device-Id", credentials.DeviceId.ToString("D"));
         request.Headers.Add("X-Auraly-Device-Secret", credentials.Secret);
         using var response = await httpClient.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            var detail = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new HttpRequestException(
+                $"Auraly Server rejected catalog synchronization with " +
+                $"{(int)response.StatusCode}: {detail}",
+                null,
+                response.StatusCode);
+        }
         return await response.Content.ReadFromJsonAsync<T>(cancellationToken: cancellationToken)
             ?? throw new InvalidDataException("The Auraly server returned an empty catalog response.");
     }

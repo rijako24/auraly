@@ -171,7 +171,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
             WHERE d.DocumentId=@DocumentId;
 
             SELECT l.LineNumber,l.Direction,l.ProductId,l.ProductCode,l.ProductName,
-                   l.Quantity,l.SystemQuantityAtBase,
+                   l.Quantity,l.PreCountQuantity,l.SystemQuantityAtBase,
                    CASE WHEN @IncludeCosts=1 THEN l.ExplicitUnitCost END,
                    l.AllocationWeight,
                    CASE WHEN @IncludeCosts=1 THEN l.ProcessedUnitCost END,
@@ -179,13 +179,13 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
             FROM (
               SELECT l.InventoryOperationId DocumentId,l.LineNumber,l.Direction,l.ProductId,
                      l.ProductCodeSnapshot ProductCode,l.DescriptionSnapshot ProductName,
-                     l.Quantity,l.SystemQuantityAtBase,l.ExplicitUnitCost,l.AllocationWeight,
+                     l.Quantity,l.PreCountQuantity,l.SystemQuantityAtBase,l.ExplicitUnitCost,l.AllocationWeight,
                      l.ProcessedUnitCost,l.ProcessedValue
               FROM dbo.InventoryOperationLines l
               UNION ALL
               SELECT l.GoodsReceiptId,l.LineNumber,N'RECEIPT',l.ProductId,
                      COALESCE(p.ProductCode,p.Sku),l.DescriptionSnapshot,l.Quantity,
-                     NULL,l.UnitCost,NULL,l.UnitCost,l.LineTotal
+                     NULL,NULL,l.UnitCost,NULL,l.UnitCost,l.LineTotal
               FROM dbo.GoodsReceiptLines l
               INNER JOIN dbo.Products p ON p.ProductId=l.ProductId
             ) l
@@ -225,7 +225,8 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                 reader.IsDBNull(7) ? null : reader.GetDecimal(7),
                 reader.IsDBNull(8) ? null : reader.GetDecimal(8),
                 reader.IsDBNull(9) ? null : reader.GetDecimal(9),
-                reader.IsDBNull(10) ? null : reader.GetDecimal(10)));
+                reader.IsDBNull(10) ? null : reader.GetDecimal(10),
+                reader.IsDBNull(11) ? null : reader.GetDecimal(11)));
         return detail with { Lines = lines };
     }
 

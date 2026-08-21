@@ -30,15 +30,25 @@ public sealed partial class SqlCatalogStore
               AND i.ValidFrom<=SYSDATETIMEOFFSET()
               AND (i.ValidUntil IS NULL OR i.ValidUntil>SYSDATETIMEOFFSET());
 
-            SELECT i.PriceChannelId,i.ProductId,i.Amount,i.CurrencyCode,
-              CONVERT(bit,CASE WHEN e.ProductId IS NULL THEN 0 ELSE 1 END)
-            FROM dbo.ResolvedPriceChannelItems i
-            JOIN dbo.PriceChannels c ON c.PriceChannelId=i.PriceChannelId
-            LEFT JOIN dbo.PriceChannelExclusions e
-              ON e.PriceChannelId=i.PriceChannelId AND e.ProductId=i.ProductId
-            WHERE c.BusinessId=@BusinessId AND c.IsActive=1 AND i.IsActive=1
-              AND i.ValidFrom<=SYSDATETIMEOFFSET()
-              AND (i.ValidUntil IS NULL OR i.ValidUntil>SYSDATETIMEOFFSET());
+            SELECT c.PriceChannelId,p.ProductId,
+              ROUND(basePrice.Amount*(1+COALESCE(channelRule.NumericValue,0)/100),4),basePrice.CurrencyCode,
+              CONVERT(bit,0)
+            FROM dbo.PriceChannels c
+            JOIN dbo.Products p ON p.BusinessId=c.BusinessId AND p.IsActive=1
+            CROSS APPLY(SELECT TOP(1) pp.Amount,pp.CurrencyCode
+                        FROM dbo.ProductPrices pp
+                        WHERE pp.BusinessId=p.BusinessId AND pp.ProductId=p.ProductId AND pp.IsActive=1
+                          AND pp.ValidFrom<=SYSDATETIMEOFFSET()
+                          AND (pp.ValidUntil IS NULL OR pp.ValidUntil>SYSDATETIMEOFFSET())
+                        ORDER BY pp.ValidFrom DESC) basePrice
+            OUTER APPLY(SELECT TOP(1) sourceRule.NumericValue
+                        FROM dbo.PriceChannelRules sourceRule
+                        WHERE sourceRule.PriceChannelId=c.PriceChannelId AND sourceRule.RuleKind=N'PercentageVariation'
+                          AND sourceRule.AppliesTo=N'AllProducts' AND sourceRule.IsActive=1
+                          AND sourceRule.ValidFrom<=SYSDATETIMEOFFSET()
+                          AND (sourceRule.ValidUntil IS NULL OR sourceRule.ValidUntil>SYSDATETIMEOFFSET())
+                        ORDER BY sourceRule.ValidFrom DESC) channelRule
+            WHERE c.BusinessId=@BusinessId AND c.IsActive=1;
 
             SELECT c.CustomerId,
               COALESCE(p.NormalizedIdentification,p.Identification,N''),

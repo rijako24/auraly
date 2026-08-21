@@ -1,147 +1,67 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Pencil, Plus, ReceiptText } from "lucide-react";
 import { toast } from "sonner";
-import { taxationApi, type SaveWithholdingRule, type WithholdingBaseKind, type WithholdingDirection, type WithholdingKind } from "@/services/api/taxation";
-import { goodsReceiptsApi } from "@/services/api/goods-receipts";
-import { useBusinessContextStore } from "@/stores/business-context-store";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { DatePicker } from "@/components/ui/date-picker";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
+import { taxationApi, type SaveWithholdingRule, type WithholdingBaseKind, type WithholdingKind, type WithholdingRule } from "@/services/api/taxation";
+import { useBusinessContextStore } from "@/stores/business-context-store";
 
 const kindLabels: Record<WithholdingKind, string> = { IncomeTax: "Retefuente", Vat: "ReteIVA", IndustryCommerce: "ReteICA" };
 
 export default function WithholdingRulesPage() {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
-  const queryClient = useQueryClient();
-  const [kind, setKind] = useState<WithholdingKind>("IncomeTax");
-  const direction: WithholdingDirection = "Purchase";
-  const [code, setCode] = useState("");
-  const [name, setName] = useState("");
-  const [rate, setRate] = useState("");
-  const [minimumBase, setMinimumBase] = useState("0");
-  const [conceptCode, setConceptCode] = useState("");
-  const [jurisdictionCode, setJurisdictionCode] = useState("");
-  const [responsibilities, setResponsibilities] = useState("");
-  const [effectiveFrom, setEffectiveFrom] = useState(new Date().toISOString().slice(0, 10));
-  const [supplierId, setSupplierId] = useState("");
-  const [profileResponsibilities, setProfileResponsibilities] = useState("");
-  const [profileJurisdiction, setProfileJurisdiction] = useState("");
-  const [appliesWithholding, setAppliesWithholding] = useState(false);
-
-  const suppliers = useQuery({ queryKey: ["withholding-suppliers", businessId], queryFn: goodsReceiptsApi.options, enabled: Boolean(businessId) });
   const rules = useQuery({ queryKey: ["withholding-rules", businessId], queryFn: () => taxationApi.listRules(true), enabled: Boolean(businessId) });
-  const profile = useQuery({
-    queryKey: ["withholding-profile", businessId, supplierId],
-    queryFn: () => taxationApi.getProfile(supplierId),
-    enabled: Boolean(businessId && supplierId),
-    retry: false,
-  });
-  const baseKind: WithholdingBaseKind = kind === "Vat" ? "VatAmount" : "TaxExclusiveAmount";
-  const save = useMutation({
-    mutationFn: (request: SaveWithholdingRule) => taxationApi.createRule(request),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["withholding-rules", businessId] });
-      setCode(""); setName(""); setRate("");
-      toast.success("Regla de retención creada");
-    },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "No fue posible guardar la regla"),
-  });
-  const saveProfile = useMutation({
-    mutationFn: () => taxationApi.saveProfile({
-      businessId: businessId!, counterpartyId: supplierId,
-      appliesWithholding,
-      responsibilities: profileResponsibilities.split(",").map((value) => value.trim()).filter(Boolean),
-      jurisdictionCode: profileJurisdiction.trim() || null,
-    }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["withholding-profile", businessId, supplierId] });
-      toast.success("Perfil tributario del proveedor guardado");
-    },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "No fue posible guardar el perfil"),
-  });
-
-  useEffect(() => {
-    if (!supplierId) {
-      setProfileResponsibilities("");
-      setProfileJurisdiction("");
-      setAppliesWithholding(false);
-      return;
-    }
-    if (profile.data) {
-      setProfileResponsibilities(profile.data.responsibilities.join(", "));
-      setProfileJurisdiction(profile.data.jurisdictionCode ?? "");
-      setAppliesWithholding(profile.data.appliesWithholding);
-    } else if (!profile.isFetching) {
-      setProfileResponsibilities("");
-      setProfileJurisdiction("");
-      setAppliesWithholding(false);
-    }
-  }, [profile.data, profile.isFetching, supplierId]);
-
-  const grouped = useMemo(() => [...(rules.data ?? [])].sort((a, b) => a.code.localeCompare(b.code)), [rules.data]);
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    if (!businessId) return toast.error("Selecciona un negocio");
-    if (kind === "IndustryCommerce" && !jurisdictionCode.trim()) return toast.error("ReteICA requiere municipio o jurisdicción");
-    save.mutate({
-      businessId, code, name, kind, direction, moment: "Accrual", baseKind,
-      conceptCode: conceptCode.trim() || null,
-      jurisdictionCode: jurisdictionCode.trim() || null,
-      rate: Number(rate), minimumBase: Number(minimumBase),
-      requiredResponsibilities: responsibilities.split(",").map((value) => value.trim()).filter(Boolean),
-      effectiveFrom, effectiveTo: null, isActive: true,
-    });
-  };
+  const [editing, setEditing] = useState<WithholdingRule | null | undefined>(undefined);
+  const grouped = useMemo(() => [...(rules.data ?? [])].sort((a, b) => a.code.localeCompare(b.code) || b.version - a.version), [rules.data]);
+  const active = grouped.filter((rule) => rule.isActive).length;
 
   return <div className="space-y-6">
-    <div><h1 className="text-2xl font-semibold">Retenciones</h1><p className="text-sm text-muted-foreground">Reglas versionadas para retefuente, ReteIVA y ReteICA. Las facturas guardan una copia inmutable del cálculo aplicado.</p></div>
-    <Card><CardHeader><CardTitle>Nueva regla</CardTitle></CardHeader><CardContent>
-      <form onSubmit={submit} className="grid gap-4 md:grid-cols-3">
-        <Field label="Tipo"><Select value={kind} onValueChange={(value) => setKind(value as WithholdingKind)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="IncomeTax">Retefuente</SelectItem><SelectItem value="Vat">ReteIVA</SelectItem><SelectItem value="IndustryCommerce">ReteICA</SelectItem></SelectContent></Select></Field>
-        <Field label="Operación"><Input value="Compras" disabled /></Field>
-        <Field label="Reconocimiento"><Input value="En la causación" disabled /></Field>
-        <Field label="Base"><Input value={baseKind === "VatAmount" ? "IVA del documento" : "Subtotal sin impuestos"} disabled /></Field>
-        <Field label="Código"><Input value={code} onChange={(e) => setCode(e.target.value)} required maxLength={32} /></Field>
-        <Field label="Nombre"><Input value={name} onChange={(e) => setName(e.target.value)} required maxLength={120} /></Field>
-        <Field label="Tarifa %"><Input type="number" step="0.000001" min="0.000001" max="100" value={rate} onChange={(e) => setRate(e.target.value)} required /></Field>
-        <Field label="Base mínima"><Input type="number" step="0.01" min="0" value={minimumBase} onChange={(e) => setMinimumBase(e.target.value)} required /></Field>
-        <Field label="Concepto"><Input value={conceptCode} onChange={(e) => setConceptCode(e.target.value)} placeholder="Opcional" /></Field>
-        <Field label="Municipio / jurisdicción"><Input value={jurisdictionCode} onChange={(e) => setJurisdictionCode(e.target.value)} required={kind === "IndustryCommerce"} placeholder={kind === "IndustryCommerce" ? "Ej. 11001" : "Opcional"} /></Field>
-        <Field label="Responsabilidades requeridas"><Input value={responsibilities} onChange={(e) => setResponsibilities(e.target.value)} placeholder="Separadas por coma" /></Field>
-        <Field label="Vigente desde"><Input type="date" value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} required /></Field>
-        <div className="flex items-end"><Button type="submit" disabled={save.isPending}>{save.isPending ? "Guardando…" : "Crear versión"}</Button></div>
-      </form>
+    <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+      <div><p className="text-sm font-medium text-emerald-600">Impuestos y cumplimiento</p><h1 className="text-3xl font-bold tracking-tight">Retenciones</h1><p className="mt-1 text-muted-foreground">Consulta primero las reglas vigentes. Cada cambio crea una versión trazable para no alterar documentos anteriores.</p></div>
+      <Button onClick={() => setEditing(null)}><Plus className="mr-2 h-4 w-4" />Nueva regla</Button>
+    </header>
+    <div className="grid gap-4 sm:grid-cols-3"><Metric label="Reglas configuradas" value={grouped.length}/><Metric label="Reglas activas" value={active}/><Metric label="Tipos cubiertos" value={new Set(grouped.map((rule) => rule.kind)).size}/></div>
+    <Card><CardContent className="p-0">
+      <div className="border-b p-5"><h2 className="font-semibold">Reglas configuradas</h2><p className="text-sm text-muted-foreground">El motor cruza estas reglas con el perfil tributario guardado en cada proveedor.</p></div>
+      {rules.isLoading ? <p className="p-8 text-center text-sm text-muted-foreground">Cargando reglas…</p> : grouped.length === 0 ? <div className="p-10 text-center"><ReceiptText className="mx-auto mb-3 h-9 w-9 text-primary"/><p className="font-medium">Aún no hay reglas de retención</p><p className="mt-1 text-sm text-muted-foreground">Crea la primera regla para comenzar el cálculo automático.</p></div> :
+        <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="p-3 text-left font-semibold">Regla</th><th className="p-3 text-left font-semibold">Tipo</th><th className="p-3 text-right font-semibold">Tarifa</th><th className="p-3 text-right font-semibold">Base mínima</th><th className="p-3 text-left font-semibold">Vigencia</th><th className="p-3 text-left font-semibold">Estado</th><th className="p-3 text-right font-semibold">Acción</th></tr></thead><tbody>{grouped.map((rule) => <tr key={`${rule.ruleId}-${rule.version}`} className="border-t hover:bg-muted/20"><td className="p-3"><b>{rule.code} · {rule.name}</b><small className="block text-muted-foreground">Versión {rule.version}{rule.conceptCode ? ` · ${rule.conceptCode}` : ""}</small></td><td className="p-3">{kindLabels[rule.kind]}{rule.jurisdictionCode && <small className="block text-muted-foreground">Jurisdicción {rule.jurisdictionCode}</small>}</td><td className="p-3 text-right font-medium">{rule.rate}%</td><td className="p-3 text-right">$ {rule.minimumBase.toLocaleString("es-CO")}</td><td className="p-3">Desde {rule.effectiveFrom}</td><td className="p-3"><Badge variant={rule.isActive ? "secondary" : "outline"}>{rule.isActive ? "Activa" : "Inactiva"}</Badge></td><td className="p-3 text-right"><Button size="sm" variant="outline" onClick={() => setEditing(rule)}><Pencil className="mr-2 h-3.5 w-3.5"/>Nueva versión</Button></td></tr>)}</tbody></table></div>}
     </CardContent></Card>
-    <Card><CardHeader><CardTitle>Perfil tributario del proveedor</CardTitle></CardHeader><CardContent>
-      <div className="grid gap-4 md:grid-cols-3">
-        <Field label="Proveedor"><Select value={supplierId} onValueChange={setSupplierId}><SelectTrigger><SelectValue placeholder={suppliers.isLoading ? "Cargando proveedores…" : "Selecciona proveedor"} /></SelectTrigger><SelectContent>{(suppliers.data?.suppliers ?? []).map((supplier) => <SelectItem key={supplier.supplierId} value={supplier.supplierId}>{supplier.identification} — {supplier.name}</SelectItem>)}</SelectContent></Select></Field>
-        <Field label="Responsabilidades"><Input value={profileResponsibilities} onChange={(event) => setProfileResponsibilities(event.target.value)} placeholder="Separadas por coma" /></Field>
-        <Field label="Municipio / jurisdicción"><Input value={profileJurisdiction} onChange={(event) => setProfileJurisdiction(event.target.value)} placeholder="Ej. 11001" /></Field>
-      </div>
-      <div className="mt-4 flex items-center justify-between rounded-xl border bg-muted/20 p-4">
-        <div><p className="text-sm font-medium">Aplica retención</p><p className="text-xs text-muted-foreground">Al causarle compras o gastos, el motor calculará automáticamente las reglas que correspondan.</p></div>
-        <Switch checked={appliesWithholding} onCheckedChange={setAppliesWithholding} disabled={!supplierId} aria-label="Aplicar retenciones al proveedor" />
-      </div>
-      <div className="mt-4 flex justify-end"><Button type="button" disabled={!supplierId || saveProfile.isPending} onClick={() => saveProfile.mutate()}>
-        Guardar perfil tributario
-      </Button></div>
-      <p className="mt-3 text-xs text-muted-foreground">Si “Aplica retención” está apagado no se descontará ninguna regla. Si está encendido, responsabilidades, concepto, topes y jurisdicción determinan cuáles aplican.</p>
-    </CardContent></Card>
-
-    <Card><CardHeader><CardTitle>Reglas configuradas</CardTitle></CardHeader><CardContent>
-      {rules.isLoading ? <p className="text-sm text-muted-foreground">Cargando reglas…</p> : grouped.length === 0 ? <p className="text-sm text-muted-foreground">No hay reglas configuradas.</p> :
-        <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b text-left"><th className="py-2">Código</th><th>Tipo</th><th>Operación</th><th>Tarifa</th><th>Base mínima</th><th>Vigencia</th><th>Estado</th></tr></thead><tbody>{grouped.map((rule) => <tr key={`${rule.ruleId}-${rule.version}`} className="border-b"><td className="py-3 font-medium">{rule.code}<span className="ml-2 text-xs text-muted-foreground">v{rule.version}</span></td><td>{kindLabels[rule.kind]}</td><td>{rule.direction === "Purchase" ? "Compras" : "Ventas"}</td><td>{rule.rate}%</td><td>{rule.minimumBase.toLocaleString("es-CO")}</td><td>{rule.effectiveFrom}</td><td><Badge variant={rule.isActive ? "secondary" : "outline"}>{rule.isActive ? "Activa" : "Inactiva"}</Badge></td></tr>)}</tbody></table></div>}
-    </CardContent></Card>
+    <div className="rounded-2xl border border-primary/20 bg-primary/5 p-5"><h2 className="font-semibold">¿Dónde se configura el proveedor?</h2><p className="mt-1 text-sm text-muted-foreground">En <b>Terceros → Proveedor → Perfil tributario</b>. Allí se muestran responsabilidades, jurisdicción y si está sujeto a retención; esta vista queda dedicada únicamente a las reglas.</p></div>
+    {editing !== undefined && <RuleDialog businessId={businessId ?? ""} source={editing} onClose={() => setEditing(undefined)} />}
   </div>;
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return <div className="space-y-2"><Label>{label}</Label>{children}</div>;
+function RuleDialog({ businessId, source, onClose }: { businessId: string; source: WithholdingRule | null; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [kind, setKind] = useState<WithholdingKind>(source?.kind ?? "IncomeTax");
+  const [code, setCode] = useState(source?.code ?? ""); const [name, setName] = useState(source?.name ?? ""); const [rate, setRate] = useState(source ? String(source.rate) : "");
+  const [minimumBase, setMinimumBase] = useState(source ? String(source.minimumBase) : "0"); const [conceptCode, setConceptCode] = useState(source?.conceptCode ?? "");
+  const [jurisdictionCode, setJurisdictionCode] = useState(source?.jurisdictionCode ?? ""); const [responsibilities, setResponsibilities] = useState(source?.requiredResponsibilities.join(", ") ?? "");
+  const [effectiveFrom, setEffectiveFrom] = useState(new Date().toISOString().slice(0, 10)); const [isActive, setIsActive] = useState(source?.isActive ?? true);
+  const baseKind: WithholdingBaseKind = kind === "Vat" ? "VatAmount" : "TaxExclusiveAmount";
+  const save = useMutation({ mutationFn: (request: SaveWithholdingRule) => source ? taxationApi.updateRule(source.ruleId, request) : taxationApi.createRule(request), onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["withholding-rules", businessId] }); toast.success(source ? "Nueva versión de la regla creada" : "Regla creada"); onClose(); }, onError: (error) => toast.error(error instanceof Error ? error.message : "No fue posible guardar la regla") });
+  const submit = (event: FormEvent) => { event.preventDefault(); if (kind === "IndustryCommerce" && !jurisdictionCode.trim()) return toast.error("ReteICA requiere municipio o jurisdicción"); save.mutate({ businessId, code: code.trim(), name: name.trim(), kind, direction: "Purchase", moment: "Accrual", baseKind, conceptCode: conceptCode.trim() || null, jurisdictionCode: jurisdictionCode.trim() || null, rate: Number(rate), minimumBase: Number(minimumBase), requiredResponsibilities: responsibilities.split(",").map((value) => value.trim()).filter(Boolean), effectiveFrom, effectiveTo: null, isActive }); };
+  return <Dialog open onOpenChange={(open) => !open && onClose()}><DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto"><DialogHeader><DialogTitle>{source ? `Nueva versión de ${source.code}` : "Nueva regla de retención"}</DialogTitle><DialogDescription>{source ? "Se conservará la versión anterior para la trazabilidad de los documentos ya causados." : "Define cuándo y sobre qué base se calcula esta retención."}</DialogDescription></DialogHeader><form onSubmit={submit} className="grid gap-4 md:grid-cols-2">
+    <Field label="Tipo"><Select value={kind} onValueChange={(value) => setKind(value as WithholdingKind)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="IncomeTax">Retefuente</SelectItem><SelectItem value="Vat">ReteIVA</SelectItem><SelectItem value="IndustryCommerce">ReteICA</SelectItem></SelectContent></Select></Field>
+    <Field label="Base de cálculo"><Input value={baseKind === "VatAmount" ? "IVA del documento" : "Subtotal sin impuestos"} disabled/></Field>
+    <Field label="Código"><Input value={code} onChange={(event) => setCode(event.target.value)} required maxLength={32}/></Field><Field label="Nombre"><Input value={name} onChange={(event) => setName(event.target.value)} required maxLength={120}/></Field>
+    <Field label="Tarifa %"><Input type="number" step="0.000001" min="0.000001" max="100" value={rate} onChange={(event) => setRate(event.target.value)} required/></Field><Field label="Base mínima"><Input type="number" step="0.01" min="0" value={minimumBase} onChange={(event) => setMinimumBase(event.target.value)} required/></Field>
+    <Field label="Concepto"><Input value={conceptCode} onChange={(event) => setConceptCode(event.target.value)} placeholder="Opcional"/></Field><Field label="Municipio o jurisdicción"><Input value={jurisdictionCode} onChange={(event) => setJurisdictionCode(event.target.value)} required={kind === "IndustryCommerce"} placeholder={kind === "IndustryCommerce" ? "Ej. 11001" : "Opcional"}/></Field>
+    <Field label="Responsabilidades requeridas"><Input value={responsibilities} onChange={(event) => setResponsibilities(event.target.value)} placeholder="Separadas por coma"/></Field><Field label="Vigente desde"><DatePicker value={effectiveFrom} onChange={setEffectiveFrom}/></Field>
+    <label className="md:col-span-2 flex items-center gap-3 rounded-xl border p-4"><Checkbox checked={isActive} onCheckedChange={(value) => setIsActive(value === true)}/><span><b className="block text-sm">Regla activa</b><small className="text-muted-foreground">El motor podrá aplicarla desde la fecha de vigencia.</small></span></label>
+    <DialogFooter className="md:col-span-2 mt-2 gap-2 sm:gap-2"><Button type="button" variant="outline" onClick={onClose}>Cancelar</Button><Button type="submit" disabled={save.isPending || !businessId}>{save.isPending ? "Guardando…" : source ? "Crear nueva versión" : "Crear regla"}</Button></DialogFooter>
+  </form></DialogContent></Dialog>;
 }
+
+function Metric({ label, value }: { label: string; value: number }) { return <div className="rounded-2xl border bg-card p-5"><p className="text-sm text-muted-foreground">{label}</p><p className="mt-1 text-2xl font-bold">{value}</p></div>; }
+function Field({ label, children }: { label: string; children: ReactNode }) { return <div className="space-y-2"><Label>{label}</Label>{children}</div>; }

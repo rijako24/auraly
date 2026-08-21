@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BadgePercent, CalendarClock, Check, CircleDollarSign, Layers3, Pencil, Plus, Radio, Search, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
@@ -13,12 +13,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useProducts } from "@/hooks/use-products";
+import { InventoryProductPicker } from "@/components/inventory/inventory-operation-workspace";
 import { formatCurrency } from "@/lib/utils";
 import { priceSegmentsApi, type PriceSegmentItem, type PriceSegmentKind, type PriceSegmentSummary } from "@/services/api/price-segments";
 import { useAuthStore } from "@/stores/auth-store";
+import { useBusinessContextStore } from "@/stores/business-context-store";
 
 type ItemDraft = {
   originalMinimumQuantity: number | null;
@@ -44,12 +44,13 @@ export function PriceSegmentsManager() {
   const [kind, setKind] = useState<PriceSegmentKind>("PriceList");
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
+  const [channelVariation, setChannelVariation] = useState(0);
 
   const segments = useQuery({ queryKey: ["price-segments"], queryFn: priceSegmentsApi.list });
   const items = useQuery({
     queryKey: ["price-segments", selected?.kind, selected?.id],
     queryFn: () => priceSegmentsApi.items(selected!.kind, selected!.id),
-    enabled: Boolean(selected),
+    enabled: selected?.kind === "PriceList",
   });
 
   const create = useMutation({
@@ -105,6 +106,19 @@ export function PriceSegmentsManager() {
     onError: (error: { message?: string }) => toast.error(error.message ?? "No fue posible retirar el producto."),
   });
 
+  const saveChannel = useMutation({
+    mutationFn: async () => {
+      if (!selected || selected.kind !== "PriceChannel") return;
+      await priceSegmentsApi.saveChannelSettings(selected.id, channelVariation);
+    },
+    onSuccess: async () => {
+      await client.invalidateQueries({ queryKey: ["price-segments"] });
+      setSelected((current) => current ? { ...current, priceVariationPercent: channelVariation } : current);
+      toast.success("Regla general del canal guardada.");
+    },
+    onError: (error: { message?: string }) => toast.error(error.message ?? "No fue posible guardar la regla del canal."),
+  });
+
   const filtered = useMemo(() => {
     const term = search.trim().toLocaleLowerCase("es-CO");
     return (segments.data ?? []).filter((segment) =>
@@ -133,7 +147,7 @@ export function PriceSegmentsManager() {
             <TabsContent key={tab} value={tab} className="mt-5">
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                 {filtered.filter((segment) => segment.kind === tab).map((segment) =>
-                  <button key={segment.id} type="button" className="group rounded-2xl border bg-background p-5 text-left transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md" onClick={() => setSelected(segment)}>
+                  <button key={segment.id} type="button" className="group rounded-2xl border bg-background p-5 text-left transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md" onClick={() => { setSelected(segment); setChannelVariation(segment.priceVariationPercent ?? 0); }}>
                     <div className="flex items-start justify-between gap-3">
                       <span className="grid h-11 w-11 place-items-center rounded-xl bg-primary/10 text-primary">{tab === "PriceList" ? <Layers3 className="h-5 w-5" /> : <Radio className="h-5 w-5" />}</span>
                       <Badge variant={segment.isActive ? "secondary" : "outline"}>{segment.isActive ? "Activo" : "Inactivo"}</Badge>
@@ -141,7 +155,7 @@ export function PriceSegmentsManager() {
                     <h2 className="mt-4 font-semibold">{segment.name}</h2>
                     <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{segment.code}</p>
                     <div className="mt-5 grid grid-cols-2 gap-3 border-t pt-4 text-sm">
-                      <span><b className="block text-lg text-foreground">{segment.productCount}</b><small className="text-muted-foreground">Productos</small></span>
+                      <span><b className="block text-lg text-foreground">{segment.kind === "PriceList" ? segment.productCount : `${segment.priceVariationPercent && segment.priceVariationPercent > 0 ? "+" : ""}${segment.priceVariationPercent ?? 0} %`}</b><small className="text-muted-foreground">{segment.kind === "PriceList" ? "Productos" : "Variación general"}</small></span>
                       <span><b className="block text-lg text-foreground">{segment.customerCount}</b><small className="text-muted-foreground">Clientes</small></span>
                     </div>
                   </button>)}
@@ -177,18 +191,22 @@ export function PriceSegmentsManager() {
           <DialogHeader>
             <div className="flex items-start gap-3">
               <span className="grid h-11 w-11 place-items-center rounded-xl bg-primary/10 text-primary">{selected.kind === "PriceList" ? <Layers3 className="h-5 w-5" /> : <Radio className="h-5 w-5" />}</span>
-              <div><DialogTitle>{selected.name}</DialogTitle><DialogDescription>{selected.code} · {selected.kind === "PriceList" ? "Escalas por cantidad" : "Precio o exclusión por canal"}</DialogDescription></div>
+              <div><DialogTitle>{selected.name}</DialogTitle><DialogDescription>{selected.code} · {selected.kind === "PriceList" ? "Escalas por cantidad" : "Regla general para todo el catálogo"}</DialogDescription></div>
             </div>
           </DialogHeader>
           <div className="grid gap-3 sm:grid-cols-3">
-            <Metric icon={BadgePercent} label="Condiciones" value={items.data?.length ?? 0} />
+            <Metric icon={BadgePercent} label={selected.kind === "PriceList" ? "Condiciones" : "Variación"} value={selected.kind === "PriceList" ? items.data?.length ?? 0 : `${channelVariation > 0 ? "+" : ""}${channelVariation} %`} />
             <Metric icon={Users} label="Clientes asignados" value={selected.customerCount} />
             <Metric icon={CircleDollarSign} label="Tipo" value={selected.kind === "PriceList" ? "Lista" : "Canal"} />
           </div>
-          <div className="flex items-center justify-between gap-3 border-t pt-4">
+          {selected.kind === "PriceList" ? <><div className="flex items-center justify-between gap-3 border-t pt-4">
             <div><h3 className="font-semibold">Productos y condiciones</h3><p className="text-sm text-muted-foreground">{selected.kind === "PriceList" ? "Un producto puede tener varias escalas." : "Define un precio propio o exclúyelo del canal."}</p></div>
             {canManage && <Button onClick={() => setDraft(emptyDraft())}><Plus className="mr-2 h-4 w-4" />Agregar producto</Button>}
-          </div>
+          </div></> : <div className="space-y-5 rounded-2xl border bg-muted/20 p-5">
+            <div><h3 className="font-semibold">Regla de precio del canal</h3><p className="text-sm text-muted-foreground">Este porcentaje se aplica al precio público de todos los productos. Usa un valor negativo para reducirlo.</p></div>
+            <div className="max-w-sm space-y-2"><Label>Variación sobre el precio público</Label><FormattedNumberInput kind="percent" value={channelVariation} invalid={channelVariation < -100 || channelVariation > 1000} onValueChange={(value) => setChannelVariation(value ?? 0)} /><p className="text-xs text-muted-foreground">Ejemplo: 10 % aumenta todo el catálogo; -5 % lo reduce.</p></div>
+            {canManage && <Button disabled={saveChannel.isPending || channelVariation < -100 || channelVariation > 1000} onClick={() => saveChannel.mutate()}>{saveChannel.isPending ? "Guardando…" : "Guardar regla del canal"}</Button>}
+          </div>}
           <div className="overflow-hidden rounded-xl border">
             <table className="w-full text-sm">
               <thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-3 text-left">Producto</th>{selected.kind === "PriceList" && <th className="px-4 py-3 text-right">Desde</th>}<th className="px-4 py-3 text-right">Precio</th><th className="px-4 py-3 text-left">Vigencia</th><th className="w-24" /></tr></thead>
@@ -208,7 +226,7 @@ export function PriceSegmentsManager() {
       </DialogContent>
     </Dialog>
 
-    <PriceItemDialog segment={selected} draft={draft} onChange={setDraft} onSave={(value) => saveItem.mutate(value)} saving={saveItem.isPending} />
+    <PriceItemDialog segment={selected?.kind === "PriceList" ? selected : null} draft={draft} onChange={setDraft} onSave={(value) => saveItem.mutate(value)} saving={saveItem.isPending} />
 
     <Dialog open={Boolean(deleteItem)} onOpenChange={(open) => { if (!open) setDeleteItem(null); }}>
       <DialogContent>
@@ -220,11 +238,8 @@ export function PriceSegmentsManager() {
 }
 
 function PriceItemDialog({ segment, draft, onChange, onSave, saving }: { segment: PriceSegmentSummary | null; draft: ItemDraft | null; onChange: (value: ItemDraft | null) => void; onSave: (value: ItemDraft) => void; saving: boolean }) {
-  const [productSearch, setProductSearch] = useState("");
-  const products = useProducts({ page: 1, pageSize: 50, search: productSearch || undefined, includeInactive: false });
+  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const isNew = draft?.originalMinimumQuantity === null;
-
-  useEffect(() => { if (!draft) setProductSearch(""); }, [draft]);
 
   return <Dialog open={Boolean(draft)} onOpenChange={(open) => { if (!open) onChange(null); }}>
     <DialogContent className="max-w-2xl">
@@ -232,19 +247,13 @@ function PriceItemDialog({ segment, draft, onChange, onSave, saving }: { segment
         <DialogHeader><DialogTitle>{isNew ? "Agregar producto" : "Editar condición"}</DialogTitle><DialogDescription>{segment.kind === "PriceList" ? "Define el precio y la cantidad desde la cual aplica." : "Define el precio del canal o marca el producto como excluido."}</DialogDescription></DialogHeader>
         <div className="space-y-4">
           {isNew ? <div className="space-y-2">
-            <Label>Producto *</Label>
-            <div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input className="pl-9" value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder="Buscar por nombre, código, referencia o código de barras" /></div>
-            <div className="max-h-48 overflow-y-auto rounded-xl border p-1">
-              {(products.data?.items ?? []).map((product) => <button key={product.productId} type="button" className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left hover:bg-muted" onClick={() => { onChange({ ...draft, productId: product.productId, productCode: product.productCode ?? product.sku ?? "", productName: product.name, amount: product.unitPrice }); setProductSearch(product.name); }}><span><b className="block text-sm">{product.name}</b><small className="text-muted-foreground">{product.productCode ?? product.sku ?? "Sin código"}</small></span><span className="font-medium">{formatCurrency(product.unitPrice)}</span></button>)}
-              {!products.isLoading && (products.data?.items ?? []).length === 0 && <p className="p-4 text-center text-sm text-muted-foreground">Sin datos</p>}
-            </div>
+            {businessId && <InventoryProductPicker businessId={businessId} selectedProductIds={new Set(draft.productId ? [draft.productId] : [])} disabled={saving} label="Producto *" onSelect={(product) => onChange({ ...draft, productId: product.productId, productCode: product.productCode, productName: product.productName, amount: product.saleUnitPrice ?? 0 })} />}
             {draft.productId && <p className="flex items-center gap-2 text-sm text-primary"><Check className="h-4 w-4" />{draft.productName}</p>}
           </div> : <div className="rounded-xl border bg-muted/20 p-3"><b>{draft.productName}</b><p className="text-xs text-muted-foreground">{draft.productCode}</p></div>}
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2"><Label>Precio *</Label><FormattedNumberInput kind="currency" value={draft.amount} invalid={draft.amount <= 0} onValueChange={(value) => onChange({ ...draft, amount: value ?? 0 })} /></div>
             {segment.kind === "PriceList" && <div className="space-y-2"><Label>Cantidad mínima *</Label><FormattedNumberInput value={draft.minimumQuantity} invalid={draft.minimumQuantity <= 0} onValueChange={(value) => onChange({ ...draft, minimumQuantity: value ?? 0 })} /></div>}
           </div>
-          {segment.kind === "PriceChannel" && <div className="flex items-center justify-between rounded-xl border p-4"><div><Label>Excluir del canal</Label><p className="text-xs text-muted-foreground">El producto no estará disponible en este canal.</p></div><Switch checked={draft.excluded} onCheckedChange={(excluded) => onChange({ ...draft, excluded })} /></div>}
           <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label>Válido desde</Label><DateTimePicker value={draft.validFrom} onChange={(validFrom) => onChange({ ...draft, validFrom })} /></div><div className="space-y-2"><Label>Válido hasta</Label><DateTimePicker value={draft.validUntil} onChange={(validUntil) => onChange({ ...draft, validUntil })} /></div></div>
         </div>
         <DialogFooter><Button variant="outline" onClick={() => onChange(null)}>Cancelar</Button><Button disabled={saving || !draft.productId || draft.amount <= 0 || draft.minimumQuantity <= 0} onClick={() => onSave(draft)}>{saving ? "Guardando…" : "Guardar condición"}</Button></DialogFooter>

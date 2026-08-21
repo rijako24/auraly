@@ -22,6 +22,7 @@ export type PosCatalogProduct = {
   unitPrice: number;
   currencyCode: string;
   isActive: boolean;
+  priceSource: "Public" | "Base" | "PriceList" | "PriceChannel";
 };
 export type PosCatalogSearchPage = {
   items: PosCatalogProduct[];
@@ -293,7 +294,7 @@ export interface PosClient {
     catalogUpdatedAt: string | null;
   }>;
   synchronizeNow(): Promise<void>;
-  searchProducts(search?: string, skip?: number, take?: number): Promise<PosCatalogSearchPage>;
+  searchProducts(search?: string, skip?: number, take?: number, customerId?: string | null): Promise<PosCatalogSearchPage>;
   searchCustomers(search?: string, skip?: number, take?: number): Promise<PosCustomerSearchPage>;
   customer(customerId: string): Promise<PosCustomer>;
   customerCountries(): Promise<PosCountry[]>;
@@ -367,12 +368,56 @@ export type PosPrinterConfiguration = {
   receiptPrinterName: string | null;
   receiptPaperWidthMillimeters: 58 | 80;
   letterPrinterName: string | null;
+  orderMode: "BrowserPreview" | "WindowsPrint";
+  posOutputFormat: "Receipt" | "HalfLetter";
+  ordersOutputFormat: "Receipt" | "HalfLetter";
+  templateRoutes: Array<{
+    documentType: "SalesInvoice" | "SalesReceipt";
+    format: "Receipt" | "HalfLetter";
+    printerName: string | null;
+  }> | null;
 };
 
 export type PosPrinterConfigurationView = {
   configuration: PosPrinterConfiguration;
   installedPrinters: string[];
 };
+
+const BROWSER_PRINTER_CONFIGURATION_KEY = "auraly.printing.configuration.v1";
+
+export function loadBrowserPrinterConfiguration(): PosPrinterConfiguration {
+  const defaults: PosPrinterConfiguration = {
+    receiptMode: "BrowserPreview",
+    receiptPrinterName: null,
+    receiptPaperWidthMillimeters: 80,
+    letterPrinterName: null,
+    orderMode: "BrowserPreview",
+    posOutputFormat: "Receipt",
+    ordersOutputFormat: "HalfLetter",
+    templateRoutes: null,
+  };
+  if (typeof window === "undefined") return defaults;
+  try {
+    return { ...defaults, ...JSON.parse(window.localStorage.getItem(
+      BROWSER_PRINTER_CONFIGURATION_KEY) ?? "{}") };
+  } catch {
+    return defaults;
+  }
+}
+
+export function saveBrowserPrinterConfiguration(
+  configuration: PosPrinterConfiguration,
+) {
+  window.localStorage.setItem(
+    BROWSER_PRINTER_CONFIGURATION_KEY,
+    JSON.stringify({
+      ...configuration,
+      receiptMode: "BrowserPreview",
+      orderMode: "BrowserPreview",
+    }),
+  );
+  return loadBrowserPrinterConfiguration();
+}
 
 export class PosEdgeClient implements PosClient {
   readonly mode = "edge" as const;
@@ -496,12 +541,13 @@ export class PosEdgeClient implements PosClient {
     window.sessionStorage.removeItem("auraly.pos.user-session");
   }
 
-  searchProducts(search = "", skip = 0, take = 50) {
+  searchProducts(search = "", skip = 0, take = 50, customerId: string | null = null) {
     const query = new URLSearchParams({
       search,
       skip: String(skip),
       take: String(take),
     });
+    if (customerId) query.set("customerId", customerId);
     return this.request<PosCatalogSearchPage>(
       `/edge/v1/catalog/products?${query}`,
     );

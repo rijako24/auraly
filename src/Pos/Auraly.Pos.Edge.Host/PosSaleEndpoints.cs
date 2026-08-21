@@ -112,13 +112,17 @@ internal static class PosSaleHostModule
             sp.GetRequiredService<TimeProvider>()));
         services.AddSingleton<EscPosReceiptRenderer>();
         services.AddSingleton<HtmlReceiptPreviewRenderer>();
+        services.AddSingleton<HalfLetterDocumentRenderer>();
         services.AddSingleton<IReceiptPreviewLauncher, ShellReceiptPreviewLauncher>();
         var dataDirectory = Path.GetDirectoryName(Path.GetFullPath(databasePath))!;
         services.AddSingleton(new PosPrinterConfigurationStore(
             Path.Combine(dataDirectory, "printer-settings.json"),
             configuration["PosEdge:ReceiptOutputDirectory"]
                 ?? Path.Combine(dataDirectory, "receipts")));
-        services.AddSingleton<IPosReceiptPrinter, ConfigurablePosReceiptPrinter>();
+        services.AddSingleton<ConfigurableOrderDocumentPrinter>();
+        services.AddSingleton<ConfigurablePosReceiptPrinter>();
+        services.AddSingleton<IPosReceiptPrinter>(sp =>
+            sp.GetRequiredService<ConfigurablePosReceiptPrinter>());
         services.AddSingleton<PosSaleCompletionService>();
         services.AddHostedService<PosSaleStorageInitializer>();
         return services;

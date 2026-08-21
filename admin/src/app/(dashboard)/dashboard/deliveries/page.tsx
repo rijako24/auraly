@@ -5,8 +5,5 @@ import { useAuthStore } from "@/stores/auth-store";
 
 export default function MyDeliveriesPage() {
   const permissions = new Set(useAuthStore((state) => state.user?.permissions ?? []));
-  return <TransportDispatchApp
-    canExecute={permissions.has("dispatches.delivery.execute")}
-    canSettle={permissions.has("dispatches.settle")}
-  />;
+  return <TransportDispatchApp canExecute={permissions.has("dispatches.delivery.execute")} />;
 }

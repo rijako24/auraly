@@ -191,6 +191,36 @@ public sealed class EscPosReceiptRendererTests
         Assert.DoesNotContain("<svg", html);
     }
 
+    [Fact]
+    public void Half_letter_renders_two_identical_copies_on_each_letter_sheet()
+    {
+        var receipt = new OnlineSalesReceipt(
+            Guid.NewGuid(),
+            PosSaleDocumentTypes.Invoice,
+            "VTA01-00000999",
+            "FE999",
+            DateTimeOffset.UtcNow,
+            "222222222",
+            [new OnlineSalesReceiptLine(
+                "P-001", "Producto", 2m, 10_000m, 0m, 3_800m, 23_800m)],
+            [new OnlineSalesPayment("Cash", 23_800m, null)],
+            20_000m,
+            3_800m,
+            23_800m,
+            "cufe-999",
+            "https://catalogo-vpfe.dian.gov.co/document/searchqr?documentkey=cufe-999",
+            "Accepted",
+            "Cliente prueba");
+
+        var html = new HalfLetterDocumentRenderer().Render([receipt]);
+
+        Assert.Contains("@page { size: Letter portrait;", html);
+        Assert.Contains("CORTE MEDIA CARTA", html);
+        Assert.Equal(2, html.Split("VTA01-00000999").Length - 1);
+        Assert.Equal(2, html.Split("Cliente prueba").Length - 1);
+        Assert.Contains("data:image/svg+xml;base64", html);
+    }
+
     private static PosReceipt Receipt() =>
         new(
             Guid.NewGuid(),

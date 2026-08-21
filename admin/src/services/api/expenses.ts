@@ -12,7 +12,7 @@ export type SaveExpenseConcept = { conceptId: string; businessId: string; code: 
 
 export const expensesApi = {
   options: () => apiClient.get<ExpenseOptions>("/commerce/v1/expenses/options"),
-  list: (page = 1) => apiClient.get<ExpensePage>("/commerce/v1/expenses", { page, pageSize: 25 }),
+  list: (params:{page:number;pageSize:number;search?:string}) => apiClient.get<ExpensePage>("/commerce/v1/expenses", params),
   confirm: (request: ConfirmExpense) => apiClient.postIdempotent("/commerce/v1/expenses/confirm", request, request.expenseId),
   saveConcept: (request: SaveExpenseConcept) => apiClient.put<ExpenseConcept>(`/commerce/v1/expenses/concepts/${request.conceptId}`, request),
 };

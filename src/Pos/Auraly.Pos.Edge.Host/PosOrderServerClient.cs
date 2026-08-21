@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using Auraly.Contracts.Orders;
+using Auraly.Contracts.Sales;
 using Auraly.Pos.Edge.Infrastructure;
 
 namespace Auraly.Pos.Edge.Host;
@@ -75,6 +76,17 @@ public sealed class PosOrderServerClient(
                 paymentReference = (string?)null
             }),
             idempotencyKey,
+            cancellationToken);
+
+    public Task<OnlineSalesReceipt> ReceiptAsync(
+        PosLocalUserSession session,
+        Guid documentId,
+        CancellationToken cancellationToken) =>
+        SendAsync<OnlineSalesReceipt>(
+            HttpMethod.Get,
+            $"/api/pos/v1/orders/documents/{documentId:D}/receipt?{ContextQuery(session)}",
+            null,
+            null,
             cancellationToken);
 
     private string ContextQuery(PosLocalUserSession session) =>

@@ -167,6 +167,7 @@ export default function PosPage() {
     useState<PosCashMovementDirection | null>(null);
   const [printerOpen, setPrinterOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<PosCustomer | null>(null);
+  const [pricingTransition, setPricingTransition] = useState(false);
   const [documentType, setDocumentType] = useState<PosSaleDocumentType>("SalesReceipt");
 
   const [sidePanel, setSidePanel] = useState<"temporaries" | "orders">("temporaries");
@@ -938,6 +939,7 @@ export default function PosPage() {
   async function selectCustomer(customer: PosCustomer | null) {
     if (!client || !draft || busy) return;
     setBusy(true);
+    setPricingTransition(true);
     setError(null);
     try {
       const selection = await client.selectCustomer(
@@ -956,6 +958,7 @@ export default function PosPage() {
       showError(caught);
     } finally {
       setBusy(false);
+      setPricingTransition(false);
       focusScanner();
     }
   }
@@ -1129,13 +1132,13 @@ export default function PosPage() {
 
   const searchProducts = useCallback(
     (term: string, skip: number) =>
-      client?.searchProducts(term, skip, 50) ??
+      client?.searchProducts(term, skip, 50, selectedCustomer?.customerId ?? null) ??
       Promise.resolve({
         items: [],
         hasMore: false,
         nextOffset: null,
       }),
-    [client],
+    [client, selectedCustomer?.customerId],
   );
 
   const searchCustomers = useCallback(
@@ -1270,7 +1273,8 @@ export default function PosPage() {
       documentType,
     );
     setMessage(
-      result.completedCount +
+      (result.printError ? result.printError + " · " : "") +
+        result.completedCount +
         " pedido" +
         (result.completedCount === 1 ? "" : "s") +
         " facturado" +
@@ -1625,16 +1629,16 @@ edgeCapable={edgeEnrollmentRequired}
               <span className="hidden lg:inline">Modo online</span>
             </button>
           )}
-          {client instanceof PosEdgeClient && (
+          {client && (
             <button
               type="button"
               onClick={() => setPrinterOpen(true)}
               disabled={busy}
               title="Configurar impresoras de tirilla y carta"
-              className="flex h-8 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-xs font-semibold text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
+              className="grid h-8 w-8 place-items-center rounded-lg border border-white/10 text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
+              aria-label="Configurar impresora"
             >
               <Printer className="h-4 w-4" />
-              <span className="hidden lg:inline">Impresoras</span>
             </button>
           )}
           {client.mode === "edge" && serverConnected && (
@@ -2160,6 +2164,7 @@ edgeCapable={edgeEnrollmentRequired}
                     documentType,
                   )
                 }
+                onConfigurePrinting={() => setPrinterOpen(true)}
                 onExpand={openOrders}
               />
             )}
@@ -2202,6 +2207,7 @@ edgeCapable={edgeEnrollmentRequired}
                   documentType,
                 )
               }
+              onConfigurePrinting={() => setPrinterOpen(true)}
             />
           </main>
         </div>
@@ -2278,8 +2284,9 @@ edgeCapable={edgeEnrollmentRequired}
         />
       )}
 
-      {printerOpen && client instanceof PosEdgeClient && (
-        <PosPrinterDialog client={client} onClose={() => setPrinterOpen(false)} />
+      {printerOpen && client && (
+        <PosPrinterDialog client={client instanceof PosEdgeClient ? client : null}
+          onClose={() => setPrinterOpen(false)} />
       )}
 
       {invoiceSearchOpen && client && (
@@ -2426,6 +2433,7 @@ edgeCapable={edgeEnrollmentRequired}
           </form>
         </div>
       )}
+      {pricingTransition && <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/45 p-4" role="status" aria-live="assertive"><div className="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-2xl"><Loader2 className="mx-auto h-8 w-8 animate-spin text-teal-700"/><h2 className="mt-4 text-lg font-semibold">Actualizando precios</h2><p className="mt-1 text-sm text-slate-500">Aplicando la lista o el canal del cliente a todos los productos de la venta.</p></div></div>}
     </main>
   );
 }

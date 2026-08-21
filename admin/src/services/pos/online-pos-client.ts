@@ -24,6 +24,7 @@ import {
   PosDraft,
   PosDraftLine,
   PosEdgeError,
+  loadBrowserPrinterConfiguration,
   PosIssuedSaleSearchPage,
   PosIssuedSaleSummary,
   PosNextNumbers,
@@ -297,10 +298,10 @@ export class OnlinePosClient implements PosClient {
   }
 
 
-  async searchProducts(search = "", skip = 0, take = 50) {
+  async searchProducts(search = "", skip = 0, take = 50, customerId: string | null = null) {
     const page = await request<OnlineProductPage>(
       "/api/commerce/v1/pos/drafts/products/search",
-      this.post({ context: this.scope(), search, skip, take }),
+      this.post({ context: this.scope(), search, skip, take, customerId }),
     );
     return page satisfies PosCatalogSearchPage;
   }
@@ -551,7 +552,11 @@ export class OnlinePosClient implements PosClient {
     payments: PosPaymentInput[],
     documentType: PosSaleDocumentType,
   ) {
-    const preview = openPrintPreview();
+    const printConfiguration = loadBrowserPrinterConfiguration();
+    const halfLetter = printConfiguration.posOutputFormat === "HalfLetter";
+    const preview = halfLetter
+      ? openHalfLetterPrintPreview()
+      : openPrintPreview();
     try {
       const result = await request<OnlineCheckoutResponse>(
         `/api/commerce/v1/pos/drafts/${draftId}/complete`,
@@ -561,14 +566,12 @@ export class OnlinePosClient implements PosClient {
         }, "POST", `online-sale-${draftId}`),
       );
       const nextDraft = this.mapDraft(result.nextDraft);
-      if (preview)
-        await renderReceipt(
-          preview,
-          result.receipt,
+      if (halfLetter)
+        await renderReceiptsHalfLetter(preview, [result.receipt], this.context);
+      else if (preview)
+        await renderReceipt(preview, result.receipt,
           result.receipt.documentType === "SalesInvoice"
-            ? this.qrImageUrl(result.receipt.documentId)
-            : null,
-        );
+            ? this.qrImageUrl(result.receipt.documentId) : null);
       return {
         issuedSale: {
           documentId: { value: result.receipt.documentId },
@@ -660,6 +663,11 @@ export class OnlinePosClient implements PosClient {
     paymentMethodCode: string,
     documentType: "SalesInvoice" | "SalesReceipt",
   ): Promise<InvoiceOrdersResponse> {
+    const printConfiguration = loadBrowserPrinterConfiguration();
+    const halfLetter = printConfiguration.ordersOutputFormat === "HalfLetter";
+    const preview = halfLetter
+      ? openHalfLetterPrintPreview()
+      : openPrintPreview();
     const response = await invoiceCommerceOrders({
       workSessionId: this.context.workSessionId,
       warehouseId: this.context.warehouseId,
@@ -669,6 +677,19 @@ export class OnlinePosClient implements PosClient {
       paymentReference: null,
       documentType,
     });
+    try {
+      if (halfLetter)
+        await renderInvoiceOrdersHalfLetter(preview, response, this.context);
+      else
+        await renderInvoiceOrdersReceipt(preview, response, this.context);
+      response.printStatus = response.completedCount ? "Sent" : "NotRequired";
+    } catch (error) {
+      preview?.close();
+      response.printStatus = "Failed";
+      response.printError = `Los pedidos se facturaron, pero no fue posible imprimir: ${
+        error instanceof Error ? error.message : "error desconocido"
+      }`;
+    }
     await this.activeDraft();
     return response;
   }
@@ -813,6 +834,102 @@ function openPrintPreview(): Window | null {
     "_blank",
     "popup=yes,width=460,height=760,resizable=yes,scrollbars=yes",
   );
+}
+
+export function openHalfLetterPrintPreview(): Window | null {
+  return window.open(
+    "",
+    "_blank",
+    "popup=yes,width=920,height=820,resizable=yes,scrollbars=yes",
+  );
+}
+
+export async function renderInvoiceOrdersReceipt(
+  preview: Window | null,
+  response: InvoiceOrdersResponse,
+  context: Pick<SalesWorkspaceContext, "businessId" | "warehouseId" | "workSessionId">,
+) {
+  const documentIds = response.results.flatMap((result) =>
+    result.documentId && !result.error ? [result.documentId] : []);
+  if (!documentIds.length) { preview?.close(); return; }
+  if (!preview) throw new Error("El navegador bloqueó la vista previa de impresión.");
+  const receipts = await Promise.all(documentIds.map((documentId) =>
+    request<PosPrintableReceipt>(
+      `/api/commerce/v1/pos/drafts/sales/${documentId}/receipt`,
+      { method: "POST", body: JSON.stringify(context) },
+    )));
+  const currency = new Intl.NumberFormat("es-CO", {
+    style: "currency", currency: "COP", maximumFractionDigits: 0,
+  });
+  const documents = receipts.map((receipt) => {
+    const title = receipt.documentType === "SalesInvoice"
+      ? "FACTURA ELECTRÓNICA DE VENTA" : "COMPROBANTE DE VENTA";
+    const lines = receipt.lines.map((line) => `<div class="line"><b>${escapeHtml(line.description)}</b><div><span>${line.quantity} × ${currency.format(line.unitPrice)}</span><b>${currency.format(line.total)}</b></div></div>`).join("");
+    const qr = receipt.documentType === "SalesInvoice"
+      ? `<img src="${window.location.origin}/api/commerce/v1/pos/drafts/sales/${receipt.documentId}/qr?businessId=${context.businessId}&warehouseId=${context.warehouseId}&workSessionId=${context.workSessionId}" alt="QR DIAN">` : "";
+    return `<article><header><h1>Auraly</h1><h2>${title}</h2><b>${escapeHtml(receipt.documentNumber)}</b><br>${new Date(receipt.issuedAt).toLocaleString("es-CO")}</header><section class="meta"><div><span>Cliente</span><b>${escapeHtml(receipt.customerName)}</b></div><div><span>Identificación</span><b>${escapeHtml(receipt.customerIdentification)}</b></div></section>${lines}<section class="totals"><div><span>Subtotal</span><b>${currency.format(receipt.untaxedAmount)}</b></div><div><span>Impuestos</span><b>${currency.format(receipt.taxAmount)}</b></div><div class="total"><span>Total</span><b>${currency.format(receipt.payableAmount)}</b></div></section>${receipt.cufe ? `<p class="cufe"><b>CUFE</b><br>${escapeHtml(receipt.cufe)}</p>` : ""}${qr}<footer>${title}</footer></article>`;
+  }).join("");
+  preview.document.open();
+  preview.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Tirillas Auraly</title><style>@page{size:80mm auto;margin:4mm}*{box-sizing:border-box}body{width:72mm;margin:0 auto;color:#111;font:12px/1.35 ui-monospace,Consolas,monospace}article{page-break-after:always}article:last-child{page-break-after:auto}header{text-align:center;border-bottom:1px dashed #555;padding-bottom:8px}h1{margin:0;font:800 19px/1.2 Arial,sans-serif}h2{margin:4px 0;font-size:12px}.meta,.totals{padding:8px 0;border-bottom:1px dashed #555}.meta div,.totals div,.line div{display:flex;justify-content:space-between;gap:10px}.line{padding:8px 0;border-bottom:1px dashed #aaa}.total{margin-top:5px;font-size:16px}.cufe{overflow-wrap:anywhere;font-size:9px}img{display:block;width:42mm;height:42mm;margin:9px auto 4px}footer{text-align:center;padding-top:6px}</style></head><body>${documents}<script>addEventListener('load',()=>setTimeout(()=>window.print(),150));</script></body></html>`);
+  preview.document.close();
+}
+
+export async function renderInvoiceOrdersHalfLetter(
+  preview: Window | null,
+  response: InvoiceOrdersResponse,
+  context: Pick<SalesWorkspaceContext, "businessId" | "warehouseId" | "workSessionId">,
+) {
+  const documentIds = response.results.flatMap((result) =>
+    result.documentId && !result.error ? [result.documentId] : []);
+  if (!documentIds.length) {
+    preview?.close();
+    return;
+  }
+  if (!preview)
+    throw new Error("El navegador bloqueó la vista previa de impresión.");
+  const receipts = await Promise.all(documentIds.map((documentId) =>
+    request<PosPrintableReceipt>(
+      `/api/commerce/v1/pos/drafts/sales/${documentId}/receipt`,
+      {
+        method: "POST",
+        body: JSON.stringify(context),
+      },
+    )));
+  await renderReceiptsHalfLetter(preview, receipts, context);
+}
+
+export async function renderReceiptsHalfLetter(
+  preview: Window | null,
+  receipts: PosPrintableReceipt[],
+  context: Pick<SalesWorkspaceContext, "businessId" | "warehouseId" | "workSessionId">,
+) {
+  if (!receipts.length) { preview?.close(); return; }
+  if (!preview) throw new Error("El navegador bloqueó la vista previa de impresión.");
+  const currency = new Intl.NumberFormat("es-CO", {
+    style: "currency", currency: "COP", maximumFractionDigits: 0,
+  });
+  const pages = receipts.map((receipt) => {
+    const title = receipt.documentType === "SalesInvoice"
+      ? "FACTURA ELECTRÓNICA DE VENTA"
+      : "COMPROBANTE DE VENTA";
+    const rows = receipt.lines.map((line) => `<tr><td>${escapeHtml(line.description)}</td><td class="n">${line.quantity}</td><td class="n">${currency.format(line.unitPrice)}</td><td class="n">${currency.format(line.total)}</td></tr>`).join("");
+    const qr = receipt.documentType === "SalesInvoice"
+      ? `<img class="qr" src="${window.location.origin}/api/commerce/v1/pos/drafts/sales/${receipt.documentId}/qr?businessId=${context.businessId}&warehouseId=${context.warehouseId}&workSessionId=${context.workSessionId}" alt="QR DIAN">`
+      : "";
+    const fiscal = receipt.fiscalNumber
+      ? `<div><span>Número DIAN</span><b>${escapeHtml(receipt.fiscalNumber)}</b></div>`
+      : "";
+    const cufe = receipt.cufe
+      ? `<p class="cufe"><b>CUFE</b><br>${escapeHtml(receipt.cufe)}</p>`
+      : "";
+    const copy = `<article class="document"><header><div><h1>Auraly</h1><h2>${title}</h2></div><div class="right"><b>${escapeHtml(receipt.documentNumber)}</b><br>${new Date(receipt.issuedAt).toLocaleString("es-CO")}</div></header><section class="meta"><div><span>Cliente</span><b>${escapeHtml(receipt.customerName)}</b></div><div><span>Identificación</span><b>${escapeHtml(receipt.customerIdentification)}</b></div>${fiscal}</section><table><thead><tr><th>Producto</th><th class="n">Cant.</th><th class="n">Precio</th><th class="n">Total</th></tr></thead><tbody>${rows}</tbody></table><section class="bottom"><div>${cufe}<small>Representación gráfica · copia cliente / control</small></div><div class="totals"><div><span>Subtotal</span><b>${currency.format(receipt.untaxedAmount)}</b></div><div><span>Impuestos</span><b>${currency.format(receipt.taxAmount)}</b></div><div class="total"><span>Total</span><b>${currency.format(receipt.payableAmount)}</b></div>${qr}</div></section></article>`;
+    return `<section class="sheet"><div class="copy">${copy}</div><span class="cut">CORTE MEDIA CARTA</span><div class="copy">${copy}</div></section>`;
+  }).join("");
+  preview.document.open();
+  preview.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Media carta Auraly</title><style>
+    @page{size:Letter portrait;margin:0}*{box-sizing:border-box}html,body{margin:0;color:#07111f;font-family:Arial,sans-serif}.sheet{width:215.9mm;height:279.4mm;page-break-after:always;position:relative;overflow:hidden}.sheet:last-child{page-break-after:auto}.copy{height:50%;padding:8mm 10mm 6mm;overflow:hidden}.copy:first-child{border-bottom:1px dashed #64748b}.cut{position:absolute;left:50%;top:calc(50% - 2.5mm);z-index:2;padding:0 2mm;transform:translateX(-50%);background:#fff;color:#64748b;font-size:7pt}.document{transform-origin:top left;font-size:8pt;line-height:1.2}header{display:grid;grid-template-columns:1fr auto;gap:6mm;border-bottom:1px solid #0f766e;padding-bottom:2mm}h1{margin:0;font-size:14pt;color:#065f5b}h2{margin:1mm 0 0;font-size:9pt}.right{text-align:right}.meta{display:grid;grid-template-columns:1fr 1fr;gap:1mm 5mm;margin:2mm 0}.meta div,.totals div{display:flex;justify-content:space-between;gap:3mm}.meta span,.totals span{color:#475569}table{width:100%;border-collapse:collapse;margin-top:1.5mm}th{padding:1.2mm;background:#e9f7f5;text-align:left;font-size:7pt}td{padding:1.1mm;border-bottom:1px solid #e2e8f0}.n{text-align:right;white-space:nowrap}.bottom{display:grid;grid-template-columns:1fr 44mm;gap:4mm;margin-top:2mm}.totals{border:1px solid #cbd5e1;border-radius:2mm;padding:2mm}.total{font-size:10pt;color:#065f5b}.cufe{overflow-wrap:anywhere;font-size:6.5pt}.qr{display:block;width:27mm;height:27mm;margin:1mm auto 0}small{color:#64748b;font-size:6.5pt}@media screen{body{background:#e2e8f0}.sheet{margin:8mm auto;background:#fff;box-shadow:0 4px 24px #0f172a33}}
+  </style></head><body>${pages}<script>addEventListener('load',()=>{for(const copy of document.querySelectorAll('.copy')){const content=copy.querySelector('.document');const available=copy.clientHeight-2;if(content.scrollHeight>available){const scale=Math.max(.62,available/content.scrollHeight);content.style.transform='scale('+scale+')';content.style.width=(100/scale)+'%'}}setTimeout(()=>window.print(),150)});</script></body></html>`);
+  preview.document.close();
 }
 
 async function renderReceipt(

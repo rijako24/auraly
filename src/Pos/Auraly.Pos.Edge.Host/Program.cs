@@ -550,6 +550,7 @@ public static class PosEdgeHostApplication
             string? search,
             int? skip,
             int? take,
+            Guid? customerId,
             PosCatalogStore catalog,
             CancellationToken ct) =>
         {
@@ -561,9 +562,19 @@ public static class PosEdgeHostApplication
                 pageSize + 1,
                 ct)).ToArray();
             var hasMore = values.Length > pageSize;
+            var priced = new List<object>(Math.Min(values.Length, pageSize));
+            foreach (var value in values.Take(pageSize))
+            {
+                var resolved = await catalog.ResolvePriceAsync(value.ProductId, customerId, 1m, ct);
+                priced.Add(new {
+                    value.ProductId,value.ProductCode,value.Reference,value.Name,value.BaseUnitCode,
+                    value.TaxCode,value.TaxRate,unitPrice=resolved.Amount,resolved.CurrencyCode,
+                    value.IsActive,priceSource=resolved.Source
+                });
+            }
             return Results.Ok(new
             {
-                items = values.Take(pageSize),
+                items = priced,
                 hasMore,
                 nextOffset = hasMore ? offset + pageSize : (int?)null
             });

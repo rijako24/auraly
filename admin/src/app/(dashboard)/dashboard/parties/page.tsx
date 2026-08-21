@@ -5,7 +5,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { ArrowRight, BriefcaseBusiness, KeyRound, MapPin, Pencil, Plus, Search, Scissors, Truck, UserRound, UsersRound, X } from "lucide-react";
 import { toast } from "sonner";
 import { WorkingHoursEditor } from "@/components/settings/working-hours-editor";
-import { PartyEmployeeRolePanel, PartyUserRolePanel } from "@/components/parties/party-operational-role-panels";
+import { PartyEmployeeRolePanel, PartySupplierTaxRolePanel, PartyUserRolePanel } from "@/components/parties/party-operational-role-panels";
 import { DataTable } from "@/components/tables/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -233,7 +233,7 @@ function PartyDetailDialog({target,onClose,onAddRole}:{target?:{partyId:string;e
         <PartySitesSection detail={detail}/>
       </TabsContent>
       {detail.customer&&<TabsContent value="Customer" className="space-y-4"><RoleCard title="Cliente" rows={[["Estado",detail.customer.isActive?"Activo":"Inactivo"],["Lista de precios",detail.customer.priceListId??"Precio público"],["Canal de precios",detail.customer.priceChannelId??"No asignado"]]}/><CustomerBillingCard detail={detail} onSaved={()=>detailQuery.refetch()}/></TabsContent>}
-      {detail.supplier&&<TabsContent value="Supplier"><RoleCard title="Proveedor" rows={[["Estado",detail.supplier.isActive?"Activo":"Inactivo"],["Identificador",detail.supplier.supplierId]]}/></TabsContent>}
+      {detail.supplier&&<TabsContent value="Supplier" className="space-y-4"><RoleCard title="Proveedor" rows={[["Estado",detail.supplier.isActive?"Activo":"Inactivo"],["Identificador",detail.supplier.supplierId]]}/><PartySupplierTaxRolePanel supplierId={detail.supplier.supplierId}/></TabsContent>}
       {detail.seller&&<TabsContent value="Seller" className="space-y-4"><RoleCard title="Vendedor" rows={[["Estado",detail.seller.isActive?"Activo":"Inactivo"],["Código",detail.seller.code],["Comisión",detail.seller.defaultCommissionPercent==null?"Sin comisión":detail.seller.defaultCommissionPercent+" %"],["Base",detail.seller.commissionBasis],["Causación",detail.seller.commissionTrigger]]}/><SellerAccessCard detail={detail}/></TabsContent>}
       {detail.carrier&&<TabsContent value="Carrier"><RoleCard title="Transportador" rows={[["Estado",detail.carrier.isActive?"Activo":"Inactivo"],["Código",detail.carrier.code],["Modalidad",detail.carrier.transportationMode]]}/></TabsContent>}
       {detail.employee&&<TabsContent value="Employee"><PartyEmployeeRolePanel employeeId={detail.employee.employeeId}/></TabsContent>}

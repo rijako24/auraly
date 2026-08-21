@@ -220,7 +220,7 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         var publishedSignal = createdSignal;
         var priceListId = Guid.NewGuid();
         var listItemId = Guid.NewGuid();
-        var channelItemId = Guid.NewGuid();
+        var channelRuleId = Guid.NewGuid();
         var listCustomerId = Guid.NewGuid();
         var channelCustomerId = Guid.NewGuid();
         var listPartyId = Guid.NewGuid();
@@ -234,9 +234,9 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             INSERT dbo.PriceListItems
               (PriceListItemId,PriceListId,ProductId,MinimumQuantity,Amount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
               VALUES(@ListItem,@List,@Product,1,11000,N'COP',SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET());
-            INSERT dbo.ResolvedPriceChannelItems
-              (ResolvedPriceChannelItemId,PriceChannelId,ProductId,Amount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
-              VALUES(@ChannelItem,@Channel,@Product,11500,N'COP',SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET());
+            INSERT dbo.PriceChannelRules
+              (PriceChannelRuleId,PriceChannelId,RuleKind,AppliesTo,NumericValue,ValidFrom,IsActive,CreatedAt)
+              VALUES(@ChannelRule,@Channel,N'PercentageVariation',N'AllProducts',10,SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET());
             INSERT dbo.Parties
               (PartyId,TenantId,PartyType,IdentificationCountryId,IdentificationTypeCode,
                Identification,NormalizedIdentification,DisplayName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
@@ -262,7 +262,7 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             new SqlParameter("@ListParty", listPartyId),
             new SqlParameter("@ChannelParty", channelPartyId),
             new SqlParameter("@ListItem", listItemId),
-            new SqlParameter("@ChannelItem", channelItemId),
+            new SqlParameter("@ChannelRule", channelRuleId),
             new SqlParameter("@Channel", priceChannelId),
             new SqlParameter("@Product", created.ProductId),
             new SqlParameter("@ListCustomer", listCustomerId),
@@ -305,7 +305,7 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             Assert.Equal(11_000m, listPrice.Amount);
             var channelPrice = await local.ResolvePriceAsync(created.ProductId, channelCustomerId, 1m);
             Assert.Equal("PriceChannel", channelPrice.Source);
-            Assert.Equal(11_500m, channelPrice.Amount);
+            Assert.Equal(13_750m, channelPrice.Amount);
             Assert.Equal(12_500m, (await local.ResolvePriceAsync(created.ProductId, null, 1m)).Amount);
 
             var attempted = request with

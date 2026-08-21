@@ -4,6 +4,8 @@ import { Loader2, Printer, Save, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   PosEdgeClient,
+  loadBrowserPrinterConfiguration,
+  saveBrowserPrinterConfiguration,
   type PosPrinterConfiguration,
 } from "@/services/pos/pos-edge-client";
 
@@ -11,7 +13,7 @@ export function PosPrinterDialog({
   client,
   onClose,
 }: {
-  client: PosEdgeClient;
+  client: PosEdgeClient | null;
   onClose: () => void;
 }) {
   const [value, setValue] = useState<PosPrinterConfiguration | null>(null);
@@ -21,7 +23,13 @@ export function PosPrinterDialog({
 
   useEffect(() => {
     let active = true;
-    client.printerConfiguration()
+    const operation = client
+      ? client.printerConfiguration()
+      : Promise.resolve({
+          configuration: loadBrowserPrinterConfiguration(),
+          installedPrinters: [] as string[],
+        });
+    operation
       .then((view) => {
         if (!active) return;
         setValue(view.configuration);
@@ -42,9 +50,13 @@ export function PosPrinterDialog({
     setBusy(true);
     setError(null);
     try {
-      const view = await client.savePrinterConfiguration(value);
-      setValue(view.configuration);
-      setPrinters(view.installedPrinters);
+      if (client) {
+        const view = await client.savePrinterConfiguration(value);
+        setValue(view.configuration);
+        setPrinters(view.installedPrinters);
+      } else {
+        setValue(saveBrowserPrinterConfiguration(value));
+      }
       onClose();
     } catch (caught) {
       setError(caught instanceof Error
@@ -57,30 +69,46 @@ export function PosPrinterDialog({
 
   return (
     <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/65 p-4">
-      <section className="w-full max-w-xl overflow-hidden rounded-3xl bg-white shadow-2xl">
-        <header className="flex items-start justify-between border-b px-6 py-5">
+      <section className="flex max-h-[calc(100dvh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+        <header className="flex shrink-0 items-start justify-between border-b px-6 py-5">
           <div>
             <p className="text-xs font-bold uppercase tracking-[.16em] text-teal-700">
               Equipo local
             </p>
             <h2 className="mt-1 flex items-center gap-2 text-xl font-bold">
-              <Printer className="h-5 w-5" /> Impresoras
+              <Printer className="h-5 w-5" /> Impresión
             </h2>
             <p className="mt-1 text-sm text-slate-600">
-              Se guardan en este computador, no en el tenant ni en el instalador.
+              {client
+                ? "Se guardan en este computador, no en el tenant ni en el instalador."
+                : "El navegador guarda los formatos; la impresora se elige en su ventana de impresión."}
             </p>
           </div>
           <button type="button" onClick={onClose} disabled={busy}
             className="grid h-10 w-10 place-items-center rounded-xl hover:bg-slate-100"
             aria-label="Cerrar"><X className="h-5 w-5" /></button>
         </header>
-        <div className="space-y-5 p-6">
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
           {busy && !value ? (
             <div className="flex min-h-36 items-center justify-center gap-2 text-sm text-slate-600">
               <Loader2 className="h-5 w-5 animate-spin" /> Consultando Windows...
             </div>
           ) : value ? (
             <>
+              <div className="rounded-2xl border border-teal-200 bg-teal-50/60 p-4">
+                <p className="font-semibold text-slate-950">Formato por flujo de facturación</p>
+                <p className="mb-4 mt-1 text-xs text-slate-600">
+                  Solo aplica a facturas y comprobantes. Los informes continúan en carta.
+                </p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <FormatSelect label="Punto de venta"
+                    value={value.posOutputFormat ?? "Receipt"}
+                    onChange={(posOutputFormat) => setValue({ ...value, posOutputFormat })} />
+                  <FormatSelect label="Pedidos"
+                    value={value.ordersOutputFormat ?? "HalfLetter"}
+                    onChange={(ordersOutputFormat) => setValue({ ...value, ordersOutputFormat })} />
+                </div>
+              </div>
               <Field label="Salida de tirilla">
                 <select value={value.receiptMode}
                   onChange={(event) => setValue({
@@ -89,17 +117,21 @@ export function PosPrinterDialog({
                   })}
                   className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3">
                   <option value="BrowserPreview">Vista previa en pantalla</option>
-                  <option value="WindowsRaw">Impresora termica de Windows</option>
-                  <option value="File">Archivo ESC/POS</option>
+                  {client && <option value="WindowsRaw">Impresora de Windows · impresión directa</option>}
+                  {client && <option value="File">Archivo ESC/POS</option>}
                 </select>
               </Field>
               {value.receiptMode === "WindowsRaw" && (
-                <PrinterSelect label="Impresora para tirilla"
-                  value={value.receiptPrinterName}
-                  printers={printers}
-                  onChange={(receiptPrinterName) => setValue({
-                    ...value, receiptPrinterName,
-                  })} />
+                <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="font-semibold text-slate-900">Plantillas de tirilla</p>
+                  <TemplatePrinterSelect value={value} printers={printers}
+                    documentType="SalesInvoice" format="Receipt"
+                    label="Factura electrónica · tirilla" onChange={setValue} />
+                  <TemplatePrinterSelect value={value} printers={printers}
+                    documentType="SalesReceipt" format="Receipt"
+                    label="Comprobante de venta · tirilla" onChange={setValue} />
+                  <p className="text-xs text-slate-500">La venta se envía directamente a la impresora de su plantilla. Microsoft XPS abre el diálogo para guardar.</p>
+                </div>
               )}
               <Field label="Ancho de tirilla">
                 <select value={value.receiptPaperWidthMillimeters}
@@ -113,14 +145,38 @@ export function PosPrinterDialog({
                   <option value={58}>58 mm</option>
                 </select>
               </Field>
-              <PrinterSelect label="Impresora para carta"
-                value={value.letterPrinterName}
-                printers={printers}
-                optional
-                onChange={(letterPrinterName) => setValue({
-                  ...value, letterPrinterName,
-                })} />
-              {!printers.length && (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="font-semibold text-slate-900">Media carta</p>
+                <p className="mb-4 mt-1 text-xs text-slate-600">
+                  El documento sale dos veces en una hoja carta, listo para corte central. Aplica a la facturación desde POS o Pedidos.
+                </p>
+                <div className="space-y-4">
+                  <Field label="Salida media carta">
+                    <select value={value.orderMode ?? "BrowserPreview"}
+                      onChange={(event) => setValue({
+                        ...value,
+                        orderMode: event.target.value as PosPrinterConfiguration["orderMode"],
+                      })}
+                      className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3">
+                      <option value="BrowserPreview">Vista previa e impresora del sistema</option>
+                      {client && <option value="WindowsPrint">Enviar a una impresora de Windows</option>}
+                    </select>
+                  </Field>
+                  {client && <>
+                    <TemplatePrinterSelect value={value} printers={printers}
+                      documentType="SalesInvoice" format="HalfLetter"
+                      label="Factura electrónica · media carta"
+                      optional={(value.orderMode ?? "BrowserPreview") !== "WindowsPrint"}
+                      onChange={setValue} />
+                    <TemplatePrinterSelect value={value} printers={printers}
+                      documentType="SalesReceipt" format="HalfLetter"
+                      label="Comprobante de venta · media carta"
+                      optional={(value.orderMode ?? "BrowserPreview") !== "WindowsPrint"}
+                      onChange={setValue} />
+                  </>}
+                </div>
+              </div>
+              {client && !printers.length && (
                 <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
                   Windows no reporto impresoras instaladas. Instala el controlador y vuelve a abrir esta configuracion.
                 </p>
@@ -129,7 +185,7 @@ export function PosPrinterDialog({
           ) : null}
           {error && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         </div>
-        <footer className="flex justify-end gap-2 border-t px-6 py-4">
+        <footer className="flex shrink-0 justify-end gap-2 border-t bg-white px-6 py-4">
           <button type="button" onClick={onClose} disabled={busy}
             className="h-10 rounded-xl border px-4 text-sm font-semibold">Cancelar</button>
           <button type="button" onClick={() => void save()} disabled={busy || !value}
@@ -141,6 +197,51 @@ export function PosPrinterDialog({
       </section>
     </div>
   );
+}
+
+function FormatSelect({
+  label, value, onChange,
+}: {
+  label: string;
+  value: "Receipt" | "HalfLetter";
+  onChange: (value: "Receipt" | "HalfLetter") => void;
+}) {
+  return <Field label={label}>
+    <select value={value}
+      onChange={(event) => onChange(event.target.value as "Receipt" | "HalfLetter")}
+      className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3">
+      <option value="Receipt">Tirilla</option>
+      <option value="HalfLetter">Media carta</option>
+    </select>
+  </Field>;
+}
+
+function TemplatePrinterSelect({
+  value, printers, documentType, format, label, optional = false, onChange,
+}: {
+  value: PosPrinterConfiguration;
+  printers: string[];
+  documentType: "SalesInvoice" | "SalesReceipt";
+  format: "Receipt" | "HalfLetter";
+  label: string;
+  optional?: boolean;
+  onChange: (value: PosPrinterConfiguration) => void;
+}) {
+  const route = value.templateRoutes?.find((item) =>
+    item.documentType === documentType && item.format === format);
+  const fallback = format === "Receipt"
+    ? value.receiptPrinterName
+    : value.letterPrinterName;
+  return <PrinterSelect label={label} value={route?.printerName ?? fallback}
+    printers={printers} optional={optional}
+    onChange={(printerName) => {
+      const routes = (value.templateRoutes ?? []).filter((item) =>
+        !(item.documentType === documentType && item.format === format));
+      onChange({
+        ...value,
+        templateRoutes: [...routes, { documentType, format, printerName }],
+      });
+    }} />;
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
