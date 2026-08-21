@@ -385,15 +385,6 @@ function ReceiptEditor({
     }
   };
 
-  const continueToProducts = () => {
-    if (!draft.supplierId || !draft.warehouseId) {
-      toast.error("Selecciona el proveedor y la bodega antes de continuar.");
-      return;
-    }
-    setDetailsExpanded(false);
-    requestAnimationFrame(() => scanRef.current?.focus());
-  };
-
   const addProduct = (product: GoodsReceiptProduct) => {
     const existing = draft.lines.find((line) => line.productId === product.productId);
     const lineIndex = existing ? draft.lines.findIndex((line) => line.productId === product.productId) : draft.lines.length;
@@ -618,11 +609,6 @@ function ReceiptEditor({
           <Field label="Vencimiento">
             <DatePicker disabled={!draft.createsPayable} value={draft.dueDate} onChange={(value) => change({ dueDate: value })} />
           </Field>
-          <div className="flex justify-end md:col-span-4">
-            <Button type="button" onClick={continueToProducts} data-testid="goods-receipt-continue">
-              Continuar a productos
-            </Button>
-          </div>
         </section>
         </>}
         <section className="rounded-2xl border">
@@ -763,7 +749,7 @@ function ReceiptEditor({
 
         <section className="grid gap-3 md:grid-cols-[minmax(0,1fr)_18rem]">
           <Textarea value={draft.notes} onChange={(event) => change({ notes: event.target.value })}
-            className="h-24 min-h-24 resize-none"
+            className="h-full min-h-[8.5rem] resize-none"
             placeholder="Observaciones de recepción" maxLength={1000} />
           <dl className="space-y-2 rounded-2xl bg-slate-950 p-5 text-white">
             <Amount label="Subtotal" value={totals.net} />

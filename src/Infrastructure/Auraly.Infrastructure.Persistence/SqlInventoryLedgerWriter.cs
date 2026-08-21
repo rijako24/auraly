@@ -49,8 +49,6 @@ public sealed class SqlInventoryLedgerWriter(
 
             DECLARE @QuantityAfter DECIMAL(19,6)=
               CAST(@QuantityBefore+@QuantityChange AS DECIMAL(19,6));
-            IF @QuantityAfter<0
-              THROW 51601,'The inventory posting would create a negative balance.',1;
 
             DECLARE @RecognizedUnitCost DECIMAL(19,6);
             DECLARE @ValueChange DECIMAL(19,4);

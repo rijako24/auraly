@@ -82,5 +82,14 @@ public sealed class SqlBusinessDefaultsProvisioner(
         command.Parameters.AddWithValue("@CostBasis", inventoryCostBasis);
         command.Parameters.AddWithValue("@Now", DateTimeOffset.UtcNow);
         await command.ExecuteNonQueryAsync(cancellationToken);
+
+        await using var accounting = new SqlCommand("dbo.AccountingDefaultsProvision", connection, transaction)
+        {
+            CommandType = CommandType.StoredProcedure
+        };
+        accounting.Parameters.AddWithValue("@TenantId", tenantId);
+        accounting.Parameters.AddWithValue("@BusinessId", businessId);
+        accounting.Parameters.AddWithValue("@Now", DateTimeOffset.UtcNow);
+        await accounting.ExecuteNonQueryAsync(cancellationToken);
     }
 }

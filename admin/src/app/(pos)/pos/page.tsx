@@ -68,6 +68,7 @@ import { PosDocumentTypeDialog } from "./pos-document-type-dialog";
 import { PosDiscountDialog } from "./pos-discount-dialog";
 import { PosExitMenuButton } from "./pos-exit-menu-button";
 import { PosInvoiceSearchDialog } from "./pos-invoice-search-dialog";
+import { temporaryNameForCustomer } from "./pos-temporary-name";
 import { PosLocalLogin } from "./pos-local-login";
 import { PosOnlineSetup } from "./pos-online-setup";
 import { PosPaymentDialog } from "./pos-payment-dialog";
@@ -455,6 +456,42 @@ export default function PosPage() {
     if (!draft?.lines.length || busy) return;
     setConfirmation({ kind: "sale" });
   }, [busy, draft]);
+
+  const persistTemporary = useCallback(async (name: string, reference: string) => {
+    const normalizedName = name.trim();
+    if (!client || !draft || !normalizedName || busy) return;
+    setBusy(true);
+    try {
+      await client.saveTemporary(draft.draftId.value, normalizedName, reference, "");
+      setDraft(await client.activeDraft());
+      setSelectedCustomer(null);
+      setSelectedLineId(null);
+      setScan("");
+      setLastSettlement(null);
+      await refreshTemporaries();
+      setTemporaryOpen(false);
+      setTemporaryName("");
+      setTemporaryReference("");
+      setMessage("Venta pausada");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "No fue posible pausar la venta.");
+    } finally {
+      setBusy(false);
+      focusScanner();
+    }
+  }, [busy, client, draft, focusScanner, refreshTemporaries]);
+
+  const requestPauseSale = useCallback(async () => {
+    const customerName = temporaryNameForCustomer(selectedCustomer);
+    if (!customerName) {
+      setTemporaryName("");
+      setTemporaryReference("");
+      setTemporaryOpen(true);
+      return;
+    }
+    await persistTemporary(customerName, "");
+  }, [persistTemporary, selectedCustomer]);
+
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
       if (
@@ -549,7 +586,7 @@ export default function PosPage() {
         !confirmation
       ) {
         event.preventDefault();
-        setTemporaryOpen(true);
+        void requestPauseSale();
       } else if (
         event.key === "F3" &&
         !busy &&
@@ -620,6 +657,7 @@ export default function PosPage() {
     paymentOpen,
     productSearchOpen,
     requestCancelSale,
+    requestPauseSale,
     requestRemoveLine,
     selectedLineId,
     temporaryOpen,
@@ -967,31 +1005,7 @@ export default function PosPage() {
 
   async function saveTemporary(event: FormEvent) {
     event.preventDefault();
-    if (!client || !draft || !temporaryName.trim()) return;
-    setBusy(true);
-    try {
-      await client.saveTemporary(
-        draft.draftId.value,
-        temporaryName,
-        temporaryReference,
-        "",
-      );
-      setDraft(await client.activeDraft());
-      setSelectedCustomer(null);
-      setSelectedLineId(null);
-      setScan("");
-      setLastSettlement(null);
-      await refreshTemporaries();
-      setTemporaryOpen(false);
-      setTemporaryName("");
-      setTemporaryReference("");
-      setMessage("Venta pausada");
-    } catch (caught) {
-      showError(caught);
-    } finally {
-      setBusy(false);
-      focusScanner();
-    }
+    await persistTemporary(temporaryName, temporaryReference);
   }
 
   async function recoverTemporary(id: string) {
@@ -1992,7 +2006,7 @@ edgeCapable={edgeEnrollmentRequired}
             <button
               type="button"
               disabled={!draft?.lines.length || busy}
-              onClick={() => setTemporaryOpen(true)}
+              onClick={() => void requestPauseSale()}
               className="mt-2 flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-auraly-accent/40 bg-white/5 text-sm font-semibold transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <Save className="h-4 w-4" />

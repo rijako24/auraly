@@ -96,32 +96,7 @@ public sealed class SqlExecutionContextDirectory(
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand(
-            """
-            DECLARE @CanReadAll bit = CASE WHEN EXISTS (
-                SELECT 1
-                FROM dbo.UserRoles ur
-                JOIN dbo.AppRoles r ON r.RoleId=ur.RoleId AND r.IsActive=1
-                JOIN dbo.RolePermissions rp ON rp.RoleId=r.RoleId
-                JOIN dbo.Permissions p ON p.PermissionId=rp.PermissionId
-                WHERE ur.UserId=@UserId AND p.Resource=N'tenants.read'
-            ) THEN 1 ELSE 0 END;
-
-            SELECT DISTINCT t.TenantId,t.Name
-            FROM dbo.Tenants t
-            WHERE t.IsActive=1
-              AND (
-                @CanReadAll=1
-                OR EXISTS (
-                    SELECT 1
-                    FROM dbo.UserRoles ur
-                    JOIN dbo.AppRoles r ON r.RoleId=ur.RoleId AND r.IsActive=1
-                    LEFT JOIN dbo.Businesses b ON b.BusinessId=ur.BusinessId
-                    WHERE ur.UserId=@UserId
-                      AND (r.TenantId=t.TenantId OR b.TenantId=t.TenantId))
-              )
-            ORDER BY t.Name,t.TenantId;
-            """, connection);
+        await using var command = Procedure("dbo.ExecutionTenantsList", connection);
         command.Parameters.AddWithValue("@UserId", userId);
         var result = new List<ExecutionTenantOption>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -137,32 +112,7 @@ public sealed class SqlExecutionContextDirectory(
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand(
-            """
-            DECLARE @CanReadAll bit = CASE WHEN EXISTS (
-                SELECT 1
-                FROM dbo.UserRoles ur
-                JOIN dbo.AppRoles r ON r.RoleId=ur.RoleId AND r.IsActive=1
-                JOIN dbo.RolePermissions rp ON rp.RoleId=r.RoleId
-                JOIN dbo.Permissions p ON p.PermissionId=rp.PermissionId
-                WHERE ur.UserId=@UserId AND p.Resource=N'tenants.read'
-            ) THEN 1 ELSE 0 END;
-
-            SELECT b.BusinessId,b.TenantId,b.Name
-            FROM dbo.Businesses b
-            WHERE b.TenantId=@TenantId AND b.IsActive=1
-              AND (
-                @CanReadAll=1
-                OR EXISTS (
-                    SELECT 1
-                    FROM dbo.UserRoles ur
-                    JOIN dbo.AppRoles r ON r.RoleId=ur.RoleId AND r.IsActive=1
-                    WHERE ur.UserId=@UserId
-                      AND r.TenantId=@TenantId
-                      AND (ur.BusinessId IS NULL OR ur.BusinessId=b.BusinessId))
-              )
-            ORDER BY b.Name,b.BusinessId;
-            """, connection);
+        await using var command = Procedure("dbo.ExecutionBusinessesList", connection);
         command.Parameters.AddWithValue("@UserId", userId);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         var result = new List<ExecutionBusinessOption>();
@@ -184,60 +134,7 @@ public sealed class SqlExecutionContextDirectory(
             return cached;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand(
-            """
-            DECLARE @CanReadAll bit = CASE WHEN EXISTS (
-                SELECT 1
-                FROM dbo.UserRoles ur
-                JOIN dbo.AppRoles r ON r.RoleId=ur.RoleId AND r.IsActive=1
-                JOIN dbo.RolePermissions rp ON rp.RoleId=r.RoleId
-                JOIN dbo.Permissions p ON p.PermissionId=rp.PermissionId
-                WHERE ur.UserId=@UserId AND p.Resource=N'tenants.read'
-            ) THEN 1 ELSE 0 END;
-
-            IF NOT EXISTS (
-                SELECT 1 FROM dbo.AppUsers
-                WHERE UserId=@UserId AND IsActive=1)
-               OR NOT EXISTS (
-                SELECT 1 FROM dbo.Tenants
-                WHERE TenantId=@TenantId AND IsActive=1)
-               OR (@BusinessId IS NOT NULL AND NOT EXISTS (
-                SELECT 1 FROM dbo.Businesses
-                WHERE BusinessId=@BusinessId AND TenantId=@TenantId AND IsActive=1))
-               OR (@CanReadAll=0 AND NOT EXISTS (
-                SELECT 1
-                FROM dbo.UserRoles ur
-                JOIN dbo.AppRoles r ON r.RoleId=ur.RoleId AND r.IsActive=1
-                LEFT JOIN dbo.Businesses b ON b.BusinessId=ur.BusinessId
-                WHERE ur.UserId=@UserId
-                  AND (r.TenantId=@TenantId OR b.TenantId=@TenantId)
-                  AND (@BusinessId IS NULL OR ur.BusinessId IS NULL OR ur.BusinessId=@BusinessId)))
-            BEGIN
-                RETURN;
-            END;
-
-            ;WITH ApplicableRoles AS (
-                SELECT DISTINCT r.RoleId,r.Name
-                FROM dbo.UserRoles ur
-                JOIN dbo.AppRoles r ON r.RoleId=ur.RoleId AND r.IsActive=1
-                LEFT JOIN dbo.RolePermissions allRp ON allRp.RoleId=r.RoleId
-                LEFT JOIN dbo.Permissions allP ON allP.PermissionId=allRp.PermissionId
-                WHERE ur.UserId=@UserId
-                  AND (
-                    (r.TenantId=@TenantId
-                     AND (@BusinessId IS NULL OR ur.BusinessId IS NULL OR ur.BusinessId=@BusinessId))
-                    OR r.TenantId IS NULL
-                    OR (@CanReadAll=1 AND allP.Resource=N'tenants.read'))
-            )
-            SELECT N'Role',Name FROM ApplicableRoles
-            UNION ALL
-            SELECT N'Permission',p.Resource
-            FROM ApplicableRoles ar
-            JOIN dbo.RolePermissions rp ON rp.RoleId=ar.RoleId
-            JOIN dbo.Permissions p ON p.PermissionId=rp.PermissionId
-            GROUP BY p.Resource
-            ORDER BY 1,2;
-            """, connection);
+        await using var command = Procedure("dbo.ExecutionAccessResolve", connection);
         command.Parameters.AddWithValue("@UserId", userId);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.Add("@BusinessId", SqlDbType.UniqueIdentifier).Value =
@@ -256,4 +153,7 @@ public sealed class SqlExecutionContextDirectory(
         cache.Set(cacheKey, result, TimeSpan.FromSeconds(10));
         return result;
     }
+
+    private static SqlCommand Procedure(string name, SqlConnection connection) =>
+        new(name, connection) { CommandType = CommandType.StoredProcedure };
 }

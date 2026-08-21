@@ -97,12 +97,10 @@ public static class OrdersApi
             HttpContext context,
             InvoiceOrdersRequest request,
             OrderBatchService service,
-            SellerOrderInvoiceInventoryService sellerInventory,
             CancellationToken ct) =>
             await Handle(async () =>
             {
                 var actor = context.User.ToOrderUserActor(request.WorkSessionId);
-                await sellerInventory.PrepareAsync(actor, request, ct);
                 return await service.InvoiceAsync(
                     actor,
                     request,

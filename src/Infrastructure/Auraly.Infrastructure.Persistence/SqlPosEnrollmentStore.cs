@@ -313,7 +313,8 @@ public sealed class SqlPosEnrollmentStore(
             LEFT JOIN dbo.FiscalSeries fs WITH (UPDLOCK,HOLDLOCK)
               ON fs.BusinessId=e.BusinessId AND fs.DocumentType=N'SalesInvoice'
              AND fs.EmitterKind=N'Device' AND fs.IsActive=1
-             AND @ExistingDeviceId IS NOT NULL AND fs.DeviceId=@ExistingDeviceId
+             AND ((@ExistingDeviceId IS NOT NULL AND fs.DeviceId=@ExistingDeviceId)
+                  OR (@ExistingDeviceId IS NULL AND fs.DeviceId IS NULL))
              AND EXISTS (
                  SELECT 1 FROM dbo.FiscalAuthorizations eligible
                  WHERE eligible.FiscalAuthorizationId=fs.FiscalAuthorizationId

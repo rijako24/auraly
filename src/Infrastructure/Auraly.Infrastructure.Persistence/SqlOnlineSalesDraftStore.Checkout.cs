@@ -279,6 +279,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                     .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))),
             state.CustomerId,
             SaleSourceModes.Online,
+            state.SourceOrderId,
             Credit: request.Credit is null || state.CustomerId is null ? null :
                 new PosSaleCreditContract(state.CustomerId.Value, request.Credit.Amount, request.Credit.DueDate));
 

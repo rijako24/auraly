@@ -145,10 +145,16 @@ public sealed class RabbitMqDocumentProcessingTests(ServerSliceFixture fixture)
         }
         finally
         {
-            await service.StopAsync(CancellationToken.None);
             fixture.ResumeDocumentProcessing();
             fixture.DrainDocumentSignals();
-            await DeleteQueuesAsync(connection, documentQueue, fiscalQueue);
+            try
+            {
+                await service.StopAsync(CancellationToken.None);
+            }
+            finally
+            {
+                await DeleteQueuesAsync(connection, documentQueue, fiscalQueue);
+            }
         }
     }
 

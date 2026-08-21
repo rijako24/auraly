@@ -7,6 +7,8 @@ import { accountingApi } from "@/services/api/accounting";
 import { useTenantContextStore } from "@/stores/tenant-context-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -87,26 +89,26 @@ export default function AccountingConfigurationPage() {
         <Field label="Código PUC"><Input value={accountCode} onChange={(e) => setAccountCode(e.target.value)} required /></Field>
         <Field label="Nombre"><Input value={accountName} onChange={(e) => setAccountName(e.target.value)} required /></Field>
         <Field label="Naturaleza"><Select value={accountType} onValueChange={setAccountType}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{["Asset", "Liability", "Equity", "Revenue", "Expense", "ContraRevenue"].map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent></Select></Field>
-        <label className="flex items-end gap-2 pb-2 text-sm"><input type="checkbox" checked={requiresParty} onChange={(e) => setRequiresParty(e.target.checked)} /> Exige tercero</label>
+        <label className="flex items-end gap-2 pb-2 text-sm"><Checkbox className="h-5 w-5 rounded-md" checked={requiresParty} onCheckedChange={(checked) => setRequiresParty(checked === true)} /> Exige tercero</label>
         <Button disabled={accountMutation.isPending}>Crear cuenta</Button>
       </form></CardContent></Card>
       <Card><CardHeader><CardTitle>Centro de costo</CardTitle></CardHeader><CardContent><form className="grid gap-4 sm:grid-cols-2" onSubmit={(event) => submit(event, centerMutation.mutate)}>
         <Field label="Código"><Input value={centerCode} onChange={(e) => setCenterCode(e.target.value)} required /></Field>
         <Field label="Nombre"><Input value={centerName} onChange={(e) => setCenterName(e.target.value)} required /></Field>
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={defaultCenter} onChange={(e) => setDefaultCenter(e.target.checked)} /> Centro predeterminado</label>
+        <label className="flex items-center gap-2 text-sm"><Checkbox className="h-5 w-5 rounded-md" checked={defaultCenter} onCheckedChange={(checked) => setDefaultCenter(checked === true)} /> Centro predeterminado</label>
         <Button disabled={centerMutation.isPending}>Crear centro</Button>
       </form></CardContent></Card>
       <Card><CardHeader><CardTitle>Periodo contable</CardTitle></CardHeader><CardContent><form className="grid gap-4 sm:grid-cols-3" onSubmit={(event) => submit(event, periodMutation.mutate)}>
         <Field label="Nombre"><Input value={periodName} onChange={(e) => setPeriodName(e.target.value)} required /></Field>
-        <Field label="Desde"><Input type="date" value={startsOn} onChange={(e) => setStartsOn(e.target.value)} required /></Field>
-        <Field label="Hasta"><Input type="date" value={endsOn} onChange={(e) => setEndsOn(e.target.value)} required /></Field>
+        <Field label="Desde"><DatePicker value={startsOn} onChange={setStartsOn} /></Field>
+        <Field label="Hasta"><DatePicker value={endsOn} onChange={setEndsOn} /></Field>
         <Button disabled={periodMutation.isPending}>Crear periodo</Button>
       </form></CardContent></Card>
       <Card><CardHeader><CardTitle>Mapeo automático</CardTitle></CardHeader><CardContent><form className="grid gap-4 sm:grid-cols-2" onSubmit={(event) => submit(event, mappingMutation.mutate)}>
         <Field label="Concepto"><Select value={category} onValueChange={setCategory}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(categories).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></Field>
         <Field label="Cuenta"><Select value={accountId} onValueChange={setAccountId} required><SelectTrigger><SelectValue placeholder={accounts.isLoading ? "Cargando cuentas…" : "Selecciona cuenta"} /></SelectTrigger><SelectContent>{postingAccounts.map((item) => <SelectItem key={item.accountId} value={item.accountId}>{item.code} — {item.name}</SelectItem>)}</SelectContent></Select></Field>
         <Field label="Alcance"><Select value={mappingScope} onValueChange={(value) => setMappingScope(value as "tenant" | "business")}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="tenant">Toda la empresa</SelectItem><SelectItem value="business">Solo esta sede</SelectItem></SelectContent></Select></Field>
-        <Field label="Vigente desde"><Input type="date" value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} required /></Field>
+        <Field label="Vigente desde"><DatePicker value={effectiveFrom} onChange={setEffectiveFrom} /></Field>
         <Button disabled={!accountId || mappingMutation.isPending}>Guardar mapeo</Button>
       </form></CardContent></Card>
     </div>

@@ -367,7 +367,6 @@ builder.Services.AddScoped<OrderService>();
 builder.Services.AddScoped<OrderRecoveryService>();
 builder.Services.AddScoped<IOrderBatchStore, SqlOrderBatchStore>();
 builder.Services.AddScoped<OrderBatchService>();
-builder.Services.AddScoped<SellerOrderInvoiceInventoryService>();
 builder.Services.AddScoped<AzureBlobObjectStorage>();
 builder.Services.AddScoped<IGoodsReceiptStore, SqlGoodsReceiptStore>();
 builder.Services.AddScoped<IGoodsReceiptWorkspaceStore, SqlGoodsReceiptWorkspaceStore>();

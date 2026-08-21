@@ -19,6 +19,31 @@
     <None Include="Scripts\Seeds\*.sql" />
   </ItemGroup>
   <ItemGroup>
+    <Build Include="StoredProcedures\SellerOrderCatalogGet.sql" />
+    <Build Include="StoredProcedures\SellerOrderContextGet.sql" />
+    <Build Include="StoredProcedures\SellerOrderProductResolve.sql" />
+    <Build Include="StoredProcedures\SellerOrderReplay.sql" />
+    <Build Include="StoredProcedures\SellerOrderCreate.sql" />
+    <Build Include="StoredProcedures\SellerOrderConfirm.sql" />
+    <Build Include="StoredProcedures\SellerOrderEditableGet.sql" />
+    <Build Include="StoredProcedures\SellerOrderReplace.sql" />
+    <Build Include="StoredProcedures\InventoryProcessingSequenceRequireCurrent.sql" />
+    <Build Include="StoredProcedures\InventoryBalancesSearch.sql" />
+    <Build Include="StoredProcedures\InventoryMovementsSearch.sql" />
+    <Build Include="StoredProcedures\InventoryOperationsSearch.sql" />
+    <Build Include="StoredProcedures\AccountingDefaultsProvision.sql" />
+    <Build Include="StoredProcedures\DocumentProcessingPayloadGet.sql" />
+    <Build Include="StoredProcedures\DocumentProcessingComplete.sql" />
+    <Build Include="StoredProcedures\SellerUserAccessGet.sql" />
+    <Build Include="StoredProcedures\SellerUserAccessCreate.sql" />
+    <Build Include="StoredProcedures\ExecutionTenantsList.sql" />
+    <Build Include="StoredProcedures\ExecutionBusinessesList.sql" />
+    <Build Include="StoredProcedures\ExecutionAccessResolve.sql" />
+    <Build Include="StoredProcedures\PriceSegmentsList.sql" />
+    <Build Include="StoredProcedures\PriceSegmentCreate.sql" />
+    <Build Include="StoredProcedures\PriceSegmentItemsList.sql" />
+    <Build Include="StoredProcedures\PriceSegmentItemSave.sql" />
+    <Build Include="StoredProcedures\PriceSegmentItemDelete.sql" />
     <Build Include="Schemas\Reference.sql" />
     <Build Include="Schemas\Dispatch.sql" />
     <Build Include="Types\GuidIdList.sql" />

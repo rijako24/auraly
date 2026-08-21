@@ -354,7 +354,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         command.Transaction = transaction;
         command.CommandText = """
             SELECT d.BusinessId,d.WarehouseId,d.WorkSessionId,d.Version,d.Status,
-                   d.CustomerId,w.AllowNegativeStockSales
+                   d.CustomerId,w.AllowNegativeStockSales,d.SourceOrderId
             FROM dbo.SalesDrafts d WITH (UPDLOCK,HOLDLOCK)
             JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId
             JOIN dbo.Warehouses w ON w.WarehouseId=d.WarehouseId
@@ -372,7 +372,8 @@ public sealed partial class SqlOnlineSalesDraftStore
         return new(
             reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
             reader.GetInt64(3), reader.GetString(4),
-            reader.IsDBNull(5) ? null : reader.GetGuid(5), reader.GetBoolean(6));
+            reader.IsDBNull(5) ? null : reader.GetGuid(5), reader.GetBoolean(6),
+            reader.IsDBNull(7) ? null : reader.GetGuid(7));
     }
 
     private static void DemandTemporaryVersion(DraftState state, long expectedVersion)

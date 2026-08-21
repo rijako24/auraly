@@ -30,13 +30,135 @@ public sealed class ArchitectureDebtRatchetTests
     }
 
     [Fact]
+    public void ConfirmedDocumentHandlers_ShareTheEngineTransaction()
+    {
+        var handlers = CSharpFiles(Path.Combine("src", "Infrastructure", "Auraly.Infrastructure.Persistence"))
+            .Where(file => File.ReadAllText(file).Contains("IConfirmedDocumentHandler", StringComparison.Ordinal))
+            .ToArray();
+
+        Assert.NotEmpty(handlers);
+        foreach (var handler in handlers)
+        {
+            var source = File.ReadAllText(handler);
+            Assert.True(
+                source.Contains("sessions.Current", StringComparison.Ordinal) ||
+                source.Contains("_sessions.Current", StringComparison.Ordinal),
+                $"{Path.GetFileName(handler)} must use the document engine SQL session.");
+            Assert.DoesNotMatch(@"\bBeginTransaction(?:Async)?\s*\(", source);
+            Assert.DoesNotMatch(@"\.Commit(?:Async)?\s*\(", source);
+            Assert.DoesNotMatch(@"\bSaveChanges(?:Async)?\s*\(", source);
+        }
+    }
+
+    [Fact]
+    public void DocumentProcessingJobStore_OwnsCommitAndRollback()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            RepositoryRoot,
+            "src",
+            "Infrastructure",
+            "Auraly.Infrastructure.Persistence",
+            "SqlDocumentProcessingJobStore.cs"));
+
+        Assert.Contains("session.Transaction.CommitAsync", source, StringComparison.Ordinal);
+        Assert.Contains("session.Transaction.RollbackAsync", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ApiSqlDebt_CannotGrow()
     {
         var count = CSharpFiles(Path.Combine("src", "API", "Auraly.Api"))
             .Sum(file => Regex.Matches(File.ReadAllText(file), @"(?:new\s+)?SqlCommand\s*\(").Count);
 
-        Assert.True(count <= 36,
-            $"Direct SQL in the API grew to {count}. Extract persistence instead of increasing the DT-003 baseline of 36.");
+        Assert.True(count <= 15,
+            $"Direct SQL in the API grew to {count}. Use EF Core or a versioned stored procedure; the reduced DT-003 baseline is 15.");
+    }
+
+    [Fact]
+    public void SellerOrderApi_UsesStoredProceduresInsteadOfEmbeddedSql()
+    {
+        var paths = new[]
+        {
+            Path.Combine("src", "API", "Auraly.Api", "SellerOrdersApi.cs"),
+            Path.Combine("src", "Infrastructure", "Auraly.Infrastructure.Persistence", "SellerOrderReviewPersistence.cs")
+        };
+        foreach (var path in paths)
+        {
+            var source = File.ReadAllText(Path.Combine(RepositoryRoot, path));
+            Assert.DoesNotMatch(@"\b(?:SELECT|INSERT|UPDATE|DELETE)\s+(?:INTO\s+)?dbo\.", source);
+            Assert.DoesNotContain("CommandText =", source, StringComparison.Ordinal);
+            Assert.Contains("CommandType", source, StringComparison.Ordinal);
+            Assert.Contains("CommandType.StoredProcedure", source, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void SellerOrderAndInventoryProcedures_ParticipateInTheCallerTransaction()
+    {
+        var sellerSource = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "API", "Auraly.Api", "SellerOrdersApi.cs"));
+        Assert.Contains("Procedure(\"dbo.SellerOrderCreate\",connection,transaction)", sellerSource, StringComparison.Ordinal);
+        Assert.Contains("ConfirmTransferAtomicallyAsync", sellerSource, StringComparison.Ordinal);
+        Assert.Contains("Procedure(\"dbo.SellerOrderConfirm\",connection,transaction)", sellerSource, StringComparison.Ordinal);
+
+        var procedures = Directory.EnumerateFiles(
+            Path.Combine(RepositoryRoot, "database", "Auraly.Database", "StoredProcedures"),
+            "*.sql", SearchOption.TopDirectoryOnly);
+        foreach (var procedure in procedures)
+        {
+            var sql = File.ReadAllText(procedure);
+            Assert.DoesNotMatch(@"\b(?:BEGIN|COMMIT|ROLLBACK)\s+TRAN(?:SACTION)?\b", sql);
+        }
+    }
+
+    [Fact]
+    public void CommerceEngines_DoNotPollForCompletion()
+    {
+        var paths = new[] { Path.Combine("src", "API", "Auraly.Api", "DispatchSettlementHostedService.cs") };
+        foreach (var path in paths)
+        {
+            var source = File.ReadAllText(Path.Combine(RepositoryRoot, path));
+            Assert.DoesNotContain("Task.Delay", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("Task.WhenAny", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("WaitForDocument", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("DocumentsCompletedAsync", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("FiscalReturnsCompletedAsync", source, StringComparison.Ordinal);
+        }
+
+        var posReception = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "Infrastructure", "Auraly.Infrastructure.Persistence", "SqlPosSaleServerStore.cs"));
+        Assert.DoesNotContain("FindAfterContentionAsync", posReception, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SellerOrderInvoice_ConsumesReservedStockInTheInvoiceTransaction()
+    {
+        var checkout = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "Infrastructure", "Auraly.Infrastructure.Persistence",
+            "SqlOnlineSalesDraftStore.Checkout.cs"));
+        var handler = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "Infrastructure", "Auraly.Infrastructure.Persistence",
+            "SqlPosSaleDocumentHandler.cs"));
+        var ordersApi = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "API", "Auraly.Api", "OrdersApi.cs"));
+
+        Assert.Contains("state.SourceOrderId", checkout, StringComparison.Ordinal);
+        Assert.Contains("ResolveInventoryWarehouseAsync", handler, StringComparison.Ordinal);
+        Assert.Contains("inventoryWarehouseId", handler, StringComparison.Ordinal);
+        Assert.DoesNotContain("SellerOrderInvoiceInventoryService", ordersApi, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(
+            RepositoryRoot, "src", "API", "Auraly.Api", "SellerOrderInvoiceInventoryService.cs")));
+    }
+
+    [Fact]
+    public void DispatchSettlement_ExecutesCanonicalDocumentsWithoutWaitingForOtherEngines()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "API", "Auraly.Api", "DispatchSettlementHostedService.cs"));
+        Assert.Contains("DocumentProcessingWorker", source, StringComparison.Ordinal);
+        Assert.Contains("documentWorker.ProcessOneAsync", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("DocumentProcessingJobs WHERE", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("FiscalStatus FROM", source, StringComparison.Ordinal);
     }
 
     [Fact]

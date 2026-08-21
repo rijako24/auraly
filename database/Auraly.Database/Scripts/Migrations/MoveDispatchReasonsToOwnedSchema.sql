@@ -1,4 +1,5 @@
-IF SCHEMA_ID(N'dispatch') IS NULL
+IF OBJECT_ID(N'dbo.DispatchReasons', N'U') IS NOT NULL
+   AND SCHEMA_ID(N'dispatch') IS NULL
     EXEC(N'CREATE SCHEMA [dispatch] AUTHORIZATION [dbo]');
 GO
 

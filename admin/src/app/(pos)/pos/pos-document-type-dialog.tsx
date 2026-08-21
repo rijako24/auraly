@@ -4,7 +4,6 @@ import { Check, FileText, Loader2, Receipt, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { FiscalResolutionForm } from "@/components/fiscal/fiscal-resolution-form";
-import { InvoiceNumberingCard } from "@/components/fiscal/invoice-numbering-card";
 import {
   fiscalConfigurationApi,
   type FiscalResolutionConfiguration,
@@ -52,7 +51,6 @@ export function PosDocumentTypeDialog({
   });
   const [configuration, setConfiguration] =
     useState<FiscalResolutionConfiguration | null>(null);
-  const [numberingReady, setNumberingReady] = useState(false);
   const [configuringInvoice, setConfiguringInvoice] = useState(false);
   const [checkingFiscal, setCheckingFiscal] = useState(false);
   const [savingFiscal, setSavingFiscal] = useState(false);
@@ -71,14 +69,9 @@ export function PosDocumentTypeDialog({
   }, [busy, onCancel]);
 
   async function loadFiscalState() {
-    const [nextConfiguration, numbering] = await Promise.all([
-      fiscalConfigurationApi.get(businessId),
-      fiscalConfigurationApi.getNumbering(businessId),
-    ]);
-    const hasNumbering = numbering.initialConsecutive !== null;
+    const nextConfiguration = await fiscalConfigurationApi.get(businessId);
     setConfiguration(nextConfiguration);
-    setNumberingReady(hasNumbering);
-    return { configuration: nextConfiguration, hasNumbering };
+    return nextConfiguration;
   }
 
   async function selectDocument(next: PosSaleDocumentType) {
@@ -94,14 +87,12 @@ export function PosDocumentTypeDialog({
     setCheckingFiscal(true);
     try {
       const state = await loadFiscalState();
-      const serverReady =
-        state.hasNumbering &&
-        (edgeMode
-          ? state.configuration.isReadyForEnrollment
-          : state.configuration.isReadyForOnlineSales);
+      const serverReady = edgeMode
+        ? state.isReadyForEnrollment
+        : state.isReadyForOnlineSales;
       if (!serverReady) {
         if (!canManageFiscal) {
-          setFiscalError("La factura electrónica no está lista en esta sede. Solicita a un usuario con permiso de configuración fiscal que complete la resolución y la numeración; esta venta permanecerá guardada.");
+          setFiscalError("La factura electrónica no está lista en esta sede. Solicita a un usuario con permiso de configuración fiscal que complete la resolución; esta venta permanecerá guardada.");
           return;
         }
         setConfiguringInvoice(true);
@@ -240,14 +231,10 @@ export function PosDocumentTypeDialog({
             <div>
               <h3 className="font-bold text-slate-950">Configurar factura electrónica</h3>
               <p className="mt-1 text-sm text-slate-600">
-                Completa únicamente la numeración y la resolución fiscal. El comprobante de
-                venta sigue disponible mientras terminas.
+                Completa la resolución fiscal. El consecutivo interno de Auraly es automático y
+                empieza en uno; el comprobante de venta sigue disponible mientras terminas.
               </p>
             </div>
-            <InvoiceNumberingCard
-              businessId={businessId}
-              onChanged={() => void loadFiscalState()}
-            />
             {configuration &&
               !(edgeMode
                 ? configuration.isReadyForEnrollment
@@ -271,7 +258,7 @@ export function PosDocumentTypeDialog({
             >
               {checkingFiscal
                 ? "Verificando..."
-                : edgeMode && !edgeFiscalReady && numberingReady
+                : edgeMode && !edgeFiscalReady
                   ? "Preparar serie fiscal en este equipo"
                   : "Activar factura electrónica"}
             </button>

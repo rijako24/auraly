@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  CalendarDays,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -20,6 +19,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -335,32 +336,26 @@ export function OrdersWorkspace({
         )}
         {!compact && (
           <div className="flex gap-2 xl:col-span-2">
-            <label className="relative flex-1">
-              <CalendarDays className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <Input
-                type="date"
+            <div className="flex-1">
+              <DatePicker
                 value={createdFrom}
-                onChange={(event) => {
-                  setCreatedFrom(event.target.value);
+                onChange={(value) => {
+                  setCreatedFrom(value);
                   setPage(1);
                 }}
-                className="pl-9"
-                aria-label="Pedidos desde"
+                placeholder="Pedidos desde"
               />
-            </label>
-            <label className="relative flex-1">
-              <CalendarDays className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <Input
-                type="date"
+            </div>
+            <div className="flex-1">
+              <DatePicker
                 value={createdTo}
-                onChange={(event) => {
-                  setCreatedTo(event.target.value);
+                onChange={(value) => {
+                  setCreatedTo(value);
                   setPage(1);
                 }}
-                className="pl-9"
-                aria-label="Pedidos hasta"
+                placeholder="Pedidos hasta"
               />
-            </label>
+            </div>
           </div>
         )}
       </div>
@@ -380,26 +375,25 @@ export function OrdersWorkspace({
 
       <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
         {!compact && (
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50/80 px-4 py-3">
+          <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-slate-50/80 px-4 py-3">
             <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={allSelected}
-                onChange={() =>
+                onCheckedChange={() =>
                   setSelected(
                     allSelected
                       ? new Set()
                       : new Set(selectable.map((item) => item.orderId)),
                   )
                 }
-                className="h-4 w-4 rounded border-slate-300 accent-teal-700"
+                className="h-5 w-5 rounded-md"
               />
               Seleccionar disponibles
             </label>
-            <div className="flex w-full flex-col gap-2 lg:w-auto lg:items-end">
-              <div>
+            <span className="hidden h-7 w-px bg-slate-200 md:block" aria-hidden="true" />
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                 <div
-                  className="grid grid-cols-2 rounded-xl border border-slate-200 bg-white p-1"
+                  className="grid min-w-[20rem] grid-cols-2 rounded-xl border border-slate-200 bg-white p-1"
                   aria-label="Tipo de documento para los pedidos seleccionados"
                 >
                   <button
@@ -427,11 +421,10 @@ export function OrdersWorkspace({
                     Comprobante de venta
                   </button>
                 </div>
-                <p className="mt-1 text-[11px] text-slate-500">
-                  Los clientes configurados para factura electrónica se facturan siempre.
-                </p>
-              </div>
-              <div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto">
+              <span className="hidden text-xs text-slate-500 xl:inline">
+                Los clientes que exigen factura electrónica siempre se facturan.
+              </span>
+              <div className="ml-auto flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
               <Select value={paymentMethod} onValueChange={setPaymentMethod}>
                 <SelectTrigger className="w-full sm:w-44">
                   <SelectValue />
@@ -458,8 +451,8 @@ export function OrdersWorkspace({
                   ? "Facturar seleccionados"
                   : "Emitir comprobantes"} ({selectedOrders.length})
               </Button>
-              </div>
             </div>
+          </div>
           </div>
         )}
 
@@ -483,11 +476,10 @@ export function OrdersWorkspace({
                     }`}
                   >
                     {!compact && (
-                      <input
-                        type="checkbox"
+                      <Checkbox
                         checked={checked}
                         disabled={!order.canInvoice}
-                        onChange={() =>
+                        onCheckedChange={() =>
                           setSelected((current) => {
                             const next = new Set(current);
                             if (next.has(order.orderId)) next.delete(order.orderId);
@@ -495,7 +487,7 @@ export function OrdersWorkspace({
                             return next;
                           })
                         }
-                        className="h-4 w-4 rounded border-slate-300 accent-teal-700"
+                        className="h-5 w-5 rounded-md"
                         aria-label={`Seleccionar ${order.orderNumber}`}
                       />
                     )}

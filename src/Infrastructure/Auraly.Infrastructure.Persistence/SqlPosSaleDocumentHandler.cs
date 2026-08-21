@@ -43,10 +43,13 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         var session = _sessions.Current;
         var workSessionId = await EnsureWorkSessionAsync(
             session, request, cancellationToken);
+        var inventoryWarehouseId = await ResolveInventoryWarehouseAsync(
+            session, request, cancellationToken);
         foreach (var line in request.Lines.OrderBy(line => line.LineNumber))
         {
             await InsertLineAsync(session, request, line, cancellationToken);
-            await InsertInventoryMovementAsync(session, request, line, cancellationToken);
+            await InsertInventoryMovementAsync(
+                session, request, inventoryWarehouseId, line, cancellationToken);
         }
 
         await InsertTaxSummariesAsync(session, request, _timeProvider.GetUtcNow(), cancellationToken);
@@ -143,13 +146,14 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
     private Task InsertInventoryMovementAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
         PosSaleUploadRequest request,
+        Guid inventoryWarehouseId,
         PosSaleLineContract line,
         CancellationToken cancellationToken) =>
         _inventoryWriter.PostAsync(
             session,
             new InventoryLedgerPosting(
                 request.BusinessId,
-                request.WarehouseId,
+                inventoryWarehouseId,
                 line.ProductId,
                 request.DocumentId,
                 request.CommercialSnapshot.DocumentType,
@@ -160,6 +164,29 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                 InventoryValuationModes.AverageCost,
                 request.CommercialSnapshot.IssuedAt),
             cancellationToken);
+
+    private static async Task<Guid> ResolveInventoryWarehouseAsync(
+        SqlDocumentProcessingSessionAccessor.Session session,
+        PosSaleUploadRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.SourceOrderId is null) return request.WarehouseId;
+        const string sql = """
+            SELECT ExternalStatus,
+                   TRY_CONVERT(uniqueidentifier,JSON_VALUE(CustomAttributesJson,'$.ordersWarehouseId'))
+            FROM dbo.Orders WITH(UPDLOCK,HOLDLOCK)
+            WHERE OrderId=@OrderId AND BusinessId=@BusinessId;
+            """;
+        await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
+        command.Parameters.AddWithValue("@OrderId", request.SourceOrderId.Value);
+        command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            throw new InvalidOperationException("El pedido de origen no existe en este negocio.");
+        var released = !reader.IsDBNull(0) &&
+            string.Equals(reader.GetString(0), "InventoryReleasedForInvoice", StringComparison.Ordinal);
+        return released || reader.IsDBNull(1) ? request.WarehouseId : reader.GetGuid(1);
+    }
 
     private async Task LinkSourceOrderAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
@@ -182,6 +209,10 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             UPDATE dbo.OrderClaims
             SET ReleasedAt=COALESCE(ReleasedAt,@CreatedAt)
             WHERE OrderId=@OrderId AND ReleasedAt IS NULL;
+
+            UPDATE dbo.Orders
+            SET ExternalStatus=N'InventoryConsumedByInvoice',UpdatedAt=@CreatedAt
+            WHERE OrderId=@OrderId AND BusinessId=@BusinessId;
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@LinkId", _idGenerator.NewId());

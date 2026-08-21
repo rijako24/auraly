@@ -44,6 +44,8 @@ public static class SellerOrdersApi
         catch (SellerOrderForbiddenException error) { return Results.Problem(error.Message,statusCode:403); }
         catch (SellerOrderValidationException error) { return Results.Problem(error.Message,statusCode:400); }
         catch (SellerOrderConflictException error) { return Results.Problem(error.Message,statusCode:409); }
+        catch (SqlException error) when (error.Number is >= 51300 and <= 51304)
+        { return Results.Problem(error.Message,statusCode:error.Number==51300?400:409); }
     }
 
     private static SellerOrderActor Actor(ClaimsPrincipal principal) => new(
@@ -105,9 +107,8 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
             throw new SellerOrderValidationException("Sede, bodega y cliente son obligatorios.");
         var take=Math.Clamp(request.Take,1,500);var search=request.Search?.Trim()??string.Empty;
         await using var connection=connections.Create();await connection.OpenAsync(token);
-        await ValidateScopeAsync(connection,actor,request.BusinessId,request.WarehouseId,request.CustomerId,token);
-        await using var command=new SqlCommand(CatalogSql,connection);
-        command.Parameters.AddRange([P("@BusinessId",request.BusinessId),P("@WarehouseId",request.WarehouseId),P("@CustomerId",request.CustomerId),
+        await using var command=Procedure("dbo.SellerOrderCatalogGet",connection);
+        command.Parameters.AddRange([P("@TenantId",actor.TenantId),P("@BusinessId",request.BusinessId),P("@WarehouseId",request.WarehouseId),P("@CustomerId",request.CustomerId),
             P("@Search",search),P("@Contains",$"%{search}%"),P("@Prefix",$"{search}%"),P("@Skip",request.Skip),P("@Take",take+1)]);
         var values=new List<SellerOrdersApi.SellerCatalogItem>();
         await using var reader=await command.ExecuteReaderAsync(token);
@@ -142,32 +143,9 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
             var review=warnings.Count>0;var number=$"PED-{DateTime.UtcNow:yyyyMMdd}-{orderId.ToString("N")[..8].ToUpperInvariant()}";
             var total=lines.Sum(line=>decimal.Round(line.UnitPrice*line.Quantity,2,MidpointRounding.AwayFromZero));
             var reservationTransferId=DeterministicGuid($"seller-order-transfer:{orderId:N}");var attributes=JsonSerializer.Serialize(new{request.WarehouseId,ordersWarehouseId=context.OrdersWarehouseId,reservationTransferId,request.RouteId,request.RouteStopId,request.PartySiteId,request.CapturedOffline,requiresStockReview=review,createdBy=actor.UserId});
-            await using(var insert=new SqlCommand("""
-                INSERT dbo.Orders(OrderId,BusinessId,CustomerId,Source,FulfillmentMode,Status,CustomerNameSnapshot,
-                    CustomerEmailSnapshot,CustomerPhoneSnapshot,CustomerDocumentSnapshot,DeliveryAddressSnapshot,Notes,
-                    Currency,Subtotal,DiscountTotal,TaxTotal,Total,CustomerConfirmed,ExternalDocumentNumber,ExternalStatus,
-                    IdempotencyKey,CustomAttributesJson,CreatedAt,UpdatedAt)
-                VALUES(@OrderId,@BusinessId,@CustomerId,1,0,@Status,@CustomerName,@Email,@Phone,@Identification,@Address,@Notes,
-                    N'COP',@Total,0,0,@Total,1,@Number,@ExternalStatus,@Key,@Attributes,SYSUTCDATETIME(),SYSUTCDATETIME());
-                """,connection,transaction))
-            {
-                insert.Parameters.AddRange([P("@OrderId",orderId),P("@BusinessId",request.BusinessId),P("@CustomerId",request.CustomerId),P("@Status",review?5:3),
-                    P("@CustomerName",context.Name),P("@Email",context.Email),P("@Phone",context.Phone),P("@Identification",context.Identification),P("@Address",context.Address),
-                    P("@Notes",request.Notes),Money("@Total",total),P("@Number",number),P("@ExternalStatus",review?"StockReview":"InventoryTransferPending"),P("@Key",request.IdempotencyKey.Trim()),P("@Attributes",attributes)]);
-                await insert.ExecuteNonQueryAsync(token);
-            }
-            foreach(var line in lines)
-            {
-                var lineTotal=decimal.Round(line.UnitPrice*line.Quantity,2,MidpointRounding.AwayFromZero);
-                var tax=line.TaxRate<=0?0:decimal.Round(lineTotal*line.TaxRate/(100+line.TaxRate),2,MidpointRounding.AwayFromZero);
-                await using var insert=new SqlCommand("""
-                    INSERT dbo.OrderItems(OrderItemId,OrderId,BusinessId,ProductId,Sku,ProductCodeSnapshot,ProductNameSnapshot,
-                        DescriptionSnapshot,UnitCodeSnapshot,Quantity,UnitPrice,DiscountAmount,TaxAmount,LineTotal,RawPayloadJson,CreatedAt)
-                    VALUES(NEWID(),@OrderId,@BusinessId,@ProductId,@Sku,@Code,@Name,@Name,@Unit,@Quantity,@Price,0,@Tax,@Total,@Raw,SYSUTCDATETIME());
-                    """,connection,transaction);
-                insert.Parameters.AddRange([P("@OrderId",orderId),P("@BusinessId",request.BusinessId),P("@ProductId",line.ProductId),P("@Sku",line.Code),P("@Code",line.Code),P("@Name",line.Name),P("@Unit",line.UnitCode),Quantity("@Quantity",line.Quantity),Money("@Price",line.UnitPrice),Money("@Tax",tax),Money("@Total",lineTotal),P("@Raw",JsonSerializer.Serialize(new{line.PriceSource,line.Available}))]);
-                await insert.ExecuteNonQueryAsync(token);
-            }
+            var persistedLines=lines.Select(line=>{var lineTotal=decimal.Round(line.UnitPrice*line.Quantity,2,MidpointRounding.AwayFromZero);var tax=line.TaxRate<=0?0:decimal.Round(lineTotal*line.TaxRate/(100+line.TaxRate),2,MidpointRounding.AwayFromZero);return new{productId=line.ProductId,code=line.Code,name=line.Name,unitCode=line.UnitCode,quantity=line.Quantity,unitPrice=line.UnitPrice,taxAmount=tax,lineTotal,rawPayloadJson=JsonSerializer.Serialize(new{line.PriceSource,line.Available})};});
+            await using(var insert=Procedure("dbo.SellerOrderCreate",connection,transaction))
+            {insert.Parameters.AddRange([P("@OrderId",orderId),P("@BusinessId",request.BusinessId),P("@CustomerId",request.CustomerId),P("@Status",review?5:3),P("@CustomerName",context.Name),P("@Email",context.Email),P("@Phone",context.Phone),P("@Identification",context.Identification),P("@Address",context.Address),P("@Notes",request.Notes),Money("@Total",total),P("@Number",number),P("@ExternalStatus",review?"StockReview":"InventoryTransferPending"),P("@IdempotencyKey",request.IdempotencyKey.Trim()),P("@Attributes",attributes),P("@LinesJson",JsonSerializer.Serialize(persistedLines))]);await insert.ExecuteNonQueryAsync(token);}
             var stockLines=lines.Where(line=>line.ManageStock).Select((line,index)=>new WarehouseTransferLineRequest(index+1,line.ProductId,line.Quantity)).ToArray();
             if(review)
             {
@@ -182,8 +160,8 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
                     reservationTransferId,request.BusinessId,request.WarehouseId,context.OrdersWarehouseId,
                     DateTimeOffset.UtcNow,"WAREHOUSE_TRANSFER",$"Reserva del pedido {number}",stockLines),connection,transaction,token);
             }
-            await using(var confirm=new SqlCommand("UPDATE dbo.Orders SET Status=2,ExternalStatus=@External,UpdatedAt=SYSUTCDATETIME() WHERE OrderId=@Id",connection,transaction))
-            {confirm.Parameters.AddRange([P("@External",stockLines.Length>0?"InventoryTransferProcessed":"Confirmed"),P("@Id",orderId)]);await confirm.ExecuteNonQueryAsync(token);}
+            await using(var confirm=Procedure("dbo.SellerOrderConfirm",connection,transaction))
+            {confirm.Parameters.AddRange([P("@ExternalStatus",stockLines.Length>0?"InventoryTransferProcessed":"Confirmed"),P("@OrderId",orderId),P("@BusinessId",request.BusinessId)]);await confirm.ExecuteNonQueryAsync(token);}
             await transaction.CommitAsync(token);
             return new(orderId,number,"Confirmed",total,false,[]);
         }
@@ -191,25 +169,13 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
     }
 
     private static async Task<SellerOrdersApi.SellerOrderResult?> ReplayAsync(SqlConnection connection,SqlTransaction transaction,Guid businessId,string key,CancellationToken token)
-    {await using var command=new SqlCommand("SELECT OrderId,ExternalDocumentNumber,Status,Total,ExternalStatus FROM dbo.Orders WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@BusinessId AND IdempotencyKey=@Key",connection,transaction);command.Parameters.AddRange([P("@BusinessId",businessId),P("@Key",key.Trim())]);await using var reader=await command.ExecuteReaderAsync(token);if(!await reader.ReadAsync(token))return null;var review=reader.GetInt32(2)==5;return new(reader.GetGuid(0),reader.GetString(1),review?"InReview":"Confirmed",reader.GetDecimal(3),review,review?[reader.IsDBNull(4)?"Requiere revisión.":reader.GetString(4)]:[]);}
+    {await using var command=Procedure("dbo.SellerOrderReplay",connection,transaction);command.Parameters.AddRange([P("@BusinessId",businessId),P("@IdempotencyKey",key.Trim())]);await using var reader=await command.ExecuteReaderAsync(token);if(!await reader.ReadAsync(token))return null;var review=reader.GetInt32(2)==5;return new(reader.GetGuid(0),reader.GetString(1),review?"InReview":"Confirmed",reader.GetDecimal(3),review,review?[reader.IsDBNull(4)?"Requiere revisión.":reader.GetString(4)]:[]);}
 
     private static async Task<CustomerContext> LoadContextAsync(SqlConnection connection,SqlTransaction transaction,SellerOrderActor actor,SellerOrdersApi.CreateSellerOrderRequest request,CancellationToken token)
-    {await using var command=new SqlCommand("""
-        SELECT COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName)),p.Identification,email.Value,phone.Value,
-               COALESCE(site.AddressLine,N''),orders.WarehouseId
-        FROM dbo.Customers customer INNER JOIN dbo.Parties p ON p.PartyId=customer.PartyId
-        OUTER APPLY(SELECT TOP(1) contact.Value FROM dbo.PartyContacts contact WHERE contact.PartyId=p.PartyId AND contact.ContactType=N'Email' AND contact.IsActive=1 ORDER BY contact.IsPrimary DESC,contact.CreatedAt) email
-        OUTER APPLY(SELECT TOP(1) contact.Value FROM dbo.PartyContacts contact WHERE contact.PartyId=p.PartyId AND contact.ContactType=N'Phone' AND contact.IsActive=1 ORDER BY contact.IsPrimary DESC,contact.CreatedAt) phone
-        LEFT JOIN dbo.PartySites site ON site.PartySiteId=@SiteId AND site.PartyId=p.PartyId AND site.IsActive=1
-        CROSS APPLY(SELECT TOP(1) WarehouseId FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND Code=N'PED' AND IsActive=1 ORDER BY CreatedAt) orders
-        INNER JOIN dbo.Businesses business ON business.BusinessId=customer.BusinessId AND business.TenantId=@TenantId
-        WHERE customer.CustomerId=@CustomerId AND customer.BusinessId=@BusinessId AND customer.IsActive=1;
-        """,connection,transaction);command.Parameters.AddRange([P("@SiteId",request.PartySiteId),P("@BusinessId",request.BusinessId),P("@TenantId",actor.TenantId),P("@CustomerId",request.CustomerId)]);await using var reader=await command.ExecuteReaderAsync(token);if(!await reader.ReadAsync(token))throw new SellerOrderValidationException("El cliente, su sede o la bodega de pedidos no están disponibles.");return new(reader.GetString(0),reader.IsDBNull(1)?null:reader.GetString(1),reader.IsDBNull(2)?null:reader.GetString(2),reader.IsDBNull(3)?null:reader.GetString(3),reader.GetString(4),reader.GetGuid(5));}
+    {await using var command=Procedure("dbo.SellerOrderContextGet",connection,transaction);command.Parameters.AddRange([P("@SiteId",request.PartySiteId),P("@BusinessId",request.BusinessId),P("@TenantId",actor.TenantId),P("@CustomerId",request.CustomerId)]);await using var reader=await command.ExecuteReaderAsync(token);if(!await reader.ReadAsync(token))throw new SellerOrderValidationException("El cliente, su sede o la bodega de pedidos no están disponibles.");return new(reader.GetString(0),reader.IsDBNull(1)?null:reader.GetString(1),reader.IsDBNull(2)?null:reader.GetString(2),reader.IsDBNull(3)?null:reader.GetString(3),reader.GetString(4),reader.GetGuid(5));}
 
     private static async Task<OrderLine?> ResolveLineAsync(SqlConnection connection,SqlTransaction transaction,Guid businessId,Guid warehouseId,Guid customerId,SellerOrdersApi.SellerOrderLineInput input,CancellationToken token)
-    {await using var command=new SqlCommand(LineSql,connection,transaction);command.Parameters.AddRange([P("@BusinessId",businessId),P("@WarehouseId",warehouseId),P("@CustomerId",customerId),P("@ProductId",input.ProductId),Quantity("@Quantity",input.Quantity)]);await using var reader=await command.ExecuteReaderAsync(token);return await reader.ReadAsync(token)?new(input.ProductId,reader.GetString(0),reader.GetString(1),reader.GetString(2),input.Quantity,reader.GetDecimal(3),reader.GetString(4),reader.GetDecimal(5),reader.GetBoolean(6),reader.GetDecimal(7),0):null;}
-    private static async Task ValidateScopeAsync(SqlConnection connection,SellerOrderActor actor,Guid businessId,Guid warehouseId,Guid customerId,CancellationToken token)
-    {await using var command=new SqlCommand("SELECT COUNT(*) FROM dbo.Businesses b JOIN dbo.Warehouses w ON w.BusinessId=b.BusinessId JOIN dbo.Customers c ON c.BusinessId=b.BusinessId WHERE b.BusinessId=@BusinessId AND b.TenantId=@TenantId AND w.WarehouseId=@WarehouseId AND w.IsActive=1 AND w.UseForSales=1 AND c.CustomerId=@CustomerId AND c.IsActive=1",connection);command.Parameters.AddRange([P("@BusinessId",businessId),P("@TenantId",actor.TenantId),P("@WarehouseId",warehouseId),P("@CustomerId",customerId)]);if(Convert.ToInt32(await command.ExecuteScalarAsync(token))!=1)throw new SellerOrderValidationException("Selecciona una bodega de venta válida.");}
+    {await using var command=Procedure("dbo.SellerOrderProductResolve",connection,transaction);command.Parameters.AddRange([P("@BusinessId",businessId),P("@WarehouseId",warehouseId),P("@CustomerId",customerId),P("@ProductId",input.ProductId),Quantity("@Quantity",input.Quantity)]);await using var reader=await command.ExecuteReaderAsync(token);return await reader.ReadAsync(token)?new(input.ProductId,reader.GetString(0),reader.GetString(1),reader.GetString(2),input.Quantity,reader.GetDecimal(3),reader.GetString(4),reader.GetDecimal(5),reader.GetBoolean(6),reader.GetDecimal(7),0):null;}
     private static void Validate(SellerOrderActor actor,SellerOrdersApi.CreateSellerOrderRequest request){if(request.BusinessId!=actor.BusinessId||request.WarehouseId==Guid.Empty||request.CustomerId==Guid.Empty)throw new SellerOrderValidationException("Sede, bodega y cliente son obligatorios.");if(string.IsNullOrWhiteSpace(request.IdempotencyKey)||request.IdempotencyKey.Trim().Length>160)throw new SellerOrderValidationException("La clave idempotente es obligatoria.");if(request.Lines.Count is <1 or >500||request.Lines.Any(line=>line.ProductId==Guid.Empty||line.Quantity<=0))throw new SellerOrderValidationException("El pedido requiere productos y cantidades válidas.");if(request.Notes?.Length>1000)throw new SellerOrderValidationException("Las notas superan 1000 caracteres.");}
     private static void Demand(SellerOrderActor actor,string permission){if(!actor.Permissions.Contains(permission))throw new SellerOrderForbiddenException($"Permission '{permission}' is required.");}
     public static Guid DeterministicDocumentId(string value)=>DeterministicGuid(value);
@@ -217,38 +183,10 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
     private static SqlParameter P(string name,object? value)=>new(name,value??DBNull.Value);
     private static SqlParameter Money(string name,decimal value)=>new(name,SqlDbType.Decimal){Precision=19,Scale=4,Value=value};
     private static SqlParameter Quantity(string name,decimal value)=>new(name,SqlDbType.Decimal){Precision=19,Scale=6,Value=value};
+    private static SqlCommand Procedure(string name,SqlConnection connection,SqlTransaction? transaction=null)=>new(name,connection,transaction){CommandType=CommandType.StoredProcedure};
     private sealed record CustomerContext(string Name,string? Identification,string? Email,string? Phone,string Address,Guid OrdersWarehouseId);
     private sealed record OrderLine(Guid ProductId,string Code,string Name,string UnitCode,decimal Quantity,decimal UnitPrice,string PriceSource,decimal Available,bool ManageStock,decimal TaxRate,int Position);
 
-    private const string LineSql="""
-        SELECT COALESCE(NULLIF(p.ProductCode,N''),NULLIF(p.Sku,N''),N''),p.Name,COALESCE(NULLIF(p.BaseUnitCode,N''),N'EA'),
-               COALESCE(listPrice.Amount,channelPrice.Amount,basePrice.Amount),
-               CASE WHEN listPrice.Amount IS NOT NULL THEN N'PriceList' WHEN channelPrice.Amount IS NOT NULL THEN N'PriceChannel' ELSE N'Public' END,
-               COALESCE((SELECT SUM(m.QuantityChange) FROM dbo.InventoryMovements m WHERE m.BusinessId=p.BusinessId AND m.WarehouseId=@WarehouseId AND m.ProductId=p.ProductId),0),
-               p.ManageStock,COALESCE(tax.Rate,0)
-        FROM dbo.Products p
-        LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=p.TaxProfileId AND tax.IsActive=1
-        CROSS APPLY(SELECT TOP(1) pp.Amount FROM dbo.ProductPrices pp WHERE pp.BusinessId=p.BusinessId AND pp.ProductId=p.ProductId AND pp.IsActive=1 AND pp.ValidFrom<=SYSDATETIMEOFFSET() AND(pp.ValidUntil IS NULL OR pp.ValidUntil>SYSDATETIMEOFFSET()) ORDER BY pp.ValidFrom DESC)basePrice
-        LEFT JOIN dbo.CustomerPricingSettings setting ON setting.CustomerId=@CustomerId
-        OUTER APPLY(SELECT TOP(1)i.Amount FROM dbo.PriceListItems i JOIN dbo.PriceLists l ON l.PriceListId=i.PriceListId WHERE i.PriceListId=setting.PriceListId AND l.BusinessId=@BusinessId AND l.IsActive=1 AND i.ProductId=p.ProductId AND i.IsActive=1 AND i.MinimumQuantity<=@Quantity AND i.ValidFrom<=SYSDATETIMEOFFSET() AND(i.ValidUntil IS NULL OR i.ValidUntil>SYSDATETIMEOFFSET()) ORDER BY i.MinimumQuantity DESC,i.ValidFrom DESC)listPrice
-        OUTER APPLY(SELECT TOP(1)i.Amount FROM dbo.ResolvedPriceChannelItems i JOIN dbo.PriceChannels c ON c.PriceChannelId=i.PriceChannelId WHERE i.PriceChannelId=setting.PriceChannelId AND c.BusinessId=@BusinessId AND c.IsActive=1 AND i.ProductId=p.ProductId AND i.IsActive=1 AND i.ValidFrom<=SYSDATETIMEOFFSET() AND(i.ValidUntil IS NULL OR i.ValidUntil>SYSDATETIMEOFFSET()) AND NOT EXISTS(SELECT 1 FROM dbo.PriceChannelExclusions e WHERE e.PriceChannelId=i.PriceChannelId AND e.ProductId=i.ProductId))channelPrice
-        WHERE p.BusinessId=@BusinessId AND p.ProductId=@ProductId AND p.IsActive=1;
-        """;
-    private const string CatalogSql="""
-        SELECT p.ProductId,COALESCE(NULLIF(p.ProductCode,N''),NULLIF(p.Sku,N''),N''),p.Name,COALESCE(NULLIF(p.BaseUnitCode,N''),N'EA'),
-               COALESCE(listPrice.Amount,channelPrice.Amount,basePrice.Amount),CASE WHEN listPrice.Amount IS NOT NULL THEN N'PriceList' WHEN channelPrice.Amount IS NOT NULL THEN N'PriceChannel' ELSE N'Public' END,
-               COALESCE((SELECT SUM(m.QuantityChange) FROM dbo.InventoryMovements m WHERE m.BusinessId=p.BusinessId AND m.WarehouseId=@WarehouseId AND m.ProductId=p.ProductId),0),p.ManageStock
-        FROM dbo.Products p CROSS APPLY(SELECT TOP(1)pp.Amount FROM dbo.ProductPrices pp WHERE pp.BusinessId=p.BusinessId AND pp.ProductId=p.ProductId AND pp.IsActive=1 AND pp.ValidFrom<=SYSDATETIMEOFFSET() AND(pp.ValidUntil IS NULL OR pp.ValidUntil>SYSDATETIMEOFFSET()) ORDER BY pp.ValidFrom DESC)basePrice
-        LEFT JOIN dbo.CustomerPricingSettings setting ON setting.CustomerId=@CustomerId
-        OUTER APPLY(SELECT TOP(1)i.Amount FROM dbo.PriceListItems i JOIN dbo.PriceLists l ON l.PriceListId=i.PriceListId WHERE i.PriceListId=setting.PriceListId AND l.BusinessId=@BusinessId AND l.IsActive=1 AND i.ProductId=p.ProductId AND i.IsActive=1 AND i.MinimumQuantity<=1 AND i.ValidFrom<=SYSDATETIMEOFFSET() AND(i.ValidUntil IS NULL OR i.ValidUntil>SYSDATETIMEOFFSET()) ORDER BY i.MinimumQuantity DESC,i.ValidFrom DESC)listPrice
-        OUTER APPLY(SELECT TOP(1)i.Amount FROM dbo.ResolvedPriceChannelItems i JOIN dbo.PriceChannels c ON c.PriceChannelId=i.PriceChannelId WHERE i.PriceChannelId=setting.PriceChannelId AND c.BusinessId=@BusinessId AND c.IsActive=1 AND i.ProductId=p.ProductId AND i.IsActive=1 AND i.ValidFrom<=SYSDATETIMEOFFSET() AND(i.ValidUntil IS NULL OR i.ValidUntil>SYSDATETIMEOFFSET()) AND NOT EXISTS(SELECT 1 FROM dbo.PriceChannelExclusions e WHERE e.PriceChannelId=i.PriceChannelId AND e.ProductId=i.ProductId))channelPrice
-        WHERE p.BusinessId=@BusinessId AND p.IsActive=1 AND(@Search=N''
-          OR p.Name COLLATE Latin1_General_100_CI_AI LIKE @Contains COLLATE Latin1_General_100_CI_AI
-          OR p.ProductCode COLLATE Latin1_General_100_CI_AI LIKE @Prefix COLLATE Latin1_General_100_CI_AI
-          OR p.Sku COLLATE Latin1_General_100_CI_AI LIKE @Prefix COLLATE Latin1_General_100_CI_AI
-          OR p.Reference COLLATE Latin1_General_100_CI_AI LIKE @Prefix COLLATE Latin1_General_100_CI_AI)
-        ORDER BY CASE WHEN p.ProductCode=@Search OR p.Sku=@Search THEN 0 ELSE 1 END,p.Name,p.ProductId OFFSET @Skip ROWS FETCH NEXT @Take ROWS ONLY;
-        """;
 }
 
 public sealed class SellerOrderForbiddenException(string message):Exception(message);

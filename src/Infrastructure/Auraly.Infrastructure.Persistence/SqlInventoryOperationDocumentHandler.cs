@@ -170,7 +170,6 @@ public sealed class SqlInventoryOperationProcessor(
         else
         {
             var outgoing = -quantityChange;
-            if (state.Quantity < outgoing) throw new InvalidOperationException("The inventory operation would create a negative balance.");
             recognizedCost = state.AverageCost;
             afterQuantity = InventoryOperationRules.Quantity(state.Quantity - outgoing);
             valueChange = -InventoryOperationRules.Money(outgoing * recognizedCost);

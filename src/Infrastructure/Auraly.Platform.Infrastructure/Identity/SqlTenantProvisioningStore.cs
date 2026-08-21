@@ -204,6 +204,16 @@ public sealed class SqlTenantProvisioningStore(
             Add("@InvitationPayload", JsonSerializer.Serialize(new { invitationId, tenantId, email = request.InvitationEmail.Trim(), activationToken }));
             Add("@AuditPayload", JsonSerializer.Serialize(new { request.ProvisioningRequestId, businessId, salesWarehouseId, ordersWarehouseId, damagedWarehouseId, request.MaximumUsers, request.MaximumEnrolledDevices }));
             await command.ExecuteNonQueryAsync(cancellationToken);
+            await using (var accounting = new SqlCommand("dbo.AccountingDefaultsProvision", connection, transaction)
+            {
+                CommandType = CommandType.StoredProcedure
+            })
+            {
+                accounting.Parameters.AddWithValue("@TenantId", tenantId);
+                accounting.Parameters.AddWithValue("@BusinessId", businessId);
+                accounting.Parameters.AddWithValue("@Now", now);
+                await accounting.ExecuteNonQueryAsync(cancellationToken);
+            }
             await transaction.CommitAsync(cancellationToken);
             return new(request.ProvisioningRequestId, tenantId, businessId, tenantKey,
                 salesWarehouseId, ordersWarehouseId, customerId, null, "Completed");

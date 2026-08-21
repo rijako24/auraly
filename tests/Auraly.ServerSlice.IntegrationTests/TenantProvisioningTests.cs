@@ -40,6 +40,11 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.Equal(12, state.InventoryReasons);
         Assert.Equal(4, state.ProductUnits);
         Assert.Equal(1, state.DefaultCustomers);
+        Assert.Equal(26, state.AccountingAccounts);
+        Assert.Equal(26, state.AccountingMappings);
+        Assert.Equal(1, state.OpenAccountingPeriods);
+        Assert.Equal(1, state.DefaultCostCenters);
+        Assert.Equal(1, state.AccountingVoucherCursors);
         Assert.Equal(4, state.Roles);
         Assert.Equal(0, state.UserRoles);
         Assert.Null(state.UserActive);
@@ -172,6 +177,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         var business = await response.Content.ReadFromJsonAsync<BusinessCreatedResponse>();
         Assert.NotNull(business);
         Assert.Equal(2, await CountDefaultWarehousesAsync(fixture.TenantId, business!.BusinessId));
+        Assert.Equal(1, await CountDefaultCostCentersAsync(fixture.TenantId, business.BusinessId));
     }
 
     private async Task<(Guid CountryId, Guid DivisionId, Guid CityId)> ReadGeographyAsync()
@@ -201,6 +207,11 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
               (SELECT COUNT(*) FROM dbo.InventoryReasons r INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId WHERE b.TenantId=@TenantId),
               (SELECT COUNT(*) FROM dbo.ProductUnits u INNER JOIN dbo.Businesses b ON b.BusinessId=u.BusinessId WHERE b.TenantId=@TenantId),
               (SELECT COUNT(*) FROM dbo.Customers c INNER JOIN dbo.Parties p ON p.PartyId=c.PartyId WHERE p.TenantId=@TenantId AND p.DisplayName=N'Consumidor final'),
+              (SELECT COUNT(*) FROM dbo.AccountingAccounts WHERE TenantId=@TenantId),
+              (SELECT COUNT(*) FROM dbo.AccountingAccountMappings WHERE TenantId=@TenantId AND BusinessId IS NULL),
+              (SELECT COUNT(*) FROM dbo.AccountingPeriods WHERE TenantId=@TenantId AND Status=N'Open'),
+              (SELECT COUNT(*) FROM dbo.AccountingCostCenters c INNER JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId WHERE b.TenantId=@TenantId AND c.IsDefault=1 AND c.IsActive=1),
+              (SELECT COUNT(*) FROM dbo.AccountingVoucherCursors WHERE TenantId=@TenantId),
               (SELECT COUNT(*) FROM dbo.AppRoles WHERE TenantId=@TenantId AND NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'ADMINISTRATOR')),
               (SELECT COUNT(*) FROM dbo.UserRoles WHERE UserId=@UserId),
               (SELECT IsActive FROM dbo.AppUsers WHERE TenantId=@TenantId AND UserId=@UserId),
@@ -213,9 +224,10 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.True(await reader.ReadAsync());
         return new ProvisionedState(
             reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2), reader.GetInt32(3),
-            reader.GetInt32(4), reader.GetInt32(5), reader.GetInt32(6),
-            reader.IsDBNull(7) ? null : reader.GetBoolean(7),
-            reader.IsDBNull(8) ? null : reader.GetString(8), reader.GetString(9));
+            reader.GetInt32(4), reader.GetInt32(5), reader.GetInt32(6), reader.GetInt32(7),
+            reader.GetInt32(8), reader.GetInt32(9), reader.GetInt32(10), reader.GetInt32(11),
+            reader.IsDBNull(12) ? null : reader.GetBoolean(12),
+            reader.IsDBNull(13) ? null : reader.GetString(13), reader.GetString(14));
     }
 
     private async Task<string> ReadInvitationTokenAsync(Guid tenantId)
@@ -251,10 +263,28 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
+    private async Task<int> CountDefaultCostCentersAsync(Guid tenantId, Guid businessId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT COUNT(*)
+            FROM dbo.AccountingCostCenters c
+            INNER JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId
+            WHERE b.TenantId=@TenantId AND b.BusinessId=@BusinessId
+              AND c.IsDefault=1 AND c.IsActive=1;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
     private sealed record BusinessCreatedResponse(Guid BusinessId);
 
     private sealed record ProvisionedState(
         int Businesses, int Warehouses, int InventoryReasons, int ProductUnits,
-        int DefaultCustomers, int Roles, int UserRoles,
+        int DefaultCustomers, int AccountingAccounts, int AccountingMappings,
+        int OpenAccountingPeriods, int DefaultCostCenters, int AccountingVoucherCursors,
+        int Roles, int UserRoles,
         bool? UserActive, string? PasswordHash, string InvitationStatus);
 }

@@ -448,19 +448,11 @@ public sealed class SqlInventoryOperationStore(
         Guid businessId,
         CancellationToken cancellationToken)
     {
-        const string sql = """
-            IF NOT EXISTS(SELECT 1 FROM dbo.BusinessProcessingCursors WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@BusinessId)
-              INSERT dbo.BusinessProcessingCursors(BusinessId,LastAssignedSequence,LastCompletedSequence,UpdatedAt)
-              VALUES(@BusinessId,0,0,SYSDATETIMEOFFSET());
-            SELECT LastAssignedSequence,LastCompletedSequence
-            FROM dbo.BusinessProcessingCursors WITH(UPDLOCK,HOLDLOCK)
-            WHERE BusinessId=@BusinessId;
-            """;
-        await using var command = new SqlCommand(sql, connection, transaction);
+        await using var command = StoredProcedure("dbo.InventoryProcessingSequenceRequireCurrent", connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", businessId);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken) || reader.GetInt64(0) != reader.GetInt64(1))
-            throw new InventoryConflictException("El inventario está terminando una operación anterior. Intenta nuevamente.");
+        try { await command.ExecuteNonQueryAsync(cancellationToken); }
+        catch (SqlException exception) when (exception.Number == 51220)
+        { throw new InventoryConflictException(exception.Message); }
     }
 
     private async Task ProcessAcceptedInsideTransactionAsync(
@@ -470,14 +462,9 @@ public sealed class SqlInventoryOperationStore(
         InventoryOperationAcceptance acceptance,
         CancellationToken cancellationToken)
     {
-        const string payloadSql = """
-            SELECT PayloadJson,AcceptedAt
-            FROM dbo.DocumentProcessingPayloads
-            WHERE DocumentId=@DocumentId AND DocumentType=@DocumentType AND BusinessId=@BusinessId;
-            """;
         string payload;
         DateTimeOffset acceptedAt;
-        await using (var command = new SqlCommand(payloadSql, connection, transaction))
+        await using (var command = StoredProcedure("dbo.DocumentProcessingPayloadGet", connection, transaction))
         {
             command.Parameters.AddWithValue("@DocumentId", acceptance.DocumentId);
             command.Parameters.AddWithValue("@DocumentType", acceptance.DocumentType);
@@ -510,22 +497,14 @@ public sealed class SqlInventoryOperationStore(
             processingSessions.Take();
         }
 
-        const string completeSql = """
-            UPDATE dbo.DocumentProcessingJobs
-            SET Status=N'Completed',CompletedAt=@CompletedAt,LeaseOwner=NULL,LeaseExpiresAt=NULL,LastError=NULL
-            WHERE JobId=@JobId AND Status=N'Pending';
-            UPDATE dbo.BusinessProcessingCursors
-            SET LastCompletedSequence=@Sequence,UpdatedAt=@CompletedAt
-            WHERE BusinessId=@BusinessId AND LastCompletedSequence=@PreviousSequence;
-            """;
-        await using var complete = new SqlCommand(completeSql, connection, transaction);
+        await using var complete = StoredProcedure("dbo.DocumentProcessingComplete", connection, transaction);
         complete.Parameters.AddWithValue("@JobId", acceptance.MovementId);
         complete.Parameters.AddWithValue("@Sequence", acceptance.ProcessingSequence);
-        complete.Parameters.AddWithValue("@PreviousSequence", acceptance.ProcessingSequence - 1);
         complete.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         complete.Parameters.AddWithValue("@CompletedAt", timeProvider.GetUtcNow());
-        if (await complete.ExecuteNonQueryAsync(cancellationToken) != 2)
-            throw new DBConcurrencyException("La reserva y su secuencia no pudieron confirmarse atómicamente.");
+        try { await complete.ExecuteNonQueryAsync(cancellationToken); }
+        catch (SqlException exception) when (exception.Number is 51221 or 51222)
+        { throw new DBConcurrencyException("La reserva y su secuencia no pudieron confirmarse atómicamente.", exception); }
     }
 
     private static async Task<long> AllocateSequenceAsync(SqlConnection connection, SqlTransaction transaction, Guid businessId, DateTimeOffset now, CancellationToken cancellationToken)
@@ -584,6 +563,7 @@ public sealed class SqlInventoryOperationStore(
     private static byte[] Hash(object value) => SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(value));
     private static void AddDecimal(SqlCommand command,string name,decimal value,byte precision,byte scale){var p=command.Parameters.Add(name,SqlDbType.Decimal);p.Precision=precision;p.Scale=scale;p.Value=value;}
     private static void AddNullableDecimal(SqlCommand command,string name,decimal? value,byte precision,byte scale){var p=command.Parameters.Add(name,SqlDbType.Decimal);p.Precision=precision;p.Scale=scale;p.Value=(object?)value??DBNull.Value;}
+    private static SqlCommand StoredProcedure(string name,SqlConnection connection,SqlTransaction transaction)=>new(name,connection,transaction){CommandType=CommandType.StoredProcedure};
     private sealed record LineInput(int LineNumber,string Direction,Guid ProductId,decimal Quantity,decimal? SystemQuantityAtBase,decimal? ExplicitUnitCost,decimal? AllocationWeight);
     private sealed record ProductState(Guid Id,string Code,string Name,decimal Quantity);
     private sealed record CountDraftState(Guid WarehouseId,DateTimeOffset OccurredAt,string ReasonCode,long BaseSequence,string? Notes,IReadOnlyList<InventoryOperationLineSnapshot> Lines);

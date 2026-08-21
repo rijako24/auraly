@@ -74,13 +74,7 @@ public sealed class SellerUserAccessService(
         Demand(actor);
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
-        await using var command = new SqlCommand("""
-            SELECT app.UserId,app.PartyId,app.Username,app.Email,app.IsActive,role.Name,@BusinessId
-            FROM dbo.AppUsers app
-            JOIN dbo.UserRoles assignment ON assignment.UserId=app.UserId AND assignment.BusinessId=@BusinessId
-            JOIN dbo.AppRoles role ON role.RoleId=assignment.RoleId AND role.NormalizedName=N'SELLER'
-            WHERE app.TenantId=@TenantId AND app.PartyId=@PartyId;
-            """, connection);
+        await using var command = Procedure("dbo.SellerUserAccessGet", connection);
         AddScope(command, actor, partyId);
         await using var reader = await command.ExecuteReaderAsync(ct);
         return await reader.ReadAsync(ct) ? Read(reader) : null;
@@ -113,43 +107,7 @@ public sealed class SellerUserAccessService(
             (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         try
         {
-            await using var command = new SqlCommand("""
-                DECLARE @RoleId uniqueidentifier;
-                SELECT @RoleId=RoleId
-                FROM dbo.AppRoles WITH(UPDLOCK,HOLDLOCK)
-                WHERE TenantId=@TenantId AND NormalizedName=N'SELLER' AND IsActive=1;
-                IF @RoleId IS NULL
-                  THROW 51913,'El rol Vendedor no está configurado para la empresa.',1;
-                IF NOT EXISTS(
-                  SELECT 1 FROM dbo.Parties party WITH(UPDLOCK,HOLDLOCK)
-                  JOIN dbo.CommerceSellers seller ON seller.PartyId=party.PartyId
-                    AND seller.BusinessId=@BusinessId AND seller.IsActive=1
-                  WHERE party.TenantId=@TenantId AND party.PartyId=@PartyId AND party.IsActive=1)
-                  THROW 51910,'El tercero no es un vendedor activo de este negocio.',1;
-                IF EXISTS(SELECT 1 FROM dbo.AppUsers WHERE PartyId=@PartyId)
-                  THROW 51911,'El vendedor ya tiene una cuenta de acceso.',1;
-                IF EXISTS(SELECT 1 FROM dbo.AppUsers WHERE TenantId=@TenantId AND (NormalizedUsername=@NormalizedUsername OR NormalizedEmail=@NormalizedEmail))
-                  THROW 51912,'El usuario o el correo ya están registrados.',1;
-
-                INSERT dbo.AppUsers
-                  (UserId,TenantId,PartyId,CreatedByUserId,Username,NormalizedUsername,Email,NormalizedEmail,
-                   PasswordHash,PosOfflinePasswordSalt,PosOfflinePasswordHash,PosOfflinePasswordIterations,
-                   PosOfflinePasswordChangedAt,FirstName,LastName,PhoneNumber,AccessFailedCount,EmailConfirmed,
-                   IsActive,CreatedAt)
-                VALUES
-                  (@UserId,@TenantId,@PartyId,@ActorUserId,@Username,@NormalizedUsername,@Email,@NormalizedEmail,
-                   @PasswordHash,@OfflineSalt,@OfflineHash,@OfflineIterations,@OfflineChangedAt,@FirstName,@LastName,
-                   @PhoneNumber,0,0,1,@Now);
-
-                INSERT dbo.UserRoles
-                  (UserRoleId,UserId,RoleId,BusinessId,AssignedAt,AssignedByUserId)
-                VALUES(NEWID(),@UserId,@RoleId,@BusinessId,@Now,@ActorUserId);
-
-                SELECT app.UserId,app.PartyId,app.Username,app.Email,app.IsActive,role.Name,@BusinessId
-                FROM dbo.AppUsers app
-                JOIN dbo.AppRoles role ON role.RoleId=@RoleId
-                WHERE app.UserId=@UserId;
-                """, connection, transaction);
+            await using var command = Procedure("dbo.SellerUserAccessCreate", connection, transaction);
             AddScope(command, actor, partyId);
             command.Parameters.AddWithValue("@UserId", userId);
             command.Parameters.AddWithValue("@Username", username);
@@ -221,6 +179,9 @@ public sealed class SellerUserAccessService(
     private static SellerUserAccessApi.SellerUserAccessResult Read(SqlDataReader reader) => new(
         reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2), reader.GetString(3),
         reader.GetBoolean(4), reader.GetString(5), reader.GetGuid(6));
+
+    private static SqlCommand Procedure(string name, SqlConnection connection, SqlTransaction? transaction = null) =>
+        new(name, connection, transaction) { CommandType = CommandType.StoredProcedure };
 }
 
 public sealed class SellerUserAccessForbiddenException(string message) : Exception(message);

@@ -157,6 +157,11 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.Equal(1, await CountAsync("InventoryMovements", damageId)); Assert.Equal(1, await CountAsync("ServerOutboxMessages", damageId));
         var balances = await client.GetFromJsonAsync<InventoryBalancePage>($"/api/commerce/v1/inventory/balances?warehouseId={fixture.WarehouseId:D}&search=Insumo&page=1&pageSize=20");
         var row = Assert.Single(balances!.Items.Where(x => x.ProductId == product)); Assert.Equal(5m,row.AverageUnitCost); Assert.Equal(35m,row.InventoryValue);
+        foreach (var search in new[] { $"REF-{product:N}", $"BAR-{product:N}" })
+        {
+            var result = await client.GetFromJsonAsync<InventoryBalancePage>($"/api/commerce/v1/inventory/balances?warehouseId={fixture.WarehouseId:D}&search={search}&page=1&pageSize=20");
+            Assert.Contains(result!.Items, item => item.ProductId == product);
+        }
         var products = await client.GetFromJsonAsync<InventoryProductPage>($"/api/commerce/v1/inventory/products?warehouseId={fixture.WarehouseId:D}&search=Insumo&page=1&pageSize=20");
         var productRow = Assert.Single(products!.Items.Where(x => x.ProductId == product)); Assert.Equal(7m, productRow.QuantityOnHand); Assert.Equal(5m, productRow.AverageUnitCost);
         foreach (var search in new[] { $"I-{product:N}", $"REF-{product:N}", $"BAR-{product:N}" })
@@ -166,6 +171,10 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         }
         var movements = await client.GetFromJsonAsync<InventoryMovementPage>($"/api/commerce/v1/inventory/movements?productId={product:D}&page=1&pageSize=20");
         Assert.Contains(movements!.Items,x=>x.DocumentId==damageId&&x.MovementType=="InventoryDamage");
+        var searchedMovements = await client.GetFromJsonAsync<InventoryMovementPage>($"/api/commerce/v1/inventory/movements?search=REF-{product:N}&page=1&pageSize=20");
+        Assert.Contains(searchedMovements!.Items, x => x.DocumentId == damageId);
+        var searchedOperations = await client.GetFromJsonAsync<InventoryOperationPage>("/api/commerce/v1/inventory/operations?search=Insumo&page=1&pageSize=20");
+        Assert.Contains(searchedOperations!.Items, x => x.DocumentId == damageId);
         using var restricted = fixture.CreateAdminClient(InventoryPermissionCodes.Read);
         var hidden = await restricted.GetFromJsonAsync<InventoryBalancePage>($"/api/commerce/v1/inventory/balances?warehouseId={fixture.WarehouseId:D}&search=Insumo&page=1&pageSize=20");
         var hiddenRow = Assert.Single(hidden!.Items.Where(x => x.ProductId == product)); Assert.Null(hiddenRow.AverageUnitCost); Assert.Null(hiddenRow.InventoryValue);
@@ -173,7 +182,7 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.Null(Assert.Single(hiddenProducts!.Items.Where(x => x.ProductId == product)).AverageUnitCost);
     }
     [Fact]
-    public async Task Inventory_endpoints_enforce_permission_and_transaction_rolls_back_an_impossible_conversion()
+    public async Task Inventory_endpoints_enforce_permission_and_the_engine_posts_negative_stock_in_sequence()
     {
         var source = Guid.NewGuid(); var output = Guid.NewGuid(); var destination = Guid.NewGuid();
         await SeedAsync(source, output, Guid.NewGuid(), destination);
@@ -194,13 +203,13 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             new(conversionId, fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
                 "SPLIT", "PRESENTATION_CHANGE", null, null,
                 [new(1,"INPUT",source,99m,null),new(2,"OUTPUT",output,1m,null)]),
-            $"impossible-{conversionId:N}");
-        Assert.Equal(before, await BalanceAsync(fixture.WarehouseId, source));
-        Assert.Equal(0, await CountAsync("InventoryMovements", conversionId));
-        Assert.Equal(0, await CountAsync("ServerOutboxMessages", conversionId));
-        Assert.Equal("RetryScheduled", await JobStatusAsync(conversionId));
-        await ExhaustRetriesAsync(conversionId);
-        Assert.Equal("DeadLettered", await JobStatusAsync(conversionId));
+            $"negative-{conversionId:N}");
+        Assert.Equal((before.Quantity - 99m, before.Average, before.Value - 198m),
+            await BalanceAsync(fixture.WarehouseId, source));
+        Assert.Equal((1m, 198m, 198m), await BalanceAsync(fixture.WarehouseId, output));
+        Assert.Equal(2, await CountAsync("InventoryMovements", conversionId));
+        Assert.Equal(1, await CountAsync("ServerOutboxMessages", conversionId));
+        Assert.Equal("Completed", await JobStatusAsync(conversionId));
     }
 
     private async Task SeedAsync(Guid first, Guid second, Guid third, Guid destination)
@@ -252,24 +261,6 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         return await response.Content.ReadFromJsonAsync<InventoryOperationAcceptance>() ?? throw new InvalidOperationException("Acceptance missing.");
     }
     private static HttpRequestMessage CreateMessage<T>(string url,T request,string key){var message=new HttpRequestMessage(HttpMethod.Post,url){Content=JsonContent.Create(request)};message.Headers.Add("Idempotency-Key",key);return message;}
-    private async Task ExhaustRetriesAsync(Guid documentId)
-    {
-        var movementId = await ScalarAsync<Guid>("SELECT JobId FROM dbo.DocumentProcessingJobs WHERE DocumentId=@Id", documentId);
-        var signal = new Auraly.Application.DocumentProcessing.DocumentProcessingSignal(movementId, fixture.BusinessId, documentId, InventoryDocumentTypes.Conversion);
-        for (var attempt = 2; attempt <= 5; attempt++)
-        {
-            await using (var connection = new SqlConnection(fixture.ConnectionString))
-            {
-                await connection.OpenAsync();
-                await using var command = new SqlCommand("UPDATE dbo.DocumentProcessingJobs SET AvailableAt=DATEADD(second,-1,SYSDATETIMEOFFSET()) WHERE DocumentId=@Id;", connection);
-                command.Parameters.AddWithValue("@Id", documentId);
-                await command.ExecuteNonQueryAsync();
-            }
-            await using var scope = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.CreateAsyncScope(fixture.Services);
-            var worker = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Auraly.Application.DocumentProcessing.DocumentProcessingWorker>(scope.ServiceProvider);
-            await Assert.ThrowsAsync<InvalidOperationException>(() => worker.ProcessOneAsync(signal));
-        }
-    }
     private async Task<(decimal Quantity,decimal Average,decimal Value)> BalanceAsync(Guid warehouse,Guid product)
     {await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();await using var command=new SqlCommand("SELECT QuantityOnHand,AverageUnitCost,InventoryValue FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId",connection);command.Parameters.AddWithValue("@BusinessId",fixture.BusinessId);command.Parameters.AddWithValue("@WarehouseId",warehouse);command.Parameters.AddWithValue("@ProductId",product);await using var reader=await command.ExecuteReaderAsync();if(!await reader.ReadAsync())return(0,0,0);return(reader.GetDecimal(0),reader.GetDecimal(1),reader.GetDecimal(2));}
     private async Task<T> ScalarAsync<T>(string sql,Guid id){await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();await using var command=new SqlCommand(sql,connection);command.Parameters.AddWithValue("@Id",id);return (T)Convert.ChangeType((await command.ExecuteScalarAsync())!,typeof(T));}

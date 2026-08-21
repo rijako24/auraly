@@ -263,31 +263,8 @@ public sealed class SqlPosSaleServerStore(
             }
         }
 
-        return await FindAfterContentionAsync(
-            request.BusinessId,
-            request.DocumentId,
-            command.IdempotencyKey,
-            cancellationToken);
-    }
-
-    private async Task<StoredPosSale> FindAfterContentionAsync(
-        Guid businessId, Guid documentId, string idempotencyKey, CancellationToken cancellationToken)
-    {
-        for (var attempt = 0; attempt < 5; attempt++)
-        {
-            try
-            {
-                var stored = await FindAsync(businessId, documentId, idempotencyKey, cancellationToken);
-                if (stored is not null) return stored;
-            }
-            catch (SqlException exception) when (exception.Number == 1205 && attempt < 4)
-            {
-                // The competing idempotent request still owns the winning transaction.
-            }
-            if (attempt < 4)
-                await Task.Delay(TimeSpan.FromMilliseconds(25 * (attempt + 1)), cancellationToken);
-        }
-        throw new InvalidOperationException("The received sale was not persisted after bounded contention retries.");
+        return await FindAsync(request.BusinessId, request.DocumentId, command.IdempotencyKey, cancellationToken)
+            ?? throw new InvalidOperationException("The idempotent sale transaction completed without a persisted document.");
     }
 
     private static async Task InsertFiscalDocumentAsync(
