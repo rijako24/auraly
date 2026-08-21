@@ -14,16 +14,8 @@ BEGIN
         THROW 51006,'Price variation percent is outside the allowed range.',1;
     IF NOT EXISTS(SELECT 1 FROM dbo.PriceChannels WHERE PriceChannelId=@PriceChannelId AND BusinessId=@BusinessId)
         THROW 51004,'Segment not found',1;
-    BEGIN TRY
-        BEGIN TRANSACTION;
-        UPDATE dbo.PriceChannelRules SET IsActive=0
-        WHERE PriceChannelId=@PriceChannelId AND RuleKind=@RuleKind AND AppliesTo=N'AllProducts' AND IsActive=1;
-        INSERT dbo.PriceChannelRules(PriceChannelRuleId,PriceChannelId,RuleKind,AppliesTo,NumericValue,ValidFrom,ValidUntil,IsActive,CreatedAt)
-        VALUES(NEWID(),@PriceChannelId,@RuleKind,N'AllProducts',@NumericValue,@ValidFrom,NULL,1,SYSUTCDATETIME());
-        COMMIT TRANSACTION;
-    END TRY
-    BEGIN CATCH
-        IF @@TRANCOUNT>0 ROLLBACK TRANSACTION;
-        THROW;
-    END CATCH
+    UPDATE dbo.PriceChannelRules SET IsActive=0
+    WHERE PriceChannelId=@PriceChannelId AND RuleKind=@RuleKind AND AppliesTo=N'AllProducts' AND IsActive=1;
+    INSERT dbo.PriceChannelRules(PriceChannelRuleId,PriceChannelId,RuleKind,AppliesTo,NumericValue,ValidFrom,ValidUntil,IsActive,CreatedAt)
+    VALUES(NEWID(),@PriceChannelId,@RuleKind,N'AllProducts',@NumericValue,@ValidFrom,NULL,1,SYSUTCDATETIME());
 END

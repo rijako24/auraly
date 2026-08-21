@@ -128,14 +128,23 @@ public static class PriceSegmentsApi
             return Results.Problem("La variación debe estar entre -100 % y 1.000 %.", statusCode: 400);
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
-        await using var command = Procedure("dbo.PriceChannelSettingsSave", connection);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(ct);
+        await using var command = Procedure("dbo.PriceChannelSettingsSave", connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
         command.Parameters.AddWithValue("@PriceChannelId", id);
         command.Parameters.AddWithValue("@RuleKind", PriceChannelRuleKind.PercentageVariation.ToString());
         command.Parameters.AddWithValue("@NumericValue", request.PriceVariationPercent);
         command.Parameters.AddWithValue("@ValidFrom", DateTimeOffset.UtcNow);
-        try { await command.ExecuteNonQueryAsync(ct); }
-        catch (SqlException exception) when (exception.Number == 51004) { return Results.NotFound(); }
+        try
+        {
+            await command.ExecuteNonQueryAsync(ct);
+            await transaction.CommitAsync(ct);
+        }
+        catch (SqlException exception) when (exception.Number == 51004)
+        {
+            await transaction.RollbackAsync(ct);
+            return Results.NotFound();
+        }
         return Results.NoContent();
     }
 
