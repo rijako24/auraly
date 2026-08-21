@@ -59,6 +59,7 @@ var apiName = 'api-auraly-${compactEnvironment}-${suffix}'
 var adminName = 'admin-auraly-${compactEnvironment}-${suffix}'
 var emailServiceName = 'email-auraly-${compactEnvironment}-${suffix}'
 var communicationServiceName = 'acs-auraly-${compactEnvironment}-${suffix}'
+var fiscalKeyVaultName = 'kv-auraly-${compactEnvironment}-${suffix}'
 
 var blobDataOwnerRoleId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
@@ -84,11 +85,54 @@ var serviceBusReceiverRoleId = subscriptionResourceId(
 var webPubSubOwnerRoleId = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   '12cf5a90-567b-43ae-8102-96cf46c7d9b4')
+var keyVaultCertificatesOfficerRoleId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  'a4417e6f-fecd-4de8-b567-7b0420556985')
+var keyVaultSecretsOfficerRoleId = subscriptionResourceId(
+  'Microsoft.Authorization/roleDefinitions',
+  'b86a8fe4-44ce-4948-aee5-eccb2c155cd7')
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: identityName
   location: location
   tags: tags
+}
+resource fiscalKeyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
+  name: fiscalKeyVaultName
+  location: location
+  tags: tags
+  properties: {
+    tenantId: subscription().tenantId
+    enableRbacAuthorization: true
+    enablePurgeProtection: true
+    enableSoftDelete: true
+    softDeleteRetentionInDays: 90
+    publicNetworkAccess: 'Enabled'
+    sku: {
+      family: 'A'
+      name: 'standard'
+    }
+  }
+}
+
+resource fiscalKeyVaultCertificatesRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(fiscalKeyVault.id, identity.id, keyVaultCertificatesOfficerRoleId)
+  scope: fiscalKeyVault
+  properties: {
+    roleDefinitionId: keyVaultCertificatesOfficerRoleId
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource fiscalKeyVaultSecretsRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(fiscalKeyVault.id, identity.id, keyVaultSecretsOfficerRoleId)
+  scope: fiscalKeyVault
+  properties: {
+    roleDefinitionId: keyVaultSecretsOfficerRoleId
+    principalId: identity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
 }
 resource emailService 'Microsoft.Communication/emailServices@2025-09-01' = {
   name: emailServiceName
@@ -656,6 +700,14 @@ resource apiApp 'Microsoft.Web/sites@2024-04-01' = {
           value: fiscalSecretProtectionKey
         }
         {
+          name: 'Auraly__Fiscal__CredentialStore'
+          value: 'AzureKeyVault'
+        }
+        {
+          name: 'Auraly__Fiscal__KeyVaultUri'
+          value: fiscalKeyVault.properties.vaultUri
+        }
+        {
           name: 'Authentication__Jwt__SigningKey'
           value: jwtSecret
         }
@@ -836,3 +888,5 @@ output appConfigurationName string = appConfiguration.name
 output managedIdentityName string = identity.name
 output managedIdentityClientId string = identity.properties.clientId
 output managedIdentityPrincipalId string = identity.properties.principalId
+output fiscalKeyVaultName string = fiscalKeyVault.name
+output fiscalKeyVaultUri string = fiscalKeyVault.properties.vaultUri

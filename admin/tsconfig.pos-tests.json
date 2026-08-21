@@ -50,8 +50,6 @@
     "src/lib/goods-receipt-calculator.test.ts",
     "src/lib/formatted-decimal-input.ts",
     "src/lib/formatted-decimal-input.test.ts",
-    "src/lib/fiscal-resolution-form-state.ts",
-    "src/lib/fiscal-resolution-form-state.test.ts",
     "src/lib/default-start-route.ts",
     "src/lib/default-start-route.test.ts",
     "src/lib/report-viewer.ts",

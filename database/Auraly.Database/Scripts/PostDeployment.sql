@@ -50,6 +50,7 @@
 :r .\Migrations\MigrateProductsToCanonicalPrices.sql
 :r .\Migrations\BackfillPreparedProductPrices.sql
 :r .\Migrations\MigratePricePublicationAuditOrigins.sql
+:r .\Migrations\RemoveLegacyFiscalConfiguration.sql
 GO
 :r .\Seeds\SeedReferenceOptions.sql
 GO

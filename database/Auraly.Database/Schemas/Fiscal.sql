@@ -1,0 +1,1 @@
+CREATE SCHEMA [fiscal] AUTHORIZATION [dbo];

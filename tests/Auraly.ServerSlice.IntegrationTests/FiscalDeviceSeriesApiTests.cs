@@ -98,11 +98,11 @@ public sealed class FiscalDeviceSeriesApiTests(ServerSliceFixture fixture)
             INSERT dbo.FiscalAuthorizations(
               FiscalAuthorizationId,BusinessId,AuthorizationNumber,SupplierTaxId,
               Environment,QrValidationUrl,TechnicalKeyVersion,ValidFrom,ValidUntil,
-              IsActive,CreatedAt)
+              AuthorizedRangeStart,AuthorizedRangeEnd,IsActive,CreatedAt)
             VALUES(
               @ExpiredAuthorizationId,@BusinessId,N'EXPIRED-TEST',N'9001234567',2,
               N'https://example.test/qr',N'expired-test','2020-01-01','2020-12-31',
-              1,SYSDATETIMEOFFSET());
+              40001,40020,1,SYSDATETIMEOFFSET());
             INSERT dbo.FiscalSeries(
               SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
               DocumentType,Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)

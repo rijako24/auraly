@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Auraly.Application.Fiscal;
 using Auraly.Contracts.Fiscal;
+using Microsoft.AspNetCore.Mvc;
 
 namespace Auraly.Api;
 
@@ -14,12 +15,6 @@ public static class FiscalConfigurationApi
         group.MapGet("/", async (HttpContext context, Guid businessId,
             FiscalConfigurationService service, CancellationToken ct) =>
             await Handle(() => service.GetAsync(context.User.ToFiscalConfigurationUser(), businessId, ct)));
-
-        group.MapPut("/", async (HttpContext context, Guid businessId,
-            SaveFiscalResolutionConfiguration request,
-            FiscalConfigurationService service, CancellationToken ct) =>
-            await Handle(() => service.SaveAsync(
-                context.User.ToFiscalConfigurationUser(), businessId, request, ct)));
 
         group.MapGet("/devices", async (HttpContext context, Guid businessId,
             FiscalDeviceSeriesService service, CancellationToken ct) =>
@@ -46,31 +41,66 @@ public static class FiscalConfigurationApi
             })
             .RequireAuthorization("pos.synchronization");
 
-        group.MapGet("/issuer", async (HttpContext context, Guid businessId,
-            FiscalIssuerConnectionService service, CancellationToken ct) =>
+        group.MapGet("/onboarding", async (HttpContext context, Guid businessId,
+            FiscalOnboardingService service, CancellationToken ct) =>
             await Handle(() => service.GetAsync(
                 context.User.ToFiscalConfigurationUser(), businessId, ct)));
 
-        group.MapPut("/issuer", async (HttpContext context, Guid businessId,
-            SaveFiscalIssuerConnectionConfiguration request,
-            FiscalIssuerConnectionService service, CancellationToken ct) =>
-            await Handle(() => service.SaveAsync(
-                context.User.ToFiscalConfigurationUser(), businessId, request, ct)));
+        group.MapPost("/onboarding/habilitation", async (
+            HttpContext context,
+            Guid businessId,
+            FiscalOnboardingService service,
+            CancellationToken ct) => await Handle(async () =>
+        {
+            var form = await context.Request.ReadFormAsync(ct);
+            var file = form.Files.GetFile("certificate")
+                ?? throw new FiscalConfigurationValidationException(
+                    "Selecciona un certificado PFX/P12.");
+            if (file.Length > 2 * 1024 * 1024)
+                throw new FiscalConfigurationValidationException(
+                    "El certificado no puede superar 2 MB.");
+            var extension = Path.GetExtension(file.FileName);
+            if (extension is not (".pfx" or ".PFX" or ".p12" or ".P12"))
+                throw new FiscalConfigurationValidationException(
+                    "El certificado debe ser un archivo PFX o P12.");
+            await using var stream = new MemoryStream((int)file.Length);
+            await file.CopyToAsync(stream, ct);
+            if (!Guid.TryParse(form["testSetId"], out var testSetId))
+                throw new FiscalConfigurationValidationException("El TestSetId no es válido.");
+            var request = new SaveDianHabilitationConfiguration(
+                form["softwareIdentificationCode"].ToString(),
+                form["softwarePin"].ToString(),
+                testSetId,
+                form["certificatePassword"].ToString(),
+                stream.ToArray());
+            return await service.ConfigureHabilitationAsync(
+                context.User.ToFiscalConfigurationUser(), businessId, request, ct);
+        })).DisableAntiforgery()
+            .WithMetadata(
+                new RequestSizeLimitAttribute(3 * 1024 * 1024),
+                new RequestFormLimitsAttribute
+                {
+                    MultipartBodyLengthLimit = 3 * 1024 * 1024
+                });
 
-        var numbering = endpoints
-            .MapGroup("/api/commerce/v1/fiscal/numbering")
-            .RequireAuthorization("fiscal.user");
-        numbering.MapGet("/", async (HttpContext context, Guid businessId,
-            SalesInvoiceNumberingConfigurationService service,
+        group.MapPost("/onboarding/numbering-ranges/synchronize", async (
+            HttpContext context,
+            Guid businessId,
+            FiscalOnboardingService service,
             CancellationToken ct) =>
-            await Handle(() => service.GetAsync(
+            await Handle(() => service.SynchronizeNumberingRangesAsync(
                 context.User.ToFiscalConfigurationUser(), businessId, ct)));
-        numbering.MapPut("/", async (HttpContext context, Guid businessId,
-            SaveSalesInvoiceNumberingConfiguration request,
-            SalesInvoiceNumberingConfigurationService service,
+
+        group.MapPost("/onboarding/activate-production", async (
+            HttpContext context,
+            Guid businessId,
+            ActivateFiscalProductionRequest request,
+            FiscalOnboardingService service,
             CancellationToken ct) =>
-            await Handle(() => service.SaveAsync(
-                context.User.ToFiscalConfigurationUser(), businessId, request, ct)));
+            await Handle(() => service.ActivateProductionAsync(
+                context.User.ToFiscalConfigurationUser(), businessId,
+                request.DianNumberingRangeId, ct)));
+
         return endpoints;
     }
 
@@ -103,3 +133,5 @@ public static class FiscalConfigurationApi
             : throw new FiscalConfigurationForbiddenException(
                 $"La identidad del equipo no contiene '{type}'.");
 }
+
+public sealed record ActivateFiscalProductionRequest(Guid DianNumberingRangeId);

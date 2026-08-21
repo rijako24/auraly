@@ -46,6 +46,7 @@
     <Build Include="StoredProcedures\PriceSegmentItemDelete.sql" />
     <Build Include="Schemas\Reference.sql" />
     <Build Include="Schemas\Dispatch.sql" />
+    <Build Include="Schemas\Fiscal.sql" />
     <Build Include="Types\GuidIdList.sql" />
     <Build Include="Tables\ReferenceOptions.sql" />
     <Build Include="Tables\Tenants.sql" />
@@ -140,8 +141,9 @@
     <Build Include="Tables\PosEnrollmentSessions.sql" />
     <Build Include="Tables\DocumentSeries.sql" />
     <Build Include="Tables\FiscalAuthorizations.sql" />
-    <Build Include="Tables\SalesInvoiceNumberingConfigurations.sql" />
     <Build Include="Tables\FiscalTechnicalKeySecrets.sql" />
+    <Build Include="Tables\FiscalCredentialSecrets.sql" />
+    <Build Include="Tables\DianNumberingRanges.sql" />
     <Build Include="Tables\FiscalSeries.sql" />
 
     <Build Include="Tables\WorkSessions.sql" />

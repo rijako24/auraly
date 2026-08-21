@@ -165,11 +165,11 @@ public sealed class SqlFiscalGenerationWorkStore(
             SET FiscalStatus=@Status,UpdatedAt=@FailedAt
             WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId;
             UPDATE dbo.SalesDocuments
-            SET FiscalStatus=@Status,UpdatedAt=@FailedAt
+            SET FiscalStatus=@Status
             WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId
               AND @FiscalDocumentType=N'Invoice';
             UPDATE dbo.SalesReturns
-            SET FiscalStatus=@Status,UpdatedAt=@FailedAt
+            SET FiscalStatus=@Status
             WHERE ReturnId=@DocumentId AND BusinessId=@BusinessId
               AND @FiscalDocumentType=N'CreditNote';
             """;

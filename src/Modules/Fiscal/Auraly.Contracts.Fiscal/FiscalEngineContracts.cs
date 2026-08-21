@@ -61,6 +61,13 @@ public interface IDianHabilitationConfigurationProvider
         CancellationToken cancellationToken = default);
 }
 
+public interface IDianProductionConfigurationProvider
+{
+    Task<DianHabilitationConfiguration> ResolveAsync(
+        Guid businessId,
+        CancellationToken cancellationToken = default);
+}
+
 public sealed record FiscalSigningRequest(
     Guid BusinessId,
     string SupplierTaxId,
@@ -86,7 +93,7 @@ public sealed record DianSubmissionRequest(
     Guid DocumentId,
     string FileName,
     byte[] ZipContent,
-    string TestSetId,
+    string? TestSetId,
     string? TrackId,
     string CorrelationId);
 
@@ -120,8 +127,16 @@ public interface IDianHabilitationTransport
         CancellationToken cancellationToken = default);
 }
 
+public interface IDianProductionTransport
+{
+    Task<DianSubmissionResult> SubmitBillSyncAsync(
+        DianSubmissionRequest request,
+        CancellationToken cancellationToken = default);
+}
+
 public static class DianOperationCodes
 {
     public const string SendTestSet = "SendTestSetAsync";
     public const string GetStatusZip = "GetStatusZip";
+    public const string SendBillSync = "SendBillSync";
 }

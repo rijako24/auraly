@@ -1,13 +1,12 @@
 "use client";
 
 import { Check, FileText, Loader2, Receipt, X } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { FiscalResolutionForm } from "@/components/fiscal/fiscal-resolution-form";
 import {
   fiscalConfigurationApi,
   type FiscalResolutionConfiguration,
-  type SaveFiscalResolutionConfiguration,
 } from "@/services/api/fiscal-configuration";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
 import type { PosSaleDocumentType } from "@/services/pos/pos-edge-client";
@@ -53,7 +52,6 @@ export function PosDocumentTypeDialog({
     useState<FiscalResolutionConfiguration | null>(null);
   const [configuringInvoice, setConfiguringInvoice] = useState(false);
   const [checkingFiscal, setCheckingFiscal] = useState(false);
-  const [savingFiscal, setSavingFiscal] = useState(false);
   const [fiscalError, setFiscalError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -117,22 +115,6 @@ export function PosDocumentTypeDialog({
     }
   }
 
-  async function saveFiscal(request: SaveFiscalResolutionConfiguration) {
-    setSavingFiscal(true);
-    setFiscalError(null);
-    try {
-      setConfiguration(await fiscalConfigurationApi.save(businessId, request));
-    } catch (caught) {
-      setFiscalError(
-        caught instanceof Error
-          ? caught.message
-          : "No fue posible guardar la resolución fiscal.",
-      );
-    } finally {
-      setSavingFiscal(false);
-    }
-  }
-
   return (
     <div
       className="fixed inset-0 z-[60] grid place-items-center bg-slate-950/65 p-4"
@@ -164,7 +146,7 @@ export function PosDocumentTypeDialog({
           <button
             type="button"
             onClick={onCancel}
-            disabled={busy || checkingFiscal || savingFiscal}
+            disabled={busy || checkingFiscal}
             className="grid h-10 w-10 shrink-0 place-items-center rounded-xl text-slate-500 outline-none transition hover:bg-slate-100 hover:text-slate-900 focus:ring-2 focus:ring-teal-500/30 disabled:opacity-50"
             aria-label="Cerrar"
           >
@@ -181,7 +163,7 @@ export function PosDocumentTypeDialog({
                 key={option.value}
                 autoFocus={selected}
                 type="button"
-                disabled={busy || checkingFiscal || savingFiscal}
+                disabled={busy || checkingFiscal}
                 onClick={() => void selectDocument(option.value)}
                 className={`relative min-h-40 rounded-2xl border-2 p-5 text-left outline-none transition focus:ring-4 focus:ring-teal-500/20 disabled:cursor-wait disabled:opacity-60 ${
                   selected
@@ -231,28 +213,20 @@ export function PosDocumentTypeDialog({
             <div>
               <h3 className="font-bold text-slate-950">Configurar factura electrónica</h3>
               <p className="mt-1 text-sm text-slate-600">
-                Completa la resolución fiscal. El consecutivo interno de Auraly es automático y
-                empieza en uno; el comprobante de venta sigue disponible mientras terminas.
+                El POS no puede cargar certificados, cambiar el emisor ni asignar resoluciones.
+                Un administrador debe completar la activación DIAN para esta sede desde Configuración fiscal.
               </p>
             </div>
-            {configuration &&
-              !(edgeMode
-                ? configuration.isReadyForEnrollment
-                : configuration.isReadyForOnlineSales) && (
-                <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                  <FiscalResolutionForm
-                    value={configuration}
-                    saving={savingFiscal}
-                    onSave={saveFiscal}
-                  />
-                </div>
-              )}
+            {configuration?.authorizationNumber && <p className="rounded-xl bg-white p-3 text-sm text-slate-700">Resolución detectada: {configuration.authorizationNumber}. Aún no cumple todos los requisitos para este modo de venta.</p>}
             {fiscalError && (
               <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{fiscalError}</p>
             )}
+            <Link href="/dashboard/settings/fiscal" className="flex h-12 w-full items-center justify-center rounded-xl border border-teal-600 font-bold text-teal-700">
+              Abrir activación fiscal
+            </Link>
             <button
               type="button"
-              disabled={busy || checkingFiscal || savingFiscal}
+              disabled={busy || checkingFiscal}
               onClick={() => void selectDocument("SalesInvoice")}
               className="h-12 w-full rounded-xl bg-teal-600 font-bold text-white disabled:opacity-50"
             >
@@ -260,7 +234,7 @@ export function PosDocumentTypeDialog({
                 ? "Verificando..."
                 : edgeMode && !edgeFiscalReady
                   ? "Preparar serie fiscal en este equipo"
-                  : "Activar factura electrónica"}
+                  : "Volver a verificar"}
             </button>
           </div>
         )}

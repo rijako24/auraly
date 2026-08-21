@@ -110,7 +110,7 @@ public sealed class FiscalSubmissionWorkerTests
     }
 
     [Fact]
-    public async Task Missing_test_set_is_an_explicit_configuration_failure()
+    public async Task Missing_test_set_selects_production_SendBillSync()
     {
         var store = new TestStore(Work() with { TestSetId = null });
         var transport = new TestTransport(new DianSubmissionResult(
@@ -119,9 +119,10 @@ public sealed class FiscalSubmissionWorkerTests
         Assert.True((await Worker(store, transport).ProcessAsync(
             store.BusinessId, store.DocumentId, "worker-a")).WorkFound);
 
-        Assert.Equal(FiscalDocumentStatusCodes.PermanentFailure, store.Status);
-        Assert.Equal("MissingTestSetId", store.ErrorCode);
-        Assert.Equal(0, transport.SendCalls + transport.QueryCalls);
+        Assert.Equal(FiscalDocumentStatusCodes.DianAccepted, store.Status);
+        Assert.Equal(DianOperationCodes.SendBillSync, store.Started!.Operation);
+        Assert.Equal(1, transport.SendCalls);
+        Assert.Equal(0, transport.QueryCalls);
     }
 
     private static FiscalSubmissionWorker Worker(TestStore store, TestTransport transport)
@@ -130,6 +131,7 @@ public sealed class FiscalSubmissionWorkerTests
         return new FiscalSubmissionWorker(
             store,
             transport,
+            new TestProductionTransport(transport),
             new FiscalSubmissionPackageBuilder(),
             new FixedTimeProvider(Now));
     }
@@ -184,7 +186,7 @@ public sealed class FiscalSubmissionWorkerTests
                 operation,
                 "correlation",
                 new DianSubmissionRequest(item.BusinessId, item.DocumentId, $"{item.FiscalNumber}.zip",
-                    submissionZip ?? [1], item.TestSetId!.Value.ToString("D"), item.TrackId, "correlation"));
+                    submissionZip ?? [1], item.TestSetId?.ToString("D"), item.TrackId, "correlation"));
             return Task.FromResult(Started);
         }
 
@@ -250,6 +252,14 @@ public sealed class FiscalSubmissionWorkerTests
             StoreWasStartedAtCall = Store?.Started is not null;
             return Task.FromResult(result);
         }
+    }
+
+    private sealed class TestProductionTransport(TestTransport transport) : IDianProductionTransport
+    {
+        public Task<DianSubmissionResult> SubmitBillSyncAsync(
+            DianSubmissionRequest request,
+            CancellationToken cancellationToken = default) =>
+            transport.SubmitTestSetAsync(request, cancellationToken);
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider

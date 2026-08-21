@@ -21,6 +21,13 @@ public sealed class DianCreditNoteUblTests
                 .Elements(DianUblNamespaces.Cbc + "ID").Single().Value);
         Assert.Equal(DianCreditNoteCodes.PartialReturn,
             xml.Descendants(DianUblNamespaces.Cbc + "ResponseCode").Single().Value);
+        Assert.Equal("2", xml.Descendants(DianUblNamespaces.Cbc + "ProfileExecutionID").Single().Value);
+        Assert.Equal(DianCreditNoteCodes.DocumentType,
+            xml.Descendants(DianUblNamespaces.Cbc + "CreditNoteTypeCode").Single().Value);
+        var originalCufe = xml.Descendants(DianUblNamespaces.Cac + "InvoiceDocumentReference")
+            .Elements(DianUblNamespaces.Cbc + "UUID").Single();
+        Assert.Equal("2", originalCufe.Attribute("schemeID")?.Value);
+        Assert.Equal("CUFE-SHA384", originalCufe.Attribute("schemeName")?.Value);
     }
 
     [Fact]

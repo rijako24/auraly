@@ -77,7 +77,7 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
                 Encoding.UTF8.GetBytes("accepted"), true));
         var packages = new FiscalSubmissionPackageBuilder();
         var first = new FiscalSubmissionWorker(
-            submissionStore, transport, packages, new FixedTimeProvider(generatedAt.AddSeconds(1)));
+            submissionStore, transport, transport, packages, new FixedTimeProvider(generatedAt.AddSeconds(1)));
         Assert.True((await first.ProcessAsync(
             fixture.BusinessId, request.DocumentId, "submitter-one")).WorkFound);
         Assert.Equal(FiscalDocumentStatusCodes.PendingDianResult,
@@ -86,7 +86,7 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
                 request.DocumentId));
 
         var second = new FiscalSubmissionWorker(
-            submissionStore, transport, packages, new FixedTimeProvider(generatedAt.AddSeconds(10)));
+            submissionStore, transport, transport, packages, new FixedTimeProvider(generatedAt.AddSeconds(10)));
         Assert.True((await second.ProcessAsync(
             fixture.BusinessId, request.DocumentId, "submitter-two")).WorkFound);
         Assert.False((await second.ProcessAsync(
@@ -211,20 +211,37 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         Assert.Contains(original.FiscalSnapshot.Cufe,
             xml.Descendants().Where(element => element.Name.LocalName == "UUID")
                 .Select(element => element.Value));
+        Assert.Equal("2", xml.Descendants().Single(element =>
+            element.Name.LocalName == "ProfileExecutionID").Value);
+        Assert.Equal("91", xml.Descendants().Single(element =>
+            element.Name.LocalName == "CreditNoteTypeCode").Value);
+        Assert.Equal("1", xml.Descendants().Single(element =>
+            element.Name.LocalName == "ResponseCode").Value);
         Assert.Equal(2, await ScalarIntAsync(
             "SELECT COUNT(*) FROM dbo.FiscalArtifacts WHERE DocumentId=@DocumentId", returnId));
 
-        var transport = new SequenceTransport(new DianSubmissionResult(
-            DianSubmissionDisposition.Accepted, "credit-track-903", "00", "Accepted",
-            Encoding.UTF8.GetBytes("<ApplicationResponse />"),
-            Encoding.UTF8.GetBytes("accepted"), true));
+        var transport = new SequenceTransport(
+            new DianSubmissionResult(
+                DianSubmissionDisposition.Received, "credit-track-903", "Received", "Queued",
+                null, Encoding.UTF8.GetBytes("received"), true),
+            new DianSubmissionResult(
+                DianSubmissionDisposition.Accepted, "credit-track-903", "2",
+                "Set de prueba se encuentra Aceptado.",
+                Encoding.UTF8.GetBytes("<ApplicationResponse />"),
+                Encoding.UTF8.GetBytes("accepted"), true));
         var submitter = new FiscalSubmissionWorker(
-            new SqlFiscalSubmissionWorkStore(connections, ids), transport,
+            new SqlFiscalSubmissionWorkStore(connections, ids), transport, transport,
             new FiscalSubmissionPackageBuilder(),
             new FixedTimeProvider(generatedAt.AddSeconds(1)));
         Assert.True((await submitter.ProcessAsync(
             fixture.BusinessId, returnId, "credit-submitter")).WorkFound);
-        Assert.False((await submitter.ProcessAsync(
+        var statusQuery = new FiscalSubmissionWorker(
+            new SqlFiscalSubmissionWorkStore(connections, ids), transport, transport,
+            new FiscalSubmissionPackageBuilder(),
+            new FixedTimeProvider(generatedAt.AddSeconds(10)));
+        Assert.True((await statusQuery.ProcessAsync(
+            fixture.BusinessId, returnId, "credit-submitter")).WorkFound);
+        Assert.False((await statusQuery.ProcessAsync(
             fixture.BusinessId, returnId, "credit-submitter")).WorkFound);
 
         Assert.Equal(FiscalDocumentStatusCodes.DianAccepted,
@@ -233,14 +250,20 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         Assert.Equal(FiscalDocumentStatusCodes.DianAccepted,
             await ScalarStringAsync(
                 "SELECT FiscalStatus FROM dbo.SalesReturns WHERE ReturnId=@DocumentId", returnId));
-        Assert.Equal(1, await ScalarIntAsync(
+        Assert.Equal(2, await ScalarIntAsync(
             "SELECT COUNT(*) FROM dbo.FiscalTransmissionAttempts WHERE DocumentId=@DocumentId", returnId));
+        Assert.Equal(1, await ScalarIntAsync(
+            "SELECT COUNT(*) FROM dbo.FiscalTransmissionAttempts WHERE DocumentId=@DocumentId AND Operation='SendTestSetAsync'", returnId));
+        Assert.Equal(1, await ScalarIntAsync(
+            "SELECT COUNT(*) FROM dbo.FiscalTransmissionAttempts WHERE DocumentId=@DocumentId AND Operation='GetStatusZip' AND StatusCode='2'", returnId));
         Assert.Equal(1, await ScalarIntAsync(
             "SELECT COUNT(*) FROM dbo.FiscalArtifacts WHERE DocumentId=@DocumentId AND ArtifactType='SubmissionZip'", returnId));
         Assert.Equal(1, await ScalarIntAsync(
             "SELECT COUNT(*) FROM dbo.ServerOutboxMessages WHERE DocumentId=@DocumentId AND Type='FiscalDocument.DianAccepted'", returnId));
         Assert.Equal(1, transport.SendCalls);
-        Assert.Equal(0, transport.QueryCalls);
+        Assert.Equal(1, transport.TestSetCalls);
+        Assert.Equal(0, transport.ProductionCalls);
+        Assert.Equal(1, transport.QueryCalls);
 
         using var fiscalUser = fixture.CreateAdminClient(FiscalPermissionCodes.DocumentsRead);
         using var documentResponse = await fiscalUser.GetAsync(
@@ -368,10 +391,12 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         public override DateTimeOffset GetUtcNow() => now;
     }
     private sealed class SequenceTransport(params DianSubmissionResult[] results)
-        : IDianHabilitationTransport
+        : IDianHabilitationTransport, IDianProductionTransport
     {
         private int index;
         public int SendCalls { get; private set; }
+        public int TestSetCalls { get; private set; }
+        public int ProductionCalls { get; private set; }
         public int QueryCalls { get; private set; }
 
         public Task<DianSubmissionResult> SubmitTestSetAsync(
@@ -379,6 +404,7 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
             CancellationToken cancellationToken = default)
         {
             SendCalls++;
+            TestSetCalls++;
             return Next();
         }
 
@@ -387,7 +413,16 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
             CancellationToken cancellationToken = default)
         {
             QueryCalls++;
-            Assert.Equal("track-902", request.TrackId);
+            Assert.False(string.IsNullOrWhiteSpace(request.TrackId));
+            return Next();
+        }
+
+        public Task<DianSubmissionResult> SubmitBillSyncAsync(
+            DianSubmissionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            SendCalls++;
+            ProductionCalls++;
             return Next();
         }
 
@@ -406,7 +441,8 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         Guid productId,
         decimal quantity,
         decimal averageCost,
-        decimal inventoryValue) : IAsyncDisposable
+        decimal inventoryValue,
+        bool existed) : IAsyncDisposable
     {
         public static async Task<InventoryCheckpoint> CaptureAsync(
             string connectionString, Guid businessId, Guid warehouseId, Guid productId)
@@ -424,10 +460,12 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
             command.Parameters.AddWithValue("@WarehouseId", warehouseId);
             command.Parameters.AddWithValue("@ProductId", productId);
             await using var reader = await command.ExecuteReaderAsync();
-            Assert.True(await reader.ReadAsync());
+            if (!await reader.ReadAsync())
+                return new InventoryCheckpoint(
+                    connectionString, businessId, warehouseId, productId, 0m, 0m, 0m, false);
             return new InventoryCheckpoint(
                 connectionString, businessId, warehouseId, productId,
-                reader.GetDecimal(0), reader.GetDecimal(1), reader.GetDecimal(2));
+                reader.GetDecimal(0), reader.GetDecimal(1), reader.GetDecimal(2), true);
         }
 
         public async ValueTask DisposeAsync()
@@ -435,13 +473,19 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
             await using var connection = new SqlConnection(connectionString);
             await connection.OpenAsync();
             await using var command = connection.CreateCommand();
-            command.CommandText = """
-                UPDATE dbo.InventoryBalances
-                SET QuantityOnHand=@Quantity,AverageUnitCost=@AverageCost,
-                    InventoryValue=@InventoryValue,UpdatedAt=SYSUTCDATETIME()
-                WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId
-                  AND ProductId=@ProductId;
-                """;
+            command.CommandText = existed
+                ? """
+                  UPDATE dbo.InventoryBalances
+                  SET QuantityOnHand=@Quantity,AverageUnitCost=@AverageCost,
+                      InventoryValue=@InventoryValue,UpdatedAt=SYSUTCDATETIME()
+                  WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId
+                    AND ProductId=@ProductId;
+                  """
+                : """
+                  DELETE dbo.InventoryBalances
+                  WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId
+                    AND ProductId=@ProductId;
+                  """;
             command.Parameters.AddWithValue("@Quantity", quantity);
             command.Parameters.AddWithValue("@AverageCost", averageCost);
             command.Parameters.AddWithValue("@InventoryValue", inventoryValue);
