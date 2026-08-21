@@ -110,6 +110,7 @@ public static class PosOrderEndpoints
                 sessions.Required(),
                 request.OrderIds,
                 request.PaymentMethodCode,
+                request.DocumentType,
                 request.IdempotencyKey,
                 ct)));
 
@@ -121,4 +122,5 @@ public sealed record InvoicePosOrdersRequest(
     IReadOnlyCollection<Guid> OrderIds,
     string PaymentMethodCode,
     string? PaymentReference,
-    string IdempotencyKey);
+    string IdempotencyKey,
+    string DocumentType = "SalesInvoice");

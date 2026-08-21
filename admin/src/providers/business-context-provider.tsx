@@ -16,6 +16,7 @@ export function BusinessContextProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const userId = useAuthStore((state) => state.user?.userId ?? null);
   const setExecutionAccess = useAuthStore((state) => state.setExecutionAccess);
   const selectedTenantId = useTenantContextStore((state) => state.selectedTenantId);
   const setTenants = useTenantContextStore((state) => state.setTenants);
@@ -25,9 +26,9 @@ export function BusinessContextProvider({ children }: { children: ReactNode }) {
   const businessesLoaded = useBusinessContextStore((state) => state.isLoaded);
 
   const tenantsQuery = useQuery({
-    queryKey: ["execution-context", "tenants"],
+    queryKey: ["execution-context", userId, "tenants"],
     queryFn: executionContextApi.tenants,
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && Boolean(userId),
     staleTime: 60_000,
   });
 
@@ -36,7 +37,7 @@ export function BusinessContextProvider({ children }: { children: ReactNode }) {
   }, [setTenants, tenantsQuery.data]);
 
   const businessesQuery = useQuery({
-    queryKey: ["execution-context", "businesses", selectedTenantId],
+    queryKey: ["execution-context", userId, "businesses", selectedTenantId],
     queryFn: () => executionContextApi.businesses(selectedTenantId!),
     enabled: isAuthenticated && Boolean(selectedTenantId),
     staleTime: 60_000,
@@ -47,12 +48,13 @@ export function BusinessContextProvider({ children }: { children: ReactNode }) {
   }, [businessesQuery.data, setBusinesses]);
 
   const accessQuery = useQuery({
-    queryKey: ["execution-context", "access", selectedTenantId, selectedBusinessId],
+    queryKey: ["execution-context", userId, "access", selectedTenantId, selectedBusinessId],
     queryFn: () => executionContextApi.access(selectedTenantId!, selectedBusinessId!),
     enabled:
       isAuthenticated &&
       Boolean(selectedTenantId) &&
       Boolean(selectedBusinessId) &&
+      Boolean(userId) &&
       businessesLoaded,
     staleTime: 30_000,
   });
@@ -66,7 +68,11 @@ export function BusinessContextProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!accessQuery.data) return;
     const target = defaultStartRoute(accessQuery.data.roles, accessQuery.data.permissions);
-    if (shouldRestoreOperationalStart(pathname, target)) router.replace(target);
+    if (shouldRestoreOperationalStart(pathname, target)) {
+      if (typeof navigator !== "undefined" && !navigator.onLine)
+        window.location.replace(target);
+      else router.replace(target);
+    }
   }, [accessQuery.data, pathname, router]);
 
   if (!isAuthenticated) return null;

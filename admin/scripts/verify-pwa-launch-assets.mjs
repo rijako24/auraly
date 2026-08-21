@@ -27,6 +27,24 @@ for (const [width, height] of expectedScreens) {
 const manifest = JSON.parse(await readFile(path.join(root, "public", "app.webmanifest"), "utf8"));
 if (manifest.display !== "standalone" || manifest.background_color !== "#f8fafc" || manifest.theme_color !== "#f8fafc")
   throw new Error("The app manifest must use standalone mode and the light launch background.");
-for (const icon of manifest.icons) await access(path.join(root, "public", icon.src.replace(/^\//, "")));
+for (const icon of manifest.icons) {
+  const iconPath = new URL(icon.src, "https://auraly.local").pathname;
+  await access(path.join(root, "public", iconPath.replace(/^\//, "")));
+}
+
+const layout = await readFile(path.join(root, "src", "app", "layout.tsx"), "utf8");
+for (const [width, height] of expectedScreens) {
+  if (!layout.includes(`auraly-${width}x${height}-v4.png?v=5`))
+    throw new Error(`The iOS startup metadata is missing ${width}x${height}.`);
+}
+if (!layout.includes("#auraly-standalone-boot") ||
+    !layout.includes("background:#f8fafc") ||
+    !layout.includes('colorScheme: "light"'))
+  throw new Error("The first standalone DOM frame must force the light launch screen.");
+
+const worker = await readFile(path.join(root, "public", "app-sw.js"), "utf8");
+if (!worker.includes('VERSION = "auraly-pwa-v5"') ||
+    /APP_SHELL\s*=\s*\[[^\]]*"\/dashboard"/.test(worker))
+  throw new Error("The v5 worker must not pre-cache an unauthenticated dashboard response.");
 
 console.log(`Verified ${expectedScreens.length} opaque iOS launch screens and ${manifest.icons.length} Android PWA icons.`);

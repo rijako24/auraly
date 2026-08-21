@@ -141,6 +141,7 @@ type OnlineCheckoutResponse = {
 };
 
 const WORKSPACE_STORAGE_KEY = "auraly.pos.sales-workspace";
+const WORKSPACE_OFFLINE_STORE = "seller-workspaces";
 
 // Survives client-side navigation only. The server remains authoritative for
 // authorization, workspace and every POS operation.
@@ -155,9 +156,33 @@ export function recalledOnlinePosClient(): OnlinePosClient | null {
 }
 
 export async function loadSalesWorkspaceOptions(): Promise<SalesWorkspaceOption[]> {
-  return request<SalesWorkspaceOption[]>(
-    "/api/commerce/v1/pos/workspace/options",
-  );
+  try {
+    const values = await request<SalesWorkspaceOption[]>(
+      "/api/commerce/v1/pos/workspace/options",
+    );
+    const { openSalesOfflineDatabase } = await import("@/lib/sales-offline-database");
+    const database = await openSalesOfflineDatabase();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const operation = database.transaction(WORKSPACE_OFFLINE_STORE, "readwrite").objectStore(WORKSPACE_OFFLINE_STORE).put({ key: "available", values, updatedAt: new Date().toISOString() });
+        operation.onsuccess = () => resolve();
+        operation.onerror = () => reject(operation.error);
+      });
+    } finally { database.close(); }
+    return values;
+  } catch (error) {
+    const { openSalesOfflineDatabase } = await import("@/lib/sales-offline-database");
+    const database = await openSalesOfflineDatabase();
+    try {
+      const cached = await new Promise<{ values: SalesWorkspaceOption[] } | undefined>((resolve, reject) => {
+        const operation = database.transaction(WORKSPACE_OFFLINE_STORE, "readonly").objectStore(WORKSPACE_OFFLINE_STORE).get("available");
+        operation.onsuccess = () => resolve(operation.result);
+        operation.onerror = () => reject(operation.error);
+      });
+      if (cached?.values.length) return cached.values;
+    } finally { database.close(); }
+    throw error;
+  }
 }
 
 export async function selectSalesWorkspace(
@@ -633,6 +658,7 @@ export class OnlinePosClient implements PosClient {
   async invoiceOrders(
     orderIds: string[],
     paymentMethodCode: string,
+    documentType: "SalesInvoice" | "SalesReceipt",
   ): Promise<InvoiceOrdersResponse> {
     const response = await invoiceCommerceOrders({
       workSessionId: this.context.workSessionId,
@@ -641,6 +667,7 @@ export class OnlinePosClient implements PosClient {
       orderIds,
       paymentMethodCode,
       paymentReference: null,
+      documentType,
     });
     await this.activeDraft();
     return response;

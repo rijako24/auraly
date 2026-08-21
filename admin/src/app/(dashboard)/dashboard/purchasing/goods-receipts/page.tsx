@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
-  ArchiveRestore, Barcode, ChevronDown, CircleDollarSign, PackagePlus, Pencil, Plus, Save,
+  ArchiveRestore, Barcode, ChevronDown, CircleDollarSign, PackagePlus, Plus, Save,
   Search, Trash2, Truck, Warehouse,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -82,7 +82,7 @@ export default function GoodsReceiptsPage() {
 
   const rememberLocalDraft = (next: EditorDraft) => {
     setEditor(next);
-    if (localDraftKey && !next.concurrencyToken) localStorage.setItem(localDraftKey, JSON.stringify(next));
+    if (localDraftKey) localStorage.setItem(localDraftKey, JSON.stringify(next));
   };
   const clearLocalDraft = () => {
     if (localDraftKey) localStorage.removeItem(localDraftKey);
@@ -342,8 +342,6 @@ function ReceiptEditor({
   const totals = calculateGoodsReceiptTotals(draft.lines);
 
   const change = (values: Partial<EditorDraft>) => onChange({ ...draft, ...values });
-  const supplierName = options.data?.suppliers.find((item) => item.supplierId === draft.supplierId)?.name ?? "Sin proveedor";
-  const warehouseName = options.data?.warehouses.find((item) => item.warehouseId === draft.warehouseId)?.name ?? "Sin bodega";
 
   const applySupplierChange = (supplierId: string) => {
     change({ supplierId, lines: [] });
@@ -505,11 +503,11 @@ function ReceiptEditor({
       line.productId === productId ? { ...line, ...values } : line) });
 
   const deleteDraft = async () => {
-    if (!draft.concurrencyToken) { onClose(); return; }
+    if (!draft.concurrencyToken) return;
     try {
       await remove.mutateAsync({ draftId: draft.draftId, concurrencyToken: draft.concurrencyToken });
       toast.success("El borrador fue eliminado.");
-      onClose();
+      onClear();
     } catch { toast.error("No fue posible eliminar el borrador."); }
   };
 
@@ -544,7 +542,7 @@ function ReceiptEditor({
           onClick: () => router.push(`/dashboard/products/pricing?sourceDocumentId=${accepted.documentId}`),
         },
       });
-      onClose();
+      onClear();
     } catch (error) {
       const message = error && typeof error === "object" && "message" in error
         ? String(error.message)
@@ -560,7 +558,9 @@ function ReceiptEditor({
           <Truck className="h-5 w-5 text-primary" /> Entrada de mercancía
         </DialogTitle>
         <DialogDescription>
-          Borrador recuperable. El consecutivo se asigna únicamente al confirmar.
+          {draft.concurrencyToken
+            ? "Borrador guardado. Puedes continuarlo, confirmarlo o eliminarlo."
+            : "Captura local sin guardar. Cerrar conserva lo digitado en este dispositivo."}
         </DialogDescription>
       </DialogHeader>
 
@@ -618,30 +618,13 @@ function ReceiptEditor({
           <Field label="Vencimiento">
             <DatePicker disabled={!draft.createsPayable} value={draft.dueDate} onChange={(value) => change({ dueDate: value })} />
           </Field>
-          <Field label="Notas">
-            <Input value={draft.notes} onChange={(event) => change({ notes: event.target.value })}
-              placeholder="Recepción, estado o referencia" maxLength={1000} />
-          </Field>
-        </section>
-        </>}
-        {!detailsExpanded &&
-        <section className="rounded-2xl border bg-muted/20 p-4" data-testid="goods-receipt-readonly-details">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Datos de la recepción</p>
-              <div className="mt-2 flex flex-wrap gap-x-6 gap-y-2 text-sm">
-                <span><strong>Proveedor:</strong> {supplierName}</span>
-                <span><strong>Bodega:</strong> {warehouseName}</span>
-                <span><strong>Factura:</strong> {draft.supplierInvoiceNumber || "Sin número"}</span>
-                <span><strong>Condición:</strong> {draft.createsPayable ? "Crédito" : "Contado"}</span>
-              </div>
-            </div>
-            <Button type="button" variant="outline" size="sm" onClick={() => setDetailsExpanded(true)}>
-              <Pencil className="mr-2 h-4 w-4" /> Editar datos
+          <div className="flex justify-end md:col-span-4">
+            <Button type="button" onClick={continueToProducts} data-testid="goods-receipt-continue">
+              Continuar a productos
             </Button>
           </div>
-        </section>}
-
+        </section>
+        </>}
         <section className="rounded-2xl border">
           <div ref={productPickerRef} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setProductMenuOpen(false); }}>
           <div className="grid gap-3 border-b p-4 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
@@ -780,6 +763,7 @@ function ReceiptEditor({
 
         <section className="grid gap-3 md:grid-cols-[minmax(0,1fr)_18rem]">
           <Textarea value={draft.notes} onChange={(event) => change({ notes: event.target.value })}
+            className="h-24 min-h-24 resize-none"
             placeholder="Observaciones de recepción" maxLength={1000} />
           <dl className="space-y-2 rounded-2xl bg-slate-950 p-5 text-white">
             <Amount label="Subtotal" value={totals.net} />
@@ -858,18 +842,17 @@ function ReceiptEditor({
         </DialogContent>
       </Dialog>
       <DialogFooter className="border-t bg-background px-6 py-4 sm:justify-between">
-        <Button type="button" variant="ghost" className="text-destructive" onClick={deleteDraft}>
-          <Trash2 className="mr-2 h-4 w-4" /> Eliminar borrador
-        </Button>
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={onClear}>Cancelar entrada</Button>
-          <Button type="button" variant="outline" onClick={onClose}>Cerrar</Button>
+        {draft.concurrencyToken
+          ? <Button type="button" variant="ghost" className="text-destructive" disabled={remove.isPending} onClick={deleteDraft}>
+              <Trash2 className="mr-2 h-4 w-4" /> Eliminar borrador
+            </Button>
+          : <Button type="button" variant="ghost" className="text-destructive" onClick={onClear}>
+              Descartar captura
+            </Button>}
+        <div className="grid w-full gap-2 sm:flex sm:w-auto sm:justify-end">
           <Button type="button" variant="secondary" disabled={save.isPending} onClick={() => persist()}>
             <Save className="mr-2 h-4 w-4" /> Guardar borrador
           </Button>
-          {detailsExpanded && <Button type="button" disabled={save.isPending} onClick={continueToProducts} data-testid="goods-receipt-continue">
-              Guardar datos y contraer
-            </Button>}
           {canConfirm && <Button type="button" disabled={confirm.isPending} onClick={confirmEntry}>
               <ArchiveRestore className="mr-2 h-4 w-4" /> Confirmar entrada
             </Button>}

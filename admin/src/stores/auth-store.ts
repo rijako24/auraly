@@ -25,16 +25,15 @@ export const useAuthStore = create<AuthState>()(
         })),
       clearAuth: () => set({ user: null, isAuthenticated: false }),
       logout: async () => {
+        set({ user: null, isAuthenticated: false });
         try {
           await fetch("/api/auth/logout", {
             method: "POST",
             credentials: "include",
           });
-        } finally {
-          set({
-            user: null,
-            isAuthenticated: false,
-          });
+        } catch {
+          // The local session is already closed; the server cookie can expire
+          // independently when the device recovers connectivity.
         }
       },
     }),

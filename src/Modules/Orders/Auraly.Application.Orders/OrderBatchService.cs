@@ -35,6 +35,7 @@ public sealed class OrderBatchService(
     OrderService orders,
     OrderRecoveryService recovery,
     OnlineSalesDraftService drafts,
+    OnlineSalesHistoryService history,
     OnlineSalesCheckoutService checkout)
 {
     private static readonly HashSet<string> PaymentMethods =
@@ -131,6 +132,22 @@ public sealed class OrderBatchService(
                 var paymentReference = order.PaymentStatus == "Confirmed"
                     ? $"Pago confirmado del pedido {order.OrderNumber}"
                     : request.PaymentReference;
+                var documentType = request.DocumentType;
+                if (order.CustomerId is not null &&
+                    request.DocumentType == PosSaleDocumentTypes.Receipt)
+                {
+                    var customer = await history.GetCustomerAsync(
+                        identity,
+                        new GetOnlineSalesCustomerRequest(
+                            new OnlineSalesDraftContext(
+                                actor.BusinessId,
+                                request.WarehouseId,
+                                request.WorkSessionId),
+                            order.CustomerId.Value),
+                        cancellationToken);
+                    if (customer?.RequiresElectronicInvoice == true)
+                        documentType = PosSaleDocumentTypes.Invoice;
+                }
                 var issued = await checkout.CompleteAsync(
                     identity,
                     draft.DraftId,
@@ -141,7 +158,8 @@ public sealed class OrderBatchService(
                                 paymentMethod,
                                 draft.PayableAmount,
                                 paymentReference)
-                        ]),
+                        ],
+                        DocumentType: documentType),
                     OperationKey(lease.OperationId, orderId, "invoice"),
                     cancellationToken);
                 results.Add(new(
@@ -230,6 +248,8 @@ public sealed class OrderBatchService(
             request.OrderIds.Count is < 1 or > 50 ||
             request.OrderIds.Any(id => id == Guid.Empty) ||
             !PaymentMethods.Contains(request.PaymentMethodCode) ||
+            request.DocumentType is not (
+                PosSaleDocumentTypes.Invoice or PosSaleDocumentTypes.Receipt) ||
             request.PaymentReference?.Length > 160)
             throw new OrderValidationException(
                 "Sesión, usuario, pedidos y medio de pago válidos son obligatorios.");
@@ -252,6 +272,7 @@ public sealed class OrderBatchService(
             request.UserId.ToString("D"),
             request.PaymentMethodCode,
             request.PaymentReference ?? string.Empty,
+            request.DocumentType,
             string.Join(",", orderIds.Select(id => id.ToString("D"))));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     }

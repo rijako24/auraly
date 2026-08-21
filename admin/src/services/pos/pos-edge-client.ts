@@ -336,6 +336,7 @@ export interface PosClient {
   invoiceOrders(
     orderIds: string[],
     paymentMethodCode: string,
+    documentType: PosSaleDocumentType,
   ): Promise<InvoiceOrdersResponse>;
   cashMovementReasons(direction: PosCashMovementDirection): Promise<PosCashMovementReason[]>;
   confirmCashMovement(input: PosCashMovementInput): Promise<PosCashMovementAcceptance>;
@@ -693,13 +694,18 @@ export class PosEdgeClient implements PosClient {
     });
   }
 
-  invoiceOrders(orderIds: string[], paymentMethodCode: string) {
+  invoiceOrders(
+    orderIds: string[],
+    paymentMethodCode: string,
+    documentType: PosSaleDocumentType,
+  ) {
     return this.request<InvoiceOrdersResponse>("/edge/v1/orders/invoice", {
       method: "POST",
       body: JSON.stringify({
         orderIds,
         paymentMethodCode,
         paymentReference: null,
+        documentType,
         idempotencyKey: crypto.randomUUID(),
       }),
     });

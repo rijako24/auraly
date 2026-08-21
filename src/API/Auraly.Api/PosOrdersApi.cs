@@ -107,7 +107,8 @@ public static class PosOrdersApi
                     request.UserId,
                     request.OrderIds.ToArray(),
                     request.PaymentMethodCode,
-                    request.PaymentReference),
+                    request.PaymentReference,
+                    request.DocumentType),
                     context.Request.Headers["Idempotency-Key"].ToString(),
                     ct);
             }));
@@ -156,7 +157,8 @@ public sealed record PosInvoiceOrdersRequest(
     Guid WorkSessionId,
     IReadOnlyCollection<Guid> OrderIds,
     string PaymentMethodCode,
-    string? PaymentReference)
+    string? PaymentReference,
+    string DocumentType = "SalesInvoice")
 {
     public PosOrderExecutionContext ToExecutionContext() =>
         new(UserId, BusinessId, WarehouseId, WorkSessionId);

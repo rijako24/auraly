@@ -205,18 +205,20 @@ export default function PricingPage() {
     {
       accessorKey: "observedUnitCost",
       header: "Costo base",
-      cell: ({ row }) => <div className="flex min-h-16 min-w-28 flex-col justify-center">
-        <p className="font-medium">{formatCurrency(row.original.observedUnitCost)}</p>
-        {row.original.previousObservedUnitCost !== null && <p className="text-xs text-muted-foreground">
-          Antes {formatCurrency(row.original.previousObservedUnitCost)}
-        </p>}
+      cell: ({ row }) => <div className="grid min-h-20 min-w-28 grid-rows-[2.5rem_1rem] content-center">
+        <p className="flex items-center font-medium">{formatCurrency(row.original.observedUnitCost)}</p>
+        <p className="text-xs text-muted-foreground">
+          {row.original.previousObservedUnitCost !== null
+            ? `Antes ${formatCurrency(row.original.previousObservedUnitCost)}`
+            : "Costo registrado"}
+        </p>
       </div>,
     },
     {
       accessorKey: "currentSalePrice",
       header: "Precio público actual",
-      cell: ({ row }) => <div className="flex min-h-16 min-w-28 flex-col justify-center">
-        <p className="font-medium">{formatCurrency(row.original.currentSalePrice)}</p>
+      cell: ({ row }) => <div className="grid min-h-20 min-w-28 grid-rows-[2.5rem_1rem] content-center">
+        <p className="flex items-center font-medium">{formatCurrency(row.original.currentSalePrice)}</p>
         <p className="text-xs text-muted-foreground">{publicationLabel(row.original.currentPricePublishedAt)}</p>
       </div>,
     },
@@ -225,7 +227,7 @@ export default function PricingPage() {
       header: "Margen preparado",
       cell: ({ row }) => {
         const draft = draftFor(row.original);
-        return <div className="flex min-h-16 min-w-32 flex-col justify-center" title={proposalDisabledReason(row.original)}>
+        return <div className="grid min-h-20 min-w-32 grid-rows-[2.5rem_1rem] content-center" title={proposalDisabledReason(row.original)}>
           <FormattedNumberInput
             id={`pricing-margin-${row.original.proposalId}`}
             kind="percent"
@@ -236,7 +238,7 @@ export default function PricingPage() {
             onKeyDown={(event) => navigatePricingGrid(event, row.original, "margin")}
             className="h-10 bg-background text-right font-medium"
           />
-          <p className="mt-1 text-xs text-muted-foreground">Sobre precio antes de IVA</p>
+          <p className="text-xs text-muted-foreground">Sobre precio antes de IVA</p>
         </div>;
       },
     },
@@ -245,7 +247,7 @@ export default function PricingPage() {
       header: "Precio a publicar",
       cell: ({ row }) => {
         const draft = draftFor(row.original);
-        return <div className="flex min-h-16 min-w-40 flex-col justify-center" title={proposalDisabledReason(row.original)}>
+        return <div className="grid min-h-20 min-w-40 grid-rows-[2.5rem_1rem] content-center" title={proposalDisabledReason(row.original)}>
           <FormattedNumberInput
             id={`pricing-price-${row.original.proposalId}`}
             kind="currency"
@@ -256,7 +258,7 @@ export default function PricingPage() {
             onKeyDown={(event) => navigatePricingGrid(event, row.original, "price")}
             className="h-10 border-primary/40 bg-primary/5 text-right font-semibold text-primary"
           />
-          <p className="mt-1 text-xs text-muted-foreground">Valor final con IVA incluido</p>
+          <p className="text-xs text-muted-foreground">Valor final con IVA incluido</p>
         </div>;
       },
     },

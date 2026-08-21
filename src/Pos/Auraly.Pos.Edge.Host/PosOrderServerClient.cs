@@ -57,6 +57,7 @@ public sealed class PosOrderServerClient(
         PosLocalUserSession session,
         IReadOnlyCollection<Guid> orderIds,
         string paymentMethodCode,
+        string documentType,
         string idempotencyKey,
         CancellationToken cancellationToken) =>
         SendAsync<InvoiceOrdersResponse>(
@@ -70,6 +71,7 @@ public sealed class PosOrderServerClient(
                 workSessionId = session.WorkSessionId,
                 orderIds,
                 paymentMethodCode,
+                documentType,
                 paymentReference = (string?)null
             }),
             idempotencyKey,

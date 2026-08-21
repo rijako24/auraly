@@ -71,7 +71,7 @@ public sealed class DispatchDeliveryService(IDispatchDeliveryStore store)
 
     public Task<DispatchExecutionDetail> CloseRouteAsync(DispatchActorIdentity actor, Guid dispatchId, CloseDispatchRouteRequest request, CancellationToken ct)
     {
-        Require(actor, DispatchPermissionCodes.ExecuteDeliveries); Required(dispatchId, "DispatchId"); Idempotency(request.IdempotencyKey);
+        Require(actor, DispatchPermissionCodes.Settle); Required(dispatchId, "DispatchId"); Idempotency(request.IdempotencyKey);
         if (request.DeclaredCash < 0) throw new DispatchValidationException("DeclaredCash cannot be negative.");
         return store.CloseRouteAsync(actor, dispatchId, request with { DifferenceReason = Text(request.DifferenceReason, 500), IdempotencyKey = request.IdempotencyKey.Trim() }, ct);
     }

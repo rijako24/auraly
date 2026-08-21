@@ -60,7 +60,7 @@ public sealed class SqlDispatchDeliveryStore(DispatchingSqlConnectionFactory con
           FROM dbo.DispatchSourceDocuments source INNER JOIN dbo.Dispatches dispatch ON dispatch.DispatchId=source.DispatchId
           INNER JOIN dbo.SalesDocuments sale ON sale.DocumentId=source.SourceDocumentId
           LEFT JOIN dbo.DispatchDocumentSequences custom ON custom.DispatchId=source.DispatchId AND custom.DispatchSourceDocumentId=source.DispatchSourceDocumentId
-          LEFT JOIN dbo.SalesRouteStops routeStop ON routeStop.RouteId=dispatch.RouteId AND routeStop.CustomerId=source.CustomerId AND routeStop.IsActive=1
+          OUTER APPLY(SELECT TOP(1) stop.Sequence,stop.PartySiteId FROM dbo.SalesRouteStops stop LEFT JOIN dbo.PartySites stopSite ON stopSite.PartySiteId=stop.PartySiteId WHERE stop.RouteId=dispatch.RouteId AND stop.CustomerId=source.CustomerId AND stop.IsActive=1 ORDER BY CASE WHEN stopSite.AddressLine=source.DeliveryAddressSnapshot THEN 0 ELSE 1 END,stop.Sequence,stop.RouteStopId) routeStop
           OUTER APPLY(SELECT TOP(1) site.Latitude,site.Longitude FROM dbo.Customers customer INNER JOIN dbo.PartySites site ON site.PartyId=customer.PartyId AND site.IsActive=1 WHERE customer.CustomerId=source.CustomerId ORDER BY CASE WHEN site.PartySiteId=routeStop.PartySiteId THEN 0 WHEN site.IsPrimary=1 THEN 1 ELSE 2 END,site.CreatedAt) destination
           LEFT JOIN dbo.DispatchDeliveryEvents delivery ON delivery.DispatchSourceDocumentId=source.DispatchSourceDocumentId
           WHERE source.DispatchId=@Id ORDER BY COALESCE(custom.Sequence,routeStop.Sequence,2147483647),source.CustomerNameSnapshot,source.DocumentNumberSnapshot;
@@ -181,7 +181,7 @@ public sealed class SqlDispatchDeliveryStore(DispatchingSqlConnectionFactory con
           IF EXISTS(SELECT 1 FROM dbo.DispatchSettlements WHERE BusinessId=@BusinessId AND IdempotencyKey=@Key) RETURN;
           BEGIN TRAN;
           BEGIN TRY
-            IF NOT EXISTS(SELECT 1 FROM dbo.Dispatches WITH(UPDLOCK,HOLDLOCK) WHERE DispatchId=@Id AND BusinessId=@BusinessId AND DriverUserId=@UserId AND Status=N'InDelivery') THROW 51000,'The dispatch is not open for this transporter.',1;
+            IF NOT EXISTS(SELECT 1 FROM dbo.Dispatches WITH(UPDLOCK,HOLDLOCK) WHERE DispatchId=@Id AND BusinessId=@BusinessId AND @Settle=1 AND Status=N'InDelivery') THROW 51000,'The dispatch is not ready to be received and closed.',1;
             IF EXISTS(SELECT 1 FROM dbo.DispatchSourceDocuments source WHERE source.DispatchId=@Id AND NOT EXISTS(SELECT 1 FROM dbo.DispatchDeliveryEvents delivery WHERE delivery.DispatchSourceDocumentId=source.DispatchSourceDocumentId)) THROW 51000,'Every invoice requires a delivery result.',1;
             DECLARE @Cash decimal(19,4)=(SELECT COALESCE(SUM(Amount),0) FROM dbo.DispatchDeliveryPayments WHERE DispatchId=@Id AND PaymentMethod=N'Cash');
             DECLARE @Deposit decimal(19,4)=(SELECT COALESCE(SUM(Amount),0) FROM dbo.DispatchDeliveryPayments WHERE DispatchId=@Id AND PaymentMethod=N'Deposit');

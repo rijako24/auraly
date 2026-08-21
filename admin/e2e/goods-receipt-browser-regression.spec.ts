@@ -44,8 +44,11 @@ test("recibe mercancia por UI, conserva el foco y procesa inventario", async ({ 
   await selectFirst(page, dialog, "Proveedor");
   await selectFirst(page, dialog, "Bodega");
   await dialog.getByTestId("goods-receipt-continue").click();
-  await expect(dialog.getByTestId("goods-receipt-readonly-details")).toContainText("Proveedor:");
-  await expect(dialog.getByRole("button", { name: "Editar datos" })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /Datos de la recepción/ })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+  await expect(dialog.getByTestId("goods-receipt-readonly-details")).toHaveCount(0);
 
   const search = dialog.getByPlaceholder(/Escanea o busca por c.digo/);
   await dialog.getByRole("button", { name: /Buscar en todo el cat.logo/ }).click();
@@ -66,6 +69,8 @@ test("recibe mercancia por UI, conserva el foco y procesa inventario", async ({ 
   await quantity.press("Enter");
   await expect(search).toBeFocused();
   await expect(dialog.getByText(/10 .* = 10/).first()).toBeVisible();
+  const notes = dialog.getByPlaceholder("Observaciones de recepción");
+  await expect(notes).toHaveCSS("resize", "none");
 
   const confirm = dialog.getByRole("button", { name: "Confirmar entrada" });
   await confirm.focus();

@@ -4,6 +4,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "@/providers/theme-provider";
 import { QueryProvider } from "@/providers/query-provider";
 import { PwaProvider } from "@/providers/pwa-provider";
+import { AppBootScreen } from "@/components/pwa/app-boot-screen";
 
 import "./globals.css";
 
@@ -13,23 +14,23 @@ export const metadata: Metadata = {
   description: "Panel de administración de Auraly",
   manifest: "/app.webmanifest",
   icons: {
-    icon: "/brand/auraly-app-icon-192.png",
-    shortcut: "/brand/auraly-app-icon-192.png",
-    apple: "/brand/auraly-ios-icon-512-v4.png",
+    icon: "/brand/auraly-app-icon-192-v4.png?v=5",
+    shortcut: "/brand/auraly-app-icon-192-v4.png?v=5",
+    apple: "/brand/auraly-ios-icon-512-v4.png?v=5",
   },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
     title: "Auraly",
     startupImage: [
-      { url: "/brand/launch/auraly-750x1334-v4.png", media: "(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" },
-      { url: "/brand/launch/auraly-828x1792-v4.png", media: "(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" },
-      { url: "/brand/launch/auraly-1125x2436-v4.png", media: "(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
-      { url: "/brand/launch/auraly-1170x2532-v4.png", media: "(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
-      { url: "/brand/launch/auraly-1179x2556-v4.png", media: "(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
-      { url: "/brand/launch/auraly-1242x2688-v4.png", media: "(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
-      { url: "/brand/launch/auraly-1284x2778-v4.png", media: "(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
-      { url: "/brand/launch/auraly-1290x2796-v4.png", media: "(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
+      { url: "/brand/launch/auraly-750x1334-v4.png?v=5", media: "(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" },
+      { url: "/brand/launch/auraly-828x1792-v4.png?v=5", media: "(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" },
+      { url: "/brand/launch/auraly-1125x2436-v4.png?v=5", media: "(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
+      { url: "/brand/launch/auraly-1170x2532-v4.png?v=5", media: "(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
+      { url: "/brand/launch/auraly-1179x2556-v4.png?v=5", media: "(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
+      { url: "/brand/launch/auraly-1242x2688-v4.png?v=5", media: "(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
+      { url: "/brand/launch/auraly-1284x2778-v4.png?v=5", media: "(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
+      { url: "/brand/launch/auraly-1290x2796-v4.png?v=5", media: "(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
     ],
   },
 };
@@ -50,7 +51,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es" suppressHydrationWarning style={{ backgroundColor: "#f8fafc", colorScheme: "light" }}>
+      <head>
+        <meta name="supported-color-schemes" content="light" />
+        <style>{`html,body{background:#f8fafc!important;color-scheme:light}#auraly-standalone-boot{display:none}@media(display-mode:standalone){#auraly-standalone-boot{display:block;position:fixed;inset:0;z-index:2147483647;background:#f8fafc url('/brand/launch/auraly-1170x2532-v4.png?v=5') center/cover no-repeat}}`}</style>
+      </head>
       <body className="font-sans antialiased" style={{ backgroundColor: "#f8fafc" }}>
+        <AppBootScreen />
         <ThemeProvider
           attribute="class"
           defaultTheme="light"

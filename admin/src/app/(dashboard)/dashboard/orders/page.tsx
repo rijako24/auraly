@@ -137,7 +137,7 @@ export default function OrdersPage() {
         }
         onInvoiceSelected={
           workspace && user
-            ? async (orders, paymentMethodCode) => {
+            ? async (orders, paymentMethodCode, documentType) => {
                 const context = await selectSalesWorkspace(workspace);
                 const response = await invoiceCommerceOrders({
                   workSessionId: context.workSessionId,
@@ -146,6 +146,7 @@ export default function OrdersPage() {
                   orderIds: orders.map((order) => order.orderId),
                   paymentMethodCode,
                   paymentReference: null,
+                  documentType,
                 });
                 return {
                   completedCount: response.completedCount,

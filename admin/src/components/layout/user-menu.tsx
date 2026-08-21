@@ -47,6 +47,7 @@ export function UserMenu({ className }: UserMenuProps) {
     resetBusinessContext();
     resetTenantSession();
     await authLogout().catch(() => undefined);
+    queryClient.clear();
     router.replace("/login");
     router.refresh();
   };

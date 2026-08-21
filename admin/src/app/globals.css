@@ -158,3 +158,9 @@ body.dashboard-shell { overflow: hidden; }
   html, body { overscroll-behavior: none; }
   body { -webkit-tap-highlight-color: transparent; }
 }
+.auraly-map-marker { background: transparent; border: 0; }
+.auraly-map-marker__pin { display: grid; width: 42px; height: 42px; place-items: center; border: 3px solid white; border-radius: 16px 16px 16px 4px; color: white; font-weight: 900; box-shadow: 0 10px 24px rgb(15 23 42 / .3); transform: rotate(-45deg); }
+.auraly-map-marker__pin b { transform: rotate(45deg); }
+.auraly-map-marker__pin--pending { background: #020617; }
+.auraly-map-marker__pin--visited { background: #10b981; }
+.auraly-map-marker__pin--skipped { background: #f59e0b; }

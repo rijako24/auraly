@@ -67,6 +67,7 @@ type OrdersWorkspaceProps = {
   onInvoiceSelected?: (
     orders: CommerceOrderListItem[],
     paymentMethodCode: string,
+    documentType: "SalesInvoice" | "SalesReceipt",
   ) => Promise<{ completedCount: number; failedCount: number }>;
   onExpand?: () => void;
   routeOptions?: Array<{ routeId: string; name: string }>;
@@ -103,6 +104,9 @@ export function OrdersWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState("Cash");
+  const [documentType, setDocumentType] = useState<"SalesInvoice" | "SalesReceipt">(
+    "SalesInvoice",
+  );
   const pageSize = compact ? 8 : 20;
 
   const refresh = useCallback(async () => {
@@ -204,11 +208,15 @@ export function OrdersWorkspace({
     setError(null);
     setNotice(null);
     try {
-      const result = await onInvoiceSelected(selectedOrders, paymentMethod);
+      const result = await onInvoiceSelected(
+        selectedOrders,
+        paymentMethod,
+        documentType,
+      );
       setNotice(
         result.failedCount === 0
-          ? `${result.completedCount} ${result.completedCount === 1 ? "pedido facturado" : "pedidos facturados"} correctamente.`
-          : `${result.completedCount} facturados y ${result.failedCount} pendientes de revisar.`,
+          ? `${result.completedCount} ${result.completedCount === 1 ? "pedido emitido" : "pedidos emitidos"} correctamente.`
+          : `${result.completedCount} emitidos y ${result.failedCount} pendientes de revisar.`,
       );
       setSelected(new Set());
       await refresh();
@@ -388,9 +396,44 @@ export function OrdersWorkspace({
               />
               Seleccionar disponibles
             </label>
-            <div className="flex items-center gap-2">
+            <div className="flex w-full flex-col gap-2 lg:w-auto lg:items-end">
+              <div>
+                <div
+                  className="grid grid-cols-2 rounded-xl border border-slate-200 bg-white p-1"
+                  aria-label="Tipo de documento para los pedidos seleccionados"
+                >
+                  <button
+                    type="button"
+                    aria-pressed={documentType === "SalesInvoice"}
+                    onClick={() => setDocumentType("SalesInvoice")}
+                    className={`min-h-10 rounded-lg px-3 text-sm font-semibold transition ${
+                      documentType === "SalesInvoice"
+                        ? "bg-teal-700 text-white shadow-sm"
+                        : "text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    Factura electrónica
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={documentType === "SalesReceipt"}
+                    onClick={() => setDocumentType("SalesReceipt")}
+                    className={`min-h-10 rounded-lg px-3 text-sm font-semibold transition ${
+                      documentType === "SalesReceipt"
+                        ? "bg-teal-700 text-white shadow-sm"
+                        : "text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    Comprobante de venta
+                  </button>
+                </div>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Los clientes configurados para factura electrónica se facturan siempre.
+                </p>
+              </div>
+              <div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto">
               <Select value={paymentMethod} onValueChange={setPaymentMethod}>
-                <SelectTrigger className="w-44">
+                <SelectTrigger className="w-full sm:w-44">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -404,15 +447,18 @@ export function OrdersWorkspace({
                 type="button"
                 disabled={!selectedOrders.length || working || !onInvoiceSelected}
                 onClick={() => void invoiceSelected()}
-                className="bg-teal-700 text-white hover:bg-teal-800"
+                className="w-full bg-teal-700 text-white hover:bg-teal-800 sm:w-auto"
               >
                 {working ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
                   <Receipt className="mr-2 h-4 w-4" />
                 )}
-                Facturar seleccionados ({selectedOrders.length})
+                {documentType === "SalesInvoice"
+                  ? "Facturar seleccionados"
+                  : "Emitir comprobantes"} ({selectedOrders.length})
               </Button>
+              </div>
             </div>
           </div>
         )}

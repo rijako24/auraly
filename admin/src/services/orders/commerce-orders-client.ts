@@ -145,6 +145,7 @@ export function invoiceCommerceOrders(request: {
   orderIds: string[];
   paymentMethodCode: string;
   paymentReference: string | null;
+  documentType?: "SalesInvoice" | "SalesReceipt";
 }) {
   return orderRequest<InvoiceOrdersResponse>(
     "/api/commerce/v1/orders/invoice",

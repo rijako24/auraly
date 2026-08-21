@@ -6,7 +6,8 @@ public sealed record InvoiceOrdersRequest(
     Guid UserId,
     IReadOnlyList<Guid> OrderIds,
     string PaymentMethodCode,
-    string? PaymentReference);
+    string? PaymentReference,
+    string DocumentType = "SalesInvoice");
 
 public sealed record InvoiceOrderResult(
     Guid OrderId,

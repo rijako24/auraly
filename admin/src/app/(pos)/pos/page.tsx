@@ -1247,9 +1247,14 @@ export default function PosPage() {
   async function invoicePosOrders(
     orderIds: string[],
     paymentMethodCode: string,
+    documentType: "SalesInvoice" | "SalesReceipt",
   ) {
     if (!client) throw new Error("El punto de venta no está disponible.");
-    const result = await client.invoiceOrders(orderIds, paymentMethodCode);
+    const result = await client.invoiceOrders(
+      orderIds,
+      paymentMethodCode,
+      documentType,
+    );
     setMessage(
       result.completedCount +
         " pedido" +
@@ -2134,8 +2139,12 @@ edgeCapable={edgeEnrollmentRequired}
                 loadPage={(filters) => client!.orders(filters)}
                 loadDetail={(orderId) => client!.order(orderId)}
                 onRecover={(order) => recoverPosOrder(order.orderId)}
-                onInvoiceSelected={(orders, method) =>
-                  invoicePosOrders(orders.map((order) => order.orderId), method)
+                onInvoiceSelected={(orders, method, documentType) =>
+                  invoicePosOrders(
+                    orders.map((order) => order.orderId),
+                    method,
+                    documentType,
+                  )
                 }
                 onExpand={openOrders}
               />
@@ -2172,8 +2181,12 @@ edgeCapable={edgeEnrollmentRequired}
               loadPage={(filters) => client.orders(filters)}
               loadDetail={(orderId) => client.order(orderId)}
               onRecover={(order) => recoverPosOrder(order.orderId)}
-              onInvoiceSelected={(orders, method) =>
-                invoicePosOrders(orders.map((order) => order.orderId), method)
+              onInvoiceSelected={(orders, method, documentType) =>
+                invoicePosOrders(
+                  orders.map((order) => order.orderId),
+                  method,
+                  documentType,
+                )
               }
             />
           </main>

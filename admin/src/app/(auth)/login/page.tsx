@@ -21,6 +21,8 @@ import { Label } from "@/components/ui/label";
 import { authApi } from "@/services/api/auth";
 import { readEdgeTokenFromLaunch } from "@/services/pos/pos-edge-client";
 import { readRememberedTenantKey, rememberTenantKey } from "@/lib/remembered-tenant-key";
+import { rememberOfflineLogin, verifyOfflineLogin } from "@/lib/offline-login-store";
+import { defaultStartRoute } from "@/lib/default-start-route";
 import { useAuthStore } from "@/stores/auth-store";
 import type { ApiError } from "@/types/api";
 
@@ -40,6 +42,7 @@ function LoginForm() {
   const [isHydrated, setIsHydrated] = useState(false);
   const [wasTenantRemembered, setWasTenantRemembered] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [offlineAccess, setOfflineAccess] = useState(false);
 
   useEffect(() => {
     if (!tenantFromUrl) {
@@ -59,15 +62,26 @@ function LoginForm() {
 
     try {
       const response = await authApi.login({ tenantKey: tenantKey.trim(), username, password });
+      await rememberOfflineLogin(tenantKey, username, password, response.user).catch(() => undefined);
       rememberTenantKey(response.user.tenantKey || tenantKey);
       setAuth(response.user);
       const redirect = searchParams.get("redirect") ?? "/dashboard";
       router.push(redirect.startsWith("/") ? redirect : "/dashboard");
     } catch (err) {
       const apiError = err as ApiError;
-      setError(
-        apiError?.message || "Error al iniciar sesión. Verifica tus credenciales.",
-      );
+      const mayUseOffline = !navigator.onLine || !apiError?.statusCode || apiError.statusCode >= 500;
+      const savedUser = mayUseOffline ? await verifyOfflineLogin(tenantKey, username, password).catch(() => null) : null;
+      if (savedUser) {
+        rememberTenantKey(savedUser.tenantKey || tenantKey);
+        setAuth(savedUser);
+        setOfflineAccess(true);
+        const redirect = searchParams.get("redirect") ?? defaultStartRoute(savedUser.roles, savedUser.permissions);
+        window.location.replace(redirect.startsWith("/") ? redirect : "/dashboard");
+        return;
+      }
+      setError(mayUseOffline
+        ? "No hay conexión y este usuario no quedó preparado en este teléfono, o la contraseña no coincide."
+        : apiError?.message || "Error al iniciar sesión. Verifica tus credenciales.");
     } finally {
       setIsLoading(false);
     }
@@ -101,6 +115,7 @@ function LoginForm() {
             <span>{error}</span>
           </div>
         )}
+        {offlineAccess && <p className="rounded-xl bg-amber-50 p-3 text-sm font-medium text-amber-900">Entrando con la sesión preparada en este teléfono…</p>}
 
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-3">
