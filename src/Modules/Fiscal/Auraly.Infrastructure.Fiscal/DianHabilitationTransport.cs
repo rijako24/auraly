@@ -20,6 +20,17 @@ public interface IDianWcfClient : IAsyncDisposable
     Task<IReadOnlyList<DianDocumentResponse>> GetStatusZipAsync(
         string trackId,
         CancellationToken cancellationToken);
+
+    Task<DianNumberRangeResponseList> GetNumberingRangeAsync(
+        string accountCode,
+        string accountCodeT,
+        string softwareCode,
+        CancellationToken cancellationToken);
+
+    Task<DianDocumentResponse> SendBillSyncAsync(
+        string fileName,
+        byte[] contentFile,
+        CancellationToken cancellationToken);
 }
 
 public interface IDianWcfClientFactory
@@ -79,9 +90,9 @@ public sealed class DianHabilitationTransport(
             var response = await client.SendTestSetAsync(
                 request.FileName,
                 request.ZipContent,
-                request.TestSetId,
+                request.TestSetId!,
                 cancellationToken);
-            var errors = response.ErrorMessageList
+            var errors = (response.ErrorMessageList ?? Array.Empty<DianUploadError>())
                 .Where(item => !item.Success || !string.IsNullOrWhiteSpace(item.ProcessedMessage))
                 .Select(item => item.ProcessedMessage ?? "DIAN rejected the upload during initial validation.")
                 .ToArray();
@@ -115,7 +126,8 @@ public sealed class DianHabilitationTransport(
             if (documents.Count == 0)
                 return Result(DianSubmissionDisposition.Pending, request.TrackId, "Pending",
                     "DIAN has not returned a document result yet.", null, documents, mayHaveReachedDian: true);
-            var rejected = documents.FirstOrDefault(item => !item.IsValid);
+            var rejected = documents.FirstOrDefault(item =>
+                !item.IsValid && !IsAcceptedTestSet(item));
             var response = rejected ?? documents[0];
             var disposition = rejected is null
                 ? DianSubmissionDisposition.Accepted
@@ -166,6 +178,11 @@ public sealed class DianHabilitationTransport(
         if (!Guid.TryParse(request.TestSetId, out _))
             throw new ArgumentException("TestSetId must be a valid DIAN identifier.", nameof(request));
     }
+
+    private static bool IsAcceptedTestSet(DianDocumentResponse response) =>
+        string.Equals(response.StatusCode, "2", StringComparison.Ordinal) &&
+        response.StatusDescription?.Contains(
+            "se encuentra Aceptado", StringComparison.OrdinalIgnoreCase) == true;
 }
 
 [ServiceContract(Namespace = "http://wcf.dian.colombia")]
@@ -185,6 +202,21 @@ public interface IDianCustomerServices
         Action = "http://wcf.dian.colombia/IWcfDianCustomerServices/GetStatusZip",
         ReplyAction = "http://wcf.dian.colombia/IWcfDianCustomerServices/GetStatusZipResponse")]
     Task<DianDocumentResponse[]> GetStatusZipAsync(string trackId);
+
+    [OperationContract(
+        Name = "GetNumberingRange",
+        Action = "http://wcf.dian.colombia/IWcfDianCustomerServices/GetNumberingRange",
+        ReplyAction = "http://wcf.dian.colombia/IWcfDianCustomerServices/GetNumberingRangeResponse")]
+    Task<DianNumberRangeResponseList> GetNumberingRangeAsync(
+        string accountCode,
+        string accountCodeT,
+        string softwareCode);
+
+    [OperationContract(
+        Name = "SendBillSync",
+        Action = "http://wcf.dian.colombia/IWcfDianCustomerServices/SendBillSync",
+        ReplyAction = "http://wcf.dian.colombia/IWcfDianCustomerServices/SendBillSyncResponse")]
+    Task<DianDocumentResponse> SendBillSyncAsync(string fileName, byte[] contentFile);
 }
 
 internal sealed class DianWcfClient(
@@ -208,6 +240,26 @@ internal sealed class DianWcfClient(
     {
         cancellationToken.ThrowIfCancellationRequested();
         return await channel.GetStatusZipAsync(trackId).WaitAsync(cancellationToken);
+    }
+
+    public async Task<DianNumberRangeResponseList> GetNumberingRangeAsync(
+        string accountCode,
+        string accountCodeT,
+        string softwareCode,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return await channel.GetNumberingRangeAsync(accountCode, accountCodeT, softwareCode)
+            .WaitAsync(cancellationToken);
+    }
+
+    public async Task<DianDocumentResponse> SendBillSyncAsync(
+        string fileName,
+        byte[] contentFile,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return await channel.SendBillSyncAsync(fileName, contentFile).WaitAsync(cancellationToken);
     }
 
     public ValueTask DisposeAsync()
@@ -267,4 +319,25 @@ public sealed class DianDocumentResponse
     [DataMember(Order = 6)] public byte[]? XmlBytes { get; set; }
     [DataMember(Order = 7)] public string? XmlDocumentKey { get; set; }
     [DataMember(Order = 8)] public string? XmlFileName { get; set; }
+}
+
+[DataContract(Name = "NumberRangeResponseList", Namespace = "http://schemas.datacontract.org/2004/07/NumberRangeResponseList")]
+public sealed class DianNumberRangeResponseList
+{
+    [DataMember(Order = 0)] public string? OperationCode { get; set; }
+    [DataMember(Order = 1)] public string? OperationDescription { get; set; }
+    [DataMember(Order = 2)] public DianNumberRangeResponse[] ResponseList { get; set; } = [];
+}
+
+[DataContract(Name = "NumberRangeResponse", Namespace = "http://schemas.datacontract.org/2004/07/NumberRangeResponse")]
+public sealed class DianNumberRangeResponse
+{
+    [DataMember(Order = 0)] public string? ResolutionNumber { get; set; }
+    [DataMember(Order = 1)] public string? ResolutionDate { get; set; }
+    [DataMember(Order = 2)] public string? Prefix { get; set; }
+    [DataMember(Order = 3)] public long FromNumber { get; set; }
+    [DataMember(Order = 4)] public long ToNumber { get; set; }
+    [DataMember(Order = 5)] public string? ValidDateFrom { get; set; }
+    [DataMember(Order = 6)] public string? ValidDateTo { get; set; }
+    [DataMember(Order = 7)] public string? TechnicalKey { get; set; }
 }

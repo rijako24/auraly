@@ -52,3 +52,45 @@ public sealed class WindowsFiscalSigningCertificateProvider : IFiscalSigningCert
     private static string Normalize(string value) =>
         value.Replace(" ", string.Empty, StringComparison.Ordinal).ToUpperInvariant();
 }
+
+public sealed class ManagedFiscalSoftwarePinProvider(
+    IFiscalCredentialVault credentials,
+    EnvironmentFiscalSoftwarePinProvider legacy) : IFiscalSoftwarePinProvider
+{
+    public Task<string> ResolveAsync(
+        Guid businessId, string secretReference, CancellationToken cancellationToken) =>
+        secretReference.StartsWith("env://", StringComparison.OrdinalIgnoreCase)
+            ? legacy.ResolveAsync(businessId, secretReference, cancellationToken)
+            : credentials.ResolveSoftwarePinAsync(businessId, secretReference, cancellationToken);
+}
+
+public sealed class ManagedFiscalSigningCertificateProvider(
+    IFiscalCredentialVault credentials,
+    WindowsFiscalSigningCertificateProvider legacy) : IFiscalSigningCertificateProvider
+{
+    public async Task<FiscalCertificateMaterial> ResolveAsync(
+        FiscalCertificateReference reference,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.Equals(reference.Provider, "WindowsCertificateStore", StringComparison.OrdinalIgnoreCase))
+            return await legacy.ResolveAsync(reference, cancellationToken);
+        if (reference.Provider is not ("AzureKeyVault" or "ProtectedDatabase"))
+            throw new InvalidOperationException("The configured fiscal certificate provider is unsupported.");
+        var pfx = await credentials.ResolveCertificatePfxAsync(
+            reference.BusinessId, reference.KeyReference, cancellationToken);
+        var collection = new X509Certificate2Collection();
+        collection.Import(pfx, null,
+            X509KeyStorageFlags.EphemeralKeySet | X509KeyStorageFlags.Exportable);
+        var certificate = collection.OfType<X509Certificate2>().Single(item => item.HasPrivateKey);
+        var thumbprint = certificate.Thumbprint
+            .Replace(" ", string.Empty, StringComparison.Ordinal).ToUpperInvariant();
+        if (!string.Equals(thumbprint,
+                reference.ExpectedThumbprint.Replace(" ", string.Empty, StringComparison.Ordinal).ToUpperInvariant(),
+                StringComparison.Ordinal))
+            throw new InvalidOperationException("The configured fiscal certificate thumbprint does not match the stored certificate.");
+        var chain = collection.OfType<X509Certificate2>()
+            .Where(item => item.Thumbprint != certificate.Thumbprint)
+            .ToArray();
+        return new FiscalCertificateMaterial(certificate, chain, RequireTrustedChain: true);
+    }
+}

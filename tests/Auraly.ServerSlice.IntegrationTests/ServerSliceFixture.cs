@@ -839,10 +839,12 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             (@DeviceId, @PosIdentitySync, 1, SYSDATETIMEOFFSET());
             INSERT INTO dbo.FiscalAuthorizations
             (FiscalAuthorizationId, BusinessId, AuthorizationNumber, SupplierTaxId,
-             Environment, QrValidationUrl, TechnicalKeyVersion, ValidFrom, ValidUntil, IsActive, CreatedAt)
+             Environment, QrValidationUrl, TechnicalKeyVersion, ValidFrom, ValidUntil,
+             AuthorizedRangeStart, AuthorizedRangeEnd, IsActive, CreatedAt)
             VALUES
             (@FiscalAuthorizationId, @BusinessId, @AuthorizationNumber, @SupplierTaxId,
-             2, @QrValidationUrl, @TechnicalKeyVersion, '2026-01-01', '2028-12-31', 1, SYSDATETIMEOFFSET());
+             2, @QrValidationUrl, @TechnicalKeyVersion, '2026-01-01', '2028-12-31',
+             1, 20000, 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.FiscalIssuerConfigurations
             (FiscalIssuerConfigurationId,BusinessId,Version,SupplierTaxId,SupplierCheckDigit,

@@ -122,6 +122,7 @@ public sealed record FiscalSubmissionProcessingResult(
 public sealed class FiscalSubmissionWorker(
     IFiscalSubmissionWorkStore store,
     IDianHabilitationTransport transport,
+    IDianProductionTransport productionTransport,
     FiscalSubmissionPackageBuilder packages,
     TimeProvider timeProvider)
 {
@@ -154,21 +155,15 @@ public sealed class FiscalSubmissionWorker(
             return new(true, null);
         }
 
-        if (work.TestSetId is null)
-        {
-            await store.FailConfigurationAsync(
-                work,
-                "MissingTestSetId",
-                "The active fiscal issuer configuration has no DIAN habilitation TestSetId.",
-                timeProvider.GetUtcNow(),
-                cancellationToken);
-            return new(true, null);
-        }
-
         var zip = packages.Build(work.FiscalNumber, work.SignedXml);
-        var operation = string.IsNullOrWhiteSpace(work.TrackId)
-            ? DianOperationCodes.SendTestSet
-            : DianOperationCodes.GetStatusZip;
+        var production = work.TestSetId is null;
+        if (production && !string.IsNullOrWhiteSpace(work.TrackId))
+            throw new InvalidOperationException("A production SendBillSync attempt cannot be polled with GetStatusZip.");
+        var operation = production
+            ? DianOperationCodes.SendBillSync
+            : string.IsNullOrWhiteSpace(work.TrackId)
+                ? DianOperationCodes.SendTestSet
+                : DianOperationCodes.GetStatusZip;
         var correlationId = $"{work.DocumentId:N}-{Guid.NewGuid():N}";
         var fileName = $"{work.FiscalNumber}.zip";
         var request = new DianSubmissionRequest(
@@ -176,7 +171,7 @@ public sealed class FiscalSubmissionWorker(
             work.DocumentId,
             fileName,
             zip,
-            work.TestSetId.Value.ToString("D"),
+            work.TestSetId?.ToString("D"),
             work.TrackId,
             correlationId);
         var sanitizedRequest = packages.BuildSanitizedRequest(
@@ -188,14 +183,19 @@ public sealed class FiscalSubmissionWorker(
         var attempt = await store.StartAttemptAsync(
             work,
             operation,
-            operation == DianOperationCodes.SendTestSet ? zip : null,
+            operation is DianOperationCodes.SendTestSet or DianOperationCodes.SendBillSync ? zip : null,
             sanitizedRequest,
             timeProvider.GetUtcNow(),
             cancellationToken);
 
-        var result = operation == DianOperationCodes.SendTestSet
-            ? await transport.SubmitTestSetAsync(attempt.Request, cancellationToken)
-            : await transport.GetStatusZipAsync(attempt.Request, cancellationToken);
+        var result = operation switch
+        {
+            DianOperationCodes.SendTestSet =>
+                await transport.SubmitTestSetAsync(attempt.Request, cancellationToken),
+            DianOperationCodes.GetStatusZip =>
+                await transport.GetStatusZipAsync(attempt.Request, cancellationToken),
+            _ => await productionTransport.SubmitBillSyncAsync(attempt.Request, cancellationToken)
+        };
         var completedAt = timeProvider.GetUtcNow();
         var nextAttemptAt = NextAttempt(result, completedAt);
         await store.CompleteAttemptAsync(

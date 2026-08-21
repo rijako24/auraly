@@ -21,7 +21,7 @@ CREATE TABLE [dbo].[FiscalTransmissionAttempts]
     CONSTRAINT [UQ_FiscalTransmissionAttempts_Document_Number] UNIQUE ([DocumentId], [AttemptNumber]),
     CONSTRAINT [UQ_FiscalTransmissionAttempts_Correlation] UNIQUE ([CorrelationId]),
     CONSTRAINT [CK_FiscalTransmissionAttempts_Number] CHECK ([AttemptNumber] > 0),
-    CONSTRAINT [CK_FiscalTransmissionAttempts_Operation] CHECK ([Operation] IN ('SendTestSetAsync', 'GetStatusZip'))
+    CONSTRAINT [CK_FiscalTransmissionAttempts_Operation] CHECK ([Operation] IN ('SendTestSetAsync', 'GetStatusZip', 'SendBillSync'))
 );
 
 GO

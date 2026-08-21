@@ -123,6 +123,8 @@ function Test-RemoteEnvironment {
         'Auraly__Fiscal__ServiceBus__QueueName',
         'Auraly__ExternalCustomerReconciliation__QueueName',
         'Auraly__Fiscal__SecretProtectionKey',
+        'Auraly__Fiscal__CredentialStore',
+        'Auraly__Fiscal__KeyVaultUri',
         'Authentication__Jwt__Issuer',
         'Authentication__Jwt__Audience',
         'Authentication__Jwt__SigningKey',
@@ -145,6 +147,10 @@ function Test-RemoteEnvironment {
     }
     Assert-Condition ($fiscalBytes.Length -eq 32) `
         'Auraly__Fiscal__SecretProtectionKey debe contener exactamente 32 bytes.'
+    Assert-Condition ($settings['Auraly__Fiscal__CredentialStore'] -eq 'AzureKeyVault') `
+        'Auraly__Fiscal__CredentialStore debe usar AzureKeyVault en Azure.'
+    Assert-Condition ($settings['Auraly__Fiscal__KeyVaultUri'] -match '^https://[^/]+\.vault\.azure\.net/?$') `
+        'Auraly__Fiscal__KeyVaultUri no es una URI valida de Azure Key Vault.'
     $jwtLength = [Text.Encoding]::UTF8.GetByteCount(
         $settings['Authentication__Jwt__SigningKey'])
     Assert-Condition ($jwtLength -ge 32) `

@@ -75,11 +75,10 @@ public sealed class ExecutionContextTests(ServerSliceFixture fixture)
         }
     }
     [Fact]
-    public async Task Fiscal_configuration_starts_at_the_selected_number_and_cannot_restart_after_consumption()
+    public async Task Legacy_manual_fiscal_configuration_endpoints_are_not_exposed()
     {
         var businessId = Guid.NewGuid();
         var roleId = Guid.NewGuid();
-        var authorizationNumber = $"TEST-{Guid.NewGuid():N}";
         await SeedFiscalConfigurationScope(businessId, roleId);
         try
         {
@@ -90,116 +89,19 @@ public sealed class ExecutionContextTests(ServerSliceFixture fixture)
             client.DefaultRequestHeaders.Add("X-Tenant-Id", fixture.TenantId.ToString("D"));
             using var numberingResponse = await client.PutAsJsonAsync(
                 $"/api/commerce/v1/fiscal/numbering?businessId={businessId:D}",
-                new SaveSalesInvoiceNumberingConfiguration(250));
-            Assert.Equal(HttpStatusCode.OK, numberingResponse.StatusCode);
-
-            var request = new SaveFiscalResolutionConfiguration(
-                authorizationNumber,
-                "900123456",
-                2,
-                "https://catalogo-vpfe-hab.dian.gov.co/document/searchqr?documentkey=",
-                "1",
-                null,
-                new DateOnly(2026, 1, 1),
-                new DateOnly(2028, 12, 31),
-                "SET",
-                1,
-                1_000,
-                250,
-                true,
-                true);
-
-            using var createdResponse = await client.PutAsJsonAsync(
+                new { initialConsecutive = 250 });
+            using var resolutionResponse = await client.PutAsJsonAsync(
                 $"/api/commerce/v1/fiscal/configuration?businessId={businessId:D}",
-                request);
+                new { authorizationNumber = "legacy" });
 
-            Assert.Equal(HttpStatusCode.OK, createdResponse.StatusCode);
-            var created = await createdResponse.Content.ReadFromJsonAsync<FiscalResolutionConfiguration>();
-            Assert.NotNull(created);
-            Assert.Equal(1, created.RangeStart);
-            Assert.Equal(1_000, created.RangeEnd);
-            Assert.Equal(250, created.InitialConsecutive);
-            Assert.Equal(250, created.NextConsecutive);
-            Assert.True(created.CanSetInitialConsecutive);
-            Assert.True(created.HasOfflineSeriesAvailable);
-            Assert.Equal(0, await CountFiscalSeriesOverlapsAsync(businessId, authorizationNumber));
-            await SetInitialFiscalConsecutive(businessId, authorizationNumber, null);
-            var incomplete = await client.GetFromJsonAsync<FiscalResolutionConfiguration>(
-                $"/api/commerce/v1/fiscal/configuration?businessId={businessId:D}");
-            Assert.NotNull(incomplete);
-            Assert.Null(incomplete.InitialConsecutive);
-            Assert.False(incomplete.IsReadyForOnlineSales);
-            Assert.False(incomplete.IsReadyForEnrollment);
-            await SetInitialFiscalConsecutive(businessId, authorizationNumber, 250);
-            await SeedIssuedSalesDocument(businessId, authorizationNumber);
-            await SetNextFiscalConsecutive(businessId, authorizationNumber, 251);
-
-            using var numberingRestart = await client.PutAsJsonAsync(
-                $"/api/commerce/v1/fiscal/numbering?businessId={businessId:D}",
-                new SaveSalesInvoiceNumberingConfiguration(100));
-            Assert.Equal(HttpStatusCode.Conflict, numberingRestart.StatusCode);
-
-            using var restartResponse = await client.PutAsJsonAsync(
-                $"/api/commerce/v1/fiscal/configuration?businessId={businessId:D}",
-                request with { Prefix = "ALT" });
-
-            Assert.Equal(HttpStatusCode.Conflict, restartResponse.StatusCode);
-            var current = await client.GetFromJsonAsync<FiscalResolutionConfiguration>(
-                $"/api/commerce/v1/fiscal/configuration?businessId={businessId:D}");
-            Assert.NotNull(current);
-            Assert.Equal(250, current.InitialConsecutive);
-            Assert.Equal(251, current.NextConsecutive);
-            Assert.False(current.CanSetInitialConsecutive);
+            Assert.Equal(HttpStatusCode.NotFound, numberingResponse.StatusCode);
+            Assert.Equal(HttpStatusCode.MethodNotAllowed, resolutionResponse.StatusCode);
         }
         finally
         {
             await DeleteFiscalConfigurationScope(businessId, roleId);
         }
     }
-    [Fact]
-    public async Task Operational_numbering_can_be_saved_before_the_DIAN_resolution_is_complete()
-    {
-        var businessId = Guid.NewGuid();
-        var roleId = Guid.NewGuid();
-        await SeedFiscalConfigurationScope(businessId, roleId);
-        await SeedIncompleteFiscalAuthorization(businessId);
-        try
-        {
-            using var client = fixture.CreateAdminClientWithBusinessHeader(
-                businessId,
-                FiscalPermissionCodes.ConfigurationRead,
-                FiscalPermissionCodes.ConfigurationManage);
-            client.DefaultRequestHeaders.Add("X-Tenant-Id", fixture.TenantId.ToString("D"));
-
-            using var response = await client.PutAsJsonAsync(
-                $"/api/commerce/v1/fiscal/numbering?businessId={businessId:D}",
-                new SaveSalesInvoiceNumberingConfiguration(17));
-
-            var responseBody = await response.Content.ReadAsStringAsync();
-            Assert.True(
-                response.StatusCode == HttpStatusCode.OK,
-                $"Expected OK but received {response.StatusCode}: {responseBody}");
-            var saved = JsonSerializer.Deserialize<SalesInvoiceNumberingConfiguration>(
-                responseBody,
-                new JsonSerializerOptions(JsonSerializerDefaults.Web));
-            Assert.NotNull(saved);
-            Assert.Equal(17, saved.InitialConsecutive);
-            Assert.Equal(17, saved.NextConsecutive);
-
-            await using var connection = new SqlConnection(fixture.ConnectionString);
-            await connection.OpenAsync();
-            await using var command = new SqlCommand(
-                "SELECT InitialConsecutive FROM dbo.FiscalAuthorizations WHERE BusinessId=@BusinessId;",
-                connection);
-            command.Parameters.AddWithValue("@BusinessId", businessId);
-            Assert.Equal(DBNull.Value, await command.ExecuteScalarAsync());
-        }
-        finally
-        {
-            await DeleteFiscalConfigurationScope(businessId, roleId);
-        }
-    }
-
     [Fact]
     public async Task Rejects_a_tenant_without_membership()
     {
@@ -377,140 +279,6 @@ public sealed class ExecutionContextTests(ServerSliceFixture fixture)
         await command.ExecuteNonQueryAsync();
     }
 
-    private async Task SeedIncompleteFiscalAuthorization(Guid businessId)
-    {
-        await using var connection = new SqlConnection(fixture.ConnectionString);
-        await connection.OpenAsync();
-        await using var command = new SqlCommand(
-            """
-            INSERT dbo.FiscalAuthorizations(
-                FiscalAuthorizationId,BusinessId,AuthorizationNumber,SupplierTaxId,
-                Environment,QrValidationUrl,TechnicalKeyVersion,ValidFrom,ValidUntil,
-                AuthorizedRangeStart,AuthorizedRangeEnd,InitialConsecutive,IsActive,CreatedAt)
-            VALUES(
-                NEWID(),@BusinessId,N'PENDING-DIAN',N'900123456',2,
-                N'https://catalogo-vpfe-hab.dian.gov.co/document/searchqr?documentkey=',
-                N'v1','2026-01-01','2028-12-31',NULL,NULL,NULL,1,SYSDATETIMEOFFSET());
-            """, connection);
-        command.Parameters.AddWithValue("@BusinessId", businessId);
-        Assert.Equal(1, await command.ExecuteNonQueryAsync());
-    }
-
-    private async Task SeedIssuedSalesDocument(
-        Guid businessId,
-        string authorizationNumber)
-    {
-        await using var connection = new SqlConnection(fixture.ConnectionString);
-        await connection.OpenAsync();
-        await using var command = new SqlCommand(
-            """
-            DECLARE @WarehouseId uniqueidentifier=NEWID(),
-                    @DocumentSeriesId uniqueidentifier=NEWID(),
-                    @AuthorizationId uniqueidentifier,
-                    @FiscalSeriesId uniqueidentifier;
-            SELECT @AuthorizationId=FiscalAuthorizationId
-            FROM dbo.FiscalAuthorizations
-            WHERE BusinessId=@BusinessId AND AuthorizationNumber=@AuthorizationNumber;
-            SELECT TOP(1) @FiscalSeriesId=SeriesId
-            FROM dbo.FiscalSeries
-            WHERE FiscalAuthorizationId=@AuthorizationId
-              AND EmitterKind=N'Server' AND DeviceId IS NULL AND IsActive=1;
-
-            INSERT dbo.Warehouses(
-                WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,IsActive,CreatedAt)
-            VALUES(@WarehouseId,@BusinessId,N'VENTA-TEST',N'Venta test',1,1,SYSDATETIMEOFFSET());
-            INSERT dbo.DocumentSeries(
-                DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,
-                Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
-            VALUES(@DocumentSeriesId,@BusinessId,NULL,N'SalesInvoice',N'VTA',N'00',
-                8,1,99999999,0,1,SYSDATETIMEOFFSET());
-            INSERT dbo.SalesDocuments(
-                DocumentId,BusinessId,WarehouseId,DeviceId,SourceMode,DocumentSeriesId,
-                DocumentNumber,DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,
-                FiscalSeriesId,FiscalAuthorizationId,DocumentType,IdempotencyKey,PayloadHash,
-                FiscalNumber,FiscalPrefix,FiscalConsecutive,IssuedAt,CustomerIdentification,
-                UntaxedAmount,TaxAmount,PayableAmount,CreditAmount,CufeReceived,CufeCalculated,
-                FiscalStatus,ProcessingStatus,ReceivedAt)
-            VALUES(NEWID(),@BusinessId,@WarehouseId,NULL,N'Online',@DocumentSeriesId,
-                N'VTA00-00000250',N'VTA',N'00',250,@FiscalSeriesId,@AuthorizationId,
-                N'SalesInvoice',CONVERT(nvarchar(128),NEWID()),HASHBYTES('SHA2_256',N'fiscal-numbering-test'),
-                N'SET250',N'SET',250,SYSDATETIMEOFFSET(),N'222222222222',
-                100,19,119,0,REPLICATE(N'A',96),REPLICATE(N'A',96),
-                N'FiscalVerified',N'Processed',SYSDATETIMEOFFSET());
-            """, connection);
-        command.Parameters.AddWithValue("@BusinessId", businessId);
-        command.Parameters.AddWithValue("@AuthorizationNumber", authorizationNumber);
-        Assert.Equal(3, await command.ExecuteNonQueryAsync());
-    }
-
-    private async Task SetInitialFiscalConsecutive(
-        Guid businessId,
-        string authorizationNumber,
-        long? initialConsecutive)
-    {
-        await using var connection = new SqlConnection(fixture.ConnectionString);
-        await connection.OpenAsync();
-        await using var command = new SqlCommand(
-            "UPDATE dbo.FiscalAuthorizations SET InitialConsecutive=@Initial " +
-            "WHERE BusinessId=@BusinessId AND AuthorizationNumber=@AuthorizationNumber;",
-            connection);
-        command.Parameters.AddWithValue("@BusinessId", businessId);
-        command.Parameters.AddWithValue("@AuthorizationNumber", authorizationNumber);
-        command.Parameters.AddWithValue(
-            "@Initial", (object?)initialConsecutive ?? DBNull.Value);
-        Assert.Equal(1, await command.ExecuteNonQueryAsync());
-    }
-
-    private async Task SetNextFiscalConsecutive(
-        Guid businessId,
-        string authorizationNumber,
-        long nextConsecutive)
-    {
-        await using var connection = new SqlConnection(fixture.ConnectionString);
-        await connection.OpenAsync();
-        await using var command = new SqlCommand(
-            """
-            UPDATE c SET NextConsecutive=@Next,UpdatedAt=SYSDATETIMEOFFSET()
-            FROM dbo.FiscalSeriesCursors c
-            JOIN dbo.FiscalSeries s ON s.SeriesId=c.SeriesId
-            JOIN dbo.FiscalAuthorizations a ON a.FiscalAuthorizationId=s.FiscalAuthorizationId
-            WHERE a.BusinessId=@BusinessId AND a.AuthorizationNumber=@AuthorizationNumber
-              AND s.EmitterKind=N'Server' AND s.IsActive=1;
-            """, connection);
-        command.Parameters.AddWithValue("@BusinessId", businessId);
-        command.Parameters.AddWithValue("@AuthorizationNumber", authorizationNumber);
-        command.Parameters.AddWithValue("@Next", nextConsecutive);
-        Assert.Equal(1, await command.ExecuteNonQueryAsync());
-    }
-
-    private async Task<int> CountFiscalSeriesOverlapsAsync(
-        Guid businessId,
-        string authorizationNumber)
-    {
-        await using var connection = new SqlConnection(fixture.ConnectionString);
-        await connection.OpenAsync();
-        await using var command = new SqlCommand("""
-            SELECT COUNT(*)
-            FROM dbo.FiscalSeries candidate
-            JOIN dbo.FiscalSeries other
-              ON other.SeriesId>candidate.SeriesId
-             AND other.BusinessId=candidate.BusinessId
-             AND other.FiscalAuthorizationId=candidate.FiscalAuthorizationId
-             AND other.DocumentType=candidate.DocumentType
-             AND other.Prefix=candidate.Prefix
-             AND other.IsActive=1
-             AND candidate.RangeStart<=other.RangeEnd
-             AND other.RangeStart<=candidate.RangeEnd
-            JOIN dbo.FiscalAuthorizations auth
-              ON auth.FiscalAuthorizationId=candidate.FiscalAuthorizationId
-            WHERE candidate.BusinessId=@BusinessId
-              AND auth.AuthorizationNumber=@AuthorizationNumber
-              AND candidate.IsActive=1;
-            """, connection);
-        command.Parameters.AddWithValue("@BusinessId", businessId);
-        command.Parameters.AddWithValue("@AuthorizationNumber", authorizationNumber);
-        return Convert.ToInt32(await command.ExecuteScalarAsync());
-    }
     private async Task DeleteFiscalConfigurationScope(Guid businessId, Guid roleId)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
@@ -525,7 +293,6 @@ public sealed class ExecutionContextTests(ServerSliceFixture fixture)
             WHERE s.BusinessId=@BusinessId;
             DELETE dbo.FiscalSeries WHERE BusinessId=@BusinessId;
             DELETE dbo.FiscalAuthorizations WHERE BusinessId=@BusinessId;
-            DELETE dbo.SalesInvoiceNumberingConfigurations WHERE BusinessId=@BusinessId;
             DELETE dbo.UserRoles WHERE UserId=@UserId AND RoleId=@RoleId;
             DELETE dbo.AppRoles WHERE RoleId=@RoleId;
             DELETE dbo.Businesses WHERE BusinessId=@BusinessId;

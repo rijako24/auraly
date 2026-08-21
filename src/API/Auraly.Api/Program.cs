@@ -101,11 +101,8 @@ builder.Services.AddScoped<IFiscalConfigurationStore, SqlFiscalConfigurationStor
 builder.Services.AddScoped<FiscalConfigurationService>();
 builder.Services.AddScoped<IFiscalDeviceSeriesStore, SqlFiscalDeviceSeriesStore>();
 builder.Services.AddScoped<FiscalDeviceSeriesService>();
-builder.Services.AddScoped<IFiscalIssuerConnectionStore, SqlFiscalIssuerConnectionStore>();
-builder.Services.AddScoped<FiscalIssuerConnectionService>();
-builder.Services.AddScoped<ISalesInvoiceNumberingConfigurationStore,
-    SqlSalesInvoiceNumberingConfigurationStore>();
-builder.Services.AddScoped<SalesInvoiceNumberingConfigurationService>();
+builder.Services.AddScoped<IFiscalOnboardingStore, SqlFiscalOnboardingStore>();
+builder.Services.AddScoped<FiscalOnboardingService>();
 builder.Services.AddScoped<IFiscalSnapshotVerifier, FiscalSnapshotVerifier>();
 builder.Services.AddScoped<IFiscalDocumentStore, SqlFiscalDocumentStore>();
 builder.Services.AddScoped<FiscalDocumentService>();
@@ -115,11 +112,40 @@ builder.Services.AddScoped<IFiscalGenerationWorkStore, SqlFiscalGenerationWorkSt
 builder.Services.AddScoped<IFiscalSubmissionWorkStore, SqlFiscalSubmissionWorkStore>();
 builder.Services.AddScoped<IDianHabilitationConfigurationProvider,
     SqlDianHabilitationConfigurationProvider>();
-builder.Services.AddSingleton<IFiscalSoftwarePinProvider, EnvironmentFiscalSoftwarePinProvider>();
-builder.Services.AddSingleton<IFiscalSigningCertificateProvider, WindowsFiscalSigningCertificateProvider>();
+builder.Services.AddScoped<IDianProductionConfigurationProvider,
+    SqlDianProductionConfigurationProvider>();
+var fiscalCredentialStore = builder.Configuration["Auraly:Fiscal:CredentialStore"]
+    ?? (builder.Environment.IsDevelopment() || builder.Environment.IsEnvironment("Testing")
+        ? "ProtectedDatabase"
+        : "AzureKeyVault");
+if (string.Equals(fiscalCredentialStore, "AzureKeyVault", StringComparison.OrdinalIgnoreCase))
+{
+    var keyVaultUri = builder.Configuration["Auraly:Fiscal:KeyVaultUri"];
+    if (!Uri.TryCreate(keyVaultUri, UriKind.Absolute, out var vaultUri) ||
+        vaultUri.Scheme != Uri.UriSchemeHttps)
+        throw new InvalidOperationException(
+            "Auraly:Fiscal:KeyVaultUri must be an HTTPS Azure Key Vault URI when CredentialStore is AzureKeyVault.");
+    builder.Services.AddSingleton<IFiscalCredentialVault>(
+        AzureKeyVaultFiscalCredentialVault.Create(vaultUri));
+}
+else if (string.Equals(fiscalCredentialStore, "ProtectedDatabase", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddSingleton<IFiscalCredentialVault, SqlProtectedFiscalCredentialVault>();
+}
+else
+{
+    throw new InvalidOperationException(
+        "Auraly:Fiscal:CredentialStore must be AzureKeyVault or ProtectedDatabase.");
+}
+builder.Services.AddSingleton<EnvironmentFiscalSoftwarePinProvider>();
+builder.Services.AddSingleton<WindowsFiscalSigningCertificateProvider>();
+builder.Services.AddSingleton<IFiscalSoftwarePinProvider, ManagedFiscalSoftwarePinProvider>();
+builder.Services.AddSingleton<IFiscalSigningCertificateProvider, ManagedFiscalSigningCertificateProvider>();
 builder.Services.AddSingleton<IFiscalXmlSigner, DianXadesSigner>();
 builder.Services.AddSingleton<IDianWcfClientFactory, DianWcfClientFactory>();
 builder.Services.AddScoped<IDianHabilitationTransport, DianHabilitationTransport>();
+builder.Services.AddScoped<IDianProductionTransport, DianProductionTransport>();
+builder.Services.AddScoped<IDianNumberingRangeClient, DianNumberingRangeClient>();
 builder.Services.AddSingleton<DianInvoiceUblBuilder>();
 builder.Services.AddSingleton<DianCreditNoteUblBuilder>();
 builder.Services.AddSingleton<DianSchemaValidator>();

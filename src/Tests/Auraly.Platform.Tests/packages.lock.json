@@ -185,6 +185,14 @@
           "Azure.Core": "1.46.0"
         }
       },
+      "Azure.Security.KeyVault.Certificates": {
+        "type": "Transitive",
+        "resolved": "4.8.0",
+        "contentHash": "48EHvsZM0hQow0PP4PAkWZYcE/tmjfx7az07GrqU2Q/0p3O3Vm/F+bEu1iVREBYzSV7uHHPikyJyBnXClfKuJA==",
+        "dependencies": {
+          "Azure.Core": "1.46.2"
+        }
+      },
       "Azure.Security.KeyVault.Secrets": {
         "type": "Transitive",
         "resolved": "4.8.0",
@@ -2706,6 +2714,9 @@
           "Auraly.Application.Fiscal": "[1.0.0, )",
           "Auraly.Contracts.Fiscal": "[1.0.0, )",
           "Auraly.Fiscal.Ubl": "[1.0.0, )",
+          "Azure.Identity": "[1.17.2, )",
+          "Azure.Security.KeyVault.Certificates": "[4.8.0, )",
+          "Azure.Security.KeyVault.Secrets": "[4.8.0, )",
           "System.Security.Cryptography.Xml": "[8.0.4, )",
           "System.ServiceModel.Http": "[8.1.2, )"
         }

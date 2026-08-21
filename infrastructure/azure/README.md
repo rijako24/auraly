@@ -89,6 +89,8 @@ El script exige un árbol Git limpio, hace restore bloqueado, build determiníst
 
 Los releases son inmutables: no se reemplaza una carpeta existente. Para una corrección se crea una versión nueva.
 
+Cada ambiente también aprovisiona un Azure Key Vault fiscal independiente. La identidad administrada de la API tiene permisos RBAC para importar los PFX/P12 cargados desde el onboarding y administrar sus secretos asociados. El App Service recibe `Auraly__Fiscal__CredentialStore=AzureKeyVault` y `Auraly__Fiscal__KeyVaultUri`; los certificados de clientes no se incluyen en app settings ni en el paquete de despliegue.
+
 ## Aprovisionamiento inicial o cambio de infraestructura
 
 Este apartado crea o actualiza recursos. No publica los binarios de Function/API ni el esquema de la base.

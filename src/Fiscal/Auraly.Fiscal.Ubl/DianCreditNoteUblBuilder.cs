@@ -53,6 +53,7 @@ public sealed class DianCreditNoteUblBuilder
                 new XElement(Cac + "InvoiceDocumentReference",
                     E(Cbc, "ID", note.OriginalInvoice.DocumentNumber),
                     new XElement(Cbc + "UUID",
+                        new XAttribute("schemeID", note.Environment),
                         new XAttribute("schemeName", "CUFE-SHA384"), note.OriginalInvoice.Cufe),
                     E(Cbc, "IssueDate", Date(note.OriginalInvoice.IssuedOn)))),
             Party("AccountingSupplierParty", note.Supplier),

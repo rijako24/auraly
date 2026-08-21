@@ -48,7 +48,7 @@ public sealed class SqlFiscalSubmissionWorkStore(
                    CONVERT(bit,CASE WHEN EXISTS(
                      SELECT 1 FROM dbo.FiscalTransmissionAttempts x
                      WHERE x.DocumentId=p.DocumentId
-                       AND x.Operation=@SendOperation
+                       AND x.Operation IN (@SendTestOperation,@SendProductionOperation)
                        AND x.CompletedAt IS NULL
                    ) THEN 1 ELSE 0 END)
             FROM @Document selected
@@ -73,7 +73,8 @@ public sealed class SqlFiscalSubmissionWorkStore(
         command.Parameters.AddWithValue("@AcquiredAt", acquiredAt);
         command.Parameters.AddWithValue("@LeaseExpiredAt", acquiredAt - lease);
         command.Parameters.AddWithValue("@WorkerId", workerId);
-        command.Parameters.AddWithValue("@SendOperation", DianOperationCodes.SendTestSet);
+        command.Parameters.AddWithValue("@SendTestOperation", DianOperationCodes.SendTestSet);
+        command.Parameters.AddWithValue("@SendProductionOperation", DianOperationCodes.SendBillSync);
         command.Parameters.AddWithValue("@SignedXml", FiscalArtifactTypeCodes.SignedXml);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         FiscalSubmissionWorkItem? work = null;
@@ -144,7 +145,8 @@ public sealed class SqlFiscalSubmissionWorkStore(
         DateTimeOffset startedAt,
         CancellationToken cancellationToken)
     {
-        if (operation is not (DianOperationCodes.SendTestSet or DianOperationCodes.GetStatusZip))
+        if (operation is not (DianOperationCodes.SendTestSet or
+            DianOperationCodes.GetStatusZip or DianOperationCodes.SendBillSync))
             throw new ArgumentOutOfRangeException(nameof(operation));
         if (sanitizedRequest.Length == 0)
             throw new ArgumentException("A sanitized request record is required.", nameof(sanitizedRequest));
@@ -324,7 +326,9 @@ public sealed class SqlFiscalSubmissionWorkStore(
             command.Parameters.AddWithValue("@NextAttemptAt", (object?)nextAttemptAt ?? DBNull.Value);
             command.Parameters.AddWithValue("@IsFailure", result.Disposition is
                 DianSubmissionDisposition.TransientFailure or DianSubmissionDisposition.PermanentFailure);
-            command.Parameters.AddWithValue("@WasSubmitted", attempt.Operation == DianOperationCodes.SendTestSet && result.MayHaveReachedDian);
+            command.Parameters.AddWithValue("@WasSubmitted",
+                (attempt.Operation is DianOperationCodes.SendTestSet or DianOperationCodes.SendBillSync) &&
+                result.MayHaveReachedDian);
             command.Parameters.AddWithValue("@IsTerminal", terminal);
             if (await command.ExecuteNonQueryAsync(cancellationToken) != 4)
                 throw new InvalidOperationException("The fiscal transmission result could not be committed.");
@@ -343,7 +347,7 @@ public sealed class SqlFiscalSubmissionWorkStore(
             work,
             FiscalDocumentStatusCodes.PendingDianResult,
             "SubmissionOutcomeUnknown",
-            "A previous SendTestSet attempt ended without a durable response or TrackId. Automatic retransmission is blocked.",
+            "A previous DIAN send attempt ended without a durable response or TrackId. Automatic retransmission is blocked.",
             occurredAt,
             cancellationToken);
 
