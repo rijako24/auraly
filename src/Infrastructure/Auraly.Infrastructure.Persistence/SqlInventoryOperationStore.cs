@@ -259,7 +259,7 @@ public sealed class SqlInventoryOperationStore(
               AND IsActive=1 AND UseForSales=1)
               THROW 51201,'La bodega no está habilitada como bodega de venta.',1;
             IF @Destination IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@Destination AND BusinessId=@BusinessId
-              AND IsActive=1 AND UseForSales=1)
+              AND IsActive=1 AND (UseForSales=1 OR (@AllowSystemDestination=1 AND Code IN(N'PED',N'AVE'))))
               THROW 51202,'La bodega de destino no está habilitada como bodega de venta.',1;
             IF EXISTS(SELECT x.ProductId FROM OPENJSON(@Products) WITH(ProductId UNIQUEIDENTIFIER '$') x
               LEFT JOIN dbo.Products p ON p.ProductId=x.ProductId AND p.BusinessId=@BusinessId AND p.IsActive=1 AND p.ManageStock=1
@@ -271,6 +271,7 @@ public sealed class SqlInventoryOperationStore(
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@WarehouseId", warehouseId);
         command.Parameters.AddWithValue("@Destination", (object?)destinationWarehouseId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@AllowSystemDestination", user.Permissions.Contains("inventory.system-warehouses.use"));
         command.Parameters.AddWithValue("@Products", JsonSerializer.Serialize(productIds.Distinct()));
         try { await command.ExecuteNonQueryAsync(cancellationToken); }
         catch (SqlException exception) when (exception.Number is >= 51200 and <= 51203) { throw new InventoryValidationException(exception.Message); }
