@@ -56,7 +56,9 @@ public sealed class DispatchSettlementHostedService(
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(token);
-        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, token);
+        // READPAST is a queue-consumer lock hint and SQL Server only permits it at
+        // READ COMMITTED or REPEATABLE READ. UPDLOCK still serializes the selected row.
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, token);
         try
         {
             const string selectSql = """
