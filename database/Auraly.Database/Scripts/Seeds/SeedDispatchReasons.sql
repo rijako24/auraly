@@ -8,7 +8,7 @@ INSERT @DispatchReasonDefaults VALUES
 (N'NotDelivered',N'ACCESS_RESTRICTED',N'No fue posible acceder al lugar',60),
 (N'NotDelivered',N'OTHER',N'Otro motivo',999);
 
-INSERT dbo.DispatchReasons(DispatchReasonId,BusinessId,ReasonType,Code,Name,IsSystem,IsActive,DisplayOrder,CreatedAt)
+INSERT dispatch.DispatchReasons(DispatchReasonId,BusinessId,ReasonType,Code,Name,IsSystem,IsActive,DisplayOrder,CreatedAt)
 SELECT NEWID(),business.BusinessId,reason.ReasonType,reason.Code,reason.Name,1,1,reason.DisplayOrder,SYSUTCDATETIME()
 FROM dbo.Businesses business CROSS JOIN @DispatchReasonDefaults reason
-WHERE NOT EXISTS(SELECT 1 FROM dbo.DispatchReasons currentReason WHERE currentReason.BusinessId=business.BusinessId AND currentReason.ReasonType=reason.ReasonType AND currentReason.Code=reason.Code);
+WHERE NOT EXISTS(SELECT 1 FROM dispatch.DispatchReasons currentReason WHERE currentReason.BusinessId=business.BusinessId AND currentReason.ReasonType=reason.ReasonType AND currentReason.Code=reason.Code);

@@ -1,0 +1,1 @@
+CREATE SCHEMA [dispatch] AUTHORIZATION [dbo];

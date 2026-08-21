@@ -1,4 +1,4 @@
-CREATE TABLE [dbo].[DispatchReasons] (
+CREATE TABLE [dispatch].[DispatchReasons] (
     [DispatchReasonId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [ReasonType] NVARCHAR(32) NOT NULL,
@@ -16,7 +16,7 @@ CREATE TABLE [dbo].[DispatchReasons] (
     CONSTRAINT [CK_DispatchReasons_Order] CHECK ([DisplayOrder] BETWEEN 0 AND 9999)
 );
 GO
-CREATE UNIQUE INDEX [UX_DispatchReasons_Business_Type_Code] ON [dbo].[DispatchReasons] ([BusinessId],[ReasonType],[Code]);
+CREATE UNIQUE INDEX [UX_DispatchReasons_Business_Type_Code] ON [dispatch].[DispatchReasons] ([BusinessId],[ReasonType],[Code]);
 GO
-CREATE INDEX [IX_DispatchReasons_Business_Type_Active] ON [dbo].[DispatchReasons] ([BusinessId],[ReasonType],[IsActive],[DisplayOrder]);
+CREATE INDEX [IX_DispatchReasons_Business_Type_Active] ON [dispatch].[DispatchReasons] ([BusinessId],[ReasonType],[IsActive],[DisplayOrder]);
 GO

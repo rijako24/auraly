@@ -10,7 +10,7 @@ public sealed class SqlDispatchDeliveryStore(DispatchingSqlConnectionFactory con
     public async Task<IReadOnlyList<DispatchReasonOption>> ReasonsAsync(DispatchActorIdentity actor, string reasonType, CancellationToken ct)
     {
         await using var connection=connections.Create();await connection.OpenAsync(ct);
-        await using var command=new SqlCommand("SELECT DispatchReasonId,ReasonType,Code,Name FROM dbo.DispatchReasons WHERE BusinessId=@BusinessId AND ReasonType=@Type AND IsActive=1 ORDER BY DisplayOrder,Name",connection);
+        await using var command=new SqlCommand("SELECT DispatchReasonId,ReasonType,Code,Name FROM dispatch.DispatchReasons WHERE BusinessId=@BusinessId AND ReasonType=@Type AND IsActive=1 ORDER BY DisplayOrder,Name",connection);
         command.Parameters.AddWithValue("@BusinessId",actor.BusinessId);command.Parameters.AddWithValue("@Type",reasonType);
         var result=new List<DispatchReasonOption>();await using var reader=await command.ExecuteReaderAsync(ct);
         while(await reader.ReadAsync(ct))result.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetString(3)));
