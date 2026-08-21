@@ -22,6 +22,7 @@ export default defineConfig([
     ".pos-test-dist/**",
     "playwright-report/**",
     "test-results/**",
+    "public/vendor/**",
     "next-env.d.ts",
   ]),
 ]);
