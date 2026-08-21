@@ -2,9 +2,11 @@ using System.Data;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Auraly.Application.DocumentProcessing;
 using Auraly.Application.Inventory;
 using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.Contracts.DocumentProcessing;
 using Auraly.Contracts.Inventory;
 using Microsoft.Data.SqlClient;
 
@@ -13,7 +15,9 @@ namespace Auraly.Infrastructure.Persistence;
 public sealed class SqlInventoryOperationStore(
     SqlServerConnectionFactory connections,
     IAuralyIdGenerator ids,
-    TimeProvider timeProvider) : IInventoryOperationStore
+    TimeProvider timeProvider,
+    SqlDocumentProcessingSessionAccessor processingSessions,
+    SqlInventoryOperationProcessor processor) : IInventoryOperationStore
 {
     public async Task<StockCountDraft> StartCountAsync(InventoryUserIdentity user, StartStockCountRequest request, CancellationToken cancellationToken)
     {
@@ -103,6 +107,67 @@ public sealed class SqlInventoryOperationStore(
         AcceptNewAsync(user, idempotencyKey, request.DocumentId, InventoryDocumentTypes.Transfer,
             request.SourceWarehouseId, request.DestinationWarehouseId, request.OccurredAt, request.ReasonCode, null, null, null, request.Notes,
             request.Lines.Select(line => new LineInput(line.LineNumber, "TRANSFER", line.ProductId, line.Quantity, null, null, null)).ToArray(), request, cancellationToken);
+
+    public async Task<InventoryOperationAcceptance> ConfirmTransferAtomicallyAsync(
+        InventoryUserIdentity user,
+        string idempotencyKey,
+        ConfirmWarehouseTransferRequest request,
+        SqlConnection connection,
+        SqlTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        var inputLines = request.Lines
+            .Select(line => new LineInput(line.LineNumber, "TRANSFER", line.ProductId, line.Quantity, null, null, null))
+            .ToArray();
+        var requestHash = Hash(request);
+        var replay = await TryReplayAsync(connection, transaction, request.BusinessId, request.DocumentId,
+            idempotencyKey, requestHash, cancellationToken);
+        if (replay is not null)
+        {
+            if (!StringComparer.Ordinal.Equals(replay.Status, "Processed"))
+                throw new InventoryConflictException("La reserva de inventario anterior todavía no ha terminado.");
+            return replay;
+        }
+
+        await RequireCurrentProcessingSequenceAsync(connection, transaction, request.BusinessId, cancellationToken);
+        await ValidateScopeAsync(connection, transaction, user, request.SourceWarehouseId,
+            request.DestinationWarehouseId, inputLines.Select(line => line.ProductId), cancellationToken);
+        var reasonDescription = await LoadActiveReasonAsync(connection, transaction, user.BusinessId,
+            InventoryDocumentTypes.Transfer, request.ReasonCode, cancellationToken);
+        var products = (await LoadProductsAsync(connection, transaction, request.BusinessId,
+            request.SourceWarehouseId, inputLines.Select(line => line.ProductId), cancellationToken)).ToDictionary(product => product.Id);
+        var lines = inputLines.Select(line => new InventoryOperationLineSnapshot(
+            line.LineNumber, line.Direction, line.ProductId, products[line.ProductId].Code,
+            products[line.ProductId].Name, line.Quantity, null, null, null)).ToArray();
+        var now = timeProvider.GetUtcNow();
+        const string insert = """
+            INSERT dbo.InventoryOperations
+              (InventoryOperationId,BusinessId,DocumentType,WarehouseId,DestinationWarehouseId,
+               OccurredAt,ReasonCode,ReasonDescription,Notes,Status,CreatedAt)
+            VALUES(@Id,@BusinessId,N'WarehouseTransfer',@WarehouseId,@Destination,@OccurredAt,
+               @Reason,@ReasonDescription,@Notes,N'Draft',@Now);
+            """;
+        await using (var command = new SqlCommand(insert, connection, transaction))
+        {
+            command.Parameters.AddWithValue("@Id", request.DocumentId);
+            command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
+            command.Parameters.AddWithValue("@WarehouseId", request.SourceWarehouseId);
+            command.Parameters.AddWithValue("@Destination", request.DestinationWarehouseId);
+            command.Parameters.AddWithValue("@OccurredAt", request.OccurredAt);
+            command.Parameters.AddWithValue("@Reason", request.ReasonCode);
+            command.Parameters.AddWithValue("@ReasonDescription", reasonDescription);
+            command.Parameters.AddWithValue("@Notes", (object?)request.Notes ?? DBNull.Value);
+            command.Parameters.AddWithValue("@Now", now);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await InsertLinesAsync(connection, transaction, request.DocumentId, lines, cancellationToken);
+        var acceptance = await AcceptDraftAsync(connection, transaction, user, request.DocumentId,
+            InventoryDocumentTypes.Transfer, request.SourceWarehouseId, request.DestinationWarehouseId,
+            request.OccurredAt, request.ReasonCode, null, null, null, request.Notes,
+            idempotencyKey, requestHash, lines, cancellationToken);
+        await ProcessAcceptedInsideTransactionAsync(connection, transaction, user, acceptance, cancellationToken);
+        return acceptance with { Status = "Processed" };
+    }
 
     public Task<InventoryOperationAcceptance> ConfirmDamageAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmInventoryDamageRequest request, CancellationToken cancellationToken) =>
         AcceptNewAsync(user, idempotencyKey, request.DocumentId, InventoryDocumentTypes.Damage,
@@ -375,6 +440,92 @@ public sealed class SqlInventoryOperationStore(
         const string sql = "SELECT COALESCE(LastAssignedSequence,0) FROM dbo.BusinessProcessingCursors WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@BusinessId;";
         await using var command = new SqlCommand(sql, connection, transaction); command.Parameters.AddWithValue("@BusinessId", businessId);
         return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken) ?? 0L);
+    }
+
+    private static async Task RequireCurrentProcessingSequenceAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid businessId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            IF NOT EXISTS(SELECT 1 FROM dbo.BusinessProcessingCursors WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@BusinessId)
+              INSERT dbo.BusinessProcessingCursors(BusinessId,LastAssignedSequence,LastCompletedSequence,UpdatedAt)
+              VALUES(@BusinessId,0,0,SYSDATETIMEOFFSET());
+            SELECT LastAssignedSequence,LastCompletedSequence
+            FROM dbo.BusinessProcessingCursors WITH(UPDLOCK,HOLDLOCK)
+            WHERE BusinessId=@BusinessId;
+            """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken) || reader.GetInt64(0) != reader.GetInt64(1))
+            throw new InventoryConflictException("El inventario está terminando una operación anterior. Intenta nuevamente.");
+    }
+
+    private async Task ProcessAcceptedInsideTransactionAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        InventoryUserIdentity user,
+        InventoryOperationAcceptance acceptance,
+        CancellationToken cancellationToken)
+    {
+        const string payloadSql = """
+            SELECT PayloadJson,AcceptedAt
+            FROM dbo.DocumentProcessingPayloads
+            WHERE DocumentId=@DocumentId AND DocumentType=@DocumentType AND BusinessId=@BusinessId;
+            """;
+        string payload;
+        DateTimeOffset acceptedAt;
+        await using (var command = new SqlCommand(payloadSql, connection, transaction))
+        {
+            command.Parameters.AddWithValue("@DocumentId", acceptance.DocumentId);
+            command.Parameters.AddWithValue("@DocumentType", acceptance.DocumentType);
+            command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                throw new InventoryConflictException("No se pudo recuperar la reserva aceptada.");
+            payload = reader.GetString(0);
+            acceptedAt = reader.GetDateTimeOffset(1);
+        }
+
+        var context = new DocumentProcessingContext(
+            new TenantId(user.TenantId),
+            new BusinessId(user.BusinessId),
+            new DocumentId(acceptance.DocumentId),
+            acceptance.DocumentType);
+        processingSessions.Set(connection, transaction, context, acceptance.MovementId, acceptance.ProcessingSequence);
+        try
+        {
+            await processor.HandleAsync(new ConfirmedDocument(
+                context.TenantId,
+                context.BusinessId,
+                context.DocumentId,
+                context.DocumentType,
+                payload,
+                acceptedAt), cancellationToken);
+        }
+        finally
+        {
+            processingSessions.Take();
+        }
+
+        const string completeSql = """
+            UPDATE dbo.DocumentProcessingJobs
+            SET Status=N'Completed',CompletedAt=@CompletedAt,LeaseOwner=NULL,LeaseExpiresAt=NULL,LastError=NULL
+            WHERE JobId=@JobId AND Status=N'Pending';
+            UPDATE dbo.BusinessProcessingCursors
+            SET LastCompletedSequence=@Sequence,UpdatedAt=@CompletedAt
+            WHERE BusinessId=@BusinessId AND LastCompletedSequence=@PreviousSequence;
+            """;
+        await using var complete = new SqlCommand(completeSql, connection, transaction);
+        complete.Parameters.AddWithValue("@JobId", acceptance.MovementId);
+        complete.Parameters.AddWithValue("@Sequence", acceptance.ProcessingSequence);
+        complete.Parameters.AddWithValue("@PreviousSequence", acceptance.ProcessingSequence - 1);
+        complete.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        complete.Parameters.AddWithValue("@CompletedAt", timeProvider.GetUtcNow());
+        if (await complete.ExecuteNonQueryAsync(cancellationToken) != 2)
+            throw new DBConcurrencyException("La reserva y su secuencia no pudieron confirmarse atómicamente.");
     }
 
     private static async Task<long> AllocateSequenceAsync(SqlConnection connection, SqlTransaction transaction, Guid businessId, DateTimeOffset now, CancellationToken cancellationToken)

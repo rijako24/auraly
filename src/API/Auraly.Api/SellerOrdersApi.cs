@@ -55,7 +55,7 @@ public static class SellerOrdersApi
 
 public sealed record SellerOrderActor(Guid UserId,Guid TenantId,Guid BusinessId,IReadOnlySet<string> Permissions);
 
-public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,InventoryOperationService inventory)
+public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,SqlInventoryOperationStore inventory)
 {
     public async Task<SellerOrdersApi.SellerOrderResult> UpdateReviewAsync(SellerOrderActor actor, Guid orderId,
         SellerOrdersApi.UpdateSellerOrderRequest request,CancellationToken token)
@@ -70,39 +70,32 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Inv
         var requested=request.Lines.GroupBy(line=>line.ProductId).Select(group=>new SellerOrdersApi.SellerOrderLineInput(group.Key,group.Sum(line=>line.Quantity))).ToArray();
         var lines=new List<OrderLine>();var position=0;
         await using var connection=connections.Create();await connection.OpenAsync(token);await using var transaction=(SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable,token);
-        foreach(var input in requested){var line=await ResolveLineAsync(connection,transaction,actor.BusinessId,warehouseId,customerId,input,token);if(line is null)throw new SellerOrderValidationException($"El producto {input.ProductId:D} no está activo o no tiene precio publicado.");var alreadyReserved=editable.Status==2&&editable.ReservedQuantities.TryGetValue(input.ProductId,out var prior)?prior:0;var additional=Math.Max(0,input.Quantity-alreadyReserved);if(line.ManageStock&&line.Available<additional)throw new SellerOrderConflictException($"{line.Code}: adicionales {additional:N3}, disponibles {line.Available:N3}.");lines.Add(line with{Position=++position});}
-        var total=lines.Sum(line=>decimal.Round(line.UnitPrice*line.Quantity,2,MidpointRounding.AwayFromZero));
-        await transaction.CommitAsync(token);
-        var desired=lines.Where(line=>line.ManageStock).ToDictionary(line=>line.ProductId,line=>line.Quantity);
-        var previous=editable.Status==2?editable.ReservedQuantities:new Dictionary<Guid,decimal>();
-        var increases=desired.Select(pair=>new{pair.Key,Quantity=pair.Value-(previous.TryGetValue(pair.Key,out var prior)?prior:0)}).Where(line=>line.Quantity>0).ToArray();
-        var releases=previous.Select(pair=>new{pair.Key,Quantity=pair.Value-(desired.TryGetValue(pair.Key,out var next)?next:0)}).Where(line=>line.Quantity>0).ToArray();
-        var identity=new InventoryUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,new HashSet<string>{InventoryPermissionCodes.Transfer,"inventory.system-warehouses.use"});
-        var key=request.IdempotencyKey.Trim();var increaseApplied=false;var releaseApplied=false;
         try
         {
-            if(increases.Length>0){await TransferAsync(identity,$"seller-order-edit-increase:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-increase:{orderId:N}:{key}"),warehouseId,ordersWarehouseId,$"Aumento de reserva del pedido {number}",increases.Select(line=>(line.Key,line.Quantity)).ToArray(),token);increaseApplied=true;}
-            if(releases.Length>0){await TransferAsync(identity,$"seller-order-edit-release:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-release:{orderId:N}:{key}"),ordersWarehouseId,warehouseId,$"Liberación de reserva del pedido {number}",releases.Select(line=>(line.Key,line.Quantity)).ToArray(),token);releaseApplied=true;}
-            await using var saveConnection=connections.Create();await saveConnection.OpenAsync(token);await using var saveTransaction=(SqlTransaction)await saveConnection.BeginTransactionAsync(IsolationLevel.Serializable,token);
-            await SellerOrderReviewPersistence.ReplaceAsync(saveConnection,saveTransaction,orderId,actor.BusinessId,request.Notes,total,DeterministicGuid($"seller-order-edit:{orderId:N}:{key}"),
+            foreach(var input in requested){var line=await ResolveLineAsync(connection,transaction,actor.BusinessId,warehouseId,customerId,input,token);if(line is null)throw new SellerOrderValidationException($"El producto {input.ProductId:D} no está activo o no tiene precio publicado.");var alreadyReserved=editable.Status==2&&editable.ReservedQuantities.TryGetValue(input.ProductId,out var prior)?prior:0;var additional=Math.Max(0,input.Quantity-alreadyReserved);if(line.ManageStock&&line.Available<additional)throw new SellerOrderConflictException($"{line.Code}: adicionales {additional:N3}, disponibles {line.Available:N3}.");lines.Add(line with{Position=++position});}
+            var total=lines.Sum(line=>decimal.Round(line.UnitPrice*line.Quantity,2,MidpointRounding.AwayFromZero));
+            var desired=lines.Where(line=>line.ManageStock).ToDictionary(line=>line.ProductId,line=>line.Quantity);
+            var previous=editable.Status==2?editable.ReservedQuantities:new Dictionary<Guid,decimal>();
+            var increases=desired.Select(pair=>new{pair.Key,Quantity=pair.Value-(previous.TryGetValue(pair.Key,out var prior)?prior:0)}).Where(line=>line.Quantity>0).ToArray();
+            var releases=previous.Select(pair=>new{pair.Key,Quantity=pair.Value-(desired.TryGetValue(pair.Key,out var next)?next:0)}).Where(line=>line.Quantity>0).ToArray();
+            var identity=new InventoryUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,new HashSet<string>{InventoryPermissionCodes.Transfer,"inventory.system-warehouses.use"});
+            var key=request.IdempotencyKey.Trim();
+            if(increases.Length>0)await TransferAsync(identity,$"seller-order-edit-increase:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-increase:{orderId:N}:{key}"),warehouseId,ordersWarehouseId,$"Aumento de reserva del pedido {number}",increases.Select(line=>(line.Key,line.Quantity)).ToArray(),connection,transaction,token);
+            if(releases.Length>0)await TransferAsync(identity,$"seller-order-edit-release:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-release:{orderId:N}:{key}"),ordersWarehouseId,warehouseId,$"Liberación de reserva del pedido {number}",releases.Select(line=>(line.Key,line.Quantity)).ToArray(),connection,transaction,token);
+            await SellerOrderReviewPersistence.ReplaceAsync(connection,transaction,orderId,actor.BusinessId,request.Notes,total,DeterministicGuid($"seller-order-edit:{orderId:N}:{key}"),
                 lines.Select(line=>new SellerOrderReplacementLine(line.ProductId,line.Code,line.Name,line.UnitCode,line.Quantity,line.UnitPrice,decimal.Round(line.UnitPrice*line.Quantity,2,MidpointRounding.AwayFromZero),JsonSerializer.Serialize(new{line.PriceSource,line.Available}))).ToArray(),token);
-            await saveTransaction.CommitAsync(token);
+            await transaction.CommitAsync(token);
             return new(orderId,number,"Confirmed",total,false,[]);
         }
         catch(Exception error)
         {
-            try
-            {
-                if(releaseApplied)await TransferAsync(identity,$"seller-order-edit-restore-release:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-restore-release:{orderId:N}:{key}"),warehouseId,ordersWarehouseId,$"Restauración de reserva del pedido {number}",releases.Select(line=>(line.Key,line.Quantity)).ToArray(),token);
-                if(increaseApplied)await TransferAsync(identity,$"seller-order-edit-restore-increase:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-restore-increase:{orderId:N}:{key}"),ordersWarehouseId,warehouseId,$"Reversión de aumento del pedido {number}",increases.Select(line=>(line.Key,line.Quantity)).ToArray(),token);
-            }
-            catch(Exception compensationError){throw new SellerOrderConflictException($"La edición no se completó y requiere revisión de inventario: {compensationError.Message}");}
+            if(transaction.Connection is not null)await transaction.RollbackAsync(CancellationToken.None);
             throw new SellerOrderConflictException($"No fue posible editar el pedido: {error.Message}");
         }
     }
 
-    private async Task TransferAsync(InventoryUserIdentity identity,string idempotencyKey,Guid transferId,Guid source,Guid destination,string notes,IReadOnlyList<(Guid ProductId,decimal Quantity)> values,CancellationToken token)
-    {var transferLines=values.Select((line,index)=>new WarehouseTransferLineRequest(index+1,line.ProductId,line.Quantity)).ToArray();await inventory.ConfirmTransferAsync(identity,idempotencyKey,new ConfirmWarehouseTransferRequest(transferId,identity.BusinessId,source,destination,DateTimeOffset.UtcNow,"WAREHOUSE_TRANSFER",notes,transferLines),token);}
+    private async Task TransferAsync(InventoryUserIdentity identity,string idempotencyKey,Guid transferId,Guid source,Guid destination,string notes,IReadOnlyList<(Guid ProductId,decimal Quantity)> values,SqlConnection connection,SqlTransaction transaction,CancellationToken token)
+    {var transferLines=values.Select((line,index)=>new WarehouseTransferLineRequest(index+1,line.ProductId,line.Quantity)).ToArray();await inventory.ConfirmTransferAtomicallyAsync(identity,idempotencyKey,new ConfirmWarehouseTransferRequest(transferId,identity.BusinessId,source,destination,DateTimeOffset.UtcNow,"WAREHOUSE_TRANSFER",notes,transferLines),connection,transaction,token);}
 
     public async Task<SellerOrdersApi.SellerCatalogPage> CatalogAsync(SellerOrderActor actor,
         SellerOrdersApi.SellerCatalogRequest request,CancellationToken token)
@@ -175,34 +168,27 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Inv
                 insert.Parameters.AddRange([P("@OrderId",orderId),P("@BusinessId",request.BusinessId),P("@ProductId",line.ProductId),P("@Sku",line.Code),P("@Code",line.Code),P("@Name",line.Name),P("@Unit",line.UnitCode),Quantity("@Quantity",line.Quantity),Money("@Price",line.UnitPrice),Money("@Tax",tax),Money("@Total",lineTotal),P("@Raw",JsonSerializer.Serialize(new{line.PriceSource,line.Available}))]);
                 await insert.ExecuteNonQueryAsync(token);
             }
-            await transaction.CommitAsync(token);
-            if(review)return new(orderId,number,"InReview",total,true,warnings);
-
             var stockLines=lines.Where(line=>line.ManageStock).Select((line,index)=>new WarehouseTransferLineRequest(index+1,line.ProductId,line.Quantity)).ToArray();
+            if(review)
+            {
+                await transaction.CommitAsync(token);
+                return new(orderId,number,"InReview",total,true,warnings);
+            }
+
             if(stockLines.Length>0)
             {
-                try
-                {
-                    var identity=new InventoryUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,new HashSet<string>{InventoryPermissionCodes.Transfer,"inventory.system-warehouses.use"});
-                    await inventory.ConfirmTransferAsync(identity,$"seller-order-reservation:{orderId:N}",new ConfirmWarehouseTransferRequest(
-                        reservationTransferId,request.BusinessId,request.WarehouseId,context.OrdersWarehouseId,
-                        DateTimeOffset.UtcNow,"WAREHOUSE_TRANSFER",$"Reserva del pedido {number}",stockLines),token);
-                    await SetOrderStateAsync(orderId,2,"InventoryTransferAccepted",token);
-                }
-                catch(Exception error)
-                {
-                    await SetOrderStateAsync(orderId,5,"InventoryTransferReview",token);
-                    return new(orderId,number,"InReview",total,true,[error.Message]);
-                }
+                var identity=new InventoryUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,new HashSet<string>{InventoryPermissionCodes.Transfer,"inventory.system-warehouses.use"});
+                await inventory.ConfirmTransferAtomicallyAsync(identity,$"seller-order-reservation:{orderId:N}",new ConfirmWarehouseTransferRequest(
+                    reservationTransferId,request.BusinessId,request.WarehouseId,context.OrdersWarehouseId,
+                    DateTimeOffset.UtcNow,"WAREHOUSE_TRANSFER",$"Reserva del pedido {number}",stockLines),connection,transaction,token);
             }
-            else await SetOrderStateAsync(orderId,2,"Confirmed",token);
+            await using(var confirm=new SqlCommand("UPDATE dbo.Orders SET Status=2,ExternalStatus=@External,UpdatedAt=SYSUTCDATETIME() WHERE OrderId=@Id",connection,transaction))
+            {confirm.Parameters.AddRange([P("@External",stockLines.Length>0?"InventoryTransferProcessed":"Confirmed"),P("@Id",orderId)]);await confirm.ExecuteNonQueryAsync(token);}
+            await transaction.CommitAsync(token);
             return new(orderId,number,"Confirmed",total,false,[]);
         }
         catch{if(transaction.Connection is not null)await transaction.RollbackAsync(token);throw;}
     }
-
-    private async Task SetOrderStateAsync(Guid orderId,int status,string externalStatus,CancellationToken token)
-    {await using var connection=connections.Create();await connection.OpenAsync(token);await using var command=new SqlCommand("UPDATE dbo.Orders SET Status=@Status,ExternalStatus=@External,UpdatedAt=SYSUTCDATETIME() WHERE OrderId=@Id",connection);command.Parameters.AddRange([P("@Status",status),P("@External",externalStatus),P("@Id",orderId)]);await command.ExecuteNonQueryAsync(token);}
 
     private static async Task<SellerOrdersApi.SellerOrderResult?> ReplayAsync(SqlConnection connection,SqlTransaction transaction,Guid businessId,string key,CancellationToken token)
     {await using var command=new SqlCommand("SELECT OrderId,ExternalDocumentNumber,Status,Total,ExternalStatus FROM dbo.Orders WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@BusinessId AND IdempotencyKey=@Key",connection,transaction);command.Parameters.AddRange([P("@BusinessId",businessId),P("@Key",key.Trim())]);await using var reader=await command.ExecuteReaderAsync(token);if(!await reader.ReadAsync(token))return null;var review=reader.GetInt32(2)==5;return new(reader.GetGuid(0),reader.GetString(1),review?"InReview":"Confirmed",reader.GetDecimal(3),review,review?[reader.IsDBNull(4)?"Requiere revisión.":reader.GetString(4)]:[]);}
@@ -238,15 +224,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Inv
         SELECT COALESCE(NULLIF(p.ProductCode,N''),NULLIF(p.Sku,N''),N''),p.Name,COALESCE(NULLIF(p.BaseUnitCode,N''),N'EA'),
                COALESCE(listPrice.Amount,channelPrice.Amount,basePrice.Amount),
                CASE WHEN listPrice.Amount IS NOT NULL THEN N'PriceList' WHEN channelPrice.Amount IS NOT NULL THEN N'PriceChannel' ELSE N'Public' END,
-               COALESCE((SELECT SUM(m.QuantityChange) FROM dbo.InventoryMovements m WHERE m.BusinessId=p.BusinessId AND m.WarehouseId=@WarehouseId AND m.ProductId=p.ProductId),0)
-               -COALESCE((SELECT SUM(line.Quantity)
-                          FROM dbo.InventoryOperations operation
-                          INNER JOIN dbo.InventoryOperationLines line ON line.InventoryOperationId=operation.InventoryOperationId
-                          WHERE operation.BusinessId=p.BusinessId
-                            AND operation.WarehouseId=@WarehouseId
-                            AND operation.DocumentType=N'WarehouseTransfer'
-                            AND operation.Status=N'Accepted'
-                            AND line.ProductId=p.ProductId),0),
+               COALESCE((SELECT SUM(m.QuantityChange) FROM dbo.InventoryMovements m WHERE m.BusinessId=p.BusinessId AND m.WarehouseId=@WarehouseId AND m.ProductId=p.ProductId),0),
                p.ManageStock,COALESCE(tax.Rate,0)
         FROM dbo.Products p
         LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=p.TaxProfileId AND tax.IsActive=1
@@ -259,15 +237,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Inv
     private const string CatalogSql="""
         SELECT p.ProductId,COALESCE(NULLIF(p.ProductCode,N''),NULLIF(p.Sku,N''),N''),p.Name,COALESCE(NULLIF(p.BaseUnitCode,N''),N'EA'),
                COALESCE(listPrice.Amount,channelPrice.Amount,basePrice.Amount),CASE WHEN listPrice.Amount IS NOT NULL THEN N'PriceList' WHEN channelPrice.Amount IS NOT NULL THEN N'PriceChannel' ELSE N'Public' END,
-               COALESCE((SELECT SUM(m.QuantityChange) FROM dbo.InventoryMovements m WHERE m.BusinessId=p.BusinessId AND m.WarehouseId=@WarehouseId AND m.ProductId=p.ProductId),0)
-               -COALESCE((SELECT SUM(line.Quantity)
-                          FROM dbo.InventoryOperations operation
-                          INNER JOIN dbo.InventoryOperationLines line ON line.InventoryOperationId=operation.InventoryOperationId
-                          WHERE operation.BusinessId=p.BusinessId
-                            AND operation.WarehouseId=@WarehouseId
-                            AND operation.DocumentType=N'WarehouseTransfer'
-                            AND operation.Status=N'Accepted'
-                            AND line.ProductId=p.ProductId),0),p.ManageStock
+               COALESCE((SELECT SUM(m.QuantityChange) FROM dbo.InventoryMovements m WHERE m.BusinessId=p.BusinessId AND m.WarehouseId=@WarehouseId AND m.ProductId=p.ProductId),0),p.ManageStock
         FROM dbo.Products p CROSS APPLY(SELECT TOP(1)pp.Amount FROM dbo.ProductPrices pp WHERE pp.BusinessId=p.BusinessId AND pp.ProductId=p.ProductId AND pp.IsActive=1 AND pp.ValidFrom<=SYSDATETIMEOFFSET() AND(pp.ValidUntil IS NULL OR pp.ValidUntil>SYSDATETIMEOFFSET()) ORDER BY pp.ValidFrom DESC)basePrice
         LEFT JOIN dbo.CustomerPricingSettings setting ON setting.CustomerId=@CustomerId
         OUTER APPLY(SELECT TOP(1)i.Amount FROM dbo.PriceListItems i JOIN dbo.PriceLists l ON l.PriceListId=i.PriceListId WHERE i.PriceListId=setting.PriceListId AND l.BusinessId=@BusinessId AND l.IsActive=1 AND i.ProductId=p.ProductId AND i.IsActive=1 AND i.MinimumQuantity<=1 AND i.ValidFrom<=SYSDATETIMEOFFSET() AND(i.ValidUntil IS NULL OR i.ValidUntil>SYSDATETIMEOFFSET()) ORDER BY i.MinimumQuantity DESC,i.ValidFrom DESC)listPrice
