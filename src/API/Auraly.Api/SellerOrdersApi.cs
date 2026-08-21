@@ -65,21 +65,44 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Inv
             throw new SellerOrderValidationException("El pedido requiere productos, cantidades y una clave de actualización válidos.");
         var editable=await SellerOrderReviewPersistence.FindEditableAsync(connections,orderId,actor.BusinessId,actor.UserId,token)
             ?? throw new SellerOrderConflictException("El pedido no existe, no te pertenece, ya fue facturado o no conserva su configuración de bodega.");
-        if(editable.Status!=5)throw new SellerOrderConflictException("Solo se puede corregir un pedido que esté en revisión; los pedidos confirmados conservan su reserva de inventario.");
+        if(editable.Status is not (2 or 5))throw new SellerOrderConflictException("Solo se puede editar un pedido disponible o en revisión que todavía no haya sido facturado.");
         var number=editable.Number;var customerId=editable.CustomerId;var warehouseId=editable.WarehouseId;var ordersWarehouseId=editable.OrdersWarehouseId;
-        await using var connection=connections.Create();await connection.OpenAsync(token);await using var transaction=(SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable,token);
         var requested=request.Lines.GroupBy(line=>line.ProductId).Select(group=>new SellerOrdersApi.SellerOrderLineInput(group.Key,group.Sum(line=>line.Quantity))).ToArray();
         var lines=new List<OrderLine>();var position=0;
-        foreach(var input in requested){var line=await ResolveLineAsync(connection,transaction,actor.BusinessId,warehouseId,customerId,input,token);if(line is null)throw new SellerOrderValidationException($"El producto {input.ProductId:D} no está activo o no tiene precio publicado.");if(line.ManageStock&&line.Available<input.Quantity)throw new SellerOrderConflictException($"{line.Code}: solicitadas {input.Quantity:N3}, disponibles {line.Available:N3}.");lines.Add(line with{Position=++position});}
+        await using var connection=connections.Create();await connection.OpenAsync(token);await using var transaction=(SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable,token);
+        foreach(var input in requested){var line=await ResolveLineAsync(connection,transaction,actor.BusinessId,warehouseId,customerId,input,token);if(line is null)throw new SellerOrderValidationException($"El producto {input.ProductId:D} no está activo o no tiene precio publicado.");var alreadyReserved=editable.Status==2&&editable.ReservedQuantities.TryGetValue(input.ProductId,out var prior)?prior:0;var additional=Math.Max(0,input.Quantity-alreadyReserved);if(line.ManageStock&&line.Available<additional)throw new SellerOrderConflictException($"{line.Code}: adicionales {additional:N3}, disponibles {line.Available:N3}.");lines.Add(line with{Position=++position});}
         var total=lines.Sum(line=>decimal.Round(line.UnitPrice*line.Quantity,2,MidpointRounding.AwayFromZero));
-        var reservationTransferId=DeterministicGuid($"seller-order-edit-transfer:{orderId:N}:{request.IdempotencyKey.Trim()}");
-        await SellerOrderReviewPersistence.ReplaceAsync(connection,transaction,orderId,actor.BusinessId,request.Notes,total,reservationTransferId,
-            lines.Select(line=>new SellerOrderReplacementLine(line.ProductId,line.Code,line.Name,line.UnitCode,line.Quantity,line.UnitPrice,
-                decimal.Round(line.UnitPrice*line.Quantity,2,MidpointRounding.AwayFromZero),JsonSerializer.Serialize(new{line.PriceSource,line.Available}))).ToArray(),token);
         await transaction.CommitAsync(token);
-        var stockLines=lines.Where(line=>line.ManageStock).Select((line,index)=>new WarehouseTransferLineRequest(index+1,line.ProductId,line.Quantity)).ToArray();
-        try{if(stockLines.Length>0){var identity=new InventoryUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,new HashSet<string>{InventoryPermissionCodes.Transfer,"inventory.system-warehouses.use"});await inventory.ConfirmTransferAsync(identity,$"seller-order-edit-reservation:{orderId:N}:{request.IdempotencyKey.Trim()}",new ConfirmWarehouseTransferRequest(reservationTransferId,actor.BusinessId,warehouseId,ordersWarehouseId,DateTimeOffset.UtcNow,"WAREHOUSE_TRANSFER",$"Reserva corregida del pedido {number}",stockLines),token);}await SetOrderStateAsync(orderId,2,stockLines.Length>0?"InventoryTransferAccepted":"Confirmed",token);return new(orderId,number,"Confirmed",total,false,[]);}catch(Exception error){await SetOrderStateAsync(orderId,5,"InventoryTransferReview",token);return new(orderId,number,"InReview",total,true,[error.Message]);}
+        var desired=lines.Where(line=>line.ManageStock).ToDictionary(line=>line.ProductId,line=>line.Quantity);
+        var previous=editable.Status==2?editable.ReservedQuantities:new Dictionary<Guid,decimal>();
+        var increases=desired.Select(pair=>new{pair.Key,Quantity=pair.Value-(previous.TryGetValue(pair.Key,out var prior)?prior:0)}).Where(line=>line.Quantity>0).ToArray();
+        var releases=previous.Select(pair=>new{pair.Key,Quantity=pair.Value-(desired.TryGetValue(pair.Key,out var next)?next:0)}).Where(line=>line.Quantity>0).ToArray();
+        var identity=new InventoryUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,new HashSet<string>{InventoryPermissionCodes.Transfer,"inventory.system-warehouses.use"});
+        var key=request.IdempotencyKey.Trim();var increaseApplied=false;var releaseApplied=false;
+        try
+        {
+            if(increases.Length>0){await TransferAsync(identity,$"seller-order-edit-increase:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-increase:{orderId:N}:{key}"),warehouseId,ordersWarehouseId,$"Aumento de reserva del pedido {number}",increases.Select(line=>(line.Key,line.Quantity)).ToArray(),token);increaseApplied=true;}
+            if(releases.Length>0){await TransferAsync(identity,$"seller-order-edit-release:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-release:{orderId:N}:{key}"),ordersWarehouseId,warehouseId,$"Liberación de reserva del pedido {number}",releases.Select(line=>(line.Key,line.Quantity)).ToArray(),token);releaseApplied=true;}
+            await using var saveConnection=connections.Create();await saveConnection.OpenAsync(token);await using var saveTransaction=(SqlTransaction)await saveConnection.BeginTransactionAsync(IsolationLevel.Serializable,token);
+            await SellerOrderReviewPersistence.ReplaceAsync(saveConnection,saveTransaction,orderId,actor.BusinessId,request.Notes,total,DeterministicGuid($"seller-order-edit:{orderId:N}:{key}"),
+                lines.Select(line=>new SellerOrderReplacementLine(line.ProductId,line.Code,line.Name,line.UnitCode,line.Quantity,line.UnitPrice,decimal.Round(line.UnitPrice*line.Quantity,2,MidpointRounding.AwayFromZero),JsonSerializer.Serialize(new{line.PriceSource,line.Available}))).ToArray(),token);
+            await saveTransaction.CommitAsync(token);
+            return new(orderId,number,"Confirmed",total,false,[]);
+        }
+        catch(Exception error)
+        {
+            try
+            {
+                if(releaseApplied)await TransferAsync(identity,$"seller-order-edit-restore-release:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-restore-release:{orderId:N}:{key}"),warehouseId,ordersWarehouseId,$"Restauración de reserva del pedido {number}",releases.Select(line=>(line.Key,line.Quantity)).ToArray(),token);
+                if(increaseApplied)await TransferAsync(identity,$"seller-order-edit-restore-increase:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-restore-increase:{orderId:N}:{key}"),ordersWarehouseId,warehouseId,$"Reversión de aumento del pedido {number}",increases.Select(line=>(line.Key,line.Quantity)).ToArray(),token);
+            }
+            catch(Exception compensationError){throw new SellerOrderConflictException($"La edición no se completó y requiere revisión de inventario: {compensationError.Message}");}
+            throw new SellerOrderConflictException($"No fue posible editar el pedido: {error.Message}");
+        }
     }
+
+    private async Task TransferAsync(InventoryUserIdentity identity,string idempotencyKey,Guid transferId,Guid source,Guid destination,string notes,IReadOnlyList<(Guid ProductId,decimal Quantity)> values,CancellationToken token)
+    {var transferLines=values.Select((line,index)=>new WarehouseTransferLineRequest(index+1,line.ProductId,line.Quantity)).ToArray();await inventory.ConfirmTransferAsync(identity,idempotencyKey,new ConfirmWarehouseTransferRequest(transferId,identity.BusinessId,source,destination,DateTimeOffset.UtcNow,"WAREHOUSE_TRANSFER",notes,transferLines),token);}
 
     public async Task<SellerOrdersApi.SellerCatalogPage> CatalogAsync(SellerOrderActor actor,
         SellerOrdersApi.SellerCatalogRequest request,CancellationToken token)

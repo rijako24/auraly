@@ -8,7 +8,8 @@ public sealed record EditableSellerOrder(
     Guid CustomerId,
     int Status,
     Guid WarehouseId,
-    Guid OrdersWarehouseId);
+    Guid OrdersWarehouseId,
+    IReadOnlyDictionary<Guid, decimal> ReservedQuantities);
 
 public sealed record SellerOrderReplacementLine(
     Guid ProductId,
@@ -45,10 +46,34 @@ public static class SellerOrderReviewPersistence
             Parameter("@BusinessId", businessId),
             Parameter("@UserId", userId)
         ]);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(1) || reader.IsDBNull(3) || reader.IsDBNull(4))
-            return null;
-        return new EditableSellerOrder(reader.GetString(0), reader.GetGuid(1), reader.GetInt32(2), reader.GetGuid(3), reader.GetGuid(4));
+        string number;
+        Guid customerId;
+        int status;
+        Guid warehouseId;
+        Guid ordersWarehouseId;
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(1) || reader.IsDBNull(3) || reader.IsDBNull(4))
+                return null;
+            number = reader.GetString(0);
+            customerId = reader.GetGuid(1);
+            status = reader.GetInt32(2);
+            warehouseId = reader.GetGuid(3);
+            ordersWarehouseId = reader.GetGuid(4);
+        }
+
+        await using var lines = new SqlCommand("""
+            SELECT ProductId,SUM(Quantity)
+            FROM dbo.OrderItems
+            WHERE OrderId=@Id AND ProductId IS NOT NULL
+            GROUP BY ProductId;
+            """, connection);
+        lines.Parameters.Add(Parameter("@Id", orderId));
+        var reserved = new Dictionary<Guid, decimal>();
+        await using (var reader = await lines.ExecuteReaderAsync(cancellationToken))
+            while (await reader.ReadAsync(cancellationToken))
+                reserved[reader.GetGuid(0)] = reader.GetDecimal(1);
+        return new EditableSellerOrder(number, customerId, status, warehouseId, ordersWarehouseId, reserved);
     }
 
     public static async Task ReplaceAsync(
@@ -63,7 +88,7 @@ public static class SellerOrderReviewPersistence
         CancellationToken cancellationToken)
     {
         await using (var update = new SqlCommand("""
-            UPDATE dbo.Orders SET Notes=@Notes,Subtotal=@Total,Total=@Total,Status=5,ExternalStatus=N'InventoryTransferPending',
+            UPDATE dbo.Orders SET Notes=@Notes,Subtotal=@Total,Total=@Total,Status=2,ExternalStatus=N'InventoryTransferAccepted',
               CustomAttributesJson=JSON_MODIFY(JSON_MODIFY(CustomAttributesJson,'$.reservationTransferId',CONVERT(nvarchar(36),@TransferId)),'$.requiresStockReview',CAST(0 AS bit)),UpdatedAt=SYSUTCDATETIME()
             WHERE OrderId=@Id AND BusinessId=@BusinessId;
             DELETE dbo.OrderItems WHERE OrderId=@Id;
