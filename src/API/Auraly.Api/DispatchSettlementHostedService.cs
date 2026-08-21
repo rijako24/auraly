@@ -65,7 +65,7 @@ public sealed class DispatchSettlementHostedService(
                 SELECT TOP(1) operation.DispatchSettlementOperationId,operation.BusinessId,
                        operation.DispatchId,operation.RequestedBy,operation.RequestedAt,
                        operation.Attempts,business.TenantId,dispatch.WarehouseId,dispatch.DispatchNumber
-                FROM dbo.DispatchSettlementOperations operation WITH(UPDLOCK,READPAST)
+                FROM dbo.DispatchSettlementOperations operation WITH(UPDLOCK,READPAST,READCOMMITTEDLOCK)
                 INNER JOIN dbo.Businesses business ON business.BusinessId=operation.BusinessId
                 INNER JOIN dbo.Dispatches dispatch ON dispatch.DispatchId=operation.DispatchId
                 WHERE operation.Status IN(N'Pending',N'Processing',N'NeedsAttention')
