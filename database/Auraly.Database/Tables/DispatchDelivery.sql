@@ -19,8 +19,7 @@ CREATE TABLE [dbo].[DispatchDeliveryPayments] (
     CONSTRAINT [CK_DispatchDeliveryPayments_Application] CHECK ([ApplicationType] IN (N'InvoicePayment',N'CreditDocument',N'CreditAdvance')),
     CONSTRAINT [CK_DispatchDeliveryPayments_Shape] CHECK (
       ([ApplicationType]=N'CreditDocument' AND [PaymentMethod] IS NULL AND [Amount]=0 AND [EvidenceUrl] IS NOT NULL)
-      OR ([ApplicationType] IN (N'InvoicePayment',N'CreditAdvance') AND [PaymentMethod] IN (N'Cash',N'Deposit') AND [Amount]>0
-          AND ([PaymentMethod]=N'Cash' OR [EvidenceUrl] IS NOT NULL)))
+      OR ([ApplicationType] IN (N'InvoicePayment',N'CreditAdvance') AND [PaymentMethod] IN (N'Cash',N'Deposit') AND [Amount]>0))
 );
 GO
 CREATE INDEX [IX_DispatchDeliveryPayments_Dispatch_Document] ON [dbo].[DispatchDeliveryPayments] ([DispatchId],[DispatchSourceDocumentId]);

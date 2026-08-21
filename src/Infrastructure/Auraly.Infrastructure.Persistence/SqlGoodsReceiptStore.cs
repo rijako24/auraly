@@ -156,8 +156,8 @@ public sealed class SqlGoodsReceiptStore(
         const string sql = """
             IF NOT EXISTS (SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
               THROW 51100,'The business is outside the authenticated tenant.',1;
-            IF NOT EXISTS (SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId)
-              THROW 51101,'The warehouse is outside the authenticated business.',1;
+            IF NOT EXISTS (SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId AND IsActive=1 AND UseForSales=1)
+              THROW 51101,'Selecciona una bodega de venta válida para recibir mercancía.',1;
             IF NOT EXISTS (SELECT 1 FROM dbo.Suppliers WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1)
               THROW 51102,'The supplier is outside the authenticated business.',1;
             IF EXISTS (

@@ -28,7 +28,7 @@ public sealed class SqlPosEnrollmentStore(
                    w.AllowNegativeStockSales
             FROM dbo.Businesses b
             JOIN dbo.Warehouses w
-              ON w.BusinessId=b.BusinessId AND w.IsActive=1
+              ON w.BusinessId=b.BusinessId AND w.IsActive=1 AND w.UseForSales=1
             WHERE b.TenantId=@TenantId AND b.BusinessId=@BusinessId
               AND w.WarehouseId=@WarehouseId AND b.IsActive=1;
             """;
@@ -52,7 +52,7 @@ public sealed class SqlPosEnrollmentStore(
             SET XACT_ABORT ON;
             BEGIN TRANSACTION;
             SELECT WarehouseId FROM dbo.Warehouses WITH (UPDLOCK,HOLDLOCK)
-            WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND IsActive=1;
+            WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND IsActive=1 AND UseForSales=1;
             IF @@ROWCOUNT=0 THROW 51000,'The sales workspace is unavailable.',1;
             UPDATE dbo.PosEnrollmentSessions
             SET ExpiresAt=@Now

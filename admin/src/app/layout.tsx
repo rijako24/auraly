@@ -15,21 +15,21 @@ export const metadata: Metadata = {
   icons: {
     icon: "/brand/auraly-app-icon-192.png",
     shortcut: "/brand/auraly-app-icon-192.png",
-    apple: "/brand/auraly-ios-icon-512.png",
+    apple: "/brand/auraly-ios-icon-512-v4.png",
   },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
     title: "Auraly",
     startupImage: [
-      { url: "/brand/launch/auraly-750x1334.png", media: "(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2)" },
-      { url: "/brand/launch/auraly-828x1792.png", media: "(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2)" },
-      { url: "/brand/launch/auraly-1125x2436.png", media: "(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3)" },
-      { url: "/brand/launch/auraly-1170x2532.png", media: "(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3)" },
-      { url: "/brand/launch/auraly-1179x2556.png", media: "(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3)" },
-      { url: "/brand/launch/auraly-1242x2688.png", media: "(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3)" },
-      { url: "/brand/launch/auraly-1284x2778.png", media: "(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3)" },
-      { url: "/brand/launch/auraly-1290x2796.png", media: "(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3)" },
+      { url: "/brand/launch/auraly-750x1334-v4.png", media: "(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" },
+      { url: "/brand/launch/auraly-828x1792-v4.png", media: "(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" },
+      { url: "/brand/launch/auraly-1125x2436-v4.png", media: "(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
+      { url: "/brand/launch/auraly-1170x2532-v4.png", media: "(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
+      { url: "/brand/launch/auraly-1179x2556-v4.png", media: "(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
+      { url: "/brand/launch/auraly-1242x2688-v4.png", media: "(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
+      { url: "/brand/launch/auraly-1284x2778-v4.png", media: "(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
+      { url: "/brand/launch/auraly-1290x2796-v4.png", media: "(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" },
     ],
   },
 };
@@ -40,6 +40,7 @@ export const viewport: Viewport = {
   viewportFit: "cover",
   interactiveWidget: "resizes-content",
   themeColor: "#f8fafc",
+  colorScheme: "light",
 };
 
 export default function RootLayout({
@@ -48,8 +49,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es" suppressHydrationWarning>
-      <body className="font-sans antialiased">
+    <html lang="es" suppressHydrationWarning style={{ backgroundColor: "#f8fafc", colorScheme: "light" }}>
+      <body className="font-sans antialiased" style={{ backgroundColor: "#f8fafc" }}>
         <ThemeProvider
           attribute="class"
           defaultTheme="light"

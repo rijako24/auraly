@@ -36,7 +36,7 @@ public sealed class SqlDispatchStore(DispatchingSqlConnectionFactory connections
     {
         await using var connection=connections.Create(); await connection.OpenAsync(ct);
         var warehouses=new List<DispatchWarehouseOption>();
-        await using(var command=new SqlCommand("SELECT WarehouseId,Code,Name FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND IsActive=1 ORDER BY Name",connection))
+        await using(var command=new SqlCommand("SELECT WarehouseId,Code,Name FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND IsActive=1 AND UseForSales=1 ORDER BY Name",connection))
         { Scope(command,actor); await using var reader=await command.ExecuteReaderAsync(ct); while(await reader.ReadAsync(ct)) warehouses.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2))); }
         var routes=new List<DispatchRouteOption>();
         await using(var command=new SqlCommand("""
@@ -109,7 +109,7 @@ public sealed class SqlDispatchStore(DispatchingSqlConnectionFactory connections
         await using var connection=connections.Create(); await connection.OpenAsync(ct); await using var transaction=(SqlTransaction)await connection.BeginTransactionAsync(ct);
         try {
           await using(var command=new SqlCommand("""
-            IF NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId AND IsActive=1) THROW 51000,'La bodega no es válida para el despacho.',1;
+            IF NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId AND IsActive=1 AND UseForSales=1) THROW 51000,'Selecciona una bodega de venta válida para el despacho.',1;
             IF @RouteId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.SalesRoutes WHERE RouteId=@RouteId AND BusinessId=@BusinessId AND IsActive=1) THROW 51000,'La ruta no es válida para el despacho.',1;
             DECLARE @ResolvedDriver nvarchar(160)=@Driver;
             IF @DriverUserId IS NOT NULL BEGIN

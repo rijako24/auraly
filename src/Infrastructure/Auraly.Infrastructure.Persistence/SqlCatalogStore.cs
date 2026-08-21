@@ -318,7 +318,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
               FROM dbo.EnrolledDevices d
               JOIN dbo.Businesses b ON b.BusinessId=@BusinessId
                 AND b.TenantId=d.TenantId AND b.IsActive=1
-              JOIN dbo.Warehouses w ON w.WarehouseId=@WarehouseId
+              JOIN dbo.Warehouses w ON w.WarehouseId=@WarehouseId AND w.IsActive=1 AND w.UseForSales=1
                 AND w.BusinessId=b.BusinessId AND w.IsActive=1
               WHERE d.DeviceId=@DeviceId AND d.TenantId=@TenantId AND d.IsActive=1)
               THROW 51020,'The device operational scope is invalid.',1;
@@ -415,7 +415,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             FROM dbo.EnrolledDevices d
             JOIN dbo.Businesses b ON b.BusinessId=@BusinessId
               AND b.TenantId=d.TenantId AND b.IsActive=1
-            JOIN dbo.Warehouses w ON w.WarehouseId=@WarehouseId
+            JOIN dbo.Warehouses w ON w.WarehouseId=@WarehouseId AND w.IsActive=1 AND w.UseForSales=1
               AND w.BusinessId=b.BusinessId AND w.IsActive=1
             JOIN dbo.Products p ON p.ProductId=@ProductId AND p.BusinessId=b.BusinessId
             LEFT JOIN dbo.ProductLinks link

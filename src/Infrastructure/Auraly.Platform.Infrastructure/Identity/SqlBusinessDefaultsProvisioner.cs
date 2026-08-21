@@ -39,7 +39,8 @@ public sealed class SqlBusinessDefaultsProvisioner(
               (WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,PriceFormationCostBasis,IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,IsActive,CreatedAt)
             VALUES
               (@SalesWarehouseId,@BusinessId,N'VEN',N'Bodega de venta',0,@CostBasis,0,1,1,1,1,@Now),
-              (@OrdersWarehouseId,@BusinessId,N'PED',N'Bodega de pedidos',0,@CostBasis,1,0,0,0,1,@Now);
+              (@OrdersWarehouseId,@BusinessId,N'PED',N'Bodega de pedidos',0,@CostBasis,1,0,0,0,1,@Now),
+              (@DamagedWarehouseId,@BusinessId,N'AVE',N'Bodega de averías',0,@CostBasis,1,0,0,0,1,@Now);
 
             DECLARE @Reasons TABLE(
                 OperationType nvarchar(64),Code nvarchar(40),Name nvarchar(120),DisplayOrder int);
@@ -77,6 +78,7 @@ public sealed class SqlBusinessDefaultsProvisioner(
         command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@SalesWarehouseId", ids.NewId());
         command.Parameters.AddWithValue("@OrdersWarehouseId", ids.NewId());
+        command.Parameters.AddWithValue("@DamagedWarehouseId", ids.NewId());
         command.Parameters.AddWithValue("@CostBasis", inventoryCostBasis);
         command.Parameters.AddWithValue("@Now", DateTimeOffset.UtcNow);
         await command.ExecuteNonQueryAsync(cancellationToken);

@@ -9,8 +9,8 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
     public async Task<InventoryProductPage> GetProductsAsync(InventoryUserIdentity user, InventoryProductQuery query, bool includeCosts, CancellationToken token)
     {
         const string sql = """
-            IF NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND IsActive=1 AND IsInventoryVisible=1)
-              THROW 51201,'The warehouse is outside the authenticated business.',1;
+            IF NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND IsActive=1 AND UseForSales=1)
+              THROW 51201,'La bodega no está habilitada como bodega de venta.',1;
             SELECT COUNT(*) FROM dbo.Products p
             LEFT JOIN dbo.ProductLinks link ON link.BusinessId=p.BusinessId AND link.ChildProductId=p.ProductId AND link.SharesInventory=1 AND link.IsActive=1
             LEFT JOIN dbo.Products root ON root.BusinessId=p.BusinessId AND root.ProductId=link.ParentProductId
@@ -42,7 +42,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
     }
     public async Task<IReadOnlyList<InventoryWarehouseOption>> GetWarehousesAsync(InventoryUserIdentity user, CancellationToken token)
     {
-        const string sql = "SELECT WarehouseId,Code,Name FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND IsActive=1 AND IsInventoryVisible=1 ORDER BY Name;";
+        const string sql = "SELECT WarehouseId,Code,Name FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND IsActive=1 AND UseForSales=1 ORDER BY Name;";
         await using var connection=connections.Create(); await connection.OpenAsync(token); await using var command=new SqlCommand(sql,connection); command.Parameters.AddWithValue("@BusinessId",user.BusinessId);
         await using var reader=await command.ExecuteReaderAsync(token); var items=new List<InventoryWarehouseOption>(); while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2))); return items;
     }
@@ -62,17 +62,17 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
               THROW 51201,'The business is outside the authenticated tenant.',1;
             IF @IsNew=1
               INSERT dbo.Warehouses(WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,PriceFormationCostBasis,IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,IsActive,CreatedAt)
-              VALUES(@WarehouseId,@BusinessId,@Code,@Name,@AllowNegative,@CostBasis,0,@UseForSales,@UseForReceipts,@InventoryVisible,@IsActive,SYSUTCDATETIME());
+              VALUES(@WarehouseId,@BusinessId,@Code,@Name,@AllowNegative,@CostBasis,0,@UseForSales,@UseForSales,@UseForSales,@IsActive,SYSUTCDATETIME());
             ELSE
             BEGIN
               UPDATE dbo.Warehouses SET Name=@Name,AllowNegativeStockSales=@AllowNegative,PriceFormationCostBasis=@CostBasis,
-                UseForSales=@UseForSales,UseForGoodsReceipts=@UseForReceipts,IsInventoryVisible=@InventoryVisible,IsActive=@IsActive
+                UseForSales=@UseForSales,UseForGoodsReceipts=@UseForSales,IsInventoryVisible=@UseForSales,IsActive=@IsActive
               WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId AND IsSystem=0;
               IF @@ROWCOUNT=0 THROW 51201,'Warehouse was not found in the authenticated business.',1;
             END;
             SELECT WarehouseId,Code,Name,AllowNegativeStockSales,PriceFormationCostBasis,IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,IsActive FROM dbo.Warehouses WHERE WarehouseId=@WarehouseId;
             """;
-        await using var connection=connections.Create();await connection.OpenAsync(token);await using var command=new SqlCommand(sql,connection);command.Parameters.AddWithValue("@WarehouseId",id);command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@TenantId",user.TenantId);command.Parameters.AddWithValue("@Code",code);command.Parameters.AddWithValue("@Name",request.Name);command.Parameters.AddWithValue("@AllowNegative",request.AllowNegativeStockSales);command.Parameters.AddWithValue("@CostBasis",request.PriceFormationCostBasis);command.Parameters.AddWithValue("@UseForSales",request.UseForSales);command.Parameters.AddWithValue("@UseForReceipts",request.UseForGoodsReceipts);command.Parameters.AddWithValue("@InventoryVisible",request.IsInventoryVisible);command.Parameters.AddWithValue("@IsActive",request.IsActive);command.Parameters.AddWithValue("@IsNew",warehouseId is null);
+        await using var connection=connections.Create();await connection.OpenAsync(token);await using var command=new SqlCommand(sql,connection);command.Parameters.AddWithValue("@WarehouseId",id);command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@TenantId",user.TenantId);command.Parameters.AddWithValue("@Code",code);command.Parameters.AddWithValue("@Name",request.Name);command.Parameters.AddWithValue("@AllowNegative",request.AllowNegativeStockSales);command.Parameters.AddWithValue("@CostBasis",request.PriceFormationCostBasis);command.Parameters.AddWithValue("@UseForSales",request.UseForSales);command.Parameters.AddWithValue("@IsActive",request.IsActive);command.Parameters.AddWithValue("@IsNew",warehouseId is null);
         await using var reader=await command.ExecuteReaderAsync(token);await reader.ReadAsync(token);return new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetBoolean(3),reader.GetString(4),reader.GetBoolean(5),reader.GetBoolean(6),reader.GetBoolean(7),reader.GetBoolean(8),reader.GetBoolean(9));
     }
     public async Task<IReadOnlyList<InventoryReasonItem>> GetReasonsAsync(InventoryUserIdentity user, string? operationType, bool includeInactive, string? search, CancellationToken token)
@@ -119,7 +119,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
             SELECT COUNT(*) FROM dbo.InventoryBalances b
             INNER JOIN dbo.Products p ON p.ProductId=b.ProductId AND p.BusinessId=b.BusinessId
             INNER JOIN dbo.Warehouses w ON w.WarehouseId=b.WarehouseId AND w.BusinessId=b.BusinessId
-            WHERE b.BusinessId=@BusinessId AND w.IsInventoryVisible=1 AND (@WarehouseId IS NULL OR b.WarehouseId=@WarehouseId)
+            WHERE b.BusinessId=@BusinessId AND w.UseForSales=1 AND (@WarehouseId IS NULL OR b.WarehouseId=@WarehouseId)
               AND (@ProductId IS NULL OR b.ProductId=@ProductId)
               AND (@OnlyWithStock=0 OR b.QuantityOnHand<>0)
               AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Name LIKE @Pattern OR w.Code LIKE @Pattern OR w.Name LIKE @Pattern);
@@ -129,7 +129,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
             FROM dbo.InventoryBalances b
             INNER JOIN dbo.Products p ON p.ProductId=b.ProductId AND p.BusinessId=b.BusinessId
             INNER JOIN dbo.Warehouses w ON w.WarehouseId=b.WarehouseId AND w.BusinessId=b.BusinessId
-            WHERE b.BusinessId=@BusinessId AND w.IsInventoryVisible=1 AND (@WarehouseId IS NULL OR b.WarehouseId=@WarehouseId)
+            WHERE b.BusinessId=@BusinessId AND w.UseForSales=1 AND (@WarehouseId IS NULL OR b.WarehouseId=@WarehouseId)
               AND (@ProductId IS NULL OR b.ProductId=@ProductId)
               AND (@OnlyWithStock=0 OR b.QuantityOnHand<>0)
               AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Name LIKE @Pattern OR w.Code LIKE @Pattern OR w.Name LIKE @Pattern)
@@ -144,7 +144,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
 
     public async Task<InventoryMovementPage> GetMovementsAsync(InventoryUserIdentity user, InventoryMovementQuery query, bool includeCosts, CancellationToken token)
     {
-        const string filter="""m.BusinessId=@BusinessId AND w.IsInventoryVisible=1 AND (@WarehouseId IS NULL OR m.WarehouseId=@WarehouseId) AND (@ProductId IS NULL OR m.ProductId=@ProductId) AND (@DocumentType IS NULL OR m.DocumentType=@DocumentType) AND (@MovementType IS NULL OR m.MovementType=@MovementType) AND (@From IS NULL OR m.OccurredAt>=@From) AND (@To IS NULL OR m.OccurredAt<@To) AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Name LIKE @Pattern OR o.DocumentNumber LIKE @Pattern)""";
+        const string filter="""m.BusinessId=@BusinessId AND w.UseForSales=1 AND (@WarehouseId IS NULL OR m.WarehouseId=@WarehouseId) AND (@ProductId IS NULL OR m.ProductId=@ProductId) AND (@DocumentType IS NULL OR m.DocumentType=@DocumentType) AND (@MovementType IS NULL OR m.MovementType=@MovementType) AND (@From IS NULL OR m.OccurredAt>=@From) AND (@To IS NULL OR m.OccurredAt<@To) AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Name LIKE @Pattern OR o.DocumentNumber LIKE @Pattern)""";
         var sql=$"""
             SELECT COUNT(*) FROM dbo.InventoryMovements m INNER JOIN dbo.Products p ON p.ProductId=m.ProductId INNER JOIN dbo.Warehouses w ON w.WarehouseId=m.WarehouseId LEFT JOIN dbo.InventoryOperations o ON o.InventoryOperationId=m.DocumentId WHERE {filter};
             SELECT m.InventoryMovementId,m.WarehouseId,w.Name,m.ProductId,COALESCE(p.ProductCode,N''),p.Name,m.DocumentId,m.DocumentType,o.DocumentNumber,m.MovementType,m.QuantityChange,COALESCE(m.QuantityBefore,0),COALESCE(m.QuantityAfter,0),CASE WHEN @IncludeCosts=1 THEN m.RecognizedUnitCost END,CASE WHEN @IncludeCosts=1 THEN m.ValueChange END,m.OccurredAt,m.PostedAt
@@ -170,7 +170,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
               CONCAT(o.DocumentNumber,N' ',o.ReasonDescription,N' ',o.ReasonCode,N' ',w.Name) SearchText
             INTO #InventoryHistory
             FROM dbo.InventoryOperations o
-            INNER JOIN dbo.Warehouses w ON w.WarehouseId=o.WarehouseId AND w.IsInventoryVisible=1
+            INNER JOIN dbo.Warehouses w ON w.WarehouseId=o.WarehouseId AND w.UseForSales=1
             LEFT JOIN dbo.Warehouses dw ON dw.WarehouseId=o.DestinationWarehouseId
             WHERE o.BusinessId=@BusinessId
             UNION ALL
@@ -183,7 +183,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                         WHERE m.DocumentId=g.GoodsReceiptId),0),
               CONCAT(g.DocumentNumber,N' ',g.SupplierInvoiceNumber,N' ',w.Name,N' ',s.DisplayName)
             FROM dbo.GoodsReceipts g
-            INNER JOIN dbo.Warehouses w ON w.WarehouseId=g.WarehouseId AND w.IsInventoryVisible=1
+            INNER JOIN dbo.Warehouses w ON w.WarehouseId=g.WarehouseId AND w.UseForSales=1
             INNER JOIN dbo.Suppliers supplier ON supplier.SupplierId=g.SupplierId
             INNER JOIN dbo.Parties s ON s.PartyId=supplier.PartyId
             WHERE g.BusinessId=@BusinessId;
@@ -220,7 +220,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                      o.ConversionType,o.BaseInventorySequence,o.Notes,o.Status,o.OccurredAt,
                      o.CreatedAt,o.AcceptedAt,o.ProcessedAt,o.TotalValueChange
               FROM dbo.InventoryOperations o
-              INNER JOIN dbo.Warehouses w ON w.WarehouseId=o.WarehouseId AND w.IsInventoryVisible=1
+              INNER JOIN dbo.Warehouses w ON w.WarehouseId=o.WarehouseId AND w.UseForSales=1
               LEFT JOIN dbo.Warehouses dw ON dw.WarehouseId=o.DestinationWarehouseId
               WHERE o.BusinessId=@BusinessId
               UNION ALL
@@ -230,7 +230,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                      COALESCE((SELECT SUM(m.ValueChange) FROM dbo.InventoryMovements m
                                WHERE m.DocumentId=g.GoodsReceiptId),0)
               FROM dbo.GoodsReceipts g
-              INNER JOIN dbo.Warehouses w ON w.WarehouseId=g.WarehouseId AND w.IsInventoryVisible=1
+              INNER JOIN dbo.Warehouses w ON w.WarehouseId=g.WarehouseId AND w.UseForSales=1
               WHERE g.BusinessId=@BusinessId
             ) d
             WHERE d.DocumentId=@DocumentId;

@@ -8,7 +8,7 @@ const EVIDENCE = "pending-evidence";
 
 type Evidence = { placeholder: string; file: File };
 type DeliveryOperation = { id: string; dispatchId: string; kind: "delivery"; request: DeliveryResultInput; evidence: Evidence[]; queuedAt: string; attempts: number };
-type ExpenseOperation = { id: string; dispatchId: string; kind: "expense"; request: { category: string; amount: number; description: string; evidenceUrl: string; idempotencyKey: string; occurredAt: string }; evidence: Evidence[]; queuedAt: string; attempts: number };
+type ExpenseOperation = { id: string; dispatchId: string; kind: "expense"; request: { category: string; amount: number; description: string|null; evidenceUrl: string|null; idempotencyKey: string; occurredAt: string }; evidence: Evidence[]; queuedAt: string; attempts: number };
 type DispatchOperation = DeliveryOperation | ExpenseOperation;
 
 function openDatabase(): Promise<IDBDatabase> {
@@ -100,7 +100,7 @@ export async function flushDispatchOutbox() {
         const request = { ...operation.request, payments: operation.request.payments.map(payment => ({ ...payment, evidenceUrl: payment.evidenceUrl && urls.get(payment.evidenceUrl) || payment.evidenceUrl })) };
         result = await dispatchesApi.recordDelivery(operation.dispatchId, request);
       } else {
-        const request = { ...operation.request, evidenceUrl: urls.get(operation.request.evidenceUrl) || operation.request.evidenceUrl };
+        const request = { ...operation.request, evidenceUrl: operation.request.evidenceUrl ? urls.get(operation.request.evidenceUrl) || operation.request.evidenceUrl : null };
         result = await dispatchesApi.addExpense(operation.dispatchId, request);
       }
       await saveDispatchSnapshot(result);

@@ -1,7 +1,6 @@
 import type { RecordSalesRouteVisit, SalesRouteDetail, SalesRouteVisit } from "@/services/api/routes";
+import { openSalesOfflineDatabase } from "@/lib/sales-offline-database";
 
-const DATABASE = "auraly-sales-pwa";
-const VERSION = 2;
 const SNAPSHOTS = "daily-route-snapshots";
 const OUTBOX = "route-visit-outbox";
 
@@ -28,23 +27,8 @@ export type PendingRouteVisit = {
 export const dailyRouteSnapshotKey = (businessId: string, warehouseId: string, date: string, routeId: string) =>
   `${businessId}:${warehouseId}:${date}:${routeId}`;
 
-function openDatabase(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DATABASE, VERSION);
-    request.onupgradeneeded = () => {
-      const database = request.result;
-      if (!database.objectStoreNames.contains(SNAPSHOTS))
-        database.createObjectStore(SNAPSHOTS, { keyPath: "key" });
-      if (!database.objectStoreNames.contains(OUTBOX))
-        database.createObjectStore(OUTBOX, { keyPath: "idempotencyKey" });
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
-
 async function request<T>(storeName: string, mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
-  const database = await openDatabase();
+  const database = await openSalesOfflineDatabase();
   try {
     return await new Promise<T>((resolve, reject) => {
       const value = action(database.transaction(storeName, mode).objectStore(storeName));

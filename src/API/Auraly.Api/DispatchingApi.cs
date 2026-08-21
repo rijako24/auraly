@@ -23,6 +23,10 @@ public static class DispatchingApi
         group.MapGet("/options", async (ClaimsPrincipal principal, DispatchService service, CancellationToken ct) =>
             await ExecuteAsync(() => service.OptionsAsync(principal.ToDispatchIdentity(), ct), Results.Ok));
 
+        group.MapGet("/delivery-reasons", async (ClaimsPrincipal principal, string type,
+            DispatchDeliveryService service, CancellationToken ct) =>
+            await ExecuteAsync(() => service.ReasonsAsync(principal.ToDispatchIdentity(), type, ct), Results.Ok));
+
         group.MapGet("/candidates", async (ClaimsPrincipal principal, int page, int pageSize,
             string? search, string? documentType, DateOnly? from, DateOnly? to, Guid? warehouseId,
             DispatchService service, CancellationToken ct) =>

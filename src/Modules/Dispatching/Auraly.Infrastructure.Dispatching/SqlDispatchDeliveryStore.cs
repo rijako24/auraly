@@ -7,6 +7,16 @@ namespace Auraly.Infrastructure.Dispatching;
 
 public sealed class SqlDispatchDeliveryStore(DispatchingSqlConnectionFactory connections) : IDispatchDeliveryStore
 {
+    public async Task<IReadOnlyList<DispatchReasonOption>> ReasonsAsync(DispatchActorIdentity actor, string reasonType, CancellationToken ct)
+    {
+        await using var connection=connections.Create();await connection.OpenAsync(ct);
+        await using var command=new SqlCommand("SELECT DispatchReasonId,ReasonType,Code,Name FROM dbo.DispatchReasons WHERE BusinessId=@BusinessId AND ReasonType=@Type AND IsActive=1 ORDER BY DisplayOrder,Name",connection);
+        command.Parameters.AddWithValue("@BusinessId",actor.BusinessId);command.Parameters.AddWithValue("@Type",reasonType);
+        var result=new List<DispatchReasonOption>();await using var reader=await command.ExecuteReaderAsync(ct);
+        while(await reader.ReadAsync(ct))result.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetString(3)));
+        return result;
+    }
+
     public async Task<DispatchExecutionDetail?> GetAsync(DispatchActorIdentity actor, Guid dispatchId, CancellationToken ct)
     {
         await using var connection=connections.Create(); await connection.OpenAsync(ct);
@@ -59,7 +69,7 @@ public sealed class SqlDispatchDeliveryStore(DispatchingSqlConnectionFactory con
 
         var expenses=new List<DispatchExpenseDetail>();
         await using(var command=new SqlCommand("SELECT DispatchExpenseId,Category,Amount,Description,EvidenceUrl,ApprovalStatus,ApprovedAmount FROM dbo.DispatchExpenses WHERE DispatchId=@Id ORDER BY OccurredAt,DispatchExpenseId",connection))
-        { command.Parameters.AddWithValue("@Id",id);await using var reader=await command.ExecuteReaderAsync(ct);while(await reader.ReadAsync(ct))expenses.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetDecimal(2),reader.GetString(3),reader.GetString(4),reader.GetString(5),NullableDecimal(reader,6))); }
+        { command.Parameters.AddWithValue("@Id",id);await using var reader=await command.ExecuteReaderAsync(ct);while(await reader.ReadAsync(ct))expenses.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetDecimal(2),NullableString(reader,3),NullableString(reader,4),reader.GetString(5),NullableDecimal(reader,6))); }
         var dispatchTotal=documents.Sum(document=>document.DocumentTotal);
         var grossCash=payments.Values.SelectMany(value=>value).Where(value=>value.PaymentMethod=="Cash").Sum(value=>value.Amount);
         var approvedExpenses=expenses.Where(value=>value.ApprovalStatus=="Approved").Sum(value=>value.ApprovedAmount??0);
@@ -134,7 +144,7 @@ public sealed class SqlDispatchDeliveryStore(DispatchingSqlConnectionFactory con
           IF NOT EXISTS(SELECT 1 FROM dbo.Dispatches WHERE DispatchId=@Id AND BusinessId=@BusinessId AND DriverUserId=@UserId AND Status IN(N'Released',N'InDelivery')) THROW 51000,'The dispatch is not open for expenses.',1;
           INSERT dbo.DispatchExpenses(DispatchExpenseId,BusinessId,DispatchId,Category,Amount,Description,EvidenceUrl,ApprovalStatus,RecordedBy,OccurredAt,IdempotencyKey,CreatedAt)
           VALUES(NEWID(),@BusinessId,@Id,@Category,@Amount,@Description,@Evidence,N'Pending',@UserId,@Occurred,@Key,SYSUTCDATETIME());
-        """,connection);Scope(command,actor,dispatchId);command.Parameters.AddWithValue("@Category",request.Category);Money(command,"@Amount",request.Amount);command.Parameters.AddWithValue("@Description",request.Description);command.Parameters.AddWithValue("@Evidence",request.EvidenceUrl);command.Parameters.AddWithValue("@Occurred",request.OccurredAt);command.Parameters.AddWithValue("@Key",request.IdempotencyKey);try{await command.ExecuteNonQueryAsync(ct);}catch(SqlException ex){throw new DispatchConflictException(ex.Message);}return(await GetAsync(actor,dispatchId,ct))!;
+        """,connection);Scope(command,actor,dispatchId);command.Parameters.AddWithValue("@Category",request.Category);Money(command,"@Amount",request.Amount);command.Parameters.AddWithValue("@Description",(object?)request.Description??DBNull.Value);command.Parameters.AddWithValue("@Evidence",(object?)request.EvidenceUrl??DBNull.Value);command.Parameters.AddWithValue("@Occurred",request.OccurredAt);command.Parameters.AddWithValue("@Key",request.IdempotencyKey);try{await command.ExecuteNonQueryAsync(ct);}catch(SqlException ex){throw new DispatchConflictException(ex.Message);}return(await GetAsync(actor,dispatchId,ct))!;
     }
 
     public async Task<DispatchExecutionDetail> ReviewExpenseAsync(DispatchActorIdentity actor, Guid dispatchId, Guid expenseId, ReviewDispatchExpenseRequest request, CancellationToken ct)

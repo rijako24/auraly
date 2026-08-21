@@ -42,6 +42,7 @@ public sealed class SqlTenantProvisioningStore(
             var businessId = ids.NewId();
             var salesWarehouseId = ids.NewId();
             var ordersWarehouseId = ids.NewId();
+            var damagedWarehouseId = ids.NewId();
             var consumerPartyId = ids.NewId();
             var customerId = ids.NewId();
             var cashierRoleId = ids.NewId();
@@ -79,7 +80,8 @@ public sealed class SqlTenantProvisioningStore(
                 INSERT dbo.Warehouses(WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,PriceFormationCostBasis,IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,IsActive,CreatedAt)
                 VALUES
                   (@SalesWarehouseId,@BusinessId,N'VEN',N'Bodega de venta',0,@CostBasis,0,1,1,1,1,@Now),
-                  (@OrdersWarehouseId,@BusinessId,N'PED',N'Bodega de pedidos',0,@CostBasis,1,0,0,0,1,@Now);
+                  (@OrdersWarehouseId,@BusinessId,N'PED',N'Bodega de pedidos',0,@CostBasis,1,0,0,0,1,@Now),
+                  (@DamagedWarehouseId,@BusinessId,N'AVE',N'Bodega de averías',0,@CostBasis,1,0,0,0,1,@Now);
 
                 DECLARE @DocumentSeries TABLE(DocumentType nvarchar(64),Prefix nvarchar(8));
                 INSERT @DocumentSeries VALUES
@@ -185,7 +187,7 @@ public sealed class SqlTenantProvisioningStore(
             void Add(string name, object? value) => command.Parameters.AddWithValue(name, value ?? DBNull.Value);
             Add("@RequestId", request.ProvisioningRequestId);
             Add("@TenantId", tenantId); Add("@BusinessId", businessId);
-            Add("@SalesWarehouseId", salesWarehouseId); Add("@OrdersWarehouseId", ordersWarehouseId);
+            Add("@SalesWarehouseId", salesWarehouseId); Add("@OrdersWarehouseId", ordersWarehouseId); Add("@DamagedWarehouseId", damagedWarehouseId);
             Add("@ConsumerPartyId", consumerPartyId); Add("@CustomerId", customerId);
             Add("@CashierRoleId", cashierRoleId); Add("@SupervisorRoleId", supervisorRoleId); Add("@SellerRoleId", sellerRoleId);
             Add("@AdministrativeRoleId", administrativeRoleId); Add("@AdminRoleId", adminRoleId);
@@ -200,7 +202,7 @@ public sealed class SqlTenantProvisioningStore(
             Add("@InvitationEmail", request.InvitationEmail.Trim()); Add("@ActivationHash", activationHash);
             Add("@MaximumUsers", request.MaximumUsers); Add("@MaximumEnrolledDevices", request.MaximumEnrolledDevices);
             Add("@InvitationPayload", JsonSerializer.Serialize(new { invitationId, tenantId, email = request.InvitationEmail.Trim(), activationToken }));
-            Add("@AuditPayload", JsonSerializer.Serialize(new { request.ProvisioningRequestId, businessId, salesWarehouseId, ordersWarehouseId, request.MaximumUsers, request.MaximumEnrolledDevices }));
+            Add("@AuditPayload", JsonSerializer.Serialize(new { request.ProvisioningRequestId, businessId, salesWarehouseId, ordersWarehouseId, damagedWarehouseId, request.MaximumUsers, request.MaximumEnrolledDevices }));
             await command.ExecuteNonQueryAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return new(request.ProvisioningRequestId, tenantId, businessId, tenantKey,

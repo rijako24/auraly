@@ -191,8 +191,8 @@ public sealed class SqlSalesReturnStore(
                            WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
               THROW 51200,'The business is outside the authenticated tenant.',1;
             IF NOT EXISTS (SELECT 1 FROM dbo.Warehouses WITH (HOLDLOCK)
-                           WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId)
-              THROW 51201,'The return warehouse is outside the business.',1;
+                           WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId AND IsActive=1 AND UseForSales=1)
+              THROW 51201,'Selecciona una bodega de venta válida para la devolución.',1;
             SELECT d.CustomerId,d.CustomerIdentification,d.IssuedAt,d.FiscalNumber,
                    d.CufeReceived,d.FiscalStatus
             FROM dbo.SalesDocuments d WITH (UPDLOCK,HOLDLOCK)

@@ -159,7 +159,7 @@ public sealed record WarehouseMasterItem(Guid WarehouseId, string Code, string N
     string PriceFormationCostBasis, bool IsSystem, bool UseForSales, bool UseForGoodsReceipts,
     bool IsInventoryVisible, bool IsActive);
 public sealed record SaveWarehouseRequest(string Name, bool AllowNegativeStockSales, string PriceFormationCostBasis,
-    bool UseForSales, bool UseForGoodsReceipts, bool IsInventoryVisible, bool IsActive);
+    bool UseForSales, bool IsActive);
 public sealed record InventoryReasonItem(Guid InventoryReasonId, string OperationType, string Code, string Name, bool IsSystem, bool IsActive, int DisplayOrder);
 public sealed record SaveInventoryReasonRequest(string OperationType, string Name, bool IsActive, int DisplayOrder);
 public sealed record InventoryBalanceQuery(Guid BusinessId, Guid? WarehouseId, string? Search, bool OnlyWithStock, int Page = 1, int PageSize = 50, Guid? ProductId = null);

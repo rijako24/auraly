@@ -4,6 +4,7 @@ namespace Auraly.Application.Dispatching;
 
 public interface IDispatchDeliveryStore
 {
+    Task<IReadOnlyList<DispatchReasonOption>> ReasonsAsync(DispatchActorIdentity actor, string reasonType, CancellationToken ct);
     Task<DispatchExecutionDetail?> GetAsync(DispatchActorIdentity actor, Guid dispatchId, CancellationToken ct);
     Task<DispatchExecutionDetail> RecordAsync(DispatchActorIdentity actor, Guid dispatchId, RecordDispatchDeliveryRequest request, CancellationToken ct);
     Task<DispatchExecutionDetail> ReorderAsync(DispatchActorIdentity actor, Guid dispatchId, ReorderDispatchDocumentsRequest request, byte[] rowVersion, CancellationToken ct);
@@ -15,6 +16,13 @@ public interface IDispatchDeliveryStore
 
 public sealed class DispatchDeliveryService(IDispatchDeliveryStore store)
 {
+    public Task<IReadOnlyList<DispatchReasonOption>> ReasonsAsync(DispatchActorIdentity actor, string reasonType, CancellationToken ct)
+    {
+        RequireAny(actor, DispatchPermissionCodes.Read, DispatchPermissionCodes.ExecuteDeliveries, DispatchPermissionCodes.Settle);
+        if (reasonType is not ("NotDelivered" or "DeliveryReturn")) throw new DispatchValidationException("ReasonType is invalid.");
+        return store.ReasonsAsync(actor, reasonType, ct);
+    }
+
     public async Task<DispatchExecutionDetail> GetAsync(DispatchActorIdentity actor, Guid dispatchId, CancellationToken ct)
     {
         RequireAny(actor, DispatchPermissionCodes.Read, DispatchPermissionCodes.ExecuteDeliveries, DispatchPermissionCodes.Settle);
@@ -74,8 +82,8 @@ public sealed class DispatchDeliveryService(IDispatchDeliveryStore store)
         if (request.Amount <= 0) throw new DispatchValidationException("Expense amount must be positive.");
         if (request.OccurredAt == default) throw new DispatchValidationException("OccurredAt is required.");
         var category = Text(request.Category, 64) ?? throw new DispatchValidationException("Expense category is required.");
-        var description = Text(request.Description, 300) ?? throw new DispatchValidationException("Expense description is required.");
-        var evidence = Text(request.EvidenceUrl, 1000) ?? throw new DispatchValidationException("Expense evidence is required.");
+        var description = Text(request.Description, 300);
+        var evidence = Text(request.EvidenceUrl, 1000);
         return store.RecordExpenseAsync(actor, dispatchId, request with { Category = category, Description = description, EvidenceUrl = evidence, IdempotencyKey = request.IdempotencyKey.Trim() }, ct);
     }
 
@@ -106,7 +114,6 @@ public sealed class DispatchDeliveryService(IDispatchDeliveryStore store)
         if (value.ApplicationType is not (DeliveryPaymentApplications.InvoicePayment or DeliveryPaymentApplications.CreditAdvance) || value.Amount <= 0)
             throw new DispatchValidationException("The payment application is invalid.");
         if (value.PaymentMethod is not ("Cash" or "Deposit")) throw new DispatchValidationException("Only cash and deposit are accepted during delivery.");
-        if (value.PaymentMethod == "Deposit" && string.IsNullOrWhiteSpace(value.EvidenceUrl)) throw new DispatchValidationException("A deposit requires its photographic evidence.");
         if (value.Reference?.Trim().Length > 120 || value.EvidenceUrl?.Trim().Length > 1000) throw new DispatchValidationException("Payment evidence data is too long.");
     }
 

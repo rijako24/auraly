@@ -29,6 +29,8 @@ public sealed class SqlPosSaleServerStore(
             INNER JOIN dbo.Warehouses w
                 ON w.WarehouseId=@WarehouseId
                AND w.BusinessId=b.BusinessId
+               AND w.IsActive=1
+               AND w.UseForSales=1
             INNER JOIN dbo.AppUsers u
                 ON u.UserId=@SoldByUserId
                AND u.TenantId=b.TenantId
@@ -112,7 +114,7 @@ public sealed class SqlPosSaleServerStore(
               AND ds.Prefix=@Prefix AND ds.SeriesCode=@SeriesCode
               AND @Consecutive BETWEEN ds.RangeStart AND ds.RangeEnd
               AND ds.IsOfflineCapable=1 AND ds.IsActive=1
-              AND b.IsActive=1 AND w.IsActive=1 AND u.IsActive=1 AND d.IsActive=1;
+              AND b.IsActive=1 AND w.IsActive=1 AND w.UseForSales=1 AND u.IsActive=1 AND d.IsActive=1;
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);

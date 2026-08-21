@@ -4,8 +4,10 @@ import sharp from "sharp";
 
 const root = process.cwd();
 const source = path.join(root, "public", "brand", "auraly-app-icon-512.png");
+const maskableSource = path.join(root, "public", "brand", "auraly-maskable-512.png");
 const symbolSource = path.join(root, "public", "brand", "auraly-symbol.png");
 const destination = path.join(root, "public", "brand", "launch");
+const assetVersion = "v4";
 const screens = [
   [750, 1334],
   [828, 1792],
@@ -19,6 +21,7 @@ const screens = [
 
 await mkdir(destination, { recursive: true });
 const icon = await readFile(source);
+const maskable = await readFile(maskableSource);
 const symbol = await readFile(symbolSource);
 
 for (const [width, height] of screens) {
@@ -43,7 +46,10 @@ for (const [width, height] of screens) {
   await sharp(launchScreen)
     .composite([{ input: transparentSymbol, left: Math.round((width - iconSize) / 2), top: Math.round(height * 0.465 - symbolHeight / 2) }])
     .png({ compressionLevel: 9, palette: true, quality: 92 })
-    .toFile(path.join(destination, `auraly-${width}x${height}.png`));
+    .toFile(path.join(destination, `auraly-${width}x${height}-${assetVersion}.png`));
 }
 
-await sharp(icon).resize(512, 512).png({ compressionLevel: 9 }).toFile(path.join(root, "public", "brand", "auraly-ios-icon-512.png"));
+await sharp(icon).resize(512, 512).flatten({ background: "#f8fafc" }).png({ compressionLevel: 9 }).toFile(path.join(root, "public", "brand", `auraly-ios-icon-512-${assetVersion}.png`));
+await sharp(icon).resize(192, 192).flatten({ background: "#f8fafc" }).png({ compressionLevel: 9 }).toFile(path.join(root, "public", "brand", `auraly-app-icon-192-${assetVersion}.png`));
+await sharp(icon).resize(512, 512).flatten({ background: "#f8fafc" }).png({ compressionLevel: 9 }).toFile(path.join(root, "public", "brand", `auraly-app-icon-512-${assetVersion}.png`));
+await sharp(maskable).resize(512, 512).flatten({ background: "#f8fafc" }).png({ compressionLevel: 9 }).toFile(path.join(root, "public", "brand", `auraly-maskable-512-${assetVersion}.png`));

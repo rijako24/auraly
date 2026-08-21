@@ -256,11 +256,11 @@ public sealed class SqlInventoryOperationStore(
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
               THROW 51200,'The business is outside the authenticated tenant.',1;
             IF NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId
-              AND IsActive=1 AND IsInventoryVisible=1)
-              THROW 51201,'The warehouse is outside the authenticated business.',1;
+              AND IsActive=1 AND UseForSales=1)
+              THROW 51201,'La bodega no está habilitada como bodega de venta.',1;
             IF @Destination IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@Destination AND BusinessId=@BusinessId
-              AND IsActive=1 AND IsInventoryVisible=1)
-              THROW 51202,'The destination warehouse is outside the authenticated business.',1;
+              AND IsActive=1 AND UseForSales=1)
+              THROW 51202,'La bodega de destino no está habilitada como bodega de venta.',1;
             IF EXISTS(SELECT x.ProductId FROM OPENJSON(@Products) WITH(ProductId UNIQUEIDENTIFIER '$') x
               LEFT JOIN dbo.Products p ON p.ProductId=x.ProductId AND p.BusinessId=@BusinessId AND p.IsActive=1 AND p.ManageStock=1
               WHERE p.ProductId IS NULL)

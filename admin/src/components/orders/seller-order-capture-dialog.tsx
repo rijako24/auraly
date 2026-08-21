@@ -10,10 +10,11 @@ import { Input } from "@/components/ui/input";
 import { loadSellerCatalog, loadSellerDraft, queueSellerOrder, removeSellerDraft, saveSellerCatalog, saveSellerDraft } from "@/lib/seller-order-offline-store";
 import type { SalesRouteDetail, SalesRouteStop } from "@/services/api/routes";
 import { sellerOrdersApi, type SellerCatalogItem, type SellerOrderRequest } from "@/services/api/seller-orders";
+import type { CommerceOrderDetail } from "@/services/orders/commerce-orders-client";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
-export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop, onClose, onCreated }: { businessId: string; warehouseId: string; route: SalesRouteDetail | null; stop: SalesRouteStop; onClose: () => void; onCreated: (orderId: string) => Promise<void> }) {
-  const key = `${businessId}:${warehouseId}:${route?.routeId ?? "outside-route"}:${stop.routeStopId}`;
+export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop, editing, onClose, onCreated }: { businessId: string; warehouseId: string; route: SalesRouteDetail | null; stop: SalesRouteStop; editing?: CommerceOrderDetail|null; onClose: () => void; onCreated: (orderId: string) => Promise<void> }) {
+  const key = `${businessId}:${warehouseId}:${route?.routeId ?? "outside-route"}:${stop.routeStopId}:${editing?.orderId??"new"}`;
   const searchRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [searched, setSearched] = useState(false);
@@ -30,8 +31,8 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
     void Promise.all([loadSellerCatalog(businessId, warehouseId, stop.customerId), loadSellerDraft(key)]).then(async ([catalog, draft]) => {
       if (!active) return;
       let available = catalog;
-      const missingDraftProduct = draft?.request.lines.some((line) => !available.some((item) => item.productId === line.productId));
-      if (missingDraftProduct && navigatorOnline()) {
+      const requiredProducts=editing?.lines.flatMap(line=>line.productId?[line.productId]:[])??draft?.request.lines.map(line=>line.productId)??[];
+      if (requiredProducts.some(productId=>!available.some(item=>item.productId===productId)) && navigatorOnline()) {
         try {
           const page = await sellerOrdersApi.catalog({ businessId, warehouseId, customerId: stop.customerId, search: undefined, skip: 0, take: 500 });
           available = [...new Map([...catalog, ...page.items].map((item) => [item.productId, item])).values()];
@@ -40,10 +41,11 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
       }
       if (!active) return;
       setKnownItems(Object.fromEntries(available.map((item) => [item.productId, item])));
-      if (draft) { setQuantities(draft.quantities); setNotes(draft.request.notes ?? ""); }
+      if(editing){setQuantities(Object.fromEntries(editing.lines.flatMap(line=>line.productId?[[line.productId,line.quantity]]:[])));setNotes(editing.notes??"");}
+      else if (draft) { setQuantities(draft.quantities); setNotes(draft.request.notes ?? ""); }
     });
     return () => { active = false; };
-  }, [businessId, key, stop.customerId, warehouseId]);
+  }, [businessId, editing, key, stop.customerId, warehouseId]);
 
   useEffect(() => {
     if (!Object.values(quantities).some((quantity) => quantity > 0)) return;
@@ -97,20 +99,20 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
     setSaving(true);
     try {
       const request: SellerOrderRequest = { businessId, warehouseId, customerId: stop.customerId, partySiteId: stop.partySiteId, routeId: route?.routeId ?? null, routeStopId: route ? stop.routeStopId : null, capturedOffline: !online, notes: notes || null, idempotencyKey: crypto.randomUUID(), lines: selected.map(({ item, quantity }) => ({ productId: item.productId, quantity })) };
-      const result = online ? await sellerOrdersApi.create(request) : await queueSellerOrder(request, route, localDateKey());
+      const result = editing ? await sellerOrdersApi.update(editing.orderId,{notes:request.notes,idempotencyKey:crypto.randomUUID(),lines:request.lines}) : online ? await sellerOrdersApi.create(request) : await queueSellerOrder(request, route, localDateKey());
       await removeSellerDraft(key);
-      toast.success(result.requiresReview ? `${result.orderNumber} quedó en revisión` : `${result.orderNumber} guardado`);
+      toast.success(result.requiresReview ? `${result.orderNumber} quedó en revisión` : editing?`${result.orderNumber} actualizado`:`${result.orderNumber} guardado`);
       await onCreated(result.orderId);
     } catch (error) { toast.error(errorMessage(error, "No fue posible guardar el pedido.")); }
     finally { setSaving(false); }
   };
 
   return <><Dialog open onOpenChange={(open) => !open && onClose()}><DialogContent className="flex h-[100dvh] max-h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none p-0 sm:h-[min(90dvh,760px)] sm:max-w-4xl sm:rounded-[2rem]">
-    <DialogHeader className="shrink-0 border-b bg-background px-4 pb-4 pt-5 text-left sm:px-6"><div className="flex items-start gap-3"><Button type="button" size="icon" variant="ghost" className="-ml-2 shrink-0" onClick={onClose}><ArrowLeft className="h-5 w-5"/></Button><div className="min-w-0 flex-1"><DialogTitle className="truncate">{stop.customerName}</DialogTitle><DialogDescription className="line-clamp-1">{stop.siteName} · {stop.addressLine}</DialogDescription></div><Badge className="rounded-full bg-teal-600">{selected.length}</Badge></div><div className="relative mt-4"><Search className="pointer-events-none absolute left-3 top-3.5 h-5 w-5 text-teal-700"/><Input ref={searchRef} enterKeyHint="search" autoComplete="off" className="h-12 rounded-2xl border-teal-300 bg-white pl-10 pr-12 text-base" value={query} onChange={(event)=>{setQuery(event.target.value);setSearched(false)}} onKeyDown={(event)=>{if(event.key==="Enter"){event.preventDefault();void search()}}} placeholder="Buscar por nombre o código"/>{query&&<Button type="button" size="icon" variant="ghost" className="absolute right-1.5 top-1.5 h-9 w-9 rounded-xl" onClick={()=>{setQuery("");setResults([]);setSearched(false);searchRef.current?.focus()}}><X className="h-4 w-4"/></Button>}</div></DialogHeader>
+    <DialogHeader className="shrink-0 border-b bg-background px-4 pb-4 pt-5 text-left sm:px-6"><div className="flex items-start gap-3"><Button type="button" size="icon" variant="ghost" className="-ml-2 shrink-0" onClick={onClose}><ArrowLeft className="h-5 w-5"/></Button><div className="min-w-0 flex-1"><DialogTitle className="truncate">{editing?`Editar ${editing.orderNumber}`:stop.customerName}</DialogTitle><DialogDescription className="line-clamp-1">{stop.siteName} · {stop.addressLine}</DialogDescription></div><Badge className="rounded-full bg-teal-600">{selected.length}</Badge></div><div className="relative mt-4"><Search className="pointer-events-none absolute left-3 top-3.5 h-5 w-5 text-teal-700"/><Input ref={searchRef} enterKeyHint="search" autoComplete="off" className="h-12 rounded-2xl border-teal-300 bg-white pl-10 pr-12 text-base" value={query} onChange={(event)=>{setQuery(event.target.value);setSearched(false)}} onKeyDown={(event)=>{if(event.key==="Enter"){event.preventDefault();void search()}}} placeholder="Buscar por nombre o código"/>{query&&<Button type="button" size="icon" variant="ghost" className="absolute right-1.5 top-1.5 h-9 w-9 rounded-xl" onClick={()=>{setQuery("");setResults([]);setSearched(false);searchRef.current?.focus()}}><X className="h-4 w-4"/></Button>}</div></DialogHeader>
     <main className="min-h-0 flex-1 overflow-y-auto bg-slate-50/70 px-3 py-4 sm:px-6">
       {query.trim().length>=2||searched||loading?<SearchResults searching={loading} searched={searched} results={results} quantities={quantities} online={online} onChange={addFromSearch} onEdit={setQuantityItem}/>:<Cart items={selected} online={online} onChange={change} onEdit={setQuantityItem} onSearch={()=>searchRef.current?.focus()}/>}
     </main>
-    <footer className="shrink-0 border-t bg-background/95 px-3 pb-[max(.75rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-12px_35px_-24px_rgba(15,118,110,.7)] backdrop-blur sm:px-6"><div className="mb-3 flex items-center justify-between gap-3"><button type="button" onClick={()=>{setQuery("");setResults([]);setSearched(false)}} className="text-left"><small className="block text-muted-foreground">{selected.length} productos · {units.toLocaleString("es-CO", { maximumFractionDigits: 3 })} unidades</small><strong className="text-xl">{money.format(total)}</strong></button>{(query||searched)&&<Button type="button" variant="outline" onClick={()=>{setQuery("");setResults([]);setSearched(false)}}><ShoppingBag className="mr-2 h-4 w-4"/>Ver pedido</Button>}</div><Input value={notes} onChange={(event) => setNotes(event.target.value)} className="mb-3" placeholder="Nota para este pedido (opcional)"/><Button className="h-12 w-full bg-teal-600 text-base font-bold hover:bg-teal-700" disabled={saving || selected.length === 0 || invalid} onClick={submit}><PackagePlus className="mr-2 h-5 w-5"/>{saving ? "Guardando…" : online ? `Crear pedido · ${money.format(total)}` : "Guardar para sincronizar"}</Button></footer>
+    <footer className="shrink-0 border-t bg-background/95 px-3 pb-[max(.75rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-12px_35px_-24px_rgba(15,118,110,.7)] backdrop-blur sm:px-6"><div className="mb-3 flex items-center justify-between gap-3"><button type="button" onClick={()=>{setQuery("");setResults([]);setSearched(false)}} className="text-left"><small className="block text-muted-foreground">{selected.length} productos · {units.toLocaleString("es-CO", { maximumFractionDigits: 3 })} unidades</small><strong className="text-xl">{money.format(total)}</strong></button>{(query||searched)&&<Button type="button" variant="outline" onClick={()=>{setQuery("");setResults([]);setSearched(false)}}><ShoppingBag className="mr-2 h-4 w-4"/>Ver pedido</Button>}</div><Input value={notes} onChange={(event) => setNotes(event.target.value)} className="mb-3" placeholder="Nota para este pedido (opcional)"/><Button className="h-12 w-full bg-teal-600 text-base font-bold hover:bg-teal-700" disabled={saving || selected.length === 0 || invalid || (Boolean(editing)&&!online)} onClick={submit}><PackagePlus className="mr-2 h-5 w-5"/>{saving ? "Guardando…" : editing?`Actualizar pedido · ${money.format(total)}`:online ? `Crear pedido · ${money.format(total)}` : "Guardar para sincronizar"}</Button></footer>
   </DialogContent></Dialog>{quantityItem && <QuantityDialog item={quantityItem} current={quantities[quantityItem.productId] ?? 0} online={online} onClose={() => setQuantityItem(null)} onConfirm={(quantity) => { setQuantity(quantityItem, quantity); setQuantityItem(null); }}/>}</>;
 }
 
