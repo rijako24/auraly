@@ -606,6 +606,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.UnitPrice).HasPrecision(18, 2);
             entity.Property(e => e.Currency).IsRequired().HasMaxLength(10);
             entity.Property(e => e.StockQuantity).HasPrecision(18, 2);
+            entity.Property(e => e.ConversionMaximumLossPercent).HasPrecision(9, 6);
             entity.Property(e => e.RawPayloadJson).HasColumnType("NVARCHAR(MAX)");
             entity.HasOne(e => e.Business)
                 .WithMany()

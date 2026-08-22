@@ -20,7 +20,8 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             InventoryPermissionCodes.Count,
             InventoryPermissionCodes.Adjust,
             InventoryPermissionCodes.Transfer,
-            InventoryPermissionCodes.Convert);
+            InventoryPermissionCodes.Convert,
+            InventoryPermissionCodes.Read);
         var occurred = new DateTimeOffset(2026, 8, 1, 9, 0, 0, TimeSpan.FromHours(-5));
 
         await ConfirmAdjustmentAsync(client, new(Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
@@ -87,6 +88,34 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.Equal(0m, await ScalarAsync<decimal>("SELECT SUM(ValueChange) FROM dbo.InventoryMovements WHERE DocumentId=@Id", conversionId));
         Assert.Equal(1, await CountAsync("ServerOutboxMessages", conversionId));
         Assert.Equal("Completed", await JobStatusAsync(conversionId));
+
+        using var detailResponse = await client.GetAsync($"/api/commerce/v1/inventory/operations/{conversionId:D}");
+        var detailBody = await detailResponse.Content.ReadAsStringAsync();
+        Assert.True(detailResponse.IsSuccessStatusCode, detailBody);
+        var detail = await detailResponse.Content.ReadFromJsonAsync<InventoryOperationDetail>();
+        Assert.NotNull(detail);
+        Assert.Equal(source, detail.ConversionFamilyRootProductId);
+        Assert.Equal(4m, detail.ConversionInputEquivalent);
+        Assert.Equal(4m, detail.ConversionOutputEquivalent);
+        Assert.Equal(0m, detail.ConversionLossQuantity);
+        Assert.All(detail.Lines, line => Assert.NotNull(line.ConversionFactor));
+
+        var candidates = await client.GetFromJsonAsync<ProductConversionProductPage>($"/api/commerce/v1/inventory/conversion-products?warehouseId={fixture.WarehouseId:D}&familyRootProductId={source:D}&page=1&pageSize=2");
+        Assert.NotNull(candidates);
+        Assert.Equal(3, candidates.TotalCount);
+        Assert.Equal(2, candidates.Items.Count);
+        Assert.Equal(2, candidates.TotalPages);
+
+        var reverseId = Guid.NewGuid();
+        await SendAsync<ConfirmProductConversionRequest>(client,
+            "/api/commerce/v1/product-conversions/confirm",
+            new(reverseId, fixture.BusinessId, fixture.WarehouseId, occurred.AddMinutes(5),
+                "MERGE", "PRESENTATION_CHANGE", null, "Conversión inversa entre vinculados",
+                [new(1,"INPUT",outputOne,2m,null), new(2,"INPUT",outputTwo,1m,null), new(3,"OUTPUT",source,4m,null)]),
+            $"conversion-reverse-{reverseId:N}");
+        Assert.Equal((20m, 5m, 100m), await BalanceAsync(fixture.WarehouseId, source));
+        Assert.Equal((0m, 0m, 0m), await BalanceAsync(fixture.WarehouseId, outputOne));
+        Assert.Equal((0m, 0m, 0m), await BalanceAsync(fixture.WarehouseId, outputTwo));
     }
 
     [Fact]
@@ -183,7 +212,7 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.Null(Assert.Single(hiddenProducts!.Items.Where(x => x.ProductId == product)).AverageUnitCost);
     }
     [Fact]
-    public async Task Inventory_endpoints_enforce_permission_and_the_engine_posts_negative_stock_in_sequence()
+    public async Task Inventory_endpoints_enforce_permission_and_conversion_rejects_insufficient_stock()
     {
         var source = Guid.NewGuid(); var output = Guid.NewGuid(); var destination = Guid.NewGuid();
         await SeedAsync(source, output, Guid.NewGuid(), destination);
@@ -193,24 +222,27 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         using (var deniedClient = fixture.CreateAdminClient())
         using (var deniedMessage = CreateMessage("/api/commerce/v1/inventory-adjustments/confirm", request, Guid.NewGuid().ToString("N")))
         using (var denied = await deniedClient.SendAsync(deniedMessage))
+        {
             Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+            using var deniedDetail = await deniedClient.GetAsync($"/api/commerce/v1/inventory/operations/{request.DocumentId:D}");
+            Assert.Equal(HttpStatusCode.Forbidden, deniedDetail.StatusCode);
+        }
 
         using var client = fixture.CreateAdminClient(InventoryPermissionCodes.Adjust, InventoryPermissionCodes.Convert);
         await ConfirmAdjustmentAsync(client, request);
         var before = await BalanceAsync(fixture.WarehouseId, source);
         var conversionId = Guid.NewGuid();
-        await SendAsync<ConfirmProductConversionRequest>(client,
-            "/api/commerce/v1/product-conversions/confirm",
-            new(conversionId, fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
-                "SPLIT", "PRESENTATION_CHANGE", null, null,
-                [new(1,"INPUT",source,99m,null),new(2,"OUTPUT",output,1m,null)]),
-            $"negative-{conversionId:N}");
-        Assert.Equal((before.Quantity - 99m, before.Average, before.Value - 198m),
-            await BalanceAsync(fixture.WarehouseId, source));
-        Assert.Equal((1m, 198m, 198m), await BalanceAsync(fixture.WarehouseId, output));
-        Assert.Equal(2, await CountAsync("InventoryMovements", conversionId));
-        Assert.Equal(1, await CountAsync("ServerOutboxMessages", conversionId));
-        Assert.Equal("Completed", await JobStatusAsync(conversionId));
+        var conversion = new ConfirmProductConversionRequest(
+            conversionId, fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
+            "SPLIT", "PRESENTATION_CHANGE", null, null,
+            [new(1,"INPUT",source,99m,null),new(2,"OUTPUT",output,99m,null)]);
+        using (var message = CreateMessage("/api/commerce/v1/product-conversions/confirm", conversion, $"negative-{conversionId:N}"))
+        using (var response = await client.SendAsync(message))
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(before, await BalanceAsync(fixture.WarehouseId, source));
+        Assert.Equal((0m, 0m, 0m), await BalanceAsync(fixture.WarehouseId, output));
+        Assert.Equal(0, await CountAsync("InventoryMovements", conversionId));
+        Assert.Equal(0, await CountAsync("ServerOutboxMessages", conversionId));
     }
 
     private async Task SeedAsync(Guid first, Guid second, Guid third, Guid destination)
@@ -221,10 +253,13 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             INSERT dbo.TaxProfiles(
                 TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
             VALUES(@TaxProfileId,@BusinessId,@TaxCode,N'IVA de prueba',19,1,SYSDATETIMEOFFSET());
-            INSERT dbo.Products(ProductId,BusinessId,ProductCode,Reference,BaseUnitCode,TaxProfileId,Source,Sku,Name,UnitPrice,Currency,ManageStock,IsActive,CreatedAt)
-            VALUES(@First,@BusinessId,@FirstSku,@FirstReference,N'EA',@TaxProfileId,0,@FirstSku,N'Insumo',0,N'COP',1,1,SYSUTCDATETIME()),
-                  (@Second,@BusinessId,NULL,NULL,N'EA',@TaxProfileId,0,@SecondSku,N'Salida uno',0,N'COP',1,1,SYSUTCDATETIME()),
-                  (@Third,@BusinessId,NULL,NULL,N'EA',@TaxProfileId,0,@ThirdSku,N'Salida dos',0,N'COP',1,1,SYSUTCDATETIME());
+            INSERT dbo.Products(ProductId,BusinessId,ProductCode,Reference,BaseUnitCode,TaxProfileId,Source,Sku,Name,UnitPrice,Currency,ManageStock,ConversionMaximumLossPercent,IsActive,CreatedAt)
+            VALUES(@First,@BusinessId,@FirstSku,@FirstReference,N'EA',@TaxProfileId,0,@FirstSku,N'Insumo',0,N'COP',1,0,1,SYSUTCDATETIME()),
+                  (@Second,@BusinessId,NULL,NULL,N'EA',@TaxProfileId,0,@SecondSku,N'Salida uno',0,N'COP',1,NULL,1,SYSUTCDATETIME()),
+                  (@Third,@BusinessId,NULL,NULL,N'EA',@TaxProfileId,0,@ThirdSku,N'Salida dos',0,N'COP',1,NULL,1,SYSUTCDATETIME());
+            INSERT dbo.ProductLinks(ProductLinkId,BusinessId,ChildProductId,ParentProductId,InventoryFactor,PriceFactor,ConversionFactor,SharesInventory,SharesPrice,AllowsConversion,IsActive,CreatedAt)
+            VALUES(NEWID(),@BusinessId,@Second,@First,NULL,NULL,1,0,0,1,1,SYSUTCDATETIME()),
+                  (NEWID(),@BusinessId,@Third,@First,NULL,NULL,2,0,0,1,1,SYSUTCDATETIME());
             INSERT dbo.ProductBarcodes(ProductBarcodeId,BusinessId,ProductId,Barcode,IsPrimary,IsActive,CreatedAt)
             VALUES(NEWID(),@BusinessId,@First,@FirstBarcode,1,1,SYSUTCDATETIME());
             IF NOT EXISTS(

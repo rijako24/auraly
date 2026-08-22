@@ -64,6 +64,60 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Linked_product_family_persists_bidirectional_conversion_configuration()
+    {
+        var (taxProfileId, _, _) = await ConfigureCatalogAsync();
+        using var client = fixture.CreateAdminClient(
+            CatalogPermissionCodes.Create,
+            CatalogPermissionCodes.Read,
+            CatalogPermissionCodes.Update,
+            CatalogPermissionCodes.ManagePrices,
+            CatalogPermissionCodes.ManageCosts);
+        async Task<ProductDetail> CreateAsync(string name)
+        {
+            using var response = await client.PostAsJsonAsync("/api/commerce/v1/products",
+                ProductRequest(taxProfileId, [new ProductPriceInput(10_000m)], []) with { Name = name });
+            response.EnsureSuccessStatusCode();
+            return (await response.Content.ReadFromJsonAsync<ProductDetail>())!;
+        }
+        var rootRequest = ProductRequest(taxProfileId, [new ProductPriceInput(10_000m)], []) with
+        {
+            Name = $"Familia conversión {Guid.NewGuid():N}"
+        };
+        using var rootResponse = await client.PostAsJsonAsync("/api/commerce/v1/products", rootRequest);
+        rootResponse.EnsureSuccessStatusCode();
+        var root = (await rootResponse.Content.ReadFromJsonAsync<ProductDetail>())!;
+        var child = await CreateAsync($"Presentación conversión {Guid.NewGuid():N}");
+        var current = (await client.GetFromJsonAsync<ProductMerchandisingConfiguration>(
+            $"/api/commerce/v1/products/{root.ProductId:D}/merchandising"))!;
+        var save = new SaveProductMerchandisingRequest(
+            current.ProductCategoryId, current.ProductBrandId, current.BaseUnitCode,
+            true, current.AllowsFractionalSale, current.IsWeighable, current.Scale,
+            current.Barcodes, null,
+            [new LinkedProductInput(child.ProductId, false, null, false, null, true, 0.5m)],
+            2.5m);
+
+        using var response = await client.PutAsJsonAsync(
+            $"/api/commerce/v1/products/{root.ProductId:D}/merchandising", save);
+        response.EnsureSuccessStatusCode();
+        var configured = (await response.Content.ReadFromJsonAsync<ProductMerchandisingConfiguration>())!;
+
+        Assert.Equal(2.5m, configured.ConversionMaximumLossPercent);
+        var link = Assert.Single(configured.LinkedProducts);
+        Assert.True(link.AllowsConversion);
+        Assert.Equal(0.5m, link.ConversionFactor);
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.ProductLinks WHERE ParentProductId=@Parent AND ChildProductId=@Child AND AllowsConversion=1 AND ConversionFactor=0.5 AND SharesInventory=0;",
+            new SqlParameter("@Parent", root.ProductId), new SqlParameter("@Child", child.ProductId)));
+
+        using var invalidRootUpdate = await client.PutAsJsonAsync(
+            $"/api/commerce/v1/products/{root.ProductId:D}", rootRequest with { ManageInventory = false });
+        var invalidRootBody = await invalidRootUpdate.Content.ReadAsStringAsync();
+        Assert.True(invalidRootUpdate.StatusCode == HttpStatusCode.BadRequest,
+            $"Expected BadRequest, received {invalidRootUpdate.StatusCode}: {invalidRootBody}");
+    }
+
+    [Fact]
     public async Task Editing_inventory_management_controls_inventory_product_search()
     {
         var (taxProfileId, _, _) = await ConfigureCatalogAsync();

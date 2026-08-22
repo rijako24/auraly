@@ -8,6 +8,7 @@ using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.DocumentProcessing;
 using Auraly.Contracts.Inventory;
+using Auraly.Domain.Inventory;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
@@ -84,7 +85,7 @@ public sealed class SqlInventoryOperationStore(
             var lines = draft.Lines.Select(line => line with { Quantity = counted[line.ProductId].CountedQuantity }).ToArray();
             var acceptance = await AcceptDraftAsync(connection, transaction, user, documentId, InventoryDocumentTypes.StockCount,
                 draft.WarehouseId, null, draft.OccurredAt, draft.ReasonCode, null, null, draft.BaseSequence, draft.Notes,
-                idempotencyKey, requestHash, lines, cancellationToken);
+                idempotencyKey, requestHash, lines, null, cancellationToken);
             foreach (var line in lines)
             {
                 const string update = "UPDATE dbo.InventoryOperationLines SET Quantity=@Quantity WHERE InventoryOperationId=@Id AND ProductId=@ProductId;";
@@ -166,7 +167,7 @@ public sealed class SqlInventoryOperationStore(
         var acceptance = await AcceptDraftAsync(connection, transaction, user, request.DocumentId,
             InventoryDocumentTypes.Transfer, request.SourceWarehouseId, request.DestinationWarehouseId,
             request.OccurredAt, request.ReasonCode, null, null, null, request.Notes,
-            idempotencyKey, requestHash, lines, cancellationToken);
+            idempotencyKey, requestHash, lines, null, cancellationToken);
         await ProcessAcceptedInsideTransactionAsync(connection, transaction, user, acceptance, cancellationToken);
         return acceptance with { Status = "Processed" };
     }
@@ -202,13 +203,30 @@ public sealed class SqlInventoryOperationStore(
                 line.LineNumber, line.Direction, line.ProductId, products[line.ProductId].Code,
                 products[line.ProductId].Name, line.Quantity, null, line.SystemQuantityAtBase,
                 line.ExplicitUnitCost, line.AllocationWeight)).ToArray();
+            ConversionMetadata? conversion = null;
+            if (documentType == InventoryDocumentTypes.Conversion)
+            {
+                conversion = await BuildConversionMetadataAsync(
+                    connection, transaction, user.BusinessId, conversionType!, lines, cancellationToken);
+                lines = lines.Select((line, index) => line with
+                {
+                    ConversionFactor = conversion.Factors[line.ProductId],
+                    ConversionEquivalentQuantity = conversion.Equivalence.EquivalentQuantities[index]
+                }).ToArray();
+                foreach (var input in lines.Where(line => line.Direction == "INPUT"))
+                    if (products[input.ProductId].Quantity < input.Quantity)
+                        throw new InventoryValidationException($"Insufficient inventory for product '{input.ProductCode}'.");
+            }
             var now = timeProvider.GetUtcNow();
             const string insert = """
                 INSERT dbo.InventoryOperations
                   (InventoryOperationId,BusinessId,DocumentType,WarehouseId,DestinationWarehouseId,
-                   OccurredAt,ReasonCode,ReasonDescription,ConversionType,CostCenterId,BaseInventorySequence,Notes,Status,CreatedAt)
+                   OccurredAt,ReasonCode,ReasonDescription,ConversionType,ConversionFamilyRootProductId,
+                   ConversionInputEquivalent,ConversionOutputEquivalent,ConversionLossQuantity,
+                   ConversionLossPercent,ConversionMaximumLossPercent,CostCenterId,BaseInventorySequence,Notes,Status,CreatedAt)
                 VALUES(@Id,@BusinessId,@Type,@WarehouseId,@Destination,@OccurredAt,@Reason,@ReasonDescription,@ConversionType,
-                   @CostCenterId,@BaseSequence,@Notes,N'Draft',@Now);
+                   @ConversionFamilyRootProductId,@ConversionInputEquivalent,@ConversionOutputEquivalent,@ConversionLossQuantity,
+                   @ConversionLossPercent,@ConversionMaximumLossPercent,@CostCenterId,@BaseSequence,@Notes,N'Draft',@Now);
                 """;
             await using (var command = new SqlCommand(insert, connection, transaction))
             {
@@ -221,6 +239,12 @@ public sealed class SqlInventoryOperationStore(
                 command.Parameters.AddWithValue("@Reason", reasonCode);
                 command.Parameters.AddWithValue("@ReasonDescription", reasonDescription);
                 command.Parameters.AddWithValue("@ConversionType", (object?)conversionType ?? DBNull.Value);
+                command.Parameters.AddWithValue("@ConversionFamilyRootProductId", (object?)conversion?.FamilyRootProductId ?? DBNull.Value);
+                AddNullableDecimal(command, "@ConversionInputEquivalent", conversion?.Equivalence.InputEquivalent, 19, 6);
+                AddNullableDecimal(command, "@ConversionOutputEquivalent", conversion?.Equivalence.OutputEquivalent, 19, 6);
+                AddNullableDecimal(command, "@ConversionLossQuantity", conversion?.Equivalence.LossQuantity, 19, 6);
+                AddNullableDecimal(command, "@ConversionLossPercent", conversion?.Equivalence.LossPercent, 9, 6);
+                AddNullableDecimal(command, "@ConversionMaximumLossPercent", conversion?.MaximumLossPercent, 9, 6);
                 command.Parameters.AddWithValue("@CostCenterId", (object?)costCenterId ?? DBNull.Value);
                 command.Parameters.AddWithValue("@BaseSequence", (object?)baseSequence ?? DBNull.Value);
                 command.Parameters.AddWithValue("@Notes", (object?)notes ?? DBNull.Value);
@@ -230,7 +254,7 @@ public sealed class SqlInventoryOperationStore(
             await InsertLinesAsync(connection, transaction, documentId, lines, cancellationToken);
             var acceptance = await AcceptDraftAsync(connection, transaction, user, documentId, documentType,
                 warehouseId, destinationWarehouseId, occurredAt, reasonCode, conversionType, costCenterId,
-                baseSequence, notes, idempotencyKey, requestHash, lines, cancellationToken);
+                baseSequence, notes, idempotencyKey, requestHash, lines, conversion, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return acceptance;
         }
@@ -247,7 +271,8 @@ public sealed class SqlInventoryOperationStore(
         Guid documentId, string documentType, Guid warehouseId, Guid? destinationWarehouseId,
         DateTimeOffset occurredAt, string reasonCode, string? conversionType, Guid? costCenterId,
         long? baseSequence, string? notes, string idempotencyKey, byte[] requestHash,
-        IReadOnlyList<InventoryOperationLineSnapshot> lines, CancellationToken cancellationToken)
+        IReadOnlyList<InventoryOperationLineSnapshot> lines, ConversionMetadata? conversion,
+        CancellationToken cancellationToken)
     {
         var number = await AllocateNumberAsync(connection, transaction, user.BusinessId, documentType, cancellationToken);
         var now = timeProvider.GetUtcNow();
@@ -256,6 +281,16 @@ public sealed class SqlInventoryOperationStore(
             documentType, warehouseId, destinationWarehouseId, user.UserId, number.FullNumber,
             number.SeriesId, number.Prefix, number.SeriesCode, number.Consecutive, occurredAt,
             reasonCode, conversionType, costCenterId, baseSequence, notes, lines);
+        if (conversion is not null)
+            payload = payload with
+            {
+                ConversionFamilyRootProductId = conversion.FamilyRootProductId,
+                ConversionInputEquivalent = conversion.Equivalence.InputEquivalent,
+                ConversionOutputEquivalent = conversion.Equivalence.OutputEquivalent,
+                ConversionLossQuantity = conversion.Equivalence.LossQuantity,
+                ConversionLossPercent = conversion.Equivalence.LossPercent,
+                ConversionMaximumLossPercent = conversion.MaximumLossPercent
+            };
         var payloadJson = InventoryOperationContractSerializer.Serialize(payload);
         var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(payloadJson));
         var movementId = ids.NewId();
@@ -382,14 +417,83 @@ public sealed class SqlInventoryOperationStore(
         return result;
     }
 
+    private static async Task<ConversionMetadata> BuildConversionMetadataAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid businessId,
+        string conversionType,
+        IReadOnlyList<InventoryOperationLineSnapshot> lines,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT p.ProductId,
+                   COALESCE(link.ParentProductId,p.ProductId) AS FamilyRootProductId,
+                   CAST(CASE WHEN link.ProductLinkId IS NULL THEN 1 ELSE link.ConversionFactor END AS decimal(19,6)) AS ConversionFactor,
+                   root.ConversionMaximumLossPercent
+            FROM dbo.Products p WITH(UPDLOCK,HOLDLOCK)
+            INNER JOIN OPENJSON(@Products) WITH(ProductId uniqueidentifier '$') requested ON requested.ProductId=p.ProductId
+            LEFT JOIN dbo.ProductLinks link WITH(UPDLOCK,HOLDLOCK)
+              ON link.BusinessId=p.BusinessId AND link.ChildProductId=p.ProductId
+             AND link.IsActive=1 AND link.AllowsConversion=1
+            INNER JOIN dbo.Products root WITH(UPDLOCK,HOLDLOCK)
+              ON root.BusinessId=p.BusinessId AND root.ProductId=COALESCE(link.ParentProductId,p.ProductId)
+            WHERE p.BusinessId=@BusinessId AND p.IsActive=1 AND p.ManageStock=1
+              AND root.IsActive=1 AND root.ManageStock=1
+              AND root.ConversionMaximumLossPercent IS NOT NULL
+              AND (link.ProductLinkId IS NOT NULL OR EXISTS(
+                    SELECT 1 FROM dbo.ProductLinks child WITH(UPDLOCK,HOLDLOCK)
+                    INNER JOIN dbo.Products childProduct WITH(UPDLOCK,HOLDLOCK)
+                      ON childProduct.ProductId=child.ChildProductId AND childProduct.BusinessId=child.BusinessId
+                     AND childProduct.IsActive=1 AND childProduct.ManageStock=1
+                    WHERE child.BusinessId=p.BusinessId AND child.ParentProductId=p.ProductId
+                      AND child.IsActive=1 AND child.AllowsConversion=1));
+            """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@Products", JsonSerializer.Serialize(lines.Select(line => line.ProductId).Distinct()));
+        var factors = new Dictionary<Guid, decimal>();
+        Guid? rootProductId = null;
+        decimal? maximumLossPercent = null;
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var productId = reader.GetGuid(0);
+                var rowRootProductId = reader.GetGuid(1);
+                if (rootProductId is not null && rootProductId != rowRootProductId)
+                    throw new InventoryValidationException("All conversion products must belong to the same linked family.");
+                rootProductId = rowRootProductId;
+                factors[productId] = reader.GetDecimal(2);
+                maximumLossPercent = reader.GetDecimal(3);
+            }
+        }
+        if (factors.Count != lines.Select(line => line.ProductId).Distinct().Count() || rootProductId is null || maximumLossPercent is null)
+            throw new InventoryValidationException("Every conversion product must be enabled in the same linked product family.");
+
+        try
+        {
+            var equivalence = InventoryOperationRules.ValidateConversionEquivalence(
+                conversionType,
+                lines.Select(line => (line.Direction, line.Quantity, factors[line.ProductId])).ToArray(),
+                maximumLossPercent.Value);
+            return new ConversionMetadata(rootProductId.Value, maximumLossPercent.Value, factors, equivalence);
+        }
+        catch (ArgumentException exception)
+        {
+            throw new InventoryValidationException(exception.Message);
+        }
+    }
+
     private static async Task InsertLinesAsync(SqlConnection connection, SqlTransaction transaction, Guid documentId,
         IEnumerable<InventoryOperationLineSnapshot> lines, CancellationToken cancellationToken)
     {
         const string sql = """
             INSERT dbo.InventoryOperationLines
               (InventoryOperationId,LineNumber,Direction,ProductId,ProductCodeSnapshot,DescriptionSnapshot,
-               Quantity,PreCountQuantity,SystemQuantityAtBase,ExplicitUnitCost,AllocationWeight)
-            VALUES(@Id,@Line,@Direction,@ProductId,@Code,@Description,@Quantity,@PreCount,@SystemAtBase,@UnitCost,@Weight);
+               Quantity,PreCountQuantity,SystemQuantityAtBase,ExplicitUnitCost,AllocationWeight,
+               ConversionFactor,ConversionEquivalentQuantity)
+            VALUES(@Id,@Line,@Direction,@ProductId,@Code,@Description,@Quantity,@PreCount,@SystemAtBase,@UnitCost,@Weight,
+               @ConversionFactor,@ConversionEquivalentQuantity);
             """;
         foreach (var line in lines)
         {
@@ -405,6 +509,8 @@ public sealed class SqlInventoryOperationStore(
             AddNullableDecimal(command, "@SystemAtBase", line.SystemQuantityAtBase, 19, 6);
             AddNullableDecimal(command, "@UnitCost", line.ExplicitUnitCost, 19, 6);
             AddNullableDecimal(command, "@Weight", line.AllocationWeight, 9, 6);
+            AddNullableDecimal(command, "@ConversionFactor", line.ConversionFactor, 19, 6);
+            AddNullableDecimal(command, "@ConversionEquivalentQuantity", line.ConversionEquivalentQuantity, 19, 6);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
     }
@@ -575,4 +681,9 @@ public sealed class SqlInventoryOperationStore(
     private sealed record LineInput(int LineNumber,string Direction,Guid ProductId,decimal Quantity,decimal? SystemQuantityAtBase,decimal? ExplicitUnitCost,decimal? AllocationWeight);
     private sealed record ProductState(Guid Id,string Code,string Name,decimal Quantity);
     private sealed record CountDraftState(Guid WarehouseId,DateTimeOffset OccurredAt,string ReasonCode,long BaseSequence,string? Notes,IReadOnlyList<InventoryOperationLineSnapshot> Lines);
+    private sealed record ConversionMetadata(
+        Guid FamilyRootProductId,
+        decimal MaximumLossPercent,
+        IReadOnlyDictionary<Guid, decimal> Factors,
+        ProductConversionEquivalence Equivalence);
 }

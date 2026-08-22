@@ -192,6 +192,11 @@ public sealed class CatalogService(
             throw new CatalogValidationException("The linked inventory factor must be positive.");
         if (request.Link is { SharesPrice: true, PriceFactor: null or <= 0 })
             throw new CatalogValidationException("The linked price factor must be positive.");
+        if (request.Link is { AllowsConversion: true } link &&
+            (link.SharesInventory || !request.ManageInventory || link.ConversionFactor is null or <= 0))
+            throw new CatalogValidationException("A convertible linked product must manage separate inventory and define a positive conversion factor.");
+        if (request.Link is { AllowsConversion: false, ConversionFactor: not null })
+            throw new CatalogValidationException("A conversion factor requires conversion to be enabled.");
 
     }
 }

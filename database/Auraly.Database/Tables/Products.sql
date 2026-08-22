@@ -19,6 +19,7 @@ CREATE TABLE [dbo].[Products] (
     [UnitPrice] DECIMAL(18, 2) NOT NULL DEFAULT 0,
     [Currency] NVARCHAR(10) NOT NULL DEFAULT N'COP',
     [ManageStock] BIT NOT NULL DEFAULT 0,
+    [ConversionMaximumLossPercent] DECIMAL(9,6) NULL,
     [AllowsFractionalSale] BIT NOT NULL CONSTRAINT [DF_Products_AllowsFractionalSale] DEFAULT 0,
     [IsWeighable] BIT NOT NULL CONSTRAINT [DF_Products_IsWeighable] DEFAULT 0,
     [StockQuantity] DECIMAL(18, 2) NULL,
@@ -48,6 +49,7 @@ CREATE TABLE [dbo].[Products] (
         ON DELETE NO ACTION,
     CONSTRAINT [CK_Products_Source] CHECK ([Source] IN (0, 1)),
     CONSTRAINT [CK_Products_WeighableFractional] CHECK ([IsWeighable] = 0 OR [AllowsFractionalSale] = 1),
+    CONSTRAINT [CK_Products_ConversionMaximumLossPercent] CHECK ([ConversionMaximumLossPercent] IS NULL OR [ConversionMaximumLossPercent] BETWEEN 0 AND 100),
     CONSTRAINT [CK_Products_CanonicalFields] CHECK (
         [ProductCode] IS NULL OR
         ([BaseUnitCode] IS NOT NULL AND [TaxProfileId] IS NOT NULL))

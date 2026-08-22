@@ -59,6 +59,14 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                   THROW 51022, 'A product cannot be linked to itself.', 1;
                 IF @ParentProductId IS NOT NULL AND EXISTS (SELECT 1 FROM dbo.ProductLinks WHERE BusinessId=@BusinessId AND ChildProductId=@ParentProductId AND IsActive=1)
                   THROW 51022, 'Linked product chains are not allowed.', 1;
+                IF @ManageInventory=0 AND EXISTS (
+                  SELECT 1 FROM dbo.ProductLinks WHERE BusinessId=@BusinessId AND ParentProductId=@ProductId
+                    AND IsActive=1 AND AllowsConversion=1)
+                  THROW 51024, 'A conversion family root must manage inventory.', 1;
+                IF @AllowsConversion=1 AND NOT EXISTS (
+                  SELECT 1 FROM dbo.Products WHERE BusinessId=@BusinessId AND ProductId=@ParentProductId
+                    AND IsActive=1 AND ManageStock=1 AND ConversionMaximumLossPercent IS NOT NULL)
+                  THROW 51024, 'The linked parent must manage inventory and define a maximum conversion loss.', 1;
                 """, ProductParameters(user, productId, request, now), ct);
             await ExecuteAsync(connection, transaction, create
                 ? """
@@ -82,11 +90,12 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             await ExecuteAsync(connection, transaction, """
                 UPDATE dbo.ProductLinks SET IsActive=0,UpdatedAt=@Now WHERE BusinessId=@BusinessId AND ChildProductId=@ProductId AND IsActive=1;
                 IF @ParentProductId IS NOT NULL
-                  INSERT dbo.ProductLinks(ProductLinkId,BusinessId,ChildProductId,ParentProductId,InventoryFactor,PriceFactor,SharesInventory,SharesPrice,IsActive,CreatedAt)
-                  VALUES(@ProductLinkId,@BusinessId,@ProductId,@ParentProductId,@InventoryFactor,@PriceFactor,@SharesInventory,@SharesPrice,1,@Now);
+                  INSERT dbo.ProductLinks(ProductLinkId,BusinessId,ChildProductId,ParentProductId,InventoryFactor,PriceFactor,ConversionFactor,SharesInventory,SharesPrice,AllowsConversion,IsActive,CreatedAt)
+                  VALUES(@ProductLinkId,@BusinessId,@ProductId,@ParentProductId,@InventoryFactor,@PriceFactor,@ConversionFactor,@SharesInventory,@SharesPrice,@AllowsConversion,1,@Now);
                 """, [P("@ProductLinkId", ids.NewId()), P("@BusinessId", user.BusinessId), P("@ProductId", productId), P("@ParentProductId", request.Link?.ParentProductId),
                 P("@InventoryFactor", request.Link is { SharesInventory: true } ? request.Link.InventoryFactor : null), P("@PriceFactor", request.Link is { SharesPrice: true } ? request.Link.PriceFactor : null),
-                P("@SharesInventory", request.Link?.SharesInventory ?? false), P("@SharesPrice", request.Link?.SharesPrice ?? false), P("@Now", now)], ct);
+                P("@ConversionFactor", request.Link is { AllowsConversion: true } ? request.Link.ConversionFactor : null), P("@SharesInventory", request.Link?.SharesInventory ?? false),
+                P("@SharesPrice", request.Link?.SharesPrice ?? false), P("@AllowsConversion", request.Link?.AllowsConversion ?? false), P("@Now", now)], ct);
 
 
             foreach (var barcode in request.Barcodes.DistinctBy(value => value.Value, StringComparer.OrdinalIgnoreCase))
@@ -371,7 +380,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT TOP (@Take) c.CatalogChangeId,c.ChangeKind,p.ProductId,p.ProductCode,p.Reference,p.Name,p.BaseUnitCode,
-              t.DianTaxCode,t.Rate,pr.Amount,pr.CurrencyCode,p.IsActive,
+              t.DianTaxCode,t.Rate,pr.Amount,pr.CurrencyCode,p.IsActive,p.IsWeighable,p.AllowsFractionalSale,
               COALESCE((SELECT Barcode AS [Value] FROM dbo.ProductBarcodes b WHERE b.ProductId=p.ProductId AND b.IsActive=1 FOR JSON PATH),N'[]'),
               COALESCE((SELECT IdentifierType AS [Type],Value FROM dbo.ProductIdentifiers i WHERE i.ProductId=p.ProductId AND i.IsActive=1 FOR JSON PATH),N'[]'),
               s.ScaleCode,s.BarcodePrefix,s.EmbeddedValueType,s.ValueStart,s.ValueLength,s.DecimalPlaces
@@ -580,6 +589,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
          P("@PurchaseTaxTreatment", r.PurchaseTaxTreatment), P("@ManageInventory", r.ManageInventory), P("@IsWeighable", r.IsWeighable),
          P("@ProductCategoryId", r.ProductCategoryId), P("@ProductBrandId", r.ProductBrandId), P("@AllowsFractionalSale", r.AllowsFractionalSale),
          P("@ParentProductId", r.Link?.ParentProductId),
+         P("@AllowsConversion", r.Link?.AllowsConversion ?? false),
          P("@Now", now), P("@UserId", user.UserId)];
 
     private static async Task ExecuteAsync(SqlConnection connection, SqlTransaction transaction, string sql, SqlParameter[] parameters, CancellationToken ct)

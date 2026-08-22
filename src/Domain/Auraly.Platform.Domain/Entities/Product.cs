@@ -25,6 +25,7 @@ public class Product
     public string Currency { get; set; } = "COP";
     public bool ManageStock { get; set; }
     public decimal? StockQuantity { get; set; }
+    public decimal? ConversionMaximumLossPercent { get; set; }
     public bool IsActive { get; set; } = true;
     public string? RawPayloadJson { get; set; }
     public int SearchIndexVersion { get; set; }

@@ -96,7 +96,7 @@ public sealed class InventoryOperationService(
         Required(request.OccurredAt, nameof(request.OccurredAt));
         ValidateKey(idempotencyKey);
         ValidateReason(request.ReasonCode);
-        ValidateLines(request.Lines.Select(line => (line.LineNumber, line.ProductId)), allowProductOnBothDirections: true);
+        ValidateLines(request.Lines.Select(line => (line.LineNumber, line.ProductId)));
         var directions = request.Lines.Select(line => line.Direction.Trim().ToUpperInvariant()).ToArray();
         if (directions.Any(direction => direction is not ("INPUT" or "OUTPUT")) || !directions.Contains("INPUT") || !directions.Contains("OUTPUT"))
             throw new InventoryValidationException("A conversion requires input and output lines.");
@@ -104,7 +104,7 @@ public sealed class InventoryOperationService(
             throw new InventoryValidationException("Conversion quantities and allocation weights must be positive.");
         var inputCount = directions.Count(direction => direction == "INPUT");
         var outputCount = directions.Count(direction => direction == "OUTPUT");
-        var conversionType = request.ConversionType.Trim().ToUpperInvariant();
+        var conversionType = request.ConversionType?.Trim().ToUpperInvariant() ?? string.Empty;
         if (conversionType == "SPLIT" && inputCount != 1 || conversionType == "MERGE" && outputCount != 1 || conversionType is not ("SPLIT" or "MERGE"))
             throw new InventoryValidationException("ConversionType must be Split (one input) or Merge (one output).");
         var weights = request.Lines.Where((_, index) => directions[index] == "OUTPUT").Select(line => line.AllocationWeight).ToArray();
@@ -127,12 +127,12 @@ public sealed class InventoryOperationService(
         if (!user.Permissions.Contains(permission)) throw new InventoryForbiddenException($"Permission '{permission}' is required.");
     }
 
-    private static void ValidateLines(IEnumerable<(int LineNumber, Guid ProductId)> source, bool allowProductOnBothDirections = false)
+    private static void ValidateLines(IEnumerable<(int LineNumber, Guid ProductId)> source)
     {
         var lines = source.ToArray();
         if (lines.Length == 0 || lines.Any(line => line.LineNumber <= 0 || line.ProductId == Guid.Empty) || lines.Select(line => line.LineNumber).Distinct().Count() != lines.Length)
             throw new InventoryValidationException("The document requires valid, unique line numbers and products.");
-        if (!allowProductOnBothDirections && lines.Select(line => line.ProductId).Distinct().Count() != lines.Length)
+        if (lines.Select(line => line.ProductId).Distinct().Count() != lines.Length)
             throw new InventoryValidationException("A product cannot be repeated in this document.");
     }
 

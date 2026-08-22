@@ -41,6 +41,58 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
         while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.IsDBNull(2)?null:reader.GetString(2),reader.GetString(3),reader.GetString(4),reader.GetDecimal(5),reader.IsDBNull(6)?null:reader.GetDecimal(6),reader.IsDBNull(7)?null:reader.GetDecimal(7)));
         return new(items,query.Page,query.PageSize,total,Pages(total,query.PageSize));
     }
+
+    public async Task<ProductConversionProductPage> GetConversionProductsAsync(InventoryUserIdentity user, ProductConversionProductQuery query, CancellationToken token)
+    {
+        const string eligible = """
+            SELECT p.ProductId ProductId,COALESCE(p.ProductCode,p.Sku,N'') ProductCode,p.Reference Reference,
+                   p.Name ProductName,COALESCE(p.BaseUnitCode,N'UN') UnitCode,
+                   COALESCE(b.QuantityOnHand,0) QuantityOnHand,root.ProductId FamilyRootProductId,
+                   CAST(CASE WHEN childLink.ProductLinkId IS NULL THEN 1 ELSE childLink.ConversionFactor END AS DECIMAL(19,6)) ConversionFactor,
+                   root.ConversionMaximumLossPercent MaximumLossPercent
+            FROM dbo.Products p
+            LEFT JOIN dbo.ProductLinks childLink
+              ON childLink.BusinessId=p.BusinessId AND childLink.ChildProductId=p.ProductId
+             AND childLink.AllowsConversion=1 AND childLink.IsActive=1
+            INNER JOIN dbo.Products root
+              ON root.BusinessId=p.BusinessId AND root.ProductId=COALESCE(childLink.ParentProductId,p.ProductId)
+             AND root.IsActive=1 AND root.ManageStock=1 AND root.ConversionMaximumLossPercent IS NOT NULL
+            LEFT JOIN dbo.InventoryBalances b
+              ON b.BusinessId=p.BusinessId AND b.ProductId=p.ProductId AND b.WarehouseId=@WarehouseId
+            WHERE p.BusinessId=@BusinessId AND p.IsActive=1 AND p.ManageStock=1
+              AND (childLink.ProductLinkId IS NOT NULL OR EXISTS(
+                    SELECT 1 FROM dbo.ProductLinks familyLink
+                    WHERE familyLink.BusinessId=p.BusinessId AND familyLink.ParentProductId=p.ProductId
+                      AND familyLink.AllowsConversion=1 AND familyLink.IsActive=1))
+              AND (@FamilyRootProductId IS NULL OR root.ProductId=@FamilyRootProductId)
+              AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Reference LIKE @Pattern OR p.Name LIKE @Pattern OR EXISTS(
+                    SELECT 1 FROM dbo.ProductBarcodes barcode
+                    WHERE barcode.BusinessId=p.BusinessId AND barcode.ProductId=p.ProductId
+                      AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1))
+            """;
+        var sql = $"""
+            IF NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND IsActive=1 AND UseForSales=1)
+              THROW 51201,'La bodega no está habilitada como bodega de venta.',1;
+            SELECT COUNT(*) FROM ({eligible}) eligible;
+            SELECT * FROM ({eligible}) eligible
+            ORDER BY ProductName,ProductId OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            """;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(token);
+        await using var command = new SqlCommand(sql, connection);
+        AddCommon(command, user.BusinessId, query.WarehouseId, query.Search, query.Page, query.PageSize);
+        command.Parameters.AddWithValue("@FamilyRootProductId", (object?)query.FamilyRootProductId ?? DBNull.Value);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        await reader.ReadAsync(token);
+        var total = reader.GetInt32(0);
+        await reader.NextResultAsync(token);
+        var items = new List<ProductConversionProductItem>();
+        while (await reader.ReadAsync(token))
+            items.Add(new(reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2),
+                reader.GetString(3), reader.GetString(4), reader.GetDecimal(5), reader.GetGuid(6),
+                reader.GetDecimal(7), reader.GetDecimal(8)));
+        return new(items, query.Page, query.PageSize, total, Pages(total, query.PageSize));
+    }
     public async Task<IReadOnlyList<InventoryWarehouseOption>> GetWarehousesAsync(InventoryUserIdentity user, CancellationToken token)
     {
         const string sql = "SELECT WarehouseId,Code,Name FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND IsActive=1 AND UseForSales=1 ORDER BY Name;";
@@ -135,7 +187,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
     public async Task<InventoryOperationPage> GetOperationsAsync(InventoryUserIdentity user, InventoryOperationQuery query, bool includeCosts, CancellationToken token)
     {
         await using var connection=connections.Create(); await connection.OpenAsync(token); await using var command=new SqlCommand("dbo.InventoryOperationsSearch",connection){CommandType=CommandType.StoredProcedure}; AddCommon(command,user.BusinessId,query.WarehouseId,query.Search,query.Page,query.PageSize); command.Parameters.AddWithValue("@DocumentType",(object?)query.DocumentType??DBNull.Value); command.Parameters.AddWithValue("@Status",(object?)query.Status??DBNull.Value); command.Parameters.AddWithValue("@From",(object?)query.From??DBNull.Value); command.Parameters.AddWithValue("@To",(object?)query.To??DBNull.Value); command.Parameters.AddWithValue("@IncludeCosts",includeCosts);
-        await using var reader=await command.ExecuteReaderAsync(token); await reader.ReadAsync(token); var total=reader.GetInt32(0); await reader.NextResultAsync(token); var items=new List<InventoryOperationItem>(); while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.IsDBNull(2)?null:reader.GetString(2),reader.GetGuid(3),reader.GetString(4),reader.IsDBNull(5)?null:reader.GetGuid(5),reader.IsDBNull(6)?null:reader.GetString(6),reader.GetString(7),reader.GetString(8),reader.GetFieldValue<DateTimeOffset>(9),reader.GetInt32(10),reader.IsDBNull(11)?null:reader.GetDecimal(11)));
+        await using var reader=await command.ExecuteReaderAsync(token); await reader.ReadAsync(token); var total=reader.GetInt32(0); await reader.NextResultAsync(token); var items=new List<InventoryOperationItem>(); while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.IsDBNull(2)?null:reader.GetString(2),reader.GetGuid(3),reader.GetString(4),reader.IsDBNull(5)?null:reader.GetGuid(5),reader.IsDBNull(6)?null:reader.GetString(6),reader.GetString(7),reader.GetString(8),reader.GetFieldValue<DateTimeOffset>(9),reader.GetInt32(10),reader.IsDBNull(11)?null:reader.GetDecimal(11),reader.IsDBNull(12)?null:reader.GetDecimal(12),reader.IsDBNull(13)?null:reader.GetDecimal(13),reader.IsDBNull(14)?null:reader.GetDecimal(14),reader.IsDBNull(15)?null:reader.GetDecimal(15),reader.IsDBNull(16)?null:reader.GetDecimal(16)));
         return new(items,query.Page,query.PageSize,total,Pages(total,query.PageSize));
     }
 
@@ -149,13 +201,19 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                    d.DestinationWarehouseId,d.DestinationWarehouseName,d.ReasonCode,
                    d.ReasonDescription,d.ConversionType,d.BaseInventorySequence,d.Notes,
                    d.Status,d.OccurredAt,d.CreatedAt,d.AcceptedAt,d.ProcessedAt,
-                   CASE WHEN @IncludeCosts=1 THEN d.TotalValueChange END
+                   CASE WHEN @IncludeCosts=1 THEN d.TotalValueChange END,
+                   d.ConversionFamilyRootProductId,d.ConversionInputEquivalent,
+                   d.ConversionOutputEquivalent,d.ConversionLossQuantity,
+                   d.ConversionLossPercent,d.ConversionMaximumLossPercent
             FROM (
               SELECT o.InventoryOperationId DocumentId,o.DocumentType,o.DocumentNumber,
                      o.WarehouseId,w.Name WarehouseName,o.DestinationWarehouseId,
                      dw.Name DestinationWarehouseName,o.ReasonCode,o.ReasonDescription,
                      o.ConversionType,o.BaseInventorySequence,o.Notes,o.Status,o.OccurredAt,
-                     o.CreatedAt,o.AcceptedAt,o.ProcessedAt,o.TotalValueChange
+                     o.CreatedAt,o.AcceptedAt,o.ProcessedAt,o.TotalValueChange,
+                     o.ConversionFamilyRootProductId,o.ConversionInputEquivalent,
+                     o.ConversionOutputEquivalent,o.ConversionLossQuantity,
+                     o.ConversionLossPercent,o.ConversionMaximumLossPercent
               FROM dbo.InventoryOperations o
               INNER JOIN dbo.Warehouses w ON w.WarehouseId=o.WarehouseId AND w.UseForSales=1
               LEFT JOIN dbo.Warehouses dw ON dw.WarehouseId=o.DestinationWarehouseId
@@ -165,7 +223,8 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                      NULL,NULL,N'GOODS_RECEIPT',N'Recepción de mercancía',NULL,NULL,g.Notes,
                      g.Status,g.ReceivedAt,g.AcceptedAt,g.AcceptedAt,g.ProcessedAt,
                      COALESCE((SELECT SUM(m.ValueChange) FROM dbo.InventoryMovements m
-                               WHERE m.DocumentId=g.GoodsReceiptId),0)
+                               WHERE m.DocumentId=g.GoodsReceiptId),0),
+                     NULL,NULL,NULL,NULL,NULL,NULL
               FROM dbo.GoodsReceipts g
               INNER JOIN dbo.Warehouses w ON w.WarehouseId=g.WarehouseId AND w.UseForSales=1
               WHERE g.BusinessId=@BusinessId
@@ -177,17 +236,18 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                    CASE WHEN @IncludeCosts=1 THEN l.ExplicitUnitCost END,
                    l.AllocationWeight,
                    CASE WHEN @IncludeCosts=1 THEN l.ProcessedUnitCost END,
-                   CASE WHEN @IncludeCosts=1 THEN l.ProcessedValue END
+                   CASE WHEN @IncludeCosts=1 THEN l.ProcessedValue END,
+                   l.ConversionFactor,l.ConversionEquivalentQuantity
             FROM (
               SELECT l.InventoryOperationId DocumentId,l.LineNumber,l.Direction,l.ProductId,
                      l.ProductCodeSnapshot ProductCode,l.DescriptionSnapshot ProductName,
                      l.Quantity,l.PreCountQuantity,l.SystemQuantityAtBase,l.ExplicitUnitCost,l.AllocationWeight,
-                     l.ProcessedUnitCost,l.ProcessedValue
+                     l.ProcessedUnitCost,l.ProcessedValue,l.ConversionFactor,l.ConversionEquivalentQuantity
               FROM dbo.InventoryOperationLines l
               UNION ALL
               SELECT l.GoodsReceiptId,l.LineNumber,N'RECEIPT',l.ProductId,
                      COALESCE(p.ProductCode,p.Sku),l.DescriptionSnapshot,l.Quantity,
-                     NULL,NULL,l.UnitCost,NULL,l.UnitCost,l.LineTotal
+                     NULL,NULL,l.UnitCost,NULL,l.UnitCost,l.LineTotal,NULL,NULL
               FROM dbo.GoodsReceiptLines l
               INNER JOIN dbo.Products p ON p.ProductId=l.ProductId
             ) l
@@ -214,7 +274,13 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
             reader.IsDBNull(14) ? null : reader.GetDateTimeOffset(14),
             reader.IsDBNull(15) ? null : reader.GetDateTimeOffset(15),
             reader.IsDBNull(16) ? null : reader.GetDecimal(16),
-            Array.Empty<InventoryOperationDetailLine>());
+            Array.Empty<InventoryOperationDetailLine>(),
+            reader.IsDBNull(17) ? null : reader.GetGuid(17),
+            reader.IsDBNull(18) ? null : reader.GetDecimal(18),
+            reader.IsDBNull(19) ? null : reader.GetDecimal(19),
+            reader.IsDBNull(20) ? null : reader.GetDecimal(20),
+            reader.IsDBNull(21) ? null : reader.GetDecimal(21),
+            reader.IsDBNull(22) ? null : reader.GetDecimal(22));
 
         await reader.NextResultAsync(token);
         var lines = new List<InventoryOperationDetailLine>();
@@ -228,7 +294,9 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                 reader.IsDBNull(8) ? null : reader.GetDecimal(8),
                 reader.IsDBNull(9) ? null : reader.GetDecimal(9),
                 reader.IsDBNull(10) ? null : reader.GetDecimal(10),
-                reader.IsDBNull(11) ? null : reader.GetDecimal(11)));
+                reader.IsDBNull(11) ? null : reader.GetDecimal(11),
+                reader.IsDBNull(12) ? null : reader.GetDecimal(12),
+                reader.IsDBNull(13) ? null : reader.GetDecimal(13)));
         return detail with { Lines = lines };
     }
 

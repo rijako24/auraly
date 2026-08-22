@@ -72,6 +72,9 @@ export type InventoryOperationLine = {
   direction: Direction;
   salePrice: string;
   systemQuantity: number | null;
+  familyRootProductId?: string;
+  conversionFactor?: number;
+  maximumLossPercent?: number;
 };
 type Line = InventoryOperationLine;
 
@@ -287,6 +290,9 @@ export function InventoryOperationWorkspace({
         salePrice: product.saleUnitPrice?.toString() ?? "",
         direction: kind === "conversion" && current.length > 0 ? "OUTPUT" : "INPUT",
         systemQuantity: null,
+        familyRootProductId: product.familyRootProductId,
+        conversionFactor: product.conversionFactor,
+        maximumLossPercent: product.maximumLossPercent,
       },
     ]);
     window.requestAnimationFrame(() =>
@@ -450,7 +456,9 @@ export function InventoryOperationWorkspace({
         queryClient.invalidateQueries({ queryKey: ["inventory-balances"] }),
         queryClient.invalidateQueries({ queryKey: ["inventory-movements"] }),
         queryClient.invalidateQueries({ queryKey: ["inventory-operations"] }),
+        queryClient.invalidateQueries({ queryKey: ["inventory-conversions"] }),
         queryClient.invalidateQueries({ queryKey: ["inventory-operation-products"] }),
+        queryClient.invalidateQueries({ queryKey: ["inventory-product-picker"] }),
       ]);
     },
     onError: (error: { message?: string }) =>
@@ -472,9 +480,20 @@ export function InventoryOperationWorkspace({
     kind !== "conversion" ||
     (lines.some((line) => line.direction === "INPUT") &&
       lines.some((line) => line.direction === "OUTPUT") &&
+      lines.every((line) => line.familyRootProductId === lines[0]?.familyRootProductId && (line.conversionFactor ?? 0) > 0) &&
       (conversionType === "SPLIT"
         ? lines.filter((line) => line.direction === "INPUT").length === 1
         : lines.filter((line) => line.direction === "OUTPUT").length === 1));
+  const conversionInputEquivalent = conversionQuantity(lines.filter((line) => line.direction === "INPUT").reduce((total, line) => total + conversionQuantity(Number(line.quantity || 0) * (line.conversionFactor ?? 0)), 0));
+  const conversionOutputEquivalent = conversionQuantity(lines.filter((line) => line.direction === "OUTPUT").reduce((total, line) => total + conversionQuantity(Number(line.quantity || 0) * (line.conversionFactor ?? 0)), 0));
+  const conversionLoss = conversionQuantity(Math.max(0, conversionInputEquivalent - conversionOutputEquivalent));
+  const conversionLossPercent = conversionInputEquivalent > 0 ? conversionQuantity(conversionLoss / conversionInputEquivalent * 100) : 0;
+  const conversionMaximumLossPercent = lines[0]?.maximumLossPercent ?? 0;
+  const conversionInventoryValid = kind !== "conversion" || (
+    conversionOutputEquivalent <= conversionInputEquivalent &&
+    conversionLossPercent <= conversionMaximumLossPercent &&
+    lines.filter((line) => line.direction === "INPUT").every((line) => Number(line.quantity || 0) <= line.stock)
+  );
   const adjustmentValuationValid =
     kind !== "adjustment" ||
     lines.every((line) =>
@@ -485,7 +504,7 @@ export function InventoryOperationWorkspace({
     Boolean(warehouseId) &&
     Boolean(reason.trim()) &&
     lines.length > 0 &&
-    quantitiesValid && conversionValid && adjustmentValuationValid &&
+    quantitiesValid && conversionValid && conversionInventoryValid && adjustmentValuationValid &&
     (kind !== "transfer" ||
       (Boolean(destinationId) && destinationId !== warehouseId));
 
@@ -592,6 +611,8 @@ export function InventoryOperationWorkspace({
               warehouseId={warehouseId}
               selectedProductIds={selectedProductIds}
               disabled={!warehouseId || mutation.isPending}
+              conversionOnly={kind === "conversion"}
+              conversionFamilyRootProductId={kind === "conversion" ? lines[0]?.familyRootProductId : undefined}
               onSelect={addProduct}
             />
           )}
@@ -611,6 +632,14 @@ export function InventoryOperationWorkspace({
           />
           )}
           </div>
+
+          {kind === "conversion" && lines.length > 0 && <div className={`grid gap-3 rounded-xl border p-4 sm:grid-cols-4 ${conversionInventoryValid ? "border-emerald-200 bg-emerald-50/50" : "border-red-200 bg-red-50/60"}`}>
+            <ConversionMetric label="Entrada equivalente" value={conversionInputEquivalent} />
+            <ConversionMetric label="Salida equivalente" value={conversionOutputEquivalent} />
+            <ConversionMetric label="Merma" value={conversionLoss} detail={`${conversionLossPercent.toFixed(3)} %`} />
+            <ConversionMetric label="Máximo permitido" value={conversionMaximumLossPercent} detail="%" />
+            {!conversionInventoryValid && <p className="text-sm text-red-700 sm:col-span-4">La salida no puede superar la entrada, la merma debe quedar dentro del máximo configurado y cada consumo debe tener existencia suficiente.</p>}
+          </div>}
 
           <Field label="Observaciones">
             <Textarea value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={1000} />
@@ -640,6 +669,8 @@ export function InventoryProductPicker({
   disabled,
   onSelect,
   label = "Agregar productos",
+  conversionOnly = false,
+  conversionFamilyRootProductId,
 }: {
   businessId: string;
   warehouseId?: string;
@@ -647,6 +678,8 @@ export function InventoryProductPicker({
   disabled: boolean;
   onSelect: (product: InventoryProductItem) => void;
   label?: string;
+  conversionOnly?: boolean;
+  conversionFamilyRootProductId?: string;
 }) {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
@@ -655,8 +688,9 @@ export function InventoryProductPicker({
   const pickerRef = useRef<HTMLDivElement>(null);
 
   const query = useInfiniteQuery({
-    queryKey: ["inventory-product-picker", businessId, warehouseId ?? "catalog", search.trim()],
+    queryKey: ["inventory-product-picker", businessId, warehouseId ?? "catalog", conversionOnly, conversionFamilyRootProductId ?? "all-families", search.trim()],
     queryFn: async ({ pageParam }) => {
+      if (warehouseId && conversionOnly) return inventoryApi.conversionProducts({ warehouseId, familyRootProductId: conversionFamilyRootProductId, search: search.trim() || undefined, page: pageParam, pageSize: PRODUCT_PAGE_SIZE });
       if (warehouseId) return inventoryApi.products({ warehouseId, search: search.trim() || undefined, page: pageParam, pageSize: PRODUCT_PAGE_SIZE });
       const page = await productsApi.list(businessId, { page: pageParam, pageSize: PRODUCT_PAGE_SIZE, search: search.trim() || undefined, includeInactive: false });
       return { ...page, items: page.items.map((product) => ({ productId: product.productId, productCode: product.productCode ?? product.sku ?? "", reference: product.reference ?? null, productName: product.name, unitCode: "EA", quantityOnHand: product.stockQuantity ?? 0, averageUnitCost: null, saleUnitPrice: product.unitPrice })) };
@@ -668,7 +702,7 @@ export function InventoryProductPicker({
   const products = useMemo(() => query.data?.pages.flatMap((page) => page.items) ?? [], [query.data]);
   const totalCount = query.data?.pages[0]?.totalCount ?? 0;
 
-  useEffect(() => { setActiveIndex(0); listRef.current?.scrollTo({ top: 0 }); }, [search, warehouseId]);
+  useEffect(() => { setActiveIndex(0); listRef.current?.scrollTo({ top: 0 }); }, [search, warehouseId, conversionOnly, conversionFamilyRootProductId]);
   useEffect(() => {
     if (!open) return;
     const closeOnOutsidePointer = (event: PointerEvent) => {
@@ -726,7 +760,7 @@ export function InventoryProductPicker({
           : query.isError ? <div className="p-4 text-sm text-red-700"><p>No fue posible cargar los productos.</p><Button className="mt-3" size="sm" variant="outline" onClick={() => void query.refetch()}>Reintentar</Button></div>
           : products.length === 0 ? <p className="p-4 text-sm text-muted-foreground">No hay productos activos que coincidan con la búsqueda.</p>
           : <><div className="px-3 py-2 text-xs text-muted-foreground">{products.length.toLocaleString("es-CO")} de {totalCount.toLocaleString("es-CO")} productos</div>
-            {products.map((product, index) => <button key={product.productId} type="button" role="option" aria-selected={activeIndex === index} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActiveIndex(index)} onClick={() => choose(product)} className={`flex w-full items-center justify-between gap-4 rounded-lg px-3 py-2.5 text-left text-sm ${activeIndex === index ? "bg-emerald-50 text-emerald-950" : "hover:bg-muted"}`}><span className="min-w-0"><strong className="block truncate">{product.productName}</strong><small className="block truncate text-muted-foreground">{product.productCode}{product.reference ? ` · ${product.reference}` : ""}</small></span><span className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">Saldo {product.quantityOnHand}{selectedProductIds.has(product.productId) && <Check className="h-4 w-4 text-emerald-700" aria-label="Agregado" />}</span></button>)}
+            {products.map((product, index) => <button key={product.productId} type="button" role="option" aria-selected={activeIndex === index} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActiveIndex(index)} onClick={() => choose(product)} className={`flex w-full items-center justify-between gap-4 rounded-lg px-3 py-2.5 text-left text-sm ${activeIndex === index ? "bg-emerald-50 text-emerald-950" : "hover:bg-muted"}`}><span className="min-w-0"><strong className="block truncate">{product.productName}</strong><small className="block truncate text-muted-foreground">{product.productCode}{product.reference ? ` · ${product.reference}` : ""}{conversionOnly && product.conversionFactor ? ` · factor ${product.conversionFactor}` : ""}</small></span><span className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">Saldo {product.quantityOnHand}{selectedProductIds.has(product.productId) && <Check className="h-4 w-4 text-emerald-700" aria-label="Agregado" />}</span></button>)}
             {query.hasNextPage && <Button type="button" variant="ghost" className="mt-1 w-full" disabled={query.isFetchingNextPage} onMouseDown={(event) => event.preventDefault()} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Cargar 50 más</Button>}</>}
         </div>
       )}
@@ -745,4 +779,15 @@ function CaptureGrid({ kind, prepared, lines, update, remove, onKey }: { kind: O
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <div className="space-y-2"><Label>{label}</Label>{children}</div>;
+}
+
+function ConversionMetric({ label, value, detail }: { label: string; value: number; detail?: string }) {
+  return <div className="rounded-lg bg-background/80 p-3">
+    <p className="text-xs text-muted-foreground">{label}</p>
+    <p className="mt-1 text-lg font-semibold tabular-nums">{value.toLocaleString("es-CO", { maximumFractionDigits: 6 })} {detail && <span className="text-xs font-normal text-muted-foreground">{detail}</span>}</p>
+  </div>;
+}
+
+function conversionQuantity(value: number) {
+  return Math.round((value + Number.EPSILON) * 1_000_000) / 1_000_000;
 }

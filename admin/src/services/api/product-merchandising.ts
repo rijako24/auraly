@@ -4,8 +4,8 @@ export interface ProductBrand { productBrandId: string; name: string; isActive: 
 export interface ProductUnit { productUnitId: string; code: string; name: string; symbol: string; allowsFractionalQuantity: boolean; decimalPlaces: number; isActive: boolean }
 export interface ProductBarcode { value: string; isPrimary: boolean }
 export interface ProductScale { scaleCode: string; barcodePrefix: string; embeddedValueType: "Weight" | "Price"; valueStart: number; valueLength: number; decimalPlaces: number }
-export interface ProductLink { parentProductId: string; parentProductCode: string; parentProductName: string; sharesInventory: boolean; inventoryFactor: number | null; sharesPrice: boolean; priceFactor: number | null }
-export interface LinkedProduct { childProductId: string; childProductCode: string; childProductName: string; sharesInventory: boolean; inventoryFactor: number | null; sharesPrice: boolean; priceFactor: number | null }
+export interface ProductLink { parentProductId: string; parentProductCode: string; parentProductName: string; sharesInventory: boolean; inventoryFactor: number | null; sharesPrice: boolean; priceFactor: number | null; allowsConversion: boolean; conversionFactor: number | null }
+export interface LinkedProduct { childProductId: string; childProductCode: string; childProductName: string; sharesInventory: boolean; inventoryFactor: number | null; sharesPrice: boolean; priceFactor: number | null; allowsConversion: boolean; conversionFactor: number | null }
 export interface ProductMerchandising {
   productId: string;
   productCategoryId: string | null;
@@ -18,6 +18,7 @@ export interface ProductMerchandising {
   barcodes: ProductBarcode[];
   link: ProductLink | null;
   linkedProducts: LinkedProduct[];
+  conversionMaximumLossPercent: number | null;
 }
 export type SaveProductMerchandising = Omit<ProductMerchandising, "productId" | "link" | "linkedProducts"> & {
   link: null | Omit<ProductLink, "parentProductCode" | "parentProductName">;

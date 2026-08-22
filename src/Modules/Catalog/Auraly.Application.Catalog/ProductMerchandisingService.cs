@@ -75,6 +75,11 @@ public sealed class ProductMerchandisingService(
         if (request.Link is not null && request.LinkedProducts.Count > 0) throw new CatalogValidationException("A linked child cannot also be a root product.");
         if (request.Link is { SharesInventory: true } && request.ManageInventory)
             throw new CatalogValidationException("A product that shares its parent's inventory cannot control a separate inventory.");
+        if (request.ConversionMaximumLossPercent is < 0 or > 100)
+            throw new CatalogValidationException("The maximum conversion loss must be between zero and 100 percent.");
+        if (request.LinkedProducts.Any(link => link.AllowsConversion) &&
+            (!request.ManageInventory || request.ConversionMaximumLossPercent is null))
+            throw new CatalogValidationException("A convertible family must manage inventory and define its maximum conversion loss.");
         if (request.IsWeighable != (request.Scale is not null)) throw new CatalogValidationException("Scale capture requires exactly one scale configuration.");
         if (request.Barcodes.Any(x => string.IsNullOrWhiteSpace(x.Value)) ||
             request.Barcodes.Select(x => x.Value.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count() != request.Barcodes.Count ||
@@ -82,12 +87,16 @@ public sealed class ProductMerchandisingService(
             throw new CatalogValidationException("Product barcodes are invalid or duplicated.");
         if (request.Link is { } link && (link.ParentProductId == productId ||
             (link.SharesInventory && link.InventoryFactor is null or <= 0) ||
-            (link.SharesPrice && link.PriceFactor is null or <= 0)))
+            (link.SharesPrice && link.PriceFactor is null or <= 0) ||
+            (link.AllowsConversion && (link.SharesInventory || !request.ManageInventory || link.ConversionFactor is null or <= 0)) ||
+            (!link.AllowsConversion && link.ConversionFactor is not null)))
             throw new CatalogValidationException("The linked product configuration is invalid.");
         if (request.LinkedProducts.Select(x => x.ChildProductId).Distinct().Count() != request.LinkedProducts.Count ||
             request.LinkedProducts.Any(link => link.ChildProductId == productId ||
                 (link.SharesInventory && link.InventoryFactor is null or <= 0) ||
-                (link.SharesPrice && link.PriceFactor is null or <= 0)))
+                (link.SharesPrice && link.PriceFactor is null or <= 0) ||
+                (link.AllowsConversion && (link.SharesInventory || link.ConversionFactor is null or <= 0)) ||
+                (!link.AllowsConversion && link.ConversionFactor is not null)))
             throw new CatalogValidationException("The linked product list is invalid.");
     }
 

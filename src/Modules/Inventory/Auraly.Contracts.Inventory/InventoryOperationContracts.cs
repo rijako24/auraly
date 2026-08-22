@@ -116,7 +116,9 @@ public sealed record InventoryOperationLineSnapshot(
     decimal? PreCountQuantity,
     decimal? SystemQuantityAtBase,
     decimal? ExplicitUnitCost,
-    decimal? AllocationWeight);
+    decimal? AllocationWeight,
+    decimal? ConversionFactor = null,
+    decimal? ConversionEquivalentQuantity = null);
 
 public sealed record InventoryOperationDocumentPayload(
     Guid TenantId,
@@ -137,7 +139,13 @@ public sealed record InventoryOperationDocumentPayload(
     Guid? CostCenterId,
     long? BaseInventorySequence,
     string? Notes,
-    IReadOnlyList<InventoryOperationLineSnapshot> Lines);
+    IReadOnlyList<InventoryOperationLineSnapshot> Lines,
+    Guid? ConversionFamilyRootProductId = null,
+    decimal? ConversionInputEquivalent = null,
+    decimal? ConversionOutputEquivalent = null,
+    decimal? ConversionLossQuantity = null,
+    decimal? ConversionLossPercent = null,
+    decimal? ConversionMaximumLossPercent = null);
 
 public sealed record StockCountDraft(
     Guid DocumentId,
@@ -157,6 +165,18 @@ public sealed record InventoryOperationAcceptance(
 public sealed record InventoryProductQuery(Guid BusinessId, Guid WarehouseId, string? Search, int Page = 1, int PageSize = 50);
 public sealed record InventoryProductItem(Guid ProductId, string ProductCode, string? Reference, string ProductName, string UnitCode, decimal QuantityOnHand, decimal? AverageUnitCost, decimal? SaleUnitPrice);
 public sealed record InventoryProductPage(IReadOnlyList<InventoryProductItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);
+public sealed record ProductConversionProductQuery(Guid BusinessId, Guid WarehouseId, Guid? FamilyRootProductId, string? Search, int Page = 1, int PageSize = 50);
+public sealed record ProductConversionProductItem(
+    Guid ProductId,
+    string ProductCode,
+    string? Reference,
+    string ProductName,
+    string UnitCode,
+    decimal QuantityOnHand,
+    Guid FamilyRootProductId,
+    decimal ConversionFactor,
+    decimal MaximumLossPercent);
+public sealed record ProductConversionProductPage(IReadOnlyList<ProductConversionProductItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);
 public sealed record InventoryWarehouseOption(Guid WarehouseId, string Code, string Name);
 public sealed record WarehouseMasterItem(Guid WarehouseId, string Code, string Name, bool AllowNegativeStockSales,
     string PriceFormationCostBasis, bool IsSystem, bool UseForSales, bool UseForGoodsReceipts,
@@ -174,12 +194,20 @@ public sealed record InventoryMovementItem(Guid InventoryMovementId, Guid Wareho
 public sealed record InventoryMovementPage(IReadOnlyList<InventoryMovementItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);
 
 public sealed record InventoryOperationQuery(Guid BusinessId, Guid? WarehouseId, string? Search, string? DocumentType, string? Status, DateTimeOffset? From, DateTimeOffset? To, int Page = 1, int PageSize = 50);
-public sealed record InventoryOperationItem(Guid DocumentId, string DocumentType, string? DocumentNumber, Guid WarehouseId, string WarehouseName, Guid? DestinationWarehouseId, string? DestinationWarehouseName, string ReasonCode, string Status, DateTimeOffset OccurredAt, int LineCount, decimal? TotalValueChange);
+public sealed record InventoryOperationItem(
+    Guid DocumentId, string DocumentType, string? DocumentNumber, Guid WarehouseId,
+    string WarehouseName, Guid? DestinationWarehouseId, string? DestinationWarehouseName,
+    string ReasonCode, string Status, DateTimeOffset OccurredAt, int LineCount,
+    decimal? TotalValueChange, decimal? ConversionInputEquivalent = null,
+    decimal? ConversionOutputEquivalent = null, decimal? ConversionLossQuantity = null,
+    decimal? ConversionLossPercent = null, decimal? ConversionMaximumLossPercent = null);
 public sealed record InventoryOperationDetailLine(
     int LineNumber, string Direction, Guid ProductId, string ProductCode,
     string ProductName, decimal? Quantity, decimal? PreCountQuantity, decimal? SystemQuantityAtBase,
     decimal? ExplicitUnitCost, decimal? AllocationWeight,
-    decimal? ProcessedUnitCost, decimal? ProcessedValue);
+    decimal? ProcessedUnitCost, decimal? ProcessedValue,
+    decimal? ConversionFactor = null,
+    decimal? ConversionEquivalentQuantity = null);
 
 public sealed record InventoryOperationDetail(
     Guid DocumentId, string DocumentType, string? DocumentNumber,
@@ -188,7 +216,13 @@ public sealed record InventoryOperationDetail(
     string? ConversionType, long? BaseInventorySequence, string? Notes, string Status,
     DateTimeOffset OccurredAt, DateTimeOffset CreatedAt, DateTimeOffset? AcceptedAt,
     DateTimeOffset? ProcessedAt, decimal? TotalValueChange,
-    IReadOnlyList<InventoryOperationDetailLine> Lines);
+    IReadOnlyList<InventoryOperationDetailLine> Lines,
+    Guid? ConversionFamilyRootProductId = null,
+    decimal? ConversionInputEquivalent = null,
+    decimal? ConversionOutputEquivalent = null,
+    decimal? ConversionLossQuantity = null,
+    decimal? ConversionLossPercent = null,
+    decimal? ConversionMaximumLossPercent = null);
 
 public sealed record InventoryOperationPage(IReadOnlyList<InventoryOperationItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);
 public static class InventoryOperationContractSerializer

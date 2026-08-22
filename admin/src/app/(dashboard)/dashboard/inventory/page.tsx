@@ -2,7 +2,7 @@
 
 import { useDeferredValue, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Boxes, History, Search } from "lucide-react";
+import { AlertTriangle, Boxes, History, RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
 import { InventoryOperationWorkspace } from "@/components/inventory/inventory-operation-workspace";
 import { DataTablePagination } from "@/components/tables/data-table-pagination";
@@ -30,27 +30,28 @@ export default function InventoryPage(){
  const [search,setSearch]=useState(""); const deferredSearch=useDeferredValue(search.trim());
  const [warehouseId,setWarehouseId]=useState("all"); const [activeTab,setActiveTab]=useState("balances");
  const [pageSize,setPageSize]=useState(20);
- const [pages,setPages]=useState({balances:1,movements:1,operations:1}); const [detail,setDetail]=useState<InventoryOperationDetail>();
- const resetPages=()=>setPages({balances:1,movements:1,operations:1});
+ const [pages,setPages]=useState({balances:1,movements:1,operations:1,conversions:1}); const [detail,setDetail]=useState<InventoryOperationDetail>();
+ const resetPages=()=>setPages({balances:1,movements:1,operations:1,conversions:1});
  const warehouseOptions=useQuery({queryKey:["inventory-warehouses",businessId],queryFn:()=>inventoryApi.warehouses(),enabled:!!businessId});
  const balances=useQuery({queryKey:["inventory-balances",businessId,warehouseId,deferredSearch,pages.balances,pageSize],queryFn:()=>inventoryApi.balances({warehouseId:warehouseId==="all"?undefined:warehouseId,search:deferredSearch||undefined,page:pages.balances,pageSize}),enabled:!!businessId});
  const movements=useQuery({queryKey:["inventory-movements",businessId,warehouseId,deferredSearch,pages.movements,pageSize],queryFn:()=>inventoryApi.movements({warehouseId:warehouseId==="all"?undefined:warehouseId,search:deferredSearch||undefined,page:pages.movements,pageSize}),enabled:!!businessId});
  const operations=useQuery({queryKey:["inventory-operations",businessId,warehouseId,deferredSearch,pages.operations,pageSize],queryFn:()=>inventoryApi.operations({warehouseId:warehouseId==="all"?undefined:warehouseId,search:deferredSearch||undefined,page:pages.operations,pageSize}),enabled:!!businessId});
+ const conversions=useQuery({queryKey:["inventory-conversions",businessId,warehouseId,deferredSearch,pages.conversions,pageSize],queryFn:()=>inventoryApi.operations({warehouseId:warehouseId==="all"?undefined:warehouseId,search:deferredSearch||undefined,documentType:"ProductConversion",page:pages.conversions,pageSize}),enabled:!!businessId});
  const warehouses=(warehouseOptions.data??[]).map(x=>({id:x.warehouseId,name:x.name}));
- async function openOperationDetail(index:number){
-  const item=operations.data?.items[index];
-  if(!item)return;
-  try{setDetail(await inventoryApi.operationDetail(item.documentId));}
+ async function openOperationDetail(documentId?:string){
+  if(!documentId)return;
+  try{setDetail(await inventoryApi.operationDetail(documentId));}
   catch{toast.error("No fue posible consultar el detalle del documento.");}
  }
  if(!businessId)return <Empty text="Selecciona una sede para consultar su inventario."/>;
  return <div className="space-y-5 p-6"><header><p className="text-sm font-medium text-emerald-600">Operación y trazabilidad</p><h1 className="text-3xl font-bold tracking-tight">Inventario</h1><p className="text-muted-foreground">Existencias, kárdex y documentos procesados por el motor ordenado de Auraly.</p></header>
  <div className="grid gap-3 md:grid-cols-3"><Metric icon={Boxes} label="Referencias con saldo" value={String(balances.data?.totalCount??0)}/><Metric icon={History} label="Movimientos filtrados" value={String(movements.data?.totalCount??0)}/><Metric icon={AlertTriangle} label="Operaciones" value={String(operations.data?.totalCount??0)}/></div>
  <Card><CardContent className="flex flex-col gap-3 pt-6 md:flex-row"><div className="relative flex-1"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground"/><Input className="pl-9" value={search} onChange={e=>{setSearch(e.target.value);resetPages()}} placeholder="Producto, referencia, código, documento o motivo"/></div><Select value={warehouseId} onValueChange={v=>{setWarehouseId(v);resetPages()}}><SelectTrigger className="md:w-72"><SelectValue placeholder="Todas las bodegas"/></SelectTrigger><SelectContent><SelectItem value="all">Todas las bodegas</SelectItem>{warehouses.map(w=><SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}</SelectContent></Select></CardContent></Card>
- <Tabs value={activeTab} onValueChange={setActiveTab}><TabsList className="grid h-auto w-full grid-cols-4"><TabsTrigger value="balances">Existencias</TabsTrigger><TabsTrigger value="movements">Kárdex</TabsTrigger><TabsTrigger value="operations">Historial</TabsTrigger><TabsTrigger value="capture">Nueva operación</TabsTrigger></TabsList>
+ <Tabs value={activeTab} onValueChange={setActiveTab}><TabsList className="grid h-auto w-full grid-cols-2 sm:grid-cols-5"><TabsTrigger value="balances">Existencias</TabsTrigger><TabsTrigger value="movements">Kárdex</TabsTrigger><TabsTrigger value="operations">Historial</TabsTrigger><TabsTrigger value="conversions"><RefreshCw className="mr-2 h-4 w-4"/>Conversiones</TabsTrigger><TabsTrigger value="capture">Nueva operación</TabsTrigger></TabsList>
  <TabsContent value="balances" className="space-y-4"><BalanceTable items={balances.data?.items??[]} loading={balances.isLoading}/><Pager page={pages.balances} pageSize={pageSize} total={balances.data?.totalPages??0} totalItems={balances.data?.totalCount??0} setPage={page=>setPages(current=>({...current,balances:page}))} setPageSize={setPageSize}/></TabsContent>
  <TabsContent value="movements" className="space-y-4"><SimpleTable headers={["Fecha","Producto","Bodega","Movimiento","Cantidad","Saldo","Documento"]} rows={(movements.data?.items??[]).map(x=>[formatDateTime(x.occurredAt),`${x.productCode} · ${x.productName}`,x.warehouseName,humanLabel(x.movementType,movementLabels),<Signed key={x.inventoryMovementId} value={x.quantityChange}/>,fmt(x.quantityAfter),x.documentNumber??humanLabel(x.documentType,documentLabels)])} loading={movements.isLoading}/><Pager page={pages.movements} pageSize={pageSize} total={movements.data?.totalPages??0} totalItems={movements.data?.totalCount??0} setPage={page=>setPages(current=>({...current,movements:page}))} setPageSize={setPageSize}/></TabsContent>
- <TabsContent value="operations" className="space-y-4"><SimpleTable headers={["Fecha","Documento","Tipo","Bodega","Motivo","Estado","Líneas","Valor"]} rows={(operations.data?.items??[]).map(x=>[formatDateTime(x.occurredAt),x.documentNumber??"Borrador",documentLabels[x.documentType]??x.documentType,x.destinationWarehouseName?`${x.warehouseName} → ${x.destinationWarehouseName}`:x.warehouseName,humanLabel(x.reasonCode,reasonLabels),humanLabel(x.status,statusLabels),String(x.lineCount),x.totalValueChange==null?"Restringido":formatCurrency(x.totalValueChange)])} loading={operations.isLoading} onRowClick={openOperationDetail}/><Pager page={pages.operations} pageSize={pageSize} total={operations.data?.totalPages??0} totalItems={operations.data?.totalCount??0} setPage={page=>setPages(current=>({...current,operations:page}))} setPageSize={setPageSize}/></TabsContent>
+ <TabsContent value="operations" className="space-y-4"><SimpleTable headers={["Fecha","Documento","Tipo","Bodega","Motivo","Estado","Líneas","Valor"]} rows={(operations.data?.items??[]).map(x=>[formatDateTime(x.occurredAt),x.documentNumber??"Borrador",documentLabels[x.documentType]??x.documentType,x.destinationWarehouseName?`${x.warehouseName} → ${x.destinationWarehouseName}`:x.warehouseName,humanLabel(x.reasonCode,reasonLabels),humanLabel(x.status,statusLabels),String(x.lineCount),x.totalValueChange==null?"Restringido":formatCurrency(x.totalValueChange)])} loading={operations.isLoading} onRowClick={index=>void openOperationDetail(operations.data?.items[index]?.documentId)}/><Pager page={pages.operations} pageSize={pageSize} total={operations.data?.totalPages??0} totalItems={operations.data?.totalCount??0} setPage={page=>setPages(current=>({...current,operations:page}))} setPageSize={setPageSize}/></TabsContent>
+ <TabsContent value="conversions" className="space-y-4"><SimpleTable headers={["Fecha","Documento","Bodega","Entrada equivalente","Salida equivalente","Merma","Tolerancia","Estado"]} rows={(conversions.data?.items??[]).map(x=>[formatDateTime(x.occurredAt),x.documentNumber??"Borrador",x.warehouseName,x.conversionInputEquivalent==null?"—":fmt(x.conversionInputEquivalent),x.conversionOutputEquivalent==null?"—":fmt(x.conversionOutputEquivalent),x.conversionLossPercent==null?"—":`${fmt(x.conversionLossQuantity??0)} · ${fmt(x.conversionLossPercent)} %`,x.conversionMaximumLossPercent==null?"—":`${fmt(x.conversionMaximumLossPercent)} %`,humanLabel(x.status,statusLabels)])} loading={conversions.isLoading} onRowClick={index=>void openOperationDetail(conversions.data?.items[index]?.documentId)}/><Pager page={pages.conversions} pageSize={pageSize} total={conversions.data?.totalPages??0} totalItems={conversions.data?.totalCount??0} setPage={page=>setPages(current=>({...current,conversions:page}))} setPageSize={setPageSize}/></TabsContent>
  <TabsContent value="capture"><InventoryOperationWorkspace businessId={businessId} warehouses={warehouses} permissions={permissions}/></TabsContent></Tabs>
  <InventoryDetailDialog detail={detail} onClose={()=>setDetail(undefined)}/></div>
 }
@@ -60,6 +61,7 @@ function Signed({value}:{value:number}){return <span className={value<0?"font-se
 function InventoryDetailDialog({detail,onClose}:{detail?:InventoryOperationDetail;onClose:()=>void}){
  if(!detail)return null;
  const isCount=detail.documentType==="StockCount";
+ const isConversion=detail.documentType==="ProductConversion";
  return <Dialog open onOpenChange={value=>!value&&onClose()}><DialogContent className="flex max-h-[92dvh] max-w-5xl flex-col overflow-hidden p-0">
   <DialogHeader className="border-b px-6 py-5"><DialogTitle>{detail.documentNumber??"Documento en preparación"}</DialogTitle><DialogDescription>{documentLabels[detail.documentType]??detail.documentType} · documento inmutable y trazable</DialogDescription></DialogHeader>
   <div className="space-y-5 overflow-y-auto px-6 py-5">
@@ -73,10 +75,17 @@ function InventoryDetailDialog({detail,onClose}:{detail?:InventoryOperationDetai
     <DetailCard label="Valor" value={detail.totalValueChange==null?"Restringido":formatCurrency(detail.totalValueChange)}/>
     <DetailCard label="Procesado" value={detail.processedAt?formatDateTime(detail.processedAt):"Pendiente"}/>
    </div>
+   {isConversion&&<div className="grid gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4 sm:grid-cols-5">
+    <DetailCard label="Entrada equivalente" value={detail.conversionInputEquivalent==null?"—":fmt(detail.conversionInputEquivalent)}/>
+    <DetailCard label="Salida equivalente" value={detail.conversionOutputEquivalent==null?"—":fmt(detail.conversionOutputEquivalent)}/>
+    <DetailCard label="Merma" value={detail.conversionLossQuantity==null?"—":fmt(detail.conversionLossQuantity)}/>
+    <DetailCard label="Merma %" value={detail.conversionLossPercent==null?"—":`${fmt(detail.conversionLossPercent)} %`}/>
+    <DetailCard label="Máximo" value={detail.conversionMaximumLossPercent==null?"—":`${fmt(detail.conversionMaximumLossPercent)} %`}/>
+   </div>}
    <div className="overflow-x-auto rounded-2xl border"><table className="w-full min-w-[850px] text-sm">
     <thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-3 text-left">Producto</th><th className="px-4 py-3 text-left">Movimiento</th>{isCount&&<th className="px-4 py-3 text-right">Existencia sistema</th>}<th className="px-4 py-3 text-right">{isCount?"Preconteo":"Saldo base"}</th><th className="px-4 py-3 text-right">{isCount?"Cantidad contada":"Cantidad"}</th>{isCount&&<th className="px-4 py-3 text-right">Diferencia</th>}<th className="px-4 py-3 text-right">Valor unitario</th><th className="px-4 py-3 text-right">Valor total</th></tr></thead>
     <tbody className="divide-y">{detail.lines.map(line=><tr key={line.lineNumber}>
-     <td className="px-4 py-3"><p>{line.productName}</p><p className="text-xs text-muted-foreground">{line.productCode} · Línea {line.lineNumber}</p></td>
+     <td className="px-4 py-3"><p>{line.productName}</p><p className="text-xs text-muted-foreground">{line.productCode} · Línea {line.lineNumber}{isConversion&&line.conversionFactor!=null?` · factor ${fmt(line.conversionFactor)} · equivalente ${fmt(line.conversionEquivalentQuantity??0)}`:""}</p></td>
      <td className="px-4 py-3">{directionLabel(line.direction)}</td>
      {isCount&&<td className="px-4 py-3 text-right tabular-nums">{line.systemQuantityAtBase==null?"—":fmt(line.systemQuantityAtBase)}</td>}
      <td className="px-4 py-3 text-right tabular-nums">{isCount?(line.preCountQuantity==null?"—":fmt(line.preCountQuantity)):(line.systemQuantityAtBase==null?"—":fmt(line.systemQuantityAtBase))}</td>
