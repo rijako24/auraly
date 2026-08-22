@@ -220,7 +220,6 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         var publishedSignal = createdSignal;
         var priceListId = Guid.NewGuid();
         var listItemId = Guid.NewGuid();
-        var channelRuleId = Guid.NewGuid();
         var listCustomerId = Guid.NewGuid();
         var channelCustomerId = Guid.NewGuid();
         var listPartyId = Guid.NewGuid();
@@ -234,9 +233,9 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             INSERT dbo.PriceListItems
               (PriceListItemId,PriceListId,ProductId,MinimumQuantity,Amount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
               VALUES(@ListItem,@List,@Product,1,11000,N'COP',SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET());
-            INSERT dbo.PriceChannelRules
-              (PriceChannelRuleId,PriceChannelId,RuleKind,AppliesTo,NumericValue,ValidFrom,IsActive,CreatedAt)
-              VALUES(@ChannelRule,@Channel,N'PercentageVariation',N'AllProducts',10,SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET());
+            UPDATE dbo.PriceChannels
+              SET Strategy=N'PercentageOverBasePrice',Value=10
+              WHERE PriceChannelId=@Channel AND BusinessId=@Business;
             INSERT dbo.Parties
               (PartyId,TenantId,PartyType,IdentificationCountryId,IdentificationTypeCode,
                Identification,NormalizedIdentification,DisplayName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
@@ -262,7 +261,6 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             new SqlParameter("@ListParty", listPartyId),
             new SqlParameter("@ChannelParty", channelPartyId),
             new SqlParameter("@ListItem", listItemId),
-            new SqlParameter("@ChannelRule", channelRuleId),
             new SqlParameter("@Channel", priceChannelId),
             new SqlParameter("@Product", created.ProductId),
             new SqlParameter("@ListCustomer", listCustomerId),

@@ -36,9 +36,9 @@ test("listas y canales administra condiciones y cada guardado cierra su modal", 
       return;
     }
     if (request.method() === "POST") {
-      const body = request.postDataJSON() as { kind: "PriceList" | "PriceChannel"; name: string; priceVariationPercent?: number; items?: unknown[] };
+      const body = request.postDataJSON() as { kind: "PriceList" | "PriceChannel"; name: string; channelStrategy?: string; channelValue?: number | null; items?: unknown[] };
       createdRequest = body as unknown as Record<string, unknown>;
-      const created = { id: crypto.randomUUID(), kind: body.kind, code: "LST-AUTO", name: body.name, isActive: true, createdAt: new Date().toISOString(), productCount: body.items?.length ?? 0, customerCount: 0, priceVariationPercent: body.priceVariationPercent ?? null };
+      const created = { id: crypto.randomUUID(), kind: body.kind, code: body.kind === "PriceList" ? "LST-AUTO" : "CNL-AUTO", name: body.name, isActive: true, createdAt: new Date().toISOString(), productCount: body.items?.length ?? 0, customerCount: 0, strategy: body.channelStrategy ?? null, value: body.channelValue ?? null };
       segments = [...segments, created];
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(created) });
       return;
@@ -117,4 +117,20 @@ test("listas y canales administra condiciones y cada guardado cierra su modal", 
   await expect(itemDialog).toBeHidden();
   await expect(detailDialog).toBeVisible();
   expect(savedItem).toMatchObject({ amount: 29500, minimumQuantity: 12, excluded: false });
+
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Nueva lista o canal" }).click();
+  const channelDialog = page.getByRole("dialog", { name: "Nueva lista o canal" });
+  await channelDialog.getByRole("button", { name: "Canal" }).click();
+  await expect(channelDialog.getByRole("button", { name: "% sobre precio público" })).toBeVisible();
+  await expect(channelDialog.getByRole("button", { name: "% sobre costo promedio" })).toBeVisible();
+  await expect(channelDialog.getByRole("button", { name: "Margen sobre costo promedio" })).toBeVisible();
+  await expect(channelDialog.getByRole("button", { name: "Vender al costo promedio" })).toBeVisible();
+  await expect(channelDialog.getByRole("button", { name: "Precio especial por producto" })).toBeVisible();
+  await channelDialog.getByText("Nombre *", { exact: true }).locator("..").getByRole("textbox").fill("Distribuidores costo");
+  await channelDialog.getByRole("button", { name: "Margen sobre costo promedio" }).click();
+  await channelDialog.getByText("Margen objetivo (%)", { exact: true }).locator("..").locator("input").fill("22");
+  await channelDialog.getByRole("button", { name: "Crear canal" }).click();
+  await expect(channelDialog).toBeHidden();
+  expect(createdRequest).toMatchObject({ kind: "PriceChannel", name: "Distribuidores costo", channelStrategy: "FixedMarginOverAverageCost", channelValue: 22 });
 });

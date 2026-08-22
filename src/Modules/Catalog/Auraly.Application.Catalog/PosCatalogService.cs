@@ -45,7 +45,7 @@ public sealed class PosCatalogService(ICatalogStore store, TimeProvider timeProv
         CancellationToken ct)
     {
         RequireSync(device);
-        return store.PricingSnapshotAsync(device.DeviceId, device.TenantId, device.BusinessId, ct);
+        return store.PricingSnapshotAsync(device.DeviceId, device.TenantId, device.BusinessId, device.WarehouseId, ct);
     }
     public Task<InventoryAvailabilityResponse> AvailabilityAsync(
         CatalogDeviceIdentity device,

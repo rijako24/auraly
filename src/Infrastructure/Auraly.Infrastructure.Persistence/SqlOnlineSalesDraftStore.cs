@@ -102,7 +102,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
             connection, transaction, state, productId,
             totalQuantity, cancellationToken);
         var price = await ResolvePriceAsync(
-            connection, transaction, state.BusinessId, state.CustomerId,
+            connection, transaction, state.BusinessId, state.WarehouseId, state.CustomerId,
             productId, totalQuantity, product.UnitPrice,
             product.CurrencyCode, cancellationToken);
         if (existing is null)
@@ -197,7 +197,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
             connection, transaction, state, line.ProductId,
             quantity, cancellationToken);
         var price = await ResolvePriceAsync(
-            connection, transaction, state.BusinessId, state.CustomerId,
+            connection, transaction, state.BusinessId, state.WarehouseId, state.CustomerId,
             line.ProductId, quantity, line.BaseUnitPrice,
             line.CurrencyCode, cancellationToken);
         var affected = await ExecuteAsync(connection, transaction, """
@@ -362,7 +362,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
         foreach (var line in lines)
         {
             var price = await ResolvePriceAsync(
-                connection, transaction, state.BusinessId, customerId,
+                connection, transaction, state.BusinessId, state.WarehouseId, customerId,
                 line.ProductId, line.Quantity, line.BaseUnitPrice,
                 line.CurrencyCode, cancellationToken);
             await ExecuteAsync(connection, transaction, """
@@ -812,6 +812,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
         SqlConnection connection,
         SqlTransaction transaction,
         Guid businessId,
+        Guid warehouseId,
         Guid? customerId,
         Guid productId,
         decimal quantity,
@@ -873,25 +874,34 @@ public sealed partial class SqlOnlineSalesDraftStore(
             await using var channel = connection.CreateCommand();
             channel.Transaction = transaction;
             channel.CommandText = """
-                SELECT COALESCE(rule.NumericValue,0)
+                SELECT CONVERT(decimal(19,4),ROUND(CASE channel.Strategy
+                    WHEN N'PercentageOverBasePrice' THEN @BaseAmount*(1+COALESCE(channel.Value,0)/100)
+                    WHEN N'PercentageOverAverageCost' THEN cost.Amount*(1+COALESCE(channel.Value,0)/100)
+                    WHEN N'FixedMarginOverAverageCost' THEN cost.Amount/(1-COALESCE(channel.Value,0)/100)
+                    WHEN N'SellAtAverageCost' THEN cost.Amount
+                    WHEN N'FixedSpecialPrice' THEN special.Amount END,4))
                 FROM dbo.PriceChannels channel
-                OUTER APPLY(SELECT TOP(1) currentRule.NumericValue
-                            FROM dbo.PriceChannelRules currentRule
-                            WHERE currentRule.PriceChannelId=channel.PriceChannelId
-                              AND currentRule.RuleKind=N'PercentageVariation' AND currentRule.AppliesTo=N'AllProducts'
-                              AND currentRule.IsActive=1 AND currentRule.ValidFrom<=SYSDATETIMEOFFSET()
-                              AND (currentRule.ValidUntil IS NULL OR currentRule.ValidUntil>SYSDATETIMEOFFSET())
-                            ORDER BY currentRule.ValidFrom DESC) rule
+                OUTER APPLY(SELECT COALESCE(MAX(NULLIF(balance.AverageUnitCost,0)),MAX(price.CostBasisAmount),0) Amount
+                    FROM dbo.ProductPrices price
+                    LEFT JOIN dbo.InventoryBalances balance ON balance.BusinessId=price.BusinessId AND balance.ProductId=price.ProductId AND balance.WarehouseId=@WarehouseId
+                    WHERE price.BusinessId=@BusinessId AND price.ProductId=@ProductId AND price.IsActive=1) cost
+                OUTER APPLY(SELECT TOP(1) item.Amount FROM dbo.ResolvedPriceChannelItems item
+                    WHERE item.PriceChannelId=channel.PriceChannelId AND item.ProductId=@ProductId AND item.IsActive=1
+                      AND item.ValidFrom<=SYSDATETIMEOFFSET() AND(item.ValidUntil IS NULL OR item.ValidUntil>SYSDATETIMEOFFSET())
+                    ORDER BY item.ValidFrom DESC) special
+                LEFT JOIN dbo.PriceChannelExclusions exclusion ON exclusion.PriceChannelId=channel.PriceChannelId AND exclusion.ProductId=@ProductId
                 WHERE channel.PriceChannelId=@SourceId AND channel.BusinessId=@BusinessId AND channel.IsActive=1
+                  AND exclusion.ProductId IS NULL AND(channel.Strategy<>N'FixedSpecialPrice' OR special.Amount IS NOT NULL)
                 ;
                 """;
             channel.Parameters.AddRange([
-                P("@SourceId", channelId), P("@BusinessId", businessId)
+                P("@SourceId", channelId), P("@BusinessId", businessId),
+                P("@WarehouseId", warehouseId), P("@ProductId", productId), P("@BaseAmount", baseAmount)
             ]);
             await using var reader = await channel.ExecuteReaderAsync(ct);
             if (await reader.ReadAsync(ct))
                 return new(
-                    decimal.Round(baseAmount * (1m + reader.GetDecimal(0) / 100m), 4), baseCurrency,
+                    reader.GetDecimal(0), baseCurrency,
                     "PriceChannel", null, channelId);
         }
         return new(baseAmount, baseCurrency, "Base", listId, channelId);

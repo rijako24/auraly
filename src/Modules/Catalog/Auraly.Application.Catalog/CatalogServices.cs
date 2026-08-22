@@ -17,7 +17,7 @@ public interface ICatalogStore
     Task<InventoryAvailabilityResponse> AvailabilityAsync(
         Guid deviceId, Guid tenantId, Guid businessId,
         InventoryAvailabilityRequest request, CancellationToken ct);
-    Task<PosPricingSnapshot> PricingSnapshotAsync(Guid deviceId, Guid tenantId, Guid businessId, CancellationToken ct);
+    Task<PosPricingSnapshot> PricingSnapshotAsync(Guid deviceId, Guid tenantId, Guid businessId, Guid warehouseId, CancellationToken ct);
     Task<IReadOnlyList<TaxProfileSummary>> ListTaxProfilesAsync(CatalogUserIdentity user, bool includeInactive, CancellationToken ct);
     Task<TaxProfileSummary> SaveTaxProfileAsync(CatalogUserIdentity user, Guid? taxProfileId, SaveTaxProfileRequest request, DateTimeOffset now, CancellationToken ct);
     Task<ProductTaxConfiguration?> GetProductTaxConfigurationAsync(CatalogUserIdentity user, Guid productId, CancellationToken ct);

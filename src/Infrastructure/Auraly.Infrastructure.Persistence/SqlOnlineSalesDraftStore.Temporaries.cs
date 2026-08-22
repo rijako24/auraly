@@ -88,7 +88,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             {
                 var item = items[index];
                 var resolved = await ResolvePriceAsync(connection, transaction, scope.BusinessId,
-                    request.CustomerId, item.ProductId, 1m, item.UnitPrice, item.CurrencyCode,
+                    scope.WarehouseId, request.CustomerId, item.ProductId, 1m, item.UnitPrice, item.CurrencyCode,
                     cancellationToken);
                 items[index] = item with { UnitPrice = resolved.Amount, CurrencyCode = resolved.CurrencyCode, PriceSource = resolved.Source };
             }
