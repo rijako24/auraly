@@ -34,17 +34,22 @@ type ItemDraft = {
 
 export function PriceSegmentsManager() {
   const client = useQueryClient();
+  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const permissions = useAuthStore((state) => state.user?.permissions ?? []);
   const canManage = permissions.includes("pricing.segments.manage");
   const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [selected, setSelected] = useState<PriceSegmentSummary | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [draft, setDraft] = useState<ItemDraft | null>(null);
   const [deleteItem, setDeleteItem] = useState<PriceSegmentItem | null>(null);
   const [kind, setKind] = useState<PriceSegmentKind>("PriceList");
-  const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [channelVariation, setChannelVariation] = useState(0);
+  const [channelMode, setChannelMode] = useState<"Public" | "Discount" | "Surcharge">("Public");
+  const [channelMagnitude, setChannelMagnitude] = useState(0);
+  const [createItems, setCreateItems] = useState<ItemDraft[]>([]);
+  const [createItem, setCreateItem] = useState<ItemDraft>(emptyDraft());
 
   const segments = useQuery({ queryKey: ["price-segments"], queryFn: priceSegmentsApi.list });
   const items = useQuery({
@@ -54,12 +59,26 @@ export function PriceSegmentsManager() {
   });
 
   const create = useMutation({
-    mutationFn: () => priceSegmentsApi.create({ kind, code: code.trim(), name: name.trim() }),
-    onSuccess: async () => {
+    mutationFn: async () => {
+      const variation = channelMode === "Discount" ? -channelMagnitude : channelMode === "Surcharge" ? channelMagnitude : 0;
+      return priceSegmentsApi.create({
+        kind,
+        name: name.trim(),
+        priceVariationPercent: kind === "PriceChannel" ? variation : undefined,
+        items: kind === "PriceList" ? createItems.map((item) => ({ productId: item.productId, amount: item.amount, minimumQuantity: item.minimumQuantity, validFrom: item.validFrom || null, validUntil: item.validUntil || null })) : undefined,
+      });
+    },
+    onSuccess: async (created) => {
       await client.invalidateQueries({ queryKey: ["price-segments"] });
       setCreateOpen(false);
-      setCode("");
       setName("");
+      setChannelMode("Public");
+      setChannelMagnitude(0);
+      setCreateItems([]);
+      setCreateItem(emptyDraft());
+      setSelected(created);
+      setChannelVariation(created.priceVariationPercent ?? 0);
+      setDetailOpen(true);
       toast.success(kind === "PriceList" ? "Lista de precios creada." : "Canal comercial creado.");
     },
     onError: (error: { message?: string }) => toast.error(error.message ?? "No fue posible crear el segmento."),
@@ -85,6 +104,7 @@ export function PriceSegmentsManager() {
         client.invalidateQueries({ queryKey: ["price-segments", selected?.kind, selected?.id] }),
       ]);
       setDraft(null);
+      setDetailOpen(true);
       toast.success("Condición de precio guardada.");
     },
     onError: (error: { message?: string }) => toast.error(error.message ?? "No fue posible guardar la condición."),
@@ -101,6 +121,7 @@ export function PriceSegmentsManager() {
         client.invalidateQueries({ queryKey: ["price-segments", selected?.kind, selected?.id] }),
       ]);
       setDeleteItem(null);
+      setDetailOpen(true);
       toast.success("Producto retirado del segmento.");
     },
     onError: (error: { message?: string }) => toast.error(error.message ?? "No fue posible retirar el producto."),
@@ -122,8 +143,17 @@ export function PriceSegmentsManager() {
   const filtered = useMemo(() => {
     const term = search.trim().toLocaleLowerCase("es-CO");
     return (segments.data ?? []).filter((segment) =>
-      !term || segment.name.toLocaleLowerCase("es-CO").includes(term) || segment.code.toLocaleLowerCase("es-CO").includes(term));
+      !term || segment.name.toLocaleLowerCase("es-CO").includes(term));
   }, [search, segments.data]);
+
+  function addCreateItem() {
+    if (!createItem.productId || createItem.amount <= 0 || createItem.minimumQuantity <= 0) return;
+    setCreateItems((current) => {
+      const duplicate = current.findIndex((item) => item.productId === createItem.productId && item.minimumQuantity === createItem.minimumQuantity);
+      return duplicate < 0 ? [...current, createItem] : current.map((item, index) => index === duplicate ? createItem : item);
+    });
+    setCreateItem(emptyDraft());
+  }
 
   return <div className="space-y-6">
     <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -139,28 +169,19 @@ export function PriceSegmentsManager() {
       <CardContent className="pt-6">
         <div className="relative mb-5">
           <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-          <Input className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nombre o código" />
+          <Input className="pl-9" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nombre" />
         </div>
         <Tabs defaultValue="PriceList">
           <TabsList><TabsTrigger value="PriceList">Listas</TabsTrigger><TabsTrigger value="PriceChannel">Canales</TabsTrigger></TabsList>
           {(["PriceList", "PriceChannel"] as PriceSegmentKind[]).map((tab) =>
             <TabsContent key={tab} value={tab} className="mt-5">
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <div className="overflow-hidden rounded-xl border">
+                <table className="w-full text-sm"><thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-3 text-left">Nombre</th><th className="px-4 py-3 text-right">{tab === "PriceList" ? "Productos" : "Regla"}</th><th className="px-4 py-3 text-right">Clientes</th><th className="px-4 py-3 text-right">Estado</th></tr></thead><tbody>
                 {filtered.filter((segment) => segment.kind === tab).map((segment) =>
-                  <button key={segment.id} type="button" className="group rounded-2xl border bg-background p-5 text-left transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md" onClick={() => { setSelected(segment); setChannelVariation(segment.priceVariationPercent ?? 0); }}>
-                    <div className="flex items-start justify-between gap-3">
-                      <span className="grid h-11 w-11 place-items-center rounded-xl bg-primary/10 text-primary">{tab === "PriceList" ? <Layers3 className="h-5 w-5" /> : <Radio className="h-5 w-5" />}</span>
-                      <Badge variant={segment.isActive ? "secondary" : "outline"}>{segment.isActive ? "Activo" : "Inactivo"}</Badge>
-                    </div>
-                    <h2 className="mt-4 font-semibold">{segment.name}</h2>
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{segment.code}</p>
-                    <div className="mt-5 grid grid-cols-2 gap-3 border-t pt-4 text-sm">
-                      <span><b className="block text-lg text-foreground">{segment.kind === "PriceList" ? segment.productCount : `${segment.priceVariationPercent && segment.priceVariationPercent > 0 ? "+" : ""}${segment.priceVariationPercent ?? 0} %`}</b><small className="text-muted-foreground">{segment.kind === "PriceList" ? "Productos" : "Variación general"}</small></span>
-                      <span><b className="block text-lg text-foreground">{segment.customerCount}</b><small className="text-muted-foreground">Clientes</small></span>
-                    </div>
-                  </button>)}
+                  <tr key={segment.id} className="cursor-pointer border-t transition hover:bg-muted/40" onClick={() => { setSelected(segment); setDetailOpen(true); setChannelVariation(segment.priceVariationPercent ?? 0); }}><td className="px-4 py-4 font-semibold">{segment.name}</td><td className="px-4 py-4 text-right tabular-nums">{segment.kind === "PriceList" ? segment.productCount : `${segment.priceVariationPercent && segment.priceVariationPercent > 0 ? "+" : ""}${segment.priceVariationPercent ?? 0} %`}</td><td className="px-4 py-4 text-right tabular-nums">{segment.customerCount}</td><td className="px-4 py-4 text-right"><Badge variant={segment.isActive ? "secondary" : "outline"}>{segment.isActive ? "Activo" : "Inactivo"}</Badge></td></tr>)}
                 {!segments.isLoading && filtered.filter((segment) => segment.kind === tab).length === 0 &&
-                  <div className="col-span-full rounded-2xl border border-dashed p-12 text-center text-muted-foreground">Sin datos</div>}
+                  <tr><td colSpan={4} className="p-12 text-center text-muted-foreground">Sin datos</td></tr>}
+                </tbody></table>
               </div>
             </TabsContent>)}
         </Tabs>
@@ -168,24 +189,25 @@ export function PriceSegmentsManager() {
     </Card>
 
     <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-      <DialogContent>
+      <DialogContent className="max-h-[92dvh] max-w-4xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Nueva lista o canal</DialogTitle>
-          <DialogDescription>Elige cómo se aplicará el precio y asigna un código fácil de reconocer.</DialogDescription>
+          <DialogDescription>Crea el segmento y configúralo de una vez. El identificador interno se genera automáticamente.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-2">
             <Button type="button" variant={kind === "PriceList" ? "default" : "outline"} onClick={() => setKind("PriceList")}><Layers3 className="mr-2 h-4 w-4" />Lista</Button>
             <Button type="button" variant={kind === "PriceChannel" ? "default" : "outline"} onClick={() => setKind("PriceChannel")}><Radio className="mr-2 h-4 w-4" />Canal</Button>
           </div>
-          <div className="space-y-2"><Label>Código *</Label><Input value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="MAYORISTA" maxLength={32} /></div>
           <div className="space-y-2"><Label>Nombre *</Label><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Mayoristas" maxLength={120} /></div>
+          {kind === "PriceList" && <div className="space-y-4 rounded-2xl border bg-muted/15 p-4"><div><h3 className="font-semibold">Productos y precios por cantidad</h3><p className="text-sm text-muted-foreground">Agrega el mismo producto varias veces para definir precios desde 1, 3, 5 o cualquier cantidad.</p></div>{businessId && <InventoryProductPicker businessId={businessId} selectedProductIds={new Set()} disabled={create.isPending} label="Producto" onSelect={(product) => setCreateItem({ ...createItem, productId: product.productId, productCode: product.productCode, productName: product.productName, amount: product.saleUnitPrice ?? 0 })} />}{createItem.productId && <div className="grid gap-3 rounded-xl border bg-background p-3 sm:grid-cols-[1fr_170px_150px_auto] sm:items-end"><div><Label>Producto</Label><p className="mt-2 font-medium">{createItem.productName}</p><p className="text-xs text-muted-foreground">{createItem.productCode || "Sin código"}</p></div><div className="space-y-2"><Label>Precio</Label><FormattedNumberInput kind="currency" value={createItem.amount} invalid={createItem.amount <= 0} onValueChange={(value) => setCreateItem({ ...createItem, amount: value ?? 0 })} /></div><div className="space-y-2"><Label>Desde cantidad</Label><FormattedNumberInput value={createItem.minimumQuantity} invalid={createItem.minimumQuantity <= 0} onValueChange={(value) => setCreateItem({ ...createItem, minimumQuantity: value ?? 0 })} /></div><Button type="button" variant="secondary" disabled={createItem.amount <= 0 || createItem.minimumQuantity <= 0} onClick={addCreateItem}>Agregar precio</Button></div>}{createItems.length > 0 && <div className="overflow-hidden rounded-xl border bg-background"><table className="w-full text-sm"><thead className="bg-muted/60"><tr><th className="px-3 py-2 text-left">Producto</th><th className="px-3 py-2 text-right">Desde</th><th className="px-3 py-2 text-right">Precio</th><th className="w-12" /></tr></thead><tbody>{createItems.map((item, index) => <tr key={`${item.productId}-${item.minimumQuantity}`} className="border-t"><td className="px-3 py-2"><b>{item.productName}</b><small className="block text-muted-foreground">{item.productCode}</small></td><td className="px-3 py-2 text-right">{item.minimumQuantity}</td><td className="px-3 py-2 text-right font-medium">{formatCurrency(item.amount)}</td><td><Button type="button" size="icon" variant="ghost" aria-label={`Eliminar precio de ${item.productName}`} onClick={() => setCreateItems((current) => current.filter((_, currentIndex) => currentIndex !== index))}><Trash2 className="h-4 w-4 text-destructive" /></Button></td></tr>)}</tbody></table></div>}</div>}
+          {kind === "PriceChannel" && <div className="space-y-3"><Label>Modo de precio</Label><div className="grid grid-cols-3 gap-2"><Button type="button" variant={channelMode === "Public" ? "default" : "outline"} onClick={() => setChannelMode("Public")}>Precio público</Button><Button type="button" variant={channelMode === "Discount" ? "default" : "outline"} onClick={() => setChannelMode("Discount")}>Descuento</Button><Button type="button" variant={channelMode === "Surcharge" ? "default" : "outline"} onClick={() => setChannelMode("Surcharge")}>Recargo</Button></div>{channelMode !== "Public" && <div className="space-y-2"><Label>{channelMode === "Discount" ? "Descuento" : "Recargo"} (%)</Label><FormattedNumberInput kind="percent" value={channelMagnitude} invalid={channelMagnitude < 0 || channelMagnitude > (channelMode === "Discount" ? 100 : 1000)} onValueChange={(value) => setChannelMagnitude(Math.abs(value ?? 0))} /></div>}<p className="text-xs text-muted-foreground">Se aplica al precio público cuando el cliente tenga este canal.</p></div>}
         </div>
-        <DialogFooter><Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancelar</Button><Button disabled={!code.trim() || !name.trim() || create.isPending} onClick={() => create.mutate()}>{create.isPending ? "Creando…" : "Crear"}</Button></DialogFooter>
+        <DialogFooter><Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancelar</Button><Button disabled={!name.trim() || create.isPending || channelMagnitude > (channelMode === "Discount" ? 100 : 1000)} onClick={() => create.mutate()}>{create.isPending ? "Guardando…" : kind === "PriceList" ? `Crear lista${createItems.length ? ` · ${createItems.length} precios` : ""}` : "Crear canal"}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
 
-    <Dialog open={Boolean(selected)} onOpenChange={(open) => { if (!open) setSelected(null); }}>
+    <Dialog open={Boolean(selected) && detailOpen} onOpenChange={(open) => { setDetailOpen(open); if (!open) setSelected(null); }}>
       <DialogContent className="max-h-[92dvh] max-w-5xl overflow-y-auto">
         {selected && <>
           <DialogHeader>
@@ -201,7 +223,7 @@ export function PriceSegmentsManager() {
           </div>
           {selected.kind === "PriceList" ? <><div className="flex items-center justify-between gap-3 border-t pt-4">
             <div><h3 className="font-semibold">Productos y condiciones</h3><p className="text-sm text-muted-foreground">{selected.kind === "PriceList" ? "Un producto puede tener varias escalas." : "Define un precio propio o exclúyelo del canal."}</p></div>
-            {canManage && <Button onClick={() => setDraft(emptyDraft())}><Plus className="mr-2 h-4 w-4" />Agregar producto</Button>}
+            {canManage && <Button onClick={() => { setDetailOpen(false); setDraft(emptyDraft()); }}><Plus className="mr-2 h-4 w-4" />Agregar producto</Button>}
           </div></> : <div className="space-y-5 rounded-2xl border bg-muted/20 p-5">
             <div><h3 className="font-semibold">Regla de precio del canal</h3><p className="text-sm text-muted-foreground">Este porcentaje se aplica al precio público de todos los productos. Usa un valor negativo para reducirlo.</p></div>
             <div className="max-w-sm space-y-2"><Label>Variación sobre el precio público</Label><FormattedNumberInput kind="percent" value={channelVariation} invalid={channelVariation < -100 || channelVariation > 1000} onValueChange={(value) => setChannelVariation(value ?? 0)} /><p className="text-xs text-muted-foreground">Ejemplo: 10 % aumenta todo el catálogo; -5 % lo reduce.</p></div>
@@ -216,7 +238,7 @@ export function PriceSegmentsManager() {
                   {selected.kind === "PriceList" && <td className="px-4 py-3 text-right tabular-nums">{item.minimumQuantity}</td>}
                   <td className="px-4 py-3 text-right"><span className={item.excluded ? "text-destructive" : "font-medium"}>{item.excluded ? "Excluido" : formatCurrency(item.amount)}</span></td>
                   <td className="px-4 py-3 text-muted-foreground"><CalendarClock className="mr-1 inline h-3.5 w-3.5" />{new Date(item.validFrom).toLocaleDateString("es-CO")}{item.validUntil ? " – " + new Date(item.validUntil).toLocaleDateString("es-CO") : " – Sin vencimiento"}</td>
-                  <td className="px-2 py-3"><div className="flex justify-end">{canManage && <><Button size="icon" variant="ghost" aria-label={"Editar " + item.productName} onClick={() => setDraft(fromItem(item))}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" className="text-destructive" aria-label={"Retirar " + item.productName} onClick={() => setDeleteItem(item)}><Trash2 className="h-4 w-4" /></Button></>}</div></td>
+                  <td className="px-2 py-3"><div className="flex justify-end">{canManage && <><Button size="icon" variant="ghost" aria-label={"Editar " + item.productName} onClick={() => { setDetailOpen(false); setDraft(fromItem(item)); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" className="text-destructive" aria-label={"Retirar " + item.productName} onClick={() => { setDetailOpen(false); setDeleteItem(item); }}><Trash2 className="h-4 w-4" /></Button></>}</div></td>
                 </tr>)}
                 {!items.isLoading && (items.data ?? []).length === 0 && <tr><td colSpan={5} className="p-10 text-center text-muted-foreground">Sin datos</td></tr>}
               </tbody>
@@ -226,9 +248,9 @@ export function PriceSegmentsManager() {
       </DialogContent>
     </Dialog>
 
-    <PriceItemDialog segment={selected?.kind === "PriceList" ? selected : null} draft={draft} onChange={setDraft} onSave={(value) => saveItem.mutate(value)} saving={saveItem.isPending} />
+    <PriceItemDialog segment={selected?.kind === "PriceList" ? selected : null} draft={draft} onChange={(value) => { setDraft(value); if (!value && selected) setDetailOpen(true); }} onSave={(value) => saveItem.mutate(value)} saving={saveItem.isPending} />
 
-    <Dialog open={Boolean(deleteItem)} onOpenChange={(open) => { if (!open) setDeleteItem(null); }}>
+    <Dialog open={Boolean(deleteItem)} onOpenChange={(open) => { if (!open) { setDeleteItem(null); if (selected) setDetailOpen(true); } }}>
       <DialogContent>
         <DialogHeader><DialogTitle>Retirar producto</DialogTitle><DialogDescription>Se dejará de aplicar esta condición a {deleteItem?.productName}. El precio público del producto no cambia.</DialogDescription></DialogHeader>
         <DialogFooter><Button variant="outline" onClick={() => setDeleteItem(null)}>Cancelar</Button><Button variant="destructive" disabled={removeItem.isPending} onClick={() => deleteItem && removeItem.mutate(deleteItem)}>Retirar</Button></DialogFooter>

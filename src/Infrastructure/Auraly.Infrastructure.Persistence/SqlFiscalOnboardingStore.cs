@@ -29,7 +29,8 @@ public sealed class SqlFiscalOnboardingStore(
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND IsActive=1)
                 THROW 51021,'Business is outside the authenticated tenant.',1;
 
-            SELECT b.Name,p.LegalName,p.Nit,p.VerificationDigit,
+            SELECT b.Name,COALESCE(NULLIF(p.LegalName,N''),b.Name),
+                   COALESCE(p.Nit,N''),COALESCE(p.VerificationDigit,N''),
                    i.SoftwareIdentificationCode,i.TestSetId,i.CertificateThumbprint,
                    i.ValidFrom,i.ValidTo,i.Environment,
                    accepted.AcceptedAt,
@@ -37,7 +38,7 @@ public sealed class SqlFiscalOnboardingStore(
                    assigned.ResolutionDate,assigned.Prefix,assigned.RangeStart,assigned.RangeEnd,
                    assigned.ValidFrom,assigned.ValidUntil
             FROM dbo.Businesses b
-            JOIN dbo.TenantLegalProfiles p ON p.TenantId=b.TenantId
+            LEFT JOIN dbo.TenantLegalProfiles p ON p.TenantId=b.TenantId
             OUTER APPLY(
                 SELECT TOP(1) SoftwareIdentificationCode,TestSetId,CertificateThumbprint,
                        ValidFrom,ValidTo,Environment
@@ -115,6 +116,7 @@ public sealed class SqlFiscalOnboardingStore(
 
         var now = timeProvider.GetUtcNow();
         var missing = new List<string>();
+        if (string.IsNullOrWhiteSpace(nit)) missing.Add("PerfilLegal");
         if (string.IsNullOrWhiteSpace(softwareId)) missing.Add("SoftwareId");
         if (testSetId is null) missing.Add("TestSetId");
         if (string.IsNullOrWhiteSpace(thumbprint)) missing.Add("Certificado");

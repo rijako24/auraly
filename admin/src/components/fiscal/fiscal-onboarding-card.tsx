@@ -18,6 +18,7 @@ type Props = { businessId: string; canManage: boolean };
 export function FiscalOnboardingCard({ businessId, canManage }: Props) {
   const [value, setValue] = useState<FiscalOnboardingConfiguration | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [activating, setActivating] = useState(false);
@@ -32,12 +33,15 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
+      setLoadError("");
       const result = await fiscalConfigurationApi.getOnboarding(businessId);
       setValue(result);
       setSoftwareId(result.softwareIdentificationCode ?? "");
       setTestSetId(result.testSetId ?? "");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "No fue posible cargar la configuración fiscal.");
+      const errorMessage = error instanceof Error ? error.message : "No fue posible cargar la configuración fiscal.";
+      setLoadError(errorMessage);
+      if (silent) toast.error(errorMessage);
     } finally {
       if (!silent) setLoading(false);
     }
@@ -108,16 +112,22 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
     }
   }
 
-  if (loading || !value) {
+  if (loading) {
     return <Card><CardContent className="flex min-h-40 items-center justify-center gap-2"><Loader2 className="h-5 w-5 animate-spin" /> Verificando DIAN…</CardContent></Card>;
   }
+
+  if (!value) {
+    return <Card className="border-amber-200"><CardContent className="flex min-h-40 flex-col items-center justify-center gap-3 p-6 text-center"><p className="font-medium text-amber-950">{loadError || "No fue posible cargar la configuración fiscal."}</p><Button type="button" variant="outline" onClick={() => void load()}><RefreshCw className="mr-2 h-4 w-4" />Volver a intentar</Button></CardContent></Card>;
+  }
+
+  const missingLegalProfile = value.missingRequirements.includes("PerfilLegal");
 
   return (
     <div className="space-y-5">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-primary" /> Activación de facturación electrónica</CardTitle>
-          <CardDescription>{value.businessName} · {value.legalName} · NIT {value.supplierTaxId}-{value.supplierCheckDigit}</CardDescription>
+          <CardDescription>{value.businessName} · {value.legalName}{value.supplierTaxId ? ` · NIT ${value.supplierTaxId}-${value.supplierCheckDigit}` : " · Perfil tributario pendiente"}</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid gap-3 md:grid-cols-4">
@@ -129,7 +139,9 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
         </CardContent>
       </Card>
 
-      {!value.productionActive && (
+      {missingLegalProfile && <Card className="border-amber-200 bg-amber-50"><CardContent className="p-5 text-sm text-amber-950"><b className="block">Completa primero el perfil tributario de la empresa</b><p className="mt-1">La razón social, el NIT y el dígito de verificación son necesarios para configurar la facturación electrónica.</p></CardContent></Card>}
+
+      {!value.productionActive && !missingLegalProfile && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2"><Upload className="h-5 w-5 text-primary" /> 1. Certificado y software DIAN</CardTitle>

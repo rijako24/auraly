@@ -44,23 +44,65 @@ public static class PriceSegmentsApi
         var identity = context.User.ToPricingIdentity();
         if (!identity.Permissions.Contains("pricing.segments.manage")) return Results.Forbid();
         var kind = NormalizeKind(request.Kind);
-        var code = request.Code?.Trim().ToUpperInvariant();
         var name = request.Name?.Trim();
-        if (string.IsNullOrWhiteSpace(code) || code.Length > 32 || string.IsNullOrWhiteSpace(name) || name.Length > 120)
-            return Results.Problem("Código y nombre son obligatorios.", statusCode: 400);
+        if (string.IsNullOrWhiteSpace(name) || name.Length > 120)
+            return Results.Problem("El nombre es obligatorio.", statusCode: 400);
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(ct);
         var id = Guid.NewGuid();
-        await using var command = Procedure("dbo.PriceSegmentCreate", connection);
+        var code = $"{(kind == "PriceList" ? "LST" : "CNL")}-{id:N}".ToUpperInvariant()[..12];
+        var requestedItems = request.Items ?? [];
+        if (kind == "PriceList" && requestedItems.Any(item => item.ProductId == Guid.Empty || item.Amount <= 0 || item.MinimumQuantity <= 0))
+            return Results.Problem("Todos los productos necesitan precio y cantidad mínima válidos.", statusCode: 400);
+        if (kind == "PriceChannel" && request.PriceVariationPercent is < -100 or > 1000)
+            return Results.Problem("La variación debe estar entre -100 % y 1.000 %.", statusCode: 400);
+        await using var command = Procedure("dbo.PriceSegmentCreate", connection, transaction);
         command.Parameters.AddWithValue("@Kind", kind);
         command.Parameters.AddWithValue("@Id", id);
         command.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
         command.Parameters.AddWithValue("@Code", code);
         command.Parameters.AddWithValue("@Name", name);
-        try { await command.ExecuteNonQueryAsync(ct); }
+        try
+        {
+            await command.ExecuteNonQueryAsync(ct);
+            if (kind == "PriceList")
+            {
+                foreach (var item in requestedItems)
+                {
+                    await using var itemCommand = Procedure("dbo.PriceSegmentItemSave", connection, transaction);
+                    itemCommand.Parameters.AddWithValue("@Kind", kind);
+                    itemCommand.Parameters.AddWithValue("@Id", id);
+                    itemCommand.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
+                    itemCommand.Parameters.AddWithValue("@ProductId", item.ProductId);
+                    itemCommand.Parameters.AddWithValue("@MinimumQuantity", item.MinimumQuantity);
+                    itemCommand.Parameters.AddWithValue("@Amount", item.Amount);
+                    itemCommand.Parameters.AddWithValue("@ValidFrom", item.ValidFrom ?? DateTimeOffset.UtcNow);
+                    itemCommand.Parameters.AddWithValue("@ValidUntil", (object?)item.ValidUntil ?? DBNull.Value);
+                    itemCommand.Parameters.AddWithValue("@Excluded", false);
+                    await itemCommand.ExecuteNonQueryAsync(ct);
+                }
+            }
+            else
+            {
+                await using var channelCommand = Procedure("dbo.PriceChannelSettingsSave", connection, transaction);
+                channelCommand.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
+                channelCommand.Parameters.AddWithValue("@PriceChannelId", id);
+                channelCommand.Parameters.AddWithValue("@RuleKind", PriceChannelRuleKind.PercentageVariation.ToString());
+                channelCommand.Parameters.AddWithValue("@NumericValue", request.PriceVariationPercent ?? 0);
+                channelCommand.Parameters.AddWithValue("@ValidFrom", DateTimeOffset.UtcNow);
+                await channelCommand.ExecuteNonQueryAsync(ct);
+            }
+            await transaction.CommitAsync(ct);
+        }
         catch (SqlException exception) when (exception.Number is 2601 or 2627)
-        { return Results.Problem("Ya existe un segmento con ese código.", statusCode: 409); }
-        return Results.Ok(new { id, kind, code, name });
+        {
+            await transaction.RollbackAsync(ct);
+            return Results.Problem("Ya existe una condición igual para ese producto.", statusCode: 409);
+        }
+        return Results.Ok(new PriceSegmentSummary(id, kind, code, name, true,
+            DateTimeOffset.UtcNow, requestedItems.Select(item => item.ProductId).Distinct().Count(), 0,
+            kind == "PriceChannel" ? request.PriceVariationPercent ?? 0 : null));
     }
 
     private static async Task<IResult> ItemsAsync(
@@ -182,7 +224,10 @@ public static class PriceSegmentsApi
 
 public sealed record PriceSegmentSummary(Guid Id, string Kind, string Code, string Name, bool IsActive, DateTimeOffset CreatedAt, int ProductCount, int CustomerCount, decimal? PriceVariationPercent);
 public sealed record PriceSegmentItem(Guid ProductId, string ProductCode, string ProductName, decimal Amount, string CurrencyCode, decimal MinimumQuantity, DateTimeOffset ValidFrom, DateTimeOffset? ValidUntil, bool Excluded);
-public sealed record SavePriceSegmentRequest(string Kind, string Code, string Name);
+public sealed record SavePriceSegmentRequest(string Kind, string Name,
+    decimal? PriceVariationPercent, IReadOnlyList<CreatePriceSegmentItemRequest>? Items);
+public sealed record CreatePriceSegmentItemRequest(Guid ProductId, decimal Amount,
+    decimal MinimumQuantity, DateTimeOffset? ValidFrom, DateTimeOffset? ValidUntil);
 public sealed record SavePriceSegmentItemRequest(decimal Amount, decimal MinimumQuantity, DateTimeOffset? ValidFrom, DateTimeOffset? ValidUntil, bool Excluded);
 public sealed record SavePriceChannelSettingsRequest(decimal PriceVariationPercent);
 public enum PriceChannelRuleKind { PercentageVariation }
