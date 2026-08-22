@@ -121,6 +121,6 @@ CREATE TABLE [dbo].[DispatchSettlements] (
     CONSTRAINT [UQ_DispatchSettlements_Idempotency] UNIQUE ([BusinessId],[IdempotencyKey]),
     CONSTRAINT [CK_DispatchSettlements_Values] CHECK ([ExpectedCash]>=0 AND [DeclaredCash]>=0 AND [DepositTotal]>=0 AND [CreditDocumentTotal]>=0 AND [CreditAdvanceTotal]>=0 AND [ReturnTotal]>=0),
     CONSTRAINT [CK_DispatchSettlements_Difference] CHECK ([DeclaredCash]=[ExpectedCash] OR [DifferenceReason] IS NOT NULL),
-    CONSTRAINT [CK_DispatchSettlements_Status] CHECK ([Status] IN (N'PendingReview',N'Processing',N'Completed'))
+    CONSTRAINT [CK_DispatchSettlements_Status] CHECK ([Status] IN (N'PendingReview',N'Processing',N'Completed',N'Attention'))
 );
 GO
