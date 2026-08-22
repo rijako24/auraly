@@ -50,6 +50,9 @@ public class CommerceServiceTests
         adapter.As<IAuthoritativeCommercePricingAdapter>();
         var promotions = new Mock<IPromotionPricingService>();
         var availability = new Mock<IProductCatalogAvailabilityService>();
+        var workspace = new Mock<ICommerceOrderWorkspaceResolver>();
+        workspace.Setup(value => value.ResolveAsync(businessId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CommerceOrderWorkspace(Guid.NewGuid(), "VEN"));
         availability.Setup(a => a.IsSellable(It.IsAny<ProductReference>()))
             .Returns<ProductReference>(p => p.IsActive && (!p.StockQuantity.HasValue || p.StockQuantity.Value > 0));
 
@@ -93,7 +96,9 @@ public class CommerceServiceTests
             .Returns<Guid, IReadOnlyList<PromotionPricingItem>, DateTime?, CancellationToken>((_, items, _, _) =>
                 Task.FromResult(PromotionPricingResult.Empty(items)));
 
-        var service = new CommerceService(unitOfWork.Object, adapterFactory.Object, promotions.Object, availability.Object);
+        var service = new CommerceService(
+            unitOfWork.Object, adapterFactory.Object, promotions.Object, availability.Object,
+            workspaceResolver: workspace.Object);
         var ctx = new AgentConversationContext
         {
             BusinessId = businessId,
@@ -328,6 +333,9 @@ public class CommerceServiceTests
         adapter.As<IAuthoritativeCommercePricingAdapter>();
         var promotions = new Mock<IPromotionPricingService>();
         var availability = new Mock<IProductCatalogAvailabilityService>();
+        var workspace = new Mock<ICommerceOrderWorkspaceResolver>();
+        workspace.Setup(value => value.ResolveAsync(businessId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CommerceOrderWorkspace(Guid.NewGuid(), "VEN"));
 
         unitOfWork.SetupGet(value => value.OrderDrafts).Returns(drafts.Object);
         unitOfWork.SetupGet(value => value.OrderDraftItems).Returns(draftItems.Object);
@@ -375,7 +383,8 @@ public class CommerceServiceTests
             unitOfWork.Object,
             adapterFactory.Object,
             promotions.Object,
-            availability.Object);
+            availability.Object,
+            workspaceResolver: workspace.Object);
         var context = new AgentConversationContext
         {
             BusinessId = businessId,
