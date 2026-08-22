@@ -1,13 +1,9 @@
 using System.Net;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Auraly.Application.Authorization;
 using Auraly.Contracts.Authorization;
-using Auraly.Infrastructure.Persistence;
 using Lib.Net.Http.WebPush;
 using Lib.Net.Http.WebPush.Authentication;
-using Microsoft.Data.SqlClient;
 
 namespace Auraly.Api;
 
@@ -17,7 +13,7 @@ public sealed record PosApprovalPushSubscriptionRequest(
     string Auth);
 
 public sealed class PosApprovalWebPushService(
-    SqlServerConnectionFactory connections,
+    IPosApprovalPushSubscriptionStore subscriptions,
     PushServiceClient pushClient,
     IConfiguration configuration,
     ILogger<PosApprovalWebPushService> logger)
@@ -41,27 +37,8 @@ public sealed class PosApprovalWebPushService(
             request.Endpoint.Length > 2000 || request.P256dh.Length is < 20 or > 512 || request.Auth.Length is < 8 or > 256)
             throw new PosApprovalException("InvalidPushSubscription", "La suscripción push no es válida.");
 
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(request.Endpoint));
-        await using var connection = connections.Create();
-        await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand("""
-            UPDATE dbo.PosApprovalPushSubscriptions
-            SET TenantId=@TenantId,BusinessId=@BusinessId,Endpoint=@Endpoint,
-                P256dh=@P256dh,Auth=@Auth,UpdatedAt=SYSUTCDATETIME()
-            WHERE UserId=@UserId AND EndpointHash=@Hash;
-            IF @@ROWCOUNT=0
-              INSERT dbo.PosApprovalPushSubscriptions
-                (SubscriptionId,TenantId,BusinessId,UserId,Endpoint,EndpointHash,P256dh,Auth,CreatedAt,UpdatedAt)
-              VALUES(NEWID(),@TenantId,@BusinessId,@UserId,@Endpoint,@Hash,@P256dh,@Auth,SYSUTCDATETIME(),SYSUTCDATETIME());
-            """, connection);
-        command.Parameters.AddWithValue("@TenantId", user.TenantId);
-        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
-        command.Parameters.AddWithValue("@UserId", user.UserId);
-        command.Parameters.AddWithValue("@Endpoint", request.Endpoint);
-        command.Parameters.AddWithValue("@Hash", hash);
-        command.Parameters.AddWithValue("@P256dh", request.P256dh);
-        command.Parameters.AddWithValue("@Auth", request.Auth);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        await subscriptions.UpsertAsync(
+            user, request.Endpoint, request.P256dh, request.Auth, cancellationToken);
     }
 
     public async Task UnsubscribeAsync(
@@ -69,19 +46,7 @@ public sealed class PosApprovalWebPushService(
         string endpoint,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(endpoint)) return;
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(endpoint));
-        await using var connection = connections.Create();
-        await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand("""
-            DELETE dbo.PosApprovalPushSubscriptions
-            WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND UserId=@UserId AND EndpointHash=@Hash;
-            """, connection);
-        command.Parameters.AddWithValue("@TenantId", user.TenantId);
-        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
-        command.Parameters.AddWithValue("@UserId", user.UserId);
-        command.Parameters.AddWithValue("@Hash", hash);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        await subscriptions.DeleteAsync(user, endpoint, cancellationToken);
     }
 
     public async Task NotifyAsync(PosApprovalRequestView request, CancellationToken cancellationToken)
@@ -92,10 +57,10 @@ public sealed class PosApprovalWebPushService(
             return;
         }
 
-        List<SubscriptionRow> subscriptions;
+        IReadOnlyList<PosApprovalPushRecipient> recipients;
         try
         {
-            subscriptions = await RecipientsAsync(request, cancellationToken);
+            recipients = await subscriptions.RecipientsAsync(request, cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -106,7 +71,7 @@ public sealed class PosApprovalWebPushService(
                 request.ApprovalRequestId);
             return;
         }
-        if (subscriptions.Count == 0) return;
+        if (recipients.Count == 0) return;
         var payload = JsonSerializer.Serialize(new
         {
             title = "Auraly · autorización POS",
@@ -118,7 +83,7 @@ public sealed class PosApprovalWebPushService(
         });
         using var authentication = new VapidAuthentication(publicKey, privateKey) { Subject = subject };
 
-        foreach (var subscription in subscriptions)
+        foreach (var subscription in recipients)
         {
             try
             {
@@ -132,7 +97,7 @@ public sealed class PosApprovalWebPushService(
             }
             catch (PushServiceClientException exception) when (exception.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
             {
-                await DeleteSubscriptionAsync(subscription.SubscriptionId, cancellationToken);
+                await subscriptions.DeleteAsync(subscription.SubscriptionId, cancellationToken);
             }
             catch (Exception exception)
             {
@@ -141,42 +106,4 @@ public sealed class PosApprovalWebPushService(
         }
     }
 
-    private async Task<List<SubscriptionRow>> RecipientsAsync(PosApprovalRequestView request, CancellationToken cancellationToken)
-    {
-        await using var connection = connections.Create();
-        await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand("""
-            SELECT DISTINCT subscription.SubscriptionId,subscription.Endpoint,subscription.P256dh,subscription.Auth
-            FROM dbo.PosApprovalPushSubscriptions subscription
-            JOIN dbo.AppUsers app ON app.UserId=subscription.UserId AND app.IsActive=1
-            WHERE subscription.TenantId=@TenantId AND subscription.BusinessId=@BusinessId
-              AND subscription.UserId<>@RequesterId
-              AND EXISTS(
-                SELECT 1 FROM dbo.UserRoles assignment
-                JOIN dbo.RolePermissions rolePermission ON rolePermission.RoleId=assignment.RoleId
-                JOIN dbo.Permissions permission ON permission.PermissionId=rolePermission.PermissionId
-                WHERE assignment.UserId=subscription.UserId
-                  AND(assignment.BusinessId IS NULL OR assignment.BusinessId=@BusinessId)
-                  AND permission.Resource=N'pos.approvals.receive_notifications');
-            """, connection);
-        command.Parameters.AddWithValue("@TenantId", request.TenantId);
-        command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
-        command.Parameters.AddWithValue("@RequesterId", request.RequestedByUserId);
-        var rows = new List<SubscriptionRow>();
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-            rows.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetString(3)));
-        return rows;
-    }
-
-    private async Task DeleteSubscriptionAsync(Guid subscriptionId, CancellationToken cancellationToken)
-    {
-        await using var connection = connections.Create();
-        await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand("DELETE dbo.PosApprovalPushSubscriptions WHERE SubscriptionId=@Id;", connection);
-        command.Parameters.AddWithValue("@Id", subscriptionId);
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
-
-    private sealed record SubscriptionRow(Guid SubscriptionId, string Endpoint, string P256dh, string Auth);
 }

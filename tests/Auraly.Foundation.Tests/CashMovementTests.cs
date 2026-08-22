@@ -13,7 +13,7 @@ public sealed class CashMovementTests
         var reason = CashMovementReasonDefinition.Create(Guid.NewGuid(), businessId, "reason",
             "Movimiento", direction, "OtherIncome", null, false, true);
         var movement = CashMovement.Create(Guid.NewGuid(), businessId, Guid.NewGuid(), reason,
-            25_000m, DateTimeOffset.UtcNow, null, "Nota", null);
+            25_000m, DateTimeOffset.UtcNow, "REF-001", "Nota", null);
 
         Assert.Equal(signed, movement.SignedAmount);
         Assert.Equal("REASON", movement.Reason.Code);
