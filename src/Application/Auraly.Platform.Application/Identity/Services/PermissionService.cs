@@ -73,10 +73,22 @@ public class PermissionService : IPermissionService
         // administrator templates are allowed to receive the complete catalog.
         foreach (var role in systemRoles.Where(IsAdministratorRole))
         {
+            var eligiblePermissions = permissions
+                .Where(permission => IsAllowedForAdministrator(role, permission))
+                .ToList();
+            var eligiblePermissionIds = eligiblePermissions
+                .Select(permission => permission.PermissionId)
+                .ToHashSet();
+            var improper = role.RolePermissions
+                .Where(assignment => !eligiblePermissionIds.Contains(assignment.PermissionId))
+                .ToList();
+            if (improper.Count > 0)
+                _unitOfWork.RolePermissions.DeleteRange(improper);
+
             var assignedPermissionIds = role.RolePermissions
                 .Select(rp => rp.PermissionId)
                 .ToHashSet();
-            var missing = permissions
+            var missing = eligiblePermissions
                 .Where(p => !assignedPermissionIds.Contains(p.PermissionId))
                 .Select(p => new RolePermission
                 {
@@ -96,6 +108,16 @@ public class PermissionService : IPermissionService
 
     private static bool IsAdministratorRole(AppRole role) =>
         role.NormalizedName is "ADMINISTRATOR" or "TENANTADMINISTRATOR";
+
+    private static bool IsAllowedForAdministrator(
+        AppRole role,
+        Domain.Entities.Permission permission) =>
+        string.Equals(
+            role.Tenant?.TenantKey,
+            PlatformPermissions.PlatformTenantKey,
+            StringComparison.OrdinalIgnoreCase)
+        || !permission.Resource.StartsWith("tenants.", StringComparison.OrdinalIgnoreCase)
+          && !permission.Resource.StartsWith("platform.", StringComparison.OrdinalIgnoreCase);
 
     private static PermissionDto MapToDto(Domain.Entities.Permission p) => new(
         p.PermissionId, p.Module, p.Action, p.Resource, p.Description);

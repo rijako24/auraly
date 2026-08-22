@@ -19,6 +19,18 @@ UPDATE dbo.AppRoles
 SET IsSystemRole=0
 WHERE NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE');
 
+-- El administrador de plataforma recibe el catálogo completo. Los
+-- administradores de tenant reciben todos los permisos operativos y de
+-- administración de su organización, pero nunca capacidades de plataforma.
+DELETE assignment
+FROM dbo.RolePermissions assignment
+JOIN dbo.AppRoles roleValue ON roleValue.RoleId=assignment.RoleId
+JOIN dbo.Tenants tenantValue ON tenantValue.TenantId=roleValue.TenantId
+JOIN dbo.Permissions permissionValue ON permissionValue.PermissionId=assignment.PermissionId
+WHERE roleValue.NormalizedName IN(N'ADMINISTRATOR',N'TENANTADMINISTRATOR')
+  AND tenantValue.TenantKey<>N'@auraly'
+  AND (permissionValue.Resource LIKE N'tenants.%' OR permissionValue.Resource LIKE N'platform.%');
+
 INSERT dbo.AppRoles(RoleId,TenantId,Name,NormalizedName,Description,IsActive,IsSystemRole,CreatedAt)
 SELECT NEWID(),tenant.TenantId,preset.Name,preset.NormalizedName,preset.Description,1,preset.IsSystemRole,SYSUTCDATETIME()
 FROM dbo.Tenants tenant

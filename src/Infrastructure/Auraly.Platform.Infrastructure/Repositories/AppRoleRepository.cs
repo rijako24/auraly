@@ -49,6 +49,7 @@ public class AppRoleRepository : IAppRoleRepository
 
     public async Task<IReadOnlyList<AppRole>> GetActiveSystemRolesAsync(CancellationToken ct = default) =>
         await _context.AppRoles
+            .Include(r => r.Tenant)
             .Include(r => r.RolePermissions)
             .Where(r => r.IsSystemRole && r.IsActive)
             .OrderBy(r => r.Name)

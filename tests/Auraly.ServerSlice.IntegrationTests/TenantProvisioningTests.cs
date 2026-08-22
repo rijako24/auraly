@@ -101,6 +101,11 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.Contains("Administrador", authentication.User.Roles);
         Assert.DoesNotContain(authentication.User.Permissions, permission =>
             permission.StartsWith("tenants.", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(authentication.User.Permissions, permission =>
+            permission.StartsWith("platform.", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(
+            await TenantAdministratorPermissionCountAsync(),
+            authentication.User.Permissions.Count);
     }
 
     [Fact]
@@ -303,6 +308,19 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@RoleName", normalizedRoleName);
         command.Parameters.AddWithValue("@Resource", resource);
         return Convert.ToInt32(await command.ExecuteScalarAsync()) == 1;
+    }
+
+    private async Task<int> TenantAdministratorPermissionCountAsync()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT COUNT(*)
+            FROM dbo.Permissions
+            WHERE Resource NOT LIKE N'tenants.%'
+              AND Resource NOT LIKE N'platform.%';
+            """, connection);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
     private sealed record BusinessCreatedResponse(Guid BusinessId);
