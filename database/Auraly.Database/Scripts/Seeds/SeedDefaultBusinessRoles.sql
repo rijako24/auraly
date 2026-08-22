@@ -1,5 +1,15 @@
 SET NOCOUNT ON;
 
+-- Estos permisos forman parte de la matriz base de caja y deben existir antes de
+-- asignar las plantillas. Mantenerlos aquí evita roles incompletos en tenants nuevos.
+INSERT dbo.Permissions(PermissionId,Module,Action,Resource,Description,CreatedAt)
+SELECT NEWID(),source.Module,source.Action,source.Resource,source.Description,SYSUTCDATETIME()
+FROM (VALUES
+  (N'POS',N'CreateCustomer',N'pos.customer.create',N'Crear y seleccionar clientes desde el punto de venta'),
+  (N'POS',N'Orders',N'pos.orders',N'Consultar y recuperar pedidos desde el punto de venta')
+) source(Module,Action,Resource,Description)
+WHERE NOT EXISTS(SELECT 1 FROM dbo.Permissions existing WHERE existing.Resource=source.Resource);
+
 -- Roles iniciales coherentes para tenants nuevos y existentes.
 UPDATE dbo.AppRoles
 SET Name=N'Administrador',Description=N'Administración completa de la empresa y todas sus sedes.',IsSystemRole=1

@@ -46,6 +46,10 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.Equal(1, state.DefaultCostCenters);
         Assert.Equal(1, state.AccountingVoucherCursors);
         Assert.Equal(4, state.Roles);
+        Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "SUPERVISOR", "pos.approvals.receive_notifications"));
+        Assert.False(await RoleHasPermissionAsync(
+            result.TenantId, "CASHIER", "pos.approvals.receive_notifications"));
         Assert.Equal(0, state.UserRoles);
         Assert.Null(state.UserActive);
         Assert.Null(state.PasswordHash);
@@ -277,6 +281,28 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@BusinessId", businessId);
         return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<bool> RoleHasPermissionAsync(
+        Guid tenantId,
+        string normalizedRoleName,
+        string resource)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT COUNT(*)
+            FROM dbo.AppRoles roleValue
+            INNER JOIN dbo.RolePermissions assignment ON assignment.RoleId=roleValue.RoleId
+            INNER JOIN dbo.Permissions permissionValue ON permissionValue.PermissionId=assignment.PermissionId
+            WHERE roleValue.TenantId=@TenantId
+              AND roleValue.NormalizedName=@RoleName
+              AND permissionValue.Resource=@Resource;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@RoleName", normalizedRoleName);
+        command.Parameters.AddWithValue("@Resource", resource);
+        return Convert.ToInt32(await command.ExecuteScalarAsync()) == 1;
     }
 
     private sealed record BusinessCreatedResponse(Guid BusinessId);

@@ -141,7 +141,7 @@ public sealed class SqlTenantProvisioningStore(
                 FROM dbo.Permissions
                 WHERE Resource IN(
                   N'sales.create',N'sales.discount',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',
-                  N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.manage_credential',
+                  N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.receive_notifications',N'pos.approvals.manage_credential',
                   N'pos.customer.create',N'pos.orders',N'orders.read',N'orders.invoice',
                   N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',
                   N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',N'inventory.read');
