@@ -57,7 +57,7 @@ export const navigation: NavEntry[] = [
   { name: "Terceros", href: "/dashboard/parties", icon: ContactRound, permission: "parties.read" },
   { name: "Rutas comerciales", href: "/dashboard/routes", icon: Route, permission: "routes.read" },
   { name: "Precios y rentabilidad", href: "/dashboard/products/pricing", icon: TrendingUp, permission: "pricing.read" },
-  { name: "Listas y canales", href: "/dashboard/products/price-segments", icon: BadgePercent, permission: "pricing.segments.read" },
+  { name: "Canal de precios", href: "/dashboard/products/price-segments", icon: BadgePercent, permission: "pricing.segments.read" },
   { name: "Promociones", href: "/dashboard/promotions", icon: BadgePercent, permission: "promotions.read" },
   { type: "separator", label: "Operaciones" },
   { name: "Punto de venta", href: "/pos", icon: ReceiptText, permission: "sales.create" },

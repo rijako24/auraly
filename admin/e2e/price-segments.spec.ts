@@ -103,9 +103,8 @@ test("canales administra precios por cantidad y modos calculados sin listas", as
   await createDialog.getByRole("button", { name: "Agregar precio" }).click();
   await createDialog.getByRole("button", { name: /Crear canal · 1 precios/ }).click();
   await expect(createDialog).toBeHidden();
-  await expect(page.getByRole("dialog", { name: "Distribuidores" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Distribuidores" })).toHaveCount(0);
   expect(createdRequest).toMatchObject({ name: "Distribuidores", channelStrategy: "TieredProductPrice", items: [{ productId, amount: 29500, minimumQuantity: 3 }] });
-  await page.keyboard.press("Escape");
   await expect(page.getByRole("cell", { name: "Distribuidores" })).toBeVisible();
 
   await page.getByRole("cell", { name: "Mayoristas" }).click();
@@ -133,4 +132,13 @@ test("canales administra precios por cantidad y modos calculados sin listas", as
   await channelDialog.getByRole("button", { name: "Crear canal" }).click();
   await expect(channelDialog).toBeHidden();
   expect(createdRequest).toMatchObject({ name: "Distribuidores costo", channelStrategy: "FixedMarginOverAverageCost", channelValue: 22 });
+
+  await page.getByRole("button", { name: "Nuevo canal" }).click();
+  const discountDialog = page.getByRole("dialog", { name: "Nuevo canal de precios" });
+  await discountDialog.getByText("Nombre *", { exact: true }).locator("..").getByRole("textbox").fill("Descuento web");
+  await discountDialog.getByRole("button", { name: "% sobre precio público" }).click();
+  await discountDialog.getByText(/Variación/).locator("..").locator("input").fill("-10");
+  await discountDialog.getByRole("button", { name: "Crear canal" }).click();
+  await expect(discountDialog).toBeHidden();
+  expect(createdRequest).toMatchObject({ name: "Descuento web", channelStrategy: "PercentageOverBasePrice", channelValue: -10 });
 });

@@ -205,18 +205,17 @@ public sealed class SqlSalesReturnStore(
             IF NOT EXISTS (SELECT 1 FROM dbo.Warehouses WITH (HOLDLOCK)
                            WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId AND IsActive=1 AND UseForSales=1)
               THROW 51201,'Selecciona una bodega de venta válida para la devolución.',1;
-            SELECT d.CustomerId,d.CustomerIdentification,d.IssuedAt,d.FiscalNumber,
-                   d.CufeReceived,d.FiscalStatus
+            SELECT d.CustomerId,d.CustomerIdentification
             FROM dbo.SalesDocuments d WITH (UPDLOCK,HOLDLOCK)
             WHERE d.DocumentId=@OriginalDocumentId AND d.BusinessId=@BusinessId
-              AND d.DocumentType=@OriginalDocumentType AND d.ProcessingStatus=N'Completed';
+              AND d.DocumentType IN(N'SalesInvoice',N'SalesReceipt')
+              AND d.ProcessingStatus=N'Completed';
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
         command.Parameters.AddWithValue("@OriginalDocumentId", request.OriginalDocumentId);
-        command.Parameters.AddWithValue("@OriginalDocumentType", AuralyDocumentTypes.SalesInvoice);
         try
         {
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -224,9 +223,7 @@ public sealed class SqlSalesReturnStore(
                 throw new SalesReturnValidationException(
                     "The original completed invoice was not found in this business.");
             return new OriginalSale(
-                reader.IsDBNull(0) ? null : reader.GetGuid(0), reader.GetString(1),
-                reader.GetDateTimeOffset(2), reader.GetString(3), reader.GetString(4),
-                reader.GetString(5));
+                reader.IsDBNull(0) ? null : reader.GetGuid(0), reader.GetString(1));
         }
         catch (SqlException exception) when (exception.Number is 51200 or 51201)
         {
@@ -482,8 +479,7 @@ public sealed class SqlSalesReturnStore(
         parameter.Precision=precision; parameter.Scale=scale; parameter.Value=value;
     }
 
-    private sealed record OriginalSale(Guid? CustomerId,string CustomerIdentification,
-        DateTimeOffset IssuedAt,string FiscalNumber,string Cufe,string FiscalStatus);
+    private sealed record OriginalSale(Guid? CustomerId,string CustomerIdentification);
     private sealed record OriginalLine(Guid ProductId,string Description,decimal Quantity,
         decimal UnitPrice,decimal DiscountAmount,string TaxCode,decimal TaxRate,
         decimal UntaxedAmount,decimal TaxAmount,decimal LineTotal,decimal ReturnedQuantity,

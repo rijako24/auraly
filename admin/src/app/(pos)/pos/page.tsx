@@ -1673,7 +1673,7 @@ edgeCapable={edgeEnrollmentRequired}
               type="button"
               ref={cashClosureButton}
               onClick={() => void openCashClosure()}
-              disabled={busy || !workstation.workSessionId || !edgeEnrollmentToken}
+              disabled={busy || !workstation.workSessionId}
               title="Solicitar cierre y arqueo de caja (Ctrl+F10)"
               aria-keyshortcuts="Control+F10"
               className="flex h-8 items-center gap-1.5 rounded-full border border-sky-300/20 px-3 text-xs font-semibold text-sky-200 transition hover:bg-sky-300/10 hover:text-white disabled:opacity-40"
@@ -1971,8 +1971,8 @@ edgeCapable={edgeEnrollmentRequired}
                             }
                           }}
                           type="number"
-                          min="0.001"
-                          step="0.001"
+                          min={line.allowsFractionalSale ? "0.001" : "1"}
+                          step={line.allowsFractionalSale ? "0.001" : "1"}
                           value={quantityDrafts[line.lineId] ?? String(line.quantity)}
                           onChange={(event) =>
                             setQuantityDrafts((current) => ({
@@ -2013,6 +2013,10 @@ edgeCapable={edgeEnrollmentRequired}
                               setQuantityDrafts((current) => ({
                                 ...current, [line.lineId]: String(line.quantity),
                               }));
+                              focusScanner();
+                            } else if (!line.allowsFractionalSale && !Number.isInteger(quantity)) {
+                              setQuantityDrafts((current) => ({ ...current, [line.lineId]: String(line.quantity) }));
+                              setError(`${line.description} solo se vende en unidades completas.`);
                               focusScanner();
                             } else if (quantity !== line.quantity) {
                               void changeQuantity(line.lineId, quantity);
@@ -2404,7 +2408,7 @@ edgeCapable={edgeEnrollmentRequired}
       )}
 
       {printerOpen && client && (
-        <PosPrinterDialog client={client instanceof PosEdgeClient ? client : null}
+        <PosPrinterDialog client={client instanceof PosEdgeClient || (client instanceof OnlinePosClient && edgeEnrollmentToken) ? client : null}
           onClose={() => setPrinterOpen(false)} />
       )}
 

@@ -24,7 +24,7 @@ export function PartySitesSection({ detail, editing = false }: { detail: PartyWo
 
   return <section className="rounded-2xl border p-5">
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <div><h3 className="font-semibold">Sedes y puntos de entrega</h3><p className="text-sm text-muted-foreground">Direcciones del cliente administradas desde esta misma ficha.</p></div>
+      <div><h3 className="font-semibold">Sedes y puntos de entrega</h3><p className="text-sm text-muted-foreground">Las sedes pertenecen a la identidad del tercero y se administran desde esta misma ficha.</p></div>
       {canManage && !target && <Button type="button" variant="outline" onClick={() => setTarget({ kind: "new" })}><Plus className="mr-2 h-4 w-4"/>Agregar sede</Button>}
     </div>
     {!sites.length ? <p className="mt-4 rounded-xl bg-muted/30 p-4 text-sm text-muted-foreground">No tiene sedes registradas.</p> : <div className="mt-4 grid gap-4 md:grid-cols-2">{sites.map(site => <SiteCard key={site.partySiteId} site={site} canEdit={canManage && !target} onEdit={() => setTarget({ kind: "edit", site })}/>)}</div>}

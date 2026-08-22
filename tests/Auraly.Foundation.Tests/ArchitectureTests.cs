@@ -157,6 +157,22 @@ public sealed class ArchitectureTests
     }
 
     [Fact]
+    public void Admin_uses_the_Auraly_select_component_instead_of_native_selects()
+    {
+        var root = FindRepositoryRoot();
+        var admin = Path.Combine(root, "admin", "src");
+        var violations = Directory.GetFiles(admin, "*.tsx", SearchOption.AllDirectories)
+            // JSX host elements are lowercase. Keep the check case-sensitive so the
+            // shared <Select> component itself is not mistaken for a native element.
+            .Where(path => File.ReadAllText(path).Contains("<select", StringComparison.Ordinal))
+            .Select(path => Path.GetRelativePath(root, path))
+            .ToArray();
+
+        Assert.True(violations.Length == 0,
+            $"Native selects bypass the Auraly overlay policy:{Environment.NewLine}{string.Join(Environment.NewLine, violations)}");
+    }
+
+    [Fact]
     public void Database_schema_does_not_use_triggers()
     {
         var repositoryRoot = FindRepositoryRoot();

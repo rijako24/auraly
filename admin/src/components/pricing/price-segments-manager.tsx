@@ -64,7 +64,7 @@ export function PriceSegmentsManager() {
         items: channelStrategy === "TieredProductPrice" ? createItems.map((item) => ({ productId: item.productId, amount: item.amount, minimumQuantity: item.minimumQuantity, validFrom: item.validFrom || null, validUntil: item.validUntil || null })) : undefined,
       });
     },
-    onSuccess: async (created) => {
+    onSuccess: async () => {
       await client.invalidateQueries({ queryKey: ["price-segments"] });
       setCreateOpen(false);
       setName("");
@@ -72,10 +72,6 @@ export function PriceSegmentsManager() {
       setChannelValue(0);
       setCreateItems([]);
       setCreateItem(emptyDraft());
-      setSelected(created);
-      setChannelStrategy(created.strategy ?? "PercentageOverBasePrice");
-      setChannelValue(created.value ?? 0);
-      setDetailOpen(true);
       toast.success("Canal de precios creado.");
     },
     onError: (error: { message?: string }) => toast.error(error.message ?? "No fue posible crear el segmento."),
@@ -186,7 +182,7 @@ export function PriceSegmentsManager() {
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2"><Label>Nombre *</Label><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Mayoristas" maxLength={120} /></div>
-          <div className="space-y-3"><Label>Modo de precio</Label><div className="grid gap-2 sm:grid-cols-2">{channelStrategies.map((mode) => <Button key={mode.value} type="button" variant={channelStrategy === mode.value ? "default" : "outline"} className="h-auto justify-start whitespace-normal py-3 text-left" onClick={() => { setChannelStrategy(mode.value); setChannelValue(0); setCreateItems([]); }}>{mode.label}</Button>)}</div>{requiresChannelValue(channelStrategy) && <div className="space-y-2"><Label>{channelValueLabel(channelStrategy)}</Label><FormattedNumberInput kind="percent" value={channelValue} invalid={!validChannelValue(channelStrategy, channelValue)} onValueChange={(value) => setChannelValue(value ?? 0)} /></div>}<p className="text-xs text-muted-foreground">{channelStrategyHelp(channelStrategy)}</p></div>
+          <div className="space-y-3"><Label>Modo de precio</Label><div className="grid gap-2 sm:grid-cols-2">{channelStrategies.map((mode) => <Button key={mode.value} type="button" variant={channelStrategy === mode.value ? "default" : "outline"} className="h-auto justify-start whitespace-normal py-3 text-left" onClick={() => { setChannelStrategy(mode.value); setChannelValue(0); }}>{mode.label}</Button>)}</div>{requiresChannelValue(channelStrategy) && <div className="space-y-2"><Label>{channelValueLabel(channelStrategy)}</Label><FormattedNumberInput kind="percent" allowNegative={channelStrategy !== "FixedMarginOverAverageCost"} value={channelValue} invalid={!validChannelValue(channelStrategy, channelValue)} onValueChange={(value) => setChannelValue(value ?? 0)} /></div>}<p className="text-xs text-muted-foreground">{channelStrategyHelp(channelStrategy)}</p></div>
           {channelStrategy === "TieredProductPrice" && <div className="space-y-4 rounded-2xl border bg-muted/15 p-4"><div><h3 className="font-semibold">Productos y precios por cantidad</h3><p className="text-sm text-muted-foreground">Agrega el mismo producto varias veces para definir precios desde 1, 3, 5 o cualquier cantidad.</p></div>{businessId && <InventoryProductPicker businessId={businessId} selectedProductIds={new Set()} disabled={create.isPending} label="Producto" onSelect={(product) => setCreateItem({ ...createItem, productId: product.productId, productCode: product.productCode, productName: product.productName, amount: product.saleUnitPrice ?? 0 })} />}{createItem.productId && <div className="grid gap-3 rounded-xl border bg-background p-3 sm:grid-cols-[1fr_170px_150px_auto] sm:items-end"><div><Label>Producto</Label><p className="mt-2 font-medium">{createItem.productName}</p><p className="text-xs text-muted-foreground">{createItem.productCode || "Sin código"}</p></div><div className="space-y-2"><Label>Precio</Label><FormattedNumberInput kind="currency" value={createItem.amount} invalid={createItem.amount <= 0} onValueChange={(value) => setCreateItem({ ...createItem, amount: value ?? 0 })} /></div><div className="space-y-2"><Label>Desde cantidad</Label><FormattedNumberInput value={createItem.minimumQuantity} invalid={createItem.minimumQuantity <= 0} onValueChange={(value) => setCreateItem({ ...createItem, minimumQuantity: value ?? 0 })} /></div><Button type="button" variant="secondary" disabled={createItem.amount <= 0 || createItem.minimumQuantity <= 0} onClick={addCreateItem}>Agregar precio</Button></div>}{createItems.length > 0 && <div className="overflow-hidden rounded-xl border bg-background"><table className="w-full text-sm"><thead className="bg-muted/60"><tr><th className="px-3 py-2 text-left">Producto</th><th className="px-3 py-2 text-right">Desde</th><th className="px-3 py-2 text-right">Precio</th><th className="w-12" /></tr></thead><tbody>{createItems.map((item, index) => <tr key={`${item.productId}-${item.minimumQuantity}`} className="border-t"><td className="px-3 py-2"><b>{item.productName}</b><small className="block text-muted-foreground">{item.productCode}</small></td><td className="px-3 py-2 text-right">{item.minimumQuantity}</td><td className="px-3 py-2 text-right font-medium">{formatCurrency(item.amount)}</td><td><Button type="button" size="icon" variant="ghost" aria-label={`Eliminar precio de ${item.productName}`} onClick={() => setCreateItems((current) => current.filter((_, currentIndex) => currentIndex !== index))}><Trash2 className="h-4 w-4 text-destructive" /></Button></td></tr>)}</tbody></table></div>}</div>}
         </div>
         <DialogFooter><Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancelar</Button><Button disabled={!name.trim() || create.isPending || !validChannelValue(channelStrategy, channelValue)} onClick={() => create.mutate()}>{create.isPending ? "Guardando…" : `Crear canal${channelStrategy === "TieredProductPrice" && createItems.length ? ` · ${createItems.length} precios` : ""}`}</Button></DialogFooter>
@@ -213,10 +209,10 @@ export function PriceSegmentsManager() {
           </div></> : <div className="space-y-5 rounded-2xl border bg-muted/20 p-5">
             <div><h3 className="font-semibold">Regla de precio del canal</h3><p className="text-sm text-muted-foreground">{channelStrategyHelp(channelStrategy)}</p></div>
             <div className="grid gap-3 sm:grid-cols-2">{channelStrategies.map((mode) => <Button key={mode.value} type="button" variant={channelStrategy === mode.value ? "default" : "outline"} onClick={() => { setChannelStrategy(mode.value); setChannelValue(0); }}>{mode.label}</Button>)}</div>
-            {requiresChannelValue(channelStrategy) && <div className="max-w-sm space-y-2"><Label>{channelValueLabel(channelStrategy)}</Label><FormattedNumberInput kind="percent" value={channelValue} invalid={!validChannelValue(channelStrategy, channelValue)} onValueChange={(value) => setChannelValue(value ?? 0)} /></div>}
+            {requiresChannelValue(channelStrategy) && <div className="max-w-sm space-y-2"><Label>{channelValueLabel(channelStrategy)}</Label><FormattedNumberInput kind="percent" allowNegative={channelStrategy !== "FixedMarginOverAverageCost"} value={channelValue} invalid={!validChannelValue(channelStrategy, channelValue)} onValueChange={(value) => setChannelValue(value ?? 0)} /></div>}
             {canManage && <Button disabled={saveChannel.isPending || !validChannelValue(channelStrategy, channelValue)} onClick={() => saveChannel.mutate()}>{saveChannel.isPending ? "Guardando…" : "Guardar regla del canal"}</Button>}
           </div>}
-          <div className="overflow-hidden rounded-xl border">
+          {channelStrategy === "TieredProductPrice" && <div className="overflow-hidden rounded-xl border">
             <table className="w-full text-sm">
               <thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-3 text-left">Producto</th><th className="px-4 py-3 text-right">Desde</th><th className="px-4 py-3 text-right">Precio</th><th className="px-4 py-3 text-left">Vigencia</th><th className="w-24" /></tr></thead>
               <tbody>
@@ -230,7 +226,7 @@ export function PriceSegmentsManager() {
                 {!items.isLoading && (items.data ?? []).length === 0 && <tr><td colSpan={5} className="p-10 text-center text-muted-foreground">Sin datos</td></tr>}
               </tbody>
             </table>
-          </div>
+          </div>}
         </>}
       </DialogContent>
     </Dialog>

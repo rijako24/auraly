@@ -7,6 +7,7 @@ import type {
   PosCashMovementReason,
   PosClient,
 } from "@/services/pos/pos-edge-client";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export function PosCashMovementDialog({
   client,
@@ -109,12 +110,11 @@ export function PosCashMovementDialog({
             icon={<ArrowUpFromLine className="h-5 w-5"/>} label="Salida"/>
         </div>
         <Field label="Motivo">
-          <select value={reasonId} onChange={(event)=>setReasonId(event.target.value)}
-            disabled={loading} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3">
-            <option value="">{loading?"Cargando motivos...":"Selecciona un motivo"}</option>
-            {reasons.map((item)=><option key={item.reasonId} value={item.reasonId}
-              disabled={!item.isAccountingConfigured}>{item.name}{item.isAccountingConfigured?"":" (sin cuenta)"}</option>)}
-          </select>
+          <Select value={reasonId||undefined} onValueChange={setReasonId} disabled={loading}>
+            <SelectTrigger className="h-11 rounded-xl border-slate-300"><SelectValue placeholder={loading?"Cargando motivos...":"Selecciona un motivo"}/></SelectTrigger>
+            <SelectContent>{reasons.map((item)=><SelectItem key={item.reasonId} value={item.reasonId}
+              disabled={!item.isAccountingConfigured}>{item.name}{item.isAccountingConfigured?"":" (sin cuenta)"}</SelectItem>)}</SelectContent>
+          </Select>
         </Field>
         <Field label="Valor">
           <input value={amount} onChange={(event)=>setAmount(event.target.value)}

@@ -23,6 +23,7 @@ export type PosCatalogProduct = {
   currencyCode: string;
   isActive: boolean;
   isWeighable: boolean;
+  allowsFractionalSale: boolean;
   priceSource: "Public" | "Base" | "PriceChannel";
 };
 export type PosCatalogSearchPage = {
@@ -103,6 +104,7 @@ export type PosDraftLine = {
   currencyCode: string;
   priceSource: string;
   discount: number;
+  allowsFractionalSale: boolean;
   net: number;
   tax: number;
   total: number;
@@ -429,6 +431,9 @@ export type PosPrinterConfiguration = {
     printerName: string | null;
   }> | null;
   scale: PosScaleConfiguration | null;
+  posPrinterName?: string | null;
+  ordersPrinterName?: string | null;
+  ordersReceiptPaperWidthMillimeters?: 58 | 80;
 };
 
 export type PosScaleConfiguration = {

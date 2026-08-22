@@ -77,7 +77,8 @@ public sealed class PosCaptureService(
                 price.Amount,
                 price.CurrencyCode,
                 price.Source,
-                price.PriceChannelId),
+                price.PriceChannelId,
+                AllowsFractionalSale: captured.Product.AllowsFractionalSale),
             cancellationToken);
         updated = await RepriceAsync(
             updated,
@@ -100,6 +101,10 @@ public sealed class PosCaptureService(
             ?? throw new KeyNotFoundException("The draft does not exist.");
         var line = current.Lines.SingleOrDefault(value => value.LineId == lineId)
             ?? throw new KeyNotFoundException("The draft line does not exist.");
+        var product = await catalog.GetByProductIdAsync(line.ProductId.Value, cancellationToken)
+            ?? throw new KeyNotFoundException("The product does not exist in the local catalog.");
+        if (!product.AllowsFractionalSale && quantity != decimal.Truncate(quantity))
+            throw new InvalidOperationException("Este producto solo se vende en unidades completas.");
         var totalQuantity = current.Lines
             .Where(value => value.ProductId == line.ProductId && value.LineId != lineId)
             .Sum(value => value.Quantity) + quantity;

@@ -123,7 +123,14 @@ public sealed class SqlDispatchDeliveryStore(DispatchingSqlConnectionFactory con
               INSERT dbo.DispatchDeliveryEvents(DispatchDeliveryEventId,BusinessId,DispatchId,DispatchSourceDocumentId,DeliveryStatus,Reason,Notes,Latitude,Longitude,OccurredAt,RecordedBy,ReceivedAt,IdempotencyKey)
               VALUES(NEWID(),@BusinessId,@Id,@DocumentId,@Status,@Reason,@Notes,@Latitude,@Longitude,@Occurred,@UserId,SYSUTCDATETIME(),@Key);
               UPDATE dbo.DispatchSourceDocuments SET Status=@Status WHERE DispatchSourceDocumentId=@DocumentId;
-              UPDATE dbo.Dispatches SET Status=N'InDelivery',UpdatedBy=@UserId,UpdatedAt=SYSUTCDATETIME() WHERE DispatchId=@Id;
+              UPDATE dispatch SET Status=CASE WHEN EXISTS(
+                SELECT 1 FROM dbo.DispatchSourceDocuments pending
+                WHERE pending.DispatchId=@Id AND NOT EXISTS(
+                  SELECT 1 FROM dbo.DispatchDeliveryEvents completed
+                  WHERE completed.DispatchSourceDocumentId=pending.DispatchSourceDocumentId)
+              ) THEN N'InDelivery' ELSE N'PendingSettlement' END,
+                UpdatedBy=@UserId,UpdatedAt=SYSUTCDATETIME()
+              FROM dbo.Dispatches dispatch WHERE dispatch.DispatchId=@Id;
             """,connection,tx))
             {Scope(insert,actor,dispatchId);insert.Parameters.AddWithValue("@DocumentId",request.DispatchSourceDocumentId);insert.Parameters.AddWithValue("@Status",request.DeliveryStatus);insert.Parameters.AddWithValue("@Reason",(object?)request.Reason??DBNull.Value);insert.Parameters.AddWithValue("@Notes",(object?)request.Notes??DBNull.Value);Coordinate(insert,"@Latitude",request.Latitude);Coordinate(insert,"@Longitude",request.Longitude);insert.Parameters.AddWithValue("@Occurred",request.OccurredAt);insert.Parameters.AddWithValue("@Key",request.IdempotencyKey);await insert.ExecuteNonQueryAsync(ct);}
             await tx.CommitAsync(ct);return (await GetAsync(actor,dispatchId,ct))!;
@@ -181,7 +188,7 @@ public sealed class SqlDispatchDeliveryStore(DispatchingSqlConnectionFactory con
           IF EXISTS(SELECT 1 FROM dbo.DispatchSettlements WHERE BusinessId=@BusinessId AND IdempotencyKey=@Key) RETURN;
           BEGIN TRAN;
           BEGIN TRY
-            IF NOT EXISTS(SELECT 1 FROM dbo.Dispatches WITH(UPDLOCK,HOLDLOCK) WHERE DispatchId=@Id AND BusinessId=@BusinessId AND @Settle=1 AND Status=N'InDelivery') THROW 51000,'The dispatch is not ready to be received and closed.',1;
+            IF NOT EXISTS(SELECT 1 FROM dbo.Dispatches WITH(UPDLOCK,HOLDLOCK) WHERE DispatchId=@Id AND BusinessId=@BusinessId AND @Settle=1 AND Status IN(N'InDelivery',N'PendingSettlement')) THROW 51000,'The dispatch is not ready to be received and closed.',1;
             IF EXISTS(SELECT 1 FROM dbo.DispatchSourceDocuments source WHERE source.DispatchId=@Id AND NOT EXISTS(SELECT 1 FROM dbo.DispatchDeliveryEvents delivery WHERE delivery.DispatchSourceDocumentId=source.DispatchSourceDocumentId)) THROW 51000,'Every invoice requires a delivery result.',1;
             DECLARE @Cash decimal(19,4)=(SELECT COALESCE(SUM(Amount),0) FROM dbo.DispatchDeliveryPayments WHERE DispatchId=@Id AND PaymentMethod=N'Cash');
             DECLARE @Deposit decimal(19,4)=(SELECT COALESCE(SUM(Amount),0) FROM dbo.DispatchDeliveryPayments WHERE DispatchId=@Id AND PaymentMethod=N'Deposit');

@@ -384,8 +384,8 @@ export function OrdersWorkspace({
 
       <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
         {!compact && (
-          <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-slate-50/80 px-4 py-3">
-            <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+          <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/80 px-3 py-3 md:flex-row md:flex-wrap md:items-center md:px-4">
+            <label className="flex w-full items-center gap-2 text-sm font-medium text-slate-700 md:w-auto">
               <Checkbox
                 checked={allSelected}
                 onCheckedChange={() =>
@@ -400,9 +400,9 @@ export function OrdersWorkspace({
               Seleccionar disponibles
             </label>
             <span className="hidden h-7 w-px bg-slate-200 md:block" aria-hidden="true" />
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            <div className="flex min-w-0 flex-1 flex-col gap-3 md:flex-row md:flex-wrap md:items-center">
                 <div
-                  className="grid min-w-[20rem] grid-cols-2 rounded-xl border border-slate-200 bg-white p-1"
+                  className="grid w-full min-w-0 grid-cols-1 rounded-xl border border-slate-200 bg-white p-1 sm:min-w-[20rem] sm:grid-cols-2 md:w-auto"
                   aria-label="Tipo de documento para los pedidos seleccionados"
                 >
                   <button
@@ -433,7 +433,7 @@ export function OrdersWorkspace({
               <span className="hidden text-xs text-slate-500 xl:inline">
                 Los clientes que exigen factura electrónica siempre se facturan.
               </span>
-              <div className="ml-auto flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+              <div className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2 sm:ml-auto sm:flex sm:w-auto sm:flex-row">
               {onConfigurePrinting && (
                 <Button type="button" variant="outline" size="icon"
                   title="Configurar plantillas e impresoras"
@@ -457,7 +457,7 @@ export function OrdersWorkspace({
                 type="button"
                 disabled={!selectedOrders.length || working || !onInvoiceSelected}
                 onClick={() => void invoiceSelected()}
-                className="w-full bg-teal-700 text-white hover:bg-teal-800 sm:w-auto"
+                className="col-span-2 w-full bg-teal-700 text-white hover:bg-teal-800 sm:w-auto"
               >
                 {working ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

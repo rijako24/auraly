@@ -26,6 +26,8 @@ public sealed partial class SqlPartyStore(
         try
         {
             await ValidateScopeAndGeographyAsync(connection, transaction, actor, request.PrimarySite, ct);
+            foreach (var site in request.AdditionalSites ?? [])
+                await ValidateScopeAndGeographyAsync(connection, transaction, actor, site, ct);
             var receipt = await ReceiptAsync(connection, transaction, actor.BusinessId, request.OperationId, ct);
             if (receipt is not null)
             {
@@ -94,6 +96,9 @@ public sealed partial class SqlPartyStore(
                 if (existingPartyId is null || !await PartyHasSiteAsync(connection, transaction, resolvedPartyId, ct))
                     await InsertSiteAsync(
                         connection, transaction, actor, resolvedPartyId, siteId, request.PrimarySite, now, ct);
+                foreach (var site in request.AdditionalSites ?? [])
+                    await InsertSiteAsync(
+                        connection, transaction, actor, resolvedPartyId, ids.NewId(), site with { IsPrimary = false }, now, ct);
                 if (request.Pricing is not null)
                     await InsertPricingAsync(
                         connection, transaction, actor, resolvedCustomerId, request.Pricing, now, ct);

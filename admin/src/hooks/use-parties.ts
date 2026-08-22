@@ -51,5 +51,6 @@ export function usePartyDetail(partyId?:string) {
     queryKey:["parties","detail",businessId,partyId],
     queryFn:()=>partiesApi.detail(partyId!),
     enabled:!!businessId&&!!partyId,
+    staleTime:60_000,
   });
 }

@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
-import { AlertTriangle, CalendarClock, Landmark, ReceiptText, Search, WalletCards } from "lucide-react";
+import { AlertTriangle, CalendarClock, Landmark, Plus, ReceiptText, Search, WalletCards } from "lucide-react";
 import { toast } from "sonner";
 import { useConfirmSupplierPayment, usePayableDetail, usePayables } from "@/hooks/use-payables";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
-import type { PayableListItem, PayableStatus } from "@/services/api/payables";
+import type { PayableDetail, PayableListItem, PayableStatus } from "@/services/api/payables";
 import { DataTable } from "@/components/tables/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -38,6 +39,7 @@ export default function PayablesPage() {
   const [overdue, setOverdue] = useState(false);
   const [selectedId, setSelectedId] = useState<string>();
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [paymentTarget,setPaymentTarget]=useState<PayableDetail>();
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState<"Cash" | "BankTransfer">("BankTransfer");
   const [reference, setReference] = useState("");
@@ -54,8 +56,8 @@ export default function PayablesPage() {
   const detail = detailQuery.data;
 
   useEffect(() => {
-    if (paymentOpen && detail) setAmount(String(detail.outstandingAmount));
-  }, [paymentOpen, detail]);
+    if (paymentOpen && paymentTarget) setAmount(String(paymentTarget.outstandingAmount));
+  }, [paymentOpen, paymentTarget]);
 
   const columns = useMemo<ColumnDef<PayableListItem>[]>(() => [
     {
@@ -105,14 +107,14 @@ export default function PayablesPage() {
   const openPayment = () => {
     if (!detail || detail.outstandingAmount <= 0) return;
     setMethod("BankTransfer"); setReference(""); setNotes("");
-    setAmount(String(detail.outstandingAmount)); setPaymentOpen(true);
+    setAmount(String(detail.outstandingAmount)); setPaymentTarget(detail); setSelectedId(undefined); setPaymentOpen(true);
   };
 
   const submitPayment = async (event: FormEvent) => {
     event.preventDefault();
-    if (!detail || !businessId) return;
+    if (!paymentTarget || !businessId) return;
     const parsed = Number(amount);
-    if (!Number.isFinite(parsed) || parsed <= 0 || parsed > detail.outstandingAmount) {
+    if (!Number.isFinite(parsed) || parsed <= 0 || parsed > paymentTarget.outstandingAmount) {
       toast.error("El valor debe ser mayor que cero y no superar el saldo.");
       return;
     }
@@ -120,15 +122,15 @@ export default function PayablesPage() {
       const accepted = await confirmPayment.mutateAsync({
         paymentId: crypto.randomUUID(),
         businessId,
-        supplierId: detail.supplierId,
+        supplierId: paymentTarget.supplierId,
         paidAt: new Date().toISOString(),
-        currencyCode: detail.currencyCode,
+        currencyCode: paymentTarget.currencyCode,
         paymentMethod: method,
         reference: reference.trim() || null,
         notes: notes.trim() || null,
-        allocations: [{ payableId: detail.payableId, amount: parsed }],
+        allocations: [{ payableId: paymentTarget.payableId, amount: parsed }],
       });
-      setPaymentOpen(false);
+      setPaymentOpen(false);setPaymentTarget(undefined);
       toast.success(`${accepted.documentNumber} fue recibido y quedó en procesamiento.`);
     } catch {
       toast.error("No fue posible registrar el pago. El saldo pudo cambiar; actualiza el detalle.");
@@ -137,9 +139,10 @@ export default function PayablesPage() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Cuentas por pagar</h1>
-        <p className="text-muted-foreground">Obligaciones creadas por las entradas de mercancía y sus pagos aplicados.</p>
+      <header className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+        <div><h1 className="text-2xl font-semibold tracking-tight">Cuentas por pagar</h1>
+        <p className="text-muted-foreground">Obligaciones creadas por las entradas de mercancía y sus pagos aplicados.</p></div>
+        <Button asChild><Link href="/dashboard/purchasing/goods-receipts"><Plus className="mr-2 h-4 w-4"/>Crear cuenta por pagar</Link></Button>
       </header>
 
       <section className="grid gap-3 md:grid-cols-3">
@@ -210,15 +213,15 @@ export default function PayablesPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
+      <Dialog open={paymentOpen} onOpenChange={open=>{setPaymentOpen(open);if(!open)setPaymentTarget(undefined)}}>
         <DialogContent className="sm:max-w-lg">
           <form className="space-y-5" onSubmit={submitPayment}>
-            <DialogHeader><DialogTitle>Registrar pago</DialogTitle><DialogDescription>El pago se aplicará a {detail?.documentNumber} mediante el motor transaccional.</DialogDescription></DialogHeader>
+            <DialogHeader><DialogTitle>Registrar pago</DialogTitle><DialogDescription>El pago se aplicará a {paymentTarget?.documentNumber} mediante el motor transaccional.</DialogDescription></DialogHeader>
             <div className="space-y-2"><Label htmlFor="payable-amount">Valor</Label><FormattedNumberInput id="payable-amount" kind="currency" value={amount} onValueChange={(value) => setAmount(value?.toString() ?? "")} /></div>
             <div className="space-y-2"><Label>Medio de pago</Label><Select value={method} onValueChange={(value) => setMethod(value as "Cash" | "BankTransfer")}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="BankTransfer">Transferencia bancaria</SelectItem><SelectItem value="Cash">Efectivo</SelectItem></SelectContent></Select></div>
             <div className="space-y-2"><Label htmlFor="payable-reference">Referencia</Label><Input id="payable-reference" maxLength={120} value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Comprobante o referencia bancaria" /></div>
             <div className="space-y-2"><Label htmlFor="payable-notes">Notas</Label><Textarea id="payable-notes" maxLength={1000} value={notes} onChange={(event) => setNotes(event.target.value)} /></div>
-            <DialogFooter><Button type="button" variant="outline" onClick={() => setPaymentOpen(false)}>Cancelar</Button><Button type="submit" disabled={confirmPayment.isPending}>{confirmPayment.isPending ? "Registrando..." : "Registrar pago"}</Button></DialogFooter>
+            <DialogFooter><Button type="button" variant="outline" onClick={() => {setPaymentOpen(false);setPaymentTarget(undefined)}}>Cancelar</Button><Button type="submit" disabled={confirmPayment.isPending}>{confirmPayment.isPending ? "Registrando..." : "Registrar pago"}</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>

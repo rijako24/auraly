@@ -208,7 +208,7 @@ public sealed partial class SqlPartyWorkspaceStore
             carrier,
             employee,
             user,
-            Convert.ToBase64String((byte[])reader[47]));
+            Convert.ToBase64String((byte[])reader[46]));
         await reader.CloseAsync();
         var sites = await LoadSitesAsync(connection, detail.PartyId, ct);
         return detail with

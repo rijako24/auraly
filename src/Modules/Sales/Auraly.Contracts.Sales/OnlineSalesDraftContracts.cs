@@ -59,6 +59,7 @@ public sealed record OnlineSalesProduct(
     string CurrencyCode,
     bool IsActive,
     bool IsWeighable,
+    bool AllowsFractionalSale,
     string PriceSource);
 
 public sealed record OnlineSalesProductPage(
@@ -96,6 +97,7 @@ public sealed record OnlineSalesDraftLine(
     string CurrencyCode,
     string PriceSource,
     decimal Discount,
+    bool AllowsFractionalSale,
     decimal Net,
     decimal Tax,
     decimal Total);

@@ -97,7 +97,7 @@ public sealed class PartyWorkspaceService(
     public async Task<PartyWorkspaceDetail> GetDetailAsync(
         PartyActorIdentity actor, Guid partyId, CancellationToken ct)
     {
-        Require(actor, PartyWorkspacePermissionCodes.Read);
+        Require(actor, PartyWorkspacePermissionCodes.Read, PartyPermissionCodes.CustomerRead, PartyWorkspacePermissionCodes.SupplierRead);
         if (partyId == Guid.Empty)
             throw new PartyValidationException("PartyId is required.");
         return await store.GetDetailAsync(actor, partyId, ct)

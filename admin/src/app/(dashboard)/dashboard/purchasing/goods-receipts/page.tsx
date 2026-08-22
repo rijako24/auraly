@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
   ArchiveRestore, Barcode, ChevronDown, CircleDollarSign, PackagePlus, Plus, Save,
-  Search, Trash2, Truck, Warehouse,
+  Search, Trash2, Truck, Warehouse, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
@@ -788,17 +788,14 @@ function ReceiptEditor({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!pendingAssociation} onOpenChange={(value) => {
-        if (!value) { setPendingAssociation(undefined); setSupplierProductCode(""); setPurchasePresentationName("Unidad"); setUnitsPerPresentation(1); }
-      }}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Asociar producto al proveedor</DialogTitle>
-            <DialogDescription>
+      {pendingAssociation && <section className="mx-6 mb-4 space-y-4 rounded-2xl border border-teal-200 bg-teal-50/30 p-5">
+          <div>
+            <h3 className="font-semibold">Asociar producto al proveedor</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
               {pendingAssociation?.name} no pertenece todavía al catálogo de este proveedor.
               Confirma la relación para poder recibirlo ahora y encontrarlo directamente en futuras entradas.
-            </DialogDescription>
-          </DialogHeader>
+            </p>
+          </div>
           <Field label="Código utilizado por el proveedor">
             <Input value={supplierProductCode}
               onChange={(event) => setSupplierProductCode(event.target.value)}
@@ -816,17 +813,16 @@ function ReceiptEditor({
             </Field>
           </div>
           <p className="text-sm text-muted-foreground">Ejemplo: 3 cajas de 24 se registran como 72 unidades de inventario.</p>
-          <DialogFooter>
+          <div className="flex justify-end gap-2">
             <Button type="button" variant="outline"
-              onClick={() => { setPendingAssociation(undefined); setSupplierProductCode(""); }}>
+              onClick={() => { setPendingAssociation(undefined); setSupplierProductCode(""); setPurchasePresentationName("Unidad"); setUnitsPerPresentation(1); }}>
               Cancelar
             </Button>
             <Button type="button" disabled={associateProduct.isPending} onClick={confirmAssociation}>
               Asociar y agregar
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </div>
+      </section>}
       <DialogFooter className="border-t bg-background px-6 py-4 sm:justify-between">
         {draft.concurrencyToken
           ? <Button type="button" variant="ghost" className="text-destructive" disabled={remove.isPending} onClick={deleteDraft}>
@@ -836,6 +832,9 @@ function ReceiptEditor({
               Descartar captura
             </Button>}
         <div className="grid w-full gap-2 sm:flex sm:w-auto sm:justify-end">
+          <Button type="button" variant="outline" onClick={onClose}>
+            <X className="mr-2 h-4 w-4" /> Cerrar
+          </Button>
           <Button type="button" variant="secondary" disabled={save.isPending} onClick={() => persist()}>
             <Save className="mr-2 h-4 w-4" /> Guardar borrador
           </Button>

@@ -2,10 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { dispatchesApi } from "@/services/api/dispatches";
 
 const key=["dispatches"] as const;
-export const useDispatches=(params:{page:number;pageSize:number;search?:string;status?:string;from?:string;to?:string})=>useQuery({queryKey:[...key,"page",params],queryFn:()=>dispatchesApi.page(params)});
+export const useDispatches=(params:{page:number;pageSize:number;search?:string;status?:string;from?:string;to?:string})=>useQuery({queryKey:[...key,"page",params],queryFn:()=>dispatchesApi.page(params),refetchInterval:query=>query.state.data?.items.some(item=>item.status==="SettlementProcessing")?2_000:false});
 export const useDispatchOptions=()=>useQuery({queryKey:[...key,"options"],queryFn:dispatchesApi.options});
 export const useDispatchCandidates=(params:{search?:string;documentType?:string;warehouseId?:string},enabled=true)=>useQuery({queryKey:[...key,"candidates",params],queryFn:()=>dispatchesApi.candidates({...params,page:1,pageSize:100}),enabled});
-export const useDispatchDetail=(id?:string)=>useQuery({queryKey:[...key,"detail",id],queryFn:()=>dispatchesApi.detail(id!),enabled:!!id});
+export const useDispatchDetail=(id?:string)=>useQuery({queryKey:[...key,"detail",id],queryFn:()=>dispatchesApi.detail(id!),enabled:!!id,refetchInterval:query=>query.state.data?.status==="SettlementProcessing"?2_000:false});
 export function useCreateDispatch(){const cache=useQueryClient();return useMutation({mutationFn:dispatchesApi.create,onSuccess:()=>cache.invalidateQueries({queryKey:key})});}
 export function useDispatchTransition(){const cache=useQueryClient();return useMutation({mutationFn:({id,action,rowVersion}:{id:string;action:string;rowVersion:string})=>dispatchesApi.transition(id,action,rowVersion),onSuccess:(_,value)=>{cache.invalidateQueries({queryKey:key});cache.invalidateQueries({queryKey:[...key,"detail",value.id]});}});}
 export function useVerifyDispatch(){const cache=useQueryClient();return useMutation({mutationFn:({id,lineId,quantity}:{id:string;lineId:string;quantity:number})=>dispatchesApi.verify(id,lineId,quantity,null),onSuccess:(_,value)=>{cache.invalidateQueries({queryKey:key});cache.invalidateQueries({queryKey:[...key,"detail",value.id]});}});}

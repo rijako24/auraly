@@ -27,7 +27,7 @@ CREATE TABLE [dbo].[SalesDraftLines] (
 );
 GO
 
-CREATE UNIQUE INDEX [UX_SalesDraftLines_Draft_Product]
+CREATE INDEX [IX_SalesDraftLines_Draft_Product]
     ON [dbo].[SalesDraftLines] ([SalesDraftId], [ProductId]);
 GO
 

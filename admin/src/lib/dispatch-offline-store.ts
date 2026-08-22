@@ -1,7 +1,9 @@
 import type { DeliveryResultInput, DispatchExecution } from "@/services/api/dispatches";
 
 const DATABASE = "auraly-dispatch-pwa";
-const VERSION = 2;
+// IndexedDB versions are monotonic. Version 3 was already shipped in DEV;
+// opening it as version 2 blocks startup with VersionError.
+const VERSION = 4;
 const SNAPSHOTS = "dispatch-snapshots";
 const OUTBOX = "dispatch-outbox";
 const EVIDENCE = "pending-evidence";
@@ -71,7 +73,8 @@ export async function queueDeliveryOperation(dispatchId: string, request: Delive
       return { returnLineId: `local-${index}`, productId: line?.productId ?? "", productCode: line?.productCode ?? "", description: line?.description ?? "", ...value };
     }),
   } : document);
-  await saveDispatchSnapshot({ ...snapshot, status: "InDelivery", documents });
+  const routeCompleted=documents.every(document=>document.deliveryStatus!=="Pending");
+  await saveDispatchSnapshot({ ...snapshot, status: routeCompleted?"PendingSettlement":"InDelivery", documents });
 }
 
 export async function queueExpenseOperation(dispatchId: string, request: ExpenseOperation["request"], evidence: Evidence[]) {

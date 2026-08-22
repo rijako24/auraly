@@ -13,7 +13,7 @@ export default defineConfig({
     }] : []),
     {
       command: "node .next/standalone/server.js",
-      url: "http://127.0.0.1:3001/login",
+      url: "http://127.0.0.1:3000/login",
       reuseExistingServer: false,
       timeout: 120_000,
     },

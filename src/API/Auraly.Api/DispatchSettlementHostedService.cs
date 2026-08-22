@@ -68,6 +68,7 @@ public sealed class DispatchSettlementHostedService(
                 INNER JOIN dbo.Businesses business ON business.BusinessId=operation.BusinessId
                 INNER JOIN dbo.Dispatches dispatch ON dispatch.DispatchId=operation.DispatchId
                 WHERE operation.Status IN(N'Pending',N'Processing')
+                  AND operation.NextAttemptAt<=SYSUTCDATETIME()
                 ORDER BY operation.NextAttemptAt,operation.RequestedAt;
                 """;
             Operation? value = null;

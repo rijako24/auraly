@@ -65,7 +65,8 @@ public sealed record CreateCustomerRequest(
     PartyInput Party,
     PartySiteInput PrimarySite,
     CustomerPricingInput? Pricing,
-    bool RequiresElectronicInvoice = false);
+    bool RequiresElectronicInvoice = false,
+    IReadOnlyCollection<PartySiteInput>? AdditionalSites = null);
 
 public sealed record SaveCustomerBillingRequest(bool RequiresElectronicInvoice);
 

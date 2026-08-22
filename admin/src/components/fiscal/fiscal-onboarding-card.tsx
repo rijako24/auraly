@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import {
   fiscalConfigurationApi,
   type FiscalOnboardingConfiguration,
@@ -188,12 +190,9 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
             {available.length > 0 ? (
               <>
                 <Field label="Resolución disponible">
-                  <select className="h-10 w-full rounded-md border bg-background px-3 text-sm" value={selectedRangeId} onChange={(event) => { setSelectedRangeId(event.target.value); setConfirmed(false); }}>
-                    <option value="">Selecciona una resolución</option>
-                    {available.map((item) => <option key={item.dianNumberingRangeId} value={item.dianNumberingRangeId}>{item.authorizationNumber} · {item.prefix}{item.rangeStart}–{item.rangeEnd} · vence {item.validUntil}</option>)}
-                  </select>
+                  <Select value={selectedRangeId||undefined} onValueChange={value=>{setSelectedRangeId(value);setConfirmed(false)}}><SelectTrigger><SelectValue placeholder="Selecciona una resolución"/></SelectTrigger><SelectContent>{available.map((item) => <SelectItem key={item.dianNumberingRangeId} value={item.dianNumberingRangeId}>{item.authorizationNumber} · {item.prefix}{item.rangeStart}–{item.rangeEnd} · vence {item.validUntil}</SelectItem>)}</SelectContent></Select>
                 </Field>
-                <label className="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /><span>Confirmo que esta resolución corresponde a <b>{value.businessName}</b>. Al activar quedará reservada para esta sede y no podrá trasladarse desde la aplicación.</span></label>
+                <label className="flex items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><span>Confirmo que esta resolución corresponde a <b>{value.businessName}</b>. Al activar quedará reservada para esta sede y no podrá trasladarse desde la aplicación.</span><Switch checked={confirmed} onCheckedChange={setConfirmed}/></label>
                 <Button disabled={!canManage || !selectedRangeId || !confirmed || activating} onClick={() => void activate()}>{activating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Activar producción</Button>
               </>
             ) : <p className="text-sm text-muted-foreground">No hay resoluciones libres. Solicita y asocia la numeración en el portal DIAN, luego vuelve a consultar.</p>}

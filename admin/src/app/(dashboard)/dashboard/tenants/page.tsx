@@ -1,12 +1,12 @@
 "use client";
 import { useMemo } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { MoreHorizontal, Plus, Eye } from "lucide-react";
+import { Plus } from "lucide-react";
 import { DataTable } from "@/components/tables/data-table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { PageLoading } from "@/components/ui/page-loading";
 import { PageError } from "@/components/ui/page-error";
 import type { Tenant } from "@/types/entities";
@@ -16,6 +16,7 @@ import { useAuthStore } from "@/stores/auth-store";
 
 export default function TenantsPage() {
   const { data, isLoading, isError, refetch } = useTenants();
+  const router = useRouter();
   const canCreateTenant = useAuthStore((state) => state.user?.permissions.includes("tenants.create") ?? false);
   const tenants = data?.items ?? [];
   const columns: ColumnDef<Tenant>[] = useMemo(() => [
@@ -26,7 +27,6 @@ export default function TenantsPage() {
     { id: "users", header: "Usuarios", cell: ({ row }) => `${row.original.activeUserCount} / ${row.original.maximumUsers}` },
     { id: "devices", header: "Cajas", cell: ({ row }) => `${row.original.activeEnrolledDeviceCount} / ${row.original.maximumEnrolledDevices}` },
     { accessorKey: "createdAt", header: "Creado", cell: ({ row }) => formatDate(row.original.createdAt) },
-    { id: "actions", cell: ({ row }) => { const t = row.original; return (<DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem asChild><Link href={`/dashboard/tenants/${t.tenantId}`}><Eye className="mr-2 h-4 w-4" />Ver</Link></DropdownMenuItem></DropdownMenuContent></DropdownMenu>); } },
   ], []);
 
   if (isLoading) return <PageLoading cards={0} />;
@@ -38,7 +38,7 @@ export default function TenantsPage() {
         <div><h1 className="text-2xl font-semibold tracking-tight">Tenants</h1><p className="text-muted-foreground">Gestiona las organizaciones que usan la plataforma</p></div>
         {canCreateTenant && <Button asChild><Link href="/dashboard/tenants/new"><Plus className="mr-2 h-4 w-4" />Nuevo Tenant</Link></Button>}
       </div>
-      <DataTable columns={columns} data={tenants} searchKey="name" searchPlaceholder="Buscar por nombre..." enableRowSelection={false} />
+      <DataTable columns={columns} data={tenants} searchKey="name" searchPlaceholder="Buscar por nombre..." enableRowSelection={false} onRowClick={(tenant)=>router.push(`/dashboard/tenants/${tenant.tenantId}`)} />
     </div>
   );
 }

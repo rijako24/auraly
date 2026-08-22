@@ -26,7 +26,6 @@ import {
   PosEdgeError,
   PosEdgeClient,
   readEdgeUserSession,
-  loadBrowserPrinterConfiguration,
   PosIssuedSaleSearchPage,
   PosIssuedSaleSummary,
   PosNextNumbers,
@@ -42,9 +41,9 @@ import {
   PosSensitiveAuthorization,
   PosApprovalCreateInput,
   PosApprovalSummary,
+  type PosPrinterConfiguration,
 } from "./pos-edge-client";
 import { posApprovalClient } from "./pos-approval-client";
-import { calculateReceiptRetailUnitPrice } from "@/app/(pos)/pos/pos-retail-price";
 
 export type SalesWorkspaceOption = {
   businessId: string;
@@ -75,6 +74,7 @@ type OnlineDraftLine = {
   currencyCode: string;
   priceSource: string;
   discount: number;
+  allowsFractionalSale: boolean;
   net: number;
   tax: number;
   total: number;
@@ -638,6 +638,14 @@ export class OnlinePosClient implements PosClient {
     return this.localEdge().readScaleWeight();
   }
 
+  printerConfiguration() {
+    return this.localEdge().printerConfiguration();
+  }
+
+  savePrinterConfiguration(configuration: PosPrinterConfiguration) {
+    return this.localEdge().savePrinterConfiguration(configuration);
+  }
+
   previewWorkSessionClosure(
     draftId: string,
     authorization?: PosSensitiveAuthorization,
@@ -839,14 +847,6 @@ async function request<T>(
   return (await response.json()) as T;
 }
 
-function openPrintPreview(): Window | null {
-  return window.open(
-    "",
-    "_blank",
-    "popup=yes,width=460,height=760,resizable=yes,scrollbars=yes",
-  );
-}
-
 export function openHalfLetterPrintPreview(): Window | null {
   return window.open(
     "",
@@ -941,104 +941,6 @@ export async function renderReceiptsHalfLetter(
     @page{size:Letter portrait;margin:0}*{box-sizing:border-box}html,body{margin:0;color:#07111f;font-family:Arial,sans-serif}.sheet{width:215.9mm;height:279.4mm;page-break-after:always;position:relative;overflow:hidden}.sheet:last-child{page-break-after:auto}.copy{height:50%;padding:8mm 10mm 6mm;overflow:hidden}.copy:first-child{border-bottom:1px dashed #64748b}.cut{position:absolute;left:50%;top:calc(50% - 2.5mm);z-index:2;padding:0 2mm;transform:translateX(-50%);background:#fff;color:#64748b;font-size:7pt}.document{transform-origin:top left;font-size:8pt;line-height:1.2}header{display:grid;grid-template-columns:1fr auto;gap:6mm;border-bottom:1px solid #0f766e;padding-bottom:2mm}h1{margin:0;font-size:14pt;color:#065f5b}h2{margin:1mm 0 0;font-size:9pt}.right{text-align:right}.meta{display:grid;grid-template-columns:1fr 1fr;gap:1mm 5mm;margin:2mm 0}.meta div,.totals div{display:flex;justify-content:space-between;gap:3mm}.meta span,.totals span{color:#475569}table{width:100%;border-collapse:collapse;margin-top:1.5mm}th{padding:1.2mm;background:#e9f7f5;text-align:left;font-size:7pt}td{padding:1.1mm;border-bottom:1px solid #e2e8f0}.n{text-align:right;white-space:nowrap}.bottom{display:grid;grid-template-columns:1fr 44mm;gap:4mm;margin-top:2mm}.totals{border:1px solid #cbd5e1;border-radius:2mm;padding:2mm}.total{font-size:10pt;color:#065f5b}.cufe{overflow-wrap:anywhere;font-size:6.5pt}.qr{display:block;width:27mm;height:27mm;margin:1mm auto 0}small{color:#64748b;font-size:6.5pt}@media screen{body{background:#e2e8f0}.sheet{margin:8mm auto;background:#fff;box-shadow:0 4px 24px #0f172a33}}
   </style></head><body>${pages}<script>addEventListener('load',()=>{for(const copy of document.querySelectorAll('.copy')){const content=copy.querySelector('.document');const available=copy.clientHeight-2;if(content.scrollHeight>available){const scale=Math.max(.62,available/content.scrollHeight);content.style.transform='scale('+scale+')';content.style.width=(100/scale)+'%'}}setTimeout(()=>window.print(),150)});</script></body></html>`);
   preview.document.close();
-}
-
-async function renderReceipt(
-  preview: Window,
-  receipt: PosPrintableReceipt,
-  qrImageUrl: string | null,
-) {
-  const currency = new Intl.NumberFormat("es-CO", {
-    style: "currency",
-    currency: "COP",
-    maximumFractionDigits: 0,
-  });
-  const lines = receipt.lines
-    .map(
-      (line) => `
-        <section class="line">
-          <strong>${escapeHtml(line.description)}</strong>
-          <div><span>${line.quantity} × ${currency.format(calculateReceiptRetailUnitPrice(line.unitPrice, line.quantity, line.discount, line.tax))}</span><b>${currency.format(line.total)}</b></div>
-          ${line.discount > 0 ? `<small>Descuento: ${currency.format(line.discount)}</small>` : ""}
-          ${line.tax > 0 ? `<small>IVA: ${currency.format(line.tax)}</small>` : ""}
-        </section>`,
-    )
-    .join("");
-  const payments = receipt.payments
-    .map(
-      (payment) =>
-        `<div><span>${escapeHtml(payment.methodCode)}</span><b>${currency.format(payment.amount)}</b></div>`,
-    )
-    .join("");
-  const isFiscal = receipt.documentType === "SalesInvoice";
-  const fiscalMeta = isFiscal
-    ? `<div><span>Número DIAN</span><b>${escapeHtml(receipt.fiscalNumber)}</b></div>`
-    : "";
-  const fiscalArtifacts = isFiscal
-    ? `<div class="cufe"><strong>CUFE</strong><br>${escapeHtml(receipt.cufe)}</div>
-       <img class="qr" src="${escapeHtml(qrImageUrl)}" alt="Código QR DIAN">
-       <footer>Representación gráfica</footer>`
-    : `<footer>Comprobante de venta</footer>`;
-  const documentTitle = isFiscal
-    ? "FACTURA ELECTRÓNICA DE VENTA"
-    : "COMPROBANTE DE VENTA";
-  preview.document.open();
-  preview.document.write(`<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8">
-  <title>${escapeHtml(receipt.documentNumber)}</title>
-  <style>
-    @page { size: 80mm auto; margin: 4mm; }
-    * { box-sizing: border-box; }
-    body { width: 72mm; margin: 0 auto; color: #111; font: 12px/1.35 ui-monospace, Consolas, monospace; }
-    header { text-align: center; border-bottom: 1px dashed #555; padding-bottom: 8px; }
-    h1 { margin: 0; font: 800 19px/1.2 Arial, sans-serif; }
-    h2 { margin: 4px 0; font-size: 12px; }
-    .meta, .totals, .payments { padding: 8px 0; border-bottom: 1px dashed #555; }
-    .meta div, .totals div, .payments div, .line div { display: flex; justify-content: space-between; gap: 10px; }
-    .line { padding: 8px 0; border-bottom: 1px dashed #aaa; }
-    .line strong { display: block; margin-bottom: 2px; }
-    .line small { display: block; color: #444; }
-    .total { margin-top: 5px; font-size: 16px; }
-    .cufe { margin-top: 9px; overflow-wrap: anywhere; font-size: 9px; }
-    .qr { display: block; width: 42mm; height: 42mm; margin: 9px auto 4px; }
-    footer { text-align: center; padding-top: 6px; }
-  </style>
-</head>
-<body>
-  <header>
-    <h1>Auraly</h1>
-    <h2>${documentTitle}</h2>
-    <div>${new Date(receipt.issuedAt).toLocaleString("es-CO")}</div>
-  </header>
-  <section class="meta">
-    <div><span>Documento Auraly</span><b>${escapeHtml(receipt.documentNumber)}</b></div>
-    ${fiscalMeta}
-    <div><span>Adquirente</span><b>${escapeHtml(receipt.customerName)}</b></div>
-    <div><span>Identificación</span><b>${escapeHtml(receipt.customerIdentification)}</b></div>
-  </section>
-  ${lines}
-  <section class="totals">
-    <div><span>Subtotal</span><b>${currency.format(receipt.untaxedAmount)}</b></div>
-    <div><span>Impuestos</span><b>${currency.format(receipt.taxAmount)}</b></div>
-    <div class="total"><strong>Total</strong><strong>${currency.format(receipt.payableAmount)}</strong></div>
-  </section>
-  <section class="payments">${payments}</section>
-  ${fiscalArtifacts}
-</body>
-</html>`);
-  preview.document.close();
-  const image = preview.document.querySelector("img.qr") as HTMLImageElement | null;
-  if (image && !image.complete)
-    await new Promise<void>((resolve) => {
-      const done = () => resolve();
-      image.addEventListener("load", done, { once: true });
-      image.addEventListener("error", done, { once: true });
-      window.setTimeout(done, 3_000);
-    });
-  preview.focus();
-  preview.print();
 }
 
 function escapeHtml(value: string | null) {

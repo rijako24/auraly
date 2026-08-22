@@ -231,7 +231,7 @@ function PosCustomerCreateForm({ busy, onCountries, onDivisions, onCities, onCre
 
   return <form onSubmit={submit} className="min-h-0 flex-1 overflow-auto p-5">
     <div className="grid gap-4 sm:grid-cols-2">
-      <Field label="Tipo de identificación"><Input autoFocus value={form.identificationTypeCode} onChange={(e) => set("identificationTypeCode", e.target.value)} /></Field>
+      <Field label="Tipo de identificación"><Select value={form.identificationTypeCode} onValueChange={value=>set("identificationTypeCode",value)}><SelectTrigger autoFocus><SelectValue/></SelectTrigger><SelectContent><SelectItem value="CC">Cédula</SelectItem><SelectItem value="NIT">NIT</SelectItem><SelectItem value="CE">Cédula de extranjería</SelectItem><SelectItem value="PP">Pasaporte</SelectItem></SelectContent></Select></Field>
       <Field label="Número"><Input value={form.identification} onChange={(e) => set("identification", e.target.value)} /></Field>
       <Field label="Nombre completo"><Input value={form.displayName} onChange={(e) => set("displayName", e.target.value)} /></Field>
       <Field label="Teléfono"><Input value={form.phone} onChange={(e) => set("phone", e.target.value)} /></Field>

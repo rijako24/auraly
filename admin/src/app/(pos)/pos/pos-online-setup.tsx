@@ -8,6 +8,7 @@ import type { PosSaleDocumentType } from "@/services/pos/pos-edge-client";
 import { loadPosInstaller, type PosInstaller } from "@/services/pos/pos-installer";
 import { rememberedSalesWorkspaceKey, salesWorkspaceKey, type SalesWorkspaceOption } from "@/services/pos/online-pos-client";
 import { resolvePosWorkspaceSelection } from "@/services/pos/pos-workspace-selection";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type Props = {
   options: SalesWorkspaceOption[];
@@ -110,7 +111,10 @@ export function PosOnlineSetup({ options, loading, error, tenantName, userDispla
   </main>;
 }
 
-function Combo({ title, icon: Icon, items, value, onChange, disabled = false }: { title: string; icon: typeof Building2; items: { id: string; name: string }[]; value: string; onChange: (value: string) => void; disabled?: boolean }) { return <label className="block"><span className="mb-2 flex items-center gap-2 text-sm font-semibold"><Icon className="h-4 w-4 text-teal-200" />{title}</span><select value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled} className="h-12 w-full rounded-xl border border-teal-300/30 bg-[#102e33] px-4 font-semibold text-white outline-none focus:border-teal-300"><option value="">Selecciona {title.toLocaleLowerCase("es")}</option>{items.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>; }
+function Combo({ title, icon: Icon, items, value, onChange, disabled = false }: { title: string; icon: typeof Building2; items: { id: string; name: string }[]; value: string; onChange: (value: string) => void; disabled?: boolean }) {
+  const only = items.length === 1 ? items[0] : null;
+  return <div className="block"><span className="mb-2 flex items-center gap-2 text-sm font-semibold"><Icon className="h-4 w-4 text-teal-200" />{title}</span>{only ? <div className="flex h-12 items-center rounded-xl border border-teal-300/30 bg-[#102e33] px-4 font-semibold text-white">{only.name}</div> : <Select value={value} onValueChange={onChange} disabled={disabled}><SelectTrigger className="h-12 rounded-xl border-teal-300/30 bg-[#102e33] px-4 font-semibold text-white focus:ring-teal-300"><SelectValue placeholder={`Selecciona ${title.toLocaleLowerCase("es")}`} /></SelectTrigger><SelectContent>{items.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select>}</div>;
+}
 function DocumentButton({ active, icon: Icon, title, onClick }: { active: boolean; icon: typeof Receipt; title: string; onClick: () => void }) { return <button type="button" onClick={onClick} className={`flex min-h-16 items-center gap-3 rounded-2xl border p-3 text-left text-sm font-bold transition ${active ? "border-teal-300 bg-teal-300/15" : "border-white/15 bg-[#102e33]"}`}><Icon className="h-5 w-5 shrink-0 text-teal-200" />{title}{active && <CheckCircle2 className="ml-auto h-4 w-4 text-teal-200" />}</button>; }
 function Loading({ text = "Cargando sedes y bodegas…" }: { text?: string }) { return <div className="flex min-h-24 items-center justify-center gap-3 text-sm text-slate-300"><Loader2 className="h-6 w-6 animate-spin text-teal-300" />{text}</div>; }
 function Step({ number, text, active }: { number: string; text: string; active: boolean }) { return <li className={`flex items-center gap-3 ${active ? "text-white" : "text-slate-500"}`}><span className={`grid h-7 w-7 place-items-center rounded-full ${active ? "bg-teal-300 text-[#071a1d]" : "bg-white/10"}`}>{number}</span>{text}</li>; }

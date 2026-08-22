@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   productOffersApi,
   type ProductOffer,
@@ -154,17 +155,7 @@ export function ProductOffersSection({ productId }: { productId: string }) {
           if (!draft) return null;
           return (
             <div key={offer.productOfferId} className="grid gap-2 rounded-lg border p-3 sm:grid-cols-7">
-              <select
-                className="h-9 rounded-md border bg-background px-2 text-sm"
-                value={draft.condition}
-                onChange={(event) => {
-                  updateDraft(offer, "condition", event.target.value as ProductOffer["condition"]);
-                }}
-              >
-                <option value="new">Nuevo</option>
-                <option value="used">Usado</option>
-                <option value="refurbished">Reacondicionado</option>
-              </select>
+              <Select value={draft.condition} onValueChange={(value)=>updateDraft(offer,"condition",value as ProductOffer["condition"])}><SelectTrigger className="h-9"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="new">Nuevo</SelectItem><SelectItem value="used">Usado</SelectItem><SelectItem value="refurbished">Reacondicionado</SelectItem></SelectContent></Select>
               <Input
                 type="number"
                 value={draft.storageGb ?? ""}
@@ -208,20 +199,7 @@ export function ProductOffersSection({ productId }: { productId: string }) {
           );
         })}
         <div className="grid gap-2 rounded-lg border border-dashed p-3 sm:grid-cols-7">
-          <select
-            className="h-9 rounded-md border bg-background px-2 text-sm"
-            value={newOffer.condition}
-            onChange={(event) => {
-              setNewOffer((value) => ({
-                ...value,
-                condition: event.target.value as ProductOffer["condition"],
-              }));
-            }}
-          >
-            <option value="new">Nuevo</option>
-            <option value="used">Usado</option>
-            <option value="refurbished">Reacondicionado</option>
-          </select>
+          <Select value={newOffer.condition} onValueChange={(condition)=>setNewOffer(value=>({...value,condition:condition as ProductOffer["condition"]}))}><SelectTrigger className="h-9"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="new">Nuevo</SelectItem><SelectItem value="used">Usado</SelectItem><SelectItem value="refurbished">Reacondicionado</SelectItem></SelectContent></Select>
           <Input type="number" value={newOffer.storageGb ?? ""} onChange={(event) => setNewOffer((value) => ({ ...value, storageGb: Number(event.target.value) }))} />
           <Input value={newOffer.variantLabel ?? ""} placeholder="Variante" onChange={(event) => setNewOffer((value) => ({ ...value, variantLabel: event.target.value }))} />
           <FormattedNumberInput kind="currency" value={newOffer.unitPrice} onValueChange={(price) => setNewOffer((value) => ({ ...value, unitPrice: price ?? 0 }))} />
@@ -249,18 +227,7 @@ export function ProductOffersSection({ productId }: { productId: string }) {
             </div>
           ))}
         </div>
-        <select
-          className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-          value={imageOfferId}
-          onChange={(event) => setImageOfferId(event.target.value)}
-        >
-          <option value="">Imagen general del producto</option>
-          {(offersQuery.data ?? []).map((offer) => (
-            <option key={offer.productOfferId} value={offer.productOfferId}>
-              {offer.condition} · {offer.storageGb ?? "sin capacidad"} GB
-            </option>
-          ))}
-        </select>
+        <Select value={imageOfferId||"_general"} onValueChange={value=>setImageOfferId(value==="_general"?"":value)}><SelectTrigger className="h-9 w-full"><SelectValue/></SelectTrigger><SelectContent><SelectItem value="_general">Imagen general del producto</SelectItem>{(offersQuery.data ?? []).map((offer) => <SelectItem key={offer.productOfferId} value={offer.productOfferId}>{offer.condition} · {offer.storageGb ?? "sin capacidad"} GB</SelectItem>)}</SelectContent></Select>
         <div className="flex flex-col gap-2 sm:flex-row">
           <Input value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} placeholder="https://... imagen externa" />
           <Button variant="outline" disabled={!imageUrl || addImageUrl.isPending} onClick={() => addImageUrl.mutate()}>

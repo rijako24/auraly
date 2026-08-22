@@ -42,7 +42,8 @@ public sealed class PosOrderRecoveryService(
                     order.Currency,
                     "Order",
                     Discount: orderLine.DiscountAmount,
-                    Note: $"Pedido {order.OrderNumber}"));
+                    Note: $"Pedido {order.OrderNumber}",
+                    AllowsFractionalSale: product.AllowsFractionalSale));
             }
 
             return await drafts.ImportOrderAsync(
@@ -127,10 +128,10 @@ public static class PosOrderEndpoints
                         session, result.DocumentId!.Value, ct));
                 if (printerSettings.Load().OrdersOutputFormat ==
                     PrintTemplateFormats.HalfLetter)
-                    await printer.PrintAsync(receipts, ct);
+                    await printer.PrintAsync(receipts, printerSettings.Load().OrdersPrinterName, ct);
                 else
                     foreach (var receipt in receipts)
-                        await receiptPrinter.PrintReceiptAsync(receipt, ct);
+                        await receiptPrinter.PrintOrdersReceiptAsync(receipt, ct);
                 return Results.Ok(response with
                 {
                     PrintStatus = receipts.Count == 0 ? "NotRequired" : "Sent"

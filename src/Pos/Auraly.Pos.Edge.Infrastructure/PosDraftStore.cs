@@ -34,7 +34,8 @@ public sealed record PosDraftLineInput(
     string PriceSource,
     Guid? PriceChannelId = null,
     decimal Discount = 0,
-    string? Note = null);
+    string? Note = null,
+    bool AllowsFractionalSale = false);
 
 public sealed record PosDraftLine(
     Guid LineId,
@@ -52,6 +53,7 @@ public sealed record PosDraftLine(
     Guid? PriceChannelId,
     decimal Discount,
     string? Note,
+    bool AllowsFractionalSale,
     int Position)
 {
     public decimal Gross => Round(Quantity * UnitPrice);
@@ -139,6 +141,19 @@ public sealed class PosDraftStore
         if (!columns.Contains("SourceOrderId"))
         {
             command.CommandText = "ALTER TABLE PosDrafts ADD COLUMN SourceOrderId TEXT NULL;";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        columns.Clear();
+        command.CommandText = "PRAGMA table_info('PosDraftLines');";
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+                columns.Add(reader.GetString(1));
+        }
+        if (!columns.Contains("AllowsFractionalSale"))
+        {
+            command.CommandText =
+                "ALTER TABLE PosDraftLines ADD COLUMN AllowsFractionalSale INTEGER NOT NULL DEFAULT 0;";
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         command.CommandText = """
@@ -640,11 +655,11 @@ public sealed class PosDraftStore
             INSERT INTO PosDraftLines(
               LineId,DraftId,ProductId,ProductCode,Description,UnitCode,TaxCode,TaxRate,
               Quantity,BaseUnitPrice,UnitPrice,CurrencyCode,PriceSource,
-              PriceChannelId,Discount,Note,Position)
+              PriceChannelId,Discount,Note,AllowsFractionalSale,Position)
             VALUES(
               @LineId,@DraftId,@ProductId,@ProductCode,@Description,@UnitCode,@TaxCode,@TaxRate,
               @Quantity,@BaseUnitPrice,@UnitPrice,@CurrencyCode,@PriceSource,
-              @PriceChannelId,@Discount,@Note,@Position);
+              @PriceChannelId,@Discount,@Note,@AllowsFractionalSale,@Position);
             """,
             LineParameters(lineId, draftId, input, position),
             ct);
@@ -896,10 +911,11 @@ public sealed class PosDraftStore
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT LineId,ProductId,ProductCode,Description,UnitCode,TaxCode,TaxRate,Quantity,
-                   BaseUnitPrice,UnitPrice,CurrencyCode,PriceSource,PriceChannelId,
-                   Discount,Note,Position
-            FROM PosDraftLines WHERE DraftId=@DraftId ORDER BY Position,LineId;
+            SELECT line.LineId,line.ProductId,line.ProductCode,line.Description,line.UnitCode,line.TaxCode,line.TaxRate,line.Quantity,
+                   line.BaseUnitPrice,line.UnitPrice,line.CurrencyCode,line.PriceSource,line.PriceChannelId,
+                   line.Discount,line.Note,line.AllowsFractionalSale,line.Position
+            FROM PosDraftLines line
+            WHERE line.DraftId=@DraftId ORDER BY line.Position,line.LineId;
             """;
         command.Parameters.Add(P("@DraftId", draftId.Value));
         var lines = new List<PosDraftLine>();
@@ -921,7 +937,8 @@ public sealed class PosDraftStore
                 NullableGuid(reader, 12),
                 Decimal(reader, 13),
                 NullableString(reader, 14),
-                reader.GetInt32(15)));
+                reader.GetInt64(15) == 1,
+                reader.GetInt32(16)));
         return lines;
     }
 
@@ -965,7 +982,9 @@ public sealed class PosDraftStore
         P("@CurrencyCode", input.CurrencyCode.Trim().ToUpperInvariant()),
         P("@PriceSource", input.PriceSource),
         P("@PriceChannelId", input.PriceChannelId), P("@Discount", input.Discount),
-        P("@Note", Normalize(input.Note)), P("@Position", position)
+        P("@Note", Normalize(input.Note)),
+        P("@AllowsFractionalSale", input.AllowsFractionalSale ? 1 : 0),
+        P("@Position", position)
     ];
 
     private static PosDraftLineInput ToInput(PosDraftLine line) =>
@@ -983,7 +1002,8 @@ public sealed class PosDraftStore
             line.PriceSource,
             line.PriceChannelId,
             line.Discount,
-            line.Note);
+            line.Note,
+            line.AllowsFractionalSale);
 
     private DateTimeOffset Now() => _timeProvider.GetUtcNow();
 
@@ -1051,6 +1071,7 @@ public sealed class PosDraftStore
           PriceChannelId TEXT NULL,
           Discount TEXT NOT NULL,
           Note TEXT NULL,
+          AllowsFractionalSale INTEGER NOT NULL DEFAULT 0,
           Position INTEGER NOT NULL,
           FOREIGN KEY(DraftId) REFERENCES PosDrafts(DraftId) ON DELETE CASCADE);
         CREATE INDEX IF NOT EXISTS IX_PosDraftLines_Draft

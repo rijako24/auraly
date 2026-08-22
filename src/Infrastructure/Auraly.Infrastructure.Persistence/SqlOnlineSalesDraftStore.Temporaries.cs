@@ -32,7 +32,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                    price.Amount,
                    price.CurrencyCode,
                    p.IsActive,
-                   p.IsWeighable
+                   p.IsWeighable,
+                   p.AllowsFractionalSale
             FROM dbo.Products p
             LEFT JOIN dbo.TaxProfiles t
               ON t.TaxProfileId=p.TaxProfileId AND t.BusinessId=p.BusinessId AND t.IsActive=1
@@ -81,7 +82,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                     reader.IsDBNull(2) ? null : reader.GetString(2),
                     reader.GetString(3), reader.GetString(4), reader.GetString(5),
                     reader.GetDecimal(6), reader.GetDecimal(7), reader.GetString(8),
-                    reader.GetBoolean(9), reader.GetBoolean(10), "Public"));
+                    reader.GetBoolean(9), reader.GetBoolean(10), reader.GetBoolean(11), "Public"));
         if (request.CustomerId is not null)
         {
             for (var index = 0; index < items.Count; index++)

@@ -57,12 +57,17 @@ public sealed class PosConfigurationTests
             var store = new PosPrinterConfigurationStore(
                 path, Path.Combine(directory, "receipts"));
             var saved = store.Save(new PosPrinterConfiguration(
-                PosPrinterModes.WindowsRaw, "  Tirilla  ", 58, "  Carta  "));
+                PosPrinterModes.WindowsRaw, "  Tirilla  ", 58, "  Carta  ",
+                PosPrinterName: "  Caja POS  ", OrdersPrinterName: "  Pedidos  ",
+                OrdersReceiptPaperWidthMillimeters: 80));
             var reloaded = new PosPrinterConfigurationStore(
                 path, Path.Combine(directory, "receipts")).Load();
 
             Assert.Equal("Tirilla", saved.ReceiptPrinterName);
             Assert.Equal("Carta", saved.LetterPrinterName);
+            Assert.Equal("Caja POS", reloaded.PosPrinterName);
+            Assert.Equal("Pedidos", reloaded.OrdersPrinterName);
+            Assert.Equal(80, reloaded.OrdersReceiptPaperWidthMillimeters);
             Assert.Equal(58, reloaded.ReceiptPaperWidthMillimeters);
             Assert.Equal(PrintTemplateFormats.Receipt, reloaded.PosOutputFormat);
             Assert.Equal(PrintTemplateFormats.HalfLetter, reloaded.OrdersOutputFormat);

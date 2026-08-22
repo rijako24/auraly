@@ -60,6 +60,13 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
             throw new PartyForbiddenException("The customer business does not match the authenticated identity.");
         ValidateParty(request.Party);
         ValidateSite(request.PrimarySite);
+        foreach (var site in request.AdditionalSites ?? []) ValidateSite(site);
+        var duplicatedSiteCode = (request.AdditionalSites ?? [])
+            .Prepend(request.PrimarySite)
+            .GroupBy(site => site.Code.Trim(), StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(group => group.Count() > 1)?.Key;
+        if (duplicatedSiteCode is not null)
+            throw new PartyValidationException($"Site code '{duplicatedSiteCode}' is repeated.");
         Translate(() =>
             _ = new CustomerPricingAssignment(request.Pricing?.PriceChannelId));
         if (request.Pricing is not null && !actor.IsDevice) Require(actor, PartyPermissionCodes.ManagePricing);

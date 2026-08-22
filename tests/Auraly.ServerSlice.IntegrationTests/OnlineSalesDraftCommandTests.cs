@@ -18,6 +18,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
         var customerId = Guid.NewGuid();
         var priceChannelId = Guid.NewGuid();
         var priceChannelItemId = Guid.NewGuid();
+        var volumePriceChannelItemId = Guid.NewGuid();
         var barcodeId = Guid.NewGuid();
         var barcode = $"770{Random.Shared.NextInt64(1_000_000_000, 9_999_999_999)}";
         await ExecuteAsync(
@@ -49,6 +50,12 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             VALUES(
               @PriceChannelItemId,@PriceChannelId,@ProductId,1,8000,N'COP',
               DATEADD(day,-1,SYSDATETIMEOFFSET()),1,SYSDATETIMEOFFSET());
+            INSERT dbo.ResolvedPriceChannelItems(
+              ResolvedPriceChannelItemId,PriceChannelId,ProductId,MinimumQuantity,Amount,
+              CurrencyCode,ValidFrom,IsActive,CreatedAt)
+            VALUES(
+              @VolumePriceChannelItemId,@PriceChannelId,@ProductId,3,7000,N'COP',
+              DATEADD(day,-1,SYSDATETIMEOFFSET()),1,SYSDATETIMEOFFSET());
             INSERT dbo.CustomerPricingSettings(
               CustomerId,PriceChannelId,UpdatedBy,UpdatedAt)
             VALUES(
@@ -68,6 +75,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             new("@PriceChannelId", priceChannelId),
             new("@ChannelCode", $"C-{priceChannelId:N}"[..20]),
             new("@PriceChannelItemId", priceChannelItemId),
+            new("@VolumePriceChannelItemId", volumePriceChannelItemId),
             new("@ProductId", fixture.ProductId),
             new("@BarcodeId", barcodeId),
             new("@Barcode", barcode));
@@ -115,13 +123,31 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             new ChangeOnlineSalesDraftQuantityRequest(2m, discounted.Version));
         Assert.Equal(15_000m, changed.PayableAmount);
 
+        var volumePriced = await MutateAsync<OnlineSalesDraft>(
+            client,
+            HttpMethod.Post,
+            $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/items",
+            new AddOnlineSalesDraftItemRequest(barcode, 1m, changed.Version));
+        Assert.Equal(2, volumePriced.Lines.Count);
+        Assert.All(volumePriced.Lines, line => Assert.Equal(7_000m, line.UnitPrice));
+        Assert.Equal(20_000m, volumePriced.PayableAmount);
+
         var removed = await MutateAsync<OnlineSalesDraft>(
             client,
             HttpMethod.Post,
             $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/lines/{customerLine.LineId:D}/remove",
-            new RemoveOnlineSalesDraftLineRequest(changed.Version));
-        Assert.Empty(removed.Lines);
-        Assert.Equal(0m, removed.PayableAmount);
+            new RemoveOnlineSalesDraftLineRequest(volumePriced.Version));
+        var remaining = Assert.Single(removed.Lines);
+        Assert.Equal(8_000m, remaining.UnitPrice);
+        Assert.Equal(8_000m, removed.PayableAmount);
+
+        var emptied = await MutateAsync<OnlineSalesDraft>(
+            client,
+            HttpMethod.Post,
+            $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/lines/{remaining.LineId:D}/remove",
+            new RemoveOnlineSalesDraftLineRequest(removed.Version));
+        Assert.Empty(emptied.Lines);
+        Assert.Equal(0m, emptied.PayableAmount);
     }
 
     [Fact]
@@ -175,6 +201,56 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
         }
     }
 
+    [Fact]
+    public async Task Online_capture_allows_decimals_only_for_fractional_products()
+    {
+        var userId = Guid.NewGuid();
+        await ExecuteAsync(
+            """
+            INSERT dbo.AppUsers(
+              UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,FirstName,LastName,
+              IsActive,CreatedAt)
+            VALUES(
+              @UserId,@TenantId,@Username,@NormalizedUsername,
+              CONCAT(@Username,N'@test.local'),UPPER(CONCAT(@Username,N'@test.local')),N'Venta',N'Fraccionada',
+              1,SYSDATETIMEOFFSET());
+            UPDATE dbo.Products SET AllowsFractionalSale=0 WHERE ProductId=@ProductId;
+            """,
+            new("@UserId", userId), new("@TenantId", fixture.TenantId),
+            new("@Username", $"fraction-{userId:N}"),
+            new("@NormalizedUsername", $"FRACTION-{userId:N}".ToUpperInvariant()),
+            new("@ProductId", fixture.ProductId));
+        try
+        {
+            using var client = fixture.CreateUserClient(
+                userId, CommercePermissionCodes.SalesCreate, WorkSessionPermissionCodes.Open);
+            var workSession = await fixture.OpenWorkSessionAsync(client);
+            var draft = await OpenAsync(client, workSession.WorkSessionId);
+            using var rejectedRequest = Mutation(
+                HttpMethod.Post,
+                $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/items",
+                new AddOnlineSalesDraftItemRequest("P-E2E", 1.5m, draft.Version));
+            using var rejected = await client.SendAsync(rejectedRequest);
+            Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+
+            await ExecuteAsync(
+                "UPDATE dbo.Products SET AllowsFractionalSale=1 WHERE ProductId=@ProductId;",
+                new SqlParameter("@ProductId", fixture.ProductId));
+            var accepted = await MutateAsync<OnlineSalesDraft>(
+                client,
+                HttpMethod.Post,
+                $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/items",
+                new AddOnlineSalesDraftItemRequest("P-E2E", 1.5m, draft.Version));
+            Assert.Equal(1.5m, Assert.Single(accepted.Lines).Quantity);
+        }
+        finally
+        {
+            await ExecuteAsync(
+                "UPDATE dbo.Products SET AllowsFractionalSale=0 WHERE ProductId=@ProductId;",
+                new SqlParameter("@ProductId", fixture.ProductId));
+        }
+    }
+
     private async Task<OnlineSalesDraft> OpenAsync(HttpClient client, Guid workSessionId)
     {
         using var response = await client.PostAsJsonAsync(
@@ -196,7 +272,9 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
     {
         using var request = Mutation(method, path, body);
         using var response = await client.SendAsync(request);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException(
+                $"{(int)response.StatusCode} {response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
         return await response.Content.ReadFromJsonAsync<T>()
             ?? throw new InvalidOperationException("Empty mutation response.");
     }

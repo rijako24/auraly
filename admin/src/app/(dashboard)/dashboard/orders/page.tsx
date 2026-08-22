@@ -8,16 +8,13 @@ import { OrdersWorkspace } from "@/components/orders/orders-workspace";
 import { Button } from "@/components/ui/button";
 import { PageError } from "@/components/ui/page-error";
 import {
-  invoiceCommerceOrders,
   loadCommerceOrder,
   loadCommerceOrders,
 } from "@/services/orders/commerce-orders-client";
 import {
   loadSalesWorkspaceOptions,
-  openHalfLetterPrintPreview,
+  OnlinePosClient,
   rememberedSalesWorkspaceKey,
-  renderInvoiceOrdersHalfLetter,
-  renderInvoiceOrdersReceipt,
   salesWorkspaceKey,
   selectSalesWorkspace,
   type SalesWorkspaceOption,
@@ -27,7 +24,7 @@ import { useBusinessContextStore } from "@/stores/business-context-store";
 import { isSellerOperationalProfile, ordersLandingView } from "@/lib/default-start-route";
 import { routesApi, type SalesRouteListItem } from "@/services/api/routes";
 import { PosPrinterDialog } from "@/app/(pos)/pos/pos-printer-dialog";
-import { loadBrowserPrinterConfiguration } from "@/services/pos/pos-edge-client";
+import { PosEdgeClient, readEdgeTokenFromLaunch, readEdgeUserSession } from "@/services/pos/pos-edge-client";
 
 export default function OrdersPage() {
   const router = useRouter();
@@ -37,6 +34,10 @@ export default function OrdersPage() {
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [routeOptions, setRouteOptions] = useState<SalesRouteListItem[]>([]);
   const [printerOpen, setPrinterOpen] = useState(false);
+  const [printerClient] = useState(() => {
+    const token = readEdgeTokenFromLaunch();
+    return token ? new PosEdgeClient(token, readEdgeUserSession()) : null;
+  });
   const [routeMode, setRouteMode] = useState(
     () =>
       typeof window !== "undefined" &&
@@ -144,32 +145,21 @@ export default function OrdersPage() {
         onInvoiceSelected={
           workspace && user
             ? async (orders, paymentMethodCode, documentType) => {
-                const halfLetter = loadBrowserPrinterConfiguration()
-                  .ordersOutputFormat === "HalfLetter";
-                const preview = halfLetter
-                  ? openHalfLetterPrintPreview()
-                  : window.open("", "_blank", "popup=yes,width=460,height=760,resizable=yes,scrollbars=yes");
+                const edgeToken = readEdgeTokenFromLaunch();
+                if (!edgeToken)
+                  throw new Error("Prepara este equipo para facturar e imprimir pedidos directamente.");
                 const context = await selectSalesWorkspace(workspace);
-                const response = await invoiceCommerceOrders({
-                  workSessionId: context.workSessionId,
-                  warehouseId: context.warehouseId,
-                  userId: user.userId,
-                  orderIds: orders.map((order) => order.orderId),
+                const client = new OnlinePosClient(
+                  context,
+                  user.userId,
+                  `${user.firstName} ${user.lastName}`.trim() || user.username,
+                  edgeToken,
+                );
+                const response = await client.invoiceOrders(
+                  orders.map((order) => order.orderId),
                   paymentMethodCode,
-                  paymentReference: null,
                   documentType,
-                });
-                try {
-                  if (halfLetter)
-                    await renderInvoiceOrdersHalfLetter(preview, response, context);
-                  else
-                    await renderInvoiceOrdersReceipt(preview, response, context);
-                } catch (error) {
-                  preview?.close();
-                  response.printError =
-                    "Los pedidos se facturaron, pero no fue posible imprimir: " +
-                    (error instanceof Error ? error.message : "error desconocido");
-                }
+                );
                 return {
                   completedCount: response.completedCount,
                   failedCount: response.failedCount,
@@ -181,7 +171,7 @@ export default function OrdersPage() {
         onConfigurePrinting={() => setPrinterOpen(true)}
       />
       {printerOpen && (
-        <PosPrinterDialog client={null} onClose={() => setPrinterOpen(false)} />
+        <PosPrinterDialog client={printerClient} onClose={() => setPrinterOpen(false)} />
       )}
       {!workspace && (
         <p className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">

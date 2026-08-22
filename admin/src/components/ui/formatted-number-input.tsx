@@ -21,6 +21,7 @@ export function FormattedNumberInput({
   invalid = false,
   ariaLabel,
   placeholder,
+  allowNegative = false,
 }: {
   value: string | number;
   onValueChange: (value: number | null) => void;
@@ -33,10 +34,11 @@ export function FormattedNumberInput({
   invalid?: boolean;
   ariaLabel?: string;
   placeholder?: string;
+  allowNegative?: boolean;
 }) {
   const canonical = decimalInputFromNumber(value);
-  const parsed = parseDecimalInput(canonical);
-  const formatted = formatDecimalInput(canonical);
+  const parsed = parseDecimalInput(canonical, allowNegative);
+  const formatted = formatDecimalInput(canonical, 4, allowNegative);
   const [editing, setEditing] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [draft, setDraft] = useState(formatted);
@@ -46,7 +48,7 @@ export function FormattedNumberInput({
   }, [dirty, editing, formatted]);
 
   const commitDraft = () => {
-    const next = parseDecimalInput(draft);
+    const next = parseDecimalInput(draft, allowNegative);
     setEditing(false);
     setDirty(false);
     if (!sameNumber(next, parsed)) onValueChange(next);
@@ -82,10 +84,10 @@ export function FormattedNumberInput({
         }
       }}
       onChange={(event) => {
-        const next = formatDecimalInput(event.target.value);
+        const next = formatDecimalInput(event.target.value, 4, allowNegative);
         setDirty(true);
         setDraft(next);
-        if (commitMode === "change") onValueChange(parseDecimalInput(next));
+        if (commitMode === "change") onValueChange(parseDecimalInput(next, allowNegative));
       }}
       onKeyDown={onKeyDown}
     />

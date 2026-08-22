@@ -29,6 +29,19 @@ BEGIN
     WHERE Strategy = N'FixedSpecialPrice';
 END;
 
+-- La caja conserva cada captura como una línea independiente. El índice
+-- histórico por producto impedía agregar el mismo producto dos veces y debe
+-- retirarse explícitamente porque DEV publica conservando objetos ajenos al DACPAC.
+IF OBJECT_ID(N'dbo.SalesDraftLines', N'U') IS NOT NULL
+   AND EXISTS (
+       SELECT 1
+       FROM sys.indexes
+       WHERE object_id = OBJECT_ID(N'dbo.SalesDraftLines')
+         AND name = N'UX_SalesDraftLines_Draft_Product')
+BEGIN
+    DROP INDEX [UX_SalesDraftLines_Draft_Product] ON [dbo].[SalesDraftLines];
+END;
+
 PRINT 'Pre-deployment script ejecutado correctamente.';
 
 GO

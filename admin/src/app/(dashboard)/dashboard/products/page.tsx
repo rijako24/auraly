@@ -449,10 +449,6 @@ export default function ProductsPage() {
                   </div>
                 </ProductFormSection>
 
-                <ProductFormSection id="product-images" icon={Images} title="Imágenes del producto" description="Carga varias imágenes, revisa su vista previa y elige una portada. Se guardarán junto con el producto.">
-                  <ProductImageEditor ref={imageEditorRef} productId={selectedProduct.productId} />
-                </ProductFormSection>
-
                 <ProductMerchandisingEditor ref={merchandisingEditorRef} embedded productId={selectedProduct.productId} />
 
                 <ProductFormSection id="product-supplier" icon={Truck} title="Proveedor principal y empaque habitual" description="Opcional. Permite recibir por caja, bulto o paquete y convertir a la unidad del producto.">
@@ -469,6 +465,9 @@ export default function ProductsPage() {
                   <summary className="cursor-pointer list-none p-5 font-semibold">Reconocimiento, alias y aprendizaje <span className="ml-2 text-xs font-normal text-muted-foreground">Información avanzada</span></summary>
                   <div className="space-y-5 border-t p-5"><ProductRecognitionSections ref={recognitionEditorRef} productId={selectedProduct.productId} editable aliases={configurationQuery.data?.aliases ?? []} searchTerms={configurationQuery.data?.searchTerms ?? []} isLoading={configurationQuery.isLoading} isError={configurationQuery.isError} /><ProductLearningSection aliases={configurationQuery.data?.aliases ?? []} isLoading={configurationQuery.isLoading} isError={configurationQuery.isError} isPending={reviewAlias.isPending || promoteAlias.isPending} onReview={handleReviewLearning} onPromote={handlePromoteLearning} /></div>
                 </details>
+                <ProductFormSection id="product-images" icon={Images} title="Imágenes del producto" description="Carga varias imágenes, revisa su vista previa y elige una portada. Se guardarán junto con el producto.">
+                  <ProductImageEditor ref={imageEditorRef} productId={selectedProduct.productId} />
+                </ProductFormSection>
               </div>}
               </div>
               <footer className="flex flex-col-reverse gap-3 border-t bg-background px-6 py-4 sm:flex-row sm:items-center sm:justify-between">

@@ -1,4 +1,5 @@
-export function sanitizeDecimalInput(value: string, maximumFractionDigits = 4): string {
+export function sanitizeDecimalInput(value: string, maximumFractionDigits = 4, allowNegative = false): string {
+  const negative = allowNegative && value.trimStart().startsWith("-");
   const allowed = value.replace(/[^\d.]/g, "");
   if (!allowed) return "";
 
@@ -8,19 +9,23 @@ export function sanitizeDecimalInput(value: string, maximumFractionDigits = 4): 
     ? ""
     : allowed.slice(separator + 1).replace(/\D/g, "").slice(0, maximumFractionDigits);
   const integer = (integerSource || "0").replace(/^0+(?=\d)/, "");
-  return separator < 0 ? integer : `${integer}.${fractionSource}`;
+  const result = separator < 0 ? integer : `${integer}.${fractionSource}`;
+  return negative ? `-${result}` : result;
 }
 
-export function formatDecimalInput(value: string, maximumFractionDigits = 4): string {
-  const sanitized = sanitizeDecimalInput(value, maximumFractionDigits);
+export function formatDecimalInput(value: string, maximumFractionDigits = 4, allowNegative = false): string {
+  const sanitized = sanitizeDecimalInput(value, maximumFractionDigits, allowNegative);
   if (!sanitized) return "";
-  const [integer, fraction] = sanitized.split(".");
+  const negative = sanitized.startsWith("-");
+  const unsigned = negative ? sanitized.slice(1) : sanitized;
+  const [integer, fraction] = unsigned.split(".");
   const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, " ");
-  return sanitized.includes(".") ? `${grouped}.${fraction ?? ""}` : grouped;
+  const result = unsigned.includes(".") ? `${grouped}.${fraction ?? ""}` : grouped;
+  return negative ? `-${result}` : result;
 }
 
-export function parseDecimalInput(value: string): number | null {
-  const sanitized = sanitizeDecimalInput(value);
+export function parseDecimalInput(value: string, allowNegative = false): number | null {
+  const sanitized = sanitizeDecimalInput(value, 4, allowNegative);
   if (!sanitized || sanitized === ".") return null;
   const parsed = Number(sanitized);
   return Number.isFinite(parsed) ? parsed : null;
