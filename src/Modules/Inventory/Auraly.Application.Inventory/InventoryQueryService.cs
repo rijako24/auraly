@@ -51,15 +51,23 @@ public sealed class InventoryQueryService(IInventoryQueryStore store)
     {
         Validate(user, user.BusinessId, 1, 1);
         var type = Normalize(operationType);
-        if (type is not null) ValidateOperationType(type);
         return store.GetReasonsAsync(user, type, includeInactive, Normalize(search), token);
+    }
+
+    public Task<IReadOnlyList<InventoryReasonItem>> GetSelectableReasonsAsync(
+        InventoryUserIdentity user, string reasonType, CancellationToken token = default)
+    {
+        if (user.BusinessId == Guid.Empty || string.IsNullOrWhiteSpace(reasonType) || reasonType.Trim().Length > 64)
+            throw new InventoryValidationException("A valid reason type is required.");
+        return store.GetReasonsAsync(user, reasonType.Trim(), false, null, token);
     }
 
     public Task<InventoryReasonItem> SaveReasonAsync(InventoryUserIdentity user, Guid? inventoryReasonId, SaveInventoryReasonRequest request, CancellationToken token = default)
     {
         if (!user.Permissions.Contains(InventoryPermissionCodes.ManageReasons))
             throw new InventoryForbiddenException($"Permission '{InventoryPermissionCodes.ManageReasons}' is required.");
-        ValidateOperationType(request.OperationType);
+        if (string.IsNullOrWhiteSpace(request.OperationType) || request.OperationType.Trim().Length > 64)
+            throw new InventoryValidationException("A valid reason type is required.");
         if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Trim().Length > 120)
             throw new InventoryValidationException("Reason name is required and cannot exceed 120 characters.");
         if (request.DisplayOrder is < 0 or > 9999)
@@ -110,9 +118,4 @@ public sealed class InventoryQueryService(IInventoryQueryStore store)
 
     private static string? Normalize(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private static void ValidateOperationType(string value)
-    {
-        if (value is not (InventoryDocumentTypes.StockCount or InventoryDocumentTypes.Adjustment or InventoryDocumentTypes.Transfer or InventoryDocumentTypes.Conversion or InventoryDocumentTypes.Damage))
-            throw new InventoryValidationException("The inventory operation type is invalid.");
-    }
 }

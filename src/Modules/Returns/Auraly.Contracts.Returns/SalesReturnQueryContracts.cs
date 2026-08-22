@@ -1,19 +1,5 @@
 namespace Auraly.Contracts.Returns;
 
-public static class SalesReturnReasonCodes
-{
-    public const string CustomerChangedMind = "CustomerChangedMind";
-    public const string WrongProduct = "WrongProduct";
-    public const string QualityIssue = "QualityIssue";
-    public const string Damaged = "Damaged";
-    public const string BillingCorrection = "BillingCorrection";
-    public const string Other = "Other";
-
-    public static readonly IReadOnlySet<string> All = new HashSet<string>(
-        [CustomerChangedMind, WrongProduct, QualityIssue, Damaged, BillingCorrection, Other],
-        StringComparer.Ordinal);
-}
-
 public static class SalesReturnRefundMethods
 {
     public const string Cash = "Cash";

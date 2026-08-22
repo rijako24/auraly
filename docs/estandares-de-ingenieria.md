@@ -189,10 +189,14 @@ Las reglas concretas del motor conversacional viven exclusivamente en `docs/agen
 ## 14. Frontend y contratos de UI
 
 - Reutilizar componentes y convenciones existentes antes de crear variantes visuales o de estado.
+- Toda página consultable aplica el contrato visual, los estados obligatorios y la paginación de servidor definidos en `docs/decision-reportes-consultas-filtros-y-paginacion.md`; las grillas de un documento activo usan desplazamiento o virtualización y no dividen la captura en páginas.
 - Mantener accesibilidad: HTML semantico, labels, teclado, foco, contraste y estados de carga/error/vacio.
 - Evitar duplicar server state en stores globales. Usar la herramienta de estado segun su propietario y ciclo de vida.
 - Validar para UX en cliente, pero conservar validacion y autorizacion autoritativas en servidor.
 - No codificar permisos, estados, catalogos o reglas de negocio solo en la UI.
+- Ningún catálogo, equivalencia, valor inicial o lista de opciones de negocio se implementa como arreglo, diccionario o `switch` en frontend o backend. Debe persistirse en una tabla con clave estable, estado y, cuando aplique, vigencia, orden y alcance; la UI lo consulta por API.
+- Un enum o constante de contrato solo puede representar una identidad técnica estable. No contiene metadatos configurables ni sustituye el catálogo: se valida y resuelve contra su tabla correspondiente.
+- Todos los motivos operativos provienen de `BusinessReasons`. `ReasonType` determina en qué procesos y selectores aparece cada motivo; `ReasonTemplates` contiene únicamente los valores iniciales del perfil y el tenant materializa filas editables por sede. No se crean listas paralelas de motivos por módulo.
 - Mantener limites server/client de Next.js y consultar la documentacion instalada de la version del repositorio antes de usar APIs que puedan haber cambiado.
 - Cubrir flujos criticos y estados de error, no solo el happy path.
 
@@ -261,3 +265,20 @@ Antes de entregar, verificar:
 - [ ] No se suprimieron gates ni se alteraron dependencias/lock files sin formar parte del alcance.
 - [ ] No se mezclaron cambios ajenos ni se sobrescribio trabajo existente.
 - [ ] Documentacion y decisiones canonicas quedaron sincronizadas.
+
+## Motor de documentos: atomicidad y rendimiento
+
+- La validación de disponibilidad se realiza antes de confirmar el documento. El motor procesa el hecho confirmado aunque el saldo de inventario resulte negativo.
+- El documento, sus líneas, kardex, saldos, efectos de cartera, outbox y avance del cursor se escriben en una única transacción SQL.
+- El estado `Completed` y el cursor se confirman en el mismo `commit`. Cualquier excepción revierte todos los efectos del intento.
+- Un fallo deja el trabajo en `RetryScheduled`; el mismo mensaje se reintenta de forma idempotente y los documentos posteriores esperan su secuencia.
+- Las pruebas de integración deben forzar una excepción después de una escritura intermedia y demostrar ausencia de efectos parciales antes del reintento.
+- `StartedAt` y `CompletedAt` son la medición canónica del tiempo interno. Ventas, compras, devoluciones, caja y operaciones de inventario tienen un umbral local automatizado de dos segundos; se investiga cualquier regresión antes de publicar.
+
+## Configuración contable inicial
+
+- Auraly instala de forma idempotente el perfil contable activo, sus conceptos y cuentas, un centro de costo general y el periodo del año vigente.
+- Los códigos PUC, nombres, naturalezas, obligatoriedad, orden y cuentas sugeridas viven en `AccountingConfigurationProfiles` y `AccountingConfigurationProfileAccounts`; ni el motor ni la interfaz mantienen copias quemadas de ese catálogo.
+- El código solo conserva identificadores estables de conceptos contables para construir el asiento. Cada concepto resuelve su cuenta efectiva en `AccountingAccountMappings`, con alcance general o excepción por sede.
+- La configuración existente del cliente no se sobrescribe: los valores iniciales solo completan códigos o conceptos ausentes.
+- El balance de prueba debe cuadrar débitos y créditos y sirve como verificación visible de los acumulados generados por el motor.

@@ -29,7 +29,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             ReturnEconomicResolutions.Refund, "Cash", "Cliente devuelve parcialmente",
             [new ConfirmSalesReturnLineRequest(
                 1, .5m, ReturnInventoryDispositions.Sellable)],
-            fixture.WorkSessionId, 1);
+            fixture.WorkSessionId, 1, "Other");
         const string idempotencyKey = "sales-return-e2e-001";
         using var user = fixture.CreateAdminClient(
             SalesReturnPermissionCodes.Read, SalesReturnPermissionCodes.Create,
@@ -81,7 +81,7 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
             detailResponse.EnsureSuccessStatusCode();
             var detail = await detailResponse.Content.ReadFromJsonAsync<SalesReturnDetail>();
             Assert.NotNull(detail);
-            Assert.Equal(SalesReturnReasonCodes.Other, detail.ReasonCode);
+            Assert.Equal("Other", detail.ReasonCode);
             Assert.Single(detail.Lines);
         }
 
@@ -158,7 +158,8 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
         var request = new ConfirmSalesReturnRequest(
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, Guid.NewGuid(),
             DateTimeOffset.UtcNow, ReturnEconomicResolutions.Refund, "Cash", "Prueba",
-            [new ConfirmSalesReturnLineRequest(1, 1m, ReturnInventoryDispositions.Sellable)]);
+            [new ConfirmSalesReturnLineRequest(1, 1m, ReturnInventoryDispositions.Sellable)],
+            ReasonCode: "Other");
         using (var deniedMessage = Message(request, $"denied-{Guid.NewGuid():N}"))
         using (var deniedResponse = await denied.SendAsync(deniedMessage))
             Assert.Equal(HttpStatusCode.Forbidden, deniedResponse.StatusCode);

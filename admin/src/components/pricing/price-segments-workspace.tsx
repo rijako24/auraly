@@ -1,25 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BadgePercent, Plus, Radio, Search, Users } from "lucide-react";
-import { toast } from "sonner";
-
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { priceSegmentsApi, type PriceSegmentKind } from "@/services/api/price-segments";
+import { PriceSegmentsManager } from "@/components/pricing/price-segments-manager";
 
 export function PriceSegmentsWorkspace() {
-  const client=useQueryClient();
-  const [search,setSearch]=useState(""); const [createOpen,setCreateOpen]=useState(false);
-  const [kind,setKind]=useState<PriceSegmentKind>("PriceList"); const [code,setCode]=useState(""); const [name,setName]=useState("");
-  const query=useQuery({queryKey:["price-segments"],queryFn:priceSegmentsApi.list});
-  const create=useMutation({mutationFn:()=>priceSegmentsApi.create({kind,code,name}),onSuccess:async()=>{await client.invalidateQueries({queryKey:["price-segments"]});setCreateOpen(false);setCode("");setName("");toast.success("Segmento de precios creado.");},onError:(error:{message?:string})=>toast.error(error.message??"No fue posible crear el segmento.")});
-  const items=(query.data??[]).filter(x=>!search.trim()||`${x.code} ${x.name}`.toLowerCase().includes(search.toLowerCase()));
-  return <Card className="border-primary/20 bg-gradient-to-br from-background to-primary/5"><CardHeader><div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-sm font-medium text-primary">Precios por segmento</p><CardTitle className="mt-1">Listas y canales comerciales</CardTitle><p className="mt-1 max-w-3xl text-sm text-muted-foreground">Una sola vista para administrar precios especiales. Las listas permiten escalas por cantidad; los canales permiten precio propio y exclusiones.</p></div><Dialog open={createOpen} onOpenChange={setCreateOpen}><DialogTrigger asChild><Button><Plus className="mr-2 h-4 w-4"/>Nuevo segmento</Button></DialogTrigger><DialogContent><DialogHeader><DialogTitle>Crear segmento de precios</DialogTitle></DialogHeader><div className="space-y-4"><div className="grid grid-cols-2 gap-2"><Button type="button" variant={kind==="PriceList"?"default":"outline"} onClick={()=>setKind("PriceList")}>Lista de precios</Button><Button type="button" variant={kind==="PriceChannel"?"default":"outline"} onClick={()=>setKind("PriceChannel")}>Canal comercial</Button></div><div className="space-y-2"><Label>Código</Label><Input value={code} onChange={e=>setCode(e.target.value)} placeholder="MAYORISTA" maxLength={32}/></div><div className="space-y-2"><Label>Nombre</Label><Input value={name} onChange={e=>setName(e.target.value)} placeholder="Mayoristas" maxLength={120}/></div></div><DialogFooter><Button variant="outline" onClick={()=>setCreateOpen(false)}>Cancelar</Button><Button disabled={!code.trim()||!name.trim()||create.isPending} onClick={()=>create.mutate()}>Crear</Button></DialogFooter></DialogContent></Dialog></div></CardHeader><CardContent><div className="relative mb-4"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground"/><Input className="pl-9" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar lista o canal"/></div><Tabs defaultValue="PriceList"><TabsList><TabsTrigger value="PriceList">Listas</TabsTrigger><TabsTrigger value="PriceChannel">Canales</TabsTrigger></TabsList>{(["PriceList","PriceChannel"] as PriceSegmentKind[]).map(tab=><TabsContent key={tab} value={tab}><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{items.filter(x=>x.kind===tab).map(segment=><button key={segment.id} type="button" className="rounded-xl border bg-background p-4 text-left transition hover:border-primary/40 hover:shadow-sm" onClick={()=>toast.info(tab==="PriceList"?"Selecciona productos y escalas desde la edición del segmento.":"Selecciona productos, precios y exclusiones desde la edición del canal.")}><div className="flex items-start justify-between gap-3"><div className="rounded-lg bg-primary/10 p-2 text-primary">{tab==="PriceList"?<BadgePercent className="h-5 w-5"/>:<Radio className="h-5 w-5"/>}</div><Badge variant={segment.isActive?"secondary":"outline"}>{segment.isActive?"Activo":"Inactivo"}</Badge></div><p className="mt-3 font-medium">{segment.name}</p><p className="text-xs text-muted-foreground">{segment.code}</p><div className="mt-4 flex items-center justify-between text-sm text-muted-foreground"><span>{segment.productCount} productos</span><span className="flex items-center gap-1"><Users className="h-3.5 w-3.5"/>{segment.customerCount} clientes</span></div></button>)}{!query.isLoading&&items.filter(x=>x.kind===tab).length===0&&<div className="col-span-full rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">Aún no hay {tab==="PriceList"?"listas de precios":"canales comerciales"}.</div>}</div></TabsContent>)}</Tabs></CardContent></Card>;
+  return <PriceSegmentsManager />;
 }

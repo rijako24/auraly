@@ -18,6 +18,7 @@ export function PosPrinterDialog({
 }) {
   const [value, setValue] = useState<PosPrinterConfiguration | null>(null);
   const [printers, setPrinters] = useState<string[]>([]);
+  const [serialPorts, setSerialPorts] = useState<string[]>([]);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -28,12 +29,14 @@ export function PosPrinterDialog({
       : Promise.resolve({
           configuration: loadBrowserPrinterConfiguration(),
           installedPrinters: [] as string[],
+          serialPorts: [] as string[],
         });
     operation
       .then((view) => {
         if (!active) return;
         setValue(view.configuration);
         setPrinters(view.installedPrinters);
+        setSerialPorts(view.serialPorts ?? []);
       })
       .catch((caught) => {
         if (active)
@@ -54,6 +57,7 @@ export function PosPrinterDialog({
         const view = await client.savePrinterConfiguration(value);
         setValue(view.configuration);
         setPrinters(view.installedPrinters);
+        setSerialPorts(view.serialPorts ?? []);
       } else {
         setValue(saveBrowserPrinterConfiguration(value));
       }
@@ -116,7 +120,7 @@ export function PosPrinterDialog({
                     receiptMode: event.target.value as PosPrinterConfiguration["receiptMode"],
                   })}
                   className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3">
-                  <option value="BrowserPreview">Vista previa en pantalla</option>
+                  {!client && <option value="BrowserPreview">Vista previa en pantalla</option>}
                   {client && <option value="WindowsRaw">Impresora de Windows · impresión directa</option>}
                   {client && <option value="File">Archivo ESC/POS</option>}
                 </select>
@@ -158,7 +162,7 @@ export function PosPrinterDialog({
                         orderMode: event.target.value as PosPrinterConfiguration["orderMode"],
                       })}
                       className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3">
-                      <option value="BrowserPreview">Vista previa e impresora del sistema</option>
+                      {!client && <option value="BrowserPreview">Vista previa e impresora del sistema</option>}
                       {client && <option value="WindowsPrint">Enviar a una impresora de Windows</option>}
                     </select>
                   </Field>
@@ -181,6 +185,23 @@ export function PosPrinterDialog({
                   Windows no reporto impresoras instaladas. Instala el controlador y vuelve a abrir esta configuracion.
                 </p>
               )}
+              {client && (
+                <ScaleConfiguration
+                  value={value.scale ?? defaultScale()}
+                  serialPorts={serialPorts}
+                  busy={busy}
+                  onChange={(scale) => setValue({ ...value, scale })}
+                  onTest={async () => {
+                    setBusy(true); setError(null);
+                    try {
+                      const result = await client.readScaleWeight();
+                      setError(`Balanza conectada: ${result.weight} ${result.unit} (${result.portName}).`);
+                    } catch (caught) {
+                      setError(caught instanceof Error ? caught.message : "No fue posible leer la balanza.");
+                    } finally { setBusy(false); }
+                  }}
+                />
+              )}
             </>
           ) : null}
           {error && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
@@ -197,6 +218,38 @@ export function PosPrinterDialog({
       </section>
     </div>
   );
+}
+
+function ScaleConfiguration({ value, serialPorts, busy, onChange, onTest }: {
+  value: NonNullable<PosPrinterConfiguration["scale"]>;
+  serialPorts: string[];
+  busy: boolean;
+  onChange: (value: NonNullable<PosPrinterConfiguration["scale"]>) => void;
+  onTest: () => Promise<void>;
+}) {
+  return <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+    <label className="flex items-center gap-2 font-semibold text-slate-900">
+      <input type="checkbox" checked={value.enabled} onChange={(event) => onChange({ ...value, enabled: event.target.checked })} />
+      Balanza conectada
+    </label>
+    {value.enabled && <>
+      <Field label="Puerto de la balanza">
+        <select value={value.portName} onChange={(event) => onChange({ ...value, portName: event.target.value })} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3">
+          <option value="">Selecciona un puerto</option>
+          {serialPorts.map((port) => <option key={port} value={port}>{port}</option>)}
+        </select>
+      </Field>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Velocidad"><input type="number" min={1} value={value.baudRate} onChange={(event) => onChange({ ...value, baudRate: Number(event.target.value) })} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3" /></Field>
+        <Field label="Tiempo de espera (ms)"><input type="number" min={200} max={10000} value={value.timeoutMilliseconds} onChange={(event) => onChange({ ...value, timeoutMilliseconds: Number(event.target.value) })} className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3" /></Field>
+      </div>
+      <button type="button" disabled={busy || !value.portName} onClick={() => void onTest()} className="h-10 rounded-xl border px-4 text-sm font-semibold disabled:opacity-50">Probar balanza</button>
+    </>}
+  </div>;
+}
+
+function defaultScale(): NonNullable<PosPrinterConfiguration["scale"]> {
+  return { enabled: false, portName: "", baudRate: 9600, dataBits: 8, parity: "None", stopBits: "One", sendsRequest: false, requestText: "", startIndex: 0, length: 0, reverse: false, divideBy1000: false, timeoutMilliseconds: 2000 };
 }
 
 function FormatSelect({

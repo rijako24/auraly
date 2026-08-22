@@ -202,7 +202,9 @@ public sealed partial class SqlWorkSessionStore(
             var hash = SHA256.HashData(Encoding.UTF8.GetBytes(snapshot));
 
             await InsertClosureAsync(
-                connection, transaction, identity, closure, idempotencyKey,
+                connection, transaction,
+                request.ClosedByUserId ?? identity.UserId,
+                closure, idempotencyKey,
                 snapshot, hash, cancellationToken);
             await InsertTotalsAsync(
                 connection, transaction, closure.WorkSessionClosureId,
@@ -230,6 +232,48 @@ public sealed partial class SqlWorkSessionStore(
             await transaction.RollbackAsync(CancellationToken.None);
             throw;
         }
+    }
+
+    public async Task<WorkSessionClosurePreviewView> PreviewClosureAsync(
+        WorkSessionIdentity identity,
+        Guid workSessionId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.ReadCommitted,
+            cancellationToken);
+        var session = await ReadByIdAsync(
+            connection, transaction, identity, workSessionId, cancellationToken)
+            ?? throw new WorkSessionNotFoundException(
+                "The work session does not exist in the authenticated tenant.");
+        if (!string.Equals(session.Status, "Open", StringComparison.Ordinal))
+            throw new WorkSessionConflictException("The work session is not open.");
+        var totals = await ReadTotalsAsync(
+            connection, transaction, workSessionId, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        var totalSales = totals.Sum(value => value.SalesAmount);
+        var totalRefunds = totals.Sum(value => value.RefundAmount);
+        var totalOther = totals.Sum(value => value.OtherAmount);
+        return new WorkSessionClosurePreviewView(
+            session.WorkSessionId,
+            session.BusinessId,
+            session.BusinessName,
+            session.WarehouseId,
+            session.WarehouseName,
+            session.UserId,
+            session.UserName,
+            session.OpenedAt,
+            session.LastActivityAt,
+            totalSales,
+            totalRefunds,
+            totalOther,
+            totals.Sum(value => value.NetAmount),
+            totals.Where(value => string.Equals(
+                    value.PaymentMethodCode, "Cash", StringComparison.OrdinalIgnoreCase))
+                .Sum(value => value.NetAmount),
+            totals);
     }
 
     public async Task<WorkSessionClosureView?> CloseForAuthenticationAsync(
@@ -407,7 +451,7 @@ public sealed partial class SqlWorkSessionStore(
     private static async Task InsertClosureAsync(
         SqlConnection connection,
         SqlTransaction transaction,
-        WorkSessionIdentity identity,
+        Guid closedByUserId,
         WorkSessionClosureView closure,
         string idempotencyKey,
         string snapshot,
@@ -426,7 +470,7 @@ public sealed partial class SqlWorkSessionStore(
             """, connection, transaction);
         command.Parameters.AddWithValue("@ClosureId", closure.WorkSessionClosureId);
         command.Parameters.AddWithValue("@SessionId", closure.WorkSessionId);
-        command.Parameters.AddWithValue("@UserId", identity.UserId);
+        command.Parameters.AddWithValue("@UserId", closedByUserId);
         command.Parameters.AddWithValue("@IdempotencyKey", idempotencyKey);
         AddMoney(command, "@TotalSales", closure.TotalSales);
         AddMoney(command, "@TotalRefunds", closure.TotalRefunds);

@@ -244,7 +244,7 @@ public sealed class SqlAccountingPostingProcessor(
             number = reader.GetString(0); untaxed = reader.GetDecimal(1); tax = reader.GetDecimal(2); total = reader.GetDecimal(3);
             partyId = reader.IsDBNull(4) ? null : reader.GetGuid(4);
         }
-        var payments = new List<(string Category, decimal Amount)>();
+        var paymentSources = new List<(string MethodCode, decimal Amount)>();
         await using (var command = new SqlCommand("""
             SELECT MethodCode,SUM(Amount) FROM dbo.SalesPayments
             WHERE DocumentId=@DocumentId GROUP BY MethodCode ORDER BY MethodCode;
@@ -253,8 +253,12 @@ public sealed class SqlAccountingPostingProcessor(
             command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
-                payments.Add((PaymentCategory(reader.GetString(0)), reader.GetDecimal(1)));
+                paymentSources.Add((reader.GetString(0), reader.GetDecimal(1)));
         }
+        var payments = new List<(string Category, decimal Amount)>();
+        foreach (var payment in paymentSources)
+            payments.Add((await ResolveSourceCategoryAsync(connection, transaction,
+                "PosPaymentMethod", payment.MethodCode, cancellationToken), payment.Amount));
         var paid = payments.Sum(payment => payment.Amount);
         if (paid > total) throw new InvalidOperationException("Payments exceed the immutable invoice total.");
         if (paid < total) payments.Add((AccountingCategories.AccountsReceivable, total - paid));
@@ -298,7 +302,8 @@ public sealed class SqlAccountingPostingProcessor(
         }
         var settlements = new List<(string Category, decimal Amount)>();
         if (resolution == "Refund")
-            settlements.Add((PaymentCategory(refundMethod!), total));
+            settlements.Add((await ResolveSourceCategoryAsync(connection, transaction,
+                "PosPaymentMethod", refundMethod!, cancellationToken), total));
         else
         {
             if (receivableApplication > 0)
@@ -411,6 +416,7 @@ public sealed class SqlAccountingPostingProcessor(
             return [(AccountingCategories.AccountsPayable, grossTotal)];
 
         var settlements = new List<(string Category, decimal Amount)>();
+        var withholdingSources = new List<(string Kind, decimal Amount)>();
         if (netAmount.Value > 0)
             settlements.Add((AccountingCategories.AccountsPayable, netAmount.Value));
         await using (var command = new SqlCommand("""
@@ -423,18 +429,11 @@ public sealed class SqlAccountingPostingProcessor(
             command.Parameters.AddWithValue("@DocumentType", source.DocumentType);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
-            {
-                var category = reader.GetString(0) switch
-                {
-                    "IncomeTax" => AccountingCategories.WithholdingIncomeTaxPayable,
-                    "Vat" => AccountingCategories.WithholdingVatPayable,
-                    "IndustryCommerce" => AccountingCategories.WithholdingIcaPayable,
-                    var kind => throw new InvalidOperationException(
-                        $"Unsupported withholding kind '{kind}'.")
-                };
-                settlements.Add((category, reader.GetDecimal(1)));
-            }
+                withholdingSources.Add((reader.GetString(0), reader.GetDecimal(1)));
         }
+        foreach (var withholding in withholdingSources)
+            settlements.Add((await ResolveSourceCategoryAsync(connection, transaction,
+                "PurchaseWithholdingKind", withholding.Kind, cancellationToken), withholding.Amount));
         if (decimal.Round(settlements.Sum(item => item.Amount), 4) != decimal.Round(grossTotal, 4))
             throw new InvalidOperationException("The payable and withholding settlements do not reconcile.");
         return settlements;
@@ -548,15 +547,11 @@ public sealed class SqlAccountingPostingProcessor(
         var currency = reader.GetString(1);
         var amount = reader.GetDecimal(2);
         var method = reader.GetString(3);
+        await reader.DisposeAsync();
         if (!string.Equals(currency, "COP", StringComparison.Ordinal))
             throw new InvalidOperationException("Supplier payment accounting currently requires COP.");
-        var settlement = method switch
-        {
-            "Cash" => AccountingCategories.Cash,
-            "BankTransfer" => AccountingCategories.Bank,
-            _ => throw new InvalidOperationException(
-                $"Supplier payment method '{method}' has no accounting category.")
-        };
+        var settlement = await ResolveSourceCategoryAsync(connection, transaction,
+            "SupplierPaymentMethod", method, cancellationToken);
         return FinancialFacts.PayablePayment(number, amount, settlement);
     }
 
@@ -583,14 +578,10 @@ public sealed class SqlAccountingPostingProcessor(
         if (reader.GetString(2) != "COP")
             throw new InvalidOperationException("Customer receipt accounting currently requires COP.");
         var amount = reader.GetDecimal(3);
-        var settlement = reader.GetString(4) switch
-        {
-            "Cash" => AccountingCategories.Cash,
-            "BankTransfer" => AccountingCategories.Bank,
-            "DebitCard" => AccountingCategories.DebitCardClearing,
-            "CreditCard" => AccountingCategories.CreditCardClearing,
-            var method => throw new InvalidOperationException($"Customer receipt method '{method}' has no accounting category.")
-        };
+        var method = reader.GetString(4);
+        await reader.DisposeAsync();
+        var settlement = await ResolveSourceCategoryAsync(connection, transaction,
+            "CustomerPaymentMethod", method, cancellationToken);
         return FinancialFacts.ReceivablePayment(number, partyId, amount, settlement);
     }
 
@@ -607,15 +598,23 @@ public sealed class SqlAccountingPostingProcessor(
         return Convert.ToDecimal(await command.ExecuteScalarAsync(cancellationToken));
     }
 
-    private static string PaymentCategory(string methodCode) =>
-        methodCode.ToUpperInvariant() switch
-        {
-            "CASH" => AccountingCategories.Cash,
-            "DEBITCARD" => AccountingCategories.DebitCardClearing,
-            "CREDITCARD" => AccountingCategories.CreditCardClearing,
-            "TRANSFER" => AccountingCategories.TransferClearing,
-            _ => throw new InvalidOperationException($"Payment method '{methodCode}' has no accounting category.")
-        };
+    private static async Task<string> ResolveSourceCategoryAsync(
+        SqlConnection connection, SqlTransaction transaction, string sourceType,
+        string sourceCode, CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            SELECT m.Category
+            FROM dbo.AccountingConfigurationProfiles p
+            INNER JOIN dbo.AccountingSourceCategoryMappings m ON m.ProfileCode=p.ProfileCode
+            WHERE p.IsDefault=1 AND p.IsActive=1
+              AND m.SourceType=@SourceType AND m.SourceCode=@SourceCode;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@SourceType", sourceType);
+        command.Parameters.AddWithValue("@SourceCode", sourceCode);
+        var category = await command.ExecuteScalarAsync(cancellationToken) as string;
+        return category ?? throw new InvalidOperationException(
+            $"Source '{sourceType}:{sourceCode}' has no accounting category mapping.");
+    }
 
     private static async Task<FinancialFactsResult> LoadCashMovementFactsAsync(
         SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
@@ -625,7 +624,7 @@ public sealed class SqlAccountingPostingProcessor(
             SELECT d.DocumentNumber,d.Direction,d.Amount,
                    r.CounterpartAccountingCategory,d.CostCenterId
             FROM dbo.CashMovementDocuments d
-            INNER JOIN dbo.CashMovementReasons r
+            INNER JOIN dbo.BusinessReasons r
               ON r.BusinessId=d.BusinessId AND r.ReasonId=d.ReasonId
             WHERE d.DocumentId=@DocumentId AND d.BusinessId=@BusinessId
               AND d.DocumentType=@DocumentType;

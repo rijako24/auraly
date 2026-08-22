@@ -76,7 +76,7 @@ public sealed class SqlAccountingStore(
         await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand("""
             SELECT MappingId,TenantId,BusinessId,Category,AccountId,EffectiveFrom,EffectiveTo
-            FROM dbo.AccountMappings
+            FROM dbo.AccountingAccountMappings
             WHERE TenantId=@TenantId AND (BusinessId IS NULL OR BusinessId=@BusinessId)
             ORDER BY Category,EffectiveFrom DESC;
             """, connection);
@@ -90,6 +90,127 @@ public sealed class SqlAccountingStore(
                 DateOnly.FromDateTime(reader.GetDateTime(5)),
                 reader.IsDBNull(6) ? null : DateOnly.FromDateTime(reader.GetDateTime(6))));
         return values;
+    }
+
+    public async Task<IReadOnlyList<AccountingCategoryDefinition>> ListCategoryDefinitionsAsync(
+        AccountingUserIdentity user, CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand("""
+            SELECT d.Category,d.DisplayName,d.AccountType,d.IsRequired,d.DisplayOrder
+            FROM dbo.AccountingConfigurationProfiles p
+            INNER JOIN dbo.AccountingConfigurationProfileAccounts d ON d.ProfileCode=p.ProfileCode
+            WHERE p.IsDefault=1 AND p.IsActive=1
+            ORDER BY d.DisplayOrder;
+            """, connection);
+        var values = new List<AccountingCategoryDefinition>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            values.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2),
+                reader.GetBoolean(3), reader.GetInt32(4)));
+        return values;
+    }
+
+    public async Task<AccountingDefaultsResult> EnsureDefaultsAsync(
+        AccountingUserIdentity user, CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        try
+        {
+            await using var command = new SqlCommand("""
+                IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WITH(UPDLOCK,HOLDLOCK)
+                  WHERE BusinessId=@BusinessId AND TenantId=@TenantId AND IsActive=1)
+                  THROW 51403,'The accounting business is outside the legal entity.',1;
+
+                DECLARE @ProfileCode nvarchar(32)=(
+                  SELECT ProfileCode FROM dbo.AccountingConfigurationProfiles WITH(UPDLOCK,HOLDLOCK)
+                  WHERE IsDefault=1 AND IsActive=1);
+                IF @ProfileCode IS NULL
+                  THROW 51403,'No active default accounting profile is configured.',1;
+
+                INSERT dbo.AccountingAccounts(
+                  AccountId,TenantId,Code,Name,AccountType,AllowsPosting,
+                  RequiresParty,IsActive,CreatedAt)
+                SELECT NEWID(),@TenantId,d.AccountCode,d.AccountName,d.AccountType,d.AllowsPosting,
+                       d.RequiresParty,1,@Now
+                FROM dbo.AccountingConfigurationProfileAccounts d
+                WHERE d.ProfileCode=@ProfileCode AND
+                  NOT EXISTS(SELECT 1 FROM dbo.AccountingAccounts a WITH(UPDLOCK,HOLDLOCK)
+                  WHERE a.TenantId=@TenantId AND a.Code=d.AccountCode);
+
+                INSERT dbo.AccountingAccountMappings(
+                  MappingId,TenantId,BusinessId,Category,AccountId,
+                  EffectiveFrom,EffectiveTo,CreatedAt)
+                SELECT NEWID(),@TenantId,NULL,d.Category,a.AccountId,
+                       CONVERT(date,'20000101'),NULL,@Now
+                FROM dbo.AccountingConfigurationProfileAccounts d
+                INNER JOIN dbo.AccountingAccounts a
+                  ON a.TenantId=@TenantId AND a.Code=d.AccountCode AND a.IsActive=1 AND a.AllowsPosting=1
+                WHERE d.ProfileCode=@ProfileCode AND
+                  NOT EXISTS(SELECT 1 FROM dbo.AccountingAccountMappings m WITH(UPDLOCK,HOLDLOCK)
+                  WHERE m.TenantId=@TenantId AND m.BusinessId IS NULL AND m.Category=d.Category);
+
+                IF NOT EXISTS(SELECT 1 FROM dbo.AccountingCostCenters WITH(UPDLOCK,HOLDLOCK)
+                  WHERE BusinessId=@BusinessId AND IsDefault=1 AND IsActive=1)
+                  INSERT dbo.AccountingCostCenters(
+                    CostCenterId,BusinessId,Code,Name,ParentCostCenterId,IsDefault,IsActive,CreatedAt)
+                  VALUES(NEWID(),@BusinessId,N'GENERAL',N'Operación general',NULL,1,1,@Now);
+
+                DECLARE @YearStart date=DATEFROMPARTS(YEAR(@Now),1,1);
+                DECLARE @YearEnd date=DATEFROMPARTS(YEAR(@Now),12,31);
+                IF NOT EXISTS(SELECT 1 FROM dbo.AccountingPeriods WITH(UPDLOCK,HOLDLOCK)
+                  WHERE TenantId=@TenantId AND StartsOn<=@YearEnd AND EndsOn>=@YearStart)
+                  INSERT dbo.AccountingPeriods(
+                    PeriodId,TenantId,Name,StartsOn,EndsOn,Status,CreatedAt)
+                  VALUES(NEWID(),@TenantId,CONVERT(nvarchar(4),YEAR(@Now)),
+                         @YearStart,@YearEnd,N'Open',@Now);
+
+                DECLARE @RequiredMappingCount int=(SELECT COUNT(*)
+                  FROM dbo.AccountingConfigurationProfileAccounts
+                  WHERE ProfileCode=@ProfileCode AND IsRequired=1);
+                SELECT
+                  (SELECT COUNT(*) FROM dbo.AccountingAccounts WHERE TenantId=@TenantId AND IsActive=1),
+                  (SELECT COUNT(DISTINCT Category) FROM dbo.AccountingAccountMappings
+                    WHERE TenantId=@TenantId AND (BusinessId IS NULL OR BusinessId=@BusinessId)
+                      AND EffectiveFrom<=CAST(@Now AS date)
+                      AND (EffectiveTo IS NULL OR EffectiveTo>=CAST(@Now AS date))),
+                  CONVERT(bit,CASE WHEN EXISTS(SELECT 1 FROM dbo.AccountingCostCenters
+                    WHERE BusinessId=@BusinessId AND IsDefault=1 AND IsActive=1) THEN 1 ELSE 0 END),
+                  CONVERT(bit,CASE WHEN EXISTS(SELECT 1 FROM dbo.AccountingPeriods
+                    WHERE TenantId=@TenantId AND Status=N'Open'
+                      AND CAST(@Now AS date) BETWEEN StartsOn AND EndsOn) THEN 1 ELSE 0 END),
+                  @RequiredMappingCount;
+                """, connection, transaction);
+            command.Parameters.AddWithValue("@TenantId", user.TenantId);
+            command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+            command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                throw new InvalidOperationException("Accounting defaults did not return their status.");
+            var accountCount = reader.GetInt32(0);
+            var mappingCount = reader.GetInt32(1);
+            var hasCenter = reader.GetBoolean(2);
+            var hasPeriod = reader.GetBoolean(3);
+            var requiredMappingCount = reader.GetInt32(4);
+            await reader.DisposeAsync();
+            await transaction.CommitAsync(cancellationToken);
+            return new(accountCount, mappingCount, hasCenter, hasPeriod,
+                accountCount >= requiredMappingCount && mappingCount >= requiredMappingCount && hasCenter && hasPeriod);
+        }
+        catch (SqlException exception) when (IsConflict(exception))
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw new AccountingConflictException(exception.Message);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
     }
 
     public async Task<AccountingAccountView> CreateAccountAsync(
@@ -180,6 +301,11 @@ public sealed class SqlAccountingStore(
                 IF @BusinessId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.Businesses
                   WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
                   THROW 51403,'The mapping business is outside the legal entity.',1;
+                IF NOT EXISTS(
+                  SELECT 1 FROM dbo.AccountingConfigurationProfiles p
+                  INNER JOIN dbo.AccountingConfigurationProfileAccounts d ON d.ProfileCode=p.ProfileCode
+                  WHERE p.IsDefault=1 AND p.IsActive=1 AND d.Category=@Category)
+                  THROW 51403,'The accounting category is not configured in the active profile.',1;
                 IF EXISTS(SELECT 1 FROM dbo.AccountingAccountMappings WITH(UPDLOCK,HOLDLOCK)
                   WHERE TenantId=@TenantId AND Category=@Category
                     AND ((BusinessId=@BusinessId) OR (BusinessId IS NULL AND @BusinessId IS NULL))

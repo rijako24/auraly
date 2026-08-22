@@ -87,6 +87,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                     reader.GetString(7));
                 items.Add(new(
                     reader.GetGuid(0),
+                    payload.CommercialSnapshot.DocumentType,
                     reader.GetString(1),
                     reader.GetString(2),
                     reader.GetDateTimeOffset(3),

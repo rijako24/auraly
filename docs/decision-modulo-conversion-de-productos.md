@@ -1,1381 +1,542 @@
 # Decisión: módulo Conversión de productos
 
-**Estado:** incluido en el MVP de Auraly Commerce  
-**Fecha:** 27 de julio de 2026  
-**Referencia:** entidades, formularios, servicios, motor, kardex, asociaciones e informes de Conversión de Xion  
-**Prevalencia:** este documento reemplaza cualquier exclusión anterior de “conversiones” en el alcance del MVP. Producción continúa fuera del MVP.
+Fecha: 2026-08-21
+Estado: diseño funcional vigente
+Referencia funcional: Xion, sin trasladar sus defectos ni su complejidad accidental
 
 ---
 
 ## 1. Decisión ejecutiva
 
-Auraly Commerce incluirá un módulo de **Conversión de productos**.
+Auraly soportará conversiones de inventario entre productos de una misma familia ya definida mediante `ProductLinks`.
 
-El módulo permitirá transformar existencias dentro de una misma bodega mediante:
+No se crearán perfiles, recetas, versiones ni un maestro paralelo de conversiones para el MVP. La configuración permanecerá en la sección **Familia de productos** del producto principal.
 
-```text
-Uno a muchos
-    un producto de salida
-    -> varios productos resultantes
+Cada vínculo podrá marcarse con **Permitir conversión** y declarar su equivalencia física respecto al producto principal. Todos los integrantes habilitados de la familia podrán convertirse entre sí, sin imponer una dirección padre-hijo:
 
-Muchos a uno
-    varios productos de salida
-    -> un producto resultante
-```
+- principal a vinculado;
+- vinculado a principal;
+- vinculado a otro vinculado;
+- un producto a varios productos;
+- varios productos a uno.
 
-Ejemplos:
+No se permite muchos-a-muchos en una sola operación durante el MVP.
 
-- abrir una presentación mayor y obtener presentaciones menores;
-- agrupar varias unidades en una presentación comercial;
-- reclasificar productos equivalentes;
-- convertir referencias asociadas conservando cantidades y costo;
-- registrar rendimiento o merma autorizada.
+La conversión descontará inventario de los productos consumidos y aumentará inventario de los productos obtenidos en una sola operación atómica. Nunca podrá crear cantidad física equivalente. Podrá registrar merma dentro de una tolerancia configurable para la familia.
 
-Conversión será un documento de inventario procesado por el motor del servidor. Produce:
-
-- salidas de inventario;
-- entradas de inventario;
-- kardex;
-- snapshots de costo;
-- valoración de productos resultantes;
-- trazabilidad;
-- eventos;
-- reportes.
-
-No produce:
-
-- venta;
-- compra;
-- cuenta por cobrar;
-- cuenta por pagar;
-- factura electrónica;
-- orden de producción;
-- consumo de mano de obra;
-- programación de planta;
-- lotes ni seriales en el MVP.
+Todas las páginas y búsquedas del módulo seguirán el estándar transversal de [reportes, consultas, filtros y paginación](decision-reportes-consultas-filtros-y-paginacion.md). La bandeja y los selectores consultan y paginan desde servidor; las líneas de un documento activo conservan la operación completa y usan desplazamiento o virtualización, no paginación.
 
 ---
 
-## 2. Hallazgos de Xion
+## 2. Qué se conserva de Xion
 
-### 2.1 Encabezado
+Xion demuestra las necesidades funcionales correctas:
 
-`Conversion` contiene:
+- agrupar productos que pueden transformarse entre sí;
+- habilitar o deshabilitar la conversión;
+- consumir uno o varios productos;
+- obtener uno o varios productos;
+- validar existencias;
+- generar entradas, salidas y kárdex;
+- conservar el costo total de la transformación;
+- consultar el historial.
 
-- número;
-- fecha;
-- bodega;
-- centro de costo;
-- motivo;
-- tipo uno-a-muchos o muchos-a-uno;
-- observación;
-- usuario;
-- equipo;
-- estado procesado.
+Auraly no copiará:
 
-### 2.2 Detalles
-
-Xion separa:
-
-```text
-ConversionSalida
-ConversionEntrada
-```
-
-Las líneas conservan:
-
-- producto;
-- código;
-- descripción;
-- unidad;
-- embalaje;
-- cajas;
-- unidades;
-- cantidad en unidad principal;
-- precio de conversión;
-- costo;
-- costo promedio;
-- precio de venta;
-- total.
-
-### 2.3 Asociaciones
-
-Antes de convertir, el producto debe pertenecer a un `AsociadoProducto` con:
-
-```text
-PermiteConversion = true
-```
-
-La asociación:
-
-- agrupa productos compatibles;
-- define un principal;
-- guarda cantidad;
-- exige familia y tipo de unidad compatibles;
-- impide algunos tipos especiales;
-- permite obtener automáticamente los posibles resultados.
-
-### 2.4 Operación
-
-La pantalla:
-
-- trabaja por bodega;
-- captura productos por código;
-- soporta teclado;
-- permite uno-a-muchos y muchos-a-uno;
-- muestra existencias según permiso;
-- muestra costos según permiso;
-- calcula cantidades y totales;
-- guarda un borrador local;
-- envía el documento;
-- deja el movimiento pendiente para el motor;
-- permite buscar e imprimir conversiones.
-
-### 2.5 Motor
-
-El motor:
-
-- toma productos de salida;
-- descuenta existencia;
-- crea kardex de salida;
-- toma productos de entrada;
-- incrementa existencia;
-- crea kardex de entrada;
-- marca la conversión procesada;
-- marca el movimiento terminado;
-- ejecuta dentro de persistencia coordinada.
-
-### 2.6 Problemas que no se deben migrar
-
-- identificadores enteros compuestos manualmente;
-- `double` para cantidades y costos;
-- copia de descripciones, códigos y precios como campos operativos mezclados;
-- duplicación servidor/local;
-- borradores temporales en tablas `Z` y `S`;
-- lógica de UI como fuente de verdad;
-- consultas y autorización desde el formulario;
-- mezcla entre unidad capturada, unidad base y embalaje;
-- dependencia de una única asociación por producto;
-- costo resultante ambiguo;
-- validación de pérdidas defectuosa;
-- estado booleano `Procesada`;
-- ausencia de reversión explícita;
-- eliminación/modificación de líneas sin modelo de estados.
+- validaciones de pérdida defectuosas;
+- formularios que cargan catálogos completos;
+- dependencia de una dirección fija padre-hijo;
+- configuración duplicada;
+- perfiles o aprobaciones sin una necesidad vigente;
+- reglas de inventario confiadas únicamente al frontend.
 
 ---
 
-## 3. Hallazgo crítico: validación de pérdida defectuosa
+## 3. Familia convertible
 
-Xion intenta:
-
-1. impedir que la entrada equivalente sea mayor que la salida;
-2. permitir una entrada menor con autorización;
-3. limitar el porcentaje de pérdida.
-
-Sin embargo, después de rechazar el caso mayor, aparece una condición equivalente a:
+La familia canónica es:
 
 ```text
-si entrada NO es mayor que salida:
-    continuar
+producto principal + productos vinculados activos
 ```
 
-Esto hace inalcanzable la validación posterior de pérdida.
+El producto principal organiza la familia, pero no es necesariamente el producto de entrada. La relación no define la dirección de la conversión.
 
-Auraly no debe reproducir ese comportamiento.
+Un producto vinculado participa en conversiones únicamente cuando su vínculo activo tiene `AllowsConversion = 1`.
 
-Las reglas de:
+Desde cualquier miembro habilitado se podrá llegar al principal o a cualquier otro miembro habilitado de la misma familia.
 
-- rendimiento;
-- merma;
-- tolerancia;
-- autorización;
-- costo;
+### 3.1 Incompatibilidad con inventario compartido
 
-serán invariantes de dominio y se probarán independientemente de la interfaz.
+`AllowsConversion` y `SharesInventory` son incompatibles en el mismo vínculo.
+
+Cuando dos productos comparten inventario, ambos resuelven al mismo saldo canónico. Convertir entre ellos produciría movimientos ficticios sobre una existencia que ya es común.
+
+La UI deshabilita una opción al activar la otra y el servidor aplica la misma invariante.
+
+### 3.2 Requisitos de los productos
+
+Para participar en una conversión, cada producto debe:
+
+- pertenecer al mismo `BusinessId`;
+- estar activo;
+- administrar inventario;
+- pertenecer a la misma familia convertible activa;
+- no compartir inventario mediante ese vínculo;
+- tener una equivalencia válida;
+- admitir la precisión capturada por su unidad.
 
 ---
 
-## 4. Conversión no es Producción
+## 4. Equivalencia física
 
-### Conversión
+El modelo actual de unidades describe código, nombre, símbolo y precisión, pero no contiene conversiones dimensionales confiables. Por eso `BaseUnitCode` no basta para demostrar que dos cantidades representan el mismo contenido físico.
 
-- transformación logística/comercial;
-- sin orden de fabricación;
-- sin receta industrial;
-- sin etapas;
-- sin mano de obra;
-- sin máquinas;
-- sin tiempos;
-- sin planeación;
-- sin consumo indirecto;
-- inventario entra y sale en una operación atómica.
+Cada vínculo convertible declarará una equivalencia respecto al producto principal:
 
-### Producción
+```text
+1 unidad del producto vinculado = X unidades equivalentes del producto principal
+```
 
-- receta o BOM;
-- orden;
-- consumos planificados/reales;
-- procesos;
-- responsables;
-- tiempos;
-- costos indirectos;
-- desperdicios de producción;
-- producto en proceso.
+El producto principal tiene factor implícito `1`.
 
-Producción permanece fuera del MVP.
+Ejemplo:
 
-Si un caso requiere receta, ejecución parcial, producto en proceso o costos indirectos, no se fuerza dentro de Conversión. Se clasifica como necesidad futura de Producción.
+| Producto | Factor equivalente |
+| --- | ---: |
+| Bulto de 10 kg, principal | 1,00 |
+| Bolsa de 1 kg | 0,10 |
+| Bolsa de 500 g | 0,05 |
+
+Esto permite:
+
+- 1 bulto a 10 bolsas de 1 kg;
+- 10 bolsas de 1 kg a 1 bulto;
+- 5 bolsas de 1 kg a 10 bolsas de 500 g;
+- 1 bulto a una combinación equivalente de bolsas habilitadas.
+
+El factor debe ser mayor que cero. No se infiere a partir del nombre, código o símbolo del producto.
 
 ---
 
-## 5. Arquitectura modular
+## 5. Merma de conversión
 
-Conversión pertenece a Inventario:
+El término visible será **Merma de conversión**.
+
+La tolerancia se configura una sola vez para la familia, en la sección de productos vinculados del producto principal:
 
 ```text
-Auraly.Domain.Inventory.Conversions
-Auraly.Application.Inventory.Conversions
-Auraly.Infrastructure.Inventory.Conversions
-Auraly.Contracts.Inventory.Conversions
+Tolerancia máxima de merma (%)
 ```
 
-No se crea inicialmente un microservicio ni base independiente.
+No se configura inicialmente por sede o bodega. La tolerancia describe el comportamiento físico de la familia y debe ser consistente sin importar dónde se ejecute. Además, el modelo vigente no tiene una sede operativa que sea propietaria de esta política.
 
-Dependencias:
+Una futura política de bodega podría actuar como límite más estricto, pero no forma parte del MVP.
 
-```text
-Catalog
-    -> productos, códigos, unidades y estado
-
-Inventory
-    -> bodega, existencia, kardex, valoración
-
-Identity/Authorization
-    -> usuario, permisos y alcances
-
-ReferenceData
-    -> motivos
-
-Reporting
-    -> consultas y reportes
-
-DocumentEngine
-    -> procesamiento definitivo
-```
-
-Conversión no modifica directamente tablas de otros módulos fuera de los puertos y servicios de aplicación establecidos.
-
----
-
-## 6. Modelo conceptual
-
-### 6.1 Documento
+### 5.1 Cálculo
 
 ```text
-InventoryConversion
--------------------
-Id
-BusinessId
-DocumentNumber
-BranchId
-WarehouseId
-OccurredAt
-ConversionType
-ReasonId
-ResponsiblePartyId?
-Notes?
-Status
-Source
-CreatedAt
-CreatedBy
-SubmittedAt?
-SubmittedBy?
-ConfirmedAt?
-ConfirmedBy?
-CancelledAt?
-CancelledBy?
-ReversalOfId?
-IdempotencyKey
-RowVersion
-```
+equivalente de entrada = suma(cantidad consumida × factor)
+equivalente de salida  = suma(cantidad obtenida × factor)
 
-`Id` usa la política nueva de documentos de Auraly. `DocumentNumber` es legible y separado.
-
-### 6.2 Estados
-
-```text
-Draft
-Submitted
-Processing
-Confirmed
-Failed
-Cancelled
-Reversed
+merma equivalente = equivalente de entrada - equivalente de salida
+merma % = merma equivalente / equivalente de entrada × 100
 ```
 
 Reglas:
 
-- `Draft` puede editarse;
-- `Submitted` queda bloqueado;
-- `Processing` pertenece al motor;
-- `Confirmed` es inmutable;
-- `Failed` conserva error y permite reintento idempotente;
-- `Cancelled` solo aplica antes de confirmar;
-- `Reversed` referencia un documento compensatorio.
+- la entrada equivalente debe ser mayor que cero;
+- la salida equivalente debe ser mayor que cero;
+- la salida no puede superar la entrada más el epsilon técnico de redondeo;
+- una salida superior a la entrada se rechaza como creación de inventario;
+- la merma no puede superar la tolerancia configurada;
+- el redondeo se ejecuta una sola vez con la precisión definida por el dominio.
 
-No se usa un booleano `Processed`.
-
-### 6.3 Tipo
+Ejemplo:
 
 ```text
-Split       // uno a muchos
-Merge       // muchos a uno
+Entrada equivalente: 10,000 kg
+Salida equivalente:    9,500 kg
+Merma:                  0,500 kg
+Merma:                  5,00 %
+Tolerancia máxima:      5,00 %
+Resultado:              permitido
 ```
 
-Una transformación muchos-a-muchos queda fuera del MVP. Si aparece, se evalúa como producción o transformación avanzada.
-
-### 6.4 Líneas
-
-```text
-InventoryConversionLine
------------------------
-Id
-ConversionId
-Direction
-ProductId
-CapturedUnitId
-CapturedQuantity
-BaseQuantity
-UnitCostSnapshot
-TotalCostSnapshot
-AllocationWeight?
-ExpectedBaseQuantity?
-ActualBaseQuantity
-VarianceBaseQuantity
-Notes?
-Sequence
-```
-
-Dirección:
-
-```text
-Input     // sale de inventario
-Output    // entra a inventario
-```
-
-Los nombres evitan la ambigüedad de “entrada/salida” respecto al documento.
-
-### 6.5 Snapshots
-
-Al confirmar se conserva:
-
-- código;
-- descripción;
-- unidad;
-- factor;
-- costo usado;
-- moneda;
-- fórmula;
-- versión de valoración.
-
-Los nombres visibles pueden proyectarse desde Catálogo, pero los documentos históricos deben conservar los valores necesarios para explicar el movimiento.
+Con tolerancia de 3 %, la misma operación se rechaza.
 
 ---
 
-## 7. Perfiles de conversión
+## 6. Persistencia mínima
 
-Xion usa asociaciones genéricas con `PermiteConversion`. Auraly lo mejora mediante un concepto explícito:
+Se extiende el modelo existente; no se crea un subsistema paralelo.
 
-```text
-ConversionProfile
------------------
-Id
-BusinessId
-Name
-ConversionType
-Status
-DefaultWarehouseId?
-LossPolicy
-MaximumLossPercent
-CostAllocationMethod
-EffectiveFrom
-EffectiveTo?
-CreatedBy
-CreatedAt
-RowVersion
-```
+### 6.1 `ProductLinks`
+
+Nuevas columnas:
 
 ```text
-ConversionProfileLine
----------------------
-Id
-ConversionProfileId
-Direction
-ProductId
-BaseQuantity
-AllocationWeight?
-IsEditable
-Sequence
+AllowsConversion bit NOT NULL DEFAULT 0
+ConversionFactor decimal(19,6) NULL
 ```
 
-Ventajas:
+Restricciones:
 
-- un producto puede participar en más de un perfil;
-- no se mezcla con otras asociaciones comerciales;
-- el tipo es explícito;
-- las cantidades esperadas están versionadas;
-- la tolerancia es visible;
-- la distribución del costo es reproducible;
-- los perfiles tienen vigencia;
-- se puede auditar.
+- si `AllowsConversion = 1`, `ConversionFactor > 0`;
+- si `AllowsConversion = 1`, `SharesInventory = 0`;
+- si `AllowsConversion = 0`, `ConversionFactor` queda nulo;
+- se respeta la pertenencia existente al negocio y a una sola familia.
 
-### 7.1 Plantilla, no obligación
+### 6.2 `Products`
 
-El perfil:
-
-- precarga productos;
-- propone cantidades;
-- valida compatibilidad;
-- define método de costo.
-
-El negocio puede permitir una conversión ad hoc con permiso especial:
+Nueva columna utilizada en la raíz de la familia:
 
 ```text
-inventory.conversions.create-ad-hoc
+ConversionMaximumLossPercent decimal(9,6) NULL
 ```
 
-En el MVP es preferible exigir perfil para reducir errores.
+Debe estar entre 0 y 100. Es obligatoria cuando existe al menos un vínculo convertible activo.
 
-### 7.2 Restricciones
+### 6.3 Documento de inventario
 
-- productos activos;
-- productos inventariables;
-- unidad base definida;
-- al menos una línea por lado;
-- `Split`: exactamente un input y uno o varios outputs;
-- `Merge`: uno o varios inputs y exactamente un output;
-- cantidades mayores que cero;
-- sin duplicados en el mismo lado;
-- mismas dimensiones de unidad cuando se exige conservación física;
-- perfil vigente.
+Se reutilizan `InventoryOperations`, `InventoryOperationLines`, el motor documental, el escritor canónico de inventario y el kárdex.
 
-Lotes y seriales continúan fuera; por tanto un producto que los exija no puede participar en el MVP.
+El documento confirmado debe conservar:
+
+- familia raíz utilizada;
+- dirección de cada línea;
+- cantidad capturada;
+- factor de equivalencia congelado;
+- cantidad equivalente congelada;
+- entrada equivalente total;
+- salida equivalente total;
+- merma y porcentaje calculados;
+- tolerancia aplicada;
+- costos procesados.
+
+Los snapshots impiden que el historial cambie si después se modifica un factor o una tolerancia.
 
 ---
 
-## 8. Cantidades, rendimiento y merma
+## 7. Operación permitida
 
-### 8.1 Cantidad base
-
-Toda cantidad se convierte a unidad base:
+La UI presenta dos grupos, sin lenguaje de padre o hijo:
 
 ```text
-BaseQuantity = CapturedQuantity * UnitConversionFactor
+Se descuenta
+Se obtiene
 ```
 
-El documento conserva ambas.
+El MVP permite:
 
-Los cálculos usan `decimal`.
+- una entrada y una salida;
+- una entrada y varias salidas;
+- varias entradas y una salida.
 
-### 8.2 Rendimiento
+No permite varias entradas y varias salidas simultáneamente.
 
-```text
-YieldPercent =
-    ActualEquivalentOutput
-    / ExpectedEquivalentOutput
-    * 100
-```
+La primera selección determina la familia. Desde ese momento todos los selectores quedan restringidos a miembros convertibles de esa familia.
 
-### 8.3 Merma
+### 7.1 Confirmación
 
-```text
-LossQuantity =
-    ExpectedEquivalentOutput
-    - ActualEquivalentOutput
+Antes de aceptar el documento, el servidor valida:
 
-LossPercent =
-    LossQuantity
-    / ExpectedEquivalentOutput
-    * 100
-```
+1. negocio y permisos;
+2. bodega válida;
+3. familia activa;
+4. vínculos habilitados;
+5. factores y tolerancia;
+6. forma uno-a-uno, uno-a-muchos o muchos-a-uno;
+7. cantidades y precisión;
+8. existencia disponible de cada entrada;
+9. conservación física y merma;
+10. idempotencia.
 
-No todos los perfiles permiten comparar cantidades directamente. Para productos con magnitudes diferentes, el rendimiento se define mediante la cantidad esperada del perfil.
+El motor repite las invariantes críticas dentro del procesamiento transaccional. Una validación de la UI nunca es autoridad.
 
-### 8.4 Políticas
-
-```text
-NoLoss
-AllowWithinTolerance
-RequireApproval
-```
-
-#### `NoLoss`
-
-La salida equivalente debe coincidir exactamente dentro de precisión técnica.
-
-#### `AllowWithinTolerance`
-
-La diferencia debe ser menor o igual a `MaximumLossPercent`.
-
-#### `RequireApproval`
-
-La diferencia puede superar el límite únicamente con:
-
-- permiso;
-- aprobador distinto cuando se configure;
-- motivo;
-- comentario;
-- auditoría.
-
-No existe una continuación silenciosa.
-
-### 8.5 Ganancia aparente
-
-Una cantidad resultante mayor que la esperada:
-
-- se bloquea por defecto;
-- no se acepta como “merma negativa”;
-- exige corregir factores o cantidades;
-- una excepción futura requiere caso de negocio explícito.
+Si la operación no tiene existencia o supera la merma, se rechaza antes de enviarla al procesamiento asíncrono. No debe presentarse como aceptada para terminar después en dead letter por una regla conocida de negocio.
 
 ---
 
-## 9. Existencia y negativos
+## 8. Costo
 
-La política:
+El costo total de las entradas se conserva y se distribuye entre las salidas usando el mecanismo actual del motor.
+
+Para el MVP, la merma física queda absorbida por los productos obtenidos:
 
 ```text
-Warehouse.AllowNegativeStockSales
+valor total de entradas = valor total distribuido a salidas
 ```
 
-solo gobierna ventas.
+Si 10 kg con costo total de 100 producen 9,5 kg, los 9,5 kg conservan el costo total de 100. El costo unitario resultante aumenta.
 
-Conversión:
+No se crea un producto de merma ni un asiento contable separado en esta fase.
 
-- consulta existencia en línea;
-- valida al capturar/cambiar cantidades;
-- revalida al confirmar;
-- bloquea si no hay disponibilidad;
-- no vende a un cliente presente;
-- no opera offline;
-- no usa inventario local de la caja;
-- no permite negativos en el MVP.
-
-La validación definitiva ocurre dentro de la misma transacción o control de concurrencia que aplica el movimiento.
-
-Si dos conversiones consumen la misma existencia:
-
-- solo puede confirmarse la que conserve disponibilidad;
-- la otra queda `Failed` con error recuperable;
-- no deja efectos parciales.
+Los costos se muestran solamente a usuarios con el permiso vigente de lectura de costos.
 
 ---
 
-## 10. Conservación y distribución del costo
+## 9. Diseño web y usabilidad
 
-### 10.1 Fuente del costo
+El módulo debe sentirse parte de Auraly. Reutiliza `Card`, `Button`, `Input`, `Select`, `Dialog`, `Skeleton`, badges de estado, tokens de color y el componente compartido `DataTable`. No crea una librería visual ni una tabla propia.
 
-Los inputs usan el costo de valoración que Inventory determine al confirmar:
-
-- costo promedio;
-- capa de costo futura;
-- otra política configurada.
-
-No usan precio público ni costo digitado arbitrariamente.
+Rutas propuestas:
 
 ```text
-InputTotalCost =
-    sum(InputBaseQuantity * InventoryUnitCost)
+/dashboard/inventory/conversions
+/dashboard/inventory/conversions/new
+/dashboard/inventory/conversions/{documentId}
 ```
 
-### 10.2 Invariante
+### 9.1 Bandeja de conversiones
 
-```text
-InputTotalCost
-= OutputAllocatedCost
- + RecognizedConversionVariance
-```
+La página contiene:
 
-La diferencia permitida solo puede provenir de precisión monetaria o de una política de merma explícita.
+1. encabezado con título, descripción breve y acción primaria **Nueva conversión**;
+2. filtros y búsqueda en una barra compacta;
+3. tabla o tarjetas adaptables;
+4. paginador visible;
+5. detalle al abrir una fila.
 
-### 10.3 Un solo output
+Columnas mínimas:
 
-```text
-OutputTotalCost = InputTotalCost - RecognizedVariance
-
-OutputUnitCost =
-    OutputTotalCost / OutputBaseQuantity
-```
-
-### 10.4 Varios outputs
-
-El perfil define el método:
-
-```text
-ByExpectedQuantity
-ByAllocationWeight
-```
-
-#### Por cantidad esperada
-
-Aplica cuando los productos representan presentaciones comparables:
-
-```text
-OutputShare =
-    OutputExpectedBaseQuantity
-    / Sum(ExpectedBaseQuantities)
-```
-
-#### Por peso de distribución
-
-Cada output tiene un porcentaje/peso:
-
-```text
-AllocationWeight > 0
-Sum(AllocationWeight) = 100 %
-```
-
-```text
-OutputAllocatedCost =
-    AllocatableCost * AllocationWeight
-```
-
-### 10.5 Merma y costo
-
-Políticas:
-
-```text
-AbsorbLossIntoOutputs
-RecordConversionVariance
-```
-
-#### Absorber
-
-El costo de los inputs se distribuye completamente entre las unidades obtenidas. Al producir menos, aumenta el costo unitario del output.
-
-#### Registrar variación
-
-Una porción queda como pérdida de conversión identificada. No se implementa asiento contable completo si Contabilidad está fuera, pero sí:
-
-- valor;
-- motivo;
-- autorización;
-- reporte;
-- evento para integración futura.
-
-La política debe estar definida en el perfil, no escogerse informalmente al confirmar.
-
-### 10.6 Precisión
-
-- dinero con `decimal`;
-- cantidades con `decimal`;
-- precisión definida por unidad;
-- residuo monetario asignado de forma determinística;
-- fórmula versionada;
-- snapshots inmutables;
-- pruebas doradas.
-
----
-
-## 11. Flujo web
-
-### 11.1 Vista de consultas
-
-Ruta:
-
-```text
-Inventario > Conversiones
-```
-
-Columnas:
-
-- número;
 - fecha;
-- tipo;
+- número;
 - bodega;
-- perfil;
-- motivo;
-- responsable;
-- costo input;
-- costo output;
+- resumen de productos consumidos;
+- resumen de productos obtenidos;
 - merma;
 - estado;
-- usuario;
-- procesado en;
-- acciones.
-
-La vista cumple el estándar transversal:
-
-- filtros por encabezado;
-- filtros combinables;
-- ordenamiento;
-- paginación de servidor;
-- permisos;
-- vistas guardadas;
-- exportación.
-
-### 11.2 Nuevo documento
-
-Encabezado:
-
-- negocio;
-- sucursal;
-- bodega;
-- fecha;
-- tipo;
-- perfil;
-- motivo;
 - responsable;
-- observación.
+- acciones permitidas.
 
-Paneles:
+La consulta:
+
+- pagina desde servidor;
+- ordena por fecha descendente y desempata por ID descendente;
+- permite búsqueda por número, producto y responsable;
+- filtra por bodega, estado y rango de fechas;
+- reinicia en la primera página al cambiar filtros, búsqueda, orden o tamaño;
+- conserva los parámetros relevantes en la URL;
+- nunca descarga todo el historial para filtrarlo en el navegador.
+
+El paginador muestra rango, total, página actual, navegación anterior/siguiente y tamaño de página permitido por el estándar transversal.
+
+### 9.2 Nueva conversión
+
+La captura se organiza en bloques claros:
+
+- datos generales: bodega, fecha y observación;
+- **Se descuenta**;
+- **Se obtiene**;
+- resumen fijo de equivalencia, merma y validaciones;
+- acciones **Cancelar**, **Guardar borrador** si se conserva esa capacidad y **Confirmar conversión**.
+
+Los selectores de producto:
+
+- consultan al servidor con búsqueda paginada;
+- buscan por código, código de barras, referencia y nombre;
+- no cargan el catálogo completo;
+- muestran unidad, equivalencia y existencia disponible cuando el permiso lo permite;
+- quedan restringidos a la familia después de la primera selección;
+- conservan el foco y soportan teclado y lector.
+
+Las líneas capturadas no se paginan. Constituyen un solo documento y sus totales deben recalcularse completos. Si el número de líneas crece, se usa un contenedor con altura controlada y virtualización.
+
+El resumen se actualiza inmediatamente:
 
 ```text
-Productos a consumir
-Productos resultantes
-Resumen y validaciones
+Entrada equivalente
+Salida equivalente
+Merma equivalente
+Merma porcentual
+Tolerancia máxima
+Estado de validación
 ```
 
-### 11.3 Captura
+La acción de confirmar permanece deshabilitada mientras exista un error y muestra la causa junto al campo o línea responsable.
 
-Cada grilla:
+### 9.3 Detalle
 
-- recibe lector de código;
-- busca por código de barras, alterno, referencia o nombre;
-- agrega y deja listo el foco;
-- permite cambiar cantidad;
-- recalcula inmediatamente;
-- permite eliminar línea antes de enviar;
-- navega con Enter, Tab y flechas;
-- muestra errores por línea;
-- usa virtualización, no paginación de servidor;
-- conserva el documento completo.
+La página de detalle muestra:
 
-### 11.4 Perfil seleccionado
+- estado y trazabilidad;
+- bodega, fecha, usuario y observación;
+- entradas y salidas en grupos separados;
+- factores y equivalencias congeladas;
+- merma real y tolerancia aplicada;
+- costos solo con permiso;
+- vínculo al kárdex relacionado.
 
-Al seleccionar perfil:
+El detalle no es editable después de confirmar.
 
-- precarga líneas;
-- establece proporciones;
-- muestra vigencia;
-- marca campos editables;
-- muestra tolerancia;
-- muestra método de costo;
-- no permite mezclar tipo incompatible.
+### 9.4 Configuración en producto
 
-### 11.5 Resumen
+En **Familia de productos**, el producto principal muestra:
 
-- cantidades esperadas;
-- cantidades reales;
-- rendimiento;
-- merma;
-- existencia disponible;
-- costo de inputs;
-- costo distribuido;
-- variación;
-- advertencias;
-- aprobaciones necesarias.
+- **Tolerancia máxima de merma (%)**;
+- para cada vínculo, **Permitir conversión**;
+- para cada vínculo habilitado, el campo **1 unidad de este producto equivale a X unidades del producto principal**;
+- un ejemplo calculado en ambos sentidos;
+- explicación de incompatibilidad con **Compartir inventario**.
 
-Los costos solo aparecen con permiso.
+La búsqueda para agregar vinculados es paginada desde servidor. No se carga el catálogo completo.
 
-### 11.6 Guardar borrador
+### 9.5 Estados obligatorios
 
-Un borrador:
+Cada página implementa explícitamente:
 
-- se guarda en servidor;
-- puede recuperarse;
-- no mueve inventario;
-- admite edición;
-- tiene `RowVersion`;
-- conserva usuario y fechas.
+- carga con `Skeleton`, sin saltos bruscos de estructura;
+- vacío inicial con explicación y acción principal cuando corresponda;
+- sin resultados por filtros con opción de limpiarlos;
+- error recuperable con mensaje humano y acción **Reintentar**;
+- confirmación en curso con acción protegida contra doble envío;
+- éxito mediante actualización visible y notificación breve;
+- permisos insuficientes sin exponer datos restringidos.
 
-Conversión no requiere borrador offline.
+### 9.6 Responsive y accesibilidad
 
-### 11.7 Confirmar
-
-Al confirmar:
-
-1. valida permisos;
-2. valida perfil y vigencia;
-3. valida cantidades;
-4. valida tolerancia/aprobación;
-5. consulta existencias;
-6. calcula costo;
-7. muestra resumen final;
-8. envía con `IdempotencyKey`;
-9. bloquea edición;
-10. el motor procesa.
+- escritorio usa tabla y paneles con jerarquía visual Auraly;
+- móvil usa tarjetas o lista cuando la tabla pierda legibilidad;
+- no se reduce información crítica únicamente a un icono o color;
+- cantidades usan números tabulares y alineación consistente;
+- acciones tienen texto accesible;
+- filas accionables responden a Enter y espacio;
+- el foco vuelve a un lugar predecible al cerrar diálogos;
+- errores se asocian al control correspondiente;
+- la navegación principal es posible con teclado.
 
 ---
 
-## 12. Motor del servidor
+## 10. Contrato de paginación
 
-El motor es la única autoridad para una conversión definitiva.
+La bandeja y los buscadores utilizan el contrato paginado común:
 
-Procesamiento:
-
-```text
-Load Submitted conversion
-    -> verify idempotency
-    -> validate status
-    -> validate permissions snapshot/approval
-    -> validate products and warehouse
-    -> lock/check input availability
-    -> resolve inventory costs
-    -> validate yield/loss
-    -> allocate output costs
-    -> create input kardex
-    -> decrease inputs
-    -> create output kardex
-    -> increase outputs
-    -> update valuation
-    -> record variance
-    -> mark Confirmed
-    -> append audit/outbox
-    -> commit
-```
-
-Todo ocurre atómicamente.
-
-Si falla:
-
-- no cambia inventario;
-- no queda kardex parcial;
-- no duplica movimientos;
-- conserva error técnico sanitizado;
-- permite reintento seguro.
-
-### 12.1 Idempotencia
-
-Claves:
-
-```text
-ConversionId
-IdempotencyKey
-ProcessingAttempt
-```
-
-Una solicitud repetida devuelve el resultado ya confirmado.
-
-### 12.2 Orden de movimientos
-
-Aunque se creen kardex de input y output, ambos pertenecen al mismo documento y transacción.
-
-Si el mismo producto aparece en ambos lados:
-
-- el caso debe estar permitido por el perfil;
-- se registra trazabilidad de ambos movimientos;
-- la existencia final aplica el neto;
-- el costo sigue la regla completa;
-- no se colapsa de forma que se pierda auditoría.
-
----
-
-## 13. Cancelación y reversión
-
-### Antes de confirmar
-
-- se puede cancelar;
-- no produce inventario;
-- queda auditado.
-
-### Después de confirmar
-
-No se edita ni elimina.
-
-Se crea:
-
-```text
-InventoryConversionReversal
+```json
+{
+  "items": [],
+  "page": 1,
+  "pageSize": 50,
+  "totalCount": 0,
+  "totalPages": 0
+}
 ```
 
 Reglas:
 
-- referencia la conversión original;
-- por defecto revierte completa;
-- valida que los productos resultantes sigan disponibles;
-- crea kardex inverso;
-- usa costos originales;
-- es idempotente;
-- requiere permiso y motivo;
-- marca original `Reversed`.
-
-La reversión parcial queda fuera del MVP.
+- `page` comienza en 1;
+- el servidor limita `pageSize`;
+- `pageSize = 0` nunca significa traer todo;
+- búsqueda, filtros y ordenamiento se ejecutan en servidor;
+- el orden siempre termina con un identificador único;
+- cada consulta aplica `BusinessId`, permisos y bodega antes de paginar;
+- los selectores pueden usar cursor cuando el catálogo lo requiera, sin cambiar la experiencia visible.
 
 ---
 
-## 14. Configuración
+## 11. Permisos
 
-### 14.1 Motivos
-
-Semillas editables:
-
-- cambio de presentación;
-- despiece comercial;
-- agrupación;
-- reclasificación;
-- corrección autorizada;
-- otro controlado.
-
-Cada motivo define:
-
-- estado;
-- requiere observación;
-- requiere aprobación;
-- permite merma;
-- límite.
-
-### 14.2 Parámetros por negocio
+El módulo reutiliza la autorización de inventario y agrega únicamente acciones que representen una capacidad real:
 
 ```text
-RequireConversionProfile
-DefaultLossPolicy
-DefaultMaximumLossPercent
-DefaultCostAllocationMethod
-RequireDifferentApproverAboveLossPercent
-```
-
-No se parametrizan reglas incompatibles con invariantes.
-
----
-
-## 15. Permisos
-
-```text
-inventory.conversions.view
+inventory.conversions.read
 inventory.conversions.create
-inventory.conversions.edit-draft
-inventory.conversions.submit
 inventory.conversions.confirm
-inventory.conversions.cancel
-inventory.conversions.reverse
-inventory.conversions.view-stock
-inventory.conversions.view-cost
-inventory.conversions.allow-loss
-inventory.conversions.approve-loss
-inventory.conversions.create-ad-hoc
-inventory.conversions.export
-inventory.conversion-profiles.view
-inventory.conversion-profiles.manage
+inventory.conversions.configure
 ```
 
-Alcances:
-
-- negocio;
-- sucursal;
-- bodega.
-
-El usuario:
-
-- no ve el menú sin permiso;
-- ve acciones deshabilitadas cuando corresponda;
-- no accede por URL;
-- no recibe costos sin permiso;
-- no puede aprobar su propia excepción si se exige separación.
-
-La API y el motor vuelven a validar.
+La lectura de costos continúa gobernada por el permiso canónico existente. El backend vuelve a autorizar cada endpoint y recurso.
 
 ---
 
-## 16. Eventos
+## 12. Pruebas obligatorias
 
-```text
-InventoryConversionDrafted
-InventoryConversionSubmitted
-InventoryConversionConfirmed
-InventoryConversionFailed
-InventoryConversionCancelled
-InventoryConversionReversed
-InventoryConversionLossApproved
-ConversionProfileCreated
-ConversionProfileChanged
-ConversionProfileDeactivated
-```
+### Dominio y aplicación
 
-Consumidores:
-
-- Reporting;
-- alertas;
-- auditoría;
-- futuras integraciones contables;
-- sincronización de consultas.
-
-Las cajas no necesitan recibir conversiones ni inventario. Solo reciben deltas de producto/precio/configuración si otra regla los modifica.
-
----
-
-## 17. Reportes
-
-### Consultas
-
-- conversiones por rango;
-- por bodega;
-- por tipo;
-- por perfil;
-- por motivo;
-- por usuario;
-- por estado;
-- por producto input;
-- por producto output;
-- pendientes/fallidas;
-- reversadas.
-
-### Métricas
-
-- cantidad consumida;
-- cantidad resultante;
-- rendimiento;
-- merma;
-- costo consumido;
-- costo asignado;
-- variación;
-- conversiones con autorización;
-- productos más convertidos.
-
-### Trazabilidad
-
-Desde una conversión:
-
-- encabezado;
-- inputs;
-- outputs;
-- kardex;
-- existencias antes/después;
-- costo;
-- aprobaciones;
-- intentos del motor;
-- reversión.
-
-Los reportes cumplen filtros por encabezado, combinación, ordenamiento, paginación, totales y exportación.
-
----
-
-## 18. On-Premise
-
-Conversión usa la misma implementación funcional.
-
-Cloud:
-
-- API;
-- Azure SQL;
-- motor/Worker;
-- outbox.
-
-On-Premise:
-
-- IIS/API;
-- SQL Server;
-- `Auraly.Worker`;
-- outbox SQL.
-
-No depende de Azure.
-
-Conversión requiere conexión con el servidor Auraly de la instalación. Si el equipo está sin conexión:
-
-- puede conservar datos no enviados solo si se implementa un borrador local futuro;
-- no confirma;
-- no consulta inventario local;
-- no genera movimientos.
-
-Para el MVP, los borradores son online.
-
----
-
-## 19. Migración desde Xion
-
-### 19.1 Mapeo
-
-| Xion | Auraly |
-|---|---|
-| `Conversion.ConversionId` | mapa legado + nuevo `Id` |
-| `Fecha` | `OccurredAt` |
-| `BodegaId` | `WarehouseId` |
-| `CentroCostoId` | referencia opcional si aplica |
-| `MotivoId` | `ReasonId` |
-| `TipoConversion` | `Split` / `Merge` |
-| `Procesada` | estado derivado |
-| `ConversionSalida` | líneas `Input` |
-| `ConversionEntrada` | líneas `Output` |
-| `UnidadesPrincipal` | `BaseQuantity` |
-| `PrecioConversion` | costo legado para conciliación |
-| `Total` | total legado para conciliación |
-| `AsociadoProducto.PermiteConversion` | `ConversionProfile` |
-| `AsociadoProductoDetalle.Cantidad` | cantidad esperada |
-
-### 19.2 Históricos confirmados
-
-Se migran como documentos históricos inmutables:
-
-- no vuelven a afectar inventario;
-- enlazan al kardex legado;
-- conservan número;
-- conservan usuario/fecha;
-- registran estado migrado;
-- permiten consulta.
-
-### 19.3 Pendientes
-
-No se migran automáticamente como confirmables.
-
-Se clasifican:
-
-- descartado;
-- convertido a borrador para revisión;
-- resuelto en Xion antes del corte.
-
-### 19.4 Perfiles
-
-Las asociaciones se convierten en perfiles solo cuando:
-
-- están activas;
-- permiten conversión;
-- sus productos existen;
-- las cantidades son válidas;
-- la unidad es compatible;
-- la regla tiene sentido.
-
-Conflictos generan informe, no decisiones silenciosas.
-
-### 19.5 Conciliación
-
-- cantidad input;
-- cantidad output;
-- bodega;
-- kardex;
-- costo legado;
-- estado;
-- usuario;
-- fecha;
-- asociación.
-
-La validación defectuosa de pérdida no se conserva como regla.
-
----
-
-## 20. Pruebas obligatorias
-
-### 20.1 Dominio
-
-- `Split` exige un input;
-- `Merge` exige un output;
-- cantidades positivas;
-- unidad base;
-- perfiles vigentes;
-- productos válidos;
-- rendimiento;
-- merma exacta;
-- tolerancia;
-- aprobación;
-- ganancia aparente;
-- distribución de costo;
-- residuo monetario;
-- transiciones de estado;
-- inmutabilidad.
-
-### 20.2 Aplicación
-
-- crear;
-- recuperar borrador;
-- editar con `RowVersion`;
-- enviar;
-- confirmar;
-- cancelar;
-- reintentar;
-- revertir;
-- permisos;
-- alcances;
+- principal a vinculado;
+- vinculado a principal;
+- vinculado a vinculado;
+- uno-a-uno;
+- uno-a-muchos;
+- muchos-a-uno;
+- rechazo de muchos-a-muchos;
+- familia diferente;
+- vínculo deshabilitado;
+- inventario compartido;
+- factor cero, negativo o ausente;
+- salida superior a entrada;
+- merma exacta al límite;
+- merma superior al límite;
+- precisión y redondeo;
+- existencia insuficiente;
 - idempotencia.
 
-### 20.3 SQL real
+### Persistencia y motor
 
-- documento y líneas;
-- constraints;
-- concurrencia;
-- índices;
-- outbox;
-- transacción;
-- DACPAC limpio;
-- actualización.
+- descuento y entrada atómicos;
+- kárdex completo;
+- snapshots inmutables;
+- costo total conservado;
+- reintento sin duplicados;
+- concurrencia sobre el mismo saldo;
+- aislamiento por negocio y bodega.
 
-### 20.4 Inventario
+### UI/E2E
 
-- existencia suficiente;
-- insuficiente;
-- consumo concurrente;
-- input/output mismo producto;
-- producto no inventariable;
-- kardex doble;
-- antes/después;
-- sin movimientos parciales;
-- valoración;
-- reversión.
-
-### 20.5 Costos
-
-- costo promedio input;
-- output único;
-- outputs múltiples;
-- pesos;
-- cantidad esperada;
-- merma absorbida;
-- variación;
-- precisión;
-- moneda;
-- reversión al costo original.
-
-### 20.6 UI/E2E
-
-- lector de código;
-- búsqueda;
-- foco siguiente;
-- edición de cantidad;
-- recálculo;
-- perfil;
-- `Split`;
-- `Merge`;
-- error de existencia;
-- error de merma;
-- aprobación;
-- costos ocultos;
-- guardar/recuperar;
-- confirmar;
-- estado;
-- filtros;
-- paginación;
-- informe.
-
-### 20.7 Motor
-
-- evento repetido;
-- caída antes del commit;
-- caída después del commit;
-- reintento;
-- bloqueo;
-- error de costo;
-- error de inventario;
-- outbox;
-- estado final.
-
-### 20.8 Migración
-
-- tipos;
-- asociaciones;
-- cantidades;
-- costos;
-- procesadas;
-- pendientes;
-- huérfanos;
-- duplicados;
-- conciliación;
-- repetición segura.
-
-### 20.9 Cloud/On-Premise
-
-- misma suite funcional;
-- Worker;
-- SQL;
-- permisos;
-- rendimiento;
-- recuperación.
+- bandeja paginada con total correcto;
+- siguiente, anterior y cambio de tamaño;
+- cambio de filtro vuelve a página 1;
+- filtros y orden ejecutados en servidor;
+- búsqueda paginada de productos;
+- restricción automática a la familia;
+- captura con teclado y lector;
+- cálculo inmediato de equivalencia y merma;
+- estados carga, vacío, sin resultados y error;
+- diseño móvil;
+- confirmación sin doble envío;
+- costos y acciones ocultos según permisos.
 
 ---
 
-## 21. Criterios de aceptación
+## 13. Criterios de aceptación
 
-Conversión está lista cuando:
+La primera versión está terminada cuando:
 
-- soporta `Split` y `Merge`;
-- utiliza perfiles versionados;
-- permite lector y teclado;
-- recalcula cantidades y costo;
-- valida inventario online;
-- no permite negativos;
-- controla merma;
-- distribuye costo conservando valor;
-- procesa atómicamente;
-- crea kardex completo;
-- no duplica por reintento;
-- permite consulta paginada y filtrada;
-- restringe existencias/costos por permiso;
-- permite reversión completa;
-- genera reportes;
-- concilia históricos de Xion;
-- pasa pruebas Cloud y On-Premise.
+- reutiliza `ProductLinks` como única definición de la familia;
+- convierte en cualquier dirección entre miembros habilitados;
+- impide combinar conversión e inventario compartido;
+- conserva equivalencia física y rechaza creación de inventario;
+- calcula y controla la merma con una tolerancia de familia;
+- valida existencia antes de aceptar y durante el procesamiento;
+- mueve inventario y costo atómicamente mediante el motor canónico;
+- conserva snapshots suficientes para auditar el documento;
+- la bandeja y todos los buscadores paginan desde servidor;
+- las líneas activas conservan el documento completo;
+- todas las páginas cumplen los estados, responsive y accesibilidad definidos;
+- no introduce perfiles, recetas ni aprobaciones innecesarias;
+- pasa las pruebas de dominio, SQL, motor y UI.
 
 ---
 
-## 22. Alcance confirmado
+## 14. Fuera del MVP
 
-### Incluido
-
-- configuración de perfiles;
-- uno-a-muchos;
-- muchos-a-uno;
-- misma bodega;
-- lector y teclado;
-- unidades y cantidad base;
-- motivos;
-- responsable;
-- borrador online;
-- validación de existencia;
-- rendimiento y merma;
-- costo y distribución;
-- motor;
-- kardex;
-- reversión total;
-- permisos;
-- auditoría;
-- reportes;
-- migración.
-
-### Fuera
-
-- producción;
-- BOM/recetas industriales;
-- etapas;
-- mano de obra;
-- máquinas;
-- producto en proceso;
-- conversiones entre bodegas;
+- producción y listas de materiales;
+- etapas, máquinas y mano de obra;
 - muchos-a-muchos;
-- lotes;
-- seriales;
-- vencimientos;
+- conversiones entre bodegas;
+- tolerancia diferente por dirección;
+- límite adicional por bodega;
+- lotes, seriales y vencimientos;
+- producto separado para merma;
+- contabilización independiente de la merma;
+- aprobación por exceso de tolerancia;
 - conversión offline;
-- reversión parcial;
-- asientos contables completos.
+- reversión parcial.
 
 ---
 
-## 23. Decisión final
+## 15. Decisión final
 
-Conversión debe entrar al MVP porque es una operación real de inventario que Xion ya resolvía mediante:
+Conversión será una operación simple de inventario basada en familias vinculadas. La configuración vive junto al producto, la dirección es libre dentro de la familia habilitada, la equivalencia física impide crear inventario y la merma queda controlada por una tolerancia única de familia.
 
-- asociaciones;
-- uno-a-muchos;
-- muchos-a-uno;
-- captura por código;
-- validación de existencia;
-- costos;
-- kardex;
-- motor;
-- informes.
-
-Auraly absorberá ese conocimiento, pero lo mejorará con:
-
-- perfiles explícitos;
-- IDs nuevos;
-- estados;
-- `decimal`;
-- cantidades base;
-- control real de merma;
-- conservación de costo;
-- snapshots;
-- atomicidad;
-- idempotencia;
-- reversión;
-- permisos;
-- reportes paginados;
-- pruebas completas.
-
-Conversión queda incluida y Producción continúa fuera del MVP.
+La experiencia web forma parte del requisito funcional: bandejas y búsquedas paginadas desde servidor, captura continua sin dividir el documento, componentes compartidos, feedback inmediato, estados completos, responsive y accesibilidad coherentes con Auraly.

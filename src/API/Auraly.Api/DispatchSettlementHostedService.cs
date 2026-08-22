@@ -123,7 +123,7 @@ public sealed class DispatchSettlementHostedService(
                         item.SourceDocumentId, operation.RequestedAt, ReturnEconomicResolutions.CustomerCredit,
                         null, item.NotDelivered ? "Mercancía no entregada en despacho" : "Devolución registrada durante la entrega",
                         item.Lines.Select(line => new ConfirmSalesReturnLineRequest(line.LineNumber, line.Quantity, line.Disposition)).ToArray(),
-                        ReasonCode: SalesReturnReasonCodes.Other,
+                        ReasonCode: item.ReasonCode,
                         Notes: $"Liquidación automática del despacho {operation.DispatchNumber}."), token);
                 await documentWorker.ProcessOneAsync(new DocumentProcessingSignal(
                     accepted.MovementId, operation.BusinessId, accepted.ReturnId,
@@ -166,12 +166,16 @@ public sealed class DispatchSettlementHostedService(
         const string sql = """
             SELECT source.SourceDocumentId,delivery.DeliveryStatus,line.LineNumber,
                    CASE WHEN delivery.DeliveryStatus=N'NotDelivered' THEN line.Quantity ELSE returned.Quantity END,
-                   CASE WHEN delivery.DeliveryStatus=N'NotDelivered' THEN N'Sellable' ELSE returned.InventoryDisposition END
+                   CASE WHEN delivery.DeliveryStatus=N'NotDelivered' THEN N'Sellable' ELSE returned.InventoryDisposition END,
+                   reason.Code
             FROM dbo.DispatchSourceDocuments source
             INNER JOIN dbo.DispatchDeliveryEvents delivery ON delivery.DispatchSourceDocumentId=source.DispatchSourceDocumentId
             INNER JOIN dbo.SalesDocumentLines line ON line.DocumentId=source.SourceDocumentId
             LEFT JOIN dbo.DispatchDeliveryReturns returned ON returned.DispatchSourceDocumentId=source.DispatchSourceDocumentId
                 AND returned.OriginalLineNumber=line.LineNumber
+            OUTER APPLY(SELECT TOP(1) r.Code FROM dbo.BusinessReasons r
+              WHERE r.BusinessId=@BusinessId AND r.ReasonType=N'SalesReturn' AND r.IsActive=1
+              ORDER BY r.DisplayOrder,r.Name,r.Code) reason
             WHERE source.DispatchId=@DispatchId
               AND (delivery.DeliveryStatus=N'NotDelivered' OR returned.DispatchDeliveryReturnId IS NOT NULL)
             ORDER BY source.SourceDocumentId,line.LineNumber;
@@ -180,14 +184,18 @@ public sealed class DispatchSettlementHostedService(
         await connection.OpenAsync(token);
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@DispatchId", operation.DispatchId);
-        var rows = new List<(Guid Source, bool NotDelivered, ReturnLine Line)>();
+        command.Parameters.AddWithValue("@BusinessId", operation.BusinessId);
+        var rows = new List<(Guid Source, bool NotDelivered, string ReasonCode, ReturnLine Line)>();
         await using var reader = await command.ExecuteReaderAsync(token);
         while (await reader.ReadAsync(token))
             rows.Add((reader.GetGuid(0), reader.GetString(1) == "NotDelivered",
+                reader.IsDBNull(5) ? throw new InvalidOperationException(
+                    "No active sales return reason is configured for this business.") : reader.GetString(5),
                 new(reader.GetInt32(2), reader.GetDecimal(3), reader.GetString(4))));
-        return rows.GroupBy(row => new { row.Source, row.NotDelivered })
+        return rows.GroupBy(row => new { row.Source, row.NotDelivered, row.ReasonCode })
             .Select(group => new ReturnWork(DeterministicGuid($"dispatch:{operation.DispatchId:N}:return:{group.Key.Source:N}"),
-                group.Key.Source, group.Key.NotDelivered, group.Select(row => row.Line).ToArray())).ToArray();
+                group.Key.Source, group.Key.NotDelivered, group.Key.ReasonCode,
+                group.Select(row => row.Line).ToArray())).ToArray();
     }
 
     private async Task<IReadOnlyList<PaymentWork>> LoadPaymentsAsync(Operation operation, CancellationToken token)
@@ -287,7 +295,8 @@ public sealed class DispatchSettlementHostedService(
     private sealed record Operation(Guid Id, Guid BusinessId, Guid DispatchId, Guid RequestedBy,
         DateTimeOffset RequestedAt, int Attempts, Guid TenantId, Guid WarehouseId, string DispatchNumber);
     private sealed record ReturnLine(int LineNumber, decimal Quantity, string Disposition);
-    private sealed record ReturnWork(Guid ReturnId, Guid SourceDocumentId, bool NotDelivered, IReadOnlyList<ReturnLine> Lines);
+    private sealed record ReturnWork(Guid ReturnId, Guid SourceDocumentId, bool NotDelivered,
+        string ReasonCode, IReadOnlyList<ReturnLine> Lines);
     private sealed record PaymentWork(Guid PaymentId, Guid SourceDocumentId, Guid CustomerId,
         Guid ReceivableId, string PaymentMethod, decimal Amount, string Reference);
 }

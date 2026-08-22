@@ -1,14 +1,12 @@
 "use client";
 
-import { Loader2, PackageSearch, Search, X } from "lucide-react";
+import { Loader2, PackageSearch, Search, X, Scale } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import type {
   PosCatalogProduct,
   PosCatalogSearchPage,
 } from "@/services/pos/pos-edge-client";
-
-const PAGE_SIZE = 50;
 
 const money = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -252,6 +250,7 @@ export function PosProductSearchDialog({
             >
               <span className="min-w-0">
                 <span className="block truncate font-semibold text-slate-900">{product.name}</span>
+                {product.isWeighable&&<span className="mt-1 inline-flex items-center gap-1 rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-bold text-teal-800"><Scale className="h-3 w-3"/>Venta por peso</span>}
                 <span className="mt-0.5 block truncate text-xs text-slate-500">
                   {product.productCode}{product.reference ? ` - ${product.reference}` : ""}
                 </span>

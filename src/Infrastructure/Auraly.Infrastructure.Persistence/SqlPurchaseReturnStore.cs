@@ -158,6 +158,17 @@ public sealed class SqlPurchaseReturnStore(
                 await transaction.CommitAsync(cancellationToken);
                 return replay;
             }
+            await using (var reason = new SqlCommand("""
+                SELECT COUNT_BIG(*) FROM dbo.BusinessReasons WITH(UPDLOCK,HOLDLOCK)
+                WHERE BusinessId=@BusinessId AND ReasonType=N'PurchaseReturn'
+                  AND Code=@Code AND IsActive=1;
+                """, connection, transaction))
+            {
+                reason.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+                reason.Parameters.AddWithValue("@Code", request.ReasonCode);
+                if (Convert.ToInt64(await reason.ExecuteScalarAsync(cancellationToken)) != 1)
+                    throw new PurchasingValidationException("The return reason is not active for this business.");
+            }
             var original = await LoadOriginalAsync(connection, transaction, user, request,
                 cancellationToken);
             if (request.ReturnedAt < original.ReceivedAt)

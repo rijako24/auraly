@@ -512,8 +512,18 @@ Se conservan en el inventario legado para una fase futura.
 El portal usará un componente compartido:
 
 ```text
-AuralyDataGrid
+DataTable
 ```
+
+La implementación canónica vive en:
+
+```text
+admin/src/components/tables/data-table.tsx
+admin/src/components/tables/data-table-toolbar.tsx
+admin/src/components/tables/data-table-pagination.tsx
+```
+
+Una página no crea otra tabla, barra de filtros o paginador si el componente compartido cubre el caso. Si falta una capacidad transversal, se extiende el componente común y se conserva su contrato para los consumidores existentes.
 
 No será una tabla con reglas de negocio. Proporcionará:
 
@@ -542,7 +552,52 @@ Cada módulo aporta:
 - totales;
 - claves estables.
 
-### 8.2 Metadatos de columna
+### 8.2 Experiencia visual y de interacción obligatoria
+
+Paginación correcta no es suficiente por sí sola. Toda página consultable debe sentirse parte de Auraly y conservar una jerarquía predecible:
+
+1. encabezado con título, descripción breve y una sola acción primaria visible;
+2. filtros y búsqueda en una barra compacta;
+3. resumen o métricas únicamente cuando ayuden a decidir;
+4. tabla, lista o tarjetas usando componentes y tokens visuales compartidos;
+5. paginador unido visualmente al resultado;
+6. detalle en página o diálogo consistente según la complejidad del contenido.
+
+La experiencia mínima incluye:
+
+- espaciado, tipografía, bordes, radios, colores y elevación provenientes del sistema visual vigente;
+- controles de `Button`, `Input`, `Select`, `Dialog`, `Card`, `Skeleton` y badges compartidos;
+- una acción primaria clara y acciones secundarias con menor peso visual;
+- filtros activos visibles y una acción para restablecerlos;
+- rango actual y total de registros junto al paginador;
+- números alineados y con dígitos tabulares; moneda, fecha y cantidad con formato consistente;
+- acciones destructivas diferenciadas y confirmadas;
+- feedback inmediato, breve y humano después de una acción;
+- protección contra doble envío mientras una mutación está en curso;
+- conservación de búsqueda, filtros, orden, página y tamaño en URL cuando la navegación de regreso deba restaurar el contexto;
+- fila accionable mediante puntero, Enter y espacio, sin controles anidados que disparen la fila accidentalmente;
+- foco visible y retorno de foco predecible al cerrar un diálogo.
+
+Estados obligatorios:
+
+- **carga:** estructura estable con `Skeleton`; no tabla vacía ni spinner aislado si se conoce la forma del contenido;
+- **vacío inicial:** explica qué falta y ofrece la acción principal cuando el usuario puede ejecutarla;
+- **sin resultados:** distingue filtros sin coincidencias de ausencia real de datos y permite limpiar filtros;
+- **error:** mensaje comprensible, conserva los filtros y ofrece **Reintentar** cuando sea recuperable;
+- **sin permiso:** no consulta ni muestra datos restringidos y explica la indisponibilidad sin revelar su contenido;
+- **éxito:** actualiza la colección o el detalle y presenta una confirmación breve.
+
+Responsive:
+
+- la tabla puede usar desplazamiento horizontal cuando las columnas sean necesarias;
+- si en móvil la tabla deja de ser legible, se utiliza el modo tarjeta o lista del componente compartido;
+- la información crítica no depende únicamente de color, icono, tooltip o interacción `hover`;
+- controles táctiles conservan un área operable adecuada;
+- la acción primaria y el paginador siguen accesibles sin solaparse.
+
+Estas reglas aplican a cada página nueva y a las páginas existentes cuando se modifiquen materialmente. No justifican reescribir de una vez todas las vistas que no estén dentro del alcance de un cambio.
+
+### 8.3 Metadatos de columna
 
 ```text
 GridColumnDefinition
@@ -1278,12 +1333,19 @@ Una vista tabular no está terminada hasta que:
 - ordena establemente;
 - aplica permisos y alcances;
 - muestra carga, vacío y error;
+- distingue vacío inicial de filtros sin resultados;
+- reutiliza los componentes y tokens visuales de Auraly;
+- tiene una jerarquía clara y una sola acción primaria dominante;
+- protege mutaciones contra doble envío y muestra feedback;
 - conserva filtros;
+- restaura el contexto de navegación cuando corresponda;
 - limita tamaño;
 - funciona con volumen real;
 - tiene índices;
 - pasa pruebas;
 - es usable con teclado;
+- conserva foco visible y navegación accesible;
+- ofrece una presentación legible y operable en móvil;
 - exporta de forma segura si aplica;
 - distingue total de página y total filtrado.
 
@@ -1327,4 +1389,47 @@ Y mejorará:
 - pruebas;
 - despliegue Cloud/On-Premise.
 
-La norma transversal queda establecida: todas las listas y consultas de datos usan filtros por encabezado combinables, ordenamiento y paginación de servidor. Las grillas de captura de un documento completo usan virtualización en vez de paginación para no romper la operación del cajero o bodeguero.
+La norma transversal queda establecida: todas las listas y consultas de datos usan filtros por encabezado combinables, ordenamiento y paginación de servidor. Además reutilizan el sistema visual y los componentes compartidos de Auraly, implementan estados completos, navegación por teclado y presentación responsive. Las grillas de captura de un documento completo usan virtualización en vez de paginación para no romper la operación del cajero o bodeguero.
+
+---
+
+## 25. Patrón corporativo del visor de reportes
+
+Todos los reportes operativos de Auraly usan el mismo visor en página completa. No se abren como un segundo modal sobre una ficha o formulario.
+
+Cuando una operación ofrece varios reportes, el botón `Reportes` puede abrir un selector liviano con tarjetas descriptivas. Ese selector solo decide el tipo de reporte: se cierra antes de abrir el visor. Búsqueda, impresión/PDF y exportación pertenecen exclusivamente al visor.
+
+El documento visible, impreso o exportado se divide en dos zonas:
+
+### Encabezado
+
+- logo y nombre Auraly;
+- clasificación `Reporte corporativo`;
+- nombre inequívoco del reporte;
+- descripción del alcance y orden aplicado;
+- fecha y hora local de generación;
+- cantidad total de registros incluidos;
+- sistema de origen `Auraly Commerce`.
+
+### Detalle
+
+- columnas con nombres de negocio, no nombres internos de base de datos;
+- orden estable y declarado;
+- importes alineados a la derecha y formateados con su moneda;
+- encabezado de columnas repetible al imprimir;
+- búsqueda dentro del conjunto ya cargado;
+- exportación CSV del mismo conjunto visible;
+- acción `Imprimir / PDF` con área de impresión aislada;
+- pie con nombre del reporte, sistema de origen y total de registros.
+
+El visor compartido es `ReportViewer`. Una pantalla entrega únicamente `title`, `description`, `fileName`, `rows` y `columns`; no recrea encabezados, exportadores ni estilos de impresión. Si el reporte debe contener todos los registros, su productor debe consultar todas las páginas del servidor o usar un endpoint de reporte dedicado. Nunca exporta silenciosamente solo la página visible.
+
+El reporte inicial de productos se denomina `Productos`, consulta todo el catálogo según el alcance activo y ordena alfabéticamente por descripción. Su detalle mínimo es:
+
+1. código interno;
+2. descripción del producto;
+3. precio público con moneda.
+
+Proveedor no forma parte de este primer contrato. Cuando se agregue, será una dimensión y agrupación explícita; no se inferirá ni se convertirá en requisito de creación como efecto secundario de un reporte.
+
+El reporte detallado de un despacho agrupa sus renglones bajo el comprobante o factura que los originó. Cliente y vendedor aparecen en ese encabezado de grupo, en lugar de repetirse en cada producto. Los modos consolidados muestran exclusivamente su dimensión —producto, cliente o vendedor— y no rellenan columnas sin significado con valores como `Varios`.

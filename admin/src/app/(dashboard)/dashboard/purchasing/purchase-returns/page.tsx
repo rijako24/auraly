@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ArrowDownLeft, PackageCheck, RotateCcw, Search, ShieldCheck, WalletCards } from "lucide-react";
 import { toast } from "sonner";
@@ -18,15 +19,7 @@ import { purchaseReturnsApi, type ReturnableReceipt, type ReturnableReceiptListI
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
-
-const reasons = [
-  ["QualityIssue", "Problema de calidad"],
-  ["Damaged", "Producto averiado"],
-  ["WrongProduct", "Producto equivocado"],
-  ["ExcessQuantity", "Cantidad recibida de más"],
-  ["CommercialAgreement", "Acuerdo con el proveedor"],
-  ["ReceiptCorrection", "Corrección de la entrada"],
-] as const;
+import { inventoryApi } from "@/services/api/inventory";
 
 export default function PurchaseReturnsPage() {
   const permissions = useAuthStore((state) => new Set(state.user?.permissions ?? []));
@@ -35,6 +28,7 @@ export default function PurchaseReturnsPage() {
   const [pageSize, setPageSize] = useState(25);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<ReturnableReceipt>();
+  const searchInput = useRef<HTMLInputElement>(null);
   const list = useReturnableReceipts({ page, pageSize, search: search.trim() || undefined });
 
   const columns = useMemo<ColumnDef<ReturnableReceiptListItem>[]>(() => [
@@ -91,7 +85,7 @@ export default function PurchaseReturnsPage() {
           inventario, cuenta por pagar y contabilidad sin alterar el documento recibido.
         </p>
       </div>
-      <Badge className="w-fit" variant="outline"><ShieldCheck className="mr-2 h-4 w-4" /> Documento compensatorio DCP</Badge>
+      <div className="flex flex-wrap items-center gap-2"><Badge className="w-fit" variant="outline"><ShieldCheck className="mr-2 h-4 w-4" /> Documento compensatorio DCP</Badge><Button disabled={!canCreate} onClick={() => { setSearch(""); window.requestAnimationFrame(() => searchInput.current?.focus()); }}><RotateCcw className="mr-2 h-4 w-4"/>Nueva devolución a proveedor</Button></div>
     </header>
 
     <section className="grid gap-3 md:grid-cols-3">
@@ -103,9 +97,9 @@ export default function PurchaseReturnsPage() {
     <section className="rounded-2xl border bg-card p-4">
       <div className="relative max-w-2xl">
         <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-        <Input className="pl-9" value={search} onChange={(event) => {
+        <Input ref={searchInput} className="pl-9" value={search} onChange={(event) => {
           setSearch(event.target.value); setPage(1);
-        }} placeholder="Entrada, proveedor o factura del proveedor" />
+        }} placeholder="Busca la entrada que vas a devolver" />
       </div>
     </section>
 
@@ -125,7 +119,8 @@ function ReturnEditor({ receipt, open, canConfirm, onClose }: {
 }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const confirm = useConfirmPurchaseReturn();
-  const [reason, setReason] = useState("QualityIssue");
+  const reasonsQuery = useQuery({queryKey:["business-reasons","PurchaseReturn"],queryFn:()=>inventoryApi.businessReasons("PurchaseReturn"),enabled:open});
+  const [reason, setReason] = useState("");
   const [notes, setNotes] = useState("");
   const [quantities, setQuantities] = useState<Record<number, number>>({});
   if (!receipt || !businessId) return null;
@@ -134,6 +129,7 @@ function ReturnEditor({ receipt, open, canConfirm, onClose }: {
     line.lineTotal * (quantities[line.originalLineNumber] ?? 0) / line.receivedQuantity, 0);
 
   const submit = async () => {
+    if (!reason) { toast.error("Selecciona un motivo de devolución."); return; }
     if (chosen.length === 0) { toast.error("Indica al menos una cantidad por devolver."); return; }
     if (chosen.some((line) => (quantities[line.originalLineNumber] ?? 0) > line.availableQuantity)) {
       toast.error("Una cantidad supera el saldo disponible de la entrada."); return;
@@ -196,7 +192,7 @@ function ReturnEditor({ receipt, open, canConfirm, onClose }: {
       <div className="grid gap-4 md:grid-cols-[18rem_minmax(0,1fr)_14rem] md:items-end">
         <div className="space-y-2"><Label>Motivo</Label><Select value={reason} onValueChange={setReason}>
           <SelectTrigger><SelectValue /></SelectTrigger><SelectContent>
-            {reasons.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
+            {(reasonsQuery.data??[]).map(item => <SelectItem key={item.inventoryReasonId} value={item.code}>{item.name}</SelectItem>)}
           </SelectContent></Select></div>
         <div className="space-y-2"><Label>Observación</Label><Textarea value={notes}
           onChange={(event) => setNotes(event.target.value)} placeholder="Evidencia o acuerdo con el proveedor" /></div>
@@ -209,7 +205,7 @@ function ReturnEditor({ receipt, open, canConfirm, onClose }: {
 
       <DialogFooter>
         <Button variant="outline" onClick={onClose}>Cancelar</Button>
-        <Button disabled={!canConfirm || chosen.length === 0 || confirm.isPending} onClick={submit}>
+        <Button disabled={!canConfirm || !reason || chosen.length === 0 || confirm.isPending} onClick={submit}>
           <RotateCcw className="mr-2 h-4 w-4" /> Confirmar devolución
         </Button>
       </DialogFooter>

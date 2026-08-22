@@ -1,3 +1,65 @@
+CREATE TABLE [dbo].[AccountingConfigurationProfiles]
+(
+    [ProfileCode] NVARCHAR(32) NOT NULL,
+    [Name] NVARCHAR(120) NOT NULL,
+    [IsDefault] BIT NOT NULL CONSTRAINT [DF_AccountingConfigurationProfiles_IsDefault] DEFAULT (0),
+    [IsActive] BIT NOT NULL CONSTRAINT [DF_AccountingConfigurationProfiles_IsActive] DEFAULT (1),
+    CONSTRAINT [PK_AccountingConfigurationProfiles] PRIMARY KEY CLUSTERED ([ProfileCode])
+);
+GO
+CREATE UNIQUE INDEX [UX_AccountingConfigurationProfiles_Default]
+    ON [dbo].[AccountingConfigurationProfiles]([IsDefault]) WHERE [IsDefault]=1 AND [IsActive]=1;
+GO
+
+CREATE TABLE [dbo].[AccountingConfigurationProfileAccounts]
+(
+    [ProfileCode] NVARCHAR(32) NOT NULL,
+    [Category] NVARCHAR(64) NOT NULL,
+    [DisplayName] NVARCHAR(160) NOT NULL,
+    [AccountCode] NVARCHAR(32) NOT NULL,
+    [AccountName] NVARCHAR(200) NOT NULL,
+    [AccountType] NVARCHAR(24) NOT NULL,
+    [AllowsPosting] BIT NOT NULL CONSTRAINT [DF_AccountingConfigurationProfileAccounts_AllowsPosting] DEFAULT (1),
+    [RequiresParty] BIT NOT NULL CONSTRAINT [DF_AccountingConfigurationProfileAccounts_RequiresParty] DEFAULT (0),
+    [IsRequired] BIT NOT NULL CONSTRAINT [DF_AccountingConfigurationProfileAccounts_IsRequired] DEFAULT (1),
+    [DisplayOrder] INT NOT NULL,
+    CONSTRAINT [PK_AccountingConfigurationProfileAccounts] PRIMARY KEY CLUSTERED ([ProfileCode],[Category]),
+    CONSTRAINT [FK_AccountingConfigurationProfileAccounts_Profile] FOREIGN KEY ([ProfileCode]) REFERENCES [dbo].[AccountingConfigurationProfiles]([ProfileCode]),
+    CONSTRAINT [CK_AccountingConfigurationProfileAccounts_Type] CHECK ([AccountType] IN (N'Asset',N'Liability',N'Equity',N'Revenue',N'Expense',N'ContraRevenue')),
+    CONSTRAINT [CK_AccountingConfigurationProfileAccounts_Order] CHECK ([DisplayOrder]>0)
+);
+GO
+
+CREATE TABLE [dbo].[AccountingSourceCategoryMappings]
+(
+    [ProfileCode] NVARCHAR(32) NOT NULL,
+    [SourceType] NVARCHAR(40) NOT NULL,
+    [SourceCode] NVARCHAR(64) NOT NULL,
+    [Category] NVARCHAR(64) NOT NULL,
+    CONSTRAINT [PK_AccountingSourceCategoryMappings] PRIMARY KEY CLUSTERED ([ProfileCode],[SourceType],[SourceCode]),
+    CONSTRAINT [FK_AccountingSourceCategoryMappings_Profile] FOREIGN KEY ([ProfileCode]) REFERENCES [dbo].[AccountingConfigurationProfiles]([ProfileCode]),
+    CONSTRAINT [FK_AccountingSourceCategoryMappings_Category] FOREIGN KEY ([ProfileCode],[Category]) REFERENCES [dbo].[AccountingConfigurationProfileAccounts]([ProfileCode],[Category])
+);
+GO
+
+CREATE TABLE [dbo].[ReasonTemplates]
+(
+    [ProfileCode] NVARCHAR(32) NOT NULL,
+    [ReasonType] NVARCHAR(64) NOT NULL,
+    [Code] NVARCHAR(40) NOT NULL,
+    [Name] NVARCHAR(160) NOT NULL,
+    [Direction] NVARCHAR(8) NULL,
+    [CounterpartAccountingCategory] NVARCHAR(64) NULL,
+    [RequiresReference] BIT NOT NULL CONSTRAINT [DF_ReasonTemplates_RequiresReference] DEFAULT (0),
+    [DisplayOrder] INT NOT NULL,
+    [IsActive] BIT NOT NULL CONSTRAINT [DF_ReasonTemplates_IsActive] DEFAULT (1),
+    CONSTRAINT [PK_ReasonTemplates] PRIMARY KEY CLUSTERED ([ProfileCode],[ReasonType],[Code]),
+    CONSTRAINT [FK_ReasonTemplates_Profile] FOREIGN KEY ([ProfileCode]) REFERENCES [dbo].[AccountingConfigurationProfiles]([ProfileCode]),
+    CONSTRAINT [CK_ReasonTemplates_Direction] CHECK ([Direction] IS NULL OR [Direction] IN (N'In',N'Out')),
+    CONSTRAINT [CK_ReasonTemplates_Order] CHECK ([DisplayOrder]>0)
+);
+GO
+
 CREATE TABLE [dbo].[AccountingAccounts]
 (
     [AccountId] UNIQUEIDENTIFIER NOT NULL,
@@ -38,6 +100,37 @@ CREATE TABLE [dbo].[AccountingCostCenters]
 GO
 CREATE UNIQUE INDEX [UX_AccountingCostCenters_Business_Default]
     ON [dbo].[AccountingCostCenters]([BusinessId]) WHERE [IsDefault]=1 AND [IsActive]=1;
+GO
+
+CREATE TABLE [dbo].[BusinessReasons]
+(
+    [ReasonId] UNIQUEIDENTIFIER NOT NULL,
+    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [ReasonType] NVARCHAR(64) NOT NULL,
+    [Code] NVARCHAR(40) NOT NULL,
+    [Name] NVARCHAR(160) NOT NULL,
+    [Direction] NVARCHAR(8) NULL,
+    [CounterpartAccountingCategory] NVARCHAR(64) NULL,
+    [DefaultCostCenterId] UNIQUEIDENTIFIER NULL,
+    [RequiresReference] BIT NOT NULL CONSTRAINT [DF_BusinessReasons_RequiresReference] DEFAULT (0),
+    [IsSystem] BIT NOT NULL CONSTRAINT [DF_BusinessReasons_IsSystem] DEFAULT (0),
+    [IsActive] BIT NOT NULL CONSTRAINT [DF_BusinessReasons_IsActive] DEFAULT (1),
+    [DisplayOrder] INT NOT NULL CONSTRAINT [DF_BusinessReasons_DisplayOrder] DEFAULT (0),
+    [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
+    [UpdatedAt] DATETIMEOFFSET(7) NOT NULL,
+    [RowVersion] ROWVERSION NOT NULL,
+    CONSTRAINT [PK_BusinessReasons] PRIMARY KEY CLUSTERED ([ReasonId]),
+    CONSTRAINT [UQ_BusinessReasons_Business_Reason] UNIQUE ([BusinessId],[ReasonId]),
+    CONSTRAINT [UQ_BusinessReasons_Business_Type_Code] UNIQUE ([BusinessId],[ReasonType],[Code]),
+    CONSTRAINT [FK_BusinessReasons_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
+    CONSTRAINT [FK_BusinessReasons_CostCenters] FOREIGN KEY ([DefaultCostCenterId]) REFERENCES [dbo].[AccountingCostCenters]([CostCenterId]),
+    CONSTRAINT [CK_BusinessReasons_Direction] CHECK ([Direction] IS NULL OR [Direction] IN (N'In',N'Out')),
+    CONSTRAINT [CK_BusinessReasons_Order] CHECK ([DisplayOrder] BETWEEN 0 AND 9999)
+);
+GO
+CREATE INDEX [IX_BusinessReasons_Business_Type_Active]
+    ON [dbo].[BusinessReasons]([BusinessId],[ReasonType],[IsActive],[DisplayOrder])
+    INCLUDE([Code],[Name],[Direction],[CounterpartAccountingCategory],[DefaultCostCenterId],[RequiresReference]);
 GO
 
 CREATE TABLE [dbo].[AccountingPeriods]

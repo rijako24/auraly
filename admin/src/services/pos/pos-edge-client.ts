@@ -274,6 +274,54 @@ export type PosCashMovementAcceptance = {
   documentNumber?: string;
 };
 
+export type PosWorkSessionPaymentTotal = {
+  paymentMethodCode: string;
+  salesAmount: number;
+  refundAmount: number;
+  otherAmount: number;
+  netAmount: number;
+};
+
+export type PosWorkSessionClosure = {
+  workSessionClosureId: string;
+  workSessionId: string;
+  businessId: string;
+  businessName: string;
+  warehouseId: string;
+  warehouseName: string;
+  userId: string;
+  userName: string;
+  deviceId: string | null;
+  openedAt: string;
+  closedAt: string;
+  totalSales: number;
+  totalRefunds: number;
+  totalOther: number;
+  netAmount: number;
+  expectedCash: number;
+  countedCash: number | null;
+  cashDifference: number | null;
+  note: string | null;
+  paymentTotals: PosWorkSessionPaymentTotal[];
+};
+
+export type PosWorkSessionClosurePreview = Omit<
+  PosWorkSessionClosure,
+  "workSessionClosureId" | "closedAt" | "countedCash" | "cashDifference" | "note"
+> & { lastActivityAt: string };
+
+export type PosAuthorizedClosurePreview = {
+  authorizationToken: string;
+  preview: PosWorkSessionClosurePreview;
+};
+
+export type PosCloseWorkSessionInput = {
+  operationId: string;
+  authorizationToken: string;
+  countedCash: number;
+  note: string | null;
+};
+
 export interface PosClient {
   readonly mode: "edge" | "online";
   health(): Promise<{
@@ -294,6 +342,7 @@ export interface PosClient {
     catalogUpdatedAt: string | null;
   }>;
   synchronizeNow(): Promise<void>;
+  readScaleWeight(): Promise<{ weight: number; unit: string; portName: string }>;
   searchProducts(search?: string, skip?: number, take?: number, customerId?: string | null): Promise<PosCatalogSearchPage>;
   searchCustomers(search?: string, skip?: number, take?: number): Promise<PosCustomerSearchPage>;
   customer(customerId: string): Promise<PosCustomer>;
@@ -341,6 +390,8 @@ export interface PosClient {
   ): Promise<InvoiceOrdersResponse>;
   cashMovementReasons(direction: PosCashMovementDirection): Promise<PosCashMovementReason[]>;
   confirmCashMovement(input: PosCashMovementInput): Promise<PosCashMovementAcceptance>;
+  previewWorkSessionClosure(draftId: string, authorization?: PosSensitiveAuthorization): Promise<PosAuthorizedClosurePreview>;
+  closeWorkSession(input: PosCloseWorkSessionInput): Promise<PosWorkSessionClosure>;
 }
 
 export class PosEdgeError extends Error {
@@ -376,11 +427,29 @@ export type PosPrinterConfiguration = {
     format: "Receipt" | "HalfLetter";
     printerName: string | null;
   }> | null;
+  scale: PosScaleConfiguration | null;
+};
+
+export type PosScaleConfiguration = {
+  enabled: boolean;
+  portName: string;
+  baudRate: number;
+  dataBits: number;
+  parity: "None" | "Even" | "Odd";
+  stopBits: "One" | "Two";
+  sendsRequest: boolean;
+  requestText: string;
+  startIndex: number;
+  length: number;
+  reverse: boolean;
+  divideBy1000: boolean;
+  timeoutMilliseconds: number;
 };
 
 export type PosPrinterConfigurationView = {
   configuration: PosPrinterConfiguration;
   installedPrinters: string[];
+  serialPorts: string[];
 };
 
 const BROWSER_PRINTER_CONFIGURATION_KEY = "auraly.printing.configuration.v1";
@@ -395,6 +464,7 @@ export function loadBrowserPrinterConfiguration(): PosPrinterConfiguration {
     posOutputFormat: "Receipt",
     ordersOutputFormat: "HalfLetter",
     templateRoutes: null,
+    scale: null,
   };
   if (typeof window === "undefined") return defaults;
   try {
@@ -472,6 +542,22 @@ export class PosEdgeClient implements PosClient {
     );
   }
 
+  openCashDrawer() {
+    return this.requestVoid("/edge/v1/cash-drawer/open", { method: "POST" });
+  }
+
+  readScaleWeight() {
+    return this.request<{ weight: number; unit: string; portName: string }>(
+      "/edge/v1/scale/read", { method: "POST" },
+    );
+  }
+
+  printWorkSessionClosure(closure: PosWorkSessionClosure) {
+    return this.requestVoid("/edge/v1/print/work-session-closure", {
+      method: "POST", body: JSON.stringify(closure),
+    });
+  }
+
   watchLocalState(onStateChanged: () => void): () => void {
     const controller = new AbortController();
     const listen = async () => {
@@ -520,6 +606,19 @@ export class PosEdgeClient implements PosClient {
       method: "POST",
       body: JSON.stringify(input),
     });
+  }
+
+  closeWorkSession(input: PosCloseWorkSessionInput) {
+    return this.request<PosWorkSessionClosure>("/edge/v1/work-sessions/current/close", {
+      method: "POST", body: JSON.stringify(input),
+    });
+  }
+
+  previewWorkSessionClosure(draftId: string, authorization?: PosSensitiveAuthorization) {
+    return this.request<PosAuthorizedClosurePreview>(
+      "/edge/v1/work-sessions/current/closure-preview",
+      { method: "POST", headers: sensitiveHeaders(authorization), body: JSON.stringify({ draftId }) },
+    );
   }
 
   async login(username: string, password: string) {

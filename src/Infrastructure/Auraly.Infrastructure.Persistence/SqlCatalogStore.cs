@@ -489,7 +489,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         await using var command = connection.CreateCommand();
         command.CommandText = $"""
             SELECT TOP (@Take) p.ProductId,p.ProductCode,p.Reference,p.Name,p.BaseUnitCode,t.DianTaxCode,t.Rate,
-              pr.Amount,pr.CurrencyCode,p.IsActive,
+              pr.Amount,pr.CurrencyCode,p.IsActive,p.IsWeighable,p.AllowsFractionalSale,
               (SELECT Barcode AS [Value] FROM dbo.ProductBarcodes b WHERE b.ProductId=p.ProductId AND b.IsActive=1 FOR JSON PATH),
               (SELECT IdentifierType AS [Type],Value FROM dbo.ProductIdentifiers i WHERE i.ProductId=p.ProductId AND i.IsActive=1 FOR JSON PATH),
               s.ScaleCode,s.BarcodePrefix,s.EmbeddedValueType,s.ValueStart,s.ValueLength,s.DecimalPlaces
@@ -511,14 +511,15 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
 
     private static PosCatalogItem ReadPosItem(SqlDataReader reader, int offset)
     {
-        ScaleConfigurationInput? scale = reader.IsDBNull(offset + 12) ? null :
-            new(reader.GetString(offset + 12), reader.GetString(offset + 13), reader.GetString(offset + 14),
-                reader.GetInt32(offset + 15), reader.GetInt32(offset + 16), reader.GetInt32(offset + 17));
+        ScaleConfigurationInput? scale = reader.IsDBNull(offset + 14) ? null :
+            new(reader.GetString(offset + 14), reader.GetString(offset + 15), reader.GetString(offset + 16),
+                reader.GetInt32(offset + 17), reader.GetInt32(offset + 18), reader.GetInt32(offset + 19));
         return new(reader.GetGuid(offset), reader.GetString(offset + 1), reader.IsDBNull(offset + 2) ? null : reader.GetString(offset + 2),
             reader.GetString(offset + 3), reader.GetString(offset + 4), reader.GetString(offset + 5), reader.GetDecimal(offset + 6),
-            reader.GetDecimal(offset + 7), reader.GetString(offset + 8), reader.GetBoolean(offset + 9), scale,
-            DeserializeArray<BarcodeJson>(reader, offset + 10).Select(value => value.Value).ToArray(),
-            DeserializeArray<ProductIdentifierInput>(reader, offset + 11));
+            reader.GetDecimal(offset + 7), reader.GetString(offset + 8), reader.GetBoolean(offset + 9),
+            reader.GetBoolean(offset + 10), reader.GetBoolean(offset + 11), scale,
+            DeserializeArray<BarcodeJson>(reader, offset + 12).Select(value => value.Value).ToArray(),
+            DeserializeArray<ProductIdentifierInput>(reader, offset + 13));
     }
 
     private static T[] DeserializeArray<T>(SqlDataReader reader, int ordinal) =>

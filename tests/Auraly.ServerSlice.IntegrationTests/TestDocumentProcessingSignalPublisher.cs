@@ -2,11 +2,13 @@ using System.Collections.Concurrent;
 using Auraly.Application.DocumentProcessing;
 using Auraly.Commerce.Accounting.Application;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
 internal sealed class TestDocumentProcessingSignalPublisher(
-    IServiceScopeFactory scopes)
+    IServiceScopeFactory scopes,
+    ILogger<TestDocumentProcessingSignalPublisher> logger)
     : IDocumentProcessingSignalPublisher
 {
     private static readonly ConcurrentDictionary<Guid, SemaphoreSlim> BusinessGates = new();
@@ -48,6 +50,10 @@ internal sealed class TestDocumentProcessingSignalPublisher(
                 // A real broker has already accepted the signal. Processing failures remain
                 // durable in DocumentProcessingJobs and must not turn the publishing request
                 // into an HTTP failure.
+                logger.LogError(
+                    exception,
+                    "Document {DocumentId} failed in the deterministic test transport.",
+                    signal.DocumentId);
             }
         }
         finally

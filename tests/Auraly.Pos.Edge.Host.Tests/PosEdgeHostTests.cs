@@ -505,6 +505,26 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Enrolled_cashier_can_log_in_locally_while_Auraly_Server_is_offline()
+    {
+        // The test host uses UnavailableServerHandler for every server request.
+        // Authentication must therefore be resolved exclusively from the
+        // protected offline lease and the durable local identity snapshot.
+        using var loginClient = _factory!.CreateClient();
+        loginClient.DefaultRequestHeaders.Add("X-Auraly-Edge-Session", Token);
+
+        using var response = await loginClient.PostAsJsonAsync(
+            "/edge/v1/auth/login",
+            new PosLocalLoginRequest("cashier", "Cashier-Password-1"));
+
+        response.EnsureSuccessStatusCode();
+        var session = await response.Content.ReadFromJsonAsync<PosLocalUserSession>();
+        Assert.NotNull(session);
+        Assert.Equal("Cajera de prueba", session.DisplayName);
+        Assert.NotEqual(Guid.Empty, session.WorkSessionId);
+    }
+
+    [Fact]
     public async Task Five_wrong_passwords_lock_the_local_cashier_temporarily()
     {
         for (var attempt = 0; attempt < 5; attempt++)

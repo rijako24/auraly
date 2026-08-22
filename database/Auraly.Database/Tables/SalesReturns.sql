@@ -17,7 +17,7 @@ CREATE TABLE [dbo].[SalesReturns]
     [RefundMethodCode] NVARCHAR(32) NULL,
     [OriginalPaymentNumber] INT NULL,
     [CorrectionCode] NVARCHAR(4) NOT NULL,
-    [ReasonCode] NVARCHAR(32) NOT NULL CONSTRAINT [DF_SalesReturns_ReasonCode] DEFAULT N'Other',
+    [ReasonCode] NVARCHAR(32) NOT NULL,
     [ReasonDescription] NVARCHAR(300) NOT NULL,
     [Notes] NVARCHAR(1000) NULL,
     [CustomerId] UNIQUEIDENTIFIER NULL,
@@ -49,8 +49,6 @@ CREATE TABLE [dbo].[SalesReturns]
        ([EconomicResolution]=N'CustomerCredit' AND [RefundMethodCode] IS NULL
           AND [OriginalPaymentNumber] IS NULL)),
     CONSTRAINT [CK_SalesReturns_Correction] CHECK ([CorrectionCode]=N'1'),
-    CONSTRAINT [CK_SalesReturns_Reason] CHECK ([ReasonCode] IN
-      (N'CustomerChangedMind',N'WrongProduct',N'QualityIssue',N'Damaged',N'BillingCorrection',N'Other')),
     CONSTRAINT [CK_SalesReturns_Amounts] CHECK
       ([UntaxedAmount]>=0 AND [TaxAmount]>=0 AND [TotalAmount]>0),
     CONSTRAINT [CK_SalesReturns_Status] CHECK ([Status] IN (N'Accepted',N'Processed'))

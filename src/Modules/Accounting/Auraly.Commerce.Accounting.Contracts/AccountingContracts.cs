@@ -37,29 +37,6 @@ public static class AccountingCategories
     public const string OperatingExpense = "OperatingExpense";
     public const string OtherExpense = "OtherExpense";
 
-    private static readonly IReadOnlySet<string> Supported = new HashSet<string>(
-    [
-        Cash, Bank, DebitCardClearing, CreditCardClearing, TransferClearing,
-        AccountsReceivable, SalesRevenue, SalesReturns, OutputVat, Inventory,
-        CostOfGoodsSold, CustomerCreditsPayable, AccountsPayable,
-        SupplierCreditsReceivable, InputVat, PurchasesExpense,
-        WithholdingIncomeTaxPayable, WithholdingVatPayable,
-        WithholdingIcaPayable, WithholdingIncomeTaxReceivable,
-        WithholdingVatReceivable, WithholdingIcaReceivable,
-        OtherIncome, OwnerContributions, OperatingExpense, OtherExpense
-    ], StringComparer.Ordinal);
-
-    public static bool IsSupported(string category) => Supported.Contains(category);
-
-    public static string ForPaymentMethod(string methodCode) => methodCode switch
-    {
-        "Cash" => Cash,
-        "DebitCard" => DebitCardClearing,
-        "CreditCard" => CreditCardClearing,
-        "Transfer" => TransferClearing,
-        _ => throw new ArgumentOutOfRangeException(nameof(methodCode), methodCode,
-            "The payment method has no accounting category.")
-    };
 }
 
 public static class AccountingPostingStatuses
@@ -139,6 +116,20 @@ public sealed record AccountingMappingView(
     Guid AccountId,
     DateOnly EffectiveFrom,
     DateOnly? EffectiveTo);
+
+public sealed record AccountingDefaultsResult(
+    int AccountCount,
+    int MappingCount,
+    bool HasDefaultCostCenter,
+    bool HasOpenPeriod,
+    bool IsReady);
+
+public sealed record AccountingCategoryDefinition(
+    string Category,
+    string DisplayName,
+    string AccountType,
+    bool IsRequired,
+    int DisplayOrder);
 
 public sealed record AccountingEntryLineView(
     int LineNumber,

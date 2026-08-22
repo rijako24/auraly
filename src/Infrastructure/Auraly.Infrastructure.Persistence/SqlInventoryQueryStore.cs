@@ -79,12 +79,12 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
     public async Task<IReadOnlyList<InventoryReasonItem>> GetReasonsAsync(InventoryUserIdentity user, string? operationType, bool includeInactive, string? search, CancellationToken token)
     {
         const string sql = """
-            SELECT InventoryReasonId,OperationType,Code,Name,IsSystem,IsActive,DisplayOrder
-            FROM dbo.InventoryReasons
-            WHERE BusinessId=@BusinessId AND (@OperationType IS NULL OR OperationType=@OperationType)
+            SELECT ReasonId,ReasonType,Code,Name,IsSystem,IsActive,DisplayOrder
+            FROM dbo.BusinessReasons
+            WHERE BusinessId=@BusinessId AND (@OperationType IS NULL OR ReasonType=@OperationType)
               AND (@IncludeInactive=1 OR IsActive=1)
               AND (@Search IS NULL OR Name LIKE @Pattern OR Code LIKE @Pattern)
-            ORDER BY OperationType,DisplayOrder,Name;
+            ORDER BY ReasonType,DisplayOrder,Name;
             """;
         await using var connection=connections.Create(); await connection.OpenAsync(token); await using var command=new SqlCommand(sql,connection);
         command.Parameters.AddWithValue("@BusinessId",user.BusinessId); command.Parameters.AddWithValue("@OperationType",(object?)operationType??DBNull.Value); command.Parameters.AddWithValue("@IncludeInactive",includeInactive); command.Parameters.AddWithValue("@Search",(object?)search??DBNull.Value); command.Parameters.AddWithValue("@Pattern",search is null?DBNull.Value:$"%{search}%");
@@ -97,16 +97,18 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
     {
         var id=inventoryReasonId??ids.NewId(); var code=$"MOT-{id.ToString("N")[^12..].ToUpperInvariant()}";
         const string sql="""
+            IF NOT EXISTS(SELECT 1 FROM dbo.ReasonTemplates WHERE ReasonType=@OperationType AND IsActive=1)
+              THROW 51220,'Reason type is not configured in the active catalog.',1;
             IF @IsNew=1
-              INSERT dbo.InventoryReasons(InventoryReasonId,BusinessId,OperationType,Code,Name,IsSystem,IsActive,DisplayOrder,CreatedAt,UpdatedAt)
-              VALUES(@Id,@BusinessId,@OperationType,@Code,@Name,0,@IsActive,@DisplayOrder,SYSUTCDATETIME(),SYSUTCDATETIME());
+              INSERT dbo.BusinessReasons(ReasonId,BusinessId,ReasonType,Code,Name,Direction,CounterpartAccountingCategory,DefaultCostCenterId,RequiresReference,IsSystem,IsActive,DisplayOrder,CreatedAt,UpdatedAt)
+              VALUES(@Id,@BusinessId,@OperationType,@Code,@Name,NULL,NULL,NULL,0,0,@IsActive,@DisplayOrder,SYSUTCDATETIME(),SYSUTCDATETIME());
             ELSE
             BEGIN
-              UPDATE dbo.InventoryReasons SET OperationType=@OperationType,Name=@Name,IsActive=@IsActive,DisplayOrder=@DisplayOrder,UpdatedAt=SYSUTCDATETIME()
-              WHERE InventoryReasonId=@Id AND BusinessId=@BusinessId;
+              UPDATE dbo.BusinessReasons SET ReasonType=@OperationType,Name=@Name,IsActive=@IsActive,DisplayOrder=@DisplayOrder,UpdatedAt=SYSUTCDATETIME()
+              WHERE ReasonId=@Id AND BusinessId=@BusinessId;
               IF @@ROWCOUNT=0 THROW 51220,'Inventory reason was not found in the authenticated business.',1;
             END;
-            SELECT InventoryReasonId,OperationType,Code,Name,IsSystem,IsActive,DisplayOrder FROM dbo.InventoryReasons WHERE InventoryReasonId=@Id;
+            SELECT ReasonId,ReasonType,Code,Name,IsSystem,IsActive,DisplayOrder FROM dbo.BusinessReasons WHERE ReasonId=@Id;
             """;
         await using var connection=connections.Create(); await connection.OpenAsync(token); await using var command=new SqlCommand(sql,connection);
         command.Parameters.AddWithValue("@Id",id); command.Parameters.AddWithValue("@BusinessId",user.BusinessId); command.Parameters.AddWithValue("@OperationType",request.OperationType); command.Parameters.AddWithValue("@Code",code); command.Parameters.AddWithValue("@Name",request.Name); command.Parameters.AddWithValue("@IsActive",request.IsActive); command.Parameters.AddWithValue("@DisplayOrder",request.DisplayOrder); command.Parameters.AddWithValue("@IsNew",inventoryReasonId is null);

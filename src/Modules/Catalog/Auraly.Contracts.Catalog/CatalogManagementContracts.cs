@@ -100,6 +100,7 @@ public sealed record CatalogDeviceIdentity(
     Guid WarehouseId,
     IReadOnlySet<string> Permissions);
 
+[method: System.Text.Json.Serialization.JsonConstructor]
 public sealed record PosCatalogItem(
     Guid ProductId,
     string ProductCode,
@@ -111,9 +112,45 @@ public sealed record PosCatalogItem(
     decimal UnitPrice,
     string CurrencyCode,
     bool IsActive,
+    bool IsWeighable,
+    bool AllowsFractionalSale,
     ScaleConfigurationInput? Scale,
     IReadOnlyCollection<string> Barcodes,
-    IReadOnlyCollection<ProductIdentifierInput> Identifiers);
+    IReadOnlyCollection<ProductIdentifierInput> Identifiers)
+{
+    public PosCatalogItem(
+        Guid productId,
+        string productCode,
+        string? reference,
+        string name,
+        string baseUnitCode,
+        string taxCode,
+        decimal taxRate,
+        decimal unitPrice,
+        string currencyCode,
+        bool isActive,
+        ScaleConfigurationInput? scale,
+        IReadOnlyCollection<string> barcodes,
+        IReadOnlyCollection<ProductIdentifierInput> identifiers)
+        : this(
+            productId,
+            productCode,
+            reference,
+            name,
+            baseUnitCode,
+            taxCode,
+            taxRate,
+            unitPrice,
+            currencyCode,
+            isActive,
+            false,
+            false,
+            scale,
+            barcodes,
+            identifiers)
+    {
+    }
+}
 
 public sealed record CatalogSyncSessionResponse(
     Guid SessionId,

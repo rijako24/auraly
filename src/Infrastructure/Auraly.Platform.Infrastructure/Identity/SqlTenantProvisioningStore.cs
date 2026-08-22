@@ -91,26 +91,16 @@ public sealed class SqlTenantProvisioningStore(
                 INSERT dbo.DocumentSeries(DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
                 SELECT NEWID(),@BusinessId,NULL,DocumentType,Prefix,N'00',8,1,99999999,0,1,@Now FROM @DocumentSeries;
 
-                DECLARE @Reasons TABLE(
-                    OperationType nvarchar(64),Code nvarchar(40),Name nvarchar(120),DisplayOrder int);
-                INSERT @Reasons VALUES
-                  (N'StockCount',N'PHYSICAL_COUNT',N'Conteo físico programado',10),
-                  (N'StockCount',N'INVENTORY_VERIFICATION',N'Verificación de existencias',20),
-                  (N'InventoryAdjustment',N'MANUAL_ADJUSTMENT',N'Corrección de saldo',10),
-                  (N'InventoryAdjustment',N'INITIAL_BALANCE',N'Saldo inicial',20),
-                  (N'InventoryAdjustment',N'FOUND_SURPLUS',N'Sobrante identificado',30),
-                  (N'InventoryAdjustment',N'FOUND_SHORTAGE',N'Faltante identificado',40),
-                  (N'WarehouseTransfer',N'WAREHOUSE_TRANSFER',N'Reabastecimiento entre bodegas',10),
-                  (N'WarehouseTransfer',N'STOCK_REDISTRIBUTION',N'Redistribución de existencias',20),
-                  (N'ProductConversion',N'PRESENTATION_CHANGE',N'Cambio de presentación',10),
-                  (N'Damage',N'DAMAGE',N'Producto averiado',10),
-                  (N'Damage',N'EXPIRED',N'Producto vencido',20),
-                  (N'Damage',N'NOT_SALEABLE',N'Producto no vendible',30);
-                INSERT dbo.InventoryReasons(
-                    InventoryReasonId,BusinessId,OperationType,Code,Name,
+                INSERT dbo.BusinessReasons(
+                    ReasonId,BusinessId,ReasonType,Code,Name,Direction,
+                    CounterpartAccountingCategory,DefaultCostCenterId,RequiresReference,
                     IsSystem,IsActive,DisplayOrder,CreatedAt,UpdatedAt)
-                SELECT NEWID(),@BusinessId,OperationType,Code,Name,1,1,DisplayOrder,@Now,@Now
-                FROM @Reasons;
+                SELECT NEWID(),@BusinessId,t.ReasonType,t.Code,t.Name,t.Direction,
+                       t.CounterpartAccountingCategory,NULL,t.RequiresReference,
+                       1,1,t.DisplayOrder,@Now,@Now
+                FROM dbo.AccountingConfigurationProfiles p
+                INNER JOIN dbo.ReasonTemplates t ON t.ProfileCode=p.ProfileCode
+                WHERE p.IsDefault=1 AND p.IsActive=1 AND t.IsActive=1;
 
                 INSERT dbo.ProductUnits(
                     ProductUnitId,BusinessId,Code,Name,Symbol,

@@ -30,6 +30,7 @@ public sealed partial class PosCatalogStore(string connectionString)
         await using var command = connection.CreateCommand();
         command.CommandText = Schema;
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await EnsureProductFlagsAsync(connection, cancellationToken);
         await InitializePricingAsync(connection, cancellationToken);
     }
 
@@ -326,13 +327,14 @@ public sealed partial class PosCatalogStore(string connectionString)
         var identifiers = staging ? "PosCatalogStagingIdentifiers" : "PosCatalogIdentifiers";
         await ExecuteAsync(connection, transaction, $"""
             INSERT INTO {products}
-              (ProductId,ProductCode,Reference,Name,BaseUnitCode,TaxCode,TaxRate,UnitPrice,CurrencyCode,IsActive,ScaleJson,ScalePrefix)
+              (ProductId,ProductCode,Reference,Name,BaseUnitCode,TaxCode,TaxRate,UnitPrice,CurrencyCode,IsActive,IsWeighable,AllowsFractionalSale,ScaleJson,ScalePrefix)
             VALUES
-              (@ProductId,@ProductCode,@Reference,@Name,@BaseUnitCode,@TaxCode,@TaxRate,@UnitPrice,@CurrencyCode,@IsActive,@ScaleJson,@ScalePrefix)
+              (@ProductId,@ProductCode,@Reference,@Name,@BaseUnitCode,@TaxCode,@TaxRate,@UnitPrice,@CurrencyCode,@IsActive,@IsWeighable,@AllowsFractionalSale,@ScaleJson,@ScalePrefix)
             ON CONFLICT(ProductId) DO UPDATE SET
               ProductCode=excluded.ProductCode,Reference=excluded.Reference,Name=excluded.Name,
               BaseUnitCode=excluded.BaseUnitCode,TaxCode=excluded.TaxCode,TaxRate=excluded.TaxRate,
               UnitPrice=excluded.UnitPrice,CurrencyCode=excluded.CurrencyCode,IsActive=excluded.IsActive,
+              IsWeighable=excluded.IsWeighable,AllowsFractionalSale=excluded.AllowsFractionalSale,
               ScaleJson=excluded.ScaleJson,ScalePrefix=excluded.ScalePrefix;
             DELETE FROM {barcodes} WHERE ProductId=@ProductId;
             DELETE FROM {identifiers} WHERE ProductId=@ProductId;
@@ -342,6 +344,8 @@ public sealed partial class PosCatalogStore(string connectionString)
                 P("@Reference", item.Reference), P("@Name", item.Name), P("@BaseUnitCode", item.BaseUnitCode),
                 P("@TaxCode", item.TaxCode), P("@TaxRate", item.TaxRate), P("@UnitPrice", item.UnitPrice),
                 P("@CurrencyCode", item.CurrencyCode), P("@IsActive", item.IsActive ? 1 : 0),
+                P("@IsWeighable", item.IsWeighable ? 1 : 0),
+                P("@AllowsFractionalSale", item.AllowsFractionalSale ? 1 : 0),
                 P("@ScaleJson", item.Scale is null ? null : JsonSerializer.Serialize(item.Scale)),
                 P("@ScalePrefix", item.Scale?.BarcodePrefix)
             ],
@@ -373,6 +377,8 @@ public sealed partial class PosCatalogStore(string connectionString)
             Convert.ToDecimal(reader.GetValue(reader.GetOrdinal("UnitPrice")), CultureInfo.InvariantCulture),
             reader.GetString(reader.GetOrdinal("CurrencyCode")),
             reader.GetInt64(reader.GetOrdinal("IsActive")) == 1,
+            reader.GetInt64(reader.GetOrdinal("IsWeighable")) == 1,
+            reader.GetInt64(reader.GetOrdinal("AllowsFractionalSale")) == 1,
             scale,
             [],
             []);
@@ -413,6 +419,27 @@ public sealed partial class PosCatalogStore(string connectionString)
 
     private static SqliteParameter P(string name, object? value) => new(name, value ?? DBNull.Value);
 
+    private static async Task EnsureProductFlagsAsync(SqliteConnection connection, CancellationToken ct)
+    {
+        foreach (var table in new[] { "PosCatalogProducts", "PosCatalogStagingProducts" })
+        {
+            var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            await using (var info = connection.CreateCommand())
+            {
+                info.CommandText = $"PRAGMA table_info('{table}');";
+                await using var reader = await info.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct)) columns.Add(reader.GetString(1));
+            }
+            foreach (var column in new[] { "IsWeighable", "AllowsFractionalSale" })
+            {
+                if (columns.Contains(column)) continue;
+                await using var alter = connection.CreateCommand();
+                alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0;";
+                await alter.ExecuteNonQueryAsync(ct);
+            }
+        }
+    }
+
     private const string ProductColumns = """
         ProductId TEXT PRIMARY KEY,
         ProductCode TEXT NOT NULL,
@@ -424,6 +451,8 @@ public sealed partial class PosCatalogStore(string connectionString)
         UnitPrice TEXT NOT NULL,
         CurrencyCode TEXT NOT NULL,
         IsActive INTEGER NOT NULL,
+        IsWeighable INTEGER NOT NULL DEFAULT 0,
+        AllowsFractionalSale INTEGER NOT NULL DEFAULT 0,
         ScaleJson TEXT NULL,
         ScalePrefix TEXT NULL
         """;

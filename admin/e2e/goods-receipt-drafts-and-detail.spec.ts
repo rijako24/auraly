@@ -59,6 +59,7 @@ test.describe("borradores y detalle de entradas de mercancia", () => {
     const invoiceMarker = `E2E-${Date.now()}`;
     await field(dialog, "Factura del proveedor").getByRole("textbox").fill(invoiceMarker);
     await field(dialog, "Notas").getByRole("textbox").fill(marker);
+    await expect(dialog.getByRole("button", { name: "Cerrar", exact: true })).toBeVisible();
     await dialog.getByRole("button", { name: "Guardar borrador" }).click();
 
     await expect(dialog).toBeHidden({ timeout: 20_000 });

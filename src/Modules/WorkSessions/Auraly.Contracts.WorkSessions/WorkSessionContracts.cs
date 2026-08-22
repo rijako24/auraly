@@ -25,7 +25,15 @@ public sealed record OpenWorkSessionRequest(
 
 public sealed record CloseWorkSessionRequest(
     decimal? CountedCash,
-    string? Note);
+    string? Note,
+    Guid? ClosedByUserId = null);
+
+public sealed record DeviceCloseWorkSessionRequest(
+    Guid UserId,
+    Guid WorkSessionId,
+    decimal? CountedCash,
+    string? Note,
+    Guid AuthorizedByUserId);
 
 public sealed record WorkSessionView(
     Guid WorkSessionId,
@@ -67,6 +75,23 @@ public sealed record WorkSessionClosureView(
     decimal? CountedCash,
     decimal? CashDifference,
     string? Note,
+    IReadOnlyList<WorkSessionPaymentTotal> PaymentTotals);
+
+public sealed record WorkSessionClosurePreviewView(
+    Guid WorkSessionId,
+    Guid BusinessId,
+    string BusinessName,
+    Guid WarehouseId,
+    string WarehouseName,
+    Guid UserId,
+    string UserName,
+    DateTimeOffset OpenedAt,
+    DateTimeOffset LastActivityAt,
+    decimal TotalSales,
+    decimal TotalRefunds,
+    decimal TotalOther,
+    decimal NetAmount,
+    decimal ExpectedCash,
     IReadOnlyList<WorkSessionPaymentTotal> PaymentTotals);
 public static class CashMovementDirections
 {

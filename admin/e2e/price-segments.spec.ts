@@ -23,9 +23,9 @@ test("listas y canales administra condiciones y cada guardado cierra su modal", 
   test.setTimeout(120_000);
   const listId = "99999999-9999-7999-8999-999999999999";
   const productId = "77777777-7777-7777-7777-777777777777";
-  let segments = [
-    { id: listId, kind: "PriceList", code: "MAYORISTA", name: "Mayoristas", isActive: true, createdAt: "2026-08-14T10:00:00Z", productCount: 0, customerCount: 2 },
-    { id: "88888888-8888-7888-8888-888888888888", kind: "PriceChannel", code: "WEB", name: "Tienda web", isActive: true, createdAt: "2026-08-14T10:00:00Z", productCount: 0, customerCount: 0 },
+  let segments: Array<Record<string, unknown>> = [
+    { id: listId, kind: "PriceList", code: "MAYORISTA", name: "Mayoristas", strategy: null, value: null, isActive: true, createdAt: "2026-08-14T10:00:00Z", productCount: 0, customerCount: 2 },
+    { id: "88888888-8888-7888-8888-888888888888", kind: "PriceChannel", code: "WEB", name: "Tienda web", strategy: "PercentageOverBasePrice", value: -5, isActive: true, createdAt: "2026-08-14T10:00:00Z", productCount: 0, customerCount: 0 },
   ];
   let savedItem: Record<string, unknown> | null = null;
 
@@ -41,8 +41,8 @@ test("listas y canales administra condiciones y cada guardado cierra su modal", 
       return;
     }
     if (request.method() === "POST") {
-      const body = request.postDataJSON() as { kind: "PriceList" | "PriceChannel"; code: string; name: string };
-      const created = { id: crypto.randomUUID(), kind: body.kind, code: body.code, name: body.name, isActive: true, createdAt: new Date().toISOString(), productCount: 0, customerCount: 0 };
+      const body = request.postDataJSON() as { kind: "PriceList" | "PriceChannel"; name: string; strategy?: string; value?: number };
+      const created = { id: crypto.randomUUID(), kind: body.kind, code: "LST-AUTO", name: body.name, strategy: body.strategy ?? null, value: body.value ?? null, isActive: true, createdAt: new Date().toISOString(), productCount: 0, customerCount: 0 };
       segments = [...segments, created];
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(created) });
       return;
@@ -89,13 +89,18 @@ test("listas y canales administra condiciones y cada guardado cierra su modal", 
 
   await page.getByRole("button", { name: "Nueva lista o canal" }).click();
   const createDialog = page.getByRole("dialog", { name: "Nueva lista o canal" });
-  await createDialog.getByText("Código *", { exact: true }).locator("..").getByRole("textbox").fill("DISTRIBUIDOR");
   await createDialog.getByText("Nombre *", { exact: true }).locator("..").getByRole("textbox").fill("Distribuidores");
-  await createDialog.getByRole("button", { name: "Crear", exact: true }).click();
+  await createDialog.getByRole("button", { name: "Crear y agregar productos", exact: true }).click();
   await expect(createDialog).toBeHidden();
-  await expect(page.getByRole("button", { name: /Distribuidores/ })).toBeVisible();
+  const initialConditionDialog = page.getByRole("dialog", { name: "Agregar producto" });
+  await expect(initialConditionDialog).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Distribuidores" })).toBeHidden();
+  await initialConditionDialog.getByRole("button", { name: "Cancelar" }).click();
+  await expect(page.getByRole("dialog", { name: "Distribuidores" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("cell", { name: "Distribuidores" })).toBeVisible();
 
-  await page.getByRole("button", { name: /Mayoristas/ }).click();
+  await page.getByRole("cell", { name: "Mayoristas" }).click();
   const detailDialog = page.getByRole("dialog", { name: "Mayoristas" });
   await expect(detailDialog.getByText("Escalas por cantidad")).toBeVisible();
   await detailDialog.getByRole("button", { name: "Agregar producto" }).click();

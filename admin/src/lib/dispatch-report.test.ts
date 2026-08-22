@@ -13,11 +13,11 @@ describe("dispatch reports", () => {
     assert.equal(result[0].verifiedQuantity, 4);
     assert.equal(result[0].shortageQuantity, 1);
     assert.equal(result[0].lineTotal, 500);
-    assert.equal(result[0].documentNumber, "Varios");
+    assert.equal(result[0].productCode, "P1");
   });
 
   it("keeps detail rows unchanged and hides price columns without permission", () => {
-    assert.equal(buildDispatchReportRows([base], "detail").length, 1);
+    assert.equal(buildDispatchReportRows([base], "detail").length, 2);
     assert.equal(dispatchReportColumns(false).some((column) => column.key === "lineTotal"), false);
     assert.equal(dispatchReportColumns(true).some((column) => column.key === "lineTotal"), true);
   });

@@ -175,11 +175,14 @@ public sealed class WindowsRawReceiptPrinter(
             throw new InvalidOperationException("A receipt printer must be configured.");
 
         var bytes = renderer.Render(receipt);
-        Print(printerName, $"Auraly-{receipt.PrintJobId:N}", bytes);
+        WindowsRawPrintJob.Print(printerName, $"Auraly-{receipt.PrintJobId:N}", bytes);
         return Task.CompletedTask;
     }
+}
 
-    private static void Print(string name, string documentName, byte[] bytes)
+public static class WindowsRawPrintJob
+{
+    public static void Print(string name, string documentName, byte[] bytes)
     {
         if (!OpenPrinter(name, out var printer, IntPtr.Zero))
             throw Win32("The configured receipt printer could not be opened.");

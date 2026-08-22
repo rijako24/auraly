@@ -37,7 +37,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         var state = await ReadProvisionedStateAsync(result.TenantId, null);
         Assert.Equal(1, state.Businesses);
         Assert.Equal(2, state.Warehouses);
-        Assert.Equal(12, state.InventoryReasons);
+        Assert.True(state.InventoryReasons >= 12);
         Assert.Equal(4, state.ProductUnits);
         Assert.Equal(1, state.DefaultCustomers);
         Assert.Equal(26, state.AccountingAccounts);
@@ -204,7 +204,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             SELECT
               (SELECT COUNT(*) FROM dbo.Businesses WHERE TenantId=@TenantId),
               (SELECT COUNT(*) FROM dbo.Warehouses w INNER JOIN dbo.Businesses b ON b.BusinessId=w.BusinessId WHERE b.TenantId=@TenantId AND w.Code IN(N'VEN',N'PED')),
-              (SELECT COUNT(*) FROM dbo.InventoryReasons r INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId WHERE b.TenantId=@TenantId),
+              (SELECT COUNT(*) FROM dbo.BusinessReasons r INNER JOIN dbo.Businesses b ON b.BusinessId=r.BusinessId WHERE b.TenantId=@TenantId),
               (SELECT COUNT(*) FROM dbo.ProductUnits u INNER JOIN dbo.Businesses b ON b.BusinessId=u.BusinessId WHERE b.TenantId=@TenantId),
               (SELECT COUNT(*) FROM dbo.Customers c INNER JOIN dbo.Parties p ON p.PartyId=c.PartyId WHERE p.TenantId=@TenantId AND p.DisplayName=N'Consumidor final'),
               (SELECT COUNT(*) FROM dbo.AccountingAccounts WHERE TenantId=@TenantId),

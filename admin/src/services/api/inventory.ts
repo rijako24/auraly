@@ -18,6 +18,7 @@ export const inventoryApi = {
   warehouseMasters: () => apiClient.get<WarehouseMasterItem[]>("/commerce/v1/inventory/warehouse-masters"),
   saveWarehouse: (warehouseId:string|null, request:{name:string;allowNegativeStockSales:boolean;priceFormationCostBasis:string;useForSales:boolean;isActive:boolean}) => warehouseId ? apiClient.put<WarehouseMasterItem>(`/commerce/v1/inventory/warehouse-masters/${warehouseId}`,request) : apiClient.post<WarehouseMasterItem>("/commerce/v1/inventory/warehouse-masters",request),
   reasons: (params:{operationType?:string;includeInactive?:boolean;search?:string}={}) => apiClient.get<InventoryReasonItem[]>("/commerce/v1/inventory/reasons",params),
+  businessReasons: (reasonType:string) => apiClient.get<InventoryReasonItem[]>("/commerce/v1/reasons",{reasonType}),
   saveReason: (inventoryReasonId:string|null, request:{operationType:string;name:string;isActive:boolean;displayOrder:number}) => inventoryReasonId ? apiClient.put<InventoryReasonItem>(`/commerce/v1/inventory/reasons/${inventoryReasonId}`,request) : apiClient.post<InventoryReasonItem>("/commerce/v1/inventory/reasons",request),
   products: (params:{warehouseId:string;search?:string;page?:number;pageSize?:number}) => apiClient.get<Page<InventoryProductItem>>("/commerce/v1/inventory/products",withPagedDefaults(params)),
   balances: (params:{warehouseId?:string;productId?:string;search?:string;onlyWithStock?:boolean;page?:number;pageSize?:number}) => apiClient.get<Page<InventoryBalanceItem>>("/commerce/v1/inventory/balances",withPagedDefaults(params)),

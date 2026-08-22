@@ -50,7 +50,7 @@ public sealed record ConfirmSalesReturnRequest(
     IReadOnlyCollection<ConfirmSalesReturnLineRequest> Lines,
     Guid? WorkSessionId = null,
     int? OriginalPaymentNumber = null,
-    string ReasonCode = SalesReturnReasonCodes.Other,
+    string ReasonCode = "",
     string? Notes = null);
 
 public sealed record SalesReturnLineSnapshot(
@@ -94,7 +94,7 @@ public sealed record SalesReturnDocumentPayload(
     IReadOnlyList<SalesReturnLineSnapshot> Lines,
     Guid? WorkSessionId = null,
     int? OriginalPaymentNumber = null,
-    string ReasonCode = SalesReturnReasonCodes.Other,
+    string ReasonCode = "",
     string? Notes = null);
 
 public sealed record SalesReturnAcceptance(

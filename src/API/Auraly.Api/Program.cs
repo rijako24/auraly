@@ -637,6 +637,14 @@ builder.Services.AddAuthorization(options =>
             PosAuthenticationDefaults.PermissionClaim,
             WorkSessionPermissionCodes.ManageCash);
     });
+    options.AddPolicy("pos.work-session.close", policy =>
+    {
+        policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
+        policy.RequireAuthenticatedUser();
+        policy.RequireClaim(
+            PosAuthenticationDefaults.PermissionClaim,
+            WorkSessionPermissionCodes.Close);
+    });
 });
 var app = builder.Build();
 app.UseResponseCompression();

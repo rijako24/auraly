@@ -33,13 +33,15 @@ JOIN dbo.Permissions permissionValue ON permissionValue.PermissionId=assignment.
 WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE')
   AND NOT (
     roleValue.NormalizedName=N'CASHIER' AND permissionValue.Resource IN(
-      N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read',N'work_sessions.read')
+      N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read',
+      N'work-sessions.read',N'work-sessions.open',N'work-sessions.cash.manage')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(
       N'sales.create',N'sales.discount',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',
       N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.manage_credential',
       N'pos.customer.create',N'pos.orders',N'orders.read',N'orders.invoice',
       N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',
-      N'work_sessions.read',N'work_sessions.close',N'inventory.read',N'inventory.costs.read',
+      N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.cash.manage',
+      N'inventory.read',N'inventory.costs.read',
       N'inventory.counts.confirm',N'inventory.adjustments.confirm',N'inventory.transfers.confirm',
       N'inventory.conversions.confirm',N'inventory.damages.confirm')
     OR roleValue.NormalizedName=N'ADMINISTRATIVE' AND permissionValue.Resource NOT LIKE N'tenants.%'
@@ -58,13 +60,15 @@ WHERE roleValue.IsActive=1
       AND (permissionValue.Resource NOT LIKE N'tenants.%' AND permissionValue.Resource NOT LIKE N'platform.%'
         OR EXISTS(SELECT 1 FROM dbo.Tenants ownerTenant WHERE ownerTenant.TenantId=roleValue.TenantId AND ownerTenant.TenantKey=N'@auraly'))
     OR roleValue.NormalizedName=N'CASHIER' AND permissionValue.Resource IN(
-      N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read',N'work_sessions.read')
+      N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read',
+      N'work-sessions.read',N'work-sessions.open',N'work-sessions.cash.manage')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(
       N'sales.create',N'sales.discount',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',
       N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.manage_credential',
       N'pos.customer.create',N'pos.orders',N'orders.read',N'orders.invoice',
       N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',
-      N'work_sessions.read',N'work_sessions.close',N'inventory.read',N'inventory.costs.read',
+      N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.cash.manage',
+      N'inventory.read',N'inventory.costs.read',
       N'inventory.counts.confirm',N'inventory.adjustments.confirm',N'inventory.transfers.confirm',
       N'inventory.conversions.confirm',N'inventory.damages.confirm')
     OR roleValue.NormalizedName=N'ADMINISTRATIVE' AND permissionValue.Resource NOT LIKE N'tenants.%'

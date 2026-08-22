@@ -8,21 +8,6 @@ namespace Auraly.Infrastructure.Persistence;
 
 public sealed partial class SqlWorkSessionStore
 {
-    private static readonly (string Code, string Name, CashMovementDirection Direction,
-        string Category, bool RequiresReference)[] DefaultCashReasons =
-    [
-        ("OTHER_INCOME", "Otros ingresos de caja", CashMovementDirection.In,
-            CashCounterpartCategories.OtherIncome, true),
-        ("OWNER_CONTRIBUTION", "Aporte del propietario", CashMovementDirection.In,
-            CashCounterpartCategories.OwnerContributions, true),
-        ("OPERATING_EXPENSE", "Gasto operativo", CashMovementDirection.Out,
-            CashCounterpartCategories.OperatingExpense, true),
-        ("CASH_TO_BANK", "Consignación a banco", CashMovementDirection.Out,
-            CashCounterpartCategories.Bank, true),
-        ("OTHER_OUTFLOW", "Otra salida de caja", CashMovementDirection.Out,
-            CashCounterpartCategories.OtherExpense, true)
-    ];
-
     public async Task<IReadOnlyList<CashMovementReasonView>> ListCashReasonsAsync(
         WorkSessionIdentity identity, Guid businessId, string? direction,
         CancellationToken cancellationToken)
@@ -38,6 +23,7 @@ public sealed partial class SqlWorkSessionStore
         var values = new List<CashMovementReasonView>();
         await using var command = new SqlCommand(ReasonViewSql + " " + """
             WHERE r.BusinessId=@BusinessId
+              AND r.ReasonType IN (N'CashIn',N'CashOut')
               AND (@Direction IS NULL OR r.Direction=@Direction)
             ORDER BY r.Direction,r.Name,r.Code;
             """, connection, transaction);
@@ -71,25 +57,28 @@ public sealed partial class SqlWorkSessionStore
                     cancellationToken);
             var now = timeProvider.GetUtcNow();
             await using var command = new SqlCommand("""
-                IF EXISTS(SELECT 1 FROM dbo.CashMovementReasons WITH(UPDLOCK,HOLDLOCK)
+                IF EXISTS(SELECT 1 FROM dbo.BusinessReasons WITH(UPDLOCK,HOLDLOCK)
                           WHERE ReasonId=@ReasonId AND BusinessId=@BusinessId)
-                  UPDATE dbo.CashMovementReasons
-                  SET Code=@Code,Name=@Name,Direction=@Direction,
+                  UPDATE dbo.BusinessReasons
+                  SET ReasonType=CASE WHEN @Direction=N'In' THEN N'CashIn' ELSE N'CashOut' END,
+                      Code=@Code,Name=@Name,Direction=@Direction,
                       CounterpartAccountingCategory=@Category,
                       DefaultCostCenterId=@CostCenterId,
                       RequiresReference=@RequiresReference,IsActive=@IsActive,
                       UpdatedAt=@Now
                   WHERE ReasonId=@ReasonId AND BusinessId=@BusinessId;
                 ELSE
-                  INSERT dbo.CashMovementReasons
-                    (ReasonId,BusinessId,Code,Name,Direction,
+                  INSERT dbo.BusinessReasons
+                    (ReasonId,BusinessId,ReasonType,Code,Name,Direction,
                      CounterpartAccountingCategory,DefaultCostCenterId,
-                     RequiresReference,IsActive,CreatedAt,UpdatedAt)
-                  VALUES(@ReasonId,@BusinessId,@Code,@Name,@Direction,@Category,
-                         @CostCenterId,@RequiresReference,@IsActive,@Now,@Now);
+                     RequiresReference,IsSystem,IsActive,DisplayOrder,CreatedAt,UpdatedAt)
+                  VALUES(@ReasonId,@BusinessId,CASE WHEN @Direction=N'In' THEN N'CashIn' ELSE N'CashOut' END,
+                         @Code,@Name,@Direction,@Category,@CostCenterId,@RequiresReference,0,
+                         @IsActive,0,@Now,@Now);
                 """, connection, transaction);
             AddReasonParameters(command, reason, now);
             await command.ExecuteNonQueryAsync(cancellationToken);
+            await SyncCashReasonCompatibilityAsync(connection, transaction, reason, now, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return await ReadCashReasonViewAsync(
                 connection, identity, reason.BusinessId, reason.ReasonId,
@@ -130,28 +119,59 @@ public sealed partial class SqlWorkSessionStore
         SqlConnection connection, SqlTransaction transaction, Guid businessId,
         CancellationToken cancellationToken)
     {
-        foreach (var item in DefaultCashReasons)
-        {
-            await using var command = new SqlCommand("""
-                IF NOT EXISTS(SELECT 1 FROM dbo.CashMovementReasons WITH(UPDLOCK,HOLDLOCK)
-                              WHERE BusinessId=@BusinessId AND Code=@Code)
-                  INSERT dbo.CashMovementReasons
-                    (ReasonId,BusinessId,Code,Name,Direction,
-                     CounterpartAccountingCategory,DefaultCostCenterId,
-                     RequiresReference,IsActive,CreatedAt,UpdatedAt)
-                  VALUES(@ReasonId,@BusinessId,@Code,@Name,@Direction,@Category,NULL,
-                         @RequiresReference,1,@Now,@Now);
-                """, connection, transaction);
-            command.Parameters.AddWithValue("@ReasonId", ids.NewId());
-            command.Parameters.AddWithValue("@BusinessId", businessId);
-            command.Parameters.AddWithValue("@Code", item.Code);
-            command.Parameters.AddWithValue("@Name", item.Name);
-            command.Parameters.AddWithValue("@Direction", item.Direction.ToString());
-            command.Parameters.AddWithValue("@Category", item.Category);
-            command.Parameters.AddWithValue("@RequiresReference", item.RequiresReference);
-            command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
+        await using var command = new SqlCommand("""
+            INSERT dbo.BusinessReasons
+              (ReasonId,BusinessId,ReasonType,Code,Name,Direction,
+               CounterpartAccountingCategory,DefaultCostCenterId,
+               RequiresReference,IsSystem,IsActive,DisplayOrder,CreatedAt,UpdatedAt)
+            SELECT NEWID(),@BusinessId,t.ReasonType,t.Code,t.Name,t.Direction,
+                   t.CounterpartAccountingCategory,NULL,t.RequiresReference,1,1,t.DisplayOrder,@Now,@Now
+            FROM dbo.AccountingConfigurationProfiles p
+            INNER JOIN dbo.ReasonTemplates t
+              ON t.ProfileCode=p.ProfileCode
+            WHERE p.IsDefault=1 AND p.IsActive=1 AND t.IsActive=1
+              AND t.ReasonType IN (N'CashIn',N'CashOut')
+              AND NOT EXISTS(
+                SELECT 1 FROM dbo.BusinessReasons r WITH(UPDLOCK,HOLDLOCK)
+                WHERE r.BusinessId=@BusinessId AND r.ReasonType=t.ReasonType AND r.Code=t.Code);
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        await using var compatibility = new SqlCommand("""
+            INSERT dbo.CashMovementReasons(
+              ReasonId,BusinessId,Code,Name,Direction,CounterpartAccountingCategory,
+              DefaultCostCenterId,RequiresReference,IsActive,CreatedAt,UpdatedAt)
+            SELECT r.ReasonId,r.BusinessId,r.Code,r.Name,r.Direction,r.CounterpartAccountingCategory,
+                   r.DefaultCostCenterId,r.RequiresReference,r.IsActive,r.CreatedAt,r.UpdatedAt
+            FROM dbo.BusinessReasons r
+            WHERE r.BusinessId=@BusinessId AND r.ReasonType IN (N'CashIn',N'CashOut')
+              AND NOT EXISTS(SELECT 1 FROM dbo.CashMovementReasons c
+                WHERE c.BusinessId=r.BusinessId AND c.ReasonId=r.ReasonId);
+            """, connection, transaction);
+        compatibility.Parameters.AddWithValue("@BusinessId", businessId);
+        await compatibility.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task SyncCashReasonCompatibilityAsync(
+        SqlConnection connection, SqlTransaction transaction,
+        CashMovementReasonDefinition reason, DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            IF EXISTS(SELECT 1 FROM dbo.CashMovementReasons WHERE BusinessId=@BusinessId AND ReasonId=@ReasonId)
+              UPDATE dbo.CashMovementReasons SET Code=@Code,Name=@Name,Direction=@Direction,
+                CounterpartAccountingCategory=@Category,DefaultCostCenterId=@CostCenterId,
+                RequiresReference=@RequiresReference,IsActive=@IsActive,UpdatedAt=@Now
+              WHERE BusinessId=@BusinessId AND ReasonId=@ReasonId;
+            ELSE
+              INSERT dbo.CashMovementReasons(ReasonId,BusinessId,Code,Name,Direction,
+                CounterpartAccountingCategory,DefaultCostCenterId,RequiresReference,IsActive,CreatedAt,UpdatedAt)
+              VALUES(@ReasonId,@BusinessId,@Code,@Name,@Direction,@Category,@CostCenterId,
+                @RequiresReference,@IsActive,@Now,@Now);
+            """, connection, transaction);
+        AddReasonParameters(command, reason, now);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task ValidateBusinessScopeAsync(
@@ -194,8 +214,9 @@ public sealed partial class SqlWorkSessionStore
             SELECT ReasonId,BusinessId,Code,Name,Direction,
                    CounterpartAccountingCategory,DefaultCostCenterId,
                    RequiresReference,IsActive
-            FROM dbo.CashMovementReasons WITH(UPDLOCK,HOLDLOCK)
-            WHERE BusinessId=@BusinessId AND ReasonId=@ReasonId AND IsActive=1;
+            FROM dbo.BusinessReasons WITH(UPDLOCK,HOLDLOCK)
+            WHERE BusinessId=@BusinessId AND ReasonId=@ReasonId
+              AND ReasonType IN (N'CashIn',N'CashOut') AND IsActive=1;
             """, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@ReasonId", reasonId);
@@ -215,7 +236,8 @@ public sealed partial class SqlWorkSessionStore
         Guid reasonId, CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand(ReasonViewSql + " " + """
-            WHERE r.BusinessId=@BusinessId AND r.ReasonId=@ReasonId;
+            WHERE r.BusinessId=@BusinessId AND r.ReasonId=@ReasonId
+              AND r.ReasonType IN (N'CashIn',N'CashOut');
             """, connection);
         command.Parameters.AddWithValue("@TenantId", identity.TenantId);
         command.Parameters.AddWithValue("@BusinessId", businessId);
@@ -261,7 +283,7 @@ public sealed partial class SqlWorkSessionStore
                CAST(CASE WHEN r.CounterpartAccountingCategory IS NOT NULL
                               AND a.AccountId IS NOT NULL THEN 1 ELSE 0 END AS bit),
                r.RequiresReference,r.IsActive
-        FROM dbo.CashMovementReasons r
+        FROM dbo.BusinessReasons r
         INNER JOIN dbo.Businesses b
           ON b.BusinessId=r.BusinessId AND b.TenantId=@TenantId
         LEFT JOIN dbo.AccountingCostCenters cc

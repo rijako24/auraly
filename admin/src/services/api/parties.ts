@@ -22,6 +22,8 @@ export interface PartySiteDetail {
 }
 export interface CustomerRoleDetail { customerId: string; priceListId: string | null; priceChannelId: string | null; requiresElectronicInvoice: boolean; isActive: boolean; }
 export interface SupplierRoleDetail { supplierId: string; isActive: boolean; }
+export interface SupplierAcceptance { supplierId: string; partyId: string; idempotentReplay: boolean; }
+export interface CustomerAcceptance { customerId: string; partyId: string; }
 export interface SellerRoleDetail { sellerId: string; code: string; defaultCommissionPercent: number | null; commissionBasis: string; commissionTrigger: string; isActive: boolean; }
 export interface CarrierRoleDetail { carrierId: string; code: string; transportationMode: string; isActive: boolean; }
 export interface EmployeeRoleDetail { employeeId: string; isActive: boolean; }
@@ -55,8 +57,8 @@ export const partiesApi = {
     apiClient.get<PartyWorkspacePage>("/commerce/v1/parties", params),
   createIdentity: (request: CreateThirdPartyRequest & { targetRole: "Employee" | "User" }) => apiClient.post<PartyIdentityAcceptance>("/commerce/v1/parties/identity", request),
   customerMap: () => apiClient.get<CustomerMapSite[]>("/commerce/v1/parties/customer-map"),
-  createCustomer: (request: CreateThirdPartyRequest) => apiClient.post("/commerce/v1/customers", request),
-  createSupplier: (request: CreateThirdPartyRequest) => apiClient.post("/commerce/v1/suppliers", request),
+  createCustomer: (request: CreateThirdPartyRequest) => apiClient.post<CustomerAcceptance>("/commerce/v1/customers", request),
+  createSupplier: (request: CreateThirdPartyRequest) => apiClient.post<SupplierAcceptance>("/commerce/v1/suppliers", request),
   createSeller: (request: CreateThirdPartyRequest) => apiClient.post("/commerce/v1/sellers", request),
   createCarrier: (request: CreateThirdPartyRequest) => apiClient.post("/commerce/v1/carriers", request),
   addSite: (customerId: string, request: { operationId: string; site: PartySiteInput }) => apiClient.post<PartySiteDetail>(`/commerce/v1/customers/${customerId}/sites`, request),

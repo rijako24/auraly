@@ -42,6 +42,7 @@ import {
   PosEdgeClient,
   PosEdgeError,
   type PosClient,
+  type PosAuthorizedClosurePreview,
   type PosSensitiveAuthorization,
   readEdgeTokenFromLaunch,
   readEdgeUserSession,
@@ -63,6 +64,7 @@ import {
 } from "@/services/pos/pos-enrollment";
 import { PosConfirmDialog } from "./pos-confirm-dialog";
 import { PosCashMovementDialog } from "./pos-cash-movement-dialog";
+import { PosCashClosureDialog } from "./pos-cash-closure-dialog";
 import { PosCustomerSearchDialog } from "./pos-customer-search-dialog";
 import { PosDocumentTypeDialog } from "./pos-document-type-dialog";
 import { PosDiscountDialog } from "./pos-discount-dialog";
@@ -166,6 +168,7 @@ export default function PosPage() {
   const [cashMovementDirection, setCashMovementDirection] =
     useState<PosCashMovementDirection | null>(null);
   const [printerOpen, setPrinterOpen] = useState(false);
+  const [cashClosure, setCashClosure] = useState<PosAuthorizedClosurePreview | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<PosCustomer | null>(null);
   const [pricingTransition, setPricingTransition] = useState(false);
   const [documentType, setDocumentType] = useState<PosSaleDocumentType>("SalesReceipt");
@@ -185,6 +188,7 @@ export default function PosPage() {
     execute: (authorization: PosSensitiveAuthorization) => Promise<void>;
   } | null>(null);
   const [sensitiveApprovalError, setSensitiveApprovalError] = useState<string | null>(null);
+  const cashClosureButton = useRef<HTMLButtonElement>(null);
   const [lastSettlement, setLastSettlement] = useState<{
     documentId: string;
     documentNumber: string;
@@ -321,6 +325,7 @@ export default function PosPage() {
               context,
               serverBootstrap.userId,
               displayName,
+              edgeToken,
             );
             rememberOnlinePosClient(onlineClient);
             setClient(onlineClient);
@@ -499,7 +504,8 @@ export default function PosPage() {
         invoiceSearchOpen ||
         returnsOpen ||
         documentTypeOpen ||
-        cashMovementDirection
+        cashMovementDirection ||
+        cashClosure
       ) return;
       const canOpenCashMovement =
         Boolean(workstation.workSessionId) &&
@@ -564,6 +570,7 @@ export default function PosPage() {
         event.preventDefault();
         setProductSearchOpen(true);
       } else if (
+        !event.ctrlKey &&
         event.key === "F10" &&
         !busy &&
         Boolean(draft) &&
@@ -632,6 +639,9 @@ export default function PosPage() {
       } else if (event.ctrlKey && event.key === "F9" && canOpenCashMovement) {
         event.preventDefault();
         setCashMovementDirection("Out");
+      } else if (event.ctrlKey && event.key === "F10" && canOpenCashMovement) {
+        event.preventDefault();
+        cashClosureButton.current?.click();
       } else if (!event.ctrlKey && event.key === "F8" && !busy) {
         event.preventDefault();
         setSidePanel("temporaries");
@@ -646,6 +656,7 @@ export default function PosPage() {
     busy,
     client,
     cashMovementDirection,
+    cashClosure,
     returnsOpen,
     confirmation,
     customerSearchOpen,
@@ -682,6 +693,20 @@ export default function PosPage() {
       setMessage(client.mode === "online" ? "Esperando conexi\u00f3n con Auraly" : "Esperando servicios del equipo");
       focusScanner();
       return false;
+    }
+    try {
+      const candidates = await client.searchProducts(value, 0, 3);
+      const exact = candidates.items.find(product =>
+        product.productCode.localeCompare(value, undefined, { sensitivity: "accent" }) === 0 ||
+        product.reference?.localeCompare(value, undefined, { sensitivity: "accent" }) === 0);
+      if (exact?.isWeighable) {
+        const added = await captureSelectedProduct(exact);
+        if (added) setScan("");
+        return added;
+      }
+    } catch {
+      // The normal capture path still supports offline identifiers and
+      // embedded-weight barcodes when the pre-check is unavailable.
     }
     setBusy(true);
     setError(null);
@@ -812,6 +837,61 @@ export default function PosPage() {
       }
       setSensitiveApprovalError(null);
       setSensitiveApproval({ approval, operationId, execute });
+    }
+  }
+
+  async function openCashClosure() {
+    if (!client || !draft || busy || !workstation.workSessionId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await executeSensitive(
+        "work-sessions.close",
+        null,
+        {
+          action: "CloseWorkSession",
+          cashier: workstation.userDisplayName,
+          workSessionId: workstation.workSessionId,
+        },
+        async (authorization) => {
+          const preview = await client.previewWorkSessionClosure(
+            draft.draftId.value,
+            authorization,
+          );
+          setCashClosure(preview);
+          setMessage("Arqueo autorizado; cajón abierto para conteo");
+        },
+      );
+    } catch (caught) {
+      showError(caught);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function closeCashRegister(countedCash: number, note: string | null) {
+    if (!client || !cashClosure || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await client.closeWorkSession({
+        operationId: crypto.randomUUID(),
+        authorizationToken: cashClosure.authorizationToken,
+        countedCash,
+        note,
+      });
+      setCashClosure(null);
+      setMessage("Caja cerrada y tirilla impresa");
+      if (client.mode === "edge") {
+        await logoutLocal(true);
+      } else {
+        forgetSalesWorkspace();
+        router.push("/dashboard");
+      }
+    } catch (caught) {
+      showError(caught);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -1113,7 +1193,7 @@ export default function PosPage() {
       setPaymentOpen(false);
       const issuedLabel =
         result.printPreviewOpened === false
-          ? "emitida. El navegador bloqueó la vista previa; puedes reimprimirla con F6"
+          ? "emitida e impresa directamente"
           : "emitida e impresa";
       setMessage(
         settlement.change > 0
@@ -1219,18 +1299,44 @@ export default function PosPage() {
     setBusy(true);
     setError(null);
     try {
+      let scaleWeight: number | null = null;
+      let manualWeight = false;
+      if (product.isWeighable) {
+        try {
+          scaleWeight = (await client.readScaleWeight()).weight;
+        } catch (caught) {
+          manualWeight = true;
+          setError(caught instanceof Error
+            ? `${caught.message} Ingresa la cantidad decimal manualmente.`
+            : "La balanza no respondió. Ingresa la cantidad decimal manualmente.");
+        }
+      }
       const startsNewSale = !draft?.lines.length;
       const result = await client.captureSelectedProduct(
         product,
         draft?.customerId ?? null,
       );
       if (result.status !== "Added" || !result.draft) return false;
-      setDraft(result.draft);
-      setSelectedLineId(result.draft.lines.at(-1)?.lineId ?? null);
-        revealLine(result.draft.lines.at(-1)?.lineId ?? null);
-      setMessage(`${result.draft.lines.at(-1)?.description ?? product.name} agregado`);
+      let confirmedDraft = result.draft;
+      const addedLine = confirmedDraft.lines.find(line=>line.productId.value===product.productId)
+        ?? confirmedDraft.lines.at(-1);
+      if (addedLine && scaleWeight !== null) {
+        const targetQuantity = Math.max(0.001, addedLine.quantity - 1 + scaleWeight);
+        const changed = await client.changeQuantity(confirmedDraft.draftId.value, addedLine.lineId, targetQuantity);
+        if (changed.draft) confirmedDraft = changed.draft;
+      }
+      setDraft(confirmedDraft);
+      setSelectedLineId(addedLine?.lineId ?? null);
+      revealLine(addedLine?.lineId ?? null);
+      setMessage(scaleWeight !== null
+        ? `${product.name}: ${scaleWeight.toLocaleString("es-CO",{maximumFractionDigits:3})} kg leídos de la balanza`
+        : `${product.name} agregado${manualWeight ? "; escribe el peso" : ""}`);
       if (startsNewSale) setLastSettlement(null);
       setScan("");
+      if (manualWeight && addedLine) window.requestAnimationFrame(()=>{
+        quantityInputs.current.get(addedLine.lineId)?.focus();
+        quantityInputs.current.get(addedLine.lineId)?.select();
+      });
       return true;
     } catch (caught) {
       showError(caught);
@@ -1333,7 +1439,7 @@ export default function PosPage() {
       if (edgeEnrollmentToken) {
         await new PosEdgeClient(edgeEnrollmentToken).setStartupMode("online");
       }
-      const onlineClient = new OnlinePosClient(context, onlineUserId, onlineUserName);
+      const onlineClient = new OnlinePosClient(context, onlineUserId, onlineUserName, edgeEnrollmentToken);
       rememberOnlinePosClient(onlineClient);
       setDraft(null);
       setTemporaries([]);
@@ -1447,8 +1553,8 @@ export default function PosPage() {
     }
   }
 
-  async function logoutLocal() {
-    if (!(client instanceof PosEdgeClient) || busy) return;
+  async function logoutLocal(force = false) {
+    if (!(client instanceof PosEdgeClient) || (busy && !force)) return;
     try {
       await client.logout();
     } finally {
@@ -1565,6 +1671,19 @@ edgeCapable={edgeEnrollmentRequired}
             </button>
             <button
               type="button"
+              ref={cashClosureButton}
+              onClick={() => void openCashClosure()}
+              disabled={busy || !workstation.workSessionId || !edgeEnrollmentToken}
+              title="Solicitar cierre y arqueo de caja (Ctrl+F10)"
+              aria-keyshortcuts="Control+F10"
+              className="flex h-8 items-center gap-1.5 rounded-full border border-sky-300/20 px-3 text-xs font-semibold text-sky-200 transition hover:bg-sky-300/10 hover:text-white disabled:opacity-40"
+            >
+              <Banknote className="h-3.5 w-3.5" />
+              <span className="hidden md:inline">Cerrar caja</span>
+              <kbd className="hidden xl:inline text-[10px] opacity-70">Ctrl+F10</kbd>
+            </button>
+            <button
+              type="button"
               onClick={() => setCashMovementDirection("Out")}
               disabled={busy || !workstation.workSessionId}
               title="Registrar salida de dinero (Ctrl+F9)"
@@ -1634,11 +1753,11 @@ edgeCapable={edgeEnrollmentRequired}
               type="button"
               onClick={() => setPrinterOpen(true)}
               disabled={busy}
-              title="Configurar impresoras de tirilla y carta"
-              className="grid h-8 w-8 place-items-center rounded-lg border border-white/10 text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
-              aria-label="Configurar impresora"
+              title={client.mode === "edge" ? "Configurar impresora, cajón y balanza" : "Configurar formatos de impresión"}
+              className="flex h-8 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-xs font-semibold text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
             >
               <Printer className="h-4 w-4" />
+              <span className="hidden lg:inline">{client.mode === "edge" ? "Periféricos" : "Impresión"}</span>
             </button>
           )}
           {client.mode === "edge" && serverConnected && (
@@ -2287,6 +2406,15 @@ edgeCapable={edgeEnrollmentRequired}
       {printerOpen && client && (
         <PosPrinterDialog client={client instanceof PosEdgeClient ? client : null}
           onClose={() => setPrinterOpen(false)} />
+      )}
+
+      {cashClosure && (
+        <PosCashClosureDialog
+          value={cashClosure}
+          busy={busy}
+          onClose={() => { setCashClosure(null); focusScanner(); }}
+          onConfirm={closeCashRegister}
+        />
       )}
 
       {invoiceSearchOpen && client && (

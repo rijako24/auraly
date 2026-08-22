@@ -110,7 +110,8 @@ public sealed record PosSensitiveActionAuthorization(
     PosLocalSensitiveAuthorization? Local,
     Guid? RemoteApprovalRequestId,
     Guid OperationId,
-    PosLocalUserSession User);
+    PosLocalUserSession User,
+    Guid AuthorizedByUserId);
 
 public sealed class PosSensitiveActionAuthorizer(
     PosLocalIdentityStore local,
@@ -130,15 +131,17 @@ public sealed class PosSensitiveActionAuthorizer(
         {
             var authorization = await local.AuthorizeSensitiveAsync(
                 user, permissionResource, draftId, lineId, supervisorSecret, cancellationToken);
-            return new PosSensitiveActionAuthorization(authorization, null, Guid.Empty, user);
+            return new PosSensitiveActionAuthorization(
+                authorization, null, Guid.Empty, user, authorization.AuthorizedByUserId);
         }
 
         if (!Guid.TryParse(approvalRequestHeader, out var approvalRequestId) ||
             !Guid.TryParse(operationHeader, out var operationId) || operationId == Guid.Empty)
             throw new PosLocalApprovalException("InvalidApproval", "La aprobación remota no identifica la operación.");
-        await remote.ReserveAsync(
+        var reservation = await remote.ReserveAsync(
             approvalRequestId, user, draftId, lineId, permissionResource, operationId, cancellationToken);
-        return new PosSensitiveActionAuthorization(null, approvalRequestId, operationId, user);
+        return new PosSensitiveActionAuthorization(
+            null, approvalRequestId, operationId, user, reservation.AuthorizedByUserId);
     }
 
     public async Task CompleteAsync(

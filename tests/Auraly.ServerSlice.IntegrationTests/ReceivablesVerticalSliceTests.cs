@@ -204,7 +204,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             "Devolucion total aplicada a cartera",
             [new ConfirmSalesReturnLineRequest(
                 1, 1m, ReturnInventoryDispositions.Sellable)],
-            null, null, SalesReturnReasonCodes.CustomerChangedMind);
+            null, null, "CustomerChangedMind");
         using (var response = await SendAsync(client,
                    "/api/commerce/v1/sales-returns/confirm", request,
                    $"receivable-return-{request.ReturnId:N}"))

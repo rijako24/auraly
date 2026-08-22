@@ -20,12 +20,6 @@ public sealed class PurchaseReturnService(
     IPurchaseReturnStore store,
     IDocumentProcessingSignalPublisher signalPublisher)
 {
-    private static readonly HashSet<string> Reasons =
-    [
-        "WrongProduct", "ExcessQuantity", "QualityIssue", "Damaged",
-        "CommercialAgreement", "ReceiptCorrection"
-    ];
-
     public Task<ReturnableGoodsReceiptPage> ListReturnableReceiptsAsync(
         PurchasingUserIdentity user, string? search, int page, int pageSize,
         CancellationToken cancellationToken = default)
@@ -67,9 +61,8 @@ public sealed class PurchaseReturnService(
             throw new PurchasingValidationException("ReturnedAt is required.");
         if (string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length > 160)
             throw new PurchasingValidationException("A valid Idempotency-Key is required.");
-        if (!Reasons.Contains(request.ReasonCode))
-            throw new PurchasingValidationException(
-                $"ReasonCode must be one of: {string.Join(", ", Reasons.Order())}.");
+        if (string.IsNullOrWhiteSpace(request.ReasonCode) || request.ReasonCode.Trim().Length > 40)
+            throw new PurchasingValidationException("ReasonCode is required.");
         if (request.Lines.Count is < 1 or > 200)
             throw new PurchasingValidationException("A return requires between 1 and 200 lines.");
         if (request.Lines.Any(line => line.OriginalLineNumber <= 0 || line.Quantity <= 0))

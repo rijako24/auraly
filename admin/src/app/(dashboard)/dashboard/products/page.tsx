@@ -2,7 +2,7 @@
 
 import { KeyboardEvent, useRef, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { CircleDollarSign, Images, PackagePlus, Pencil, Power, Search, Truck } from "lucide-react";
+import { ArrowLeft, BarChart3, CircleDollarSign, Images, PackagePlus, Pencil, Power, Search, Truck } from "lucide-react";
 import { toast } from "sonner";
 
 import { ProductLearningSection } from "@/components/products/product-learning-section";
@@ -15,6 +15,7 @@ import { ProductTaxEditor, type ProductTaxEditorHandle } from "@/components/prod
 import { ProductRecognitionSections, type ProductRecognitionSectionsHandle } from "@/components/products/product-recognition-sections";
 import { ProductImageEditor, type ProductImageEditorHandle } from "@/components/products/product-image-gallery";
 import { DataTable } from "@/components/tables/data-table";
+import { ReportViewer } from "@/components/reports/report-viewer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -42,7 +43,9 @@ import {
   ProductAliasReviewAction,
   type Product,
   type ProductAlias,
+  productsApi,
 } from "@/services/api/products";
+import { useBusinessContextStore } from "@/stores/business-context-store";
 
 interface ProductFormState {
   name: string;
@@ -70,6 +73,7 @@ function productToForm(product: Product): ProductFormState {
 }
 
 export default function ProductsPage() {
+  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -97,6 +101,10 @@ export default function ProductsPage() {
   const [savingProduct, setSavingProduct] = useState(false);
   const [productValidationError, setProductValidationError] = useState<string>();
   const [editingSalesTaxRate, setEditingSalesTaxRate] = useState<number>();
+  const [reportRows,setReportRows]=useState<Array<Record<string,string|number>>|null>(null);
+  const [loadingReport,setLoadingReport]=useState(false);
+
+  const openReport=async()=>{if(!businessId||loadingReport)return;setLoadingReport(true);try{const products:Product[]=[];let next=1,totalPages=1;do{const result=await productsApi.list(businessId,{page:next,pageSize:200,includeInactive});products.push(...result.items);totalPages=result.totalPages;next+=1}while(next<=totalPages);setReportRows(products.sort((left,right)=>left.name.localeCompare(right.name,"es",{sensitivity:"base"})).map(product=>({id:product.productId,code:product.productCode??product.sku??"Sin código",description:product.name,price:product.unitPrice,currency:product.currency||"COP"})))}catch{toast.error("No fue posible cargar todos los productos para el reporte.")}finally{setLoadingReport(false)}};
 
   const openDetails = (product: Product) => {
     setSelectedProduct(product);
@@ -331,6 +339,8 @@ export default function ProductsPage() {
     </article>
   );
 
+  if(reportRows)return <div className="space-y-4"><Button variant="ghost" onClick={()=>setReportRows(null)}><ArrowLeft className="mr-2 h-4 w-4"/>Volver a productos</Button><ReportViewer onClose={()=>setReportRows(null)} title="Productos" description={`${reportRows.length.toLocaleString("es-CO")} productos · orden alfabético`} fileName="productos" rows={reportRows} columns={[{key:"code",label:"Código interno"},{key:"description",label:"Descripción"},{key:"price",label:"Precio público",align:"right",format:(value,row)=>formatCurrency(Number(value),String(row.currency||"COP"))}]}/></div>;
+
   return (
     <div className="space-y-6">
       <div>
@@ -339,8 +349,8 @@ export default function ProductsPage() {
           Catálogo sincronizado para ventas, pedidos y recomendaciones del agente.
         </p>
       </div>
-      <div className="flex justify-end">
-        <Button type="button" size="lg" onClick={() => setCreateOpen(true)}><PackagePlus className="mr-2 h-5 w-5" />Nuevo producto</Button>
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button type="button" size="lg" variant="outline" disabled={loadingReport} onClick={openReport}><BarChart3 className="mr-2 h-5 w-5" />{loadingReport?"Cargando reporte…":"Reporte de productos"}</Button><Button type="button" size="lg" onClick={() => setCreateOpen(true)}><PackagePlus className="mr-2 h-5 w-5" />Nuevo producto</Button>
       </div>
 
 

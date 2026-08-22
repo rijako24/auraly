@@ -80,7 +80,7 @@ public sealed partial class SqlWorkSessionStore
             SELECT COUNT_BIG(*)
             FROM dbo.WorkSessions ws WITH (UPDLOCK,HOLDLOCK)
             INNER JOIN dbo.Businesses b ON b.BusinessId=ws.BusinessId
-            INNER JOIN dbo.CashMovementReasons r
+            INNER JOIN dbo.BusinessReasons r
               ON r.BusinessId=ws.BusinessId AND r.ReasonId=@ReasonId
             WHERE ws.WorkSessionId=@WorkSessionId AND ws.BusinessId=@BusinessId
               AND ws.UserId=@UserId AND ws.Status=N'Open'

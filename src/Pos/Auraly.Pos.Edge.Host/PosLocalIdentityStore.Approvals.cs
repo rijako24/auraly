@@ -134,7 +134,8 @@ public sealed partial class PosLocalIdentityStore
         if (permissionResource is not (
             CommercePermissionCodes.SalesDiscount or
             CommercePermissionCodes.SalesRemoveLine or
-            CommercePermissionCodes.SalesRestartDraft))
+            CommercePermissionCodes.SalesRestartDraft or
+            Auraly.Contracts.WorkSessions.WorkSessionPermissionCodes.Close))
             throw new PosLocalApprovalException(
                 "UnsupportedPermission", "La acción no admite autorización delegada.");
     }

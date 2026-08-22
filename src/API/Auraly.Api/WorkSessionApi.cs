@@ -145,6 +145,54 @@ public static class WorkSessionApi
                     acceptance);
             }));
 
+        var deviceCloseGroup = endpoints.MapGroup("/api/pos/v1")
+            .RequireAuthorization("pos.work-session.close");
+        deviceCloseGroup.MapPost("/work-sessions/{workSessionId:guid}/close", async (
+            HttpContext context,
+            Guid workSessionId,
+            DeviceCloseWorkSessionRequest request,
+            WorkSessionService service,
+            CancellationToken cancellationToken) =>
+            await Handle(async () =>
+            {
+                if (request.UserId == Guid.Empty || request.WorkSessionId != workSessionId)
+                    throw new WorkSessionValidationException(
+                        "The local supervisor and work session are required.");
+                var identity = context.User.ToDeviceWorkSessionIdentity() with
+                {
+                    UserId = request.UserId
+                };
+                return Results.Ok(await service.CloseAsync(
+                    identity,
+                    workSessionId,
+                    context.Request.Headers["Idempotency-Key"].ToString(),
+                    new CloseWorkSessionRequest(
+                        request.CountedCash,
+                        request.Note,
+                        request.AuthorizedByUserId),
+                    cancellationToken));
+            }));
+        deviceCloseGroup.MapGet("/work-sessions/{workSessionId:guid}/closure-preview", async (
+            HttpContext context,
+            Guid workSessionId,
+            Guid userId,
+            WorkSessionService service,
+            CancellationToken cancellationToken) =>
+            await Handle(async () =>
+            {
+                if (userId == Guid.Empty)
+                    throw new WorkSessionValidationException(
+                        "The local cashier is required.");
+                var identity = context.User.ToDeviceWorkSessionIdentity() with
+                {
+                    UserId = userId
+                };
+                return Results.Ok(await service.PreviewClosureAsync(
+                    identity,
+                    workSessionId,
+                    cancellationToken));
+            }));
+
         return endpoints;
     }
 

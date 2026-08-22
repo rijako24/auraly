@@ -24,15 +24,24 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
     public async Task Invoice_and_credit_note_post_balanced_once_and_periods_are_controlled()
     {
         var invoice = WithUblSnapshot(fixture.CreateValidRequest(9_811));
-        using (var pos = fixture.CreateClient())
-        using (var upload = fixture.CreateUploadMessage(invoice))
-        using (var response = await pos.SendAsync(upload))
+        await SetWarehouseNegativeSalesPolicyAsync(false);
+        try
+        {
+            using var pos = fixture.CreateClient();
+            using var upload = fixture.CreateUploadMessage(invoice);
+            using var response = await pos.SendAsync(upload);
             Assert.True(
                 response.StatusCode == HttpStatusCode.OK,
                 await response.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            await SetWarehouseNegativeSalesPolicyAsync(true);
+        }
 
         Assert.Equal(AccountingPostingStatuses.PendingConfiguration,
             await ScalarAsync<string>("SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id", invoice.DocumentId));
+        await AssertFastProcessingAsync(invoice.DocumentId, "venta");
         Assert.Equal(0, await CountAsync("AccountingEntries", "SourceDocumentId", invoice.DocumentId));
 
         using var accounting = fixture.CreateAdminClient(
@@ -51,7 +60,20 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             WorkSessionPermissionCodes.Close,
             WorkSessionPermissionCodes.ManageCash);
         // Expense permissions exercise the complete concept -> expense -> AP -> accounting flow below.
-        await ConfigureAsync(accounting);
+        using (var defaultsResponse = await accounting.PutAsync(
+                   "/api/commerce/v1/accounting/defaults", null))
+        {
+            defaultsResponse.EnsureSuccessStatusCode();
+            var defaults = await defaultsResponse.Content
+                .ReadFromJsonAsync<AccountingDefaultsResult>()
+                ?? throw new InvalidOperationException(
+                    "The accounting defaults response is empty.");
+            Assert.True(defaults.IsReady);
+            Assert.True(defaults.AccountCount >= 26);
+            Assert.Equal(26, defaults.MappingCount);
+            Assert.True(defaults.HasDefaultCostCenter);
+            Assert.True(defaults.HasOpenPeriod);
+        }
 
 
         var cashierId = await CreateCashierAsync();
@@ -96,6 +118,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             using var cashResponse = await cashier.SendAsync(cashRequest);
             Assert.Equal(HttpStatusCode.Accepted, cashResponse.StatusCode);
             await AssertBalancedAsync(cashDocumentId);
+            await AssertFastProcessingAsync(cashDocumentId, "movimiento de caja");
             Assert.Equal(5_000m, await AccountAmountAsync(cashDocumentId, "110505", debit: true));
             Assert.Equal(5_000m, await AccountAmountAsync(cashDocumentId, "429595", debit: false));
 
@@ -168,6 +191,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                 "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",
                 receipt.DocumentId));
         await AssertBalancedAsync(receipt.DocumentId);
+        await AssertFastProcessingAsync(receipt.DocumentId, "entrada de mercancía");
         Assert.Equal(1, await CountAsync(
             "AccountingEntries", "SourceDocumentId", receipt.DocumentId));
         Assert.Equal(50_000m, await AccountAmountAsync(
@@ -264,6 +288,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                 "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",
                 expenseId));
         await AssertBalancedAsync(expenseId);
+        await AssertFastProcessingAsync(expenseId, "gasto");
         Assert.Equal(119_000m, await ScalarAsync<decimal>(
             "SELECT GrossAmount FROM dbo.Expenses WHERE ExpenseId=@Id", expenseId));
         Assert.Equal(6_350m, await ScalarAsync<decimal>(
@@ -306,6 +331,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                 "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",
                 withheldReceipt.DocumentId));
         await AssertBalancedAsync(withheldReceipt.DocumentId);
+        await AssertFastProcessingAsync(withheldReceipt.DocumentId, "entrada con retenciones");
         Assert.Equal(119_000m, await ScalarAsync<decimal>(
             "SELECT GrossAmount FROM dbo.DocumentWithholdingSnapshots WHERE DocumentId=@Id",
             withheldReceipt.DocumentId));
@@ -349,6 +375,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                 "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id",
                 purchaseReturn.ReturnId));
         await AssertBalancedAsync(purchaseReturn.ReturnId);
+        await AssertFastProcessingAsync(purchaseReturn.ReturnId, "devolución a proveedor");
         Assert.Equal(23_800m, await AccountAmountAsync(
             purchaseReturn.ReturnId, "220505", debit: true));
         Assert.Equal(10_000m, await AccountAmountAsync(
@@ -394,7 +421,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             new DateTimeOffset(2026, 8, 1, 10, 0, 0, TimeSpan.FromHours(-5)),
             ReturnEconomicResolutions.Refund, "Cash", "Devolucion contable",
             [new ConfirmSalesReturnLineRequest(1, .5m, ReturnInventoryDispositions.Sellable)],
-            fixture.WorkSessionId, 1);
+            fixture.WorkSessionId, 1, "Other");
         using (var message = new HttpRequestMessage(HttpMethod.Post, "/api/commerce/v1/sales-returns/confirm")
         { Content = JsonContent.Create(returnRequest) })
         {
@@ -405,6 +432,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(AccountingPostingStatuses.Posted,
             await ScalarAsync<string>("SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id", returnRequest.ReturnId));
         await AssertBalancedAsync(returnRequest.ReturnId);
+        await AssertFastProcessingAsync(returnRequest.ReturnId, "devolución de venta");
         Assert.Equal(1, await CountAsync("AccountingEntries", "SourceDocumentId", returnRequest.ReturnId));
 
         using (var report = await accounting.GetAsync("/api/commerce/v1/accounting/reports/trial-balance?from=2026-01-01&to=2026-12-31"))
@@ -529,6 +557,21 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(reader.GetDecimal(0), reader.GetDecimal(1)); Assert.Equal(reader.GetDecimal(0), reader.GetDecimal(2)); Assert.Equal(reader.GetDecimal(1), reader.GetDecimal(3));
     }
 
+    private async Task AssertFastProcessingAsync(Guid documentId, string operation)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT DATEDIFF_BIG(microsecond,StartedAt,CompletedAt)
+            FROM dbo.DocumentProcessingJobs
+            WHERE DocumentId=@Id AND Status=N'Completed';
+            """, connection);
+        command.Parameters.AddWithValue("@Id", documentId);
+        var microseconds = Convert.ToInt64(await command.ExecuteScalarAsync());
+        Assert.True(microseconds < 2_000_000,
+            $"El motor tardó {microseconds / 1000m:N0} ms en {operation}; el límite local es 2.000 ms.");
+    }
+
     private PosSaleUploadRequest WithUblSnapshot(PosSaleUploadRequest request)
     {
         var address = new PosSaleUblAddressContract("11001", "Bogota", "Bogota D.C.", "11", "CL 1 2 3");
@@ -631,6 +674,8 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
 
     private async Task<T> ScalarAsync<T>(string sql, Guid id)
     { await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync(); await using var command = new SqlCommand(sql, connection); command.Parameters.AddWithValue("@Id", id); return (T)Convert.ChangeType((await command.ExecuteScalarAsync())!, typeof(T)); }
+    private async Task SetWarehouseNegativeSalesPolicyAsync(bool value)
+    { await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync(); await using var command = new SqlCommand("UPDATE dbo.Warehouses SET AllowNegativeStockSales=@Value WHERE WarehouseId=@Id", connection); command.Parameters.AddWithValue("@Value", value); command.Parameters.AddWithValue("@Id", fixture.WarehouseId); Assert.Equal(1, await command.ExecuteNonQueryAsync()); }
     private async Task<int> CountAsync(string table, string column, Guid id)
     { Assert.Contains($"{table}:{column}", new[] { "AccountingEntries:SourceDocumentId" }); await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync(); await using var command = new SqlCommand($"SELECT COUNT(*) FROM dbo.[{table}] WHERE [{column}]=@Id", connection); command.Parameters.AddWithValue("@Id", id); return Convert.ToInt32(await command.ExecuteScalarAsync()); }
 }

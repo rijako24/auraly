@@ -346,7 +346,7 @@ public sealed class SqlInventoryOperationStore(
 
     private static async Task<string> LoadActiveReasonAsync(SqlConnection connection, SqlTransaction transaction, Guid businessId, string operationType, string reasonCode, CancellationToken cancellationToken)
     {
-        const string sql = "SELECT Name FROM dbo.InventoryReasons WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@BusinessId AND OperationType=@OperationType AND Code=@Code AND IsActive=1;";
+        const string sql = "SELECT Name FROM dbo.BusinessReasons WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@BusinessId AND ReasonType=@OperationType AND Code=@Code AND IsActive=1;";
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@OperationType", operationType);

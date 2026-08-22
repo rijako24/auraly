@@ -24,6 +24,8 @@ import {
   PosDraft,
   PosDraftLine,
   PosEdgeError,
+  PosEdgeClient,
+  readEdgeUserSession,
   loadBrowserPrinterConfiguration,
   PosIssuedSaleSearchPage,
   PosIssuedSaleSummary,
@@ -34,6 +36,9 @@ import {
   type PosCashMovementDirection,
   type PosCashMovementInput,
   type PosCashMovementReason,
+  type PosCloseWorkSessionInput,
+  type PosWorkSessionClosure,
+  type PosAuthorizedClosurePreview,
   PosSensitiveAuthorization,
   PosApprovalCreateInput,
   PosApprovalSummary,
@@ -250,7 +255,14 @@ export class OnlinePosClient implements PosClient {
     private readonly context: SalesWorkspaceContext,
     private readonly userId: string,
     private readonly userDisplayName: string,
+    private readonly edgeSessionToken: string | null = null,
   ) {}
+
+  private localEdge() {
+    if (!this.edgeSessionToken)
+      throw new PosEdgeError("Esta operación requiere configurar este equipo como caja Auraly.", 409);
+    return new PosEdgeClient(this.edgeSessionToken, readEdgeUserSession());
+  }
 
   async health() {
     await request<{ status: string }>("/api/health");
@@ -636,6 +648,21 @@ export class OnlinePosClient implements PosClient {
       preview?.close();
       throw error;
     }
+  }
+
+  readScaleWeight() {
+    return this.localEdge().readScaleWeight();
+  }
+
+  previewWorkSessionClosure(
+    draftId: string,
+    authorization?: PosSensitiveAuthorization,
+  ): Promise<PosAuthorizedClosurePreview> {
+    return this.localEdge().previewWorkSessionClosure(draftId, authorization);
+  }
+
+  closeWorkSession(input: PosCloseWorkSessionInput): Promise<PosWorkSessionClosure> {
+    return this.localEdge().closeWorkSession(input);
   }
 
 

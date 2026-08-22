@@ -58,7 +58,7 @@ export function PosInvoiceSearchDialog({
           setResults([]);
           setHasMore(false);
           setNextOffset(null);
-          setError("No fue posible consultar las facturas de esta sede.");
+          setError("No fue posible consultar los comprobantes de esta sede.");
         })
         .finally(() => {
           if (requestVersion.current === version) setLoading(false);
@@ -90,7 +90,7 @@ export function PosInvoiceSearchDialog({
       setHasMore(page.hasMore);
       setNextOffset(page.nextOffset);
     } catch {
-      setError("No fue posible cargar más facturas.");
+      setError("No fue posible cargar más comprobantes.");
     } finally {
       setLoadingMore(false);
     }
@@ -104,15 +104,15 @@ export function PosInvoiceSearchDialog({
           <div>
             <h2 id="invoice-search-title" className="flex items-center gap-2 text-xl font-semibold">
               <ReceiptText className="h-5 w-5 text-teal-700" />
-              Buscar y reimprimir factura
+              Buscar y reimprimir comprobante
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              Número Auraly o número DIAN. La copia usa el snapshot original e incluye auditoría.
+              Facturas y comprobantes POS por número Auraly o número DIAN. La copia usa el snapshot original e incluye auditoría.
             </p>
           </div>
           <button type="button" onClick={onCancel} disabled={busy}
             className="grid h-10 w-10 place-items-center rounded-lg text-slate-500 hover:bg-slate-100"
-            aria-label="Cerrar búsqueda de facturas">
+            aria-label="Cerrar búsqueda de comprobantes">
             <X className="h-5 w-5" />
           </button>
         </header>
@@ -128,8 +128,8 @@ export function PosInvoiceSearchDialog({
                 }
               }}
               className="h-14 w-full rounded-xl border-2 border-teal-700/25 bg-slate-50 pl-12 pr-12 text-lg font-medium outline-none focus:border-teal-600 focus:bg-white focus:ring-4 focus:ring-teal-600/10"
-              placeholder="Ej. VTA01-00000001 o FE1"
-              aria-label="Número de factura" />
+              placeholder="Número de factura o comprobante"
+              aria-label="Número de factura o comprobante" />
             {loading && <Loader2 className="absolute right-4 top-1/2 h-5 w-5 -translate-y-1/2 animate-spin text-teal-700" />}
           </label>
           <p className="mt-2 text-xs text-slate-500">
@@ -155,7 +155,7 @@ export function PosInvoiceSearchDialog({
                 selected === index ? "bg-teal-50 ring-2 ring-inset ring-teal-600/25" : "hover:bg-slate-50"
               }`}>
               <span className="min-w-0">
-                <span className="block font-bold text-slate-950">{sale.documentNumber}</span>
+                <span className="flex items-center gap-2"><span className="font-bold text-slate-950">{sale.documentNumber}</span><span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-600">{sale.documentType === "SalesReceipt" ? "Comprobante POS" : "Factura"}</span></span>
                 <span className="mt-0.5 block truncate text-xs text-slate-500">
                   DIAN {sale.fiscalNumber} · {sale.customerName} · {sale.customerIdentification}
                 </span>
@@ -171,10 +171,10 @@ export function PosInvoiceSearchDialog({
           ))}
           {!loading && !results.length && !error && (
             <p className="grid min-h-40 place-items-center text-center text-sm text-slate-500">
-              No encontramos facturas con ese número.
+              No encontramos facturas ni comprobantes con ese número.
             </p>
           )}
-          {loadingMore && <p className="py-4 text-center text-sm text-teal-800">Cargando más facturas…</p>}
+          {loadingMore && <p className="py-4 text-center text-sm text-teal-800">Cargando más comprobantes…</p>}
           {error && <p className="py-5 text-center text-sm font-medium text-red-700" role="alert">{error}</p>}
         </div>
       </section>

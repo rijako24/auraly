@@ -32,6 +32,11 @@ public interface IWorkSessionStore
         WorkSessionIdentity identity,
         Guid workSessionId,
         CancellationToken cancellationToken);
+
+    Task<WorkSessionClosurePreviewView> PreviewClosureAsync(
+        WorkSessionIdentity identity,
+        Guid workSessionId,
+        CancellationToken cancellationToken);
     Task<IReadOnlyList<CashMovementReasonView>> ListCashReasonsAsync(
         WorkSessionIdentity identity,
         Guid businessId,
@@ -102,6 +107,9 @@ public sealed class WorkSessionService(
         if (request.CountedCash < 0)
             throw new WorkSessionValidationException(
                 "Counted cash cannot be negative.");
+        if (request.ClosedByUserId == Guid.Empty)
+            throw new WorkSessionValidationException(
+                "The supervisor identifier is invalid.");
         if (request.Note?.Trim().Length > 500)
             throw new WorkSessionValidationException(
                 "The closure note cannot exceed 500 characters.");
@@ -156,6 +164,17 @@ public sealed class WorkSessionService(
         if (workSessionId == Guid.Empty)
             throw new WorkSessionValidationException("WorkSessionId is required.");
         return store.GetClosureAsync(identity, workSessionId, cancellationToken);
+    }
+
+    public Task<WorkSessionClosurePreviewView> PreviewClosureAsync(
+        WorkSessionIdentity identity,
+        Guid workSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(identity, WorkSessionPermissionCodes.Close);
+        if (workSessionId == Guid.Empty)
+            throw new WorkSessionValidationException("WorkSessionId is required.");
+        return store.PreviewClosureAsync(identity, workSessionId, cancellationToken);
     }
 
     public Task<IReadOnlyList<CashMovementReasonView>> ListCashReasonsAsync(

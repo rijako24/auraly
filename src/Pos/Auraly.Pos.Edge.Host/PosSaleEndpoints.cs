@@ -157,6 +157,7 @@ internal static class PosSaleHostModule
             PosSaleCompletionService completion,
             PosSaleHostSettings settings,
             PosFiscalRuntimeSettings fiscalRuntime,
+            PosCashDrawer cashDrawer,
             PosSynchronizationSignal synchronization,
             PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
@@ -189,6 +190,9 @@ internal static class PosSaleHostModule
                         request.DocumentType),
                     ct);
                 synchronization.Signal(PosSynchronizationTrigger.LocalOutbox);
+                // The sale is already durably issued at this point. A missing or
+                // disconnected drawer must not turn a successful sale into a 409.
+                cashDrawer.TryOpen();
                 return Results.Ok(result);
             }
             catch (IOException error)

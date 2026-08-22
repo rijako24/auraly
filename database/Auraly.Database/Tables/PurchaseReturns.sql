@@ -35,7 +35,6 @@ CREATE TABLE [dbo].[PurchaseReturns]
     CONSTRAINT [UQ_PurchaseReturns_Business_Idempotency] UNIQUE ([BusinessId], [IdempotencyKey]),
     CONSTRAINT [CK_PurchaseReturns_Amounts] CHECK ([NetAmount] >= 0 AND [TaxAmount] >= 0 AND [TotalAmount] > 0 AND [TotalAmount] = [NetAmount] + [TaxAmount]),
     CONSTRAINT [CK_PurchaseReturns_Currency] CHECK ([CurrencyCode] = 'COP'),
-    CONSTRAINT [CK_PurchaseReturns_Reason] CHECK ([ReasonCode] IN (N'WrongProduct',N'ExcessQuantity',N'QualityIssue',N'Damaged',N'CommercialAgreement',N'ReceiptCorrection')),
     CONSTRAINT [CK_PurchaseReturns_Status] CHECK ([Status] IN (N'Accepted',N'Processed'))
 );
 GO

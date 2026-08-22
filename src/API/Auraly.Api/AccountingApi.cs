@@ -16,6 +16,10 @@ public static class AccountingApi
             await ExecuteAsync(() => service.ListPeriodsAsync(context.User.ToAccountingIdentity(), token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/account-mappings", async (HttpContext context, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ListMappingsAsync(context.User.ToAccountingIdentity(), token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/category-definitions", async (HttpContext context, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.ListCategoryDefinitionsAsync(context.User.ToAccountingIdentity(), token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapPut("/api/commerce/v1/accounting/defaults", async (HttpContext context, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.EnsureDefaultsAsync(context.User.ToAccountingIdentity(), token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapPost("/api/commerce/v1/accounting/accounts", async (HttpContext context, CreateAccountingAccountRequest request, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.CreateAccountAsync(context.User.ToAccountingIdentity(), request, token), value => Results.Created($"/api/commerce/v1/accounting/accounts/{value.AccountId:D}", value))).RequireAuthorization("accounting.user");
         endpoints.MapPost("/api/commerce/v1/accounting/cost-centers", async (HttpContext context, CreateCostCenterRequest request, AccountingService service, CancellationToken token) =>

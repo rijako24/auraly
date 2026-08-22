@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.IO.Ports;
 using System.Text.Json;
 using Auraly.Pos.Edge.Infrastructure;
 
@@ -42,16 +43,33 @@ public sealed record PosPrinterConfiguration(
     string OrderMode = OrderPrinterModes.BrowserPreview,
     IReadOnlyList<PrintTemplateRoute>? TemplateRoutes = null,
     string PosOutputFormat = PrintTemplateFormats.Receipt,
-    string OrdersOutputFormat = PrintTemplateFormats.HalfLetter)
+    string OrdersOutputFormat = PrintTemplateFormats.HalfLetter,
+    PosScaleConfiguration? Scale = null)
 {
     public static PosPrinterConfiguration Default { get; } =
-        new(PosPrinterModes.BrowserPreview, null, 80, null,
-            OrderPrinterModes.BrowserPreview);
+        new(PosPrinterModes.WindowsRaw, null, 80, null,
+            OrderPrinterModes.WindowsPrint);
 }
+
+public sealed record PosScaleConfiguration(
+    bool Enabled,
+    string PortName,
+    int BaudRate = 9600,
+    int DataBits = 8,
+    string Parity = "None",
+    string StopBits = "One",
+    bool SendsRequest = false,
+    string RequestText = "",
+    int StartIndex = 0,
+    int Length = 0,
+    bool Reverse = false,
+    bool DivideBy1000 = false,
+    int TimeoutMilliseconds = 2000);
 
 public sealed record PosPrinterConfigurationView(
     PosPrinterConfiguration Configuration,
-    IReadOnlyList<string> InstalledPrinters);
+    IReadOnlyList<string> InstalledPrinters,
+    IReadOnlyList<string> SerialPorts);
 
 public sealed class PosPrinterConfigurationStore(
     string settingsPath,
@@ -68,9 +86,14 @@ public sealed class PosPrinterConfigurationStore(
             if (!File.Exists(settingsPath)) return PosPrinterConfiguration.Default;
             try
             {
-                return JsonSerializer.Deserialize<PosPrinterConfiguration>(
-                           File.ReadAllText(settingsPath))
-                       ?? PosPrinterConfiguration.Default;
+                var stored = JsonSerializer.Deserialize<PosPrinterConfiguration>(
+                                 File.ReadAllText(settingsPath))
+                             ?? PosPrinterConfiguration.Default;
+                return stored with
+                {
+                    ReceiptMode = PosPrinterModes.WindowsRaw,
+                    OrderMode = OrderPrinterModes.WindowsPrint
+                };
             }
             catch (JsonException)
             {
@@ -84,6 +107,8 @@ public sealed class PosPrinterConfigurationStore(
         var mode = requested.ReceiptMode?.Trim() ?? string.Empty;
         if (!PosPrinterModes.IsValid(mode))
             throw new ArgumentException("El modo de impresion de tirilla no es valido.");
+        if (mode == PosPrinterModes.BrowserPreview)
+            throw new ArgumentException("La caja debe imprimir la tirilla directamente.");
         if (requested.ReceiptPaperWidthMillimeters is not (58 or 80))
             throw new ArgumentException("La tirilla debe ser de 58 u 80 mm.");
         var receipt = Clean(requested.ReceiptPrinterName);
@@ -91,10 +116,13 @@ public sealed class PosPrinterConfigurationStore(
         var orderMode = requested.OrderMode?.Trim() ?? string.Empty;
         if (!OrderPrinterModes.IsValid(orderMode))
             throw new ArgumentException("El modo de impresion de pedidos no es valido.");
+        if (orderMode == OrderPrinterModes.BrowserPreview)
+            throw new ArgumentException("La caja debe imprimir los pedidos directamente.");
         if (!IsWorkflowFormat(requested.PosOutputFormat) ||
             !IsWorkflowFormat(requested.OrdersOutputFormat))
             throw new ArgumentException("El formato debe ser tirilla o media carta.");
         var routes = NormalizeRoutes(requested.TemplateRoutes, receipt, letter);
+        var scale = ValidateScale(requested.Scale);
         if (mode == PosPrinterModes.WindowsRaw && routes.Any(route =>
                 route.Format == PrintTemplateFormats.Receipt &&
                 route.PrinterName is null))
@@ -109,7 +137,7 @@ public sealed class PosPrinterConfigurationStore(
         var value = new PosPrinterConfiguration(
             mode, receipt, requested.ReceiptPaperWidthMillimeters, letter,
             orderMode, routes,
-            requested.PosOutputFormat, requested.OrdersOutputFormat);
+            requested.PosOutputFormat, requested.OrdersOutputFormat, scale);
         lock (gate)
         {
             var directory = Path.GetDirectoryName(Path.GetFullPath(settingsPath));
@@ -123,6 +151,22 @@ public sealed class PosPrinterConfigurationStore(
 
     public IReadOnlyList<string> InstalledPrinters() =>
         WindowsPrinterDiscovery.GetInstalledPrinters();
+
+    public IReadOnlyList<string> SerialPorts() =>
+        SerialPort.GetPortNames().Order(StringComparer.OrdinalIgnoreCase).ToArray();
+
+    private static PosScaleConfiguration? ValidateScale(PosScaleConfiguration? scale)
+    {
+        if (scale is null || !scale.Enabled) return scale;
+        if (string.IsNullOrWhiteSpace(scale.PortName))
+            throw new ArgumentException("Selecciona el puerto COM de la balanza.");
+        if (scale.BaudRate <= 0 || scale.DataBits is < 5 or > 8)
+            throw new ArgumentException("La comunicación de la balanza no es válida.");
+        if (scale.StartIndex < 0 || scale.Length < 0 ||
+            scale.TimeoutMilliseconds is < 200 or > 10000)
+            throw new ArgumentException("La regla de lectura de la balanza no es válida.");
+        return scale with { PortName = scale.PortName.Trim(), RequestText = scale.RequestText ?? string.Empty };
+    }
 
     private static string? Clean(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();

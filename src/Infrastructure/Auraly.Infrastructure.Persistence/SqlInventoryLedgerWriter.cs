@@ -79,8 +79,6 @@ public sealed class SqlInventoryLedgerWriter(
                 THROW 51603,'A specified-cost issue requires negative quantity and unit cost.',1;
               SET @RecognizedUnitCost=@SpecifiedUnitCost;
               SET @ValueChange=CAST(@QuantityChange*@RecognizedUnitCost AS DECIMAL(19,4));
-              IF @ValueBefore+@ValueChange<0
-                THROW 51604,'Inventory value is insufficient for the specified-cost issue.',1;
               SET @ValueAfter=CASE WHEN @QuantityAfter=0 THEN 0
                 ELSE CAST(@ValueBefore+@ValueChange AS DECIMAL(19,4)) END;
               SET @AverageAfter=CASE WHEN @QuantityAfter=0 THEN 0

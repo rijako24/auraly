@@ -109,6 +109,7 @@ public sealed record PosLocalFiscalStatus(
 
 public sealed record PosIssuedSaleSummary(
     DocumentId DocumentId,
+    string DocumentType,
     string DocumentNumber,
     string FiscalNumber,
     DateTimeOffset IssuedAt,
@@ -783,6 +784,7 @@ public sealed class PosEdgeSaleStore
             var snapshot = PosSaleContractSerializer.Deserialize(row.FiscalSnapshotJson);
             return new PosIssuedSaleSummary(
                 new DocumentId(row.DocumentId),
+                snapshot.CommercialSnapshot.DocumentType,
                 row.DocumentNumber,
                 row.FiscalNumber,
                 row.IssuedAt,

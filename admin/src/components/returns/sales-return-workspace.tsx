@@ -1,6 +1,7 @@
 ﻿"use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { HandCoins, PackageCheck, ReceiptText, RotateCcw, Search, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
@@ -19,14 +20,7 @@ import { salesReturnsApi, type ReturnableSale, type ReturnableSaleListItem, type
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
-
-const reasons = [
-  ["CustomerChangedMind", "El cliente cambió de opinión"],
-  ["WrongProduct", "Producto equivocado"],
-  ["QualityIssue", "Problema de calidad"],
-  ["BillingCorrection", "Corrección de la venta"],
-  ["Other", "Otro motivo"],
-] as const;
+import { inventoryApi } from "@/services/api/inventory";
 
 export function SalesReturnWorkspace({ embedded = false }: { embedded?: boolean }) {
   const permissions = useAuthStore((state) => new Set(state.user?.permissions ?? []));
@@ -37,6 +31,7 @@ export function SalesReturnWorkspace({ embedded = false }: { embedded?: boolean 
   const [search, setSearch] = useState("");
   const [onlyAvailable, setOnlyAvailable] = useState(true);
   const [selected, setSelected] = useState<ReturnableSale>();
+  const searchInput = useRef<HTMLInputElement>(null);
   const list = useReturnableSales({
     page, pageSize, search: search.trim() || undefined,
     withAvailableQuantity: onlyAvailable || undefined,
@@ -58,10 +53,10 @@ export function SalesReturnWorkspace({ embedded = false }: { embedded?: boolean 
   };
 
   return <div className={embedded ? "space-y-4" : "space-y-6"}>
-    {!embedded && <header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end"><div><p className="text-sm font-medium text-primary">Ventas</p><h1 className="text-3xl font-semibold tracking-tight">Devoluciones de venta</h1><p className="mt-1 max-w-3xl text-muted-foreground">Busca la factura original. Auraly conserva sus precios e impuestos y compensa inventario, efectivo o cartera sin modificar la venta.</p></div><Badge className="w-fit" variant="outline"><ShieldCheck className="mr-2 h-4 w-4" /> Documento compensatorio DVT</Badge></header>}
+    {!embedded && <header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end"><div><p className="text-sm font-medium text-primary">Ventas</p><h1 className="text-3xl font-semibold tracking-tight">Devoluciones de venta</h1><p className="mt-1 max-w-3xl text-muted-foreground">Busca la factura original. Auraly conserva sus precios e impuestos y compensa inventario, efectivo o cartera sin modificar la venta.</p></div><div className="flex flex-wrap items-center gap-2"><Badge className="w-fit" variant="outline"><ShieldCheck className="mr-2 h-4 w-4" /> Documento compensatorio DVT</Badge><Button disabled={!canCreate} onClick={() => { setOnlyAvailable(true); setSearch(""); window.requestAnimationFrame(() => searchInput.current?.focus()); }}><RotateCcw className="mr-2 h-4 w-4"/>Nueva devolución de venta</Button></div></header>}
     {!embedded && <section className="grid gap-3 md:grid-cols-3"><Summary icon={ReceiptText} label="Facturas encontradas" value={String(list.data?.totalCount ?? 0)} /><Summary icon={PackageCheck} label="Inventario" value="Reingreso controlado" /><Summary icon={HandCoins} label="Resolución" value="Efectivo o saldo cliente" /></section>}
     <section className="flex flex-col gap-3 rounded-2xl border bg-card p-4 md:flex-row">
-      <div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input className="pl-9" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Número Auraly, número DIAN, CUFE, cliente o producto" /></div>
+      <div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input ref={searchInput} className="pl-9" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Busca la factura que vas a devolver" /></div>
       <Button variant={onlyAvailable ? "secondary" : "outline"} onClick={() => { setOnlyAvailable((value) => !value); setPage(1); }}>Solo con saldo</Button>
     </section>
     <DataTable columns={columns} data={list.data?.items ?? []} isLoading={list.isLoading} page={list.data?.page} pageSize={list.data?.pageSize} pageCount={list.data?.totalPages} totalItems={list.data?.totalCount} enableRowSelection={false} onPaginationChange={(next, size) => { setPage(next); setPageSize(size); }} onRowClick={canCreate ? open : undefined} />
@@ -72,7 +67,8 @@ export function SalesReturnWorkspace({ embedded = false }: { embedded?: boolean 
 function SalesReturnEditor({ sale, open, canConfirm, onClose }: { sale?: ReturnableSale; open: boolean; canConfirm: boolean; onClose: () => void }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const confirm = useConfirmSalesReturn();
-  const [reasonCode, setReasonCode] = useState("CustomerChangedMind");
+  const reasonsQuery = useQuery({queryKey:["business-reasons","SalesReturn"],queryFn:()=>inventoryApi.businessReasons("SalesReturn"),enabled:open});
+  const [reasonCode, setReasonCode] = useState("");
   const [reasonDescription, setReasonDescription] = useState("");
   const [notes, setNotes] = useState("");
   const [resolution, setResolution] = useState<SalesReturnResolution>(sale?.customerId ? "CustomerCredit" : "Refund");
@@ -87,6 +83,7 @@ function SalesReturnEditor({ sale, open, canConfirm, onClose }: { sale?: Returna
   const cashPayments = sale.payments.filter((payment) => payment.methodCode === "Cash" && payment.availableAmount > 0);
 
   const submit = async () => {
+    if (!reasonCode) { toast.error("Selecciona un motivo de devolución."); return; }
     if (!reasonDescription.trim()) { toast.error("Describe brevemente el motivo de la devolución."); return; }
     if (chosen.length === 0) { toast.error("Indica al menos una cantidad por devolver."); return; }
     if (!selection.isValid) { toast.error("Una cantidad supera el saldo disponible."); return; }
@@ -115,9 +112,9 @@ function SalesReturnEditor({ sale, open, canConfirm, onClose }: { sale?: Returna
 
   return <Dialog open={open} onOpenChange={(value) => { if (!value) onClose(); }}><DialogContent className="max-h-[94dvh] max-w-6xl overflow-y-auto"><DialogHeader><DialogTitle className="flex items-center gap-2"><RotateCcw className="h-5 w-5 text-primary" /> Nueva devolución</DialogTitle><DialogDescription>{sale.documentNumber} · DIAN {sale.fiscalNumber} · {sale.customerName} · {sale.warehouseName}</DialogDescription></DialogHeader>
     <div className="overflow-hidden rounded-2xl border"><div className="grid grid-cols-[minmax(0,1fr)_7rem_7rem_8rem_12rem] gap-3 bg-muted/60 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><span>Producto</span><span>Vendido</span><span>Disponible</span><span>Devolver</span><span>Destino</span></div>{sale.lines.map((line) => <div key={line.originalLineNumber} className="grid grid-cols-[minmax(0,1fr)_7rem_7rem_8rem_12rem] items-center gap-3 border-t px-4 py-3"><div><p className="font-medium">{line.description}</p><p className="text-xs text-muted-foreground">{line.productCode}{line.reference ? ` · ${line.reference}` : ""} · {formatCurrency(line.unitPrice)} · IVA {line.taxRate}%</p></div><span>{line.soldQuantity}</span><span className="font-semibold text-primary">{line.availableQuantity}</span><Input type="number" min={0} max={line.availableQuantity} step="0.000001" disabled={line.availableQuantity <= 0} value={quantities[line.originalLineNumber] ?? ""} onChange={(event) => setQuantities((current) => ({ ...current, [line.originalLineNumber]: Math.max(0, Number(event.target.value)) }))} /><Select value={dispositions[line.originalLineNumber] ?? "Sellable"} onValueChange={(value) => setDispositions((current) => ({ ...current, [line.originalLineNumber]: value as SalesReturnDisposition }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="Sellable">Vuelve a inventario</SelectItem><SelectItem value="NotReturned">Sin retorno físico</SelectItem></SelectContent></Select></div>)}</div>
-    <div className="grid gap-4 lg:grid-cols-[16rem_minmax(0,1fr)_18rem]"><div className="space-y-2"><Label>Motivo</Label><Select value={reasonCode} onValueChange={setReasonCode}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{reasons.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div><div className="space-y-2"><Label>Descripción del motivo</Label><Input maxLength={300} value={reasonDescription} onChange={(event) => setReasonDescription(event.target.value)} placeholder="Qué ocurrió y por qué se devuelve" /></div><Card className="border-primary/20 bg-primary/5"><CardContent className="p-4"><p className="text-xs uppercase tracking-wide text-muted-foreground">Valor estimado</p><p className="text-2xl font-semibold">{formatCurrency(estimated)}</p><p className="text-xs text-muted-foreground">El servidor conserva el redondeo original.</p></CardContent></Card></div>
+    <div className="grid gap-4 lg:grid-cols-[16rem_minmax(0,1fr)_18rem]"><div className="space-y-2"><Label>Motivo</Label><Select value={reasonCode} onValueChange={setReasonCode}><SelectTrigger><SelectValue placeholder="Selecciona un motivo" /></SelectTrigger><SelectContent>{(reasonsQuery.data??[]).map(item => <SelectItem key={item.inventoryReasonId} value={item.code}>{item.name}</SelectItem>)}</SelectContent></Select></div><div className="space-y-2"><Label>Descripción del motivo</Label><Input maxLength={300} value={reasonDescription} onChange={(event) => setReasonDescription(event.target.value)} placeholder="Qué ocurrió y por qué se devuelve" /></div><Card className="border-primary/20 bg-primary/5"><CardContent className="p-4"><p className="text-xs uppercase tracking-wide text-muted-foreground">Valor estimado</p><p className="text-2xl font-semibold">{formatCurrency(estimated)}</p><p className="text-xs text-muted-foreground">El servidor conserva el redondeo original.</p></CardContent></Card></div>
     <div className="grid gap-4 lg:grid-cols-3"><div className="space-y-2"><Label>Resolución económica</Label><Select value={resolution} onValueChange={(value) => setResolution(value as SalesReturnResolution)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{sale.customerId && <SelectItem value="CustomerCredit">Aplicar a cartera / saldo a favor</SelectItem>}<SelectItem value="Refund">Devolver efectivo</SelectItem></SelectContent></Select></div>{resolution === "Refund" && <div className="space-y-2"><Label>Pago original en efectivo</Label><Select value={paymentNumber} onValueChange={setPaymentNumber}><SelectTrigger><SelectValue placeholder="Selecciona el pago" /></SelectTrigger><SelectContent>{cashPayments.map((payment) => <SelectItem key={payment.paymentNumber} value={String(payment.paymentNumber)}>Pago {payment.paymentNumber} · disponible {formatCurrency(payment.availableAmount)}</SelectItem>)}</SelectContent></Select></div>}<div className="space-y-2"><Label>Notas internas</Label><Textarea maxLength={1000} value={notes} onChange={(event) => setNotes(event.target.value)} /></div></div>
-    <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button disabled={!canConfirm || chosen.length === 0 || confirm.isPending} onClick={submit}><RotateCcw className="mr-2 h-4 w-4" /> {confirm.isPending ? "Confirmando..." : "Confirmar devolución"}</Button></DialogFooter>
+    <DialogFooter><Button variant="outline" onClick={onClose}>Cancelar</Button><Button disabled={!canConfirm || !reasonCode || chosen.length === 0 || confirm.isPending} onClick={submit}><RotateCcw className="mr-2 h-4 w-4" /> {confirm.isPending ? "Confirmando..." : "Confirmar devolución"}</Button></DialogFooter>
   </DialogContent></Dialog>;
 }
 

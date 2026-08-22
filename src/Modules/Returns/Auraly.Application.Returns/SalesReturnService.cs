@@ -51,8 +51,8 @@ public sealed class SalesReturnService(
         if (request.EconomicResolution == ReturnEconomicResolutions.CustomerCredit &&
             request.OriginalPaymentNumber is not null)
             throw new SalesReturnValidationException("Customer credit cannot reference a payment to refund.");
-        if (!SalesReturnReasonCodes.All.Contains(request.ReasonCode))
-            throw new SalesReturnValidationException("The return reason code is invalid.");
+        if (string.IsNullOrWhiteSpace(request.ReasonCode) || request.ReasonCode.Trim().Length > 40)
+            throw new SalesReturnValidationException("The return reason code is required.");
         if (request.Notes?.Trim().Length > 1000)
             throw new SalesReturnValidationException("Return notes cannot exceed 1000 characters.");
         if (string.IsNullOrWhiteSpace(request.ReasonDescription) ||
