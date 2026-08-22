@@ -40,7 +40,7 @@ public sealed record PosPrinterConfiguration(
     string? ReceiptPrinterName,
     int ReceiptPaperWidthMillimeters,
     string? LetterPrinterName,
-    string OrderMode = OrderPrinterModes.BrowserPreview,
+    string OrderMode = OrderPrinterModes.WindowsPrint,
     IReadOnlyList<PrintTemplateRoute>? TemplateRoutes = null,
     string PosOutputFormat = PrintTemplateFormats.Receipt,
     string OrdersOutputFormat = PrintTemplateFormats.HalfLetter,
