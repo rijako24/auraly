@@ -36,7 +36,6 @@ public sealed class PosCustomerSelectionService(
                 price.Amount,
                 price.CurrencyCode,
                 price.Source,
-                price.PriceListId,
                 price.PriceChannelId));
         }
         var updated = await drafts.AssignCustomerAndPricesAsync(

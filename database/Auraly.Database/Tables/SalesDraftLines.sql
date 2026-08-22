@@ -12,7 +12,6 @@ CREATE TABLE [dbo].[SalesDraftLines] (
     [UnitPrice] DECIMAL(18, 2) NOT NULL,
     [CurrencyCode] NVARCHAR(3) NOT NULL,
     [PriceSource] NVARCHAR(24) NOT NULL,
-    [PriceListId] UNIQUEIDENTIFIER NULL,
     [PriceChannelId] UNIQUEIDENTIFIER NULL,
     [DiscountAmount] DECIMAL(18, 2) NOT NULL CONSTRAINT [DF_SalesDraftLines_Discount] DEFAULT 0,
     [Note] NVARCHAR(300) NULL,
@@ -24,8 +23,7 @@ CREATE TABLE [dbo].[SalesDraftLines] (
     CONSTRAINT [CK_SalesDraftLines_Quantity] CHECK ([Quantity] > 0),
     CONSTRAINT [CK_SalesDraftLines_Amounts]
         CHECK ([BaseUnitPrice] >= 0 AND [UnitPrice] >= 0 AND [DiscountAmount] >= 0),
-    CONSTRAINT [CK_SalesDraftLines_TaxRate] CHECK ([TaxRate] >= 0),
-    CONSTRAINT [CK_SalesDraftLines_PriceAssignment] CHECK ([PriceListId] IS NULL OR [PriceChannelId] IS NULL)
+    CONSTRAINT [CK_SalesDraftLines_TaxRate] CHECK ([TaxRate] >= 0)
 );
 GO
 

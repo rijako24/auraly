@@ -26,7 +26,7 @@ public sealed class PosCaptureServiceTests
 
             Assert.True(result.Added);
             Assert.Equal(80m, result.Draft!.Lines.Single().UnitPrice);
-            Assert.Equal("PriceList", result.Draft.Lines.Single().PriceSource);
+            Assert.Equal("PriceChannel", result.Draft.Lines.Single().PriceSource);
             Assert.Single(availability.Requests);
             Assert.Equal(1m, availability.Requests[0].Quantity);
             Assert.Equal(
@@ -111,11 +111,10 @@ public sealed class PosCaptureServiceTests
                 new CatalogBootstrapPage(sessionId, 0, null, false, hash, items));
             await catalog.PromoteBootstrapAsync();
             var customerId = Guid.NewGuid();
-            var priceListId = Guid.NewGuid();
+            var priceChannelId = Guid.NewGuid();
             await catalog.ApplyPricingSnapshotAsync(new PosPricingSnapshot(
-                [new(priceListId, productId, 1m, 80m, "COP")],
-                [],
-                [new(customerId, "1", "Customer", priceListId, null, true)]));
+                [new(priceChannelId, productId, 1m, 80m, "COP", false)],
+                [new(customerId, "1", "Customer", priceChannelId, true)]));
 
             var drafts = new PosDraftStore(
                 $"Data Source={path}",

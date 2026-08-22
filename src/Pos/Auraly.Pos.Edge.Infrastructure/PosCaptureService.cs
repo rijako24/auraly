@@ -77,7 +77,6 @@ public sealed class PosCaptureService(
                 price.Amount,
                 price.CurrencyCode,
                 price.Source,
-                price.PriceListId,
                 price.PriceChannelId),
             cancellationToken);
         updated = await RepriceAsync(
@@ -154,7 +153,6 @@ public sealed class PosCaptureService(
                 price.Amount,
                 price.CurrencyCode,
                 price.Source,
-                price.PriceListId,
                 price.PriceChannelId));
         }
         return await drafts.AssignCustomerAndPricesAsync(

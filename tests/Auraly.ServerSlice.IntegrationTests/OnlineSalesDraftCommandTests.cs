@@ -16,8 +16,8 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
         var userId = Guid.NewGuid();
         var partyId = Guid.NewGuid();
         var customerId = Guid.NewGuid();
-        var priceListId = Guid.NewGuid();
-        var priceListItemId = Guid.NewGuid();
+        var priceChannelId = Guid.NewGuid();
+        var priceChannelItemId = Guid.NewGuid();
         var barcodeId = Guid.NewGuid();
         var barcode = $"770{Random.Shared.NextInt64(1_000_000_000, 9_999_999_999)}";
         await ExecuteAsync(
@@ -33,26 +33,26 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
               PartyId,TenantId,PartyType,DisplayName,CompletionStatus,IsActive,
               CreatedBy,CreatedAt)
             VALUES(
-              @PartyId,@TenantId,N'NaturalPerson',N'Cliente lista online',
+              @PartyId,@TenantId,N'NaturalPerson',N'Cliente canal online',
               N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.Customers(
               CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
             VALUES(
               @CustomerId,@PartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
-            INSERT dbo.PriceLists(
-              PriceListId,BusinessId,Code,Name,IsActive,CreatedAt)
+            INSERT dbo.PriceChannels(
+              PriceChannelId,BusinessId,Code,Name,Strategy,IsActive,CreatedAt)
             VALUES(
-              @PriceListId,@BusinessId,@ListCode,N'Lista online',1,SYSDATETIMEOFFSET());
-            INSERT dbo.PriceListItems(
-              PriceListItemId,PriceListId,ProductId,MinimumQuantity,Amount,
+              @PriceChannelId,@BusinessId,@ChannelCode,N'Canal online',N'TieredProductPrice',1,SYSDATETIMEOFFSET());
+            INSERT dbo.ResolvedPriceChannelItems(
+              ResolvedPriceChannelItemId,PriceChannelId,ProductId,MinimumQuantity,Amount,
               CurrencyCode,ValidFrom,IsActive,CreatedAt)
             VALUES(
-              @PriceListItemId,@PriceListId,@ProductId,1,8000,N'COP',
+              @PriceChannelItemId,@PriceChannelId,@ProductId,1,8000,N'COP',
               DATEADD(day,-1,SYSDATETIMEOFFSET()),1,SYSDATETIMEOFFSET());
             INSERT dbo.CustomerPricingSettings(
-              CustomerId,PriceListId,UpdatedBy,UpdatedAt)
+              CustomerId,PriceChannelId,UpdatedBy,UpdatedAt)
             VALUES(
-              @CustomerId,@PriceListId,@UserId,SYSDATETIMEOFFSET());
+              @CustomerId,@PriceChannelId,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.ProductBarcodes(
               ProductBarcodeId,BusinessId,ProductId,Barcode,IsPrimary,IsActive,CreatedAt)
             VALUES(
@@ -65,9 +65,9 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             new("@PartyId", partyId),
             new("@CustomerId", customerId),
             new("@BusinessId", fixture.BusinessId),
-            new("@PriceListId", priceListId),
-            new("@ListCode", $"L-{priceListId:N}"[..20]),
-            new("@PriceListItemId", priceListItemId),
+            new("@PriceChannelId", priceChannelId),
+            new("@ChannelCode", $"C-{priceChannelId:N}"[..20]),
+            new("@PriceChannelItemId", priceChannelItemId),
             new("@ProductId", fixture.ProductId),
             new("@BarcodeId", barcodeId),
             new("@Barcode", barcode));
@@ -99,7 +99,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
         Assert.Equal(customerId, selected.Customer.CustomerId);
         var customerLine = Assert.Single(selected.Draft.Lines);
         Assert.Equal(8_000m, customerLine.UnitPrice);
-        Assert.Equal("PriceList", customerLine.PriceSource);
+        Assert.Equal("PriceChannel", customerLine.PriceSource);
 
         var discounted = await MutateAsync<OnlineSalesDraft>(
             client,

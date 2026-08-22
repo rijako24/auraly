@@ -9,7 +9,7 @@ namespace Auraly.Foundation.Tests;
 public sealed class PosPricingStoreTests
 {
     [Fact]
-    public async Task Local_resolver_uses_list_then_channel_and_always_falls_back_to_business_price()
+    public async Task Local_resolver_uses_channel_quantity_tiers_and_always_falls_back_to_business_price()
     {
         var path = Path.Combine(Path.GetTempPath(), $"auraly-pricing-{Guid.NewGuid():N}.db");
         try
@@ -31,34 +31,24 @@ public sealed class PosPricingStoreTests
                 new CatalogBootstrapPage(sessionId, 0, null, false, hash, items));
             await store.PromoteBootstrapAsync();
 
-            var listId = Guid.NewGuid();
             var channelId = Guid.NewGuid();
-            var listCustomer = Guid.NewGuid();
             var channelCustomer = Guid.NewGuid();
             var excludedCustomer = Guid.NewGuid();
             await store.ApplyPricingSnapshotAsync(new PosPricingSnapshot(
                 [
-                    new(listId, productId, 1m, 90m, "COP"),
-                    new(listId, productId, 5m, 80m, "COP")
+                    new(channelId, productId, 1m, 90m, "COP", false),
+                    new(channelId, productId, 5m, 80m, "COP", false)
                 ],
                 [
-                    new(channelId, productId, 85m, "COP", false)
-                ],
-                [
-                    new(listCustomer, "1", "List customer", listId, null, true),
-                    new(channelCustomer, "2", "Channel customer", null, channelId, true),
-                    new(excludedCustomer, "3", "Missing channel item", null, Guid.NewGuid(), true)
+                    new(channelCustomer, "2", "Channel customer", channelId, true),
+                    new(excludedCustomer, "3", "Missing channel item", Guid.NewGuid(), true)
                 ]));
 
-            var listOne = await store.ResolvePriceAsync(productId, listCustomer, 1m);
-            Assert.Equal("PriceList", listOne.Source);
-            Assert.Equal(90m, listOne.Amount);
-            var listFive = await store.ResolvePriceAsync(productId, listCustomer, 5m);
-            Assert.Equal(80m, listFive.Amount);
-
-            var channel = await store.ResolvePriceAsync(productId, channelCustomer, 1m);
-            Assert.Equal("PriceChannel", channel.Source);
-            Assert.Equal(85m, channel.Amount);
+            var channelOne = await store.ResolvePriceAsync(productId, channelCustomer, 1m);
+            Assert.Equal("PriceChannel", channelOne.Source);
+            Assert.Equal(90m, channelOne.Amount);
+            var channelFive = await store.ResolvePriceAsync(productId, channelCustomer, 5m);
+            Assert.Equal(80m, channelFive.Amount);
 
             var missingSpecial = await store.ResolvePriceAsync(productId, excludedCustomer, 1m);
             Assert.Equal("Base", missingSpecial.Source);
@@ -73,24 +63,4 @@ public sealed class PosPricingStoreTests
         }
     }
 
-    [Fact]
-    public async Task Local_customer_cannot_have_price_list_and_channel_at_the_same_time()
-    {
-        var path = Path.Combine(Path.GetTempPath(), $"auraly-pricing-exclusive-{Guid.NewGuid():N}.db");
-        try
-        {
-            var store = new PosCatalogStore($"Data Source={path}");
-            await store.InitializeAsync();
-            await Assert.ThrowsAsync<Microsoft.Data.Sqlite.SqliteException>(() =>
-                store.ApplyPricingSnapshotAsync(new PosPricingSnapshot(
-                    [],
-                    [],
-                    [new(Guid.NewGuid(), "1", "Invalid", Guid.NewGuid(), Guid.NewGuid(), true)])));
-        }
-        finally
-        {
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-            if (File.Exists(path)) File.Delete(path);
-        }
-    }
 }

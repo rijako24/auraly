@@ -11,13 +11,13 @@ async function login(page: Page) {
   }, { tenantId, businessId });
 }
 
-test("listas y canales administra condiciones y cada guardado cierra su modal", async ({ page }) => {
+test("canales administra precios por cantidad y modos calculados sin listas", async ({ page }) => {
   test.setTimeout(120_000);
-  const listId = "99999999-9999-7999-8999-999999999999";
+  const tierChannelId = "99999999-9999-7999-8999-999999999999";
   const productId = "77777777-7777-7777-7777-777777777777";
   let segments: Array<Record<string, unknown>> = [
-    { id: listId, kind: "PriceList", code: "MAYORISTA", name: "Mayoristas", strategy: null, value: null, isActive: true, createdAt: "2026-08-14T10:00:00Z", productCount: 0, customerCount: 2 },
-    { id: "88888888-8888-7888-8888-888888888888", kind: "PriceChannel", code: "WEB", name: "Tienda web", strategy: "PercentageOverBasePrice", value: -5, isActive: true, createdAt: "2026-08-14T10:00:00Z", productCount: 0, customerCount: 0 },
+    { id: tierChannelId, code: "MAYORISTA", name: "Mayoristas", strategy: "TieredProductPrice", value: null, isActive: true, createdAt: "2026-08-14T10:00:00Z", productCount: 0, customerCount: 2 },
+    { id: "88888888-8888-7888-8888-888888888888", code: "WEB", name: "Tienda web", strategy: "PercentageOverBasePrice", value: -5, isActive: true, createdAt: "2026-08-14T10:00:00Z", productCount: 0, customerCount: 0 },
   ];
   let savedItem: Record<string, unknown> | null = null;
   let createdRequest: Record<string, unknown> | null = null;
@@ -36,9 +36,9 @@ test("listas y canales administra condiciones y cada guardado cierra su modal", 
       return;
     }
     if (request.method() === "POST") {
-      const body = request.postDataJSON() as { kind: "PriceList" | "PriceChannel"; name: string; channelStrategy?: string; channelValue?: number | null; items?: unknown[] };
+      const body = request.postDataJSON() as { name: string; channelStrategy: string; channelValue?: number | null; items?: unknown[] };
       createdRequest = body as unknown as Record<string, unknown>;
-      const created = { id: crypto.randomUUID(), kind: body.kind, code: body.kind === "PriceList" ? "LST-AUTO" : "CNL-AUTO", name: body.name, isActive: true, createdAt: new Date().toISOString(), productCount: body.items?.length ?? 0, customerCount: 0, strategy: body.channelStrategy ?? null, value: body.channelValue ?? null };
+      const created = { id: crypto.randomUUID(), code: "CNL-AUTO", name: body.name, isActive: true, createdAt: new Date().toISOString(), productCount: body.items?.length ?? 0, customerCount: 0, strategy: body.channelStrategy, value: body.channelValue ?? null };
       segments = [...segments, created];
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(created) });
       return;
@@ -83,11 +83,17 @@ test("listas y canales administra condiciones y cada guardado cierra su modal", 
 
   await login(page);
   await page.goto("/dashboard/products/price-segments");
-  await expect(page.getByRole("heading", { name: "Listas y canales comerciales" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Canales de precios" })).toBeVisible();
+  await expect(page.getByText(/lista de precios/i)).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Nueva lista o canal" }).click();
-  const createDialog = page.getByRole("dialog", { name: "Nueva lista o canal" });
+  await page.getByRole("button", { name: "Nuevo canal" }).click();
+  const createDialog = page.getByRole("dialog", { name: "Nuevo canal de precios" });
   await expect(createDialog.getByText("Código *", { exact: true })).toHaveCount(0);
+  await expect(createDialog.getByRole("button", { name: "Precios por producto y cantidad" })).toBeVisible();
+  await expect(createDialog.getByRole("button", { name: "% sobre precio público" })).toBeVisible();
+  await expect(createDialog.getByRole("button", { name: "% sobre costo promedio" })).toBeVisible();
+  await expect(createDialog.getByRole("button", { name: "Margen sobre costo promedio" })).toBeVisible();
+  await expect(createDialog.getByRole("button", { name: "Vender al costo promedio" })).toBeVisible();
   await createDialog.getByText("Nombre *", { exact: true }).locator("..").getByRole("textbox").fill("Distribuidores");
   await createDialog.getByPlaceholder(/Código interno/).fill("Aceite");
   await expect(createDialog.getByRole("button", { name: "Agregar", exact: true })).toBeEnabled();
@@ -95,10 +101,10 @@ test("listas y canales administra condiciones y cada guardado cierra su modal", 
   await expect(createDialog.getByText("Aceite vegetal 3000 ml", { exact: true })).toBeVisible();
   await createDialog.getByText("Desde cantidad", { exact: true }).locator("..").locator("input").fill("3");
   await createDialog.getByRole("button", { name: "Agregar precio" }).click();
-  await createDialog.getByRole("button", { name: /Crear lista · 1 precios/ }).click();
+  await createDialog.getByRole("button", { name: /Crear canal · 1 precios/ }).click();
   await expect(createDialog).toBeHidden();
   await expect(page.getByRole("dialog", { name: "Distribuidores" })).toBeVisible();
-  expect(createdRequest).toMatchObject({ kind: "PriceList", name: "Distribuidores", items: [{ productId, amount: 29500, minimumQuantity: 3 }] });
+  expect(createdRequest).toMatchObject({ name: "Distribuidores", channelStrategy: "TieredProductPrice", items: [{ productId, amount: 29500, minimumQuantity: 3 }] });
   await page.keyboard.press("Escape");
   await expect(page.getByRole("cell", { name: "Distribuidores" })).toBeVisible();
 
@@ -119,18 +125,12 @@ test("listas y canales administra condiciones y cada guardado cierra su modal", 
   expect(savedItem).toMatchObject({ amount: 29500, minimumQuantity: 12, excluded: false });
 
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Nueva lista o canal" }).click();
-  const channelDialog = page.getByRole("dialog", { name: "Nueva lista o canal" });
-  await channelDialog.getByRole("button", { name: "Canal" }).click();
-  await expect(channelDialog.getByRole("button", { name: "% sobre precio público" })).toBeVisible();
-  await expect(channelDialog.getByRole("button", { name: "% sobre costo promedio" })).toBeVisible();
-  await expect(channelDialog.getByRole("button", { name: "Margen sobre costo promedio" })).toBeVisible();
-  await expect(channelDialog.getByRole("button", { name: "Vender al costo promedio" })).toBeVisible();
-  await expect(channelDialog.getByRole("button", { name: "Precio especial por producto" })).toBeVisible();
+  await page.getByRole("button", { name: "Nuevo canal" }).click();
+  const channelDialog = page.getByRole("dialog", { name: "Nuevo canal de precios" });
   await channelDialog.getByText("Nombre *", { exact: true }).locator("..").getByRole("textbox").fill("Distribuidores costo");
   await channelDialog.getByRole("button", { name: "Margen sobre costo promedio" }).click();
   await channelDialog.getByText("Margen objetivo (%)", { exact: true }).locator("..").locator("input").fill("22");
   await channelDialog.getByRole("button", { name: "Crear canal" }).click();
   await expect(channelDialog).toBeHidden();
-  expect(createdRequest).toMatchObject({ kind: "PriceChannel", name: "Distribuidores costo", channelStrategy: "FixedMarginOverAverageCost", channelValue: 22 });
+  expect(createdRequest).toMatchObject({ name: "Distribuidores costo", channelStrategy: "FixedMarginOverAverageCost", channelValue: 22 });
 });

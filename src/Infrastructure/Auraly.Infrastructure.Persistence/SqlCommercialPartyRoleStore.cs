@@ -25,19 +25,15 @@ public sealed class SqlCommercialPartyRoleStore(SqlServerConnectionFactory conne
         command.CommandText = """
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId AND IsActive=1)
               THROW 51060,'Business is outside the authenticated tenant.',1;
-            SELECT PriceListId,Code,Name FROM dbo.PriceLists WHERE BusinessId=@BusinessId AND IsActive=1 ORDER BY Name;
             SELECT PriceChannelId,Code,Name FROM dbo.PriceChannels WHERE BusinessId=@BusinessId AND IsActive=1 ORDER BY Name;
             """;
         command.Parameters.AddRange([P("@BusinessId", actor.BusinessId), P("@TenantId", actor.TenantId)]);
         try
         {
             await using var reader = await command.ExecuteReaderAsync(ct);
-            var lists = new List<CustomerPricingOption>();
-            while (await reader.ReadAsync(ct)) lists.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2)));
-            await reader.NextResultAsync(ct);
             var channels = new List<CustomerPricingOption>();
             while (await reader.ReadAsync(ct)) channels.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2)));
-            return new(lists, channels);
+            return new(channels);
         }
         catch (SqlException ex) when (ex.Number == 51060) { throw new PartyForbiddenException(ex.Message); }
     }

@@ -57,7 +57,7 @@ public sealed record PartySiteInput(
     decimal? Latitude = null,
     decimal? Longitude = null);
 
-public sealed record CustomerPricingInput(Guid? PriceListId, Guid? PriceChannelId);
+public sealed record CustomerPricingInput(Guid? PriceChannelId);
 
 public sealed record CreateCustomerRequest(
     Guid OperationId,
@@ -117,7 +117,6 @@ public sealed record CustomerDetail(
     string? LastName,
     string? Email,
     string? Phone,
-    Guid? PriceListId,
     Guid? PriceChannelId,
     bool IsActive,
     IReadOnlyCollection<PartySiteDetail> Sites,

@@ -105,7 +105,7 @@ public sealed class PosCustomerServerClientTests
                 ]);
             if (path.StartsWith($"/api/pos/v1/customers/geography/divisions/{divisionId:D}/cities?", StringComparison.Ordinal))
                 return Ok<IReadOnlyCollection<CityItem>>([
-                    new CityItem(cityId, divisionId, "MED", "Medellín", true)
+                    new CityItem(cityId, divisionId, "MED", "Medellï¿½n", true)
                 ]);            if (path == "/api/pos/v1/customers" && request.Method == HttpMethod.Post)
             {
                 var input = await request.Content!.ReadFromJsonAsync<CreateCustomerRequest>(cancellationToken);
@@ -116,11 +116,11 @@ public sealed class PosCustomerServerClientTests
                     customerId, Guid.NewGuid(), businessId, PartyTypes.NaturalPerson,
                     "CC", "1.234.567", "1234567", null, "Cliente POS nuevo",
                     null, "Cliente", "Nuevo", "cliente@auraly.test", "3001234567",
-                    null, null, true, []));
+                    null, true, []));
             }
             if (path.StartsWith("/api/pos/v1/pricing/snapshot?", StringComparison.Ordinal))
-                return Ok(new PosPricingSnapshot([], [], [
-                    new PosCustomerPricing(customerId, "1.234.567", "Cliente POS nuevo", null, null, true)
+                return Ok(new PosPricingSnapshot([], [
+                    new PosCustomerPricing(customerId, "1.234.567", "Cliente POS nuevo", null, true)
                 ]));
             if (path.StartsWith("/api/pos/v1/catalog/changes?", StringComparison.Ordinal))
                 return Ok(new CatalogDeltaPage(0, 0, false, []));

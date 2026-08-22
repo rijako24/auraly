@@ -87,7 +87,7 @@ public sealed record CreateSellerRequest(Guid OperationId, Guid BusinessId, Part
 public sealed record CreateCarrierRequest(Guid OperationId, Guid BusinessId, PartyInput Party, PartySiteInput PrimarySite, string Code, string TransportationMode);
 public sealed record CommercialRoleAcceptance(Guid RoleId, Guid PartyId, string Role, bool IdempotentReplay);
 public sealed record CustomerPricingOption(Guid Id, string Code, string Name);
-public sealed record CustomerPricingOptions(IReadOnlyCollection<CustomerPricingOption> PriceLists, IReadOnlyCollection<CustomerPricingOption> PriceChannels);
+public sealed record CustomerPricingOptions(IReadOnlyCollection<CustomerPricingOption> PriceChannels);
 public sealed record PartyWorkspaceSiteDetail(
     Guid PartySiteId,
     string Code,
@@ -110,7 +110,6 @@ public sealed record PartyWorkspaceSiteDetail(
 
 public sealed record CustomerRoleDetail(
     Guid CustomerId,
-    Guid? PriceListId,
     Guid? PriceChannelId,
     bool IsActive,
     bool RequiresElectronicInvoice = false);

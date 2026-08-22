@@ -436,13 +436,13 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Selected_customer_price_list_reprices_separate_scan_lines_by_total_quantity()
+    public async Task Selected_customer_channel_reprices_separate_scan_lines_by_total_quantity()
     {
         var customers = await Client.GetFromJsonAsync<CustomerSearchPageContract>(
             "/edge/v1/customers?search=400&take=50");
         var customer = Assert.Single(customers!.Items);
-        Assert.Equal("Cliente lista POS", customer.Name);
-        Assert.NotNull(customer.PriceListId);
+        Assert.Equal("Cliente canal escalonado POS", customer.Name);
+        Assert.NotNull(customer.PriceChannelId);
 
         var active = await Client.GetFromJsonAsync<PosDraft>("/edge/v1/drafts/active");
         var selectedResponse = await Client.PutAsJsonAsync(
@@ -458,7 +458,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         var firstLine = Assert.Single(first!.Draft!.Lines);
         Assert.Equal(1m, firstLine.Quantity);
         Assert.Equal(90m, firstLine.UnitPrice);
-        Assert.Equal("PriceList", firstLine.PriceSource);
+        Assert.Equal("PriceChannel", firstLine.PriceSource);
 
         var secondResponse = await Client.PostAsJsonAsync(
             "/edge/v1/capture",
@@ -477,7 +477,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         var repriced = await quantityResponse.Content.ReadFromJsonAsync<PosCaptureResult>();
         Assert.Equal(new[] { 1m, 2m }, repriced!.Draft!.Lines.Select(line => line.Quantity).Order().ToArray());
         Assert.All(repriced.Draft.Lines, line => Assert.Equal(70m, line.UnitPrice));
-        Assert.All(repriced.Draft.Lines, line => Assert.Equal("PriceList", line.PriceSource));
+        Assert.All(repriced.Draft.Lines, line => Assert.Equal("PriceChannel", line.PriceSource));
     }
 
     [Fact]
@@ -576,8 +576,8 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     {
         var customerId = Guid.NewGuid();
         var priceChannelId = Guid.NewGuid();
-        var listCustomerId = Guid.NewGuid();
-        var priceListId = Guid.NewGuid();
+        var tierCustomerId = Guid.NewGuid();
+        var tierChannelId = Guid.NewGuid();
         var excludedCustomerId = Guid.NewGuid();
         var excludedChannelId = Guid.NewGuid();
         var userId = Guid.NewGuid();
@@ -724,29 +724,31 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         await store.PromoteBootstrapAsync();
         await store.ApplyPricingSnapshotAsync(new PosPricingSnapshot(
             [
-                new PosPriceListItem(
-                    priceListId,
+                new PosPriceChannelItem(
+                    tierChannelId,
                     product.ProductId,
                     1m,
                     90m,
-                    "COP"),
-                new PosPriceListItem(
-                    priceListId,
+                    "COP",
+                    false),
+                new PosPriceChannelItem(
+                    tierChannelId,
                     product.ProductId,
                     3m,
                     70m,
-                    "COP")
-            ],
-            [
+                    "COP",
+                    false),
                 new PosPriceChannelItem(
                     priceChannelId,
                     product.ProductId,
+                    1m,
                     80m,
                     "COP",
                     false),
                 new PosPriceChannelItem(
                     excludedChannelId,
                     product.ProductId,
+                    1m,
                     60m,
                     "COP",
                     true)
@@ -756,21 +758,18 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                     customerId,
                     "3001234567",
                     "Cliente POS",
-                    null,
                     priceChannelId,
                     true),
                 new PosCustomerPricing(
-                    listCustomerId,
+                    tierCustomerId,
                     "4001234567",
-                    "Cliente lista POS",
-                    priceListId,
-                    null,
+                    "Cliente canal escalonado POS",
+                    tierChannelId,
                     true),
                 new PosCustomerPricing(
                     excludedCustomerId,
                     "5001234567",
                     "Cliente canal excluido",
-                    null,
                     excludedChannelId,
                     true)
             ]));

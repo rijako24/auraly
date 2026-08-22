@@ -260,7 +260,7 @@ export function PosProductSearchDialog({
               </span>
               <span className="text-right font-bold tabular-nums text-teal-800">
                 {money.format(product.unitPrice)}
-                <small className="mt-0.5 block font-medium text-slate-500">{product.priceSource === "PriceList" ? "Lista" : product.priceSource === "PriceChannel" ? "Canal" : "Público"}</small>
+                <small className="mt-0.5 block font-medium text-slate-500">{product.priceSource === "PriceChannel" ? "Canal" : "Público"}</small>
               </span>
             </button>
           ))}

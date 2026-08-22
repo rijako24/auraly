@@ -218,21 +218,21 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             "SELECT PreparedAmount FROM dbo.ProductPrices WHERE ProductId=@Id AND IsActive=1;",
             new SqlParameter("@Id", created.ProductId)));
         var publishedSignal = createdSignal;
-        var priceListId = Guid.NewGuid();
-        var listItemId = Guid.NewGuid();
-        var listCustomerId = Guid.NewGuid();
+        var tierChannelId = Guid.NewGuid();
+        var tierItemId = Guid.NewGuid();
+        var tierCustomerId = Guid.NewGuid();
         var channelCustomerId = Guid.NewGuid();
-        var listPartyId = Guid.NewGuid();
+        var tierPartyId = Guid.NewGuid();
         var channelPartyId = Guid.NewGuid();
         var countryId = await ScalarAsync<Guid>(
             "SELECT CountryId FROM dbo.Countries WHERE Code=N'CO';");
         await ExecuteAsync(
             """
-            INSERT dbo.PriceLists(PriceListId,BusinessId,Code,Name,IsActive,CreatedAt)
-              VALUES(@List,@Business,N'VIP',N'VIP',1,SYSDATETIMEOFFSET());
-            INSERT dbo.PriceListItems
-              (PriceListItemId,PriceListId,ProductId,MinimumQuantity,Amount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
-              VALUES(@ListItem,@List,@Product,1,11000,N'COP',SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET());
+            INSERT dbo.PriceChannels(PriceChannelId,BusinessId,Code,Name,Strategy,IsActive,CreatedAt)
+              VALUES(@TierChannel,@Business,N'VIP',N'VIP',N'TieredProductPrice',1,SYSDATETIMEOFFSET());
+            INSERT dbo.ResolvedPriceChannelItems
+              (ResolvedPriceChannelItemId,PriceChannelId,ProductId,MinimumQuantity,Amount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
+              VALUES(@TierItem,@TierChannel,@Product,1,11000,N'COP',SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET());
             UPDATE dbo.PriceChannels
               SET Strategy=N'PercentageOverBasePrice',Value=10
               WHERE PriceChannelId=@Channel AND BusinessId=@Business;
@@ -240,30 +240,30 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
               (PartyId,TenantId,PartyType,IdentificationCountryId,IdentificationTypeCode,
                Identification,NormalizedIdentification,DisplayName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
               VALUES
-              (@ListParty,@Tenant,N'NaturalPerson',@Country,N'CC',N'1001',N'1001',
-               N'List customer',N'Complete',1,@User,SYSDATETIMEOFFSET()),
+              (@TierParty,@Tenant,N'NaturalPerson',@Country,N'CC',N'1001',N'1001',
+               N'Tier channel customer',N'Complete',1,@User,SYSDATETIMEOFFSET()),
               (@ChannelParty,@Tenant,N'NaturalPerson',@Country,N'CC',N'1002',N'1002',
                N'Channel customer',N'Complete',1,@User,SYSDATETIMEOFFSET());
             INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
               VALUES
-              (@ListCustomer,@ListParty,@Business,1,@User,SYSDATETIMEOFFSET()),
+              (@TierCustomer,@TierParty,@Business,1,@User,SYSDATETIMEOFFSET()),
               (@ChannelCustomer,@ChannelParty,@Business,1,@User,SYSDATETIMEOFFSET());
-            INSERT dbo.CustomerPricingSettings(CustomerId,PriceListId,PriceChannelId,UpdatedBy,UpdatedAt)
+            INSERT dbo.CustomerPricingSettings(CustomerId,PriceChannelId,UpdatedBy,UpdatedAt)
               VALUES
-              (@ListCustomer,@List,NULL,@User,SYSDATETIMEOFFSET()),
-              (@ChannelCustomer,NULL,@Channel,@User,SYSDATETIMEOFFSET());
+              (@TierCustomer,@TierChannel,@User,SYSDATETIMEOFFSET()),
+              (@ChannelCustomer,@Channel,@User,SYSDATETIMEOFFSET());
             """,
-            new SqlParameter("@List", priceListId),
+            new SqlParameter("@TierChannel", tierChannelId),
             new SqlParameter("@Business", fixture.BusinessId),
             new SqlParameter("@Tenant", fixture.TenantId),
             new SqlParameter("@User", fixture.UserId),
             new SqlParameter("@Country", countryId),
-            new SqlParameter("@ListParty", listPartyId),
+            new SqlParameter("@TierParty", tierPartyId),
             new SqlParameter("@ChannelParty", channelPartyId),
-            new SqlParameter("@ListItem", listItemId),
+            new SqlParameter("@TierItem", tierItemId),
             new SqlParameter("@Channel", priceChannelId),
             new SqlParameter("@Product", created.ProductId),
-            new SqlParameter("@ListCustomer", listCustomerId),
+            new SqlParameter("@TierCustomer", tierCustomerId),
             new SqlParameter("@ChannelCustomer", channelCustomerId));
         Assert.Single(suppliers);
         var filterUri = $"/api/commerce/v1/products?barcode=7701234500012&supplierId={suppliers.Single().SupplierId:D}&minimumPrice=12000&maximumPrice=13000&sortDescending=true";
@@ -298,9 +298,9 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
                 sqlitePath,
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name LIKE '%Supplier%';"));
 
-            var listPrice = await local.ResolvePriceAsync(created.ProductId, listCustomerId, 1m);
-            Assert.Equal("PriceList", listPrice.Source);
-            Assert.Equal(11_000m, listPrice.Amount);
+            var tierPrice = await local.ResolvePriceAsync(created.ProductId, tierCustomerId, 1m);
+            Assert.Equal("PriceChannel", tierPrice.Source);
+            Assert.Equal(11_000m, tierPrice.Amount);
             var channelPrice = await local.ResolvePriceAsync(created.ProductId, channelCustomerId, 1m);
             Assert.Equal("PriceChannel", channelPrice.Source);
             Assert.Equal(13_750m, channelPrice.Amount);

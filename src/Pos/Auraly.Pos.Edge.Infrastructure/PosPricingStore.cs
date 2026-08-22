@@ -18,7 +18,7 @@ public sealed partial class PosCatalogStore
         await connection.OpenAsync(ct);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT CustomerId,Identification,Name,PriceListId,PriceChannelId,RequiresElectronicInvoice,IsActive
+            SELECT CustomerId,Identification,Name,PriceChannelId,RequiresElectronicInvoice,IsActive
             FROM PosPricingCustomers
             WHERE IsActive=1
               AND (@Term='' OR Identification LIKE @Prefix OR Name LIKE @Name)
@@ -48,7 +48,7 @@ public sealed partial class PosCatalogStore
         await connection.OpenAsync(ct);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT CustomerId,Identification,Name,PriceListId,PriceChannelId,RequiresElectronicInvoice,IsActive
+            SELECT CustomerId,Identification,Name,PriceChannelId,RequiresElectronicInvoice,IsActive
             FROM PosPricingCustomers
             WHERE CustomerId=@CustomerId AND IsActive=1;
             """;
@@ -65,34 +65,24 @@ public sealed partial class PosCatalogStore
         await connection.OpenAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
         await ExecutePricingAsync(connection, transaction, """
-            DELETE FROM PosPriceListItems;
             DELETE FROM PosPriceChannelItems;
             DELETE FROM PosPricingCustomers;
             """, [], ct);
-        foreach (var item in snapshot.PriceListItems)
-            await ExecutePricingAsync(connection, transaction, """
-                INSERT INTO PosPriceListItems(PriceListId,ProductId,MinimumQuantity,Amount,CurrencyCode)
-                VALUES(@PriceListId,@ProductId,@MinimumQuantity,@Amount,@CurrencyCode);
-                """,
-                [Q("@PriceListId", item.PriceListId), Q("@ProductId", item.ProductId),
-                 Q("@MinimumQuantity", item.MinimumQuantity), Q("@Amount", item.Amount),
-                 Q("@CurrencyCode", item.CurrencyCode)], ct);
         foreach (var item in snapshot.PriceChannelItems)
             await ExecutePricingAsync(connection, transaction, """
-                INSERT INTO PosPriceChannelItems(PriceChannelId,ProductId,Amount,CurrencyCode,IsExcluded)
-                VALUES(@PriceChannelId,@ProductId,@Amount,@CurrencyCode,@IsExcluded);
+                INSERT INTO PosPriceChannelItems(PriceChannelId,ProductId,MinimumQuantity,Amount,CurrencyCode,IsExcluded)
+                VALUES(@PriceChannelId,@ProductId,@MinimumQuantity,@Amount,@CurrencyCode,@IsExcluded);
                 """,
                 [Q("@PriceChannelId", item.PriceChannelId), Q("@ProductId", item.ProductId),
-                 Q("@Amount", item.Amount), Q("@CurrencyCode", item.CurrencyCode),
+                 Q("@MinimumQuantity", item.MinimumQuantity), Q("@Amount", item.Amount), Q("@CurrencyCode", item.CurrencyCode),
                  Q("@IsExcluded", item.IsExcluded ? 1 : 0)], ct);
         foreach (var customer in snapshot.Customers)
             await ExecutePricingAsync(connection, transaction, """
-                INSERT INTO PosPricingCustomers(CustomerId,Identification,Name,PriceListId,PriceChannelId,RequiresElectronicInvoice,IsActive)
-                VALUES(@CustomerId,@Identification,@Name,@PriceListId,@PriceChannelId,@RequiresElectronicInvoice,@IsActive);
+                INSERT INTO PosPricingCustomers(CustomerId,Identification,Name,PriceChannelId,RequiresElectronicInvoice,IsActive)
+                VALUES(@CustomerId,@Identification,@Name,@PriceChannelId,@RequiresElectronicInvoice,@IsActive);
                 """,
                 [Q("@CustomerId", customer.CustomerId), Q("@Identification", customer.Identification),
-                 Q("@Name", customer.Name), Q("@PriceListId", customer.PriceListId),
-                 Q("@PriceChannelId", customer.PriceChannelId),
+                 Q("@Name", customer.Name), Q("@PriceChannelId", customer.PriceChannelId),
                  Q("@RequiresElectronicInvoice", customer.RequiresElectronicInvoice ? 1 : 0),
                  Q("@IsActive", customer.IsActive ? 1 : 0)], ct);
         await transaction.CommitAsync(ct);
@@ -120,51 +110,36 @@ public sealed partial class PosCatalogStore
         var currency = baseReader.GetString(1);
         await baseReader.DisposeAsync();
         if (customerId is null)
-            return new(productId, baseAmount, baseAmount, currency, "Base", null, null);
+            return new(productId, baseAmount, baseAmount, currency, "Base", null);
 
         command.Parameters.Clear();
         command.CommandText = """
-            SELECT PriceListId,PriceChannelId FROM PosPricingCustomers
+            SELECT PriceChannelId FROM PosPricingCustomers
             WHERE CustomerId=@CustomerId AND IsActive=1;
             """;
         command.Parameters.Add(Q("@CustomerId", customerId));
         await using var customerReader = await command.ExecuteReaderAsync(ct);
         if (!await customerReader.ReadAsync(ct))
-            return new(productId, baseAmount, baseAmount, currency, "Base", null, null);
-        var listId = customerReader.IsDBNull(0) ? (Guid?)null : Guid.Parse(customerReader.GetString(0));
-        var channelId = customerReader.IsDBNull(1) ? (Guid?)null : Guid.Parse(customerReader.GetString(1));
+            return new(productId, baseAmount, baseAmount, currency, "Base", null);
+        var channelId = customerReader.IsDBNull(0) ? (Guid?)null : Guid.Parse(customerReader.GetString(0));
         await customerReader.DisposeAsync();
 
         command.Parameters.Clear();
-        if (listId is not null)
-        {
-            command.CommandText = """
-                SELECT Amount,CurrencyCode FROM PosPriceListItems
-                WHERE PriceListId=@SourceId AND ProductId=@ProductId AND MinimumQuantity<=@Quantity
-                ORDER BY MinimumQuantity DESC LIMIT 1;
-                """;
-            command.Parameters.AddRange(
-                [Q("@SourceId", listId), Q("@ProductId", productId), Q("@Quantity", quantity)]);
-            await using var reader = await command.ExecuteReaderAsync(ct);
-            if (await reader.ReadAsync(ct))
-                return new(productId, baseAmount,
-                    Convert.ToDecimal(reader.GetValue(0), CultureInfo.InvariantCulture),
-                    reader.GetString(1), "PriceList", listId, null);
-        }
-        else if (channelId is not null)
+        if (channelId is not null)
         {
             command.CommandText = """
                 SELECT Amount,CurrencyCode FROM PosPriceChannelItems
-                WHERE PriceChannelId=@SourceId AND ProductId=@ProductId AND IsExcluded=0 LIMIT 1;
+                WHERE PriceChannelId=@SourceId AND ProductId=@ProductId AND MinimumQuantity<=@Quantity AND IsExcluded=0
+                ORDER BY MinimumQuantity DESC LIMIT 1;
                 """;
-            command.Parameters.AddRange([Q("@SourceId", channelId), Q("@ProductId", productId)]);
+            command.Parameters.AddRange([Q("@SourceId", channelId), Q("@ProductId", productId), Q("@Quantity", quantity)]);
             await using var reader = await command.ExecuteReaderAsync(ct);
             if (await reader.ReadAsync(ct))
                 return new(productId, baseAmount,
                     Convert.ToDecimal(reader.GetValue(0), CultureInfo.InvariantCulture),
-                    reader.GetString(1), "PriceChannel", null, channelId);
+                    reader.GetString(1), "PriceChannel", channelId);
         }
-        return new(productId, baseAmount, baseAmount, currency, "Base", listId, channelId);
+        return new(productId, baseAmount, baseAmount, currency, "Base", channelId);
     }
 
     private static async Task InitializePricingAsync(SqliteConnection connection, CancellationToken ct)
@@ -173,17 +148,12 @@ public sealed partial class PosCatalogStore
         command.CommandText = """
             CREATE TABLE IF NOT EXISTS PosPricingCustomers(
               CustomerId TEXT PRIMARY KEY,Identification TEXT NOT NULL,Name TEXT NOT NULL,
-              PriceListId TEXT NULL,PriceChannelId TEXT NULL,RequiresElectronicInvoice INTEGER NOT NULL DEFAULT 0,IsActive INTEGER NOT NULL,
-              CHECK(PriceListId IS NULL OR PriceChannelId IS NULL));
+              PriceChannelId TEXT NULL,RequiresElectronicInvoice INTEGER NOT NULL DEFAULT 0,IsActive INTEGER NOT NULL);
             CREATE INDEX IF NOT EXISTS IX_PosPricingCustomers_Identification ON PosPricingCustomers(Identification);
-            CREATE TABLE IF NOT EXISTS PosPriceListItems(
-              PriceListId TEXT NOT NULL,ProductId TEXT NOT NULL,MinimumQuantity TEXT NOT NULL,
-              Amount TEXT NOT NULL,CurrencyCode TEXT NOT NULL,
-              PRIMARY KEY(PriceListId,ProductId,MinimumQuantity));
             CREATE TABLE IF NOT EXISTS PosPriceChannelItems(
-              PriceChannelId TEXT NOT NULL,ProductId TEXT NOT NULL,Amount TEXT NOT NULL,
-              CurrencyCode TEXT NOT NULL,IsExcluded INTEGER NOT NULL,
-              PRIMARY KEY(PriceChannelId,ProductId));
+              PriceChannelId TEXT NOT NULL,ProductId TEXT NOT NULL,MinimumQuantity TEXT NOT NULL,
+              Amount TEXT NOT NULL,CurrencyCode TEXT NOT NULL,IsExcluded INTEGER NOT NULL,
+              PRIMARY KEY(PriceChannelId,ProductId,MinimumQuantity));
             """;
         await command.ExecuteNonQueryAsync(ct);
         command.CommandText = "PRAGMA table_info(PosPricingCustomers);";
@@ -194,6 +164,34 @@ public sealed partial class PosCatalogStore
         if (!hasBillingColumn)
         {
             command.CommandText = "ALTER TABLE PosPricingCustomers ADD COLUMN RequiresElectronicInvoice INTEGER NOT NULL DEFAULT 0;";
+            await command.ExecuteNonQueryAsync(ct);
+        }
+        command.CommandText = "PRAGMA table_info(PosPriceChannelItems);";
+        var hasChannelQuantity = false;
+        var hasChannelAmount = false;
+        await using (var reader = await command.ExecuteReaderAsync(ct))
+            while (await reader.ReadAsync(ct))
+            {
+                hasChannelQuantity |= string.Equals(reader.GetString(1), "MinimumQuantity", StringComparison.Ordinal);
+                hasChannelAmount |= string.Equals(reader.GetString(1), "Amount", StringComparison.Ordinal);
+            }
+        if (!hasChannelAmount)
+        {
+            command.CommandText = "ALTER TABLE PosPriceChannelItems ADD COLUMN Amount TEXT NOT NULL DEFAULT '0';";
+            await command.ExecuteNonQueryAsync(ct);
+        }
+        if (!hasChannelQuantity)
+        {
+            command.CommandText = """
+                ALTER TABLE PosPriceChannelItems RENAME TO PosPriceChannelItemsLegacy;
+                CREATE TABLE PosPriceChannelItems(
+                  PriceChannelId TEXT NOT NULL,ProductId TEXT NOT NULL,MinimumQuantity TEXT NOT NULL,
+                  Amount TEXT NOT NULL,CurrencyCode TEXT NOT NULL,IsExcluded INTEGER NOT NULL,
+                  PRIMARY KEY(PriceChannelId,ProductId,MinimumQuantity));
+                INSERT INTO PosPriceChannelItems(PriceChannelId,ProductId,MinimumQuantity,Amount,CurrencyCode,IsExcluded)
+                SELECT PriceChannelId,ProductId,'1',Amount,CurrencyCode,IsExcluded FROM PosPriceChannelItemsLegacy;
+                DROP TABLE PosPriceChannelItemsLegacy;
+                """;
             await command.ExecuteNonQueryAsync(ct);
         }
     }
@@ -218,7 +216,6 @@ public sealed partial class PosCatalogStore
             reader.GetString(1),
             reader.GetString(2),
             reader.IsDBNull(3) ? null : Guid.Parse(reader.GetString(3)),
-            reader.IsDBNull(4) ? null : Guid.Parse(reader.GetString(4)),
-            reader.GetInt32(6) == 1,
-            reader.GetInt32(5) == 1);
+            reader.GetInt32(5) == 1,
+            reader.GetInt32(4) == 1);
 }

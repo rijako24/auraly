@@ -61,11 +61,9 @@ public sealed class PartyService(IPartyStore store, IAuralyIdGenerator ids, Time
         ValidateParty(request.Party);
         ValidateSite(request.PrimarySite);
         Translate(() =>
-            _ = new CustomerPricingAssignment(
-                request.Pricing?.PriceListId,
-                request.Pricing?.PriceChannelId));
+            _ = new CustomerPricingAssignment(request.Pricing?.PriceChannelId));
         if (request.Pricing is not null && !actor.IsDevice) Require(actor, PartyPermissionCodes.ManagePricing);
-        if (actor.IsDevice && request.Pricing is { PriceListId: not null } or { PriceChannelId: not null })
+        if (actor.IsDevice && request.Pricing is { PriceChannelId: not null })
             throw new PartyForbiddenException("POS quick creation cannot assign commercial pricing.");
         var normalized = string.Empty;
         Translate(() =>

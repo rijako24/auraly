@@ -23,7 +23,7 @@ export type PosCatalogProduct = {
   currencyCode: string;
   isActive: boolean;
   isWeighable: boolean;
-  priceSource: "Public" | "Base" | "PriceList" | "PriceChannel";
+  priceSource: "Public" | "Base" | "PriceChannel";
 };
 export type PosCatalogSearchPage = {
   items: PosCatalogProduct[];
@@ -35,7 +35,6 @@ export type PosCustomer = {
   customerId: string;
   identification: string;
   name: string;
-  priceListId: string | null;
   priceChannelId: string | null;
   requiresElectronicInvoice: boolean;
   isActive: boolean;

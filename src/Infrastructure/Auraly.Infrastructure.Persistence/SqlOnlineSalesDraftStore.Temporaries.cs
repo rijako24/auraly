@@ -117,7 +117,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                    COALESCE(p.DisplayName,p.LegalName,
                             NULLIF(LTRIM(RTRIM(CONCAT(p.FirstName,N' ',p.LastName))),N''),
                             N'Sin nombre'),
-                   s.PriceListId,s.PriceChannelId,c.RequiresElectronicInvoice
+                   s.PriceChannelId,c.RequiresElectronicInvoice
             FROM dbo.Customers c
             JOIN dbo.Parties p ON p.PartyId=c.PartyId
             LEFT JOIN dbo.CustomerPricingSettings s ON s.CustomerId=c.CustomerId
@@ -141,8 +141,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                 items.Add(new(
                     reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
                     reader.IsDBNull(3) ? null : reader.GetGuid(3),
-                    reader.IsDBNull(4) ? null : reader.GetGuid(4),
-                    reader.GetBoolean(5)));
+                    reader.GetBoolean(4)));
         var hasMore = items.Count > request.Take;
         if (hasMore) items.RemoveAt(items.Count - 1);
         await transaction.CommitAsync(cancellationToken);

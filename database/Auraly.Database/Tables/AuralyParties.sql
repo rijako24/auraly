@@ -177,7 +177,6 @@ GO
 
 CREATE TABLE [dbo].[CustomerPricingSettings] (
     [CustomerId] UNIQUEIDENTIFIER NOT NULL,
-    [PriceListId] UNIQUEIDENTIFIER NULL,
     [PriceChannelId] UNIQUEIDENTIFIER NULL,
     [UpdatedBy] UNIQUEIDENTIFIER NOT NULL,
     [UpdatedAt] DATETIMEOFFSET(7) NOT NULL,
@@ -185,12 +184,8 @@ CREATE TABLE [dbo].[CustomerPricingSettings] (
     CONSTRAINT [PK_CustomerPricingSettings] PRIMARY KEY ([CustomerId]),
     CONSTRAINT [FK_CustomerPricingSettings_Customers] FOREIGN KEY ([CustomerId])
         REFERENCES [dbo].[Customers] ([CustomerId]),
-    CONSTRAINT [FK_CustomerPricingSettings_PriceLists] FOREIGN KEY ([PriceListId])
-        REFERENCES [dbo].[PriceLists] ([PriceListId]),
     CONSTRAINT [FK_CustomerPricingSettings_PriceChannels] FOREIGN KEY ([PriceChannelId])
-        REFERENCES [dbo].[PriceChannels] ([PriceChannelId]),
-    CONSTRAINT [CK_CustomerPricingSettings_Exclusive] CHECK (
-        NOT ([PriceListId] IS NOT NULL AND [PriceChannelId] IS NOT NULL))
+        REFERENCES [dbo].[PriceChannels] ([PriceChannelId])
 );
 GO
 

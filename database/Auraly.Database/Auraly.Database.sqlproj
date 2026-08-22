@@ -44,7 +44,6 @@
     <Build Include="StoredProcedures\PriceSegmentItemsList.sql" />
     <Build Include="StoredProcedures\PriceSegmentItemSave.sql" />
     <Build Include="StoredProcedures\PriceSegmentItemDelete.sql" />
-    <Build Include="StoredProcedures\PriceChannelSettingsSave.sql" />
     <Build Include="Schemas\Reference.sql" />
     <Build Include="Schemas\Dispatch.sql" />
     <Build Include="Schemas\Fiscal.sql" />
@@ -84,7 +83,6 @@
     <Build Include="Tables\WithholdingRules.sql" />
     <Build Include="Tables\PartyWorkspace.sql" />
     <Build Include="Tables\AuralyPosPricing.sql" />
-    <Build Include="Tables\PriceChannelRules.sql" />
     <Build Include="Tables\SalesRoutes.sql" />
     <Build Include="Tables\AuralyCatalogSyncSnapshot.sql" />
     <Build Include="Tables\ProductOffers.sql" />

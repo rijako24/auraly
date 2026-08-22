@@ -2600,7 +2600,6 @@ function TotalRow({ label, value }: { label: string; value: number }) {
 }
 
 function priceLabel(source: string) {
-  if (source === "PriceList") return "Lista de precio";
   if (source === "PriceChannel") return "Canal de precio";
   return "Precio del negocio";
 }

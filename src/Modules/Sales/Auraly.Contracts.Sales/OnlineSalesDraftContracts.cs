@@ -75,7 +75,6 @@ public sealed record OnlineSalesCustomer(
     Guid CustomerId,
     string Identification,
     string Name,
-    Guid? PriceListId,
     Guid? PriceChannelId,
     bool RequiresElectronicInvoice);
 

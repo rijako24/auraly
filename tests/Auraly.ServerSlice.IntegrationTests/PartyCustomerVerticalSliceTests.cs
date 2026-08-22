@@ -73,16 +73,12 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
             new SaveCityRequest(division.AdministrativeDivisionId, "C01", "Customer test city", true));
         Assert.Equal(HttpStatusCode.OK, reactivateCityResponse.StatusCode);
 
-        var priceListId = Guid.NewGuid();
         var priceChannelId = Guid.NewGuid();
         await ExecuteAsync(
             """
-            INSERT dbo.PriceLists(PriceListId,BusinessId,Code,Name,IsActive,CreatedAt)
-            VALUES(@PriceListId,@BusinessId,N'CLI-VIP',N'Lista VIP clientes',1,SYSDATETIMEOFFSET());
-            INSERT dbo.PriceChannels(PriceChannelId,BusinessId,Code,Name,IsActive,CreatedAt)
-            VALUES(@PriceChannelId,@BusinessId,N'CLI-MAY',N'Mayorista clientes',1,SYSDATETIMEOFFSET());
+            INSERT dbo.PriceChannels(PriceChannelId,BusinessId,Code,Name,Strategy,IsActive,CreatedAt)
+            VALUES(@PriceChannelId,@BusinessId,N'CLI-MAY',N'Mayorista clientes',N'TieredProductPrice',1,SYSDATETIMEOFFSET());
             """,
-            new SqlParameter("@PriceListId", priceListId),
             new SqlParameter("@PriceChannelId", priceChannelId),
             new SqlParameter("@BusinessId", fixture.BusinessId));
 
@@ -96,7 +92,7 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
             "1.234.567-8",
             "Ada Cliente",
             "Principal",
-            new CustomerPricingInput(priceListId, null));
+            new CustomerPricingInput(priceChannelId));
 
         using var createdResponse = await admin.PostAsJsonAsync(
             "/api/commerce/v1/customers",
@@ -105,8 +101,7 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         var created = await createdResponse.Content.ReadFromJsonAsync<CustomerDetail>();
         Assert.NotNull(created);
         Assert.Equal("12345678", created.NormalizedIdentification);
-        Assert.Equal(priceListId, created.PriceListId);
-        Assert.Null(created.PriceChannelId);
+        Assert.Equal(priceChannelId, created.PriceChannelId);
         Assert.Equal("Barrio escrito por el usuario", Assert.Single(created.Sites).Neighborhood);
         PosSynchronizationInvalidation customerSignal;
         do
@@ -150,7 +145,7 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
             var localCustomer = Assert.Single(
                 await local.SearchCustomersAsync("12345678"));
             Assert.Equal(created.CustomerId, localCustomer.CustomerId);
-            Assert.Equal(priceListId, localCustomer.PriceListId);
+            Assert.Equal(priceChannelId, localCustomer.PriceChannelId);
         }
         finally
         {
@@ -209,7 +204,7 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         {
             OperationId = Guid.NewGuid(),
             Party = request.Party with { Identification = "900111222" },
-            Pricing = new CustomerPricingInput(priceListId, priceChannelId)
+            Pricing = new CustomerPricingInput(Guid.NewGuid())
         };
         using var invalidPricingResponse = await admin.PostAsJsonAsync(
             "/api/commerce/v1/customers",
@@ -302,7 +297,6 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         var created = await createdResponse.Content.ReadFromJsonAsync<CustomerDetail>();
         Assert.NotNull(created);
         Assert.Equal(fixture.BusinessId, created.BusinessId);
-        Assert.Null(created.PriceListId);
         Assert.Null(created.PriceChannelId);
 
         var found = await pos.GetFromJsonAsync<CustomerDetail>(
@@ -311,13 +305,13 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         Assert.NotNull(found);
         Assert.Equal(created.CustomerId, found.CustomerId);
 
-        var priceListId = Guid.NewGuid();
+        var priceChannelId = Guid.NewGuid();
         await ExecuteAsync(
             """
-            INSERT dbo.PriceLists(PriceListId,BusinessId,Code,Name,IsActive,CreatedAt)
-            VALUES(@PriceListId,@BusinessId,N'POS-NO',N'POS cannot assign',1,SYSDATETIMEOFFSET());
+            INSERT dbo.PriceChannels(PriceChannelId,BusinessId,Code,Name,Strategy,IsActive,CreatedAt)
+            VALUES(@PriceChannelId,@BusinessId,N'POS-NO',N'POS cannot assign',N'TieredProductPrice',1,SYSDATETIMEOFFSET());
             """,
-            new SqlParameter("@PriceListId", priceListId),
+            new SqlParameter("@PriceChannelId", priceChannelId),
             new SqlParameter("@BusinessId", fixture.BusinessId));
         using var pricingResponse = await pos.PostAsJsonAsync(
             "/api/pos/v1/customers",
@@ -325,7 +319,7 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
             {
                 OperationId = Guid.NewGuid(),
                 Party = request.Party with { Identification = "55667799" },
-                Pricing = new CustomerPricingInput(priceListId, null)
+                Pricing = new CustomerPricingInput(priceChannelId)
             });
         Assert.Equal(HttpStatusCode.Forbidden, pricingResponse.StatusCode);
 

@@ -28,17 +28,13 @@ public static class PartyIdentityNormalizer
 
 public sealed class CustomerPricingAssignment
 {
-    public CustomerPricingAssignment(Guid? priceListId, Guid? priceChannelId)
+    public CustomerPricingAssignment(Guid? priceChannelId)
     {
-        if (priceListId.HasValue && priceChannelId.HasValue)
-            throw new ArgumentException("A customer can use a price list or a price channel, never both.");
-        if (priceListId == Guid.Empty || priceChannelId == Guid.Empty)
+        if (priceChannelId == Guid.Empty)
             throw new ArgumentException("Pricing identifiers cannot be empty.");
-        PriceListId = priceListId;
         PriceChannelId = priceChannelId;
     }
 
-    public Guid? PriceListId { get; }
     public Guid? PriceChannelId { get; }
 }
 

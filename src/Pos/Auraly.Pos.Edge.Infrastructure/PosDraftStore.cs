@@ -32,7 +32,6 @@ public sealed record PosDraftLineInput(
     decimal UnitPrice,
     string CurrencyCode,
     string PriceSource,
-    Guid? PriceListId = null,
     Guid? PriceChannelId = null,
     decimal Discount = 0,
     string? Note = null);
@@ -50,7 +49,6 @@ public sealed record PosDraftLine(
     decimal UnitPrice,
     string CurrencyCode,
     string PriceSource,
-    Guid? PriceListId,
     Guid? PriceChannelId,
     decimal Discount,
     string? Note,
@@ -98,7 +96,6 @@ public sealed record PosDraftLinePriceUpdate(
     decimal UnitPrice,
     string CurrencyCode,
     string PriceSource,
-    Guid? PriceListId,
     Guid? PriceChannelId);
 
 public sealed class PosDraftStore
@@ -385,7 +382,7 @@ public sealed class PosDraftStore
                 UPDATE PosDraftLines
                 SET BaseUnitPrice=@BaseUnitPrice,UnitPrice=@UnitPrice,
                     CurrencyCode=@CurrencyCode,PriceSource=@PriceSource,
-                    PriceListId=@PriceListId,PriceChannelId=@PriceChannelId
+                    PriceChannelId=@PriceChannelId
                 WHERE DraftId=@DraftId AND LineId=@LineId;
                 """,
                 [
@@ -393,7 +390,6 @@ public sealed class PosDraftStore
                     P("@UnitPrice", price.UnitPrice),
                     P("@CurrencyCode", price.CurrencyCode.Trim().ToUpperInvariant()),
                     P("@PriceSource", price.PriceSource),
-                    P("@PriceListId", price.PriceListId),
                     P("@PriceChannelId", price.PriceChannelId),
                     P("@DraftId", draftId.Value),
                     P("@LineId", price.LineId)
@@ -643,11 +639,11 @@ public sealed class PosDraftStore
         await ExecuteAsync(connection, transaction, """
             INSERT INTO PosDraftLines(
               LineId,DraftId,ProductId,ProductCode,Description,UnitCode,TaxCode,TaxRate,
-              Quantity,BaseUnitPrice,UnitPrice,CurrencyCode,PriceSource,PriceListId,
+              Quantity,BaseUnitPrice,UnitPrice,CurrencyCode,PriceSource,
               PriceChannelId,Discount,Note,Position)
             VALUES(
               @LineId,@DraftId,@ProductId,@ProductCode,@Description,@UnitCode,@TaxCode,@TaxRate,
-              @Quantity,@BaseUnitPrice,@UnitPrice,@CurrencyCode,@PriceSource,@PriceListId,
+              @Quantity,@BaseUnitPrice,@UnitPrice,@CurrencyCode,@PriceSource,
               @PriceChannelId,@Discount,@Note,@Position);
             """,
             LineParameters(lineId, draftId, input, position),
@@ -690,10 +686,6 @@ public sealed class PosDraftStore
             throw new ArgumentOutOfRangeException(
                 nameof(input),
                 "Discount cannot exceed gross value.");
-        if (input.PriceListId is not null && input.PriceChannelId is not null)
-            throw new ArgumentException(
-                "A line cannot originate from both a price list and a price channel.",
-                nameof(input));
     }
 
     private static async Task UpgradeScopeAsync(
@@ -792,7 +784,6 @@ public sealed class PosDraftStore
             SELECT LineId FROM PosDraftLines
             WHERE DraftId=@DraftId AND ProductId=@ProductId AND UnitCode=@UnitCode
               AND UnitPrice=@UnitPrice AND PriceSource=@PriceSource
-              AND ifnull(PriceListId,'')=ifnull(@PriceListId,'')
               AND ifnull(PriceChannelId,'')=ifnull(@PriceChannelId,'')
               AND TaxCode=@TaxCode AND TaxRate=@TaxRate AND Discount=@Discount
               AND ifnull(Note,'')=ifnull(@Note,'')
@@ -802,7 +793,7 @@ public sealed class PosDraftStore
         [
             P("@DraftId", draftId.Value), P("@ProductId", input.ProductId.Value),
             P("@UnitCode", input.UnitCode), P("@UnitPrice", input.UnitPrice),
-            P("@PriceSource", input.PriceSource), P("@PriceListId", input.PriceListId),
+            P("@PriceSource", input.PriceSource),
             P("@PriceChannelId", input.PriceChannelId), P("@TaxCode", input.TaxCode),
             P("@TaxRate", input.TaxRate), P("@Discount", input.Discount),
             P("@Note", Normalize(input.Note))
@@ -906,7 +897,7 @@ public sealed class PosDraftStore
         command.Transaction = transaction;
         command.CommandText = """
             SELECT LineId,ProductId,ProductCode,Description,UnitCode,TaxCode,TaxRate,Quantity,
-                   BaseUnitPrice,UnitPrice,CurrencyCode,PriceSource,PriceListId,PriceChannelId,
+                   BaseUnitPrice,UnitPrice,CurrencyCode,PriceSource,PriceChannelId,
                    Discount,Note,Position
             FROM PosDraftLines WHERE DraftId=@DraftId ORDER BY Position,LineId;
             """;
@@ -928,10 +919,9 @@ public sealed class PosDraftStore
                 reader.GetString(10),
                 reader.GetString(11),
                 NullableGuid(reader, 12),
-                NullableGuid(reader, 13),
-                Decimal(reader, 14),
-                NullableString(reader, 15),
-                reader.GetInt32(16)));
+                Decimal(reader, 13),
+                NullableString(reader, 14),
+                reader.GetInt32(15)));
         return lines;
     }
 
@@ -973,7 +963,7 @@ public sealed class PosDraftStore
         P("@TaxRate", input.TaxRate), P("@Quantity", input.Quantity),
         P("@BaseUnitPrice", input.BaseUnitPrice), P("@UnitPrice", input.UnitPrice),
         P("@CurrencyCode", input.CurrencyCode.Trim().ToUpperInvariant()),
-        P("@PriceSource", input.PriceSource), P("@PriceListId", input.PriceListId),
+        P("@PriceSource", input.PriceSource),
         P("@PriceChannelId", input.PriceChannelId), P("@Discount", input.Discount),
         P("@Note", Normalize(input.Note)), P("@Position", position)
     ];
@@ -991,7 +981,6 @@ public sealed class PosDraftStore
             line.UnitPrice,
             line.CurrencyCode,
             line.PriceSource,
-            line.PriceListId,
             line.PriceChannelId,
             line.Discount,
             line.Note);
@@ -1059,12 +1048,10 @@ public sealed class PosDraftStore
           UnitPrice TEXT NOT NULL,
           CurrencyCode TEXT NOT NULL,
           PriceSource TEXT NOT NULL,
-          PriceListId TEXT NULL,
           PriceChannelId TEXT NULL,
           Discount TEXT NOT NULL,
           Note TEXT NULL,
           Position INTEGER NOT NULL,
-          CHECK(PriceListId IS NULL OR PriceChannelId IS NULL),
           FOREIGN KEY(DraftId) REFERENCES PosDrafts(DraftId) ON DELETE CASCADE);
         CREATE INDEX IF NOT EXISTS IX_PosDraftLines_Draft
           ON PosDraftLines(DraftId,Position);

@@ -545,7 +545,7 @@ public sealed partial class SqlPartyStore(
               (SELECT TOP(1) Value FROM dbo.PartyContacts x
                  WHERE x.PartyId=p.PartyId AND x.ContactType=N'Phone' AND x.IsActive=1
                  ORDER BY x.IsPrimary DESC,x.CreatedAt),
-              ps.PriceListId,ps.PriceChannelId,c.RequiresElectronicInvoice,c.IsActive
+              ps.PriceChannelId,c.RequiresElectronicInvoice,c.IsActive
             FROM dbo.Customers c
             JOIN dbo.Parties p ON p.PartyId=c.PartyId
             JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId AND b.TenantId=@TenantId
@@ -568,7 +568,7 @@ public sealed partial class SqlPartyStore(
         ]);
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct)) return null;
-        var header = new object?[18];
+        var header = new object?[17];
         reader.GetValues(header);
         var sites = new List<PartySiteDetail>();
         await reader.NextResultAsync(ct);
@@ -590,8 +590,7 @@ public sealed partial class SqlPartyStore(
             header[7] as string, header[8] as string, header[9] as string,
             header[10] as string, header[11] as string, header[12] as string, header[13] as string,
             header[14] is DBNull ? null : (Guid?)header[14],
-            header[15] is DBNull ? null : (Guid?)header[15],
-            (bool)header[17]!, sites, (bool)header[16]!);
+            (bool)header[16]!, sites, (bool)header[15]!);
     }
 
     private static async Task ValidateScopeAndGeographyAsync(
@@ -774,24 +773,21 @@ public sealed partial class SqlPartyStore(
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            IF @PriceListId IS NOT NULL AND NOT EXISTS (
-              SELECT 1 FROM dbo.PriceLists WHERE PriceListId=@PriceListId AND BusinessId=@BusinessId AND IsActive=1)
-              THROW 51034,'Price list is outside the customer business.',1;
             IF @PriceChannelId IS NOT NULL AND NOT EXISTS (
               SELECT 1 FROM dbo.PriceChannels WHERE PriceChannelId=@PriceChannelId AND BusinessId=@BusinessId AND IsActive=1)
               THROW 51035,'Price channel is outside the customer business.',1;
             INSERT dbo.CustomerPricingSettings
-              (CustomerId,PriceListId,PriceChannelId,UpdatedBy,UpdatedAt)
-            VALUES(@CustomerId,@PriceListId,@PriceChannelId,@ActorId,@Now);
+              (CustomerId,PriceChannelId,UpdatedBy,UpdatedAt)
+            VALUES(@CustomerId,@PriceChannelId,@ActorId,@Now);
             """;
         command.Parameters.AddRange(
         [
             P("@CustomerId", customerId), P("@BusinessId", actor.BusinessId),
-            P("@PriceListId", pricing.PriceListId), P("@PriceChannelId", pricing.PriceChannelId),
+            P("@PriceChannelId", pricing.PriceChannelId),
             P("@ActorId", actor.ActorId), P("@Now", now)
         ]);
         try { await command.ExecuteNonQueryAsync(ct); }
-        catch (SqlException exception) when (exception.Number is 51034 or 51035)
+        catch (SqlException exception) when (exception.Number == 51035)
         {
             throw new PartyValidationException(exception.Message);
         }

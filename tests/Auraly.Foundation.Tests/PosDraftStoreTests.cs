@@ -41,8 +41,8 @@ public sealed class PosDraftStoreTests
                 Line(quantity: 2m) with
                 {
                     UnitPrice = 8_000m,
-                    PriceSource = "PriceList",
-                    PriceListId = Guid.NewGuid()
+                    PriceSource = "PriceChannel",
+                    PriceChannelId = Guid.NewGuid()
                 });
 
             Assert.Equal(2, draft.Lines.Count);
