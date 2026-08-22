@@ -58,8 +58,10 @@ try {
         '/p:BlockOnPossibleDataLoss=True'
         '/p:DropObjectsNotInSource=False'
         '/p:ScriptDatabaseOptions=True'
-        "/v:BootstrapAdminPasswordHash=$BootstrapAdminPasswordHash"
     )
+    if (-not [string]::IsNullOrWhiteSpace($BootstrapAdminPasswordHash)) {
+        $publishArguments += "/v:BootstrapAdminPasswordHash=$BootstrapAdminPasswordHash"
+    }
     & $SqlPackagePath $publishArguments
     if ($LASTEXITCODE) {
         throw "SqlPackage fall? con c?digo $LASTEXITCODE."
