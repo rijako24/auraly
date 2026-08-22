@@ -41,6 +41,21 @@ WHEN MATCHED THEN UPDATE SET DisplayName=source.DisplayName,AccountCode=source.A
 WHEN NOT MATCHED THEN INSERT(ProfileCode,Category,DisplayName,AccountCode,AccountName,AccountType,AllowsPosting,RequiresParty,IsRequired,DisplayOrder)
   VALUES(N'AURALY_CO',source.Category,source.DisplayName,source.AccountCode,source.AccountName,source.AccountType,1,source.RequiresParty,1,source.DisplayOrder);
 
+MERGE dbo.AccountingConfigurationProfileExpenseConcepts AS target
+USING (VALUES
+  (N'PEAJE',N'Peajes',N'OperatingExpense',10),
+  (N'PARQUEADERO',N'Parqueaderos',N'OperatingExpense',20),
+  (N'COMBUSTIBLE',N'Combustible',N'OperatingExpense',30),
+  (N'TRANSPORTE',N'Transporte y mensajería',N'OperatingExpense',40),
+  (N'SERVICIOS',N'Servicios operativos',N'OperatingExpense',50),
+  (N'OTROS',N'Otros gastos',N'OtherExpense',60)
+) AS source(Code,Name,ExpenseAccountCategory,DisplayOrder)
+ON target.ProfileCode=N'AURALY_CO' AND target.Code=source.Code
+WHEN MATCHED THEN UPDATE SET Name=source.Name,ExpenseAccountCategory=source.ExpenseAccountCategory,
+  DisplayOrder=source.DisplayOrder,IsActive=1
+WHEN NOT MATCHED THEN INSERT(ProfileCode,Code,Name,ExpenseAccountCategory,DisplayOrder,IsActive)
+  VALUES(N'AURALY_CO',source.Code,source.Name,source.ExpenseAccountCategory,source.DisplayOrder,1);
+
 MERGE dbo.AccountingSourceCategoryMappings AS target
 USING (VALUES
   (N'PosPaymentMethod',N'Cash',N'Cash'),
@@ -92,7 +107,19 @@ USING (VALUES
   (N'PurchaseReturn',N'QualityIssue',N'Problema de calidad',NULL,NULL,0,30),
   (N'PurchaseReturn',N'Damaged',N'Producto averiado',NULL,NULL,0,40),
   (N'PurchaseReturn',N'CommercialAgreement',N'Acuerdo comercial',NULL,NULL,0,50),
-  (N'PurchaseReturn',N'ReceiptCorrection',N'Corrección de recepción',NULL,NULL,0,60)
+  (N'PurchaseReturn',N'ReceiptCorrection',N'Corrección de recepción',NULL,NULL,0,60),
+  (N'NotDelivered',N'CUSTOMER_ABSENT',N'Cliente ausente',NULL,NULL,0,10),
+  (N'NotDelivered',N'BUSINESS_CLOSED',N'Local cerrado',NULL,NULL,0,20),
+  (N'NotDelivered',N'CUSTOMER_REJECTED',N'Cliente rechazó el pedido',NULL,NULL,0,30),
+  (N'NotDelivered',N'WRONG_ADDRESS',N'Dirección incorrecta',NULL,NULL,0,40),
+  (N'NotDelivered',N'NO_PAYMENT',N'Cliente sin medio de pago',NULL,NULL,0,50),
+  (N'NotDelivered',N'ACCESS_RESTRICTED',N'No fue posible acceder al lugar',NULL,NULL,0,60),
+  (N'NotDelivered',N'OTHER',N'Otro motivo',NULL,NULL,0,999),
+  (N'DeliveryReturn',N'CUSTOMER_RETURN',N'Devolución solicitada por el cliente',NULL,NULL,0,10),
+  (N'DeliveryReturn',N'WRONG_PRODUCT',N'Producto equivocado',NULL,NULL,0,20),
+  (N'DeliveryReturn',N'DAMAGED_DELIVERY',N'Producto averiado durante la entrega',NULL,NULL,0,30),
+  (N'DeliveryReturn',N'QUALITY_ISSUE',N'Problema de calidad',NULL,NULL,0,40),
+  (N'DeliveryReturn',N'OTHER',N'Otro motivo',NULL,NULL,0,999)
 ) AS source(ReasonType,Code,Name,Direction,CounterpartCategory,RequiresReference,DisplayOrder)
 ON target.ProfileCode=N'AURALY_CO' AND target.ReasonType=source.ReasonType AND target.Code=source.Code
 WHEN MATCHED THEN UPDATE SET Name=source.Name,Direction=source.Direction,

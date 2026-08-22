@@ -681,7 +681,7 @@ public static class PosEdgeHostApplication
                 priced.Add(new {
                     value.ProductId,value.ProductCode,value.Reference,value.Name,value.BaseUnitCode,
                     value.TaxCode,value.TaxRate,unitPrice=resolved.Amount,resolved.CurrencyCode,
-                    value.IsActive,priceSource=resolved.Source
+                    value.IsActive,value.IsWeighable,priceSource=resolved.Source
                 });
             }
             return Results.Ok(new

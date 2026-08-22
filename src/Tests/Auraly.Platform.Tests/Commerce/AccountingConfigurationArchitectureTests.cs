@@ -19,6 +19,8 @@ public sealed class AccountingConfigurationArchitectureTests
         var page = Read(root,
             "admin/src/app/(dashboard)/dashboard/accounting/page.tsx");
         var schema = Read(root, "database/Auraly.Database/Tables/Accounting.sql");
+        var provision = Read(root,
+            "database/Auraly.Database/StoredProcedures/AccountingDefaultsProvision.sql");
 
         Regex.IsMatch(store, @"N?'[1-6]\d{5}'").Should().BeFalse(
             "PUC account codes belong to configuration tables, not runtime C#");
@@ -31,6 +33,11 @@ public sealed class AccountingConfigurationArchitectureTests
         schema.Should().Contain("AccountingSourceCategoryMappings");
         schema.Should().Contain("ReasonTemplates");
         schema.Should().Contain("BusinessReasons");
+        schema.Should().Contain("AccountingConfigurationProfileExpenseConcepts");
+        provision.Should().NotContain("DECLARE @Accounts");
+        provision.Should().NotContain("DECLARE @ExpenseConcepts");
+        provision.Should().Contain("AccountingConfigurationProfileAccounts");
+        provision.Should().Contain("AccountingConfigurationProfileExpenseConcepts");
     }
 
     [Fact]
@@ -57,6 +64,10 @@ public sealed class AccountingConfigurationArchitectureTests
         salesPage.Should().NotContain("const reasons =");
         purchasePage.Should().NotContain("const reasons =");
         inventoryQuery.Should().Contain("dbo.BusinessReasons");
+        var dispatchStore = Read(root,
+            "src/Modules/Dispatching/Auraly.Infrastructure.Dispatching/SqlDispatchDeliveryStore.cs");
+        dispatchStore.Should().Contain("dbo.BusinessReasons");
+        dispatchStore.Should().NotContain("dispatch.DispatchReasons");
     }
 
     private static string Read(string root, string relativePath) =>

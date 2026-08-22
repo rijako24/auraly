@@ -42,6 +42,21 @@ CREATE TABLE [dbo].[AccountingSourceCategoryMappings]
 );
 GO
 
+CREATE TABLE [dbo].[AccountingConfigurationProfileExpenseConcepts]
+(
+    [ProfileCode] NVARCHAR(32) NOT NULL,
+    [Code] NVARCHAR(32) NOT NULL,
+    [Name] NVARCHAR(120) NOT NULL,
+    [ExpenseAccountCategory] NVARCHAR(64) NOT NULL,
+    [DisplayOrder] INT NOT NULL,
+    [IsActive] BIT NOT NULL CONSTRAINT [DF_AccountingConfigurationProfileExpenseConcepts_IsActive] DEFAULT (1),
+    CONSTRAINT [PK_AccountingConfigurationProfileExpenseConcepts] PRIMARY KEY CLUSTERED ([ProfileCode],[Code]),
+    CONSTRAINT [FK_AccountingConfigurationProfileExpenseConcepts_Profile] FOREIGN KEY ([ProfileCode]) REFERENCES [dbo].[AccountingConfigurationProfiles]([ProfileCode]),
+    CONSTRAINT [FK_AccountingConfigurationProfileExpenseConcepts_Account] FOREIGN KEY ([ProfileCode],[ExpenseAccountCategory]) REFERENCES [dbo].[AccountingConfigurationProfileAccounts]([ProfileCode],[Category]),
+    CONSTRAINT [CK_AccountingConfigurationProfileExpenseConcepts_Order] CHECK ([DisplayOrder]>0)
+);
+GO
+
 CREATE TABLE [dbo].[ReasonTemplates]
 (
     [ProfileCode] NVARCHAR(32) NOT NULL,

@@ -9,46 +9,19 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
         THROW 51041,'La sede no pertenece al tenant indicado.',1;
 
-    DECLARE @Accounts TABLE(
-        Category nvarchar(64) NOT NULL,
-        Code nvarchar(32) NOT NULL,
-        Name nvarchar(200) NOT NULL,
-        AccountType nvarchar(24) NOT NULL,
-        RequiresParty bit NOT NULL);
-    INSERT @Accounts(Category,Code,Name,AccountType,RequiresParty) VALUES
-      (N'Cash',N'110505',N'Caja general',N'Asset',0),
-      (N'Bank',N'111005',N'Bancos moneda nacional',N'Asset',0),
-      (N'DebitCardClearing',N'111010',N'Tarjetas débito por cobrar',N'Asset',0),
-      (N'CreditCardClearing',N'111015',N'Tarjetas crédito por cobrar',N'Asset',0),
-      (N'TransferClearing',N'111020',N'Transferencias por conciliar',N'Asset',0),
-      (N'AccountsReceivable',N'130505',N'Clientes nacionales',N'Asset',1),
-      (N'SupplierCreditsReceivable',N'133595',N'Saldos a favor con proveedores',N'Asset',1),
-      (N'WithholdingIncomeTaxReceivable',N'135515',N'Retención en la fuente a favor',N'Asset',0),
-      (N'WithholdingVatReceivable',N'135517',N'Retención de IVA a favor',N'Asset',0),
-      (N'WithholdingIcaReceivable',N'135518',N'Retención de ICA a favor',N'Asset',0),
-      (N'Inventory',N'143505',N'Inventarios de mercancías',N'Asset',0),
-      (N'AccountsPayable',N'220505',N'Proveedores nacionales',N'Liability',1),
-      (N'CustomerCreditsPayable',N'238095',N'Saldos a favor de clientes',N'Liability',1),
-      (N'OutputVat',N'240805',N'IVA generado',N'Liability',0),
-      (N'InputVat',N'240810',N'IVA descontable',N'Asset',0),
-      (N'WithholdingIncomeTaxPayable',N'236540',N'Retención en la fuente por pagar',N'Liability',0),
-      (N'WithholdingVatPayable',N'236701',N'Retención de IVA por pagar',N'Liability',0),
-      (N'WithholdingIcaPayable',N'236805',N'Retención de ICA por pagar',N'Liability',0),
-      (N'OwnerContributions',N'311505',N'Aportes sociales',N'Equity',0),
-      (N'SalesRevenue',N'413595',N'Ingresos por ventas',N'Revenue',0),
-      (N'SalesReturns',N'417595',N'Devoluciones en ventas',N'ContraRevenue',0),
-      (N'OtherIncome',N'429595',N'Otros ingresos',N'Revenue',0),
-      (N'OperatingExpense',N'519510',N'Gastos operativos',N'Expense',0),
-      (N'PurchasesExpense',N'519595',N'Compras no inventariables',N'Expense',0),
-      (N'OtherExpense',N'539595',N'Otros gastos',N'Expense',0),
-      (N'CostOfGoodsSold',N'613595',N'Costo de ventas',N'Expense',0);
+    DECLARE @ProfileCode nvarchar(32)=(
+      SELECT TOP(1) ProfileCode FROM dbo.AccountingConfigurationProfiles
+      WHERE IsDefault=1 AND IsActive=1 ORDER BY ProfileCode);
+    IF @ProfileCode IS NULL
+        THROW 51042,'No existe un perfil contable predeterminado activo.',1;
 
     INSERT dbo.AccountingAccounts(
         AccountId,TenantId,Code,Name,AccountType,AllowsPosting,RequiresParty,IsActive,CreatedAt)
-    SELECT NEWID(),@TenantId,a.Code,a.Name,a.AccountType,1,a.RequiresParty,1,@Now
-    FROM @Accounts a
-    WHERE NOT EXISTS (SELECT 1 FROM dbo.AccountingAccounts currentAccount
-                      WHERE currentAccount.TenantId=@TenantId AND currentAccount.Code=a.Code);
+    SELECT NEWID(),@TenantId,a.AccountCode,a.AccountName,a.AccountType,a.AllowsPosting,a.RequiresParty,1,@Now
+    FROM dbo.AccountingConfigurationProfileAccounts a
+    WHERE a.ProfileCode=@ProfileCode AND
+      NOT EXISTS (SELECT 1 FROM dbo.AccountingAccounts currentAccount
+                  WHERE currentAccount.TenantId=@TenantId AND currentAccount.Code=a.AccountCode);
 
     DECLARE @Year int=DATEPART(year,SWITCHOFFSET(@Now,'-05:00'));
     DECLARE @StartsOn date=DATEFROMPARTS(@Year,1,1),@EndsOn date=DATEFROMPARTS(@Year,12,31);
@@ -60,9 +33,10 @@ BEGIN
     INSERT dbo.AccountingAccountMappings(
         MappingId,TenantId,BusinessId,Category,AccountId,EffectiveFrom,EffectiveTo,CreatedAt)
     SELECT NEWID(),@TenantId,NULL,a.Category,account.AccountId,@StartsOn,NULL,@Now
-    FROM @Accounts a
-    INNER JOIN dbo.AccountingAccounts account ON account.TenantId=@TenantId AND account.Code=a.Code
-    WHERE NOT EXISTS (SELECT 1 FROM dbo.AccountingAccountMappings mapping
+    FROM dbo.AccountingConfigurationProfileAccounts a
+    INNER JOIN dbo.AccountingAccounts account ON account.TenantId=@TenantId AND account.Code=a.AccountCode
+    WHERE a.ProfileCode=@ProfileCode AND
+      NOT EXISTS (SELECT 1 FROM dbo.AccountingAccountMappings mapping
                       WHERE mapping.TenantId=@TenantId AND mapping.BusinessId IS NULL
                         AND mapping.Category=a.Category AND mapping.EffectiveFrom=@StartsOn);
 
@@ -72,25 +46,30 @@ BEGIN
         VALUES(NEWID(),@BusinessId,N'PRINCIPAL',N'Operación principal',NULL,1,1,@Now);
 
     DECLARE @DefaultCostCenterId uniqueidentifier=(SELECT TOP(1) CostCenterId FROM dbo.AccountingCostCenters WHERE BusinessId=@BusinessId AND IsDefault=1 AND IsActive=1 ORDER BY CreatedAt);
-    DECLARE @OperatingExpenseId uniqueidentifier=(SELECT AccountId FROM dbo.AccountingAccounts WHERE TenantId=@TenantId AND Code=N'519510');
-    DECLARE @OtherExpenseId uniqueidentifier=(SELECT AccountId FROM dbo.AccountingAccounts WHERE TenantId=@TenantId AND Code=N'539595');
-    DECLARE @ExpenseConcepts TABLE(Code nvarchar(32),Name nvarchar(120),AccountId uniqueidentifier);
-    INSERT @ExpenseConcepts VALUES
-      (N'PEAJE',N'Peajes',@OperatingExpenseId),
-      (N'PARQUEADERO',N'Parqueaderos',@OperatingExpenseId),
-      (N'COMBUSTIBLE',N'Combustible',@OperatingExpenseId),
-      (N'TRANSPORTE',N'Transporte y mensajería',@OperatingExpenseId),
-      (N'SERVICIOS',N'Servicios operativos',@OperatingExpenseId),
-      (N'OTROS',N'Otros gastos',@OtherExpenseId);
     INSERT dbo.ExpenseConcepts(ExpenseConceptId,BusinessId,Code,Name,ExpenseAccountId,DefaultCostCenterId,WithholdingConceptCode,IsActive,CreatedAt,UpdatedAt)
-    SELECT NEWID(),@BusinessId,concept.Code,concept.Name,concept.AccountId,@DefaultCostCenterId,NULL,1,@Now,@Now
-    FROM @ExpenseConcepts concept
-    WHERE concept.AccountId IS NOT NULL AND NOT EXISTS(
+    SELECT NEWID(),@BusinessId,concept.Code,concept.Name,account.AccountId,@DefaultCostCenterId,NULL,1,@Now,@Now
+    FROM dbo.AccountingConfigurationProfileExpenseConcepts concept
+    INNER JOIN dbo.AccountingConfigurationProfileAccounts definition
+      ON definition.ProfileCode=concept.ProfileCode AND definition.Category=concept.ExpenseAccountCategory
+    INNER JOIN dbo.AccountingAccounts account
+      ON account.TenantId=@TenantId AND account.Code=definition.AccountCode
+    WHERE concept.ProfileCode=@ProfileCode AND concept.IsActive=1 AND NOT EXISTS(
       SELECT 1 FROM dbo.ExpenseConcepts currentConcept WHERE currentConcept.BusinessId=@BusinessId AND currentConcept.Code=concept.Code);
 
     IF NOT EXISTS(SELECT 1 FROM dbo.Suppliers WHERE BusinessId=@BusinessId AND Identification=N'OCASIONAL')
       INSERT dbo.Suppliers(SupplierId,BusinessId,PartyId,Identification,Name,IsActive,CreatedAt)
       VALUES(NEWID(),@BusinessId,NULL,N'OCASIONAL',N'Gasto ocasional / sin proveedor',1,@Now);
+
+    INSERT dbo.BusinessReasons(
+      ReasonId,BusinessId,ReasonType,Code,Name,Direction,CounterpartAccountingCategory,
+      DefaultCostCenterId,RequiresReference,IsSystem,IsActive,DisplayOrder,CreatedAt,UpdatedAt)
+    SELECT NEWID(),@BusinessId,template.ReasonType,template.Code,template.Name,template.Direction,
+      template.CounterpartAccountingCategory,NULL,template.RequiresReference,1,1,
+      template.DisplayOrder,@Now,@Now
+    FROM dbo.ReasonTemplates template
+    WHERE template.ProfileCode=@ProfileCode AND template.IsActive=1 AND NOT EXISTS(
+      SELECT 1 FROM dbo.BusinessReasons reason
+      WHERE reason.BusinessId=@BusinessId AND reason.ReasonType=template.ReasonType AND reason.Code=template.Code);
 
     IF NOT EXISTS (SELECT 1 FROM dbo.AccountingVoucherCursors WHERE TenantId=@TenantId)
         INSERT dbo.AccountingVoucherCursors(TenantId,LastAssignedNumber,UpdatedAt)

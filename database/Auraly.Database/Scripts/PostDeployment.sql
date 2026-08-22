@@ -135,7 +135,6 @@ PRINT 'Post-deployment scripts executed successfully.';
 
 :r .\Seeds\SeedInventoryPermissions.sql
 :r .\Seeds\SeedInventoryReasons.sql
-:r .\Seeds\SeedDispatchReasons.sql
 :r .\Seeds\SeedInventoryDocumentSeries.sql
 :r .\Seeds\SeedRoutePermissions.sql
 :r .\Seeds\SeedSellerRole.sql
@@ -148,3 +147,4 @@ PRINT 'Post-deployment scripts executed successfully.';
 :r .\Migrations\MigrateEmployeesAndUsersToParties.sql
 :r .\Seeds\EnsureFinalConsumer.sql
 :r .\Seeds\SeedAccountingDefaults.sql
+:r .\Seeds\SeedDispatchReasons.sql

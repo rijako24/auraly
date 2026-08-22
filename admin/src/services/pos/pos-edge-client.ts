@@ -22,6 +22,7 @@ export type PosCatalogProduct = {
   unitPrice: number;
   currencyCode: string;
   isActive: boolean;
+  isWeighable: boolean;
   priceSource: "Public" | "Base" | "PriceList" | "PriceChannel";
 };
 export type PosCatalogSearchPage = {
@@ -71,6 +72,7 @@ export type PosCustomerSelection = { draft: PosDraft; customer: PosCustomer | nu
 
 export type PosIssuedSaleSummary = {
   documentId: { value: string };
+  documentType: PosSaleDocumentType;
   documentNumber: string;
   fiscalNumber: string;
   issuedAt: string;
@@ -544,6 +546,13 @@ export class PosEdgeClient implements PosClient {
 
   openCashDrawer() {
     return this.requestVoid("/edge/v1/cash-drawer/open", { method: "POST" });
+  }
+
+  printReceipt(receipt: PosPrintableReceipt) {
+    return this.requestVoid("/edge/v1/print/receipt", {
+      method: "POST",
+      body: JSON.stringify(receipt),
+    });
   }
 
   readScaleWeight() {

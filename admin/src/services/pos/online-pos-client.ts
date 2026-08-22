@@ -128,6 +128,7 @@ type OnlineCustomerSelection = {
 type OnlineIssuedSalePage = {
   items: Array<{
     documentId: string;
+    documentType: PosSaleDocumentType;
     documentNumber: string;
     fiscalNumber: string;
     issuedAt: string;
@@ -262,6 +263,16 @@ export class OnlinePosClient implements PosClient {
     if (!this.edgeSessionToken)
       throw new PosEdgeError("Esta operación requiere configurar este equipo como caja Auraly.", 409);
     return new PosEdgeClient(this.edgeSessionToken, readEdgeUserSession());
+  }
+
+  private async printDirect(
+    receipts: PosPrintableReceipt[],
+    openDrawer = false,
+  ) {
+    const edge = this.localEdge();
+    const jobs = receipts.map((receipt) => edge.printReceipt(receipt));
+    if (openDrawer) jobs.push(edge.openCashDrawer());
+    await Promise.all(jobs);
   }
 
   async health() {
@@ -564,13 +575,7 @@ export class OnlinePosClient implements PosClient {
     payments: PosPaymentInput[],
     documentType: PosSaleDocumentType,
   ) {
-    const printConfiguration = loadBrowserPrinterConfiguration();
-    const halfLetter = printConfiguration.posOutputFormat === "HalfLetter";
-    const preview = halfLetter
-      ? openHalfLetterPrintPreview()
-      : openPrintPreview();
-    try {
-      const result = await request<OnlineCheckoutResponse>(
+    const result = await request<OnlineCheckoutResponse>(
         `/api/commerce/v1/pos/drafts/${draftId}/complete`,
         this.mutation({
           expectedVersion: this.version(draftId),
@@ -578,12 +583,7 @@ export class OnlinePosClient implements PosClient {
         }, "POST", `online-sale-${draftId}`),
       );
       const nextDraft = this.mapDraft(result.nextDraft);
-      if (halfLetter)
-        await renderReceiptsHalfLetter(preview, [result.receipt], this.context);
-      else if (preview)
-        await renderReceipt(preview, result.receipt,
-          result.receipt.documentType === "SalesInvoice"
-            ? this.qrImageUrl(result.receipt.documentId) : null);
+      await this.printDirect([result.receipt], !result.isDuplicate);
       return {
         issuedSale: {
           documentId: { value: result.receipt.documentId },
@@ -599,12 +599,8 @@ export class OnlinePosClient implements PosClient {
         nextDocumentNumber: null,
         nextFiscalNumber: null,
         receipt: result.receipt,
-        printPreviewOpened: preview !== null,
+        printPreviewOpened: false,
       } satisfies PosCompleteSaleResult;
-    } catch (error) {
-      preview?.close();
-      throw error;
-    }
   }
 
   async searchIssuedSales(search = "", skip = 0, take = 50) {
@@ -617,6 +613,7 @@ export class OnlinePosClient implements PosClient {
         (sale) =>
           ({
             documentId: { value: sale.documentId },
+            documentType: sale.documentType,
             documentNumber: sale.documentNumber,
             fiscalNumber: sale.fiscalNumber,
             issuedAt: sale.issuedAt,
@@ -632,22 +629,11 @@ export class OnlinePosClient implements PosClient {
   }
 
   async reprint(documentId: string) {
-    const preview = openPrintPreview();
-    try {
-      const receipt = await request<PosPrintableReceipt>(
+    const receipt = await request<PosPrintableReceipt>(
         `/api/commerce/v1/pos/drafts/sales/${documentId}/receipt`,
         this.post(this.scope()),
       );
-      if (!preview)
-        throw new PosEdgeError(
-          "El navegador bloqueó la vista previa de impresión.",
-          409,
-        );
-      await renderReceipt(preview, receipt, this.qrImageUrl(documentId));
-    } catch (error) {
-      preview?.close();
-      throw error;
-    }
+    await this.printDirect([receipt]);
   }
 
   readScaleWeight() {
@@ -690,11 +676,6 @@ export class OnlinePosClient implements PosClient {
     paymentMethodCode: string,
     documentType: "SalesInvoice" | "SalesReceipt",
   ): Promise<InvoiceOrdersResponse> {
-    const printConfiguration = loadBrowserPrinterConfiguration();
-    const halfLetter = printConfiguration.ordersOutputFormat === "HalfLetter";
-    const preview = halfLetter
-      ? openHalfLetterPrintPreview()
-      : openPrintPreview();
     const response = await invoiceCommerceOrders({
       workSessionId: this.context.workSessionId,
       warehouseId: this.context.warehouseId,
@@ -705,13 +686,18 @@ export class OnlinePosClient implements PosClient {
       documentType,
     });
     try {
-      if (halfLetter)
-        await renderInvoiceOrdersHalfLetter(preview, response, this.context);
-      else
-        await renderInvoiceOrdersReceipt(preview, response, this.context);
+      const documentIds = response.results
+        .map((result) => result.documentId)
+        .filter((documentId): documentId is string => Boolean(documentId));
+      const receipts = await Promise.all(documentIds.map((documentId) =>
+        request<PosPrintableReceipt>(
+          `/api/commerce/v1/pos/drafts/sales/${documentId}/receipt`,
+          this.post(this.scope()),
+        ),
+      ));
+      await this.printDirect(receipts, receipts.length > 0);
       response.printStatus = response.completedCount ? "Sent" : "NotRequired";
     } catch (error) {
-      preview?.close();
       response.printStatus = "Failed";
       response.printError = `Los pedidos se facturaron, pero no fue posible imprimir: ${
         error instanceof Error ? error.message : "error desconocido"

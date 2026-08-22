@@ -58,6 +58,7 @@ public sealed record OnlineSalesProduct(
     decimal UnitPrice,
     string CurrencyCode,
     bool IsActive,
+    bool IsWeighable,
     string PriceSource);
 
 public sealed record OnlineSalesProductPage(
@@ -132,6 +133,7 @@ public sealed record SearchOnlineSalesIssuedSalesRequest(
 
 public sealed record OnlineSalesIssuedSale(
     Guid DocumentId,
+    string DocumentType,
     string DocumentNumber,
     string FiscalNumber,
     DateTimeOffset IssuedAt,

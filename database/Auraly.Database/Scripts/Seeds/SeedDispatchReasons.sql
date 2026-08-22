@@ -1,14 +1,20 @@
-DECLARE @DispatchReasonDefaults TABLE(ReasonType nvarchar(32),Code nvarchar(40),Name nvarchar(160),DisplayOrder int);
-INSERT @DispatchReasonDefaults VALUES
-(N'NotDelivered',N'CUSTOMER_ABSENT',N'Cliente ausente',10),
-(N'NotDelivered',N'BUSINESS_CLOSED',N'Local cerrado',20),
-(N'NotDelivered',N'CUSTOMER_REJECTED',N'Cliente rechazó el pedido',30),
-(N'NotDelivered',N'WRONG_ADDRESS',N'Dirección incorrecta',40),
-(N'NotDelivered',N'NO_PAYMENT',N'Cliente sin medio de pago',50),
-(N'NotDelivered',N'ACCESS_RESTRICTED',N'No fue posible acceder al lugar',60),
-(N'NotDelivered',N'OTHER',N'Otro motivo',999);
-
 INSERT dispatch.DispatchReasons(DispatchReasonId,BusinessId,ReasonType,Code,Name,IsSystem,IsActive,DisplayOrder,CreatedAt)
-SELECT NEWID(),business.BusinessId,reason.ReasonType,reason.Code,reason.Name,1,1,reason.DisplayOrder,SYSUTCDATETIME()
-FROM dbo.Businesses business CROSS JOIN @DispatchReasonDefaults reason
-WHERE NOT EXISTS(SELECT 1 FROM dispatch.DispatchReasons currentReason WHERE currentReason.BusinessId=business.BusinessId AND currentReason.ReasonType=reason.ReasonType AND currentReason.Code=reason.Code);
+SELECT reason.ReasonId,reason.BusinessId,reason.ReasonType,reason.Code,reason.Name,
+       reason.IsSystem,reason.IsActive,reason.DisplayOrder,reason.CreatedAt
+FROM dbo.BusinessReasons reason
+WHERE reason.ReasonType IN(N'NotDelivered',N'DeliveryReturn')
+  AND NOT EXISTS(
+    SELECT 1 FROM dispatch.DispatchReasons currentReason
+    WHERE currentReason.BusinessId=reason.BusinessId
+      AND currentReason.ReasonType=reason.ReasonType
+      AND currentReason.Code=reason.Code);
+
+UPDATE legacy SET legacy.Name=reason.Name,legacy.IsActive=reason.IsActive,
+  legacy.DisplayOrder=reason.DisplayOrder,legacy.UpdatedAt=SYSUTCDATETIME()
+FROM dispatch.DispatchReasons legacy
+INNER JOIN dbo.BusinessReasons reason
+  ON reason.BusinessId=legacy.BusinessId
+ AND reason.ReasonType=legacy.ReasonType
+ AND reason.Code=legacy.Code
+WHERE legacy.Name<>reason.Name OR legacy.IsActive<>reason.IsActive
+   OR legacy.DisplayOrder<>reason.DisplayOrder;
