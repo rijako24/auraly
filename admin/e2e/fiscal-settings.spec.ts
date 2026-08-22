@@ -5,7 +5,7 @@ const businessId = "22222222-2222-2222-2222-222222222222";
 const permissions = ["dashboard.read", "fiscal.configuration.read", "fiscal.configuration.manage"];
 
 async function authenticate(page: Page) {
-  await page.context().addCookies([{ name: "auth_token", value: "e2e", domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
+  await page.context().addCookies([{ name: "auth_token", value: "e2e", url: process.env.AURALY_E2E_BASE_URL ?? "http://127.0.0.1:3000", httpOnly: true, sameSite: "Lax" }]);
   await page.addInitScript(({ tenant, business, granted }) => {
     localStorage.setItem("selected_tenant_id", tenant);
     localStorage.setItem("selected_business_id", business);

@@ -3,7 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 async function login(page: Page) {
   const tenantId = "11111111-1111-1111-1111-111111111111";
   const businessId = "22222222-2222-2222-2222-222222222222";
-  await page.context().addCookies([{ name: "auth_token", value: "e2e", domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
+  await page.context().addCookies([{ name: "auth_token", value: "e2e", url: process.env.AURALY_E2E_BASE_URL ?? "http://127.0.0.1:3000", httpOnly: true, sameSite: "Lax" }]);
   await page.addInitScript(({ tenantId: tenant, businessId: business }) => {
     localStorage.setItem("selected_tenant_id", tenant);
     localStorage.setItem("selected_business_id", business);
