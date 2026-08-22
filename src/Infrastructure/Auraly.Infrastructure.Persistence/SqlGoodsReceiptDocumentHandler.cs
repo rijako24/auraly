@@ -4,7 +4,6 @@ using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.DocumentProcessing;
 using Auraly.Contracts.Purchasing;
 using Auraly.Domain.Inventory;
-using Auraly.Domain.Payables;
 using Auraly.Domain.Pricing;
 using Microsoft.Data.SqlClient;
 
@@ -37,8 +36,6 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         foreach (var line in receipt.Lines.OrderBy(line => line.LineNumber))
             await ProcessLineAsync(session, receipt, line, cancellationToken);
         await PersistWithholdingSnapshotAsync(session, receipt, cancellationToken);
-        if (receipt.CreatesPayable && receipt.Withholding.NetAmount > 0)
-            await OpenPayableAsync(session, receipt, cancellationToken);
         await SqlAccountingPostingJobWriter.InsertAsync(
             session, document, receipt.ReceivedAt, ids, timeProvider,
             cancellationToken);
@@ -298,40 +295,6 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         AddNullableDecimal(command, "@EffectiveMargin", effectiveMargin, 9, 6);
         command.Parameters.AddWithValue("@CostBasisType", costBasisType);
         command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
-
-    private async Task OpenPayableAsync(
-        SqlDocumentProcessingSessionAccessor.Session session,
-        GoodsReceiptDocumentPayload receipt,
-        CancellationToken cancellationToken)
-    {
-        var payable = PayableOpening.Create(receipt.Withholding.NetAmount, receipt.ReceivedAt, receipt.DueDate);
-        var payableId = ids.NewId();
-        var now = timeProvider.GetUtcNow();
-        const string sql = """
-            INSERT dbo.Payables
-              (PayableId,BusinessId,SupplierId,SourceDocumentId,SourceDocumentType,DocumentNumber,
-               CurrencyCode,OriginalAmount,OutstandingAmount,DueDate,Status,CreatedAt)
-            VALUES(@PayableId,@BusinessId,@SupplierId,@DocumentId,N'GoodsReceipt',@Number,
-               @Currency,@Original,@Outstanding,@DueDate,N'Open',@Now);
-            INSERT dbo.PayableTransactions
-              (PayableTransactionId,PayableId,TransactionType,Amount,SourceDocumentId,OccurredAt,CreatedAt)
-            VALUES(@TransactionId,@PayableId,N'Opening',@Original,@DocumentId,@OccurredAt,@Now);
-            """;
-        await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
-        command.Parameters.AddWithValue("@PayableId", payableId);
-        command.Parameters.AddWithValue("@TransactionId", ids.NewId());
-        command.Parameters.AddWithValue("@BusinessId", receipt.BusinessId);
-        command.Parameters.AddWithValue("@SupplierId", receipt.SupplierId);
-        command.Parameters.AddWithValue("@DocumentId", receipt.DocumentId);
-        command.Parameters.AddWithValue("@Number", receipt.DocumentNumber);
-        command.Parameters.AddWithValue("@Currency", receipt.CurrencyCode);
-        AddDecimal(command, "@Original", payable.OriginalAmount, 19, 4);
-        AddDecimal(command, "@Outstanding", payable.OutstandingAmount, 19, 4);
-        command.Parameters.AddWithValue("@DueDate", payable.DueDate);
-        command.Parameters.AddWithValue("@OccurredAt", receipt.ReceivedAt);
-        command.Parameters.AddWithValue("@Now", now);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 

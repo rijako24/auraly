@@ -10,6 +10,8 @@ Este documento responde qué componente es dueño de cada efecto y dónde se agr
 | Efecto de inventario | handler documental → `SqlInventoryLedgerWriter`; operaciones dedicadas además usan `SqlInventoryOperationProcessor` | SQL a `InventoryBalances`/`InventoryMovements`, segundo kardex o motor |
 | Nuevo documento fiscal DIAN | snapshot/regla del `FiscalProcessingCoordinator` y workers fiscales existentes | worker DIAN por módulo, tenant o tipo |
 | Nuevo asiento automático | política/regla del `AccountingProcessingCoordinator` y `SqlAccountingPostingProcessor` | asiento desde API o segundo posting service |
+| Nuevo efecto de CxC/CxP, pago, aplicación, crédito o anticipo | contrato y transacción del único `SqlAccountingPostingProcessor` | handler operacional, worker financiero adicional o job lateral |
+| Nueva proyección de alto volumen | motor de reporting existente, con métrica, idempotencia, rebuild y benchmark documentados | consolidado preventivo o job por reporte |
 | Nueva opción de dropdown | seed/maestro → store de aplicación → endpoint de catálogo → `useReferenceOptions` | array `{value,label}`, switch de labels o prompt |
 | Nuevo endpoint | contrato/caso de uso de aplicación; adapter de persistencia en infraestructura | SQL o reglas de dominio en Minimal API |
 | Regla dependiente de fecha/hora | `IBusinessClock` y `TimeProvider` | `DateTime.Now/UtcNow` dentro de la regla |
@@ -17,7 +19,7 @@ Este documento responde qué componente es dueño de cada efecto y dónde se agr
 
 ## Documento e inventario
 
-`API/POS/importador` → confirma documento y trabajo durable → `DocumentProcessingWorker` → `DocumentProcessingEngine` → `IConfirmedDocumentHandler` → efectos intrínsecos → `SqlInventoryLedgerWriter` cuando aplica → marca job procesado.
+`API/POS/importador` → confirma documento y trabajo durable → `DocumentProcessingWorker` → `DocumentProcessingEngine` → `IConfirmedDocumentHandler` → documento e inventario → marca job procesado → publica señales contable, fiscal y reporting aplicables.
 
 - SQL es la fuente de orden, lease, estado e idempotencia; la cola solo despierta consumidores.
 - Cada tipo documental tiene un handler. El handler no es un motor nuevo.
@@ -38,11 +40,23 @@ Documento operativo confirmado → proceso fiscal durable → `FiscalProcessingC
 
 ## Contabilidad
 
-Documento contabilizable → trabajo durable único → `AccountingProcessingCoordinator` → `SqlAccountingPostingProcessor` → entry/lines → estado final o error reintentable.
+Documento contabilizable → trabajo durable único → `AccountingProcessingCoordinator` → `SqlAccountingPostingProcessor` → submayores CxC/CxP, pagos y aplicaciones + entry/lines en una transacción → estado final o error reintentable.
 
 - `AccountingProcessingPolicy` es la lista canónica de tipos soportados.
 - La unicidad por documento fuente evita doble asiento.
 - Agregar un documento significa extender la política y el posting existente, con prueba; no copiar la lista ni insertar asientos desde el módulo origen.
+- El motor documental no escribe saldos financieros ni aplicaciones. No existe un worker financiero distinto del motor contable.
+
+## Reporting
+
+Documento comercial completado → `SalesReportingProcessingCoordinator` → cola
+`auraly-sales-reporting` → proyección idempotente → hechos y consolidados.
+
+- Reporting no bloquea ni decide operación, fiscal o contabilidad.
+- Ventas usa proyección física por su volumen, costo y agregaciones.
+- Reportes pequeños consultan tablas propietarias indexadas.
+- Una nueva proyección exige métrica versionada, benchmark, idempotencia,
+  reconciliación y rebuild; no crea automáticamente otra tabla de jobs.
 
 ## Conversacional
 

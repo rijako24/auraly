@@ -6,6 +6,7 @@ public static class AccountingPermissionCodes
     public const string Configure = "accounting.configure";
     public const string PeriodsManage = "accounting.periods.manage";
     public const string Retry = "accounting.postings.retry";
+    public const string Activate = "accounting.activate";
 }
 
 public static class AccountingCategories
@@ -123,6 +124,26 @@ public sealed record AccountingDefaultsResult(
     bool HasDefaultCostCenter,
     bool HasOpenPeriod,
     bool IsReady);
+
+public static class AccountingActivationStatuses
+{
+    public const string Disabled = "Disabled";
+    public const string Configuring = "Configuring";
+    public const string Ready = "Ready";
+}
+
+public sealed record ActivateAccountingRequest(
+    DateOnly EffectiveFrom,
+    string FunctionalCurrencyCode,
+    string OpeningBalanceMode);
+
+public sealed record AccountingReadinessView(
+    string Status,
+    string FunctionalCurrencyCode,
+    DateOnly? EffectiveFrom,
+    string? OpeningBalanceMode,
+    DateTimeOffset? ActivatedAt,
+    IReadOnlyList<string> BlockingIssues);
 
 public sealed record AccountingCategoryDefinition(
     string Category,

@@ -25,3 +25,4 @@ export { systemConfigurationsApi } from "./system-configurations";
 
 
 export { productsApi } from "./products";
+export { salesReportingApi } from "./sales-reporting";

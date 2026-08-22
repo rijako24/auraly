@@ -12,6 +12,13 @@
     <ProjectReference Include="..\Auraly.Commerce.Accounting.Domain\Auraly.Commerce.Accounting.Domain.csproj" />
     <ProjectReference Include="..\Auraly.Commerce.Accounting.Application\Auraly.Commerce.Accounting.Application.csproj" />
     <ProjectReference Include="..\..\DocumentProcessing\Auraly.Application.DocumentProcessing\Auraly.Application.DocumentProcessing.csproj" />
+    <ProjectReference Include="..\..\Sales\Auraly.Contracts.Sales\Auraly.Contracts.Sales.csproj" />
+    <ProjectReference Include="..\..\Returns\Auraly.Contracts.Returns\Auraly.Contracts.Returns.csproj" />
+    <ProjectReference Include="..\..\Purchasing\Auraly.Contracts.Purchasing\Auraly.Contracts.Purchasing.csproj" />
+    <ProjectReference Include="..\..\Payables\Auraly.Contracts.Payables\Auraly.Contracts.Payables.csproj" />
+    <ProjectReference Include="..\..\Receivables\Auraly.Contracts.Receivables\Auraly.Contracts.Receivables.csproj" />
+    <ProjectReference Include="..\..\Expenses\Auraly.Contracts.Expenses\Auraly.Contracts.Expenses.csproj" />
+    <ProjectReference Include="..\..\WorkSessions\Auraly.Contracts.WorkSessions\Auraly.Contracts.WorkSessions.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
   </ItemGroup>
 </Project>

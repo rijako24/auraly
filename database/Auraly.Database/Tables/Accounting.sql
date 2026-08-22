@@ -11,6 +11,30 @@ CREATE UNIQUE INDEX [UX_AccountingConfigurationProfiles_Default]
     ON [dbo].[AccountingConfigurationProfiles]([IsDefault]) WHERE [IsDefault]=1 AND [IsActive]=1;
 GO
 
+CREATE TABLE [dbo].[AccountingTenantSettings]
+(
+    [TenantId] UNIQUEIDENTIFIER NOT NULL,
+    [Status] NVARCHAR(16) NOT NULL,
+    [FunctionalCurrencyCode] CHAR(3) NOT NULL CONSTRAINT [DF_AccountingTenantSettings_Currency] DEFAULT N'COP',
+    [EffectiveFrom] DATE NULL,
+    [OpeningBalanceMode] NVARCHAR(24) NULL,
+    [ActivatedAt] DATETIMEOFFSET(7) NULL,
+    [ActivatedByUserId] UNIQUEIDENTIFIER NULL,
+    [UpdatedAt] DATETIMEOFFSET(7) NOT NULL,
+    [RowVersion] ROWVERSION NOT NULL,
+    CONSTRAINT [PK_AccountingTenantSettings] PRIMARY KEY CLUSTERED ([TenantId]),
+    CONSTRAINT [FK_AccountingTenantSettings_Tenant] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
+    CONSTRAINT [FK_AccountingTenantSettings_ActivatedBy] FOREIGN KEY ([ActivatedByUserId]) REFERENCES [dbo].[AppUsers]([UserId]),
+    CONSTRAINT [CK_AccountingTenantSettings_Status] CHECK ([Status] IN (N'Disabled',N'Configuring',N'Ready')),
+    CONSTRAINT [CK_AccountingTenantSettings_Opening] CHECK ([OpeningBalanceMode] IS NULL OR [OpeningBalanceMode] IN (N'ZeroDeclared',N'ImportedAndApproved')),
+    CONSTRAINT [CK_AccountingTenantSettings_Ready] CHECK
+      (([Status]<>N'Ready' AND [EffectiveFrom] IS NULL AND [ActivatedAt] IS NULL AND [ActivatedByUserId] IS NULL)
+       OR
+       ([Status]=N'Ready' AND [EffectiveFrom] IS NOT NULL AND [OpeningBalanceMode] IS NOT NULL
+        AND [ActivatedAt] IS NOT NULL AND [ActivatedByUserId] IS NOT NULL))
+);
+GO
+
 CREATE TABLE [dbo].[AccountingConfigurationProfileAccounts]
 (
     [ProfileCode] NVARCHAR(32) NOT NULL,

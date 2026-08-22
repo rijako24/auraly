@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
 using Auraly.Application.DocumentProcessing;
 using Auraly.Application.Fiscal;
+using Auraly.Application.Sales;
 using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Accounting.Infrastructure;
+using Auraly.Infrastructure.Persistence;
 
 namespace Auraly.Api;
 
@@ -15,7 +17,8 @@ public sealed class InProcessTestingProcessingTransport(
     ILogger<InProcessTestingProcessingTransport> logger) :
     IDocumentProcessingSignalPublisher,
     IFiscalProcessingSignalPublisher,
-    IAccountingProcessingSignalPublisher
+    IAccountingProcessingSignalPublisher,
+    ISalesReportingProcessingSignalPublisher
 {
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> businessGates = new();
 
@@ -60,6 +63,17 @@ public sealed class InProcessTestingProcessingTransport(
                     signal.DocumentType,
                     cancellationToken);
             }
+
+            if (SalesReportingProcessingPolicy.Supports(signal.DocumentType))
+            {
+                var reporting = scope.ServiceProvider
+                    .GetRequiredService<SalesReportingProcessingCoordinator>();
+                await reporting.RequestProjectionAsync(
+                    signal.BusinessId,
+                    signal.DocumentId,
+                    signal.DocumentType,
+                    cancellationToken);
+            }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -95,6 +109,30 @@ public sealed class InProcessTestingProcessingTransport(
             logger.LogWarning(
                 exception,
                 "In-process accounting document {DocumentId} remains available for inspection after posting failed.",
+                signal.DocumentId);
+        }
+    }
+
+    public async Task PublishAsync(
+        SalesReportingProcessingSignal signal,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        try
+        {
+            await using var scope = scopes.CreateAsyncScope();
+            var processor = scope.ServiceProvider
+                .GetRequiredService<SqlSalesReportingProcessor>();
+            await processor.ProcessAsync(
+                signal.DocumentId,
+                signal.DocumentType,
+                signal.BusinessId,
+                cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(exception,
+                "In-process reporting document {DocumentId} remains pending after projection failed.",
                 signal.DocumentId);
         }
     }

@@ -181,6 +181,11 @@ builder.Services.AddScoped<IConfirmedDocumentHandler, SqlProductConversionDocume
 builder.Services.AddScoped<DocumentProcessingEngine>();
 builder.Services.AddScoped<DocumentProcessingWorker>();
 builder.Services.AddScoped<SqlAccountingPostingProcessor>();
+builder.Services.AddSingleton<IAccountingProcessingSignalGate, SqlAccountingProcessingSignalGate>();
+builder.Services.AddScoped<SqlSalesReportingProjectionWriter>();
+builder.Services.AddScoped<SqlSalesReportingProcessor>();
+builder.Services.AddScoped<ISalesReportingStore, SqlSalesReportingStore>();
+builder.Services.AddScoped<SalesReportingService>();
 builder.Services.AddScoped<IAccountingStore, SqlAccountingStore>();
 builder.Services.AddScoped<AccountingService>();
 builder.Services.AddScoped<IWithholdingRuleStore, SqlWithholdingRuleStore>();
@@ -188,6 +193,7 @@ builder.Services.AddScoped<WithholdingEngine>();
 builder.Services.AddScoped<WithholdingService>();
 builder.Services.AddSingleton<AccountingProcessingCoordinator>();
 builder.Services.AddSingleton<FiscalProcessingCoordinator>();
+builder.Services.AddSingleton<SalesReportingProcessingCoordinator>();
 builder.Services.AddScoped<ReceivePosSaleService>();
 if (builder.Environment.IsEnvironment("Testing"))
 {
@@ -197,6 +203,8 @@ if (builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddSingleton<IFiscalProcessingSignalPublisher>(provider =>
         provider.GetRequiredService<InProcessTestingProcessingTransport>());
     builder.Services.AddSingleton<IAccountingProcessingSignalPublisher>(provider =>
+        provider.GetRequiredService<InProcessTestingProcessingTransport>());
+    builder.Services.AddSingleton<ISalesReportingProcessingSignalPublisher>(provider =>
         provider.GetRequiredService<InProcessTestingProcessingTransport>());
 }
 else
@@ -213,6 +221,8 @@ else
             "Auraly:Fiscal:RabbitMq:QueueName"];
         var accountingQueue = builder.Configuration[
             "Auraly:Accounting:RabbitMq:QueueName"];
+        var salesReportingQueue = builder.Configuration[
+            "Auraly:SalesReporting:RabbitMq:QueueName"];
         var externalCustomerQueue = builder.Configuration[
             "Auraly:ExternalCustomerReconciliation:QueueName"] ??
             "auraly-external-customer-reconciliation";
@@ -220,12 +230,14 @@ else
             string.IsNullOrWhiteSpace(documentQueue) ||
             string.IsNullOrWhiteSpace(fiscalQueue) ||
             string.IsNullOrWhiteSpace(accountingQueue) ||
+            string.IsNullOrWhiteSpace(salesReportingQueue) ||
             string.IsNullOrWhiteSpace(externalCustomerQueue))
             throw new InvalidOperationException(
-                "RabbitMQ connection and document/fiscal/accounting/external-customer queue names are required.");
+                "RabbitMQ connection and document/fiscal/accounting/sales-reporting/external-customer queue names are required.");
 
         builder.Services.AddSingleton(new RabbitMqProcessingOptions(
-            rabbitConnection, documentQueue, fiscalQueue, accountingQueue));
+            rabbitConnection, documentQueue, fiscalQueue, accountingQueue,
+            salesReportingQueue));
         builder.Services.AddSingleton(
             new ExternalCustomerReconciliationRabbitMqOptions(externalCustomerQueue));
         builder.Services.AddSingleton<RabbitMqProcessingConnection>();
@@ -236,10 +248,14 @@ else
             provider.GetRequiredService<RabbitMqProcessingTransport>());
         builder.Services.AddSingleton<IAccountingProcessingSignalPublisher>(provider =>
             provider.GetRequiredService<RabbitMqProcessingTransport>());
+        builder.Services.AddSingleton<ISalesReportingProcessingSignalPublisher>(provider =>
+            provider.GetRequiredService<RabbitMqProcessingTransport>());
         if (builder.Configuration.GetValue("Auraly:Fiscal:Worker:Enabled", true))
             builder.Services.AddHostedService<RabbitMqFiscalProcessingHostedService>();
         if (builder.Configuration.GetValue("Auraly:Accounting:Worker:Enabled", true))
             builder.Services.AddHostedService<RabbitMqAccountingProcessingHostedService>();
+        if (builder.Configuration.GetValue("Auraly:SalesReporting:Worker:Enabled", true))
+            builder.Services.AddHostedService<RabbitMqSalesReportingProcessingHostedService>();
         if (builder.Configuration.GetValue(
                 "Auraly:DocumentProcessing:Worker:Enabled", true))
             builder.Services.AddHostedService<RabbitMqDocumentProcessingHostedService>();
@@ -276,6 +292,12 @@ else
             throw new InvalidOperationException(
                 "Auraly:Accounting:ServiceBus:QueueName is required. " +
                 "Accounting processing never falls back to synchronous observers.");
+        var salesReportingQueueName = builder.Configuration[
+            "Auraly:SalesReporting:ServiceBus:QueueName"];
+        if (string.IsNullOrWhiteSpace(salesReportingQueueName))
+            throw new InvalidOperationException(
+                "Auraly:SalesReporting:ServiceBus:QueueName is required. " +
+                "Sales reporting never falls back to the operational engine.");
         var externalCustomerQueueName = builder.Configuration[
             "Auraly:ExternalCustomerReconciliation:QueueName"] ??
             "auraly-external-customer-reconciliation";
@@ -284,16 +306,22 @@ else
         builder.Services.AddSingleton(
             new AccountingProcessingServiceBusOptions(accountingQueueName));
         builder.Services.AddSingleton(
+            new SalesReportingProcessingServiceBusOptions(salesReportingQueueName));
+        builder.Services.AddSingleton(
             new ExternalCustomerReconciliationServiceBusOptions(
                 externalCustomerQueueName));
         builder.Services.AddSingleton<IFiscalProcessingSignalPublisher,
             ServiceBusFiscalProcessingPublisher>();
         builder.Services.AddSingleton<IAccountingProcessingSignalPublisher,
             ServiceBusAccountingProcessingPublisher>();
+        builder.Services.AddSingleton<ISalesReportingProcessingSignalPublisher,
+            ServiceBusSalesReportingProcessingPublisher>();
         if (builder.Configuration.GetValue("Auraly:Fiscal:Worker:Enabled", true))
             builder.Services.AddHostedService<FiscalProcessingHostedService>();
         if (builder.Configuration.GetValue("Auraly:Accounting:Worker:Enabled", true))
             builder.Services.AddHostedService<AccountingProcessingHostedService>();
+        if (builder.Configuration.GetValue("Auraly:SalesReporting:Worker:Enabled", true))
+            builder.Services.AddHostedService<SalesReportingProcessingHostedService>();
         if (builder.Configuration.GetValue(
                 "Auraly:DocumentProcessing:Worker:Enabled", true))
             builder.Services.AddHostedService<DocumentProcessingHostedService>();
@@ -561,6 +589,11 @@ builder.Services.AddAuthorization(options =>
         policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
         policy.RequireAuthenticatedUser();
     });
+    options.AddPolicy("sales-reporting.user", policy =>
+    {
+        policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
+        policy.RequireAuthenticatedUser();
+    });
     options.AddPolicy("pos.catalog.sync", policy =>
     {
         policy.AuthenticationSchemes.Add(PosAuthenticationDefaults.Scheme);
@@ -695,6 +728,7 @@ app.MapDispatchingApi();
 app.MapPricingApi();
 app.MapPriceSegmentsApi();
 app.MapAccountingApi();
+app.MapSalesReportingApi();
 app.MapTaxationApi();
 app.MapPost(
         "/api/pos/v1/sales",

@@ -160,6 +160,7 @@
     <Build Include="Tables\OnlineSalesCheckout.sql" />
     <Build Include="Tables\SalesDocumentLines.sql" />
     <Build Include="Tables\SalesDocumentTaxSummaries.sql" />
+    <Build Include="Tables\SalesReporting.sql" />
     <Build Include="Tables\SalesPayments.sql" />
     <Build Include="Tables\SalesReturns.sql" />
     <Build Include="Tables\Dispatching.sql" />

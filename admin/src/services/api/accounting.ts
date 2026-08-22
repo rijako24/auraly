@@ -16,6 +16,19 @@ export interface AccountingMapping {
   accountId: string; effectiveFrom: string; effectiveTo: string | null;
 }
 export interface AccountingDefaultsResult { accountCount: number; mappingCount: number; hasDefaultCostCenter: boolean; hasOpenPeriod: boolean; isReady: boolean; }
+export interface AccountingReadiness {
+  status: "Disabled" | "Configuring" | "Ready";
+  functionalCurrencyCode: string;
+  effectiveFrom: string | null;
+  openingBalanceMode: "ZeroDeclared" | "ImportedAndApproved" | null;
+  activatedAt: string | null;
+  blockingIssues: string[];
+}
+export interface ActivateAccounting {
+  effectiveFrom: string;
+  functionalCurrencyCode: "COP";
+  openingBalanceMode: "ZeroDeclared" | "ImportedAndApproved";
+}
 export interface AccountingCategoryDefinition { category: string; displayName: string; accountType: string; isRequired: boolean; displayOrder: number; }
 export interface TrialBalanceRow { accountCode: string; accountName: string; debit: number; credit: number; balance: number; }
 export interface AccountMovementRow { entryId: string; entryNumber: string; sourceDocumentId: string; sourceDocumentType: string; occurredAt: string; description: string; debit: number; credit: number; balance: number; }
@@ -41,6 +54,8 @@ export const accountingApi = {
   periods: () => apiClient.get<AccountingPeriod[]>("/commerce/v1/accounting/periods"),
   mappings: () => apiClient.get<AccountingMapping[]>("/commerce/v1/accounting/account-mappings"),
   categoryDefinitions: () => apiClient.get<AccountingCategoryDefinition[]>("/commerce/v1/accounting/category-definitions"),
+  readiness: () => apiClient.get<AccountingReadiness>("/commerce/v1/accounting/readiness"),
+  activate: (request: ActivateAccounting) => apiClient.post<AccountingReadiness>("/commerce/v1/accounting/activate", request),
   ensureDefaults: () => apiClient.put<AccountingDefaultsResult>("/commerce/v1/accounting/defaults", {}),
   createAccount: (request: CreateAccount) => apiClient.post<AccountingAccount>("/commerce/v1/accounting/accounts", request),
   createCostCenter: (request: CreateCostCenter) => apiClient.post<AccountingCostCenter>("/commerce/v1/accounting/cost-centers", request),

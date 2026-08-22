@@ -43,8 +43,6 @@ public abstract class SqlCashMovementDocumentHandler(
 
         var session = sessions.Current;
         await LockAcceptedDocumentAsync(session, movement, cancellationToken);
-        await InsertDrawerMovementAsync(session, movement, cancellationToken);
-        await CompleteDocumentAsync(session, movement, cancellationToken);
         await SqlAccountingPostingJobWriter.InsertAsync(
             session, document, movement.OccurredAt, ids, timeProvider,
             cancellationToken);
@@ -80,60 +78,6 @@ public abstract class SqlCashMovementDocumentHandler(
             reader.GetString(6) != "Accepted")
             throw new InvalidOperationException(
                 "The accepted cash movement no longer matches its immutable payload.");
-    }
-
-    private async Task InsertDrawerMovementAsync(
-        SqlDocumentProcessingSessionAccessor.Session session,
-        CashMovementDocumentPayload movement,
-        CancellationToken cancellationToken)
-    {
-        var isCashIn = movement.Direction == CashMovementDirections.In;
-        await using var command = new SqlCommand("""
-            INSERT dbo.WorkSessionMovements
-              (WorkSessionMovementId,WorkSessionId,DocumentId,PaymentNumber,
-               BusinessDate,MovementType,PaymentMethodCode,Amount,Reference,
-               SourceKey,OccurredAt,RecordedByUserId)
-            VALUES
-              (@MovementId,@WorkSessionId,@DocumentId,NULL,@BusinessDate,
-               @MovementType,N'Cash',@Amount,@Reference,@SourceKey,@OccurredAt,@UserId);
-            """, session.Connection, session.Transaction);
-        command.Parameters.AddWithValue("@MovementId", ids.NewId());
-        command.Parameters.AddWithValue("@WorkSessionId", movement.WorkSessionId);
-        command.Parameters.AddWithValue("@DocumentId", movement.DocumentId);
-        command.Parameters.AddWithValue("@BusinessDate", movement.OccurredAt.Date);
-        command.Parameters.AddWithValue(
-            "@MovementType", isCashIn ? "CashIn" : "CashOut");
-        var amount = isCashIn ? movement.Amount : -movement.Amount;
-        var money = command.Parameters.Add("@Amount", System.Data.SqlDbType.Decimal);
-        money.Precision = 19;
-        money.Scale = 4;
-        money.Value = amount;
-        command.Parameters.AddWithValue(
-            "@Reference",
-            (object?)movement.Reference ?? movement.DocumentNumber);
-        command.Parameters.AddWithValue(
-            "@SourceKey", $"cash-movement:{movement.DocumentId:N}");
-        command.Parameters.AddWithValue("@OccurredAt", movement.OccurredAt);
-        command.Parameters.AddWithValue("@UserId", movement.ConfirmedByUserId);
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
-
-    private static async Task CompleteDocumentAsync(
-        SqlDocumentProcessingSessionAccessor.Session session,
-        CashMovementDocumentPayload movement,
-        CancellationToken cancellationToken)
-    {
-        await using var command = new SqlCommand("""
-            UPDATE dbo.CashMovementDocuments
-            SET Status=N'Processed',ProcessedAt=SYSDATETIMEOFFSET()
-            WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId
-              AND Status=N'Accepted';
-            """, session.Connection, session.Transaction);
-        command.Parameters.AddWithValue("@DocumentId", movement.DocumentId);
-        command.Parameters.AddWithValue("@BusinessId", movement.BusinessId);
-        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
-            throw new System.Data.DBConcurrencyException(
-                "The cash movement could not be completed.");
     }
 
     private async Task InsertOutboxAsync(

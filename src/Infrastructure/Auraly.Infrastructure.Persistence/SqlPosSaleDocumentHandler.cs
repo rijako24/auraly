@@ -41,7 +41,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         }
 
         var session = _sessions.Current;
-        var workSessionId = await EnsureWorkSessionAsync(
+        await EnsureWorkSessionAsync(
             session, request, cancellationToken);
         var inventoryWarehouseId = await ResolveInventoryWarehouseAsync(
             session, request, cancellationToken);
@@ -58,12 +58,8 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         foreach (var payment in request.Payments.OrderBy(payment => payment.PaymentNumber))
         {
             await InsertPaymentAsync(session, request, payment, cancellationToken);
-            await InsertWorkSessionMovementAsync(
-                session, request, payment, workSessionId, cancellationToken);
         }
 
-        if (request.CommercialSnapshot.DocumentType == PosSaleDocumentTypes.Invoice)
-            await InsertReceivableAsync(session, request, cancellationToken);
         await SqlAccountingPostingJobWriter.InsertAsync(
             session, document, request.CommercialSnapshot.IssuedAt,
             _idGenerator, _timeProvider, cancellationToken);

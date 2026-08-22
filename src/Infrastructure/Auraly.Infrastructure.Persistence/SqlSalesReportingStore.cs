@@ -1,0 +1,366 @@
+using System.Data;
+using Auraly.Application.Sales;
+using Auraly.Contracts.Sales;
+using Microsoft.Data.SqlClient;
+
+namespace Auraly.Infrastructure.Persistence;
+
+public sealed class SqlSalesReportingStore(SqlServerConnectionFactory connections)
+    : ISalesReportingStore
+{
+    public async Task<SalesReportSummary> GetSummaryAsync(
+        SalesReportingUserIdentity user, SalesReportFilter filter,
+        DateOnly? comparisonFrom, DateOnly? comparisonTo, CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        var filtered = HasDimensionFilter(filter);
+        var current = filtered
+            ? await ReadFilteredTotalsAsync(connection, user, filter, cancellationToken)
+            : await ReadTotalsAsync(connection, user, filter.From, filter.To, cancellationToken);
+        SalesReportTotals? comparison = null;
+        if (comparisonFrom is { } compareFrom && comparisonTo is { } compareTo)
+            comparison = filtered
+                ? await ReadFilteredTotalsAsync(connection, user,
+                    filter with { From=compareFrom, To=compareTo }, cancellationToken)
+                : await ReadTotalsAsync(connection, user, compareFrom, compareTo, cancellationToken);
+        var trend = filtered
+            ? await ReadFilteredTrendAsync(connection, user, filter, cancellationToken)
+            : await ReadTrendAsync(connection, user, filter.From, filter.To, cancellationToken);
+        await using var checkpoint = new SqlCommand("""
+            SELECT MAX(c.LastProjectedAt)
+            FROM dbo.SalesReportingCheckpoints c
+            INNER JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId
+            WHERE c.BusinessId=@BusinessId AND b.TenantId=@TenantId;
+            """, connection);
+        Scope(checkpoint, user);
+        var projected = await checkpoint.ExecuteScalarAsync(cancellationToken);
+        decimal? change = comparison is null ? null : comparison.NetTotalSales == 0
+            ? current.NetTotalSales == 0 ? 0 : null
+            : decimal.Round((current.NetTotalSales-comparison.NetTotalSales)/
+                decimal.Abs(comparison.NetTotalSales)*100m, 2);
+        return new(current, comparison, change, trend,
+            projected is null or DBNull ? null : (DateTimeOffset)projected);
+    }
+
+    public async Task<IReadOnlyList<SalesReportBreakdownRow>> GetBreakdownAsync(
+        SalesReportingUserIdentity user, SalesReportFilter filter, string dimension,
+        int limit, CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        if (dimension is SalesReportingDimensions.Customer or SalesReportingDimensions.Seller or
+            SalesReportingDimensions.Supplier or SalesReportingDimensions.Product or
+            SalesReportingDimensions.Category or SalesReportingDimensions.Warehouse &&
+            filter.CustomerId is null && filter.SellerId is null && filter.SupplierId is null &&
+            filter.ProductId is null && filter.CategoryId is null && filter.WarehouseId is null &&
+            filter.DocumentType is null)
+            return await ReadDailyDimensionBreakdownAsync(
+                connection, user, filter, dimension, limit, cancellationToken);
+        return dimension switch
+        {
+            SalesReportingDimensions.PaymentMethod => await ReadPaymentBreakdownAsync(
+                connection, user, filter, limit, cancellationToken),
+            SalesReportingDimensions.Tax => await ReadTaxBreakdownAsync(
+                connection, user, filter, limit, cancellationToken),
+            _ => await ReadLineBreakdownAsync(
+                connection, user, filter, dimension, limit, cancellationToken)
+        };
+    }
+
+    private static async Task<IReadOnlyList<SalesReportBreakdownRow>> ReadDailyDimensionBreakdownAsync(
+        SqlConnection connection, SalesReportingUserIdentity user, SalesReportFilter filter,
+        string dimension, int limit, CancellationToken token)
+    {
+        var dimensionType = char.ToUpperInvariant(dimension[0]) + dimension[1..];
+        const string sql = """
+            WITH grouped AS
+            (
+              SELECT DimensionKey [Key],MAX(DimensionLabel) Label,SUM(DocumentCount) Documents,
+                SUM(Quantity) Quantity,SUM(GrossSales) Gross,SUM(Discounts) Discounts,
+                SUM(Returns) Returns,SUM(NetUntaxedSales) Untaxed,SUM(NetTax) Tax,
+                SUM(NetTotalSales) Net,SUM(NetRecognizedCost) Cost,SUM(GrossProfit) Profit
+              FROM dbo.SalesReportDailyDimensionTotals t
+              INNER JOIN dbo.Businesses b ON b.BusinessId=t.BusinessId
+              WHERE t.BusinessId=@BusinessId AND b.TenantId=@TenantId
+                AND t.BusinessLocalDate BETWEEN @From AND @To AND t.DimensionType=@DimensionType
+              GROUP BY DimensionKey
+            )
+            SELECT TOP(@Limit) [Key],Label,Documents,Quantity,Gross,Discounts,Returns,Untaxed,
+              Tax,Net,Cost,Profit,CASE WHEN Untaxed=0 THEN 0 ELSE Profit/Untaxed*100 END,
+              CASE WHEN SUM(Net) OVER()=0 THEN 0 ELSE Net/SUM(Net) OVER()*100 END
+            FROM grouped ORDER BY Net DESC,Label;
+            """;
+        await using var command = new SqlCommand(sql, connection);
+        Scope(command, user); Date(command, "@From", filter.From); Date(command, "@To", filter.To);
+        command.Parameters.AddWithValue("@DimensionType", dimensionType);
+        command.Parameters.AddWithValue("@Limit", limit);
+        return await ReadBreakdownRowsAsync(command, token);
+    }
+
+    public async Task<SalesReportDocumentPage> ListDocumentsAsync(
+        SalesReportingUserIdentity user, SalesReportFilter filter, int page, int pageSize,
+        string? search, CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT d.DocumentId,d.DocumentType,d.DocumentNumber,d.FiscalNumber,d.IssuedAt,
+                   d.CustomerName,d.SellerName,d.WarehouseName,d.GrossAmount,d.DiscountAmount,
+                   d.UntaxedAmount,d.TaxAmount,d.TotalAmount,d.ReturnedTotalAmount,
+                   d.TotalAmount-d.ReturnedTotalAmount,
+                   (d.UntaxedAmount-d.ReturnedUntaxedAmount)-
+                     (d.RecognizedCostAmount-d.ReturnedCostAmount),d.FiscalStatus,
+                   COUNT(*) OVER()
+            FROM dbo.SalesReportDocuments d
+            WHERE d.TenantId=@TenantId AND d.BusinessId=@BusinessId
+              AND d.BusinessLocalDate BETWEEN @From AND @To
+              AND (@CustomerId IS NULL OR d.CustomerId=@CustomerId)
+              AND (@SellerId IS NULL OR d.SellerId=@SellerId)
+              AND (@WarehouseId IS NULL OR d.WarehouseId=@WarehouseId)
+              AND (@DocumentType IS NULL OR d.DocumentType=@DocumentType)
+              AND ((@ProductId IS NULL AND @SupplierId IS NULL AND @CategoryId IS NULL) OR EXISTS(
+                    SELECT 1 FROM dbo.SalesReportLineFacts f
+                    WHERE f.OriginalSaleDocumentId=d.DocumentId
+                      AND (@ProductId IS NULL OR f.ProductId=@ProductId)
+                      AND (@SupplierId IS NULL OR f.SupplierId=@SupplierId)
+                      AND (@CategoryId IS NULL OR f.CategoryId=@CategoryId)))
+              AND (@Search IS NULL OR d.DocumentNumber LIKE N'%'+@Search+N'%'
+                    OR d.FiscalNumber LIKE N'%'+@Search+N'%'
+                    OR d.CustomerName LIKE N'%'+@Search+N'%'
+                    OR d.CustomerIdentification LIKE N'%'+@Search+N'%'
+                    OR d.SellerName LIKE N'%'+@Search+N'%'
+                    OR EXISTS(SELECT 1 FROM dbo.SalesReportLineFacts f
+                      WHERE f.OriginalSaleDocumentId=d.DocumentId AND
+                        (f.ProductCode LIKE N'%'+@Search+N'%' OR f.ProductName LIKE N'%'+@Search+N'%')))
+            ORDER BY d.BusinessLocalDate DESC,d.DocumentId DESC
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            """;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection);
+        AddFilter(command, user, filter);
+        command.Parameters.AddWithValue("@Search", (object?)search ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Offset", (page-1)*pageSize);
+        command.Parameters.AddWithValue("@PageSize", pageSize);
+        var rows = new List<SalesReportDocumentRow>(); var total = 0;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            rows.Add(ReadDocument(reader)); total = reader.GetInt32(17);
+        }
+        return new(rows, page, pageSize, total);
+    }
+
+    public async Task<SalesReportDocumentDetail?> GetDocumentAsync(
+        SalesReportingUserIdentity user, Guid documentId, CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var header = new SqlCommand("""
+            SELECT d.DocumentId,d.DocumentType,d.DocumentNumber,d.FiscalNumber,d.IssuedAt,
+                   d.CustomerName,d.SellerName,d.WarehouseName,d.GrossAmount,d.DiscountAmount,
+                   d.UntaxedAmount,d.TaxAmount,d.TotalAmount,d.ReturnedTotalAmount,
+                   d.TotalAmount-d.ReturnedTotalAmount,
+                   (d.UntaxedAmount-d.ReturnedUntaxedAmount)-
+                     (d.RecognizedCostAmount-d.ReturnedCostAmount),d.FiscalStatus
+            FROM dbo.SalesReportDocuments d
+            WHERE d.DocumentId=@DocumentId AND d.TenantId=@TenantId AND d.BusinessId=@BusinessId;
+            """, connection);
+        Scope(header, user); header.Parameters.AddWithValue("@DocumentId", documentId);
+        SalesReportDocumentRow document;
+        await using (var reader = await header.ExecuteReaderAsync(cancellationToken))
+        {
+            if (!await reader.ReadAsync(cancellationToken)) return null;
+            document = ReadDocument(reader);
+        }
+        await using var lines = new SqlCommand("""
+            SELECT FactId,MovementType,OccurredAt,ProductCode,ProductName,CategoryName,
+                   Quantity,GrossAmount,DiscountAmount,UntaxedAmount,TaxAmount,TotalAmount,
+                   RecognizedCostAmount,ReturnReasonCode,ReturnDisposition
+            FROM dbo.SalesReportLineFacts
+            WHERE TenantId=@TenantId AND BusinessId=@BusinessId
+              AND OriginalSaleDocumentId=@DocumentId
+            ORDER BY OccurredAt,MovementType,SourceLineNumber;
+            """, connection);
+        Scope(lines, user); lines.Parameters.AddWithValue("@DocumentId", documentId);
+        var detail = new List<SalesReportLineRow>();
+        await using var lineReader = await lines.ExecuteReaderAsync(cancellationToken);
+        while (await lineReader.ReadAsync(cancellationToken))
+            detail.Add(new(lineReader.GetGuid(0),lineReader.GetString(1),lineReader.GetDateTimeOffset(2),
+                lineReader.GetString(3),lineReader.GetString(4),lineReader.IsDBNull(5)?null:lineReader.GetString(5),
+                lineReader.GetDecimal(6),lineReader.GetDecimal(7),lineReader.GetDecimal(8),lineReader.GetDecimal(9),
+                lineReader.GetDecimal(10),lineReader.GetDecimal(11),lineReader.GetDecimal(12),
+                lineReader.IsDBNull(13)?null:lineReader.GetString(13),lineReader.IsDBNull(14)?null:lineReader.GetString(14)));
+        return new(document, detail);
+    }
+
+    private static async Task<SalesReportTotals> ReadTotalsAsync(SqlConnection connection,
+        SalesReportingUserIdentity user, DateOnly from, DateOnly to, CancellationToken token)
+    {
+        await using var command = new SqlCommand("""
+            SELECT COALESCE(SUM(DocumentCount),0),COALESCE(SUM(UnitsSold),0),
+              COALESCE(SUM(UnitsReturned),0),COALESCE(SUM(GrossSales),0),
+              COALESCE(SUM(Discounts),0),COALESCE(SUM(Returns),0),
+              COALESCE(SUM(NetUntaxedSales),0),COALESCE(SUM(NetTax),0),
+              COALESCE(SUM(NetTotalSales),0),COALESCE(SUM(NetRecognizedCost),0),
+              COALESCE(SUM(GrossProfit),0),COALESCE(SUM(CreditSales),0),
+              COALESCE(SUM(Collected),0),COALESCE(SUM(Refunded),0)
+            FROM dbo.SalesReportDailyTotals t
+            INNER JOIN dbo.Businesses b ON b.BusinessId=t.BusinessId
+            WHERE t.BusinessId=@BusinessId AND b.TenantId=@TenantId
+              AND t.BusinessLocalDate BETWEEN @From AND @To;
+            """, connection);
+        Scope(command,user); Date(command,"@From",from); Date(command,"@To",to);
+        await using var r=await command.ExecuteReaderAsync(token); await r.ReadAsync(token);
+        var profit=r.GetDecimal(10);var net=r.GetDecimal(6);
+        return new(r.GetInt64(0),r.GetDecimal(1),r.GetDecimal(2),r.GetDecimal(3),r.GetDecimal(4),
+            r.GetDecimal(5),net,r.GetDecimal(7),r.GetDecimal(8),r.GetDecimal(9),profit,
+            net==0?0:decimal.Round(profit/net*100m,2),r.GetDecimal(11),r.GetDecimal(12),r.GetDecimal(13));
+    }
+
+    private static async Task<SalesReportTotals> ReadFilteredTotalsAsync(SqlConnection connection,
+        SalesReportingUserIdentity user, SalesReportFilter filter, CancellationToken token)
+    {
+        await using var command = new SqlCommand("""
+            SELECT COUNT(DISTINCT f.OriginalSaleDocumentId),
+              COALESCE(SUM(CASE WHEN f.MovementType=N'Sale' THEN f.Quantity ELSE 0 END),0),
+              COALESCE(-SUM(CASE WHEN f.MovementType=N'Return' THEN f.Quantity ELSE 0 END),0),
+              COALESCE(SUM(CASE WHEN f.MovementType=N'Sale' THEN f.GrossAmount ELSE 0 END),0),
+              COALESCE(SUM(CASE WHEN f.MovementType=N'Sale' THEN f.DiscountAmount ELSE 0 END),0),
+              COALESCE(-SUM(CASE WHEN f.MovementType=N'Return' THEN f.TotalAmount ELSE 0 END),0),
+              COALESCE(SUM(f.UntaxedAmount),0),COALESCE(SUM(f.TaxAmount),0),
+              COALESCE(SUM(f.TotalAmount),0),COALESCE(SUM(f.RecognizedCostAmount),0),
+              COALESCE(SUM(f.UntaxedAmount-f.RecognizedCostAmount),0)
+            FROM dbo.SalesReportLineFacts f
+            INNER JOIN dbo.SalesReportDocuments d ON d.DocumentId=f.OriginalSaleDocumentId
+            WHERE f.TenantId=@TenantId AND f.BusinessId=@BusinessId
+              AND f.BusinessLocalDate BETWEEN @From AND @To
+              AND (@CustomerId IS NULL OR f.CustomerId=@CustomerId)
+              AND (@SellerId IS NULL OR f.SellerId=@SellerId)
+              AND (@SupplierId IS NULL OR f.SupplierId=@SupplierId)
+              AND (@ProductId IS NULL OR f.ProductId=@ProductId)
+              AND (@CategoryId IS NULL OR f.CategoryId=@CategoryId)
+              AND (@WarehouseId IS NULL OR f.WarehouseId=@WarehouseId)
+              AND (@DocumentType IS NULL OR d.DocumentType=@DocumentType);
+            """, connection);
+        AddFilter(command,user,filter);
+        await using var r=await command.ExecuteReaderAsync(token);await r.ReadAsync(token);
+        var untaxed=r.GetDecimal(6);var profit=r.GetDecimal(10);
+        return new(r.GetInt32(0),r.GetDecimal(1),r.GetDecimal(2),r.GetDecimal(3),r.GetDecimal(4),
+            r.GetDecimal(5),untaxed,r.GetDecimal(7),r.GetDecimal(8),r.GetDecimal(9),profit,
+            untaxed==0?0:decimal.Round(profit/untaxed*100m,2),0,0,0);
+    }
+
+    private static async Task<IReadOnlyList<SalesReportTrendPoint>> ReadFilteredTrendAsync(
+        SqlConnection connection,SalesReportingUserIdentity user,SalesReportFilter filter,CancellationToken token)
+    {
+        await using var command=new SqlCommand("""
+          SELECT f.BusinessLocalDate,COUNT(DISTINCT f.OriginalSaleDocumentId),
+            SUM(CASE WHEN f.MovementType=N'Sale' THEN f.GrossAmount ELSE 0 END),
+            -SUM(CASE WHEN f.MovementType=N'Return' THEN f.TotalAmount ELSE 0 END),
+            SUM(f.TotalAmount),SUM(f.UntaxedAmount-f.RecognizedCostAmount)
+          FROM dbo.SalesReportLineFacts f INNER JOIN dbo.SalesReportDocuments d ON d.DocumentId=f.OriginalSaleDocumentId
+          WHERE f.TenantId=@TenantId AND f.BusinessId=@BusinessId AND f.BusinessLocalDate BETWEEN @From AND @To
+            AND (@CustomerId IS NULL OR f.CustomerId=@CustomerId) AND (@SellerId IS NULL OR f.SellerId=@SellerId)
+            AND (@SupplierId IS NULL OR f.SupplierId=@SupplierId) AND (@ProductId IS NULL OR f.ProductId=@ProductId)
+            AND (@CategoryId IS NULL OR f.CategoryId=@CategoryId) AND (@WarehouseId IS NULL OR f.WarehouseId=@WarehouseId)
+            AND (@DocumentType IS NULL OR d.DocumentType=@DocumentType)
+          GROUP BY f.BusinessLocalDate ORDER BY f.BusinessLocalDate;
+          """,connection);AddFilter(command,user,filter);var rows=new List<SalesReportTrendPoint>();
+        await using var r=await command.ExecuteReaderAsync(token);while(await r.ReadAsync(token))rows.Add(new(DateOnly.FromDateTime(r.GetDateTime(0)),r.GetInt32(1),r.GetDecimal(2),r.GetDecimal(3),r.GetDecimal(4),r.GetDecimal(5)));return rows;
+    }
+
+    private static async Task<IReadOnlyList<SalesReportTrendPoint>> ReadTrendAsync(
+        SqlConnection connection,SalesReportingUserIdentity user,DateOnly from,DateOnly to,CancellationToken token)
+    {
+        await using var command=new SqlCommand("""
+          SELECT BusinessLocalDate,SUM(DocumentCount),SUM(GrossSales),SUM(Returns),
+                 SUM(NetTotalSales),SUM(GrossProfit)
+          FROM dbo.SalesReportDailyTotals t INNER JOIN dbo.Businesses b ON b.BusinessId=t.BusinessId
+          WHERE t.BusinessId=@BusinessId AND b.TenantId=@TenantId AND BusinessLocalDate BETWEEN @From AND @To
+          GROUP BY BusinessLocalDate ORDER BY BusinessLocalDate;
+          """,connection);Scope(command,user);Date(command,"@From",from);Date(command,"@To",to);
+        var rows=new List<SalesReportTrendPoint>();await using var r=await command.ExecuteReaderAsync(token);
+        while(await r.ReadAsync(token))rows.Add(new(DateOnly.FromDateTime(r.GetDateTime(0)),r.GetInt64(1),r.GetDecimal(2),r.GetDecimal(3),r.GetDecimal(4),r.GetDecimal(5)));
+        return rows;
+    }
+
+    private static async Task<IReadOnlyList<SalesReportBreakdownRow>> ReadLineBreakdownAsync(
+        SqlConnection connection,SalesReportingUserIdentity user,SalesReportFilter filter,
+        string dimension,int limit,CancellationToken token)
+    {
+        var (key,label)=dimension switch
+        {
+            "customer" => ("COALESCE(CONVERT(nvarchar(36),d.CustomerId),N'final-consumer')","d.CustomerName"),
+            "seller" => ("COALESCE(CONVERT(nvarchar(36),d.SellerId),N'no-seller')","d.SellerName"),
+            "supplier" => ("COALESCE(CONVERT(nvarchar(36),f.SupplierId),N'no-supplier')","COALESCE(f.SupplierName,N'Sin proveedor asociado')"),
+            "product" => ("CONVERT(nvarchar(36),f.ProductId)","f.ProductName"),
+            "category" => ("COALESCE(CONVERT(nvarchar(36),f.CategoryId),N'no-category')","COALESCE(f.CategoryName,N'Sin categoría')"),
+            "warehouse" => ("CONVERT(nvarchar(36),d.WarehouseId)","d.WarehouseName"),
+            "day" => ("CONVERT(nvarchar(10),f.BusinessLocalDate,23)","CONVERT(nvarchar(10),f.BusinessLocalDate,23)"),
+            "month" => ("CONVERT(nvarchar(7),f.BusinessLocalDate,126)","CONVERT(nvarchar(7),f.BusinessLocalDate,126)"),
+            _ => throw new InvalidOperationException("Unsupported line dimension.")
+        };
+        var sql=$"""
+          WITH grouped AS(SELECT {key} [Key],{label} Label,CONVERT(bigint,COUNT(DISTINCT f.OriginalSaleDocumentId)) Documents,
+            SUM(f.Quantity) Quantity,SUM(CASE WHEN f.MovementType=N'Sale' THEN f.GrossAmount ELSE 0 END) Gross,
+            SUM(CASE WHEN f.MovementType=N'Sale' THEN f.DiscountAmount ELSE 0 END) Discounts,
+            -SUM(CASE WHEN f.MovementType=N'Return' THEN f.TotalAmount ELSE 0 END) Returns,
+            SUM(f.UntaxedAmount) Untaxed,SUM(f.TaxAmount) Tax,SUM(f.TotalAmount) Net,
+            SUM(f.RecognizedCostAmount) Cost,SUM(f.UntaxedAmount-f.RecognizedCostAmount) Profit
+          FROM dbo.SalesReportLineFacts f INNER JOIN dbo.SalesReportDocuments d ON d.DocumentId=f.OriginalSaleDocumentId
+          WHERE f.TenantId=@TenantId AND f.BusinessId=@BusinessId AND f.BusinessLocalDate BETWEEN @From AND @To
+            AND (@CustomerId IS NULL OR f.CustomerId=@CustomerId) AND (@SellerId IS NULL OR f.SellerId=@SellerId)
+            AND (@SupplierId IS NULL OR f.SupplierId=@SupplierId)
+            AND (@ProductId IS NULL OR f.ProductId=@ProductId)
+            AND (@CategoryId IS NULL OR f.CategoryId=@CategoryId)
+            AND (@WarehouseId IS NULL OR f.WarehouseId=@WarehouseId)
+            AND (@DocumentType IS NULL OR d.DocumentType=@DocumentType) GROUP BY {key},{label})
+          SELECT TOP(@Limit) [Key],Label,Documents,Quantity,Gross,Discounts,Returns,Untaxed,Tax,Net,Cost,Profit,
+            CASE WHEN Untaxed=0 THEN 0 ELSE Profit/Untaxed*100 END,
+            CASE WHEN SUM(Net) OVER()=0 THEN 0 ELSE Net/SUM(Net) OVER()*100 END
+          FROM grouped ORDER BY Net DESC,Label;
+          """;
+        await using var command=new SqlCommand(sql,connection);AddFilter(command,user,filter);command.Parameters.AddWithValue("@Limit",limit);
+        return await ReadBreakdownRowsAsync(command,token);
+    }
+
+    private static async Task<IReadOnlyList<SalesReportBreakdownRow>> ReadPaymentBreakdownAsync(
+        SqlConnection connection,SalesReportingUserIdentity user,SalesReportFilter filter,int limit,CancellationToken token)
+    {
+        await using var command=new SqlCommand("""
+          WITH grouped AS(SELECT p.MethodCode [Key],p.MethodCode Label,CONVERT(bigint,COUNT(DISTINCT p.SourceDocumentId)) Documents,
+            SUM(p.Amount) Net FROM dbo.SalesReportPaymentFacts p
+            WHERE p.TenantId=@TenantId AND p.BusinessId=@BusinessId AND p.BusinessLocalDate BETWEEN @From AND @To
+            GROUP BY p.MethodCode)
+          SELECT TOP(@Limit) [Key],Label,Documents,CAST(0 AS decimal(19,4)),Net,0,0,Net,0,Net,0,Net,100,
+            CASE WHEN SUM(Net) OVER()=0 THEN 0 ELSE Net/SUM(Net) OVER()*100 END
+          FROM grouped ORDER BY Net DESC;
+          """,connection);AddFilter(command,user,filter);command.Parameters.AddWithValue("@Limit",limit);
+        return await ReadBreakdownRowsAsync(command,token);
+    }
+
+    private static async Task<IReadOnlyList<SalesReportBreakdownRow>> ReadTaxBreakdownAsync(
+        SqlConnection connection,SalesReportingUserIdentity user,SalesReportFilter filter,int limit,CancellationToken token)
+    {
+        await using var command=new SqlCommand("""
+          WITH grouped AS(SELECT CONCAT(t.TaxCode,N' · ',FORMAT(t.TaxRate*100,N'0.##'),N'%') [Key],
+            CONCAT(t.TaxCode,N' · ',FORMAT(t.TaxRate*100,N'0.##'),N'%') Label,
+            CONVERT(bigint,COUNT(DISTINCT t.SourceDocumentId)) Documents,SUM(t.TaxableAmount) Base,SUM(t.TaxAmount) Tax,SUM(t.TotalAmount) Net
+            FROM dbo.SalesReportTaxFacts t WHERE t.TenantId=@TenantId AND t.BusinessId=@BusinessId
+              AND t.BusinessLocalDate BETWEEN @From AND @To GROUP BY t.TaxCode,t.TaxRate)
+          SELECT TOP(@Limit) [Key],Label,Documents,CAST(0 AS decimal(19,4)),Base,0,0,Base,Tax,Net,0,Base,100,
+            CASE WHEN SUM(Net) OVER()=0 THEN 0 ELSE Net/SUM(Net) OVER()*100 END
+          FROM grouped ORDER BY Net DESC;
+          """,connection);AddFilter(command,user,filter);command.Parameters.AddWithValue("@Limit",limit);
+        return await ReadBreakdownRowsAsync(command,token);
+    }
+
+    private static async Task<IReadOnlyList<SalesReportBreakdownRow>> ReadBreakdownRowsAsync(SqlCommand command,CancellationToken token)
+    {var rows=new List<SalesReportBreakdownRow>();await using var r=await command.ExecuteReaderAsync(token);while(await r.ReadAsync(token))rows.Add(new(r.GetString(0),r.GetString(1),r.GetInt64(2),r.GetDecimal(3),r.GetDecimal(4),r.GetDecimal(5),r.GetDecimal(6),r.GetDecimal(7),r.GetDecimal(8),r.GetDecimal(9),r.GetDecimal(10),r.GetDecimal(11),decimal.Round(r.GetDecimal(12),2),decimal.Round(r.GetDecimal(13),2)));return rows;}
+
+    private static SalesReportDocumentRow ReadDocument(SqlDataReader r)=>new(r.GetGuid(0),r.GetString(1),r.GetString(2),r.IsDBNull(3)?null:r.GetString(3),r.GetDateTimeOffset(4),r.GetString(5),r.GetString(6),r.GetString(7),r.GetDecimal(8),r.GetDecimal(9),r.GetDecimal(10),r.GetDecimal(11),r.GetDecimal(12),r.GetDecimal(13),r.GetDecimal(14),r.GetDecimal(15),r.IsDBNull(16)?null:r.GetString(16));
+    private static void AddFilter(SqlCommand c,SalesReportingUserIdentity u,SalesReportFilter f){Scope(c,u);Date(c,"@From",f.From);Date(c,"@To",f.To);c.Parameters.AddWithValue("@CustomerId",(object?)f.CustomerId??DBNull.Value);c.Parameters.AddWithValue("@SellerId",(object?)f.SellerId??DBNull.Value);c.Parameters.AddWithValue("@SupplierId",(object?)f.SupplierId??DBNull.Value);c.Parameters.AddWithValue("@ProductId",(object?)f.ProductId??DBNull.Value);c.Parameters.AddWithValue("@CategoryId",(object?)f.CategoryId??DBNull.Value);c.Parameters.AddWithValue("@WarehouseId",(object?)f.WarehouseId??DBNull.Value);c.Parameters.AddWithValue("@DocumentType",(object?)f.DocumentType??DBNull.Value);}
+    private static bool HasDimensionFilter(SalesReportFilter f)=>f.CustomerId is not null||f.SellerId is not null||f.SupplierId is not null||f.ProductId is not null||f.CategoryId is not null||f.WarehouseId is not null||f.DocumentType is not null;
+    private static void Scope(SqlCommand c,SalesReportingUserIdentity u){c.Parameters.AddWithValue("@TenantId",u.TenantId);c.Parameters.AddWithValue("@BusinessId",u.BusinessId);}
+    private static void Date(SqlCommand c,string name,DateOnly value)=>c.Parameters.Add(new SqlParameter(name,SqlDbType.Date){Value=value.ToDateTime(TimeOnly.MinValue)});
+}

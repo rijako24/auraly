@@ -6,6 +6,7 @@ using Auraly.Commerce.Accounting.Application;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Inventory;
 using Auraly.Contracts.Purchasing;
+using Auraly.Application.Sales;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -33,7 +34,8 @@ public sealed class RabbitMqDocumentProcessingTests(ServerSliceFixture fixture)
         var documentQueue = $"auraly-tests-documents-{suffix}";
         var fiscalQueue = $"auraly-tests-fiscal-{suffix}";
         var options = new RabbitMqProcessingOptions(
-            rabbitConnection, documentQueue, fiscalQueue, $"auraly-tests-accounting-{suffix}");
+            rabbitConnection, documentQueue, fiscalQueue, $"auraly-tests-accounting-{suffix}",
+            $"auraly-tests-reporting-{suffix}");
         await using var connection = new RabbitMqProcessingConnection(options);
         await using var transport = new RabbitMqProcessingTransport(
             connection, options, TimeProvider.System);
@@ -43,6 +45,9 @@ public sealed class RabbitMqDocumentProcessingTests(ServerSliceFixture fixture)
         var accounting = new AccountingProcessingCoordinator(
             transport,
             fixture.Services.GetRequiredService<IAuralyIdGenerator>());
+        var reporting = new SalesReportingProcessingCoordinator(
+            transport,
+            fixture.Services.GetRequiredService<IAuralyIdGenerator>());
         using var service = new RabbitMqDocumentProcessingHostedService(
             connection,
             transport,
@@ -50,6 +55,7 @@ public sealed class RabbitMqDocumentProcessingTests(ServerSliceFixture fixture)
             fixture.Services.GetRequiredService<IServiceScopeFactory>(),
             fiscal,
             accounting,
+            reporting,
             NullLogger<RabbitMqDocumentProcessingHostedService>.Instance);
 
         fixture.PauseDocumentProcessing();

@@ -15,7 +15,7 @@ public sealed class SqlAccountingCompletionObserver(
         processor.ProcessAsync(signal.DocumentId, signal.DocumentType, signal.BusinessId, cancellationToken);
 }
 
-public sealed class SqlAccountingPostingProcessor(
+public sealed partial class SqlAccountingPostingProcessor(
     AccountingSqlConnectionFactory connections,
     IAuralyIdGenerator ids,
     TimeProvider timeProvider)
@@ -61,6 +61,10 @@ public sealed class SqlAccountingPostingProcessor(
                 return;
             }
 
+            transaction.Save("BeforeFinancialEffects");
+            await ApplyFinancialEffectsAsync(
+                connection, transaction, source, cancellationToken);
+
             var factsResult = source.DocumentType switch
             {
                 "SalesInvoice" => FinancialFactsResult.Ready(
@@ -92,6 +96,7 @@ public sealed class SqlAccountingPostingProcessor(
             };
             if (factsResult.Facts is null)
             {
+                transaction.Rollback("BeforeFinancialEffects");
                 await MarkPendingConfigurationAsync(
                     connection, transaction, source,
                     factsResult.ErrorCode!, factsResult.ErrorMessage!,
@@ -110,6 +115,7 @@ public sealed class SqlAccountingPostingProcessor(
                 .ToArray();
             if (missing.Length > 0)
             {
+                transaction.Rollback("BeforeFinancialEffects");
                 await MarkPendingConfigurationAsync(connection, transaction, source,
                     "AccountMappingMissing",
                     $"Missing accounting mappings: {string.Join(", ", missing)}.",
@@ -144,7 +150,7 @@ public sealed class SqlAccountingPostingProcessor(
     {
         const string sql = """
             SELECT a.TenantId,a.BusinessId,a.SourceDocumentId,
-                   a.SourceDocumentType,a.SourcePayloadHash,a.OccurredAt
+                   a.SourceDocumentType,a.SourcePayloadHash,a.OccurredAt,p.PayloadJson
             FROM dbo.AccountingPostingJobs a WITH (UPDLOCK,HOLDLOCK)
             INNER JOIN dbo.DocumentProcessingPayloads p
               ON p.DocumentId=a.SourceDocumentId
@@ -167,7 +173,8 @@ public sealed class SqlAccountingPostingProcessor(
         if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(5)) return null;
         return new SourceEnvelope(
             reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
-            reader.GetString(3), (byte[])reader[4], reader.GetDateTimeOffset(5));
+            reader.GetString(3), (byte[])reader[4], reader.GetDateTimeOffset(5),
+            reader.GetString(6));
     }
 
     private static async Task<string> LockPostingStatusAsync(
@@ -754,7 +761,14 @@ public sealed class SqlAccountingPostingProcessor(
         command.Parameters.AddWithValue("@PayloadHash", source.PayloadHash); command.Parameters.AddWithValue("@OccurredAt", source.OccurredAt);
     }
     private static void AddMoney(SqlCommand command, string name, decimal value) { var parameter = command.Parameters.Add(name, SqlDbType.Decimal); parameter.Precision = 19; parameter.Scale = 4; parameter.Value = value; }
-    private sealed record SourceEnvelope(Guid TenantId, Guid BusinessId, Guid DocumentId, string DocumentType, byte[] PayloadHash, DateTimeOffset OccurredAt);
+    private sealed record SourceEnvelope(
+        Guid TenantId,
+        Guid BusinessId,
+        Guid DocumentId,
+        string DocumentType,
+        byte[] PayloadHash,
+        DateTimeOffset OccurredAt,
+        string PayloadJson);
 
     private sealed record FinancialFactsResult(
         FinancialFacts? Facts,

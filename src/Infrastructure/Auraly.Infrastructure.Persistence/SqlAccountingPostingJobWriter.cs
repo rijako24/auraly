@@ -21,6 +21,9 @@ internal static class SqlAccountingPostingJobWriter
             SELECT @JobId,@TenantId,@BusinessId,p.DocumentId,p.DocumentType,
                    p.PayloadHash,@OccurredAt,N'Pending',0,@CreatedAt
             FROM dbo.DocumentProcessingPayloads p
+            INNER JOIN dbo.AccountingTenantSettings settings
+              ON settings.TenantId=@TenantId AND settings.Status=N'Ready'
+             AND settings.EffectiveFrom<=CONVERT(date,@OccurredAt)
             WHERE p.DocumentId=@DocumentId AND p.DocumentType=@DocumentType
               AND p.BusinessId=@BusinessId
               AND NOT EXISTS
@@ -38,8 +41,8 @@ internal static class SqlAccountingPostingJobWriter
         command.Parameters.AddWithValue("@DocumentType", document.DocumentType);
         command.Parameters.AddWithValue("@OccurredAt", occurredAt);
         command.Parameters.AddWithValue("@CreatedAt", timeProvider.GetUtcNow());
-        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
-            throw new InvalidOperationException(
-                "The accounting work could not be created atomically with the document effects.");
+        var inserted = await command.ExecuteNonQueryAsync(cancellationToken);
+        if (inserted is not (0 or 1))
+            throw new InvalidOperationException("An invalid number of accounting jobs was created.");
     }
 }

@@ -131,6 +131,30 @@ public sealed class ArchitectureDebtRatchetTests
     }
 
     [Fact]
+    public void Operational_document_handlers_do_not_write_financial_subledgers_or_ledger()
+    {
+        var persistence = Path.Combine(
+            RepositoryRoot, "src", "Infrastructure", "Auraly.Infrastructure.Persistence");
+        var forbiddenWrites = new[]
+        {
+            "INSERT dbo.Receivables", "UPDATE dbo.Receivables",
+            "INSERT dbo.ReceivableTransactions", "INSERT dbo.Payables",
+            "UPDATE dbo.Payables", "INSERT dbo.PayableTransactions",
+            "INSERT dbo.WorkSessionMovements", "INSERT dbo.AccountingEntries",
+            "INSERT dbo.AccountingEntryLines"
+        };
+        var violations = Directory.GetFiles(
+                persistence, "Sql*DocumentHandler*.cs", SearchOption.TopDirectoryOnly)
+            .SelectMany(path => forbiddenWrites
+                .Where(token => File.ReadAllText(path).Contains(
+                    token, StringComparison.OrdinalIgnoreCase))
+                .Select(token => $"{Path.GetFileName(path)}: {token}"))
+            .ToArray();
+
+        Assert.Empty(violations);
+    }
+
+    [Fact]
     public void SellerOrderInvoice_ConsumesReservedStockInTheInvoiceTransaction()
     {
         var checkout = File.ReadAllText(Path.Combine(

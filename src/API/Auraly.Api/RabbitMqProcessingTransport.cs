@@ -1,6 +1,7 @@
 using System.Text;
 using Auraly.Application.DocumentProcessing;
 using Auraly.Application.Fiscal;
+using Auraly.Application.Sales;
 using Auraly.Commerce.Accounting.Application;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
@@ -11,7 +12,8 @@ public sealed record RabbitMqProcessingOptions(
     string ConnectionString,
     string DocumentQueueName,
     string FiscalQueueName,
-    string AccountingQueueName);
+    string AccountingQueueName,
+    string SalesReportingQueueName);
 
 public sealed class RabbitMqProcessingConnection(
     RabbitMqProcessingOptions options) : IAsyncDisposable
@@ -72,6 +74,7 @@ public sealed class RabbitMqProcessingTransport(
     IDocumentProcessingSignalPublisher,
     IFiscalProcessingSignalPublisher,
     IAccountingProcessingSignalPublisher,
+    ISalesReportingProcessingSignalPublisher,
     IAsyncDisposable
 {
     private static readonly int[] RetryBucketsInSeconds = [2, 5, 15, 30, 120, 300];
@@ -127,6 +130,21 @@ public sealed class RabbitMqProcessingTransport(
             cancellationToken);
     }
 
+    public async Task PublishAsync(
+        SalesReportingProcessingSignal signal,
+        CancellationToken cancellationToken = default)
+    {
+        SalesReportingProcessingSignalCodec.Validate(signal);
+        await PublishAsync(
+            options.SalesReportingQueueName,
+            Encoding.UTF8.GetBytes(SalesReportingProcessingSignalCodec.Serialize(signal)),
+            signal.SignalId,
+            signal.BusinessId,
+            signal.DocumentType,
+            signal.DocumentId,
+            cancellationToken);
+    }
+
     public Task RetryFiscalAsync(
         FiscalProcessingSignal signal,
         TimeSpan delay,
@@ -152,6 +170,8 @@ public sealed class RabbitMqProcessingTransport(
                 activeChannel, options.FiscalQueueName, true, cancellationToken);
             await DeclareQueueFamilyAsync(
                 activeChannel, options.AccountingQueueName, false, cancellationToken);
+            await DeclareQueueFamilyAsync(
+                activeChannel, options.SalesReportingQueueName, false, cancellationToken);
         }
         finally
         {
@@ -178,6 +198,8 @@ public sealed class RabbitMqProcessingTransport(
                 activeChannel, options.FiscalQueueName, true, cancellationToken);
             await DeclareQueueFamilyAsync(
                 activeChannel, options.AccountingQueueName, false, cancellationToken);
+            await DeclareQueueFamilyAsync(
+                activeChannel, options.SalesReportingQueueName, false, cancellationToken);
             var properties = new BasicProperties
             {
                 Persistent = true,
@@ -280,6 +302,7 @@ public sealed class RabbitMqDocumentProcessingHostedService(
     IServiceScopeFactory scopeFactory,
     FiscalProcessingCoordinator fiscalProcessing,
     AccountingProcessingCoordinator accountingProcessing,
+    SalesReportingProcessingCoordinator salesReporting,
     ILogger<RabbitMqDocumentProcessingHostedService> logger) : BackgroundService
 {
     private const int MaximumAttempts = 5;
@@ -349,6 +372,12 @@ public sealed class RabbitMqDocumentProcessingHostedService(
                             args.CancellationToken);
                     if (AccountingProcessingPolicy.Supports(signal.DocumentType))
                         await accountingProcessing.RequestPostingAsync(
+                            signal.BusinessId,
+                            signal.DocumentId,
+                            signal.DocumentType,
+                            args.CancellationToken);
+                    if (SalesReportingProcessingPolicy.Supports(signal.DocumentType))
+                        await salesReporting.RequestProjectionAsync(
                             signal.BusinessId,
                             signal.DocumentId,
                             signal.DocumentType,

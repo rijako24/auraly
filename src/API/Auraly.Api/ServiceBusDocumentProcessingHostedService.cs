@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Auraly.Application.DocumentProcessing;
 using Auraly.Application.Fiscal;
+using Auraly.Application.Sales;
 using Auraly.Commerce.Accounting.Application;
 using Azure.Messaging.ServiceBus;
 
@@ -33,6 +34,7 @@ public sealed class DocumentProcessingHostedService(
     IServiceScopeFactory scopeFactory,
     FiscalProcessingCoordinator fiscalProcessing,
     AccountingProcessingCoordinator accountingProcessing,
+    SalesReportingProcessingCoordinator salesReporting,
     ILogger<DocumentProcessingHostedService> logger) : BackgroundService
 {
     private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(2);
@@ -96,6 +98,12 @@ public sealed class DocumentProcessingHostedService(
                     args.CancellationToken);
             if (AccountingProcessingPolicy.Supports(signal.DocumentType))
                 await accountingProcessing.RequestPostingAsync(
+                    signal.BusinessId,
+                    signal.DocumentId,
+                    signal.DocumentType,
+                    args.CancellationToken);
+            if (SalesReportingProcessingPolicy.Supports(signal.DocumentType))
+                await salesReporting.RequestProjectionAsync(
                     signal.BusinessId,
                     signal.DocumentId,
                     signal.DocumentType,

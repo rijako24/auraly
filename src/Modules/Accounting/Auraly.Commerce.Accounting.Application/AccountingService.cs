@@ -11,6 +11,8 @@ public interface IAccountingStore
     Task<IReadOnlyList<AccountingMappingView>> ListMappingsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
     Task<IReadOnlyList<AccountingCategoryDefinition>> ListCategoryDefinitionsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
     Task<AccountingDefaultsResult> EnsureDefaultsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
+    Task<AccountingReadinessView> GetReadinessAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
+    Task<AccountingReadinessView> ActivateAsync(AccountingUserIdentity user, ActivateAccountingRequest request, CancellationToken cancellationToken);
     Task<AccountingAccountView> CreateAccountAsync(AccountingUserIdentity user, CreateAccountingAccountRequest request, CancellationToken cancellationToken);
     Task<AccountingCostCenterView> CreateCostCenterAsync(AccountingUserIdentity user, CreateCostCenterRequest request, CancellationToken cancellationToken);
     Task<AccountingPeriodView> CreatePeriodAsync(AccountingUserIdentity user, CreateAccountingPeriodRequest request, CancellationToken cancellationToken);
@@ -24,6 +26,28 @@ public interface IAccountingStore
 
 public sealed class AccountingService(IAccountingStore store)
 {
+    public Task<AccountingReadinessView> GetReadinessAsync(
+        AccountingUserIdentity user, CancellationToken cancellationToken = default)
+    {
+        Demand(user, AccountingPermissionCodes.Read);
+        return store.GetReadinessAsync(user, cancellationToken);
+    }
+
+    public Task<AccountingReadinessView> ActivateAsync(
+        AccountingUserIdentity user, ActivateAccountingRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, AccountingPermissionCodes.Activate);
+        if (request.EffectiveFrom == default)
+            throw new AccountingValidationException("EffectiveFrom is required.");
+        if (request.FunctionalCurrencyCode is not "COP")
+            throw new AccountingValidationException(
+                "The initial accounting activation supports COP as functional currency.");
+        if (request.OpeningBalanceMode is not ("ZeroDeclared" or "ImportedAndApproved"))
+            throw new AccountingValidationException("The opening balance mode is invalid.");
+        return store.ActivateAsync(user, request, cancellationToken);
+    }
+
     public Task<IReadOnlyList<AccountingAccountView>> ListAccountsAsync(
         AccountingUserIdentity user, CancellationToken cancellationToken = default)
     {

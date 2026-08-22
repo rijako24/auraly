@@ -1,5 +1,11 @@
 # Decisión: motor durable, orden de documentos, inventario y contabilidad
 
+> **Prevalencia:** desde el 22 de agosto de 2026, la distribución de efectos y
+> colas se rige por
+> `decision-cuatro-motores-operacion-contabilidad-fiscal-reporting.md`.
+> El motor documental ya no es propietario de submayores financieros,
+> contabilidad ni proyecciones de reporting.
+
 **Estado:** vigente y obligatoria  
 **Fecha:** 31 de julio de 2026  
 **Alcance:** Auraly Commerce Cloud y On-Premise

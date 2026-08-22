@@ -15,11 +15,40 @@ public interface IAccountingProcessingSignalPublisher
         CancellationToken cancellationToken = default);
 }
 
-public sealed class AccountingProcessingCoordinator(
-    IAccountingProcessingSignalPublisher publisher,
-    IAuralyIdGenerator ids)
+public interface IAccountingProcessingSignalGate
 {
-    public Task RequestPostingAsync(
+    Task<bool> HasPendingWorkAsync(
+        Guid businessId,
+        Guid documentId,
+        string documentType,
+        CancellationToken cancellationToken = default);
+}
+
+public sealed class AccountingProcessingCoordinator
+{
+    private readonly IAccountingProcessingSignalPublisher publisher;
+    private readonly IAuralyIdGenerator ids;
+    private readonly IAccountingProcessingSignalGate? gate;
+
+    public AccountingProcessingCoordinator(
+        IAccountingProcessingSignalPublisher publisher,
+        IAuralyIdGenerator ids,
+        IAccountingProcessingSignalGate gate)
+    {
+        this.publisher = publisher;
+        this.ids = ids;
+        this.gate = gate;
+    }
+
+    public AccountingProcessingCoordinator(
+        IAccountingProcessingSignalPublisher publisher,
+        IAuralyIdGenerator ids)
+    {
+        this.publisher = publisher;
+        this.ids = ids;
+    }
+
+    public async Task RequestPostingAsync(
         Guid businessId,
         Guid documentId,
         string documentType,
@@ -30,7 +59,11 @@ public sealed class AccountingProcessingCoordinator(
             throw new ArgumentException(
                 "Business, document and document type are required for accounting processing.");
 
-        return publisher.PublishAsync(
+        if (gate is not null && !await gate.HasPendingWorkAsync(
+                businessId, documentId, documentType, cancellationToken))
+            return;
+
+        await publisher.PublishAsync(
             new AccountingProcessingSignal(
                 ids.NewId(), businessId, documentId, documentType.Trim()),
             cancellationToken);

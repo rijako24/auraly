@@ -126,6 +126,12 @@ public sealed class SqlAccountingStore(
                   WHERE BusinessId=@BusinessId AND TenantId=@TenantId AND IsActive=1)
                   THROW 51403,'The accounting business is outside the legal entity.',1;
 
+                IF NOT EXISTS(SELECT 1 FROM dbo.AccountingTenantSettings WITH(UPDLOCK,HOLDLOCK)
+                  WHERE TenantId=@TenantId)
+                  INSERT dbo.AccountingTenantSettings
+                    (TenantId,Status,FunctionalCurrencyCode,UpdatedAt)
+                  VALUES(@TenantId,N'Configuring',N'COP',@Now);
+
                 DECLARE @ProfileCode nvarchar(32)=(
                   SELECT ProfileCode FROM dbo.AccountingConfigurationProfiles WITH(UPDLOCK,HOLDLOCK)
                   WHERE IsDefault=1 AND IsActive=1);
@@ -463,6 +469,117 @@ public sealed class SqlAccountingStore(
             reader.GetDateTimeOffset(4), reader.GetString(5), reader.GetDecimal(6),
             reader.GetDecimal(7), reader.GetDecimal(8)));
         return rows;
+    }
+
+    public async Task<AccountingReadinessView> GetReadinessAsync(
+        AccountingUserIdentity user, CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        var issues = await ReadActivationIssuesAsync(
+            connection, null, user, DateOnly.FromDateTime(timeProvider.GetUtcNow().Date),
+            cancellationToken);
+        await using var command = new SqlCommand("""
+            SELECT Status,FunctionalCurrencyCode,EffectiveFrom,OpeningBalanceMode,ActivatedAt
+            FROM dbo.AccountingTenantSettings WHERE TenantId=@TenantId;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", user.TenantId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            return new(AccountingActivationStatuses.Disabled, "COP", null, null, null, issues);
+        return new(reader.GetString(0), reader.GetString(1),
+            reader.IsDBNull(2) ? null : DateOnly.FromDateTime(reader.GetDateTime(2)),
+            reader.IsDBNull(3) ? null : reader.GetString(3),
+            reader.IsDBNull(4) ? null : reader.GetDateTimeOffset(4), issues);
+    }
+
+    public async Task<AccountingReadinessView> ActivateAsync(
+        AccountingUserIdentity user, ActivateAccountingRequest request,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        try
+        {
+            var issues = await ReadActivationIssuesAsync(
+                connection, transaction, user, request.EffectiveFrom, cancellationToken);
+            if (issues.Count > 0)
+                throw new AccountingConflictException(
+                    $"Accounting is not ready: {string.Join("; ", issues)}");
+            var now = timeProvider.GetUtcNow();
+            await using var command = new SqlCommand("""
+                MERGE dbo.AccountingTenantSettings WITH(HOLDLOCK) AS target
+                USING(SELECT @TenantId TenantId) source ON target.TenantId=source.TenantId
+                WHEN MATCHED AND target.Status<>N'Ready' THEN UPDATE SET
+                  Status=N'Ready',FunctionalCurrencyCode=@Currency,EffectiveFrom=@EffectiveFrom,
+                  OpeningBalanceMode=@OpeningMode,ActivatedAt=@Now,
+                  ActivatedByUserId=@UserId,UpdatedAt=@Now
+                WHEN NOT MATCHED THEN INSERT
+                  (TenantId,Status,FunctionalCurrencyCode,EffectiveFrom,OpeningBalanceMode,
+                   ActivatedAt,ActivatedByUserId,UpdatedAt)
+                VALUES(@TenantId,N'Ready',@Currency,@EffectiveFrom,@OpeningMode,@Now,@UserId,@Now);
+
+                IF NOT EXISTS(SELECT 1 FROM dbo.AccountingVoucherCursors WITH(UPDLOCK,HOLDLOCK)
+                              WHERE TenantId=@TenantId)
+                  INSERT dbo.AccountingVoucherCursors(TenantId,LastAssignedNumber,UpdatedAt)
+                  VALUES(@TenantId,0,@Now);
+                """, connection, transaction);
+            command.Parameters.AddWithValue("@TenantId", user.TenantId);
+            command.Parameters.AddWithValue("@Currency", request.FunctionalCurrencyCode);
+            command.Parameters.AddWithValue("@EffectiveFrom", request.EffectiveFrom.ToDateTime(TimeOnly.MinValue));
+            command.Parameters.AddWithValue("@OpeningMode", request.OpeningBalanceMode);
+            command.Parameters.AddWithValue("@UserId", user.UserId);
+            command.Parameters.AddWithValue("@Now", now);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return new(AccountingActivationStatuses.Ready,
+                request.FunctionalCurrencyCode, request.EffectiveFrom,
+                request.OpeningBalanceMode, now, []);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+    }
+
+    private static async Task<IReadOnlyList<string>> ReadActivationIssuesAsync(
+        SqlConnection connection, SqlTransaction? transaction,
+        AccountingUserIdentity user, DateOnly effectiveFrom,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            DECLARE @Profile nvarchar(32)=(SELECT TOP(1) ProfileCode
+              FROM dbo.AccountingConfigurationProfiles WHERE IsDefault=1 AND IsActive=1);
+            SELECT
+              (SELECT COUNT(*) FROM dbo.AccountingConfigurationProfileAccounts d
+               WHERE d.ProfileCode=@Profile AND d.IsRequired=1 AND NOT EXISTS
+               (SELECT 1 FROM dbo.AccountingAccountMappings m
+                INNER JOIN dbo.AccountingAccounts a ON a.AccountId=m.AccountId
+                WHERE m.TenantId=@TenantId AND (m.BusinessId IS NULL OR m.BusinessId=@BusinessId)
+                  AND m.Category=d.Category AND a.IsActive=1 AND a.AllowsPosting=1
+                  AND m.EffectiveFrom<=@EffectiveFrom
+                  AND (m.EffectiveTo IS NULL OR m.EffectiveTo>=@EffectiveFrom))),
+              CONVERT(bit,CASE WHEN EXISTS(SELECT 1 FROM dbo.AccountingPeriods
+                WHERE TenantId=@TenantId AND Status=N'Open'
+                  AND @EffectiveFrom BETWEEN StartsOn AND EndsOn) THEN 1 ELSE 0 END),
+              (SELECT COUNT(*) FROM dbo.Businesses b
+               WHERE b.TenantId=@TenantId AND b.IsActive=1 AND NOT EXISTS
+                 (SELECT 1 FROM dbo.AccountingCostCenters c
+                  WHERE c.BusinessId=b.BusinessId AND c.IsDefault=1 AND c.IsActive=1));
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@TenantId", user.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        command.Parameters.AddWithValue("@EffectiveFrom", effectiveFrom.ToDateTime(TimeOnly.MinValue));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        await reader.ReadAsync(cancellationToken);
+        var issues = new List<string>();
+        if (reader.GetInt32(0) > 0) issues.Add("required account mappings are missing");
+        if (!reader.GetBoolean(1)) issues.Add("no open period contains the activation date");
+        if (reader.GetInt32(2) > 0) issues.Add("an active business has no default cost center");
+        return issues;
     }
 
     private async Task<string?> FindPostingSourceAsync(AccountingUserIdentity user, Guid documentId, CancellationToken token)

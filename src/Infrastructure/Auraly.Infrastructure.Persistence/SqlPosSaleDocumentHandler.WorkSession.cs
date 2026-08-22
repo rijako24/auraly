@@ -91,41 +91,6 @@ public sealed partial class SqlPosSaleDocumentHandler
         command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
         return (long)(await command.ExecuteScalarAsync(cancellationToken) ?? 0L) == 1;
     }
-    private async Task InsertWorkSessionMovementAsync(
-        SqlDocumentProcessingSessionAccessor.Session processing,
-        PosSaleUploadRequest request,
-        PosSalePaymentContract payment,
-        Guid workSessionId,
-        CancellationToken cancellationToken)
-    {
-        await using var command = new SqlCommand("""
-            INSERT dbo.WorkSessionMovements
-              (WorkSessionMovementId,WorkSessionId,DocumentId,PaymentNumber,
-               BusinessDate,MovementType,PaymentMethodCode,Amount,Reference,SourceKey,
-               OccurredAt,RecordedByUserId)
-            VALUES
-              (@MovementId,@WorkSessionId,@DocumentId,@PaymentNumber,
-               @BusinessDate,N'SalePayment',@Method,@Amount,@Reference,@SourceKey,
-               @OccurredAt,@UserId);
-            """, processing.Connection, processing.Transaction);
-        command.Parameters.AddWithValue("@MovementId", _idGenerator.NewId());
-        command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
-        command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
-        command.Parameters.AddWithValue("@PaymentNumber", payment.PaymentNumber);
-        command.Parameters.Add(new SqlParameter("@BusinessDate", SqlDbType.Date)
-        {
-            Value = request.CommercialSnapshot.IssuedAt.Date
-        });
-        command.Parameters.AddWithValue("@Method", payment.MethodCode);
-        AddDecimal(command, "@Amount", payment.Amount, 19, 4);
-        command.Parameters.AddWithValue("@Reference", (object?)payment.Reference ?? DBNull.Value);
-        command.Parameters.AddWithValue(
-            "@SourceKey", $"sale:{request.DocumentId:D}:{payment.PaymentNumber}");
-        command.Parameters.AddWithValue("@OccurredAt", request.CommercialSnapshot.IssuedAt);
-        command.Parameters.AddWithValue("@UserId", request.SoldByUserId);
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
-
     private static void AddWorkSessionParameters(
         SqlCommand command,
         PosSaleUploadRequest request,

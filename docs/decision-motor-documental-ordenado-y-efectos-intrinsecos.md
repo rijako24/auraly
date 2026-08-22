@@ -1,5 +1,11 @@
 # Motor documental ordenado de Auraly
 
+> **Prevalencia:** la propiedad de cartera, pagos, caja financiera,
+> contabilidad y reporting fue reemplazada por
+> `decision-cuatro-motores-operacion-contabilidad-fiscal-reporting.md`.
+> Este documento conserva autoridad para aceptación, orden, inventario y
+> recuperación documental.
+
 Fecha: 2026-07-31  
 Estado: obligatorio para todo documento operativo
 

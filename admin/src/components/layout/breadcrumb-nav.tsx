@@ -12,11 +12,9 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { cn } from "@/lib/utils";
-
 const pathLabels: Record<string, string> = {
   dashboard: "Dashboard",
-  analytics: "Analytics",
+  analytics: "Analítica de ventas",
   services: "Servicios",
   employees: "Empleados",
   reservations: "Reservaciones",

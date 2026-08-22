@@ -50,7 +50,7 @@ export type NavEntry = NavItem | NavSeparator;
 
 export const navigation: NavEntry[] = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard, permission: "dashboard.read" },
-  { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3, permission: "dashboard.read" },
+  { name: "Analítica de ventas", href: "/dashboard/analytics", icon: BarChart3, permission: "sales.reports.read" },
   { type: "separator", label: "Negocio" },
   { name: "Servicios", href: "/dashboard/services", icon: Package, permission: "services.read" },
   { name: "Productos", href: "/dashboard/products", icon: Package, permission: "catalog.read" },

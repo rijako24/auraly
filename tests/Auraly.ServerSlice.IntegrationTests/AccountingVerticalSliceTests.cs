@@ -23,12 +23,12 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Invoice_and_credit_note_post_balanced_once_and_periods_are_controlled()
     {
-        var invoice = WithUblSnapshot(fixture.CreateValidRequest(9_811));
+        var unconfiguredInvoice = WithUblSnapshot(fixture.CreateValidRequest(9_811));
         await SetWarehouseNegativeSalesPolicyAsync(false);
         try
         {
             using var pos = fixture.CreateClient();
-            using var upload = fixture.CreateUploadMessage(invoice);
+            using var upload = fixture.CreateUploadMessage(unconfiguredInvoice);
             using var response = await pos.SendAsync(upload);
             Assert.True(
                 response.StatusCode == HttpStatusCode.OK,
@@ -39,14 +39,17 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             await SetWarehouseNegativeSalesPolicyAsync(true);
         }
 
-        Assert.Equal(AccountingPostingStatuses.PendingConfiguration,
-            await ScalarAsync<string>("SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id", invoice.DocumentId));
-        await AssertFastProcessingAsync(invoice.DocumentId, "venta");
-        Assert.Equal(0, await CountAsync("AccountingEntries", "SourceDocumentId", invoice.DocumentId));
+        Assert.Equal(0, await CountAsync(
+            "AccountingPostingJobs", "SourceDocumentId", unconfiguredInvoice.DocumentId));
+        await AssertFastProcessingAsync(
+            unconfiguredInvoice.DocumentId, "venta sin contabilidad activa");
+        Assert.Equal(0, await CountAsync(
+            "AccountingEntries", "SourceDocumentId", unconfiguredInvoice.DocumentId));
 
         using var accounting = fixture.CreateAdminClient(
             AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
             AccountingPermissionCodes.PeriodsManage, AccountingPermissionCodes.Retry,
+            AccountingPermissionCodes.Activate,
             SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm,
             PurchasingPermissionCodes.CreateGoodsReceipts,
             PurchasingPermissionCodes.ConfirmGoodsReceipts,
@@ -74,6 +77,36 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             Assert.True(defaults.HasDefaultCostCenter);
             Assert.True(defaults.HasOpenPeriod);
         }
+
+        using (var activateResponse = await accounting.PostAsJsonAsync(
+                   "/api/commerce/v1/accounting/activate",
+                   new ActivateAccountingRequest(
+                       new DateOnly(2026, 1, 1), "COP", "ZeroDeclared")))
+        {
+            activateResponse.EnsureSuccessStatusCode();
+            var readiness = await activateResponse.Content
+                .ReadFromJsonAsync<AccountingReadinessView>();
+            Assert.NotNull(readiness);
+            Assert.Equal(AccountingActivationStatuses.Ready, readiness.Status);
+            Assert.Empty(readiness.BlockingIssues);
+        }
+
+        var invoice = WithUblSnapshot(fixture.CreateValidRequest(9_812));
+        await SetWarehouseNegativeSalesPolicyAsync(false);
+        try
+        {
+            using var pos = fixture.CreateClient();
+            using var upload = fixture.CreateUploadMessage(invoice);
+            using var response = await pos.SendAsync(upload);
+            Assert.True(
+                response.StatusCode == HttpStatusCode.OK,
+                await response.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            await SetWarehouseNegativeSalesPolicyAsync(true);
+        }
+        await AssertBalancedAsync(invoice.DocumentId);
 
 
         var cashierId = await CreateCashierAsync();
@@ -677,5 +710,5 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
     private async Task SetWarehouseNegativeSalesPolicyAsync(bool value)
     { await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync(); await using var command = new SqlCommand("UPDATE dbo.Warehouses SET AllowNegativeStockSales=@Value WHERE WarehouseId=@Id", connection); command.Parameters.AddWithValue("@Value", value); command.Parameters.AddWithValue("@Id", fixture.WarehouseId); Assert.Equal(1, await command.ExecuteNonQueryAsync()); }
     private async Task<int> CountAsync(string table, string column, Guid id)
-    { Assert.Contains($"{table}:{column}", new[] { "AccountingEntries:SourceDocumentId" }); await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync(); await using var command = new SqlCommand($"SELECT COUNT(*) FROM dbo.[{table}] WHERE [{column}]=@Id", connection); command.Parameters.AddWithValue("@Id", id); return Convert.ToInt32(await command.ExecuteScalarAsync()); }
+    { Assert.Contains($"{table}:{column}", new[] { "AccountingEntries:SourceDocumentId", "AccountingPostingJobs:SourceDocumentId" }); await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync(); await using var command = new SqlCommand($"SELECT COUNT(*) FROM dbo.[{table}] WHERE [{column}]=@Id", connection); command.Parameters.AddWithValue("@Id", id); return Convert.ToInt32(await command.ExecuteScalarAsync()); }
 }
