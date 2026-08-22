@@ -21,6 +21,14 @@ Pre-Deployment Script Template
 -- Scripts de pre-despliegue
 -- Aquí puedes agregar validaciones, limpieza, etc.
 
+IF OBJECT_ID(N'dbo.PriceChannels', N'U') IS NOT NULL
+BEGIN
+    UPDATE dbo.PriceChannels
+    SET Strategy = N'TieredProductPrice',
+        Value = NULL
+    WHERE Strategy = N'FixedSpecialPrice';
+END;
+
 PRINT 'Pre-deployment script ejecutado correctamente.';
 
 GO
