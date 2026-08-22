@@ -14,7 +14,9 @@ public static class CommercePermissionCodes
     public const string SalesRestartDraft = "sales.drafts.restart";
     public const string PosApprovalsAuthorize = "pos.approvals.authorize";
     public const string PosApprovalsRead = "pos.approvals.read";
+    public const string PosApprovalsReceiveNotifications = "pos.approvals.receive_notifications";
     public const string PosApprovalsManageCredential = "pos.approvals.manage_credential";
+    public const string PosWorkspaceChange = "pos.workspace.change";
     public const string SalesReturn = "sales.return";
     public const string CashCount = "cash.count";
     public const string CashRead = "cash.read";

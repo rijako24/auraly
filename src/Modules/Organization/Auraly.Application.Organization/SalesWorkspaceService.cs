@@ -57,6 +57,17 @@ public sealed class SalesWorkspaceService(ISalesWorkspaceDirectory directory)
                 "La sede o bodega no pertenece a la empresa autenticada o está inactiva.");
     }
 
+    public Task<SalesWorkspaceContext> ChangeAsync(
+        SalesWorkspaceUserIdentity user,
+        SalesWorkspaceSelection selection,
+        CancellationToken cancellationToken = default)
+    {
+        if (!user.Permissions.Contains(CommercePermissionCodes.PosWorkspaceChange))
+            throw new SalesWorkspaceForbiddenException(
+                $"Permission '{CommercePermissionCodes.PosWorkspaceChange}' is required.");
+        return SelectAsync(user, selection, cancellationToken);
+    }
+
     private static void DemandSalesPermission(SalesWorkspaceUserIdentity user)
     {
         ArgumentNullException.ThrowIfNull(user);

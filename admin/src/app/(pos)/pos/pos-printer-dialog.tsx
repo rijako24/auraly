@@ -104,17 +104,17 @@ export function PosPrinterDialog({
             <div className="flex min-h-36 items-center justify-center gap-2 text-sm text-slate-600">
               <Loader2 className="h-5 w-5 animate-spin" /> Consultando Windows...
             </div>
-          ) : value && client ? (
+          ) : value ? (
             <>
-              <div className="rounded-2xl border border-teal-200 bg-teal-50/60 p-4"><p className="font-semibold text-slate-950">Impresión directa por flujo</p><p className="mt-1 text-xs text-slate-600">Cada flujo usa su formato, impresora de Windows y, si corresponde, su ancho de tirilla. No se abre la impresión del navegador.</p></div>
+              <div className="rounded-2xl border border-teal-200 bg-teal-50/60 p-4"><p className="font-semibold text-slate-950">{client?"Impresión directa por flujo":"Impresión desde el navegador"}</p><p className="mt-1 text-xs text-slate-600">{client?"Cada flujo usa su formato, impresora de Windows y, si corresponde, su ancho de tirilla. No se abre la impresión del navegador.":"Configura formato y ancho. Al emitir, el navegador abrirá su ventana para escoger la impresora."}</p></div>
               <WorkflowPrinterCard title="Punto de venta" description="Facturas y comprobantes emitidos desde la caja." format={value.posOutputFormat??"Receipt"} printerName={value.posPrinterName??printerFor(value,value.posOutputFormat??"Receipt")} paperWidth={value.receiptPaperWidthMillimeters} printers={printers} onChange={(format,printerName,paperWidth)=>setValue(configureWorkflow(value,"pos",format,printerName,paperWidth))}/>
               <WorkflowPrinterCard title="Pedidos" description="Documentos facturados desde la pantalla de pedidos." format={value.ordersOutputFormat??"HalfLetter"} printerName={value.ordersPrinterName??printerFor(value,value.ordersOutputFormat??"HalfLetter")} paperWidth={value.ordersReceiptPaperWidthMillimeters??80} printers={printers} onChange={(format,printerName,paperWidth)=>setValue(configureWorkflow(value,"orders",format,printerName,paperWidth))}/>
-              {!printers.length && (
+              {client&&!printers.length && (
                 <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
                   Windows no reporto impresoras instaladas. Instala el controlador y vuelve a abrir esta configuracion.
                 </p>
               )}
-              <ScaleConfiguration
+              {client&&<ScaleConfiguration
                   value={value.scale ?? defaultScale()}
                   serialPorts={serialPorts}
                   busy={busy}
@@ -128,15 +128,15 @@ export function PosPrinterDialog({
                       setError(caught instanceof Error ? caught.message : "No fue posible leer la balanza.");
                     } finally { setBusy(false); }
                   }}
-                />
+                />}
             </>
-          ) : value ? <p className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900">Prepara o enrola este equipo para consultar las impresoras de Windows, configurar la balanza e imprimir directamente.</p> : null}
+          ) : null}
           {error && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         </div>
         <footer className="flex shrink-0 justify-end gap-2 border-t bg-white px-6 py-4">
           <button type="button" onClick={onClose} disabled={busy}
             className="h-10 rounded-xl border px-4 text-sm font-semibold">Cancelar</button>
-          <button type="button" onClick={() => void save()} disabled={busy || !value || !client}
+          <button type="button" onClick={() => void save()} disabled={busy || !value}
             className="flex h-10 items-center gap-2 rounded-xl bg-teal-700 px-4 text-sm font-bold text-white disabled:opacity-50">
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             Guardar
@@ -148,7 +148,7 @@ export function PosPrinterDialog({
 }
 
 function WorkflowPrinterCard({title,description,format,printerName,paperWidth,printers,onChange}:{title:string;description:string;format:"Receipt"|"HalfLetter";printerName:string|null;paperWidth:58|80;printers:string[];onChange:(format:"Receipt"|"HalfLetter",printerName:string|null,paperWidth:58|80)=>void}){
-  return <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4"><div><h3 className="font-semibold text-slate-950">{title}</h3><p className="text-xs text-slate-600">{description}</p></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Formato"><Select value={format} onValueChange={next=>onChange(next as "Receipt"|"HalfLetter",printerName,paperWidth)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="Receipt">Tirilla</SelectItem><SelectItem value="HalfLetter">Media carta</SelectItem></SelectContent></Select></Field><Field label="Impresora del sistema"><Select value={printerName??undefined} onValueChange={next=>onChange(format,next,paperWidth)}><SelectTrigger><SelectValue placeholder="Selecciona una impresora"/></SelectTrigger><SelectContent>{printers.map(printer=><SelectItem key={printer} value={printer}>{printer}</SelectItem>)}</SelectContent></Select></Field>{format==="Receipt"&&<Field label="Ancho de tirilla"><Select value={String(paperWidth)} onValueChange={next=>onChange(format,printerName,Number(next) as 58|80)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="80">80 mm</SelectItem><SelectItem value="58">58 mm</SelectItem></SelectContent></Select></Field>}</div></section>;
+  return <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4"><div><h3 className="font-semibold text-slate-950">{title}</h3><p className="text-xs text-slate-600">{description}</p></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Formato"><Select value={format} onValueChange={next=>onChange(next as "Receipt"|"HalfLetter",printerName,paperWidth)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="Receipt">Tirilla</SelectItem><SelectItem value="HalfLetter">Media carta</SelectItem></SelectContent></Select></Field>{printers.length>0&&<Field label="Impresora del sistema"><Select value={printerName??undefined} onValueChange={next=>onChange(format,next,paperWidth)}><SelectTrigger><SelectValue placeholder="Selecciona una impresora"/></SelectTrigger><SelectContent>{printers.map(printer=><SelectItem key={printer} value={printer}>{printer}</SelectItem>)}</SelectContent></Select></Field>}{format==="Receipt"&&<Field label="Ancho de tirilla"><Select value={String(paperWidth)} onValueChange={next=>onChange(format,printerName,Number(next) as 58|80)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="80">80 mm</SelectItem><SelectItem value="58">58 mm</SelectItem></SelectContent></Select></Field>}</div></section>;
 }
 
 function printerFor(value:PosPrinterConfiguration,format:"Receipt"|"HalfLetter"){

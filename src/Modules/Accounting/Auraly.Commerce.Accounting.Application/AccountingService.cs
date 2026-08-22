@@ -19,6 +19,7 @@ public interface IAccountingStore
     Task<AccountingPostingView?> RetryPostingAsync(AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken);
     Task<AccountingEntryView?> GetEntryAsync(AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken);
     Task<IReadOnlyList<TrialBalanceRow>> GetTrialBalanceAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, CancellationToken cancellationToken);
+    Task<IReadOnlyList<AccountMovementRow>> GetAccountMovementsAsync(AccountingUserIdentity user, string accountCode, DateOnly from, DateOnly to, CancellationToken cancellationToken);
 }
 
 public sealed class AccountingService(IAccountingStore store)
@@ -135,6 +136,14 @@ public sealed class AccountingService(IAccountingStore store)
         Demand(user, AccountingPermissionCodes.Read);
         if (from == default || to < from) throw new AccountingValidationException("The report date range is invalid.");
         return store.GetTrialBalanceAsync(user, from, to, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<AccountMovementRow>> GetAccountMovementsAsync(AccountingUserIdentity user, string accountCode, DateOnly from, DateOnly to, CancellationToken cancellationToken = default)
+    {
+        Demand(user, AccountingPermissionCodes.Read);
+        ValidateText(accountCode, 30, "Account code");
+        if (from == default || to < from) throw new AccountingValidationException("The report date range is invalid.");
+        return store.GetAccountMovementsAsync(user, accountCode.Trim(), from, to, cancellationToken);
     }
 
     private static void Demand(AccountingUserIdentity user, string permission)

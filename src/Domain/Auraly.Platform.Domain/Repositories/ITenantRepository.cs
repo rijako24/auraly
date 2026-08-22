@@ -10,4 +10,5 @@ public interface ITenantRepository
     Task AddAsync(Tenant tenant, CancellationToken ct = default);
     void Update(Tenant tenant);
     Task RevokeActiveAuthenticationSessionsAsync(Guid tenantId, DateTimeOffset now, CancellationToken ct = default);
+    Task UpdateLegalIdentityAsync(Guid tenantId, string legalName, string nit, string verificationDigit, DateTimeOffset now, CancellationToken ct = default);
 }

@@ -26,7 +26,7 @@ FROM @Values v WHERE NOT EXISTS(SELECT 1 FROM dbo.Permissions p WHERE p.Resource
 INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
 SELECT NEWID(),r.RoleId,p.PermissionId,SYSUTCDATETIME()
 FROM dbo.AppRoles r CROSS JOIN dbo.Permissions p
-WHERE r.IsActive=1 AND r.NormalizedName=N'ADMINISTRATOR'
+WHERE r.IsActive=1 AND r.NormalizedName IN(N'ADMINISTRATOR',N'TENANTADMINISTRATOR')
   AND p.Resource IN(SELECT Resource FROM @Values)
   AND NOT EXISTS(SELECT 1 FROM dbo.RolePermissions rp WHERE rp.RoleId=r.RoleId AND rp.PermissionId=p.PermissionId);
 GO

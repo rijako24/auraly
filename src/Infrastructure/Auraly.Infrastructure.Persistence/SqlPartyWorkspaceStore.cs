@@ -247,6 +247,70 @@ public sealed partial class SqlPartyWorkspaceStore(
         try
         {
             await RequirePartyAsync(connection,transaction,actor,partyId,ct);
+            await RequireMutablePartyAsync(connection,transaction,actor,partyId,ct);
+            if(request.Sites is not null)
+            {
+                foreach(var site in request.Sites) await ValidateScopeAsync(connection,transaction,actor,site.Site,ct);
+                await ApplySitesAsync(connection,transaction,actor,partyId,request.Sites,now,ct);
+            }
+            if(request.Customer is not null)
+            {
+                await using var customer=connection.CreateCommand(); customer.Transaction=transaction;
+                customer.CommandText="""
+                    IF @PriceChannelId IS NOT NULL AND NOT EXISTS(
+                      SELECT 1 FROM dbo.PriceChannels
+                      WHERE PriceChannelId=@PriceChannelId AND BusinessId=@BusinessId AND IsActive=1)
+                      THROW 51066,'The selected price channel is not active in this business.',1;
+                    DECLARE @CustomerId UNIQUEIDENTIFIER;
+                    SELECT @CustomerId=CustomerId FROM dbo.Customers
+                    WHERE PartyId=@PartyId AND BusinessId=@BusinessId;
+                    IF @CustomerId IS NULL THROW 51063,'The Party is not a customer in the authenticated business.',1;
+                    UPDATE dbo.Customers
+                    SET RequiresElectronicInvoice=@RequiresElectronicInvoice,
+                        UpdatedBy=@ActorId,UpdatedAt=@Now
+                    WHERE CustomerId=@CustomerId;
+                    UPDATE dbo.CustomerPricingSettings
+                    SET PriceChannelId=@PriceChannelId,ValidFrom=COALESCE(@ValidFrom,@Now),
+                        ValidUntil=@ValidUntil,UpdatedBy=@ActorId,UpdatedAt=@Now
+                    WHERE CustomerId=@CustomerId;
+                    IF @@ROWCOUNT=0 INSERT dbo.CustomerPricingSettings
+                      (CustomerId,PriceChannelId,ValidFrom,ValidUntil,UpdatedBy,UpdatedAt)
+                    VALUES(@CustomerId,@PriceChannelId,COALESCE(@ValidFrom,@Now),@ValidUntil,@ActorId,@Now);
+                    """;
+                customer.Parameters.AddRange([P("@PartyId",partyId),P("@BusinessId",actor.BusinessId),
+                    P("@PriceChannelId",request.Customer.PriceChannelId),P("@RequiresElectronicInvoice",request.Customer.RequiresElectronicInvoice),
+                    P("@ValidFrom",request.Customer.ValidFrom),P("@ValidUntil",request.Customer.ValidUntil),
+                    P("@ActorId",actor.ActorId),P("@Now",now)]);
+                await customer.ExecuteNonQueryAsync(ct);
+            }
+            if(request.Seller is not null)
+            {
+                await using var seller=connection.CreateCommand(); seller.Transaction=transaction;
+                seller.CommandText="""
+                    UPDATE dbo.CommerceSellers
+                    SET Code=@Code,DefaultCommissionPercent=@Commission,
+                        CommissionBasis=@Basis,CommissionTrigger=@Trigger
+                    WHERE PartyId=@PartyId AND BusinessId=@BusinessId;
+                    IF @@ROWCOUNT=0 THROW 51063,'The Party is not a seller in the authenticated business.',1;
+                    """;
+                seller.Parameters.AddRange([P("@PartyId",partyId),P("@BusinessId",actor.BusinessId),
+                    P("@Code",request.Seller.Code.Trim().ToUpperInvariant()),P("@Commission",request.Seller.DefaultCommissionPercent),
+                    P("@Basis",request.Seller.CommissionBasis),P("@Trigger",request.Seller.CommissionTrigger)]);
+                await seller.ExecuteNonQueryAsync(ct);
+            }
+            if(request.Carrier is not null)
+            {
+                await using var carrier=connection.CreateCommand(); carrier.Transaction=transaction;
+                carrier.CommandText="""
+                    UPDATE dbo.Carriers
+                    SET Code=@Code,TransportationMode=@Mode
+                    WHERE PartyId=@PartyId AND BusinessId=@BusinessId;
+                    IF @@ROWCOUNT=0 THROW 51063,'The Party is not a carrier in the authenticated business.',1;
+                    """;
+                carrier.Parameters.AddRange([P("@PartyId",partyId),P("@BusinessId",actor.BusinessId),
+                    P("@Code",request.Carrier.Code.Trim().ToUpperInvariant()),P("@Mode",request.Carrier.TransportationMode)]);
+                await carrier.ExecuteNonQueryAsync(ct);
+            }
             await using var update=connection.CreateCommand(); update.Transaction=transaction;
             update.CommandText="""
                 UPDATE dbo.Parties SET PartyType=@PartyType,DisplayName=@DisplayName,LegalName=@LegalName,
@@ -269,8 +333,12 @@ public sealed partial class SqlPartyWorkspaceStore(
             await transaction.CommitAsync(ct);
             return await RequiredItemAsync(actor,partyId,ct);
         }
-        catch(SqlException ex) when(ex.Number==51062)
+        catch(FormatException)
+        { await transaction.RollbackAsync(ct); throw new PartyValidationException("A site row version is invalid."); }
+        catch(SqlException ex) when(ex.Number is 51062 or 51063 or 51064 or 51065 or 51066)
         { await transaction.RollbackAsync(ct); throw new PartyConflictException(ex.Message); }
+        catch(SqlException ex) when(ex.Number is 2601 or 2627)
+        { await transaction.RollbackAsync(ct); throw new PartyConflictException("A site code is already used by this customer."); }
         catch { await transaction.RollbackAsync(ct); throw; }
     }
 
@@ -283,6 +351,7 @@ public sealed partial class SqlPartyWorkspaceStore(
         try
         {
             await RequirePartyAsync(connection,transaction,actor,partyId,ct);
+            await RequireMutablePartyAsync(connection,transaction,actor,partyId,ct);
             await using var command=connection.CreateCommand(); command.Transaction=transaction;
             command.CommandText="""
                 IF NOT EXISTS(SELECT 1 FROM dbo.Parties WHERE PartyId=@PartyId AND TenantId=@TenantId AND RowVersion=@RowVersion)
@@ -318,35 +387,9 @@ public sealed partial class SqlPartyWorkspaceStore(
             await transaction.CommitAsync(ct);
             return await RequiredItemAsync(actor,partyId,ct);
         }
-        catch(SqlException ex) when(ex.Number==51062)
+        catch(SqlException ex) when(ex.Number is 51062 or 51064)
         { await transaction.RollbackAsync(ct); throw new PartyConflictException(ex.Message); }
         catch { await transaction.RollbackAsync(ct); throw; }
-    }
-
-    public async Task<CustomerRoleDetail> SaveCustomerBillingAsync(
-        PartyActorIdentity actor, Guid partyId, SaveCustomerBillingRequest request,
-        DateTimeOffset now, CancellationToken ct)
-    {
-        await using var connection=connections.Create(); await connection.OpenAsync(ct);
-        await using var transaction=(SqlTransaction)await connection.BeginTransactionAsync(ct);
-        await using var command=connection.CreateCommand(); command.Transaction=transaction;
-        command.CommandText="""
-            UPDATE customer
-            SET RequiresElectronicInvoice=@Required,UpdatedBy=@ActorId,UpdatedAt=@Now
-            FROM dbo.Customers customer
-            JOIN dbo.Parties party ON party.PartyId=customer.PartyId AND party.TenantId=@TenantId
-            WHERE customer.PartyId=@PartyId AND customer.BusinessId=@BusinessId;
-            IF @@ROWCOUNT=0 THROW 51063,'The Party is not a customer in the authenticated business.',1;
-            """;
-        command.Parameters.AddRange([
-            P("@PartyId",partyId),P("@TenantId",actor.TenantId),P("@BusinessId",actor.BusinessId),
-            P("@Required",request.RequiresElectronicInvoice),P("@ActorId",actor.ActorId),P("@Now",now)]);
-        try { await command.ExecuteNonQueryAsync(ct); }
-        catch(SqlException ex) when(ex.Number==51063) { throw new PartyValidationException(ex.Message); }
-        await EnqueueCustomerChangeAsync(connection,transaction,actor.BusinessId,partyId,now,ct);
-        await transaction.CommitAsync(ct);
-        var detail=await GetDetailAsync(actor,partyId,ct);
-        return detail?.Customer ?? throw new PartyValidationException("Customer configuration was not found.");
     }
 
     private async Task<PartyWorkspaceItem> RequiredItemAsync(PartyActorIdentity actor,Guid partyId,CancellationToken ct)
@@ -425,6 +468,53 @@ public sealed partial class SqlPartyWorkspaceStore(
             """;command.Parameters.AddRange([P("@PartyId",id),P("@TenantId",a.TenantId),P("@BusinessId",a.BusinessId)]);
         try{await command.ExecuteNonQueryAsync(ct);}catch(SqlException ex) when(ex.Number==51060){throw new PartyForbiddenException(ex.Message);}
     }
+
+    private static async Task RequireMutablePartyAsync(SqlConnection c,SqlTransaction t,PartyActorIdentity a,Guid id,CancellationToken ct)
+    {
+        await using var command=c.CreateCommand();command.Transaction=t;command.CommandText="""
+            IF EXISTS(SELECT 1 FROM dbo.Parties WHERE PartyId=@PartyId AND TenantId=@TenantId
+              AND Identification=N'222222222222' AND DisplayName=N'Consumidor final')
+              THROW 51064,'Consumidor final is a protected system customer and cannot be changed.',1;
+            """;
+        command.Parameters.AddRange([P("@PartyId",id),P("@TenantId",a.TenantId)]);
+        await command.ExecuteNonQueryAsync(ct);
+    }
+
+    private async Task ApplySitesAsync(SqlConnection c,SqlTransaction t,PartyActorIdentity actor,Guid partyId,IReadOnlyCollection<PartySiteSaveInput> sites,DateTimeOffset now,CancellationToken ct)
+    {
+        foreach(var value in sites.Where(value=>value.PartySiteId.HasValue))
+        {
+            if(string.IsNullOrWhiteSpace(value.RowVersion)) throw new FormatException();
+            await using var check=c.CreateCommand();check.Transaction=t;check.CommandText="""
+                IF NOT EXISTS(SELECT 1 FROM dbo.PartySites WHERE PartySiteId=@SiteId AND PartyId=@PartyId AND RowVersion=@RowVersion)
+                  THROW 51065,'A customer site changed after it was loaded.',1;
+                """;
+            check.Parameters.AddRange([P("@SiteId",value.PartySiteId),P("@PartyId",partyId),P("@RowVersion",Convert.FromBase64String(value.RowVersion))]);
+            await check.ExecuteNonQueryAsync(ct);
+        }
+        await ExecuteAsync(c,t,"UPDATE dbo.PartySites SET IsActive=0,IsPrimary=0,UpdatedAt=@Now WHERE PartyId=@PartyId",[P("@PartyId",partyId),P("@Now",now)],ct);
+        foreach(var value in sites)
+        {
+            var site=value.Site;
+            if(value.PartySiteId is null)
+            {
+                await ExecuteAsync(c,t,"""
+                    INSERT dbo.PartySites(PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,AddressLine,Neighborhood,PostalCode,Email,Phone,GoogleMapsUrl,GooglePlaceId,Latitude,Longitude,IsPrimary,IsActive,CreatedBy,CreatedAt)
+                    VALUES(@SiteId,@PartyId,@Code,@Name,@Country,@Division,@City,@Address,@Neighborhood,@Postal,@Email,@Phone,@Maps,@Place,@Latitude,@Longitude,@Primary,1,@Actor,@Now)
+                    """,SiteParameters(ids.NewId(),partyId,site,actor.ActorId,now),ct);
+                continue;
+            }
+            await ExecuteAsync(c,t,"""
+                UPDATE dbo.PartySites SET Code=@Code,Name=@Name,CountryId=@Country,AdministrativeDivisionId=@Division,CityId=@City,
+                  AddressLine=@Address,Neighborhood=@Neighborhood,PostalCode=@Postal,Email=@Email,Phone=@Phone,
+                  GoogleMapsUrl=@Maps,GooglePlaceId=@Place,Latitude=@Latitude,Longitude=@Longitude,IsPrimary=@Primary,IsActive=1,UpdatedAt=@Now
+                WHERE PartySiteId=@SiteId AND PartyId=@PartyId
+                """,SiteParameters(value.PartySiteId.Value,partyId,site,actor.ActorId,now),ct);
+        }
+    }
+
+    private static SqlParameter[] SiteParameters(Guid siteId,Guid partyId,PartySiteInput site,Guid actorId,DateTimeOffset now)=>
+    [P("@SiteId",siteId),P("@PartyId",partyId),P("@Code",site.Code.Trim().ToUpperInvariant()),P("@Name",site.Name.Trim()),P("@Country",site.CountryId),P("@Division",site.AdministrativeDivisionId),P("@City",site.CityId),P("@Address",site.AddressLine.Trim()),P("@Neighborhood",Empty(site.Neighborhood)),P("@Postal",Empty(site.PostalCode)),P("@Email",Empty(site.Email)),P("@Phone",Empty(site.Phone)),P("@Maps",Empty(site.GoogleMapsUrl)),P("@Place",Empty(site.GooglePlaceId)),P("@Latitude",site.Latitude),P("@Longitude",site.Longitude),P("@Primary",site.IsPrimary),P("@Actor",actorId),P("@Now",now)];
 
     private static async Task<Guid?> FindPartyIdAsync(SqlConnection c,SqlTransaction t,Guid tenant,PartyInput p,string normalized,CancellationToken ct)
     { await using var x=c.CreateCommand();x.Transaction=t;x.CommandText="SELECT PartyId FROM dbo.Parties WITH(UPDLOCK,HOLDLOCK) WHERE TenantId=@Tenant AND IdentificationCountryId=@Country AND IdentificationTypeCode=@Type AND NormalizedIdentification=@Normalized";x.Parameters.AddRange([P("@Tenant",tenant),P("@Country",p.IdentificationCountryId),P("@Type",p.IdentificationTypeCode.Trim().ToUpperInvariant()),P("@Normalized",normalized)]);return await x.ExecuteScalarAsync(ct) as Guid?; }

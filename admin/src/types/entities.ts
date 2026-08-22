@@ -28,7 +28,10 @@ export interface Tenant {
   maximumEnrolledDevices: number;
   businessCount: number;
   activeUserCount: number;
-  activeEnrolledDeviceCount: number;
+    activeEnrolledDeviceCount: number;
+    legalName: string | null;
+    nit: string | null;
+    verificationDigit: string | null;
   businesses?: Business[];
 }
 

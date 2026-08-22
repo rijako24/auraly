@@ -54,8 +54,8 @@ export function PosCashMovementDialog({
       setError("Selecciona un motivo e ingresa un valor mayor que cero.");
       return;
     }
-    if (reason.requiresReference && !reference.trim()) {
-      setError("Este motivo exige una referencia.");
+    if (!reference.trim()) {
+      setError("La referencia es obligatoria para entradas y salidas de caja.");
       return;
     }
     if (!reason.isAccountingConfigured) {
@@ -121,7 +121,7 @@ export function PosCashMovementDialog({
             type="number" min="1" step="1" inputMode="numeric"
             className="h-11 w-full rounded-xl border border-slate-300 px-3"/>
         </Field>
-        <Field label={reason?.requiresReference?"Referencia obligatoria":"Referencia"}>
+        <Field label="Referencia obligatoria">
           <input value={reference} onChange={(event)=>setReference(event.target.value)}
             maxLength={120} className="h-11 w-full rounded-xl border border-slate-300 px-3"/>
         </Field>
@@ -138,7 +138,7 @@ export function PosCashMovementDialog({
       <footer className="flex justify-end gap-2 border-t px-6 py-4">
         <button type="button" onClick={onClose} disabled={saving}
           className="h-10 rounded-xl border px-4 text-sm font-semibold">Cancelar</button>
-        <button type="button" onClick={()=>void confirm()} disabled={saving||loading}
+        <button type="button" onClick={()=>void confirm()} disabled={saving||loading||!reference.trim()}
           className="flex h-10 items-center gap-2 rounded-xl bg-teal-700 px-4 text-sm font-bold text-white disabled:opacity-50">
           {saving&&<Loader2 className="h-4 w-4 animate-spin"/>}Registrar
         </button>

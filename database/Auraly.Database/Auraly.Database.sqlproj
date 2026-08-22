@@ -150,6 +150,7 @@
     <Build Include="Tables\WorkSessionClosures.sql" />
     <Build Include="Tables\SupervisorCredentials.sql" />
     <Build Include="Tables\PosApprovalRequests.sql" />
+    <Build Include="Tables\PosApprovalPushSubscriptions.sql" />
     <Build Include="Tables\SalesDocuments.sql" />
     <Build Include="Tables\FiscalDocuments.sql" />
     <Build Include="Tables\OrderCommerce.sql" />

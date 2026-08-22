@@ -25,6 +25,11 @@ param audioModelDeploymentName string = 'whisper'
 @secure()
 param jwtSecret string
 @secure()
+param offlineLeaseSigningPrivateKeyPem string
+param webPushPublicKey string
+@secure()
+param webPushPrivateKey string
+@secure()
 param fiscalSecretProtectionKey string
 @secure()
 param whatsAppVerifyToken string
@@ -718,6 +723,30 @@ resource apiApp 'Microsoft.Web/sites@2024-04-01' = {
         {
           name: 'Authentication__Jwt__Audience'
           value: 'auraly-admin-${compactEnvironment}'
+        }
+        {
+          name: 'Authentication__OfflineLeaseSigning__KeyId'
+          value: 'auraly-${compactEnvironment}-offline-v1'
+        }
+        {
+          name: 'Authentication__OfflineLeaseSigning__PrivateKeyPem'
+          value: offlineLeaseSigningPrivateKeyPem
+        }
+        {
+          name: 'Authentication__OfflineLeaseSigning__DurationHours'
+          value: '8'
+        }
+        {
+          name: 'Notifications__WebPush__PublicKey'
+          value: webPushPublicKey
+        }
+        {
+          name: 'Notifications__WebPush__PrivateKey'
+          value: webPushPrivateKey
+        }
+        {
+          name: 'Notifications__WebPush__Subject'
+          value: 'mailto:soporte@auraly.app'
         }
         {
           name: 'WhatsApp__Webhook__ApiBaseUrl'

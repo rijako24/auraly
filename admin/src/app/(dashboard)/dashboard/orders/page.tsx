@@ -146,8 +146,6 @@ export default function OrdersPage() {
           workspace && user
             ? async (orders, paymentMethodCode, documentType) => {
                 const edgeToken = readEdgeTokenFromLaunch();
-                if (!edgeToken)
-                  throw new Error("Prepara este equipo para facturar e imprimir pedidos directamente.");
                 const context = await selectSalesWorkspace(workspace);
                 const client = new OnlinePosClient(
                   context,

@@ -11,7 +11,17 @@ public sealed record CommerceAdapterContext(
     IntegrationConnection? Connection,
     string? CustomerPhone = null,
     CommerceCustomerReference? Customer = null,
-    string? WarehouseCode = null);
+    string? WarehouseCode = null,
+    Guid? WarehouseId = null);
+
+public sealed record CommerceOrderWorkspace(Guid WarehouseId, string WarehouseCode);
+
+public interface ICommerceOrderWorkspaceResolver
+{
+    Task<CommerceOrderWorkspace?> ResolveAsync(
+        Guid businessId,
+        CancellationToken cancellationToken = default);
+}
 
 public sealed record CommerceCustomerReference(
     CommerceProvider Provider,

@@ -18,6 +18,7 @@ export interface AccountingMapping {
 export interface AccountingDefaultsResult { accountCount: number; mappingCount: number; hasDefaultCostCenter: boolean; hasOpenPeriod: boolean; isReady: boolean; }
 export interface AccountingCategoryDefinition { category: string; displayName: string; accountType: string; isRequired: boolean; displayOrder: number; }
 export interface TrialBalanceRow { accountCode: string; accountName: string; debit: number; credit: number; balance: number; }
+export interface AccountMovementRow { entryId: string; entryNumber: string; sourceDocumentId: string; sourceDocumentType: string; occurredAt: string; description: string; debit: number; credit: number; balance: number; }
 export interface CreateAccount {
   accountId: string; tenantId: string; code: string; name: string;
   accountType: string; allowsPosting: boolean; requiresParty: boolean;
@@ -47,4 +48,5 @@ export const accountingApi = {
   setMapping: (request: SetAccountMapping) => apiClient.put<void>("/commerce/v1/accounting/account-mappings", request),
   closePeriod: (periodId: string) => apiClient.post<void>(`/commerce/v1/accounting/periods/${periodId}/close`, {}),
   trialBalance: (from: string, to: string) => apiClient.get<TrialBalanceRow[]>(`/commerce/v1/accounting/reports/trial-balance?from=${from}&to=${to}`),
+  accountMovements: (accountCode: string, from: string, to: string) => apiClient.get<AccountMovementRow[]>(`/commerce/v1/accounting/reports/account-movements?accountCode=${encodeURIComponent(accountCode)}&from=${from}&to=${to}`),
 };

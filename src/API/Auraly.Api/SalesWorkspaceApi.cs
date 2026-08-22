@@ -39,6 +39,12 @@ public static class SalesWorkspaceApi
             await Handle(async () => Results.Ok(await service.SelectAsync(
                 context.User.ToSalesWorkspaceUserIdentity(), selection, ct))));
 
+        group.MapPost("/change", async (
+            HttpContext context, SalesWorkspaceService service,
+            SalesWorkspaceSelection selection, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.ChangeAsync(
+                context.User.ToSalesWorkspaceUserIdentity(), selection, ct))));
+
         return endpoints;
     }
 

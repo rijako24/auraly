@@ -9,6 +9,7 @@ public static class WorkSessionPermissionCodes
     public const string Open = "work-sessions.open";
     public const string Close = "work-sessions.close";
     public const string ManageCash = "work-sessions.cash.manage";
+    public const string OpenCashDrawer = "work-sessions.cash.drawer.open";
     public const string ConfigureCashReasons = "work-sessions.cash-reasons.configure";
 }
 

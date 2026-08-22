@@ -825,7 +825,9 @@ public sealed partial class SqlOnlineSalesDraftStore(
         await using var assignment = connection.CreateCommand();
         assignment.Transaction = transaction;
         assignment.CommandText = """
-            SELECT s.PriceChannelId
+            SELECT CASE WHEN s.ValidFrom<=SYSDATETIMEOFFSET()
+                          AND(s.ValidUntil IS NULL OR s.ValidUntil>SYSDATETIMEOFFSET())
+                        THEN s.PriceChannelId END
             FROM dbo.Customers c
             LEFT JOIN dbo.CustomerPricingSettings s ON s.CustomerId=c.CustomerId
             WHERE c.CustomerId=@CustomerId AND c.BusinessId=@BusinessId AND c.IsActive=1;
@@ -849,6 +851,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 SELECT CONVERT(decimal(19,4),ROUND(CASE channel.Strategy
                     WHEN N'TieredProductPrice' THEN special.Amount
                     WHEN N'PercentageOverBasePrice' THEN @BaseAmount*(1+COALESCE(channel.Value,0)/100)
+                    WHEN N'PercentageBelowBasePrice' THEN @BaseAmount*(1-COALESCE(channel.Value,0)/100)
                     WHEN N'PercentageOverAverageCost' THEN cost.Amount*(1+COALESCE(channel.Value,0)/100)
                     WHEN N'FixedMarginOverAverageCost' THEN cost.Amount/(1-COALESCE(channel.Value,0)/100)
                     WHEN N'SellAtAverageCost' THEN cost.Amount END,4))
@@ -894,7 +897,9 @@ public sealed partial class SqlOnlineSalesDraftStore(
             SELECT c.CustomerId,COALESCE(p.Identification,N''),
                    COALESCE(p.DisplayName,p.LegalName,
                             CONCAT(p.FirstName,N' ',p.LastName),N'Sin nombre'),
-                   s.PriceChannelId,c.RequiresElectronicInvoice
+                   CASE WHEN s.ValidFrom<=SYSDATETIMEOFFSET()
+                          AND(s.ValidUntil IS NULL OR s.ValidUntil>SYSDATETIMEOFFSET())
+                        THEN s.PriceChannelId END,c.RequiresElectronicInvoice
             FROM dbo.Customers c
             JOIN dbo.Parties p ON p.PartyId=c.PartyId
             LEFT JOIN dbo.CustomerPricingSettings s ON s.CustomerId=c.CustomerId

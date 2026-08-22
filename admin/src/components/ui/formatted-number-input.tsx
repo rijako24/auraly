@@ -89,7 +89,18 @@ export function FormattedNumberInput({
         setDraft(next);
         if (commitMode === "change") onValueChange(parseDecimalInput(next, allowNegative));
       }}
-      onKeyDown={onKeyDown}
+      onKeyDown={(event) => {
+        if (allowNegative && event.key === "-") {
+          event.preventDefault();
+          const unsigned = draft.startsWith("-") ? draft.slice(1) : draft;
+          const next = draft.startsWith("-") ? unsigned : `-${unsigned}`;
+          setEditing(true);
+          setDirty(true);
+          setDraft(next);
+          if (commitMode === "change") onValueChange(parseDecimalInput(next, true));
+        }
+        onKeyDown?.(event);
+      }}
     />
     {kind === "percent" && <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">%</span>}
   </div>;

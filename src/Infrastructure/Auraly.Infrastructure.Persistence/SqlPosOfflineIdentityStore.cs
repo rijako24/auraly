@@ -31,6 +31,7 @@ public sealed class SqlPosOfflineIdentityStore(
             FROM dbo.AppUsers u
             LEFT JOIN dbo.SupervisorCredentials credential
               ON credential.UserId=u.UserId AND credential.IsActive=1
+              AND (credential.ValidUntil IS NULL OR credential.ValidUntil>SYSUTCDATETIME())
             JOIN dbo.UserRoles ur ON ur.UserId=u.UserId
                 AND (ur.BusinessId IS NULL OR ur.BusinessId=@BusinessId)
             JOIN dbo.AppRoles r ON r.RoleId=ur.RoleId AND r.IsActive=1

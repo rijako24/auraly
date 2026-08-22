@@ -37,7 +37,30 @@ public sealed record UpdatePartyRequest(
     string? VerificationDigit,
     string? Email,
     string? Phone,
-    string RowVersion);
+    string RowVersion,
+    IReadOnlyCollection<PartySiteSaveInput>? Sites = null,
+    UpdateCustomerRoleRequest? Customer = null,
+    UpdateSellerRoleRequest? Seller = null,
+    UpdateCarrierRoleRequest? Carrier = null);
+
+public sealed record UpdateCustomerRoleRequest(
+    Guid? PriceChannelId,
+    bool RequiresElectronicInvoice,
+    DateTimeOffset? ValidFrom = null,
+    DateTimeOffset? ValidUntil = null);
+
+public sealed record UpdateSellerRoleRequest(
+    string Code,
+    decimal? DefaultCommissionPercent,
+    string CommissionBasis,
+    string CommissionTrigger);
+
+public sealed record UpdateCarrierRoleRequest(string Code, string TransportationMode);
+
+public sealed record PartySiteSaveInput(
+    Guid? PartySiteId,
+    string? RowVersion,
+    PartySiteInput Site);
 
 public sealed record SetPartyBusinessStatusRequest(bool IsActive, string RowVersion);
 
@@ -112,7 +135,9 @@ public sealed record CustomerRoleDetail(
     Guid CustomerId,
     Guid? PriceChannelId,
     bool IsActive,
-    bool RequiresElectronicInvoice = false);
+    bool RequiresElectronicInvoice,
+    DateTimeOffset ValidFrom,
+    DateTimeOffset? ValidUntil);
 
 public sealed record SupplierRoleDetail(Guid SupplierId, bool IsActive);
 

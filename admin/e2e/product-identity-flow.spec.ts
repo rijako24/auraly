@@ -22,6 +22,9 @@ test("crea, consulta y edita nombre, referencia y descripción en el mismo orden
 
   await page.getByRole("button", { name: "Nuevo producto" }).click();
   const create = page.getByRole("dialog", { name: "Crear producto" });
+  const baseSections = ["identity", "classification", "sale", "family", "supplier", "taxes", "images"];
+  await expect.poll(() => create.locator("section[id^='new-']").evaluateAll((items) => items.map((item) => item.id)))
+    .toEqual(baseSections.map((id) => `new-${id}`));
   const identity = create.locator("#new-identity");
   const labels = await identity.locator("label").allTextContents();
   expect(labels.slice(0, 3).map((value) => value.replace("*", "").trim())).toEqual([
@@ -48,13 +51,17 @@ test("crea, consulta y edita nombre, referencia y descripción en el mismo orden
   await row.click();
 
   const detail = page.getByRole("dialog", { name });
-  const overview = detail.locator("#product-view-identity");
+  await expect.poll(() => detail.locator("section[id^='product-']").evaluateAll((items) => items.map((item) => item.id)))
+    .toEqual(baseSections.map((id) => `product-${id}`));
+  const overview = detail.locator("#product-identity");
   await expect(overview).toContainText(reference, { timeout: 20_000 });
   const overviewText = await overview.innerText();
   expect(overviewText.indexOf("Nombre")).toBeLessThan(overviewText.indexOf("Referencia"));
   expect(overviewText.indexOf("Referencia")).toBeLessThan(overviewText.indexOf("Descripción"));
 
   await detail.getByRole("button", { name: "Editar información" }).click();
+  await expect.poll(() => detail.locator("section[id^='product-']").evaluateAll((items) => items.map((item) => item.id)))
+    .toEqual(baseSections.map((id) => `product-${id}`));
   const editIdentity = detail.locator("#product-identity");
   const updatedReference = `${reference}-EDIT`;
   const updatedDescription = `Descripción actualizada ${suffix}`;
@@ -66,6 +73,6 @@ test("crea, consulta y edita nombre, referencia y descripción en el mismo orden
 
   await row.click();
   const reopened = page.getByRole("dialog", { name });
-  await expect(reopened.locator("#product-view-identity")).toContainText(updatedReference, { timeout: 20_000 });
-  await expect(reopened.locator("#product-view-identity")).toContainText(updatedDescription);
+  await expect(reopened.locator("#product-identity")).toContainText(updatedReference, { timeout: 20_000 });
+  await expect(reopened.locator("#product-identity")).toContainText(updatedDescription);
 });

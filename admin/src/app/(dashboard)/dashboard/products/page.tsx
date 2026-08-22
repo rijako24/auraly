@@ -411,9 +411,16 @@ export default function ProductsPage() {
                   <h2 className="mt-2 text-2xl font-semibold">Una ficha, todo conectado</h2>
                   <p className="mt-2 text-sm text-slate-300">Consulta y modifica la información conservando siempre el mismo orden.</p>
                   <nav className="mt-8 space-y-1">
-                    <a href="#product-identity" className="block rounded-xl px-3 py-2.5 text-sm text-slate-200 hover:bg-white/10">1. Identidad y operación</a>
-                    <a href="#product-pricing" className="block rounded-xl px-3 py-2.5 text-sm text-slate-200 hover:bg-white/10">2. IVA y precios</a>
-                    <a href="#product-recognition" className="block rounded-xl px-3 py-2.5 text-sm text-slate-200 hover:bg-white/10">3. Reconocimiento</a>
+                    {[
+                      ["identity", "Identidad"],
+                      ["classification", "Clasificación, marca y unidad"],
+                      ["sale", "Captura, cantidad y balanza"],
+                      ["family", "Familia de productos"],
+                      ["supplier", "Proveedor y empaque"],
+                      ["taxes", "IVA, costo y precio"],
+                      ["images", "Imágenes"],
+                      ["recognition", "Reconocimiento avanzado"],
+                    ].map(([id, label], index) => <a key={id} href={`#product-${id}`} className="block rounded-xl px-3 py-2.5 text-sm text-slate-200 hover:bg-white/10">{index + 1}. {label}</a>)}
                   </nav>
                 </div>
               </aside>
@@ -437,7 +444,7 @@ export default function ProductsPage() {
               </DialogHeader>
 
               <div className="min-h-0 flex-1 overflow-y-auto scroll-smooth p-4 sm:p-6">
-              {modalMode !== "edit" && <div className="mx-auto w-full max-w-5xl"><ProductOverview product={selectedProduct} /></div>}
+              {modalMode !== "edit" && <div className="mx-auto w-full max-w-5xl space-y-5"><ProductOverview product={selectedProduct} /><details id="product-recognition" className="group scroll-mt-5 rounded-xl border bg-background"><summary className="cursor-pointer list-none p-5 font-semibold">Reconocimiento, alias y aprendizaje <span className="ml-2 text-xs font-normal text-muted-foreground">Información avanzada</span></summary><div className="space-y-5 border-t p-5"><ProductRecognitionSections productId={selectedProduct.productId} aliases={configurationQuery.data?.aliases ?? []} searchTerms={configurationQuery.data?.searchTerms ?? []} isLoading={configurationQuery.isLoading} isError={configurationQuery.isError} /><ProductLearningSection aliases={configurationQuery.data?.aliases ?? []} isLoading={configurationQuery.isLoading} isError={configurationQuery.isError} isPending={reviewAlias.isPending || promoteAlias.isPending} onReview={handleReviewLearning} onPromote={handlePromoteLearning} /></div></details></div>}
 
               {modalMode === "edit" && <div className="mx-auto w-full max-w-5xl space-y-5">
                 {productValidationError && <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"><strong>No se puede guardar todavía.</strong> {productValidationError}</div>}
@@ -455,19 +462,19 @@ export default function ProductsPage() {
                   <ProductSupplierEditor ref={supplierEditorRef} embedded productId={selectedProduct.productId} productName={selectedProduct.name} />
                 </ProductFormSection>
 
-                <ProductFormSection id="product-pricing" icon={CircleDollarSign} title="IVA, costo y precio preparado" description="El IVA se incluye en el precio de venta; publicar sigue siendo una decision explicita.">
+                <ProductFormSection id="product-taxes" icon={CircleDollarSign} title="IVA, costo y precio" description="El IVA se incluye en el precio de venta; publicar sigue siendo una decisión explícita.">
                   <div className="space-y-5">
                     <ProductTaxEditor ref={taxEditorRef} embedded productId={selectedProduct.productId} onSalesTaxRateChange={setEditingSalesTaxRate} />
                     <ProductPricingEditor ref={pricingEditorRef} embedded productId={selectedProduct.productId} productName={selectedProduct.name} salesTaxRateOverride={editingSalesTaxRate} />
                   </div>
                 </ProductFormSection>
+                <ProductFormSection id="product-images" icon={Images} title="Imágenes del producto" description="Carga varias imágenes, revisa su vista previa y elige una portada. Se guardarán junto con el producto.">
+                  <ProductImageEditor ref={imageEditorRef} productId={selectedProduct.productId} />
+                </ProductFormSection>
                 <details id="product-recognition" className="group scroll-mt-5 rounded-xl border bg-muted/10">
                   <summary className="cursor-pointer list-none p-5 font-semibold">Reconocimiento, alias y aprendizaje <span className="ml-2 text-xs font-normal text-muted-foreground">Información avanzada</span></summary>
                   <div className="space-y-5 border-t p-5"><ProductRecognitionSections ref={recognitionEditorRef} productId={selectedProduct.productId} editable aliases={configurationQuery.data?.aliases ?? []} searchTerms={configurationQuery.data?.searchTerms ?? []} isLoading={configurationQuery.isLoading} isError={configurationQuery.isError} /><ProductLearningSection aliases={configurationQuery.data?.aliases ?? []} isLoading={configurationQuery.isLoading} isError={configurationQuery.isError} isPending={reviewAlias.isPending || promoteAlias.isPending} onReview={handleReviewLearning} onPromote={handlePromoteLearning} /></div>
                 </details>
-                <ProductFormSection id="product-images" icon={Images} title="Imágenes del producto" description="Carga varias imágenes, revisa su vista previa y elige una portada. Se guardarán junto con el producto.">
-                  <ProductImageEditor ref={imageEditorRef} productId={selectedProduct.productId} />
-                </ProductFormSection>
               </div>}
               </div>
               <footer className="flex flex-col-reverse gap-3 border-t bg-background px-6 py-4 sm:flex-row sm:items-center sm:justify-between">

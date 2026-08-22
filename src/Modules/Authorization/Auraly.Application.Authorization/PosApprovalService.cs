@@ -48,10 +48,18 @@ public interface IPosApprovalStore
 
     Task ConfigureCredentialAsync(
         PosApprovalUserIdentity user,
+        Guid targetUserId,
         byte[] salt,
         byte[] hash,
         int iterations,
+        DateTimeOffset? validUntil,
         CancellationToken cancellationToken);
+
+    Task<SupervisorCredentialStatusView> CredentialStatusAsync(
+        PosApprovalUserIdentity user, Guid targetUserId, CancellationToken cancellationToken);
+
+    Task RevokeCredentialAsync(
+        PosApprovalUserIdentity user, Guid targetUserId, CancellationToken cancellationToken);
 
     Task ReserveAsync(
         PosApprovalUserIdentity user,
@@ -294,19 +302,54 @@ public sealed class PosApprovalService(
     public Task ConfigureCredentialAsync(
         PosApprovalUserIdentity user,
         string secret,
+        int? validityHours,
+        CancellationToken cancellationToken = default)
+    {
+        return ConfigureCredentialForUserAsync(user, user.UserId, secret, validityHours, cancellationToken);
+    }
+
+    public Task ConfigureCredentialForUserAsync(
+        PosApprovalUserIdentity user, Guid targetUserId, string secret, int? validityHours,
         CancellationToken cancellationToken = default)
     {
         Require(user, CommercePermissionCodes.PosApprovalsManageCredential);
-        Require(user, CommercePermissionCodes.PosApprovalsAuthorize);
+        if (targetUserId == Guid.Empty) throw new PosApprovalException("InvalidUser", "El usuario autorizador es obligatorio.");
         if (string.IsNullOrWhiteSpace(secret) || secret.Length is < 6 or > 32)
             throw new PosApprovalException("WeakCredential", "La credencial debe tener entre 6 y 32 caracteres.");
+        if (validityHours is not (null or 8 or 168))
+            throw new PosApprovalException("InvalidValidity", "La vigencia debe ser de 8 horas, 1 semana o permanente.");
 
         var salt = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
         var hash = System.Security.Cryptography.Rfc2898DeriveBytes.Pbkdf2(
             secret, salt, Iterations,
             System.Security.Cryptography.HashAlgorithmName.SHA256, 32);
-        return store.ConfigureCredentialAsync(user, salt, hash, Iterations, cancellationToken);
+        DateTimeOffset? validUntil = validityHours.HasValue
+            ? timeProvider.GetUtcNow().AddHours(validityHours.Value)
+            : null;
+        return store.ConfigureCredentialAsync(user, targetUserId, salt, hash, Iterations, validUntil, cancellationToken);
     }
+
+    public Task<SupervisorCredentialStatusView> CredentialStatusAsync(
+        PosApprovalUserIdentity user, CancellationToken cancellationToken = default)
+    {
+        Require(user, CommercePermissionCodes.PosApprovalsManageCredential);
+        return store.CredentialStatusAsync(user, user.UserId, cancellationToken);
+    }
+
+    public Task<SupervisorCredentialStatusView> CredentialStatusForUserAsync(
+        PosApprovalUserIdentity user, Guid targetUserId, CancellationToken cancellationToken = default)
+    { Require(user, CommercePermissionCodes.PosApprovalsManageCredential); return store.CredentialStatusAsync(user, targetUserId, cancellationToken); }
+
+    public Task RevokeCredentialAsync(
+        PosApprovalUserIdentity user, CancellationToken cancellationToken = default)
+    {
+        Require(user, CommercePermissionCodes.PosApprovalsManageCredential);
+        return store.RevokeCredentialAsync(user, user.UserId, cancellationToken);
+    }
+
+    public Task RevokeCredentialForUserAsync(
+        PosApprovalUserIdentity user, Guid targetUserId, CancellationToken cancellationToken = default)
+    { Require(user, CommercePermissionCodes.PosApprovalsManageCredential); return store.RevokeCredentialAsync(user, targetUserId, cancellationToken); }
 
     private static void Require(PosApprovalUserIdentity user, string permission)
     {
@@ -325,7 +368,8 @@ public sealed class PosApprovalService(
         if (permission is not (
             CommercePermissionCodes.SalesDiscount or
             CommercePermissionCodes.SalesRemoveLine or
-            CommercePermissionCodes.SalesRestartDraft))
+            CommercePermissionCodes.SalesRestartDraft or
+            "work-sessions.close"))
             throw new PosApprovalException("UnsupportedPermission", "La acción no admite autorización delegada.");
     }
 }

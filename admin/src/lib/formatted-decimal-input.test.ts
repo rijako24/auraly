@@ -3,6 +3,12 @@ import { describe, it } from "node:test";
 import { formatDecimalInput, parseDecimalInput, sanitizeDecimalInput } from "./formatted-decimal-input";
 
 describe("formatted decimal input", () => {
+  it("preserves a leading minus while a negative percentage is being typed", () => {
+    assert.equal(sanitizeDecimalInput("-", 4, true), "-");
+    assert.equal(formatDecimalInput("-", 4, true), "-");
+    assert.equal(parseDecimalInput("-", true), null);
+    assert.equal(parseDecimalInput("-12.5", true), -12.5);
+  });
   it("accepts digits and one decimal point and formats thousands", () => {
     assert.equal(sanitizeDecimalInput("12500.50"), "12500.50");
     assert.equal(formatDecimalInput("12500.50"), "12 500.50");

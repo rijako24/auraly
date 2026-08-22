@@ -72,7 +72,7 @@ public sealed partial class SqlPartyWorkspaceStore
               carrier.CarrierId,carrier.Code,carrier.TransportationMode,carrier.IsActive,
               employee.EmployeeId,employee.IsActive,
               appUser.UserId,appUser.Username,appUser.Email,appUser.IsActive,
-              p.RowVersion
+              COALESCE(pricing.ValidFrom,customer.CreatedAt),pricing.ValidUntil,p.RowVersion
             FROM dbo.Parties p
             OUTER APPLY(
               SELECT TOP(1) pc.Value
@@ -133,7 +133,9 @@ public sealed partial class SqlPartyWorkspaceStore
                 reader.GetGuid(24),
                 G(reader, 26),
                 reader.GetBoolean(25),
-                reader.GetBoolean(27));
+                reader.GetBoolean(27),
+                reader.GetFieldValue<DateTimeOffset>(46),
+                reader.IsDBNull(47) ? null : reader.GetFieldValue<DateTimeOffset>(47));
         var supplier = reader.IsDBNull(28)
             ? null
             : new SupplierRoleDetail(reader.GetGuid(28), reader.GetBoolean(29));
@@ -208,7 +210,7 @@ public sealed partial class SqlPartyWorkspaceStore
             carrier,
             employee,
             user,
-            Convert.ToBase64String((byte[])reader[46]));
+            Convert.ToBase64String((byte[])reader[48]));
         await reader.CloseAsync();
         var sites = await LoadSitesAsync(connection, detail.PartyId, ct);
         return detail with

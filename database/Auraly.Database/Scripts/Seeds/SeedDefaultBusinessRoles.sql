@@ -34,13 +34,13 @@ WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE')
   AND NOT (
     roleValue.NormalizedName=N'CASHIER' AND permissionValue.Resource IN(
       N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read',
-      N'work-sessions.read',N'work-sessions.open',N'work-sessions.cash.manage')
+      N'work-sessions.read',N'work-sessions.open',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(
       N'sales.create',N'sales.discount',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',
-      N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.manage_credential',
+      N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.receive_notifications',N'pos.approvals.manage_credential',N'pos.workspace.change',
       N'pos.customer.create',N'pos.orders',N'orders.read',N'orders.invoice',
       N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',
-      N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.cash.manage',
+      N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
       N'inventory.read',N'inventory.costs.read',
       N'inventory.counts.confirm',N'inventory.adjustments.confirm',N'inventory.transfers.confirm',
       N'inventory.conversions.confirm',N'inventory.damages.confirm')
@@ -61,13 +61,13 @@ WHERE roleValue.IsActive=1
         OR EXISTS(SELECT 1 FROM dbo.Tenants ownerTenant WHERE ownerTenant.TenantId=roleValue.TenantId AND ownerTenant.TenantKey=N'@auraly'))
     OR roleValue.NormalizedName=N'CASHIER' AND permissionValue.Resource IN(
       N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read',
-      N'work-sessions.read',N'work-sessions.open',N'work-sessions.cash.manage')
+      N'work-sessions.read',N'work-sessions.open',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open')
     OR roleValue.NormalizedName=N'SUPERVISOR' AND permissionValue.Resource IN(
       N'sales.create',N'sales.discount',N'sales.reprint',N'sales.lines.remove',N'sales.drafts.restart',
-      N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.manage_credential',
+      N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.receive_notifications',N'pos.approvals.manage_credential',N'pos.workspace.change',
       N'pos.customer.create',N'pos.orders',N'orders.read',N'orders.invoice',
       N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',
-      N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.cash.manage',
+      N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
       N'inventory.read',N'inventory.costs.read',
       N'inventory.counts.confirm',N'inventory.adjustments.confirm',N'inventory.transfers.confirm',
       N'inventory.conversions.confirm',N'inventory.damages.confirm')

@@ -180,7 +180,8 @@ public sealed class SqlOrderStore(
               CASE pt.Status WHEN 2 THEN N'Confirmed' WHEN 3 THEN N'Failed'
                    WHEN 1 THEN N'Pending' ELSE NULL END,
               o.CreatedAt,o.CustomerConfirmed,link.DocumentId,
-              claim.OrderClaimId,claim.WorkSessionId,claim.DeviceId,claim.UserId,claim.ExpiresAt
+              claim.OrderClaimId,claim.WorkSessionId,claim.DeviceId,claim.UserId,claim.ExpiresAt,
+              TRY_CONVERT(uniqueidentifier,JSON_VALUE(o.CustomAttributesJson,'$.WarehouseId'))
             FROM dbo.Orders o
             INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
             LEFT JOIN dbo.PaymentTransactions pt
@@ -228,7 +229,8 @@ public sealed class SqlOrderStore(
             PaymentStatus = NullableString(header, 17),
             CreatedAt = DateTime.SpecifyKind(header.GetDateTime(18), DateTimeKind.Utc),
             Confirmed = header.GetBoolean(19),
-            DocumentId = hasInvoice ? header.GetGuid(20) : (Guid?)null
+            DocumentId = hasInvoice ? header.GetGuid(20) : (Guid?)null,
+            WarehouseId = header.IsDBNull(26) ? (Guid?)null : header.GetGuid(26)
         };
         await header.CloseAsync();
 
@@ -269,7 +271,7 @@ public sealed class SqlOrderStore(
             values.Subtotal, values.Discount, values.Total, values.PaymentId,
             values.PaymentStatus, values.CreatedAt,
             OrderRules.CanInvoice(storedStatus, values.Confirmed, hasInvoice),
-            values.DocumentId, claim, lines);
+            values.DocumentId, claim, lines, values.WarehouseId);
     }
 
     public async Task<OrderClaimSummary> ClaimAsync(

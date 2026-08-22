@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
 using Auraly.Application.Authorization;
 using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Contracts.Authorization;
@@ -210,6 +211,174 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(supervisorId, reader.GetGuid(2));
     }
 
+    [Theory]
+    [InlineData(CommercePermissionCodes.SalesRemoveLine, "RemoveLine")]
+    [InlineData(CommercePermissionCodes.SalesRestartDraft, "RestartSale")]
+    [InlineData(CommercePermissionCodes.SalesDiscount, "Discount")]
+    [InlineData("work-sessions.close", "CloseWorkSession")]
+    public async Task Every_sensitive_pos_action_accepts_local_window_and_remote_approval(
+        string permissionResource,
+        string action)
+    {
+        var supervisorId = Guid.NewGuid();
+        await SeedSupervisorAsync(supervisorId);
+        using var requester = fixture.CreateAdminClient(CommercePermissionCodes.SalesCreate);
+        using var supervisor = fixture.CreateUserClient(
+            supervisorId,
+            permissionResource,
+            CommercePermissionCodes.PosApprovalsRead,
+            CommercePermissionCodes.PosApprovalsAuthorize,
+            CommercePermissionCodes.PosApprovalsManageCredential);
+        var secret = $"Secondary-{Guid.NewGuid():N}"[..24];
+        using var configured = await supervisor.PutAsJsonAsync(
+            "/api/commerce/v1/pos/approvals/supervisor-credential",
+            new ConfigureSupervisorCredentialRequest(secret, 8));
+        configured.EnsureSuccessStatusCode();
+
+        async Task<PosApprovalRequestView> CreateAsync() =>
+            (await (await requester.PostAsJsonAsync(
+                "/api/commerce/v1/pos/approvals/",
+                new CreatePosApprovalRequest(
+                    fixture.BusinessId,
+                    fixture.DeviceId,
+                    fixture.WorkSessionId,
+                    Guid.NewGuid(),
+                    permissionResource == CommercePermissionCodes.SalesRemoveLine
+                        ? Guid.NewGuid()
+                        : null,
+                    permissionResource,
+                    $"{{\"action\":\"{action}\"}}")))
+                .Content.ReadFromJsonAsync<PosApprovalRequestView>())!;
+
+        var local = await CreateAsync();
+        using var localResponse = await requester.PostAsJsonAsync(
+            $"/api/commerce/v1/pos/approvals/{local.ApprovalRequestId:D}/local-authorization",
+            new AuthorizePosApprovalLocallyRequest(secret));
+        localResponse.EnsureSuccessStatusCode();
+
+        var remote = await CreateAsync();
+        using var remoteResponse = await supervisor.PostAsJsonAsync(
+            $"/api/commerce/v1/pos/approvals/{remote.ApprovalRequestId:D}/decision",
+            new DecidePosApprovalRequest(true));
+        remoteResponse.EnsureSuccessStatusCode();
+
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT ApprovalRequestId,Status,DecisionMethod,DecidedByUserId
+            FROM dbo.PosApprovalRequests
+            WHERE ApprovalRequestId IN(@LocalId,@RemoteId);
+            """;
+        command.Parameters.AddWithValue("@LocalId", local.ApprovalRequestId);
+        command.Parameters.AddWithValue("@RemoteId", remote.ApprovalRequestId);
+        await using var reader = await command.ExecuteReaderAsync();
+        var decisions = new Dictionary<Guid, (string Status, string Method, Guid UserId)>();
+        while (await reader.ReadAsync())
+            decisions[reader.GetGuid(0)] = (
+                reader.GetString(1), reader.GetString(2), reader.GetGuid(3));
+        Assert.Equal((PosApprovalStatus.Approved, "LocalSecret", supervisorId),
+            decisions[local.ApprovalRequestId]);
+        Assert.Equal((PosApprovalStatus.Approved, "Remote", supervisorId),
+            decisions[remote.ApprovalRequestId]);
+    }
+
+    [Fact]
+    public async Task Push_subscription_requires_receive_permission_and_pending_keeps_each_register_separate()
+    {
+        var supervisorId = Guid.NewGuid();
+        await SeedSupervisorAsync(supervisorId);
+        var subscription = new
+        {
+            endpoint = $"https://push.test.local/{Guid.NewGuid():N}",
+            p256dh = Convert.ToBase64String(RandomNumberGenerator.GetBytes(65)),
+            auth = Convert.ToBase64String(RandomNumberGenerator.GetBytes(16))
+        };
+        using var withoutReceive = fixture.CreateUserClient(
+            supervisorId,
+            CommercePermissionCodes.PosApprovalsRead,
+            CommercePermissionCodes.PosApprovalsAuthorize);
+        using var forbidden = await withoutReceive.PutAsJsonAsync(
+            "/api/commerce/v1/pos/approvals/push/subscription", subscription);
+        Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+
+        using var supervisor = fixture.CreateUserClient(
+            supervisorId,
+            CommercePermissionCodes.PosApprovalsRead,
+            CommercePermissionCodes.PosApprovalsAuthorize,
+            CommercePermissionCodes.PosApprovalsReceiveNotifications);
+        using var subscribed = await supervisor.PutAsJsonAsync(
+            "/api/commerce/v1/pos/approvals/push/subscription", subscription);
+        Assert.Equal(HttpStatusCode.NoContent, subscribed.StatusCode);
+
+        using var requester = fixture.CreateAdminClient(CommercePermissionCodes.SalesCreate);
+        var first = await (await requester.PostAsJsonAsync(
+            "/api/commerce/v1/pos/approvals/",
+            new CreatePosApprovalRequest(fixture.BusinessId, fixture.DeviceId, fixture.WorkSessionId,
+                Guid.NewGuid(), null, CommercePermissionCodes.SalesRestartDraft, "{\"action\":\"RestartSale\",\"register\":\"Caja A\"}")))
+            .Content.ReadFromJsonAsync<PosApprovalRequestView>();
+        var second = await (await requester.PostAsJsonAsync(
+            "/api/commerce/v1/pos/approvals/",
+            new CreatePosApprovalRequest(fixture.BusinessId, fixture.DeniedDeviceId, fixture.WorkSessionId,
+                Guid.NewGuid(), null, CommercePermissionCodes.SalesDiscount, "{\"action\":\"Discount\",\"register\":\"Caja B\"}")))
+            .Content.ReadFromJsonAsync<PosApprovalRequestView>();
+
+        var pending = await supervisor.GetFromJsonAsync<List<PosApprovalRequestView>>(
+            "/api/commerce/v1/pos/approvals/pending");
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+        Assert.Contains(pending!, item => item.ApprovalRequestId == first.ApprovalRequestId);
+        Assert.Contains(pending!, item => item.ApprovalRequestId == second.ApprovalRequestId);
+        Assert.NotEqual(first.ApprovalRequestId, second.ApprovalRequestId);
+    }
+
+    [Fact]
+    public async Task Secondary_credential_can_be_reset_for_eight_hours_one_week_or_always_and_revoked()
+    {
+        var supervisorId = Guid.NewGuid();
+        await SeedSupervisorAsync(supervisorId);
+        using var supervisor = fixture.CreateUserClient(
+            supervisorId,
+            CommercePermissionCodes.PosApprovalsManageCredential);
+
+        var started = DateTimeOffset.UtcNow;
+        using var weekly = await supervisor.PutAsJsonAsync(
+            "/api/commerce/v1/pos/approvals/supervisor-credential",
+            new ConfigureSupervisorCredentialRequest("Weekly-Secondary-1", 168));
+        weekly.EnsureSuccessStatusCode();
+        var weeklyStatus = await supervisor.GetFromJsonAsync<SupervisorCredentialStatusView>(
+            "/api/commerce/v1/pos/approvals/supervisor-credential");
+        Assert.True(weeklyStatus!.IsConfigured);
+        Assert.InRange(weeklyStatus.ValidUntil!.Value,
+            started.AddDays(6).AddHours(23), DateTimeOffset.UtcNow.AddDays(7).AddMinutes(1));
+
+        using var reset = await supervisor.PutAsJsonAsync(
+            "/api/commerce/v1/pos/approvals/supervisor-credential",
+            new ConfigureSupervisorCredentialRequest("Eight-Hour-Secondary-2", 8));
+        reset.EnsureSuccessStatusCode();
+        var resetStatus = await supervisor.GetFromJsonAsync<SupervisorCredentialStatusView>(
+            "/api/commerce/v1/pos/approvals/supervisor-credential");
+        Assert.InRange(resetStatus!.ValidUntil!.Value,
+            started.AddHours(7).AddMinutes(59), DateTimeOffset.UtcNow.AddHours(8).AddMinutes(1));
+
+        using var permanent = await supervisor.PutAsJsonAsync(
+            "/api/commerce/v1/pos/approvals/supervisor-credential",
+            new ConfigureSupervisorCredentialRequest("Permanent-Secondary-3", null));
+        permanent.EnsureSuccessStatusCode();
+        var permanentStatus = await supervisor.GetFromJsonAsync<SupervisorCredentialStatusView>(
+            "/api/commerce/v1/pos/approvals/supervisor-credential");
+        Assert.True(permanentStatus!.IsConfigured);
+        Assert.Null(permanentStatus.ValidUntil);
+
+        using var revoked = await supervisor.DeleteAsync(
+            "/api/commerce/v1/pos/approvals/supervisor-credential");
+        Assert.Equal(HttpStatusCode.NoContent, revoked.StatusCode);
+        var revokedStatus = await supervisor.GetFromJsonAsync<SupervisorCredentialStatusView>(
+            "/api/commerce/v1/pos/approvals/supervisor-credential");
+        Assert.False(revokedStatus!.IsConfigured);
+        Assert.Null(revokedStatus.ValidUntil);
+    }
+
     private async Task SeedSupervisorAsync(Guid userId)
     {
         var roleId = Guid.NewGuid();
@@ -236,7 +405,8 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
             SELECT NEWID(),@RoleId,PermissionId,SYSUTCDATETIME()
             FROM dbo.Permissions WHERE Resource IN(
               N'sales.create',N'sales.discount',N'sales.lines.remove',N'sales.drafts.restart',
-              N'pos.approvals.read',N'pos.approvals.authorize',N'pos.approvals.manage_credential');
+              N'work-sessions.close',
+              N'pos.approvals.read',N'pos.approvals.authorize',N'pos.approvals.receive_notifications',N'pos.approvals.manage_credential');
             """;
         command.Parameters.AddWithValue("@UserId", userId);
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);

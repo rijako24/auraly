@@ -42,8 +42,8 @@ import {
   PosApprovalCreateInput,
   PosApprovalSummary,
   type PosPrinterConfiguration,
+  loadBrowserPrinterConfiguration,
 } from "./pos-edge-client";
-import { posApprovalClient } from "./pos-approval-client";
 
 export type SalesWorkspaceOption = {
   businessId: string;
@@ -193,9 +193,10 @@ export async function loadSalesWorkspaceOptions(): Promise<SalesWorkspaceOption[
 
 export async function selectSalesWorkspace(
   option: SalesWorkspaceOption,
+  change = false,
 ): Promise<SalesWorkspaceContext> {
   const selected = await request<Omit<SalesWorkspaceContext, "workSessionId">>(
-    "/api/commerce/v1/pos/workspace/select",
+    change ? "/api/commerce/v1/pos/workspace/change" : "/api/commerce/v1/pos/workspace/select",
     {
       method: "POST",
       body: JSON.stringify({
@@ -267,15 +268,34 @@ export class OnlinePosClient implements PosClient {
   private async printDirect(
     receipts: PosPrintableReceipt[],
     openDrawer = false,
+    workflow: "pos" | "orders" = "pos",
+    browserPreview: Window | null = null,
   ) {
-    const edge = this.localEdge();
-    const jobs = receipts.map((receipt) => edge.printReceipt(receipt));
-    if (openDrawer) jobs.push(edge.openCashDrawer());
-    await Promise.all(jobs);
+    if (this.edgeSessionToken) {
+      const edge = this.localEdge();
+      const jobs = receipts.map((receipt) => edge.printReceipt(receipt));
+      if (openDrawer) jobs.push(edge.openCashDrawer());
+      await Promise.all(jobs);
+      return;
+    }
+    const configuration = loadBrowserPrinterConfiguration();
+    const format = workflow === "orders"
+      ? configuration.ordersOutputFormat ?? "HalfLetter"
+      : configuration.posOutputFormat ?? "Receipt";
+    if (format === "HalfLetter")
+      await renderReceiptsHalfLetter(browserPreview, receipts, this.scope());
+    else
+      await renderReceiptsReceipt(browserPreview, receipts, this.scope(),
+        workflow === "orders"
+          ? configuration.ordersReceiptPaperWidthMillimeters ?? 80
+          : configuration.receiptPaperWidthMillimeters);
   }
 
   async health() {
     await request<{ status: string }>("/api/health");
+    const local = this.edgeSessionToken
+      ? await this.localEdge().health().catch(() => null)
+      : null;
     return {
       status: "ok",
       serverConnected: true,
@@ -286,6 +306,7 @@ export class OnlinePosClient implements PosClient {
       userDisplayName: this.userDisplayName,
       userId: this.userId,
       workSessionId: this.context.workSessionId,
+      deviceId: local?.deviceId ?? null,
       fiscalReady: true,
       synchronizationInProgress: false,
       lastSynchronizationAt: null,
@@ -295,6 +316,9 @@ export class OnlinePosClient implements PosClient {
   }
   async synchronizeNow() {
     // Online mode reads authoritative server data and has no local catalog to synchronize.
+  }
+  openCashDrawer() {
+    return this.localEdge().openCashDrawer();
   }
   cashMovementReasons(direction: PosCashMovementDirection) {
     return request<PosCashMovementReason[]>(
@@ -392,7 +416,10 @@ export class OnlinePosClient implements PosClient {
   }
 
   createApproval(input: PosApprovalCreateInput): Promise<PosApprovalSummary> {
-    return posApprovalClient.create(input);
+    return request<PosApprovalSummary>(
+      "/api/commerce/v1/pos/approvals/",
+      { method: "POST", body: JSON.stringify(input) },
+    );
   }
 
   async activeDraft() {
@@ -573,7 +600,9 @@ export class OnlinePosClient implements PosClient {
     payments: PosPaymentInput[],
     documentType: PosSaleDocumentType,
   ) {
-    const result = await request<OnlineCheckoutResponse>(
+    const browserPreview = this.edgeSessionToken ? null : openHalfLetterPrintPreview();
+    try {
+      const result = await request<OnlineCheckoutResponse>(
         `/api/commerce/v1/pos/drafts/${draftId}/complete`,
         this.mutation({
           expectedVersion: this.version(draftId),
@@ -581,7 +610,7 @@ export class OnlinePosClient implements PosClient {
         }, "POST", `online-sale-${draftId}`),
       );
       const nextDraft = this.mapDraft(result.nextDraft);
-      await this.printDirect([result.receipt], !result.isDuplicate);
+      await this.printDirect([result.receipt], !result.isDuplicate, "pos", browserPreview);
       return {
         issuedSale: {
           documentId: { value: result.receipt.documentId },
@@ -599,6 +628,10 @@ export class OnlinePosClient implements PosClient {
         receipt: result.receipt,
         printPreviewOpened: false,
       } satisfies PosCompleteSaleResult;
+    } catch (error) {
+      browserPreview?.close();
+      throw error;
+    }
   }
 
   async searchIssuedSales(search = "", skip = 0, take = 50) {
@@ -627,11 +660,17 @@ export class OnlinePosClient implements PosClient {
   }
 
   async reprint(documentId: string) {
-    const receipt = await request<PosPrintableReceipt>(
+    const browserPreview = this.edgeSessionToken ? null : openHalfLetterPrintPreview();
+    try {
+      const receipt = await request<PosPrintableReceipt>(
         `/api/commerce/v1/pos/drafts/sales/${documentId}/receipt`,
         this.post(this.scope()),
       );
-    await this.printDirect([receipt]);
+      await this.printDirect([receipt], false, "pos", browserPreview);
+    } catch (error) {
+      browserPreview?.close();
+      throw error;
+    }
   }
 
   readScaleWeight() {
@@ -682,6 +721,7 @@ export class OnlinePosClient implements PosClient {
     paymentMethodCode: string,
     documentType: "SalesInvoice" | "SalesReceipt",
   ): Promise<InvoiceOrdersResponse> {
+    const browserPreview = this.edgeSessionToken ? null : openHalfLetterPrintPreview();
     const response = await invoiceCommerceOrders({
       workSessionId: this.context.workSessionId,
       warehouseId: this.context.warehouseId,
@@ -701,9 +741,10 @@ export class OnlinePosClient implements PosClient {
           this.post(this.scope()),
         ),
       ));
-      await this.printDirect(receipts, receipts.length > 0);
+      await this.printDirect(receipts, receipts.length > 0, "orders", browserPreview);
       response.printStatus = response.completedCount ? "Sent" : "NotRequired";
     } catch (error) {
+      browserPreview?.close();
       response.printStatus = "Failed";
       response.printError = `Los pedidos se facturaron, pero no fue posible imprimir: ${
         error instanceof Error ? error.message : "error desconocido"
@@ -869,6 +910,19 @@ export async function renderInvoiceOrdersReceipt(
       `/api/commerce/v1/pos/drafts/sales/${documentId}/receipt`,
       { method: "POST", body: JSON.stringify(context) },
     )));
+  await renderReceiptsReceipt(preview, receipts, context);
+}
+
+export async function renderReceiptsReceipt(
+  preview: Window | null,
+  receipts: PosPrintableReceipt[],
+  context: Pick<SalesWorkspaceContext, "businessId" | "warehouseId" | "workSessionId">,
+  paperWidthMillimeters = 80,
+) {
+  if (!receipts.length) { preview?.close(); return; }
+  if (!preview) throw new Error("El navegador bloqueó la vista previa de impresión.");
+  const paperWidth = paperWidthMillimeters === 58 ? 58 : 80;
+  const bodyWidth = paperWidth - 8;
   const currency = new Intl.NumberFormat("es-CO", {
     style: "currency", currency: "COP", maximumFractionDigits: 0,
   });
@@ -881,7 +935,7 @@ export async function renderInvoiceOrdersReceipt(
     return `<article><header><h1>Auraly</h1><h2>${title}</h2><b>${escapeHtml(receipt.documentNumber)}</b><br>${new Date(receipt.issuedAt).toLocaleString("es-CO")}</header><section class="meta"><div><span>Cliente</span><b>${escapeHtml(receipt.customerName)}</b></div><div><span>Identificación</span><b>${escapeHtml(receipt.customerIdentification)}</b></div></section>${lines}<section class="totals"><div><span>Subtotal</span><b>${currency.format(receipt.untaxedAmount)}</b></div><div><span>Impuestos</span><b>${currency.format(receipt.taxAmount)}</b></div><div class="total"><span>Total</span><b>${currency.format(receipt.payableAmount)}</b></div></section>${receipt.cufe ? `<p class="cufe"><b>CUFE</b><br>${escapeHtml(receipt.cufe)}</p>` : ""}${qr}<footer>${title}</footer></article>`;
   }).join("");
   preview.document.open();
-  preview.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Tirillas Auraly</title><style>@page{size:80mm auto;margin:4mm}*{box-sizing:border-box}body{width:72mm;margin:0 auto;color:#111;font:12px/1.35 ui-monospace,Consolas,monospace}article{page-break-after:always}article:last-child{page-break-after:auto}header{text-align:center;border-bottom:1px dashed #555;padding-bottom:8px}h1{margin:0;font:800 19px/1.2 Arial,sans-serif}h2{margin:4px 0;font-size:12px}.meta,.totals{padding:8px 0;border-bottom:1px dashed #555}.meta div,.totals div,.line div{display:flex;justify-content:space-between;gap:10px}.line{padding:8px 0;border-bottom:1px dashed #aaa}.total{margin-top:5px;font-size:16px}.cufe{overflow-wrap:anywhere;font-size:9px}img{display:block;width:42mm;height:42mm;margin:9px auto 4px}footer{text-align:center;padding-top:6px}</style></head><body>${documents}<script>addEventListener('load',()=>setTimeout(()=>window.print(),150));</script></body></html>`);
+  preview.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Tirillas Auraly</title><style>@page{size:${paperWidth}mm auto;margin:4mm}*{box-sizing:border-box}body{width:${bodyWidth}mm;margin:0 auto;color:#111;font:12px/1.35 ui-monospace,Consolas,monospace}article{page-break-after:always}article:last-child{page-break-after:auto}header{text-align:center;border-bottom:1px dashed #555;padding-bottom:8px}h1{margin:0;font:800 19px/1.2 Arial,sans-serif}h2{margin:4px 0;font-size:12px}.meta,.totals{padding:8px 0;border-bottom:1px dashed #555}.meta div,.totals div,.line div{display:flex;justify-content:space-between;gap:10px}.line{padding:8px 0;border-bottom:1px dashed #aaa}.total{margin-top:5px;font-size:16px}.cufe{overflow-wrap:anywhere;font-size:9px}img{display:block;width:42mm;height:42mm;margin:9px auto 4px}footer{text-align:center;padding-top:6px}</style></head><body>${documents}<script>addEventListener('load',()=>setTimeout(()=>window.print(),150));</script></body></html>`);
   preview.document.close();
 }
 

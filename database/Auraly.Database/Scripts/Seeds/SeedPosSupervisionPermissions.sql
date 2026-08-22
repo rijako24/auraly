@@ -10,6 +10,8 @@ VALUES
     (N'Sales',N'RestartDraft',N'sales.drafts.restart',N'Reiniciar completamente una venta en curso'),
     (N'POS',N'AuthorizeSensitiveAction',N'pos.approvals.authorize',N'Aprobar acciones sensibles solicitadas desde el punto de venta'),
     (N'POS',N'ReadApprovals',N'pos.approvals.read',N'Consultar solicitudes de aprobación del punto de venta'),
+    (N'POS',N'ReceiveApprovalNotifications',N'pos.approvals.receive_notifications',N'Recibir notificaciones remotas de solicitudes de aprobación POS'),
+    (N'POS',N'ChangeSalesWorkspace',N'pos.workspace.change',N'Cambiar la sede y bodega activas de una caja en línea'),
     (N'POS',N'ManageApprovalCredential',N'pos.approvals.manage_credential',N'Crear, rotar o revocar la credencial secundaria de aprobación');
 
 INSERT dbo.Permissions(PermissionId,Module,Action,Resource,Description,CreatedAt)
@@ -43,7 +45,8 @@ WHERE roleValue.IsActive=1
   AND roleValue.NormalizedName IN(N'ADMINISTRATOR',N'TENANTADMINISTRATOR',N'ADMINISTRATIVE',N'SUPERVISOR')
   AND permissionValue.Resource IN(
       N'sales.lines.remove',N'sales.drafts.restart',
-      N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.manage_credential')
+      N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.receive_notifications',N'pos.approvals.manage_credential',
+      N'pos.workspace.change')
   AND NOT EXISTS(
       SELECT 1 FROM dbo.RolePermissions currentAssignment
       WHERE currentAssignment.RoleId=roleValue.RoleId

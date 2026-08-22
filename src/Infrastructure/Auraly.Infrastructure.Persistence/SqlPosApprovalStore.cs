@@ -109,7 +109,7 @@ public sealed class SqlPosApprovalStore(
         const string sql="""
             SELECT DISTINCT u.UserId,c.SecretSalt,c.SecretHash,c.SecretIterations
             FROM dbo.AppUsers u
-            JOIN dbo.SupervisorCredentials c ON c.UserId=u.UserId AND c.IsActive=1
+            JOIN dbo.SupervisorCredentials c ON c.UserId=u.UserId AND c.IsActive=1 AND (c.ValidUntil IS NULL OR c.ValidUntil>SYSUTCDATETIME())
             JOIN dbo.UserRoles ur ON ur.UserId=u.UserId AND (ur.BusinessId IS NULL OR ur.BusinessId=@BusinessId)
             JOIN dbo.AppRoles r ON r.RoleId=ur.RoleId AND r.IsActive=1 AND r.TenantId=@TenantId
             JOIN dbo.RolePermissions rp ON rp.RoleId=r.RoleId
@@ -126,21 +126,63 @@ public sealed class SqlPosApprovalStore(
     }
 
     public async Task ConfigureCredentialAsync(
-        PosApprovalUserIdentity user, byte[] salt, byte[] hash, int iterations,
+        PosApprovalUserIdentity user, Guid targetUserId, byte[] salt, byte[] hash, int iterations,
+        DateTimeOffset? validUntil,
         CancellationToken cancellationToken)
     {
         await using var connection=connections.Create(); await connection.OpenAsync(cancellationToken);
         await using var transaction=(SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable,cancellationToken);
         var now=timeProvider.GetUtcNow();
         await using var command=new SqlCommand("""
+            IF NOT EXISTS(
+              SELECT 1 FROM dbo.AppUsers target
+              WHERE target.UserId=@TargetUserId AND target.TenantId=@TenantId AND target.IsActive=1
+                AND EXISTS(
+                  SELECT 1 FROM dbo.UserRoles ur
+                  JOIN dbo.AppRoles role ON role.RoleId=ur.RoleId AND role.IsActive=1
+                  JOIN dbo.RolePermissions rp ON rp.RoleId=role.RoleId
+                  JOIN dbo.Permissions permission ON permission.PermissionId=rp.PermissionId
+                  WHERE ur.UserId=target.UserId AND (ur.BusinessId IS NULL OR ur.BusinessId=@BusinessId)
+                    AND permission.Resource=N'pos.approvals.authorize'))
+              THROW 51070,'El usuario no es un autorizador activo en este negocio.',1;
             UPDATE dbo.SupervisorCredentials
-            SET IsActive=0,RevokedByUserId=@UserId,RevokedAt=@Now
-            WHERE UserId=@UserId AND IsActive=1;
-            INSERT dbo.SupervisorCredentials(CredentialId,UserId,SecretSalt,SecretHash,SecretIterations,IsActive,CreatedByUserId,CreatedAt)
-            VALUES(@Id,@UserId,@Salt,@Hash,@Iterations,1,@UserId,@Now);
+            SET IsActive=0,RevokedByUserId=@ActorUserId,RevokedAt=@Now
+            WHERE UserId=@TargetUserId AND IsActive=1;
+            INSERT dbo.SupervisorCredentials(CredentialId,UserId,SecretSalt,SecretHash,SecretIterations,IsActive,CreatedByUserId,CreatedAt,ValidUntil)
+            VALUES(@Id,@TargetUserId,@Salt,@Hash,@Iterations,1,@ActorUserId,@Now,@ValidUntil);
             """,connection,transaction);
-        Add(command,"@Id",ids.NewId());Add(command,"@UserId",user.UserId);Add(command,"@Salt",salt);Add(command,"@Hash",hash);Add(command,"@Iterations",iterations);Add(command,"@Now",now);
-        await command.ExecuteNonQueryAsync(cancellationToken); await transaction.CommitAsync(cancellationToken);
+        Add(command,"@Id",ids.NewId());Add(command,"@TargetUserId",targetUserId);Add(command,"@ActorUserId",user.UserId);Add(command,"@TenantId",user.TenantId);Add(command,"@BusinessId",user.BusinessId);Add(command,"@Salt",salt);Add(command,"@Hash",hash);Add(command,"@Iterations",iterations);Add(command,"@Now",now);Add(command,"@ValidUntil",validUntil);
+        try{await command.ExecuteNonQueryAsync(cancellationToken);}catch(SqlException exception)when(exception.Number==51070){throw new PosApprovalException("InvalidAuthorizer",exception.Message);}await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task<SupervisorCredentialStatusView> CredentialStatusAsync(
+        PosApprovalUserIdentity user, Guid targetUserId, CancellationToken cancellationToken)
+    {
+        await using var connection=connections.Create();await connection.OpenAsync(cancellationToken);
+        await using var command=new SqlCommand("""
+            SELECT TOP(1) CreatedAt,ValidUntil
+            FROM dbo.SupervisorCredentials
+            WHERE UserId=@TargetUserId AND IsActive=1 AND (ValidUntil IS NULL OR ValidUntil>SYSUTCDATETIME())
+              AND EXISTS(SELECT 1 FROM dbo.AppUsers WHERE UserId=@TargetUserId AND TenantId=@TenantId)
+            ORDER BY CreatedAt DESC;
+            """,connection);Add(command,"@TargetUserId",targetUserId);Add(command,"@TenantId",user.TenantId);
+        await using var reader=await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new(true,reader.GetFieldValue<DateTimeOffset>(0),reader.IsDBNull(1)?null:reader.GetFieldValue<DateTimeOffset>(1))
+            : new(false,null,null);
+    }
+
+    public async Task RevokeCredentialAsync(
+        PosApprovalUserIdentity user, Guid targetUserId, CancellationToken cancellationToken)
+    {
+        await using var connection=connections.Create();await connection.OpenAsync(cancellationToken);
+        await using var command=new SqlCommand("""
+            UPDATE dbo.SupervisorCredentials
+            SET IsActive=0,RevokedByUserId=@ActorUserId,RevokedAt=@Now
+            WHERE UserId=@TargetUserId AND IsActive=1
+              AND EXISTS(SELECT 1 FROM dbo.AppUsers WHERE UserId=@TargetUserId AND TenantId=@TenantId);
+            """,connection);Add(command,"@TargetUserId",targetUserId);Add(command,"@ActorUserId",user.UserId);Add(command,"@TenantId",user.TenantId);Add(command,"@Now",timeProvider.GetUtcNow());
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task ReserveAsync(

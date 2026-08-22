@@ -118,7 +118,9 @@ public sealed partial class SqlOnlineSalesDraftStore
                    COALESCE(p.DisplayName,p.LegalName,
                             NULLIF(LTRIM(RTRIM(CONCAT(p.FirstName,N' ',p.LastName))),N''),
                             N'Sin nombre'),
-                   s.PriceChannelId,c.RequiresElectronicInvoice
+                   CASE WHEN s.ValidFrom<=SYSDATETIMEOFFSET()
+                          AND(s.ValidUntil IS NULL OR s.ValidUntil>SYSDATETIMEOFFSET())
+                        THEN s.PriceChannelId END,c.RequiresElectronicInvoice
             FROM dbo.Customers c
             JOIN dbo.Parties p ON p.PartyId=c.PartyId
             LEFT JOIN dbo.CustomerPricingSettings s ON s.CustomerId=c.CustomerId

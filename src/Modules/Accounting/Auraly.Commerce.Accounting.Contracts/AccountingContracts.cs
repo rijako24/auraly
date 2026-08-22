@@ -159,6 +159,17 @@ public sealed record TrialBalanceRow(
     decimal Credit,
     decimal Balance);
 
+public sealed record AccountMovementRow(
+    Guid EntryId,
+    string EntryNumber,
+    Guid SourceDocumentId,
+    string SourceDocumentType,
+    DateTimeOffset OccurredAt,
+    string Description,
+    decimal Debit,
+    decimal Credit,
+    decimal Balance);
+
 public sealed record AccountingPostingView(
     Guid SourceDocumentId,
     string SourceDocumentType,

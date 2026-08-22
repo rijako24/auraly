@@ -11,4 +11,7 @@ public record TenantDto(
     int MaximumUsers,
     int MaximumEnrolledDevices,
     int ActiveUserCount,
-    int ActiveEnrolledDeviceCount);
+    int ActiveEnrolledDeviceCount,
+    string? LegalName,
+    string? Nit,
+    string? VerificationDigit);

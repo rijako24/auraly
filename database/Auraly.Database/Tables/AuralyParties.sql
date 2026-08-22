@@ -178,6 +178,8 @@ GO
 CREATE TABLE [dbo].[CustomerPricingSettings] (
     [CustomerId] UNIQUEIDENTIFIER NOT NULL,
     [PriceChannelId] UNIQUEIDENTIFIER NULL,
+    [ValidFrom] DATETIMEOFFSET(7) NOT NULL CONSTRAINT [DF_CustomerPricingSettings_ValidFrom] DEFAULT (SYSDATETIMEOFFSET()),
+    [ValidUntil] DATETIMEOFFSET(7) NULL,
     [UpdatedBy] UNIQUEIDENTIFIER NOT NULL,
     [UpdatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
@@ -185,7 +187,8 @@ CREATE TABLE [dbo].[CustomerPricingSettings] (
     CONSTRAINT [FK_CustomerPricingSettings_Customers] FOREIGN KEY ([CustomerId])
         REFERENCES [dbo].[Customers] ([CustomerId]),
     CONSTRAINT [FK_CustomerPricingSettings_PriceChannels] FOREIGN KEY ([PriceChannelId])
-        REFERENCES [dbo].[PriceChannels] ([PriceChannelId])
+        REFERENCES [dbo].[PriceChannels] ([PriceChannelId]),
+    CONSTRAINT [CK_CustomerPricingSettings_Validity] CHECK ([ValidUntil] IS NULL OR [ValidUntil] > [ValidFrom])
 );
 GO
 

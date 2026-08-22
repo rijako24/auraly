@@ -89,6 +89,44 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Manual_cash_drawer_requires_the_configurable_user_permission_offline()
+    {
+        using var denied = await Client.PostAsync(
+            "/edge/v1/cash-drawer/open",
+            content: null);
+
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        Assert.Contains(
+            "no tiene permiso",
+            await denied.Content.ReadAsStringAsync(),
+            StringComparison.OrdinalIgnoreCase);
+
+        await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection(
+            $"Data Source={_path};Mode=ReadWrite;Cache=Shared"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT OR IGNORE INTO PosOfflineUserPermissions(UserId,PermissionCode)
+                SELECT UserId,$permission FROM PosOfflineUsers WHERE NormalizedUsername='CASHIER';
+                """;
+            command.Parameters.AddWithValue(
+                "$permission",
+                Auraly.Contracts.WorkSessions.WorkSessionPermissionCodes.OpenCashDrawer);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        using var permitted = await Client.PostAsync(
+            "/edge/v1/cash-drawer/open",
+            content: null);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, permitted.StatusCode);
+        Assert.Contains(
+            "Configura la impresora",
+            await permitted.Content.ReadAsStringAsync(),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Host_without_device_configuration_starts_in_enrollment_mode()
     {
         var enrollmentPath =

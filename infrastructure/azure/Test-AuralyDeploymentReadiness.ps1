@@ -128,6 +128,12 @@ function Test-RemoteEnvironment {
         'Authentication__Jwt__Issuer',
         'Authentication__Jwt__Audience',
         'Authentication__Jwt__SigningKey',
+        'Authentication__OfflineLeaseSigning__KeyId',
+        'Authentication__OfflineLeaseSigning__PrivateKeyPem',
+        'Authentication__OfflineLeaseSigning__DurationHours',
+        'Notifications__WebPush__PublicKey',
+        'Notifications__WebPush__PrivateKey',
+        'Notifications__WebPush__Subject',
         'Auraly__PosSynchronization__WebPubSub__Endpoint',
         'Auraly__PosSynchronization__WebPubSub__ManagedIdentityClientId',
         'Auraly__PosSynchronization__WebPubSub__Hub',
@@ -155,6 +161,18 @@ function Test-RemoteEnvironment {
         $settings['Authentication__Jwt__SigningKey'])
     Assert-Condition ($jwtLength -ge 32) `
         'Authentication__Jwt__SigningKey debe contener al menos 32 bytes.'
+    Assert-Condition ($settings['Authentication__OfflineLeaseSigning__KeyId'] -match '^auraly-(dev|prod)-offline-v[0-9]+$') `
+        'Authentication__OfflineLeaseSigning__KeyId no identifica una versión de clave válida.'
+    Assert-Condition ($settings['Authentication__OfflineLeaseSigning__PrivateKeyPem'] -match 'BEGIN PRIVATE KEY') `
+        'Authentication__OfflineLeaseSigning__PrivateKeyPem no contiene una clave privada PEM.'
+    Assert-Condition ([int]$settings['Authentication__OfflineLeaseSigning__DurationHours'] -gt 0) `
+        'Authentication__OfflineLeaseSigning__DurationHours debe ser mayor que cero.'
+    Assert-Condition ($settings['Notifications__WebPush__PublicKey'].Length -ge 80) `
+        'Notifications__WebPush__PublicKey no contiene una clave VAPID pública válida.'
+    Assert-Condition ($settings['Notifications__WebPush__PrivateKey'].Length -ge 40) `
+        'Notifications__WebPush__PrivateKey no contiene una clave VAPID privada válida.'
+    Assert-Condition ($settings['Notifications__WebPush__Subject'] -match '^(mailto:|https://)') `
+        'Notifications__WebPush__Subject debe ser mailto: o https://.'
     Assert-Condition ($settings['Release__Version'] -eq $ReleaseVersion) `
         'La version configurada en la API no coincide con el release solicitado.'
     Assert-Condition ($settings['PosInstaller__Version'] -eq $ReleaseVersion) `

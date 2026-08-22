@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, KeyRound, ReceiptText, Save, Scissors, ShieldCheck, X } from "lucide-react";
-import { toast } from "sonner";
+import { CalendarDays, KeyRound, ReceiptText, Scissors, X } from "lucide-react";
 import { ScheduleExceptionsEditor } from "@/components/settings/schedule-exceptions-editor";
 import { WorkingHoursEditor } from "@/components/settings/working-hours-editor";
 import { Badge } from "@/components/ui/badge";
@@ -14,56 +13,54 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { useRoles } from "@/hooks/use-roles";
 import { useServices } from "@/hooks/use-services";
+import { useCities } from "@/hooks/use-parties";
 import { employeesApi, usersApi } from "@/services/api";
+import type { PartySiteDetail } from "@/services/api/parties";
 import { taxationApi } from "@/services/api/taxation";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import type { WorkingHour } from "@/types/entities";
 
 const defaultHours: WorkingHour[] = [{ dayOfWeek: 1, openTime: "08:00", closeTime: "17:00", isActive: true }];
 
-export function PartySupplierTaxRolePanel({ supplierId }: { supplierId: string }) {
+type RegisterSave = (key: string, handler: () => Promise<void>) => () => void;
+
+export function PartySupplierTaxRolePanel({ supplierId, editing, primarySite, registerSave }: { supplierId: string; editing: boolean; primarySite: PartySiteDetail | null; registerSave: RegisterSave }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const queryClient = useQueryClient();
   const profile = useQuery({ queryKey: ["withholding-profile", businessId, supplierId], queryFn: () => taxationApi.getProfile(supplierId), enabled: Boolean(businessId && supplierId), retry: false });
-  const [responsibilities, setResponsibilities] = useState("");
-  const [jurisdiction, setJurisdiction] = useState("");
-  const [applies, setApplies] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const rules = useQuery({ queryKey: ["withholding-rules", businessId, "supplier-profile-options"], queryFn: () => taxationApi.listRules(false), enabled: Boolean(businessId) });
+  const cities = useCities(primarySite?.administrativeDivisionId ?? "");
+  const [responsibilities, setResponsibilities] = useState<Set<string>>(new Set());
+  const [responsibilityToAdd, setResponsibilityToAdd] = useState("");
 
   useEffect(() => {
-    setResponsibilities(profile.data?.responsibilities.join(", ") ?? "");
-    setJurisdiction(profile.data?.jurisdictionCode ?? "");
-    setApplies(profile.data?.appliesWithholding ?? false);
+    setResponsibilities(new Set(profile.data?.responsibilities ?? []));
   }, [profile.data]);
 
   const save = async () => {
     if (!businessId) return;
-    setSaving(true);
-    try {
-      await taxationApi.saveProfile({ businessId, counterpartyId: supplierId, appliesWithholding: applies, responsibilities: responsibilities.split(",").map((value) => value.trim()).filter(Boolean), jurisdictionCode: jurisdiction.trim() || null });
-      await queryClient.invalidateQueries({ queryKey: ["withholding-profile", businessId, supplierId] });
-      toast.success("Perfil tributario del proveedor guardado");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "No fue posible guardar el perfil tributario.");
-    } finally { setSaving(false); }
+    const cityCode = cities.data?.find((city) => city.cityId === primarySite?.cityId)?.code ?? profile.data?.jurisdictionCode ?? null;
+    await taxationApi.saveProfile({ businessId, counterpartyId: supplierId, appliesWithholding: true, responsibilities: [...responsibilities], jurisdictionCode: cityCode });
+    await queryClient.invalidateQueries({ queryKey: ["withholding-profile", businessId, supplierId] });
   };
+  useEffect(() => registerSave(`supplier-tax-${supplierId}`, save), [registerSave, supplierId, businessId, responsibilities, cities.data, primarySite?.cityId, profile.data?.jurisdictionCode]);
+
+  const catalog = [...new Set((rules.data ?? []).flatMap((rule) => rule.requiredResponsibilities))].sort();
+  const available = catalog.filter((code) => !responsibilities.has(code));
+  const city = cities.data?.find((item) => item.cityId === primarySite?.cityId);
 
   return <div className="space-y-4">
-    <PanelHeader icon={ReceiptText} title="Perfil tributario" description="Define cómo se calculan las retenciones cuando este proveedor emite una compra o un gasto.">
-      <div className="flex items-center gap-3"><span className="text-sm text-slate-200">Sujeto a retención</span><Switch checked={applies} onCheckedChange={setApplies} disabled={profile.isLoading || saving} /></div>
-    </PanelHeader>
+    <PanelHeader icon={ReceiptText} title="Perfil tributario" description="Las responsabilidades se toman del catálogo configurado en Contabilidad y la jurisdicción de la ciudad principal."><Badge variant="secondary">Configuración automática</Badge></PanelHeader>
     {profile.isLoading ? <PanelLoading /> : <section className="space-y-4 rounded-2xl border p-5">
-      {!profile.data && <div className="rounded-xl border border-dashed bg-muted/20 p-4 text-sm text-muted-foreground">Este proveedor todavía no tiene perfil tributario. Completa estos datos y guárdalos; las reglas aplicables se resolverán automáticamente en cada documento.</div>}
       <div className="grid gap-4 md:grid-cols-2">
-        <div className="space-y-2"><Label>Responsabilidades tributarias</Label><Input value={responsibilities} onChange={(event) => setResponsibilities(event.target.value)} placeholder="Ej. O-13, O-15 (separadas por coma)" /><p className="text-xs text-muted-foreground">Usa los códigos registrados en el RUT.</p></div>
-        <div className="space-y-2"><Label>Municipio o jurisdicción</Label><Input value={jurisdiction} onChange={(event) => setJurisdiction(event.target.value)} placeholder="Ej. 11001" /><p className="text-xs text-muted-foreground">Se usa para resolver ReteICA; déjalo vacío si no corresponde.</p></div>
+        <div className="space-y-2"><Label>Responsabilidades tributarias</Label>{editing&&<Select value={responsibilityToAdd} onValueChange={(value) => { setResponsibilityToAdd(""); setResponsibilities((current) => new Set(current).add(value)); }}><SelectTrigger><SelectValue placeholder={rules.isLoading ? "Cargando catálogo..." : "Agregar responsabilidad"}/></SelectTrigger><SelectContent>{available.map((code) => <SelectItem key={code} value={code}>{code}</SelectItem>)}{available.length === 0 && <SelectItem value="_none" disabled>Sin responsabilidades disponibles</SelectItem>}</SelectContent></Select>}<div className="flex min-h-12 flex-wrap gap-2 rounded-xl border bg-muted/10 p-3">{[...responsibilities].map((code) => <Badge key={code} variant="secondary" className="gap-1">{code}{editing&&<button type="button" aria-label={`Quitar ${code}`} onClick={() => setResponsibilities((current) => { const next = new Set(current); next.delete(code); return next; })}><X className="h-3 w-3"/></button>}</Badge>)}{responsibilities.size===0&&<span className="text-sm text-muted-foreground">Sin responsabilidades seleccionadas</span>}</div><p className="text-xs text-muted-foreground">Las opciones se crean al configurar reglas de retención en Contabilidad.</p></div>
+        <div className="space-y-2"><Label>Ciudad o jurisdicción tributaria</Label><Input value={city ? `${city.name} (${city.code})` : primarySite ? "Cargando ciudad..." : "Sin sede principal"} readOnly/><p className="text-xs text-muted-foreground">Se sincroniza automáticamente con la ciudad de la sede principal.</p></div>
       </div>
-      <div className="flex justify-end"><Button onClick={save} disabled={saving}><Save className="mr-2 h-4 w-4" />{saving ? "Guardando..." : "Guardar perfil tributario"}</Button></div>
     </section>}
   </div>;
 }
 
-export function PartyEmployeeRolePanel({ employeeId }: { employeeId: string }) {
+export function PartyEmployeeRolePanel({ employeeId, editing, registerSave }: { employeeId: string; editing: boolean; registerSave: RegisterSave }) {
   const employeeQuery = useQuery({ queryKey: ["employees", employeeId], queryFn: () => employeesApi.getById(employeeId) });
   const hoursQuery = useQuery({ queryKey: ["employees", employeeId, "working-hours"], queryFn: () => employeesApi.getWorkingHours(employeeId) });
   const services = useServices({ page: 1, pageSize: 500 });
@@ -72,7 +69,6 @@ export function PartyEmployeeRolePanel({ employeeId }: { employeeId: string }) {
   const [active, setActive] = useState(true);
   const [customSchedule, setCustomSchedule] = useState(false);
   const [workingHours, setWorkingHours] = useState<WorkingHour[]>(defaultHours);
-  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!employeeQuery.data) return;
@@ -88,18 +84,11 @@ export function PartyEmployeeRolePanel({ employeeId }: { employeeId: string }) {
   const save = async () => {
     const employee = employeeQuery.data;
     if (!employee) return;
-    setSaving(true);
-    try {
-      await employeesApi.update(employeeId, { name: employee.name, isActive: active, serviceIds: [...selectedIds] });
-      await employeesApi.updateWorkingHours(employeeId, customSchedule ? workingHours : []);
-      await Promise.all([employeeQuery.refetch(), hoursQuery.refetch()]);
-      toast.success("Configuración del empleado actualizada");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "No fue posible actualizar el empleado.");
-    } finally {
-      setSaving(false);
-    }
+    await employeesApi.update(employeeId, { name: employee.name, isActive: active, serviceIds: [...selectedIds] });
+    await employeesApi.updateWorkingHours(employeeId, customSchedule ? workingHours : []);
+    await Promise.all([employeeQuery.refetch(), hoursQuery.refetch()]);
   };
+  useEffect(() => registerSave(`employee-${employeeId}`, save), [registerSave, employeeId, employeeQuery.data, active, selectedIds, customSchedule, workingHours]);
 
   if (employeeQuery.isLoading || hoursQuery.isLoading) return <PanelLoading />;
   if (!employeeQuery.data) return <PanelError text="No fue posible cargar la configuración del empleado." />;
@@ -107,26 +96,25 @@ export function PartyEmployeeRolePanel({ employeeId }: { employeeId: string }) {
 
   return <div className="space-y-5">
     <PanelHeader icon={Scissors} title="Configuración del empleado" description="Servicios, disponibilidad y estado en el mismo tercero.">
-      <div className="flex items-center gap-3"><span className="text-sm text-muted-foreground">Activo</span><Switch checked={active} onCheckedChange={setActive} /></div>
+      <div className="flex items-center gap-3"><span className="text-sm text-muted-foreground">Activo</span><Switch checked={active} onCheckedChange={setActive} disabled={!editing}/></div>
     </PanelHeader>
     <section className="space-y-3 rounded-2xl border p-5">
       <div><h3 className="font-semibold">Servicios asignados</h3><p className="text-sm text-muted-foreground">Agrega los servicios que este empleado puede atender.</p></div>
-      <Select value={serviceToAdd} onValueChange={(value) => { setServiceToAdd(""); setSelectedIds((current) => new Set(current).add(value)); }}>
+      <Select value={serviceToAdd} onValueChange={(value) => { setServiceToAdd(""); setSelectedIds((current) => new Set(current).add(value)); }} disabled={!editing}>
         <SelectTrigger><SelectValue placeholder={services.isLoading ? "Cargando servicios..." : "Agregar servicio"} /></SelectTrigger>
         <SelectContent>{available.map((service) => <SelectItem key={service.serviceId} value={service.serviceId}>{service.serviceName}</SelectItem>)}{available.length === 0 && <SelectItem value="_none" disabled>Sin datos</SelectItem>}</SelectContent>
       </Select>
-      <div className="grid gap-3 sm:grid-cols-2">{[...selectedIds].map((serviceId) => { const service = services.data?.items.find((item) => item.serviceId === serviceId); return <div key={serviceId} className="flex items-center justify-between rounded-xl border bg-card p-4"><div><p className="font-medium">{service?.serviceName ?? "Servicio"}</p><p className="text-xs text-muted-foreground">Disponible para asignaciones</p></div><Button type="button" variant="ghost" size="icon" onClick={() => setSelectedIds((current) => { const next = new Set(current); next.delete(serviceId); return next; })}><X className="h-4 w-4" /></Button></div>; })}{selectedIds.size === 0 && <EmptyState text="Sin datos. Agrega los servicios que atenderá esta persona." />}</div>
+      <div className="grid gap-3 sm:grid-cols-2">{[...selectedIds].map((serviceId) => { const service = services.data?.items.find((item) => item.serviceId === serviceId); return <div key={serviceId} className="flex items-center justify-between rounded-xl border bg-card p-4"><div><p className="font-medium">{service?.serviceName ?? "Servicio"}</p><p className="text-xs text-muted-foreground">Disponible para asignaciones</p></div>{editing&&<Button type="button" variant="ghost" size="icon" onClick={() => setSelectedIds((current) => { const next = new Set(current); next.delete(serviceId); return next; })}><X className="h-4 w-4" /></Button>}</div>; })}{selectedIds.size === 0 && <EmptyState text="Sin datos. Agrega los servicios que atenderá esta persona." />}</div>
     </section>
     <section className="space-y-4 rounded-2xl border p-5">
-      <div className="flex items-center justify-between gap-4"><div><h3 className="font-semibold">Calendario activo</h3><p className="text-sm text-muted-foreground">Desactivado reutiliza automáticamente el horario del negocio.</p></div><Switch checked={customSchedule} onCheckedChange={setCustomSchedule} /></div>
-      {customSchedule ? <WorkingHoursEditor value={workingHours} onChange={setWorkingHours} /> : <div className="flex items-center gap-3 rounded-xl bg-muted/40 p-4 text-sm text-muted-foreground"><CalendarDays className="h-5 w-5 text-primary" />Usará el calendario activo configurado para el negocio.</div>}
+      <div className="flex items-center justify-between gap-4"><div><h3 className="font-semibold">Calendario activo</h3><p className="text-sm text-muted-foreground">Desactivado reutiliza automáticamente el horario del negocio.</p></div><Switch checked={customSchedule} onCheckedChange={setCustomSchedule} disabled={!editing}/></div>
+      {customSchedule ? editing?<WorkingHoursEditor value={workingHours} onChange={setWorkingHours}/>:<div className="rounded-xl border bg-muted/20 p-4 text-sm text-muted-foreground">Horario personalizado configurado.</div> : <div className="flex items-center gap-3 rounded-xl bg-muted/40 p-4 text-sm text-muted-foreground"><CalendarDays className="h-5 w-5 text-primary" />Usará el calendario activo configurado para el negocio.</div>}
     </section>
-    <section className="rounded-2xl border p-5"><h3 className="font-semibold">Excepciones del calendario</h3><p className="mb-4 text-sm text-muted-foreground">Cierres o cambios puntuales para fechas específicas.</p><ScheduleExceptionsEditor employeeId={employeeId} /></section>
-    <div className="flex justify-end"><Button onClick={save} disabled={saving}><Save className="mr-2 h-4 w-4" />{saving ? "Guardando..." : "Guardar empleado"}</Button></div>
+    {editing&&<section className="rounded-2xl border p-5"><h3 className="font-semibold">Excepciones del calendario</h3><p className="mb-4 text-sm text-muted-foreground">Cierres o cambios puntuales para fechas específicas.</p><ScheduleExceptionsEditor employeeId={employeeId}/></section>}
   </div>;
 }
 
-export function PartyUserRolePanel({ userId }: { userId: string }) {
+export function PartyUserRolePanel({ userId, editing, registerSave }: { userId: string; editing: boolean; registerSave: RegisterSave }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const userQuery = useQuery({ queryKey: ["users", userId], queryFn: () => usersApi.getById(userId) });
   const userRolesQuery = useQuery({ queryKey: ["users", userId, "roles"], queryFn: () => usersApi.getRoles(userId) });
@@ -137,7 +125,6 @@ export function PartyUserRolePanel({ userId }: { userId: string }) {
   const [newPassword, setNewPassword] = useState("");
   const [roleError, setRoleError] = useState("");
   const [passwordError, setPasswordError] = useState("");
-  const [saving, setSaving] = useState(false);
   const scopedAssignments = useMemo(() => (userRolesQuery.data ?? []).filter((item) => item.businessId === businessId), [userRolesQuery.data, businessId]);
 
   useEffect(() => { if (userQuery.data) setActive(userQuery.data.isActive); }, [userQuery.data]);
@@ -148,36 +135,28 @@ export function PartyUserRolePanel({ userId }: { userId: string }) {
     const nextRoleError = selectedIds.size === 0 ? "Este campo es requerido" : "";
     const nextPasswordError = newPassword && newPassword.length < 10 ? "Debe tener al menos 10 caracteres" : "";
     setRoleError(nextRoleError); setPasswordError(nextPasswordError);
-    if (nextRoleError || nextPasswordError) return;
-    setSaving(true);
-    try {
-      const currentIds = new Set(scopedAssignments.map((item) => item.roleId));
-      await Promise.all([
-        ...[...selectedIds].filter((roleId) => !currentIds.has(roleId)).map((roleId) => usersApi.assignRole(userId, { roleId, businessId })),
-        ...scopedAssignments.filter((item) => !selectedIds.has(item.roleId)).map((item) => usersApi.removeRole(userId, item.roleId, businessId)),
-      ]);
-      if (active !== userQuery.data.isActive) await (active ? usersApi.activate(userId) : usersApi.deactivate(userId));
-      if (newPassword) await usersApi.resetPassword(userId, newPassword);
-      setNewPassword("");
-      await Promise.all([userQuery.refetch(), userRolesQuery.refetch()]);
-      toast.success("Acceso del usuario actualizado");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "No fue posible actualizar el usuario.");
-    } finally {
-      setSaving(false);
-    }
+    if (nextRoleError || nextPasswordError) throw new Error(nextRoleError || nextPasswordError);
+    const currentIds = new Set(scopedAssignments.map((item) => item.roleId));
+    await Promise.all([
+      ...[...selectedIds].filter((roleId) => !currentIds.has(roleId)).map((roleId) => usersApi.assignRole(userId, { roleId, businessId })),
+      ...scopedAssignments.filter((item) => !selectedIds.has(item.roleId)).map((item) => usersApi.removeRole(userId, item.roleId, businessId)),
+    ]);
+    if (active !== userQuery.data.isActive) await (active ? usersApi.activate(userId) : usersApi.deactivate(userId));
+    if (newPassword) await usersApi.resetPassword(userId, newPassword);
+    setNewPassword("");
+    await Promise.all([userQuery.refetch(), userRolesQuery.refetch()]);
   };
+  useEffect(() => registerSave(`user-${userId}`, save), [registerSave, userId, businessId, userQuery.data, scopedAssignments, selectedIds, active, newPassword]);
 
   if (userQuery.isLoading || userRolesQuery.isLoading) return <PanelLoading />;
   if (!userQuery.data) return <PanelError text="No fue posible cargar la configuración del usuario." />;
   const available = (roles.data?.items ?? []).filter((item) => item.isActive && !selectedIds.has(item.roleId));
   return <div className="space-y-5">
     <PanelHeader icon={KeyRound} title="Configuración del usuario" description="Acceso, contraseña unificada y permisos por rol.">
-      <div className="flex items-center gap-3"><span className="text-sm text-muted-foreground">Activo</span><Switch checked={active} onCheckedChange={setActive} /></div>
+      <div className="flex items-center gap-3"><span className="text-sm text-muted-foreground">Activo</span><Switch checked={active} onCheckedChange={setActive} disabled={!editing}/></div>
     </PanelHeader>
-    <section className={`space-y-3 rounded-2xl border p-5 ${roleError ? "border-destructive" : ""}`}><div><h3 className="font-semibold">Roles en este negocio</h3><p className="text-sm text-muted-foreground">Definen los menús visibles y las acciones habilitadas en cada vista.</p></div><Select value={roleToAdd} onValueChange={(value) => { setRoleToAdd(""); setRoleError(""); setSelectedIds((current) => new Set(current).add(value)); }}><SelectTrigger aria-invalid={Boolean(roleError)} className={roleError ? "border-destructive" : ""}><SelectValue placeholder={roles.isLoading ? "Cargando roles..." : "Agregar rol"} /></SelectTrigger><SelectContent>{available.map((role) => <SelectItem key={role.roleId} value={role.roleId}>{role.name}</SelectItem>)}{available.length === 0 && <SelectItem value="_none" disabled>Sin datos</SelectItem>}</SelectContent></Select>{roleError && <p className="text-sm text-destructive">{roleError}</p>}<div className="grid gap-3 sm:grid-cols-2">{[...selectedIds].map((roleId) => { const role = roles.data?.items.find((item) => item.roleId === roleId); return <div key={roleId} className="flex items-center justify-between rounded-xl border bg-card p-4"><div><p className="font-medium">{role?.name ?? "Rol"}</p><p className="text-xs text-muted-foreground">{role?.description ?? "Permisos asignados"}</p></div><Button type="button" variant="ghost" size="icon" onClick={() => setSelectedIds((current) => { const next = new Set(current); next.delete(roleId); return next; })}><X className="h-4 w-4" /></Button></div>; })}{selectedIds.size === 0 && <EmptyState text="Sin datos. Agrega al menos un rol para habilitar el acceso." />}</div></section>
-    <section className={`space-y-3 rounded-2xl border p-5 ${passwordError ? "border-destructive" : ""}`}><div><Label htmlFor={`reset-${userId}`}>Contraseña de acceso y modo sin conexión POS</Label><p className="text-sm text-muted-foreground">Déjala vacía para conservar la actual. Al cambiarla se actualiza también el acceso sin conexión.</p></div><Input id={`reset-${userId}`} type="password" autoComplete="new-password" value={newPassword} onChange={(event) => { setNewPassword(event.target.value); setPasswordError(""); }} aria-invalid={Boolean(passwordError)} className={passwordError ? "border-destructive" : ""} placeholder="Nueva contraseña" />{passwordError && <p className="text-sm text-destructive">{passwordError}</p>}</section>
-    <div className="flex justify-end"><Button onClick={save} disabled={saving}><ShieldCheck className="mr-2 h-4 w-4" />{saving ? "Guardando..." : "Guardar acceso"}</Button></div>
+    <section className={`space-y-3 rounded-2xl border p-5 ${roleError ? "border-destructive" : ""}`}><div><h3 className="font-semibold">Roles en este negocio</h3><p className="text-sm text-muted-foreground">Definen los menús visibles y las acciones habilitadas en cada vista.</p></div>{editing&&<Select value={roleToAdd} onValueChange={(value) => { setRoleToAdd(""); setRoleError(""); setSelectedIds((current) => new Set(current).add(value)); }}><SelectTrigger aria-invalid={Boolean(roleError)} className={roleError ? "border-destructive" : ""}><SelectValue placeholder={roles.isLoading ? "Cargando roles..." : "Agregar rol"} /></SelectTrigger><SelectContent>{available.map((role) => <SelectItem key={role.roleId} value={role.roleId}>{role.name}</SelectItem>)}{available.length === 0 && <SelectItem value="_none" disabled>Sin datos</SelectItem>}</SelectContent></Select>}{roleError && <p className="text-sm text-destructive">{roleError}</p>}<div className="grid gap-3 sm:grid-cols-2">{[...selectedIds].map((roleId) => { const role = roles.data?.items.find((item) => item.roleId === roleId); return <div key={roleId} className="flex items-center justify-between rounded-xl border bg-card p-4"><div><p className="font-medium">{role?.name ?? "Rol"}</p><p className="text-xs text-muted-foreground">{role?.description ?? "Permisos asignados"}</p></div>{editing&&<Button type="button" variant="ghost" size="icon" onClick={() => setSelectedIds((current) => { const next = new Set(current); next.delete(roleId); return next; })}><X className="h-4 w-4" /></Button>}</div>; })}{selectedIds.size === 0 && <EmptyState text="Sin datos. Agrega al menos un rol para habilitar el acceso." />}</div></section>
+    {editing&&<section className={`space-y-3 rounded-2xl border p-5 ${passwordError ? "border-destructive" : ""}`}><div><Label htmlFor={`reset-${userId}`}>Contraseña de acceso y modo sin conexión POS</Label><p className="text-sm text-muted-foreground">Déjala vacía para conservar la actual. Al cambiarla se actualiza también el acceso sin conexión.</p></div><Input id={`reset-${userId}`} type="password" autoComplete="new-password" value={newPassword} onChange={(event) => { setNewPassword(event.target.value); setPasswordError(""); }} aria-invalid={Boolean(passwordError)} className={passwordError ? "border-destructive" : ""} placeholder="Nueva contraseña" />{passwordError && <p className="text-sm text-destructive">{passwordError}</p>}</section>}
   </div>;
 }
 

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Barcode, Boxes, Check, CircleDollarSign, Images, PackagePlus, ReceiptText, Scale, Tags, Truck } from "lucide-react";
+import { Barcode, Boxes, Check, CircleDollarSign, Images, Link2, PackagePlus, ReceiptText, Scale, Tags, Trash2, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -17,10 +17,11 @@ import { recalculateProductPricing } from "@/lib/product-pricing-calculator";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { formatCurrency } from "@/lib/utils";
 import { goodsReceiptsApi } from "@/services/api/goods-receipts";
-import { productMerchandisingApi, type ProductBarcode } from "@/services/api/product-merchandising";
+import { productMerchandisingApi, type LinkedProduct, type ProductBarcode } from "@/services/api/product-merchandising";
 import { productsApi } from "@/services/api/products";
 import { productOffersApi } from "@/services/api/product-offers";
 import { PendingProductImagePicker, type PendingProductImage } from "@/components/products/product-image-gallery";
+import { ProductPicker } from "@/components/products/product-picker";
 import { taxProfilesApi } from "@/services/api/tax-profiles";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
@@ -29,8 +30,9 @@ const sections = [
   ["identity", "Identidad", PackagePlus],
   ["classification", "Clasificación", Tags],
   ["sale", "Venta y balanza", Scale],
-  ["taxes", "IVA y precios", ReceiptText],
+  ["family", "Productos vinculados", Link2],
   ["supplier", "Proveedor y empaque", Truck],
+  ["taxes", "IVA y precios", ReceiptText],
   ["images", "Imágenes", Images],
 ] as const;
 
@@ -65,6 +67,8 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
   const [validationError, setValidationError] = useState<string>();
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [pendingImages, setPendingImages] = useState<PendingProductImage[]>([]);
+  const [linkedProducts, setLinkedProducts] = useState<LinkedProduct[]>([]);
+  const [conversionMaximumLossPercent, setConversionMaximumLossPercent] = useState<number | null>(null);
   const categories = useProductCategories(false);
   const purchasePresentations = useReferenceOptions("purchase-presentation", open);
   const brands = useQuery({ queryKey: ["product-brands"], queryFn: productMerchandisingApi.brands, enabled: open });
@@ -124,6 +128,21 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
         link: null,
 
       });
+      if (linkedProducts.length > 0) {
+        await productMerchandisingApi.save(product.productId, {
+          productCategoryId: form.productCategoryId,
+          productBrandId: form.productBrandId,
+          baseUnitCode: form.baseUnitCode,
+          manageInventory: form.manageInventory,
+          allowsFractionalSale: form.allowsFractionalSale,
+          isWeighable: form.isWeighable,
+          scale: form.isWeighable ? { scaleCode: form.scaleCode.trim(), barcodePrefix: form.scalePrefix.trim(), embeddedValueType: "Weight", valueStart: 0, valueLength: 5, decimalPlaces: form.scaleDecimals } : null,
+          barcodes: form.barcodes,
+          link: null,
+          linkedProducts: linkedProducts.map(({ childProductId, sharesInventory, inventoryFactor, sharesPrice, priceFactor, allowsConversion, conversionFactor }) => ({ childProductId, sharesInventory, inventoryFactor, sharesPrice, priceFactor, allowsConversion, conversionFactor })),
+          conversionMaximumLossPercent: linkedProducts.some((item) => item.allowsConversion) ? conversionMaximumLossPercent ?? 0 : null,
+        });
+      }
       const uploads = await Promise.allSettled(pendingImages.map((image) =>
         productOffersApi.uploadImage(businessId, product.productId, image.file, null, image.isPrimary)));
       const failedUploads = uploads.filter((result) => result.status === "rejected").length;
@@ -134,7 +153,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
     onSuccess: async (product) => {
       await queryClient.invalidateQueries({ queryKey: ["products", businessId] });
       pendingImages.forEach((image) => URL.revokeObjectURL(image.previewUrl));
-      setForm(initialState); setBarcode(""); setPendingImages([]); setValidationError(undefined); setFieldErrors({});
+      setForm(initialState); setBarcode(""); setPendingImages([]); setLinkedProducts([]); setConversionMaximumLossPercent(null); setValidationError(undefined); setFieldErrors({});
       toast.success("Producto creado. El precio quedó preparado para publicación.");
       onOpenChange(false); onCreated?.(product.productId);
     },
@@ -150,6 +169,9 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
     if (form.barcodes.some((item) => item.value.toLowerCase() === value.toLowerCase())) { toast.error("Ese código ya está agregado."); return; }
     setForm((current) => ({ ...current, barcodes: [...current.barcodes, { value, isPrimary: current.barcodes.length === 0 }] }));
     setBarcode("");
+  }
+  function updateLinked(index: number, patch: Partial<LinkedProduct>) {
+    setLinkedProducts((current) => current.map((item, currentIndex) => currentIndex === index ? { ...item, ...patch } : item));
   }
   function changePricing(field: "cost" | "margin" | "salePrice", value: number) {
     try {
@@ -192,6 +214,15 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
                 {form.isWeighable && <div className="mt-4 grid items-start gap-4 rounded-xl bg-muted/30 p-4 md:grid-cols-3 [&>div>label]:flex [&>div>label]:min-h-10 [&>div>label]:items-center [&>div>p]:min-h-8"><Field label="Código del producto en la balanza"><Input value={form.scaleCode} onChange={(e) => setForm({ ...form, scaleCode: e.target.value })} placeholder="Ej. 125" /><p className="text-xs text-muted-foreground">También conocido como PLU.</p></Field><Field label="Inicio del código de balanza"><Input value={form.scalePrefix} onChange={(e) => setForm({ ...form, scalePrefix: e.target.value })} placeholder="Ej. 20" /><p className="text-xs text-muted-foreground">Identifica las etiquetas generadas por la balanza.</p></Field><Field label="Decimales del peso"><Input type="number" min={0} max={6} value={form.scaleDecimals} onChange={(e) => setForm({ ...form, scaleDecimals: Number(e.target.value) })} /><p className="text-xs text-muted-foreground">3 interpreta 1250 como 1,250 kg.</p></Field></div>}
               </Section>
 
+              <Section id="new-family" icon={Link2} title="Familia de productos" description="Relaciona presentaciones, colores o tallas. Cada producto conserva su inventario y precio, salvo que elijas compartirlos.">
+                {businessId && <div className="rounded-xl border bg-muted/20 p-3"><ProductPicker businessId={businessId} selectedProductIds={new Set(linkedProducts.map((item) => item.childProductId))} excludedProductIds={new Set(linkedProducts.map((item) => item.childProductId))} disabled={create.isPending} label="Agregar producto a la lista" resultsMode="inline" inputId="new-linked-product-search" onSelect={(product) => setLinkedProducts((current) => [...current, { childProductId: product.productId, childProductCode: product.productCode, childProductName: product.productName, sharesInventory: false, inventoryFactor: null, sharesPrice: false, priceFactor: null, allowsConversion: false, conversionFactor: null }])} /></div>}
+                <div className="mt-3 space-y-3">
+                  {linkedProducts.some((item) => item.allowsConversion) && <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4"><Label>Merma máxima permitida en conversiones (%)</Label><FormattedNumberInput className="mt-2 max-w-52 bg-background" kind="percent" value={conversionMaximumLossPercent ?? ""} onValueChange={(value) => setConversionMaximumLossPercent(value)} placeholder="Ej. 5" /><p className="mt-2 text-xs text-muted-foreground">Se aplica a toda la familia. Una salida nunca puede superar las unidades equivalentes consumidas.</p></div>}
+                  {linkedProducts.length === 0 && <div className="rounded-xl border border-dashed p-5 text-center text-sm text-muted-foreground">Todavía no has agregado opciones a esta familia.</div>}
+                  {linkedProducts.map((item, index) => <article key={item.childProductId} className="rounded-xl border p-4"><div className="mb-3 flex items-start justify-between gap-3"><div><p className="font-semibold">{item.childProductName}</p><p className="text-xs text-muted-foreground">{item.childProductCode || "Sin código"}</p></div><Button type="button" size="icon" variant="ghost" aria-label={`Quitar ${item.childProductName}`} onClick={() => setLinkedProducts((current) => current.filter((_, currentIndex) => currentIndex !== index))}><Trash2 className="h-4 w-4" /></Button></div><div className="grid items-start gap-3 md:grid-cols-3"><FamilyOption label="Compartir inventario" detail="Cada venta descontará del producto principal." checked={item.sharesInventory} valueLabel="Unidades del principal por cada unidad vendida" value={item.inventoryFactor} onToggle={(checked) => updateLinked(index, { sharesInventory: checked, inventoryFactor: checked ? item.inventoryFactor ?? 1 : null, allowsConversion: checked ? false : item.allowsConversion, conversionFactor: checked ? null : item.conversionFactor })} onValue={(value) => updateLinked(index, { inventoryFactor: value })} /><FamilyOption label="Compartir precio" detail="Al publicar el principal, este precio se actualizará por el factor." checked={item.sharesPrice} valueLabel="Multiplicador del precio principal" value={item.priceFactor} onToggle={(checked) => updateLinked(index, { sharesPrice: checked, priceFactor: checked ? item.priceFactor ?? 1 : null })} onValue={(value) => updateLinked(index, { priceFactor: value })} /><FamilyOption label="Permitir conversión" detail="Habilita conversiones con los integrantes permitidos." checked={item.allowsConversion} valueLabel="Unidades equivalentes al producto principal" value={item.conversionFactor} onToggle={(checked) => { updateLinked(index, { allowsConversion: checked, conversionFactor: checked ? item.conversionFactor ?? 1 : null, sharesInventory: checked ? false : item.sharesInventory, inventoryFactor: checked ? null : item.inventoryFactor }); if (checked) { setForm((current) => ({ ...current, manageInventory: true })); setConversionMaximumLossPercent((current) => current ?? 0); } }} onValue={(value) => updateLinked(index, { conversionFactor: value })} /></div></article>)}
+                </div>
+              </Section>
+
               <Section id="new-supplier" icon={Truck} title="Proveedor principal y empaque habitual" description="Requerido para que cada producto tenga trazabilidad de compra desde su creación.">
                 <div className="grid items-start gap-4 lg:grid-cols-3"><Field label="Proveedor principal *" error={fieldErrors.supplierId}><Select value={form.supplierId??undefined} onValueChange={(value) => setForm({ ...form, supplierId:value })}><SelectTrigger aria-invalid={Boolean(fieldErrors.supplierId)}><SelectValue placeholder="Selecciona un proveedor" /></SelectTrigger><SelectContent>{(options.data?.suppliers ?? []).map((supplier) => <SelectItem key={supplier.supplierId} value={supplier.supplierId}>{supplier.name} · {supplier.identification}</SelectItem>)}</SelectContent></Select></Field><Field label="Código del proveedor"><Input value={form.supplierProductCode} onChange={(e) => setForm({ ...form, supplierProductCode: e.target.value })} /></Field><Field label="Empaque en que lo entrega"><Select value={form.packageName} onValueChange={(value) => setForm({ ...form, packageName: value })}><SelectTrigger><SelectValue placeholder="Selecciona el empaque" /></SelectTrigger><SelectContent>{(purchasePresentations.data ?? []).map((option) => <SelectItem key={option.id} value={option.code}>{option.label}</SelectItem>)}</SelectContent></Select></Field><Field label="Contenido por empaque"><Input type="number" min="0.000001" step="0.001" value={form.unitsPerPackage} onChange={(e) => setForm({ ...form, unitsPerPackage: Number(e.target.value) })} /></Field></div>
               </Section>
@@ -224,6 +255,7 @@ export function ProductFormSection({ id, icon: Icon, title, description, childre
 const Section = ProductFormSection;
 function Field({ label, children, className = "", error }: { label: string; children: React.ReactNode; className?: string; error?: string }) { return <div className={`space-y-2 ${className} ${error ? "[&_[aria-invalid=true]]:border-destructive [&_[aria-invalid=true]]:ring-destructive/20" : ""}`}><Label>{label}</Label>{children}{error && <p className="text-sm text-destructive">{error}</p>}</div>; }
 function Toggle({ label, detail, checked, disabled = false, onChange }: { label: string; detail: string; checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void }) { return <div className={`flex items-center justify-between gap-3 rounded-xl border bg-background p-3 ${disabled ? "opacity-60" : ""}`}><div><p className="text-sm font-medium">{label}</p><p className="text-xs text-muted-foreground">{detail}</p></div><Switch checked={checked} disabled={disabled} onCheckedChange={onChange} /></div>; }
+function FamilyOption({ label, detail, checked, valueLabel, value, onToggle, onValue }: { label: string; detail: string; checked: boolean; valueLabel: string; value: number | null; onToggle: (checked: boolean) => void; onValue: (value: number | null) => void }) { return <div className="space-y-2"><Toggle label={label} detail={detail} checked={checked} onChange={onToggle} /><Label className="block min-h-10">{valueLabel}</Label><FormattedNumberInput disabled={!checked} value={value ?? ""} onValueChange={onValue} /></div>; }
 function MoneyField({ label, kind, value, onChange, error }: { label: string; kind: "currency" | "percent"; value: number; onChange: (value: number) => void; error?: string }) { return <div className={`rounded-xl border bg-background p-4 ${error ? "border-destructive ring-1 ring-destructive/20" : ""}`}><Label>{label}</Label><FormattedNumberInput invalid={Boolean(error)} className="mt-3 h-12 text-lg font-semibold" kind={kind} value={value} onValueChange={(next) => onChange(next ?? 0)} />{error && <p className="mt-2 text-sm text-destructive">{error}</p>}</div>; }
 function CreateFormulaValue({ label, value, detail }: { label: string; value: number; detail?: string }) { return <div className="p-3"><p className="text-xs text-emerald-900/70">{label}</p><p className="mt-1 text-lg font-bold">{formatCurrency(value)}</p>{detail && <p className="mt-1 text-xs text-emerald-900/70">{detail}</p>}</div>; }
 function CreateFormulaSign({ value }: { value: string }) { return <div className="flex min-w-12 items-center justify-center px-1 py-2 text-center text-xs font-bold text-emerald-800">{value}</div>; }

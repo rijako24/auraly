@@ -13,6 +13,9 @@ public class Tenant
     public int MaximumEnrolledDevices { get; set; } = 1;
     [NotMapped] public int ActiveUserCount => AppUsers.Count(user => user.IsActive);
     [NotMapped] public int ActiveEnrolledDeviceCount { get; set; }
+    [NotMapped] public string? LegalName { get; set; }
+    [NotMapped] public string? Nit { get; set; }
+    [NotMapped] public string? VerificationDigit { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
     

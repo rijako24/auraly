@@ -149,18 +149,22 @@ public static class PriceSegmentsApi
     {
         var identity = context.User.ToPricingIdentity();
         if (!identity.Permissions.Contains("pricing.segments.manage")) return Results.Forbid();
+        var name = request.Name?.Trim();
+        if (string.IsNullOrWhiteSpace(name) || name.Length > 120)
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["name"] = ["El nombre es obligatorio y admite máximo 120 caracteres."] });
         var strategy = NormalizeChannelStrategy(request.ChannelStrategy);
         var value = ValidateChannelValue(strategy, request.ChannelValue);
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(ct);
         await using var command = new SqlCommand("""
-            UPDATE dbo.PriceChannels SET Strategy=@Strategy,Value=@Value
+            UPDATE dbo.PriceChannels SET Name=@Name,Strategy=@Strategy,Value=@Value
             WHERE PriceChannelId=@Id AND BusinessId=@BusinessId;
             IF @@ROWCOUNT=0 THROW 51004,'Segment not found',1;
             """, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
         command.Parameters.AddWithValue("@Id", id);
+        command.Parameters.AddWithValue("@Name", name);
         command.Parameters.AddWithValue("@Strategy", strategy);
         command.Parameters.AddWithValue("@Value", (object?)value ?? DBNull.Value);
         try
@@ -197,6 +201,7 @@ public static class PriceSegmentsApi
     {
         "TieredProductPrice" => "TieredProductPrice",
         "PercentageOverBasePrice" => "PercentageOverBasePrice",
+        "PercentageBelowBasePrice" => "PercentageBelowBasePrice",
         "PercentageOverAverageCost" => "PercentageOverAverageCost",
         "FixedMarginOverAverageCost" => "FixedMarginOverAverageCost",
         "SellAtAverageCost" => "SellAtAverageCost",
@@ -205,7 +210,9 @@ public static class PriceSegmentsApi
 
     private static decimal? ValidateChannelValue(string strategy, decimal? value) => strategy switch
     {
-        "PercentageOverBasePrice" or "PercentageOverAverageCost" when value is >= -100 and <= 1000 => value,
+        "PercentageOverBasePrice" when value is >= -100 and <= 1000 => value,
+        "PercentageOverAverageCost" when value is >= 0 and <= 1000 => value,
+        "PercentageBelowBasePrice" when value is >= 0 and <= 100 => value,
         "FixedMarginOverAverageCost" when value is >= 0 and < 100 => value,
         "TieredProductPrice" or "SellAtAverageCost" => null,
         _ => throw new BadHttpRequestException("El valor no es válido para el modo de precio seleccionado.")
@@ -222,4 +229,4 @@ public sealed record SavePriceSegmentRequest(string Name,
 public sealed record CreatePriceSegmentItemRequest(Guid ProductId, decimal Amount,
     decimal MinimumQuantity, DateTimeOffset? ValidFrom, DateTimeOffset? ValidUntil);
 public sealed record SavePriceSegmentItemRequest(decimal Amount, decimal MinimumQuantity, DateTimeOffset? ValidFrom, DateTimeOffset? ValidUntil, bool Excluded);
-public sealed record SavePriceChannelSettingsRequest(string ChannelStrategy, decimal? ChannelValue);
+public sealed record SavePriceChannelSettingsRequest(string Name, string ChannelStrategy, decimal? ChannelValue);

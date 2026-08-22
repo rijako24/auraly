@@ -62,6 +62,7 @@ export function PosLocalLogin({
       <div className="absolute -bottom-52 -right-36 h-[38rem] w-[38rem] rounded-full bg-cyan-300/10 blur-3xl" />
       <form
         onSubmit={submit}
+        autoComplete="off"
         className="relative w-full max-w-md overflow-hidden rounded-[2rem] border border-white/10 bg-[#0b2428]/95 p-7 shadow-2xl"
       >
         <div className="flex items-start justify-between gap-4">
@@ -107,9 +108,10 @@ export function PosLocalLogin({
                 <UserRound className="h-5 w-5 text-teal-200" />
                 <input
                   ref={usernameRef}
+                  name="auraly-pos-local-user"
                   value={username}
                   onChange={(event) => setUsername(event.target.value)}
-                  autoComplete="username"
+                  autoComplete="off"
                   className="h-12 min-w-0 flex-1 bg-transparent font-semibold outline-none placeholder:text-slate-500"
                   placeholder="Tu usuario"
                 />
@@ -120,10 +122,11 @@ export function PosLocalLogin({
               <span className="flex h-13 items-center gap-3 rounded-xl border border-white/15 bg-white/5 px-4 focus-within:border-teal-300 focus-within:ring-4 focus-within:ring-teal-300/10">
                 <LockKeyhole className="h-5 w-5 text-teal-200" />
                 <input
+                  name="auraly-pos-local-secret"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                   type="password"
-                  autoComplete="current-password"
+                  autoComplete="new-password"
                   className="h-12 min-w-0 flex-1 bg-transparent font-semibold outline-none placeholder:text-slate-500"
                   placeholder="Tu contraseña"
                 />

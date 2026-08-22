@@ -11,11 +11,15 @@ import { sellerOrdersApi } from "@/services/api/seller-orders";
 import { PwaInstallPrompt } from "@/components/pwa/pwa-install-prompt";
 import { shouldOfferPwaInstall } from "@/lib/pwa-install-visibility";
 import { useAuthStore } from "@/stores/auth-store";
+import { useBusinessContextStore } from "@/stores/business-context-store";
+import { ensurePosApprovalPushSubscription } from "@/lib/pos-approval-push";
 
 export function PwaProvider({ children }: { children: ReactNode }) {
   const [online,setOnline]=useState(true),[syncing,setSyncing]=useState(false);
   const pathname=usePathname();
   const isAuthenticated=useAuthStore(state=>state.isAuthenticated);
+  const permissions=useAuthStore(state=>state.user?.permissions??[]);
+  const businessId=useBusinessContextStore(state=>state.selectedBusinessId);
   const synchronizing=useRef(false);
   useEffect(()=>{
     let active=true;
@@ -26,5 +30,9 @@ export function PwaProvider({ children }: { children: ReactNode }) {
     void synchronize();
     return()=>{active=false;window.removeEventListener("online",connected);window.removeEventListener("offline",disconnected);window.removeEventListener("focus",synchronize);document.removeEventListener("visibilitychange",visible)};
   },[]);
+  useEffect(()=>{
+    if(!isAuthenticated||!businessId||!permissions.includes("pos.approvals.receive_notifications")||typeof Notification==="undefined"||Notification.permission!=="granted")return;
+    void ensurePosApprovalPushSubscription().catch(()=>undefined);
+  },[isAuthenticated,businessId,permissions]);
   return <>{children}{shouldOfferPwaInstall(isAuthenticated,pathname)&&<PwaInstallPrompt />}{!online&&<div role="status" className="fixed inset-x-3 bottom-3 z-[100] mx-auto flex max-w-md items-center justify-center gap-2 rounded-2xl bg-amber-950 px-4 py-3 text-sm font-medium text-white shadow-2xl"><CloudOff className="h-4 w-4"/>Sin conexión. Los cambios se guardarán y subirán automáticamente.</div>}{online&&syncing&&<div role="status" className="fixed bottom-3 right-3 z-[100] rounded-full bg-slate-950 px-3 py-2 text-xs text-white shadow-xl">Sincronizando…</div>}</>;
 }

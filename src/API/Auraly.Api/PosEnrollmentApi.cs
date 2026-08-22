@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Auraly.Application.Authentication;
 using Auraly.Application.Organization;
 using Auraly.Contracts.Organization;
 
@@ -48,6 +49,13 @@ public static class PosEnrollmentApi
                 exception.Message,
                 statusCode: 409,
                 title: "PosEnrollmentConflict");
+        }
+        catch (OfflineAuthenticationLeaseConfigurationException exception)
+        {
+            return Results.Problem(
+                exception.Message,
+                statusCode: StatusCodes.Status503ServiceUnavailable,
+                title: "PosOfflineAccessUnavailable");
         }
     }
 }

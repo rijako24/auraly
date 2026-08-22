@@ -77,6 +77,12 @@ public sealed class OrderBatchService(
             try
             {
                 var order = await orders.GetAsync(actor, orderId, cancellationToken);
+                if (order.WarehouseId is null)
+                    throw new OrderConflictException(
+                        "El pedido no tiene una bodega de venta asignada y no puede emitirse.");
+                if (order.WarehouseId != request.WarehouseId)
+                    throw new OrderConflictException(
+                        "El pedido pertenece a otra bodega de venta. Ábrelo desde la bodega asignada.");
                 if (order.InvoiceDocumentId is not null)
                 {
                     results.Add(new(

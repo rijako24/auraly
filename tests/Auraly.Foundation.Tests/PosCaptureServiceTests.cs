@@ -62,6 +62,23 @@ public sealed class PosCaptureServiceTests
     }
 
     [Fact]
+    public async Task Blocking_warehouse_does_not_add_a_product_with_zero_inventory()
+    {
+        await WithServiceAsync(async (service, _, scope, productId, customerId, availability) =>
+        {
+            availability.Response = new(
+                productId, scope.WarehouseId.Value, 1m, 0m, true, false, "Insufficient");
+
+            var result = await service.CaptureAsync(
+                "770123", scope, customerId, false, Guid.NewGuid());
+
+            Assert.Equal(PosCaptureStatus.InsufficientInventory, result.Status);
+            Assert.Equal(0m, result.Availability!.AvailableQuantity);
+            Assert.Empty(result.Draft!.Lines);
+        });
+    }
+
+    [Fact]
     public async Task Blocking_warehouse_does_not_add_a_line_when_network_is_unavailable()
     {
         await WithServiceAsync(async (service, _, scope, _, customerId, availability) =>

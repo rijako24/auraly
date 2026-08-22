@@ -23,7 +23,12 @@ public sealed record DecidePosApprovalRequest(bool Approve);
 
 public sealed record AuthorizePosApprovalLocallyRequest(string Secret);
 
-public sealed record ConfigureSupervisorCredentialRequest(string Secret);
+public sealed record ConfigureSupervisorCredentialRequest(string Secret, int? ValidityHours = null);
+
+public sealed record SupervisorCredentialStatusView(
+    bool IsConfigured,
+    DateTimeOffset? CreatedAt,
+    DateTimeOffset? ValidUntil);
 
 
 public sealed record ReservePosApprovalForDeviceRequest(

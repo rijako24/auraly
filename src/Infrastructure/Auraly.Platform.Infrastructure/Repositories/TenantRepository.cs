@@ -18,6 +18,7 @@ public class TenantRepository : ITenantRepository
             .Include(t => t.AppUsers)
             .FirstOrDefaultAsync(t => t.TenantId == tenantId, ct);
         if (tenant is not null) await LoadDeviceCountAsync(tenant, ct);
+        if (tenant is not null) await LoadLegalIdentityAsync(tenant, ct);
         return tenant;
     }
 
@@ -54,6 +55,29 @@ public class TenantRepository : ITenantRepository
             .SqlQuery<int>($"SELECT COUNT(*) AS [Value] FROM dbo.EnrolledDevices WHERE TenantId={tenant.TenantId} AND IsActive=1")
             .SingleAsync(ct);
     }
+
+    private async Task LoadLegalIdentityAsync(Tenant tenant, CancellationToken ct)
+    {
+        var profile = await _context.Database.SqlQuery<LegalIdentityRow>($"""
+            SELECT LegalName,Nit,VerificationDigit
+            FROM dbo.TenantLegalProfiles WHERE TenantId={tenant.TenantId}
+            """).SingleOrDefaultAsync(ct);
+        tenant.LegalName = profile?.LegalName;
+        tenant.Nit = profile?.Nit;
+        tenant.VerificationDigit = profile?.VerificationDigit;
+    }
+
+    public Task UpdateLegalIdentityAsync(Guid tenantId, string legalName, string nit, string verificationDigit, DateTimeOffset now, CancellationToken ct = default)
+    {
+        var normalizedNit = new string(nit.Where(char.IsDigit).ToArray());
+        return _context.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE dbo.TenantLegalProfiles
+            SET LegalName={legalName},Nit={nit},NormalizedNit={normalizedNit},VerificationDigit={verificationDigit},UpdatedAt={now}
+            WHERE TenantId={tenantId};
+            """, ct);
+    }
+
+    private sealed record LegalIdentityRow(string LegalName, string Nit, string VerificationDigit);
 
     public Task RevokeActiveAuthenticationSessionsAsync(Guid tenantId, DateTimeOffset now, CancellationToken ct = default) =>
         _context.Database.ExecuteSqlInterpolatedAsync($@"

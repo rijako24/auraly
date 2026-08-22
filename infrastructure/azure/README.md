@@ -101,9 +101,14 @@ Primero solicitar los secretos sin dejarlos en texto plano:
 $version = '0.1.0-rc6'
 $sqlPassword = Read-Host 'SQL administrator password' -AsSecureString
 $jwtSecret = Read-Host 'JWT secret' -AsSecureString
+$offlineLeaseSigningPrivateKeyPem = Read-Host 'Offline lease signing private key (PKCS#8 PEM)' -AsSecureString
+$webPushPublicKey = Read-Host 'Web Push VAPID public key (Base64 URL)'
+$webPushPrivateKey = Read-Host 'Web Push VAPID private key (Base64 URL)' -AsSecureString
 $fiscalProtectionKey = Read-Host 'Fiscal protection key (Base64, 32 bytes)' -AsSecureString
 $whatsAppVerifyToken = Read-Host 'WhatsApp verify token' -AsSecureString
 ```
+
+Las claves de firma offline y VAPID son obligatorias para DEV y PROD. Deben obtenerse del almacén secreto del ambiente y conservarse entre despliegues: rotar VAPID invalida las suscripciones Push existentes y rotar la firma offline invalida los accesos offline emitidos con la clave anterior. Nunca se guardan en el repositorio ni en el manifiesto del release.
 
 Desplegar una sola vez el recurso compartido y luego cada ambiente. Antes de `Apply`, ejecutar `Validate` y revisar `WhatIf`:
 
@@ -112,9 +117,9 @@ Desplegar una sola vez el recurso compartido y luego cada ambiente. Antes de `Ap
 .\infrastructure\azure\Deploy-Auraly.ps1 -Mode WhatIf  -Scope Shared -ReleaseVersion $version -IncludeSharedAudio
 .\infrastructure\azure\Deploy-Auraly.ps1 -Mode Apply   -Scope Shared -ReleaseVersion $version -IncludeSharedAudio
 
-.\infrastructure\azure\Deploy-Auraly.ps1 -Mode Validate -Scope Dev -ReleaseVersion $version -SqlAdministratorPassword $sqlPassword -JwtSecret $jwtSecret -FiscalSecretProtectionKey $fiscalProtectionKey -WhatsAppVerifyToken $whatsAppVerifyToken -SeedAppConfiguration
-.\infrastructure\azure\Deploy-Auraly.ps1 -Mode WhatIf  -Scope Dev -ReleaseVersion $version -SqlAdministratorPassword $sqlPassword -JwtSecret $jwtSecret -FiscalSecretProtectionKey $fiscalProtectionKey -WhatsAppVerifyToken $whatsAppVerifyToken -SeedAppConfiguration
-.\infrastructure\azure\Deploy-Auraly.ps1 -Mode Apply   -Scope Dev -ReleaseVersion $version -SqlAdministratorPassword $sqlPassword -JwtSecret $jwtSecret -FiscalSecretProtectionKey $fiscalProtectionKey -WhatsAppVerifyToken $whatsAppVerifyToken -SeedAppConfiguration
+.\infrastructure\azure\Deploy-Auraly.ps1 -Mode Validate -Scope Dev -ReleaseVersion $version -SqlAdministratorPassword $sqlPassword -JwtSecret $jwtSecret -OfflineLeaseSigningPrivateKeyPem $offlineLeaseSigningPrivateKeyPem -WebPushPublicKey $webPushPublicKey -WebPushPrivateKey $webPushPrivateKey -FiscalSecretProtectionKey $fiscalProtectionKey -WhatsAppVerifyToken $whatsAppVerifyToken -SeedAppConfiguration
+.\infrastructure\azure\Deploy-Auraly.ps1 -Mode WhatIf  -Scope Dev -ReleaseVersion $version -SqlAdministratorPassword $sqlPassword -JwtSecret $jwtSecret -OfflineLeaseSigningPrivateKeyPem $offlineLeaseSigningPrivateKeyPem -WebPushPublicKey $webPushPublicKey -WebPushPrivateKey $webPushPrivateKey -FiscalSecretProtectionKey $fiscalProtectionKey -WhatsAppVerifyToken $whatsAppVerifyToken -SeedAppConfiguration
+.\infrastructure\azure\Deploy-Auraly.ps1 -Mode Apply   -Scope Dev -ReleaseVersion $version -SqlAdministratorPassword $sqlPassword -JwtSecret $jwtSecret -OfflineLeaseSigningPrivateKeyPem $offlineLeaseSigningPrivateKeyPem -WebPushPublicKey $webPushPublicKey -WebPushPrivateKey $webPushPrivateKey -FiscalSecretProtectionKey $fiscalProtectionKey -WhatsAppVerifyToken $whatsAppVerifyToken -SeedAppConfiguration
 ```
 
 Para PROD se repiten las últimas tres líneas con `-Scope Prod`. No usar `-Scope All` en una liberación normal: la promoción debe permitir validar DEV antes de tocar PROD.

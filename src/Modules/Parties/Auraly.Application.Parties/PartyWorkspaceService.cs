@@ -30,9 +30,6 @@ public interface IPartyWorkspaceStore
     Task<PartyWorkspaceItem> SetStatusAsync(
         PartyActorIdentity actor, Guid partyId, SetPartyBusinessStatusRequest request,
         byte[] rowVersion, DateTimeOffset now, CancellationToken ct);
-    Task<CustomerRoleDetail> SaveCustomerBillingAsync(
-        PartyActorIdentity actor, Guid partyId, SaveCustomerBillingRequest request,
-        DateTimeOffset now, CancellationToken ct);
 }
 
 public sealed class PartyWorkspaceService(
@@ -148,6 +145,36 @@ public sealed class PartyWorkspaceService(
         Translate(() => { PartyValidation.RequireText(request.DisplayName, "DisplayName", 200); return true; });
         if (request.PartyType == PartyTypes.Organization && string.IsNullOrWhiteSpace(request.LegalName))
             throw new PartyValidationException("Legal name is required for an organization.");
+        if (request.Sites is not null)
+        {
+            if (request.Sites.Count == 0) throw new PartyValidationException("A customer must keep at least one site.");
+            if (request.Sites.Count(site => site.Site.IsPrimary) != 1)
+                throw new PartyValidationException("Exactly one customer site must be primary.");
+            foreach (var site in request.Sites) ValidateSite(site.Site);
+        }
+        if (request.Customer?.PriceChannelId == Guid.Empty)
+            throw new PartyValidationException("PriceChannelId must be null or a valid identifier.");
+        if (request.Customer?.ValidUntil is { } validUntil &&
+            request.Customer.ValidFrom is { } validFrom && validUntil <= validFrom)
+            throw new PartyValidationException("La fecha final del canal debe ser posterior a la fecha inicial.");
+        if (request.Customer is not null)
+            Require(actor, PartyPermissionCodes.ManagePricing);
+        if (request.Seller is not null)
+        {
+            Translate(() => PartyValidation.NormalizeCode(request.Seller.Code, "SellerCode", 32));
+            if (request.Seller.DefaultCommissionPercent is < 0 or > 100)
+                throw new PartyValidationException("Default commission must be between 0 and 100.");
+            if (request.Seller.CommissionBasis is not "SaleBeforeTax" and not "SaleAfterTax" and not "GrossMargin")
+                throw new PartyValidationException("Commission basis is invalid.");
+            if (request.Seller.CommissionTrigger is not "Sale" and not "Collection")
+                throw new PartyValidationException("Commission trigger is invalid.");
+        }
+        if (request.Carrier is not null)
+        {
+            Translate(() => PartyValidation.NormalizeCode(request.Carrier.Code, "CarrierCode", 32));
+            if (request.Carrier.TransportationMode is not "Road" and not "Air" and not "Maritime" and not "Other")
+                throw new PartyValidationException("Transportation mode is invalid.");
+        }
         var updated = await store.UpdateAsync(actor, partyId, request, RowVersion(request.RowVersion), time.GetUtcNow(), ct);
         await synchronization.DispatchPendingAsync(actor.TenantId, actor.BusinessId, CancellationToken.None);
         return updated;
@@ -159,17 +186,6 @@ public sealed class PartyWorkspaceService(
         Require(actor, PartyWorkspacePermissionCodes.Deactivate);
         if (partyId == Guid.Empty) throw new PartyValidationException("PartyId is required.");
         var updated = await store.SetStatusAsync(actor, partyId, request, RowVersion(request.RowVersion), time.GetUtcNow(), ct);
-        await synchronization.DispatchPendingAsync(actor.TenantId, actor.BusinessId, CancellationToken.None);
-        return updated;
-    }
-
-    public async Task<CustomerRoleDetail> SaveCustomerBillingAsync(
-        PartyActorIdentity actor, Guid partyId, SaveCustomerBillingRequest request, CancellationToken ct)
-    {
-        Require(actor, PartyWorkspacePermissionCodes.Update);
-        if (partyId == Guid.Empty) throw new PartyValidationException("PartyId is required.");
-        var updated = await store.SaveCustomerBillingAsync(
-            actor, partyId, request, time.GetUtcNow(), ct);
         await synchronization.DispatchPendingAsync(actor.TenantId, actor.BusinessId, CancellationToken.None);
         return updated;
     }

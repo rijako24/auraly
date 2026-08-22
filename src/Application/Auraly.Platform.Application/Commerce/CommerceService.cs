@@ -17,19 +17,22 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
     private readonly IPromotionPricingService _promotions;
     private readonly IProductCatalogAvailabilityService _availability;
     private readonly IProductCandidateRetriever? _candidateRetriever;
+    private readonly ICommerceOrderWorkspaceResolver? _workspaceResolver;
 
     public CommerceService(
         IUnitOfWork unitOfWork,
         ICommerceAdapterFactory adapterFactory,
         IPromotionPricingService promotions,
         IProductCatalogAvailabilityService availability,
-        IProductCandidateRetriever? candidateRetriever = null)
+        IProductCandidateRetriever? candidateRetriever = null,
+        ICommerceOrderWorkspaceResolver? workspaceResolver = null)
     {
         _unitOfWork = unitOfWork;
         _adapterFactory = adapterFactory;
         _promotions = promotions;
         _availability = availability;
         _candidateRetriever = candidateRetriever;
+        _workspaceResolver = workspaceResolver;
     }
     public async Task<ProductCategoryPage> BrowseCategoriesAsync(
         AgentConversationContext ctx,
@@ -504,6 +507,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
 
         var adapterContext = await BuildContextAsync(ctx.BusinessId, ctx.AgentId, ctx.ConversationId, ctx.Config, draft.CustomerPhoneSnapshot, ctx.CommerceCustomer, ctx.RecipientPhoneNumberId, ct);
         adapterContext = adapterContext with { WarehouseCode = draft.CommerceWarehouseCode ?? adapterContext.WarehouseCode };
+        EnsureWorkspace(adapterContext);
         var order = await ConvertDraftToOrderAsync(draft, adapterContext, customerConfirmed: true, ct);
         await SyncExternalOrderIfNeededAsync(order, adapterContext, ct);
         await _unitOfWork.SaveChangesAsync(ct);
@@ -528,6 +532,7 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             ?? throw new InvalidOperationException("Order draft not found for paid checkout.");
         var adapterContext = await BuildContextAsync(draft.BusinessId, draft.AgentId, draft.ConversationId, config, draft.CustomerPhoneSnapshot, null, null, ct);
         adapterContext = adapterContext with { WarehouseCode = draft.CommerceWarehouseCode };
+        EnsureWorkspace(adapterContext);
         var order = await ConvertDraftToOrderAsync(draft, adapterContext, customerConfirmed: true, ct);
         order.PaymentTransactionId = paymentTransactionId;
         order.Status = OrderStatus.Confirmed;
@@ -669,6 +674,9 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
     {
         var (provider, connection) = await ResolveCommerceConnectionAsync(businessId, config, ct);
 
+        var workspace = _workspaceResolver is null
+            ? null
+            : await _workspaceResolver.ResolveAsync(businessId, ct);
         return new CommerceAdapterContext(
             businessId,
             agentId ?? Guid.Empty,
@@ -677,7 +685,9 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             connection,
             customerPhone,
             customer,
-            await ResolveWarehouseCodeAsync(businessId, provider, connection, recipientPhoneNumberId, ct));
+            await ResolveWarehouseCodeAsync(businessId, provider, connection, recipientPhoneNumberId, ct)
+                ?? workspace?.WarehouseCode,
+            workspace?.WarehouseId);
     }
 
     private async Task<string?> ResolveWarehouseCodeAsync(
@@ -746,6 +756,15 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
         var existing = await GetActiveDraftAsync(ctx, ct);
         if (existing is not null)
         {
+            EnsureWorkspace(adapterContext);
+            var scopedAttributes = WithWarehouse(existing.CustomAttributesJson, adapterContext.WarehouseId!.Value);
+            if (!string.Equals(existing.CustomAttributesJson, scopedAttributes, StringComparison.Ordinal))
+            {
+                existing.CustomAttributesJson = scopedAttributes;
+                existing.UpdatedAt = DateTime.UtcNow;
+                await _unitOfWork.OrderDrafts.UpdateAsync(existing, ct);
+                await _unitOfWork.SaveChangesAsync(ct);
+            }
             if (adapterContext.Provider == CommerceProvider.Mantis
                 && !string.IsNullOrWhiteSpace(adapterContext.WarehouseCode))
             {
@@ -773,6 +792,8 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             CommerceWarehouseCode = adapterContext.WarehouseCode,
             FulfillmentMode = adapterContext.Provider == CommerceProvider.Local ? OrderFulfillmentMode.Local : OrderFulfillmentMode.External,
             Currency = GetConnectionCurrency(adapterContext.Connection) ?? "COP",
+            CustomAttributesJson = WithWarehouse(null, adapterContext.WarehouseId
+                ?? throw new InvalidOperationException("El canal no tiene una bodega de venta activa configurada.")),
             CreatedAt = DateTime.UtcNow
         };
 
@@ -1126,6 +1147,28 @@ public sealed class CommerceService : ICommerceService, IProductLookupService
             ["shipping_cost"] = shippingCost,
             ["facts"] = facts
         };
+        return JsonSerializer.Serialize(custom);
+    }
+
+    private static void EnsureWorkspace(CommerceAdapterContext context)
+    {
+        if (!context.WarehouseId.HasValue || context.WarehouseId.Value == Guid.Empty)
+            throw new InvalidOperationException(
+                "El canal no tiene una bodega de venta activa configurada. Configúrala antes de crear pedidos.");
+    }
+
+    private static string WithWarehouse(string? json, Guid warehouseId)
+    {
+        var custom = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(json))
+        {
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind == JsonValueKind.Object)
+                foreach (var property in document.RootElement.EnumerateObject())
+                    custom[property.Name] = property.Value.Clone();
+        }
+        using var warehouse = JsonDocument.Parse(JsonSerializer.Serialize(warehouseId));
+        custom["WarehouseId"] = warehouse.RootElement.Clone();
         return JsonSerializer.Serialize(custom);
     }
 

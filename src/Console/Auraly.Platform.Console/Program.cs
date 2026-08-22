@@ -308,6 +308,7 @@ services.AddScoped<IUsageBillingService, ConsoleUsageBillingService>();
 services.AddScoped<IProductCatalogAvailabilityService, ProductCatalogAvailabilityService>();
 
 services.AddScoped<ICommerceService, CommerceService>();
+services.AddScoped<ICommerceOrderWorkspaceResolver, Auraly.Platform.Infrastructure.Commerce.CommerceOrderWorkspaceResolver>();
 services.AddScoped<ICommerceCustomerResolver, CommerceCustomerResolver>();
 
 services.AddScoped<IProductLookupService>(provider => (IProductLookupService)provider.GetRequiredService<ICommerceService>());

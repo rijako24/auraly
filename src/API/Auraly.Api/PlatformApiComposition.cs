@@ -306,6 +306,7 @@ public static class PlatformApiComposition
         builder.Services.AddScoped<IProductCatalogAvailabilityService, ProductCatalogAvailabilityService>();
 
         builder.Services.AddScoped<ICommerceService, CommerceService>();
+        builder.Services.AddScoped<ICommerceOrderWorkspaceResolver, Auraly.Platform.Infrastructure.Commerce.CommerceOrderWorkspaceResolver>();
         builder.Services.AddScoped<ICommerceCustomerResolver, CommerceCustomerResolver>();
 
         builder.Services.AddScoped<IProductLookupService>(provider => (IProductLookupService)provider.GetRequiredService<ICommerceService>());

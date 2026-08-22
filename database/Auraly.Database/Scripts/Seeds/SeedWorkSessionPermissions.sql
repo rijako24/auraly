@@ -30,7 +30,7 @@ JOIN dbo.Permissions p ON p.Resource IN
     N'work-sessions.close'
 )
 WHERE r.IsActive=1
-  AND r.NormalizedName=N'ADMINISTRATOR'
+  AND r.NormalizedName IN(N'ADMINISTRATOR',N'TENANTADMINISTRATOR')
   AND NOT EXISTS
   (
       SELECT 1 FROM dbo.RolePermissions rp
@@ -42,6 +42,8 @@ SELECT NEWID(),N'WorkSessions',v.Action,v.Resource,v.Description,SYSUTCDATETIME(
 FROM (VALUES
     (N'ManageCash',N'work-sessions.cash.manage',
      N'Registrar entradas y salidas de efectivo en la caja propia'),
+    (N'OpenCashDrawer',N'work-sessions.cash.drawer.open',
+     N'Abrir manualmente el cajón de dinero desde el punto de venta'),
     (N'ConfigureCashReasons',N'work-sessions.cash-reasons.configure',
      N'Configurar conceptos contables de entradas y salidas de caja')
 ) v(Action,Resource,Description)
@@ -56,9 +58,10 @@ FROM dbo.AppRoles r
 JOIN dbo.Permissions p ON p.Resource IN
 (
     N'work-sessions.cash.manage',
+    N'work-sessions.cash.drawer.open',
     N'work-sessions.cash-reasons.configure'
 )
-WHERE r.IsActive=1 AND r.NormalizedName=N'ADMINISTRATOR'
+WHERE r.IsActive=1 AND r.NormalizedName IN(N'ADMINISTRATOR',N'TENANTADMINISTRATOR')
   AND NOT EXISTS
   (
       SELECT 1 FROM dbo.RolePermissions rp

@@ -163,12 +163,14 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
               OrderId,BusinessId,Source,FulfillmentMode,Status,
               CustomerNameSnapshot,CustomerDocumentSnapshot,Currency,
               Subtotal,DiscountTotal,Total,CustomerConfirmed,
-              ExternalDocumentNumber,CreatedAt)
+              ExternalDocumentNumber,CreatedAt,CustomAttributesJson)
             VALUES
               (@FirstOrderId,@BusinessId,0,0,2,N'Cliente uno',N'1001',N'COP',
-               10000,0,10000,1,N'PED-LOTE-01',DATEADD(day,-2,SYSUTCDATETIME())),
+               10000,0,10000,1,N'PED-LOTE-01',DATEADD(day,-2,SYSUTCDATETIME()),
+               CONCAT(N'{"WarehouseId":"',CONVERT(nvarchar(36),@WarehouseId),N'"}')),
               (@SecondOrderId,@BusinessId,0,0,2,N'Cliente dos',N'1002',N'COP',
-               20000,0,20000,1,N'PED-LOTE-02',DATEADD(day,-1,SYSUTCDATETIME()));
+               20000,0,20000,1,N'PED-LOTE-02',DATEADD(day,-1,SYSUTCDATETIME()),
+               CONCAT(N'{"WarehouseId":"',CONVERT(nvarchar(36),@WarehouseId),N'"}'));
 
             INSERT dbo.OrderItems(
               OrderItemId,OrderId,BusinessId,ProductId,Sku,ProductCodeSnapshot,

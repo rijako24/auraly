@@ -19,8 +19,9 @@ public sealed class RsaOfflineAuthenticationLeaseSigner :
     IOfflineAuthenticationLeaseTrustProvider,
     IDisposable
 {
-    private readonly RSA _key;
-    private readonly string _keyId;
+    private readonly OfflineAuthenticationLeaseSigningOptions _options;
+    private RSA? _key;
+    private string? _keyId;
     private readonly object _sync = new();
     public IReadOnlyDictionary<string, string> TrustedPublicKeys
     {
@@ -28,9 +29,10 @@ public sealed class RsaOfflineAuthenticationLeaseSigner :
         {
             lock (_sync)
             {
+                EnsureInitialized();
                 return new Dictionary<string, string>(StringComparer.Ordinal)
                 {
-                    [_keyId] = _key.ExportSubjectPublicKeyInfoPem()
+                    [_keyId!] = _key!.ExportSubjectPublicKeyInfoPem()
                 };
             }
         }
@@ -39,26 +41,7 @@ public sealed class RsaOfflineAuthenticationLeaseSigner :
     public RsaOfflineAuthenticationLeaseSigner(
         IOptions<OfflineAuthenticationLeaseSigningOptions> options)
     {
-        var value = options.Value;
-        if (string.IsNullOrWhiteSpace(value.KeyId) ||
-            string.IsNullOrWhiteSpace(value.PrivateKeyPem))
-            throw new OfflineAuthenticationLeaseConfigurationException(
-                $"{OfflineAuthenticationLeaseSigningOptions.SectionName}:KeyId and PrivateKeyPem are required.");
-
-        _keyId = value.KeyId.Trim();
-        _key = RSA.Create();
-        try
-        {
-            _key.ImportFromPem(value.PrivateKeyPem);
-            if (_key.KeySize < 2048)
-                throw new OfflineAuthenticationLeaseConfigurationException(
-                    "The offline lease RSA key must contain at least 2048 bits.");
-        }
-        catch
-        {
-            _key.Dispose();
-            throw;
-        }
+        _options = options.Value;
     }
 
     public SignedOfflineAuthenticationLease Sign(
@@ -68,19 +51,48 @@ public sealed class RsaOfflineAuthenticationLeaseSigner :
         byte[] signature;
         lock (_sync)
         {
-            signature = _key.SignData(
+            EnsureInitialized();
+            signature = _key!.SignData(
                 bytes,
                 HashAlgorithmName.SHA256,
                 RSASignaturePadding.Pss);
         }
         return new SignedOfflineAuthenticationLease(
-            _keyId,
+            _keyId!,
             OfflineAuthenticationLeaseAlgorithms.RsaPssSha256,
             OfflineAuthenticationLeaseTokenCodec.Encode(bytes),
             OfflineAuthenticationLeaseTokenCodec.Encode(signature));
     }
 
-    public void Dispose() => _key.Dispose();
+    private void EnsureInitialized()
+    {
+        if (_key is not null) return;
+        if (string.IsNullOrWhiteSpace(_options.KeyId) ||
+            string.IsNullOrWhiteSpace(_options.PrivateKeyPem))
+            throw new OfflineAuthenticationLeaseConfigurationException(
+                "La firma segura para el acceso sin conexión no está configurada en el servidor.");
+
+        var key = RSA.Create();
+        try
+        {
+            key.ImportFromPem(_options.PrivateKeyPem);
+            if (key.KeySize < 2048)
+                throw new OfflineAuthenticationLeaseConfigurationException(
+                    "La clave de firma para el acceso sin conexión debe ser RSA de al menos 2048 bits.");
+            _keyId = _options.KeyId.Trim();
+            _key = key;
+        }
+        catch
+        {
+            key.Dispose();
+            throw;
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (_sync) _key?.Dispose();
+    }
 }
 
 public sealed class SqlOfflineAuthenticationLeaseStore(

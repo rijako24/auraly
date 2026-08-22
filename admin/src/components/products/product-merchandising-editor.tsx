@@ -9,7 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { useProductCategories, useProducts } from "@/hooks/use-products";
+import { ProductPicker } from "@/components/products/product-picker";
+import { useProductCategories } from "@/hooks/use-products";
+import { useBusinessContextStore } from "@/stores/business-context-store";
 import {
   productMerchandisingApi,
   type LinkedProduct,
@@ -31,6 +33,7 @@ export interface ProductMerchandisingEditorHandle { save: () => Promise<void> }
 
 export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorHandle, { productId: string; embedded?: boolean }>(function ProductMerchandisingEditor({ productId, embedded = false }, ref) {
   const client = useQueryClient();
+  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const config = useQuery({
     queryKey: ["product-merchandising", productId],
     queryFn: () => productMerchandisingApi.get(productId),
@@ -50,14 +53,6 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
   });
   const [showBrandCreate, setShowBrandCreate] = useState(false);
   const [showUnitCreate, setShowUnitCreate] = useState(false);
-  const [linkedSearch, setLinkedSearch] = useState("");
-  const [linkedPage, setLinkedPage] = useState(1);
-  const candidates = useProducts({
-    page: linkedPage,
-    pageSize: 20,
-    search: linkedSearch || undefined,
-    includeInactive: false,
-  });
 
   useEffect(() => {
     if (config.data) {
@@ -189,11 +184,6 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
     });
   }
 
-  const availableCandidates = (candidates.data?.items ?? []).filter(
-    (item) => item.productId !== productId
-      && !form.linkedProducts.some((link) => link.childProductId === item.productId),
-  );
-
   return <section className={embedded ? "" : "overflow-hidden rounded-2xl border bg-card"}>
     {!embedded && <header className="border-b bg-gradient-to-r from-slate-950 to-teal-950 p-5 text-white">
       <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.14em] text-teal-300">
@@ -203,7 +193,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
     </header>}
 
     <div className={`space-y-5 ${embedded ? "" : "p-5"}`}>
-      <Block icon={Tags} title="Clasificacion, marca y unidad" description="Auraly conserva la ruta completa y la unidad real en la que se vende.">
+      <Block id="product-classification" icon={Tags} title="Clasificación, marca y unidad" description="Auraly conserva la ruta completa y la unidad real en la que se vende.">
         <div className="grid gap-3 sm:grid-cols-2">
           {["Área", "Línea", "Grupo", "Subgrupo"].map((label, depth) => {
             const parent = depth === 0 ? null : chain[depth - 1]?.productCategoryId ?? null;
@@ -267,7 +257,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
         </div>}
       </div></Block>
 
-      <Block icon={Barcode} title="Captura, cantidad y balanza" description="Varios codigos de barras y reglas de cantidad en un mismo lugar.">
+      <Block id="product-sale" icon={Barcode} title="Captura, cantidad y balanza" description="Varios códigos de barras y reglas de cantidad en un mismo lugar.">
         <div className="flex gap-2">
           <Input value={barcode} onChange={(event) => setBarcode(event.target.value)} onKeyDown={(event) => {
             if (event.key === "Enter") { event.preventDefault(); addBarcode(); }
@@ -284,6 +274,14 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
         </div>
       <div className="mt-5 grid gap-3 border-t pt-5 md:grid-cols-3">
         <Toggle
+          label="Controla inventario"
+          detail={form.link?.sharesInventory ? `No puede habilitarse porque comparte inventario con ${form.link.parentProductName}. Desactiva esa opcion o desvincula el producto para controlar inventario propio.` : "Compras, ventas, traslados y ajustes cambian sus unidades disponibles."}
+          checked={form.link?.sharesInventory ? false : form.manageInventory}
+          disabled={Boolean(form.link?.sharesInventory)}
+          invalid={Boolean(form.link?.sharesInventory)}
+          onChange={(checked) => setForm({ ...form, manageInventory: checked })}
+        />
+        <Toggle
           label="Permitir venta fraccionada"
           detail={`Permite cantidades decimales para este producto vendido en ${selectedUnit?.name ?? "la unidad seleccionada"}.`}
           checked={form.allowsFractionalSale}
@@ -296,59 +294,23 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
           disabled={!form.allowsFractionalSale}
           onChange={(checked) => setForm({ ...form, isWeighable: checked, scale: checked ? form.scale ?? emptyScale : null })}
         />
-        {form.isWeighable && form.scale && <div className="mt-3 grid gap-4 rounded-xl bg-muted/30 p-4 sm:col-span-3 sm:grid-cols-3">
+        {form.isWeighable && form.scale && <div className="mt-3 grid gap-4 rounded-xl bg-muted/30 p-4 md:col-span-3 md:grid-cols-3">
           <div className="space-y-2"><Label className="flex min-h-10 items-center">Código del producto en la balanza</Label><Input value={form.scale.scaleCode} onChange={(event) => setForm({ ...form, scale: { ...form.scale!, scaleCode: event.target.value } })} placeholder="Ej. 125" /><p className="min-h-8 text-xs text-muted-foreground">También conocido como PLU.</p></div>
           <div className="space-y-2"><Label className="flex min-h-10 items-center">Inicio del código de balanza</Label><Input value={form.scale.barcodePrefix} onChange={(event) => setForm({ ...form, scale: { ...form.scale!, barcodePrefix: event.target.value } })} placeholder="Ej. 20" /><p className="min-h-8 text-xs text-muted-foreground">Prefijo que identifica una etiqueta generada por la balanza.</p></div>
           <div className="space-y-2"><Label className="flex min-h-10 items-center">Decimales del peso</Label><Input type="number" min="0" max="6" value={form.scale.decimalPlaces} onChange={(event) => setForm({ ...form, scale: { ...form.scale!, decimalPlaces: Number(event.target.value) } })} /><p className="min-h-8 text-xs text-muted-foreground">3 interpreta, por ejemplo, 1250 como 1,250 kg.</p></div>
         </div>}
-        <Toggle
-          label="Controla inventario"
-          detail={form.link?.sharesInventory ? `No puede habilitarse porque comparte inventario con ${form.link.parentProductName}. Desactiva esa opcion o desvincula el producto para controlar inventario propio.` : "Compras, ventas, traslados y ajustes cambian sus unidades disponibles."}
-          checked={form.link?.sharesInventory ? false : form.manageInventory}
-          disabled={Boolean(form.link?.sharesInventory)}
-          invalid={Boolean(form.link?.sharesInventory)}
-          onChange={(checked) => setForm({ ...form, manageInventory: checked })}
-        />
       </div></Block>
 
       <div>
-        <Block icon={Link2} title="Familia de productos" description="Relaciona presentaciones, colores o tallas. Cada producto conserva su inventario y precio, salvo que elijas compartirlos.">
+        <Block id="product-family" icon={Link2} title="Familia de productos" description="Relaciona presentaciones, colores o tallas. Cada producto conserva su inventario y precio, salvo que elijas compartirlos.">
           {form.link ? <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
             <p className="font-semibold">Este producto está vinculado a {form.link.parentProductName}</p>
             <p className="mt-1 text-xs">Esta relacion permite encontrar todas las opciones de la familia. El inventario solo se bloquea cuando se comparte con el producto principal.</p>
           </div> : <>
-            <div className="rounded-xl border bg-muted/20 p-3">
-              <Label htmlFor={`linked-search-${productId}`}>Agregar producto a la lista</Label>
-              <Input id={`linked-search-${productId}`} className="mt-2" value={linkedSearch} onChange={(event) => { setLinkedSearch(event.target.value); setLinkedPage(1); }} placeholder="Busca por nombre, código o referencia" />
-              {linkedSearch.trim() && <div className="mt-2 max-h-52 space-y-1 overflow-y-auto rounded-lg border bg-background p-1">
-                {availableCandidates.map((item) => <button key={item.productId} type="button" className="flex w-full items-center justify-between rounded-md px-3 py-2 text-left hover:bg-muted" onClick={() => {
-                  setForm({ ...form, linkedProducts: [...form.linkedProducts, {
-                    childProductId: item.productId,
-                    childProductCode: item.sku ?? "",
-                    childProductName: item.name,
-                    sharesInventory: false,
-                    inventoryFactor: null,
-                    sharesPrice: false,
-                    priceFactor: null,
-                    allowsConversion: false,
-                    conversionFactor: null,
-                  }] });
-                  setLinkedSearch("");
-                }}>
-                  <span><strong className="block text-sm">{item.name}</strong><small className="text-muted-foreground">{item.sku ?? "Sin código"}</small></span>
-                  <span className="flex items-center text-sm font-medium text-primary"><Plus className="mr-1 h-4 w-4" />Agregar</span>
-                </button>)}
-                {!candidates.isLoading && availableCandidates.length === 0 && <p className="p-3 text-sm text-muted-foreground">No hay productos disponibles con esa búsqueda.</p>}
-                {(candidates.data?.totalPages ?? 0) > 1 && <div className="sticky bottom-0 flex items-center justify-between border-t bg-background p-2 text-xs text-muted-foreground">
-                  <Button type="button" size="sm" variant="ghost" disabled={!candidates.data?.hasPreviousPage || candidates.isFetching} onClick={() => setLinkedPage((page) => Math.max(1, page - 1))}>Anterior</Button>
-                  <span>Página {candidates.data?.page ?? linkedPage} de {candidates.data?.totalPages ?? 1} · {candidates.data?.totalCount ?? 0} productos</span>
-                  <Button type="button" size="sm" variant="ghost" disabled={!candidates.data?.hasNextPage || candidates.isFetching} onClick={() => setLinkedPage((page) => page + 1)}>Siguiente</Button>
-                </div>}
-              </div>}
-            </div>
+            {businessId && <div className="rounded-xl border bg-muted/20 p-3"><ProductPicker businessId={businessId} selectedProductIds={new Set(form.linkedProducts.map((item) => item.childProductId))} excludedProductIds={new Set([productId, ...form.linkedProducts.map((item) => item.childProductId)])} disabled={save.isPending} label="Agregar producto a la lista" resultsMode="inline" inputId={`linked-search-${productId}`} onSelect={(product) => setForm({ ...form, linkedProducts: [...form.linkedProducts, { childProductId: product.productId, childProductCode: product.productCode, childProductName: product.productName, sharesInventory: false, inventoryFactor: null, sharesPrice: false, priceFactor: null, allowsConversion: false, conversionFactor: null }] })} /></div>}
 
             <div className="mt-3 space-y-3">
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+              {form.linkedProducts.some((item) => item.allowsConversion) && <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
                 <Label htmlFor={`conversion-loss-${productId}`}>Merma máxima permitida en conversiones (%)</Label>
                 <Input
                   id={`conversion-loss-${productId}`}
@@ -362,7 +324,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
                   placeholder="Ej. 5"
                 />
                 <p className="mt-2 text-xs text-muted-foreground">Se aplica a toda la familia. Una salida nunca puede superar las unidades equivalentes consumidas.</p>
-              </div>
+              </div>}
               {form.linkedProducts.length === 0 && <div className="rounded-xl border border-dashed p-5 text-center text-sm text-muted-foreground">Todavia no has agregado opciones a esta familia.</div>}
               {form.linkedProducts.map((item, index) => <article key={item.childProductId} className="rounded-xl border p-4">
                 <div className="mb-3 flex items-start justify-between gap-3">
@@ -414,13 +376,14 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
   </section>;
 });
 
-function Block({ icon: Icon, title, description, children }: {
+function Block({ id, icon: Icon, title, description, children }: {
+  id?: string;
   icon: typeof Tags;
   title: string;
   description: string;
   children: React.ReactNode;
 }) {
-  return <section className="scroll-mt-5 rounded-2xl border bg-background p-5 shadow-sm">
+  return <section id={id} className="scroll-mt-5 rounded-2xl border bg-background p-5 shadow-sm">
     <div className="mb-4 flex gap-3">
       <span className="rounded-lg bg-primary/10 p-2 text-primary"><Icon className="h-5 w-5" /></span>
       <div><h4 className="font-semibold">{title}</h4><p className="text-xs text-muted-foreground">{description}</p></div>

@@ -134,6 +134,8 @@ export type PosApprovalCreateInput = {
 export type PosApprovalSummary = {
   approvalRequestId: string;
   businessId: string;
+  deviceId: string | null;
+  workSessionId: string | null;
   draftId: string;
   lineId: string | null;
   permissionResource: string;
@@ -168,6 +170,11 @@ export type PosDraft = {
 export type PosCaptureResult = {
   status: "Added" | "NotFound" | "InsufficientInventory" | "OfflineValidationRequired";
   draft: PosDraft | null;
+  availability?: {
+    requestedQuantity: number;
+    availableQuantity: number;
+    isAvailable: boolean;
+  } | null;
 };
 
 export type PosFiscalNumberPreview = {
@@ -343,8 +350,10 @@ export interface PosClient {
     lastSynchronizationAt: string | null;
     lastSynchronizationFailed: boolean;
     catalogUpdatedAt: string | null;
+    permissions?: string[];
   }>;
   synchronizeNow(): Promise<void>;
+  openCashDrawer(): Promise<void>;
   readScaleWeight(): Promise<{ weight: number; unit: string; portName: string }>;
   searchProducts(search?: string, skip?: number, take?: number, customerId?: string | null): Promise<PosCatalogSearchPage>;
   searchCustomers(search?: string, skip?: number, take?: number): Promise<PosCustomerSearchPage>;
@@ -516,6 +525,7 @@ export class PosEdgeClient implements PosClient {
       userId: string | null;
       workSessionId: string | null;
       deviceId: string;
+      permissions: string[];
       fiscalReady: boolean;
       synchronizationInProgress: boolean;
       lastSynchronizationAt: string | null;

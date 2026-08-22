@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Auraly.Application.Authorization;
 using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Contracts.Authorization;
+using Microsoft.AspNetCore.Mvc;
 
 namespace Auraly.Api;
 
@@ -17,9 +18,29 @@ public static class PosApprovalApi
             ClaimsPrincipal principal,
             CreatePosApprovalRequest request,
             PosApprovalService service,
+            PosApprovalWebPushService push,
             CancellationToken cancellationToken) =>
-            await Handle(() => service.CreateAsync(
-                principal.ToPosApprovalIdentity(), request, cancellationToken)));
+            await Handle(async () =>
+            {
+                var created = await service.CreateAsync(principal.ToPosApprovalIdentity(), request, cancellationToken);
+                await push.NotifyAsync(created, cancellationToken);
+                return created;
+            }));
+
+        group.MapGet("/push/public-key", (PosApprovalWebPushService push) =>
+            HandleSync(() => Results.Ok(new { publicKey = push.PublicKey() })));
+        group.MapPut("/push/subscription", async (
+            ClaimsPrincipal principal,
+            PosApprovalPushSubscriptionRequest request,
+            PosApprovalWebPushService push,
+            CancellationToken cancellationToken) =>
+            await HandleNoContent(() => push.SubscribeAsync(principal.ToPosApprovalIdentity(), request, cancellationToken)));
+        group.MapDelete("/push/subscription", async (
+            ClaimsPrincipal principal,
+            [FromBody] PosApprovalPushSubscriptionRequest request,
+            PosApprovalWebPushService push,
+            CancellationToken cancellationToken) =>
+            await HandleNoContent(() => push.UnsubscribeAsync(principal.ToPosApprovalIdentity(), request.Endpoint, cancellationToken)));
 
         group.MapGet("/{approvalRequestId:guid}", async (
             ClaimsPrincipal principal,
@@ -70,9 +91,36 @@ public static class PosApprovalApi
             CancellationToken cancellationToken) =>
         {
             await service.ConfigureCredentialAsync(
-                principal.ToPosApprovalIdentity(), request.Secret, cancellationToken);
+                principal.ToPosApprovalIdentity(), request.Secret, request.ValidityHours, cancellationToken);
             return Results.NoContent();
         });
+
+        group.MapGet("/supervisor-credential", async (
+            ClaimsPrincipal principal,
+            PosApprovalService service,
+            CancellationToken cancellationToken) =>
+            await Handle(() => service.CredentialStatusAsync(
+                principal.ToPosApprovalIdentity(), cancellationToken)));
+
+        group.MapDelete("/supervisor-credential", async (
+            ClaimsPrincipal principal,
+            PosApprovalService service,
+            CancellationToken cancellationToken) =>
+        {
+            await service.RevokeCredentialAsync(
+                principal.ToPosApprovalIdentity(), cancellationToken);
+            return Results.NoContent();
+        });
+
+        group.MapGet("/users/{userId:guid}/supervisor-credential", async (
+            ClaimsPrincipal principal, Guid userId, PosApprovalService service, CancellationToken cancellationToken) =>
+            await Handle(() => service.CredentialStatusForUserAsync(principal.ToPosApprovalIdentity(), userId, cancellationToken)));
+        group.MapPut("/users/{userId:guid}/supervisor-credential", async (
+            ClaimsPrincipal principal, Guid userId, ConfigureSupervisorCredentialRequest request, PosApprovalService service, CancellationToken cancellationToken) =>
+        { await service.ConfigureCredentialForUserAsync(principal.ToPosApprovalIdentity(), userId, request.Secret, request.ValidityHours, cancellationToken); return Results.NoContent(); });
+        group.MapDelete("/users/{userId:guid}/supervisor-credential", async (
+            ClaimsPrincipal principal, Guid userId, PosApprovalService service, CancellationToken cancellationToken) =>
+        { await service.RevokeCredentialForUserAsync(principal.ToPosApprovalIdentity(), userId, cancellationToken); return Results.NoContent(); });
 
         group.MapPost("/synchronization/negotiate", (
             ClaimsPrincipal principal,
@@ -98,18 +146,24 @@ public static class PosApprovalApi
             CreatePosApprovalRequest request,
             HttpContext context,
             PosApprovalService service,
+            PosApprovalWebPushService push,
             CancellationToken cancellationToken) =>
         {
             if (!Guid.TryParse(context.Request.Headers["X-Auraly-User-Id"], out var userId) ||
                 !Guid.TryParse(context.Request.Headers["X-Auraly-Work-Session-Id"], out var workSessionId))
                 return Results.Problem("El dispositivo no identificó el usuario y su sesión.", statusCode: 400, title: "InvalidScope");
-            return await Handle(() => service.CreateForDeviceAsync(
-                RequiredDeviceGuid(principal, PosAuthenticationDefaults.TenantIdClaim),
-                RequiredDeviceGuid(principal, PosAuthenticationDefaults.DeviceIdClaim),
-                userId,
-                workSessionId,
-                request,
-                cancellationToken));
+            return await Handle(async () =>
+            {
+                var created = await service.CreateForDeviceAsync(
+                    RequiredDeviceGuid(principal, PosAuthenticationDefaults.TenantIdClaim),
+                    RequiredDeviceGuid(principal, PosAuthenticationDefaults.DeviceIdClaim),
+                    userId,
+                    workSessionId,
+                    request,
+                    cancellationToken);
+                await push.NotifyAsync(created, cancellationToken);
+                return created;
+            });
         });
 
         device.MapPost("/{approvalRequestId:guid}/reserve", async (
@@ -167,6 +221,18 @@ public static class PosApprovalApi
             var result = await action();
             return result is null ? Results.NotFound() : Results.Ok(result);
         }
+        catch (PosApprovalException exception) { return Problem(exception); }
+    }
+
+    private static IResult HandleSync(Func<IResult> action)
+    {
+        try { return action(); }
+        catch (PosApprovalException exception) { return Problem(exception); }
+    }
+
+    private static async Task<IResult> HandleNoContent(Func<Task> action)
+    {
+        try { await action(); return Results.NoContent(); }
         catch (PosApprovalException exception) { return Problem(exception); }
     }
 

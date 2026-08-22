@@ -143,7 +143,9 @@ private readonly IUnitOfWork _unitOfWork;
         order.Total = orderTotal;
         order.CustomerConfirmed = false;
         order.UpdatedAt = DateTime.UtcNow;
-        order.CustomAttributesJson = BuildOrderCustomAttributes(ctx.Facts, city, shippingCost);
+        order.CustomAttributesJson = MergeCustomAttributes(
+            order.CustomAttributesJson,
+            BuildOrderCustomAttributes(ctx.Facts, city, shippingCost));
         await _unitOfWork.OrderDrafts.UpdateAsync(order, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
@@ -456,6 +458,23 @@ private readonly IUnitOfWork _unitOfWork;
             ["facts"] = facts
         };
         return JsonSerializer.Serialize(custom);
+    }
+
+    private static string MergeCustomAttributes(string? current, string next)
+    {
+        var values = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+        Add(current);
+        Add(next);
+        return JsonSerializer.Serialize(values);
+
+        void Add(string? json)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return;
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != JsonValueKind.Object) return;
+            foreach (var property in document.RootElement.EnumerateObject())
+                values[property.Name] = property.Value.Clone();
+        }
     }
 
     private static List<string> FindMissingRequiredFacts(

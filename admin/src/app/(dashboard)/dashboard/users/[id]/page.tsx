@@ -3,13 +3,15 @@
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Plus } from "lucide-react";
+import { ArrowLeft, KeyRound, Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -31,6 +33,8 @@ import { useRoles } from "@/hooks/use-roles";
 import { useUser } from "@/hooks/use-users";
 import { formatDate, formatDateTime, getInitials } from "@/lib/utils";
 import { usersApi } from "@/services/api";
+import { posApprovalClient } from "@/services/pos/pos-approval-client";
+import { useAuthStore } from "@/stores/auth-store";
 import { useState } from "react";
 
 export default function UserDetailPage() {
@@ -94,7 +98,7 @@ export default function UserDetailPage() {
           <TabsTrigger value="roles">Roles</TabsTrigger>
         </TabsList>
         <TabsContent value="info">
-          <Card>
+          <div className="space-y-5"><Card>
             <CardHeader>
               <CardTitle>Datos del usuario</CardTitle>
             </CardHeader>
@@ -107,7 +111,7 @@ export default function UserDetailPage() {
               <div><p className="text-sm font-medium text-muted-foreground">Ultimo acceso</p><p>{user.lastLoginAt ? formatDateTime(user.lastLoginAt) : "Sin acceso registrado"}</p></div>
               <div><p className="text-sm font-medium text-muted-foreground">Creado</p><p>{formatDate(user.createdAt)}</p></div>
             </CardContent>
-          </Card>
+          </Card><SupervisorCredentialCard userId={user.userId}/></div>
         </TabsContent>
         <TabsContent value="roles">
           <Card>
@@ -156,4 +160,14 @@ export default function UserDetailPage() {
       </Tabs>
     </div>
   );
+}
+
+function SupervisorCredentialCard({userId}:{userId:string}){
+  const canManage=useAuthStore(state=>state.user?.permissions.includes("pos.approvals.manage_credential")??false);
+  const status=useQuery({queryKey:["supervisor-credential",userId],queryFn:()=>posApprovalClient.userCredentialStatus(userId),enabled:canManage});
+  const [secret,setSecret]=useState(""),[confirmation,setConfirmation]=useState(""),[validity,setValidity]=useState<"8"|"168"|"always">("always"),[saving,setSaving]=useState(false);
+  if(!canManage)return null;
+  const save=async()=>{setSaving(true);try{await posApprovalClient.configureUserCredential(userId,secret,validity==="always"?null:Number(validity) as 8|168);setSecret("");setConfirmation("");await status.refetch();toast.success(status.data?.isConfigured?"Credencial secundaria reiniciada":"Credencial secundaria configurada")}catch(error){toast.error(error instanceof Error?error.message:"No fue posible configurar la credencial")}finally{setSaving(false)}};
+  const revoke=async()=>{if(!window.confirm("¿Revocar la credencial secundaria de este usuario?"))return;setSaving(true);try{await posApprovalClient.revokeUserCredential(userId);await status.refetch();toast.success("Credencial revocada")}catch(error){toast.error(error instanceof Error?error.message:"No fue posible revocar la credencial")}finally{setSaving(false)}};
+  return <Card><CardHeader><CardTitle className="flex items-center gap-2"><KeyRound className="h-5 w-5"/>Autorización de supervisor</CardTitle><p className="text-sm text-muted-foreground">La credencial secundaria autoriza una sola acción cuando el cajero no tiene el permiso. El usuario debe tener permiso para aprobar y para la acción solicitada.</p></CardHeader><CardContent className="space-y-4">{status.data?.isConfigured&&<div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-emerald-50 p-4 text-sm"><div><strong>Credencial activa</strong><p className="text-muted-foreground">{status.data.validUntil?`Vence ${new Date(status.data.validUntil).toLocaleString("es-CO")}`:"Sin vencimiento; permanece hasta revocarla"}</p></div><Button variant="destructive" size="sm" disabled={saving} onClick={()=>void revoke()}>Revocar</Button></div>}<div className="grid gap-4 md:grid-cols-3"><div className="space-y-2"><Label>Nueva credencial</Label><Input type="password" minLength={6} maxLength={32} value={secret} onChange={event=>setSecret(event.target.value)} autoComplete="new-password"/></div><div className="space-y-2"><Label>Confirmar</Label><Input type="password" minLength={6} maxLength={32} value={confirmation} onChange={event=>setConfirmation(event.target.value)} autoComplete="new-password"/></div><div className="space-y-2"><Label>Vigencia</Label><Select value={validity} onValueChange={value=>setValidity(value as typeof validity)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="8">8 horas</SelectItem><SelectItem value="168">1 semana</SelectItem><SelectItem value="always">Siempre</SelectItem></SelectContent></Select></div></div>{confirmation&&secret!==confirmation&&<p className="text-sm text-destructive">Las credenciales no coinciden.</p>}<div className="flex justify-end"><Button disabled={saving||secret.length<6||secret!==confirmation} onClick={()=>void save()}>{saving&&<Loader2 className="mr-2 h-4 w-4 animate-spin"/>}{status.data?.isConfigured?"Reiniciar credencial":"Guardar credencial"}</Button></div></CardContent></Card>;
 }

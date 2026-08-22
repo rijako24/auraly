@@ -1,7 +1,7 @@
 export function sanitizeDecimalInput(value: string, maximumFractionDigits = 4, allowNegative = false): string {
   const negative = allowNegative && value.trimStart().startsWith("-");
   const allowed = value.replace(/[^\d.]/g, "");
-  if (!allowed) return "";
+  if (!allowed) return negative ? "-" : "";
 
   const separator = allowed.indexOf(".");
   const integerSource = (separator < 0 ? allowed : allowed.slice(0, separator)).replace(/\D/g, "");
@@ -16,6 +16,7 @@ export function sanitizeDecimalInput(value: string, maximumFractionDigits = 4, a
 export function formatDecimalInput(value: string, maximumFractionDigits = 4, allowNegative = false): string {
   const sanitized = sanitizeDecimalInput(value, maximumFractionDigits, allowNegative);
   if (!sanitized) return "";
+  if (sanitized === "-") return sanitized;
   const negative = sanitized.startsWith("-");
   const unsigned = negative ? sanitized.slice(1) : sanitized;
   const [integer, fraction] = unsigned.split(".");
@@ -26,7 +27,7 @@ export function formatDecimalInput(value: string, maximumFractionDigits = 4, all
 
 export function parseDecimalInput(value: string, allowNegative = false): number | null {
   const sanitized = sanitizeDecimalInput(value, 4, allowNegative);
-  if (!sanitized || sanitized === ".") return null;
+  if (!sanitized || sanitized === "." || sanitized === "-") return null;
   const parsed = Number(sanitized);
   return Number.isFinite(parsed) ? parsed : null;
 }

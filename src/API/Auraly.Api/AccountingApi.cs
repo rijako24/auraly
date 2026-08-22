@@ -52,6 +52,8 @@ public static class AccountingApi
             })).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/reports/trial-balance", async (HttpContext context, DateOnly from, DateOnly to, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.GetTrialBalanceAsync(context.User.ToAccountingIdentity(), from, to, token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/reports/account-movements", async (HttpContext context, string accountCode, DateOnly from, DateOnly to, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.GetAccountMovementsAsync(context.User.ToAccountingIdentity(), accountCode, from, to, token), Results.Ok)).RequireAuthorization("accounting.user");
         return endpoints;
     }
 

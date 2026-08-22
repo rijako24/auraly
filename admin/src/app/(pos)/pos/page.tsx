@@ -11,6 +11,7 @@ import {
   ClipboardList,
   Loader2,
   LogOut,
+  PackageOpen,
   Percent,
   Printer,
   RotateCcw,
@@ -42,6 +43,7 @@ import {
   PosEdgeClient,
   PosEdgeError,
   type PosClient,
+  type PosCaptureResult,
   type PosAuthorizedClosurePreview,
   type PosSensitiveAuthorization,
   readEdgeTokenFromLaunch,
@@ -112,11 +114,31 @@ function describeWorkspaceBootstrapError(caught: unknown): string {
   return "No fue posible preparar las sedes y bodegas disponibles.";
 }
 
+function describeCaptureFailure(result: PosCaptureResult) {
+  if (result.status === "InsufficientInventory") {
+    const available = result.availability?.availableQuantity;
+    return {
+      error: available == null
+        ? "No hay inventario suficiente en esta bodega."
+        : `No hay inventario suficiente en esta bodega. Disponible: ${available}.`,
+      message: "Inventario insuficiente",
+    };
+  }
+  if (result.status === "OfflineValidationRequired")
+    return {
+      error: "La bodega exige validar inventario y no hay conexión.",
+      message: "No fue posible validar el inventario",
+    };
+  return null;
+}
+
 export default function PosPage() {
   const scanner = useRef<HTMLInputElement>(null);
   const router = useRouter();
+  const permissions = useAuthStore((state) => state.user?.permissions ?? []);
   const quantityInputs = useRef(new Map<string, HTMLInputElement>());
   const lineRows = useRef(new Map<string, HTMLTableRowElement>());
+  const recoveredOrderFromUrl = useRef<string | null>(null);
   const skipQuantityBlur = useRef<string | null>(null);
   const [client, setClient] = useState<PosClient | null>(null);
   const [workspaceChanging, setWorkspaceChanging] = useState(false);
@@ -129,6 +151,7 @@ export default function PosPage() {
   const [canEnrollOffline, setCanEnrollOffline] = useState(false);
   const [edgeLoginState, setEdgeLoginState] = useState<"preparing" | "required" | null>(null);
   const [edgeLoginError, setEdgeLoginError] = useState<string | null>(null);
+  const [edgePermissions, setEdgePermissions] = useState<string[]>([]);
   const [setupLoading, setSetupLoading] = useState(true);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [draft, setDraft] = useState<PosDraft | null>(null);
@@ -219,6 +242,31 @@ export default function PosPage() {
   const focusScanner = useCallback(() => {
     window.requestAnimationFrame(() => scanner.current?.focus());
   }, []);
+  const showError = useCallback((caught: unknown) => {
+    const status = caught instanceof PosEdgeError ? caught.status : 0;
+    const onlineTransportFailure = client?.mode === "online" && caught instanceof TypeError;
+    if (onlineTransportFailure) {
+      setEdgeReady(false);
+      setServerConnected(false);
+    }
+    const text = onlineTransportFailure
+      ? "No hay conexión con Auraly. La venta en línea requiere conexión con el servidor."
+      : client?.mode === "online" && caught instanceof PosEdgeError
+        ? caught.message
+        : status === 409 && caught instanceof PosEdgeError && caught.message.includes("pendiente de imprimir")
+          ? caught.message
+          : status === 404
+            ? "Producto no encontrado en el catálogo local"
+            : status === 409
+              ? "La cantidad solicitada no está disponible"
+              : status === 503 && caught instanceof PosEdgeError && caught.message.includes("tirilla")
+                ? "La factura fue emitida, pero la tirilla no pudo imprimirse. Reintenta sin modificar la venta."
+                : status === 503
+                  ? "La bodega exige validar inventario y no hay conexión"
+                  : "No fue posible acceder a los servicios locales del equipo";
+    setError(text);
+    setMessage("Revisa la novedad");
+  }, [client?.mode]);
   useEffect(() => {
     const saved = window.localStorage.getItem("auraly.pos.document-type");
     if (saved === "SalesInvoice" || saved === "SalesReceipt")
@@ -258,6 +306,7 @@ export default function PosPage() {
             edgeStartupMode = health.startupMode;
             requiresEnrollment = health.status === "EnrollmentRequired";
             if (active) {
+              setEdgePermissions(health.permissions ?? []);
               setSynchronization({
                 inProgress: health.synchronizationInProgress,
                 lastAt: health.lastSynchronizationAt,
@@ -357,6 +406,7 @@ export default function PosPage() {
       try {
         const health = await client.health();
         if (active) {
+          if (client.mode === "edge") setEdgePermissions(health.permissions ?? []);
           setSynchronization({
             inProgress: health.synchronizationInProgress,
             lastAt: health.lastSynchronizationAt,
@@ -451,6 +501,36 @@ export default function PosPage() {
     };
   }, [client, documentType, focusScanner]);
 
+  useEffect(() => {
+    if (!client || !edgeReady || !draft || busy || typeof window === "undefined") return;
+    const orderId = new URLSearchParams(window.location.search).get("recoverOrder")?.trim();
+    if (!orderId || recoveredOrderFromUrl.current === orderId) return;
+    recoveredOrderFromUrl.current = orderId;
+    setBusy(true);
+    setError(null);
+    void client.recoverOrder(orderId)
+      .then(async (recovered) => {
+        setDraft(recovered);
+        setSelectedCustomer(recovered.customerId
+          ? await client.customer(recovered.customerId)
+          : null);
+        setSelectedLineId(recovered.lines[0]?.lineId ?? null);
+        setSidePanel("temporaries");
+        setMessage(`Pedido recuperado · ${recovered.lines.length} líneas`);
+        const url = new URL(window.location.href);
+        url.searchParams.delete("recoverOrder");
+        window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      })
+      .catch((caught) => {
+        recoveredOrderFromUrl.current = null;
+        showError(caught);
+      })
+      .finally(() => {
+        setBusy(false);
+        focusScanner();
+      });
+  }, [busy, client, draft, edgeReady, focusScanner, showError]);
+
 
   const requestRemoveLine = useCallback((lineId: string) => {
     const line = draft?.lines.find((candidate) => candidate.lineId === lineId);
@@ -497,6 +577,23 @@ export default function PosPage() {
     }
     await persistTemporary(customerName, "");
   }, [persistTemporary, selectedCustomer]);
+
+  const canOpenCashDrawer = (client?.mode === "edge" ? edgePermissions : permissions)
+    .includes("work-sessions.cash.drawer.open");
+
+  const openCashDrawer = useCallback(async () => {
+    if (!client || busy || !workstation.workSessionId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await client.openCashDrawer();
+      setMessage("Cajón de dinero abierto");
+    } catch (caught) {
+      showError(caught);
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, client, showError, workstation.workSessionId]);
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
@@ -583,6 +680,15 @@ export default function PosPage() {
         event.preventDefault();
         setCustomerSearchOpen(true);
       } else if (
+        event.ctrlKey &&
+        event.key === "F7" &&
+        canOpenCashDrawer &&
+        canOpenCashMovement
+      ) {
+        event.preventDefault();
+        void openCashDrawer();
+      } else if (
+        !event.ctrlKey &&
         event.key === "F7" &&
         !busy &&
         Boolean(draft?.lines.length) &&
@@ -657,6 +763,7 @@ export default function PosPage() {
     client,
     cashMovementDirection,
     cashClosure,
+    canOpenCashDrawer,
     returnsOpen,
     confirmation,
     customerSearchOpen,
@@ -674,12 +781,15 @@ export default function PosPage() {
     selectedLineId,
     temporaryOpen,
     printerOpen,
+    openCashDrawer,
     workstation.workSessionId,
   ]);
 
   async function capture(event: FormEvent) {
     event.preventDefault();
-    await captureValue(scan.trim());
+    const value = scan.trim();
+    if (value) setScan("");
+    await captureValue(value);
   }
 
   async function captureValue(value: string): Promise<boolean> {
@@ -723,9 +833,14 @@ export default function PosPage() {
         return true;
       }
       if (result.status === "NotFound") {
-        setScan("");
-        setError(`No encontramos un producto con el código "${value}".`);
+        setError(`No se encontró el producto “${value}”.`);
         setMessage("Producto no encontrado");
+      } else {
+        const failure = describeCaptureFailure(result);
+        if (failure) {
+          setError(failure.error);
+          setMessage(failure.message);
+        }
       }
       return false;
     } catch (caught) {
@@ -747,8 +862,21 @@ export default function PosPage() {
         lineId,
         quantity,
       );
-      if (result.draft) setDraft(result.draft);
-      setMessage("Cantidad actualizada");
+      if (result.status === "Added") {
+        if (result.draft) setDraft(result.draft);
+        setMessage("Cantidad actualizada");
+      } else {
+        const confirmed = draft.lines.find((line) => line.lineId === lineId);
+        if (confirmed)
+          setQuantityDrafts((current) => ({
+            ...current, [lineId]: String(confirmed.quantity),
+          }));
+        const failure = describeCaptureFailure(result);
+        if (failure) {
+          setError(failure.error);
+          setMessage(failure.message);
+        }
+      }
     } catch (caught) {
       showError(caught);
       const confirmed = draft.lines.find((line) => line.lineId === lineId);
@@ -802,6 +930,15 @@ export default function PosPage() {
     });
   }
 
+  function focusLastQuantity() {
+    const lastLineId = draft?.lines.at(-1)?.lineId;
+    if (!lastLineId) return;
+    window.requestAnimationFrame(() => {
+      quantityInputs.current.get(lastLineId)?.focus();
+      quantityInputs.current.get(lastLineId)?.select();
+    });
+  }
+
   function isApprovalRequired(caught: unknown) {
     return caught instanceof PosEdgeError &&
       (caught.code === "ApprovalRequired" || caught.status === 428 ||
@@ -827,8 +964,8 @@ export default function PosPage() {
           throw new Error("No fue posible identificar el negocio de esta venta.");
         approval = await activeClient.createApproval({
           businessId,
-          deviceId: activeClient.mode === "edge" ? workstation.deviceId : null,
-          workSessionId: activeClient.mode === "edge" ? workstation.workSessionId : null,
+          deviceId: workstation.deviceId,
+          workSessionId: workstation.workSessionId,
           draftId: draft.draftId.value,
           lineId,
           permissionResource,
@@ -1316,7 +1453,14 @@ export default function PosPage() {
         product,
         draft?.customerId ?? null,
       );
-      if (result.status !== "Added" || !result.draft) return false;
+      if (result.status !== "Added" || !result.draft) {
+        const failure = describeCaptureFailure(result);
+        if (failure) {
+          setError(failure.error);
+          setMessage(failure.message);
+        }
+        return false;
+      }
       let confirmedDraft = result.draft;
       const addedLine = confirmedDraft.lines.find(line=>line.productId.value===product.productId)
         ?? confirmedDraft.lines.at(-1);
@@ -1389,36 +1533,6 @@ export default function PosPage() {
     return result;
   }
 
-  function showError(caught: unknown) {
-    const status = caught instanceof PosEdgeError ? caught.status : 0;
-    const onlineTransportFailure = client?.mode === "online" && caught instanceof TypeError;
-    if (onlineTransportFailure) {
-      setEdgeReady(false);
-      setServerConnected(false);
-    }
-    const text =
-      onlineTransportFailure
-        ? "No hay conexi\\u00f3n con Auraly. La venta en l\\u00ednea requiere conexi\\u00f3n con el servidor."
-        : client?.mode === "online" && caught instanceof PosEdgeError
-        ? caught.message
-        :
-      status === 409 &&
-      caught instanceof PosEdgeError &&
-      caught.message.includes("pendiente de imprimir")
-        ? caught.message
-        : status === 404
-        ? "Producto no encontrado en el catálogo local"
-        : status === 409
-          ? "La cantidad solicitada no está disponible"
-          : status === 503 && caught instanceof PosEdgeError && caught.message.includes("tirilla")
-            ? "La factura fue emitida, pero la tirilla no pudo imprimirse. Reintenta sin modificar la venta."
-            : status === 503
-            ? "La bodega exige validar inventario y no hay conexión"
-            : "No fue posible acceder a los servicios locales del equipo";
-    setError(text);
-    setMessage("Revisa la novedad");
-  }
-
   async function activateOnline(option: SalesWorkspaceOption, initialDocumentType: PosSaleDocumentType) {
     setSetupError(null);
     const requestedWorkspace = salesWorkspaceKey(option.businessId, option.warehouseId);
@@ -1435,7 +1549,7 @@ export default function PosPage() {
       window.localStorage.setItem("auraly.pos.document-type", initialDocumentType);
     try {
       window.localStorage.setItem("selected_business_id", option.businessId);
-      const context = await selectSalesWorkspace(option);
+      const context = await selectSalesWorkspace(option, workspaceChanging);
       if (edgeEnrollmentToken) {
         await new PosEdgeClient(edgeEnrollmentToken).setStartupMode("online");
       }
@@ -1506,6 +1620,7 @@ export default function PosPage() {
         userDisplayName: session.displayName,
         userId: session.userId,
       }));
+      setEdgePermissions(session.permissions);
       setEdgeLoginState(null);
       setClient(new PosEdgeClient(edgeEnrollmentToken, session.token));
 
@@ -1659,18 +1774,6 @@ edgeCapable={edgeEnrollmentRequired}
           <div className="flex items-center gap-1" aria-label="Atajos de caja">
             <button
               type="button"
-              onClick={() => setCashMovementDirection("In")}
-              disabled={busy || !workstation.workSessionId}
-              title="Registrar entrada de dinero (Ctrl+F8)"
-              aria-keyshortcuts="Control+F8"
-              className="flex h-8 items-center gap-1.5 rounded-full border border-emerald-300/20 px-3 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-300/10 hover:text-white disabled:opacity-40"
-            >
-              <ArrowDownToLine className="h-3.5 w-3.5" />
-              <span className="hidden md:inline">Entrada de dinero</span>
-              <kbd className="hidden xl:inline text-[10px] opacity-70">Ctrl+F8</kbd>
-            </button>
-            <button
-              type="button"
               ref={cashClosureButton}
               onClick={() => void openCashClosure()}
               disabled={busy || !workstation.workSessionId}
@@ -1681,6 +1784,32 @@ edgeCapable={edgeEnrollmentRequired}
               <Banknote className="h-3.5 w-3.5" />
               <span className="hidden md:inline">Cerrar caja</span>
               <kbd className="hidden xl:inline text-[10px] opacity-70">Ctrl+F10</kbd>
+            </button>
+            {canOpenCashDrawer && (
+              <button
+                type="button"
+                onClick={() => void openCashDrawer()}
+                disabled={busy || !workstation.workSessionId}
+                title="Abrir cajón de dinero (Ctrl+F7)"
+                aria-keyshortcuts="Control+F7"
+                className="flex h-8 items-center gap-1.5 rounded-full border border-violet-300/20 px-3 text-xs font-semibold text-violet-200 transition hover:bg-violet-300/10 hover:text-white disabled:opacity-40"
+              >
+                <PackageOpen className="h-3.5 w-3.5" />
+                <span className="hidden md:inline">Abrir cajón</span>
+                <kbd className="hidden xl:inline text-[10px] opacity-70">Ctrl+F7</kbd>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setCashMovementDirection("In")}
+              disabled={busy || !workstation.workSessionId}
+              title="Registrar entrada de dinero (Ctrl+F8)"
+              aria-keyshortcuts="Control+F8"
+              className="flex h-8 items-center gap-1.5 rounded-full border border-emerald-300/20 px-3 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-300/10 hover:text-white disabled:opacity-40"
+            >
+              <ArrowDownToLine className="h-3.5 w-3.5" />
+              <span className="hidden md:inline">Entrada de dinero</span>
+              <kbd className="hidden xl:inline text-[10px] opacity-70">Ctrl+F8</kbd>
             </button>
             <button
               type="button"
@@ -1711,17 +1840,17 @@ edgeCapable={edgeEnrollmentRequired}
         </div>
         <div className="flex min-w-0 items-center gap-3 text-sm">
           <span className="min-w-0 truncate font-bold tracking-tight">{workstation.businessName || "Sede"} · {workstation.warehouseName || "Bodega"}</span>
-          {client.mode === "online" && (
+          {client.mode === "online" && permissions.includes("pos.workspace.change") && (
             <button
               type="button"
               onClick={changeOnlineWorkspace}
               disabled={busy}
-              title="Cambiar sede y bodega"
+              title="Cambiar sede de venta"
               className="flex h-8 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-xs font-semibold text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
-              aria-label="Cambiar sede y bodega"
+              aria-label="Cambiar sede de venta"
             >
               <Settings2 className="h-4 w-4" />
-              <span className="hidden lg:inline">Cambiar ubicación</span>
+              <span className="hidden lg:inline">Cambiar sede de venta</span>
             </button>
           )}
           {client.mode === "online" && edgeEnrollmentToken && (
@@ -1815,7 +1944,10 @@ edgeCapable={edgeEnrollmentRequired}
                 value={scan}
                 onChange={(event) => setScan(event.target.value)}
                 onKeyDown={(event) => {
-                  if ((event.key === "ArrowDown" || event.key === "Tab") && draft?.lines.length) {
+                  if (event.key === "ArrowDown" && draft?.lines.length) {
+                    event.preventDefault();
+                    focusLastQuantity();
+                  } else if (event.key === "Tab" && draft?.lines.length) {
                     event.preventDefault();
                     focusFirstQuantity();
                   }
@@ -1971,15 +2103,23 @@ edgeCapable={edgeEnrollmentRequired}
                             }
                           }}
                           type="number"
+                          inputMode={line.allowsFractionalSale ? "decimal" : "numeric"}
                           min={line.allowsFractionalSale ? "0.001" : "1"}
                           step={line.allowsFractionalSale ? "0.001" : "1"}
                           value={quantityDrafts[line.lineId] ?? String(line.quantity)}
-                          onChange={(event) =>
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            if (!line.allowsFractionalSale && value !== "" && !/^\d+$/.test(value)) return;
                             setQuantityDrafts((current) => ({
-                              ...current, [line.lineId]: event.target.value,
-                            }))}
+                              ...current, [line.lineId]: value,
+                            }));
+                          }}
                           onFocus={() => setSelectedLineId(line.lineId)}
                           onKeyDown={(event) => {
+                            if (!line.allowsFractionalSale && [".", ",", "e", "E", "+", "-"].includes(event.key)) {
+                              event.preventDefault();
+                              return;
+                            }
                             if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                               event.preventDefault();
                               void navigateFromQuantity(

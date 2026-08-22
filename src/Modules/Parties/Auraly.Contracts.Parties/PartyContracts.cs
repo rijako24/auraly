@@ -57,7 +57,10 @@ public sealed record PartySiteInput(
     decimal? Latitude = null,
     decimal? Longitude = null);
 
-public sealed record CustomerPricingInput(Guid? PriceChannelId);
+public sealed record CustomerPricingInput(
+    Guid? PriceChannelId,
+    DateTimeOffset? ValidFrom = null,
+    DateTimeOffset? ValidUntil = null);
 
 public sealed record CreateCustomerRequest(
     Guid OperationId,
@@ -67,8 +70,6 @@ public sealed record CreateCustomerRequest(
     CustomerPricingInput? Pricing,
     bool RequiresElectronicInvoice = false,
     IReadOnlyCollection<PartySiteInput>? AdditionalSites = null);
-
-public sealed record SaveCustomerBillingRequest(bool RequiresElectronicInvoice);
 
 public sealed record AddPartySiteRequest(Guid OperationId, PartySiteInput Site);
 public sealed record UpdatePartySiteRequest(PartySiteInput Site, string RowVersion);

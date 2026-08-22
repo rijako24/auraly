@@ -93,7 +93,8 @@ public sealed record OrderDetail(
     bool CanInvoice,
     Guid? InvoiceDocumentId,
     OrderClaimSummary? Claim,
-    IReadOnlyList<OrderLine> Lines);
+    IReadOnlyList<OrderLine> Lines,
+    Guid? WarehouseId = null);
 
 public sealed record ClaimOrderRequest(
     Guid WorkSessionId,

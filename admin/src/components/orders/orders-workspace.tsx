@@ -47,6 +47,11 @@ const date = new Intl.DateTimeFormat("es-CO", {
   timeStyle: "short",
 });
 
+function localToday() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+
 type OrdersWorkspaceProps = {
   compact?: boolean;
   connected?: boolean;
@@ -102,8 +107,8 @@ export function OrdersWorkspace({
   const [customer, setCustomer] = useState("");
   const [product, setProduct] = useState("");
   const [status, setStatus] = useState("Available");
-  const [createdFrom, setCreatedFrom] = useState("");
-  const [createdTo, setCreatedTo] = useState("");
+  const [createdFrom, setCreatedFrom] = useState(localToday);
+  const [createdTo, setCreatedTo] = useState(localToday);
   const [routeId, setRouteId] = useState("All");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [detail, setDetail] = useState<CommerceOrderDetail | null>(null);

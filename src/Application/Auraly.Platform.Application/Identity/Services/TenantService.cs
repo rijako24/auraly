@@ -35,7 +35,7 @@ public sealed class TenantService(
         return result;
     }
 
-    public async Task<TenantDto> UpdateAsync(Guid tenantId, string? name, string? email, int? maximumUsers, int? maximumEnrolledDevices, CancellationToken ct)
+    public async Task<TenantDto> UpdateAsync(Guid tenantId, string? name, string? email, int? maximumUsers, int? maximumEnrolledDevices, string? legalName = null, string? nit = null, string? verificationDigit = null, CancellationToken ct = default)
     {
         var tenant = await unitOfWork.Tenants.GetByIdAsync(tenantId, ct)
             ?? throw new NotFoundException(nameof(Tenant), tenantId);
@@ -50,6 +50,17 @@ public sealed class TenantService(
             throw new ConflictException($"El cupo no puede ser menor que las {tenant.ActiveEnrolledDeviceCount} cajas enroladas actuales.");
         if (maximumUsers.HasValue) tenant.MaximumUsers = maximumUsers.Value;
         if (maximumEnrolledDevices.HasValue) tenant.MaximumEnrolledDevices = maximumEnrolledDevices.Value;
+        var changesLegalIdentity = legalName is not null || nit is not null || verificationDigit is not null;
+        if (changesLegalIdentity)
+        {
+            var nextLegalName = legalName?.Trim() ?? tenant.LegalName;
+            var nextNit = nit?.Trim() ?? tenant.Nit;
+            var nextVerificationDigit = verificationDigit?.Trim() ?? tenant.VerificationDigit;
+            if (string.IsNullOrWhiteSpace(nextLegalName) || string.IsNullOrWhiteSpace(nextNit) || string.IsNullOrWhiteSpace(nextVerificationDigit))
+                throw new ArgumentException("Razón social, NIT y dígito de verificación son obligatorios.");
+            await unitOfWork.Tenants.UpdateLegalIdentityAsync(tenantId, nextLegalName, nextNit, nextVerificationDigit, DateTimeOffset.UtcNow, ct);
+            tenant.LegalName = nextLegalName; tenant.Nit = nextNit; tenant.VerificationDigit = nextVerificationDigit;
+        }
         await unitOfWork.SaveChangesAsync(ct);
         return MapToDto(tenant);
     }
@@ -96,5 +107,6 @@ public sealed class TenantService(
         tenant.TenantId, tenant.TenantKey, tenant.Name, tenant.Email, tenant.IsActive,
         tenant.CreatedAt, tenant.Businesses?.Count ?? 0,
         tenant.MaximumUsers, tenant.MaximumEnrolledDevices,
-        tenant.ActiveUserCount, tenant.ActiveEnrolledDeviceCount);
+        tenant.ActiveUserCount, tenant.ActiveEnrolledDeviceCount,
+        tenant.LegalName, tenant.Nit, tenant.VerificationDigit);
 }

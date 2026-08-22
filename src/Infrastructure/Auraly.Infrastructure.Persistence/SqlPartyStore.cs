@@ -269,6 +269,7 @@ public sealed partial class SqlPartyStore(
             partyCommand.CommandText = """
                 SELECT c.PartyId FROM dbo.Customers c
                 JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId AND b.TenantId=@TenantId
+                JOIN dbo.Parties p ON p.PartyId=c.PartyId
                 WHERE c.CustomerId=@CustomerId AND c.BusinessId=@BusinessId;
                 """;
             partyCommand.Parameters.AddRange(
@@ -279,6 +280,14 @@ public sealed partial class SqlPartyStore(
             var partyValue = await partyCommand.ExecuteScalarAsync(ct);
             if (partyValue is not Guid partyId)
                 throw new PartyForbiddenException("Customer does not belong to the authenticated business.");
+            await using (var protectedCommand = new SqlCommand("""
+                IF EXISTS(SELECT 1 FROM dbo.Parties WHERE PartyId=@PartyId AND Identification=N'222222222222' AND DisplayName=N'Consumidor final')
+                  THROW 51037,'Consumidor final is a protected system customer and cannot be changed.',1;
+                """, connection, transaction))
+            {
+                protectedCommand.Parameters.AddWithValue("@PartyId", partyId);
+                await protectedCommand.ExecuteNonQueryAsync(ct);
+            }
             await InsertSiteAsync(connection, transaction, actor, partyId, siteId, request.Site, now, ct);
             await ExecuteAsync(
                 connection,
@@ -305,6 +314,8 @@ public sealed partial class SqlPartyStore(
             await transaction.RollbackAsync(ct);
             throw new PartyConflictException("The site code or primary site is already in use.");
         }
+        catch (SqlException exception) when (exception.Number == 51037)
+        { await transaction.RollbackAsync(ct); throw new PartyValidationException(exception.Message); }
         catch
         {
             await transaction.RollbackAsync(ct);
@@ -326,6 +337,8 @@ public sealed partial class SqlPartyStore(
             await using var command = new SqlCommand("""
                 DECLARE @PartyId uniqueidentifier=(SELECT c.PartyId FROM dbo.Customers c JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId AND b.TenantId=@TenantId WHERE c.CustomerId=@CustomerId AND c.BusinessId=@BusinessId);
                 IF @PartyId IS NULL THROW 51030,'Customer is outside the authenticated business.',1;
+                IF EXISTS(SELECT 1 FROM dbo.Parties WHERE PartyId=@PartyId AND Identification=N'222222222222' AND DisplayName=N'Consumidor final')
+                  THROW 51037,'Consumidor final is a protected system customer and cannot be changed.',1;
                 IF @Primary=1 UPDATE dbo.PartySites SET IsPrimary=0,UpdatedAt=@Now WHERE PartyId=@PartyId AND PartySiteId<>@SiteId AND IsPrimary=1;
                 UPDATE dbo.PartySites SET Code=@Code,Name=@Name,CountryId=@CountryId,AdministrativeDivisionId=@DivisionId,CityId=@CityId,
                   AddressLine=@Address,Neighborhood=@Neighborhood,PostalCode=@PostalCode,Email=@Email,Phone=@Phone,
@@ -344,6 +357,7 @@ public sealed partial class SqlPartyStore(
         catch (FormatException) { await transaction.RollbackAsync(ct); throw new PartyValidationException("The site row version is invalid."); }
         catch (SqlException exception) when (exception.Number is 2601 or 2627) { await transaction.RollbackAsync(ct); throw new PartyConflictException("The site code is already in use."); }
         catch (SqlException exception) when (exception.Number==51036) { await transaction.RollbackAsync(ct); throw new PartyConflictException(exception.Message); }
+        catch (SqlException exception) when (exception.Number==51037) { await transaction.RollbackAsync(ct); throw new PartyValidationException(exception.Message); }
         catch { await transaction.RollbackAsync(ct); throw; }
     }
 
@@ -782,13 +796,14 @@ public sealed partial class SqlPartyStore(
               SELECT 1 FROM dbo.PriceChannels WHERE PriceChannelId=@PriceChannelId AND BusinessId=@BusinessId AND IsActive=1)
               THROW 51035,'Price channel is outside the customer business.',1;
             INSERT dbo.CustomerPricingSettings
-              (CustomerId,PriceChannelId,UpdatedBy,UpdatedAt)
-            VALUES(@CustomerId,@PriceChannelId,@ActorId,@Now);
+              (CustomerId,PriceChannelId,ValidFrom,ValidUntil,UpdatedBy,UpdatedAt)
+            VALUES(@CustomerId,@PriceChannelId,COALESCE(@ValidFrom,@Now),@ValidUntil,@ActorId,@Now);
             """;
         command.Parameters.AddRange(
         [
             P("@CustomerId", customerId), P("@BusinessId", actor.BusinessId),
             P("@PriceChannelId", pricing.PriceChannelId),
+            P("@ValidFrom", pricing.ValidFrom), P("@ValidUntil", pricing.ValidUntil),
             P("@ActorId", actor.ActorId), P("@Now", now)
         ]);
         try { await command.ExecuteNonQueryAsync(ct); }

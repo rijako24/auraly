@@ -34,9 +34,9 @@ public sealed class TenantsController(ITenantService tenantService, ITenantDevic
     [HttpPut("{tenantId:guid}")]
     public async Task<ActionResult<TenantDto>> Update(Guid tenantId, [FromBody] UpdateTenantRequest request, CancellationToken ct)
     {
-        if (request.Name is not null || request.Email is not null) EnsurePermission("tenants.update");
+        if (request.Name is not null || request.Email is not null || request.LegalName is not null || request.Nit is not null || request.VerificationDigit is not null) EnsurePermission("tenants.update");
         if (request.MaximumUsers.HasValue || request.MaximumEnrolledDevices.HasValue) EnsurePermission("tenants.capacity.update");
-        return Ok(await tenantService.UpdateAsync(tenantId, request.Name, request.Email, request.MaximumUsers, request.MaximumEnrolledDevices, ct));
+        return Ok(await tenantService.UpdateAsync(tenantId, request.Name, request.Email, request.MaximumUsers, request.MaximumEnrolledDevices, request.LegalName, request.Nit, request.VerificationDigit, ct));
     }
 
     [HttpGet("{tenantId:guid}/devices")]

@@ -103,9 +103,9 @@ public sealed record CashMovement(
                 "The cash movement date is required.");
         var normalizedReference = Normalize(reference, 160, "reference");
         var normalizedNotes = Normalize(notes, 500, "notes");
-        if (reason.RequiresReference && normalizedReference is null)
+        if (normalizedReference is null)
             throw new CashMovementRuleException(
-                "The selected cash movement reason requires a reference.");
+                "La referencia del movimiento de caja es obligatoria.");
         if (costCenterId == Guid.Empty)
             throw new CashMovementRuleException(
                 "The cost center must be null or a valid identifier.");

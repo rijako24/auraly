@@ -28,6 +28,9 @@ export default function TenantDetailPage() {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [legalName, setLegalName] = useState("");
+  const [nit, setNit] = useState("");
+  const [verificationDigit, setVerificationDigit] = useState("");
   const [saving, setSaving] = useState(false);
   const canEdit = useAuthStore((state) => state.user?.permissions.includes("tenants.update") ?? false);
 
@@ -38,13 +41,13 @@ export default function TenantDetailPage() {
       );
   }, [tenant?.tenantKey]);
 
-  useEffect(() => { if (tenant) { setName(tenant.name); setEmail(tenant.email); } }, [tenant]);
+  useEffect(() => { if (tenant) { setName(tenant.name); setEmail(tenant.email); setLegalName(tenant.legalName ?? tenant.name); setNit(tenant.nit ?? ""); setVerificationDigit(tenant.verificationDigit ?? ""); } }, [tenant]);
 
   async function saveTenant() {
     if (!tenant || !name.trim() || !email.trim()) return;
     setSaving(true);
     try {
-      await tenantsApi.update(tenant.tenantId, { name: name.trim(), email: email.trim() });
+      await tenantsApi.update(tenant.tenantId, { name: name.trim(), email: email.trim(), legalName: legalName.trim(), nit: nit.trim(), verificationDigit: verificationDigit.trim() });
       await refetch();
       setEditing(false);
       toast.success("Tenant actualizado");
@@ -88,7 +91,7 @@ export default function TenantDetailPage() {
           </div>
         </div>
       </section>
-      <Dialog open={editing} onOpenChange={setEditing}><DialogContent><DialogHeader><DialogTitle>Editar tenant</DialogTitle><DialogDescription>Actualiza la información general. Los cupos y el estado conservan sus permisos independientes.</DialogDescription></DialogHeader><div className="grid gap-4"><div className="space-y-2"><Label htmlFor="tenant-name">Nombre</Label><Input id="tenant-name" value={name} onChange={(event)=>setName(event.target.value)} /></div><div className="space-y-2"><Label htmlFor="tenant-email">Correo</Label><Input id="tenant-email" type="email" value={email} onChange={(event)=>setEmail(event.target.value)} /></div></div><DialogFooter><Button variant="outline" onClick={()=>setEditing(false)}>Cancelar</Button><Button disabled={saving||!name.trim()||!email.trim()} onClick={()=>void saveTenant()}>{saving?"Guardando…":"Guardar cambios"}</Button></DialogFooter></DialogContent></Dialog>
+      <Dialog open={editing} onOpenChange={setEditing}><DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>Editar tenant</DialogTitle><DialogDescription>Actualiza la identidad legal y la información general en una sola operación.</DialogDescription></DialogHeader><div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="tenant-name">Nombre comercial</Label><Input id="tenant-name" value={name} onChange={(event)=>setName(event.target.value)} /></div><div className="space-y-2"><Label htmlFor="tenant-legal-name">Razón social</Label><Input id="tenant-legal-name" value={legalName} onChange={(event)=>setLegalName(event.target.value)} /></div><div className="space-y-2"><Label htmlFor="tenant-nit">NIT</Label><Input id="tenant-nit" value={nit} onChange={(event)=>setNit(event.target.value)} /></div><div className="space-y-2"><Label htmlFor="tenant-verification-digit">Dígito de verificación</Label><Input id="tenant-verification-digit" maxLength={4} value={verificationDigit} onChange={(event)=>setVerificationDigit(event.target.value)} /></div><div className="space-y-2 sm:col-span-2"><Label htmlFor="tenant-email">Correo</Label><Input id="tenant-email" type="email" value={email} onChange={(event)=>setEmail(event.target.value)} /></div></div><DialogFooter><Button variant="outline" onClick={()=>setEditing(false)}>Cancelar</Button><Button disabled={saving||!name.trim()||!legalName.trim()||!nit.trim()||!verificationDigit.trim()||!email.trim()} onClick={()=>void saveTenant()}>{saving?"Guardando…":"Guardar cambios"}</Button></DialogFooter></DialogContent></Dialog>
     </div>
   );
 }

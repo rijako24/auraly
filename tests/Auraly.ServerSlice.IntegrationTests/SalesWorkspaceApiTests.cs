@@ -71,6 +71,21 @@ public sealed class SalesWorkspaceApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Changing_the_active_sales_site_requires_its_own_supervisor_permission()
+    {
+        var selection = new SalesWorkspaceSelection(fixture.BusinessId, fixture.WarehouseId);
+        using var cashier = fixture.CreateAdminClient(CommercePermissionCodes.SalesCreate);
+        using var denied = await cashier.PostAsJsonAsync("/api/commerce/v1/pos/workspace/change", selection);
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+
+        using var supervisor = fixture.CreateAdminClient(
+            CommercePermissionCodes.SalesCreate,
+            CommercePermissionCodes.PosWorkspaceChange);
+        using var allowed = await supervisor.PostAsJsonAsync("/api/commerce/v1/pos/workspace/change", selection);
+        allowed.EnsureSuccessStatusCode();
+    }
+
+    [Fact]
     public async Task Selection_cannot_escape_the_authenticated_tenant()
     {
         using var client = fixture.CreateAdminClient(

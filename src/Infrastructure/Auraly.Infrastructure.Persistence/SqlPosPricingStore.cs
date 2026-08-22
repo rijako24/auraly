@@ -29,6 +29,7 @@ public sealed partial class SqlCatalogStore
               CONVERT(decimal(19,4),ROUND(CASE c.Strategy
                 WHEN N'TieredProductPrice' THEN special.Amount
                 WHEN N'PercentageOverBasePrice' THEN basePrice.Amount*(1+COALESCE(c.Value,0)/100)
+                WHEN N'PercentageBelowBasePrice' THEN basePrice.Amount*(1-COALESCE(c.Value,0)/100)
                 WHEN N'PercentageOverAverageCost' THEN cost.Amount*(1+COALESCE(c.Value,0)/100)
                 WHEN N'FixedMarginOverAverageCost' THEN cost.Amount/(1-COALESCE(c.Value,0)/100)
                 WHEN N'SellAtAverageCost' THEN cost.Amount END,4)),basePrice.CurrencyCode,
@@ -50,7 +51,9 @@ public sealed partial class SqlCatalogStore
             SELECT c.CustomerId,
               COALESCE(p.NormalizedIdentification,p.Identification,N''),
               COALESCE(p.DisplayName,p.LegalName,p.Identification,N''),
-              s.PriceChannelId,c.RequiresElectronicInvoice,c.IsActive
+              CASE WHEN s.ValidFrom<=SYSDATETIMEOFFSET()
+                     AND(s.ValidUntil IS NULL OR s.ValidUntil>SYSDATETIMEOFFSET())
+                   THEN s.PriceChannelId END,c.RequiresElectronicInvoice,c.IsActive
             FROM dbo.Customers c
             JOIN dbo.Parties p ON p.PartyId=c.PartyId AND p.TenantId=@TenantId
             LEFT JOIN dbo.CustomerPricingSettings s ON s.CustomerId=c.CustomerId

@@ -28,6 +28,12 @@ param(
 
     [SecureString]$JwtSecret,
 
+    [SecureString]$OfflineLeaseSigningPrivateKeyPem,
+
+    [string]$WebPushPublicKey,
+
+    [SecureString]$WebPushPrivateKey,
+
     [SecureString]$FiscalSecretProtectionKey,
 
     [SecureString]$WhatsAppVerifyToken,
@@ -201,8 +207,8 @@ try {
         default { @() }
     }
 
-    if ($environments.Count -gt 0 -and (-not $JwtSecret -or -not $FiscalSecretProtectionKey -or -not $WhatsAppVerifyToken)) {
-        throw 'JwtSecret, FiscalSecretProtectionKey y WhatsAppVerifyToken son obligatorios para desplegar DEV o PROD.'
+    if ($environments.Count -gt 0 -and (-not $JwtSecret -or -not $OfflineLeaseSigningPrivateKeyPem -or -not $WebPushPublicKey -or -not $WebPushPrivateKey -or -not $FiscalSecretProtectionKey -or -not $WhatsAppVerifyToken)) {
+        throw 'JwtSecret, OfflineLeaseSigningPrivateKeyPem, WebPushPublicKey, WebPushPrivateKey, FiscalSecretProtectionKey y WhatsAppVerifyToken son obligatorios para desplegar DEV o PROD.'
     }
     if ($environments.Count -gt 0 -and -not $PosInstallerSha256) {
         $repositoryRoot = (Resolve-Path (Join-Path $templateRoot '..\..')).Path
@@ -242,6 +248,9 @@ try {
                 textModelDeploymentName = $textDeploymentName
                 audioModelDeploymentName = $audioDeploymentName
                 jwtSecret = $JwtSecret
+                offlineLeaseSigningPrivateKeyPem = $OfflineLeaseSigningPrivateKeyPem
+                webPushPublicKey = $WebPushPublicKey
+                webPushPrivateKey = $WebPushPrivateKey
                 fiscalSecretProtectionKey = $FiscalSecretProtectionKey
                 whatsAppVerifyToken = $WhatsAppVerifyToken
                 seedAppConfiguration = [bool]$SeedAppConfiguration
@@ -252,6 +261,8 @@ try {
 finally {
     $SqlAdministratorPassword = $null
     $JwtSecret = $null
+    $OfflineLeaseSigningPrivateKeyPem = $null
+    $WebPushPrivateKey = $null
     $FiscalSecretProtectionKey = $null
     if (Test-Path -LiteralPath $temporaryPath) {
         Remove-Item -LiteralPath $temporaryPath -Recurse -Force

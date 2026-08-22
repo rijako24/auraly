@@ -350,6 +350,8 @@ builder.Services.AddScoped<IPosEnrollmentStore, SqlPosEnrollmentStore>();
 builder.Services.AddScoped<PosEnrollmentService>();
 builder.Services.AddScoped<IPosApprovalStore, SqlPosApprovalStore>();
 builder.Services.AddScoped<PosApprovalService>();
+builder.Services.AddSingleton(new Lib.Net.Http.WebPush.PushServiceClient { AutoRetryAfter = true, MaxRetriesAfter = 2 });
+builder.Services.AddScoped<PosApprovalWebPushService>();
 builder.Services.AddScoped<IOnlineSalesDraftStore, SqlOnlineSalesDraftStore>();
 builder.Services.AddScoped<OnlineSalesDraftService>();
 builder.Services.AddScoped<IOnlineSalesCheckoutStore, SqlOnlineSalesDraftStore>();

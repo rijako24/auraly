@@ -130,6 +130,8 @@ GO
 GO
 :r .\Migrations\MigrateAgentBotType.sql
 GO
+:r .\Migrations\BackfillOrderSalesWarehouses.sql
+GO
 
 PRINT 'Post-deployment scripts executed successfully.';
 

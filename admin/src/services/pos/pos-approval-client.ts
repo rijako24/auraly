@@ -3,6 +3,8 @@ import { PosEdgeError } from "./pos-edge-client";
 export type PosApprovalRequest = {
   approvalRequestId: string;
   businessId: string;
+  deviceId: string | null;
+  workSessionId: string | null;
   draftId: string;
   lineId: string | null;
   permissionResource: string;
@@ -12,6 +14,9 @@ export type PosApprovalRequest = {
   expiresAt: string;
   decidedByName: string | null;
 };
+
+export type SupervisorCredentialStatus = { isConfigured: boolean; createdAt: string | null; validUntil: string | null };
+export type PosApprovalPushSubscription = { endpoint: string; p256dh: string; auth: string };
 
 type Negotiation = { clientAccessUri: string; expiresAt: string };
 
@@ -85,11 +90,43 @@ export class PosApprovalClient {
     );
   }
 
-  configureCredential(secret: string) {
+  configureCredential(secret: string, validityHours: 8 | 168 | null) {
     return this.request<void>(
       "/api/commerce/v1/pos/approvals/supervisor-credential",
-      { method: "PUT", body: JSON.stringify({ secret }) },
+      { method: "PUT", body: JSON.stringify({ secret, validityHours }) },
     );
+  }
+
+  credentialStatus() {
+    return this.request<SupervisorCredentialStatus>("/api/commerce/v1/pos/approvals/supervisor-credential");
+  }
+
+  revokeCredential() {
+    return this.request<void>("/api/commerce/v1/pos/approvals/supervisor-credential", { method: "DELETE" });
+  }
+
+  userCredentialStatus(userId: string) {
+    return this.request<SupervisorCredentialStatus>(`/api/commerce/v1/pos/approvals/users/${userId}/supervisor-credential`);
+  }
+
+  configureUserCredential(userId: string, secret: string, validityHours: 8 | 168 | null) {
+    return this.request<void>(`/api/commerce/v1/pos/approvals/users/${userId}/supervisor-credential`, { method: "PUT", body: JSON.stringify({ secret, validityHours }) });
+  }
+
+  revokeUserCredential(userId: string) {
+    return this.request<void>(`/api/commerce/v1/pos/approvals/users/${userId}/supervisor-credential`, { method: "DELETE" });
+  }
+
+  pushPublicKey() {
+    return this.request<{ publicKey: string }>("/api/commerce/v1/pos/approvals/push/public-key");
+  }
+
+  savePushSubscription(subscription: PosApprovalPushSubscription) {
+    return this.request<void>("/api/commerce/v1/pos/approvals/push/subscription", { method: "PUT", body: JSON.stringify(subscription) });
+  }
+
+  removePushSubscription(subscription: PosApprovalPushSubscription) {
+    return this.request<void>("/api/commerce/v1/pos/approvals/push/subscription", { method: "DELETE", body: JSON.stringify(subscription) });
   }
 
   async subscribe(onApprovalsChanged: () => void): Promise<() => void> {

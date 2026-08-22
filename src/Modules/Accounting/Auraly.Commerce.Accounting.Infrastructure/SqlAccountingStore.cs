@@ -433,6 +433,38 @@ public sealed class SqlAccountingStore(
         return rows;
     }
 
+    public async Task<IReadOnlyList<AccountMovementRow>> GetAccountMovementsAsync(
+        AccountingUserIdentity user, string accountCode, DateOnly from, DateOnly to,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create(); await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand("""
+            SELECT e.EntryId,e.EntryNumber,e.SourceDocumentId,e.SourceDocumentType,e.OccurredAt,
+                   l.Description,l.Debit,l.Credit,
+                   SUM(l.Debit-l.Credit) OVER(
+                     ORDER BY e.OccurredAt,e.EntryNumber,l.LineNumber
+                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+            FROM dbo.AccountingEntries e
+            INNER JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+            INNER JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+            WHERE e.TenantId=@TenantId AND e.BusinessId=@BusinessId AND a.Code=@AccountCode
+              AND CAST(e.OccurredAt AS date) BETWEEN @From AND @To
+            ORDER BY e.OccurredAt,e.EntryNumber,l.LineNumber;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", user.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        command.Parameters.AddWithValue("@AccountCode", accountCode);
+        command.Parameters.AddWithValue("@From", from.ToDateTime(TimeOnly.MinValue));
+        command.Parameters.AddWithValue("@To", to.ToDateTime(TimeOnly.MinValue));
+        var rows = new List<AccountMovementRow>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) rows.Add(new(
+            reader.GetGuid(0), reader.GetString(1), reader.GetGuid(2), reader.GetString(3),
+            reader.GetDateTimeOffset(4), reader.GetString(5), reader.GetDecimal(6),
+            reader.GetDecimal(7), reader.GetDecimal(8)));
+        return rows;
+    }
+
     private async Task<string?> FindPostingSourceAsync(AccountingUserIdentity user, Guid documentId, CancellationToken token)
     {
         await using var connection = connections.Create(); await connection.OpenAsync(token); await using var command = new SqlCommand("SELECT SourceDocumentType FROM dbo.AccountingPostingJobs WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND SourceDocumentId=@DocumentId", connection); AddScope(command, user, documentId); return await command.ExecuteScalarAsync(token) as string;

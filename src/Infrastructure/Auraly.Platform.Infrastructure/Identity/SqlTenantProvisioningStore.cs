@@ -144,7 +144,7 @@ public sealed class SqlTenantProvisioningStore(
                   N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.manage_credential',
                   N'pos.customer.create',N'pos.orders',N'orders.read',N'orders.invoice',
                   N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',
-                  N'work_sessions.read',N'work_sessions.close',N'inventory.read');
+                  N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',N'inventory.read');
                 INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
                 SELECT NEWID(),@SellerRoleId,PermissionId,@Now
                 FROM dbo.Permissions

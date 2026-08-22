@@ -401,9 +401,29 @@ public static class PosEdgeHostApplication
                     statusCode: StatusCodes.Status503ServiceUnavailable);
             }
         });
-        edge.MapPost("/cash-drawer/open", (
-            PosCashDrawer cashDrawer) =>
+        edge.MapPost("/cash-drawer/open", async (
+            HttpContext http,
+            PosCashDrawer cashDrawer,
+            PosLocalIdentityStore identities,
+            PosStartupModeStore startupMode,
+            CancellationToken ct) =>
         {
+            // In enrolled/offline operation the local identity is authoritative.
+            // In online operation the web application only exposes this call after
+            // the authenticated server permission has been resolved.
+            var user = await identities.ResolveAsync(
+                http.Request.Headers["X-Auraly-User-Session"].ToString(), ct);
+            if (startupMode.Load(hasEnrollment: true) != "online" && user is null)
+                return Results.Problem(
+                    "Inicia sesión en este dispositivo para abrir el cajón.",
+                    statusCode: StatusCodes.Status401Unauthorized,
+                    title: "LocalLoginRequired");
+            if (user is not null &&
+                !user.Permissions.Contains(WorkSessionPermissionCodes.OpenCashDrawer))
+                return Results.Problem(
+                    "Tu usuario no tiene permiso para abrir el cajón de dinero.",
+                    statusCode: StatusCodes.Status403Forbidden,
+                    title: "PermissionDenied");
             try
             {
                 cashDrawer.Open();
