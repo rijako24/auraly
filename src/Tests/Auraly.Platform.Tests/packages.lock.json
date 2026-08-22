@@ -302,6 +302,19 @@
           "Grpc.Core.Api": "2.60.0"
         }
       },
+      "Lib.Net.Http.EncryptedContentEncoding": {
+        "type": "Transitive",
+        "resolved": "2.1.1",
+        "contentHash": "n+CuGyBCZ9zLT3p39sab1bSL2FRCoXHXUM/T7jXwZlibOE+mASOqXcKD9LzNjH+VZTdA0mn02EdBww06DzD9IA=="
+      },
+      "Lib.Net.Http.WebPush": {
+        "type": "Transitive",
+        "resolved": "3.3.1",
+        "contentHash": "5ByiHRcY3lF/4LA7ZbgzBEUmX6oYlPTS1NzXEom3uvT7wFHeZ8Q9DOQcPG6awFqS8yGUuyTvxrHyBzTOwe8Fpg==",
+        "dependencies": {
+          "Lib.Net.Http.EncryptedContentEncoding": "2.1.1"
+        }
+      },
       "Microsoft.ApplicationInsights": {
         "type": "Transitive",
         "resolved": "2.23.0",
@@ -2295,6 +2308,7 @@
           "Azure.Identity": "[1.17.2, )",
           "Azure.Messaging.ServiceBus": "[7.19.0, )",
           "Azure.Messaging.WebPubSub": "[1.6.0, )",
+          "Lib.Net.Http.WebPush": "[3.3.1, )",
           "Microsoft.AspNetCore.Authentication.JwtBearer": "[8.0.12, )",
           "Microsoft.AspNetCore.OpenApi": "[8.0.12, )",
           "Microsoft.Extensions.Configuration.AzureAppConfiguration": "[8.5.0, )",
