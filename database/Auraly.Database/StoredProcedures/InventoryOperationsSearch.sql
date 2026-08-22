@@ -19,6 +19,8 @@ BEGIN
            o.ReasonDescription ReasonCode,o.Status,o.OccurredAt,
            (SELECT COUNT(*) FROM dbo.InventoryOperationLines l WHERE l.InventoryOperationId=o.InventoryOperationId) LineCount,
            o.TotalValueChange,
+           o.ConversionInputEquivalent,o.ConversionOutputEquivalent,o.ConversionLossQuantity,
+           o.ConversionLossPercent,o.ConversionMaximumLossPercent,
            CONCAT(o.DocumentNumber,N' ',o.ReasonDescription,N' ',o.ReasonCode,N' ',w.Name,N' ',
              (SELECT STRING_AGG(CONCAT(p.ProductCode,N' ',p.Reference,N' ',p.Name),N' ')
               FROM dbo.InventoryOperationLines l INNER JOIN dbo.Products p ON p.ProductId=l.ProductId
@@ -33,6 +35,7 @@ BEGIN
            N'GOODS_RECEIPT',g.Status,g.ReceivedAt,
            (SELECT COUNT(*) FROM dbo.GoodsReceiptLines l WHERE l.GoodsReceiptId=g.GoodsReceiptId),
            COALESCE((SELECT SUM(m.ValueChange) FROM dbo.InventoryMovements m WHERE m.DocumentId=g.GoodsReceiptId),0),
+           NULL,NULL,NULL,NULL,NULL,
            CONCAT(g.DocumentNumber,N' ',g.SupplierInvoiceNumber,N' ',w.Name,N' ',s.DisplayName,N' ',
              (SELECT STRING_AGG(CONCAT(p.ProductCode,N' ',p.Reference,N' ',p.Name),N' ')
               FROM dbo.GoodsReceiptLines l INNER JOIN dbo.Products p ON p.ProductId=l.ProductId
@@ -51,7 +54,9 @@ BEGIN
 
     SELECT DocumentId,DocumentType,DocumentNumber,WarehouseId,WarehouseName,
            DestinationWarehouseId,DestinationWarehouseName,ReasonCode,Status,OccurredAt,
-           LineCount,CASE WHEN @IncludeCosts=1 THEN TotalValueChange END
+           LineCount,CASE WHEN @IncludeCosts=1 THEN TotalValueChange END,
+           ConversionInputEquivalent,ConversionOutputEquivalent,ConversionLossQuantity,
+           ConversionLossPercent,ConversionMaximumLossPercent
     FROM #InventoryHistory
     WHERE BusinessId=@BusinessId AND (@WarehouseId IS NULL OR WarehouseId=@WarehouseId)
       AND (@DocumentType IS NULL OR DocumentType=@DocumentType) AND (@Status IS NULL OR Status=@Status)

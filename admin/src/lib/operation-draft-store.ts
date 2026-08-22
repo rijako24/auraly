@@ -14,6 +14,9 @@ export type DurableOperationLine = {
   salePrice?: string;
   direction: "INPUT" | "OUTPUT";
   systemQuantity: number | null;
+  familyRootProductId?: string;
+  conversionFactor?: number;
+  maximumLossPercent?: number;
 };
 
 export type DurableInventoryOperationDraft = {

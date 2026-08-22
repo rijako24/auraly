@@ -1,7 +1,7 @@
 # Decisión: módulo Conversión de productos
 
 Fecha: 2026-08-21
-Estado: diseño funcional vigente
+Estado: implementado en el módulo de inventario
 Referencia funcional: Xion, sin trasladar sus defectos ni su complejidad accidental
 
 ---
@@ -280,13 +280,15 @@ Los costos se muestran solamente a usuarios con el permiso vigente de lectura de
 
 El módulo debe sentirse parte de Auraly. Reutiliza `Card`, `Button`, `Input`, `Select`, `Dialog`, `Skeleton`, badges de estado, tokens de color y el componente compartido `DataTable`. No crea una librería visual ni una tabla propia.
 
-Rutas propuestas:
+Ubicación implementada:
 
 ```text
-/dashboard/inventory/conversions
-/dashboard/inventory/conversions/new
-/dashboard/inventory/conversions/{documentId}
+/dashboard/inventory → pestaña Conversiones
+/dashboard/inventory → Nueva operación → Conversión
+/dashboard/inventory → Conversiones → detalle inmutable
 ```
+
+Se mantiene una sola página operativa de inventario para evitar navegación y componentes duplicados. La pestaña **Conversiones** tiene consulta paginada propia y el formulario reutiliza el espacio de captura documental existente.
 
 ### 9.1 Bandeja de conversiones
 
@@ -436,16 +438,16 @@ Reglas:
 
 ## 11. Permisos
 
-El módulo reutiliza la autorización de inventario y agrega únicamente acciones que representen una capacidad real:
+El módulo reutiliza la autorización vigente; no crea permisos redundantes:
 
 ```text
-inventory.conversions.read
-inventory.conversions.create
+inventory.read
 inventory.conversions.confirm
-inventory.conversions.configure
+catalog.update
+inventory.costs.read
 ```
 
-La lectura de costos continúa gobernada por el permiso canónico existente. El backend vuelve a autorizar cada endpoint y recurso.
+`catalog.update` protege la configuración de la familia en producto. `inventory.read` protege bandeja, detalle y selector; `inventory.conversions.confirm` protege la confirmación. La lectura de costos continúa gobernada por `inventory.costs.read`. El backend vuelve a autorizar cada endpoint y recurso.
 
 ---
 

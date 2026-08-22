@@ -13,6 +13,7 @@ internal static class ProductOfferModelConfiguration
             entity.HasKey(value => value.ProductLinkId);
             entity.Property(value => value.InventoryFactor).HasPrecision(19, 6);
             entity.Property(value => value.PriceFactor).HasPrecision(19, 6);
+            entity.Property(value => value.ConversionFactor).HasPrecision(19, 6);
             entity.HasIndex(value => new { value.BusinessId, value.ChildProductId }).IsUnique();
             entity.HasIndex(value => new
             {

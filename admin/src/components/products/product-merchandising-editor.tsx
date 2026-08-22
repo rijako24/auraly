@@ -2,7 +2,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Barcode, Boxes, Link2, Plus, Save, Scale, Tags, Trash2 } from "lucide-react";
+import { Barcode, Boxes, Link2, Plus, Save, Tags, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,8 +51,9 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
   const [showBrandCreate, setShowBrandCreate] = useState(false);
   const [showUnitCreate, setShowUnitCreate] = useState(false);
   const [linkedSearch, setLinkedSearch] = useState("");
+  const [linkedPage, setLinkedPage] = useState(1);
   const candidates = useProducts({
-    page: 1,
+    page: linkedPage,
     pageSize: 20,
     search: linkedSearch || undefined,
     includeInactive: false,
@@ -80,6 +81,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
       isWeighable: form!.isWeighable,
       scale: form!.isWeighable ? form!.scale : null,
       barcodes: form!.barcodes,
+      conversionMaximumLossPercent: form!.conversionMaximumLossPercent,
       link: form!.link
         ? {
             parentProductId: form!.link.parentProductId,
@@ -87,6 +89,8 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
             inventoryFactor: form!.link.sharesInventory ? form!.link.inventoryFactor : null,
             sharesPrice: form!.link.sharesPrice,
             priceFactor: form!.link.sharesPrice ? form!.link.priceFactor : null,
+            allowsConversion: form!.link.allowsConversion,
+            conversionFactor: form!.link.allowsConversion ? form!.link.conversionFactor : null,
           }
         : null,
       linkedProducts: form!.linkedProducts.map((item) => ({
@@ -95,6 +99,8 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
         inventoryFactor: item.sharesInventory ? item.inventoryFactor : null,
         sharesPrice: item.sharesPrice,
         priceFactor: item.sharesPrice ? item.priceFactor : null,
+        allowsConversion: item.allowsConversion,
+        conversionFactor: item.allowsConversion ? item.conversionFactor : null,
       })),
     }),
     onSuccess: async (value) => {
@@ -313,7 +319,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
           </div> : <>
             <div className="rounded-xl border bg-muted/20 p-3">
               <Label htmlFor={`linked-search-${productId}`}>Agregar producto a la lista</Label>
-              <Input id={`linked-search-${productId}`} className="mt-2" value={linkedSearch} onChange={(event) => setLinkedSearch(event.target.value)} placeholder="Busca por nombre, código o referencia" />
+              <Input id={`linked-search-${productId}`} className="mt-2" value={linkedSearch} onChange={(event) => { setLinkedSearch(event.target.value); setLinkedPage(1); }} placeholder="Busca por nombre, código o referencia" />
               {linkedSearch.trim() && <div className="mt-2 max-h-52 space-y-1 overflow-y-auto rounded-lg border bg-background p-1">
                 {availableCandidates.map((item) => <button key={item.productId} type="button" className="flex w-full items-center justify-between rounded-md px-3 py-2 text-left hover:bg-muted" onClick={() => {
                   setForm({ ...form, linkedProducts: [...form.linkedProducts, {
@@ -324,6 +330,8 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
                     inventoryFactor: null,
                     sharesPrice: false,
                     priceFactor: null,
+                    allowsConversion: false,
+                    conversionFactor: null,
                   }] });
                   setLinkedSearch("");
                 }}>
@@ -331,19 +339,39 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
                   <span className="flex items-center text-sm font-medium text-primary"><Plus className="mr-1 h-4 w-4" />Agregar</span>
                 </button>)}
                 {!candidates.isLoading && availableCandidates.length === 0 && <p className="p-3 text-sm text-muted-foreground">No hay productos disponibles con esa búsqueda.</p>}
+                {(candidates.data?.totalPages ?? 0) > 1 && <div className="sticky bottom-0 flex items-center justify-between border-t bg-background p-2 text-xs text-muted-foreground">
+                  <Button type="button" size="sm" variant="ghost" disabled={!candidates.data?.hasPreviousPage || candidates.isFetching} onClick={() => setLinkedPage((page) => Math.max(1, page - 1))}>Anterior</Button>
+                  <span>Página {candidates.data?.page ?? linkedPage} de {candidates.data?.totalPages ?? 1} · {candidates.data?.totalCount ?? 0} productos</span>
+                  <Button type="button" size="sm" variant="ghost" disabled={!candidates.data?.hasNextPage || candidates.isFetching} onClick={() => setLinkedPage((page) => page + 1)}>Siguiente</Button>
+                </div>}
               </div>}
             </div>
 
             <div className="mt-3 space-y-3">
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+                <Label htmlFor={`conversion-loss-${productId}`}>Merma máxima permitida en conversiones (%)</Label>
+                <Input
+                  id={`conversion-loss-${productId}`}
+                  className="mt-2 max-w-52 bg-background"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.000001"
+                  value={form.conversionMaximumLossPercent ?? ""}
+                  onChange={(event) => setForm({ ...form, conversionMaximumLossPercent: event.target.value === "" ? null : Number(event.target.value) })}
+                  placeholder="Ej. 5"
+                />
+                <p className="mt-2 text-xs text-muted-foreground">Se aplica a toda la familia. Una salida nunca puede superar las unidades equivalentes consumidas.</p>
+              </div>
               {form.linkedProducts.length === 0 && <div className="rounded-xl border border-dashed p-5 text-center text-sm text-muted-foreground">Todavia no has agregado opciones a esta familia.</div>}
               {form.linkedProducts.map((item, index) => <article key={item.childProductId} className="rounded-xl border p-4">
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <div><p className="font-semibold">{item.childProductName}</p><p className="text-xs text-muted-foreground">{item.childProductCode || "Sin código"}</p></div>
                   <Button type="button" size="icon" variant="ghost" aria-label={`Quitar ${item.childProductName}`} onClick={() => setForm({ ...form, linkedProducts: form.linkedProducts.filter((_, current) => current !== index) })}><Trash2 className="h-4 w-4" /></Button>
                 </div>
-                <div className="grid gap-3 md:grid-cols-2">
+                <div className="grid gap-3 md:grid-cols-3">
                   <div>
-                    <Toggle label="Compartir inventario" detail="Cada venta descontará del producto principal." checked={item.sharesInventory} onChange={(checked) => updateLinkedProduct(index, { sharesInventory: checked, inventoryFactor: checked ? item.inventoryFactor ?? 1 : null })} />
+                    <Toggle label="Compartir inventario" detail="Cada venta descontará del producto principal." checked={item.sharesInventory} onChange={(checked) => updateLinkedProduct(index, { sharesInventory: checked, inventoryFactor: checked ? item.inventoryFactor ?? 1 : null, allowsConversion: checked ? false : item.allowsConversion, conversionFactor: checked ? null : item.conversionFactor })} />
                     <Label>Unidades del principal por cada unidad vendida</Label>
                     <Input className="mt-1" type="number" min="0.000001" step="0.001" disabled={!item.sharesInventory} value={item.inventoryFactor ?? ""} onChange={(event) => updateLinkedProduct(index, { inventoryFactor: Number(event.target.value) })} />
                   </div>
@@ -351,6 +379,24 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
                     <Toggle label="Compartir precio" detail="Al publicar el principal, este precio se actualizará por el factor." checked={item.sharesPrice} onChange={(checked) => updateLinkedProduct(index, { sharesPrice: checked, priceFactor: checked ? item.priceFactor ?? 1 : null })} />
                     <Label>Multiplicador del precio principal</Label>
                     <Input className="mt-1" type="number" min="0.000001" step="0.001" disabled={!item.sharesPrice} value={item.priceFactor ?? ""} onChange={(event) => updateLinkedProduct(index, { priceFactor: Number(event.target.value) })} />
+                  </div>
+                  <div>
+                    <Toggle label="Permitir conversión" detail="Habilita conversiones en ambos sentidos con cualquier integrante habilitado de la familia." checked={item.allowsConversion} onChange={(checked) => {
+                      setForm((current) => current && ({
+                        ...current,
+                        manageInventory: checked ? true : current.manageInventory,
+                        conversionMaximumLossPercent: checked ? current.conversionMaximumLossPercent ?? 0 : current.conversionMaximumLossPercent,
+                        linkedProducts: current.linkedProducts.map((linked, currentIndex) => currentIndex === index ? {
+                          ...linked,
+                          allowsConversion: checked,
+                          conversionFactor: checked ? linked.conversionFactor ?? 1 : null,
+                          sharesInventory: checked ? false : linked.sharesInventory,
+                          inventoryFactor: checked ? null : linked.inventoryFactor,
+                        } : linked),
+                      }));
+                    }} />
+                    <Label>Unidades equivalentes al producto principal</Label>
+                    <Input className="mt-1" type="number" min="0.000001" step="0.000001" disabled={!item.allowsConversion} value={item.conversionFactor ?? ""} onChange={(event) => updateLinkedProduct(index, { conversionFactor: Number(event.target.value) })} />
                   </div>
                 </div>
               </article>)}

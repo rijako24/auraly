@@ -42,8 +42,10 @@ CREATE TABLE [dbo].[ProductLinks]
     [ParentProductId] UNIQUEIDENTIFIER NOT NULL,
     [InventoryFactor] DECIMAL(19,6) NULL,
     [PriceFactor] DECIMAL(19,6) NULL,
+    [ConversionFactor] DECIMAL(19,6) NULL,
     [SharesInventory] BIT NOT NULL,
     [SharesPrice] BIT NOT NULL,
+    [AllowsConversion] BIT NOT NULL CONSTRAINT [DF_ProductLinks_AllowsConversion] DEFAULT 0,
     [IsActive] BIT NOT NULL CONSTRAINT [DF_ProductLinks_IsActive] DEFAULT 1,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [UpdatedAt] DATETIMEOFFSET(7) NULL,
@@ -54,7 +56,8 @@ CREATE TABLE [dbo].[ProductLinks]
     CONSTRAINT [UQ_ProductLinks_Business_Child] UNIQUE ([BusinessId], [ChildProductId]),
     CONSTRAINT [CK_ProductLinks_DifferentProducts] CHECK ([ChildProductId] <> [ParentProductId]),
     CONSTRAINT [CK_ProductLinks_InventoryFactor] CHECK (([SharesInventory] = 0 AND [InventoryFactor] IS NULL) OR ([SharesInventory] = 1 AND [InventoryFactor] > 0)),
-    CONSTRAINT [CK_ProductLinks_PriceFactor] CHECK (([SharesPrice] = 0 AND [PriceFactor] IS NULL) OR ([SharesPrice] = 1 AND [PriceFactor] > 0))
+    CONSTRAINT [CK_ProductLinks_PriceFactor] CHECK (([SharesPrice] = 0 AND [PriceFactor] IS NULL) OR ([SharesPrice] = 1 AND [PriceFactor] > 0)),
+    CONSTRAINT [CK_ProductLinks_ConversionFactor] CHECK (([AllowsConversion] = 0 AND [ConversionFactor] IS NULL) OR ([AllowsConversion] = 1 AND [SharesInventory] = 0 AND [ConversionFactor] > 0))
 );
 GO
 

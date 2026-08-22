@@ -5,6 +5,7 @@ namespace Auraly.Application.Inventory;
 public interface IInventoryQueryStore
 {
     Task<InventoryProductPage> GetProductsAsync(InventoryUserIdentity user, InventoryProductQuery query, bool includeCosts, CancellationToken token);
+    Task<ProductConversionProductPage> GetConversionProductsAsync(InventoryUserIdentity user, ProductConversionProductQuery query, CancellationToken token);
     Task<IReadOnlyList<InventoryWarehouseOption>> GetWarehousesAsync(InventoryUserIdentity user, CancellationToken token);
     Task<IReadOnlyList<WarehouseMasterItem>> GetWarehouseMastersAsync(InventoryUserIdentity user, CancellationToken token);
     Task<WarehouseMasterItem> SaveWarehouseAsync(InventoryUserIdentity user, Guid? warehouseId, SaveWarehouseRequest request, CancellationToken token);
@@ -23,6 +24,14 @@ public sealed class InventoryQueryService(IInventoryQueryStore store)
         Validate(user, query.BusinessId, query.Page, query.PageSize);
         if (query.WarehouseId == Guid.Empty) throw new InventoryValidationException("WarehouseId is required.");
         return store.GetProductsAsync(user, query with { Search = Normalize(query.Search) }, user.Permissions.Contains(InventoryPermissionCodes.ReadCosts), token);
+    }
+
+    public Task<ProductConversionProductPage> GetConversionProductsAsync(InventoryUserIdentity user, ProductConversionProductQuery query, CancellationToken token = default)
+    {
+        Validate(user, query.BusinessId, query.Page, query.PageSize);
+        if (query.WarehouseId == Guid.Empty) throw new InventoryValidationException("WarehouseId is required.");
+        if (query.FamilyRootProductId == Guid.Empty) throw new InventoryValidationException("FamilyRootProductId is invalid.");
+        return store.GetConversionProductsAsync(user, query with { Search = Normalize(query.Search) }, token);
     }
 
     public Task<IReadOnlyList<InventoryWarehouseOption>> GetWarehousesAsync(InventoryUserIdentity user, CancellationToken token = default)

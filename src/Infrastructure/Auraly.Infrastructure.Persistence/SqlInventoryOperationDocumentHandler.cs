@@ -19,12 +19,17 @@ public sealed class SqlInventoryOperationProcessor(
         var operation = InventoryOperationContractSerializer.Deserialize(document.Payload);
         if (operation.DocumentId != document.DocumentId.Value || operation.BusinessId != document.BusinessId.Value || operation.TenantId != document.TenantId.Value || operation.DocumentType != document.DocumentType)
             throw new InvalidOperationException("The inventory operation envelope does not match its payload.");
+        if (operation.DocumentType == InventoryDocumentTypes.Conversion)
+            ValidateConversionSnapshot(operation);
         var session = sessions.Current;
         var normalizedLines = new List<InventoryOperationLineSnapshot>(operation.Lines.Count);
         foreach (var line in operation.Lines)
         {
             var target = await SqlProductLinkResolution.ResolveInventoryAsync(
                 session, operation.BusinessId, line.ProductId, cancellationToken);
+            if (operation.DocumentType == InventoryDocumentTypes.Conversion &&
+                (target.ProductId != line.ProductId || target.Factor != 1m))
+                throw new InvalidOperationException("A conversion product must keep its own inventory.");
             normalizedLines.Add(line with
             {
                 ProductId = target.ProductId,
@@ -135,6 +140,9 @@ public sealed class SqlInventoryOperationProcessor(
     {
         var inputs = operation.Lines.Where(line => line.Direction == "INPUT").OrderBy(line => line.LineNumber).ToArray();
         var outputs = operation.Lines.Where(line => line.Direction == "OUTPUT").OrderBy(line => line.LineNumber).ToArray();
+        foreach (var input in inputs.GroupBy(line => line.ProductId))
+            if (balances[(operation.WarehouseId, input.Key)].Quantity < input.Sum(line => line.Quantity))
+                throw new InvalidOperationException("The conversion input inventory is insufficient.");
         var inputCost = 0m;
         foreach (var line in inputs)
             inputCost -= await ApplyAsync(session, operation, line, operation.WarehouseId, -line.Quantity, null, "ConversionInput", balances, cancellationToken);
@@ -146,6 +154,38 @@ public sealed class SqlInventoryOperationProcessor(
             total += await ApplyAsync(session, operation, outputs[index], operation.WarehouseId, outputs[index].Quantity, unitCost, "ConversionOutput", balances, cancellationToken);
         }
         return InventoryOperationRules.Money(total);
+    }
+
+    private static void ValidateConversionSnapshot(InventoryOperationDocumentPayload operation)
+    {
+        if (operation.ConversionFamilyRootProductId is null ||
+            operation.ConversionMaximumLossPercent is null ||
+            operation.ConversionInputEquivalent is null ||
+            operation.ConversionOutputEquivalent is null ||
+            operation.ConversionLossQuantity is null ||
+            operation.ConversionLossPercent is null ||
+            operation.Lines.Any(line => line.ConversionFactor is null || line.ConversionEquivalentQuantity is null))
+            throw new InvalidOperationException("The conversion configuration snapshot is incomplete.");
+
+        ProductConversionEquivalence calculated;
+        try
+        {
+            calculated = InventoryOperationRules.ValidateConversionEquivalence(
+                operation.ConversionType ?? string.Empty,
+                operation.Lines.Select(line => (line.Direction, line.Quantity, line.ConversionFactor!.Value)).ToArray(),
+                operation.ConversionMaximumLossPercent.Value);
+        }
+        catch (ArgumentException exception)
+        {
+            throw new InvalidOperationException(exception.Message, exception);
+        }
+        if (calculated.InputEquivalent != operation.ConversionInputEquivalent ||
+            calculated.OutputEquivalent != operation.ConversionOutputEquivalent ||
+            calculated.LossQuantity != operation.ConversionLossQuantity ||
+            calculated.LossPercent != operation.ConversionLossPercent ||
+            operation.Lines.Select(line => line.ConversionEquivalentQuantity!.Value)
+                .Where((value, index) => value != calculated.EquivalentQuantities[index]).Any())
+            throw new InvalidOperationException("The conversion configuration snapshot is inconsistent.");
     }
 
     private async Task<decimal> ApplyAsync(SqlDocumentProcessingSessionAccessor.Session session,

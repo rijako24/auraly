@@ -25,7 +25,9 @@ public sealed record ProductLinkInput(
     bool SharesInventory,
     decimal? InventoryFactor,
     bool SharesPrice,
-    decimal? PriceFactor);
+    decimal? PriceFactor,
+    bool AllowsConversion = false,
+    decimal? ConversionFactor = null);
 
 public sealed record ProductLinkDetail(
     Guid ParentProductId,
@@ -34,14 +36,18 @@ public sealed record ProductLinkDetail(
     bool SharesInventory,
     decimal? InventoryFactor,
     bool SharesPrice,
-    decimal? PriceFactor);
+    decimal? PriceFactor,
+    bool AllowsConversion = false,
+    decimal? ConversionFactor = null);
 
 public sealed record LinkedProductInput(
     Guid ChildProductId,
     bool SharesInventory,
     decimal? InventoryFactor,
     bool SharesPrice,
-    decimal? PriceFactor);
+    decimal? PriceFactor,
+    bool AllowsConversion = false,
+    decimal? ConversionFactor = null);
 
 public sealed record LinkedProductDetail(
     Guid ChildProductId,
@@ -50,7 +56,9 @@ public sealed record LinkedProductDetail(
     bool SharesInventory,
     decimal? InventoryFactor,
     bool SharesPrice,
-    decimal? PriceFactor);
+    decimal? PriceFactor,
+    bool AllowsConversion = false,
+    decimal? ConversionFactor = null);
 
 public sealed record ProductMerchandisingConfiguration(
     Guid ProductId,
@@ -63,7 +71,8 @@ public sealed record ProductMerchandisingConfiguration(
     ScaleConfigurationInput? Scale,
     IReadOnlyCollection<ProductBarcodeInput> Barcodes,
     ProductLinkDetail? Link,
-    IReadOnlyCollection<LinkedProductDetail> LinkedProducts);
+    IReadOnlyCollection<LinkedProductDetail> LinkedProducts,
+    decimal? ConversionMaximumLossPercent = null);
 
 public sealed record SaveProductMerchandisingRequest(
     Guid? ProductCategoryId,
@@ -75,4 +84,5 @@ public sealed record SaveProductMerchandisingRequest(
     ScaleConfigurationInput? Scale,
     IReadOnlyCollection<ProductBarcodeInput> Barcodes,
     ProductLinkInput? Link,
-    IReadOnlyCollection<LinkedProductInput> LinkedProducts);
+    IReadOnlyCollection<LinkedProductInput> LinkedProducts,
+    decimal? ConversionMaximumLossPercent = null);
