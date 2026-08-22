@@ -57,7 +57,7 @@ public static class PriceSegmentsApi
         var channelValue = ValidateChannelValue(strategy, request.ChannelValue);
         if (strategy == "TieredProductPrice" &&
             requestedItems.Any(item => item.ProductId == Guid.Empty || item.Amount <= 0 || item.MinimumQuantity <= 0))
-            return Results.Problem("Todos los productos necesitan precio y cantidad mínima válidos.", statusCode: 400);
+            return Results.Problem("Cada producto necesita un precio y una cantidad mínima válidos.", statusCode: 400);
         await using var command = Procedure("dbo.PriceSegmentCreate", connection, transaction);
         command.Parameters.AddWithValue("@Id", id);
         command.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
