@@ -50,7 +50,12 @@ public static class DeliveryPaymentApplications
     public const string CreditAdvance = "CreditAdvance";
 }
 
-public sealed record DispatchActorIdentity(Guid UserId, Guid TenantId, Guid BusinessId, IReadOnlySet<string> Permissions);
+public sealed record DispatchActorIdentity(
+    Guid UserId,
+    Guid TenantId,
+    Guid BusinessId,
+    IReadOnlySet<string> Permissions,
+    bool IsAdministrator);
 public sealed record DispatchQuery(int Page = 1, int PageSize = 25, string? Search = null, string? Status = null, DateOnly? From = null, DateOnly? To = null);
 public sealed record DispatchListItem(Guid DispatchId, string DispatchNumber, DateOnly ScheduledDate, string DriverName, string? VehiclePlate, string Status, int DocumentCount, int LineCount, decimal ExpectedQuantity, decimal VerifiedQuantity, decimal ShortageQuantity, DateTimeOffset UpdatedAt, string RowVersion);
 public sealed record DispatchPage(IReadOnlyCollection<DispatchListItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);

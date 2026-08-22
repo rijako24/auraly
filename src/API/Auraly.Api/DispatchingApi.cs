@@ -144,7 +144,14 @@ public static class DispatchClaimsPrincipalExtensions
     public static DispatchActorIdentity ToDispatchIdentity(this ClaimsPrincipal principal) => new(
         RequiredGuid(principal, ClaimTypes.NameIdentifier), RequiredGuid(principal, "tenant_id"),
         RequiredGuid(principal, "business_id"),
-        principal.FindAll("permission").Select(value => value.Value).ToHashSet(StringComparer.Ordinal));
+        principal.FindAll("permission").Select(value => value.Value).ToHashSet(StringComparer.Ordinal),
+        principal.FindAll(ClaimTypes.Role).Any(value => IsAdministratorRole(value.Value)));
+
+    private static bool IsAdministratorRole(string role) =>
+        role.Equals("Administrador", StringComparison.OrdinalIgnoreCase)
+        || role.Equals("Administrator", StringComparison.OrdinalIgnoreCase)
+        || role.Equals("TenantAdministrator", StringComparison.OrdinalIgnoreCase)
+        || role.Equals("Administrador de plataforma", StringComparison.OrdinalIgnoreCase);
 
     private static Guid RequiredGuid(ClaimsPrincipal principal, string claimType) =>
         Guid.TryParse(principal.FindFirstValue(claimType), out var value)
