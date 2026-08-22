@@ -2525,6 +2525,13 @@
           "Auraly.Commerce.Accounting.Application": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Contracts": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Domain": "[1.0.0, )",
+          "Auraly.Contracts.Expenses": "[1.0.0, )",
+          "Auraly.Contracts.Payables": "[1.0.0, )",
+          "Auraly.Contracts.Purchasing": "[1.0.0, )",
+          "Auraly.Contracts.Receivables": "[1.0.0, )",
+          "Auraly.Contracts.Returns": "[1.0.0, )",
+          "Auraly.Contracts.Sales": "[1.0.0, )",
+          "Auraly.Contracts.WorkSessions": "[1.0.0, )",
           "Microsoft.Data.SqlClient": "[5.2.2, )"
         }
       },

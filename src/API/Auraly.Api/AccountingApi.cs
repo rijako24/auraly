@@ -72,6 +72,22 @@ public static class AccountingApi
             await ExecuteAsync(() => service.GetIncomeStatementAsync(context.User.ToAccountingIdentity(), from, to, token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapGet("/api/commerce/v1/accounting/reports/exceptions", async (HttpContext context, DateOnly from, DateOnly to, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.GetExceptionsAsync(context.User.ToAccountingIdentity(), from, to, token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/compliance/definitions", async (HttpContext context, short? taxYear, ComplianceReportingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.ListDefinitionsAsync(context.User.ToAccountingIdentity(), taxYear, token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/compliance/mappings", async (HttpContext context, short taxYear, string? formatCode, ComplianceReportingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.ListMappingsAsync(context.User.ToAccountingIdentity(), taxYear, formatCode, token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapPut("/api/commerce/v1/accounting/compliance/mappings", async (HttpContext context, SetComplianceConceptMappingRequest request, ComplianceReportingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.SetMappingAsync(context.User.ToAccountingIdentity(), request, token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapPost("/api/commerce/v1/accounting/compliance/runs", async (HttpContext context, GenerateComplianceReportRequest request, ComplianceReportingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.GenerateAsync(context.User.ToAccountingIdentity(), request, token), value => Results.Created($"/api/commerce/v1/accounting/compliance/runs/{value.RunId:D}", value))).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/compliance/runs", async (HttpContext context, short? taxYear, ComplianceReportingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.ListRunsAsync(context.User.ToAccountingIdentity(), taxYear, token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/compliance/runs/{runId:guid}/artifact", async (HttpContext context, Guid runId, ComplianceReportingService service, CancellationToken token) =>
+            await ExecuteAsync(async () =>
+            {
+                var artifact = await service.GetArtifactAsync(context.User.ToAccountingIdentity(), runId, token);
+                return artifact is null ? Results.NotFound() : Results.File(artifact.Content, artifact.MediaType, artifact.FileName);
+            })).RequireAuthorization("accounting.user");
         return endpoints;
     }
 

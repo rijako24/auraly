@@ -62,6 +62,12 @@ export interface AccountingJournalRow { entryId:string;entryNumber:string;occurr
 export interface GeneralLedgerRow { accountCode:string;accountName:string;accountType:string;openingBalance:number;debit:number;credit:number;closingBalance:number; }
 export interface FinancialStatementRow { section:string;accountCode:string;accountName:string;amount:number; }
 export interface AccountingExceptionRow { sourceDocumentId:string;sourceDocumentType:string;occurredAt:string;status:string;errorCode:string|null;errorMessage:string|null; }
+export interface ComplianceReportDefinition { authorityCode:string;taxYear:number;formatCode:string;formatVersion:number;name:string;reportKind:"Exogenous"|"FiscalDraft";resolutionNumber:string;resolutionDate:string;technicalAnnex:string;sourceUrl:string;sourceSha256:string; }
+export interface ComplianceConceptMapping { mappingId:string;tenantId:string;businessId:string|null;authorityCode:string;taxYear:number;formatCode:string;formatVersion:number;accountId:string;accountCode:string;accountName:string;conceptCode:string;targetField:string; }
+export interface ComplianceValidation { severity:"Error"|"Warning";code:string;message:string;partyId:string|null;accountId:string|null; }
+export interface ComplianceReportRun { runId:string;authorityCode:string;taxYear:number;formatCode:string;formatVersion:number;name:string;reportKind:"Exogenous"|"FiscalDraft";periodFrom:string;periodTo:string;status:"Blocked"|"Ready";resolutionNumber:string;sourceUrl:string;sourceSha256:string;rowCount:number;controlTotal:number;createdAt:string;validations:ComplianceValidation[]; }
+export interface SetComplianceConceptMapping { businessId:string|null;authorityCode:string;taxYear:number;formatCode:string;formatVersion:number;accountId:string;conceptCode:string;targetField:string; }
+export interface GenerateComplianceReport { authorityCode:string;taxYear:number;formatCode:string;formatVersion:number;periodFrom:string;periodTo:string; }
 
 export const accountingApi = {
   accounts: () => apiClient.get<AccountingAccount[]>("/commerce/v1/accounting/accounts"),
@@ -86,4 +92,10 @@ export const accountingApi = {
   balanceSheet: (asOf:string) => apiClient.get<FinancialStatementRow[]>(`/commerce/v1/accounting/reports/balance-sheet?asOf=${asOf}`),
   incomeStatement: (from:string,to:string) => apiClient.get<FinancialStatementRow[]>(`/commerce/v1/accounting/reports/income-statement?from=${from}&to=${to}`),
   exceptions: (from:string,to:string) => apiClient.get<AccountingExceptionRow[]>(`/commerce/v1/accounting/reports/exceptions?from=${from}&to=${to}`),
+  complianceDefinitions: (taxYear?:number) => apiClient.get<ComplianceReportDefinition[]>("/commerce/v1/accounting/compliance/definitions",{taxYear}),
+  complianceMappings: (taxYear:number,formatCode?:string) => apiClient.get<ComplianceConceptMapping[]>("/commerce/v1/accounting/compliance/mappings",{taxYear,formatCode}),
+  setComplianceMapping: (request:SetComplianceConceptMapping) => apiClient.put<ComplianceConceptMapping>("/commerce/v1/accounting/compliance/mappings",request),
+  generateComplianceReport: (request:GenerateComplianceReport) => apiClient.post<ComplianceReportRun>("/commerce/v1/accounting/compliance/runs",request),
+  complianceRuns: (taxYear?:number) => apiClient.get<ComplianceReportRun[]>("/commerce/v1/accounting/compliance/runs",{taxYear}),
+  complianceArtifactUrl: (runId:string) => `/api/commerce/v1/accounting/compliance/runs/${runId}/artifact`,
 };

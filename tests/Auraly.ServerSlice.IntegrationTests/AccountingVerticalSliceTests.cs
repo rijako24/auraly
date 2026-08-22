@@ -688,6 +688,80 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                 row.ErrorCode == "SettlementSourceMissing");
         }
 
+        using (var definitionsResponse = await accounting.GetAsync(
+                   "/api/commerce/v1/accounting/compliance/definitions?taxYear=2026"))
+        {
+            definitionsResponse.EnsureSuccessStatusCode();
+            var reportDefinitions = await definitionsResponse.Content
+                .ReadFromJsonAsync<ComplianceReportDefinitionView[]>() ?? [];
+            Assert.Contains(reportDefinitions, item => item.FormatCode == "1001" &&
+                item.FormatVersion == 11 && item.ResolutionNumber.Contains("000237/2025"));
+            Assert.Contains(reportDefinitions, item => item.FormatCode == "1005" &&
+                item.FormatVersion == 9 && item.SourceSha256.Length == 64);
+            Assert.Contains(reportDefinitions, item => item.FormatCode == "1008" &&
+                item.FormatVersion == 7);
+        }
+
+        using (var blockedResponse = await accounting.PostAsJsonAsync(
+                   "/api/commerce/v1/accounting/compliance/runs",
+                   new GenerateComplianceReportRequest(
+                       "DIAN", 2026, "FORM-310", 1,
+                       new DateOnly(2026, 1, 1), new DateOnly(2026, 12, 31))))
+        {
+            Assert.Equal(HttpStatusCode.Created, blockedResponse.StatusCode);
+            var blocked = await blockedResponse.Content
+                .ReadFromJsonAsync<ComplianceReportRunView>();
+            Assert.NotNull(blocked);
+            Assert.Equal("Blocked", blocked.Status);
+            Assert.Contains(blocked.Validations,
+                item => item.Code == "CONCEPT_MAPPING_REQUIRED");
+        }
+
+        var inputVatAccount = Assert.Single(accounts, item => item.Code == "240810");
+        using (var mappingResponse = await accounting.PutAsJsonAsync(
+                   "/api/commerce/v1/accounting/compliance/mappings",
+                   new SetComplianceConceptMappingRequest(
+                       fixture.BusinessId, "DIAN", 2026, "IVA", 1,
+                       inputVatAccount.AccountId, "IVA-DESCONTABLE", "inputVat")))
+        {
+            mappingResponse.EnsureSuccessStatusCode();
+            var complianceMapping = await mappingResponse.Content
+                .ReadFromJsonAsync<ComplianceConceptMappingView>();
+            Assert.NotNull(complianceMapping);
+            Assert.Equal(fixture.BusinessId, complianceMapping.BusinessId);
+            Assert.Equal("inputVat", complianceMapping.TargetField);
+        }
+
+        ComplianceReportRunView readyRun;
+        using (var readyResponse = await accounting.PostAsJsonAsync(
+                   "/api/commerce/v1/accounting/compliance/runs",
+                   new GenerateComplianceReportRequest(
+                       "DIAN", 2026, "IVA", 1,
+                       new DateOnly(2026, 1, 1), new DateOnly(2026, 12, 31))))
+        {
+            Assert.Equal(HttpStatusCode.Created, readyResponse.StatusCode);
+            readyRun = await readyResponse.Content
+                .ReadFromJsonAsync<ComplianceReportRunView>()
+                ?? throw new InvalidOperationException("The compliance run is empty.");
+            Assert.Equal("Ready", readyRun.Status);
+            Assert.True(readyRun.RowCount > 0);
+            Assert.NotEqual(0m, readyRun.ControlTotal);
+            Assert.Empty(readyRun.Validations);
+        }
+        using (var artifactResponse = await accounting.GetAsync(
+                   $"/api/commerce/v1/accounting/compliance/runs/{readyRun.RunId:D}/artifact"))
+        {
+            artifactResponse.EnsureSuccessStatusCode();
+            var content = await artifactResponse.Content.ReadAsByteArrayAsync();
+            Assert.NotEmpty(content);
+            Assert.Contains("Authority=DIAN;TaxYear=2026;Format=IVA;Version=1",
+                System.Text.Encoding.UTF8.GetString(content));
+            var persistedHash = await ScalarAsync<byte[]>(
+                "SELECT ContentSha256 FROM dbo.ComplianceReportArtifacts WHERE RunId=@Id",
+                readyRun.RunId);
+            Assert.Equal(System.Security.Cryptography.SHA256.HashData(content), persistedHash);
+        }
+
         var nextPeriod = Guid.NewGuid();
         using (var create = await accounting.PostAsJsonAsync("/api/commerce/v1/accounting/periods",
             new CreateAccountingPeriodRequest(nextPeriod, fixture.TenantId, new DateOnly(2027, 1, 1), new DateOnly(2027, 12, 31), "2027")))
@@ -950,7 +1024,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
     }
 
     private async Task<T> ScalarAsync<T>(string sql, Guid id)
-    { await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync(); await using var command = new SqlCommand(sql, connection); command.Parameters.AddWithValue("@Id", id); return (T)Convert.ChangeType((await command.ExecuteScalarAsync())!, typeof(T)); }
+    { await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync(); await using var command = new SqlCommand(sql, connection); command.Parameters.AddWithValue("@Id", id); var value=(await command.ExecuteScalarAsync())!; return value is T typed ? typed : (T)Convert.ChangeType(value, typeof(T)); }
     private async Task SetWarehouseNegativeSalesPolicyAsync(bool value)
     { await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync(); await using var command = new SqlCommand("UPDATE dbo.Warehouses SET AllowNegativeStockSales=@Value WHERE WarehouseId=@Id", connection); command.Parameters.AddWithValue("@Value", value); command.Parameters.AddWithValue("@Id", fixture.WarehouseId); Assert.Equal(1, await command.ExecuteNonQueryAsync()); }
     private async Task<int> CountAsync(string table, string column, Guid id)

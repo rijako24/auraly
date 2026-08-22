@@ -2,10 +2,10 @@
 
 ## Decisión vigente
 
-Esta rebanada implementa la primera cobertura ejecutable definida en
-`decision-contabilidad-minima-colombia-y-cumplimiento.md` y conserva como
-contrato de evolución todo el alcance fiscal y de información exógena de esa
-decisión. No mezcla presentación DIAN, contabilidad, inventario ni analítica.
+Esta rebanada implementa la cobertura ejecutable definida en
+`decision-contabilidad-minima-colombia-y-cumplimiento.md`: contabilidad mínima,
+reporting de ventas y base fiscal/exógena reproducible. No mezcla presentación
+DIAN, contabilidad, inventario ni analítica.
 
 Los cuatro motores durables son:
 
@@ -54,11 +54,44 @@ La API y la vista de Contabilidad exponen:
 
 Todos esos informes leen `AccountingEntries` y `AccountingEntryLines`. No
 reconstruyen cifras consultando facturas, compras o movimientos operacionales.
-El diseño completo de auxiliares por tercero/centro, cambios en patrimonio,
-flujo de efectivo, bases fiscales y exógena versionada permanece obligatorio en
-la decisión contable; una salida regulatoria solo podrá declararse disponible
-cuando exista su definición por autoridad, año, formato, versión y resolución,
-y tenga pruebas contra fuentes conciliadas.
+Los auxiliares por tercero/centro, cambios en patrimonio y flujo de efectivo
+permanecen como evolución del juego completo de estados. La base fiscal y
+exógena versionada sí queda implementada con definiciones normativas, mapeos
+explícitos, ejecuciones inmutables, validaciones y artefactos conciliables.
+
+## Informes fiscales e información exógena
+
+No se agregó una quinta cola. El motor fiscal durable continúa siendo el único
+propietario de generar, firmar y transmitir documentos electrónicos a DIAN. La
+preparación de informes tributarios se ejecuta a petición desde asientos ya
+contabilizados y conserva cada corte como evidencia inmutable; nunca modifica
+operación, cartera ni libros.
+
+Cada definición se identifica por `AuthorityCode + TaxYear + FormatCode +
+FormatVersion` y guarda resolución, fecha, anexo, URL oficial y SHA-256 del
+artefacto técnico consultado. Para el año gravable 2025 se registran:
+
+- 1001 v10, 1003 v7, 1007 v9, 1005 v8, 1006 v8, 1009 v7 y 1008 v7;
+- Resolución 000162 de 2023, modificada por Resolución 000188 de 2024;
+- libros de IVA, retenciones e ICA y bases de conciliación para 300, 350, 310,
+  2516 y 2517 como borradores fiscales internos.
+
+Para 2026 se conserva otra definición, sin sobrescribir 2025: 1001 v11 y 1005
+v9, junto con 1003 v7, 1007 v9, 1006 v8, 1009 v7 y 1008 v7, bajo las
+Resoluciones 000227, 000233 y la corrección formal 000237 de 2025. Cambiar una
+versión futura exige una nueva fila y una nueva huella, nunca editar un corte
+histórico.
+
+Una clasificación tributaria no se adivina desde el PUC: el administrador debe
+mapear cuenta, concepto DIAN y campo destino con alcance empresa o sede. Al
+generar, se toma una instantánea de esos mapeos y se agregan exclusivamente
+`AccountingEntries`/`AccountingEntryLines`, con identidad y ubicación fiscal
+del tercero. Falta de mapeo, tercero, identificación o dirección bloquea la
+salida y queda registrada como validación trazable.
+
+El artefacto disponible es CSV auditable con BOM UTF-8, metadatos de control y
+SHA-256. Es una base reproducible para revisión/prevalidación; no se presenta
+como XML oficial ni sustituye el prevalidador, la firma o el envío de DIAN.
 
 ## Reporting de ventas y patrón reproducible
 
@@ -97,3 +130,7 @@ La rebanada se cierra únicamente si pasan sobre SQL Server real:
 - comprobante manual válido contabiliza una vez y uno desbalanceado se rechaza;
 - diario, mayor, estados, balance de prueba y excepciones concilian;
 - reporting de venta/devolución concilia macro, dimensiones y detalle.
+- el catálogo fiscal coincide con autoridad/año/formato/versión/resolución;
+- un corte sin mapeo o con tercero incompleto queda bloqueado;
+- un corte válido conserva filas, total de control, snapshot de mapeos, CSV y
+  SHA-256, siempre aislado por empresa y sede.

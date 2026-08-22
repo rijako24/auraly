@@ -194,6 +194,7 @@
     <Build Include="Tables\InventoryMovements.sql" />
     <Build Include="Tables\InventoryBalances.sql" />
     <Build Include="Tables\Accounting.sql" />
+    <Build Include="Tables\ComplianceReporting.sql" />
     <Build Include="Tables\Expenses.sql" />
     <Build Include="Tables\ExternalCustomerReconciliationOutboxMessages.sql" />
     <Build Include="Tables\ExternalCustomerReconciliationReceipts.sql" />
