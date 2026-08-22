@@ -1,4 +1,4 @@
-import { apiClient } from "./client";
+import { apiClient, fetchWithSessionRetry } from "./client";
 import type {
   CatalogImportDraft,
   CatalogImportResult,
@@ -10,7 +10,7 @@ export const catalogApi = {
     const formData = new FormData();
     formData.append("file", file);
 
-    const res = await fetch(`/api/businesses/${businessId}/catalog/extract`, {
+    const res = await fetchWithSessionRetry(`/api/businesses/${businessId}/catalog/extract`, {
       method: "POST",
       credentials: "include",
       headers: { "X-Business-Id": businessId },

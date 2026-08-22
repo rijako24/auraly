@@ -4,8 +4,8 @@ import { shouldIncludeExecutionContext } from "@/lib/api-execution-context";
 
 import {
   isInstalledApplicationDisplay,
+  retryAuthenticatedRequest,
   SESSION_EXPIRED_EVENT,
-  shouldRefreshSession,
 } from "@/lib/auth-session";
 
 const API_BASE = "/api";
@@ -96,6 +96,40 @@ async function expireWebSession(): Promise<void> {
   window.location.replace(destination);
 }
 
+async function refreshSession(): Promise<boolean> {
+  try {
+    const res = await fetchWithTimeout(`${API_BASE}/auth/refresh`, {
+      method: "POST",
+      credentials: "include",
+      headers: buildJsonHeaders(false),
+    }, 15_000);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchWithSessionRetry(
+  url: string,
+  options: RequestInit,
+): Promise<Response> {
+  const send = () => fetchWithTimeout(url, {
+    ...options,
+    credentials: "include",
+  });
+  return retryAuthenticatedRequest(
+    url,
+    send,
+    () => {
+      activeRefresh ??= refreshSession().finally(() => {
+        activeRefresh = null;
+      });
+      return activeRefresh;
+    },
+    expireWebSession,
+  );
+}
+
 class ApiClient {
   private baseUrl: string;
 
@@ -137,53 +171,12 @@ class ApiClient {
     return response.json();
   }
 
-  private async refreshSession(): Promise<boolean> {
-    try {
-      const res = await fetchWithTimeout(`${API_BASE}/auth/refresh`, {
-        method: "POST",
-        credentials: "include",
-        headers: buildJsonHeaders(false),
-      }, 15_000);
-      return res.ok;
-    } catch {
-      return false;
-    }
-  }
-
-  private async fetchWithRetry(
-    url: string,
-    options: RequestInit
-  ): Promise<Response> {
-    const response = await fetchWithTimeout(url, {
-      ...options,
-      credentials: "include",
-    });
-
-    if (!shouldRefreshSession(response.status, url)) return response;
-
-    activeRefresh ??= this.refreshSession().finally(() => {
-      activeRefresh = null;
-    });
-    const refreshed = await activeRefresh;
-
-    if (!refreshed) {
-      await expireWebSession();
-      return response;
-    }
-    const retried = await fetchWithTimeout(url, {
-      ...options,
-      credentials: "include",
-    });
-    if (retried.status === 401) await expireWebSession();
-    return retried;
-  }
-
   async get<T>(
     path: string,
     params?: Record<string, string | number | boolean | undefined>
   ): Promise<T> {
     const url = this.buildUrl(path, params);
-    const response = await this.fetchWithRetry(url, {
+    const response = await fetchWithSessionRetry(url, {
       method: "GET",
       headers: buildJsonHeaders(shouldIncludeExecutionContext(path)),
     });
@@ -191,7 +184,7 @@ class ApiClient {
   }
 
   async post<T>(path: string, body?: unknown): Promise<T> {
-    const response = await this.fetchWithRetry(this.buildUrl(path), {
+    const response = await fetchWithSessionRetry(this.buildUrl(path), {
       method: "POST",
       headers: buildJsonHeaders(shouldIncludeExecutionContext(path)),
       body: body ? JSON.stringify(body) : undefined,
@@ -200,7 +193,7 @@ class ApiClient {
   }
 
   async postIdempotent<T>(path: string, body: unknown, idempotencyKey: string): Promise<T> {
-    const response = await this.fetchWithRetry(this.buildUrl(path), {
+    const response = await fetchWithSessionRetry(this.buildUrl(path), {
       method: "POST",
       headers: {
         ...buildJsonHeaders(shouldIncludeExecutionContext(path)),
@@ -212,7 +205,7 @@ class ApiClient {
   }
 
   async put<T>(path: string, body?: unknown): Promise<T> {
-    const response = await this.fetchWithRetry(this.buildUrl(path), {
+    const response = await fetchWithSessionRetry(this.buildUrl(path), {
       method: "PUT",
       headers: buildJsonHeaders(shouldIncludeExecutionContext(path)),
       body: body ? JSON.stringify(body) : undefined,
@@ -221,7 +214,7 @@ class ApiClient {
   }
 
   async patch<T>(path: string, body?: unknown): Promise<T> {
-    const response = await this.fetchWithRetry(this.buildUrl(path), {
+    const response = await fetchWithSessionRetry(this.buildUrl(path), {
       method: "PATCH",
       headers: buildJsonHeaders(shouldIncludeExecutionContext(path)),
       body: body ? JSON.stringify(body) : undefined,
@@ -230,7 +223,7 @@ class ApiClient {
   }
 
   async postForm<T>(path: string, body: FormData): Promise<T> {
-    const response = await this.fetchWithRetry(this.buildUrl(path), {
+    const response = await fetchWithSessionRetry(this.buildUrl(path), {
       method: "POST",
       headers: buildExecutionHeaders(shouldIncludeExecutionContext(path)),
       body,
@@ -239,7 +232,7 @@ class ApiClient {
   }
 
   async delete<T = void>(path: string): Promise<T> {
-    const response = await this.fetchWithRetry(this.buildUrl(path), {
+    const response = await fetchWithSessionRetry(this.buildUrl(path), {
       method: "DELETE",
       headers: buildJsonHeaders(shouldIncludeExecutionContext(path)),
     });

@@ -1,4 +1,5 @@
 import { PosEdgeError } from "./pos-edge-client";
+import { fetchWithSessionRetry } from "@/services/api/client";
 
 export type PosApprovalRequest = {
   approvalRequestId: string;
@@ -32,7 +33,7 @@ export class PosApprovalClient {
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const response = await fetch(path, {
+    const response = await fetchWithSessionRetry(path, {
       ...init,
       credentials: "include",
       cache: "no-store",

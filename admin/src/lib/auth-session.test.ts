@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   isAuthenticationRequest,
   isInstalledApplicationDisplay,
+  retryAuthenticatedRequest,
   shouldRefreshSession,
 } from "./auth-session";
 
@@ -22,5 +23,37 @@ describe("auth session decisions", () => {
     assert.equal(isInstalledApplicationDisplay(true, false), true);
     assert.equal(isInstalledApplicationDisplay(false, true), true);
     assert.equal(isInstalledApplicationDisplay(false, false), false);
+  });
+
+  it("renews and retries any protected request once", async () => {
+    const statuses = [401, 200];
+    let sends = 0;
+    let refreshes = 0;
+    let expirations = 0;
+
+    const response = await retryAuthenticatedRequest(
+      "/api/commerce/v1/pos/drafts/products/search",
+      async () => ({ status: statuses[sends++] }),
+      async () => { refreshes += 1; return true; },
+      async () => { expirations += 1; },
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(sends, 2);
+    assert.equal(refreshes, 1);
+    assert.equal(expirations, 0);
+  });
+
+  it("expires the session when renewal fails", async () => {
+    let expirations = 0;
+    const response = await retryAuthenticatedRequest(
+      "/api/commerce/v1/orders",
+      async () => ({ status: 401 }),
+      async () => false,
+      async () => { expirations += 1; },
+    );
+
+    assert.equal(response.status, 401);
+    assert.equal(expirations, 1);
   });
 });

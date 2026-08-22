@@ -52,12 +52,14 @@ export function PosProductSearchDialog({
           setHasMore(page.hasMore);
           setNextOffset(page.nextOffset);
         })
-        .catch(() => {
+        .catch((caught) => {
           if (requestVersion.current !== version) return;
           setResults([]);
           setHasMore(false);
           setNextOffset(null);
-          setError("No fue posible consultar el catálogo local.");
+          setError(caught instanceof Error
+            ? caught.message
+            : "No fue posible consultar el catálogo de Auraly.");
         })
         .finally(() => {
           if (requestVersion.current === version) setLoading(false);

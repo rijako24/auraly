@@ -1,3 +1,5 @@
+import { fetchWithSessionRetry } from "@/services/api/client";
+
 export type CommerceOrderClaim = {
   claimId: string;
   workSessionId: string;
@@ -171,7 +173,7 @@ async function orderRequest<T>(
     typeof window === "undefined"
       ? null
       : window.localStorage.getItem("selected_business_id");
-  const response = await fetch(path, {
+  const response = await fetchWithSessionRetry(path, {
     ...init,
     cache: "no-store",
     credentials: "include",

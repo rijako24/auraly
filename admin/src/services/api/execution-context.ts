@@ -1,5 +1,6 @@
 import type { BusinessContextOption } from "@/stores/business-context-store";
 import type { ExecutionTenant } from "@/stores/tenant-context-store";
+import { fetchWithSessionRetry } from "./client";
 
 export type ExecutionAccess = {
   tenantId: string;
@@ -36,7 +37,7 @@ async function request<T>(
   const key = contextCacheKey(path, tenantId, businessId);
   let response: Response;
   try {
-    response = await fetch(`/api/execution-context/${path}`, {
+    response = await fetchWithSessionRetry(`/api/execution-context/${path}`, {
       credentials: "include",
       cache: "no-store",
       headers,

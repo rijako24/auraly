@@ -1,4 +1,5 @@
 import type { SalesWorkspaceOption } from "@/services/pos/online-pos-client";
+import { fetchWithSessionRetry } from "@/services/api/client";
 
 const EDGE_BASE_URL =
   process.env.NEXT_PUBLIC_AURALY_POS_EDGE_URL ?? "http://127.0.0.1:47831";
@@ -13,7 +14,7 @@ export type PosEnrollmentAuthorization = {
 export async function authorizePosEnrollment(
   option: SalesWorkspaceOption,
 ): Promise<PosEnrollmentAuthorization> {
-  const response = await fetch("/api/commerce/v1/pos/enrollments", {
+  const response = await fetchWithSessionRetry("/api/commerce/v1/pos/enrollments", {
     method: "POST",
     cache: "no-store",
     credentials: "include",

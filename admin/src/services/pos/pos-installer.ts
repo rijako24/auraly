@@ -1,3 +1,5 @@
+import { fetchWithSessionRetry } from "@/services/api/client";
+
 export type PosInstaller = {
   downloadUrl: string;
   version: string;
@@ -6,7 +8,7 @@ export type PosInstaller = {
 };
 
 export async function loadPosInstaller(): Promise<PosInstaller> {
-  const response = await fetch("/api/commerce/v1/pos/installer", {
+  const response = await fetchWithSessionRetry("/api/commerce/v1/pos/installer", {
     cache: "no-store",
     credentials: "include",
     headers: window.localStorage.getItem("selected_tenant_id")
