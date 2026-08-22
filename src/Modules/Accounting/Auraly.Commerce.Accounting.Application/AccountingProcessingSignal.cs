@@ -1,4 +1,5 @@
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.Commerce.Accounting.Contracts;
 
 namespace Auraly.Commerce.Accounting.Application;
 
@@ -83,7 +84,9 @@ public static class AccountingProcessingPolicy
         "ReceivablePayment",
         "CashReceipt",
         "CashDisbursement",
-        "Expense"
+        "Expense",
+        AccountingManualDocumentTypes.AccountAdjustment,
+        AccountingManualDocumentTypes.ManualVoucher
     ];
 
 

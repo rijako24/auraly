@@ -6,6 +6,7 @@ using Auraly.Contracts.Receivables;
 using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
+using Auraly.Commerce.Accounting.Contracts;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Commerce.Accounting.Infrastructure;
@@ -42,8 +43,66 @@ public sealed partial class SqlAccountingPostingProcessor
         "CashReceipt" or "CashDisbursement" => ApplyCashMovementFinancialEffectsAsync(
             connection, transaction,
             CashMovementContractSerializer.Deserialize(source.PayloadJson), cancellationToken),
+        AccountingManualDocumentTypes.AccountAdjustment => ApplyAccountAdjustmentFinancialEffectsAsync(
+            connection, transaction, source, cancellationToken),
+        AccountingManualDocumentTypes.ManualVoucher => Task.CompletedTask,
         _ => Task.CompletedTask
     };
+
+    private async Task ApplyAccountAdjustmentFinancialEffectsAsync(
+        SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
+        CancellationToken token)
+    {
+        var request = System.Text.Json.JsonSerializer.Deserialize<ConfirmAccountAdjustmentRequest>(
+            source.PayloadJson) ?? throw new InvalidOperationException(
+                "The account adjustment payload is invalid.");
+        var delta = request.Direction == AccountingAdjustmentDirections.Increase
+            ? request.Amount : -request.Amount;
+        var now = timeProvider.GetUtcNow();
+        var isReceivable = request.SubledgerKind == AccountingSubledgerKinds.Receivable;
+        var sql = isReceivable
+            ? """
+              UPDATE dbo.Receivables
+              SET OutstandingAmount=OutstandingAmount+@Delta,
+                  Status=CASE WHEN OutstandingAmount+@Delta=0 THEN N'Paid'
+                              WHEN OutstandingAmount+@Delta>=OriginalAmount THEN N'Open'
+                              ELSE N'PartiallyPaid' END
+              WHERE ReceivableId=@SubledgerId AND BusinessId=@BusinessId
+                AND Status<>N'Cancelled' AND OutstandingAmount+@Delta>=0;
+              IF @@ROWCOUNT<>1 THROW 51000,'The receivable adjustment is no longer valid.',1;
+              INSERT dbo.ReceivableTransactions
+                (ReceivableTransactionId,ReceivableId,TransactionType,Amount,
+                 SourceDocumentId,OccurredAt,CreatedAt)
+              VALUES(@TransactionId,@SubledgerId,N'Adjustment',@Delta,
+                     @DocumentId,@OccurredAt,@Now);
+              """
+            : """
+              UPDATE dbo.Payables
+              SET OutstandingAmount=OutstandingAmount+@Delta,
+                  Status=CASE WHEN OutstandingAmount+@Delta=0 THEN N'Paid'
+                              WHEN OutstandingAmount+@Delta>=OriginalAmount THEN N'Open'
+                              ELSE N'PartiallyPaid' END
+              WHERE PayableId=@SubledgerId AND BusinessId=@BusinessId
+                AND Status<>N'Cancelled' AND OutstandingAmount+@Delta>=0;
+              IF @@ROWCOUNT<>1 THROW 51000,'The payable adjustment is no longer valid.',1;
+              INSERT dbo.PayableTransactions
+                (PayableTransactionId,PayableId,TransactionType,Amount,
+                 SourceDocumentId,OccurredAt,CreatedAt)
+              VALUES(@TransactionId,@SubledgerId,N'Adjustment',@Delta,
+                     @DocumentId,@OccurredAt,@Now);
+              """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@SubledgerId", request.SubledgerId);
+        command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+        command.Parameters.AddWithValue("@TransactionId", ids.NewId());
+        command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
+        command.Parameters.AddWithValue("@OccurredAt", request.OccurredAt);
+        command.Parameters.AddWithValue("@Now", now);
+        AddMoney(command, "@Delta", delta);
+        if (await command.ExecuteNonQueryAsync(token) != 2)
+            throw new DBConcurrencyException(
+                "The account adjustment was not applied atomically.");
+    }
 
     private async Task ApplySaleFinancialEffectsAsync(
         SqlConnection connection, SqlTransaction transaction,

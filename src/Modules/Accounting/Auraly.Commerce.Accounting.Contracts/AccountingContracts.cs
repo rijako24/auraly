@@ -7,6 +7,7 @@ public static class AccountingPermissionCodes
     public const string PeriodsManage = "accounting.periods.manage";
     public const string Retry = "accounting.postings.retry";
     public const string Activate = "accounting.activate";
+    public const string ManualCreate = "accounting.manual.create";
 }
 
 public static class AccountingCategories
@@ -145,6 +146,42 @@ public sealed record AccountingReadinessView(
     DateTimeOffset? ActivatedAt,
     IReadOnlyList<string> BlockingIssues);
 
+public static class AccountingManualDocumentTypes
+{
+    public const string AccountAdjustment = "AccountAdjustment";
+    public const string ManualVoucher = "ManualAccountingVoucher";
+}
+
+public static class AccountingSubledgerKinds
+{
+    public const string Receivable = "Receivable";
+    public const string Payable = "Payable";
+}
+
+public static class AccountingAdjustmentDirections
+{
+    public const string Increase = "Increase";
+    public const string Decrease = "Decrease";
+}
+
+public sealed record ConfirmAccountAdjustmentRequest(
+    Guid AdjustmentId, Guid BusinessId, string SubledgerKind, Guid SubledgerId,
+    string Direction, decimal Amount, Guid CounterpartAccountId,
+    Guid? CostCenterId, DateTimeOffset OccurredAt, string ConceptCode,
+    string Description);
+
+public sealed record ManualVoucherLineRequest(
+    Guid AccountId, Guid? PartyId, Guid? CostCenterId, string Description,
+    decimal Debit, decimal Credit);
+
+public sealed record ConfirmManualAccountingVoucherRequest(
+    Guid VoucherId, Guid BusinessId, DateTimeOffset OccurredAt,
+    string ConceptCode, string Description,
+    IReadOnlyList<ManualVoucherLineRequest> Lines);
+
+public sealed record AccountingManualDocumentAcceptance(
+    Guid DocumentId, string DocumentType, string Status, bool IsDuplicate);
+
 public sealed record AccountingCategoryDefinition(
     string Category,
     string DisplayName,
@@ -190,6 +227,23 @@ public sealed record AccountMovementRow(
     decimal Debit,
     decimal Credit,
     decimal Balance);
+
+public sealed record AccountingJournalRow(
+    Guid EntryId, string EntryNumber, DateTimeOffset OccurredAt,
+    Guid SourceDocumentId, string SourceDocumentType, int LineNumber,
+    string AccountCode, string AccountName, Guid? PartyId, Guid? CostCenterId,
+    string Description, decimal Debit, decimal Credit);
+
+public sealed record GeneralLedgerRow(
+    string AccountCode, string AccountName, string AccountType,
+    decimal OpeningBalance, decimal Debit, decimal Credit, decimal ClosingBalance);
+
+public sealed record FinancialStatementRow(
+    string Section, string AccountCode, string AccountName, decimal Amount);
+
+public sealed record AccountingExceptionRow(
+    Guid SourceDocumentId, string SourceDocumentType, DateTimeOffset OccurredAt,
+    string Status, string? ErrorCode, string? ErrorMessage);
 
 public sealed record AccountingPostingView(
     Guid SourceDocumentId,

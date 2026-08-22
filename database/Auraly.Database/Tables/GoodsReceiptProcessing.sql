@@ -140,7 +140,7 @@ CREATE TABLE [dbo].[Payables]
     CONSTRAINT [FK_Payables_Suppliers] FOREIGN KEY ([SupplierId]) REFERENCES [dbo].[Suppliers] ([SupplierId]),
     CONSTRAINT [FK_Payables_SourceJob] FOREIGN KEY ([SourceDocumentId], [SourceDocumentType]) REFERENCES [dbo].[DocumentProcessingJobs] ([DocumentId], [DocumentType]),
     CONSTRAINT [UQ_Payables_Source] UNIQUE ([SourceDocumentId], [SourceDocumentType]),
-    CONSTRAINT [CK_Payables_Amounts] CHECK ([OriginalAmount] > 0 AND [OutstandingAmount] BETWEEN 0 AND [OriginalAmount]),
+    CONSTRAINT [CK_Payables_Amounts] CHECK ([OriginalAmount] > 0 AND [OutstandingAmount] >= 0),
     CONSTRAINT [CK_Payables_Status] CHECK ([Status] IN (N'Open', N'PartiallyPaid', N'Paid', N'Cancelled'))
 );
 GO
@@ -159,7 +159,7 @@ CREATE TABLE [dbo].[PayableTransactions]
     CONSTRAINT [PK_PayableTransactions] PRIMARY KEY CLUSTERED ([PayableTransactionId]),
     CONSTRAINT [FK_PayableTransactions_Payables] FOREIGN KEY ([PayableId]) REFERENCES [dbo].[Payables] ([PayableId]),
     CONSTRAINT [UQ_PayableTransactions_Payable_Source_Type] UNIQUE ([PayableId], [SourceDocumentId], [TransactionType]),
-    CONSTRAINT [CK_PayableTransactions_Amount] CHECK ([Amount] > 0),
+    CONSTRAINT [CK_PayableTransactions_Amount] CHECK ([Amount] <> 0),
     CONSTRAINT [CK_PayableTransactions_Type] CHECK ([TransactionType] IN (N'Opening', N'Payment', N'Credit', N'Adjustment'))
 );
 GO

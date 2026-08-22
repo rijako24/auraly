@@ -33,9 +33,14 @@ mismo motor fiscal, aunque puedan escalarse con consumidores distintos.
 
 Las cuatro colas se particionan y ordenan por negocio. En Azure Service Bus es
 obligatorio `SessionId = BusinessId`, con una ejecución secuencial dentro de la
-sesión y sesiones de negocios distintos en paralelo. RabbitMQ implementa la
-misma garantía mediante enrutamiento determinístico por `BusinessId` a shards
-durables y `prefetch = 1` por shard; un lock en memoria no sustituye esta regla.
+sesión y sesiones de negocios distintos en paralelo. Esa es la implementación
+SaaS que permite paralelismo entre negocios. En on-premise RabbitMQ opera con
+una sola instancia consumidora por cola y `prefetch = 1`; así conserva el orden,
+la entrega durable y la idempotencia sin requerir shards. No se pueden levantar
+consumidores concurrentes para una misma cola on-premise. Si en el futuro se
+habilita escalamiento horizontal, primero deberá implementarse y probarse el
+enrutamiento determinístico por `BusinessId` a shards durables; un lock en
+memoria no sustituye esa regla.
 
 ## 3. Frontera operacional
 
@@ -219,7 +224,9 @@ por aplicado un efecto mientras siga pendiente.
 - rebuild igual a procesamiento incremental;
 - conciliación venta neta, impuestos, costo y utilidad;
 - aislamiento por tenant y negocio;
-- Service Bus, RabbitMQ y transporte in-process equivalentes.
+- Service Bus probado con sesiones por negocio; RabbitMQ probado bajo su perfil
+  on-premise de consumidor único; in-process debe aprobar la misma matriz antes
+  de declararse equivalente.
 
 ## 9. Regla para extensiones
 

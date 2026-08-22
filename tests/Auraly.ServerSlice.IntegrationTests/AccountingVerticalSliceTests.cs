@@ -49,7 +49,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         using var accounting = fixture.CreateAdminClient(
             AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
             AccountingPermissionCodes.PeriodsManage, AccountingPermissionCodes.Retry,
-            AccountingPermissionCodes.Activate,
+            AccountingPermissionCodes.Activate, AccountingPermissionCodes.ManualCreate,
             SalesReturnPermissionCodes.Create, SalesReturnPermissionCodes.Confirm,
             PurchasingPermissionCodes.CreateGoodsReceipts,
             PurchasingPermissionCodes.ConfirmGoodsReceipts,
@@ -193,6 +193,79 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             Assert.NotNull(entry); Assert.StartsWith("ASI-", entry.EntryNumber); Assert.Equal(entry.DebitTotal, entry.CreditTotal); Assert.True(entry.Lines.Count >= 3);
         }
 
+        var customerId = await CreateCustomerAsync();
+        var creditBase = fixture.CreateValidRequest(9_813) with
+        {
+            Payments = [],
+            CustomerId = customerId,
+            Credit = new PosSaleCreditContract(
+                customerId, 11_900m,
+                new DateTimeOffset(2026, 8, 31, 0, 0, 0, TimeSpan.FromHours(-5)))
+        };
+        var creditInvoice = WithUblSnapshot(creditBase);
+        creditInvoice = creditInvoice with
+        {
+            UblSnapshot = creditInvoice.UblSnapshot! with
+            {
+                PaymentFormCode = "2",
+                DueDate = new DateOnly(2026, 8, 31)
+            }
+        };
+        await SetWarehouseNegativeSalesPolicyAsync(true);
+        try
+        {
+            using var upload = fixture.CreateUploadMessage(creditInvoice);
+            using var response = await fixture.CreateClient().SendAsync(upload);
+            Assert.True(response.StatusCode == HttpStatusCode.OK,
+                await response.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            await SetWarehouseNegativeSalesPolicyAsync(true);
+        }
+        await AssertBalancedAsync(creditInvoice.DocumentId);
+        var receivableId = await ScalarAsync<Guid>(
+            "SELECT ReceivableId FROM dbo.Receivables WHERE SourceDocumentId=@Id",
+            creditInvoice.DocumentId);
+        var creditAccounts = await accounting.GetFromJsonAsync<AccountingAccountView[]>(
+            "/api/commerce/v1/accounting/accounts") ?? [];
+        var otherIncomeAccountId = Assert.Single(
+            creditAccounts, item => item.Code == "429595").AccountId;
+        var receivableDebitId = Guid.NewGuid();
+        var receivableAdjustment = new ConfirmAccountAdjustmentRequest(
+            receivableDebitId, fixture.BusinessId, AccountingSubledgerKinds.Receivable,
+            receivableId, AccountingAdjustmentDirections.Increase, 500m,
+            otherIncomeAccountId, null,
+            new DateTimeOffset(2026, 8, 1, 8, 30, 0, TimeSpan.FromHours(-5)),
+            "ND-CLIENTE", "Mayor valor a cargo del cliente");
+        using (var response = await accounting.PostAsJsonAsync(
+                   "/api/commerce/v1/accounting/manual/account-adjustments",
+                   receivableAdjustment))
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        await AssertBalancedAsync(receivableDebitId);
+        Assert.Equal(12_400m, await ScalarAsync<decimal>(
+            "SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id",
+            receivableId));
+        Assert.Equal(500m, await AccountAmountAsync(
+            receivableDebitId, "130505", debit: true));
+        var receivableCreditId = Guid.NewGuid();
+        using (var response = await accounting.PostAsJsonAsync(
+                   "/api/commerce/v1/accounting/manual/account-adjustments",
+                   receivableAdjustment with
+                   {
+                       AdjustmentId = receivableCreditId,
+                       Direction = AccountingAdjustmentDirections.Decrease,
+                       Description = "Menor valor a cargo del cliente"
+                   }))
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        await AssertBalancedAsync(receivableCreditId);
+        Assert.Equal(11_900m, await ScalarAsync<decimal>(
+            "SELECT OutstandingAmount FROM dbo.Receivables WHERE ReceivableId=@Id",
+            receivableId));
+        Assert.Equal(-500m, await ScalarAsync<decimal>(
+            "SELECT Amount FROM dbo.ReceivableTransactions WHERE SourceDocumentId=@Id",
+            receivableCreditId));
+
         var nonStockProductId = await CreateNonStockProductAsync();
         await ConfigureTargetMarginsAsync(fixture.ProductId, nonStockProductId);
         var receivedAt = new DateTimeOffset(
@@ -227,6 +300,94 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         await AssertFastProcessingAsync(receipt.DocumentId, "entrada de mercancía");
         Assert.Equal(1, await CountAsync(
             "AccountingEntries", "SourceDocumentId", receipt.DocumentId));
+
+        var payableId = await ScalarAsync<Guid>(
+            "SELECT PayableId FROM dbo.Payables WHERE SourceDocumentId=@Id",
+            receipt.DocumentId);
+        var accounts = await accounting.GetFromJsonAsync<AccountingAccountView[]>(
+            "/api/commerce/v1/accounting/accounts") ?? [];
+        var expenseAccountId = Assert.Single(accounts, item => item.Code == "519595").AccountId;
+        var bankAccountId = Assert.Single(accounts, item => item.Code == "111005").AccountId;
+        var adjustmentId = Guid.NewGuid();
+        var adjustment = new ConfirmAccountAdjustmentRequest(
+            adjustmentId, fixture.BusinessId, AccountingSubledgerKinds.Payable,
+            payableId, AccountingAdjustmentDirections.Increase, 2_000m,
+            expenseAccountId, null, receivedAt.AddMinutes(1), "ND-PROVEEDOR",
+            "Mayor valor reconocido al proveedor");
+        using (var response = await accounting.PostAsJsonAsync(
+                   "/api/commerce/v1/accounting/manual/account-adjustments", adjustment))
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        await AssertBalancedAsync(adjustmentId);
+        Assert.Equal(85_300m, await ScalarAsync<decimal>(
+            "SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id", payableId));
+        Assert.Equal(2_000m, await ScalarAsync<decimal>(
+            "SELECT Amount FROM dbo.PayableTransactions WHERE SourceDocumentId=@Id",
+            adjustmentId));
+        Assert.Equal(2_000m, await AccountAmountAsync(adjustmentId, "519595", debit: true));
+        Assert.Equal(2_000m, await AccountAmountAsync(adjustmentId, "220505", debit: false));
+        using (var duplicate = await accounting.PostAsJsonAsync(
+                   "/api/commerce/v1/accounting/manual/account-adjustments", adjustment))
+        {
+            duplicate.EnsureSuccessStatusCode();
+            var accepted = await duplicate.Content
+                .ReadFromJsonAsync<AccountingManualDocumentAcceptance>();
+            Assert.True(accepted!.IsDuplicate);
+        }
+        Assert.Equal(1, await CountAsync(
+            "AccountingEntries", "SourceDocumentId", adjustmentId));
+
+        var creditAdjustmentId = Guid.NewGuid();
+        using (var response = await accounting.PostAsJsonAsync(
+                   "/api/commerce/v1/accounting/manual/account-adjustments",
+                   adjustment with
+                   {
+                       AdjustmentId = creditAdjustmentId,
+                       Direction = AccountingAdjustmentDirections.Decrease,
+                       Description = "Menor valor reconocido por nota crédito"
+                   }))
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        await AssertBalancedAsync(creditAdjustmentId);
+        Assert.Equal(83_300m, await ScalarAsync<decimal>(
+            "SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id", payableId));
+        Assert.Equal(-2_000m, await ScalarAsync<decimal>(
+            "SELECT Amount FROM dbo.PayableTransactions WHERE SourceDocumentId=@Id",
+            creditAdjustmentId));
+        Assert.Equal(2_000m, await AccountAmountAsync(
+            creditAdjustmentId, "220505", debit: true));
+        Assert.Equal(2_000m, await AccountAmountAsync(
+            creditAdjustmentId, "519595", debit: false));
+
+        var voucherId = Guid.NewGuid();
+        var voucher = new ConfirmManualAccountingVoucherRequest(
+            voucherId, fixture.BusinessId, receivedAt.AddMinutes(2), "AJUSTE",
+            "Comprobante manual balanceado",
+            [
+                new ManualVoucherLineRequest(expenseAccountId, null, null,
+                    "Debito del ajuste", 750m, 0m),
+                new ManualVoucherLineRequest(bankAccountId, null, null,
+                    "Credito del ajuste", 0m, 750m)
+            ]);
+        using (var response = await accounting.PostAsJsonAsync(
+                   "/api/commerce/v1/accounting/manual/vouchers", voucher))
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        await AssertBalancedAsync(voucherId);
+        Assert.Equal(750m, await AccountAmountAsync(voucherId, "519595", debit: true));
+        Assert.Equal(750m, await AccountAmountAsync(voucherId, "111005", debit: false));
+
+        using (var invalid = await accounting.PostAsJsonAsync(
+                   "/api/commerce/v1/accounting/manual/vouchers",
+                   voucher with
+                   {
+                       VoucherId = Guid.NewGuid(),
+                       Lines =
+                       [
+                           new ManualVoucherLineRequest(expenseAccountId, null, null,
+                               "Debito", 100m, 0m),
+                           new ManualVoucherLineRequest(bankAccountId, null, null,
+                               "Credito no balanceado", 0m, 99m)
+                       ]
+                   }))
+            Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
         Assert.Equal(50_000m, await AccountAmountAsync(
             receipt.DocumentId, "143505", debit: true));
         Assert.Equal(9_500m, await AccountAmountAsync(
@@ -238,6 +399,13 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(83_300m, await ScalarAsync<decimal>(
             "SELECT OriginalAmount FROM dbo.Payables WHERE SourceDocumentId=@Id",
             receipt.DocumentId));
+        Assert.True(await ScalarAsync<int>("""
+            SELECT COUNT(*) FROM dbo.AccountingEntries e
+            INNER JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+            INNER JOIN dbo.Suppliers s ON s.PartyId=l.PartyId
+            WHERE e.SourceDocumentId=@Id AND s.SupplierId=
+              (SELECT SupplierId FROM dbo.GoodsReceipts WHERE GoodsReceiptId=@Id);
+            """, receipt.DocumentId) > 0);
 
         using (var duplicate = CreateGoodsReceiptMessage(receipt, receiptKey))
         using (var duplicateResponse = await accounting.SendAsync(duplicate))
@@ -475,6 +643,50 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             Assert.NotNull(rows); Assert.NotEmpty(rows);
             Assert.Equal(rows.Sum(row => row.Debit), rows.Sum(row => row.Credit));
         }
+        using (var response = await accounting.GetAsync(
+                   "/api/commerce/v1/accounting/reports/journal?from=2026-01-01&to=2026-12-31"))
+        {
+            response.EnsureSuccessStatusCode();
+            var rows = await response.Content.ReadFromJsonAsync<AccountingJournalRow[]>() ?? [];
+            Assert.NotEmpty(rows);
+            Assert.Equal(rows.Sum(row => row.Debit), rows.Sum(row => row.Credit));
+            Assert.Contains(rows, row => row.SourceDocumentId == voucherId);
+        }
+        using (var response = await accounting.GetAsync(
+                   "/api/commerce/v1/accounting/reports/general-ledger?from=2026-01-01&to=2026-12-31"))
+        {
+            response.EnsureSuccessStatusCode();
+            var rows = await response.Content.ReadFromJsonAsync<GeneralLedgerRow[]>() ?? [];
+            Assert.NotEmpty(rows);
+            Assert.Contains(rows, row => row.AccountCode == "220505");
+        }
+        using (var response = await accounting.GetAsync(
+                   "/api/commerce/v1/accounting/reports/balance-sheet?asOf=2026-12-31"))
+        {
+            response.EnsureSuccessStatusCode();
+            var rows = await response.Content.ReadFromJsonAsync<FinancialStatementRow[]>() ?? [];
+            Assert.Contains(rows, row => row.Section == "Asset");
+            Assert.Contains(rows, row => row.Section == "Liability");
+            Assert.Equal(rows.Where(row => row.Section == "Asset").Sum(row => row.Amount),
+                rows.Where(row => row.Section is "Liability" or "Equity")
+                    .Sum(row => row.Amount));
+        }
+        using (var response = await accounting.GetAsync(
+                   "/api/commerce/v1/accounting/reports/income-statement?from=2026-01-01&to=2026-12-31"))
+        {
+            response.EnsureSuccessStatusCode();
+            var rows = await response.Content.ReadFromJsonAsync<FinancialStatementRow[]>() ?? [];
+            Assert.Contains(rows, row => row.Section == "Revenue");
+            Assert.Contains(rows, row => row.Section == "Expense");
+        }
+        using (var response = await accounting.GetAsync(
+                   "/api/commerce/v1/accounting/reports/exceptions?from=2026-01-01&to=2026-12-31"))
+        {
+            response.EnsureSuccessStatusCode();
+            var rows = await response.Content.ReadFromJsonAsync<AccountingExceptionRow[]>() ?? [];
+            Assert.Contains(rows, row => row.SourceDocumentId == receiptWithoutSettlement.DocumentId &&
+                row.ErrorCode == "SettlementSourceMissing");
+        }
 
         var nextPeriod = Guid.NewGuid();
         using (var create = await accounting.PostAsJsonAsync("/api/commerce/v1/accounting/periods",
@@ -491,6 +703,12 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         using var denied = fixture.CreateAdminClient();
         using var response = await denied.GetAsync("/api/commerce/v1/accounting/reports/trial-balance?from=2026-01-01&to=2026-12-31");
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        using var manual = await denied.PostAsJsonAsync(
+            "/api/commerce/v1/accounting/manual/vouchers",
+            new ConfirmManualAccountingVoucherRequest(
+                Guid.NewGuid(), fixture.BusinessId, DateTimeOffset.UtcNow,
+                "TEST", "Sin permiso", []));
+        Assert.Equal(HttpStatusCode.Forbidden, manual.StatusCode);
         using var configured = fixture.CreateAdminClient(AccountingPermissionCodes.Configure);
         using var wrongScope = await configured.PostAsJsonAsync("/api/commerce/v1/accounting/accounts",
             new CreateAccountingAccountRequest(Guid.NewGuid(), Guid.NewGuid(), "9999", "Fuera de alcance", "Asset", true, false));
@@ -577,6 +795,32 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@Email", $"{username}@test.local");
         await command.ExecuteNonQueryAsync();
         return userId;
+    }
+
+    private async Task<Guid> CreateCustomerAsync()
+    {
+        var partyId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            INSERT dbo.Parties
+              (PartyId,TenantId,PartyType,DisplayName,CompletionStatus,IsActive,
+               CreatedBy,CreatedAt)
+            VALUES(@PartyId,@TenantId,N'Organization',N'Cliente contable',
+                   N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.Customers
+              (CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,IsActive,
+               CreatedBy,CreatedAt)
+            VALUES(@CustomerId,@PartyId,@BusinessId,0,1,@UserId,SYSDATETIMEOFFSET());
+            """, connection);
+        command.Parameters.AddWithValue("@PartyId", partyId);
+        command.Parameters.AddWithValue("@CustomerId", customerId);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@UserId", fixture.UserId);
+        Assert.Equal(2, await command.ExecuteNonQueryAsync());
+        return customerId;
     }
 
     private async Task AssertBalancedAsync(Guid documentId)
@@ -689,7 +933,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Contains(
             accountCode,
             new[] { "143505", "240810", "519595", "220505",
-                "236540", "236701", "236805", "110505", "429595" });
+                "236540", "236701", "236805", "110505", "111005", "130505", "429595" });
         var column = debit ? "Debit" : "Credit";
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();

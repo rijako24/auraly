@@ -13,6 +13,8 @@ public interface IAccountingStore
     Task<AccountingDefaultsResult> EnsureDefaultsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
     Task<AccountingReadinessView> GetReadinessAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
     Task<AccountingReadinessView> ActivateAsync(AccountingUserIdentity user, ActivateAccountingRequest request, CancellationToken cancellationToken);
+    Task<AccountingManualDocumentAcceptance> ConfirmAccountAdjustmentAsync(AccountingUserIdentity user, ConfirmAccountAdjustmentRequest request, CancellationToken cancellationToken);
+    Task<AccountingManualDocumentAcceptance> ConfirmManualVoucherAsync(AccountingUserIdentity user, ConfirmManualAccountingVoucherRequest request, CancellationToken cancellationToken);
     Task<AccountingAccountView> CreateAccountAsync(AccountingUserIdentity user, CreateAccountingAccountRequest request, CancellationToken cancellationToken);
     Task<AccountingCostCenterView> CreateCostCenterAsync(AccountingUserIdentity user, CreateCostCenterRequest request, CancellationToken cancellationToken);
     Task<AccountingPeriodView> CreatePeriodAsync(AccountingUserIdentity user, CreateAccountingPeriodRequest request, CancellationToken cancellationToken);
@@ -22,10 +24,67 @@ public interface IAccountingStore
     Task<AccountingEntryView?> GetEntryAsync(AccountingUserIdentity user, Guid documentId, CancellationToken cancellationToken);
     Task<IReadOnlyList<TrialBalanceRow>> GetTrialBalanceAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, CancellationToken cancellationToken);
     Task<IReadOnlyList<AccountMovementRow>> GetAccountMovementsAsync(AccountingUserIdentity user, string accountCode, DateOnly from, DateOnly to, CancellationToken cancellationToken);
+    Task<IReadOnlyList<AccountingJournalRow>> GetJournalAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, CancellationToken cancellationToken);
+    Task<IReadOnlyList<GeneralLedgerRow>> GetGeneralLedgerAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, CancellationToken cancellationToken);
+    Task<IReadOnlyList<FinancialStatementRow>> GetBalanceSheetAsync(AccountingUserIdentity user, DateOnly asOf, CancellationToken cancellationToken);
+    Task<IReadOnlyList<FinancialStatementRow>> GetIncomeStatementAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, CancellationToken cancellationToken);
+    Task<IReadOnlyList<AccountingExceptionRow>> GetExceptionsAsync(AccountingUserIdentity user, DateOnly from, DateOnly to, CancellationToken cancellationToken);
 }
 
-public sealed class AccountingService(IAccountingStore store)
+public sealed class AccountingService(
+    IAccountingStore store,
+    AccountingProcessingCoordinator processing)
 {
+    public async Task<AccountingManualDocumentAcceptance> ConfirmAccountAdjustmentAsync(
+        AccountingUserIdentity user, ConfirmAccountAdjustmentRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, AccountingPermissionCodes.ManualCreate);
+        if (request.AdjustmentId == Guid.Empty || request.BusinessId != user.BusinessId ||
+            request.SubledgerId == Guid.Empty || request.CounterpartAccountId == Guid.Empty)
+            throw new AccountingValidationException("The account adjustment scope is invalid.");
+        if (request.SubledgerKind is not (AccountingSubledgerKinds.Receivable or AccountingSubledgerKinds.Payable) ||
+            request.Direction is not (AccountingAdjustmentDirections.Increase or AccountingAdjustmentDirections.Decrease))
+            throw new AccountingValidationException("The account adjustment type is invalid.");
+        if (request.Amount <= 0)
+            throw new AccountingValidationException("The adjustment amount must be positive.");
+        ValidateText(request.ConceptCode, 40, "Concept code");
+        ValidateText(request.Description, 500, "Description");
+        var result = await store.ConfirmAccountAdjustmentAsync(user, request, cancellationToken);
+        if (!result.IsDuplicate)
+            await processing.RequestPostingAsync(user.BusinessId, result.DocumentId,
+                result.DocumentType, cancellationToken);
+        return result;
+    }
+
+    public async Task<AccountingManualDocumentAcceptance> ConfirmManualVoucherAsync(
+        AccountingUserIdentity user, ConfirmManualAccountingVoucherRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, AccountingPermissionCodes.ManualCreate);
+        if (request.VoucherId == Guid.Empty || request.BusinessId != user.BusinessId ||
+            request.Lines is null || request.Lines.Count < 2)
+            throw new AccountingValidationException("A manual voucher requires at least two lines.");
+        ValidateText(request.ConceptCode, 40, "Concept code");
+        ValidateText(request.Description, 500, "Description");
+        foreach (var line in request.Lines)
+        {
+            if (line.AccountId == Guid.Empty || line.Debit < 0 || line.Credit < 0 ||
+                (line.Debit > 0) == (line.Credit > 0))
+                throw new AccountingValidationException(
+                    "Each manual line requires exactly one positive debit or credit.");
+            ValidateText(line.Description, 500, "Line description");
+        }
+        var debit = request.Lines.Sum(line => line.Debit);
+        var credit = request.Lines.Sum(line => line.Credit);
+        if (debit <= 0 || decimal.Round(debit, 4) != decimal.Round(credit, 4))
+            throw new AccountingValidationException("The manual voucher is not balanced.");
+        var result = await store.ConfirmManualVoucherAsync(user, request, cancellationToken);
+        if (!result.IsDuplicate)
+            await processing.RequestPostingAsync(user.BusinessId, result.DocumentId,
+                result.DocumentType, cancellationToken);
+        return result;
+    }
     public Task<AccountingReadinessView> GetReadinessAsync(
         AccountingUserIdentity user, CancellationToken cancellationToken = default)
     {
@@ -168,6 +227,54 @@ public sealed class AccountingService(IAccountingStore store)
         ValidateText(accountCode, 30, "Account code");
         if (from == default || to < from) throw new AccountingValidationException("The report date range is invalid.");
         return store.GetAccountMovementsAsync(user, accountCode.Trim(), from, to, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<AccountingJournalRow>> GetJournalAsync(
+        AccountingUserIdentity user, DateOnly from, DateOnly to,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateReport(user, from, to);
+        return store.GetJournalAsync(user, from, to, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<GeneralLedgerRow>> GetGeneralLedgerAsync(
+        AccountingUserIdentity user, DateOnly from, DateOnly to,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateReport(user, from, to);
+        return store.GetGeneralLedgerAsync(user, from, to, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<FinancialStatementRow>> GetBalanceSheetAsync(
+        AccountingUserIdentity user, DateOnly asOf,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, AccountingPermissionCodes.Read);
+        if (asOf == default) throw new AccountingValidationException("The report date is invalid.");
+        return store.GetBalanceSheetAsync(user, asOf, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<FinancialStatementRow>> GetIncomeStatementAsync(
+        AccountingUserIdentity user, DateOnly from, DateOnly to,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateReport(user, from, to);
+        return store.GetIncomeStatementAsync(user, from, to, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<AccountingExceptionRow>> GetExceptionsAsync(
+        AccountingUserIdentity user, DateOnly from, DateOnly to,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateReport(user, from, to);
+        return store.GetExceptionsAsync(user, from, to, cancellationToken);
+    }
+
+    private static void ValidateReport(AccountingUserIdentity user, DateOnly from, DateOnly to)
+    {
+        Demand(user, AccountingPermissionCodes.Read);
+        if (from == default || to < from)
+            throw new AccountingValidationException("The report date range is invalid.");
     }
 
     private static void Demand(AccountingUserIdentity user, string permission)

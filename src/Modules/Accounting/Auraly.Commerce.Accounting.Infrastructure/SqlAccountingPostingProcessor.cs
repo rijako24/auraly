@@ -1,4 +1,5 @@
 using System.Data;
+using System.Text.Json;
 using Auraly.Application.DocumentProcessing;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Commerce.Accounting.Application;
@@ -91,6 +92,11 @@ public sealed partial class SqlAccountingPostingProcessor(
                 "CashReceipt" or "CashDisbursement" =>
                     await LoadCashMovementFactsAsync(
                         connection, transaction, source, cancellationToken),
+                AccountingManualDocumentTypes.AccountAdjustment =>
+                    await LoadAccountAdjustmentFactsAsync(
+                        connection, transaction, source, cancellationToken),
+                AccountingManualDocumentTypes.ManualVoucher =>
+                    FinancialFactsResult.Ready(LoadManualVoucherFacts(source)),
                 _ => throw new InvalidOperationException(
                     $"Document type '{source.DocumentType}' is not supported for accounting.")
             };
@@ -334,10 +340,12 @@ public sealed partial class SqlAccountingPostingProcessor(
         string currencyCode;
         decimal total;
         bool createsPayable;
+        Guid partyId;
         await using (var command = new SqlCommand("""
-            SELECT DocumentNumber,CurrencyCode,GrandTotal,CreatesPayable
-            FROM dbo.GoodsReceipts
-            WHERE GoodsReceiptId=@DocumentId AND BusinessId=@BusinessId;
+            SELECT r.DocumentNumber,r.CurrencyCode,r.GrandTotal,r.CreatesPayable,s.PartyId
+            FROM dbo.GoodsReceipts r
+            INNER JOIN dbo.Suppliers s ON s.SupplierId=r.SupplierId
+            WHERE r.GoodsReceiptId=@DocumentId AND r.BusinessId=@BusinessId;
             """, connection, transaction))
         {
             command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
@@ -350,6 +358,7 @@ public sealed partial class SqlAccountingPostingProcessor(
             currencyCode = reader.GetString(1);
             total = reader.GetDecimal(2);
             createsPayable = reader.GetBoolean(3);
+            partyId = reader.GetGuid(4);
         }
 
         if (!createsPayable)
@@ -398,7 +407,7 @@ public sealed partial class SqlAccountingPostingProcessor(
         var settlements = await LoadPurchaseWithholdingSettlementsAsync(
             connection, transaction, source, total, cancellationToken);
         return FinancialFactsResult.Ready(FinancialFacts.Purchase(
-            number, inventory, expense, deductibleVat, total, settlements));
+            number, partyId, inventory, expense, deductibleVat, total, settlements));
     }
 
     private static async Task<IReadOnlyList<(string Category, decimal Amount)>>
@@ -482,13 +491,14 @@ public sealed partial class SqlAccountingPostingProcessor(
         CancellationToken cancellationToken)
     {
         string number; string currency; decimal total; decimal payableCredit;
-        decimal supplierCredit;
+        decimal supplierCredit; Guid partyId;
         await using (var command = new SqlCommand("""
             SELECT r.DocumentNumber,r.CurrencyCode,r.TotalAmount,
-                   e.PayableCreditAmount,e.SupplierCreditAmount
+                   e.PayableCreditAmount,e.SupplierCreditAmount,s.PartyId
             FROM dbo.PurchaseReturns r
             INNER JOIN dbo.PurchaseReturnFinancialEffects e
               ON e.PurchaseReturnId=r.PurchaseReturnId
+            INNER JOIN dbo.Suppliers s ON s.SupplierId=r.SupplierId
             WHERE r.PurchaseReturnId=@DocumentId AND r.BusinessId=@BusinessId;
             """, connection, transaction))
         {
@@ -500,7 +510,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                     "The purchase return financial effects were not found for accounting.");
             number=reader.GetString(0); currency=reader.GetString(1);
             total=reader.GetDecimal(2); payableCredit=reader.GetDecimal(3);
-            supplierCredit=reader.GetDecimal(4);
+            supplierCredit=reader.GetDecimal(4); partyId=reader.GetGuid(5);
         }
         if (currency != "COP")
             return FinancialFactsResult.Pending("ForeignCurrencyUnsupported",
@@ -531,7 +541,7 @@ public sealed partial class SqlAccountingPostingProcessor(
         if(payableCredit>0)settlements.Add((AccountingCategories.AccountsPayable,payableCredit));
         if(supplierCredit>0)settlements.Add((AccountingCategories.SupplierCreditsReceivable,supplierCredit));
         return FinancialFactsResult.Ready(FinancialFacts.PurchaseReturn(
-            number,inventory,expense,deductibleVat,total,settlements));
+            number,partyId,inventory,expense,deductibleVat,total,settlements));
     }
     private static async Task<FinancialFacts> LoadPayablePaymentFactsAsync(
         SqlConnection connection,
@@ -540,9 +550,10 @@ public sealed partial class SqlAccountingPostingProcessor(
         CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
-            SELECT DocumentNumber,CurrencyCode,TotalAmount,PaymentMethod
-            FROM dbo.SupplierPayments
-            WHERE PaymentId=@DocumentId AND BusinessId=@BusinessId AND Status=N'Processed';
+            SELECT s.PartyId,p.DocumentNumber,p.CurrencyCode,p.TotalAmount,p.PaymentMethod
+            FROM dbo.SupplierPayments p
+            INNER JOIN dbo.Suppliers s ON s.SupplierId=p.SupplierId
+            WHERE p.PaymentId=@DocumentId AND p.BusinessId=@BusinessId AND p.Status=N'Processed';
             """, connection, transaction);
         command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
         command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
@@ -550,16 +561,17 @@ public sealed partial class SqlAccountingPostingProcessor(
         if (!await reader.ReadAsync(cancellationToken))
             throw new InvalidOperationException(
                 "The processed supplier payment was not found for accounting.");
-        var number = reader.GetString(0);
-        var currency = reader.GetString(1);
-        var amount = reader.GetDecimal(2);
-        var method = reader.GetString(3);
+        var partyId = reader.GetGuid(0);
+        var number = reader.GetString(1);
+        var currency = reader.GetString(2);
+        var amount = reader.GetDecimal(3);
+        var method = reader.GetString(4);
         await reader.DisposeAsync();
         if (!string.Equals(currency, "COP", StringComparison.Ordinal))
             throw new InvalidOperationException("Supplier payment accounting currently requires COP.");
         var settlement = await ResolveSourceCategoryAsync(connection, transaction,
             "SupplierPaymentMethod", method, cancellationToken);
-        return FinancialFacts.PayablePayment(number, amount, settlement);
+        return FinancialFacts.PayablePayment(number, partyId, amount, settlement);
     }
 
     private static async Task<FinancialFacts> LoadReceivablePaymentFactsAsync(
@@ -650,6 +662,73 @@ public sealed partial class SqlAccountingPostingProcessor(
         return FinancialFactsResult.Ready(FinancialFacts.CashMovement(
             reader.GetString(0), reader.GetString(1) == "In", reader.GetDecimal(2),
             reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetGuid(4)));
+    }
+
+    private static async Task<FinancialFactsResult> LoadAccountAdjustmentFactsAsync(
+        SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
+        CancellationToken cancellationToken)
+    {
+        var request = JsonSerializer.Deserialize<ConfirmAccountAdjustmentRequest>(source.PayloadJson)
+            ?? throw new InvalidOperationException("The account adjustment payload is invalid.");
+        var category = request.SubledgerKind == AccountingSubledgerKinds.Receivable
+            ? AccountingCategories.AccountsReceivable
+            : AccountingCategories.AccountsPayable;
+        var accounts = await ResolveAccountsAsync(
+            connection, transaction, source, new HashSet<string>([category], StringComparer.Ordinal),
+            cancellationToken);
+        if (!accounts.TryGetValue(category, out var controlAccountId))
+            return FinancialFactsResult.Pending(
+                "AccountMappingMissing", $"Missing accounting mapping: {category}.");
+
+        var partyId = await ReadAdjustmentPartyAsync(
+            connection, transaction, source.BusinessId, request.SubledgerKind,
+            request.SubledgerId, cancellationToken);
+        var controlIsDebit = request.SubledgerKind == AccountingSubledgerKinds.Receivable
+            ? request.Direction == AccountingAdjustmentDirections.Increase
+            : request.Direction == AccountingAdjustmentDirections.Decrease;
+        var lines = new[]
+        {
+            new ManualLineSpec(controlAccountId,
+                controlIsDebit ? request.Amount : 0,
+                controlIsDebit ? 0 : request.Amount,
+                partyId, request.CostCenterId, request.Description),
+            new ManualLineSpec(request.CounterpartAccountId,
+                controlIsDebit ? 0 : request.Amount,
+                controlIsDebit ? request.Amount : 0,
+                partyId, request.CostCenterId, request.Description)
+        };
+        return FinancialFactsResult.Ready(FinancialFacts.Manual(request.Description, lines));
+    }
+
+    private static FinancialFacts LoadManualVoucherFacts(SourceEnvelope source)
+    {
+        var request = JsonSerializer.Deserialize<ConfirmManualAccountingVoucherRequest>(source.PayloadJson)
+            ?? throw new InvalidOperationException("The manual voucher payload is invalid.");
+        return FinancialFacts.Manual(request.Description, request.Lines.Select(line =>
+            new ManualLineSpec(line.AccountId, line.Debit, line.Credit, line.PartyId,
+                line.CostCenterId, line.Description)).ToArray());
+    }
+
+    private static async Task<Guid> ReadAdjustmentPartyAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid businessId,
+        string subledgerKind, Guid subledgerId, CancellationToken cancellationToken)
+    {
+        var sql = subledgerKind == AccountingSubledgerKinds.Receivable
+            ? """
+              SELECT c.PartyId FROM dbo.Receivables r
+              INNER JOIN dbo.Customers c ON c.CustomerId=r.CustomerId
+              WHERE r.ReceivableId=@SubledgerId AND r.BusinessId=@BusinessId;
+              """
+            : """
+              SELECT s.PartyId FROM dbo.Payables p
+              INNER JOIN dbo.Suppliers s ON s.SupplierId=p.SupplierId
+              WHERE p.PayableId=@SubledgerId AND p.BusinessId=@BusinessId;
+              """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@SubledgerId", subledgerId);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        return (Guid)(await command.ExecuteScalarAsync(cancellationToken)
+            ?? throw new InvalidOperationException("The adjustment subledger was not found."));
     }
 
     private static async Task<Dictionary<string, Guid>> ResolveAccountsAsync(
@@ -787,12 +866,15 @@ public sealed partial class SqlAccountingPostingProcessor(
         IReadOnlyList<(string Category, decimal Amount)> Settlements,
         bool IsReturn, bool IsPurchase, bool IsPayablePayment, bool IsReceivablePayment,
         bool IsCashMovement = false, bool CashIsIn = false, Guid? PreferredCostCenterId = null,
-        Guid? DirectExpenseAccountId = null)
+        Guid? DirectExpenseAccountId = null,
+        IReadOnlyList<ManualLineSpec>? DirectLines = null)
     {
         public IReadOnlySet<string> RequiredCategories
         {
             get
             {
+                if (DirectLines is not null)
+                    return new HashSet<string>(StringComparer.Ordinal);
                 var values = new HashSet<string>(Settlements.Select(item => item.Category), StringComparer.Ordinal);
                 if (IsCashMovement)
                 {
@@ -825,6 +907,13 @@ public sealed partial class SqlAccountingPostingProcessor(
         }
         public IEnumerable<JournalLine> BuildLines(IReadOnlyDictionary<string, Guid> accounts, Guid? costCenter)
         {
+            if (DirectLines is not null)
+            {
+                foreach (var line in DirectLines)
+                    yield return new JournalLine(line.AccountId, line.Debit, line.Credit,
+                        line.PartyId, line.CostCenterId ?? costCenter, line.Description);
+                yield break;
+            }
             if (IsCashMovement)
             {
                 var effectiveCostCenter = PreferredCostCenterId ?? costCenter;
@@ -898,18 +987,25 @@ public sealed partial class SqlAccountingPostingProcessor(
         }
         public static FinancialFacts Invoice(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Factura de venta {number}", party, untaxed, tax, total, cost, settlements, false, false, false, false);
         public static FinancialFacts Return(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Devolucion de venta {number}", party, untaxed, tax, total, cost, settlements, true, false, false, false);
-        public static FinancialFacts Purchase(string number, decimal inventory, decimal expense, decimal deductibleVat, decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements) =>
-            new($"Entrada de mercancia {number}", null, expense, deductibleVat, total, inventory, settlements, false, true, false, false);
+        public static FinancialFacts Purchase(string number, Guid party, decimal inventory, decimal expense, decimal deductibleVat, decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements) =>
+            new($"Entrada de mercancia {number}", party, expense, deductibleVat, total, inventory, settlements, false, true, false, false);
         public static FinancialFacts Expense(string number, Guid? party, decimal untaxed, decimal vat,
             decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements,
             Guid accountId, Guid? costCenter) => new($"Gasto {number}", party, untaxed, vat,
                 total, 0, settlements, false, true, false, false, false, false, costCenter, accountId);
-        public static FinancialFacts PurchaseReturn(string number, decimal inventory, decimal expense, decimal deductibleVat, decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Devolucion de compra {number}", null, expense, deductibleVat, total, inventory, settlements, true, true, false, false);
-        public static FinancialFacts PayablePayment(string number, decimal total, string settlement) => new($"Pago a proveedor {number}", null, 0, 0, total, 0, [(settlement, total)], false, false, true, false);
+        public static FinancialFacts PurchaseReturn(string number, Guid party, decimal inventory, decimal expense, decimal deductibleVat, decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Devolucion de compra {number}", party, expense, deductibleVat, total, inventory, settlements, true, true, false, false);
+        public static FinancialFacts PayablePayment(string number, Guid party, decimal total, string settlement) => new($"Pago a proveedor {number}", party, 0, 0, total, 0, [(settlement, total)], false, false, true, false);
         public static FinancialFacts ReceivablePayment(string number, Guid partyId, decimal total, string settlement) => new($"Recaudo de cartera {number}", partyId, 0, 0, total, 0, [(settlement, total)], false, false, false, true);
         public static FinancialFacts CashMovement(
             string number, bool isIn, decimal amount, string counterpart, Guid? costCenter) =>
             new($"{(isIn ? "Ingreso" : "Egreso")} de caja {number}", null, 0, 0,
                 amount, 0, [(counterpart, amount)], false, false, false, false, true, isIn, costCenter);
+        public static FinancialFacts Manual(string description, IReadOnlyList<ManualLineSpec> lines) =>
+            new(description, null, 0, 0, 0, 0, [], false, false, false, false,
+                DirectLines: lines);
     }
+
+    private sealed record ManualLineSpec(
+        Guid AccountId, decimal Debit, decimal Credit, Guid? PartyId,
+        Guid? CostCenterId, string Description);
 }
