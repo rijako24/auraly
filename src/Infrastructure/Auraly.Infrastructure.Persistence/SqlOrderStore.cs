@@ -381,6 +381,29 @@ public sealed class SqlOrderStore(
                 "No existe una recuperación activa del pedido para esta sesión.");
     }
 
+    public async Task ReleaseOtherClaimsAsync(
+        OrderActor actor,
+        Guid retainedOrderId,
+        Guid workSessionId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await ExecuteAsync(connection, null, """
+            UPDATE dbo.OrderClaims
+            SET ReleasedAt=@Now
+            WHERE BusinessId=@BusinessId
+              AND WorkSessionId=@WorkSessionId AND UserId=@UserId
+              AND OrderId<>@RetainedOrderId AND ReleasedAt IS NULL;
+            """,
+            [
+                P("@Now", time.GetUtcNow()), P("@BusinessId", actor.BusinessId),
+                P("@WorkSessionId", workSessionId), P("@UserId", actor.UserId),
+                P("@RetainedOrderId", retainedOrderId)
+            ],
+            cancellationToken);
+    }
+
     private static async Task DemandContextAsync(
         SqlConnection connection,
         SqlTransaction transaction,
@@ -469,8 +492,9 @@ public sealed class SqlOrderStore(
             deviceId,
             userId,
             reader.GetDateTimeOffset(start + 4),
+            actor.WorkSessionId is not null &&
             userId == actor.UserId &&
-            (actor.WorkSessionId is null || actor.WorkSessionId == workSessionId));
+            actor.WorkSessionId == workSessionId);
     }
 
     private static void AddContains(

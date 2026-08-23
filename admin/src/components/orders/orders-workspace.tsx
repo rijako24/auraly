@@ -35,6 +35,9 @@ import {
   type CommerceOrderListItem,
   type CommerceOrderPage,
 } from "@/services/orders/commerce-orders-client";
+import { getOrderAvailability } from "./order-availability";
+
+const ORDER_STATUS_REFRESH_INTERVAL_MS = 10_000;
 
 const money = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -85,6 +88,7 @@ type OrdersWorkspaceProps = {
   routeOptions?: Array<{ routeId: string; name: string }>;
   onlyMine?: boolean;
   source?: number;
+  activeOrderId?: string | null;
 };
 
 type InvoiceProgress = {
@@ -96,8 +100,11 @@ type InvoiceProgress = {
   events: Array<{ id: string; text: string; tone: "active" | "success" | "error" }>;
 };
 
-function isAvailableForThisSession(order: CommerceOrderListItem) {
-  return order.canInvoice && (!order.claim || order.claim.isOwnedByCurrentActor);
+function isAvailableForThisSession(
+  order: CommerceOrderListItem,
+  activeOrderId?: string | null,
+) {
+  return getOrderAvailability(order, activeOrderId).canUseInCurrentSession;
 }
 
 export function OrdersWorkspace({
@@ -113,6 +120,7 @@ export function OrdersWorkspace({
   routeOptions = [],
   onlyMine = false,
   source,
+  activeOrderId,
 }: OrdersWorkspaceProps) {
   const [page, setPage] = useState(1);
   const [data, setData] = useState<CommerceOrderPage | null>(null);
@@ -136,12 +144,12 @@ export function OrdersWorkspace({
   const [invoiceProgress, setInvoiceProgress] = useState<InvoiceProgress | null>(null);
   const pageSize = compact ? 8 : 20;
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (silent = false) => {
     if (!connected) {
       setData(null);
       return;
     }
-    setLoading(true);
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const next = await loadPage({
@@ -169,7 +177,7 @@ export function OrdersWorkspace({
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "No fue posible consultar los pedidos.");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [
     connected,
@@ -192,11 +200,31 @@ export function OrdersWorkspace({
     return () => window.clearTimeout(timer);
   }, [refresh, query]);
 
+  useEffect(() => {
+    if (!connected) return;
+    const refreshSilently = () => void refresh(true);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") refreshSilently();
+    };
+    const interval = window.setInterval(
+      refreshSilently,
+      ORDER_STATUS_REFRESH_INTERVAL_MS,
+    );
+    window.addEventListener("focus", refreshSilently);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshSilently);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [connected, refresh]);
+
   const selectedOrders = useMemo(
     () => (data?.items ?? []).filter((item) => selected.has(item.orderId)),
     [data?.items, selected],
   );
-  const selectable = (data?.items ?? []).filter(isAvailableForThisSession);
+  const selectable = (data?.items ?? []).filter((order) =>
+    isAvailableForThisSession(order, activeOrderId));
   const allSelected =
     selectable.length > 0 &&
     selectable.every((item) => selected.has(item.orderId));
@@ -231,7 +259,8 @@ export function OrdersWorkspace({
 
   async function invoiceSelected() {
     if (!onInvoiceSelected || selectedOrders.length === 0) return;
-    const available = selectedOrders.filter(isAvailableForThisSession);
+    const available = selectedOrders.filter((order) =>
+      isAvailableForThisSession(order, activeOrderId));
     if (available.length !== selectedOrders.length) {
       setSelected(new Set(available.map((order) => order.orderId)));
       setError("La selección cambió: uno o más pedidos ya no están disponibles para esta sesión.");
@@ -560,6 +589,7 @@ export function OrdersWorkspace({
             <div className="divide-y divide-slate-100">
               {data.items.map((order) => {
                 const checked = selected.has(order.orderId);
+                const availability = getOrderAvailability(order, activeOrderId);
                 return (
                   <article
                     key={order.orderId}
@@ -572,7 +602,7 @@ export function OrdersWorkspace({
                     {!compact && (
                       <Checkbox
                         checked={checked}
-                        disabled={!isAvailableForThisSession(order)}
+                        disabled={!availability.canUseInCurrentSession}
                         onCheckedChange={() =>
                           setSelected((current) => {
                             const next = new Set(current);
@@ -594,7 +624,7 @@ export function OrdersWorkspace({
                         <span className="font-mono text-sm font-bold text-teal-800">
                           {order.orderNumber}
                         </span>
-                        <OrderStatus status={order.status} />
+                        <OrderStatus availability={availability} />
                       </div>
                       <p className="mt-1 truncate text-xs text-slate-500">
                         {order.lineCount} {order.lineCount === 1 ? "producto" : "productos"} ·{" "}
@@ -628,12 +658,12 @@ export function OrdersWorkspace({
                     )}
                     <button
                       type="button"
-                      disabled={!isAvailableForThisSession(order) || !onRecover || working}
+                      disabled={!availability.canUseInCurrentSession || !onRecover || working}
                       onClick={() => void recover(order)}
                       className="flex h-9 items-center justify-center gap-2 rounded-lg bg-teal-50 px-3 text-sm font-bold text-teal-800 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       <RotateCcw className="h-4 w-4" />
-                      Recuperar
+                      {availability.actionLabel}
                     </button>
                     {compact && (
                       <p className="col-span-2 -mt-2 text-right text-sm font-bold tabular-nums">
@@ -770,24 +800,19 @@ export function OrdersWorkspace({
   );
 }
 
-function OrderStatus({ status }: { status: string }) {
-  const styles =
-    status === "Available"
-      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-      : status === "Invoiced"
-        ? "border-sky-200 bg-sky-50 text-sky-800"
-        : "border-slate-200 bg-slate-50 text-slate-700";
-  const label =
-    status === "Available"
-      ? "Disponible"
-      : status === "Invoiced"
-        ? "Facturado"
-        : status === "Cancelled"
-          ? "Cancelado"
-          : status;
+function OrderStatus({ availability }: { availability: ReturnType<typeof getOrderAvailability> }) {
+  const styles = availability.tone === "available"
+    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+    : availability.tone === "owned"
+      ? "border-teal-200 bg-teal-50 text-teal-800"
+      : availability.tone === "claimed"
+        ? "border-amber-200 bg-amber-50 text-amber-800"
+        : availability.tone === "invoiced"
+          ? "border-sky-200 bg-sky-50 text-sky-800"
+          : "border-slate-200 bg-slate-50 text-slate-700";
   return (
     <Badge variant="outline" className={styles}>
-      {label}
+      {availability.label}
     </Badge>
   );
 }

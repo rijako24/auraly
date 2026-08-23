@@ -27,11 +27,14 @@ public sealed class OrderRecoveryService(
             throw new OrderConflictException(
                 "El pedido tiene productos sin equivalencia en el catálogo de Auraly.");
 
+        var targetWasAlreadyClaimedBySession =
+            order.Claim?.IsOwnedByCurrentActor == true;
         await orders.ClaimAsync(
             actor,
             orderId,
             new ClaimOrderRequest(request.WorkSessionId, request.UserId),
             cancellationToken);
+        var importCompleted = false;
         try
         {
             var draft = await sales.ImportAsync(
@@ -52,6 +55,13 @@ public sealed class OrderRecoveryService(
                     request.ExpectedDraftVersion),
                 idempotencyKey,
                 cancellationToken);
+            importCompleted = true;
+            await orders.ReleaseOtherClaimsAsync(
+                actor,
+                orderId,
+                request.WorkSessionId,
+                request.UserId,
+                cancellationToken);
             return new RecoveredOrderSale(
                 order.OrderId,
                 draft.DraftId,
@@ -59,7 +69,7 @@ public sealed class OrderRecoveryService(
                 order.OrderNumber,
                 draft.PayableAmount);
         }
-        catch
+        catch when (!importCompleted && !targetWasAlreadyClaimedBySession)
         {
             await orders.ReleaseClaimAsync(
                 actor,

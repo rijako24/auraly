@@ -316,7 +316,8 @@ internal static class WorkSessionClosureReceiptRenderer
         Line(stream, new string('-', columns));
         Line(stream, Pair("EFECTIVO ESPERADO", Money(value.ExpectedCash), columns));
         Line(stream, Pair("EFECTIVO CONTADO", Money(value.CountedCash ?? 0), columns));
-        Line(stream, Pair("DIFERENCIA", Money(value.CashDifference ?? 0), columns));
+        var difference = value.CashDifference ?? 0;
+        Line(stream, Pair(DifferenceLabel(difference), SignedMoney(difference), columns));
         if (!string.IsNullOrWhiteSpace(value.Note))
         {
             Line(stream, new string('-', columns));
@@ -339,6 +340,16 @@ internal static class WorkSessionClosureReceiptRenderer
     }
     private static string Money(decimal value) =>
         value.ToString("0.00", CultureInfo.InvariantCulture);
+    private static string SignedMoney(decimal value) =>
+        value > 0
+            ? "+" + Money(value)
+            : Money(value);
+    private static string DifferenceLabel(decimal value) =>
+        value > 0
+            ? "DIFERENCIA (+) SOBRANTE"
+            : value < 0
+                ? "DIFERENCIA (-) FALTANTE"
+                : "DIFERENCIA (CUADRADO)";
     private static string Pair(string label, string value, int columns)
     {
         var available = Math.Max(1, columns - value.Length);

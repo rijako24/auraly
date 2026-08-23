@@ -43,6 +43,7 @@ import {
   PosEdgeClient,
   PosEdgeError,
   type PosClient,
+  type PosAuthorizedClosurePreview,
   type PosCaptureResult,
   type PosSensitiveAuthorization,
   readEdgeTokenFromLaunch,
@@ -65,6 +66,7 @@ import {
 } from "@/services/pos/pos-enrollment";
 import { PosConfirmDialog } from "./pos-confirm-dialog";
 import { PosCashMovementDialog } from "./pos-cash-movement-dialog";
+import { PosCashClosureDialog } from "./pos-cash-closure-dialog";
 import { PosCustomerSearchDialog } from "./pos-customer-search-dialog";
 import { PosDocumentTypeDialog } from "./pos-document-type-dialog";
 import { PosDiscountDialog } from "./pos-discount-dialog";
@@ -86,6 +88,7 @@ import {
   type PosApprovalRequest,
 } from "@/services/pos/pos-approval-client";
 import { calculateRetailUnitPrice } from "./pos-retail-price";
+import { canRequestOrderSave } from "./pos-order-save-availability";
 import { useAuthStore } from "@/stores/auth-store";
 
 
@@ -138,6 +141,7 @@ export default function PosPage() {
   const lineRows = useRef(new Map<string, HTMLTableRowElement>());
   const recoveredOrderFromUrl = useRef<string | null>(null);
   const skipQuantityBlur = useRef<string | null>(null);
+  const closureOperationId = useRef<string | null>(null);
   const [client, setClient] = useState<PosClient | null>(null);
   const [workspaceChanging, setWorkspaceChanging] = useState(false);
   const [onlineOptions, setOnlineOptions] = useState<SalesWorkspaceOption[]>([]);
@@ -188,12 +192,19 @@ export default function PosPage() {
   const [documentTypeOpen, setDocumentTypeOpen] = useState(false);
   const [cashMovementDirection, setCashMovementDirection] =
     useState<PosCashMovementDirection | null>(null);
+  const [closurePreview, setClosurePreview] =
+    useState<PosAuthorizedClosurePreview | null>(null);
+  const [closureAttempt, setClosureAttempt] = useState<{
+    countedCash: number;
+    note: string | null;
+  } | null>(null);
   const [printerOpen, setPrinterOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<PosCustomer | null>(null);
   const [pricingTransition, setPricingTransition] = useState(false);
   const [documentType, setDocumentType] = useState<PosSaleDocumentType>("SalesReceipt");
 
   const [sidePanel, setSidePanel] = useState<"temporaries" | "orders">("temporaries");
+  const [ordersRefreshVersion, setOrdersRefreshVersion] = useState(0);
   const [ordersExpanded, setOrdersExpanded] = useState(false);
   const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<
@@ -221,6 +232,11 @@ export default function PosPage() {
     selectedLineId && draft?.lines.some((line) => line.lineId === selectedLineId),
   );
   const showCashChange = lastSettlement ? shouldShowCashChange(lastSettlement) : false;
+  const orderSaveAvailable = canRequestOrderSave({
+    connected: serverConnected,
+    lineCount: draft?.lines.length ?? 0,
+    busy,
+  });
   // Online sales read the authoritative server and do not depend on POS Edge hydration.
   // Enrolled/offline workstations still require the local durable service to be ready.
   const salesReady = client?.mode === "online" ? serverConnected : edgeReady;
@@ -610,6 +626,7 @@ export default function PosPage() {
       setScan("");
       setLastSettlement(null);
       setSidePanel("orders");
+      setOrdersRefreshVersion((current) => current + 1);
       setMessage(`${saved.order.orderNumber} ${wasRecovered ? "actualizado" : "guardado"}; inventario reservado en Pedidos`);
     } catch (caught) {
       const detail = typeof caught === "object" && caught !== null && "message" in caught
@@ -646,7 +663,8 @@ export default function PosPage() {
         invoiceSearchOpen ||
         returnsOpen ||
         documentTypeOpen ||
-        cashMovementDirection
+        cashMovementDirection ||
+        closurePreview
       ) return;
       const canOpenCashMovement =
         Boolean(workstation.workSessionId) &&
@@ -657,6 +675,7 @@ export default function PosPage() {
         !customerSearchOpen &&
         !discountOpen &&
         !printerOpen &&
+        !closurePreview &&
         !confirmation;
       if (
         event.ctrlKey &&
@@ -806,6 +825,7 @@ export default function PosPage() {
     busy,
     client,
     cashMovementDirection,
+    closurePreview,
     canOpenCashDrawer,
     returnsOpen,
     confirmation,
@@ -1021,23 +1041,84 @@ export default function PosPage() {
   }
 
   async function closeSalesSession() {
-    if (!client || busy) return;
-    if (draft?.sourceOrderId) {
-      const orderId = draft.sourceOrderId;
-      try {
-        await client.cancelDraft(draft.draftId.value);
-      } catch {
-        // Releasing the lease is the safety invariant. The stale draft can be
-        // reset on the next entry, but it must never keep the order occupied.
-        await client.releaseRecoveredOrder(orderId).catch(() => undefined);
+    if (!client || !draft || !workstation.workSessionId || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await executeSensitive(
+        "work-sessions.close",
+        null,
+        {
+          action: "CloseWorkSession",
+          workSessionId: workstation.workSessionId,
+          businessName: workstation.businessName,
+          warehouseName: workstation.warehouseName,
+        },
+        async (authorization) => {
+          const preview = await client.previewWorkSessionClosure(
+            draft.draftId.value,
+            authorization,
+          );
+          closureOperationId.current = authorization.operationId ?? crypto.randomUUID();
+          setClosurePreview(preview);
+        },
+      );
+    } catch (caught) {
+      const detail = caught instanceof Error
+        ? caught.message
+        : "No fue posible preparar el arqueo de la sesión.";
+      setError(detail);
+      setMessage("No se pudo iniciar el arqueo");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmSalesSessionClosure(countedCash: number, note: string | null) {
+    if (!client || !closurePreview || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const operationId = closureOperationId.current ?? crypto.randomUUID();
+      closureOperationId.current = operationId;
+      const submitted = closureAttempt ?? { countedCash, note };
+      if (!closureAttempt) setClosureAttempt(submitted);
+      if (draft?.sourceOrderId) {
+        const orderId = draft.sourceOrderId;
+        try {
+          await client.cancelDraft(draft.draftId.value);
+        } catch {
+          // Releasing the lease is the safety invariant. The stale draft can be
+          // reset on the next entry, but it must never keep the order occupied.
+          await client.releaseRecoveredOrder(orderId).catch(() => undefined);
+        }
       }
+
+      await client.closeWorkSession({
+        operationId,
+        authorizationToken: closurePreview.authorizationToken,
+        countedCash: submitted.countedCash,
+        note: submitted.note,
+      });
+
+      setClosurePreview(null);
+      setClosureAttempt(null);
+      closureOperationId.current = null;
+      if (client instanceof PosEdgeClient) {
+        await logoutLocal(true);
+        return;
+      }
+      forgetSalesWorkspace();
+      router.push("/dashboard");
+    } catch (caught) {
+      const detail = caught instanceof Error
+        ? caught.message
+        : "No fue posible cerrar e imprimir el arqueo.";
+      setError(detail);
+      setMessage("El arqueo no se completó; corrige la novedad y reintenta");
+    } finally {
+      setBusy(false);
     }
-    if (client instanceof PosEdgeClient) {
-      await logoutLocal();
-      return;
-    }
-    forgetSalesWorkspace();
-    router.push("/dashboard");
   }
 
   async function completeRemoteApproval(approvalRequestId: string) {
@@ -1514,7 +1595,8 @@ export default function PosPage() {
     setDraft(recovered);
     setSelectedLineId(recovered.lines[0]?.lineId ?? null);
     setOrdersExpanded(false);
-    setSidePanel("temporaries");
+    setSidePanel("orders");
+    setOrdersRefreshVersion((current) => current + 1);
     setMessage("Pedido recuperado \u00b7 " + recovered.lines.length + " l\u00edneas");
     focusScanner();
   }
@@ -2298,15 +2380,12 @@ edgeCapable={edgeEnrollmentRequired}
 
               <button
                 type="button"
-                disabled={
-                  !serverConnected ||
-                  !draft?.lines.length ||
-                  !draft.customerId ||
-                  busy
-                }
+                disabled={!orderSaveAvailable}
                 onClick={() => void saveOrder()}
                 title={serverConnected
-                  ? "Reserva las existencias en la bodega Pedidos y limpia la venta"
+                  ? draft?.customerId
+                    ? "Reserva las existencias en la bodega Pedidos y limpia la venta"
+                    : "Selecciona el cliente y guarda el pedido"
                   : "Guardar pedidos requiere conexión con Auraly"}
                 className="flex h-10 min-w-0 items-center justify-center gap-1.5 rounded-xl border border-emerald-300/45 bg-emerald-400/10 px-2 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-40"
               >
@@ -2449,8 +2528,10 @@ edgeCapable={edgeEnrollmentRequired}
               </div>
             ) : (
               <OrdersWorkspace
+                key={`compact-orders-${ordersRefreshVersion}`}
                 compact
                 connected={serverConnected}
+                activeOrderId={draft?.sourceOrderId}
                 loadPage={(filters) => client!.orders(filters)}
                 loadDetail={(orderId) => client!.order(orderId)}
                 onRecover={(order) => recoverPosOrder(order.orderId)}
@@ -2493,7 +2574,9 @@ edgeCapable={edgeEnrollmentRequired}
           </header>
           <main className="min-h-0 flex-1 overflow-auto p-5">
             <OrdersWorkspace
+              key={`expanded-orders-${ordersRefreshVersion}`}
               connected={serverConnected}
+              activeOrderId={draft?.sourceOrderId}
               loadPage={(filters) => client.orders(filters)}
               loadDetail={(orderId) => client.order(orderId)}
               onRecover={(order) => recoverPosOrder(order.orderId)}
@@ -2562,6 +2645,21 @@ edgeCapable={edgeEnrollmentRequired}
             setMessage(text);
             setCashMovementDirection(null);
           }}
+        />
+      )}
+
+      {closurePreview && (
+        <PosCashClosureDialog
+          value={closurePreview}
+          busy={busy}
+          submitted={Boolean(closureAttempt)}
+          onClose={() => {
+            setClosurePreview(null);
+            setClosureAttempt(null);
+            closureOperationId.current = null;
+            focusScanner();
+          }}
+          onConfirm={confirmSalesSessionClosure}
         />
       )}
 

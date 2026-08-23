@@ -35,6 +35,12 @@ public interface IOrderStore
         Guid orderId,
         Guid workSessionId,
         CancellationToken cancellationToken);
+
+    Task ReleaseOtherClaimsAsync(
+        OrderActor actor,
+        Guid retainedOrderId,
+        Guid workSessionId,
+        CancellationToken cancellationToken);
 }
 
 public sealed class OrderService(IOrderStore orders)
@@ -98,6 +104,22 @@ public sealed class OrderService(IOrderStore orders)
             actor,
             orderId,
             request.WorkSessionId,
+            cancellationToken);
+    }
+
+    public Task ReleaseOtherClaimsAsync(
+        OrderActor actor,
+        Guid retainedOrderId,
+        Guid workSessionId,
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(actor, OrderPermissionCodes.Recover);
+        ValidateActorRequest(actor, retainedOrderId, workSessionId, userId);
+        return orders.ReleaseOtherClaimsAsync(
+            actor,
+            retainedOrderId,
+            workSessionId,
             cancellationToken);
     }
 
