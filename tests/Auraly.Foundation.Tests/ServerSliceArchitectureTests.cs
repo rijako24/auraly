@@ -241,7 +241,7 @@ public sealed class ServerSliceArchitectureTests
         Assert.Contains("name: 'auraly-accounting-processing'", template, StringComparison.Ordinal);
         Assert.Contains("name: 'auraly-fiscal-processing'", template, StringComparison.Ordinal);
         Assert.Contains("name: 'auraly-sales-reporting'", template, StringComparison.Ordinal);
-        Assert.Contains("name: 'auraly-external-customer-reconciliation'", template,
+        Assert.DoesNotContain("name: 'auraly-external-customer-reconciliation'", template,
             StringComparison.Ordinal);
         Assert.Contains("requiresSession: true", template, StringComparison.Ordinal);
         Assert.Contains("ServiceBusConnection__fullyQualifiedNamespace", template,

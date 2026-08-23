@@ -129,8 +129,7 @@ public static class PlatformApiComposition
 
     public static void AddPlatformApi(
         this WebApplicationBuilder builder,
-        bool configureAuthentication = true,
-        bool configureExternalCustomerMessaging = true)
+        bool configureAuthentication = true)
     {
         var connectionString =
             builder.Configuration.GetConnectionString("Auraly")
@@ -146,16 +145,6 @@ public static class PlatformApiComposition
             options.UseSqlServer(connectionString));
 
         builder.Services.AddMemoryCache();
-        if (configureExternalCustomerMessaging)
-        {
-            builder.Services.AddExternalCustomerReconciliationMessaging(builder.Configuration);
-        }
-        else
-        {
-            builder.Services.AddSingleton<ExternalCustomerReconciliationOutboxSignal>();
-            builder.Services.AddScoped<ExternalCustomerReconciliationCommitState>();
-        }
-
         builder.Services.AddScoped<ICorrelationIdProvider, CorrelationIdProvider>();
 
         builder.Services.AddScoped<ITenantContext, TenantContext>();
@@ -308,6 +297,7 @@ public static class PlatformApiComposition
         builder.Services.AddScoped<ICommerceService, CommerceService>();
         builder.Services.AddScoped<ICommerceOrderWorkspaceResolver, Auraly.Platform.Infrastructure.Commerce.CommerceOrderWorkspaceResolver>();
         builder.Services.AddScoped<ICommerceCustomerResolver, CommerceCustomerResolver>();
+        builder.Services.AddScoped<ICanonicalCommerceCustomerLookup, CanonicalCommerceCustomerLookup>();
 
         builder.Services.AddScoped<IProductLookupService>(provider => (IProductLookupService)provider.GetRequiredService<ICommerceService>());
 

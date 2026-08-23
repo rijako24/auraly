@@ -32,11 +32,14 @@ Las colas de retry y dead-letter son infraestructura de las cuatro anteriores;
 no son motores de negocio adicionales. Generación y envío DIAN son etapas del
 mismo motor fiscal, aunque puedan escalarse con consumidores distintos.
 
-Esta cardinalidad aplica al ciclo documental y sus efectos. Colas de otros
-contextos ya existentes —por ejemplo, conciliación de clientes de integraciones
-externas o campañas— no son motores documentales ni pueden asumir inventario,
-cartera, contabilidad, fiscal o reporting. Tampoco justifican crear un quinto
-motor para dividir ninguna de esas responsabilidades.
+La descarga de clientes de integraciones externas es una operación explícita y
+síncrona: actualiza el mapeo de origen y se concilia de inmediato o mediante la
+operación manual por lote. No tiene cola, outbox, recibo ni worker de fondo. El
+bot resuelve la identidad desde las tablas canónicas `Customers`, `Parties` y
+`PartyContacts`; el mapeo externo solo aporta los identificadores del proveedor.
+
+La infraestructura de campañas pertenece a otro contexto delimitado y no puede
+asumir inventario, cartera, contabilidad, fiscal ni reporting.
 
 Las cuatro colas se particionan y ordenan por negocio. En Azure Service Bus es
 obligatorio `SessionId = BusinessId`, con una ejecución secuencial dentro de la

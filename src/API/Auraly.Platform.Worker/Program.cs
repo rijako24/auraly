@@ -71,6 +71,8 @@ using Auraly.Platform.Application.Time;
 using Auraly.Platform.Infrastructure.Commerce;
 
 using Auraly.Platform.Infrastructure.LLM;
+using Auraly.Application.Parties;
+using Auraly.Infrastructure.Persistence;
 
 var host = new HostBuilder()
 
@@ -105,7 +107,6 @@ var host = new HostBuilder()
         services.AddMemoryCache();
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
-        services.AddExternalCustomerReconciliationMessaging(configuration);
 
         // Repositories
 
@@ -467,6 +468,8 @@ services.AddSingleton<Auraly.Platform.Application.Agents.Runtime.IDeterministicF
 services.AddScoped<Auraly.Platform.Application.Commerce.ICartProductResolver, Auraly.Platform.Application.Commerce.CommerceCartProductResolver>();
 services.AddScoped<Auraly.Platform.Application.Commerce.IProductCandidateRetriever, Auraly.Platform.Application.Commerce.LocalProductCandidateRetriever>();
 services.AddScoped<Auraly.Platform.Application.Commerce.IProductCatalogSyncService, Auraly.Platform.Application.Commerce.ProductCatalogSyncService>();
+services.AddScoped<IExternalCustomerReconciliationStore, SqlExternalCustomerReconciliationStore>();
+services.AddScoped<Auraly.Platform.Application.Commerce.IExternalCustomerReconciliationRunner, SqlExternalCustomerReconciliationRunner>();
 services.AddScoped<Auraly.Platform.Application.Commerce.IProductAliasService, Auraly.Platform.Application.Commerce.ProductAliasService>();
 
 services.AddScoped<Auraly.Platform.Application.Commerce.ICartMutationStore, Auraly.Platform.Application.Commerce.CommerceCartMutationStore>();

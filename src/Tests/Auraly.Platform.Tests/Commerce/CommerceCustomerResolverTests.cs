@@ -31,13 +31,13 @@ public sealed class CommerceCustomerResolverTests
             "6826",
             "Claudia",
             "3001234567");
-        CommerceAdapterContext? receivedContext = null;
-        var adapter = new Mock<ICommerceAdapter>();
-        var lookup = adapter.As<ICommerceCustomerLookup>();
-        lookup.Setup(value => value.FindCustomerAsync(
-                It.IsAny<CommerceAdapterContext>(),
+        var lookup = new Mock<ICanonicalCommerceCustomerLookup>();
+        lookup.Setup(value => value.FindAsync(
+                businessId,
+                connection.IntegrationConnectionId,
+                CommerceProvider.Mantis,
+                "+57 300 123 4567",
                 It.IsAny<CancellationToken>()))
-            .Callback<CommerceAdapterContext, CancellationToken>((context, _) => receivedContext = context)
             .ReturnsAsync(expected);
         var connections = new Mock<IIntegrationConnectionRepository>();
         connections.Setup(repository => repository.GetCommerceConnectionAsync(
@@ -48,9 +48,7 @@ public sealed class CommerceCustomerResolverTests
             .ReturnsAsync(connection);
         var unitOfWork = new Mock<IUnitOfWork>();
         unitOfWork.SetupGet(value => value.IntegrationConnections).Returns(connections.Object);
-        var adapters = new Mock<ICommerceAdapterFactory>();
-        adapters.Setup(factory => factory.Resolve(CommerceProvider.Mantis)).Returns(adapter.Object);
-        var resolver = new CommerceCustomerResolver(unitOfWork.Object, adapters.Object);
+        var resolver = new CommerceCustomerResolver(unitOfWork.Object, lookup.Object);
         var config = new AgentConfig
         {
             AgentId = agentId,
@@ -67,17 +65,15 @@ public sealed class CommerceCustomerResolverTests
             CancellationToken.None);
 
         result.Should().Be(expected);
-        receivedContext.Should().NotBeNull();
-        receivedContext!.CustomerPhone.Should().Be("+57 300 123 4567");
-        receivedContext.Connection.Should().BeSameAs(connection);
+        lookup.VerifyAll();
     }
 
     [Fact]
     public async Task ResolveAsync_WhenCommerceIsLocal_DoesNotQueryAnyConnection()
     {
         var unitOfWork = new Mock<IUnitOfWork>();
-        var adapters = new Mock<ICommerceAdapterFactory>();
-        var resolver = new CommerceCustomerResolver(unitOfWork.Object, adapters.Object);
+        var lookup = new Mock<ICanonicalCommerceCustomerLookup>();
+        var resolver = new CommerceCustomerResolver(unitOfWork.Object, lookup.Object);
         var config = new AgentConfig
         {
             Commerce = new CommerceConfig { Enabled = true, Provider = CommerceProvider.Local }
@@ -93,6 +89,8 @@ public sealed class CommerceCustomerResolverTests
 
         result.Should().BeNull();
         unitOfWork.VerifyGet(value => value.IntegrationConnections, Times.Never);
-        adapters.Verify(factory => factory.Resolve(It.IsAny<CommerceProvider>()), Times.Never);
+        lookup.Verify(value => value.FindAsync(
+            It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CommerceProvider>(),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

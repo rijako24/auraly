@@ -33,8 +33,7 @@ $requiredQueues = @(
     'auraly-document-processing',
     'auraly-accounting-processing',
     'auraly-fiscal-processing',
-    'auraly-sales-reporting',
-    'auraly-external-customer-reconciliation'
+    'auraly-sales-reporting'
 )
 
 function Assert-Condition {
@@ -123,7 +122,6 @@ function Test-RemoteEnvironment {
         'PosInstaller__Version',
         'PosInstaller__Sha256',
         'Auraly__Fiscal__ServiceBus__QueueName',
-        'Auraly__ExternalCustomerReconciliation__QueueName',
         'Auraly__Fiscal__SecretProtectionKey',
         'Auraly__Fiscal__CredentialStore',
         'Auraly__Fiscal__KeyVaultUri',

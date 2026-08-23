@@ -3,75 +3,39 @@ namespace Auraly.Foundation.Tests;
 public sealed class ExternalCustomerReconciliationArchitectureTests
 {
     [Fact]
-    public void Canonical_consumer_is_durable_authorized_by_business_and_has_no_polling()
+    public void Reconciliation_is_explicit_and_has_no_queue_or_background_worker()
     {
         var root = FindRepositoryRoot();
-        var contract = File.ReadAllText(Path.Combine(
-            root,
-            "src",
-            "Modules",
-            "Parties",
-            "Auraly.Contracts.Parties",
-            "ExternalCustomerReconciliationSignal.cs"));
         var application = File.ReadAllText(Path.Combine(
             root,
             "src",
             "Modules",
             "Parties",
             "Auraly.Application.Parties",
-            "ExternalCustomerReconciliationSystemService.cs"));
-        var consumer = File.ReadAllText(Path.Combine(
-            root,
-            "src",
-            "API",
-            "Auraly.Api",
-            "ExternalCustomerReconciliationHostedServices.cs"));
+            "ExternalCustomerReconciliationService.cs"));
         var composition = File.ReadAllText(Path.Combine(
             root,
             "src",
             "API",
             "Auraly.Api",
             "Program.cs"));
-        var outboxSchema = File.ReadAllText(Path.Combine(
+        var customerLookup = File.ReadAllText(Path.Combine(
             root,
-            "database",
-            "Auraly.Database",
-            "Tables",
-            "ExternalCustomerReconciliationOutboxMessages.sql"));
-        var receiptSchema = File.ReadAllText(Path.Combine(
-            root,
-            "database",
-            "Auraly.Database",
-            "Tables",
-            "ExternalCustomerReconciliationReceipts.sql"));
+            "src", "Infrastructure", "Auraly.Platform.Infrastructure", "Commerce",
+            "CanonicalCommerceCustomerLookup.cs"));
 
-        Assert.Contains("ExternalCommerceCustomerId", contract);
-        Assert.Contains("BusinessId", contract);
-        Assert.Contains("ReceiptStatusAsync", application);
-        Assert.Contains("ResolveIntegrationExecutionAsync", application);
-        Assert.Contains("RecordReceiptAsync", application);
-        Assert.Contains("CreateSessionProcessor", consumer);
-        Assert.Contains("MaxConcurrentCallsPerSession = 1", consumer);
-        Assert.Contains("BasicQosAsync(0, 1, false", consumer);
-        Assert.Contains("BasicAckAsync", consumer);
-        Assert.Contains("BasicNackAsync", consumer);
-        Assert.DoesNotContain("PeriodicTimer", consumer, StringComparison.Ordinal);
-        Assert.Contains(
-            "ExternalCustomerReconciliationRabbitMqHostedService",
-            composition,
+        Assert.Contains("ReconcilePendingAsync", application);
+        Assert.Contains("dbo.Customers", customerLookup);
+        Assert.Contains("dbo.Parties", customerLookup);
+        Assert.Contains("dbo.PartyContacts", customerLookup);
+        Assert.DoesNotContain("ExternalCustomerReconciliationHostedService", composition,
             StringComparison.Ordinal);
-        Assert.Contains(
-            "ExternalCustomerReconciliationServiceBusHostedService",
-            composition,
+        Assert.DoesNotContain("ExternalCustomerReconciliation:QueueName", composition,
             StringComparison.Ordinal);
-        Assert.Contains(
-            "UX_ExternalCustomerReconciliationOutboxMessages_PendingCustomer",
-            outboxSchema,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "PRIMARY KEY CLUSTERED ([MessageId])",
-            receiptSchema,
-            StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(root, "src", "API", "Auraly.Api",
+            "ExternalCustomerReconciliationHostedServices.cs")));
+        Assert.False(File.Exists(Path.Combine(root, "database", "Auraly.Database", "Tables",
+            "ExternalCustomerReconciliationOutboxMessages.sql")));
     }
 
     private static string FindRepositoryRoot()

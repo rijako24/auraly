@@ -15,17 +15,27 @@ public interface ICommerceCustomerResolver
         CancellationToken ct = default);
 }
 
+public interface ICanonicalCommerceCustomerLookup
+{
+    Task<CommerceCustomerReference?> FindAsync(
+        Guid businessId,
+        Guid integrationConnectionId,
+        CommerceProvider provider,
+        string phone,
+        CancellationToken ct = default);
+}
+
 public sealed class CommerceCustomerResolver : ICommerceCustomerResolver
 {
     private readonly IUnitOfWork _unitOfWork;
-    private readonly ICommerceAdapterFactory _adapters;
+    private readonly ICanonicalCommerceCustomerLookup _customers;
 
     public CommerceCustomerResolver(
         IUnitOfWork unitOfWork,
-        ICommerceAdapterFactory adapters)
+        ICanonicalCommerceCustomerLookup customers)
     {
         _unitOfWork = unitOfWork;
-        _adapters = adapters;
+        _customers = customers;
     }
 
     public async Task<CommerceCustomerReference?> ResolveAsync(
@@ -51,17 +61,11 @@ public sealed class CommerceCustomerResolver : ICommerceCustomerResolver
         if (connection is null || !connection.IsEnabled)
             return null;
 
-        var adapter = _adapters.Resolve(config.Commerce.Provider);
-        if (adapter is not ICommerceCustomerLookup customerLookup)
-            return null;
-
-        var context = new CommerceAdapterContext(
+        return await _customers.FindAsync(
             businessId,
-            agentId,
-            conversationId,
+            connection.IntegrationConnectionId,
             config.Commerce.Provider,
-            connection,
-            phone);
-        return await customerLookup.FindCustomerAsync(context, ct);
+            phone,
+            ct);
     }
 }

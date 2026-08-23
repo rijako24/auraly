@@ -1,4 +1,5 @@
 using Auraly.Api;
+using Auraly.Platform.Application.Commerce;
 using Azure.Messaging.ServiceBus;
 using Azure.Messaging.WebPubSub;
 using System.Text;
@@ -77,8 +78,7 @@ if (!builder.Environment.IsEnvironment("Testing"))
 }
 
 builder.AddAuralyPlatformApi(
-    configureAuthentication: false,
-    configureExternalCustomerMessaging: !builder.Environment.IsEnvironment("Testing"));
+    configureAuthentication: false);
 
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
@@ -225,23 +225,17 @@ else
             "Auraly:Accounting:RabbitMq:QueueName"];
         var salesReportingQueue = builder.Configuration[
             "Auraly:SalesReporting:RabbitMq:QueueName"];
-        var externalCustomerQueue = builder.Configuration[
-            "Auraly:ExternalCustomerReconciliation:QueueName"] ??
-            "auraly-external-customer-reconciliation";
         if (string.IsNullOrWhiteSpace(rabbitConnection) ||
             string.IsNullOrWhiteSpace(documentQueue) ||
             string.IsNullOrWhiteSpace(fiscalQueue) ||
             string.IsNullOrWhiteSpace(accountingQueue) ||
-            string.IsNullOrWhiteSpace(salesReportingQueue) ||
-            string.IsNullOrWhiteSpace(externalCustomerQueue))
+            string.IsNullOrWhiteSpace(salesReportingQueue))
             throw new InvalidOperationException(
-                "RabbitMQ connection and document/fiscal/accounting/sales-reporting/external-customer queue names are required.");
+                "RabbitMQ connection and document/fiscal/accounting/sales-reporting queue names are required.");
 
         builder.Services.AddSingleton(new RabbitMqProcessingOptions(
             rabbitConnection, documentQueue, fiscalQueue, accountingQueue,
             salesReportingQueue));
-        builder.Services.AddSingleton(
-            new ExternalCustomerReconciliationRabbitMqOptions(externalCustomerQueue));
         builder.Services.AddSingleton<RabbitMqProcessingConnection>();
         builder.Services.AddSingleton<RabbitMqProcessingTransport>();
         builder.Services.AddSingleton<IDocumentProcessingSignalPublisher>(provider =>
@@ -261,9 +255,6 @@ else
         if (builder.Configuration.GetValue(
                 "Auraly:DocumentProcessing:Worker:Enabled", true))
             builder.Services.AddHostedService<RabbitMqDocumentProcessingHostedService>();
-        if (builder.Configuration.GetValue(
-                "Auraly:ExternalCustomerReconciliation:Worker:Enabled", true))
-            builder.Services.AddHostedService<ExternalCustomerReconciliationRabbitMqHostedService>();
     }
     else if (string.Equals(
                  processingTransport, "ServiceBus", StringComparison.OrdinalIgnoreCase))
@@ -300,18 +291,12 @@ else
             throw new InvalidOperationException(
                 "Auraly:SalesReporting:ServiceBus:QueueName is required. " +
                 "Sales reporting never falls back to the operational engine.");
-        var externalCustomerQueueName = builder.Configuration[
-            "Auraly:ExternalCustomerReconciliation:QueueName"] ??
-            "auraly-external-customer-reconciliation";
         builder.Services.AddSingleton(
             new FiscalProcessingServiceBusOptions(fiscalQueueName));
         builder.Services.AddSingleton(
             new AccountingProcessingServiceBusOptions(accountingQueueName));
         builder.Services.AddSingleton(
             new SalesReportingProcessingServiceBusOptions(salesReportingQueueName));
-        builder.Services.AddSingleton(
-            new ExternalCustomerReconciliationServiceBusOptions(
-                externalCustomerQueueName));
         builder.Services.AddSingleton<IFiscalProcessingSignalPublisher,
             ServiceBusFiscalProcessingPublisher>();
         builder.Services.AddSingleton<IAccountingProcessingSignalPublisher,
@@ -327,7 +312,6 @@ else
         if (builder.Configuration.GetValue(
                 "Auraly:DocumentProcessing:Worker:Enabled", true))
             builder.Services.AddHostedService<DocumentProcessingHostedService>();
-        builder.Services.AddHostedService<ExternalCustomerReconciliationServiceBusHostedService>();
     }
     else
     {
@@ -368,8 +352,8 @@ builder.Services.AddScoped<IPartyStore, SqlPartyStore>();
 builder.Services.AddScoped<IPartyWorkspaceStore, SqlPartyWorkspaceStore>();
 builder.Services.AddScoped<ICommercialPartyRoleStore, SqlCommercialPartyRoleStore>();
 builder.Services.AddScoped<IExternalCustomerReconciliationStore, SqlExternalCustomerReconciliationStore>();
+builder.Services.AddScoped<IExternalCustomerReconciliationRunner, SqlExternalCustomerReconciliationRunner>();
 builder.Services.AddScoped<ExternalCustomerReconciliationService>();
-builder.Services.AddScoped<ExternalCustomerReconciliationSystemService>();
 builder.Services.AddScoped<PartyWorkspaceService>();
 builder.Services.AddScoped<CommercialPartyRoleService>();
 builder.Services.AddScoped<PartyService>();

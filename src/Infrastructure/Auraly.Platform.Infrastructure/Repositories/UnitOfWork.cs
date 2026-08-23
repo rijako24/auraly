@@ -1,15 +1,12 @@
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Platform.Domain.Repositories;
 using Auraly.Platform.Infrastructure.Data;
-using Auraly.Platform.Infrastructure.Commerce;
 
 namespace Auraly.Platform.Infrastructure.Repositories;
 
 public class UnitOfWork : IUnitOfWork
 {
     private readonly ApplicationDbContext _context;
-    private readonly ExternalCustomerReconciliationCommitState _reconciliationState;
-    private readonly ExternalCustomerReconciliationOutboxSignal _reconciliationSignal;
     private readonly IAuralyIdGenerator _ids;
     private IConversationRepository? _conversations;
     private IMessageRepository? _messages;
@@ -74,13 +71,9 @@ public class UnitOfWork : IUnitOfWork
 
     public UnitOfWork(
         ApplicationDbContext context,
-        ExternalCustomerReconciliationCommitState reconciliationState,
-        ExternalCustomerReconciliationOutboxSignal reconciliationSignal,
         IAuralyIdGenerator ids)
     {
         _context = context;
-        _reconciliationState = reconciliationState;
-        _reconciliationSignal = reconciliationSignal;
         _ids = ids;
     }
 
@@ -158,10 +151,7 @@ public class UnitOfWork : IUnitOfWork
         _integrationConnections ??= new IntegrationConnectionRepository(_context);
 
     public IExternalCommerceCustomerRepository ExternalCommerceCustomers =>
-        _externalCommerceCustomers ??= new ExternalCommerceCustomerRepository(
-            _context,
-            _reconciliationState,
-            _ids);
+        _externalCommerceCustomers ??= new ExternalCommerceCustomerRepository(_context);
 
     public IReservationIntegrationEventRepository ReservationIntegrationEvents =>
         _reservationIntegrationEvents ??= new ReservationIntegrationEventRepository(_context);
@@ -267,10 +257,7 @@ public class UnitOfWork : IUnitOfWork
 
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
-        var changes = await _context.SaveChangesAsync(cancellationToken);
-        if (_context.Database.CurrentTransaction is null)
-            NotifyCommittedReconciliationMessages();
-        return changes;
+        return await _context.SaveChangesAsync(cancellationToken);
     }
 
     public async Task ExecuteInTransactionAsync(Func<Task> action, CancellationToken cancellationToken = default)
@@ -280,11 +267,9 @@ public class UnitOfWork : IUnitOfWork
         {
             await action();
             await transaction.CommitAsync(cancellationToken);
-            NotifyCommittedReconciliationMessages();
         }
         catch
         {
-            _reconciliationState.ConsumeCommitted();
             await transaction.RollbackAsync(cancellationToken);
             throw;
         }
@@ -297,21 +282,13 @@ public class UnitOfWork : IUnitOfWork
         {
             var result = await action();
             await transaction.CommitAsync(cancellationToken);
-            NotifyCommittedReconciliationMessages();
             return result;
         }
         catch
         {
-            _reconciliationState.ConsumeCommitted();
             await transaction.RollbackAsync(cancellationToken);
             throw;
         }
-    }
-
-    private void NotifyCommittedReconciliationMessages()
-    {
-        if (_reconciliationState.ConsumeCommitted())
-            _reconciliationSignal.Notify();
     }
 
     public void Dispose()

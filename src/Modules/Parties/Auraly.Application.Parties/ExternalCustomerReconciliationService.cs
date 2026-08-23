@@ -4,6 +4,12 @@ using Auraly.Contracts.Parties;
 
 namespace Auraly.Application.Parties;
 
+public sealed record ExternalCustomerReconciliationExecution(
+    Guid TenantId,
+    Guid BusinessId,
+    Guid? ActorId,
+    string Origin);
+
 public interface IExternalCustomerReconciliationStore
 {
     Task<ExternalCustomerReconciliationPage> PageAsync(
@@ -27,22 +33,6 @@ public interface IExternalCustomerReconciliationStore
         DateTimeOffset now,
         CancellationToken cancellationToken);
 
-    Task<ExternalCustomerReconciliationExecution> ResolveIntegrationExecutionAsync(
-        Guid businessId,
-        Guid externalCommerceCustomerId,
-        CancellationToken cancellationToken);
-
-    Task<ExternalCustomerReconciliationReceipt?> ReceiptStatusAsync(
-        Guid messageId,
-        CancellationToken cancellationToken);
-
-    Task RecordReceiptAsync(
-        Guid messageId,
-        Guid externalCommerceCustomerId,
-        Guid businessId,
-        string resultStatus,
-        DateTimeOffset processedAt,
-        CancellationToken cancellationToken);
 }
 
 public sealed class ExternalCustomerReconciliationService(

@@ -71,13 +71,13 @@ Permisos:
 - `parties.external-customers.read`
 - `parties.external-customers.reconcile`
 
-## Automatización posterior
+## EjecuciÃ³n vigente
 
-La automatización del productor quedó implementada en la rebanada siguiente.
-El diseño vigente está en
-docs/implementation/external-customer-events-design.md.
+La descarga explÃ­cita guarda cada identidad externa y, antes de terminar,
+concilia directamente todos los registros `Pending` del negocio. No existe cola,
+outbox, recibo ni worker especÃ­fico para esta funciÃ³n. La vista y API permanecen
+como herramientas de revisiÃ³n y resoluciÃ³n de conflictos.
 
-Los adaptadores escriben una outbox en la misma transacción del registro externo,
-el dispatcher publica por Service Bus o RabbitMQ y Auraly consume con recibos
-idempotentes. No existe polling ni trigger SQL. La vista y API de esta rebanada
-permanecen como herramientas de revisión y resolución de conflictos.
+Durante una conversaciÃ³n el bot no descarga ni consulta clientes en el ERP. Su
+lookup parte de `Customers`, `Parties` y `PartyContacts`; el mapeo externo ya
+`Linked` aporta Ãºnicamente las claves necesarias para crear el pedido remoto.

@@ -1,13 +1,50 @@
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Parties;
+using Auraly.Platform.Application.Commerce;
+using Auraly.Platform.Domain.Enums;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
 public sealed class ExternalCustomerReconciliationTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Explicit_sync_reconciles_immediately_and_bot_reads_canonical_customer()
+    {
+        var integrationId = await CreateIntegrationAsync("Synchronous customer reconciliation");
+        var externalId = await CreateExternalAsync(
+            integrationId,
+            "account-sync",
+            "customer-sync",
+            "Cliente canónico",
+            "+57 300 555 0198",
+            "573005550198");
+
+        using var scope = fixture.CreateScope();
+        var runner = scope.ServiceProvider.GetRequiredService<
+            IExternalCustomerReconciliationRunner>();
+        Assert.Equal(1, await runner.ReconcilePendingAsync(fixture.BusinessId));
+
+        var lookup = scope.ServiceProvider.GetRequiredService<
+            ICanonicalCommerceCustomerLookup>();
+        var customer = await lookup.FindAsync(
+            fixture.BusinessId,
+            integrationId,
+            CommerceProvider.Mantis,
+            "+57 300 555 0198");
+
+        Assert.NotNull(customer);
+        Assert.Equal("account-sync", customer.ExternalAccountId);
+        Assert.Equal("customer-sync", customer.ExternalCustomerId);
+        Assert.Equal("Cliente canónico", customer.Name);
+        Assert.Equal("Linked", await ScalarAsync<string>(
+            "SELECT ReconciliationStatus FROM dbo.ExternalCommerceCustomers WHERE ExternalCommerceCustomerId=@Id;",
+            new SqlParameter("@Id", externalId)));
+    }
+
     [Fact]
     public async Task Pending_external_customer_is_linked_once_and_reuses_the_party_by_phone()
     {

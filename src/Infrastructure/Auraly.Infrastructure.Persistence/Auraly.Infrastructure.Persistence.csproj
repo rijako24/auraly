@@ -16,6 +16,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
     <ProjectReference Include="..\..\BuildingBlocks\Auraly.BuildingBlocks.Infrastructure\Auraly.BuildingBlocks.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Application\Auraly.Platform.Application\Auraly.Platform.Application.csproj" />
     <ProjectReference Include="..\..\Fiscal\Auraly.Fiscal.Core\Auraly.Fiscal.Core.csproj" />
     <ProjectReference Include="..\..\Modules\Authentication\Auraly.Application.Authentication\Auraly.Application.Authentication.csproj" />
     <ProjectReference Include="..\..\Modules\Authentication\Auraly.Contracts.Authentication\Auraly.Contracts.Authentication.csproj" />

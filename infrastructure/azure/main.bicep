@@ -422,21 +422,6 @@ resource salesReportingQueue 'Microsoft.ServiceBus/namespaces/queues@2024-01-01'
   }
 }
 
-resource externalCustomerQueue 'Microsoft.ServiceBus/namespaces/queues@2024-01-01' = {
-  parent: serviceBus
-  name: 'auraly-external-customer-reconciliation'
-  properties: {
-    deadLetteringOnMessageExpiration: true
-    defaultMessageTimeToLive: 'P7D'
-    duplicateDetectionHistoryTimeWindow: 'PT10M'
-    enableBatchedOperations: true
-    lockDuration: 'PT5M'
-    maxDeliveryCount: 10
-    requiresDuplicateDetection: true
-    requiresSession: true
-  }
-}
-
 resource serviceBusSenderRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(serviceBus.id, identity.id, serviceBusSenderRoleId)
   scope: serviceBus
@@ -686,10 +671,6 @@ resource apiApp 'Microsoft.Web/sites@2024-04-01' = {
         {
           name: 'Auraly__SalesReporting__ServiceBus__QueueName'
           value: salesReportingQueue.name
-        }
-        {
-          name: 'Auraly__ExternalCustomerReconciliation__QueueName'
-          value: externalCustomerQueue.name
         }
         {
           name: 'Auraly__PosSynchronization__WebPubSub__Endpoint'

@@ -98,6 +98,10 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public Guid OnlineSeriesId { get; } = Guid.NewGuid();
     public Guid FiscalAuthorizationId { get; } = Guid.NewGuid();
     public Guid FiscalIssuerConfigurationId { get; } = Guid.NewGuid();
+
+    public IServiceScope CreateScope() =>
+        (_factory ?? throw new InvalidOperationException("The test host is not initialized."))
+        .Services.CreateScope();
     public string SqlServer { get; } =
         Environment.GetEnvironmentVariable("AURALY_TEST_SQLSERVER") ?? @".\LOCAL";
     public string ConnectionString { get; private set; } = string.Empty;

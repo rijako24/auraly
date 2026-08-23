@@ -19,6 +19,11 @@ public sealed record ProductCatalogSyncResult(int PagesProcessed, int ProductsPr
 }
 public sealed record ProductIdentityRefreshResult(int ProductsFound, int ProductsChanged, DateTime CompletedAtUtc);
 
+public interface IExternalCustomerReconciliationRunner
+{
+    Task<int> ReconcilePendingAsync(Guid businessId, CancellationToken ct = default);
+}
+
 public interface IProductCatalogSyncService
 {
     Task<ProductCatalogSyncResult> SyncAsync(Guid businessId, ProductCatalogSyncRequest request, CancellationToken ct = default);
@@ -37,11 +42,16 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
     private readonly IUnitOfWork _unitOfWork;
     private const int CurrentSearchIndexVersion = ProductSearchText.CurrentIndexVersion;
     private readonly ICommerceAdapterFactory _adapters;
+    private readonly IExternalCustomerReconciliationRunner _customerReconciliation;
 
-    public ProductCatalogSyncService(IUnitOfWork unitOfWork, ICommerceAdapterFactory adapters)
+    public ProductCatalogSyncService(
+        IUnitOfWork unitOfWork,
+        ICommerceAdapterFactory adapters,
+        IExternalCustomerReconciliationRunner customerReconciliation)
     {
         _unitOfWork = unitOfWork;
         _adapters = adapters;
+        _customerReconciliation = customerReconciliation;
     }
 
     public async Task<ProductCatalogSyncResult> SyncAsync(
@@ -197,6 +207,8 @@ public sealed class ProductCatalogSyncService : IProductCatalogSyncService
                     if (offset == maxPages - 1)
                         throw new InvalidOperationException("Customer synchronization reached MaxPages before Mantis reported the final page; the next execution will resume from the saved checkpoint.");
                 }
+
+                await _customerReconciliation.ReconcilePendingAsync(businessId, ct);
             }
 
             connection.CatalogSyncNextPage = 1;

@@ -7,12 +7,9 @@ public static class CanonicalPlatformComposition
 {
     public static void AddAuralyPlatformApi(
         this WebApplicationBuilder builder,
-        bool configureAuthentication = true,
-        bool configureExternalCustomerMessaging = true)
+        bool configureAuthentication = true)
     {
-        builder.AddPlatformApi(
-            configureAuthentication,
-            configureExternalCustomerMessaging);
+        builder.AddPlatformApi(configureAuthentication);
     }
 
     public static void UseAuralyPlatformBeforeAuthentication(this WebApplication app)

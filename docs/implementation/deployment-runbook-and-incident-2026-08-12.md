@@ -19,10 +19,10 @@ corregir y volver a publicar.
 
 Auraly usa carriles con responsabilidades explícitas; ningún botón de la UI escribe asientos directamente:
 
-- `auraly-document-processing`: cola operacional ordenada. `SessionId = BusinessId`, `MessageId = MovementId`, un documento por mensaje. Procesa inventario, costos, caja, cuentas por cobrar y cuentas por pagar. Al confirmar sus efectos publica de forma durable el trabajo contable requerido.
+- `auraly-document-processing`: cola operacional ordenada. `SessionId = BusinessId`, `MessageId = MovementId`, un documento por mensaje. Procesa únicamente el cierre operacional, inventario y costo físico, y publica las señales derivadas.
 - `auraly-accounting-processing`: cola del motor contable. Genera asientos balanceados e idempotentes, PUC, centros de costo, retenciones y proyecciones contables. Un fallo contable se reintenta o va a intervención sin duplicar ni revertir el documento operacional confirmado.
 - `auraly-fiscal-processing`: generación, firma, envío y consulta DIAN. Está separada para que la latencia de un proveedor externo no bloquee operación ni contabilidad.
-- `auraly-external-customer-reconciliation`: convierte clientes externos del bot en `Party/Customer`; no mueve documentos, inventario ni asientos.
+- `auraly-sales-reporting`: construye las proyecciones y consolidados de ventas sin consultar las tablas operacionales en cada reporte.
 
 No se crean colas por cada tipo documental. Ventas, entradas, conteos, ajustes, traslados, conversiones, averías, devoluciones, entradas y salidas de caja entran por la cola operacional; solo los efectos contables pasan a la cola contable.
 ## Causas encontradas y corrección permanente
@@ -34,7 +34,7 @@ No se crean colas por cada tipo documental. Ventas, entradas, conteos, ajustes, 
 | La protección fiscal detenía el arranque | Faltaba una clave Base64 de 32 bytes | Parámetro Bicep seguro y preflight que valida formato/longitud sin mostrar el valor |
 | JWT no era reconocido | IaC usaba `Jwt__*`; la API usa `Authentication__Jwt__*` | Un único contrato canónico y prueba que prohíbe los nombres anteriores |
 | Service Bus exigía cadena de conexión | El host no reutilizaba la fábrica de identidad administrada | API usa `ServiceBusConnection__fullyQualifiedNamespace` y `clientId`; no se versionan secretos |
-| Las entidades del motor no existían | La infraestructura solo declaraba colas heredadas del bot | Bicep declara las colas operacional, contable y fiscal, más reconciliación externa, con sesiones y DLQ |
+| Las entidades del motor no existían | La infraestructura no declaraba el ciclo documental completo | Bicep declara exactamente operación, contabilidad, fiscal y reporting con sesiones y DLQ |
 | `az webapp deploy` falló por el certificado del proxy local | Problema del cliente local, no del paquete | La publicación puede usar Kudu autenticado; nunca se desactiva la validación TLS |
 | El primer diagnóstico tomó varios ciclos | No existía contrato de preflight de extremo a extremo | `Test-AuralyDeploymentReadiness.ps1` falla antes de publicar y lista exactamente el dato faltante |
 

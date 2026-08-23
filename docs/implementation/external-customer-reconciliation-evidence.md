@@ -79,11 +79,9 @@ y `Customers`, ambos podían tener cursor 1. La aserción ahora incluye
 `Stream = 'Catalog'`; la funcionalidad de producción no cambió y las 93 pruebas
 completas pasan juntas.
 
-## Automatizaci�n posterior
+## Arquitectura vigente
 
-La limitaci�n aqu� registrada fue cerrada por la rebanada de eventos externos.
-Consultar:
-
-- docs/implementation/external-customer-events-design.md;
-- docs/implementation/external-customer-events-evidence.md;
-- docs/implementation/run-external-customer-events.md.
+La cola temporal fue retirada. La sincronización concilia directamente y la API
+manual conserva permisos, conflictos e idempotencia. La prueba de arquitectura
+exige que no reaparezcan una cola, un hosted service ni tablas de outbox/recibos,
+y que el bot consulte las tablas canónicas de clientes.

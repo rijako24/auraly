@@ -198,8 +198,6 @@
     <Build Include="Tables\Accounting.sql" />
     <Build Include="Tables\ComplianceReporting.sql" />
     <Build Include="Tables\Expenses.sql" />
-    <Build Include="Tables\ExternalCustomerReconciliationOutboxMessages.sql" />
-    <Build Include="Tables\ExternalCustomerReconciliationReceipts.sql" />
     <Build Include="Tables\PosSynchronizationOutboxMessages.sql" />
     <Build Include="Tables\ServerOutboxMessages.sql" />
   </ItemGroup>

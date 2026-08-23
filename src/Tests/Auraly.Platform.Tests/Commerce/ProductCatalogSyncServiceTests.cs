@@ -407,6 +407,7 @@ public sealed class ProductCatalogSyncServiceTests
         public Mock<ICommerceAdapter> Adapter { get; } = new();
         public ProductCatalogSyncService Service { get; }
         public Mock<IProductCategoryRepository> Categories { get; } = new();
+        public Mock<IExternalCustomerReconciliationRunner> CustomerReconciliation { get; } = new();
         public ProductCategory Category { get; }
 
         public Mock<ICommerceProductDeltaIdentitySource> DeltaAdapter { get; }
@@ -453,7 +454,13 @@ public sealed class ProductCatalogSyncServiceTests
                 .ReturnsAsync(1);
             var factory = new Mock<ICommerceAdapterFactory>();
             factory.Setup(value => value.Resolve(CommerceProvider.Mantis)).Returns(Adapter.Object);
-            Service = new ProductCatalogSyncService(unitOfWork.Object, factory.Object);
+            CustomerReconciliation.Setup(value => value.ReconcilePendingAsync(
+                    BusinessId, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(0);
+            Service = new ProductCatalogSyncService(
+                unitOfWork.Object,
+                factory.Object,
+                CustomerReconciliation.Object);
         }
     }
 }
