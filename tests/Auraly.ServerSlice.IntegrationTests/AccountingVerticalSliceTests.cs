@@ -23,6 +23,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Invoice_and_credit_note_post_balanced_once_and_periods_are_controlled()
     {
+        await DisableAccountingAsync();
         var unconfiguredInvoice = WithUblSnapshot(fixture.CreateValidRequest(9_811));
         await SetWarehouseNegativeSalesPolicyAsync(false);
         try
@@ -757,7 +758,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             Assert.Contains("Authority=DIAN;TaxYear=2026;Format=IVA;Version=1",
                 System.Text.Encoding.UTF8.GetString(content));
             var persistedHash = await ScalarAsync<byte[]>(
-                "SELECT ContentSha256 FROM dbo.ComplianceReportArtifacts WHERE RunId=@Id",
+                "SELECT ContentSha256 FROM compliance.ComplianceReportArtifacts WHERE RunId=@Id",
                 readyRun.RunId);
             Assert.Equal(System.Security.Cryptography.SHA256.HashData(content), persistedHash);
         }
@@ -769,6 +770,21 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         using (var close = await accounting.PostAsync($"/api/commerce/v1/accounting/periods/{nextPeriod:D}/close", null))
             Assert.Equal(HttpStatusCode.NoContent, close.StatusCode);
         Assert.Equal("Closed", await ScalarAsync<string>("SELECT Status FROM dbo.AccountingPeriods WHERE PeriodId=@Id", nextPeriod));
+    }
+
+    private async Task DisableAccountingAsync()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE dbo.AccountingTenantSettings
+            SET Status=N'Disabled', EffectiveFrom=NULL, OpeningBalanceMode=NULL,
+                ActivatedAt=NULL, ActivatedByUserId=NULL, UpdatedAt=SYSDATETIMEOFFSET()
+            WHERE TenantId=@TenantId;
+            """;
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync());
     }
 
     [Fact]

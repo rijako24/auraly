@@ -69,7 +69,13 @@ operación, cartera ni libros.
 
 Cada definición se identifica por `AuthorityCode + TaxYear + FormatCode +
 FormatVersion` y guarda resolución, fecha, anexo, URL oficial y SHA-256 del
-artefacto técnico consultado. Para el año gravable 2025 se registran:
+artefacto técnico consultado.
+
+Las definiciones, mapeos, ejecuciones, filas, validaciones y artefactos viven
+en el esquema SQL propietario `compliance`; no aumentan la deuda heredada de
+tablas `dbo` ni se mezclan con las tablas transaccionales.
+
+Para el año gravable 2025 se registran:
 
 - 1001 v10, 1003 v7, 1007 v9, 1005 v8, 1006 v8, 1009 v7 y 1008 v7;
 - Resolución 000162 de 2023, modificada por Resolución 000188 de 2024;
@@ -96,6 +102,10 @@ como XML oficial ni sustituye el prevalidador, la firma o el envío de DIAN.
 ## Reporting de ventas y patrón reproducible
 
 Reporting usa una granularidad híbrida:
+
+Todas sus proyecciones viven en el esquema SQL propietario `reporting`. Este
+nombre de esquema y las referencias calificadas son parte del patrón
+reproducible para impedir que nuevos consolidados vuelvan a `dbo`.
 
 - identidad mínima por documento para paginación y salto al origen;
 - hechos delgados y firmados por línea, pago e impuesto;

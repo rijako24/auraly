@@ -9,6 +9,7 @@ using System.Net.Http.Json;
 using Auraly.Api;
 using Auraly.Application.DocumentProcessing;
 using Auraly.Commerce.Accounting.Application;
+using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Application.Fiscal;
 using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Contracts.Authentication;
@@ -180,6 +181,24 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         using var client = CreateClient();
         using var response = await client.GetAsync("/health");
         response.EnsureSuccessStatusCode();
+        await ConfigureAccountingAsync();
+    }
+
+    private async Task ConfigureAccountingAsync()
+    {
+        using var client = CreateAdminClient(
+            AccountingPermissionCodes.Read,
+            AccountingPermissionCodes.Configure,
+            AccountingPermissionCodes.PeriodsManage,
+            AccountingPermissionCodes.Activate);
+        using (var defaults = await client.PutAsync(
+                   "/api/commerce/v1/accounting/defaults", null))
+            defaults.EnsureSuccessStatusCode();
+        using var activation = await client.PostAsJsonAsync(
+            "/api/commerce/v1/accounting/activate",
+            new ActivateAccountingRequest(
+                new DateOnly(2026, 1, 1), "COP", "ZeroDeclared"));
+        activation.EnsureSuccessStatusCode();
     }
 
     public IReadOnlyCollection<PosSynchronizationInvalidation>

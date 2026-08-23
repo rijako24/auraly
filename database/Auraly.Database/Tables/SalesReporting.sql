@@ -1,4 +1,4 @@
-CREATE TABLE [dbo].[SalesReportDocuments]
+CREATE TABLE [reporting].[SalesReportDocuments]
 (
     [DocumentId] UNIQUEIDENTIFIER NOT NULL,
     [TenantId] UNIQUEIDENTIFIER NOT NULL,
@@ -49,20 +49,20 @@ CREATE TABLE [dbo].[SalesReportDocuments]
 );
 GO
 CREATE INDEX [IX_SalesReportDocuments_Business_Date]
-  ON [dbo].[SalesReportDocuments]([BusinessId],[BusinessLocalDate] DESC,[DocumentId] DESC)
+  ON [reporting].[SalesReportDocuments]([BusinessId],[BusinessLocalDate] DESC,[DocumentId] DESC)
   INCLUDE([DocumentNumber],[CustomerId],[SellerId],[WarehouseId],[WarehouseName],[SellerName],[UntaxedAmount],[TaxAmount],[TotalAmount],
           [ReturnedTotalAmount],[RecognizedCostAmount],[ReturnedCostAmount],[FiscalStatus]);
 GO
 CREATE INDEX [IX_SalesReportDocuments_Business_Customer_Date]
-  ON [dbo].[SalesReportDocuments]([BusinessId],[CustomerId],[BusinessLocalDate] DESC,[DocumentId] DESC)
+  ON [reporting].[SalesReportDocuments]([BusinessId],[CustomerId],[BusinessLocalDate] DESC,[DocumentId] DESC)
   WHERE [CustomerId] IS NOT NULL;
 GO
 CREATE INDEX [IX_SalesReportDocuments_Business_Seller_Date]
-  ON [dbo].[SalesReportDocuments]([BusinessId],[SellerId],[BusinessLocalDate] DESC,[DocumentId] DESC)
+  ON [reporting].[SalesReportDocuments]([BusinessId],[SellerId],[BusinessLocalDate] DESC,[DocumentId] DESC)
   WHERE [SellerId] IS NOT NULL;
 GO
 
-CREATE TABLE [dbo].[SalesReportLineFacts]
+CREATE TABLE [reporting].[SalesReportLineFacts]
 (
     [FactId] UNIQUEIDENTIFIER NOT NULL,
     [TenantId] UNIQUEIDENTIFIER NOT NULL,
@@ -112,21 +112,21 @@ CREATE TABLE [dbo].[SalesReportLineFacts]
 );
 GO
 CREATE INDEX [IX_SalesReportLineFacts_Business_Date]
-  ON [dbo].[SalesReportLineFacts]([BusinessId],[BusinessLocalDate] DESC,[FactId] DESC)
+  ON [reporting].[SalesReportLineFacts]([BusinessId],[BusinessLocalDate] DESC,[FactId] DESC)
   INCLUDE([ProductId],[SellerId],[CustomerId],[WarehouseId],[Quantity],[UntaxedAmount],[TaxAmount],
           [TotalAmount],[RecognizedCostAmount],[MovementType]);
 GO
 CREATE INDEX [IX_SalesReportLineFacts_Business_Product_Date]
-  ON [dbo].[SalesReportLineFacts]([BusinessId],[ProductId],[BusinessLocalDate] DESC,[FactId] DESC)
+  ON [reporting].[SalesReportLineFacts]([BusinessId],[ProductId],[BusinessLocalDate] DESC,[FactId] DESC)
   INCLUDE([Quantity],[UntaxedAmount],[TaxAmount],[TotalAmount],[RecognizedCostAmount],[MovementType]);
 GO
 CREATE INDEX [IX_SalesReportLineFacts_Business_Supplier_Date]
-  ON [dbo].[SalesReportLineFacts]([BusinessId],[SupplierId],[BusinessLocalDate] DESC,[FactId] DESC)
+  ON [reporting].[SalesReportLineFacts]([BusinessId],[SupplierId],[BusinessLocalDate] DESC,[FactId] DESC)
   INCLUDE([ProductId],[CategoryId],[Quantity],[UntaxedAmount],[TaxAmount],[TotalAmount],[RecognizedCostAmount])
   WHERE [SupplierId] IS NOT NULL;
 GO
 
-CREATE TABLE [dbo].[SalesReportDailyDimensionTotals]
+CREATE TABLE [reporting].[SalesReportDailyDimensionTotals]
 (
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessLocalDate] DATE NOT NULL,
@@ -157,12 +157,12 @@ CREATE TABLE [dbo].[SalesReportDailyDimensionTotals]
 );
 GO
 CREATE INDEX [IX_SalesReportDailyDimensionTotals_Query]
-  ON [dbo].[SalesReportDailyDimensionTotals]([BusinessId],[DimensionType],[BusinessLocalDate],[DimensionKey])
+  ON [reporting].[SalesReportDailyDimensionTotals]([BusinessId],[DimensionType],[BusinessLocalDate],[DimensionKey])
   INCLUDE([DimensionLabel],[DocumentCount],[Quantity],[GrossSales],[Discounts],[Returns],
           [NetUntaxedSales],[NetTax],[NetTotalSales],[NetRecognizedCost],[GrossProfit]);
 GO
 
-CREATE TABLE [dbo].[SalesReportPaymentFacts]
+CREATE TABLE [reporting].[SalesReportPaymentFacts]
 (
     [SourceDocumentId] UNIQUEIDENTIFIER NOT NULL,
     [SourceDocumentType] NVARCHAR(32) NOT NULL,
@@ -185,10 +185,10 @@ CREATE TABLE [dbo].[SalesReportPaymentFacts]
 );
 GO
 CREATE INDEX [IX_SalesReportPaymentFacts_Business_Date_Method]
-  ON [dbo].[SalesReportPaymentFacts]([BusinessId],[BusinessLocalDate],[MethodCode]) INCLUDE([Amount],[MovementType]);
+  ON [reporting].[SalesReportPaymentFacts]([BusinessId],[BusinessLocalDate],[MethodCode]) INCLUDE([Amount],[MovementType]);
 GO
 
-CREATE TABLE [dbo].[SalesReportTaxFacts]
+CREATE TABLE [reporting].[SalesReportTaxFacts]
 (
     [SourceDocumentId] UNIQUEIDENTIFIER NOT NULL,
     [SourceDocumentType] NVARCHAR(32) NOT NULL,
@@ -208,11 +208,11 @@ CREATE TABLE [dbo].[SalesReportTaxFacts]
 );
 GO
 CREATE INDEX [IX_SalesReportTaxFacts_Business_Date_Tax]
-  ON [dbo].[SalesReportTaxFacts]([BusinessId],[BusinessLocalDate],[TaxCode],[TaxRate])
+  ON [reporting].[SalesReportTaxFacts]([BusinessId],[BusinessLocalDate],[TaxCode],[TaxRate])
   INCLUDE([TaxableAmount],[TaxAmount],[TotalAmount]);
 GO
 
-CREATE TABLE [dbo].[SalesReportDailyTotals]
+CREATE TABLE [reporting].[SalesReportDailyTotals]
 (
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessLocalDate] DATE NOT NULL,
@@ -242,7 +242,7 @@ CREATE TABLE [dbo].[SalesReportDailyTotals]
 );
 GO
 
-CREATE TABLE [dbo].[SalesReportingCheckpoints]
+CREATE TABLE [reporting].[SalesReportingCheckpoints]
 (
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [ProjectionVersion] SMALLINT NOT NULL,

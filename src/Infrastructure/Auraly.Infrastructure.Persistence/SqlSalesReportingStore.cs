@@ -29,7 +29,7 @@ public sealed class SqlSalesReportingStore(SqlServerConnectionFactory connection
             : await ReadTrendAsync(connection, user, filter.From, filter.To, cancellationToken);
         await using var checkpoint = new SqlCommand("""
             SELECT MAX(c.LastProjectedAt)
-            FROM dbo.SalesReportingCheckpoints c
+            FROM reporting.SalesReportingCheckpoints c
             INNER JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId
             WHERE c.BusinessId=@BusinessId AND b.TenantId=@TenantId;
             """, connection);
@@ -80,7 +80,7 @@ public sealed class SqlSalesReportingStore(SqlServerConnectionFactory connection
                 SUM(Quantity) Quantity,SUM(GrossSales) Gross,SUM(Discounts) Discounts,
                 SUM(Returns) Returns,SUM(NetUntaxedSales) Untaxed,SUM(NetTax) Tax,
                 SUM(NetTotalSales) Net,SUM(NetRecognizedCost) Cost,SUM(GrossProfit) Profit
-              FROM dbo.SalesReportDailyDimensionTotals t
+              FROM reporting.SalesReportDailyDimensionTotals t
               INNER JOIN dbo.Businesses b ON b.BusinessId=t.BusinessId
               WHERE t.BusinessId=@BusinessId AND b.TenantId=@TenantId
                 AND t.BusinessLocalDate BETWEEN @From AND @To AND t.DimensionType=@DimensionType
@@ -110,7 +110,7 @@ public sealed class SqlSalesReportingStore(SqlServerConnectionFactory connection
                    (d.UntaxedAmount-d.ReturnedUntaxedAmount)-
                      (d.RecognizedCostAmount-d.ReturnedCostAmount),d.FiscalStatus,
                    COUNT(*) OVER()
-            FROM dbo.SalesReportDocuments d
+            FROM reporting.SalesReportDocuments d
             WHERE d.TenantId=@TenantId AND d.BusinessId=@BusinessId
               AND d.BusinessLocalDate BETWEEN @From AND @To
               AND (@CustomerId IS NULL OR d.CustomerId=@CustomerId)
@@ -118,7 +118,7 @@ public sealed class SqlSalesReportingStore(SqlServerConnectionFactory connection
               AND (@WarehouseId IS NULL OR d.WarehouseId=@WarehouseId)
               AND (@DocumentType IS NULL OR d.DocumentType=@DocumentType)
               AND ((@ProductId IS NULL AND @SupplierId IS NULL AND @CategoryId IS NULL) OR EXISTS(
-                    SELECT 1 FROM dbo.SalesReportLineFacts f
+                    SELECT 1 FROM reporting.SalesReportLineFacts f
                     WHERE f.OriginalSaleDocumentId=d.DocumentId
                       AND (@ProductId IS NULL OR f.ProductId=@ProductId)
                       AND (@SupplierId IS NULL OR f.SupplierId=@SupplierId)
@@ -128,7 +128,7 @@ public sealed class SqlSalesReportingStore(SqlServerConnectionFactory connection
                     OR d.CustomerName LIKE N'%'+@Search+N'%'
                     OR d.CustomerIdentification LIKE N'%'+@Search+N'%'
                     OR d.SellerName LIKE N'%'+@Search+N'%'
-                    OR EXISTS(SELECT 1 FROM dbo.SalesReportLineFacts f
+                    OR EXISTS(SELECT 1 FROM reporting.SalesReportLineFacts f
                       WHERE f.OriginalSaleDocumentId=d.DocumentId AND
                         (f.ProductCode LIKE N'%'+@Search+N'%' OR f.ProductName LIKE N'%'+@Search+N'%')))
             ORDER BY d.BusinessLocalDate DESC,d.DocumentId DESC
@@ -162,7 +162,7 @@ public sealed class SqlSalesReportingStore(SqlServerConnectionFactory connection
                    d.TotalAmount-d.ReturnedTotalAmount,
                    (d.UntaxedAmount-d.ReturnedUntaxedAmount)-
                      (d.RecognizedCostAmount-d.ReturnedCostAmount),d.FiscalStatus
-            FROM dbo.SalesReportDocuments d
+            FROM reporting.SalesReportDocuments d
             WHERE d.DocumentId=@DocumentId AND d.TenantId=@TenantId AND d.BusinessId=@BusinessId;
             """, connection);
         Scope(header, user); header.Parameters.AddWithValue("@DocumentId", documentId);
@@ -176,7 +176,7 @@ public sealed class SqlSalesReportingStore(SqlServerConnectionFactory connection
             SELECT FactId,MovementType,OccurredAt,ProductCode,ProductName,CategoryName,
                    Quantity,GrossAmount,DiscountAmount,UntaxedAmount,TaxAmount,TotalAmount,
                    RecognizedCostAmount,ReturnReasonCode,ReturnDisposition
-            FROM dbo.SalesReportLineFacts
+            FROM reporting.SalesReportLineFacts
             WHERE TenantId=@TenantId AND BusinessId=@BusinessId
               AND OriginalSaleDocumentId=@DocumentId
             ORDER BY OccurredAt,MovementType,SourceLineNumber;
@@ -204,7 +204,7 @@ public sealed class SqlSalesReportingStore(SqlServerConnectionFactory connection
               COALESCE(SUM(NetTotalSales),0),COALESCE(SUM(NetRecognizedCost),0),
               COALESCE(SUM(GrossProfit),0),COALESCE(SUM(CreditSales),0),
               COALESCE(SUM(Collected),0),COALESCE(SUM(Refunded),0)
-            FROM dbo.SalesReportDailyTotals t
+            FROM reporting.SalesReportDailyTotals t
             INNER JOIN dbo.Businesses b ON b.BusinessId=t.BusinessId
             WHERE t.BusinessId=@BusinessId AND b.TenantId=@TenantId
               AND t.BusinessLocalDate BETWEEN @From AND @To;
@@ -230,8 +230,8 @@ public sealed class SqlSalesReportingStore(SqlServerConnectionFactory connection
               COALESCE(SUM(f.UntaxedAmount),0),COALESCE(SUM(f.TaxAmount),0),
               COALESCE(SUM(f.TotalAmount),0),COALESCE(SUM(f.RecognizedCostAmount),0),
               COALESCE(SUM(f.UntaxedAmount-f.RecognizedCostAmount),0)
-            FROM dbo.SalesReportLineFacts f
-            INNER JOIN dbo.SalesReportDocuments d ON d.DocumentId=f.OriginalSaleDocumentId
+            FROM reporting.SalesReportLineFacts f
+            INNER JOIN reporting.SalesReportDocuments d ON d.DocumentId=f.OriginalSaleDocumentId
             WHERE f.TenantId=@TenantId AND f.BusinessId=@BusinessId
               AND f.BusinessLocalDate BETWEEN @From AND @To
               AND (@CustomerId IS NULL OR f.CustomerId=@CustomerId)
@@ -258,7 +258,7 @@ public sealed class SqlSalesReportingStore(SqlServerConnectionFactory connection
             SUM(CASE WHEN f.MovementType=N'Sale' THEN f.GrossAmount ELSE 0 END),
             -SUM(CASE WHEN f.MovementType=N'Return' THEN f.TotalAmount ELSE 0 END),
             SUM(f.TotalAmount),SUM(f.UntaxedAmount-f.RecognizedCostAmount)
-          FROM dbo.SalesReportLineFacts f INNER JOIN dbo.SalesReportDocuments d ON d.DocumentId=f.OriginalSaleDocumentId
+          FROM reporting.SalesReportLineFacts f INNER JOIN reporting.SalesReportDocuments d ON d.DocumentId=f.OriginalSaleDocumentId
           WHERE f.TenantId=@TenantId AND f.BusinessId=@BusinessId AND f.BusinessLocalDate BETWEEN @From AND @To
             AND (@CustomerId IS NULL OR f.CustomerId=@CustomerId) AND (@SellerId IS NULL OR f.SellerId=@SellerId)
             AND (@SupplierId IS NULL OR f.SupplierId=@SupplierId) AND (@ProductId IS NULL OR f.ProductId=@ProductId)
@@ -275,7 +275,7 @@ public sealed class SqlSalesReportingStore(SqlServerConnectionFactory connection
         await using var command=new SqlCommand("""
           SELECT BusinessLocalDate,SUM(DocumentCount),SUM(GrossSales),SUM(Returns),
                  SUM(NetTotalSales),SUM(GrossProfit)
-          FROM dbo.SalesReportDailyTotals t INNER JOIN dbo.Businesses b ON b.BusinessId=t.BusinessId
+          FROM reporting.SalesReportDailyTotals t INNER JOIN dbo.Businesses b ON b.BusinessId=t.BusinessId
           WHERE t.BusinessId=@BusinessId AND b.TenantId=@TenantId AND BusinessLocalDate BETWEEN @From AND @To
           GROUP BY BusinessLocalDate ORDER BY BusinessLocalDate;
           """,connection);Scope(command,user);Date(command,"@From",from);Date(command,"@To",to);
@@ -307,7 +307,7 @@ public sealed class SqlSalesReportingStore(SqlServerConnectionFactory connection
             -SUM(CASE WHEN f.MovementType=N'Return' THEN f.TotalAmount ELSE 0 END) Returns,
             SUM(f.UntaxedAmount) Untaxed,SUM(f.TaxAmount) Tax,SUM(f.TotalAmount) Net,
             SUM(f.RecognizedCostAmount) Cost,SUM(f.UntaxedAmount-f.RecognizedCostAmount) Profit
-          FROM dbo.SalesReportLineFacts f INNER JOIN dbo.SalesReportDocuments d ON d.DocumentId=f.OriginalSaleDocumentId
+          FROM reporting.SalesReportLineFacts f INNER JOIN reporting.SalesReportDocuments d ON d.DocumentId=f.OriginalSaleDocumentId
           WHERE f.TenantId=@TenantId AND f.BusinessId=@BusinessId AND f.BusinessLocalDate BETWEEN @From AND @To
             AND (@CustomerId IS NULL OR f.CustomerId=@CustomerId) AND (@SellerId IS NULL OR f.SellerId=@SellerId)
             AND (@SupplierId IS NULL OR f.SupplierId=@SupplierId)
@@ -329,7 +329,7 @@ public sealed class SqlSalesReportingStore(SqlServerConnectionFactory connection
     {
         await using var command=new SqlCommand("""
           WITH grouped AS(SELECT p.MethodCode [Key],p.MethodCode Label,CONVERT(bigint,COUNT(DISTINCT p.SourceDocumentId)) Documents,
-            SUM(p.Amount) Net FROM dbo.SalesReportPaymentFacts p
+            SUM(p.Amount) Net FROM reporting.SalesReportPaymentFacts p
             WHERE p.TenantId=@TenantId AND p.BusinessId=@BusinessId AND p.BusinessLocalDate BETWEEN @From AND @To
             GROUP BY p.MethodCode)
           SELECT TOP(@Limit) [Key],Label,Documents,CAST(0 AS decimal(19,4)),Net,0,0,Net,0,Net,0,Net,100,
@@ -346,7 +346,7 @@ public sealed class SqlSalesReportingStore(SqlServerConnectionFactory connection
           WITH grouped AS(SELECT CONCAT(t.TaxCode,N' · ',FORMAT(t.TaxRate*100,N'0.##'),N'%') [Key],
             CONCAT(t.TaxCode,N' · ',FORMAT(t.TaxRate*100,N'0.##'),N'%') Label,
             CONVERT(bigint,COUNT(DISTINCT t.SourceDocumentId)) Documents,SUM(t.TaxableAmount) Base,SUM(t.TaxAmount) Tax,SUM(t.TotalAmount) Net
-            FROM dbo.SalesReportTaxFacts t WHERE t.TenantId=@TenantId AND t.BusinessId=@BusinessId
+            FROM reporting.SalesReportTaxFacts t WHERE t.TenantId=@TenantId AND t.BusinessId=@BusinessId
               AND t.BusinessLocalDate BETWEEN @From AND @To GROUP BY t.TaxCode,t.TaxRate)
           SELECT TOP(@Limit) [Key],Label,Documents,CAST(0 AS decimal(19,4)),Base,0,0,Base,Tax,Net,0,Base,100,
             CASE WHEN SUM(Net) OVER()=0 THEN 0 ELSE Net/SUM(Net) OVER()*100 END

@@ -180,7 +180,7 @@ public sealed class SqlSalesReportingProjectionWriter(
         CancellationToken cancellationToken)
     {
         const string sql = """
-            INSERT dbo.SalesReportDocuments
+            INSERT reporting.SalesReportDocuments
             (
               DocumentId,TenantId,BusinessId,DocumentType,DocumentNumber,FiscalNumber,
               IssuedAt,BusinessLocalDate,TimeZoneId,WarehouseId,WarehouseName,WorkSessionId,SellerId,SellerName,
@@ -232,7 +232,7 @@ public sealed class SqlSalesReportingProjectionWriter(
         CancellationToken cancellationToken)
     {
         const string sql = """
-            INSERT dbo.SalesReportLineFacts
+            INSERT reporting.SalesReportLineFacts
             (
               FactId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,SourceLineNumber,
               OriginalSaleDocumentId,OriginalLineNumber,MovementType,OccurredAt,BusinessLocalDate,
@@ -297,7 +297,7 @@ public sealed class SqlSalesReportingProjectionWriter(
         CancellationToken cancellationToken)
     {
         const string sql = """
-            INSERT dbo.SalesReportPaymentFacts
+            INSERT reporting.SalesReportPaymentFacts
               (SourceDocumentId,SourceDocumentType,PaymentNumber,TenantId,BusinessId,
                BusinessLocalDate,MovementType,MethodCode,Amount,Reference,WorkSessionId,ProjectedAt)
             VALUES(@DocumentId,@DocumentType,@Number,@TenantId,@BusinessId,@LocalDate,
@@ -361,7 +361,7 @@ public sealed class SqlSalesReportingProjectionWriter(
         DateTimeOffset now, CancellationToken cancellationToken)
     {
         const string sql = """
-            INSERT dbo.SalesReportTaxFacts
+            INSERT reporting.SalesReportTaxFacts
               (SourceDocumentId,SourceDocumentType,TaxCode,TaxRate,TenantId,BusinessId,
                BusinessLocalDate,TaxableAmount,TaxAmount,TotalAmount,ProjectedAt)
             VALUES(@DocumentId,@DocumentType,@Code,@Rate,@TenantId,@BusinessId,@LocalDate,
@@ -412,7 +412,7 @@ public sealed class SqlSalesReportingProjectionWriter(
         DateOnly localDate, DateTimeOffset now, CancellationToken cancellationToken)
     {
         const string sql = """
-            INSERT dbo.SalesReportLineFacts
+            INSERT reporting.SalesReportLineFacts
             (
               FactId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,SourceLineNumber,
               OriginalSaleDocumentId,OriginalLineNumber,MovementType,OccurredAt,BusinessLocalDate,
@@ -472,7 +472,7 @@ public sealed class SqlSalesReportingProjectionWriter(
         decimal returnedCost, DateTimeOffset now, CancellationToken cancellationToken)
     {
         const string sql = """
-            UPDATE dbo.SalesReportDocuments
+            UPDATE reporting.SalesReportDocuments
             SET ReturnedUntaxedAmount=ReturnedUntaxedAmount+@Untaxed,
                 ReturnedTaxAmount=ReturnedTaxAmount+@Tax,
                 ReturnedTotalAmount=ReturnedTotalAmount+@Total,
@@ -497,7 +497,7 @@ public sealed class SqlSalesReportingProjectionWriter(
         DateOnly localDate, DateTimeOffset now, CancellationToken cancellationToken)
     {
         const string sql = """
-            INSERT dbo.SalesReportPaymentFacts
+            INSERT reporting.SalesReportPaymentFacts
               (SourceDocumentId,SourceDocumentType,PaymentNumber,TenantId,BusinessId,
                BusinessLocalDate,MovementType,MethodCode,Amount,Reference,WorkSessionId,ProjectedAt)
             VALUES(@DocumentId,@DocumentType,@Number,@TenantId,@BusinessId,@LocalDate,
@@ -527,8 +527,8 @@ public sealed class SqlSalesReportingProjectionWriter(
                      SUM(f.UntaxedAmount) NetUntaxed,SUM(f.TaxAmount) NetTax,
                      SUM(f.TotalAmount) NetTotal,SUM(f.RecognizedCostAmount) NetCost,
                      SUM(f.UntaxedAmount-f.RecognizedCostAmount) GrossProfit
-              FROM dbo.SalesReportLineFacts f
-              INNER JOIN dbo.SalesReportDocuments d ON d.DocumentId=f.OriginalSaleDocumentId
+              FROM reporting.SalesReportLineFacts f
+              INNER JOIN reporting.SalesReportDocuments d ON d.DocumentId=f.OriginalSaleDocumentId
               CROSS APPLY(VALUES
                 (N'Customer',COALESCE(CONVERT(nvarchar(80),d.CustomerId),N'final-consumer'),d.CustomerName),
                 (N'Seller',COALESCE(CONVERT(nvarchar(80),d.SellerId),N'no-seller'),d.SellerName),
@@ -541,7 +541,7 @@ public sealed class SqlSalesReportingProjectionWriter(
                 AND f.SourceDocumentType=@SourceDocumentType
               GROUP BY f.BusinessLocalDate,v.DimensionType,v.DimensionKey,v.DimensionLabel
             )
-            MERGE dbo.SalesReportDailyDimensionTotals WITH(HOLDLOCK) AS target
+            MERGE reporting.SalesReportDailyDimensionTotals WITH(HOLDLOCK) AS target
             USING dimensions source
             ON target.BusinessId=@BusinessId AND target.BusinessLocalDate=source.BusinessLocalDate
               AND target.DimensionType=source.DimensionType AND target.DimensionKey=source.DimensionKey
@@ -581,7 +581,7 @@ public sealed class SqlSalesReportingProjectionWriter(
         decimal refunded, DateTimeOffset now, CancellationToken cancellationToken)
     {
         const string sql = """
-            MERGE dbo.SalesReportDailyTotals WITH(HOLDLOCK) AS target
+            MERGE reporting.SalesReportDailyTotals WITH(HOLDLOCK) AS target
             USING (SELECT @BusinessId BusinessId,@Date BusinessLocalDate,@Currency CurrencyCode) source
             ON target.BusinessId=source.BusinessId
                AND target.BusinessLocalDate=source.BusinessLocalDate
@@ -640,7 +640,7 @@ public sealed class SqlSalesReportingProjectionWriter(
         CancellationToken cancellationToken)
     {
         const string sql = """
-            MERGE dbo.SalesReportingCheckpoints WITH(HOLDLOCK) AS target
+            MERGE reporting.SalesReportingCheckpoints WITH(HOLDLOCK) AS target
             USING (SELECT @BusinessId BusinessId,@Version ProjectionVersion) source
             ON target.BusinessId=source.BusinessId AND target.ProjectionVersion=source.ProjectionVersion
             WHEN MATCHED THEN UPDATE SET LastSourceDocumentId=@DocumentId,

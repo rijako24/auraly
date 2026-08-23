@@ -47,6 +47,8 @@
     <Build Include="Schemas\Reference.sql" />
     <Build Include="Schemas\Dispatch.sql" />
     <Build Include="Schemas\Fiscal.sql" />
+    <Build Include="Schemas\Compliance.sql" />
+    <Build Include="Schemas\Reporting.sql" />
     <Build Include="Types\GuidIdList.sql" />
     <Build Include="Tables\ReferenceOptions.sql" />
     <Build Include="Tables\Tenants.sql" />

@@ -64,11 +64,11 @@ public sealed class SqlSalesReportingProcessor(
             SELECT p.PayloadJson,
                    CONVERT(bit,CASE WHEN
                      (@DocumentType IN(N'SalesInvoice',N'SalesReceipt') AND EXISTS
-                       (SELECT 1 FROM dbo.SalesReportDocuments WITH(UPDLOCK,HOLDLOCK)
+                       (SELECT 1 FROM reporting.SalesReportDocuments WITH(UPDLOCK,HOLDLOCK)
                         WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId))
                      OR
                      (@DocumentType=N'SalesReturn' AND EXISTS
-                       (SELECT 1 FROM dbo.SalesReportLineFacts WITH(UPDLOCK,HOLDLOCK)
+                       (SELECT 1 FROM reporting.SalesReportLineFacts WITH(UPDLOCK,HOLDLOCK)
                         WHERE SourceDocumentId=@DocumentId
                           AND SourceDocumentType=N'SalesReturn'))
                      THEN 1 ELSE 0 END)

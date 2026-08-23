@@ -12,7 +12,7 @@ INSERT @Definitions VALUES
  (N'1009',7,N'Saldos de cuentas por pagar al 31 de diciembre',N'Anexo 23',N'BF688B618C1BEA6E27741B076C4CE5C8C33F9D350C641796D2E0B37A73BF5A7C'),
  (N'1008',7,N'Saldos de cuentas por cobrar al 31 de diciembre',N'Anexo 24',N'D767A4FFA8887E42807E9C27A5C9D828A7F2BDB304995CF8FE788F9FC1F6430B');
 
-MERGE dbo.ComplianceReportDefinitions AS target
+MERGE compliance.ComplianceReportDefinitions AS target
 USING (SELECT N'DIAN' AuthorityCode,CAST(2025 AS SMALLINT) TaxYear,d.* FROM @Definitions d) AS source
 ON target.AuthorityCode=source.AuthorityCode AND target.TaxYear=source.TaxYear
 AND target.FormatCode=source.FormatCode AND target.FormatVersion=source.FormatVersion
@@ -29,7 +29,7 @@ INSERT @Definitions2026 VALUES
  (N'1006',8,N'IVA generado e impuesto nacional al consumo',N'T3.22',N'https://normograma.com/documentospdf/PDF/R_DIAN_0227_2025_ANEXOT3.22.pdf',N'919A4D8CF30C71FE4F9940C38E80A5E7B1E2A80AE82B69FD930300888D7434B4'),
  (N'1009',7,N'Saldos de cuentas por pagar al 31 de diciembre',N'T3.23',N'https://normograma.com/documentospdf/PDF/R_DIAN_0227_2025_ANEXOT3.23.pdf',N'9B28FAB660783A973D27602B480F1793F156526034F112BDF2BC5FF806B9DEED'),
  (N'1008',7,N'Saldos de cuentas por cobrar al 31 de diciembre',N'T3.24',N'https://normograma.com/documentospdf/PDF/R_DIAN_0227_2025_ANEXOT3.24.pdf',N'73E01496B63AE506C274C224FFFD0EDF8E19DFEFF744796225F23C7772E46F03');
-MERGE dbo.ComplianceReportDefinitions AS target
+MERGE compliance.ComplianceReportDefinitions AS target
 USING (SELECT N'DIAN' AuthorityCode,CAST(2026 AS SMALLINT) TaxYear,d.* FROM @Definitions2026 d) AS source
 ON target.AuthorityCode=source.AuthorityCode AND target.TaxYear=source.TaxYear
 AND target.FormatCode=source.FormatCode AND target.FormatVersion=source.FormatVersion
@@ -51,7 +51,7 @@ DECLARE @FiscalYears TABLE(TaxYear SMALLINT,ResolutionNumber NVARCHAR(80),Resolu
 INSERT @FiscalYears VALUES
  (2025,N'Base interna; marco 000162/2023 + 000188/2024','2024-10-30',@SourceUrl,N'83490FA2D8376D17EC0F3C01D90F9F15370EE7E4ED1B05A01388C9AAB6A4FD1C'),
  (2026,N'Base interna; marco 000227/2025 + 000233/2025','2025-10-30',N'https://normograma.dian.gov.co/dian/compilacion/docs/pdf/resolucion_dian_0227_2025.pdf',N'AE8B65A40CF31C1A6D427F4A880C46F5A048DF198C9487C86B22E081C264FEBE');
-MERGE dbo.ComplianceReportDefinitions AS target
+MERGE compliance.ComplianceReportDefinitions AS target
 USING (SELECT N'DIAN' AuthorityCode,y.*,f.FormatCode,f.Name FROM @Fiscal f CROSS JOIN @FiscalYears y) AS source
 ON target.AuthorityCode=source.AuthorityCode AND target.TaxYear=source.TaxYear
 AND target.FormatCode=source.FormatCode AND target.FormatVersion=1

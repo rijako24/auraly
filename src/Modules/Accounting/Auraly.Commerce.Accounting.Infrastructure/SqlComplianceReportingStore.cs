@@ -22,7 +22,7 @@ public sealed class SqlComplianceReportingStore(
         await using var command = new SqlCommand("""
             SELECT AuthorityCode,TaxYear,FormatCode,FormatVersion,Name,ReportKind,
                    ResolutionNumber,ResolutionDate,TechnicalAnnex,SourceUrl,SourceSha256
-            FROM dbo.ComplianceReportDefinitions
+            FROM compliance.ComplianceReportDefinitions
             WHERE IsActive=1 AND (@TaxYear IS NULL OR TaxYear=@TaxYear)
             ORDER BY TaxYear DESC,ReportKind,FormatCode;
             """, connection);
@@ -42,7 +42,7 @@ public sealed class SqlComplianceReportingStore(
             SELECT m.MappingId,m.TenantId,m.BusinessId,m.AuthorityCode,m.TaxYear,
                    m.FormatCode,m.FormatVersion,m.AccountId,a.Code,a.Name,
                    m.ConceptCode,m.TargetField
-            FROM dbo.ComplianceConceptMappings m
+            FROM compliance.ComplianceConceptMappings m
             INNER JOIN dbo.AccountingAccounts a ON a.TenantId=m.TenantId AND a.AccountId=m.AccountId
             WHERE m.TenantId=@TenantId AND (m.BusinessId IS NULL OR m.BusinessId=@BusinessId)
               AND m.TaxYear=@TaxYear AND (@FormatCode IS NULL OR m.FormatCode=@FormatCode)
@@ -65,7 +65,7 @@ public sealed class SqlComplianceReportingStore(
         await using var connection = connections.Create();
         await connection.OpenAsync(token);
         await using var command = new SqlCommand("""
-            IF NOT EXISTS(SELECT 1 FROM dbo.ComplianceReportDefinitions
+            IF NOT EXISTS(SELECT 1 FROM compliance.ComplianceReportDefinitions
               WHERE AuthorityCode=@AuthorityCode AND TaxYear=@TaxYear AND FormatCode=@FormatCode
                 AND FormatVersion=@FormatVersion AND IsActive=1)
               THROW 51500,'Unknown compliance report definition.',1;
@@ -77,24 +77,24 @@ public sealed class SqlComplianceReportingStore(
               THROW 51502,'Invalid business scope.',1;
 
             DECLARE @Existing UNIQUEIDENTIFIER=(SELECT TOP(1) MappingId
-              FROM dbo.ComplianceConceptMappings WITH(UPDLOCK,HOLDLOCK)
+              FROM compliance.ComplianceConceptMappings WITH(UPDLOCK,HOLDLOCK)
               WHERE TenantId=@TenantId AND ((BusinessId=@BusinessId) OR (BusinessId IS NULL AND @BusinessId IS NULL))
                 AND AuthorityCode=@AuthorityCode AND TaxYear=@TaxYear AND FormatCode=@FormatCode
                 AND FormatVersion=@FormatVersion AND AccountId=@AccountId
                 AND ConceptCode=@ConceptCode AND TargetField=@TargetField);
             IF @Existing IS NULL
             BEGIN
-              INSERT dbo.ComplianceConceptMappings(MappingId,TenantId,BusinessId,AuthorityCode,
+              INSERT compliance.ComplianceConceptMappings(MappingId,TenantId,BusinessId,AuthorityCode,
                 TaxYear,FormatCode,FormatVersion,AccountId,ConceptCode,TargetField,CreatedAt,UpdatedAt)
               VALUES(@MappingId,@TenantId,@BusinessId,@AuthorityCode,@TaxYear,@FormatCode,
                 @FormatVersion,@AccountId,@ConceptCode,@TargetField,@Now,@Now);
               SET @Existing=@MappingId;
             END
-            ELSE UPDATE dbo.ComplianceConceptMappings SET UpdatedAt=@Now WHERE MappingId=@Existing;
+            ELSE UPDATE compliance.ComplianceConceptMappings SET UpdatedAt=@Now WHERE MappingId=@Existing;
 
             SELECT m.MappingId,m.TenantId,m.BusinessId,m.AuthorityCode,m.TaxYear,
                    m.FormatCode,m.FormatVersion,m.AccountId,a.Code,a.Name,m.ConceptCode,m.TargetField
-            FROM dbo.ComplianceConceptMappings m
+            FROM compliance.ComplianceConceptMappings m
             INNER JOIN dbo.AccountingAccounts a ON a.TenantId=m.TenantId AND a.AccountId=m.AccountId
             WHERE m.MappingId=@Existing;
             """, connection);
@@ -169,8 +169,8 @@ public sealed class SqlComplianceReportingStore(
             SELECT r.RunId,r.AuthorityCode,r.TaxYear,r.FormatCode,r.FormatVersion,d.Name,d.ReportKind,
                    r.PeriodFrom,r.PeriodTo,r.Status,r.ResolutionNumber,r.SourceUrl,r.SourceSha256,
                    r.[RowCount],r.ControlTotal,r.CreatedAt
-            FROM dbo.ComplianceReportRuns r
-            INNER JOIN dbo.ComplianceReportDefinitions d
+            FROM compliance.ComplianceReportRuns r
+            INNER JOIN compliance.ComplianceReportDefinitions d
               ON d.AuthorityCode=r.AuthorityCode AND d.TaxYear=r.TaxYear
              AND d.FormatCode=r.FormatCode AND d.FormatVersion=r.FormatVersion
             WHERE r.TenantId=@TenantId AND r.BusinessId=@BusinessId
@@ -199,8 +199,8 @@ public sealed class SqlComplianceReportingStore(
         await connection.OpenAsync(token);
         await using var command = new SqlCommand("""
             SELECT a.FileName,a.MediaType,a.Content,a.ContentSha256
-            FROM dbo.ComplianceReportArtifacts a
-            INNER JOIN dbo.ComplianceReportRuns r ON r.RunId=a.RunId
+            FROM compliance.ComplianceReportArtifacts a
+            INNER JOIN compliance.ComplianceReportRuns r ON r.RunId=a.RunId
             WHERE a.RunId=@RunId AND r.TenantId=@TenantId AND r.BusinessId=@BusinessId
               AND r.Status=N'Ready';
             """, connection);
@@ -221,7 +221,7 @@ public sealed class SqlComplianceReportingStore(
         await using var command = new SqlCommand("""
             SELECT AuthorityCode,TaxYear,FormatCode,FormatVersion,Name,ReportKind,
                    ResolutionNumber,ResolutionDate,TechnicalAnnex,SourceUrl,SourceSha256
-            FROM dbo.ComplianceReportDefinitions
+            FROM compliance.ComplianceReportDefinitions
             WHERE AuthorityCode=@Authority AND TaxYear=@TaxYear AND FormatCode=@Format
               AND FormatVersion=@Version AND IsActive=1;
             """, connection, transaction);
@@ -248,12 +248,12 @@ public sealed class SqlComplianceReportingStore(
         await using var command = new SqlCommand("""
             SELECT m.MappingId,m.TenantId,m.BusinessId,m.AuthorityCode,m.TaxYear,
                    m.FormatCode,m.FormatVersion,m.AccountId,a.Code,a.Name,m.ConceptCode,m.TargetField
-            FROM dbo.ComplianceConceptMappings m
+            FROM compliance.ComplianceConceptMappings m
             INNER JOIN dbo.AccountingAccounts a ON a.TenantId=m.TenantId AND a.AccountId=m.AccountId
             WHERE m.TenantId=@TenantId AND (m.BusinessId IS NULL OR m.BusinessId=@BusinessId)
               AND m.AuthorityCode=@Authority AND m.TaxYear=@TaxYear AND m.FormatCode=@Format
               AND m.FormatVersion=@Version
-              AND NOT EXISTS(SELECT 1 FROM dbo.ComplianceConceptMappings override
+              AND NOT EXISTS(SELECT 1 FROM compliance.ComplianceConceptMappings override
                 WHERE override.TenantId=m.TenantId AND override.BusinessId=@BusinessId
                   AND m.BusinessId IS NULL AND override.AuthorityCode=m.AuthorityCode
                   AND override.TaxYear=m.TaxYear AND override.FormatCode=m.FormatCode
@@ -282,7 +282,7 @@ public sealed class SqlComplianceReportingStore(
             FROM dbo.AccountingEntries e
             INNER JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
             INNER JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
-            INNER JOIN dbo.ComplianceConceptMappings m
+            INNER JOIN compliance.ComplianceConceptMappings m
               ON m.TenantId=e.TenantId AND (m.BusinessId=e.BusinessId OR m.BusinessId IS NULL)
              AND m.AuthorityCode=@Authority AND m.TaxYear=@TaxYear AND m.FormatCode=@Format
              AND m.FormatVersion=@Version AND m.AccountId=l.AccountId
@@ -295,7 +295,7 @@ public sealed class SqlComplianceReportingStore(
             LEFT JOIN dbo.Countries co ON co.CountryId=s.CountryId
             WHERE e.TenantId=@TenantId AND e.BusinessId=@BusinessId
               AND e.OccurredAt>=@From AND e.OccurredAt<DATEADD(day,1,@To)
-              AND NOT EXISTS(SELECT 1 FROM dbo.ComplianceConceptMappings override
+              AND NOT EXISTS(SELECT 1 FROM compliance.ComplianceConceptMappings override
                 WHERE override.TenantId=m.TenantId AND override.BusinessId=e.BusinessId
                   AND m.BusinessId IS NULL AND override.AuthorityCode=m.AuthorityCode
                   AND override.TaxYear=m.TaxYear AND override.FormatCode=m.FormatCode
@@ -396,7 +396,7 @@ public sealed class SqlComplianceReportingStore(
         DateTimeOffset now, CancellationToken token)
     {
         await using (var command = new SqlCommand("""
-            INSERT dbo.ComplianceReportRuns(RunId,TenantId,BusinessId,AuthorityCode,TaxYear,
+            INSERT compliance.ComplianceReportRuns(RunId,TenantId,BusinessId,AuthorityCode,TaxYear,
               FormatCode,FormatVersion,PeriodFrom,PeriodTo,Status,ResolutionNumber,SourceUrl,
               SourceSha256,MappingSnapshotJson,[RowCount],ControlTotal,CreatedByUserId,CreatedAt,CompletedAt)
             VALUES(@RunId,@TenantId,@BusinessId,@Authority,@TaxYear,@Format,@Version,@From,@To,
@@ -427,7 +427,7 @@ public sealed class SqlComplianceReportingStore(
         {
             var row = rows[index];
             await using var command = new SqlCommand("""
-                INSERT dbo.ComplianceReportRows(RunId,RowNumber,PartyId,ConceptCode,RowJson,ControlAmount)
+                INSERT compliance.ComplianceReportRows(RunId,RowNumber,PartyId,ConceptCode,RowJson,ControlAmount)
                 VALUES(@RunId,@Number,@PartyId,@Concept,@Json,@Amount);
                 """, connection, transaction);
             command.Parameters.AddWithValue("@RunId", runId);
@@ -442,7 +442,7 @@ public sealed class SqlComplianceReportingStore(
         {
             var validation = validations[index];
             await using var command = new SqlCommand("""
-                INSERT dbo.ComplianceReportValidations(RunId,ValidationNumber,Severity,Code,Message,PartyId,AccountId)
+                INSERT compliance.ComplianceReportValidations(RunId,ValidationNumber,Severity,Code,Message,PartyId,AccountId)
                 VALUES(@RunId,@Number,@Severity,@Code,@Message,@PartyId,@AccountId);
                 """, connection, transaction);
             command.Parameters.AddWithValue("@RunId", runId);
@@ -458,7 +458,7 @@ public sealed class SqlComplianceReportingStore(
         {
             var name = $"{definition.AuthorityCode}-{definition.TaxYear}-{definition.FormatCode}-v{definition.FormatVersion}-{runId:N}.csv";
             await using var command = new SqlCommand("""
-                INSERT dbo.ComplianceReportArtifacts(RunId,FileName,MediaType,Content,ContentSha256,CreatedAt)
+                INSERT compliance.ComplianceReportArtifacts(RunId,FileName,MediaType,Content,ContentSha256,CreatedAt)
                 VALUES(@RunId,@Name,N'text/csv; charset=utf-8',@Content,@Hash,@Now);
                 """, connection, transaction);
             command.Parameters.AddWithValue("@RunId", runId);
@@ -475,7 +475,7 @@ public sealed class SqlComplianceReportingStore(
     {
         await using var command = new SqlCommand("""
             SELECT Severity,Code,Message,PartyId,AccountId
-            FROM dbo.ComplianceReportValidations WHERE RunId=@RunId ORDER BY ValidationNumber;
+            FROM compliance.ComplianceReportValidations WHERE RunId=@RunId ORDER BY ValidationNumber;
             """, connection);
         command.Parameters.AddWithValue("@RunId", runId);
         var result = new List<ComplianceValidationView>();

@@ -1,4 +1,4 @@
-CREATE TABLE [dbo].[ComplianceReportDefinitions]
+CREATE TABLE [compliance].[ComplianceReportDefinitions]
 (
     [AuthorityCode] NVARCHAR(24) NOT NULL,
     [TaxYear] SMALLINT NOT NULL,
@@ -24,7 +24,7 @@ CREATE TABLE [dbo].[ComplianceReportDefinitions]
 );
 GO
 
-CREATE TABLE [dbo].[ComplianceConceptMappings]
+CREATE TABLE [compliance].[ComplianceConceptMappings]
 (
     [MappingId] UNIQUEIDENTIFIER NOT NULL,
     [TenantId] UNIQUEIDENTIFIER NOT NULL,
@@ -43,17 +43,17 @@ CREATE TABLE [dbo].[ComplianceConceptMappings]
     CONSTRAINT [FK_ComplianceConceptMappings_Tenant] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
     CONSTRAINT [FK_ComplianceConceptMappings_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
     CONSTRAINT [FK_ComplianceConceptMappings_Definition] FOREIGN KEY
-      ([AuthorityCode],[TaxYear],[FormatCode],[FormatVersion]) REFERENCES [dbo].[ComplianceReportDefinitions]
+      ([AuthorityCode],[TaxYear],[FormatCode],[FormatVersion]) REFERENCES [compliance].[ComplianceReportDefinitions]
       ([AuthorityCode],[TaxYear],[FormatCode],[FormatVersion]),
     CONSTRAINT [FK_ComplianceConceptMappings_Account] FOREIGN KEY ([TenantId],[AccountId]) REFERENCES [dbo].[AccountingAccounts]([TenantId],[AccountId])
 );
 GO
 CREATE UNIQUE INDEX [UX_ComplianceConceptMappings_Scope]
-    ON [dbo].[ComplianceConceptMappings]
+    ON [compliance].[ComplianceConceptMappings]
       ([TenantId],[BusinessId],[AuthorityCode],[TaxYear],[FormatCode],[FormatVersion],[AccountId],[ConceptCode],[TargetField]);
 GO
 
-CREATE TABLE [dbo].[ComplianceReportRuns]
+CREATE TABLE [compliance].[ComplianceReportRuns]
 (
     [RunId] UNIQUEIDENTIFIER NOT NULL,
     [TenantId] UNIQUEIDENTIFIER NOT NULL,
@@ -80,7 +80,7 @@ CREATE TABLE [dbo].[ComplianceReportRuns]
     CONSTRAINT [FK_ComplianceReportRuns_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
     CONSTRAINT [FK_ComplianceReportRuns_User] FOREIGN KEY ([CreatedByUserId]) REFERENCES [dbo].[AppUsers]([UserId]),
     CONSTRAINT [FK_ComplianceReportRuns_Definition] FOREIGN KEY
-      ([AuthorityCode],[TaxYear],[FormatCode],[FormatVersion]) REFERENCES [dbo].[ComplianceReportDefinitions]
+      ([AuthorityCode],[TaxYear],[FormatCode],[FormatVersion]) REFERENCES [compliance].[ComplianceReportDefinitions]
       ([AuthorityCode],[TaxYear],[FormatCode],[FormatVersion]),
     CONSTRAINT [CK_ComplianceReportRuns_Range] CHECK ([PeriodTo]>=[PeriodFrom]),
     CONSTRAINT [CK_ComplianceReportRuns_Status] CHECK ([Status] IN (N'Blocked',N'Ready')),
@@ -89,10 +89,10 @@ CREATE TABLE [dbo].[ComplianceReportRuns]
 );
 GO
 CREATE INDEX [IX_ComplianceReportRuns_Scope]
-    ON [dbo].[ComplianceReportRuns]([TenantId],[BusinessId],[TaxYear],[FormatCode],[CreatedAt] DESC);
+    ON [compliance].[ComplianceReportRuns]([TenantId],[BusinessId],[TaxYear],[FormatCode],[CreatedAt] DESC);
 GO
 
-CREATE TABLE [dbo].[ComplianceReportRows]
+CREATE TABLE [compliance].[ComplianceReportRows]
 (
     [RunId] UNIQUEIDENTIFIER NOT NULL,
     [RowNumber] INT NOT NULL,
@@ -101,14 +101,14 @@ CREATE TABLE [dbo].[ComplianceReportRows]
     [RowJson] NVARCHAR(MAX) NOT NULL,
     [ControlAmount] DECIMAL(19,4) NOT NULL,
     CONSTRAINT [PK_ComplianceReportRows] PRIMARY KEY ([RunId],[RowNumber]),
-    CONSTRAINT [FK_ComplianceReportRows_Run] FOREIGN KEY ([RunId]) REFERENCES [dbo].[ComplianceReportRuns]([RunId]),
+    CONSTRAINT [FK_ComplianceReportRows_Run] FOREIGN KEY ([RunId]) REFERENCES [compliance].[ComplianceReportRuns]([RunId]),
     CONSTRAINT [FK_ComplianceReportRows_Party] FOREIGN KEY ([PartyId]) REFERENCES [dbo].[Parties]([PartyId]),
     CONSTRAINT [CK_ComplianceReportRows_Number] CHECK ([RowNumber]>0),
     CONSTRAINT [CK_ComplianceReportRows_Json] CHECK (ISJSON([RowJson])=1)
 );
 GO
 
-CREATE TABLE [dbo].[ComplianceReportValidations]
+CREATE TABLE [compliance].[ComplianceReportValidations]
 (
     [RunId] UNIQUEIDENTIFIER NOT NULL,
     [ValidationNumber] INT NOT NULL,
@@ -118,12 +118,12 @@ CREATE TABLE [dbo].[ComplianceReportValidations]
     [PartyId] UNIQUEIDENTIFIER NULL,
     [AccountId] UNIQUEIDENTIFIER NULL,
     CONSTRAINT [PK_ComplianceReportValidations] PRIMARY KEY ([RunId],[ValidationNumber]),
-    CONSTRAINT [FK_ComplianceReportValidations_Run] FOREIGN KEY ([RunId]) REFERENCES [dbo].[ComplianceReportRuns]([RunId]),
+    CONSTRAINT [FK_ComplianceReportValidations_Run] FOREIGN KEY ([RunId]) REFERENCES [compliance].[ComplianceReportRuns]([RunId]),
     CONSTRAINT [CK_ComplianceReportValidations_Severity] CHECK ([Severity] IN (N'Error',N'Warning'))
 );
 GO
 
-CREATE TABLE [dbo].[ComplianceReportArtifacts]
+CREATE TABLE [compliance].[ComplianceReportArtifacts]
 (
     [RunId] UNIQUEIDENTIFIER NOT NULL,
     [FileName] NVARCHAR(200) NOT NULL,
@@ -132,6 +132,6 @@ CREATE TABLE [dbo].[ComplianceReportArtifacts]
     [ContentSha256] BINARY(32) NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     CONSTRAINT [PK_ComplianceReportArtifacts] PRIMARY KEY ([RunId]),
-    CONSTRAINT [FK_ComplianceReportArtifacts_Run] FOREIGN KEY ([RunId]) REFERENCES [dbo].[ComplianceReportRuns]([RunId])
+    CONSTRAINT [FK_ComplianceReportArtifacts_Run] FOREIGN KEY ([RunId]) REFERENCES [compliance].[ComplianceReportRuns]([RunId])
 );
 GO
