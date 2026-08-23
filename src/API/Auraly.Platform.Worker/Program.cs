@@ -100,13 +100,17 @@ var host = new HostBuilder()
 
         // Database
 
+        var databaseConnection = configuration.GetConnectionString("DefaultConnection")
+            ?? throw new InvalidOperationException(
+                "ConnectionStrings:DefaultConnection is required.");
         services.AddDbContext<ApplicationDbContext>(options =>
 
-            options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
+            options.UseSqlServer(databaseConnection));
 
         services.AddMemoryCache();
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
+        services.AddSingleton(new SqlServerConnectionFactory(databaseConnection));
 
         // Repositories
 
