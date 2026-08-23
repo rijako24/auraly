@@ -1333,11 +1333,12 @@
           "Auraly.Domain.Returns": "[1.0.0, )",
           "Auraly.Domain.WorkSessions": "[1.0.0, )",
           "Auraly.Fiscal.Core": "[1.0.0, )",
+          "Auraly.Platform.Application": "[1.0.0, )",
           "Azure.Storage.Blobs": "[12.19.1, )",
           "BCrypt.Net-Next": "[4.0.3, )",
           "Microsoft.Data.SqlClient": "[5.2.2, )",
           "Microsoft.Extensions.Configuration.Abstractions": "[8.0.0, )",
-          "Microsoft.Extensions.Logging.Abstractions": "[8.0.2, )",
+          "Microsoft.Extensions.Logging.Abstractions": "[8.0.3, )",
           "Microsoft.Extensions.Options": "[8.0.2, )",
           "System.IdentityModel.Tokens.Jwt": "[8.2.1, )"
         }
