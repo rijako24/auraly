@@ -1,0 +1,248 @@
+name: Deploy Auraly release
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Ambiente de destino
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - prod
+      version:
+        description: Version SemVer inmutable (ej. 0.1.0-rc7)
+        required: true
+        type: string
+      ref:
+        description: Commit o rama para construir DEV; PROD ignora este valor y usa el release aprobado
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: auraly-release-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Resolve immutable release
+    runs-on: windows-latest
+    environment: ${{ inputs.environment }}
+    outputs:
+      commit: ${{ steps.metadata.outputs.commit }}
+      artifact_name: ${{ steps.metadata.outputs.artifact_name }}
+    steps:
+      - name: Checkout source for DEV
+        if: inputs.environment == 'dev'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Checkout release tag for PROD
+        if: inputs.environment == 'prod'
+        uses: actions/checkout@v4
+        with:
+          ref: auraly-v${{ inputs.version }}
+          fetch-depth: 0
+
+      - name: Setup .NET
+        if: inputs.environment == 'dev'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Setup Node
+        if: inputs.environment == 'dev'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.0
+          cache: npm
+          cache-dependency-path: admin/package-lock.json
+
+      - name: Build and test release once in DEV
+        if: inputs.environment == 'dev'
+        shell: pwsh
+        run: ./infrastructure/azure/New-AuralyRelease.ps1 -Version '${{ inputs.version }}' -SkipAdmin
+
+      - name: Login to Azure release archive with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Archive immutable private release from DEV
+        if: inputs.environment == 'dev'
+        shell: pwsh
+        run: |
+          $tag = 'auraly-v${{ inputs.version }}'
+          git ls-remote --exit-code --tags origin "refs/tags/$tag" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            throw "El tag $tag ya existe y el release no se puede reemplazar."
+          }
+          $storage = 'stauralydevw5usmo6w'
+          $container = 'auraly-releases'
+          az storage container create --account-name $storage --name $container --auth-mode login --output none
+          if ($LASTEXITCODE -ne 0) { throw 'No se pudo preparar el archivo privado de releases.' }
+          # Sin tag no existe un release aprobado: retire solo residuos parciales de esta version.
+          az storage blob delete-batch --account-name $storage --source $container --pattern '${{ inputs.version }}/*' --auth-mode login --output none
+          if ($LASTEXITCODE -ne 0) { throw 'No se pudieron retirar residuos parciales de la version.' }
+          $manifest = Get-Content './artifacts/releases/${{ inputs.version }}/manifest.json' -Raw | ConvertFrom-Json
+          $assets = @(Get-ChildItem './artifacts/releases/${{ inputs.version }}' -File | ForEach-Object FullName)
+          foreach ($asset in $assets) {
+            $blob = '${{ inputs.version }}/' + (Split-Path $asset -Leaf)
+            $exists = az storage blob exists --account-name $storage --container-name $container --name $blob --auth-mode login --query exists --output tsv
+            if ($LASTEXITCODE -ne 0 -or $exists -eq 'true') { throw "El artefacto inmutable $blob ya existe o no se pudo validar." }
+            az storage blob upload --account-name $storage --container-name $container --name $blob --file $asset --auth-mode login --overwrite false --output none
+            if ($LASTEXITCODE -ne 0) { throw "No se pudo archivar $blob." }
+          }
+          git tag $tag $manifest.commit
+          git push origin $tag
+          if ($LASTEXITCODE -ne 0) { throw 'No se pudo publicar el tag del release.' }
+
+      - name: Download approved release for PROD
+        if: inputs.environment == 'prod'
+        shell: pwsh
+        run: |
+          $target = './artifacts/releases/${{ inputs.version }}'
+          New-Item -ItemType Directory -Path $target -Force | Out-Null
+          $storage = 'stauralydevw5usmo6w'
+          $container = 'auraly-releases'
+          $prefix = '${{ inputs.version }}/'
+          $names = @(az storage blob list --account-name $storage --container-name $container --prefix $prefix --auth-mode login --query '[].name' --output tsv)
+          if ($LASTEXITCODE -ne 0 -or $names.Count -eq 0) { throw 'No existe el release privado aprobado solicitado.' }
+          foreach ($name in $names) {
+            $destination = Join-Path $target (Split-Path $name -Leaf)
+            az storage blob download --account-name $storage --container-name $container --name $name --file $destination --auth-mode login --output none
+            if ($LASTEXITCODE -ne 0) { throw "No se pudo descargar $name." }
+          }
+
+      - name: Validate metadata
+        id: metadata
+        shell: pwsh
+        run: |
+          $manifest = Get-Content './artifacts/releases/${{ inputs.version }}/manifest.json' -Raw | ConvertFrom-Json
+          $head = (git rev-parse HEAD).Trim()
+          if ($manifest.commit -ne $head -or $manifest.dirty -or $manifest.version -ne '${{ inputs.version }}') {
+            throw 'El manifiesto no corresponde al commit/tag seleccionado.'
+          }
+          "commit=$($manifest.commit)" >> $env:GITHUB_OUTPUT
+          "artifact_name=auraly-release-${{ inputs.version }}" >> $env:GITHUB_OUTPUT
+
+      - name: Upload release between jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: auraly-release-${{ inputs.version }}
+          path: artifacts/releases/${{ inputs.version }}
+          if-no-files-found: error
+          retention-days: 7
+
+  cloud:
+    name: Deploy DB, Function and API
+    needs: release
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.release.outputs.artifact_name }}
+          path: artifacts/releases/${{ inputs.version }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install SQLPackage 170
+        shell: pwsh
+        run: |
+          dotnet tool install --global Microsoft.SqlPackage --version 170.4.83
+          "SQLPACKAGE_PATH=$HOME/.dotnet/tools/sqlpackage" >> $env:GITHUB_ENV
+
+      - name: Login to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Publish cloud release
+        shell: pwsh
+        run: >-
+          ./infrastructure/azure/Publish-AuralyReleasePipeline.ps1
+          -Environment '${{ inputs.environment }}'
+          -ReleaseVersion '${{ inputs.version }}'
+          -SqlPackagePath $env:SQLPACKAGE_PATH
+
+  admin:
+    name: Deploy Admin
+    needs:
+      - release
+      - cloud
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.commit }}
+
+      - name: Deploy Admin DEV
+        if: inputs.environment == 'dev'
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_AURALY_DEV }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: upload
+          app_location: ./admin
+          api_location: ''
+          output_location: ''
+
+      - name: Deploy Admin PROD
+        if: inputs.environment == 'prod'
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_AURALY_PROD }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: upload
+          app_location: ./admin
+          api_location: ''
+          output_location: ''
+
+  verify:
+    name: Verify environment
+    needs:
+      - release
+      - admin
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Resolve hosts and validate health
+        shell: pwsh
+        run: |
+          if ('${{ inputs.environment }}' -eq 'dev') {
+            $suffix = 'dev-w5usmo6w'
+            $admin = 'proud-moss-0d9cf540f.7.azurestaticapps.net'
+          } else {
+            $suffix = 'prod-7sov4nxc'
+            $admin = '${{ vars.AURALY_ADMIN_HOST }}'
+          }
+          $uris = @(
+            "https://api-auraly-$suffix.azurewebsites.net/health",
+            "https://func-auraly-$suffix.azurewebsites.net/api/health",
+            "https://$admin")
+          foreach ($uri in $uris) {
+            $response = Invoke-WebRequest -Uri $uri -TimeoutSec 60
+            if ($response.StatusCode -ne 200) { throw "$uri devolvio $($response.StatusCode)." }
+          }
+          "## Verificacion final" >> $env:GITHUB_STEP_SUMMARY
+          "Release ``${{ inputs.version }}`` saludable en ``${{ inputs.environment }}``." >> $env:GITHUB_STEP_SUMMARY

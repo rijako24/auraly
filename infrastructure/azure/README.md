@@ -37,7 +37,32 @@ Azure AI Foundry existe una sola vez en `RG-AURALY-SHARED`. DEV y PROD consumen 
 
 ### Línea base desplegada
 
-La línea base registrada es `0.1.0-rc5`, generada desde el commit `3777f861fd8bab8076836d7b39fc0824dca5cb01` con árbol limpio. El manifiesto local está en `artifacts/releases/0.1.0-rc5/manifest.json`. Se publicaron las Functions de DEV y PROD, la Web API de PROD, los Admin de ambos ambientes y el esquema de ambas bases. La Web API DEV usa F1 y debe comprobarse antes de asumir que está activa, porque el plan puede suspenderse por cuota diaria.
+La línea base DEV registrada es `0.1.0-rc6`, generada desde el commit `68a5a0757b82edc85de1db3fe8adfbb037452d4c` con árbol limpio. Se publicaron base de datos, Function, Web API y Admin en DEV. La Web API DEV usa F1 y debe comprobarse antes de asumir que está activa, porque el plan puede suspenderse por cuota diaria.
+
+## Ruta canónica: pipeline de release
+
+Los despliegues ordinarios ya no se ejecutan desde el equipo del operador. Se usa el workflow manual `.github/workflows/deploy-auraly-release.yml`:
+
+1. En GitHub Actions, abrir **Deploy Auraly release** y seleccionar **Run workflow**.
+2. Para DEV, indicar una versión nueva y `ref=main`. El pipeline ejecuta pruebas, crea una sola vez los artefactos, los archiva bajo la versión en el contenedor privado `auraly-releases`, crea el tag Git y despliega DB, Function, API y Admin.
+3. Para PROD, elegir la misma versión ya validada en DEV. El pipeline descarga los mismos bytes del archivo privado; no recompila ni reemplaza artefactos.
+4. Revisar el resumen final y los health checks. Un job fallido no se corrige con comandos aislados: se reejecuta el job idempotente después de corregir la causa.
+
+Cada environment de GitHub (`dev` y `prod`) debe definir las variables `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` y `AZURE_SUBSCRIPTION_ID`. La identidad usa federación OIDC y no guarda secretos de Azure. Además necesita `Contributor` en su resource group, `Storage Blob Data Contributor` en el storage del ambiente y un usuario contenido con permisos de despliegue en Azure SQL. La identidad PROD solo recibe `Storage Blob Data Reader` sobre el archivo privado de DEV para promover exactamente el release aprobado. `prod` debe tener aprobación obligatoria en GitHub Environments. Los tokens existentes `AZURE_STATIC_WEB_APPS_API_TOKEN_AURALY_DEV` y `AZURE_STATIC_WEB_APPS_API_TOKEN_AURALY_PROD` publican el Admin. Los binarios y el DACPAC no se publican como GitHub Release porque este repositorio es público.
+
+El bootstrap se ejecuta una sola vez por ambiente desde una sesión administradora de Azure y GitHub. Requiere el módulo PowerShell `SqlServer` para crear el usuario contenido sin contraseña:
+
+```powershell
+Install-Module SqlServer -Scope CurrentUser
+./infrastructure/azure/Initialize-AuralyGitHubOidc.ps1 -Environment dev
+./infrastructure/azure/Initialize-AuralyGitHubOidc.ps1 -Environment prod
+```
+
+Después del bootstrap, configurar en GitHub la aprobación obligatoria del environment `prod`. El runtime de API/Function conserva su propia Managed Identity; la identidad `id-auraly-github-<ambiente>` solo puede autenticarse desde el environment correspondiente del repositorio y se usa exclusivamente para desplegar.
+
+El pipeline usa `SqlPackage 170.4.83`, genera primero un DeployReport, rechaza eliminaciones de tablas/columnas, publica con `BlockOnPossibleDataLoss=True` y `DropObjectsNotInSource=False`, y siempre retira la regla de firewall y el blob de OneDeploy. Un timeout de seguimiento de App Service se contrasta con el log de Kudu antes de decidir si falló.
+
+Los apartados manuales siguientes son procedimiento de contingencia y bootstrap, no la ruta ordinaria.
 
 ## Ambiente legado: no borrar
 
@@ -345,6 +370,8 @@ Además:
 - `shared-ai.bicep`: Azure AI Foundry compartido.
 - `New-AuralyRelease.ps1`: release reproducible y manifiesto.
 - `Publish-AuralyDatabase.ps1`: DACPAC, permisos de identidad y firewall temporal.
+- `Publish-AuralyReleasePipeline.ps1`: publicación idempotente de DB, Function, API e instalador opcional desde GitHub Actions.
+- `Initialize-AuralyGitHubOidc.ps1`: bootstrap único de identidad federada, RBAC, SQL y variables de GitHub.
 - `function-onedeploy-v2.bicep`: publicación de Function Flex mediante OneDeploy.
 - `Sync-AuralySqlFirewall.ps1`: sincroniza IP salientes estables de API/Function cuando aplique.
 
