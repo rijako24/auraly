@@ -37,7 +37,7 @@ Azure AI Foundry existe una sola vez en `RG-AURALY-SHARED`. DEV y PROD consumen 
 
 ### Línea base desplegada
 
-La línea base DEV registrada es `0.1.0-rc6`, generada desde el commit `68a5a0757b82edc85de1db3fe8adfbb037452d4c` con árbol limpio. Se publicaron base de datos, Function, Web API y Admin en DEV. La Web API DEV usa F1 y debe comprobarse antes de asumir que está activa, porque el plan puede suspenderse por cuota diaria.
+La línea base DEV registrada es `0.1.0-rc7`, generada y desplegada por el pipeline desde el commit `4eaa18635f1096b4676387add233382276cf86c1` con árbol limpio. El workflow publicó base de datos, Function, Web API y Admin, validó sus health checks y archivó los artefactos bajo el tag `auraly-v0.1.0-rc7` en el contenedor privado. La Web API DEV usa F1 y debe comprobarse antes de asumir que está activa, porque el plan puede suspenderse por cuota diaria.
 
 ## Ruta canónica: pipeline de release
 
