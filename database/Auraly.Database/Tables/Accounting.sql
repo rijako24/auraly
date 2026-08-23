@@ -255,7 +255,6 @@ CREATE TABLE [dbo].[AccountingPostingJobs]
     CONSTRAINT [UQ_AccountingPostingJobs_Source] UNIQUE ([SourceDocumentId],[SourceDocumentType]),
     CONSTRAINT [FK_AccountingPostingJobs_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
     CONSTRAINT [FK_AccountingPostingJobs_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
-    CONSTRAINT [FK_AccountingPostingJobs_Source] FOREIGN KEY ([SourceDocumentId],[SourceDocumentType]) REFERENCES [dbo].[DocumentProcessingJobs]([DocumentId],[DocumentType]),
     CONSTRAINT [CK_AccountingPostingJobs_Status] CHECK ([Status] IN (N'Pending',N'AccountingPendingConfiguration',N'Posted')),
     CONSTRAINT [CK_AccountingPostingJobs_Attempts] CHECK ([AttemptCount]>=0)
 );

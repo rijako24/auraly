@@ -63,6 +63,8 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         await SqlAccountingPostingJobWriter.InsertAsync(
             session, document, request.CommercialSnapshot.IssuedAt,
             _idGenerator, _timeProvider, cancellationToken);
+        await SqlSalesReportingJobWriter.InsertAsync(
+            session, document, _idGenerator, _timeProvider, cancellationToken);
         await InsertOutboxAsync(session, request, document.Payload, cancellationToken);
         await MarkDocumentProcessedAsync(session, request, cancellationToken);
     }

@@ -4,6 +4,7 @@ using Microsoft.Data.SqlClient;
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
+[Trait("EngineCertification", "EndToEnd")]
 public sealed class DocumentProcessingOrderingTests(ServerSliceFixture fixture)
 {
     [Fact]

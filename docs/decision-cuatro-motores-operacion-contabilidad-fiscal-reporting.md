@@ -23,7 +23,7 @@ cuatro propietarios de ejecución:
 
 | Cola | Motor | Única responsabilidad |
 | --- | --- | --- |
-| `auraly-document-processing` | Operación | validar y cerrar el documento comercial, aplicar inventario/costo físico cuando corresponda y publicar señales derivadas |
+| `auraly-document-processing` | Operación | aplicar exclusivamente inventario, kardex y costo físico de los documentos que tengan ese efecto, y guardar sus señales derivadas en outbox |
 | `auraly-accounting-processing` | Contabilidad | todos los submayores financieros y el libro mayor |
 | `auraly-fiscal-processing` | Fiscal | generar el artefacto fiscal y transmitirlo a DIAN mediante las etapas `Generation` y `Submission` |
 | `auraly-sales-reporting` | Reporting | construir y reconstruir hechos y consolidados de ventas |
@@ -41,6 +41,13 @@ bot resuelve la identidad desde las tablas canónicas `Customers`, `Parties` y
 La infraestructura de campañas pertenece a otro contexto delimitado y no puede
 asumir inventario, cartera, contabilidad, fiscal ni reporting.
 
+Un documento exclusivamente financiero no se publica en la cola operacional.
+Notas débito/crédito de CxC o CxP, pagos sin efecto físico, comprobantes
+manuales, saldos iniciales y reclasificaciones van directamente a la cola
+contable después de que la API guarda atómicamente su fuente y su único job
+contable. No crean `DocumentProcessingJobs`, no avanzan
+`BusinessProcessingCursors` y no usan payloads propietarios de inventario.
+
 Las cuatro colas se particionan y ordenan por negocio. En Azure Service Bus es
 obligatorio `SessionId = BusinessId`, con una ejecución secuencial dentro de la
 sesión y sesiones de negocios distintos en paralelo. Esa es la implementación
@@ -54,11 +61,11 @@ memoria no sustituye esa regla.
 
 ## 3. Frontera operacional
 
-El motor operacional puede escribir:
+El motor operacional recibe solamente documentos con efecto físico y puede
+escribir:
 
-- encabezado, líneas, impuestos declarados y pagos declarados como snapshot
-  inmutable del documento;
-- estado operacional del documento y vínculos comerciales;
+- el sobre fuente inmutable mínimo necesario para reproducir el efecto físico;
+- estado operacional del efecto de inventario y vínculos con su documento;
 - kardex, saldo y valoración de inventario mediante el writer canónico;
 - outbox/señales hacia contabilidad, fiscal y reporting.
 
@@ -97,7 +104,7 @@ inconsistencia sobrevenida de período o mapeo deja el único trabajo ya creado
 en estado pendiente de configuración; no crea un trabajo lateral ni revierte
 inventario ya confirmado.
 
-Los documentos manuales usan el mismo carril:
+Los documentos manuales usan el mismo carril contable y nunca el operacional:
 
 - ajuste de cuenta: `Receivable/Payable × Increase/Decrease`;
 - nota débito o crédito derivada de ese ajuste;
@@ -105,7 +112,9 @@ Los documentos manuales usan el mismo carril:
 - comprobante manual, reversión o reclasificación.
 
 Un comprobante manual puro no altera submayores salvo que su contrato sea un
-ajuste de cuenta explícito. Todo asiento contabilizado es inmutable.
+ajuste de cuenta explícito. Todo asiento contabilizado es inmutable. El job
+contable es autosuficiente: no tiene FK hacia `DocumentProcessingJobs` y su
+orden no se obtiene alterando el cursor de inventario.
 
 El alcance mínimo completo —plan, períodos, categorías, centros de costo,
 terceros, impuestos, retenciones, libros, estados básicos, base fiscal y
@@ -168,8 +177,12 @@ dataset dorado de venta, devolución total/parcial, múltiples tarifas y múltip
 dimensiones son parte de la puerta de liberación.
 
 La transacción de proyección es idempotente por documento y línea fuente. El
-broker conserva entrega/retry/dead-letter; la proyección y sus claves únicas son
-el inbox idempotente. No se crea una tabla de job por cada reporte.
+motor tiene exactamente una tabla durable de procesamiento,
+`reporting.SalesReportingJobs`, con identidad de mensaje/documento, hash,
+estado, intentos, lease, error y tiempos. Esa tabla es el inbox del motor y se
+actualiza en la misma transacción que hechos, consolidados y checkpoint. Las
+claves únicas de proyección son una defensa adicional; no sustituyen el job. No
+se crea una tabla por reporte ni por dimensión.
 
 Debe existir una operación explícita de rebuild que borre y regenere solo la
 proyección seleccionada para un negocio y versión, tomando los payloads
@@ -209,8 +222,14 @@ Toda proyección futura debe documentar:
 El consumidor operacional confirma su mensaje únicamente después de:
 
 1. completar la transacción operacional;
-2. publicar exitosamente las señales aplicables a fiscal, contabilidad y
-   reporting.
+2. guardar, dentro de esa misma transacción, una sola fila outbox por cada señal
+   aplicable a fiscal, contabilidad y reporting.
+
+Un despachador de infraestructura publica cada fila outbox con `MessageId`
+estable y la marca enviada de forma idempotente. No se intenta una transacción
+distribuida SQL + broker. Una caída después del commit y antes de publicar deja
+la outbox pendiente; una caída después de publicar y antes de marcarla causa una
+entrega duplicada segura en el motor destino.
 
 Los consumidores toleran entrega al menos una vez. Cada motor es independiente:
 un atraso de reporting no bloquea una venta; un atraso DIAN no repite inventario;
@@ -229,8 +248,11 @@ por aplicado un efecto mientras siga pendiente.
 - venta de crédito, pago parcial, devolución y aplicación;
 - recepción a crédito, pago parcial y devolución al proveedor;
 - nota débito/crédito y comprobante manual por el mismo carril contable;
+- documento financiero puro sin job, payload ni cursor operacional;
 - fiscal `Generation` antes de `Submission`;
 - reporting atrasado sin bloquear operación;
+- un único `SalesReportingJobs` por mensaje y replay sin un segundo job;
+- caída entre commit y publicación recuperada desde outbox sin doble efecto;
 - rebuild igual a procesamiento incremental;
 - conciliación venta neta, impuestos, costo y utilidad;
 - aislamiento por tenant y negocio;

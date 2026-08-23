@@ -6,7 +6,7 @@ Este documento responde qué componente es dueño de cada efecto y dónde se agr
 
 | Necesidad | Extender | No crear ni escribir directamente |
 | --- | --- | --- |
-| Nuevo documento definitivo | contrato documental, `IConfirmedDocumentHandler` y registro DI del motor documental | otro engine, poller, job table o escritura desde endpoint |
+| Nuevo documento definitivo con inventario | contrato documental, `IConfirmedDocumentHandler` y registro DI del motor documental | otro engine, poller, job table o escritura desde endpoint |
 | Efecto de inventario | handler documental → `SqlInventoryLedgerWriter`; operaciones dedicadas además usan `SqlInventoryOperationProcessor` | SQL a `InventoryBalances`/`InventoryMovements`, segundo kardex o motor |
 | Nuevo documento fiscal DIAN | snapshot/regla del `FiscalProcessingCoordinator` y workers fiscales existentes | worker DIAN por módulo, tenant o tipo |
 | Nuevo asiento automático | política/regla del `AccountingProcessingCoordinator` y `SqlAccountingPostingProcessor` | asiento desde API o segundo posting service |
@@ -19,7 +19,7 @@ Este documento responde qué componente es dueño de cada efecto y dónde se agr
 
 ## Documento e inventario
 
-`API/POS/importador` → confirma documento y trabajo durable → `DocumentProcessingWorker` → `DocumentProcessingEngine` → `IConfirmedDocumentHandler` → documento e inventario → marca job procesado → publica señales contable, fiscal y reporting aplicables.
+`API/POS/importador` → confirma documento y trabajo durable → `DocumentProcessingWorker` → `DocumentProcessingEngine` → `IConfirmedDocumentHandler` → documento e inventario → marca job procesado y outbox → publica señales contable, fiscal y reporting aplicables.
 
 - SQL es la fuente de orden, lease, estado e idempotencia; la cola solo despierta consumidores.
 - Cada tipo documental tiene un handler. El handler no es un motor nuevo.
@@ -46,6 +46,7 @@ Documento contabilizable → trabajo durable único → `AccountingProcessingCoo
 - La unicidad por documento fuente evita doble asiento.
 - Agregar un documento significa extender la política y el posting existente, con prueba; no copiar la lista ni insertar asientos desde el módulo origen.
 - El motor documental no escribe saldos financieros ni aplicaciones. No existe un worker financiero distinto del motor contable.
+- Un documento financiero puro guarda `AccountingSourceDocuments` y `AccountingPostingJobs` en su transacción de aceptación; no crea job, payload ni secuencia operacional.
 
 ## Reporting
 
@@ -53,6 +54,7 @@ Documento comercial completado → `SalesReportingProcessingCoordinator` → col
 `auraly-sales-reporting` → proyección idempotente → hechos y consolidados.
 
 - Reporting no bloquea ni decide operación, fiscal o contabilidad.
+- `reporting.SalesReportingJobs` es su única tabla durable de procesamiento por documento; checkpoints, hechos y consolidados no son colas de trabajo.
 - Ventas usa proyección física por su volumen, costo y agregaciones.
 - Reportes pequeños consultan tablas propietarias indexadas.
 - Una nueva proyección exige métrica versionada, benchmark, idempotencia,

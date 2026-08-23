@@ -6,6 +6,7 @@ using Microsoft.Extensions.Configuration;
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
+[Trait("EngineCertification", "Fiscal")]
 public sealed class FiscalCredentialVaultSqlTests(ServerSliceFixture fixture)
 {
     [Fact]

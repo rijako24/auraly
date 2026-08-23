@@ -156,20 +156,17 @@ public sealed partial class SqlAccountingPostingProcessor(
     {
         const string sql = """
             SELECT a.TenantId,a.BusinessId,a.SourceDocumentId,
-                   a.SourceDocumentType,a.SourcePayloadHash,a.OccurredAt,p.PayloadJson
+                   a.SourceDocumentType,a.SourcePayloadHash,a.OccurredAt,s.PayloadJson
             FROM dbo.AccountingPostingJobs a WITH (UPDLOCK,HOLDLOCK)
-            INNER JOIN dbo.DocumentProcessingPayloads p
-              ON p.DocumentId=a.SourceDocumentId
-             AND p.DocumentType=a.SourceDocumentType
-             AND p.BusinessId=a.BusinessId
-             AND p.PayloadHash=a.SourcePayloadHash
-            INNER JOIN dbo.DocumentProcessingJobs j
-              ON j.DocumentId=a.SourceDocumentId
-             AND j.DocumentType=a.SourceDocumentType
-             AND j.BusinessId=a.BusinessId
+            INNER JOIN dbo.AccountingSourceDocuments s
+              ON s.SourceDocumentId=a.SourceDocumentId
+             AND s.SourceDocumentType=a.SourceDocumentType
+             AND s.BusinessId=a.BusinessId
+             AND s.TenantId=a.TenantId
+             AND s.PayloadHash=a.SourcePayloadHash
             WHERE a.SourceDocumentId=@DocumentId
               AND a.SourceDocumentType=@DocumentType
-              AND a.BusinessId=@BusinessId AND j.Status=N'Completed';
+              AND a.BusinessId=@BusinessId;
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@DocumentId", documentId);

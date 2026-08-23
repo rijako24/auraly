@@ -7,6 +7,7 @@ using Microsoft.Data.SqlClient;
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
+[Trait("EngineCertification", "Operational")]
 public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
 {
     [Fact]

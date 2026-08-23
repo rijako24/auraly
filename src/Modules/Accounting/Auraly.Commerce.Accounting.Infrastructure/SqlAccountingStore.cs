@@ -94,13 +94,15 @@ public sealed class SqlAccountingStore(
         try
         {
             await using (var replay = new SqlCommand("""
-                SELECT p.PayloadHash,a.Status
-                FROM dbo.DocumentProcessingPayloads p WITH(UPDLOCK,HOLDLOCK)
+                SELECT s.PayloadHash,a.Status
+                FROM dbo.AccountingSourceDocuments s WITH(UPDLOCK,HOLDLOCK)
                 INNER JOIN dbo.AccountingPostingJobs a
-                  ON a.SourceDocumentId=p.DocumentId AND a.SourceDocumentType=p.DocumentType
-                 AND a.BusinessId=p.BusinessId
-                WHERE p.DocumentId=@DocumentId AND p.DocumentType=@DocumentType
-                  AND p.BusinessId=@BusinessId;
+                  ON a.SourceDocumentId=s.SourceDocumentId
+                 AND a.SourceDocumentType=s.SourceDocumentType
+                 AND a.BusinessId=s.BusinessId
+                WHERE s.SourceDocumentId=@DocumentId
+                  AND s.SourceDocumentType=@DocumentType
+                  AND s.BusinessId=@BusinessId;
                 """, connection, transaction))
             {
                 replay.Parameters.AddWithValue("@DocumentId", documentId);
@@ -134,35 +136,28 @@ public sealed class SqlAccountingStore(
             }
 
             await validate(connection, transaction, cancellationToken);
-            var sequence = await AllocateCompletedProcessingSequenceAsync(
-                connection, transaction, user.BusinessId, now, cancellationToken);
             await using var insert = new SqlCommand("""
-                INSERT dbo.DocumentProcessingJobs
-                  (JobId,BusinessId,ProcessingSequence,DocumentId,DocumentType,Status,
-                   AvailableAt,CreatedAt,StartedAt,CompletedAt)
-                VALUES(@SourceJobId,@BusinessId,@Sequence,@DocumentId,@DocumentType,N'Completed',
-                   @Now,@Now,@Now,@Now);
-                INSERT dbo.DocumentProcessingPayloads
-                  (DocumentId,DocumentType,BusinessId,ContractVersion,PayloadJson,PayloadHash,AcceptedAt)
-                VALUES(@DocumentId,@DocumentType,@BusinessId,1,@Payload,@Hash,@Now);
+                INSERT dbo.AccountingSourceDocuments
+                  (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,
+                   PayloadJson,PayloadHash,OccurredAt,AcceptedAt)
+                VALUES(@DocumentId,@DocumentType,@TenantId,@BusinessId,
+                   @Payload,@Hash,@OccurredAt,@Now);
                 INSERT dbo.AccountingPostingJobs
                   (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,
                    SourceDocumentType,SourcePayloadHash,OccurredAt,Status,AttemptCount,CreatedAt)
                 VALUES(@AccountingJobId,@TenantId,@BusinessId,@DocumentId,
                    @DocumentType,@Hash,@OccurredAt,N'Pending',0,@Now);
                 """, connection, transaction);
-            insert.Parameters.AddWithValue("@SourceJobId", ids.NewId());
             insert.Parameters.AddWithValue("@AccountingJobId", ids.NewId());
             insert.Parameters.AddWithValue("@TenantId", user.TenantId);
             insert.Parameters.AddWithValue("@BusinessId", user.BusinessId);
-            insert.Parameters.AddWithValue("@Sequence", sequence);
             insert.Parameters.AddWithValue("@DocumentId", documentId);
             insert.Parameters.AddWithValue("@DocumentType", documentType);
             insert.Parameters.AddWithValue("@Payload", json);
             insert.Parameters.Add("@Hash", SqlDbType.Binary, 32).Value = hash;
             insert.Parameters.AddWithValue("@OccurredAt", occurredAt);
             insert.Parameters.AddWithValue("@Now", now);
-            if (await insert.ExecuteNonQueryAsync(cancellationToken) != 3)
+            if (await insert.ExecuteNonQueryAsync(cancellationToken) != 2)
                 throw new DBConcurrencyException(
                     "The manual accounting document was not accepted atomically.");
             await transaction.CommitAsync(cancellationToken);
@@ -209,30 +204,6 @@ public sealed class SqlAccountingStore(
                 "A manual document references an invalid cost center.");
     }
 
-    private static async Task<long> AllocateCompletedProcessingSequenceAsync(
-        SqlConnection connection, SqlTransaction transaction, Guid businessId,
-        DateTimeOffset now, CancellationToken token)
-    {
-        await using var command = new SqlCommand("""
-            IF NOT EXISTS(SELECT 1 FROM dbo.BusinessProcessingCursors WITH(UPDLOCK,HOLDLOCK)
-                          WHERE BusinessId=@BusinessId)
-              INSERT dbo.BusinessProcessingCursors
-                (BusinessId,LastAssignedSequence,LastCompletedSequence,UpdatedAt)
-              VALUES(@BusinessId,0,0,@Now);
-            UPDATE dbo.BusinessProcessingCursors WITH(UPDLOCK,HOLDLOCK)
-            SET LastAssignedSequence=LastAssignedSequence+1,
-                LastCompletedSequence=LastCompletedSequence+1,UpdatedAt=@Now
-            OUTPUT inserted.LastAssignedSequence WHERE BusinessId=@BusinessId
-              AND LastAssignedSequence=LastCompletedSequence;
-            """, connection, transaction);
-        command.Parameters.AddWithValue("@BusinessId", businessId);
-        command.Parameters.AddWithValue("@Now", now);
-        var value = await command.ExecuteScalarAsync(token);
-        return value is null
-            ? throw new AccountingConflictException(
-                "Operational documents are still pending; retry the manual document shortly.")
-            : Convert.ToInt64(value);
-    }
     public async Task<IReadOnlyList<AccountingAccountView>> ListAccountsAsync(
         AccountingUserIdentity user, CancellationToken cancellationToken)
     {

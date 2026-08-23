@@ -9,6 +9,7 @@ using Microsoft.Data.SqlClient;
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
+[Trait("EngineCertification", "Accounting")]
 public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]

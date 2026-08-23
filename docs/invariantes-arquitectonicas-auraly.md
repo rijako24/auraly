@@ -21,10 +21,11 @@ Antes de crear un processor, engine, worker, job table, queue o background servi
 
 | Capacidad | Motor y puntos de extension canonicos | Estado durable principal | Diseno vigente |
 | --- | --- | --- | --- |
-| Documentos operativos y efectos intrinsecos | `DocumentProcessingEngine` + `DocumentProcessingWorker`; nuevos tipos implementan `IConfirmedDocumentHandler` | `DocumentProcessingJobs`, movimiento confirmado y cursor de procesamiento | `decision-motor-documental-ordenado-y-efectos-intrinsecos.md` y `decision-motor-documentos-orden-inventario-contabilidad.md` |
+| Documentos operativos con efecto fisico y efectos intrinsecos | `DocumentProcessingEngine` + `DocumentProcessingWorker`; nuevos tipos implementan `IConfirmedDocumentHandler` | `DocumentProcessingJobs`, movimiento confirmado y cursor de procesamiento | `decision-cuatro-motores-operacion-contabilidad-fiscal-reporting.md` |
 | Inventario | Se ejecuta dentro del motor documental. Las operaciones dedicadas convergen en `SqlInventoryOperationProcessor`; ventas, entradas y devoluciones aplican sus efectos desde su `IConfirmedDocumentHandler` canonico | `InventoryBalances`, `InventoryMovements`, `InventoryOperations` y sus lineas | `implementation/inventory-operations-engine-design.md` |
 | Fiscal/DIAN | `FiscalProcessingCoordinator` + `FiscalGenerationWorker` + `FiscalSubmissionWorker` | `FiscalDocuments`, `FiscalDocumentProcesses`, snapshots, artefactos e intentos | `implementation/dian-fiscal-engine-design.md` |
-| Contabilidad | `AccountingProcessingCoordinator` + `SqlAccountingPostingProcessor` | `AccountingPostingJobs`, `AccountingEntries` y lineas | `implementation/accounting-operational-design.md` |
+| Contabilidad | `AccountingProcessingCoordinator` + `SqlAccountingPostingProcessor` | `AccountingSourceDocuments`, `AccountingPostingJobs`, `AccountingEntries` y lineas | `implementation/accounting-operational-design.md` |
+| Reporting de ventas | `SalesReportingProcessingCoordinator` + `SqlSalesReportingProcessor` | `reporting.SalesReportingJobs`, hechos y consolidados | `decision-cuatro-motores-operacion-contabilidad-fiscal-reporting.md` |
 | Conversacional | Pipeline determinista descrito en el manual del agente | Conversacion, estado, facts, recibos y configuracion del agente | `agent-engine-manual.md` |
 
 Si aparece una nueva capacidad con semantica realmente distinta, primero se registra su limite, fuente de verdad, orden, idempotencia, transaccion, transportes y relacion con los motores existentes mediante una decision arquitectonica. No se crea implicitamente desde una pantalla o endpoint.
@@ -32,7 +33,7 @@ Si aparece una nueva capacidad con semantica realmente distinta, primero se regi
 ## 3. Motor documental e inventario
 
 - Todo documento definitivo genera el movimiento/trabajo durable canonico y se procesa mediante `DocumentProcessingWorker` y `DocumentProcessingEngine`.
-- Un nuevo tipo de documento se integra mediante `IConfirmedDocumentHandler` y el registro DI existente. No crea otra tabla de jobs, poller, drain SQL, cola general ni engine.
+- Un nuevo tipo de documento que mueve inventario se integra mediante `IConfirmedDocumentHandler` y el registro DI existente. Un documento exclusivamente financiero entra directamente al unico motor contable. Ninguno crea otra tabla de jobs, poller, drain SQL, cola general ni engine.
 - Los efectos de inventario se aplican solamente dentro de la transaccion ordenada del motor documental.
 - `InventoryBalances` es la proyeccion autoritativa rapida y conciliable; `InventoryMovements` es el kardex durable. Ningun controller, API, admin, POS, importador o modulo los modifica por fuera de los handlers canonicos.
 - Conteos, ajustes, traslados, conversiones y danos reutilizan `SqlInventoryOperationProcessor`. Un nuevo tipo de operacion extiende contratos, reglas, handler y processor existentes.
@@ -53,6 +54,7 @@ Si aparece una nueva capacidad con semantica realmente distinta, primero se regi
 
 - Todo asiento automatico converge en `AccountingProcessingCoordinator` y `SqlAccountingPostingProcessor`.
 - Un nuevo documento contabilizable agrega su regla de posting al motor existente y reutiliza `AccountingPostingJobs` y la unicidad por documento fuente.
+- Su fuente inmutable pertenece a `AccountingSourceDocuments`; el job contable no depende por FK de `DocumentProcessingJobs`.
 - No se crea un posting service por modulo, un asiento directo desde un endpoint ni una segunda tabla de trabajos contables.
 - La contabilidad corre en su transaccion durable e idempotente. Un fallo o configuracion pendiente no reaplica los efectos operativos ya confirmados.
 - Los transportes SaaS, on-premise e in-process ejecutan el mismo processor y no contienen reglas contables.

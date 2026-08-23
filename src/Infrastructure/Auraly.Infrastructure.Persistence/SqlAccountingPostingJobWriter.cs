@@ -15,11 +15,11 @@ internal static class SqlAccountingPostingJobWriter
         CancellationToken cancellationToken)
     {
         const string sql = """
-            INSERT dbo.AccountingPostingJobs
-            (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,
-             SourceDocumentType,SourcePayloadHash,OccurredAt,Status,AttemptCount,CreatedAt)
-            SELECT @JobId,@TenantId,@BusinessId,p.DocumentId,p.DocumentType,
-                   p.PayloadHash,@OccurredAt,N'Pending',0,@CreatedAt
+            INSERT dbo.AccountingSourceDocuments
+            (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,PayloadJson,
+             PayloadHash,OccurredAt,AcceptedAt)
+            SELECT p.DocumentId,p.DocumentType,@TenantId,@BusinessId,p.PayloadJson,
+                   p.PayloadHash,@OccurredAt,@CreatedAt
             FROM dbo.DocumentProcessingPayloads p
             INNER JOIN dbo.AccountingTenantSettings settings
               ON settings.TenantId=@TenantId AND settings.Status=N'Ready'
@@ -28,9 +28,25 @@ internal static class SqlAccountingPostingJobWriter
               AND p.BusinessId=@BusinessId
               AND NOT EXISTS
               (
+                SELECT 1 FROM dbo.AccountingSourceDocuments s WITH(UPDLOCK,HOLDLOCK)
+                WHERE s.SourceDocumentId=p.DocumentId
+                  AND s.SourceDocumentType=p.DocumentType
+              );
+
+            INSERT dbo.AccountingPostingJobs
+            (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,
+             SourceDocumentType,SourcePayloadHash,OccurredAt,Status,AttemptCount,CreatedAt)
+            SELECT @JobId,s.TenantId,s.BusinessId,s.SourceDocumentId,
+                   s.SourceDocumentType,s.PayloadHash,s.OccurredAt,N'Pending',0,@CreatedAt
+            FROM dbo.AccountingSourceDocuments s
+            WHERE s.SourceDocumentId=@DocumentId
+              AND s.SourceDocumentType=@DocumentType
+              AND s.BusinessId=@BusinessId
+              AND NOT EXISTS
+              (
                 SELECT 1 FROM dbo.AccountingPostingJobs a WITH(UPDLOCK,HOLDLOCK)
-                WHERE a.SourceDocumentId=p.DocumentId
-                  AND a.SourceDocumentType=p.DocumentType
+                WHERE a.SourceDocumentId=s.SourceDocumentId
+                  AND a.SourceDocumentType=s.SourceDocumentType
               );
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
@@ -42,7 +58,7 @@ internal static class SqlAccountingPostingJobWriter
         command.Parameters.AddWithValue("@OccurredAt", occurredAt);
         command.Parameters.AddWithValue("@CreatedAt", timeProvider.GetUtcNow());
         var inserted = await command.ExecuteNonQueryAsync(cancellationToken);
-        if (inserted is not (0 or 1))
+        if (inserted is < 0 or > 2)
             throw new InvalidOperationException("An invalid number of accounting jobs was created.");
     }
 }

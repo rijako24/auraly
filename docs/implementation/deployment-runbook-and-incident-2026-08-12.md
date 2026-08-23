@@ -19,12 +19,16 @@ corregir y volver a publicar.
 
 Auraly usa carriles con responsabilidades explícitas; ningún botón de la UI escribe asientos directamente:
 
-- `auraly-document-processing`: cola operacional ordenada. `SessionId = BusinessId`, `MessageId = MovementId`, un documento por mensaje. Procesa únicamente el cierre operacional, inventario y costo físico, y publica las señales derivadas.
+- `auraly-document-processing`: cola operacional ordenada. `SessionId = BusinessId`, `MessageId = MovementId`, un documento por mensaje. Procesa únicamente inventario, kardex y costo físico de documentos que mueven existencias, y guarda sus señales derivadas en outbox.
 - `auraly-accounting-processing`: cola del motor contable. Genera asientos balanceados e idempotentes, PUC, centros de costo, retenciones y proyecciones contables. Un fallo contable se reintenta o va a intervención sin duplicar ni revertir el documento operacional confirmado.
 - `auraly-fiscal-processing`: generación, firma, envío y consulta DIAN. Está separada para que la latencia de un proveedor externo no bloquee operación ni contabilidad.
 - `auraly-sales-reporting`: construye las proyecciones y consolidados de ventas sin consultar las tablas operacionales en cada reporte.
 
-No se crean colas por cada tipo documental. Ventas, entradas, conteos, ajustes, traslados, conversiones, averías, devoluciones, entradas y salidas de caja entran por la cola operacional; solo los efectos contables pasan a la cola contable.
+No se crean colas por cada tipo documental. Ventas, entradas, conteos, ajustes,
+traslados, conversiones, averías y devoluciones que tengan efecto físico entran
+por la cola operacional. Notas débito/crédito, pagos, comprobantes y cualquier
+documento exclusivamente financiero entran directamente por la cola contable y
+no crean job ni cursor operacional.
 ## Causas encontradas y corrección permanente
 
 | Falla observada | Causa raíz | Protección permanente |
@@ -46,7 +50,7 @@ El preflight exige, sin imprimir valores:
 - `AZURE_CLIENT_ID`;
 - `ServiceBusConnection__fullyQualifiedNamespace`;
 - `ServiceBusConnection__clientId`;
-- los nombres de las colas operacional, contable y fiscal, más reconciliación externa;
+- los nombres de las colas operacional, contable, fiscal y reporting;
 - `Auraly__Fiscal__SecretProtectionKey` (Base64, 32 bytes);
 - `Authentication__Jwt__Issuer`;
 - `Authentication__Jwt__Audience`;

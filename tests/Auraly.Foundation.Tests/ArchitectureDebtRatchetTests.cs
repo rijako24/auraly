@@ -51,6 +51,30 @@ public sealed class ArchitectureDebtRatchetTests
     }
 
     [Fact]
+    public void AccountingAndReportingProcessors_OwnOneSerializableSqlTransaction()
+    {
+        var paths = new[]
+        {
+            Path.Combine("src", "Modules", "Accounting",
+                "Auraly.Commerce.Accounting.Infrastructure", "SqlAccountingPostingProcessor.cs"),
+            Path.Combine("src", "Infrastructure", "Auraly.Infrastructure.Persistence",
+                "SqlSalesReportingProcessor.cs")
+        };
+
+        foreach (var path in paths)
+        {
+            var source = File.ReadAllText(Path.Combine(RepositoryRoot, path));
+            Assert.Single(Regex.Matches(source, @"BeginTransactionAsync\s*\("));
+            Assert.Contains("IsolationLevel.Serializable", source, StringComparison.Ordinal);
+            Assert.Contains("CommitAsync", source, StringComparison.Ordinal);
+            Assert.Contains("RollbackAsync", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("Microsoft.EntityFrameworkCore", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("DbContext", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("SaveChanges", source, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public void DocumentProcessingJobStore_OwnsCommitAndRollback()
     {
         var source = File.ReadAllText(Path.Combine(

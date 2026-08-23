@@ -6,6 +6,7 @@ using Microsoft.Data.SqlClient;
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
+[Trait("EngineCertification", "Fiscal")]
 public sealed class FiscalDeviceSeriesApiTests(ServerSliceFixture fixture)
 {
     [Fact]

@@ -256,3 +256,36 @@ CREATE TABLE [reporting].[SalesReportingCheckpoints]
     CONSTRAINT [CK_SalesReportingCheckpoints_Version] CHECK ([ProjectionVersion]>0)
 );
 GO
+
+CREATE TABLE [reporting].[SalesReportingJobs]
+(
+    [SalesReportingJobId] UNIQUEIDENTIFIER NOT NULL,
+    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [SourceDocumentId] UNIQUEIDENTIFIER NOT NULL,
+    [SourceDocumentType] NVARCHAR(64) NOT NULL,
+    [SourcePayloadHash] BINARY(32) NOT NULL,
+    [Status] NVARCHAR(24) NOT NULL,
+    [AttemptCount] INT NOT NULL CONSTRAINT [DF_SalesReportingJobs_Attempts] DEFAULT 0,
+    [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
+    [StartedAt] DATETIMEOFFSET(7) NULL,
+    [CompletedAt] DATETIMEOFFSET(7) NULL,
+    [LastError] NVARCHAR(2000) NULL,
+    [RowVersion] ROWVERSION NOT NULL,
+    CONSTRAINT [PK_SalesReportingJobs] PRIMARY KEY CLUSTERED ([SalesReportingJobId]),
+    CONSTRAINT [UQ_SalesReportingJobs_Source]
+        UNIQUE ([SourceDocumentId],[SourceDocumentType]),
+    CONSTRAINT [FK_SalesReportingJobs_Business]
+        FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
+    CONSTRAINT [FK_SalesReportingJobs_Source]
+        FOREIGN KEY ([SourceDocumentId],[SourceDocumentType])
+        REFERENCES [dbo].[DocumentProcessingJobs]([DocumentId],[DocumentType]),
+    CONSTRAINT [CK_SalesReportingJobs_Status]
+        CHECK ([Status] IN (N'Pending',N'Processing',N'Projected',N'Failed')),
+    CONSTRAINT [CK_SalesReportingJobs_Attempts] CHECK ([AttemptCount]>=0)
+);
+GO
+
+CREATE INDEX [IX_SalesReportingJobs_Dispatch]
+    ON [reporting].[SalesReportingJobs]([BusinessId],[Status],[CreatedAt])
+    INCLUDE([SourceDocumentId],[SourceDocumentType],[AttemptCount]);
+GO

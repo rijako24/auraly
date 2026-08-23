@@ -11,6 +11,7 @@ public sealed class SalesReportingSliceCollection : ICollectionFixture<ServerSli
 }
 
 [Collection(SalesReportingSliceCollection.Name)]
+[Trait("EngineCertification", "Reporting")]
 public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
@@ -20,6 +21,23 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
         using (var upload = fixture.CreateUploadMessage(sale))
         using (var response = await fixture.CreateClient().SendAsync(upload))
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using (var connection = new Microsoft.Data.SqlClient.SqlConnection(
+                         fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT COUNT_BIG(*)
+                FROM reporting.SalesReportingJobs
+                WHERE SourceDocumentId=@DocumentId
+                  AND SourceDocumentType IN (N'SalesInvoice',N'SalesReceipt')
+                  AND Status=N'Projected'
+                  AND AttemptCount=1;
+                """;
+            command.Parameters.AddWithValue("@DocumentId", sale.DocumentId);
+            Assert.Equal(1L, Convert.ToInt64(await command.ExecuteScalarAsync()));
+        }
 
         using var reporting = fixture.CreateAdminClient(
             SalesReportingPermissionCodes.Read);

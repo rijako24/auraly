@@ -7,6 +7,7 @@ using Auraly.Contracts.Expenses;
 using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
+using Auraly.Fiscal.Core;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -18,9 +19,11 @@ public sealed class AccountingSliceCollection : ICollectionFixture<ServerSliceFi
 }
 
 [Collection(AccountingSliceCollection.Name)]
+[Trait("EngineCertification", "Accounting")]
 public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    [Trait("EngineCertification", "EndToEnd")]
     public async Task Invoice_and_credit_note_post_balanced_once_and_periods_are_controlled()
     {
         await DisableAccountingAsync();
@@ -319,6 +322,12 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                    "/api/commerce/v1/accounting/manual/account-adjustments", adjustment))
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         await AssertBalancedAsync(adjustmentId);
+        Assert.Equal(0, await CountAsync(
+            "DocumentProcessingJobs", "DocumentId", adjustmentId));
+        Assert.Equal(1, await CountAsync(
+            "AccountingSourceDocuments", "SourceDocumentId", adjustmentId));
+        Assert.Equal(1, await CountAsync(
+            "AccountingPostingJobs", "SourceDocumentId", adjustmentId));
         Assert.Equal(85_300m, await ScalarAsync<decimal>(
             "SELECT OutstandingAmount FROM dbo.Payables WHERE PayableId=@Id", payableId));
         Assert.Equal(2_000m, await ScalarAsync<decimal>(
@@ -372,6 +381,10 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                    "/api/commerce/v1/accounting/manual/vouchers", voucher))
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         await AssertBalancedAsync(voucherId);
+        Assert.Equal(0, await CountAsync(
+            "DocumentProcessingJobs", "DocumentId", voucherId));
+        Assert.Equal(1, await CountAsync(
+            "AccountingSourceDocuments", "SourceDocumentId", voucherId));
         Assert.Equal(750m, await AccountAmountAsync(voucherId, "519595", debit: true));
         Assert.Equal(750m, await AccountAmountAsync(voucherId, "111005", debit: false));
 
@@ -637,6 +650,10 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         await AssertFastProcessingAsync(returnRequest.ReturnId, "devolución de venta");
         Assert.Equal(1, await CountAsync("AccountingEntries", "SourceDocumentId", returnRequest.ReturnId));
 
+        await AssertTenSalePipelineIsExactAndIdempotentAsync();
+        await AssertAccumulatedCodesForTenSalesReturnsAndCreditNotesAsync(
+            accounting, customerId);
+
         using (var report = await accounting.GetAsync("/api/commerce/v1/accounting/reports/trial-balance?from=2026-01-01&to=2026-12-31"))
         {
             Assert.Equal(HttpStatusCode.OK, report.StatusCode);
@@ -771,6 +788,541 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             Assert.Equal(HttpStatusCode.NoContent, close.StatusCode);
         Assert.Equal("Closed", await ScalarAsync<string>("SELECT Status FROM dbo.AccountingPeriods WHERE PeriodId=@Id", nextPeriod));
     }
+
+    private async Task AssertTenSalePipelineIsExactAndIdempotentAsync()
+    {
+        var sales = Enumerable.Range(0, 10)
+            .Select(index => WithUblSnapshot(fixture.CreateValidRequest(9_820 + index)))
+            .ToArray();
+        var documentIds = sales.Select(sale => sale.DocumentId).ToArray();
+        var quantityBefore = await InventoryQuantityAsync();
+        var dailyBefore = await ProductDailyTotalAsync();
+
+        await SetWarehouseNegativeSalesPolicyAsync(true);
+        foreach (var sale in sales)
+        {
+            using var upload = fixture.CreateUploadMessage(sale);
+            using var response = await fixture.CreateClient().SendAsync(upload);
+            Assert.True(response.StatusCode == HttpStatusCode.OK,
+                await response.Content.ReadAsStringAsync());
+        }
+
+        var firstPass = await ReadPipelineSnapshotAsync(documentIds);
+        Assert.Equal(10, firstPass.OperationalJobs);
+        Assert.Equal(10, firstPass.InventoryMovements);
+        Assert.Equal(-10m, firstPass.InventoryQuantityChange);
+        Assert.Equal(quantityBefore - 10m, firstPass.InventoryQuantityAfter);
+        Assert.Equal(10, firstPass.AccountingJobs);
+        Assert.Equal(10, firstPass.AccountingEntries);
+        Assert.Equal(0, firstPass.UnbalancedEntries);
+        Assert.Equal(119_000m, firstPass.CashDebit);
+        Assert.Equal(100_000m, firstPass.SalesRevenueCredit);
+        Assert.Equal(19_000m, firstPass.OutputVatCredit);
+        Assert.Equal(10, firstPass.ReportDocuments);
+        Assert.Equal(119_000m, firstPass.ReportDocumentTotal);
+        Assert.Equal(10, firstPass.ReportLineFacts);
+        Assert.Equal(10m, firstPass.ReportQuantity);
+        Assert.Equal(119_000m, firstPass.ReportLineTotal);
+        Assert.InRange(firstPass.MaxOperationalMicroseconds, 1, 2_000_000);
+        Assert.InRange(firstPass.MaxAccountingMicroseconds, 1, 2_000_000);
+        Assert.InRange(firstPass.MaxReportingMicroseconds, 0, 2_000_000);
+        Console.WriteLine(
+            $"PIPELINE_10_MAX_MS operation={firstPass.MaxOperationalMicroseconds / 1000m:F3} " +
+            $"accounting={firstPass.MaxAccountingMicroseconds / 1000m:F3} " +
+            $"reporting_after_operation={firstPass.MaxReportingMicroseconds / 1000m:F3}");
+
+        await AssertInventoryMovementChainAsync(documentIds, quantityBefore);
+        var dailyAfter = await ProductDailyTotalAsync();
+        Assert.Equal(dailyBefore.DocumentCount + 10, dailyAfter.DocumentCount);
+        Assert.Equal(dailyBefore.Quantity + 10m, dailyAfter.Quantity);
+        Assert.Equal(dailyBefore.NetTotalSales + 119_000m, dailyAfter.NetTotalSales);
+
+        foreach (var sale in sales)
+        {
+            using var replay = fixture.CreateUploadMessage(sale);
+            using var response = await fixture.CreateClient().SendAsync(replay);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+
+        var replayPass = await ReadPipelineSnapshotAsync(documentIds);
+        Assert.Equal(firstPass, replayPass);
+        Assert.Equal(dailyAfter, await ProductDailyTotalAsync());
+    }
+
+    private async Task AssertAccumulatedCodesForTenSalesReturnsAndCreditNotesAsync(
+        HttpClient accounting, Guid customerId)
+    {
+        const decimal creditNoteAmount = 7_100m;
+
+        var accounts = await accounting.GetFromJsonAsync<AccountingAccountView[]>(
+            "/api/commerce/v1/accounting/accounts") ?? [];
+        var salesReturnsAccountId = Assert.Single(
+            accounts, account => account.Code == "417595").AccountId;
+        var sales = new List<PosSaleUploadRequest>(10);
+        var returns = new List<ConfirmSalesReturnRequest>(10);
+        var notes = new List<ConfirmAccountAdjustmentRequest>(10);
+        var receivableIds = new List<Guid>(10);
+
+        await SetWarehouseNegativeSalesPolicyAsync(true);
+        for (var index = 0; index < 10; index++)
+        {
+            var sale = CreateAccumulationCreditSale(9_840 + index, customerId);
+            sales.Add(sale);
+            using (var upload = fixture.CreateUploadMessage(sale))
+            using (var response = await fixture.CreateClient().SendAsync(upload))
+                Assert.True(response.StatusCode == HttpStatusCode.OK,
+                    await response.Content.ReadAsStringAsync());
+
+            var receivableId = await ScalarAsync<Guid>(
+                "SELECT ReceivableId FROM dbo.Receivables WHERE SourceDocumentId=@Id",
+                sale.DocumentId);
+            receivableIds.Add(receivableId);
+
+            var salesReturn = new ConfirmSalesReturnRequest(
+                Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
+                sale.DocumentId,
+                new DateTimeOffset(2026, 8, 10, 10, index, 0,
+                    TimeSpan.FromHours(-5)),
+                ReturnEconomicResolutions.CustomerCredit, null,
+                $"Devolución acumulativa {index + 1}",
+                [new ConfirmSalesReturnLineRequest(
+                    1, 1m, ReturnInventoryDispositions.Sellable)],
+                null, null, "Other");
+            returns.Add(salesReturn);
+            using (var message = CreateSalesReturnMessage(
+                       salesReturn, $"acc-return-{salesReturn.ReturnId:N}"))
+            using (var response = await accounting.SendAsync(message))
+                Assert.True(response.StatusCode == HttpStatusCode.Accepted,
+                    await response.Content.ReadAsStringAsync());
+
+            var creditNote = new ConfirmAccountAdjustmentRequest(
+                Guid.NewGuid(), fixture.BusinessId,
+                AccountingSubledgerKinds.Receivable, receivableId,
+                AccountingAdjustmentDirections.Decrease, creditNoteAmount,
+                salesReturnsAccountId, null,
+                new DateTimeOffset(2026, 8, 10, 11, index, 0,
+                    TimeSpan.FromHours(-5)),
+                $"NC-ACUM-{index + 1:D2}",
+                $"Nota crédito acumulativa {index + 1}");
+            notes.Add(creditNote);
+            using var noteResponse = await accounting.PostAsJsonAsync(
+                "/api/commerce/v1/accounting/manual/account-adjustments",
+                creditNote);
+            Assert.Equal(HttpStatusCode.Accepted, noteResponse.StatusCode);
+        }
+
+        var allDocumentIds = sales.Select(item => item.DocumentId)
+            .Concat(returns.Select(item => item.ReturnId))
+            .Concat(notes.Select(item => item.AdjustmentId))
+            .ToArray();
+        var firstPass = await ReadAccumulatedAccountingSnapshotAsync(
+            allDocumentIds, receivableIds);
+
+        Assert.Equal(30, firstPass.AccountingSources);
+        Assert.Equal(30, firstPass.AccountingJobs);
+        Assert.Equal(30, firstPass.AccountingEntries);
+        Assert.Equal(0, firstPass.UnbalancedEntries);
+        Assert.Equal(20, firstPass.OperationalJobs);
+        Assert.Equal(20, firstPass.InventoryMovements);
+        Assert.Equal(20, firstPass.ReportingJobs);
+        Assert.Equal(20, firstPass.ReportLineFacts);
+        Assert.Equal(1_000_000m, firstPass.ReceivablesOutstanding);
+        Assert.Equal(1_190_000m, firstPass.AccountsReceivableDebit);
+        Assert.Equal(190_000m, firstPass.AccountsReceivableCredit);
+        Assert.Equal(1_000_000m,
+            firstPass.AccountsReceivableDebit - firstPass.AccountsReceivableCredit);
+        Assert.Equal(1_000_000m, firstPass.SalesRevenueCredit);
+        Assert.Equal(190_000m, firstPass.OutputVatCredit);
+        Assert.Equal(19_000m, firstPass.OutputVatDebit);
+        Assert.Equal(171_000m, firstPass.SalesReturnsDebit);
+        Assert.Equal(firstPass.CostOfGoodsSoldDebit, firstPass.InventoryCredit);
+        Assert.Equal(firstPass.CostOfGoodsSoldCredit, firstPass.InventoryDebit);
+        Assert.Equal(
+            1_380_000m + firstPass.CostOfGoodsSoldDebit + firstPass.InventoryDebit,
+            firstPass.TotalDebits);
+        Assert.Equal(firstPass.TotalDebits, firstPass.TotalCredits);
+        Assert.Equal(1_190_000m, firstPass.ReportSalesTotal);
+        Assert.Equal(119_000m, firstPass.ReportReturnedTotal);
+        Assert.Equal(1_071_000m, firstPass.ReportNetLineTotal);
+
+        foreach (var sale in sales)
+        {
+            using var replay = fixture.CreateUploadMessage(sale);
+            using var response = await fixture.CreateClient().SendAsync(replay);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+        foreach (var salesReturn in returns)
+        {
+            using var replay = CreateSalesReturnMessage(
+                salesReturn, $"acc-return-{salesReturn.ReturnId:N}");
+            using var response = await accounting.SendAsync(replay);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        }
+        foreach (var note in notes)
+        {
+            using var response = await accounting.PostAsJsonAsync(
+                "/api/commerce/v1/accounting/manual/account-adjustments", note);
+            response.EnsureSuccessStatusCode();
+            var acceptance = await response.Content
+                .ReadFromJsonAsync<AccountingManualDocumentAcceptance>();
+            Assert.True(acceptance!.IsDuplicate);
+        }
+
+        Assert.Equal(firstPass, await ReadAccumulatedAccountingSnapshotAsync(
+            allDocumentIds, receivableIds));
+        Console.WriteLine(
+            "ACCOUNTING_ACCUMULATION_10 sales_base=1000000 " +
+            "returns_base=100000 credit_notes=71000 final_receivable=1000000");
+    }
+
+    private PosSaleUploadRequest CreateAccumulationCreditSale(
+        long consecutive, Guid customerId)
+    {
+        const decimal quantity = 10m;
+        const decimal unitPrice = 10_000m;
+        const decimal untaxed = 100_000m;
+        const decimal tax = 19_000m;
+        const decimal total = 119_000m;
+        var source = fixture.CreateValidRequest(consecutive);
+        var fiscal = source.FiscalSnapshot!;
+        var cufe = CufeCalculator.Calculate(
+            new CufeInput(
+                fiscal.FiscalNumber, fiscal.IssuedAt, untaxed, total,
+                ServerSliceFixture.SupplierTaxId, "222222222",
+                new FiscalTechnicalKey(
+                    ServerSliceFixture.TechnicalKeyValue,
+                    ServerSliceFixture.TechnicalKeyVersion),
+                FiscalEnvironment.Test,
+                [new FiscalTaxAmount("01", tax)]),
+            ServerSliceFixture.QrValidationUrl);
+        var sale = source with
+        {
+            CustomerId = customerId,
+            Payments = [],
+            Credit = new PosSaleCreditContract(
+                customerId, total,
+                new DateTimeOffset(2026, 8, 31, 0, 0, 0,
+                    TimeSpan.FromHours(-5))),
+            CommercialSnapshot = source.CommercialSnapshot with
+            {
+                Taxes = [new PosSaleTaxContract("01", tax)],
+                UntaxedAmount = untaxed,
+                TaxAmount = tax,
+                PayableAmount = total
+            },
+            FiscalSnapshot = fiscal with
+            {
+                Taxes = [new PosSaleTaxContract("01", tax)],
+                UntaxedAmount = untaxed,
+                TaxAmount = tax,
+                PayableAmount = total,
+                Cufe = cufe.Cufe,
+                QrPayload = cufe.QrPayload
+            },
+            Lines =
+            [
+                new PosSaleLineContract(
+                    1, fixture.ProductId, "Producto acumulación", "01",
+                    quantity, unitPrice, 0m, tax, untaxed, total, 19m)
+            ]
+        };
+        sale = WithUblSnapshot(sale);
+        return sale with
+        {
+            UblSnapshot = sale.UblSnapshot! with
+            {
+                PaymentFormCode = "2",
+                DueDate = new DateOnly(2026, 8, 31)
+            }
+        };
+    }
+
+    private async Task<AccumulatedAccountingSnapshot>
+        ReadAccumulatedAccountingSnapshotAsync(
+            IReadOnlyList<Guid> documentIds, IReadOnlyList<Guid> receivableIds)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        var documentParameters = documentIds.Select((id, index) =>
+        {
+            var name = $"@DocumentId{index}";
+            command.Parameters.AddWithValue(name, id);
+            return name;
+        }).ToArray();
+        var receivableParameters = receivableIds.Select((id, index) =>
+        {
+            var name = $"@ReceivableId{index}";
+            command.Parameters.AddWithValue(name, id);
+            return name;
+        }).ToArray();
+        var documents = string.Join(',', documentParameters);
+        var receivables = string.Join(',', receivableParameters);
+        command.CommandText = $"""
+            SELECT
+              (SELECT COUNT_BIG(*) FROM dbo.AccountingSourceDocuments
+               WHERE SourceDocumentId IN ({documents})),
+              (SELECT COUNT_BIG(*) FROM dbo.AccountingPostingJobs
+               WHERE SourceDocumentId IN ({documents}) AND Status=N'Posted'),
+              (SELECT COUNT_BIG(*) FROM dbo.AccountingEntries
+               WHERE SourceDocumentId IN ({documents})),
+              (SELECT COUNT_BIG(*) FROM dbo.AccountingEntries
+               WHERE SourceDocumentId IN ({documents}) AND DebitTotal<>CreditTotal),
+              (SELECT COUNT_BIG(*) FROM dbo.DocumentProcessingJobs
+               WHERE DocumentId IN ({documents}) AND Status=N'Completed'),
+              (SELECT COUNT_BIG(*) FROM dbo.InventoryMovements
+               WHERE DocumentId IN ({documents})),
+              (SELECT COUNT_BIG(*) FROM reporting.SalesReportingJobs
+               WHERE SourceDocumentId IN ({documents}) AND Status=N'Projected'),
+              (SELECT COUNT_BIG(*) FROM reporting.SalesReportLineFacts
+               WHERE SourceDocumentId IN ({documents})),
+              (SELECT COALESCE(SUM(OutstandingAmount),0) FROM dbo.Receivables
+               WHERE ReceivableId IN ({receivables})),
+              (SELECT COALESCE(SUM(l.Debit),0) FROM dbo.AccountingEntries e
+               JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+               JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+               WHERE e.SourceDocumentId IN ({documents}) AND a.Code=N'130505'),
+              (SELECT COALESCE(SUM(l.Credit),0) FROM dbo.AccountingEntries e
+               JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+               JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+               WHERE e.SourceDocumentId IN ({documents}) AND a.Code=N'130505'),
+              (SELECT COALESCE(SUM(l.Credit),0) FROM dbo.AccountingEntries e
+               JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+               JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+               WHERE e.SourceDocumentId IN ({documents}) AND a.Code=N'413595'),
+              (SELECT COALESCE(SUM(l.Debit),0) FROM dbo.AccountingEntries e
+               JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+               JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+               WHERE e.SourceDocumentId IN ({documents}) AND a.Code=N'240805'),
+              (SELECT COALESCE(SUM(l.Credit),0) FROM dbo.AccountingEntries e
+               JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+               JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+               WHERE e.SourceDocumentId IN ({documents}) AND a.Code=N'240805'),
+              (SELECT COALESCE(SUM(l.Debit),0) FROM dbo.AccountingEntries e
+               JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+               JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+               WHERE e.SourceDocumentId IN ({documents}) AND a.Code=N'417595'),
+              (SELECT COALESCE(SUM(l.Debit),0) FROM dbo.AccountingEntries e
+               JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+               JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+               WHERE e.SourceDocumentId IN ({documents}) AND a.Code=N'143505'),
+              (SELECT COALESCE(SUM(l.Credit),0) FROM dbo.AccountingEntries e
+               JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+               JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+               WHERE e.SourceDocumentId IN ({documents}) AND a.Code=N'143505'),
+              (SELECT COALESCE(SUM(l.Debit),0) FROM dbo.AccountingEntries e
+               JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+               JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+               WHERE e.SourceDocumentId IN ({documents}) AND a.Code=N'613595'),
+              (SELECT COALESCE(SUM(l.Credit),0) FROM dbo.AccountingEntries e
+               JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+               JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+               WHERE e.SourceDocumentId IN ({documents}) AND a.Code=N'613595'),
+              (SELECT COALESCE(SUM(DebitTotal),0) FROM dbo.AccountingEntries
+               WHERE SourceDocumentId IN ({documents})),
+              (SELECT COALESCE(SUM(CreditTotal),0) FROM dbo.AccountingEntries
+               WHERE SourceDocumentId IN ({documents})),
+              (SELECT COALESCE(SUM(TotalAmount),0) FROM reporting.SalesReportDocuments
+               WHERE DocumentId IN ({documents})),
+              (SELECT COALESCE(SUM(ReturnedTotalAmount),0) FROM reporting.SalesReportDocuments
+               WHERE DocumentId IN ({documents})),
+              (SELECT COALESCE(SUM(TotalAmount),0) FROM reporting.SalesReportLineFacts
+               WHERE SourceDocumentId IN ({documents}));
+            """;
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        return new AccumulatedAccountingSnapshot(
+            reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2),
+            reader.GetInt64(3), reader.GetInt64(4), reader.GetInt64(5),
+            reader.GetInt64(6), reader.GetInt64(7), reader.GetDecimal(8),
+            reader.GetDecimal(9), reader.GetDecimal(10), reader.GetDecimal(11),
+            reader.GetDecimal(12), reader.GetDecimal(13), reader.GetDecimal(14),
+            reader.GetDecimal(15), reader.GetDecimal(16), reader.GetDecimal(17),
+            reader.GetDecimal(18), reader.GetDecimal(19), reader.GetDecimal(20),
+            reader.GetDecimal(21), reader.GetDecimal(22), reader.GetDecimal(23));
+    }
+
+    private static HttpRequestMessage CreateSalesReturnMessage(
+        ConfirmSalesReturnRequest request, string idempotencyKey)
+    {
+        var message = new HttpRequestMessage(
+            HttpMethod.Post, "/api/commerce/v1/sales-returns/confirm")
+        {
+            Content = JsonContent.Create(request)
+        };
+        message.Headers.Add("Idempotency-Key", idempotencyKey);
+        return message;
+    }
+
+    private async Task<PipelineSnapshot> ReadPipelineSnapshotAsync(
+        IReadOnlyList<Guid> documentIds)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        var parameters = new string[documentIds.Count];
+        for (var index = 0; index < documentIds.Count; index++)
+        {
+            parameters[index] = $"@Id{index}";
+            command.Parameters.AddWithValue(parameters[index], documentIds[index]);
+        }
+        var ids = string.Join(',', parameters);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+        command.Parameters.AddWithValue("@ProductId", fixture.ProductId);
+        command.CommandText = $"""
+            SELECT
+              (SELECT COUNT_BIG(*) FROM dbo.DocumentProcessingJobs
+               WHERE DocumentId IN ({ids}) AND DocumentType=N'SalesInvoice' AND Status=N'Completed'),
+              (SELECT COUNT_BIG(*) FROM dbo.InventoryMovements
+               WHERE DocumentId IN ({ids}) AND DocumentType=N'SalesInvoice'),
+              (SELECT COALESCE(SUM(QuantityChange),0) FROM dbo.InventoryMovements
+               WHERE DocumentId IN ({ids}) AND DocumentType=N'SalesInvoice'),
+              (SELECT QuantityOnHand FROM dbo.InventoryBalances
+               WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId),
+              (SELECT COUNT_BIG(*) FROM dbo.AccountingPostingJobs
+               WHERE SourceDocumentId IN ({ids}) AND SourceDocumentType=N'SalesInvoice' AND Status=N'Posted'),
+              (SELECT COUNT_BIG(*) FROM dbo.AccountingEntries
+               WHERE SourceDocumentId IN ({ids}) AND SourceDocumentType=N'SalesInvoice'),
+              (SELECT COUNT_BIG(*) FROM dbo.AccountingEntries
+               WHERE SourceDocumentId IN ({ids}) AND SourceDocumentType=N'SalesInvoice'
+                 AND DebitTotal<>CreditTotal),
+              (SELECT COALESCE(SUM(l.Debit),0) FROM dbo.AccountingEntries e
+               INNER JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+               INNER JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+               WHERE e.SourceDocumentId IN ({ids}) AND a.Code=N'110505'),
+              (SELECT COALESCE(SUM(l.Credit),0) FROM dbo.AccountingEntries e
+               INNER JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+               INNER JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+               WHERE e.SourceDocumentId IN ({ids}) AND a.Code=N'413595'),
+              (SELECT COALESCE(SUM(l.Credit),0) FROM dbo.AccountingEntries e
+               INNER JOIN dbo.AccountingEntryLines l ON l.EntryId=e.EntryId
+               INNER JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId
+               WHERE e.SourceDocumentId IN ({ids}) AND a.Code=N'240805'),
+              (SELECT COUNT_BIG(*) FROM reporting.SalesReportDocuments
+               WHERE DocumentId IN ({ids})),
+              (SELECT COALESCE(SUM(TotalAmount),0) FROM reporting.SalesReportDocuments
+               WHERE DocumentId IN ({ids})),
+              (SELECT COUNT_BIG(*) FROM reporting.SalesReportLineFacts
+               WHERE SourceDocumentId IN ({ids}) AND SourceDocumentType=N'SalesInvoice'),
+              (SELECT COALESCE(SUM(Quantity),0) FROM reporting.SalesReportLineFacts
+               WHERE SourceDocumentId IN ({ids}) AND SourceDocumentType=N'SalesInvoice'),
+              (SELECT COALESCE(SUM(TotalAmount),0) FROM reporting.SalesReportLineFacts
+               WHERE SourceDocumentId IN ({ids}) AND SourceDocumentType=N'SalesInvoice'),
+              (SELECT MAX(DATEDIFF_BIG(microsecond,StartedAt,CompletedAt))
+               FROM dbo.DocumentProcessingJobs WHERE DocumentId IN ({ids})),
+              (SELECT MAX(DATEDIFF_BIG(microsecond,CreatedAt,CompletedAt))
+               FROM dbo.AccountingPostingJobs WHERE SourceDocumentId IN ({ids})),
+              (SELECT MAX(DATEDIFF_BIG(microsecond,StartedAt,CompletedAt))
+               FROM reporting.SalesReportingJobs
+               WHERE SourceDocumentId IN ({ids}) AND Status=N'Projected');
+            """;
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        return new PipelineSnapshot(
+            reader.GetInt64(0), reader.GetInt64(1), reader.GetDecimal(2),
+            reader.GetDecimal(3), reader.GetInt64(4), reader.GetInt64(5),
+            reader.GetInt64(6), reader.GetDecimal(7), reader.GetDecimal(8),
+            reader.GetDecimal(9), reader.GetInt64(10), reader.GetDecimal(11),
+            reader.GetInt64(12), reader.GetDecimal(13), reader.GetDecimal(14),
+            reader.GetInt64(15), reader.GetInt64(16), reader.GetInt64(17));
+    }
+
+    private async Task AssertInventoryMovementChainAsync(
+        IReadOnlyList<Guid> documentIds, decimal quantityBefore)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        var parameters = new string[documentIds.Count];
+        for (var index = 0; index < documentIds.Count; index++)
+        {
+            parameters[index] = $"@Id{index}";
+            command.Parameters.AddWithValue(parameters[index], documentIds[index]);
+        }
+        command.CommandText = $"""
+            SELECT QuantityBefore,QuantityChange,QuantityAfter
+            FROM dbo.InventoryMovements
+            WHERE DocumentId IN ({string.Join(',', parameters)})
+              AND DocumentType=N'SalesInvoice'
+            ORDER BY ProcessingSequence;
+            """;
+        await using var reader = await command.ExecuteReaderAsync();
+        var expectedBefore = quantityBefore;
+        var count = 0;
+        while (await reader.ReadAsync())
+        {
+            Assert.Equal(expectedBefore, reader.GetDecimal(0));
+            Assert.Equal(-1m, reader.GetDecimal(1));
+            expectedBefore -= 1m;
+            Assert.Equal(expectedBefore, reader.GetDecimal(2));
+            count++;
+        }
+        Assert.Equal(10, count);
+    }
+
+    private async Task<decimal> InventoryQuantityAsync() =>
+        await ScalarAsync<decimal>("""
+            SELECT QuantityOnHand FROM dbo.InventoryBalances
+            WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId
+              AND ProductId=@ProductId;
+            """, fixture.BusinessId, fixture.WarehouseId, fixture.ProductId);
+
+    private async Task<ProductDailyTotal> ProductDailyTotalAsync()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT COALESCE(SUM(DocumentCount),0),COALESCE(SUM(Quantity),0),
+                   COALESCE(SUM(NetTotalSales),0)
+            FROM reporting.SalesReportDailyDimensionTotals
+            WHERE BusinessId=@BusinessId AND BusinessLocalDate='2026-07-27'
+              AND DimensionType=N'Product' AND DimensionKey=@ProductId;
+            """, connection);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@ProductId", fixture.ProductId.ToString("D"));
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        return new ProductDailyTotal(
+            reader.GetInt64(0), reader.GetDecimal(1), reader.GetDecimal(2));
+    }
+
+    private async Task<T> ScalarAsync<T>(string sql, Guid businessId,
+        Guid warehouseId, Guid productId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@WarehouseId", warehouseId);
+        command.Parameters.AddWithValue("@ProductId", productId);
+        var value = (await command.ExecuteScalarAsync())!;
+        return value is T typed ? typed : (T)Convert.ChangeType(value, typeof(T));
+    }
+
+    private sealed record PipelineSnapshot(
+        long OperationalJobs, long InventoryMovements, decimal InventoryQuantityChange,
+        decimal InventoryQuantityAfter, long AccountingJobs, long AccountingEntries,
+        long UnbalancedEntries, decimal CashDebit, decimal SalesRevenueCredit,
+        decimal OutputVatCredit, long ReportDocuments, decimal ReportDocumentTotal,
+        long ReportLineFacts, decimal ReportQuantity, decimal ReportLineTotal,
+        long MaxOperationalMicroseconds, long MaxAccountingMicroseconds,
+        long MaxReportingMicroseconds);
+
+    private sealed record AccumulatedAccountingSnapshot(
+        long AccountingSources, long AccountingJobs, long AccountingEntries,
+        long UnbalancedEntries, long OperationalJobs, long InventoryMovements,
+        long ReportingJobs, long ReportLineFacts, decimal ReceivablesOutstanding,
+        decimal AccountsReceivableDebit, decimal AccountsReceivableCredit,
+        decimal SalesRevenueCredit, decimal OutputVatDebit, decimal OutputVatCredit,
+        decimal SalesReturnsDebit, decimal InventoryDebit, decimal InventoryCredit,
+        decimal CostOfGoodsSoldDebit, decimal CostOfGoodsSoldCredit,
+        decimal TotalDebits, decimal TotalCredits,
+        decimal ReportSalesTotal, decimal ReportReturnedTotal,
+        decimal ReportNetLineTotal);
+
+    private sealed record ProductDailyTotal(
+        long DocumentCount, decimal Quantity, decimal NetTotalSales);
 
     private async Task DisableAccountingAsync()
     {
@@ -1044,5 +1596,5 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
     private async Task SetWarehouseNegativeSalesPolicyAsync(bool value)
     { await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync(); await using var command = new SqlCommand("UPDATE dbo.Warehouses SET AllowNegativeStockSales=@Value WHERE WarehouseId=@Id", connection); command.Parameters.AddWithValue("@Value", value); command.Parameters.AddWithValue("@Id", fixture.WarehouseId); Assert.Equal(1, await command.ExecuteNonQueryAsync()); }
     private async Task<int> CountAsync(string table, string column, Guid id)
-    { Assert.Contains($"{table}:{column}", new[] { "AccountingEntries:SourceDocumentId", "AccountingPostingJobs:SourceDocumentId" }); await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync(); await using var command = new SqlCommand($"SELECT COUNT(*) FROM dbo.[{table}] WHERE [{column}]=@Id", connection); command.Parameters.AddWithValue("@Id", id); return Convert.ToInt32(await command.ExecuteScalarAsync()); }
+    { Assert.Contains($"{table}:{column}", new[] { "AccountingEntries:SourceDocumentId", "AccountingPostingJobs:SourceDocumentId", "AccountingSourceDocuments:SourceDocumentId", "DocumentProcessingJobs:DocumentId" }); await using var connection = new SqlConnection(fixture.ConnectionString); await connection.OpenAsync(); await using var command = new SqlCommand($"SELECT COUNT(*) FROM dbo.[{table}] WHERE [{column}]=@Id", connection); command.Parameters.AddWithValue("@Id", id); return Convert.ToInt32(await command.ExecuteScalarAsync()); }
 }

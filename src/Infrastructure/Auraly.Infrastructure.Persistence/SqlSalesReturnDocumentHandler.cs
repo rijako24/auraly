@@ -36,6 +36,8 @@ public sealed class SqlSalesReturnDocumentHandler(
         await InsertFiscalWorkAsync(session, value, cancellationToken);
         await SqlAccountingPostingJobWriter.InsertAsync(
             session, document, value.ReturnedAt, ids, timeProvider, cancellationToken);
+        await SqlSalesReportingJobWriter.InsertAsync(
+            session, document, ids, timeProvider, cancellationToken);
         await InsertOutboxAsync(session, value, document.Payload, cancellationToken);
         await MarkProcessedAsync(session, value, cancellationToken);
     }
