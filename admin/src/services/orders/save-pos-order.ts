@@ -1,4 +1,5 @@
 import { sellerOrdersApi, type SellerOrderResult } from "@/services/api/seller-orders";
+import { buildPosOrderUpdateLines } from "@/services/orders/pos-order-update-lines";
 import type { PosDraft } from "@/services/pos/pos-edge-client";
 
 export type PosOrderSaveContext = {
@@ -17,10 +18,7 @@ export async function savePosDraftAsOrder(
   if (!draft.lines.length)
     throw new Error("Agrega al menos un producto antes de guardar el pedido.");
 
-  const lines = draft.lines.map((line) => ({
-    productId: line.productId.value,
-    quantity: line.quantity,
-  }));
+  const lines = buildPosOrderUpdateLines(draft.lines);
   return draft.sourceOrderId
     ? sellerOrdersApi.update(draft.sourceOrderId, {
         notes: draft.observation ?? null,

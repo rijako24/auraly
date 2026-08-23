@@ -211,6 +211,7 @@ export default function PosPage() {
     | { kind: "line"; lineId: string; productName: string }
     | { kind: "temporary"; draftId: string; name: string }
     | { kind: "sale" }
+    | { kind: "order-save"; orderNumber: string }
     | null
   >(null);
   const [sensitiveApproval, setSensitiveApproval] = useState<{
@@ -640,6 +641,17 @@ export default function PosPage() {
     }
   }, [busy, client, draft, focusScanner]);
 
+  const requestSaveOrder = useCallback(() => {
+    if (!draft?.sourceOrderId) {
+      void saveOrder();
+      return;
+    }
+    setConfirmation({
+      kind: "order-save",
+      orderNumber: draft.reference?.trim() || draft.sourceOrderId,
+    });
+  }, [draft, saveOrder]);
+
   const canOpenCashDrawer = (client?.mode === "edge" ? edgePermissions : permissions)
     .includes("work-sessions.cash.drawer.open");
 
@@ -738,6 +750,7 @@ export default function PosPage() {
         !paymentOpen &&
         !productSearchOpen &&
         !discountOpen &&
+        !draft?.sourceOrderId &&
         !confirmation
       ) {
         event.preventDefault();
@@ -1244,6 +1257,13 @@ export default function PosPage() {
 
   async function selectCustomer(customer: PosCustomer | null) {
     if (!client || !draft || busy) return;
+    if (draft.sourceOrderId && customer?.customerId !== draft.customerId) {
+      setCustomerSearchOpen(false);
+      setError("El cliente de un pedido recuperado no se puede cambiar desde la venta.");
+      setMessage("Conserva el cliente original del pedido");
+      focusScanner();
+      return;
+    }
     setBusy(true);
     setPricingTransition(true);
     setError(null);
@@ -1306,6 +1326,8 @@ export default function PosPage() {
       await removeLine(confirmation.lineId);
     } else if (confirmation.kind === "temporary") {
       await deleteTemporary(confirmation.draftId);
+    } else if (confirmation.kind === "order-save") {
+      await saveOrder();
     } else {
       await cancelSale();
     }
@@ -2337,8 +2359,9 @@ edgeCapable={edgeEnrollmentRequired}
             </div>
             <button
               type="button"
-              disabled={!salesReady || busy}
+              disabled={!salesReady || busy || Boolean(draft?.sourceOrderId)}
               onClick={() => setCustomerSearchOpen(true)}
+              title={draft?.sourceOrderId ? "El pedido conserva su cliente original" : "Buscar cliente"}
               className="mb-3 flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-auraly-accent/40 bg-white/5 text-sm font-semibold transition hover:bg-white/10 disabled:opacity-40"
             >
               <UserRound className="h-4 w-4" />
@@ -2381,7 +2404,7 @@ edgeCapable={edgeEnrollmentRequired}
               <button
                 type="button"
                 disabled={!orderSaveAvailable}
-                onClick={() => void saveOrder()}
+                onClick={requestSaveOrder}
                 title={serverConnected
                   ? draft?.customerId
                     ? "Reserva las existencias en la bodega Pedidos y limpia la venta"
@@ -2755,6 +2778,8 @@ edgeCapable={edgeEnrollmentRequired}
               ? "¿Eliminar este producto?"
               : confirmation.kind === "temporary"
                 ? "¿Eliminar esta venta en espera?"
+                : confirmation.kind === "order-save"
+                  ? "¿Actualizar el pedido recuperado?"
               : "¿Reiniciar toda la venta?"
           }
           description={
@@ -2762,11 +2787,18 @@ edgeCapable={edgeEnrollmentRequired}
               ? `${confirmation.productName} se retirará de la venta actual.`
               : confirmation.kind === "temporary"
                 ? `${confirmation.name} se eliminará definitivamente de este dispositivo.`
+                : confirmation.kind === "order-save"
+                  ? `${confirmation.orderNumber} reemplazará sus productos, cantidades, precios y descuentos con los valores de esta venta. La reserva de inventario se ajustará automáticamente.`
               : "Se eliminarán todos los productos capturados y se abrirá una venta limpia."
           }
           confirmLabel={
-            confirmation.kind === "sale" ? "Sí, reiniciar" : "Sí, eliminar"
+            confirmation.kind === "sale"
+              ? "Sí, reiniciar"
+              : confirmation.kind === "order-save"
+                ? "Sí, actualizar"
+                : "Sí, eliminar"
           }
+          tone={confirmation.kind === "order-save" ? "primary" : "danger"}
           busy={busy}
           onConfirm={confirmDestructiveAction}
           onCancel={() => {

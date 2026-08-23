@@ -10,6 +10,7 @@ export function PosConfirmDialog({
   busy,
   onConfirm,
   onCancel,
+  tone = "danger",
 }: {
   title: string;
   description: string;
@@ -17,6 +18,7 @@ export function PosConfirmDialog({
   busy: boolean;
   onConfirm: () => Promise<void>;
   onCancel: () => void;
+  tone?: "danger" | "primary";
 }) {
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
@@ -74,7 +76,11 @@ export function PosConfirmDialog({
             autoFocus
             type="submit"
             disabled={busy}
-            className="flex h-11 min-w-32 items-center justify-center gap-2 rounded-xl bg-red-700 px-5 font-bold text-white outline-none transition hover:bg-red-800 focus:ring-4 focus:ring-red-500/25 disabled:opacity-50"
+            className={`flex h-11 min-w-32 items-center justify-center gap-2 rounded-xl px-5 font-bold text-white outline-none transition focus:ring-4 disabled:opacity-50 ${
+              tone === "primary"
+                ? "bg-teal-700 hover:bg-teal-800 focus:ring-teal-500/25"
+                : "bg-red-700 hover:bg-red-800 focus:ring-red-500/25"
+            }`}
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             {confirmLabel}

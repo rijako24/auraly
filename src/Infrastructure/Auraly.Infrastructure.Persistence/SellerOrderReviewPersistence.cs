@@ -18,6 +18,7 @@ public sealed record SellerOrderReplacementLine(
     string UnitCode,
     decimal Quantity,
     decimal UnitPrice,
+    decimal DiscountAmount,
     decimal LineTotal,
     string RawPayloadJson);
 
@@ -90,6 +91,7 @@ public static class SellerOrderReviewPersistence
                     unitCode = line.UnitCode,
                     quantity = line.Quantity,
                     unitPrice = line.UnitPrice,
+                    discountAmount = line.DiscountAmount,
                     lineTotal = line.LineTotal,
                     rawPayloadJson = line.RawPayloadJson
                 })))

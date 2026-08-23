@@ -46,6 +46,8 @@
     "src/lib/api-execution-context.test.ts",
     "src/services/pos/pos-workspace-selection.ts",
     "src/services/pos/pos-workspace-selection.test.ts",
+    "src/services/orders/pos-order-update-lines.ts",
+    "src/services/orders/pos-order-update-lines.test.ts",
     "src/lib/product-pricing-calculator.ts",
     "src/lib/product-pricing-calculator.test.ts",
     "src/lib/pricing-publication-draft.ts",

@@ -11,6 +11,144 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Recovered_order_update_preserves_price_discount_and_reserved_quantity()
+    {
+        var userId = Guid.NewGuid();
+        var customerPartyId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var ordersWarehouseId = Guid.NewGuid();
+        var attributes = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            WarehouseId = fixture.WarehouseId,
+            ordersWarehouseId,
+            createdBy = userId,
+        });
+        await ExecuteAsync(
+            """
+            INSERT dbo.AppUsers(
+              UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,
+              FirstName,LastName,IsActive,CreatedAt)
+            VALUES(
+              @UserId,@TenantId,@Username,UPPER(@Username),
+              CONCAT(@Username,N'@test.local'),UPPER(CONCAT(@Username,N'@test.local')),
+              N'Edición',N'Pedido',1,SYSDATETIMEOFFSET());
+
+            INSERT dbo.Parties(
+              PartyId,TenantId,PartyType,DisplayName,LegalName,CompletionStatus,
+              IsActive,CreatedBy,CreatedAt)
+            VALUES(
+              @PartyId,@TenantId,N'Organization',N'Cliente edición',N'Cliente edición',
+              N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
+
+            INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
+            VALUES(@CustomerId,@PartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
+
+            INSERT dbo.Warehouses(
+              WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,
+              IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,IsActive,CreatedAt)
+            VALUES(
+              @OrdersWarehouseId,@BusinessId,@OrdersWarehouseCode,N'Pedidos edición',0,
+              1,0,0,0,1,SYSDATETIMEOFFSET());
+
+            INSERT dbo.InventoryBalances(
+              BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,
+              InventoryValue,LastProcessingSequence,UpdatedAt)
+            VALUES(@BusinessId,@OrdersWarehouseId,@ProductId,2,5000,10000,1,SYSDATETIMEOFFSET());
+
+            INSERT dbo.Orders(
+              OrderId,BusinessId,Source,FulfillmentMode,Status,CustomerId,
+              CustomerNameSnapshot,CustomerDocumentSnapshot,Currency,
+              Subtotal,DiscountTotal,Total,CustomerConfirmed,
+              ExternalDocumentNumber,CustomAttributesJson,CreatedAt)
+            VALUES(
+              @OrderId,@BusinessId,1,0,2,@CustomerId,
+              N'Cliente edición',N'900100200',N'COP',
+              20000,1000,19000,1,@OrderNumber,@Attributes,SYSUTCDATETIME());
+
+            INSERT dbo.OrderItems(
+              OrderItemId,OrderId,BusinessId,ProductId,Sku,ProductCodeSnapshot,
+              ProductNameSnapshot,UnitCodeSnapshot,Quantity,UnitPrice,
+              DiscountAmount,LineTotal,CreatedAt)
+            VALUES(
+              NEWID(),@OrderId,@BusinessId,@ProductId,N'P-E2E',N'P-E2E',
+              N'Producto edición',N'EA',2,10000,1000,19000,SYSUTCDATETIME());
+            """,
+            new("@UserId", userId),
+            new("@TenantId", fixture.TenantId),
+            new("@Username", $"order-edit-{userId:N}"),
+            new("@PartyId", customerPartyId),
+            new("@CustomerId", customerId),
+            new("@BusinessId", fixture.BusinessId),
+            new("@OrdersWarehouseId", ordersWarehouseId),
+            new("@OrdersWarehouseCode", $"PED-{ordersWarehouseId:N}"[..32]),
+            new("@ProductId", fixture.ProductId),
+            new("@OrderId", orderId),
+            new("@OrderNumber", $"PED-EDIT-{orderId:N}"),
+            new("@Attributes", attributes));
+
+        using var client = fixture.CreateUserClient(
+            userId,
+            CommercePermissionCodes.SalesCreate,
+            OrderPermissionCodes.Read,
+            OrderPermissionCodes.Recover,
+            OrderPermissionCodes.Update,
+            WorkSessionPermissionCodes.Open);
+        var workSession = await fixture.OpenWorkSessionAsync(client);
+        var draft = await OpenDraftAsync(client, workSession.WorkSessionId);
+        await RecoverAsync(client, userId, workSession.WorkSessionId, orderId, draft);
+
+        using var response = await client.PutAsJsonAsync(
+            $"/api/commerce/v1/seller-orders/{orderId:D}",
+            new
+            {
+                notes = "Pedido actualizado desde el POS",
+                idempotencyKey = Guid.NewGuid().ToString("N"),
+                workSessionId = workSession.WorkSessionId,
+                lines = new[]
+                {
+                    new
+                    {
+                        productId = fixture.ProductId,
+                        quantity = 2m,
+                        unitPrice = 12_500m,
+                        discountAmount = 2_500m,
+                    },
+                },
+            });
+        response.EnsureSuccessStatusCode();
+
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT o.CustomerId,o.Subtotal,o.DiscountTotal,o.Total,
+                   i.Quantity,i.UnitPrice,i.DiscountAmount,i.LineTotal,
+                   b.QuantityOnHand,o.Notes
+            FROM dbo.Orders o
+            JOIN dbo.OrderItems i ON i.OrderId=o.OrderId
+            JOIN dbo.InventoryBalances b
+              ON b.BusinessId=o.BusinessId AND b.WarehouseId=@OrdersWarehouseId
+             AND b.ProductId=i.ProductId
+            WHERE o.OrderId=@OrderId;
+            """;
+        command.Parameters.AddWithValue("@OrderId", orderId);
+        command.Parameters.AddWithValue("@OrdersWarehouseId", ordersWarehouseId);
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(customerId, reader.GetGuid(0));
+        Assert.Equal(25_000m, reader.GetDecimal(1));
+        Assert.Equal(2_500m, reader.GetDecimal(2));
+        Assert.Equal(22_500m, reader.GetDecimal(3));
+        Assert.Equal(2m, reader.GetDecimal(4));
+        Assert.Equal(12_500m, reader.GetDecimal(5));
+        Assert.Equal(2_500m, reader.GetDecimal(6));
+        Assert.Equal(22_500m, reader.GetDecimal(7));
+        Assert.Equal(2m, reader.GetDecimal(8));
+        Assert.Equal("Pedido actualizado desde el POS", reader.GetString(9));
+    }
+
+    [Fact]
     public async Task Recovering_order_preserves_commercial_values_but_uses_current_product_tax()
     {
         var userId = Guid.NewGuid();
