@@ -68,6 +68,7 @@ internal static class PosSaleHostModule
         PosEdgeRuntimeContext runtime,
         PosDeviceCredentials device)
     {
+        services.AddPosPeripherals(configuration, databasePath);
         var tenantId = new TenantId(RequiredGuid(configuration, "PosEdge:TenantId"));
         _ = ReadPermissions(configuration);
         var fiscal = ReadFiscalSettings(configuration, runtime.DeviceId);
@@ -110,19 +111,6 @@ internal static class PosSaleHostModule
             connectionString,
             sp.GetRequiredService<IAuralyIdGenerator>(),
             sp.GetRequiredService<TimeProvider>()));
-        services.AddSingleton<EscPosReceiptRenderer>();
-        services.AddSingleton<HtmlReceiptPreviewRenderer>();
-        services.AddSingleton<HalfLetterDocumentRenderer>();
-        services.AddSingleton<IReceiptPreviewLauncher, ShellReceiptPreviewLauncher>();
-        var dataDirectory = Path.GetDirectoryName(Path.GetFullPath(databasePath))!;
-        services.AddSingleton(new PosPrinterConfigurationStore(
-            Path.Combine(dataDirectory, "printer-settings.json"),
-            configuration["PosEdge:ReceiptOutputDirectory"]
-                ?? Path.Combine(dataDirectory, "receipts")));
-        services.AddSingleton<ConfigurableOrderDocumentPrinter>();
-        services.AddSingleton<ConfigurablePosReceiptPrinter>();
-        services.AddSingleton<IPosReceiptPrinter>(sp =>
-            sp.GetRequiredService<ConfigurablePosReceiptPrinter>());
         services.AddSingleton<PosSaleCompletionService>();
         services.AddHostedService<PosSaleStorageInitializer>();
         return services;

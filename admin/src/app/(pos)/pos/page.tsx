@@ -1882,11 +1882,11 @@ edgeCapable={edgeEnrollmentRequired}
               type="button"
               onClick={() => setPrinterOpen(true)}
               disabled={busy}
-              title={client.mode === "edge" ? "Configurar impresora, cajón y balanza" : "Configurar formatos de impresión"}
+              title="Configurar impresora, cajón y balanza"
               className="flex h-8 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-xs font-semibold text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
             >
               <Printer className="h-4 w-4" />
-              <span className="hidden lg:inline">{client.mode === "edge" ? "Periféricos" : "Impresión"}</span>
+              <span className="hidden lg:inline">Periféricos</span>
             </button>
           )}
           {client.mode === "edge" && serverConnected && (

@@ -809,13 +809,264 @@ public sealed class SqlAccountingStore(
         command.Parameters.AddWithValue("@To", to.ToDateTime(TimeOnly.MinValue));
     }
 
+    public async Task<AccountingOpeningBalanceView?> GetOpeningBalanceAsync(
+        AccountingUserIdentity user, DateOnly effectiveOn,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        return await ReadOpeningBalanceAsync(connection, null, user, effectiveOn, cancellationToken);
+    }
+
+    public async Task<AccountingOpeningBalanceView> SaveOpeningBalanceAsync(
+        AccountingUserIdentity user, SaveAccountingOpeningBalanceRequest request,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        try
+        {
+            await EnsureOpeningBalancesEditableAsync(connection, transaction, user, cancellationToken);
+            foreach (var line in request.Lines)
+            {
+                var requiresParty = await ValidatePostingAccountAsync(connection, transaction,
+                    user.TenantId, line.AccountId, cancellationToken);
+                if (requiresParty && line.PartyId is null)
+                    throw new AccountingValidationException("La cuenta seleccionada exige un tercero.");
+                await ValidateCostCenterAsync(connection, transaction, user.BusinessId,
+                    line.CostCenterId, cancellationToken);
+                if (line.PartyId is Guid partyId)
+                {
+                    await using var party = new SqlCommand("SELECT COUNT_BIG(1) FROM dbo.Parties WHERE PartyId=@PartyId AND TenantId=@TenantId AND IsActive=1;", connection, transaction);
+                    party.Parameters.AddWithValue("@PartyId", partyId);
+                    party.Parameters.AddWithValue("@TenantId", user.TenantId);
+                    if (Convert.ToInt64(await party.ExecuteScalarAsync(cancellationToken)) != 1)
+                        throw new AccountingValidationException("El saldo inicial referencia un tercero inexistente o inactivo.");
+                }
+            }
+
+            byte[]? expectedVersion = null;
+            if (!string.IsNullOrWhiteSpace(request.RowVersion))
+            {
+                try { expectedVersion = Convert.FromBase64String(request.RowVersion); }
+                catch (FormatException) { throw new AccountingValidationException("The opening balance version is invalid."); }
+            }
+            var now = timeProvider.GetUtcNow();
+            await using (var command = new SqlCommand("""
+                DECLARE @ExistingId uniqueidentifier=(SELECT BatchId
+                  FROM dbo.AccountingOpeningBalanceBatches WITH(UPDLOCK,HOLDLOCK)
+                  WHERE BusinessId=@BusinessId AND EffectiveOn=@EffectiveOn);
+                IF @ExistingId IS NOT NULL AND @ExistingId<>@BatchId THROW 51405,N'An opening balance already exists for this business and date.',1;
+
+                IF EXISTS(SELECT 1 FROM dbo.AccountingOpeningBalanceBatches WHERE BatchId=@BatchId)
+                BEGIN
+                  UPDATE dbo.AccountingOpeningBalanceBatches
+                  SET CurrencyCode=@Currency,Description=@Description,
+                      UpdatedByUserId=@UserId,UpdatedAt=@Now
+                  WHERE BatchId=@BatchId AND TenantId=@TenantId AND BusinessId=@BusinessId
+                    AND Status=N'Draft' AND (@ExpectedVersion IS NULL OR RowVersion=@ExpectedVersion);
+                  IF @@ROWCOUNT<>1 THROW 51406,N'The opening balance changed or is no longer editable.',1;
+                  DELETE dbo.AccountingOpeningBalanceLines WHERE BatchId=@BatchId;
+                END
+                ELSE
+                  INSERT dbo.AccountingOpeningBalanceBatches
+                    (BatchId,TenantId,BusinessId,EffectiveOn,CurrencyCode,Description,Status,
+                     CreatedByUserId,CreatedAt,UpdatedByUserId,UpdatedAt)
+                  VALUES(@BatchId,@TenantId,@BusinessId,@EffectiveOn,@Currency,@Description,N'Draft',
+                         @UserId,@Now,@UserId,@Now);
+                """, connection, transaction))
+            {
+                command.Parameters.AddWithValue("@BatchId", request.BatchId);
+                command.Parameters.AddWithValue("@TenantId", user.TenantId);
+                command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+                command.Parameters.AddWithValue("@EffectiveOn", request.EffectiveOn.ToDateTime(TimeOnly.MinValue));
+                command.Parameters.AddWithValue("@Currency", request.CurrencyCode);
+                command.Parameters.AddWithValue("@Description", request.Description.Trim());
+                command.Parameters.AddWithValue("@UserId", user.UserId);
+                command.Parameters.AddWithValue("@Now", now);
+                command.Parameters.Add("@ExpectedVersion", SqlDbType.Timestamp).Value = (object?)expectedVersion ?? DBNull.Value;
+                try { await command.ExecuteNonQueryAsync(cancellationToken); }
+                catch (SqlException exception) when (exception.Number is 51405 or 51406)
+                { throw new AccountingConflictException(exception.Message); }
+            }
+            for (var index = 0; index < request.Lines.Count; index++)
+            {
+                var line = request.Lines[index];
+                await using var insert = new SqlCommand("""
+                    INSERT dbo.AccountingOpeningBalanceLines
+                      (BatchId,LineNumber,AccountId,PartyId,CostCenterId,Description,Debit,Credit)
+                    VALUES(@BatchId,@LineNumber,@AccountId,@PartyId,@CostCenterId,@Description,@Debit,@Credit);
+                    """, connection, transaction);
+                insert.Parameters.AddWithValue("@BatchId", request.BatchId);
+                insert.Parameters.AddWithValue("@LineNumber", index + 1);
+                insert.Parameters.AddWithValue("@AccountId", line.AccountId);
+                insert.Parameters.AddWithValue("@PartyId", (object?)line.PartyId ?? DBNull.Value);
+                insert.Parameters.AddWithValue("@CostCenterId", (object?)line.CostCenterId ?? DBNull.Value);
+                insert.Parameters.AddWithValue("@Description", line.Description.Trim());
+                AddMoney(insert, "@Debit", line.Debit);
+                AddMoney(insert, "@Credit", line.Credit);
+                await insert.ExecuteNonQueryAsync(cancellationToken);
+            }
+            var result = await ReadOpeningBalanceAsync(connection, transaction, user,
+                request.EffectiveOn, cancellationToken) ?? throw new DBConcurrencyException("The opening balance was not persisted.");
+            await transaction.CommitAsync(cancellationToken);
+            return result;
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+    }
+
+    public async Task<AccountingOpeningBalanceView> ApproveOpeningBalanceAsync(
+        AccountingUserIdentity user, Guid batchId, CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        try
+        {
+            await EnsureOpeningBalancesEditableAsync(connection, transaction, user, cancellationToken);
+            DateOnly effectiveOn;
+            await using (var command = new SqlCommand("""
+                SELECT EffectiveOn FROM dbo.AccountingOpeningBalanceBatches WITH(UPDLOCK,HOLDLOCK)
+                WHERE BatchId=@BatchId AND TenantId=@TenantId AND BusinessId=@BusinessId AND Status=N'Draft';
+                """, connection, transaction))
+            {
+                command.Parameters.AddWithValue("@BatchId", batchId);
+                command.Parameters.AddWithValue("@TenantId", user.TenantId);
+                command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+                var value = await command.ExecuteScalarAsync(cancellationToken);
+                if (value is not DateTime date)
+                    throw new AccountingConflictException("El saldo inicial no existe o ya no está en borrador.");
+                effectiveOn = DateOnly.FromDateTime(date);
+            }
+            await using (var validate = new SqlCommand("""
+                SELECT COUNT(*),COALESCE(SUM(Debit),0),COALESCE(SUM(Credit),0),
+                  SUM(CASE WHEN a.AccountId IS NULL OR a.IsActive=0 OR a.AllowsPosting=0
+                            OR (a.RequiresParty=1 AND l.PartyId IS NULL)
+                            OR (l.PartyId IS NOT NULL AND p.PartyId IS NULL)
+                            OR (l.CostCenterId IS NOT NULL AND c.CostCenterId IS NULL)
+                           THEN 1 ELSE 0 END)
+                FROM dbo.AccountingOpeningBalanceLines l
+                LEFT JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId AND a.TenantId=@TenantId
+                LEFT JOIN dbo.Parties p ON p.PartyId=l.PartyId AND p.TenantId=@TenantId AND p.IsActive=1
+                LEFT JOIN dbo.AccountingCostCenters c ON c.CostCenterId=l.CostCenterId AND c.BusinessId=@BusinessId AND c.IsActive=1
+                WHERE l.BatchId=@BatchId;
+                """, connection, transaction))
+            {
+                validate.Parameters.AddWithValue("@BatchId", batchId);
+                validate.Parameters.AddWithValue("@TenantId", user.TenantId);
+                validate.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+                await using var reader = await validate.ExecuteReaderAsync(cancellationToken);
+                await reader.ReadAsync(cancellationToken);
+                var count = reader.GetInt32(0);
+                var debit = reader.GetDecimal(1);
+                var credit = reader.GetDecimal(2);
+                var invalid = reader.GetInt32(3);
+                if (count < 2) throw new AccountingValidationException("El saldo inicial requiere al menos dos líneas.");
+                if (invalid > 0) throw new AccountingValidationException("Hay líneas con cuentas, terceros o centros de costo inválidos.");
+                if (debit <= 0 || decimal.Round(debit, 4) != decimal.Round(credit, 4))
+                    throw new AccountingValidationException("El saldo inicial debe estar cuadrado: débitos y créditos deben ser iguales.");
+            }
+            await using (var approve = new SqlCommand("""
+                UPDATE dbo.AccountingOpeningBalanceBatches
+                SET Status=N'Approved',ApprovedByUserId=@UserId,ApprovedAt=@Now,
+                    UpdatedByUserId=@UserId,UpdatedAt=@Now
+                WHERE BatchId=@BatchId AND Status=N'Draft';
+                """, connection, transaction))
+            {
+                approve.Parameters.AddWithValue("@BatchId", batchId);
+                approve.Parameters.AddWithValue("@UserId", user.UserId);
+                approve.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
+                if (await approve.ExecuteNonQueryAsync(cancellationToken) != 1)
+                    throw new DBConcurrencyException("The opening balance was not approved.");
+            }
+            var result = await ReadOpeningBalanceAsync(connection, transaction, user,
+                effectiveOn, cancellationToken) ?? throw new DBConcurrencyException("The approved opening balance could not be read.");
+            await transaction.CommitAsync(cancellationToken);
+            return result;
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+    }
+
+    private static async Task EnsureOpeningBalancesEditableAsync(
+        SqlConnection connection, SqlTransaction transaction, AccountingUserIdentity user,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("SELECT COUNT_BIG(1) FROM dbo.AccountingTenantSettings WITH(UPDLOCK,HOLDLOCK) WHERE TenantId=@TenantId AND (Status=N'Ready' OR (Status=N'Configuring' AND EffectiveFrom IS NOT NULL));", connection, transaction);
+        command.Parameters.AddWithValue("@TenantId", user.TenantId);
+        if (Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)) > 0)
+            throw new AccountingConflictException("Los saldos iniciales no se pueden modificar después de activar contabilidad.");
+    }
+
+    private static async Task<AccountingOpeningBalanceView?> ReadOpeningBalanceAsync(
+        SqlConnection connection, SqlTransaction? transaction, AccountingUserIdentity user,
+        DateOnly effectiveOn, CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            SELECT BatchId,BusinessId,EffectiveOn,CurrencyCode,Description,Status,
+                   RowVersion,UpdatedAt,ApprovedAt,PostedAt
+            FROM dbo.AccountingOpeningBalanceBatches
+            WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND EffectiveOn=@EffectiveOn;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@TenantId", user.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        command.Parameters.AddWithValue("@EffectiveOn", effectiveOn.ToDateTime(TimeOnly.MinValue));
+        Guid batchId;
+        Guid businessId;
+        string currency;
+        string description;
+        string status;
+        string version;
+        DateTimeOffset updatedAt;
+        DateTimeOffset? approvedAt;
+        DateTimeOffset? postedAt;
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        {
+            if (!await reader.ReadAsync(cancellationToken)) return null;
+            batchId = reader.GetGuid(0); businessId = reader.GetGuid(1);
+            currency = reader.GetString(3); description = reader.GetString(4); status = reader.GetString(5);
+            version = Convert.ToBase64String((byte[])reader[6]);
+            updatedAt = reader.GetDateTimeOffset(7);
+            approvedAt = reader.IsDBNull(8) ? null : reader.GetDateTimeOffset(8);
+            postedAt = reader.IsDBNull(9) ? null : reader.GetDateTimeOffset(9);
+        }
+        await using var linesCommand = new SqlCommand("""
+            SELECT LineNumber,AccountId,PartyId,CostCenterId,Description,Debit,Credit
+            FROM dbo.AccountingOpeningBalanceLines WHERE BatchId=@BatchId ORDER BY LineNumber;
+            """, connection, transaction);
+        linesCommand.Parameters.AddWithValue("@BatchId", batchId);
+        var lines = new List<AccountingOpeningBalanceLineView>();
+        await using var linesReader = await linesCommand.ExecuteReaderAsync(cancellationToken);
+        while (await linesReader.ReadAsync(cancellationToken))
+            lines.Add(new(linesReader.GetInt32(0), linesReader.GetGuid(1),
+                linesReader.IsDBNull(2) ? null : linesReader.GetGuid(2),
+                linesReader.IsDBNull(3) ? null : linesReader.GetGuid(3), linesReader.GetString(4),
+                linesReader.GetDecimal(5), linesReader.GetDecimal(6)));
+        return new(batchId, businessId, effectiveOn, currency, description, status,
+            lines.Sum(line => line.Debit), lines.Sum(line => line.Credit), version,
+            updatedAt, approvedAt, postedAt, lines);
+    }
+
     public async Task<AccountingReadinessView> GetReadinessAsync(
-        AccountingUserIdentity user, CancellationToken cancellationToken)
+        AccountingUserIdentity user, DateOnly? effectiveFrom, string? openingBalanceMode,
+        CancellationToken cancellationToken)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         var issues = await ReadActivationIssuesAsync(
-            connection, null, user, DateOnly.FromDateTime(timeProvider.GetUtcNow().Date),
+            connection, null, user,
+            effectiveFrom ?? DateOnly.FromDateTime(timeProvider.GetUtcNow().Date),
+            openingBalanceMode,
             cancellationToken);
         await using var command = new SqlCommand("""
             SELECT Status,FunctionalCurrencyCode,EffectiveFrom,OpeningBalanceMode,ActivatedAt
@@ -842,7 +1093,8 @@ public sealed class SqlAccountingStore(
         try
         {
             var issues = await ReadActivationIssuesAsync(
-                connection, transaction, user, request.EffectiveFrom, cancellationToken);
+                connection, transaction, user, request.EffectiveFrom,
+                request.OpeningBalanceMode, cancellationToken);
             if (issues.Count > 0)
                 throw new AccountingConflictException(
                     $"Accounting is not ready: {string.Join("; ", issues)}");
@@ -851,13 +1103,18 @@ public sealed class SqlAccountingStore(
                 MERGE dbo.AccountingTenantSettings WITH(HOLDLOCK) AS target
                 USING(SELECT @TenantId TenantId) source ON target.TenantId=source.TenantId
                 WHEN MATCHED AND target.Status<>N'Ready' THEN UPDATE SET
-                  Status=N'Ready',FunctionalCurrencyCode=@Currency,EffectiveFrom=@EffectiveFrom,
-                  OpeningBalanceMode=@OpeningMode,ActivatedAt=@Now,
-                  ActivatedByUserId=@UserId,UpdatedAt=@Now
+                  Status=@ActivationStatus,FunctionalCurrencyCode=@Currency,EffectiveFrom=@EffectiveFrom,
+                  OpeningBalanceMode=@OpeningMode,ActivationRequestedAt=@Now,
+                  ActivationRequestedByUserId=@UserId,
+                  ActivatedAt=CASE WHEN @ActivationStatus=N'Ready' THEN @Now ELSE NULL END,
+                  ActivatedByUserId=CASE WHEN @ActivationStatus=N'Ready' THEN @UserId ELSE NULL END,
+                  UpdatedAt=@Now
                 WHEN NOT MATCHED THEN INSERT
                   (TenantId,Status,FunctionalCurrencyCode,EffectiveFrom,OpeningBalanceMode,
-                   ActivatedAt,ActivatedByUserId,UpdatedAt)
-                VALUES(@TenantId,N'Ready',@Currency,@EffectiveFrom,@OpeningMode,@Now,@UserId,@Now);
+                   ActivationRequestedAt,ActivationRequestedByUserId,ActivatedAt,ActivatedByUserId,UpdatedAt)
+                VALUES(@TenantId,@ActivationStatus,@Currency,@EffectiveFrom,@OpeningMode,@Now,@UserId,
+                   CASE WHEN @ActivationStatus=N'Ready' THEN @Now ELSE NULL END,
+                   CASE WHEN @ActivationStatus=N'Ready' THEN @UserId ELSE NULL END,@Now);
 
                 IF NOT EXISTS(SELECT 1 FROM dbo.AccountingVoucherCursors WITH(UPDLOCK,HOLDLOCK)
                               WHERE TenantId=@TenantId)
@@ -868,11 +1125,17 @@ public sealed class SqlAccountingStore(
             command.Parameters.AddWithValue("@Currency", request.FunctionalCurrencyCode);
             command.Parameters.AddWithValue("@EffectiveFrom", request.EffectiveFrom.ToDateTime(TimeOnly.MinValue));
             command.Parameters.AddWithValue("@OpeningMode", request.OpeningBalanceMode);
+            var activationStatus = request.OpeningBalanceMode == "ImportedAndApproved"
+                ? AccountingActivationStatuses.Configuring : AccountingActivationStatuses.Ready;
+            command.Parameters.AddWithValue("@ActivationStatus", activationStatus);
             command.Parameters.AddWithValue("@UserId", user.UserId);
             command.Parameters.AddWithValue("@Now", now);
             await command.ExecuteNonQueryAsync(cancellationToken);
+            if (request.OpeningBalanceMode == "ImportedAndApproved")
+                await QueueOpeningBalancesAsync(connection, transaction, user,
+                    request.EffectiveFrom, now, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            return new(AccountingActivationStatuses.Ready,
+            return new(activationStatus,
                 request.FunctionalCurrencyCode, request.EffectiveFrom,
                 request.OpeningBalanceMode, now, []);
         }
@@ -886,6 +1149,7 @@ public sealed class SqlAccountingStore(
     private static async Task<IReadOnlyList<string>> ReadActivationIssuesAsync(
         SqlConnection connection, SqlTransaction? transaction,
         AccountingUserIdentity user, DateOnly effectiveFrom,
+        string? openingBalanceMode,
         CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
@@ -906,18 +1170,116 @@ public sealed class SqlAccountingStore(
               (SELECT COUNT(*) FROM dbo.Businesses b
                WHERE b.TenantId=@TenantId AND b.IsActive=1 AND NOT EXISTS
                  (SELECT 1 FROM dbo.AccountingCostCenters c
-                  WHERE c.BusinessId=b.BusinessId AND c.IsDefault=1 AND c.IsActive=1));
+                  WHERE c.BusinessId=b.BusinessId AND c.IsDefault=1 AND c.IsActive=1)),
+              (SELECT COUNT(*) FROM dbo.Businesses b
+               WHERE @OpeningMode=N'ImportedAndApproved'
+                 AND b.TenantId=@TenantId AND b.IsActive=1 AND NOT EXISTS
+                 (SELECT 1 FROM dbo.AccountingOpeningBalanceBatches o
+                  WHERE o.TenantId=@TenantId AND o.BusinessId=b.BusinessId
+                    AND o.EffectiveOn=@EffectiveFrom
+                    AND o.Status IN (N'Approved',N'Posted')));
             """, connection, transaction);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@EffectiveFrom", effectiveFrom.ToDateTime(TimeOnly.MinValue));
+        command.Parameters.AddWithValue("@OpeningMode", (object?)openingBalanceMode ?? DBNull.Value);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         await reader.ReadAsync(cancellationToken);
         var issues = new List<string>();
-        if (reader.GetInt32(0) > 0) issues.Add("required account mappings are missing");
-        if (!reader.GetBoolean(1)) issues.Add("no open period contains the activation date");
-        if (reader.GetInt32(2) > 0) issues.Add("an active business has no default cost center");
+        if (reader.GetInt32(0) > 0) issues.Add("Faltan cuentas automáticas obligatorias asociadas a cuentas PUC activas.");
+        if (!reader.GetBoolean(1)) issues.Add("No existe un periodo abierto que incluya la fecha efectiva.");
+        if (reader.GetInt32(2) > 0) issues.Add("Hay un negocio activo sin centro de costo predeterminado.");
+        if (reader.GetInt32(3) > 0) issues.Add("Hay un negocio activo sin saldos iniciales aprobados para la fecha efectiva.");
         return issues;
+    }
+
+    private async Task QueueOpeningBalancesAsync(
+        SqlConnection connection, SqlTransaction transaction, AccountingUserIdentity user,
+        DateOnly effectiveOn, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var batches = new List<OpeningBatchPosting>();
+        await using (var command = new SqlCommand("""
+            SELECT b.BatchId,b.BusinessId,b.Description,l.LineNumber,l.AccountId,
+                   l.PartyId,l.CostCenterId,l.Description,l.Debit,l.Credit
+            FROM dbo.AccountingOpeningBalanceBatches b WITH(UPDLOCK,HOLDLOCK)
+            INNER JOIN dbo.Businesses business ON business.BusinessId=b.BusinessId AND business.IsActive=1
+            INNER JOIN dbo.AccountingOpeningBalanceLines l ON l.BatchId=b.BatchId
+            WHERE b.TenantId=@TenantId AND b.EffectiveOn=@EffectiveOn AND b.Status=N'Approved'
+            ORDER BY b.BusinessId,l.LineNumber;
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue("@TenantId", user.TenantId);
+            command.Parameters.AddWithValue("@EffectiveOn", effectiveOn.ToDateTime(TimeOnly.MinValue));
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var batchId = reader.GetGuid(0);
+                var batch = batches.LastOrDefault(value => value.BatchId == batchId);
+                if (batch is null)
+                {
+                    batch = new(batchId, reader.GetGuid(1), reader.GetString(2), []);
+                    batches.Add(batch);
+                }
+                batch.Lines.Add(new(reader.GetInt32(3), reader.GetGuid(4),
+                    reader.IsDBNull(5) ? null : reader.GetGuid(5),
+                    reader.IsDBNull(6) ? null : reader.GetGuid(6), reader.GetString(7),
+                    reader.GetDecimal(8), reader.GetDecimal(9)));
+            }
+        }
+
+        foreach (var batch in batches)
+        {
+            var occurredAt = new DateTimeOffset(effectiveOn.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+            var payload = JsonSerializer.Serialize(new ConfirmManualAccountingVoucherRequest(
+                batch.BatchId, batch.BusinessId, occurredAt, "OPENING_BALANCE",
+                batch.Description, batch.Lines.Select(line => new ManualVoucherLineRequest(
+                    line.AccountId, line.PartyId, line.CostCenterId, line.Description,
+                    line.Debit, line.Credit)).ToArray()));
+            var hash = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
+            var jobId = ids.NewId();
+            await using (var insert = new SqlCommand("""
+                IF NOT EXISTS(SELECT 1 FROM dbo.AccountingSourceDocuments WITH(UPDLOCK,HOLDLOCK)
+                              WHERE SourceDocumentId=@BatchId AND SourceDocumentType=N'AccountingOpeningBalance')
+                BEGIN
+                  INSERT dbo.AccountingSourceDocuments
+                  (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,PayloadJson,PayloadHash,OccurredAt,AcceptedAt)
+                  VALUES(@BatchId,N'AccountingOpeningBalance',@TenantId,@BusinessId,@Payload,@Hash,@OccurredAt,@Now);
+                  INSERT dbo.AccountingPostingJobs
+                  (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,SourceDocumentType,
+                   SourcePayloadHash,OccurredAt,Status,AttemptCount,CreatedAt)
+                VALUES(@JobId,@TenantId,@BusinessId,@BatchId,N'AccountingOpeningBalance',
+                       @Hash,@OccurredAt,N'Pending',0,@Now);
+                END
+                """, connection, transaction))
+            {
+                insert.Parameters.AddWithValue("@BatchId", batch.BatchId);
+                insert.Parameters.AddWithValue("@TenantId", user.TenantId);
+                insert.Parameters.AddWithValue("@BusinessId", batch.BusinessId);
+                insert.Parameters.AddWithValue("@Payload", payload);
+                insert.Parameters.Add("@Hash", SqlDbType.Binary, 32).Value = hash;
+                insert.Parameters.AddWithValue("@OccurredAt", occurredAt);
+                insert.Parameters.AddWithValue("@Now", now);
+                insert.Parameters.AddWithValue("@JobId", jobId);
+                await insert.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
+    }
+
+    public async Task<IReadOnlyList<AccountingOpeningBalancePosting>> ListPendingOpeningPostingsAsync(
+        AccountingUserIdentity user, CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand("""
+            SELECT SourceDocumentId,BusinessId FROM dbo.AccountingPostingJobs
+            WHERE TenantId=@TenantId AND SourceDocumentType=N'AccountingOpeningBalance'
+              AND Status<>N'Posted' ORDER BY OccurredAt,BusinessId;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", user.TenantId);
+        var values = new List<AccountingOpeningBalancePosting>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken)) values.Add(new(reader.GetGuid(0),reader.GetGuid(1)));
+        return values;
     }
 
     private async Task<string?> FindPostingSourceAsync(AccountingUserIdentity user, Guid documentId, CancellationToken token)
@@ -934,6 +1296,16 @@ public sealed class SqlAccountingStore(
     }
     private static async Task ExecuteMutationAsync(SqlCommand command, CancellationToken token, string conflict) { try { await command.ExecuteNonQueryAsync(token); } catch (SqlException exception) when (IsConflict(exception)) { throw new AccountingConflictException(conflict); } }
     private static bool IsConflict(SqlException exception) => exception.Number is 2601 or 2627 or 547 or 51400 or 51401 or 51402 or 51403 or 51404;
+    private static void AddMoney(SqlCommand command, string name, decimal value)
+    {
+        var parameter = command.Parameters.Add(name, SqlDbType.Decimal);
+        parameter.Precision = 19;
+        parameter.Scale = 4;
+        parameter.Value = value;
+    }
+    private sealed record OpeningBatchPosting(
+        Guid BatchId, Guid BusinessId, string Description,
+        List<AccountingOpeningBalanceLineView> Lines);
     private static void AddPeriod(SqlCommand command, Guid tenantId, DateOnly starts, DateOnly ends) { command.Parameters.AddWithValue("@TenantId", tenantId); command.Parameters.AddWithValue("@StartsOn", starts.ToDateTime(TimeOnly.MinValue)); command.Parameters.AddWithValue("@EndsOn", ends.ToDateTime(TimeOnly.MinValue)); }
     private static void AddMapping(SqlCommand command, SetAccountMappingRequest value) { command.Parameters.AddWithValue("@TenantId", value.TenantId); command.Parameters.AddWithValue("@BusinessId", (object?)value.BusinessId ?? DBNull.Value); command.Parameters.AddWithValue("@Category", value.Category); command.Parameters.AddWithValue("@AccountId", value.AccountId); command.Parameters.AddWithValue("@EffectiveFrom", value.EffectiveFrom.ToDateTime(TimeOnly.MinValue)); command.Parameters.AddWithValue("@EffectiveTo", value.EffectiveTo is null ? DBNull.Value : value.EffectiveTo.Value.ToDateTime(TimeOnly.MinValue)); }
     private static void AddScope(SqlCommand command, AccountingUserIdentity user, Guid documentId) { command.Parameters.AddWithValue("@TenantId", user.TenantId); command.Parameters.AddWithValue("@BusinessId", user.BusinessId); command.Parameters.AddWithValue("@DocumentId", documentId); }

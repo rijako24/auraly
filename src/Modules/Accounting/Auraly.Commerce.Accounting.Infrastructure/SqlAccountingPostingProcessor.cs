@@ -97,6 +97,8 @@ public sealed partial class SqlAccountingPostingProcessor(
                         connection, transaction, source, cancellationToken),
                 AccountingManualDocumentTypes.ManualVoucher =>
                     FinancialFactsResult.Ready(LoadManualVoucherFacts(source)),
+                AccountingManualDocumentTypes.OpeningBalance =>
+                    FinancialFactsResult.Ready(LoadManualVoucherFacts(source)),
                 _ => throw new InvalidOperationException(
                     $"Document type '{source.DocumentType}' is not supported for accounting.")
             };
@@ -137,6 +139,9 @@ public sealed partial class SqlAccountingPostingProcessor(
             await InsertEntryAsync(
                 connection, transaction, source, periodId.Value, facts.Description,
                 lines, cancellationToken);
+            if (source.DocumentType == AccountingManualDocumentTypes.OpeningBalance)
+                await CompleteOpeningActivationAsync(
+                    connection, transaction, source, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }
         catch
@@ -827,6 +832,38 @@ public sealed partial class SqlAccountingPostingProcessor(
             """, connection, transaction);
         command.Parameters.AddWithValue("@Code", code); command.Parameters.AddWithValue("@Message", message);
         command.Parameters.AddWithValue("@DocumentId", source.DocumentId); command.Parameters.AddWithValue("@DocumentType", source.DocumentType);
+        await command.ExecuteNonQueryAsync(token);
+    }
+
+    private static async Task CompleteOpeningActivationAsync(
+        SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
+        CancellationToken token)
+    {
+        await using var command = new SqlCommand("""
+            UPDATE dbo.AccountingOpeningBalanceBatches
+            SET Status=N'Posted',PostedAt=SYSDATETIMEOFFSET(),UpdatedAt=SYSDATETIMEOFFSET()
+            WHERE BatchId=@DocumentId AND TenantId=@TenantId AND BusinessId=@BusinessId
+              AND Status=N'Approved';
+            IF @@ROWCOUNT<>1 THROW 51407,N'The opening balance approval is no longer valid.',1;
+
+            UPDATE settings
+            SET Status=N'Ready',ActivatedAt=SYSDATETIMEOFFSET(),
+                ActivatedByUserId=settings.ActivationRequestedByUserId,
+                UpdatedAt=SYSDATETIMEOFFSET()
+            FROM dbo.AccountingTenantSettings settings
+            WHERE settings.TenantId=@TenantId AND settings.Status=N'Configuring'
+              AND settings.OpeningBalanceMode=N'ImportedAndApproved'
+              AND NOT EXISTS(
+                SELECT 1 FROM dbo.Businesses b
+                WHERE b.TenantId=@TenantId AND b.IsActive=1 AND NOT EXISTS(
+                  SELECT 1 FROM dbo.AccountingOpeningBalanceBatches openingBatch
+                  WHERE openingBatch.TenantId=@TenantId AND openingBatch.BusinessId=b.BusinessId
+                    AND openingBatch.EffectiveOn=settings.EffectiveFrom
+                    AND openingBatch.Status=N'Posted'));
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
+        command.Parameters.AddWithValue("@TenantId", source.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
         await command.ExecuteNonQueryAsync(token);
     }
 

@@ -2,11 +2,10 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, Check, Pencil, Plus, Radio, Search, Trash2 } from "lucide-react";
+import { Check, Pencil, Plus, Radio, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
-import { DateTimePicker } from "@/components/ui/date-time-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -26,8 +25,6 @@ type ItemDraft = {
   productName: string;
   amount: number;
   minimumQuantity: number;
-  validFrom: string;
-  validUntil: string;
   excluded: boolean;
 };
 
@@ -62,7 +59,7 @@ export function PriceSegmentsManager() {
         name: name.trim(),
         channelStrategy,
         channelValue: requiresChannelValue(channelStrategy) ? channelValue : null,
-        items: channelStrategy === "TieredProductPrice" ? createItems.map((item) => ({ productId: item.productId, amount: item.amount, minimumQuantity: item.minimumQuantity, validFrom: item.validFrom || null, validUntil: item.validUntil || null })) : undefined,
+        items: channelStrategy === "TieredProductPrice" ? createItems.map((item) => ({ productId: item.productId, amount: item.amount, minimumQuantity: item.minimumQuantity })) : undefined,
       });
     },
     onSuccess: async () => {
@@ -87,8 +84,6 @@ export function PriceSegmentsManager() {
       await priceSegmentsApi.saveItem(selected.id, value.productId, {
         amount: value.amount,
         minimumQuantity: value.minimumQuantity,
-        validFrom: value.validFrom || null,
-        validUntil: value.validUntil || null,
         excluded: value.excluded,
       });
     },
@@ -206,9 +201,9 @@ export function PriceSegmentsManager() {
           </section>
           {channelStrategy === "TieredProductPrice" && <section className="space-y-4 rounded-2xl border bg-muted/15 p-4">
             <div className="flex items-center justify-between gap-3"><div><h3 className="font-semibold">Productos y precios por cantidad</h3><p className="text-sm text-muted-foreground">Un producto puede tener varias escalas por cantidad.</p></div>{editingChannel && canManage && <Button onClick={() => { setDetailOpen(false); setDraft(emptyDraft()); }}><Plus className="mr-2 h-4 w-4" />Agregar producto</Button>}</div>
-            <div className="overflow-hidden rounded-xl border bg-background"><table className="w-full text-sm"><thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-3 text-left">Producto</th><th className="px-4 py-3 text-right">Desde</th><th className="px-4 py-3 text-right">Precio</th><th className="px-4 py-3 text-left">Vigencia</th>{editingChannel && <th className="w-24" />}</tr></thead><tbody>
-              {(items.data ?? []).map((item) => <tr key={item.productId + "-" + item.minimumQuantity} className="border-t align-middle"><td className="px-4 py-3"><b className="block">{item.productName}</b><small className="text-muted-foreground">{item.productCode || "Sin código"}</small></td><td className="px-4 py-3 text-right tabular-nums">{item.minimumQuantity}</td><td className="px-4 py-3 text-right"><span className={item.excluded ? "text-destructive" : "font-medium"}>{item.excluded ? "Excluido" : formatCurrency(item.amount)}</span></td><td className="px-4 py-3 text-muted-foreground"><CalendarClock className="mr-1 inline h-3.5 w-3.5" />{new Date(item.validFrom).toLocaleDateString("es-CO")}{item.validUntil ? " – " + new Date(item.validUntil).toLocaleDateString("es-CO") : " – Sin vencimiento"}</td>{editingChannel && <td className="px-2 py-3"><div className="flex justify-end"><Button size="icon" variant="ghost" aria-label={"Editar " + item.productName} onClick={() => { setDetailOpen(false); setDraft(fromItem(item)); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" className="text-destructive" aria-label={"Retirar " + item.productName} onClick={() => { setDetailOpen(false); setDeleteItem(item); }}><Trash2 className="h-4 w-4" /></Button></div></td>}</tr>)}
-              {!items.isLoading && (items.data ?? []).length === 0 && <tr><td colSpan={editingChannel ? 5 : 4} className="p-10 text-center text-muted-foreground">Sin productos configurados</td></tr>}
+            <div className="overflow-hidden rounded-xl border bg-background"><table className="w-full text-sm"><thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-3 text-left">Producto</th><th className="px-4 py-3 text-right">Desde</th><th className="px-4 py-3 text-right">Precio</th>{editingChannel && <th className="w-24" />}</tr></thead><tbody>
+              {(items.data ?? []).map((item) => <tr key={item.productId + "-" + item.minimumQuantity} className="border-t align-middle"><td className="px-4 py-3"><b className="block">{item.productName}</b><small className="text-muted-foreground">{item.productCode || "Sin código"}</small></td><td className="px-4 py-3 text-right tabular-nums">{item.minimumQuantity}</td><td className="px-4 py-3 text-right"><span className={item.excluded ? "text-destructive" : "font-medium"}>{item.excluded ? "Excluido" : formatCurrency(item.amount)}</span></td>{editingChannel && <td className="px-2 py-3"><div className="flex justify-end"><Button size="icon" variant="ghost" aria-label={"Editar " + item.productName} onClick={() => { setDetailOpen(false); setDraft(fromItem(item)); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" className="text-destructive" aria-label={"Retirar " + item.productName} onClick={() => { setDetailOpen(false); setDeleteItem(item); }}><Trash2 className="h-4 w-4" /></Button></div></td>}</tr>)}
+              {!items.isLoading && (items.data ?? []).length === 0 && <tr><td colSpan={editingChannel ? 4 : 3} className="p-10 text-center text-muted-foreground">Sin productos configurados</td></tr>}
             </tbody></table></div>
           </section>}
           <DialogFooter>
@@ -235,19 +230,18 @@ function PriceItemDialog({ segment, draft, onChange, onSave, saving }: { segment
   const isNew = draft?.originalMinimumQuantity === null;
 
   return <Dialog open={Boolean(draft)} onOpenChange={(open) => { if (!open) onChange(null); }}>
-    <DialogContent className="max-w-2xl">
+    <DialogContent className="max-h-[92dvh] max-w-3xl overflow-y-auto">
       {draft && segment && <>
         <DialogHeader><DialogTitle>{isNew ? "Agregar producto" : "Editar condición"}</DialogTitle><DialogDescription>Define el precio y la cantidad desde la cual aplica.</DialogDescription></DialogHeader>
         <div className="space-y-4">
           {isNew ? <div className="space-y-2">
-            {businessId && <ProductPicker businessId={businessId} selectedProductIds={new Set(draft.productId ? [draft.productId] : [])} disabled={saving} label="Producto *" onSelect={(product) => onChange({ ...draft, productId: product.productId, productCode: product.productCode, productName: product.productName, amount: product.saleUnitPrice ?? 0 })} />}
+            {businessId && <ProductPicker businessId={businessId} selectedProductIds={new Set(draft.productId ? [draft.productId] : [])} disabled={saving} label="Producto *" resultsMode="inline" onSelect={(product) => onChange({ ...draft, productId: product.productId, productCode: product.productCode, productName: product.productName, amount: product.saleUnitPrice ?? 0 })} />}
             {draft.productId && <p className="flex items-center gap-2 text-sm text-primary"><Check className="h-4 w-4" />{draft.productName}</p>}
           </div> : <div className="rounded-xl border bg-muted/20 p-3"><b>{draft.productName}</b><p className="text-xs text-muted-foreground">{draft.productCode}</p></div>}
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2"><Label>Precio *</Label><FormattedNumberInput kind="currency" value={draft.amount} invalid={draft.amount <= 0} onValueChange={(value) => onChange({ ...draft, amount: value ?? 0 })} /></div>
             <div className="space-y-2"><Label>Cantidad mínima *</Label><FormattedNumberInput value={draft.minimumQuantity} invalid={draft.minimumQuantity <= 0} onValueChange={(value) => onChange({ ...draft, minimumQuantity: value ?? 0 })} /></div>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label>Válido desde</Label><DateTimePicker value={draft.validFrom} onChange={(validFrom) => onChange({ ...draft, validFrom })} /></div><div className="space-y-2"><Label>Válido hasta</Label><DateTimePicker value={draft.validUntil} onChange={(validUntil) => onChange({ ...draft, validUntil })} /></div></div>
         </div>
         <DialogFooter><Button variant="outline" onClick={() => onChange(null)}>Cancelar</Button><Button disabled={saving || !draft.productId || draft.amount <= 0 || draft.minimumQuantity <= 0} onClick={() => onSave(draft)}>{saving ? "Guardando…" : "Guardar condición"}</Button></DialogFooter>
       </>}
@@ -256,14 +250,10 @@ function PriceItemDialog({ segment, draft, onChange, onSave, saving }: { segment
 }
 
 function emptyDraft(): ItemDraft {
-  return { originalMinimumQuantity: null, productId: "", productCode: "", productName: "", amount: 0, minimumQuantity: 1, validFrom: localDateTime(new Date()), validUntil: "", excluded: false };
+  return { originalMinimumQuantity: null, productId: "", productCode: "", productName: "", amount: 0, minimumQuantity: 1, excluded: false };
 }
 function fromItem(item: PriceSegmentItem): ItemDraft {
-  return { originalMinimumQuantity: item.minimumQuantity, productId: item.productId, productCode: item.productCode, productName: item.productName, amount: item.amount, minimumQuantity: item.minimumQuantity, validFrom: localDateTime(new Date(item.validFrom)), validUntil: item.validUntil ? localDateTime(new Date(item.validUntil)) : "", excluded: item.excluded };
-}
-function localDateTime(value: Date) {
-  const local = new Date(value.getTime() - value.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 16);
+  return { originalMinimumQuantity: item.minimumQuantity, productId: item.productId, productCode: item.productCode, productName: item.productName, amount: item.amount, minimumQuantity: item.minimumQuantity, excluded: item.excluded };
 }
 const channelStrategies: Array<{ value: PriceChannelStrategy; label: string }> = [
   { value: "TieredProductPrice", label: "Precios por producto y cantidad" },

@@ -18,6 +18,8 @@ CREATE TABLE [dbo].[AccountingTenantSettings]
     [FunctionalCurrencyCode] CHAR(3) NOT NULL CONSTRAINT [DF_AccountingTenantSettings_Currency] DEFAULT N'COP',
     [EffectiveFrom] DATE NULL,
     [OpeningBalanceMode] NVARCHAR(24) NULL,
+    [ActivationRequestedAt] DATETIMEOFFSET(7) NULL,
+    [ActivationRequestedByUserId] UNIQUEIDENTIFIER NULL,
     [ActivatedAt] DATETIMEOFFSET(7) NULL,
     [ActivatedByUserId] UNIQUEIDENTIFIER NULL,
     [UpdatedAt] DATETIMEOFFSET(7) NOT NULL,
@@ -25,10 +27,16 @@ CREATE TABLE [dbo].[AccountingTenantSettings]
     CONSTRAINT [PK_AccountingTenantSettings] PRIMARY KEY CLUSTERED ([TenantId]),
     CONSTRAINT [FK_AccountingTenantSettings_Tenant] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
     CONSTRAINT [FK_AccountingTenantSettings_ActivatedBy] FOREIGN KEY ([ActivatedByUserId]) REFERENCES [dbo].[AppUsers]([UserId]),
+    CONSTRAINT [FK_AccountingTenantSettings_ActivationRequestedBy] FOREIGN KEY ([ActivationRequestedByUserId]) REFERENCES [dbo].[AppUsers]([UserId]),
     CONSTRAINT [CK_AccountingTenantSettings_Status] CHECK ([Status] IN (N'Disabled',N'Configuring',N'Ready')),
     CONSTRAINT [CK_AccountingTenantSettings_Opening] CHECK ([OpeningBalanceMode] IS NULL OR [OpeningBalanceMode] IN (N'ZeroDeclared',N'ImportedAndApproved')),
     CONSTRAINT [CK_AccountingTenantSettings_Ready] CHECK
       (([Status]<>N'Ready' AND [EffectiveFrom] IS NULL AND [ActivatedAt] IS NULL AND [ActivatedByUserId] IS NULL)
+       OR
+       ([Status]=N'Configuring' AND [OpeningBalanceMode]=N'ImportedAndApproved'
+        AND [EffectiveFrom] IS NOT NULL AND [ActivationRequestedAt] IS NOT NULL
+        AND [ActivationRequestedByUserId] IS NOT NULL
+        AND [ActivatedAt] IS NULL AND [ActivatedByUserId] IS NULL)
        OR
        ([Status]=N'Ready' AND [EffectiveFrom] IS NOT NULL AND [OpeningBalanceMode] IS NOT NULL
         AND [ActivatedAt] IS NOT NULL AND [ActivatedByUserId] IS NOT NULL))
@@ -195,6 +203,65 @@ CREATE TABLE [dbo].[AccountingPeriods]
 GO
 CREATE INDEX [IX_AccountingPeriods_Tenant_Status_Dates]
     ON [dbo].[AccountingPeriods]([TenantId],[Status],[StartsOn],[EndsOn]);
+GO
+
+CREATE TABLE [dbo].[AccountingOpeningBalanceBatches]
+(
+    [BatchId] UNIQUEIDENTIFIER NOT NULL,
+    [TenantId] UNIQUEIDENTIFIER NOT NULL,
+    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [EffectiveOn] DATE NOT NULL,
+    [CurrencyCode] CHAR(3) NOT NULL,
+    [Description] NVARCHAR(300) NOT NULL,
+    [Status] NVARCHAR(16) NOT NULL,
+    [CreatedByUserId] UNIQUEIDENTIFIER NOT NULL,
+    [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
+    [UpdatedByUserId] UNIQUEIDENTIFIER NOT NULL,
+    [UpdatedAt] DATETIMEOFFSET(7) NOT NULL,
+    [ApprovedByUserId] UNIQUEIDENTIFIER NULL,
+    [ApprovedAt] DATETIMEOFFSET(7) NULL,
+    [PostedAt] DATETIMEOFFSET(7) NULL,
+    [RowVersion] ROWVERSION NOT NULL,
+    CONSTRAINT [PK_AccountingOpeningBalanceBatches] PRIMARY KEY CLUSTERED ([BatchId]),
+    CONSTRAINT [UQ_AccountingOpeningBalanceBatches_Business_Date] UNIQUE ([BusinessId],[EffectiveOn]),
+    CONSTRAINT [FK_AccountingOpeningBalanceBatches_Tenant] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
+    CONSTRAINT [FK_AccountingOpeningBalanceBatches_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
+    CONSTRAINT [FK_AccountingOpeningBalanceBatches_CreatedBy] FOREIGN KEY ([CreatedByUserId]) REFERENCES [dbo].[AppUsers]([UserId]),
+    CONSTRAINT [FK_AccountingOpeningBalanceBatches_UpdatedBy] FOREIGN KEY ([UpdatedByUserId]) REFERENCES [dbo].[AppUsers]([UserId]),
+    CONSTRAINT [FK_AccountingOpeningBalanceBatches_ApprovedBy] FOREIGN KEY ([ApprovedByUserId]) REFERENCES [dbo].[AppUsers]([UserId]),
+    CONSTRAINT [CK_AccountingOpeningBalanceBatches_Currency] CHECK ([CurrencyCode]=N'COP'),
+    CONSTRAINT [CK_AccountingOpeningBalanceBatches_Status] CHECK ([Status] IN (N'Draft',N'Approved',N'Posted')),
+    CONSTRAINT [CK_AccountingOpeningBalanceBatches_Approval] CHECK
+      (([Status]=N'Draft' AND [ApprovedByUserId] IS NULL AND [ApprovedAt] IS NULL AND [PostedAt] IS NULL)
+       OR ([Status]=N'Approved' AND [ApprovedByUserId] IS NOT NULL AND [ApprovedAt] IS NOT NULL AND [PostedAt] IS NULL)
+       OR ([Status]=N'Posted' AND [ApprovedByUserId] IS NOT NULL AND [ApprovedAt] IS NOT NULL AND [PostedAt] IS NOT NULL))
+);
+GO
+CREATE INDEX [IX_AccountingOpeningBalanceBatches_Tenant_Status_Date]
+    ON [dbo].[AccountingOpeningBalanceBatches]([TenantId],[Status],[EffectiveOn]) INCLUDE([BusinessId],[CurrencyCode]);
+GO
+
+CREATE TABLE [dbo].[AccountingOpeningBalanceLines]
+(
+    [BatchId] UNIQUEIDENTIFIER NOT NULL,
+    [LineNumber] INT NOT NULL,
+    [AccountId] UNIQUEIDENTIFIER NOT NULL,
+    [PartyId] UNIQUEIDENTIFIER NULL,
+    [CostCenterId] UNIQUEIDENTIFIER NULL,
+    [Description] NVARCHAR(300) NOT NULL,
+    [Debit] DECIMAL(19,4) NOT NULL,
+    [Credit] DECIMAL(19,4) NOT NULL,
+    CONSTRAINT [PK_AccountingOpeningBalanceLines] PRIMARY KEY CLUSTERED ([BatchId],[LineNumber]),
+    CONSTRAINT [FK_AccountingOpeningBalanceLines_Batch] FOREIGN KEY ([BatchId]) REFERENCES [dbo].[AccountingOpeningBalanceBatches]([BatchId]),
+    CONSTRAINT [FK_AccountingOpeningBalanceLines_Account] FOREIGN KEY ([AccountId]) REFERENCES [dbo].[AccountingAccounts]([AccountId]),
+    CONSTRAINT [FK_AccountingOpeningBalanceLines_Party] FOREIGN KEY ([PartyId]) REFERENCES [dbo].[Parties]([PartyId]),
+    CONSTRAINT [FK_AccountingOpeningBalanceLines_CostCenter] FOREIGN KEY ([CostCenterId]) REFERENCES [dbo].[AccountingCostCenters]([CostCenterId]),
+    CONSTRAINT [CK_AccountingOpeningBalanceLines_Number] CHECK ([LineNumber]>0),
+    CONSTRAINT [CK_AccountingOpeningBalanceLines_Side] CHECK (([Debit]>0 AND [Credit]=0) OR ([Credit]>0 AND [Debit]=0))
+);
+GO
+CREATE INDEX [IX_AccountingOpeningBalanceLines_Account]
+    ON [dbo].[AccountingOpeningBalanceLines]([AccountId],[BatchId]) INCLUDE([Debit],[Credit],[PartyId],[CostCenterId]);
 GO
 
 CREATE TABLE [dbo].[AccountingAccountMappings]

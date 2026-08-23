@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Printer, Save, X } from "lucide-react";
+import { Download, Loader2, Printer, Save, Scale, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   PosEdgeClient,
@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { loadPosInstaller, type PosInstaller } from "@/services/pos/pos-installer";
 
 type PrinterConfigurationClient = Pick<PosEdgeClient,
   "printerConfiguration" | "savePrinterConfiguration" | "readScaleWeight">;
@@ -28,6 +29,8 @@ export function PosPrinterDialog({
   const [serialPorts, setSerialPorts] = useState<string[]>([]);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [installer, setInstaller] = useState<PosInstaller | null>(null);
+  const [installerError, setInstallerError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -52,6 +55,17 @@ export function PosPrinterDialog({
             : "No fue posible consultar las impresoras.");
       })
       .finally(() => active && setBusy(false));
+    return () => { active = false; };
+  }, [client]);
+
+  useEffect(() => {
+    if (client) return;
+    let active = true;
+    loadPosInstaller()
+      .then((value) => active && setInstaller(value))
+      .catch((caught: unknown) => active && setInstallerError(
+        caught instanceof Error ? caught.message : "No fue posible consultar el instalador.",
+      ));
     return () => { active = false; };
   }, [client]);
 
@@ -87,12 +101,12 @@ export function PosPrinterDialog({
               Equipo local
             </p>
             <h2 className="mt-1 flex items-center gap-2 text-xl font-bold">
-              <Printer className="h-5 w-5" /> Impresión
+              <Printer className="h-5 w-5" /> Periféricos
             </h2>
             <p className="mt-1 text-sm text-slate-600">
               {client
-                ? "Se guardan en este computador, no en el tenant ni en el instalador."
-                : "El navegador guarda los formatos; la impresora se elige en su ventana de impresión."}
+                ? "La impresora y la balanza se configuran para este computador."
+                : "Puedes imprimir desde el navegador o instalar Auraly POS para usar los periféricos directamente."}
             </p>
           </div>
           <button type="button" onClick={onClose} disabled={busy}
@@ -106,7 +120,7 @@ export function PosPrinterDialog({
             </div>
           ) : value ? (
             <>
-              <div className="rounded-2xl border border-teal-200 bg-teal-50/60 p-4"><p className="font-semibold text-slate-950">{client?"Impresión directa por flujo":"Impresión desde el navegador"}</p><p className="mt-1 text-xs text-slate-600">{client?"Cada flujo usa su formato, impresora de Windows y, si corresponde, su ancho de tirilla. No se abre la impresión del navegador.":"Configura formato y ancho. Al emitir, el navegador abrirá su ventana para escoger la impresora."}</p></div>
+              <div className="rounded-2xl border border-teal-200 bg-teal-50/60 p-4"><p className="font-semibold text-slate-950">{client?"Impresión directa por flujo":"Impresión desde el navegador"}</p><p className="mt-1 text-xs text-slate-600">{client?"Cada flujo usa su formato, impresora de Windows y, si corresponde, su ancho de tirilla. No se abre la impresión del navegador.":"Sin Auraly POS, al emitir se abrirá el diálogo del navegador para escoger la impresora y confirmar el trabajo."}</p></div>
               <WorkflowPrinterCard title="Punto de venta" description="Facturas y comprobantes emitidos desde la caja." format={value.posOutputFormat??"Receipt"} printerName={value.posPrinterName??printerFor(value,value.posOutputFormat??"Receipt")} paperWidth={value.receiptPaperWidthMillimeters} printers={printers} onChange={(format,printerName,paperWidth)=>setValue(configureWorkflow(value,"pos",format,printerName,paperWidth))}/>
               <WorkflowPrinterCard title="Pedidos" description="Documentos facturados desde la pantalla de pedidos." format={value.ordersOutputFormat??"HalfLetter"} printerName={value.ordersPrinterName??printerFor(value,value.ordersOutputFormat??"HalfLetter")} paperWidth={value.ordersReceiptPaperWidthMillimeters??80} printers={printers} onChange={(format,printerName,paperWidth)=>setValue(configureWorkflow(value,"orders",format,printerName,paperWidth))}/>
               {client&&!printers.length && (
@@ -114,6 +128,11 @@ export function PosPrinterDialog({
                   Windows no reporto impresoras instaladas. Instala el controlador y vuelve a abrir esta configuracion.
                 </p>
               )}
+              {!client && <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <h3 className="font-semibold text-slate-950">Impresión directa</h3>
+                <p className="mt-1 text-sm text-slate-600">Para imprimir sin abrir el diálogo del navegador, seleccionar las impresoras de este equipo y controlar corte o cajón compatibles, instala la aplicación Auraly POS.</p>
+                {installer ? <a href={installer.downloadUrl} className="mt-3 inline-flex h-10 items-center gap-2 rounded-xl bg-teal-700 px-4 text-sm font-bold text-white"><Download className="h-4 w-4" />Instalar Auraly POS {installer.version}</a> : installerError ? <p className="mt-3 text-sm text-amber-700">{installerError}</p> : <p className="mt-3 flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Consultando instalador…</p>}
+              </section>}
               {client&&<ScaleConfiguration
                   value={value.scale ?? defaultScale()}
                   serialPorts={serialPorts}
@@ -129,6 +148,10 @@ export function PosPrinterDialog({
                     } finally { setBusy(false); }
                   }}
                 />}
+              {!client && <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <h3 className="flex items-center gap-2 font-semibold text-slate-950"><Scale className="h-4 w-4" />Balanza</h3>
+                <p className="mt-1 text-sm text-slate-600">Para conectar y leer automáticamente una balanza debes instalar Auraly POS. Sin la aplicación, el peso se ingresa manualmente.</p>
+              </section>}
             </>
           ) : null}
           {error && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}

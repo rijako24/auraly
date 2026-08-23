@@ -11,8 +11,12 @@ public interface IAccountingStore
     Task<IReadOnlyList<AccountingMappingView>> ListMappingsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
     Task<IReadOnlyList<AccountingCategoryDefinition>> ListCategoryDefinitionsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
     Task<AccountingDefaultsResult> EnsureDefaultsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
-    Task<AccountingReadinessView> GetReadinessAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
+    Task<AccountingReadinessView> GetReadinessAsync(AccountingUserIdentity user, DateOnly? effectiveFrom, string? openingBalanceMode, CancellationToken cancellationToken);
     Task<AccountingReadinessView> ActivateAsync(AccountingUserIdentity user, ActivateAccountingRequest request, CancellationToken cancellationToken);
+    Task<AccountingOpeningBalanceView?> GetOpeningBalanceAsync(AccountingUserIdentity user, DateOnly effectiveOn, CancellationToken cancellationToken);
+    Task<AccountingOpeningBalanceView> SaveOpeningBalanceAsync(AccountingUserIdentity user, SaveAccountingOpeningBalanceRequest request, CancellationToken cancellationToken);
+    Task<AccountingOpeningBalanceView> ApproveOpeningBalanceAsync(AccountingUserIdentity user, Guid batchId, CancellationToken cancellationToken);
+    Task<IReadOnlyList<AccountingOpeningBalancePosting>> ListPendingOpeningPostingsAsync(AccountingUserIdentity user, CancellationToken cancellationToken);
     Task<AccountingManualDocumentAcceptance> ConfirmAccountAdjustmentAsync(AccountingUserIdentity user, ConfirmAccountAdjustmentRequest request, CancellationToken cancellationToken);
     Task<AccountingManualDocumentAcceptance> ConfirmManualVoucherAsync(AccountingUserIdentity user, ConfirmManualAccountingVoucherRequest request, CancellationToken cancellationToken);
     Task<AccountingAccountView> CreateAccountAsync(AccountingUserIdentity user, CreateAccountingAccountRequest request, CancellationToken cancellationToken);
@@ -86,13 +90,15 @@ public sealed class AccountingService(
         return result;
     }
     public Task<AccountingReadinessView> GetReadinessAsync(
-        AccountingUserIdentity user, CancellationToken cancellationToken = default)
+        AccountingUserIdentity user, DateOnly? effectiveFrom = null,
+        string? openingBalanceMode = null,
+        CancellationToken cancellationToken = default)
     {
         Demand(user, AccountingPermissionCodes.Read);
-        return store.GetReadinessAsync(user, cancellationToken);
+        return store.GetReadinessAsync(user, effectiveFrom, openingBalanceMode, cancellationToken);
     }
 
-    public Task<AccountingReadinessView> ActivateAsync(
+    public async Task<AccountingReadinessView> ActivateAsync(
         AccountingUserIdentity user, ActivateAccountingRequest request,
         CancellationToken cancellationToken = default)
     {
@@ -104,7 +110,56 @@ public sealed class AccountingService(
                 "The initial accounting activation supports COP as functional currency.");
         if (request.OpeningBalanceMode is not ("ZeroDeclared" or "ImportedAndApproved"))
             throw new AccountingValidationException("The opening balance mode is invalid.");
-        return store.ActivateAsync(user, request, cancellationToken);
+        var result = await store.ActivateAsync(user, request, cancellationToken);
+        if (request.OpeningBalanceMode == "ImportedAndApproved")
+        {
+            foreach (var pending in await store.ListPendingOpeningPostingsAsync(user, cancellationToken))
+                await processing.RequestPostingAsync(pending.BusinessId, pending.BatchId,
+                    AccountingManualDocumentTypes.OpeningBalance, cancellationToken);
+            result = await store.GetReadinessAsync(user, request.EffectiveFrom,
+                request.OpeningBalanceMode, cancellationToken);
+        }
+        return result;
+    }
+
+    public Task<AccountingOpeningBalanceView?> GetOpeningBalanceAsync(
+        AccountingUserIdentity user, DateOnly effectiveOn,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, AccountingPermissionCodes.Read);
+        if (effectiveOn == default) throw new AccountingValidationException("EffectiveOn is required.");
+        return store.GetOpeningBalanceAsync(user, effectiveOn, cancellationToken);
+    }
+
+    public Task<AccountingOpeningBalanceView> SaveOpeningBalanceAsync(
+        AccountingUserIdentity user, SaveAccountingOpeningBalanceRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, AccountingPermissionCodes.Configure);
+        if (request.BatchId == Guid.Empty || request.BusinessId != user.BusinessId || request.EffectiveOn == default)
+            throw new AccountingForbiddenException("The opening balance scope is invalid.");
+        if (request.CurrencyCode is not "COP")
+            throw new AccountingValidationException("The initial accounting opening balance supports COP.");
+        ValidateText(request.Description, 300, "Description");
+        if (request.Lines is null || request.Lines.Count == 0)
+            throw new AccountingValidationException("The opening balance requires at least one line.");
+        foreach (var line in request.Lines)
+        {
+            if (line.AccountId == Guid.Empty || line.Debit < 0 || line.Credit < 0 ||
+                (line.Debit > 0) == (line.Credit > 0))
+                throw new AccountingValidationException("Each opening balance line requires exactly one positive debit or credit.");
+            ValidateText(line.Description, 300, "Line description");
+        }
+        return store.SaveOpeningBalanceAsync(user, request, cancellationToken);
+    }
+
+    public Task<AccountingOpeningBalanceView> ApproveOpeningBalanceAsync(
+        AccountingUserIdentity user, Guid batchId,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, AccountingPermissionCodes.Activate);
+        if (batchId == Guid.Empty) throw new AccountingValidationException("BatchId is required.");
+        return store.ApproveOpeningBalanceAsync(user, batchId, cancellationToken);
     }
 
     public Task<IReadOnlyList<AccountingAccountView>> ListAccountsAsync(

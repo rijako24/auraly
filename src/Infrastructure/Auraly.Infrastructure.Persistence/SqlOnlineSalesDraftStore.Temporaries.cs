@@ -29,22 +29,17 @@ public sealed partial class SqlOnlineSalesDraftStore
                    p.Reference,p.Name,
                    COALESCE(NULLIF(p.BaseUnitCode,N''),N'EA'),
                    COALESCE(t.Code,N'01'),COALESCE(t.Rate,0),
-                   price.Amount,
-                   price.CurrencyCode,
+                   resolved.Amount,
+                   resolved.CurrencyCode,
                    p.IsActive,
                    p.IsWeighable,
-                   p.AllowsFractionalSale
+                   p.AllowsFractionalSale,
+                   resolved.PriceSource
             FROM dbo.Products p
             LEFT JOIN dbo.TaxProfiles t
               ON t.TaxProfileId=p.TaxProfileId AND t.BusinessId=p.BusinessId AND t.IsActive=1
-            CROSS APPLY (
-              SELECT TOP(1) pp.Amount,pp.CurrencyCode
-              FROM dbo.ProductPrices pp
-              WHERE pp.BusinessId=p.BusinessId AND pp.ProductId=p.ProductId
-                AND pp.IsActive=1 AND pp.ValidFrom<=SYSDATETIMEOFFSET()
-                AND (pp.ValidUntil IS NULL OR pp.ValidUntil>SYSDATETIMEOFFSET())
-              ORDER BY pp.ValidFrom DESC,pp.ProductPriceId
-            ) price
+            CROSS APPLY dbo.CustomerProductPriceResolve(
+              @BusinessId,@WarehouseId,@CustomerId,p.ProductId,1,SYSDATETIMEOFFSET()) resolved
             WHERE p.BusinessId=@BusinessId AND p.IsActive=1
               AND (@Search=N'' OR p.Name LIKE @Contains
                    OR p.ProductCode LIKE @Prefix OR p.Sku LIKE @Prefix
@@ -70,7 +65,8 @@ public sealed partial class SqlOnlineSalesDraftStore
             """;
         var search = request.Search?.Trim() ?? string.Empty;
         command.Parameters.AddRange([
-            P("@BusinessId", scope.BusinessId), P("@Search", search),
+            P("@BusinessId", scope.BusinessId), P("@WarehouseId", scope.WarehouseId),
+            P("@CustomerId", request.CustomerId), P("@Search", search),
             P("@Contains", $"%{search}%"), P("@Prefix", $"{search}%"),
             P("@Skip", request.Skip), P("@Take", request.Take + 1)
         ]);
@@ -82,18 +78,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                     reader.IsDBNull(2) ? null : reader.GetString(2),
                     reader.GetString(3), reader.GetString(4), reader.GetString(5),
                     reader.GetDecimal(6), reader.GetDecimal(7), reader.GetString(8),
-                    reader.GetBoolean(9), reader.GetBoolean(10), reader.GetBoolean(11), "Public"));
-        if (request.CustomerId is not null)
-        {
-            for (var index = 0; index < items.Count; index++)
-            {
-                var item = items[index];
-                var resolved = await ResolvePriceAsync(connection, transaction, scope.BusinessId,
-                    scope.WarehouseId, request.CustomerId, item.ProductId, 1m, item.UnitPrice, item.CurrencyCode,
-                    cancellationToken);
-                items[index] = item with { UnitPrice = resolved.Amount, CurrencyCode = resolved.CurrencyCode, PriceSource = resolved.Source };
-            }
-        }
+                    reader.GetBoolean(9), reader.GetBoolean(10), reader.GetBoolean(11), reader.GetString(12)));
         var hasMore = items.Count > request.Take;
         if (hasMore) items.RemoveAt(items.Count - 1);
         await transaction.CommitAsync(cancellationToken);

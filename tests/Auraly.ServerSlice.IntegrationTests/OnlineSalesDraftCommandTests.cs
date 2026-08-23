@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
@@ -46,10 +47,10 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
               @PriceChannelId,@BusinessId,@ChannelCode,N'Canal online',N'TieredProductPrice',1,SYSDATETIMEOFFSET());
             INSERT dbo.ResolvedPriceChannelItems(
               ResolvedPriceChannelItemId,PriceChannelId,ProductId,MinimumQuantity,Amount,
-              CurrencyCode,ValidFrom,IsActive,CreatedAt)
+              CurrencyCode,ValidFrom,ValidUntil,IsActive,CreatedAt)
             VALUES(
               @PriceChannelItemId,@PriceChannelId,@ProductId,1,8000,N'COP',
-              DATEADD(day,-1,SYSDATETIMEOFFSET()),1,SYSDATETIMEOFFSET());
+              DATEADD(day,-2,SYSDATETIMEOFFSET()),DATEADD(day,-1,SYSDATETIMEOFFSET()),1,SYSDATETIMEOFFSET());
             INSERT dbo.ResolvedPriceChannelItems(
               ResolvedPriceChannelItemId,PriceChannelId,ProductId,MinimumQuantity,Amount,
               CurrencyCode,ValidFrom,IsActive,CreatedAt)
@@ -85,9 +86,36 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             CommercePermissionCodes.SalesCreate,
             CommercePermissionCodes.SalesDiscount,
             CommercePermissionCodes.SalesRemoveLine,
+            "orders.create",
             WorkSessionPermissionCodes.Open);
         var workSession = await fixture.OpenWorkSessionAsync(client);
         var draft = await OpenAsync(client, workSession.WorkSessionId);
+        var context = new OnlineSalesDraftContext(
+            fixture.BusinessId, fixture.WarehouseId, workSession.WorkSessionId);
+
+        using (var searchResponse = await client.PostAsJsonAsync(
+                   "/api/commerce/v1/pos/drafts/products/search",
+                   new SearchOnlineSalesRequest(context, "P-E2E", 0, 50, customerId)))
+        {
+            searchResponse.EnsureSuccessStatusCode();
+            var products = await searchResponse.Content.ReadFromJsonAsync<OnlineSalesProductPage>();
+            var product = Assert.Single(products!.Items, item => item.ProductId == fixture.ProductId);
+            Assert.Equal(8_000m, product.UnitPrice);
+            Assert.Equal("PriceChannel", product.PriceSource);
+        }
+
+        using (var catalogResponse = await client.PostAsJsonAsync(
+                   "/api/commerce/v1/seller-orders/catalog",
+                   new { businessId = fixture.BusinessId, warehouseId = fixture.WarehouseId,
+                       customerId, search = "P-E2E", skip = 0, take = 50 }))
+        {
+            catalogResponse.EnsureSuccessStatusCode();
+            var catalog = await catalogResponse.Content.ReadFromJsonAsync<JsonElement>();
+            var product = Assert.Single(catalog.GetProperty("items").EnumerateArray()
+                .Where(item => item.GetProperty("productId").GetGuid() == fixture.ProductId));
+            Assert.Equal(8_000m, product.GetProperty("unitPrice").GetDecimal());
+            Assert.Equal("PriceChannel", product.GetProperty("priceSource").GetString());
+        }
 
         var captured = await MutateAsync<OnlineSalesDraft>(
             client,

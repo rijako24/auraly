@@ -29,6 +29,9 @@ export interface ActivateAccounting {
   functionalCurrencyCode: "COP";
   openingBalanceMode: "ZeroDeclared" | "ImportedAndApproved";
 }
+export interface AccountingOpeningBalanceLine { lineNumber:number;accountId:string;partyId:string|null;costCenterId:string|null;description:string;debit:number;credit:number; }
+export interface AccountingOpeningBalance { batchId:string;businessId:string;effectiveOn:string;currencyCode:string;description:string;status:"Draft"|"Approved"|"Posted";debitTotal:number;creditTotal:number;rowVersion:string;updatedAt:string;approvedAt:string|null;postedAt:string|null;lines:AccountingOpeningBalanceLine[]; }
+export interface SaveAccountingOpeningBalance { batchId:string;businessId:string;effectiveOn:string;currencyCode:"COP";description:string;rowVersion:string|null;lines:Array<Omit<AccountingOpeningBalanceLine,"lineNumber">>; }
 export interface AccountingCategoryDefinition { category: string; displayName: string; accountType: string; isRequired: boolean; displayOrder: number; }
 export interface TrialBalanceRow { accountCode: string; accountName: string; debit: number; credit: number; balance: number; }
 export interface AccountMovementRow { entryId: string; entryNumber: string; sourceDocumentId: string; sourceDocumentType: string; occurredAt: string; description: string; debit: number; credit: number; balance: number; }
@@ -75,8 +78,11 @@ export const accountingApi = {
   periods: () => apiClient.get<AccountingPeriod[]>("/commerce/v1/accounting/periods"),
   mappings: () => apiClient.get<AccountingMapping[]>("/commerce/v1/accounting/account-mappings"),
   categoryDefinitions: () => apiClient.get<AccountingCategoryDefinition[]>("/commerce/v1/accounting/category-definitions"),
-  readiness: () => apiClient.get<AccountingReadiness>("/commerce/v1/accounting/readiness"),
+  readiness: (effectiveFrom?: string, openingBalanceMode?: "ZeroDeclared"|"ImportedAndApproved") => apiClient.get<AccountingReadiness>("/commerce/v1/accounting/readiness", { effectiveFrom, openingBalanceMode }),
   activate: (request: ActivateAccounting) => apiClient.post<AccountingReadiness>("/commerce/v1/accounting/activate", request),
+  openingBalance: (effectiveOn:string) => apiClient.get<AccountingOpeningBalance|null>("/commerce/v1/accounting/opening-balances", {effectiveOn}),
+  saveOpeningBalance: (request:SaveAccountingOpeningBalance) => apiClient.put<AccountingOpeningBalance>("/commerce/v1/accounting/opening-balances",request),
+  approveOpeningBalance: (batchId:string) => apiClient.post<AccountingOpeningBalance>(`/commerce/v1/accounting/opening-balances/${batchId}/approve`,{}),
   ensureDefaults: () => apiClient.put<AccountingDefaultsResult>("/commerce/v1/accounting/defaults", {}),
   createAccount: (request: CreateAccount) => apiClient.post<AccountingAccount>("/commerce/v1/accounting/accounts", request),
   createCostCenter: (request: CreateCostCenter) => apiClient.post<AccountingCostCenter>("/commerce/v1/accounting/cost-centers", request),

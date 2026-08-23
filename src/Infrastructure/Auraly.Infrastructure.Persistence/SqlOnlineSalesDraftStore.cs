@@ -822,65 +822,23 @@ public sealed partial class SqlOnlineSalesDraftStore(
         if (customerId is null)
             return new(baseAmount, baseCurrency, "Base", null);
 
-        await using var assignment = connection.CreateCommand();
-        assignment.Transaction = transaction;
-        assignment.CommandText = """
-            SELECT CASE WHEN s.ValidFrom<=SYSDATETIMEOFFSET()
-                          AND(s.ValidUntil IS NULL OR s.ValidUntil>SYSDATETIMEOFFSET())
-                        THEN s.PriceChannelId END
-            FROM dbo.Customers c
-            LEFT JOIN dbo.CustomerPricingSettings s ON s.CustomerId=c.CustomerId
-            WHERE c.CustomerId=@CustomerId AND c.BusinessId=@BusinessId AND c.IsActive=1;
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT Amount,CurrencyCode,PriceSource,PriceChannelId
+            FROM dbo.CustomerProductPriceResolve(
+              @BusinessId,@WarehouseId,@CustomerId,@ProductId,@Quantity,SYSDATETIMEOFFSET());
             """;
-        assignment.Parameters.AddRange([
-            P("@CustomerId", customerId), P("@BusinessId", businessId)
+        command.Parameters.AddRange([
+            P("@BusinessId", businessId), P("@WarehouseId", warehouseId),
+            P("@CustomerId", customerId), P("@ProductId", productId),
+            P("@Quantity", quantity)
         ]);
-        Guid? channelId;
-        await using (var reader = await assignment.ExecuteReaderAsync(ct))
-        {
-            if (!await reader.ReadAsync(ct))
-                return new(baseAmount, baseCurrency, "Base", null);
-            channelId = reader.IsDBNull(0) ? null : reader.GetGuid(0);
-        }
-
-        if (channelId is not null)
-        {
-            await using var channel = connection.CreateCommand();
-            channel.Transaction = transaction;
-            channel.CommandText = """
-                SELECT CONVERT(decimal(19,4),ROUND(CASE channel.Strategy
-                    WHEN N'TieredProductPrice' THEN special.Amount
-                    WHEN N'PercentageOverBasePrice' THEN @BaseAmount*(1+COALESCE(channel.Value,0)/100)
-                    WHEN N'PercentageBelowBasePrice' THEN @BaseAmount*(1-COALESCE(channel.Value,0)/100)
-                    WHEN N'PercentageOverAverageCost' THEN cost.Amount*(1+COALESCE(channel.Value,0)/100)
-                    WHEN N'FixedMarginOverAverageCost' THEN cost.Amount/(1-COALESCE(channel.Value,0)/100)
-                    WHEN N'SellAtAverageCost' THEN cost.Amount END,4))
-                FROM dbo.PriceChannels channel
-                OUTER APPLY(SELECT COALESCE(MAX(NULLIF(balance.AverageUnitCost,0)),MAX(price.CostBasisAmount),0) Amount
-                    FROM dbo.ProductPrices price
-                    LEFT JOIN dbo.InventoryBalances balance ON balance.BusinessId=price.BusinessId AND balance.ProductId=price.ProductId AND balance.WarehouseId=@WarehouseId
-                    WHERE price.BusinessId=@BusinessId AND price.ProductId=@ProductId AND price.IsActive=1) cost
-                OUTER APPLY(SELECT TOP(1) item.Amount FROM dbo.ResolvedPriceChannelItems item
-                    WHERE item.PriceChannelId=channel.PriceChannelId AND item.ProductId=@ProductId AND item.IsActive=1
-                      AND item.MinimumQuantity<=@Quantity
-                      AND item.ValidFrom<=SYSDATETIMEOFFSET() AND(item.ValidUntil IS NULL OR item.ValidUntil>SYSDATETIMEOFFSET())
-                    ORDER BY item.MinimumQuantity DESC,item.ValidFrom DESC) special
-                LEFT JOIN dbo.PriceChannelExclusions exclusion ON exclusion.PriceChannelId=channel.PriceChannelId AND exclusion.ProductId=@ProductId
-                WHERE channel.PriceChannelId=@SourceId AND channel.BusinessId=@BusinessId AND channel.IsActive=1
-                  AND exclusion.ProductId IS NULL AND(channel.Strategy<>N'TieredProductPrice' OR special.Amount IS NOT NULL)
-                ;
-                """;
-            channel.Parameters.AddRange([
-                P("@SourceId", channelId), P("@BusinessId", businessId),
-                P("@WarehouseId", warehouseId), P("@ProductId", productId), P("@Quantity", quantity), P("@BaseAmount", baseAmount)
-            ]);
-            await using var reader = await channel.ExecuteReaderAsync(ct);
-            if (await reader.ReadAsync(ct))
-                return new(
-                    reader.GetDecimal(0), baseCurrency,
-                    "PriceChannel", channelId);
-        }
-        return new(baseAmount, baseCurrency, "Base", channelId);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        return await reader.ReadAsync(ct)
+            ? new(reader.GetDecimal(0), reader.GetString(1), reader.GetString(2),
+                reader.IsDBNull(3) ? null : reader.GetGuid(3))
+            : new(baseAmount, baseCurrency, "Base", null);
     }
 
     private static async Task<OnlineSalesCustomer?> ReadCustomerAsync(

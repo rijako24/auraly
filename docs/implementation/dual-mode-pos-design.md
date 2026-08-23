@@ -7,10 +7,12 @@ Fecha: 2026-07-29
 Auraly expone una sola experiencia de facturación y selecciona el adaptador por la
 forma en que se abrió el equipo:
 
-- Un navegador sin enrolamiento usa `Auraly.Api` y SQL Server en línea.
-- La aplicación instalada y enrolada usa el host local de Auraly POS. El host
-  conserva SQLite, impresión, balanza, catálogo, numeración y outbox, y sincroniza
-  con el servidor cuando existe conexión.
+- Un navegador sin enrolamiento usa `Auraly.Api` y SQL Server en línea. Si no
+  detecta Auraly POS, imprime mediante el diálogo del navegador.
+- Auraly POS instalado, aun sin enrolar, expone impresión directa, cajón y
+  balanza a la venta online. Instalar no activa respaldo offline.
+- Al enrolar se habilitan además SQLite, catálogo local, login offline,
+  numeración, outbox y sincronización.
 
 No se pregunta al cajero el modo en cada inicio y no se cambia de persistencia a
 mitad de una factura. La ausencia de Internet no se confunde con la ausencia de
@@ -146,6 +148,7 @@ producción. No se puede afirmar paridad online si el estado vive solo en React.
 ## Reglas de transición
 
 - Navegador sin Edge: entra online automáticamente.
+- Auraly POS instalado sin enrolar: vende online y usa periféricos locales.
 - Aplicación enrolada con Internet: opera mediante Edge y sincroniza de inmediato.
 - Aplicación enrolada sin Internet: Edge continúa con los recursos provisionados.
 - Un borrador iniciado en un adaptador termina en ese adaptador.

@@ -91,6 +91,44 @@ Connected authenticated endpoints cover:
 - trial balance by date range and authenticated business;
 - period close guarded by pending postings.
 
+## Native opening balances and activation
+
+Opening balances are an accounting aggregate, not fields embedded in tenant
+settings. `AccountingOpeningBalanceBatches` owns one dated batch per business;
+`AccountingOpeningBalanceLines` owns its account, optional party, optional cost
+center, description and one debit or credit side. Drafts are editable with
+row-version concurrency. Approval requires at least two valid posting lines,
+active tenant/business dimensions and equal positive debit and credit totals.
+
+Activation has two catalog-backed modes:
+
+- `ZeroDeclared` changes the tenant directly to `Ready` and creates no opening
+  entry;
+- `ImportedAndApproved` requires an approved batch for every active business on
+  the effective date. Activation stores an immutable
+  `AccountingOpeningBalance` source and one `AccountingPostingJob` per batch,
+  then publishes them to the existing accounting queue. The tenant remains
+  `Configuring` until the accounting processor has posted every opening entry.
+
+The processor uses the same open-period validation, journal validator, voucher
+cursor, immutable source hash and `AccountingEntries`/`AccountingEntryLines`
+writer as every other accounting document. The batch becomes `Posted` in that
+same serializable transaction. Only the last successful batch changes the
+tenant to `Ready`; therefore later operational documents cannot create
+accounting jobs before the complete opening position exists.
+
+The opening entry establishes general-ledger balances used by trial balance,
+ledgers and statements. A party dimension is mandatory when its PUC account
+requires one. Inventory quantities and individually payable/receivable source
+documents remain owned by their operational subledgers; their import flows must
+reconcile to the opening general-ledger lines and must not be simulated by this
+batch.
+
+Stable UI choices such as opening mode and account nature are rows in the
+canonical `reference.Options` table. Accounts, parties, cost centers, periods,
+opening batches and opening lines retain dedicated domain tables. Free text is
+limited to business data such as names and descriptions.
+
 Permissions are seeded idempotently for administrators:
 
 - `accounting.read`;
@@ -106,6 +144,13 @@ system. The governing scope remains
 
 Still pending:
 
+- minimum bank reconciliation before presenting Auraly as capable of a complete
+  accounting close: bank-account master linked to postable PUC accounts,
+  idempotent CSV/XLSX statement import, statement movements, manual matching
+  against posted receipts/payments/vouchers, unmatched differences, accounting
+  treatment for fees and interest, audited close and authorized reopen. The
+  first delivery does not require direct bank APIs, automatic matching,
+  multi-movement suggestions or AI classification;
 - operational and fiscal debit note, then its posting rule;
 - supplier payments, payable settlements and other inventory-operation postings;
 - convergence of the current supplier master into Party before supplier and
@@ -114,3 +159,10 @@ Still pending:
 - account/party/center ledgers beyond the trial balance;
 - tax/withholding engine and regulatory reporting;
 - reconciliations and statutory financial statements.
+
+The current ledger can already debit and credit bank PUC accounts and report
+their book balance. Until the minimum reconciliation above exists, the
+accountant must compare that balance with the bank statement externally and
+post supported adjustments through audited manual vouchers. This is enough for
+initial operation, but it does not satisfy the acceptance gate for a fully
+reconciled accounting close.

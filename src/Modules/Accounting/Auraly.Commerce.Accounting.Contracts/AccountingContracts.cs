@@ -146,10 +146,40 @@ public sealed record AccountingReadinessView(
     DateTimeOffset? ActivatedAt,
     IReadOnlyList<string> BlockingIssues);
 
+public static class AccountingOpeningBalanceStatuses
+{
+    public const string Draft = "Draft";
+    public const string Approved = "Approved";
+    public const string Posted = "Posted";
+}
+
+public sealed record AccountingOpeningBalanceLineRequest(
+    Guid AccountId, Guid? PartyId, Guid? CostCenterId, string Description,
+    decimal Debit, decimal Credit);
+
+public sealed record SaveAccountingOpeningBalanceRequest(
+    Guid BatchId, Guid BusinessId, DateOnly EffectiveOn, string CurrencyCode,
+    string Description, string? RowVersion,
+    IReadOnlyList<AccountingOpeningBalanceLineRequest> Lines);
+
+public sealed record AccountingOpeningBalanceLineView(
+    int LineNumber, Guid AccountId, Guid? PartyId, Guid? CostCenterId,
+    string Description, decimal Debit, decimal Credit);
+
+public sealed record AccountingOpeningBalanceView(
+    Guid BatchId, Guid BusinessId, DateOnly EffectiveOn, string CurrencyCode,
+    string Description, string Status, decimal DebitTotal, decimal CreditTotal,
+    string RowVersion, DateTimeOffset UpdatedAt, DateTimeOffset? ApprovedAt,
+    DateTimeOffset? PostedAt, IReadOnlyList<AccountingOpeningBalanceLineView> Lines);
+
+public sealed record AccountingOpeningBalancePosting(
+    Guid BatchId, Guid BusinessId);
+
 public static class AccountingManualDocumentTypes
 {
     public const string AccountAdjustment = "AccountAdjustment";
     public const string ManualVoucher = "ManualAccountingVoucher";
+    public const string OpeningBalance = "AccountingOpeningBalance";
 }
 
 public static class AccountingSubledgerKinds

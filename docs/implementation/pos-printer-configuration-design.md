@@ -89,6 +89,9 @@ para descubrir impresoras y guardar los perfiles locales. Incluirá impresión
 de prueba y validará capacidades antes de activar corte o cajón. No se agrega
 ahora una pantalla desconectada ni una lista de impresoras simulada.
 
-Para una estación web no enrolada se usa impresión del navegador. Para una
-estación enrolada, POS Edge puede imprimir silenciosamente con `WindowsRaw`.
+Sin Auraly POS, la estación web usa el diálogo de impresión del navegador. Con
+Auraly POS instalado, POS Edge puede imprimir directamente con `WindowsRaw` y
+usar balanza o cajón aunque la venta continúe online y el equipo no esté
+enrolado. La vista `Periféricos` ofrece la descarga del instalador completo;
+el enrolamiento posterior solo habilita el respaldo offline.
 

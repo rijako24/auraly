@@ -103,7 +103,8 @@ public static class PosEdgeHostApplication
                 allowedOrigin,
                 serverUrl,
                 enrollmentStore,
-                startupModeStore);
+                startupModeStore,
+                databasePath);
         if (enrollment is not null)
             builder.Configuration.AddInMemoryCollection(
                 PosEdgeEnrollmentStore.ToConfiguration(
@@ -188,8 +189,6 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton<PosCashMovementServerClient>();
         builder.Services.AddSingleton<PosWorkSessionClosureServerClient>();
         builder.Services.AddSingleton<PosWorkSessionClosurePrinter>();
-        builder.Services.AddSingleton<PosCashDrawer>();
-        builder.Services.AddSingleton<PosScaleReader>();
         builder.Services.AddSingleton<PosPendingClosureAuthorizationStore>();
         builder.Services.AddHostedService<PosCashMovementStorageInitializer>();
         builder.Services.AddSingleton<IPosSaleUploadClient>(sp =>
@@ -319,6 +318,7 @@ public static class PosEdgeHostApplication
         });
 
         var edge = app.MapGroup("/edge/v1");
+        edge.MapPosPeripheralEndpoints();
         edge.MapGet("/configuration/startup-mode", (
             PosStartupModeStore startupMode) =>
             Results.Ok(new { mode = startupMode.Load(hasEnrollment: true) }));
@@ -333,73 +333,6 @@ public static class PosEdgeHostApplication
                 });
             startupMode.Save(request.Mode);
             return Results.NoContent();
-        });
-        edge.MapGet("/configuration/printers", (
-            PosPrinterConfigurationStore printers) =>
-            Results.Ok(new PosPrinterConfigurationView(
-                printers.Load(), printers.InstalledPrinters(), printers.SerialPorts())));
-        edge.MapPut("/configuration/printers", (
-            PosPrinterConfiguration request,
-            PosPrinterConfigurationStore printers) =>
-        {
-            try
-            {
-                return Results.Ok(new PosPrinterConfigurationView(
-                    printers.Save(request), printers.InstalledPrinters(), printers.SerialPorts()));
-            }
-            catch (ArgumentException exception)
-            {
-                return Results.ValidationProblem(
-                    new Dictionary<string, string[]>
-                    {
-                        [nameof(PosPrinterConfiguration)] = [exception.Message]
-                    });
-            }
-        });
-        edge.MapPost("/print/receipt", async (
-            DirectPrintReceiptRequest request,
-            IPosReceiptPrinter printer,
-            PosPrinterConfigurationStore configuration,
-            CancellationToken ct) =>
-        {
-            if (request.DocumentId == Guid.Empty ||
-                !PosSaleDocumentTypes.IsSupported(request.DocumentType))
-                return Results.ValidationProblem(new Dictionary<string, string[]>
-                {
-                    [nameof(request)] = ["El documento para imprimir no es válido."]
-                });
-            var settings = configuration.Load();
-            if (settings.ReceiptMode != PosPrinterModes.WindowsRaw ||
-                string.IsNullOrWhiteSpace(settings.ReceiptPrinterName))
-                return Results.Problem(
-                    "Configura una impresora de tirilla para impresión directa.",
-                    statusCode: StatusCodes.Status409Conflict);
-            try
-            {
-                await printer.PrintAsync(new PosReceipt(
-                    Guid.NewGuid(),
-                    new DocumentId(request.DocumentId),
-                    request.DocumentNumber,
-                    request.FiscalNumber,
-                    request.IssuedAt,
-                    request.CustomerIdentification,
-                    request.Lines,
-                    request.Payments,
-                    request.UntaxedAmount,
-                    request.TaxAmount,
-                    request.PayableAmount,
-                    request.Cufe,
-                    request.QrPayload,
-                    settings.ReceiptPaperWidthMillimeters,
-                    request.DocumentType), ct);
-                return Results.NoContent();
-            }
-            catch (Exception exception) when (exception is IOException or InvalidOperationException)
-            {
-                return Results.Problem(
-                    exception.Message,
-                    statusCode: StatusCodes.Status503ServiceUnavailable);
-            }
         });
         edge.MapPost("/cash-drawer/open", async (
             HttpContext http,
@@ -430,21 +363,6 @@ public static class PosEdgeHostApplication
                 return Results.NoContent();
             }
             catch (Exception exception) when (exception is IOException or InvalidOperationException)
-            {
-                return Results.Problem(
-                    exception.Message,
-                    statusCode: StatusCodes.Status503ServiceUnavailable);
-            }
-        });
-        edge.MapPost("/scale/read", async (
-            PosScaleReader scale,
-            CancellationToken ct) =>
-        {
-            try
-            {
-                return Results.Ok(await scale.ReadAsync(ct));
-            }
-            catch (Exception exception) when (exception is IOException or InvalidOperationException or ArgumentException)
             {
                 return Results.Problem(
                     exception.Message,
@@ -954,7 +872,8 @@ public static class PosEdgeHostApplication
         string allowedOrigin,
         string serverUrl,
         PosEdgeEnrollmentStore store,
-        PosStartupModeStore startupModeStore)
+        PosStartupModeStore startupModeStore,
+        string databasePath)
     {
         if (!Uri.TryCreate(serverUrl, UriKind.Absolute, out var serverUri) ||
             (serverUri.Scheme != Uri.UriSchemeHttps && !serverUri.IsLoopback))
@@ -965,6 +884,7 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton(new HttpClient { BaseAddress = serverUri });
         builder.Services.AddSingleton<PosEdgeEnrollmentClient>();
         builder.Services.AddSingleton<PosUiStateSignal>();
+        builder.Services.AddPosPeripherals(builder.Configuration, databasePath);
         var app = builder.Build();
         app.Use(async (context, next) =>
         {
@@ -988,7 +908,7 @@ public static class PosEdgeHostApplication
                     return;
                 }
                 SetCorsHeaders(context.Response, allowedOrigin);
-                context.Response.Headers.AccessControlAllowMethods = "GET,POST,OPTIONS";
+                context.Response.Headers.AccessControlAllowMethods = "GET,POST,PUT,OPTIONS";
                 context.Response.Headers.AccessControlAllowHeaders =
                     "Content-Type,X-Auraly-Edge-Session,X-Auraly-User-Session";
                 context.Response.StatusCode = StatusCodes.Status204NoContent;
@@ -1005,6 +925,23 @@ public static class PosEdgeHostApplication
             await next(context);
         });
         var edge = app.MapGroup("/edge/v1");
+        edge.MapPosPeripheralEndpoints();
+        edge.MapPost("/cash-drawer/open", (
+            PosCashDrawer cashDrawer) =>
+        {
+            try
+            {
+                cashDrawer.Open();
+                return Results.NoContent();
+            }
+            catch (Exception exception) when (
+                exception is IOException or InvalidOperationException)
+            {
+                return Results.Problem(
+                    exception.Message,
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+        });
         edge.MapGet("/configuration/startup-mode", () =>
             Results.Ok(new
             {

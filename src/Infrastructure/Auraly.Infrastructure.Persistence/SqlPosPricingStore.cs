@@ -43,7 +43,7 @@ public sealed partial class SqlCatalogStore
                           AND (pp.ValidUntil IS NULL OR pp.ValidUntil>SYSDATETIMEOFFSET())
                         ORDER BY pp.ValidFrom DESC) basePrice
             OUTER APPLY(SELECT COALESCE(MAX(NULLIF(balance.AverageUnitCost,0)),basePrice.CostBasisAmount,0) Amount FROM dbo.InventoryBalances balance WHERE balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId AND balance.ProductId=p.ProductId) cost
-            OUTER APPLY(SELECT item.Amount,item.MinimumQuantity FROM dbo.ResolvedPriceChannelItems item WHERE item.PriceChannelId=c.PriceChannelId AND item.ProductId=p.ProductId AND item.IsActive=1 AND item.ValidFrom<=SYSDATETIMEOFFSET() AND(item.ValidUntil IS NULL OR item.ValidUntil>SYSDATETIMEOFFSET()) AND c.Strategy=N'TieredProductPrice') special
+            OUTER APPLY(SELECT item.Amount,item.MinimumQuantity FROM dbo.ResolvedPriceChannelItems item WHERE item.PriceChannelId=c.PriceChannelId AND item.ProductId=p.ProductId AND item.IsActive=1 AND c.Strategy=N'TieredProductPrice') special
             LEFT JOIN dbo.PriceChannelExclusions exclusion ON exclusion.PriceChannelId=c.PriceChannelId AND exclusion.ProductId=p.ProductId
             WHERE c.BusinessId=@BusinessId AND c.IsActive=1 AND exclusion.ProductId IS NULL
               AND(c.Strategy<>N'TieredProductPrice' OR special.Amount IS NOT NULL);

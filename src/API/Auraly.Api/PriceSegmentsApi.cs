@@ -78,8 +78,6 @@ public static class PriceSegmentsApi
                     itemCommand.Parameters.AddWithValue("@ProductId", item.ProductId);
                     itemCommand.Parameters.AddWithValue("@MinimumQuantity", item.MinimumQuantity);
                     itemCommand.Parameters.AddWithValue("@Amount", item.Amount);
-                    itemCommand.Parameters.AddWithValue("@ValidFrom", item.ValidFrom ?? DateTimeOffset.UtcNow);
-                    itemCommand.Parameters.AddWithValue("@ValidUntil", (object?)item.ValidUntil ?? DBNull.Value);
                     itemCommand.Parameters.AddWithValue("@Excluded", false);
                     await itemCommand.ExecuteNonQueryAsync(ct);
                 }
@@ -112,8 +110,7 @@ public static class PriceSegmentsApi
         while (await reader.ReadAsync(ct))
             items.Add(new(reader.GetGuid(0), reader.IsDBNull(1) ? "" : reader.GetString(1),
                 reader.GetString(2), reader.GetDecimal(3), reader.GetString(4), reader.GetDecimal(5),
-                reader.GetFieldValue<DateTimeOffset>(6), reader.IsDBNull(7) ? null : reader.GetFieldValue<DateTimeOffset>(7),
-                reader.GetBoolean(8)));
+                reader.GetBoolean(6)));
         return Results.Ok(items);
     }
 
@@ -134,8 +131,6 @@ public static class PriceSegmentsApi
         command.Parameters.AddWithValue("@ProductId", productId);
         command.Parameters.AddWithValue("@MinimumQuantity", request.MinimumQuantity);
         command.Parameters.AddWithValue("@Amount", request.Amount);
-        command.Parameters.AddWithValue("@ValidFrom", request.ValidFrom ?? DateTimeOffset.UtcNow);
-        command.Parameters.AddWithValue("@ValidUntil", (object?)request.ValidUntil ?? DBNull.Value);
         command.Parameters.AddWithValue("@Excluded", request.Excluded);
         try { await command.ExecuteNonQueryAsync(ct); await transaction.CommitAsync(ct); }
         catch (SqlException exception) when (exception.Number == 51004)
@@ -223,10 +218,9 @@ public static class PriceSegmentsApi
 }
 
 public sealed record PriceSegmentSummary(Guid Id, string Code, string Name, bool IsActive, DateTimeOffset CreatedAt, int ProductCount, int CustomerCount, string Strategy, decimal? Value);
-public sealed record PriceSegmentItem(Guid ProductId, string ProductCode, string ProductName, decimal Amount, string CurrencyCode, decimal MinimumQuantity, DateTimeOffset ValidFrom, DateTimeOffset? ValidUntil, bool Excluded);
+public sealed record PriceSegmentItem(Guid ProductId, string ProductCode, string ProductName, decimal Amount, string CurrencyCode, decimal MinimumQuantity, bool Excluded);
 public sealed record SavePriceSegmentRequest(string Name,
     string ChannelStrategy, decimal? ChannelValue, IReadOnlyList<CreatePriceSegmentItemRequest>? Items);
-public sealed record CreatePriceSegmentItemRequest(Guid ProductId, decimal Amount,
-    decimal MinimumQuantity, DateTimeOffset? ValidFrom, DateTimeOffset? ValidUntil);
-public sealed record SavePriceSegmentItemRequest(decimal Amount, decimal MinimumQuantity, DateTimeOffset? ValidFrom, DateTimeOffset? ValidUntil, bool Excluded);
+public sealed record CreatePriceSegmentItemRequest(Guid ProductId, decimal Amount, decimal MinimumQuantity);
+public sealed record SavePriceSegmentItemRequest(decimal Amount, decimal MinimumQuantity, bool Excluded);
 public sealed record SavePriceChannelSettingsRequest(string Name, string ChannelStrategy, decimal? ChannelValue);

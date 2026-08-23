@@ -86,7 +86,8 @@ public static class AccountingProcessingPolicy
         "CashDisbursement",
         "Expense",
         AccountingManualDocumentTypes.AccountAdjustment,
-        AccountingManualDocumentTypes.ManualVoucher
+        AccountingManualDocumentTypes.ManualVoucher,
+        AccountingManualDocumentTypes.OpeningBalance
     ];
 
 

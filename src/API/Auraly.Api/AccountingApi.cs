@@ -8,10 +8,16 @@ public static class AccountingApi
 {
     public static IEndpointRouteBuilder MapAccountingApi(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/api/commerce/v1/accounting/readiness", async (HttpContext context, AccountingService service, CancellationToken token) =>
-            await ExecuteAsync(() => service.GetReadinessAsync(context.User.ToAccountingIdentity(), token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/readiness", async (HttpContext context, DateOnly? effectiveFrom, string? openingBalanceMode, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.GetReadinessAsync(context.User.ToAccountingIdentity(), effectiveFrom, openingBalanceMode, token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapPost("/api/commerce/v1/accounting/activate", async (HttpContext context, ActivateAccountingRequest request, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ActivateAsync(context.User.ToAccountingIdentity(), request, token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapGet("/api/commerce/v1/accounting/opening-balances", async (HttpContext context, DateOnly effectiveOn, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.GetOpeningBalanceAsync(context.User.ToAccountingIdentity(), effectiveOn, token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapPut("/api/commerce/v1/accounting/opening-balances", async (HttpContext context, SaveAccountingOpeningBalanceRequest request, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.SaveOpeningBalanceAsync(context.User.ToAccountingIdentity(), request, token), Results.Ok)).RequireAuthorization("accounting.user");
+        endpoints.MapPost("/api/commerce/v1/accounting/opening-balances/{batchId:guid}/approve", async (HttpContext context, Guid batchId, AccountingService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.ApproveOpeningBalanceAsync(context.User.ToAccountingIdentity(), batchId, token), Results.Ok)).RequireAuthorization("accounting.user");
         endpoints.MapPost("/api/commerce/v1/accounting/manual/account-adjustments", async (HttpContext context, ConfirmAccountAdjustmentRequest request, AccountingService service, CancellationToken token) =>
             await ExecuteAsync(() => service.ConfirmAccountAdjustmentAsync(context.User.ToAccountingIdentity(), request, token), value => Results.Accepted($"/api/commerce/v1/accounting/entries/by-document/{value.DocumentId:D}", value))).RequireAuthorization("accounting.user");
         endpoints.MapPost("/api/commerce/v1/accounting/manual/vouchers", async (HttpContext context, ConfirmManualAccountingVoucherRequest request, AccountingService service, CancellationToken token) =>

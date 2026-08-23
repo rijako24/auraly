@@ -11,6 +11,8 @@ enrolado.
 
 - Un equipo sin host local factura en línea contra Auraly Server.
 - Un host local nuevo arranca en estado `EnrollmentRequired`.
+- En ese estado ya permite configurar impresora, cajón y balanza; el
+  enrolamiento se exige únicamente para el respaldo de venta sin conexión.
 - Un usuario con `pos.devices.enroll` elige sede y caja y puede
   preparar ese equipo para trabajar sin conexión.
 - La misma caja puede seguir usándose en línea desde uno o varios equipos.
@@ -83,7 +85,8 @@ Esta rebanada no declara terminado:
 - snapshot durable de usuarios, credenciales locales y permisos;
 - menú general offline;
 - revocación y reasignación administrativa explícita de un Edge;
-- selección administrativa de impresora y balanza durante el enrolamiento;
+- selección administrativa de impresora y balanza desde `Periféricos`, con o
+  sin enrolamiento;
 - instalador Windows y validación del reinicio automático como servicio.
 
 Actualmente el paquete identifica al usuario que autorizó el equipo, pero no

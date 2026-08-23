@@ -19,6 +19,7 @@
     <None Include="Scripts\Seeds\*.sql" />
   </ItemGroup>
   <ItemGroup>
+    <Build Include="Functions\CustomerProductPriceResolve.sql" />
     <Build Include="StoredProcedures\SellerOrderCatalogGet.sql" />
     <Build Include="StoredProcedures\SellerOrderContextGet.sql" />
     <Build Include="StoredProcedures\SellerOrderProductResolve.sql" />

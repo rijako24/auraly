@@ -171,6 +171,11 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
 
             body = await client.GetFromJsonAsync<JsonElement>("/edge/v1/health");
             Assert.Equal("enrolled", body.GetProperty("startupMode").GetString());
+            using var printers = await client.GetAsync(
+                "/edge/v1/configuration/printers");
+            printers.EnsureSuccessStatusCode();
+            using var scale = await client.PostAsync("/edge/v1/scale/read", null);
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, scale.StatusCode);
             Assert.Equal(
                 HttpStatusCode.NotFound,
                 (await client.GetAsync("/edge/v1/drafts/active")).StatusCode);

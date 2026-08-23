@@ -23,6 +23,72 @@ public sealed class AccountingSliceCollection : ICollectionFixture<ServerSliceFi
 public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Approved_opening_balances_are_posted_before_accounting_becomes_ready()
+    {
+        await DisableAccountingAsync();
+        using var accounting = fixture.CreateAdminClient(
+            AccountingPermissionCodes.Read,
+            AccountingPermissionCodes.Configure,
+            AccountingPermissionCodes.Activate);
+        using (var defaults = await accounting.PutAsync("/api/commerce/v1/accounting/defaults", null))
+            defaults.EnsureSuccessStatusCode();
+
+        var effectiveOn = new DateOnly(2026, 3, 1);
+        using (var missing = await accounting.GetAsync(
+                   $"/api/commerce/v1/accounting/readiness?effectiveFrom={effectiveOn:yyyy-MM-dd}&openingBalanceMode=ImportedAndApproved"))
+        {
+            missing.EnsureSuccessStatusCode();
+            var readiness = await missing.Content.ReadFromJsonAsync<AccountingReadinessView>();
+            Assert.Contains(readiness!.BlockingIssues,
+                issue => issue.Contains("saldos iniciales aprobados", StringComparison.Ordinal));
+        }
+
+        using var accountsResponse = await accounting.GetAsync("/api/commerce/v1/accounting/accounts");
+        accountsResponse.EnsureSuccessStatusCode();
+        var accounts = await accountsResponse.Content.ReadFromJsonAsync<AccountingAccountView[]>() ?? [];
+        var debitAccount = accounts.First(account => account.IsActive && account.AllowsPosting && account.AccountType == "Asset" && !account.RequiresParty);
+        var creditAccount = accounts.First(account => account.IsActive && account.AllowsPosting && account.AccountType == "Equity" && !account.RequiresParty);
+        var batchId = Guid.NewGuid();
+        var request = new SaveAccountingOpeningBalanceRequest(
+            batchId, fixture.BusinessId, effectiveOn, "COP", "Asiento de apertura certificado", null,
+            [
+                new(debitAccount.AccountId, null, null, "Disponible inicial", 125_000m, 0m),
+                new(creditAccount.AccountId, null, null, "Patrimonio inicial", 0m, 125_000m)
+            ]);
+        using (var save = await accounting.PutAsJsonAsync(
+                   "/api/commerce/v1/accounting/opening-balances", request))
+        {
+            Assert.True(save.IsSuccessStatusCode, await save.Content.ReadAsStringAsync());
+            Assert.Equal(AccountingOpeningBalanceStatuses.Draft,
+                (await save.Content.ReadFromJsonAsync<AccountingOpeningBalanceView>())!.Status);
+        }
+        using (var approve = await accounting.PostAsJsonAsync(
+                   $"/api/commerce/v1/accounting/opening-balances/{batchId:D}/approve", new { }))
+        {
+            approve.EnsureSuccessStatusCode();
+            Assert.Equal(AccountingOpeningBalanceStatuses.Approved,
+                (await approve.Content.ReadFromJsonAsync<AccountingOpeningBalanceView>())!.Status);
+        }
+        using (var activate = await accounting.PostAsJsonAsync(
+                   "/api/commerce/v1/accounting/activate",
+                   new ActivateAccountingRequest(effectiveOn, "COP", "ImportedAndApproved")))
+        {
+            activate.EnsureSuccessStatusCode();
+            var readiness = await activate.Content.ReadFromJsonAsync<AccountingReadinessView>();
+            Assert.Equal(AccountingActivationStatuses.Ready, readiness!.Status);
+            Assert.Empty(readiness.BlockingIssues);
+        }
+        using var entryResponse = await accounting.GetAsync(
+            $"/api/commerce/v1/accounting/entries/by-document/{batchId:D}");
+        entryResponse.EnsureSuccessStatusCode();
+        var entry = await entryResponse.Content.ReadFromJsonAsync<AccountingEntryView>();
+        Assert.Equal(AccountingManualDocumentTypes.OpeningBalance, entry!.SourceDocumentType);
+        Assert.Equal(125_000m, entry.DebitTotal);
+        Assert.Equal(entry.DebitTotal, entry.CreditTotal);
+        Assert.Equal(2, entry.Lines.Count);
+    }
+
+    [Fact]
     [Trait("EngineCertification", "EndToEnd")]
     public async Task Invoice_and_credit_note_post_balanced_once_and_periods_are_controlled()
     {
