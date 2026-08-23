@@ -407,6 +407,21 @@ resource fiscalProcessingQueue 'Microsoft.ServiceBus/namespaces/queues@2024-01-0
   }
 }
 
+resource salesReportingQueue 'Microsoft.ServiceBus/namespaces/queues@2024-01-01' = {
+  parent: serviceBus
+  name: 'auraly-sales-reporting'
+  properties: {
+    deadLetteringOnMessageExpiration: true
+    defaultMessageTimeToLive: 'P7D'
+    duplicateDetectionHistoryTimeWindow: 'PT10M'
+    enableBatchedOperations: true
+    lockDuration: 'PT5M'
+    maxDeliveryCount: 10
+    requiresDuplicateDetection: true
+    requiresSession: true
+  }
+}
+
 resource externalCustomerQueue 'Microsoft.ServiceBus/namespaces/queues@2024-01-01' = {
   parent: serviceBus
   name: 'auraly-external-customer-reconciliation'
@@ -667,6 +682,10 @@ resource apiApp 'Microsoft.Web/sites@2024-04-01' = {
         {
           name: 'Auraly__Fiscal__ServiceBus__QueueName'
           value: fiscalProcessingQueue.name
+        }
+        {
+          name: 'Auraly__SalesReporting__ServiceBus__QueueName'
+          value: salesReportingQueue.name
         }
         {
           name: 'Auraly__ExternalCustomerReconciliation__QueueName'

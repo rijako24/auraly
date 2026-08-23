@@ -18,7 +18,8 @@ el orden por negocio, la idempotencia, el kardex canónico y la recuperación.
 
 ## 2. Topología obligatoria
 
-Auraly tiene cuatro colas principales y cuatro propietarios de ejecución:
+El ciclo documental de Auraly tiene exactamente cuatro colas principales y
+cuatro propietarios de ejecución:
 
 | Cola | Motor | Única responsabilidad |
 | --- | --- | --- |
@@ -30,6 +31,12 @@ Auraly tiene cuatro colas principales y cuatro propietarios de ejecución:
 Las colas de retry y dead-letter son infraestructura de las cuatro anteriores;
 no son motores de negocio adicionales. Generación y envío DIAN son etapas del
 mismo motor fiscal, aunque puedan escalarse con consumidores distintos.
+
+Esta cardinalidad aplica al ciclo documental y sus efectos. Colas de otros
+contextos ya existentes —por ejemplo, conciliación de clientes de integraciones
+externas o campañas— no son motores documentales ni pueden asumir inventario,
+cartera, contabilidad, fiscal o reporting. Tampoco justifican crear un quinto
+motor para dividir ninguna de esas responsabilidades.
 
 Las cuatro colas se particionan y ordenan por negocio. En Azure Service Bus es
 obligatorio `SessionId = BusinessId`, con una ejecución secuencial dentro de la
@@ -233,5 +240,6 @@ por aplicado un efecto mientras siga pendiente.
 Un nuevo efecto financiero extiende el contrato y procesador contable existentes.
 Un nuevo documento fiscal extiende el motor fiscal. Un reporte pequeño agrega una
 consulta indexada; una proyección nueva exige evidencia y el contrato anterior.
-No se crea una quinta cola, otro motor financiero ni una tabla de jobs específica
-sin una nueva decisión que reemplace expresamente esta arquitectura.
+No se crea una quinta cola dentro del ciclo documental, otro motor financiero ni
+una tabla de jobs específica sin una nueva decisión que reemplace expresamente
+esta arquitectura.

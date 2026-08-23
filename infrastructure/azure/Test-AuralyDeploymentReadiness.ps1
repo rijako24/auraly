@@ -33,6 +33,7 @@ $requiredQueues = @(
     'auraly-document-processing',
     'auraly-accounting-processing',
     'auraly-fiscal-processing',
+    'auraly-sales-reporting',
     'auraly-external-customer-reconciliation'
 )
 
@@ -116,6 +117,7 @@ function Test-RemoteEnvironment {
         'ServiceBusConnection__clientId',
         'Auraly__DocumentProcessing__ServiceBus__QueueName',
         'Auraly__Accounting__ServiceBus__QueueName',
+        'Auraly__SalesReporting__ServiceBus__QueueName',
         'PosInstaller__ContainerName',
         'PosInstaller__BlobName',
         'PosInstaller__Version',

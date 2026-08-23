@@ -238,11 +238,15 @@ public sealed class ServerSliceArchitectureTests
             root, "infrastructure", "azure", "Deploy-Auraly.ps1"));
 
         Assert.Contains("name: 'auraly-document-processing'", template, StringComparison.Ordinal);
+        Assert.Contains("name: 'auraly-accounting-processing'", template, StringComparison.Ordinal);
         Assert.Contains("name: 'auraly-fiscal-processing'", template, StringComparison.Ordinal);
+        Assert.Contains("name: 'auraly-sales-reporting'", template, StringComparison.Ordinal);
         Assert.Contains("name: 'auraly-external-customer-reconciliation'", template,
             StringComparison.Ordinal);
         Assert.Contains("requiresSession: true", template, StringComparison.Ordinal);
         Assert.Contains("ServiceBusConnection__fullyQualifiedNamespace", template,
+            StringComparison.Ordinal);
+        Assert.Contains("Auraly__SalesReporting__ServiceBus__QueueName", template,
             StringComparison.Ordinal);
         Assert.Contains("AzureRuntimeClientFactory.CreateServiceBusClient", program,
             StringComparison.Ordinal);
