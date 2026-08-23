@@ -4,6 +4,8 @@ import type {
   CommerceOrderPage,
   InvoiceOrdersResponse,
 } from "@/services/orders/commerce-orders-client";
+import { savePosDraftAsOrder } from "@/services/orders/save-pos-order";
+import type { SellerOrderResult } from "@/services/api/seller-orders";
 
 export type PosSaleDocumentType = "SalesInvoice" | "SalesReceipt";
 const EDGE_BASE_URL =
@@ -395,6 +397,9 @@ export interface PosClient {
   orders(filters: CommerceOrderFilters): Promise<CommerceOrderPage>;
   order(orderId: string): Promise<CommerceOrderDetail>;
   recoverOrder(orderId: string): Promise<PosDraft>;
+  renewRecoveredOrder(orderId: string): Promise<unknown>;
+  releaseRecoveredOrder(orderId: string): Promise<unknown>;
+  saveOrder(draft: PosDraft): Promise<{ order: SellerOrderResult; nextDraft: PosDraft }>;
   invoiceOrders(
     orderIds: string[],
     paymentMethodCode: string,
@@ -519,6 +524,7 @@ export class PosEdgeClient implements PosClient {
       serverConnected: boolean;
       deviceSeriesCode: string;
       businessId: string;
+      warehouseId: string;
       businessName: string;
       warehouseName: string;
       userDisplayName: string;
@@ -860,6 +866,36 @@ export class PosEdgeClient implements PosClient {
     return this.request<PosDraft>(`/edge/v1/orders/${orderId}/recover`, {
       method: "POST",
     });
+  }
+
+  renewRecoveredOrder(orderId: string) {
+    return this.request(`/edge/v1/orders/${orderId}/claim`, { method: "POST" });
+  }
+
+  releaseRecoveredOrder(orderId: string) {
+    return this.request(`/edge/v1/orders/${orderId}/claim/release`, { method: "POST" });
+  }
+
+  async saveOrder(draft: PosDraft) {
+    const health = await this.health();
+    if (!health.serverConnected || !health.workSessionId)
+      throw new Error("Guardar el pedido requiere conexión con Auraly.");
+    const order = await savePosDraftAsOrder(
+      {
+        businessId: health.businessId,
+        warehouseId: health.warehouseId,
+        workSessionId: health.workSessionId,
+      },
+      draft,
+      `pos-order-${draft.draftId.value}`,
+    );
+    try {
+      return { order, nextDraft: await this.cancelDraft(draft.draftId.value) };
+    } catch (cleanupError) {
+      if (draft.sourceOrderId)
+        await this.releaseRecoveredOrder(draft.sourceOrderId).catch(() => undefined);
+      throw new Error(`El pedido ${order.orderNumber} se guardó, pero no fue posible limpiar la venta activa: ${cleanupError instanceof Error ? cleanupError.message : "error desconocido"}`);
+    }
   }
 
   invoiceOrders(

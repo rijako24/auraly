@@ -17,7 +17,8 @@ public sealed class SqlPurchaseReturnStore(
     TimeProvider timeProvider) : IPurchaseReturnStore
 {
     public async Task<ReturnableGoodsReceiptPage> ListReturnableReceiptsAsync(
-        PurchasingUserIdentity user, string? search, int page, int pageSize,
+        PurchasingUserIdentity user, string? search, DateOnly? from, DateOnly? to,
+        bool? withAvailableQuantity, int page, int pageSize,
         CancellationToken cancellationToken)
     {
         const string sql = """
@@ -43,9 +44,17 @@ public sealed class SqlPurchaseReturnStore(
               LEFT JOIN Returned x ON x.OriginalGoodsReceiptId=l.GoodsReceiptId
                                   AND x.OriginalLineNumber=l.LineNumber
               WHERE r.BusinessId=@BusinessId AND r.Status=N'Processed'
+                AND (@From IS NULL OR r.ReceivedAt>=@From)
+                AND (@To IS NULL OR r.ReceivedAt<DATEADD(DAY,1,@To))
                 AND (@Search IS NULL OR r.DocumentNumber LIKE N'%'+@Search+N'%'
                   OR s.Name LIKE N'%'+@Search+N'%'
-                  OR r.SupplierInvoiceNumber LIKE N'%'+@Search+N'%')
+                  OR r.SupplierInvoiceNumber LIKE N'%'+@Search+N'%'
+                  OR w.Name LIKE N'%'+@Search+N'%'
+                  OR EXISTS(SELECT 1 FROM dbo.Products product
+                    WHERE product.ProductId=l.ProductId AND
+                      (product.ProductCode LIKE N'%'+@Search+N'%' OR
+                       product.Reference LIKE N'%'+@Search+N'%' OR
+                       product.Name LIKE N'%'+@Search+N'%')))
               GROUP BY r.GoodsReceiptId,r.DocumentNumber,s.Name,w.Name,
                        r.SupplierInvoiceNumber,r.ReceivedAt,r.GrandTotal
             )
@@ -53,6 +62,7 @@ public sealed class SqlPurchaseReturnStore(
                    SupplierInvoiceNumber,ReceivedAt,GrandTotal,ReturnedTotal,
                    HasAvailableQuantity,COUNT(*) OVER()
             FROM Receipts
+            WHERE @Available IS NULL OR HasAvailableQuantity=@Available
             ORDER BY ReceivedAt DESC,GoodsReceiptId
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             """;
@@ -61,6 +71,9 @@ public sealed class SqlPurchaseReturnStore(
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@Search", (object?)search ?? DBNull.Value);
+        command.Parameters.AddWithValue("@From", (object?)from?.ToDateTime(TimeOnly.MinValue) ?? DBNull.Value);
+        command.Parameters.AddWithValue("@To", (object?)to?.ToDateTime(TimeOnly.MinValue) ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Available", (object?)withAvailableQuantity ?? DBNull.Value);
         command.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
         command.Parameters.AddWithValue("@PageSize", pageSize);
         var items = new List<ReturnableGoodsReceiptListItem>();

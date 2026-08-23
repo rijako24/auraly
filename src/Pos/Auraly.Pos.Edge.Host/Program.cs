@@ -572,6 +572,7 @@ public static class PosEdgeHostApplication
                 serverConnected = server.IsConnected,
                 deviceSeriesCode = workstation.DeviceSeriesCode,
                 businessId = runtime.BusinessId.Value,
+                warehouseId = runtime.WarehouseId.Value,
                 businessName = workstation.BusinessName,
                 warehouseName = workstation.WarehouseName,
                 userDisplayName = user?.DisplayName ?? string.Empty,
@@ -802,9 +803,11 @@ public static class PosEdgeHostApplication
             Guid draftId,
             HttpContext http,
             PosDraftStore drafts,
+            PosOrderServerClient orderServer,
             PosEdgeRuntimeContext context,
             PosSensitiveActionAuthorizer authorizer,
             PosLocalSessionAccessor sessions,
+            ILogger<PosOrderRecoveryService> logger,
             CancellationToken ct) =>
         {
             var user = sessions.Required();
@@ -813,7 +816,21 @@ public static class PosEdgeHostApplication
                 http.Request.Headers["X-Auraly-Approval-Id"],
                 http.Request.Headers["X-Auraly-Operation-Id"],
                 http.Request.Headers["X-Auraly-Supervisor-Secret"], ct);
+            var sourceOrderId = (await drafts.GetAsync(new DraftId(draftId), ct))?.SourceOrderId;
             await drafts.CancelAsync(new DraftId(draftId), ct);
+            if (sourceOrderId.HasValue)
+            {
+                try
+                {
+                    await orderServer.ReleaseAsync(user, sourceOrderId.Value, ct);
+                }
+                catch (Exception error) when (error is HttpRequestException or PosOrderServerException)
+                {
+                    logger.LogWarning(error,
+                        "Order {OrderId} claim could not be released immediately; its server lease will expire.",
+                        sourceOrderId.Value);
+                }
+            }
             var result = await drafts.GetOrCreateActiveAsync(context.ScopeFor(user), ct);
             await authorizer.CompleteAsync(authorization, ct);
             return Results.Ok(result);

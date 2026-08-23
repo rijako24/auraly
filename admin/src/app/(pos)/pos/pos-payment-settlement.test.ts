@@ -3,8 +3,25 @@ import { describe, it } from "node:test";
 
 import {
   calculatePaymentSettlement,
+  chooseAdditionalPaymentMethod,
   shouldShowCashChange,
 } from "./pos-payment-settlement";
+
+describe("chooseAdditionalPaymentMethod", () => {
+  it("uses cash first when a partial payment still has a balance", () => {
+    assert.equal(
+      chooseAdditionalPaymentMethod(["DebitCard", "Cash", "CreditCard"], new Set(["DebitCard"])),
+      "Cash",
+    );
+  });
+
+  it("uses the next unused catalog method when cash is already present", () => {
+    assert.equal(
+      chooseAdditionalPaymentMethod(["DebitCard", "Cash", "CreditCard"], new Set(["Cash"])),
+      "DebitCard",
+    );
+  });
+});
 
 describe("calculatePaymentSettlement", () => {
   it("applies the invoice total and returns cash change", () => {

@@ -24,9 +24,10 @@ export function filterReportRows(rows: ReportRow[], columns: ReportColumn[], sea
 
 export function toReportCsv(rows: ReportRow[], columns: ReportColumn[]): string {
   const quote = (value: string) => `"${value.replaceAll('"', '""')}"`;
+  const delimiter = ";";
   return "\uFEFF" + [
-    columns.map((column) => quote(column.label)).join(","),
-    ...rows.map((row) => row.__group ? columns.map((_,index)=>quote(index===0?String(row.__group):"")).join(",") : columns.map((column) => quote(reportCellText(column, row))).join(",")),
+    columns.map((column) => quote(column.label)).join(delimiter),
+    ...rows.map((row) => row.__group ? columns.map((_,index)=>quote(index===0?String(row.__group):"")).join(delimiter) : columns.map((column) => quote(reportCellText(column, row))).join(delimiter)),
   ].join("\r\n");
 }
 

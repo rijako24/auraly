@@ -87,6 +87,19 @@ type OrdersWorkspaceProps = {
   source?: number;
 };
 
+type InvoiceProgress = {
+  total: number;
+  processed: number;
+  completed: number;
+  failed: number;
+  current: string;
+  events: Array<{ id: string; text: string; tone: "active" | "success" | "error" }>;
+};
+
+function isAvailableForThisSession(order: CommerceOrderListItem) {
+  return order.canInvoice && (!order.claim || order.claim.isOwnedByCurrentActor);
+}
+
 export function OrdersWorkspace({
   compact = false,
   connected = true,
@@ -120,6 +133,7 @@ export function OrdersWorkspace({
   const [documentType, setDocumentType] = useState<"SalesInvoice" | "SalesReceipt">(
     "SalesInvoice",
   );
+  const [invoiceProgress, setInvoiceProgress] = useState<InvoiceProgress | null>(null);
   const pageSize = compact ? 8 : 20;
 
   const refresh = useCallback(async () => {
@@ -182,7 +196,7 @@ export function OrdersWorkspace({
     () => (data?.items ?? []).filter((item) => selected.has(item.orderId)),
     [data?.items, selected],
   );
-  const selectable = (data?.items ?? []).filter((item) => item.canInvoice);
+  const selectable = (data?.items ?? []).filter(isAvailableForThisSession);
   const allSelected =
     selectable.length > 0 &&
     selectable.every((item) => selected.has(item.orderId));
@@ -217,21 +231,46 @@ export function OrdersWorkspace({
 
   async function invoiceSelected() {
     if (!onInvoiceSelected || selectedOrders.length === 0) return;
+    const available = selectedOrders.filter(isAvailableForThisSession);
+    if (available.length !== selectedOrders.length) {
+      setSelected(new Set(available.map((order) => order.orderId)));
+      setError("La selección cambió: uno o más pedidos ya no están disponibles para esta sesión.");
+      await refresh();
+      return;
+    }
     setWorking(true);
     setError(null);
     setNotice(null);
+    let completed = 0;
+    let failed = 0;
+    let printError: string | null = null;
+    setInvoiceProgress({ total: available.length, processed: 0, completed: 0, failed: 0, current: "Preparando lote", events: [] });
     try {
-      const result = await onInvoiceSelected(
-        selectedOrders,
-        paymentMethod,
-        documentType,
-      );
+      for (const [index, order] of available.entries()) {
+        const activeEvent = { id: `${order.orderId}-active`, text: `Validando y emitiendo ${order.orderNumber}`, tone: "active" as const };
+        setInvoiceProgress((current) => current && ({ ...current, current: order.orderNumber, events: [...current.events.slice(-3), activeEvent] }));
+        const result = await onInvoiceSelected([order], paymentMethod, documentType);
+        completed += result.completedCount;
+        failed += result.failedCount;
+        printError ||= result.printError ?? null;
+        const tone = result.failedCount ? "error" as const : "success" as const;
+        const text = result.failedCount ? `${order.orderNumber} requiere revisión` : `${order.orderNumber} emitido`;
+        setInvoiceProgress((current) => current && ({
+          ...current,
+          processed: index + 1,
+          completed,
+          failed,
+          current: text,
+          events: [...current.events.filter((event) => event.id !== activeEvent.id).slice(-3), { id: `${order.orderId}-${tone}`, text, tone }],
+        }));
+        if (result.failedCount) break;
+      }
       setNotice(
-        result.printError
-          ? `${result.completedCount} emitidos. ${result.printError}`
-          : result.failedCount === 0
-          ? `${result.completedCount} ${result.completedCount === 1 ? "pedido emitido" : "pedidos emitidos"} correctamente.`
-          : `${result.completedCount} emitidos y ${result.failedCount} pendientes de revisar.`,
+        printError
+          ? `${completed} emitidos. ${printError}`
+          : failed === 0
+          ? `${completed} ${completed === 1 ? "pedido emitido" : "pedidos emitidos"} correctamente.`
+          : `${completed} emitidos y ${failed} pendientes de revisar.`,
       );
       setSelected(new Set());
       await refresh();
@@ -239,6 +278,7 @@ export function OrdersWorkspace({
       setError(caught instanceof Error ? caught.message : "No fue posible facturar los pedidos.");
     } finally {
       setWorking(false);
+      window.setTimeout(() => setInvoiceProgress(null), 2200);
     }
   }
 
@@ -387,6 +427,38 @@ export function OrdersWorkspace({
         </div>
       )}
 
+      {invoiceProgress && (
+        <div className="overflow-hidden rounded-2xl border border-teal-200 bg-gradient-to-r from-slate-950 via-teal-950 to-emerald-900 p-4 text-white shadow-xl" role="status" aria-live="polite">
+          <div className="flex items-center gap-4">
+            <div
+              className="grid h-20 w-20 shrink-0 place-items-center rounded-full p-2 shadow-[0_0_30px_rgba(45,212,191,0.25)] transition-all duration-500"
+              style={{ background: `conic-gradient(rgb(45 212 191) ${invoiceProgress.total ? (invoiceProgress.processed / invoiceProgress.total) * 360 : 0}deg, rgb(255 255 255 / 0.12) 0deg)` }}
+            >
+              <div className="grid h-full w-full place-items-center rounded-full bg-slate-950 text-center">
+                <span className="text-lg font-black tabular-nums">{invoiceProgress.processed}/{invoiceProgress.total}</span>
+              </div>
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-teal-200">Facturación en progreso</p>
+              <p className="mt-1 truncate text-lg font-black">{invoiceProgress.current}</p>
+              <div className="mt-2 flex gap-2 text-xs font-semibold">
+                <span className="rounded-full bg-emerald-400/15 px-2.5 py-1 text-emerald-200">{invoiceProgress.completed} emitidos</span>
+                <span className="rounded-full bg-red-400/15 px-2.5 py-1 text-red-200">{invoiceProgress.failed} fallidos</span>
+                <span className="rounded-full bg-white/10 px-2.5 py-1 text-slate-200">{invoiceProgress.total - invoiceProgress.processed} faltan</span>
+              </div>
+            </div>
+            {working && <Loader2 className="h-7 w-7 shrink-0 animate-spin text-teal-300" />}
+          </div>
+          <div className="mt-3 space-y-1 border-t border-white/10 pt-2">
+            {invoiceProgress.events.map((event, index) => (
+              <p key={event.id} className={`text-xs transition-all duration-700 ${index < invoiceProgress.events.length - 2 ? "opacity-35" : "opacity-90"} ${event.tone === "error" ? "text-red-200" : event.tone === "success" ? "text-emerald-200" : "text-teal-100 animate-pulse"}`}>
+                {event.tone === "success" ? "✓" : event.tone === "error" ? "!" : "•"} {event.text}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
         {!compact && (
           <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/80 px-3 py-3 md:flex-row md:flex-wrap md:items-center md:px-4">
@@ -500,7 +572,7 @@ export function OrdersWorkspace({
                     {!compact && (
                       <Checkbox
                         checked={checked}
-                        disabled={!order.canInvoice}
+                        disabled={!isAvailableForThisSession(order)}
                         onCheckedChange={() =>
                           setSelected((current) => {
                             const next = new Set(current);
@@ -556,7 +628,7 @@ export function OrdersWorkspace({
                     )}
                     <button
                       type="button"
-                      disabled={!order.canInvoice || !onRecover || working}
+                      disabled={!isAvailableForThisSession(order) || !onRecover || working}
                       onClick={() => void recover(order)}
                       className="flex h-9 items-center justify-center gap-2 rounded-lg bg-teal-50 px-3 text-sm font-bold text-teal-800 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-40"
                     >

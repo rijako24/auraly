@@ -102,6 +102,23 @@ public static class PosOrderEndpoints
             Results.Ok(await recovery.RecoverAsync(
                 sessions.Required(), orderId, ct)));
 
+        edge.MapPost("/orders/{orderId:guid}/claim", async (
+            Guid orderId,
+            PosOrderServerClient server,
+            PosLocalSessionAccessor sessions,
+            CancellationToken ct) =>
+            Results.Ok(await server.ClaimAsync(sessions.Required(), orderId, ct)));
+
+        edge.MapPost("/orders/{orderId:guid}/claim/release", async (
+            Guid orderId,
+            PosOrderServerClient server,
+            PosLocalSessionAccessor sessions,
+            CancellationToken ct) =>
+        {
+            await server.ReleaseAsync(sessions.Required(), orderId, ct);
+            return Results.Ok(new { released = true });
+        });
+
         edge.MapPost("/orders/invoice", async (
             InvoicePosOrdersRequest request,
             PosOrderServerClient server,

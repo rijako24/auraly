@@ -8,6 +8,8 @@ export function useReturnableSales(params: {
   page: number;
   pageSize: number;
   search?: string;
+  from?: string;
+  to?: string;
   withAvailableQuantity?: boolean;
 }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);

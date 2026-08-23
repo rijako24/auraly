@@ -142,6 +142,34 @@ export function recoverCommerceOrder(
   );
 }
 
+export function renewCommerceOrderClaim(
+  orderId: string,
+  workSessionId: string,
+  userId: string,
+) {
+  return orderRequest<CommerceOrderClaim>(
+    `/api/commerce/v1/orders/${orderId}/claim`,
+    {
+      method: "POST",
+      body: JSON.stringify({ workSessionId, userId, leaseMinutes: 10 }),
+    },
+  );
+}
+
+export function releaseCommerceOrderClaim(
+  orderId: string,
+  workSessionId: string,
+  userId: string,
+) {
+  return orderRequest<{ released: boolean }>(
+    `/api/commerce/v1/orders/${orderId}/claim/release`,
+    {
+      method: "POST",
+      body: JSON.stringify({ workSessionId, userId }),
+    },
+  );
+}
+
 export function invoiceCommerceOrders(request: {
   workSessionId: string;
   warehouseId: string;

@@ -11,9 +11,10 @@ describe("central report viewer", () => {
     assert.equal(rows.length, 2);
   });
 
-  it("exports UTF-8 CSV escaping commas and quotes", () => {
+  it("exports Excel-compatible UTF-8 CSV with semicolon delimiters", () => {
     const csv = toReportCsv(rows, columns);
     assert.ok(csv.startsWith("\uFEFF"));
+    assert.equal(csv.split("\r\n")[0], '\uFEFF"Nombre";"Cantidad"');
     assert.match(csv, /"Cliente, Norte"/);
     assert.match(csv, /"Tienda ""Centro"""/);
   });

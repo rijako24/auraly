@@ -11,7 +11,8 @@ namespace Auraly.Api;
 public static class SellerOrdersApi
 {
     public sealed record SellerOrderLineInput(Guid ProductId, decimal Quantity);
-    public sealed record UpdateSellerOrderRequest(string? Notes, string IdempotencyKey, IReadOnlyCollection<SellerOrderLineInput> Lines);
+    public sealed record UpdateSellerOrderRequest(string? Notes, string IdempotencyKey, IReadOnlyCollection<SellerOrderLineInput> Lines,
+        Guid? WorkSessionId = null);
     public sealed record CreateSellerOrderRequest(Guid BusinessId, Guid WarehouseId, Guid CustomerId,
         Guid? PartySiteId, Guid? RouteId, Guid? RouteStopId, bool CapturedOffline, string? Notes,
         string IdempotencyKey, IReadOnlyCollection<SellerOrderLineInput> Lines);
@@ -65,7 +66,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
         Demand(actor,"orders.update");
         if(orderId==Guid.Empty||string.IsNullOrWhiteSpace(request.IdempotencyKey)||request.Lines.Count is <1 or >500||request.Lines.Any(line=>line.ProductId==Guid.Empty||line.Quantity<=0)||request.Notes?.Length>1000)
             throw new SellerOrderValidationException("El pedido requiere productos, cantidades y una clave de actualización válidos.");
-        var editable=await SellerOrderReviewPersistence.FindEditableAsync(connections,orderId,actor.BusinessId,actor.UserId,token)
+        var editable=await SellerOrderReviewPersistence.FindEditableAsync(connections,orderId,actor.BusinessId,actor.UserId,request.WorkSessionId,token)
             ?? throw new SellerOrderConflictException("El pedido no existe, no te pertenece, ya fue facturado o no conserva su configuración de bodega.");
         if(editable.Status is not (2 or 5))throw new SellerOrderConflictException("Solo se puede editar un pedido disponible o en revisión que todavía no haya sido facturado.");
         var number=editable.Number;var customerId=editable.CustomerId;var warehouseId=editable.WarehouseId;var ordersWarehouseId=editable.OrdersWarehouseId;

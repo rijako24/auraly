@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { HandCoins, PackageCheck, ReceiptText, RotateCcw, Search, ShieldCheck } from "lucide-react";
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -29,11 +30,13 @@ export function SalesReturnWorkspace({ embedded = false }: { embedded?: boolean 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [search, setSearch] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [onlyAvailable, setOnlyAvailable] = useState(true);
   const [selected, setSelected] = useState<ReturnableSale>();
-  const searchInput = useRef<HTMLInputElement>(null);
   const list = useReturnableSales({
     page, pageSize, search: search.trim() || undefined,
+    from: from || undefined, to: to || undefined,
     withAvailableQuantity: onlyAvailable || undefined,
   });
 
@@ -53,10 +56,12 @@ export function SalesReturnWorkspace({ embedded = false }: { embedded?: boolean 
   };
 
   return <div className={embedded ? "space-y-4" : "space-y-6"}>
-    {!embedded && <header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end"><div><p className="text-sm font-medium text-primary">Ventas</p><h1 className="text-3xl font-semibold tracking-tight">Devoluciones de venta</h1><p className="mt-1 max-w-3xl text-muted-foreground">Busca la factura original. Auraly conserva sus precios e impuestos y compensa inventario, efectivo o cartera sin modificar la venta.</p></div><div className="flex flex-wrap items-center gap-2"><Badge className="w-fit" variant="outline"><ShieldCheck className="mr-2 h-4 w-4" /> Documento compensatorio DVT</Badge><Button disabled={!canCreate} onClick={() => { setOnlyAvailable(true); setSearch(""); window.requestAnimationFrame(() => searchInput.current?.focus()); }}><RotateCcw className="mr-2 h-4 w-4"/>Nueva devolución de venta</Button></div></header>}
+    {!embedded && <header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end"><div><p className="text-sm font-medium text-primary">Ventas</p><h1 className="text-3xl font-semibold tracking-tight">Devoluciones de venta</h1><p className="mt-1 max-w-3xl text-muted-foreground">Busca la factura original. Auraly conserva sus precios e impuestos y compensa inventario, efectivo o cartera sin modificar la venta.</p></div><Badge className="w-fit" variant="outline"><ShieldCheck className="mr-2 h-4 w-4" /> Documento compensatorio DVT</Badge></header>}
     {!embedded && <section className="grid gap-3 md:grid-cols-3"><Summary icon={ReceiptText} label="Facturas encontradas" value={String(list.data?.totalCount ?? 0)} /><Summary icon={PackageCheck} label="Inventario" value="Reingreso controlado" /><Summary icon={HandCoins} label="Resolución" value="Efectivo o saldo cliente" /></section>}
-    <section className="flex flex-col gap-3 rounded-2xl border bg-card p-4 md:flex-row">
-      <div className="relative min-w-0 flex-1"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input ref={searchInput} className="pl-9" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Busca la factura que vas a devolver" /></div>
+    <section className="grid gap-3 rounded-2xl border bg-card p-4 md:grid-cols-[minmax(16rem,1fr)_11rem_11rem_auto] md:items-end">
+      <div className="relative min-w-0"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input className="pl-9" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Factura, cliente, identificación, CUFE o producto" /></div>
+      <div className="space-y-2"><Label>Desde</Label><DatePicker value={from} onChange={(value) => { setFrom(value); setPage(1); }} /></div>
+      <div className="space-y-2"><Label>Hasta</Label><DatePicker value={to} onChange={(value) => { setTo(value); setPage(1); }} /></div>
       <Button variant={onlyAvailable ? "secondary" : "outline"} onClick={() => { setOnlyAvailable((value) => !value); setPage(1); }}>Solo con saldo</Button>
     </section>
     <DataTable columns={columns} data={list.data?.items ?? []} isLoading={list.isLoading} page={list.data?.page} pageSize={list.data?.pageSize} pageCount={list.data?.totalPages} totalItems={list.data?.totalCount} enableRowSelection={false} onPaginationChange={(next, size) => { setPage(next); setPageSize(size); }} onRowClick={canCreate ? open : undefined} />

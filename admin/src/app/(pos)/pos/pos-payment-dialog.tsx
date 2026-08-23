@@ -13,6 +13,7 @@ import {
 import { PosPaymentInput, type PosSaleDocumentType } from "@/services/pos/pos-edge-client";
 import {
   calculatePaymentSettlement,
+  chooseAdditionalPaymentMethod,
   PosPaymentSettlement,
 } from "./pos-payment-settlement";
 import {
@@ -64,6 +65,7 @@ export function PosPaymentDialog({
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [amountDrafts, setAmountDrafts] = useState<Record<string, string>>({});
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
+  const [activePaymentId, setActivePaymentId] = useState<string | null>(null);
   const amountRefs = useRef(new Map<string, HTMLInputElement>());
   const settlement = useMemo(
     () => calculatePaymentSettlement(total, payments),
@@ -82,6 +84,20 @@ export function PosPaymentDialog({
     );
   }
 
+  const removePayment = useCallback((id: string) => {
+    if (busy || payments.length === 1) return;
+    const index = payments.findIndex((payment) => payment.id === id);
+    const nextFocusId = payments[index - 1]?.id ?? payments[index + 1]?.id ?? null;
+    setPayments((current) => current.filter((payment) => payment.id !== id));
+    setAmountDrafts((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    setActivePaymentId(nextFocusId);
+    if (nextFocusId) setPendingFocusId(nextFocusId);
+  }, [busy, payments]);
+
   const focusAmount = useCallback((id: string) => {
     window.requestAnimationFrame(() => {
       const amount = amountRefs.current.get(id);
@@ -92,6 +108,17 @@ export function PosPaymentDialog({
 
   const addPayment = useCallback((requestedMethod?: string) => {
     if (busy) return;
+    const active = activePaymentId
+      ? payments.find((payment) => payment.id === activePaymentId)
+      : null;
+    const requestedIsAvailable = requestedMethod && !payments.some(
+      (payment) => payment.id !== active?.id && payment.methodCode === requestedMethod,
+    );
+    if (active && requestedMethod && requestedIsAvailable) {
+      update(active.id, { methodCode: requestedMethod });
+      focusAmount(active.id);
+      return;
+    }
     const existing = requestedMethod
       ? payments.find((payment) => payment.methodCode === requestedMethod)
       : null;
@@ -107,9 +134,13 @@ export function PosPaymentDialog({
     }
     if (settlement.missing <= 0) return;
     const used = new Set(payments.map((payment) => payment.methodCode));
-    const nextMethod = requestedMethod
-      ? methods.find((method) => method.code === requestedMethod && !used.has(method.code))
-      : methods.find((method) => method.code !== "Cash" && !used.has(method.code));
+    const nextMethodCode = requestedMethod ?? chooseAdditionalPaymentMethod(
+      methods.map((method) => method.code),
+      used,
+    );
+    const nextMethod = methods.find(
+      (method) => method.code === nextMethodCode && !used.has(method.code),
+    );
     if (!nextMethod) return;
     const id = crypto.randomUUID();
     setPayments((current) => [
@@ -121,8 +152,9 @@ export function PosPaymentDialog({
         reference: null,
       },
     ]);
+    setActivePaymentId(id);
     setPendingFocusId(id);
-  }, [busy, focusAmount, methods, payments, settlement.change, settlement.isValid, settlement.missing]);
+  }, [activePaymentId, busy, focusAmount, methods, payments, settlement.change, settlement.isValid, settlement.missing]);
 
   useEffect(() => {
     if (!pendingFocusId) return;
@@ -136,6 +168,10 @@ export function PosPaymentDialog({
       if (method) {
         event.preventDefault();
         addPayment(method.code);
+      } else if (event.key.toLowerCase() === "e" && activePaymentId && payments.length > 1 &&
+          !(event.target instanceof HTMLElement && event.target.dataset.paymentReference === "true")) {
+        event.preventDefault();
+        removePayment(activePaymentId);
       } else if (event.key === "Escape" && !busy) {
         event.preventDefault();
         onCancel();
@@ -143,7 +179,7 @@ export function PosPaymentDialog({
     };
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
-  }, [addPayment, busy, methods, onCancel]);
+  }, [activePaymentId, addPayment, busy, methods, onCancel, payments.length, removePayment]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -223,6 +259,7 @@ export function PosPaymentDialog({
           {payments.map((payment, index) => (
             <div
               key={payment.id}
+              onFocusCapture={() => setActivePaymentId(payment.id)}
               className="grid gap-2 rounded-xl border border-slate-200 p-3 sm:grid-cols-[1fr_150px_1fr_42px]"
             >
               <div className="text-xs font-medium text-slate-600">
@@ -280,6 +317,7 @@ export function PosPaymentDialog({
                 Referencia
                 <input
                   value={payment.reference ?? ""}
+                  data-payment-reference="true"
                   onChange={(event) => update(payment.id, { reference: event.target.value })}
                   className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15"
                   placeholder="Opcional"
@@ -287,14 +325,13 @@ export function PosPaymentDialog({
               </label>
               <button
                 type="button"
-                onClick={() =>
-                  setPayments((current) => current.filter((item) => item.id !== payment.id))
-                }
+                onClick={() => removePayment(payment.id)}
                 disabled={payments.length === 1 || busy}
                 className="mt-5 grid h-11 place-items-center rounded-lg text-slate-500 hover:bg-red-50 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-300 disabled:opacity-30"
                 aria-label="Eliminar medio de pago"
               >
                 <Trash2 className="h-4 w-4" />
+                <span className="sr-only">Atajo E</span>
               </button>
             </div>
           ))}
@@ -312,7 +349,7 @@ export function PosPaymentDialog({
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs text-slate-500">
-            Los atajos se asignan según el orden del catálogo; al agregar un medio el foco pasa al valor.
+            F1-F5 cambian el medio enfocado; Enter agrega el saldo faltante y E elimina la fila activa.
           </p>
           <PaymentStatus settlement={settlement} />
         </div>

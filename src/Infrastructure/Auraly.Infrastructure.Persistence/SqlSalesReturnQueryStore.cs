@@ -38,7 +38,8 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
                                   AND x.OriginalLineNumber=l.LineNumber
               LEFT JOIN dbo.Customers c ON c.CustomerId=d.CustomerId
               LEFT JOIN dbo.Parties p ON p.PartyId=c.PartyId
-              WHERE d.BusinessId=@BusinessId AND d.DocumentType=N'SalesInvoice'
+              WHERE d.BusinessId=@BusinessId
+                AND d.DocumentType IN(N'SalesInvoice',N'SalesReceipt')
                 AND d.ProcessingStatus=N'Completed'
                 AND (@From IS NULL OR d.IssuedAt>=@From)
                 AND (@To IS NULL OR d.IssuedAt<DATEADD(DAY,1,@To))
@@ -113,7 +114,8 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
             LEFT JOIN dbo.Customers c ON c.CustomerId=d.CustomerId
             LEFT JOIN dbo.Parties p ON p.PartyId=c.PartyId
             WHERE d.DocumentId=@Id AND d.BusinessId=@BusinessId
-              AND d.DocumentType=N'SalesInvoice' AND d.ProcessingStatus=N'Completed';
+              AND d.DocumentType IN(N'SalesInvoice',N'SalesReceipt')
+              AND d.ProcessingStatus=N'Completed';
             """;
         string number; string fiscal; string cufe; DateTimeOffset issued; Guid? customerId;
         string customerName; string identification; Guid warehouseId; string warehouseName;

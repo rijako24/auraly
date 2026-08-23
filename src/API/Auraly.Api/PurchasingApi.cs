@@ -120,11 +120,13 @@ public static class PurchasingApi
 
         endpoints.MapGet(
                 "/api/commerce/v1/purchase-returns/receipts",
-                (HttpContext context, string? search, int? page, int? pageSize,
+                (HttpContext context, string? search, DateOnly? from, DateOnly? to,
+                    bool? withAvailableQuantity, int? page, int? pageSize,
                     PurchaseReturnService service, CancellationToken cancellationToken) =>
                     ExecuteAsync(() => service.ListReturnableReceiptsAsync(
-                        context.User.ToPurchasingIdentity(), search, page ?? 1,
-                        pageSize ?? 25, cancellationToken)))
+                        context.User.ToPurchasingIdentity(), search, from, to,
+                        withAvailableQuantity, page ?? 1, pageSize ?? 25,
+                        cancellationToken)))
             .RequireAuthorization("purchasing.user");
 
         endpoints.MapGet(

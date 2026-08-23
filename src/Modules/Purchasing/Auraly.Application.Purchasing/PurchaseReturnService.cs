@@ -6,7 +6,8 @@ namespace Auraly.Application.Purchasing;
 public interface IPurchaseReturnStore
 {
     Task<ReturnableGoodsReceiptPage> ListReturnableReceiptsAsync(
-        PurchasingUserIdentity user, string? search, int page, int pageSize,
+        PurchasingUserIdentity user, string? search, DateOnly? from, DateOnly? to,
+        bool? withAvailableQuantity, int page, int pageSize,
         CancellationToken cancellationToken);
     Task<ReturnableGoodsReceipt?> GetReturnableReceiptAsync(
         PurchasingUserIdentity user, Guid goodsReceiptId,
@@ -21,7 +22,8 @@ public sealed class PurchaseReturnService(
     IDocumentProcessingSignalPublisher signalPublisher)
 {
     public Task<ReturnableGoodsReceiptPage> ListReturnableReceiptsAsync(
-        PurchasingUserIdentity user, string? search, int page, int pageSize,
+        PurchasingUserIdentity user, string? search, DateOnly? from, DateOnly? to,
+        bool? withAvailableQuantity, int page, int pageSize,
         CancellationToken cancellationToken = default)
     {
         Require(user, PurchasingPermissionCodes.ReadPurchaseReturns);
@@ -29,7 +31,8 @@ public sealed class PurchaseReturnService(
         if (pageSize is < 1 or > 100)
             throw new PurchasingValidationException("PageSize must be between 1 and 100.");
         return store.ListReturnableReceiptsAsync(
-            user, Normalize(search, 160), page, pageSize, cancellationToken);
+            user, Normalize(search, 160), from, to, withAvailableQuantity,
+            page, pageSize, cancellationToken);
     }
 
     public Task<ReturnableGoodsReceipt?> GetReturnableReceiptAsync(

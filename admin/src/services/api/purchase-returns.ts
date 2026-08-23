@@ -67,7 +67,7 @@ export interface ConfirmPurchaseReturnRequest {
 }
 
 export const purchaseReturnsApi = {
-  listReceipts: (params: { search?: string; page: number; pageSize: number }) =>
+  listReceipts: (params: { search?: string; from?: string; to?: string; withAvailableQuantity?: boolean; page: number; pageSize: number }) =>
     apiClient.get<ReturnableReceiptPage>(
       "/commerce/v1/purchase-returns/receipts", withPagedDefaults(params),
     ),

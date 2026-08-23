@@ -8,7 +8,7 @@ public sealed class SqlInventoryLedgerWriter(
     IAuralyIdGenerator ids,
     TimeProvider timeProvider)
 {
-    internal async Task PostAsync(
+    internal async Task<decimal> PostAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
         InventoryLedgerPosting posting,
         CancellationToken cancellationToken)
@@ -35,7 +35,11 @@ public sealed class SqlInventoryLedgerWriter(
 
             IF @ManageStock IS NULL
               THROW 51600,'The inventory product or warehouse is outside the business.',1;
-            IF @ManageStock=0 RETURN;
+            IF @ManageStock=0
+            BEGIN
+              SELECT CAST(0 AS DECIMAL(19,6));
+              RETURN;
+            END;
 
             DECLARE @Exists BIT=0;
             DECLARE @QuantityBefore DECIMAL(19,6)=0;
@@ -109,6 +113,7 @@ public sealed class SqlInventoryLedgerWriter(
                @LineNumber,@ResolvedProductId,@MovementType,@QuantityChange,@Sequence,
                @QuantityBefore,@QuantityAfter,@AverageBefore,@AverageAfter,
                @RecognizedUnitCost,@ValueChange,@OccurredAt,@Now,@Now);
+            SELECT @RecognizedUnitCost;
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@MovementId", ids.NewId());
@@ -128,7 +133,8 @@ public sealed class SqlInventoryLedgerWriter(
         command.Parameters.AddWithValue("@Sequence", session.ProcessingSequence);
         command.Parameters.AddWithValue("@OccurredAt", posting.OccurredAt);
         command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return result is null or DBNull ? 0m : Convert.ToDecimal(result);
     }
 
     internal async Task WriteCalculatedAsync(

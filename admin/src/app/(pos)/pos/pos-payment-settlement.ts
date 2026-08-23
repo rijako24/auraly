@@ -10,6 +10,14 @@ export type PosPaymentSettlement = {
   appliedPayments: PosPaymentInput[];
 };
 
+export function chooseAdditionalPaymentMethod(
+  methodCodes: readonly string[],
+  usedMethodCodes: ReadonlySet<string>,
+) {
+  if (methodCodes.includes("Cash") && !usedMethodCodes.has("Cash")) return "Cash";
+  return methodCodes.find((code) => !usedMethodCodes.has(code));
+}
+
 const precision = 100;
 const tolerance = 0.005;
 

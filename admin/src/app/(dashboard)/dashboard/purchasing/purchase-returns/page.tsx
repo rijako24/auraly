@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ArrowDownLeft, PackageCheck, RotateCcw, Search, ShieldCheck, WalletCards } from "lucide-react";
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -27,9 +28,13 @@ export default function PurchaseReturnsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [search, setSearch] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [onlyAvailable, setOnlyAvailable] = useState(true);
   const [selected, setSelected] = useState<ReturnableReceipt>();
-  const searchInput = useRef<HTMLInputElement>(null);
-  const list = useReturnableReceipts({ page, pageSize, search: search.trim() || undefined });
+  const list = useReturnableReceipts({ page, pageSize, search: search.trim() || undefined,
+    from: from || undefined, to: to || undefined,
+    withAvailableQuantity: onlyAvailable || undefined });
 
   const columns = useMemo<ColumnDef<ReturnableReceiptListItem>[]>(() => [
     {
@@ -85,7 +90,7 @@ export default function PurchaseReturnsPage() {
           inventario, cuenta por pagar y contabilidad sin alterar el documento recibido.
         </p>
       </div>
-      <div className="flex flex-wrap items-center gap-2"><Badge className="w-fit" variant="outline"><ShieldCheck className="mr-2 h-4 w-4" /> Documento compensatorio DCP</Badge><Button disabled={!canCreate} onClick={() => { setSearch(""); window.requestAnimationFrame(() => searchInput.current?.focus()); }}><RotateCcw className="mr-2 h-4 w-4"/>Nueva devolución a proveedor</Button></div>
+      <Badge className="w-fit" variant="outline"><ShieldCheck className="mr-2 h-4 w-4" /> Documento compensatorio DCP</Badge>
     </header>
 
     <section className="grid gap-3 md:grid-cols-3">
@@ -94,13 +99,16 @@ export default function PurchaseReturnsPage() {
       <Summary icon={WalletCards} label="Efecto financiero" value="CxP o saldo a favor" />
     </section>
 
-    <section className="rounded-2xl border bg-card p-4">
-      <div className="relative max-w-2xl">
+    <section className="grid gap-3 rounded-2xl border bg-card p-4 md:grid-cols-[minmax(16rem,1fr)_11rem_11rem_auto] md:items-end">
+      <div className="relative min-w-0">
         <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-        <Input ref={searchInput} className="pl-9" value={search} onChange={(event) => {
+        <Input className="pl-9" value={search} onChange={(event) => {
           setSearch(event.target.value); setPage(1);
-        }} placeholder="Busca la entrada que vas a devolver" />
+        }} placeholder="Entrada, factura, proveedor, bodega o producto" />
       </div>
+      <div className="space-y-2"><Label>Desde</Label><DatePicker value={from} onChange={(value) => { setFrom(value); setPage(1); }} /></div>
+      <div className="space-y-2"><Label>Hasta</Label><DatePicker value={to} onChange={(value) => { setTo(value); setPage(1); }} /></div>
+      <Button variant={onlyAvailable ? "secondary" : "outline"} onClick={() => { setOnlyAvailable((value) => !value); setPage(1); }}>Solo con saldo</Button>
     </section>
 
     <DataTable columns={columns} data={list.data?.items ?? []} isLoading={list.isLoading}

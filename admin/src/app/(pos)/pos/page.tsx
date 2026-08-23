@@ -44,7 +44,6 @@ import {
   PosEdgeError,
   type PosClient,
   type PosCaptureResult,
-  type PosAuthorizedClosurePreview,
   type PosSensitiveAuthorization,
   readEdgeTokenFromLaunch,
   readEdgeUserSession,
@@ -66,7 +65,6 @@ import {
 } from "@/services/pos/pos-enrollment";
 import { PosConfirmDialog } from "./pos-confirm-dialog";
 import { PosCashMovementDialog } from "./pos-cash-movement-dialog";
-import { PosCashClosureDialog } from "./pos-cash-closure-dialog";
 import { PosCustomerSearchDialog } from "./pos-customer-search-dialog";
 import { PosDocumentTypeDialog } from "./pos-document-type-dialog";
 import { PosDiscountDialog } from "./pos-discount-dialog";
@@ -191,7 +189,6 @@ export default function PosPage() {
   const [cashMovementDirection, setCashMovementDirection] =
     useState<PosCashMovementDirection | null>(null);
   const [printerOpen, setPrinterOpen] = useState(false);
-  const [cashClosure, setCashClosure] = useState<PosAuthorizedClosurePreview | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<PosCustomer | null>(null);
   const [pricingTransition, setPricingTransition] = useState(false);
   const [documentType, setDocumentType] = useState<PosSaleDocumentType>("SalesReceipt");
@@ -211,7 +208,7 @@ export default function PosPage() {
     execute: (authorization: PosSensitiveAuthorization) => Promise<void>;
   } | null>(null);
   const [sensitiveApprovalError, setSensitiveApprovalError] = useState<string | null>(null);
-  const cashClosureButton = useRef<HTMLButtonElement>(null);
+  const salesSessionButton = useRef<HTMLButtonElement>(null);
   const [lastSettlement, setLastSettlement] = useState<{
     documentId: string;
     documentNumber: string;
@@ -509,11 +506,14 @@ export default function PosPage() {
     setBusy(true);
     setError(null);
     void client.recoverOrder(orderId)
-      .then(async (recovered) => {
+      .then((recovered) => {
         setDraft(recovered);
-        setSelectedCustomer(recovered.customerId
-          ? await client.customer(recovered.customerId)
-          : null);
+        setSelectedCustomer(null);
+        if (recovered.customerId) {
+          void client.customer(recovered.customerId)
+            .then(setSelectedCustomer)
+            .catch(() => setMessage("Pedido recuperado; no fue posible actualizar el cliente."));
+        }
         setSelectedLineId(recovered.lines[0]?.lineId ?? null);
         setSidePanel("temporaries");
         setMessage(`Pedido recuperado · ${recovered.lines.length} líneas`);
@@ -530,6 +530,19 @@ export default function PosPage() {
         focusScanner();
       });
   }, [busy, client, draft, edgeReady, focusScanner, showError]);
+
+  useEffect(() => {
+    if (!client || !draft?.sourceOrderId) return;
+    const orderId = draft.sourceOrderId;
+    const renew = () => void client.renewRecoveredOrder(orderId).catch((caught) => {
+      setError(caught instanceof Error
+        ? caught.message
+        : "Se perdió la ocupación del pedido; recupéralo nuevamente antes de continuar.");
+      setMessage("El pedido ya no está ocupado por esta sesión");
+    });
+    const timer = window.setInterval(renew, 4 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [client, draft?.sourceOrderId]);
 
 
   const requestRemoveLine = useCallback((lineId: string) => {
@@ -578,6 +591,38 @@ export default function PosPage() {
     await persistTemporary(customerName, "");
   }, [persistTemporary, selectedCustomer]);
 
+  const saveOrder = useCallback(async () => {
+    if (!client || !draft?.lines.length || busy) return;
+    if (!draft.customerId) {
+      setError("Selecciona un cliente antes de guardar el pedido.");
+      setMessage("El pedido necesita cliente");
+      setCustomerSearchOpen(true);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const wasRecovered = Boolean(draft.sourceOrderId);
+      const saved = await client.saveOrder(draft);
+      setDraft(saved.nextDraft);
+      setSelectedCustomer(null);
+      setSelectedLineId(null);
+      setScan("");
+      setLastSettlement(null);
+      setSidePanel("orders");
+      setMessage(`${saved.order.orderNumber} ${wasRecovered ? "actualizado" : "guardado"}; inventario reservado en Pedidos`);
+    } catch (caught) {
+      const detail = typeof caught === "object" && caught !== null && "message" in caught
+        ? String((caught as { message: unknown }).message)
+        : "No fue posible guardar el pedido.";
+      setError(detail);
+      setMessage("Revisa la novedad del pedido");
+    } finally {
+      setBusy(false);
+      focusScanner();
+    }
+  }, [busy, client, draft, focusScanner]);
+
   const canOpenCashDrawer = (client?.mode === "edge" ? edgePermissions : permissions)
     .includes("work-sessions.cash.drawer.open");
 
@@ -601,8 +646,7 @@ export default function PosPage() {
         invoiceSearchOpen ||
         returnsOpen ||
         documentTypeOpen ||
-        cashMovementDirection ||
-        cashClosure
+        cashMovementDirection
       ) return;
       const canOpenCashMovement =
         Boolean(workstation.workSessionId) &&
@@ -747,7 +791,7 @@ export default function PosPage() {
         setCashMovementDirection("Out");
       } else if (event.ctrlKey && event.key === "F10" && canOpenCashMovement) {
         event.preventDefault();
-        cashClosureButton.current?.click();
+        salesSessionButton.current?.click();
       } else if (!event.ctrlKey && event.key === "F8" && !busy) {
         event.preventDefault();
         setSidePanel("temporaries");
@@ -762,7 +806,6 @@ export default function PosPage() {
     busy,
     client,
     cashMovementDirection,
-    cashClosure,
     canOpenCashDrawer,
     returnsOpen,
     confirmation,
@@ -977,59 +1020,24 @@ export default function PosPage() {
     }
   }
 
-  async function openCashClosure() {
-    if (!client || !draft || busy || !workstation.workSessionId) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await executeSensitive(
-        "work-sessions.close",
-        null,
-        {
-          action: "CloseWorkSession",
-          cashier: workstation.userDisplayName,
-          workSessionId: workstation.workSessionId,
-        },
-        async (authorization) => {
-          const preview = await client.previewWorkSessionClosure(
-            draft.draftId.value,
-            authorization,
-          );
-          setCashClosure(preview);
-          setMessage("Arqueo autorizado; cajón abierto para conteo");
-        },
-      );
-    } catch (caught) {
-      showError(caught);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function closeCashRegister(countedCash: number, note: string | null) {
-    if (!client || !cashClosure || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await client.closeWorkSession({
-        operationId: crypto.randomUUID(),
-        authorizationToken: cashClosure.authorizationToken,
-        countedCash,
-        note,
-      });
-      setCashClosure(null);
-      setMessage("Caja cerrada y tirilla impresa");
-      if (client.mode === "edge") {
-        await logoutLocal(true);
-      } else {
-        forgetSalesWorkspace();
-        router.push("/dashboard");
+  async function closeSalesSession() {
+    if (!client || busy) return;
+    if (draft?.sourceOrderId) {
+      const orderId = draft.sourceOrderId;
+      try {
+        await client.cancelDraft(draft.draftId.value);
+      } catch {
+        // Releasing the lease is the safety invariant. The stale draft can be
+        // reset on the next entry, but it must never keep the order occupied.
+        await client.releaseRecoveredOrder(orderId).catch(() => undefined);
       }
-    } catch (caught) {
-      showError(caught);
-    } finally {
-      setBusy(false);
     }
+    if (client instanceof PosEdgeClient) {
+      await logoutLocal();
+      return;
+    }
+    forgetSalesWorkspace();
+    router.push("/dashboard");
   }
 
   async function completeRemoteApproval(approvalRequestId: string) {
@@ -1774,15 +1782,15 @@ edgeCapable={edgeEnrollmentRequired}
           <div className="flex items-center gap-1" aria-label="Atajos de caja">
             <button
               type="button"
-              ref={cashClosureButton}
-              onClick={() => void openCashClosure()}
-              disabled={busy || !workstation.workSessionId}
-              title="Solicitar cierre y arqueo de caja (Ctrl+F10)"
+              ref={salesSessionButton}
+              onClick={() => void closeSalesSession()}
+              disabled={busy}
+              title="Cerrar sesión de venta (Ctrl+F10)"
               aria-keyshortcuts="Control+F10"
               className="flex h-8 items-center gap-1.5 rounded-full border border-sky-300/20 px-3 text-xs font-semibold text-sky-200 transition hover:bg-sky-300/10 hover:text-white disabled:opacity-40"
             >
               <Banknote className="h-3.5 w-3.5" />
-              <span className="hidden md:inline">Cerrar caja</span>
+              <span className="hidden md:inline">Cerrar sesión de venta</span>
               <kbd className="hidden xl:inline text-[10px] opacity-70">Ctrl+F10</kbd>
             </button>
             {canOpenCashDrawer && (
@@ -2233,8 +2241,13 @@ edgeCapable={edgeEnrollmentRequired}
                     ? nextNumber.fullNumber
                     : client.mode === "online"
                       ? "se asigna al emitir"
-                      : "Serie no disponible"}
+                        : "Serie no disponible"}
                 </p>
+                {draft?.sourceOrderId && (
+                  <p className="mt-1 inline-flex rounded-md bg-amber-300/15 px-2 py-1 text-xs font-bold text-amber-200">
+                    Pedido recuperado · ocupado por esta sesión
+                  </p>
+                )}
               </div>
               <span className="rounded-lg bg-white/10 px-2 py-1 text-xs">
                 {draft?.lines.length ?? 0} líneas
@@ -2270,16 +2283,37 @@ edgeCapable={edgeEnrollmentRequired}
               <span className="rounded bg-black/10 px-2 py-0.5 text-xs font-semibold">F1</span>
             </button>
 
-            <button
-              type="button"
-              disabled={!draft?.lines.length || busy}
-              onClick={() => void requestPauseSale()}
-              className="mt-2 flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-auraly-accent/40 bg-white/5 text-sm font-semibold transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <Save className="h-4 w-4" />
-              Pausar venta
-              <span className="rounded bg-white/10 px-2 py-0.5 text-xs font-semibold">F7</span>
-            </button>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={!draft?.lines.length || Boolean(draft?.sourceOrderId) || busy}
+                onClick={() => void requestPauseSale()}
+                title={draft?.sourceOrderId ? "Guarda los cambios del pedido o reinicia la venta para liberarlo" : "Guardar como venta temporal"}
+                className="flex h-10 min-w-0 items-center justify-center gap-1.5 rounded-xl border border-auraly-accent/40 bg-white/5 px-2 text-sm font-semibold transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Save className="h-4 w-4 shrink-0" />
+                <span className="truncate">Pausar venta</span>
+                <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-xs font-semibold">F7</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={
+                  !serverConnected ||
+                  !draft?.lines.length ||
+                  !draft.customerId ||
+                  busy
+                }
+                onClick={() => void saveOrder()}
+                title={serverConnected
+                  ? "Reserva las existencias en la bodega Pedidos y limpia la venta"
+                  : "Guardar pedidos requiere conexión con Auraly"}
+                className="flex h-10 min-w-0 items-center justify-center gap-1.5 rounded-xl border border-emerald-300/45 bg-emerald-400/10 px-2 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <ClipboardList className="h-4 w-4 shrink-0" />
+                <span className="truncate">{draft?.sourceOrderId ? "Guardar cambios" : "Guardar pedido"}</span>
+              </button>
+            </div>
 
           </section>
 
@@ -2550,15 +2584,6 @@ edgeCapable={edgeEnrollmentRequired}
       {printerOpen && client && (
         <PosPrinterDialog client={client instanceof PosEdgeClient || (client instanceof OnlinePosClient && edgeEnrollmentToken) ? client : null}
           onClose={() => setPrinterOpen(false)} />
-      )}
-
-      {cashClosure && (
-        <PosCashClosureDialog
-          value={cashClosure}
-          busy={busy}
-          onClose={() => { setCashClosure(null); focusScanner(); }}
-          onConfirm={closeCashRegister}
-        />
       )}
 
       {invoiceSearchOpen && client && (

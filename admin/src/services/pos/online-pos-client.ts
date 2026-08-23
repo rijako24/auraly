@@ -3,9 +3,13 @@ import {
   loadCommerceOrder,
   loadCommerceOrders,
   recoverCommerceOrder,
+  releaseCommerceOrderClaim,
+  renewCommerceOrderClaim,
   type CommerceOrderFilters,
   type InvoiceOrdersResponse,
 } from "@/services/orders/commerce-orders-client";
+import type { SellerOrderResult } from "@/services/api/seller-orders";
+import { savePosDraftAsOrder } from "@/services/orders/save-pos-order";
 
 import {
   PosCaptureResult,
@@ -302,6 +306,7 @@ export class OnlinePosClient implements PosClient {
       serverConnected: true,
       deviceSeriesCode: "00",
       businessId: this.context.businessId,
+      warehouseId: this.context.warehouseId,
       businessName: this.context.businessName,
       warehouseName: this.context.warehouseName,
       userDisplayName: this.userDisplayName,
@@ -715,6 +720,42 @@ export class OnlinePosClient implements PosClient {
       expectedDraftVersion: this.version(draft.draftId.value),
     });
     return this.activeDraft();
+  }
+
+  renewRecoveredOrder(orderId: string) {
+    return renewCommerceOrderClaim(
+      orderId,
+      this.context.workSessionId,
+      this.userId,
+    );
+  }
+
+  releaseRecoveredOrder(orderId: string) {
+    return releaseCommerceOrderClaim(
+      orderId,
+      this.context.workSessionId,
+      this.userId,
+    );
+  }
+
+  async saveOrder(draft: PosDraft): Promise<{
+    order: SellerOrderResult;
+    nextDraft: PosDraft;
+  }> {
+    const idempotencyKey = `pos-order-${draft.draftId.value}-${this.version(draft.draftId.value)}`;
+    const order = await savePosDraftAsOrder(this.context, draft, idempotencyKey);
+
+    try {
+      return { order, nextDraft: await this.cancelDraft(draft.draftId.value) };
+    } catch (cleanupError) {
+      if (draft.sourceOrderId)
+        await this.releaseRecoveredOrder(draft.sourceOrderId).catch(() => undefined);
+      throw new Error(
+        `El pedido ${order.orderNumber} se guardó, pero no fue posible limpiar la venta activa: ${
+          cleanupError instanceof Error ? cleanupError.message : "error desconocido"
+        }`,
+      );
+    }
   }
 
   async invoiceOrders(

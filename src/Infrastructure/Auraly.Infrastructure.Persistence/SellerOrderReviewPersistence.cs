@@ -28,6 +28,7 @@ public static class SellerOrderReviewPersistence
         Guid orderId,
         Guid businessId,
         Guid userId,
+        Guid? workSessionId,
         CancellationToken cancellationToken)
     {
         await using var connection = connections.Create();
@@ -36,7 +37,8 @@ public static class SellerOrderReviewPersistence
         command.Parameters.AddRange([
             Parameter("@OrderId", orderId),
             Parameter("@BusinessId", businessId),
-            Parameter("@UserId", userId)
+            Parameter("@UserId", userId),
+            Parameter("@WorkSessionId", workSessionId)
         ]);
         string number;
         Guid customerId;

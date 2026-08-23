@@ -438,6 +438,9 @@ public sealed class PosDraftStore
         var draft = await GetRequiredAsync(draftId, cancellationToken);
         if (draft.Lines.Count == 0)
             throw new InvalidOperationException("An empty sale cannot be saved as temporary.");
+        if (draft.SourceOrderId.HasValue)
+            throw new InvalidOperationException(
+                "Un pedido recuperado debe guardarse como pedido, facturarse o reiniciarse; no puede pausarse.");
 
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = connection.BeginTransaction(IsolationLevel.Serializable);

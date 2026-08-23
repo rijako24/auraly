@@ -1,13 +1,14 @@
 "use client";
 
-import {useMemo,useState} from "react";
+import {useMemo,useState,type ComponentProps} from "react";
 import {useQuery} from "@tanstack/react-query";
 import {Area,AreaChart,Bar,BarChart,CartesianGrid,Legend,ResponsiveContainer,Tooltip,XAxis,YAxis} from "recharts";
 import {ArrowDownRight,ArrowUpRight,CalendarRange,Download,FileText,PackageSearch,RefreshCw,RotateCcw,Search,TrendingUp,Users} from "lucide-react";
 import {salesReportingApi,type SalesBreakdownRow,type SalesDimension,type SalesDocumentRow,type SalesReportFilter} from "@/services/api/sales-reporting";
 import {Button} from "@/components/ui/button";
 import {Card,CardContent,CardDescription,CardHeader,CardTitle} from "@/components/ui/card";
-import {Input} from "@/components/ui/input";
+import {Input as BaseInput} from "@/components/ui/input";
+import {DatePicker} from "@/components/ui/date-picker";
 import {Select,SelectContent,SelectItem,SelectTrigger,SelectValue} from "@/components/ui/select";
 import {Badge} from "@/components/ui/badge";
 import {Dialog,DialogContent,DialogDescription,DialogHeader,DialogTitle} from "@/components/ui/dialog";
@@ -21,6 +22,13 @@ const iso=(date:Date)=>date.toISOString().slice(0,10);
 const now=new Date(),initialFrom=iso(new Date(now.getFullYear(),0,1)),initialTo=iso(now);
 const labels:Record<SalesDimension,string>={customer:"Cliente",seller:"Vendedor",supplier:"Proveedor",product:"Producto",category:"Categoría",warehouse:"Sede",day:"Día",month:"Mes","payment-method":"Forma de pago",tax:"Impuesto"};
 const dimensions:SalesDimension[]=["customer","seller","supplier","product","category","warehouse","month","payment-method","tax"];
+
+function Input(props:ComponentProps<typeof BaseInput>){
+  if(props.type!=="date")return <BaseInput {...props}/>;
+  const {value,onChange,disabled,className}=props;
+  return <DatePicker value={String(value??"")} disabled={disabled} className={className}
+    onChange={next=>onChange?.({target:{value:next},currentTarget:{value:next}} as never)}/>;
+}
 
 export default function SalesAnalyticsPage(){
   const [from,setFrom]=useState(initialFrom),[to,setTo]=useState(initialTo);

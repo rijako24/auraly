@@ -245,7 +245,8 @@ public sealed class SqlSalesReturnStore(
                    COALESCE((SELECT TOP(1) m.RecognizedUnitCost
                      FROM dbo.InventoryMovements m
                      WHERE m.DocumentId=l.DocumentId AND m.LineNumber=l.LineNumber
-                       AND m.DocumentType=N'SalesInvoice' AND m.MovementType=N'Sale'),0)
+                       AND m.DocumentType IN(N'SalesInvoice',N'SalesReceipt')
+                       AND m.MovementType=N'Sale'),0)
             FROM dbo.SalesDocumentLines l WITH (UPDLOCK,HOLDLOCK)
             LEFT JOIN dbo.SalesReturnLines r WITH (UPDLOCK,HOLDLOCK)
               ON r.OriginalDocumentId=l.DocumentId AND r.OriginalLineNumber=l.LineNumber

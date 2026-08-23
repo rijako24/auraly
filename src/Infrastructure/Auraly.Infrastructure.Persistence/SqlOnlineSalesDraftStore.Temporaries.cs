@@ -201,6 +201,9 @@ public sealed partial class SqlOnlineSalesDraftStore
             return replay;
         }
         DemandActiveVersion(state, request.ExpectedVersion);
+        if (state.SourceOrderId.HasValue)
+            throw new OnlineSalesDraftValidationException(
+                "Un pedido recuperado debe guardarse como pedido, facturarse o reiniciarse; no puede pausarse.");
         await DemandDraftHasLinesAsync(connection, transaction, draftId, cancellationToken);
         var now = time.GetUtcNow();
         await ExecuteAsync(connection, transaction, """

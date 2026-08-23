@@ -70,13 +70,9 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
                 state.BusinessId,
                 line.ProductId,
                 cancellationToken);
-            await DemandInventoryAsync(
-                connection,
-                transaction,
-                state,
-                line.ProductId,
-                line.Quantity,
-                cancellationToken);
+            // A confirmed order already owns this quantity in the system
+            // warehouse "Pedidos". Recovery edits the commercial draft; it
+            // must not demand the same stock again from the sales warehouse.
             position++;
             await ExecuteAsync(connection, transaction, """
                 INSERT dbo.SalesDraftLines(

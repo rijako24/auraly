@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { CloudOff } from "lucide-react";
+import { toast } from "sonner";
 import { flushDispatchOutbox } from "@/lib/dispatch-offline-store";
 import { flushPendingRouteVisits } from "@/lib/daily-route-store";
 import { flushSellerOrderOutbox } from "@/lib/seller-order-offline-store";
@@ -23,7 +24,7 @@ export function PwaProvider({ children }: { children: ReactNode }) {
   const synchronizing=useRef(false);
   useEffect(()=>{
     let active=true;
-    const synchronize=async()=>{if(!navigator.onLine||synchronizing.current)return;synchronizing.current=true;setSyncing(true);try{await flushDispatchOutbox();await flushSellerOrderOutbox(sellerOrdersApi.create,(routeId,request)=>routesApi.recordVisit(routeId,request));await flushPendingRouteVisits((routeId,request)=>routesApi.recordVisit(routeId,request))}finally{synchronizing.current=false;if(active)setSyncing(false)}};
+    const synchronize=async()=>{if(!navigator.onLine||synchronizing.current)return;synchronizing.current=true;setSyncing(true);try{await flushDispatchOutbox();const orders=await flushSellerOrderOutbox(sellerOrdersApi.create,(routeId,request)=>routesApi.recordVisit(routeId,request));if(orders.reviews.length)toast.warning(`${orders.reviews.length} ${orders.reviews.length===1?"pedido requiere":"pedidos requieren"} ajustar inventario`,{description:"Ábrelos en Mi ruta, cambia las cantidades o elimina los productos sin existencia."});await flushPendingRouteVisits((routeId,request)=>routesApi.recordVisit(routeId,request))}finally{synchronizing.current=false;if(active)setSyncing(false)}};
     const connected=()=>{setOnline(true);void synchronize()};const disconnected=()=>setOnline(false);const visible=()=>{if(document.visibilityState==="visible")void synchronize()};
     setOnline(navigator.onLine);window.addEventListener("online",connected);window.addEventListener("offline",disconnected);window.addEventListener("focus",synchronize);document.addEventListener("visibilitychange",visible);
     if("serviceWorker" in navigator&&process.env.NODE_ENV==="production")void navigator.serviceWorker.register("/app-sw.js",{scope:"/"});

@@ -1,7 +1,8 @@
 CREATE PROCEDURE [dbo].[SellerOrderEditableGet]
     @OrderId UNIQUEIDENTIFIER,
     @BusinessId UNIQUEIDENTIFIER,
-    @UserId UNIQUEIDENTIFIER
+    @UserId UNIQUEIDENTIFIER,
+    @WorkSessionId UNIQUEIDENTIFIER = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -10,7 +11,13 @@ BEGIN
            TRY_CONVERT(uniqueidentifier,JSON_VALUE(o.CustomAttributesJson,'$.ordersWarehouseId'))
     FROM dbo.Orders o
     WHERE o.OrderId=@OrderId AND o.BusinessId=@BusinessId AND o.Source=1
-      AND TRY_CONVERT(uniqueidentifier,JSON_VALUE(o.CustomAttributesJson,'$.createdBy'))=@UserId
+      AND (
+        TRY_CONVERT(uniqueidentifier,JSON_VALUE(o.CustomAttributesJson,'$.createdBy'))=@UserId
+        OR EXISTS(
+          SELECT 1 FROM dbo.OrderClaims claim
+          WHERE claim.OrderId=o.OrderId AND claim.BusinessId=o.BusinessId
+            AND claim.UserId=@UserId AND claim.WorkSessionId=@WorkSessionId
+            AND claim.ReleasedAt IS NULL AND claim.ExpiresAt>SYSUTCDATETIME()))
       AND NOT EXISTS(SELECT 1 FROM dbo.OrderInvoiceLinks link WHERE link.OrderId=o.OrderId);
 
     SELECT ProductId,SUM(Quantity)

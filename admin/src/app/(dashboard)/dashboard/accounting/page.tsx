@@ -1,6 +1,6 @@
 "use client";
 
-import {useEffect,useMemo,useState,type FormEvent,type ReactNode} from "react";
+import {useEffect,useMemo,useState,type ComponentProps,type FormEvent,type ReactNode} from "react";
 import {useMutation,useQuery,useQueryClient} from "@tanstack/react-query";
 import {AlertTriangle,BarChart3,BookOpen,Building2,CalendarRange,CheckCircle2,ChevronRight,FilePenLine,Landmark,Loader2,Plus,RefreshCw,Settings2,TableProperties,Trash2} from "lucide-react";
 import {toast} from "sonner";
@@ -13,7 +13,8 @@ import {useBusinessContextStore} from "@/stores/business-context-store";
 import {Badge} from "@/components/ui/badge";
 import {Button} from "@/components/ui/button";
 import {Card,CardContent,CardHeader,CardTitle} from "@/components/ui/card";
-import {Input} from "@/components/ui/input";
+import {Input as BaseInput} from "@/components/ui/input";
+import {DatePicker} from "@/components/ui/date-picker";
 import {Label} from "@/components/ui/label";
 import {Select,SelectContent,SelectItem,SelectTrigger,SelectValue} from "@/components/ui/select";
 import {Dialog,DialogContent,DialogDescription,DialogHeader,DialogTitle} from "@/components/ui/dialog";
@@ -24,6 +25,13 @@ type OpeningMode="ZeroDeclared"|"ImportedAndApproved";
 type OpeningDraftLine={accountId:string;partyId:string|null;costCenterId:string|null;description:string;debit:string;credit:string};
 const money=new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maximumFractionDigits:0});
 const year=new Date().getFullYear(),yearStart=`${year}-01-01`,yearEnd=`${year}-12-31`;
+
+function Input(props:ComponentProps<typeof BaseInput>){
+  if(props.type!=="date")return <BaseInput {...props}/>;
+  const {value,onChange,disabled,className}=props;
+  return <DatePicker value={String(value??"")} disabled={disabled} className={className}
+    onChange={next=>onChange?.({target:{value:next},currentTarget:{value:next}} as never)}/>;
+}
 
 export default function AccountingConfigurationPage(){
   const tenantId=useTenantContextStore(state=>state.selectedTenantId),businessId=useBusinessContextStore(state=>state.selectedBusinessId),queryClient=useQueryClient();

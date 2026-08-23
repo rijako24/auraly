@@ -4,7 +4,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { purchaseReturnsApi, type ConfirmPurchaseReturnRequest } from "@/services/api/purchase-returns";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
-export function useReturnableReceipts(params: { search?: string; page: number; pageSize: number }) {
+export function useReturnableReceipts(params: { search?: string; from?: string; to?: string; withAvailableQuantity?: boolean; page: number; pageSize: number }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   return useQuery({
     queryKey: ["purchase-return-receipts", businessId, params],

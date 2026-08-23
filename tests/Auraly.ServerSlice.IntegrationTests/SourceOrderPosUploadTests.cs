@@ -13,19 +13,32 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
     {
         var orderId = Guid.NewGuid();
         var claimId = Guid.NewGuid();
+        var ordersWarehouseId = Guid.NewGuid();
         await using (var connection = new SqlConnection(fixture.ConnectionString))
         {
             await connection.OpenAsync();
             await using var seed = connection.CreateCommand();
             seed.CommandText = """
+                INSERT dbo.Warehouses(
+                  WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,
+                  IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,IsActive,CreatedAt)
+                VALUES(
+                  @OrdersWarehouseId,@BusinessId,@OrdersWarehouseCode,N'Pedidos prueba',0,
+                  1,0,0,0,1,SYSDATETIMEOFFSET());
+
+                INSERT dbo.InventoryBalances(
+                  BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,
+                  InventoryValue,LastProcessingSequence,UpdatedAt)
+                VALUES(@BusinessId,@OrdersWarehouseId,@ProductId,1,5000,5000,0,SYSDATETIMEOFFSET());
+
                 INSERT dbo.Orders(
                   OrderId,BusinessId,Source,FulfillmentMode,Status,
                   CustomerNameSnapshot,CustomerDocumentSnapshot,Currency,
                   Subtotal,DiscountTotal,Total,CustomerConfirmed,
-                  ExternalDocumentNumber,CreatedAt)
+                  ExternalDocumentNumber,CustomAttributesJson,CreatedAt)
                 VALUES(
                   @OrderId,@BusinessId,0,0,2,N'Cliente POS',N'900100200',N'COP',
-                  10000,0,10000,1,@OrderNumber,SYSUTCDATETIME());
+                  10000,0,10000,1,@OrderNumber,@Attributes,SYSUTCDATETIME());
 
                 INSERT dbo.OrderItems(
                   OrderItemId,OrderId,BusinessId,ProductId,Sku,ProductCodeSnapshot,
@@ -49,6 +62,9 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
             seed.Parameters.AddWithValue("@ProductId", fixture.ProductId);
             seed.Parameters.AddWithValue("@OrderNumber", $"PED-POS-{orderId:N}");
             seed.Parameters.AddWithValue("@ClaimId", claimId);
+            seed.Parameters.AddWithValue("@OrdersWarehouseId", ordersWarehouseId);
+            seed.Parameters.AddWithValue("@OrdersWarehouseCode", $"PED-{ordersWarehouseId:N}"[..32]);
+            seed.Parameters.AddWithValue("@Attributes", System.Text.Json.JsonSerializer.Serialize(new { ordersWarehouseId }));
             seed.Parameters.AddWithValue("@DeviceId", fixture.DeviceId);
             seed.Parameters.AddWithValue("@UserId", fixture.UserId);
             await seed.ExecuteNonQueryAsync();
@@ -82,14 +98,25 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
               (SELECT COUNT(*) FROM dbo.OrderInvoiceLinks
                WHERE OrderId=@OrderId AND DocumentId=@DocumentId),
               (SELECT COUNT(*) FROM dbo.OrderClaims
-               WHERE OrderClaimId=@ClaimId AND ReleasedAt IS NOT NULL);
+               WHERE OrderClaimId=@ClaimId AND ReleasedAt IS NOT NULL),
+              (SELECT COUNT(*) FROM dbo.InventoryMovements
+               WHERE DocumentId=@DocumentId AND MovementType IN (N'TransferOut',N'TransferIn',N'Sale')),
+              (SELECT COUNT(*) FROM dbo.InventoryMovements
+               WHERE DocumentId=@DocumentId AND MovementType=N'TransferOut' AND WarehouseId=@OrdersWarehouseId),
+              (SELECT COUNT(*) FROM dbo.InventoryMovements
+               WHERE DocumentId=@DocumentId AND MovementType IN (N'TransferIn',N'Sale') AND WarehouseId=@SalesWarehouseId);
             """;
         verify.Parameters.AddWithValue("@OrderId", orderId);
         verify.Parameters.AddWithValue("@DocumentId", sale.DocumentId);
         verify.Parameters.AddWithValue("@ClaimId", claimId);
+        verify.Parameters.AddWithValue("@OrdersWarehouseId", ordersWarehouseId);
+        verify.Parameters.AddWithValue("@SalesWarehouseId", fixture.WarehouseId);
         await using var reader = await verify.ExecuteReaderAsync();
         Assert.True(await reader.ReadAsync());
         Assert.Equal(1, reader.GetInt32(0));
         Assert.Equal(1, reader.GetInt32(1));
+        Assert.Equal(3, reader.GetInt32(2));
+        Assert.Equal(1, reader.GetInt32(3));
+        Assert.Equal(2, reader.GetInt32(4));
     }
 }

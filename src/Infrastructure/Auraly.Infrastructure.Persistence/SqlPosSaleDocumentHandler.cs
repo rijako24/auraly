@@ -141,17 +141,52 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         }
     }
 
-    private Task InsertInventoryMovementAsync(
+    private async Task InsertInventoryMovementAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
         PosSaleUploadRequest request,
-        Guid inventoryWarehouseId,
+        Guid sourceWarehouseId,
         PosSaleLineContract line,
-        CancellationToken cancellationToken) =>
-        _inventoryWriter.PostAsync(
+        CancellationToken cancellationToken)
+    {
+        if (sourceWarehouseId != request.WarehouseId)
+        {
+            var unitCost = await _inventoryWriter.PostAsync(
+                session,
+                new InventoryLedgerPosting(
+                    request.BusinessId,
+                    sourceWarehouseId,
+                    line.ProductId,
+                    request.DocumentId,
+                    request.CommercialSnapshot.DocumentType,
+                    line.LineNumber,
+                    "TransferOut",
+                    -line.Quantity,
+                    null,
+                    InventoryValuationModes.AverageCost,
+                    request.CommercialSnapshot.IssuedAt),
+                cancellationToken);
+            await _inventoryWriter.PostAsync(
+                session,
+                new InventoryLedgerPosting(
+                    request.BusinessId,
+                    request.WarehouseId,
+                    line.ProductId,
+                    request.DocumentId,
+                    request.CommercialSnapshot.DocumentType,
+                    line.LineNumber,
+                    "TransferIn",
+                    line.Quantity,
+                    unitCost,
+                    InventoryValuationModes.WeightedAverageReceipt,
+                    request.CommercialSnapshot.IssuedAt),
+                cancellationToken);
+        }
+
+        await _inventoryWriter.PostAsync(
             session,
             new InventoryLedgerPosting(
                 request.BusinessId,
-                inventoryWarehouseId,
+                request.WarehouseId,
                 line.ProductId,
                 request.DocumentId,
                 request.CommercialSnapshot.DocumentType,
@@ -162,6 +197,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                 InventoryValuationModes.AverageCost,
                 request.CommercialSnapshot.IssuedAt),
             cancellationToken);
+    }
 
     private static async Task<Guid> ResolveInventoryWarehouseAsync(
         SqlDocumentProcessingSessionAccessor.Session session,

@@ -193,8 +193,47 @@ public sealed class OrderBatchService(
                     exception.Message));
                 failed++;
 
-                // A failed recovered draft must remain visible and recoverable.
-                // Continuing could incorrectly mix the following order into it.
+                // Batch invoicing has no cashier editing the recovered draft.
+                // Always clear it (or at least release its lease) so a failed
+                // item cannot leave the order occupied for another register.
+                try
+                {
+                    var active = await drafts.OpenAsync(
+                        identity,
+                        new OpenOnlineSalesDraftRequest(
+                            new OnlineSalesDraftContext(
+                                actor.BusinessId,
+                                request.WarehouseId,
+                                request.WorkSessionId)),
+                        CancellationToken.None);
+                    if (active.SourceOrderId == orderId)
+                        await drafts.ResetAsync(
+                            identity,
+                            active.DraftId,
+                            new ResetOnlineSalesDraftRequest(active.Version),
+                            OperationKey(lease.OperationId, orderId, "cleanup"),
+                            CancellationToken.None);
+                }
+                catch
+                {
+                    try
+                    {
+                        await orders.ReleaseClaimAsync(
+                            actor,
+                            orderId,
+                            new ReleaseOrderClaimRequest(
+                                request.WorkSessionId,
+                                request.UserId),
+                            CancellationToken.None);
+                    }
+                    catch (OrderConflictException)
+                    {
+                        // The checkout or reset already released it.
+                    }
+                }
+
+                // Do not continue: the next order must never reuse a draft
+                // whose cleanup outcome is uncertain.
                 break;
             }
 
