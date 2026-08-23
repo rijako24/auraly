@@ -22,13 +22,20 @@ $database = "auraly-$Environment"
 $admin = "admin-auraly-$Environment-$suffix"
 $identityName = "id-auraly-github-$Environment"
 $federatedCredentialName = "github-$Environment"
-$subject = "repo:${Repository}:environment:$Environment"
 $firewallRule = "github-bootstrap-$([guid]::NewGuid().ToString('N').Substring(0, 10))"
 
 function Assert-LastExitCode {
     param([Parameter(Mandatory)][string]$Message)
     if ($LASTEXITCODE -ne 0) { throw "$Message (codigo $LASTEXITCODE)." }
 }
+
+$repositoryParts = $Repository.Split('/', 2)
+if ($repositoryParts.Count -ne 2) { throw 'Repository debe tener formato owner/name.' }
+$repositoryOwnerId = (& gh api "users/$($repositoryParts[0])" --jq .id).Trim()
+Assert-LastExitCode 'No se pudo resolver el ID estable del propietario GitHub'
+$repositoryId = (& gh api "repos/$Repository" --jq .id).Trim()
+Assert-LastExitCode 'No se pudo resolver el ID estable del repositorio GitHub'
+$subject = "repo:$($repositoryParts[0])@$repositoryOwnerId/$($repositoryParts[1])@$repositoryId`:environment:$Environment"
 
 & az account set --subscription $SubscriptionId
 Assert-LastExitCode 'No se pudo seleccionar la suscripcion Azure'
@@ -49,11 +56,11 @@ if ($LASTEXITCODE -ne 0) {
 }
 $identity = $identityJson | ConvertFrom-Json
 
-& az identity federated-credential show `
+$federatedCredentialJson = & az identity federated-credential show `
     --resource-group $resourceGroup `
     --identity-name $identityName `
     --name $federatedCredentialName `
-    --output none 2>$null
+    --output json 2>$null
 if ($LASTEXITCODE -ne 0) {
     & az identity federated-credential create `
         --resource-group $resourceGroup `
@@ -64,6 +71,20 @@ if ($LASTEXITCODE -ne 0) {
         --audiences 'api://AzureADTokenExchange' `
         --output none
     Assert-LastExitCode 'No se pudo crear la credencial federada de GitHub'
+}
+else {
+    $federatedCredential = $federatedCredentialJson | ConvertFrom-Json
+    if ($federatedCredential.subject -ne $subject) {
+        & az identity federated-credential update `
+            --resource-group $resourceGroup `
+            --identity-name $identityName `
+            --name $federatedCredentialName `
+            --issuer 'https://token.actions.githubusercontent.com' `
+            --subject $subject `
+            --audiences 'api://AzureADTokenExchange' `
+            --output none
+        Assert-LastExitCode 'No se pudo actualizar la credencial federada de GitHub'
+    }
 }
 
 $resourceGroupScope = (& az group show --name $resourceGroup --query id --output tsv).Trim()
