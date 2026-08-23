@@ -294,7 +294,14 @@ public sealed class SqlOrderStore(
         await ExecuteAsync(connection, transaction, """
             UPDATE dbo.OrderClaims
             SET ReleasedAt=@Now
-            WHERE OrderId=@OrderId AND ReleasedAt IS NULL AND ExpiresAt<=@Now;
+            WHERE OrderId=@OrderId AND ReleasedAt IS NULL
+              AND (
+                ExpiresAt<=@Now
+                OR NOT EXISTS(
+                  SELECT 1
+                  FROM dbo.WorkSessions ownerSession
+                  WHERE ownerSession.WorkSessionId=dbo.OrderClaims.WorkSessionId
+                    AND ownerSession.Status=N'Open'));
             """,
             [P("@Now", now), P("@OrderId", orderId)],
             cancellationToken);

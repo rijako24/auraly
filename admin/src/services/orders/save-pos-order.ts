@@ -21,6 +21,7 @@ export async function savePosDraftAsOrder(
   const lines = buildPosOrderUpdateLines(draft.lines);
   return draft.sourceOrderId
     ? sellerOrdersApi.update(draft.sourceOrderId, {
+        customerId: draft.customerId,
         notes: draft.observation ?? null,
         idempotencyKey,
         lines,

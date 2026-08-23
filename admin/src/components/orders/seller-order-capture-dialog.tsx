@@ -100,7 +100,7 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
     setSaving(true);
     try {
       const request: SellerOrderRequest = { businessId, warehouseId, customerId: stop.customerId, partySiteId: stop.partySiteId, routeId: route?.routeId ?? null, routeStopId: route ? stop.routeStopId : null, capturedOffline: !online, notes: notes || null, idempotencyKey: crypto.randomUUID(), lines: selected.map(({ item, quantity }) => ({ productId: item.productId, quantity })) };
-      const result = editing ? await sellerOrdersApi.update(editing.orderId,{notes:request.notes,idempotencyKey:crypto.randomUUID(),lines:request.lines}) : online ? await sellerOrdersApi.create(request) : await queueSellerOrder(request, route, localDateKey());
+      const result = editing ? await sellerOrdersApi.update(editing.orderId,{customerId:stop.customerId,notes:request.notes,idempotencyKey:crypto.randomUUID(),lines:request.lines}) : online ? await sellerOrdersApi.create(request) : await queueSellerOrder(request, route, localDateKey());
       await removeSellerDraft(key);
       toast.success(result.requiresReview ? `${result.orderNumber} quedó en revisión` : editing?`${result.orderNumber} actualizado`:`${result.orderNumber} guardado`);
       await onCreated(result.orderId);

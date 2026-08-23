@@ -8,5 +8,5 @@ export type SellerOrderResult={orderId:string;orderNumber:string;status:"Confirm
 export const sellerOrdersApi={
   catalog:(request:{businessId:string;warehouseId:string;customerId:string;search?:string;skip?:number;take?:number})=>apiClient.post<SellerCatalogPage>("/commerce/v1/seller-orders/catalog",request),
   create:(request:SellerOrderRequest)=>apiClient.post<SellerOrderResult>("/commerce/v1/seller-orders",request),
-  update:(orderId:string,request:{notes:string|null;idempotencyKey:string;lines:Array<{productId:string;quantity:number;unitPrice?:number;discountAmount?:number}>;workSessionId?:string|null})=>apiClient.put<SellerOrderResult>(`/commerce/v1/seller-orders/${orderId}`,request),
+  update:(orderId:string,request:{customerId:string;notes:string|null;idempotencyKey:string;lines:Array<{productId:string;quantity:number;unitPrice?:number;discountAmount?:number}>;workSessionId?:string|null})=>apiClient.put<SellerOrderResult>(`/commerce/v1/seller-orders/${orderId}`,request),
 };

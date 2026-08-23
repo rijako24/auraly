@@ -873,7 +873,10 @@ export class PosEdgeClient implements PosClient {
   }
 
   releaseRecoveredOrder(orderId: string) {
-    return this.request(`/edge/v1/orders/${orderId}/claim/release`, { method: "POST" });
+    return this.request(`/edge/v1/orders/${orderId}/claim/release`, {
+      method: "POST",
+      keepalive: true,
+    });
   }
 
   async saveOrder(draft: PosDraft) {

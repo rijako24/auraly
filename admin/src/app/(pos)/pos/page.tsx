@@ -558,7 +558,14 @@ export default function PosPage() {
       setMessage("El pedido ya no está ocupado por esta sesión");
     });
     const timer = window.setInterval(renew, 4 * 60 * 1000);
-    return () => window.clearInterval(timer);
+    const releaseOnPageExit = () => {
+      void client.releaseRecoveredOrder(orderId).catch(() => undefined);
+    };
+    window.addEventListener("pagehide", releaseOnPageExit);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("pagehide", releaseOnPageExit);
+    };
   }, [client, draft?.sourceOrderId]);
 
 
@@ -750,7 +757,6 @@ export default function PosPage() {
         !paymentOpen &&
         !productSearchOpen &&
         !discountOpen &&
-        !draft?.sourceOrderId &&
         !confirmation
       ) {
         event.preventDefault();
@@ -1257,13 +1263,6 @@ export default function PosPage() {
 
   async function selectCustomer(customer: PosCustomer | null) {
     if (!client || !draft || busy) return;
-    if (draft.sourceOrderId && customer?.customerId !== draft.customerId) {
-      setCustomerSearchOpen(false);
-      setError("El cliente de un pedido recuperado no se puede cambiar desde la venta.");
-      setMessage("Conserva el cliente original del pedido");
-      focusScanner();
-      return;
-    }
     setBusy(true);
     setPricingTransition(true);
     setError(null);
@@ -2359,9 +2358,9 @@ edgeCapable={edgeEnrollmentRequired}
             </div>
             <button
               type="button"
-              disabled={!salesReady || busy || Boolean(draft?.sourceOrderId)}
+              disabled={!salesReady || busy}
               onClick={() => setCustomerSearchOpen(true)}
-              title={draft?.sourceOrderId ? "El pedido conserva su cliente original" : "Buscar cliente"}
+              title="Buscar cliente"
               className="mb-3 flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-auraly-accent/40 bg-white/5 text-sm font-semibold transition hover:bg-white/10 disabled:opacity-40"
             >
               <UserRound className="h-4 w-4" />
@@ -2788,7 +2787,7 @@ edgeCapable={edgeEnrollmentRequired}
               : confirmation.kind === "temporary"
                 ? `${confirmation.name} se eliminará definitivamente de este dispositivo.`
                 : confirmation.kind === "order-save"
-                  ? `${confirmation.orderNumber} reemplazará sus productos, cantidades, precios y descuentos con los valores de esta venta. La reserva de inventario se ajustará automáticamente.`
+                  ? `${confirmation.orderNumber} actualizará su cliente, productos, cantidades, precios y descuentos con los valores de esta venta. La reserva de inventario se ajustará automáticamente.`
               : "Se eliminarán todos los productos capturados y se abrirá una venta limpia."
           }
           confirmLabel={

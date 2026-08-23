@@ -165,6 +165,7 @@ export function releaseCommerceOrderClaim(
     `/api/commerce/v1/orders/${orderId}/claim/release`,
     {
       method: "POST",
+      keepalive: true,
       body: JSON.stringify({ workSessionId, userId }),
     },
   );

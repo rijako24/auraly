@@ -1,6 +1,12 @@
 CREATE PROCEDURE [dbo].[SellerOrderReplace]
     @OrderId UNIQUEIDENTIFIER,
     @BusinessId UNIQUEIDENTIFIER,
+    @CustomerId UNIQUEIDENTIFIER,
+    @CustomerName NVARCHAR(150),
+    @CustomerIdentification NVARCHAR(80) = NULL,
+    @CustomerEmail NVARCHAR(200) = NULL,
+    @CustomerPhone NVARCHAR(50) = NULL,
+    @CustomerAddress NVARCHAR(500) = NULL,
     @Notes NVARCHAR(MAX) = NULL,
     @Total DECIMAL(19,4),
     @ReservationTransferId UNIQUEIDENTIFIER,
@@ -17,7 +23,10 @@ BEGIN
         DiscountAmount DECIMAL(19,4) '$.discountAmount') j;
 
     UPDATE dbo.Orders
-    SET Notes=@Notes,Subtotal=@Subtotal,DiscountTotal=@DiscountTotal,Total=@Total,
+    SET CustomerId=@CustomerId,CustomerNameSnapshot=@CustomerName,
+        CustomerDocumentSnapshot=@CustomerIdentification,CustomerEmailSnapshot=@CustomerEmail,
+        CustomerPhoneSnapshot=@CustomerPhone,DeliveryAddressSnapshot=@CustomerAddress,
+        Notes=@Notes,Subtotal=@Subtotal,DiscountTotal=@DiscountTotal,Total=@Total,
         Status=2,ExternalStatus=N'InventoryTransferAccepted',
         CustomAttributesJson=JSON_MODIFY(JSON_MODIFY(CustomAttributesJson,'$.reservationTransferId',CONVERT(nvarchar(36),@ReservationTransferId)),'$.requiresStockReview',CAST(0 AS bit)),
         UpdatedAt=SYSUTCDATETIME()

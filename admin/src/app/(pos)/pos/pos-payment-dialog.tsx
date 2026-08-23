@@ -202,12 +202,15 @@ export function PosPaymentDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4">
+    <div className="fixed inset-0 z-50 flex h-[100dvh] items-end justify-center overflow-hidden bg-slate-950/60 sm:items-center sm:p-4">
       <form
         onSubmit={submit}
-        className="w-full max-w-4xl rounded-2xl bg-white p-5 shadow-2xl"
+        className="flex max-h-[100dvh] w-full max-w-4xl flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:max-h-[calc(100dvh-2rem)] sm:rounded-2xl"
         aria-labelledby="pos-payment-title"
+        aria-modal="true"
+        role="dialog"
       >
+        <div className="shrink-0 border-b border-slate-100 px-4 py-4 sm:px-5">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 id="pos-payment-title" className="flex items-center gap-2 text-xl font-semibold">
@@ -223,6 +226,9 @@ export function PosPaymentDialog({
             <span className="text-2xl font-bold text-teal-800">{money.format(total)}</span>
           </p>
         </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4 sm:px-5">
 
         <section className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
           <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
@@ -353,25 +359,27 @@ export function PosPaymentDialog({
           </p>
           <PaymentStatus settlement={settlement} />
         </div>
+        </div>
 
-        <div className="mt-5 flex justify-end gap-2 border-t border-slate-200 pt-4">
+        <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)] gap-2 border-t border-slate-200 bg-white px-4 pt-3 [padding-bottom:max(0.75rem,env(safe-area-inset-bottom))] sm:flex sm:justify-end sm:px-5 sm:pb-4 sm:pt-4">
           <button
             type="button"
             onClick={onCancel}
             disabled={busy}
-            className="h-11 rounded-lg border border-slate-300 px-5 font-medium focus:outline-none focus:ring-2 focus:ring-slate-400"
+            className="h-11 min-w-0 rounded-lg border border-slate-300 px-3 font-medium focus:outline-none focus:ring-2 focus:ring-slate-400 sm:px-5"
           >
-            Cancelar <span className="ml-1 text-xs text-slate-500">Esc</span>
+            Cerrar <span className="ml-1 hidden text-xs text-slate-500 sm:inline">Esc</span>
           </button>
           <button
             type="submit"
             disabled={!settlement.isValid || busy || !documentTypeReady ||
               paymentMethods.isLoading || paymentMethods.isError}
-            className="flex h-11 min-w-48 items-center justify-center gap-2 rounded-lg bg-teal-700 px-5 font-semibold text-white focus:outline-none focus:ring-4 focus:ring-teal-600/20 disabled:opacity-45"
+            className="flex h-11 min-w-0 items-center justify-center gap-2 rounded-lg bg-teal-700 px-3 font-semibold text-white focus:outline-none focus:ring-4 focus:ring-teal-600/20 disabled:opacity-45 sm:min-w-48 sm:px-5"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
-            Emitir e imprimir
-            <span className="rounded bg-white/15 px-1.5 py-0.5 text-xs">Enter</span>
+            <span className="sm:hidden">Emitir</span>
+            <span className="hidden sm:inline">Emitir e imprimir</span>
+            <span className="hidden rounded bg-white/15 px-1.5 py-0.5 text-xs sm:inline">Enter</span>
           </button>
         </div>
       </form>

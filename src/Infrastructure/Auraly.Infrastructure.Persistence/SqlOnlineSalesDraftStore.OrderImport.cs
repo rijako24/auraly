@@ -40,10 +40,26 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
         }
 
         DemandActiveVersion(state, request.ExpectedVersion);
-        if (await CountDraftLinesAsync(
-                connection, transaction, draftId, cancellationToken) != 0)
+        var draftLineCount = await CountDraftLinesAsync(
+            connection, transaction, draftId, cancellationToken);
+        if (state.SourceOrderId == request.SourceOrderId && draftLineCount != 0)
+        {
+            var current = await ReadDraftAsync(
+                connection, transaction, draftId, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return current;
+        }
+        if (draftLineCount != 0 && state.SourceOrderId is null)
             throw new OnlineSalesDraftValidationException(
                 "Pausa o reinicia la venta actual antes de recuperar un pedido.");
+
+        if (state.SourceOrderId is not null)
+            await ExecuteAsync(
+                connection,
+                transaction,
+                "DELETE dbo.SalesDraftLines WHERE SalesDraftId=@DraftId;",
+                [P("@DraftId", draftId)],
+                cancellationToken);
 
         await DemandOrderAsync(
             connection,
@@ -104,6 +120,16 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
         }
 
         await ExecuteAsync(connection, transaction, """
+            UPDATE staleDraft
+            SET Status=N'Deleted',SourceOrderId=NULL,DeletedAt=@Now,
+                UpdatedAt=@Now,Version=Version+1
+            FROM dbo.SalesDrafts staleDraft
+            INNER JOIN dbo.WorkSessions staleSession
+              ON staleSession.WorkSessionId=staleDraft.WorkSessionId
+            WHERE staleDraft.SourceOrderId=@OrderId
+              AND staleDraft.SalesDraftId<>@DraftId
+              AND staleSession.Status<>N'Open';
+
             UPDATE dbo.SalesDrafts
             SET CustomerId=@CustomerId,SourceOrderId=@OrderId,
                 Reference=@Reference,UpdatedAt=@Now
