@@ -1,0 +1,63 @@
+name: Deploy DEV fast
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: auraly-dev-fast
+  cancel-in-progress: false
+
+jobs:
+  api:
+    name: Deploy API directly to DEV
+    runs-on: windows-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish API
+        shell: pwsh
+        run: |
+          dotnet restore Auraly.Commerce.sln --locked-mode
+          if ($LASTEXITCODE) { throw 'Restore failed.' }
+          dotnet publish src/API/Auraly.Api/Auraly.Api.csproj --configuration Release --no-restore --output artifacts/api
+          if ($LASTEXITCODE) { throw 'API publish failed.' }
+          Compress-Archive -Path artifacts/api/* -DestinationPath artifacts/auraly-api-dev.zip -Force
+
+      - name: Login to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy API without release version
+        shell: pwsh
+        run: |
+          az webapp deploy --resource-group RG-AURALY-DEV --name api-auraly-dev-w5usmo6w --src-path artifacts/auraly-api-dev.zip --type zip --restart true --clean true --async true --track-status false --output none
+          if ($LASTEXITCODE) { throw 'Direct API deployment failed.' }
+
+          $health = 'https://api-auraly-dev-w5usmo6w.azurewebsites.net/health'
+          for ($attempt = 1; $attempt -le 18; $attempt++) {
+            try {
+              $response = Invoke-WebRequest -Uri $health -TimeoutSec 15
+              if ($response.StatusCode -eq 200) {
+                Write-Host $response.Content
+                exit 0
+              }
+            } catch {
+              Write-Host "API startup attempt $attempt/18: $($_.Exception.Message)"
+            }
+            Start-Sleep -Seconds 10
+          }
+
+          az webapp log startup show --resource-group RG-AURALY-DEV --name api-auraly-dev-w5usmo6w 2>&1 | Write-Host
+          throw 'API did not become healthy after direct deployment.'
