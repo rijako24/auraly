@@ -15,7 +15,7 @@ import { useRoles } from "@/hooks/use-roles";
 import { useServices } from "@/hooks/use-services";
 import { useCities } from "@/hooks/use-parties";
 import { employeesApi, usersApi } from "@/services/api";
-import type { PartySiteDetail } from "@/services/api/parties";
+import type { PartySiteDetail, UserRoleDetail } from "@/services/api/parties";
 import { taxationApi } from "@/services/api/taxation";
 import { receivablesApi } from "@/services/api/receivables";
 import { useAuthStore } from "@/stores/auth-store";
@@ -162,10 +162,9 @@ export function PartyEmployeeRolePanel({ employeeId, editing, registerSave }: { 
   </div>;
 }
 
-export function PartyUserRolePanel({ userId, editing, registerSave }: { userId: string; editing: boolean; registerSave: RegisterSave }) {
+export function PartyUserRolePanel({ user, editing, registerSave }: { user: UserRoleDetail; editing: boolean; registerSave: RegisterSave }) {
+  const userId = user.userId;
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
-  const userQuery = useQuery({ queryKey: ["users", userId], queryFn: () => usersApi.getById(userId) });
-  const userRolesQuery = useQuery({ queryKey: ["users", userId, "roles"], queryFn: () => usersApi.getRoles(userId) });
   const roles = useRoles({ page: 1, pageSize: 500 });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [roleToAdd, setRoleToAdd] = useState("");
@@ -173,13 +172,13 @@ export function PartyUserRolePanel({ userId, editing, registerSave }: { userId: 
   const [newPassword, setNewPassword] = useState("");
   const [roleError, setRoleError] = useState("");
   const [passwordError, setPasswordError] = useState("");
-  const scopedAssignments = useMemo(() => (userRolesQuery.data ?? []).filter((item) => item.businessId === businessId), [userRolesQuery.data, businessId]);
+  const scopedAssignments = useMemo(() => user.roles.filter((item) => item.businessId === businessId), [user.roles, businessId]);
 
-  useEffect(() => { if (userQuery.data) setActive(userQuery.data.isActive); }, [userQuery.data]);
+  useEffect(() => { setActive(user.isActive); }, [user.isActive]);
   useEffect(() => { setSelectedIds(new Set(scopedAssignments.map((item) => item.roleId))); }, [scopedAssignments]);
 
   const save = async () => {
-    if (!businessId || !userQuery.data) return;
+    if (!businessId) return;
     const nextRoleError = selectedIds.size === 0 ? "Este campo es requerido" : "";
     const nextPasswordError = newPassword && newPassword.length < 10 ? "Debe tener al menos 10 caracteres" : "";
     setRoleError(nextRoleError); setPasswordError(nextPasswordError);
@@ -189,21 +188,18 @@ export function PartyUserRolePanel({ userId, editing, registerSave }: { userId: 
       ...[...selectedIds].filter((roleId) => !currentIds.has(roleId)).map((roleId) => usersApi.assignRole(userId, { roleId, businessId })),
       ...scopedAssignments.filter((item) => !selectedIds.has(item.roleId)).map((item) => usersApi.removeRole(userId, item.roleId, businessId)),
     ]);
-    if (active !== userQuery.data.isActive) await (active ? usersApi.activate(userId) : usersApi.deactivate(userId));
+    if (active !== user.isActive) await (active ? usersApi.activate(userId) : usersApi.deactivate(userId));
     if (newPassword) await usersApi.resetPassword(userId, newPassword);
     setNewPassword("");
-    await Promise.all([userQuery.refetch(), userRolesQuery.refetch()]);
   };
-  useEffect(() => registerSave(`user-${userId}`, save), [registerSave, userId, businessId, userQuery.data, scopedAssignments, selectedIds, active, newPassword]);
+  useEffect(() => registerSave(`user-${userId}`, save), [registerSave, userId, businessId, user, scopedAssignments, selectedIds, active, newPassword]);
 
-  if (userQuery.isLoading || userRolesQuery.isLoading) return <PanelLoading />;
-  if (!userQuery.data) return <PanelError text="No fue posible cargar la configuración del usuario." />;
   const available = (roles.data?.items ?? []).filter((item) => item.isActive && !selectedIds.has(item.roleId));
   return <div className="space-y-5">
     <PanelHeader icon={KeyRound} title="Configuración del usuario" description="Acceso, contraseña unificada y permisos por rol.">
       <div className="flex items-center gap-3"><span className="text-sm text-muted-foreground">Activo</span><Switch checked={active} onCheckedChange={setActive} disabled={!editing}/></div>
     </PanelHeader>
-    <section className={`space-y-3 rounded-2xl border p-5 ${roleError ? "border-destructive" : ""}`}><div><h3 className="font-semibold">Roles en este negocio</h3><p className="text-sm text-muted-foreground">Definen los menús visibles y las acciones habilitadas en cada vista.</p></div>{editing&&<Select value={roleToAdd} onValueChange={(value) => { setRoleToAdd(""); setRoleError(""); setSelectedIds((current) => new Set(current).add(value)); }}><SelectTrigger aria-invalid={Boolean(roleError)} className={roleError ? "border-destructive" : ""}><SelectValue placeholder={roles.isLoading ? "Cargando roles..." : "Agregar rol"} /></SelectTrigger><SelectContent>{available.map((role) => <SelectItem key={role.roleId} value={role.roleId}>{role.name}</SelectItem>)}{available.length === 0 && <SelectItem value="_none" disabled>Sin datos</SelectItem>}</SelectContent></Select>}{roleError && <p className="text-sm text-destructive">{roleError}</p>}<div className="grid gap-3 sm:grid-cols-2">{[...selectedIds].map((roleId) => { const role = roles.data?.items.find((item) => item.roleId === roleId); return <div key={roleId} className="flex items-center justify-between rounded-xl border bg-card p-4"><div><p className="font-medium">{role?.name ?? "Rol"}</p><p className="text-xs text-muted-foreground">{role?.description ?? "Permisos asignados"}</p></div>{editing&&<Button type="button" variant="ghost" size="icon" onClick={() => setSelectedIds((current) => { const next = new Set(current); next.delete(roleId); return next; })}><X className="h-4 w-4" /></Button>}</div>; })}{selectedIds.size === 0 && <EmptyState text="Sin datos. Agrega al menos un rol para habilitar el acceso." />}</div></section>
+    <section className={`space-y-3 rounded-2xl border p-5 ${roleError ? "border-destructive" : ""}`}><div><h3 className="font-semibold">Roles en este negocio</h3><p className="text-sm text-muted-foreground">Definen los menús visibles y las acciones habilitadas en cada vista.</p></div>{editing&&<Select value={roleToAdd} onValueChange={(value) => { setRoleToAdd(""); setRoleError(""); setSelectedIds((current) => new Set(current).add(value)); }}><SelectTrigger aria-invalid={Boolean(roleError)} className={roleError ? "border-destructive" : ""}><SelectValue placeholder={roles.isLoading ? "Cargando roles..." : "Agregar rol"} /></SelectTrigger><SelectContent>{available.map((role) => <SelectItem key={role.roleId} value={role.roleId}>{role.name}</SelectItem>)}{available.length === 0 && <SelectItem value="_none" disabled>Sin datos</SelectItem>}</SelectContent></Select>}{roleError && <p className="text-sm text-destructive">{roleError}</p>}<div className="grid gap-3 sm:grid-cols-2">{[...selectedIds].map((roleId) => { const role = roles.data?.items.find((item) => item.roleId === roleId); const assigned = scopedAssignments.find((item) => item.roleId === roleId); return <div key={roleId} className="flex items-center justify-between rounded-xl border bg-card p-4"><div><p className="font-medium">{role?.name ?? assigned?.roleName ?? "Rol"}</p><p className="text-xs text-muted-foreground">{role?.description ?? "Permisos asignados"}</p></div>{editing&&<Button type="button" variant="ghost" size="icon" onClick={() => setSelectedIds((current) => { const next = new Set(current); next.delete(roleId); return next; })}><X className="h-4 w-4" /></Button>}</div>; })}{selectedIds.size === 0 && <EmptyState text="Sin roles asignados en este negocio." />}</div></section>
     {editing&&<section className={`space-y-3 rounded-2xl border p-5 ${passwordError ? "border-destructive" : ""}`}><div><Label htmlFor={`reset-${userId}`}>Contraseña de acceso y modo sin conexión POS</Label><p className="text-sm text-muted-foreground">Déjala vacía para conservar la actual. Al cambiarla se actualiza también el acceso sin conexión.</p></div><Input id={`reset-${userId}`} type="password" autoComplete="new-password" value={newPassword} onChange={(event) => { setNewPassword(event.target.value); setPasswordError(""); }} aria-invalid={Boolean(passwordError)} className={passwordError ? "border-destructive" : ""} placeholder="Nueva contraseña" />{passwordError && <p className="text-sm text-destructive">{passwordError}</p>}</section>}
   </div>;
 }

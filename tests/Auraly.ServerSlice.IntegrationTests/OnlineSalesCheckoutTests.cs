@@ -243,6 +243,61 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Missing_fiscal_configuration_blocks_invoice_but_allows_receipt()
+    {
+        var userId = await CreateUserAsync("no-fiscal");
+        using var client = fixture.CreateUserClient(
+            userId,
+            CommercePermissionCodes.SalesCreate,
+            WorkSessionPermissionCodes.Open);
+        client.Timeout = TimeSpan.FromSeconds(60);
+        var captured = await CaptureAsync(client, await OpenAsync(client));
+        var payment = new OnlineSalesPayment("Cash", captured.PayableAmount, null);
+
+        await ExecuteAsync(
+            """
+            UPDATE dbo.FiscalAuthorizations SET IsActive=0
+            WHERE FiscalAuthorizationId=@FiscalAuthorizationId;
+            UPDATE dbo.FiscalIssuerConfigurations SET IsActive=0
+            WHERE FiscalIssuerConfigurationId=@FiscalIssuerConfigurationId;
+            """,
+            new("@FiscalAuthorizationId", fixture.FiscalAuthorizationId),
+            new("@FiscalIssuerConfigurationId", fixture.FiscalIssuerConfigurationId));
+        try
+        {
+            using var invoiceRequest = Mutation(
+                captured.DraftId,
+                new CompleteOnlineSalesDraftRequest(
+                    captured.Version, [payment], DocumentType: PosSaleDocumentTypes.Invoice),
+                $"no-fiscal-invoice-{Guid.NewGuid():N}");
+            using var invoiceResponse = await client.SendAsync(invoiceRequest);
+            Assert.Equal(HttpStatusCode.BadRequest, invoiceResponse.StatusCode);
+            Assert.Equal(0, await CountDocumentsForDraftAsync(captured.DraftId));
+
+            var receipt = await CompleteAsync(
+                client,
+                captured.DraftId,
+                new CompleteOnlineSalesDraftRequest(
+                    captured.Version, [payment], DocumentType: PosSaleDocumentTypes.Receipt),
+                $"no-fiscal-receipt-{Guid.NewGuid():N}");
+            Assert.Equal(PosSaleDocumentTypes.Receipt, receipt.Receipt.DocumentType);
+            Assert.Null(receipt.Receipt.FiscalNumber);
+        }
+        finally
+        {
+            await ExecuteAsync(
+                """
+                UPDATE dbo.FiscalAuthorizations SET IsActive=1
+                WHERE FiscalAuthorizationId=@FiscalAuthorizationId;
+                UPDATE dbo.FiscalIssuerConfigurations SET IsActive=1
+                WHERE FiscalIssuerConfigurationId=@FiscalIssuerConfigurationId;
+                """,
+                new("@FiscalAuthorizationId", fixture.FiscalAuthorizationId),
+                new("@FiscalIssuerConfigurationId", fixture.FiscalIssuerConfigurationId));
+        }
+    }
+
+    [Fact]
     public async Task Customer_configured_for_electronic_invoicing_cannot_be_completed_as_a_commercial_receipt()
     {
         var userId = await CreateUserAsync("required-invoice");
@@ -450,6 +505,22 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             "SELECT COUNT(*) FROM dbo.SalesDocuments WHERE CustomerId=@CustomerId;",
             connection);
         command.Parameters.AddWithValue("@CustomerId", customerId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<int> CountDocumentsForDraftAsync(Guid draftId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(
+            """
+            SELECT COUNT(*)
+            FROM dbo.OnlineSalesCheckoutReceipts receipt
+            JOIN dbo.SalesDocuments document ON document.DocumentId=receipt.DocumentId
+            WHERE receipt.SalesDraftId=@DraftId;
+            """,
+            connection);
+        command.Parameters.AddWithValue("@DraftId", draftId);
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 

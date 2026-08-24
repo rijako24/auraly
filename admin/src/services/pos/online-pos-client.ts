@@ -9,6 +9,7 @@ import {
   type InvoiceOrdersResponse,
 } from "@/services/orders/commerce-orders-client";
 import type { SellerOrderResult } from "@/services/api/seller-orders";
+import { fiscalConfigurationApi } from "@/services/api/fiscal-configuration";
 import { savePosDraftAsOrder } from "@/services/orders/save-pos-order";
 
 import {
@@ -305,9 +306,12 @@ export class OnlinePosClient implements PosClient {
 
   async health() {
     await request<{ status: string }>("/api/health");
-    const local = this.edgeSessionToken
-      ? await this.localEdge().health().catch(() => null)
-      : null;
+    const [local, fiscal] = await Promise.all([
+      this.edgeSessionToken
+        ? this.localEdge().health().catch(() => null)
+        : Promise.resolve(null),
+      fiscalConfigurationApi.get(this.context.businessId).catch(() => null),
+    ]);
     return {
       status: "ok",
       serverConnected: true,
@@ -320,7 +324,7 @@ export class OnlinePosClient implements PosClient {
       userId: this.userId,
       workSessionId: this.context.workSessionId,
       deviceId: local?.deviceId ?? null,
-      fiscalReady: true,
+      fiscalReady: fiscal?.isReadyForOnlineSales === true,
       identityReady: true,
       catalogStatus: "Ready",
       synchronizationInProgress: false,

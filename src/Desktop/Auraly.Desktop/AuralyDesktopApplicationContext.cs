@@ -330,9 +330,12 @@ internal sealed class AuralySplashForm : Form
         using var format = new StringFormat
         {
             Alignment = StringAlignment.Center,
-            Trimming = StringTrimming.EllipsisCharacter
+            LineAlignment = StringAlignment.Center,
+            Trimming = StringTrimming.EllipsisCharacter,
+            FormatFlags = StringFormatFlags.NoWrap
         };
-        graphics.DrawString(value, font, brush, new RectangleF(35, y, 550, 38), format);
+        var lineHeight = Math.Max(52f, font.GetHeight(graphics) + 18f);
+        graphics.DrawString(value, font, brush, new RectangleF(35, y, 550, lineHeight), format);
     }
 
     protected override void Dispose(bool disposing)

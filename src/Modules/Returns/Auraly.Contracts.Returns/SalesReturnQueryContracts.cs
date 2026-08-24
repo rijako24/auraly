@@ -9,6 +9,7 @@ public sealed record ReturnableSalesQuery(
     int Page,
     int PageSize,
     string? Search,
+    string? Customer,
     DateOnly? From,
     DateOnly? To,
     bool? WithAvailableQuantity);

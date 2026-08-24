@@ -38,5 +38,11 @@ public sealed class WorkSessionClosureReceiptRendererTests
         Assert.Contains("CONCILIACION AUTOMATICA", receipt);
         Assert.Contains("EFECTIVO ESPERADO", receipt);
         Assert.Contains("EFECTIVO CONTADO", receipt);
+
+        var html = WorkSessionClosureReceiptRenderer.RenderHtml(closure);
+        Assert.StartsWith("<!doctype html>", html);
+        Assert.Contains("Cierre de sesión de venta", html);
+        Assert.Contains("Conciliación automática", html);
+        Assert.Contains(expectedAmount, html);
     }
 }

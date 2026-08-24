@@ -222,7 +222,9 @@ public sealed class PartyUserAccountVerticalSliceTests(ServerSliceFixture fixtur
             new PartyInput(PartyTypes.NaturalPerson,countryId,"CC",$"7{suffix[..14]}",null,"Vendedor existente",null,"Vendedor","Existente",$"existing-{suffix}@auraly.test","3001234567"),
             new PartySiteInput("PRINCIPAL","Principal",countryId,divisionId,cityId,"Calle 1",null,null,null,"3001234567",true),
             $"UE-{suffix[..10]}",null,"SaleAfterTax","Sale");
-        using var admin=fixture.CreateAdminClient(PartyWorkspacePermissionCodes.SellerCreate);
+        using var admin=fixture.CreateAdminClient(
+            PartyWorkspacePermissionCodes.SellerCreate,
+            PartyWorkspacePermissionCodes.Read);
         using var response=await admin.PostAsJsonAsync("/api/commerce/v1/sellers",request);
         Assert.Equal(HttpStatusCode.Created,response.StatusCode);
         Assert.Equal(1,await ScalarAsync<int>(
@@ -231,6 +233,12 @@ public sealed class PartyUserAccountVerticalSliceTests(ServerSliceFixture fixtur
             JOIN dbo.AppRoles role ON role.RoleId=assignment.RoleId AND role.NormalizedName=N'SELLER'
             WHERE assignment.UserId=@UserId AND assignment.BusinessId=@BusinessId;
             """,new SqlParameter("@UserId",userId),new SqlParameter("@BusinessId",fixture.BusinessId)));
+        var detail = await admin.GetFromJsonAsync<PartyWorkspaceDetail>(
+            $"/api/commerce/v1/parties/{partyId:D}");
+        Assert.NotNull(detail?.User);
+        Assert.Contains(detail.User.Roles, assignment =>
+            assignment.BusinessId == fixture.BusinessId &&
+            assignment.RoleName == "Vendedor");
     }
 
     private async Task ExecuteAsync(string sql, params SqlParameter[] parameters)

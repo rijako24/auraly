@@ -15,6 +15,7 @@ internal static class PosPeripheralModule
         services.AddSingleton<HtmlReceiptPreviewRenderer>();
         services.AddSingleton<HalfLetterDocumentRenderer>();
         services.AddSingleton<IWindowsRawPrintJob>(SystemWindowsRawPrintJob.Instance);
+        services.AddSingleton<IWindowsRenderedPrintJob, SystemWindowsRenderedPrintJob>();
         services.AddSingleton<IReceiptPreviewLauncher, ShellReceiptPreviewLauncher>();
         var dataDirectory = Path.GetDirectoryName(Path.GetFullPath(databasePath))!;
         services.AddSingleton(new PosPrinterConfigurationStore(

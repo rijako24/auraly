@@ -89,7 +89,8 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
         using (var salesResponse = await user.GetAsync(
                    $"/api/commerce/v1/sales-returns/sales?page=1&pageSize=20&search={Uri.EscapeDataString(original.DocumentNumber.FullNumber)}&withAvailableQuantity=true"))
         {
-            salesResponse.EnsureSuccessStatusCode();
+            Assert.True(salesResponse.IsSuccessStatusCode,
+                await salesResponse.Content.ReadAsStringAsync());
             var page = await salesResponse.Content.ReadFromJsonAsync<ReturnableSalePage>();
             Assert.NotNull(page);
             Assert.Contains(page.Items, item => item.DocumentId == original.DocumentId);

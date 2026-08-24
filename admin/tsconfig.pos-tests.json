@@ -26,6 +26,8 @@
     "src/app/(pos)/pos/pos-order-save-availability.ts",
     "src/app/(pos)/pos/pos-order-save-availability.test.ts",
     "src/services/pos/pos-edge-client.ts",
+    "src/services/pos/pos-launch-session.ts",
+    "src/services/pos/pos-launch-session.test.ts",
     "src/services/pos/pos-work-session-close.ts",
     "src/services/pos/pos-work-session-close.test.ts",
     "src/services/pos/pos-receipt-brand.test.ts",

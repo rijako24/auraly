@@ -55,6 +55,30 @@ export async function redeemPosEnrollment(
   if (!response.ok) throw new Error(await problemDetail(response));
 }
 
+export async function waitForRedeemedPosEdge(
+  edgeSessionToken: string,
+  timeoutMilliseconds = 30_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMilliseconds;
+  await new Promise((resolve) => window.setTimeout(resolve, 1_500));
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${EDGE_BASE_URL}/edge/v1/health`, {
+        cache: "no-store",
+        headers: { "X-Auraly-Edge-Session": edgeSessionToken },
+      });
+      if (response.ok) {
+        const health = await response.json() as { status?: string };
+        if (health.status && health.status !== "EnrollmentRequired") return;
+      }
+    } catch {
+      // The service is expected to be briefly unavailable while it restarts.
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+  }
+  throw new Error("El equipo quedó enrolado, pero el servicio local no volvió a iniciar. Cierra y abre Auraly POS.");
+}
+
 async function problemDetail(response: Response): Promise<string> {
   const raw = await response.text();
   try {

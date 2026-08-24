@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
 using Microsoft.Data.SqlClient;
 
@@ -126,6 +127,17 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
         Assert.Equal(0, reader.GetInt32(3));
         Assert.Equal(2, reader.GetInt32(4));
         Assert.Equal(0, reader.GetInt32(5));
+
+        using var returns = fixture.CreateAdminClient(SalesReturnPermissionCodes.Read);
+        using var returnableResponse = await returns.GetAsync(
+            $"/api/commerce/v1/sales-returns/sales?page=1&pageSize=20&search={Uri.EscapeDataString(receipt.DocumentNumber.FullNumber)}&withAvailableQuantity=true");
+        Assert.True(returnableResponse.IsSuccessStatusCode,
+            await returnableResponse.Content.ReadAsStringAsync());
+        var returnable = await returnableResponse.Content.ReadFromJsonAsync<ReturnableSalePage>();
+        var receiptResult = Assert.Single(returnable!.Items,
+            item => item.DocumentId == receipt.DocumentId);
+        Assert.Equal(string.Empty, receiptResult.FiscalNumber);
+        Assert.Equal(string.Empty, receiptResult.Cufe);
     }
 
     [Fact]

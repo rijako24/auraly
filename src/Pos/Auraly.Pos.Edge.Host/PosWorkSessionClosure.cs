@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Collections.Concurrent;
+using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using Auraly.Contracts.WorkSessions;
@@ -173,7 +174,8 @@ public interface IPosWorkSessionClosurePrinter
 
 public sealed class PosWorkSessionClosurePrinter(
     PosPrinterConfigurationStore configuration,
-    IWindowsRawPrintJob rawPrintJob)
+    IWindowsRawPrintJob rawPrintJob,
+    IWindowsRenderedPrintJob renderedPrintJob)
     : IPosWorkSessionClosurePrinter
 {
     public Task PrintAsync(
@@ -187,13 +189,17 @@ public sealed class PosWorkSessionClosurePrinter(
             string.IsNullOrWhiteSpace(printerName))
             throw new InvalidOperationException(
                 "Configura una impresora de tirilla antes de cerrar la sesión de venta.");
+        var documentName = $"Auraly-Cierre-{closure.WorkSessionClosureId:N}";
+        if (WindowsPrinterOutput.RequiresRenderedDocument(printerName))
+            return renderedPrintJob.PrintAsync(
+                printerName,
+                documentName,
+                WorkSessionClosureReceiptRenderer.RenderHtml(closure),
+                configuration.ReceiptOutputDirectory,
+                cancellationToken);
         var bytes = WorkSessionClosureReceiptRenderer.Render(
-            closure,
-            settings.ReceiptPaperWidthMillimeters);
-        rawPrintJob.Print(
-            printerName,
-            $"Auraly-Cierre-{closure.WorkSessionClosureId:N}",
-            bytes);
+            closure, settings.ReceiptPaperWidthMillimeters);
+        rawPrintJob.Print(printerName, documentName, bytes);
         return Task.CompletedTask;
     }
 }
@@ -407,6 +413,31 @@ internal static class WorkSessionClosureReceiptRenderer
         return stream.ToArray();
     }
 
+    public static string RenderHtml(WorkSessionClosureView value)
+    {
+        var payments = string.Join(string.Empty, value.PaymentTotals.Select(payment =>
+        {
+            var counted = RequiresManualCount(payment.PaymentMethodCode)
+                ? $"<td>{Money(payment.CountedAmount ?? 0)}</td><td>{SignedMoney(payment.Difference ?? 0)}</td>"
+                : "<td colspan=\"2\">Conciliación automática</td>";
+            return $"<tr><td>{Encode(PaymentMethodName(payment.PaymentMethodCode))}</td><td>{Money(payment.NetAmount)}</td>{counted}</tr>";
+        }));
+        var note = string.IsNullOrWhiteSpace(value.Note)
+            ? string.Empty
+            : $"<p><strong>Nota:</strong> {Encode(value.Note)}</p>";
+        return $$"""
+<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Cierre de sesión de venta</title>
+<style>@page{size:auto;margin:10mm}body{font:12px Arial,sans-serif;color:#111;max-width:760px;margin:auto}h1{text-align:center;font-size:20px}h2{text-align:center;font-size:14px;font-weight:normal}table{width:100%;border-collapse:collapse;margin:14px 0}th,td{padding:6px;border-bottom:1px solid #ddd;text-align:right}th:first-child,td:first-child{text-align:left}.summary{font-weight:bold}.difference{font-size:15px}</style></head><body>
+<h1>CIERRE DE SESIÓN DE VENTA</h1><h2>{{Encode(value.BusinessName)}} · {{Encode(value.WarehouseName)}}</h2>
+<p><strong>Cajero:</strong> {{Encode(value.UserName)}}<br><strong>Apertura:</strong> {{Date(value.OpenedAt)}}<br><strong>Cierre:</strong> {{Date(value.ClosedAt)}}<br><strong>Duración:</strong> {{Duration(value.OpenedAt, value.ClosedAt)}}</p>
+<table><tbody><tr><td>Ventas</td><td>{{Money(value.TotalSales)}}</td></tr><tr><td>Devoluciones</td><td>{{Money(value.TotalRefunds)}}</td></tr><tr><td>Otros movimientos</td><td>{{Money(value.TotalOther)}}</td></tr><tr class="summary"><td>Neto</td><td>{{Money(value.NetAmount)}}</td></tr></tbody></table>
+<h3>Conciliación por medio</h3><table><thead><tr><th>Medio</th><th>Esperado</th><th>Contado</th><th>Diferencia</th></tr></thead><tbody>{{payments}}</tbody></table>
+<p>Efectivo esperado: <strong>{{Money(value.ExpectedCash)}}</strong><br>Efectivo contado: <strong>{{Money(value.CountedCash ?? 0)}}</strong></p>
+<p class="difference"><strong>{{Encode(DifferenceLabel(value.CashDifference ?? 0))}}:</strong> {{SignedMoney(value.CashDifference ?? 0)}}</p>{{note}}
+<p>Cierre: {{value.WorkSessionClosureId:D}}</p></body></html>
+""";
+    }
+
     private static string Date(DateTimeOffset value) =>
         value.ToString("yyyy-MM-dd HH:mm:ss zzz", CultureInfo.InvariantCulture);
     private static string Duration(DateTimeOffset start, DateTimeOffset end)
@@ -440,6 +471,7 @@ internal static class WorkSessionClosureReceiptRenderer
         code.Equals("Card", StringComparison.OrdinalIgnoreCase) ||
         code.Equals("DebitCard", StringComparison.OrdinalIgnoreCase) ||
         code.Equals("CreditCard", StringComparison.OrdinalIgnoreCase);
+    private static string Encode(string value) => WebUtility.HtmlEncode(value);
     private static string Pair(string label, string value, int columns)
     {
         var available = Math.Max(1, columns - value.Length);

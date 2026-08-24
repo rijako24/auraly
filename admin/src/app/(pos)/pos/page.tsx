@@ -64,7 +64,12 @@ import {
 import {
   authorizePosEnrollment,
   redeemPosEnrollment,
+  waitForRedeemedPosEdge,
 } from "@/services/pos/pos-enrollment";
+import {
+  canIssuePosDocument,
+  fiscalConfigurationRequiredMessage,
+} from "@/services/pos/pos-fiscal-guard";
 import { PosConfirmDialog } from "./pos-confirm-dialog";
 import { PosCashMovementDialog } from "./pos-cash-movement-dialog";
 import { PosCashClosureDialog } from "./pos-cash-closure-dialog";
@@ -163,6 +168,7 @@ export default function PosPage() {
   const [edgePermissions, setEdgePermissions] = useState<string[]>([]);
   const [setupLoading, setSetupLoading] = useState(true);
   const [setupError, setSetupError] = useState<string | null>(null);
+  const [setupNotice, setSetupNotice] = useState<string | null>(null);
   const [draft, setDraft] = useState<PosDraft | null>(null);
   const [temporaries, setTemporaries] = useState<PosDraft[]>([]);
   const [scan, setScan] = useState("");
@@ -360,7 +366,7 @@ export default function PosPage() {
               });
             }
 
-            if (!requiresEnrollment && edgeStartupMode === "enrolled") {
+            if (!requiresEnrollment && health.identityReady) {
               if (active) {
                 setEdgeLoginState(
                   health.status === "IdentitySynchronizing" || health.status === "Synchronizing"
@@ -1408,6 +1414,12 @@ export default function PosPage() {
   }
   async function changeDocumentType(value: PosSaleDocumentType) {
     if (!client || busy) return;
+    if (!canIssuePosDocument(value, workstation.fiscalReady)) {
+      setDocumentTypeOpen(false);
+      setError(fiscalConfigurationRequiredMessage);
+      focusScanner();
+      return;
+    }
     if (value === documentType) {
       setDocumentTypeOpen(false);
       focusScanner();
@@ -1443,6 +1455,10 @@ export default function PosPage() {
     const effectiveDocumentType = selectedCustomer?.requiresElectronicInvoice
       ? "SalesInvoice"
       : documentType;
+    if (!canIssuePosDocument(effectiveDocumentType, workstation.fiscalReady)) {
+      setError(fiscalConfigurationRequiredMessage);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -1739,19 +1755,21 @@ export default function PosPage() {
   async function enrollOffline(option: SalesWorkspaceOption, initialDocumentType: PosSaleDocumentType) {
     if (!edgeEnrollmentToken) return;
     setSetupError(null);
-      window.localStorage.setItem("auraly.pos.document-type", initialDocumentType);
+    setSetupNotice("Autorizando este equipo para trabajar sin conexión…");
+    window.localStorage.setItem("auraly.pos.document-type", initialDocumentType);
     setSetupLoading(true);
     try {
       const authorization = await authorizePosEnrollment(option);
+      setSetupNotice("Guardando la identidad segura de la caja…");
       await redeemPosEnrollment(edgeEnrollmentToken, authorization);
-      setSetupError(
-        "Equipo enrolado. Estamos descargando usuarios, permisos y catálogo para habilitar el acceso local.",
-      );
-      window.setTimeout(() => window.location.reload(), 2_500);
+      setSetupNotice("Reiniciando el servicio local y preparando usuarios, permisos y catálogo…");
+      await waitForRedeemedPosEdge(edgeEnrollmentToken);
+      window.location.reload();
     } catch (caught) {
       const message = caught instanceof Error
         ? caught.message
         : "No fue posible enrolar esta estación.";
+      setSetupNotice(null);
       setSetupError(message);
       setError(message);
       throw caught;
@@ -1930,6 +1948,7 @@ function changeOnlineWorkspace() {
         options={onlineOptions}
         loading={setupLoading}
         error={setupError}
+        notice={setupNotice}
         tenantName={onlineTenantName || "Auraly"}
         userDisplayName={onlineUserName || "usuario"}
         onSelect={activateOnline}
@@ -2793,7 +2812,10 @@ edgeCapable={edgeEnrollmentRequired}
           busy={busy}
           documentType={selectedCustomer?.requiresElectronicInvoice ? "SalesInvoice" : documentType}
           documentTypeLocked={selectedCustomer?.requiresElectronicInvoice ?? false}
-          documentTypeReady
+          documentTypeReady={canIssuePosDocument(
+            selectedCustomer?.requiresElectronicInvoice ? "SalesInvoice" : documentType,
+            workstation.fiscalReady,
+          )}
           customer={selectedCustomer}
           onChangeDocumentType={() => setDocumentTypeOpen(true)}
           onCancel={() => {

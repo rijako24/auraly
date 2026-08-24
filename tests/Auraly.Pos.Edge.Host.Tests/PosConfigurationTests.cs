@@ -12,6 +12,72 @@ namespace Auraly.Pos.Edge.Host.Tests;
 
 public sealed class PosConfigurationTests
 {
+    [Theory]
+    [InlineData("Microsoft Print to PDF")]
+    [InlineData("Adobe PDF")]
+    [InlineData("Microsoft XPS Document Writer")]
+    public void Virtual_document_printers_require_rendered_output(string printerName)
+    {
+        Assert.True(WindowsPrinterOutput.RequiresRenderedDocument(printerName));
+        Assert.False(WindowsPrinterOutput.RequiresRenderedDocument("EPSON TM-T20III Receipt"));
+    }
+
+    [Fact]
+    public async Task Pdf_printer_receives_rendered_html_instead_of_esc_pos_bytes()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(), "auraly-pdf-printer-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new PosPrinterConfigurationStore(
+                Path.Combine(directory, "settings.json"),
+                Path.Combine(directory, "receipts"));
+            store.Save(new PosPrinterConfiguration(
+                PosPrinterModes.WindowsRaw,
+                "Microsoft Print to PDF",
+                80,
+                "Microsoft Print to PDF",
+                PosPrinterName: "Microsoft Print to PDF",
+                OrdersPrinterName: "Microsoft Print to PDF"));
+            var raw = new RecordingRawPrintJob();
+            var rendered = new RecordingRenderedPrintJob();
+            var printer = new ConfigurablePosReceiptPrinter(
+                store,
+                new EscPosReceiptRenderer(),
+                new HtmlReceiptPreviewRenderer(),
+                new NoopPreviewLauncher(),
+                new ConfigurableOrderDocumentPrinter(
+                    store, new HalfLetterDocumentRenderer()),
+                raw,
+                rendered);
+
+            await printer.PrintAsync(Receipt());
+            var now = DateTimeOffset.UtcNow;
+            await new PosWorkSessionClosurePrinter(store, raw, rendered).PrintAsync(
+                new WorkSessionClosureView(
+                    Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Negocio",
+                    Guid.NewGuid(), "Bodega", Guid.NewGuid(), "Cajero", null,
+                    now.AddHours(-8), now, 10m, 0, 0, 10m, 10m, 10m, 0, null,
+                    [new WorkSessionPaymentTotal("Cash", 10m, 0, 0, 10m, 10m, 0)]),
+                CancellationToken.None);
+
+            Assert.Empty(raw.PrinterNames);
+            Assert.Equal(2, rendered.PrinterNames.Count);
+            Assert.All(rendered.PrinterNames,
+                name => Assert.Equal("Microsoft Print to PDF", name));
+            Assert.All(rendered.Documents,
+                html => Assert.Contains("<!doctype html>", html,
+                    StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(rendered.Documents,
+                html => html.Contains("CIERRE DE SESIÓN DE VENTA",
+                    StringComparison.Ordinal));
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public void Receipt_only_enrollment_does_not_require_or_emit_fiscal_secrets()
     {
@@ -178,6 +244,7 @@ public sealed class PosConfigurationTests
                 OrdersPrinterName: "Pedidos POS",
                 OrdersReceiptPaperWidthMillimeters: 58));
             var raw = new RecordingRawPrintJob();
+            var rendered = new RecordingRenderedPrintJob();
             var receiptPrinter = new ConfigurablePosReceiptPrinter(
                 store,
                 new EscPosReceiptRenderer(),
@@ -185,7 +252,8 @@ public sealed class PosConfigurationTests
                 new NoopPreviewLauncher(),
                 new ConfigurableOrderDocumentPrinter(
                     store, new HalfLetterDocumentRenderer()),
-                raw);
+                raw,
+                rendered);
             var receipt = Receipt();
 
             await receiptPrinter.PrintAsync(receipt);
@@ -209,7 +277,7 @@ public sealed class PosConfigurationTests
                 null,
                 "Cliente"));
             var now = DateTimeOffset.UtcNow;
-            await new PosWorkSessionClosurePrinter(store, raw).PrintAsync(
+            await new PosWorkSessionClosurePrinter(store, raw, rendered).PrintAsync(
                 new WorkSessionClosureView(
                     Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Negocio",
                     Guid.NewGuid(), "Bodega", Guid.NewGuid(), "Cajero", null,
@@ -295,6 +363,24 @@ public sealed class PosConfigurationTests
 
         public void Print(string printerName, string documentName, byte[] bytes) =>
             PrinterNames.Add(printerName);
+    }
+
+    private sealed class RecordingRenderedPrintJob : IWindowsRenderedPrintJob
+    {
+        public List<string> PrinterNames { get; } = [];
+        public List<string> Documents { get; } = [];
+
+        public Task PrintAsync(
+            string printerName,
+            string documentName,
+            string html,
+            string outputDirectory,
+            CancellationToken cancellationToken)
+        {
+            PrinterNames.Add(printerName);
+            Documents.Add(html);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class NoopPreviewLauncher : IReceiptPreviewLauncher

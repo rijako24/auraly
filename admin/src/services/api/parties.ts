@@ -27,7 +27,8 @@ export interface CustomerAcceptance { customerId: string; partyId: string; }
 export interface SellerRoleDetail { sellerId: string; code: string; defaultCommissionPercent: number | null; commissionBasis: string; commissionTrigger: string; isActive: boolean; }
 export interface CarrierRoleDetail { carrierId: string; code: string; transportationMode: string; isActive: boolean; }
 export interface EmployeeRoleDetail { employeeId: string; isActive: boolean; }
-export interface UserRoleDetail { userId: string; username: string; email: string; isActive: boolean; }
+export interface PartyUserRoleAssignment { roleId: string; roleName: string; businessId: string | null; assignedAt: string; }
+export interface UserRoleDetail { userId: string; username: string; email: string; isActive: boolean; roles: PartyUserRoleAssignment[]; }
 export interface PartyWorkspaceDetail {
   partyId: string; partyType: "NaturalPerson" | "Organization";
   identificationCountryId: string | null; identificationTypeCode: string | null; identification: string | null;

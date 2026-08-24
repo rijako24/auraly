@@ -11,11 +11,12 @@ public static class SalesReturnQueryApi
     {
         endpoints.MapGet("/api/commerce/v1/sales-returns/sales", async (
                 HttpContext context, int page, int pageSize, string? search,
+                string? customer,
                 DateOnly? from, DateOnly? to, bool? withAvailableQuantity,
                 SalesReturnQueryService service, CancellationToken token) =>
             await Execute(() => service.ListReturnableSalesAsync(
                 context.User.ToSalesReturnQueryIdentity(),
-                new(page, pageSize, search, from, to, withAvailableQuantity), token),
+                new(page, pageSize, search, customer, from, to, withAvailableQuantity), token),
                 Results.Ok))
             .RequireAuthorization("returns.user");
 

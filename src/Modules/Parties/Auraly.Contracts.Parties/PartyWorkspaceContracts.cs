@@ -157,11 +157,18 @@ public sealed record CarrierRoleDetail(
 
 public sealed record EmployeeRoleDetail(Guid EmployeeId, bool IsActive);
 
+public sealed record PartyUserRoleAssignment(
+    Guid RoleId,
+    string RoleName,
+    Guid? BusinessId,
+    DateTimeOffset AssignedAt);
+
 public sealed record UserRoleDetail(
     Guid UserId,
     string Username,
     string Email,
-    bool IsActive);
+    bool IsActive,
+    IReadOnlyList<PartyUserRoleAssignment> Roles);
 
 public sealed record PartyWorkspaceDetail(
     Guid PartyId,

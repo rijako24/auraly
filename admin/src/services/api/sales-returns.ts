@@ -111,6 +111,7 @@ export const salesReturnsApi = {
     page?: number;
     pageSize?: number;
     search?: string;
+    customer?: string;
     from?: string;
     to?: string;
     withAvailableQuantity?: boolean;

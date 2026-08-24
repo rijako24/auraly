@@ -22,14 +22,16 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
               GROUP BY l.OriginalDocumentId,l.OriginalLineNumber
             ), Sales AS
             (
-              SELECT d.DocumentId,d.DocumentNumber,d.FiscalNumber,d.CufeReceived,d.IssuedAt,
+              SELECT d.DocumentId,d.DocumentNumber,
+                     COALESCE(d.FiscalNumber,N'') FiscalNumber,
+                     COALESCE(d.CufeReceived,N'') CufeReceived,d.IssuedAt,
                      d.CustomerId,COALESCE(NULLIF(p.DisplayName,N''),NULLIF(p.LegalName,N''),
                        NULLIF(d.CustomerIdentification,N''),N'Consumidor final') CustomerName,
                      d.CustomerIdentification,d.WarehouseId,w.Name WarehouseName,d.PayableAmount,
                      COALESCE(SUM(x.ReturnedTotal),0) ReturnedTotal,
                      CAST(CASE WHEN SUM(CASE WHEN l.Quantity>COALESCE(x.ReturnedQuantity,0)
                                               THEN 1 ELSE 0 END)>0 THEN 1 ELSE 0 END AS BIT) HasAvailable,
-                     d.FiscalStatus
+                     COALESCE(d.FiscalStatus,N'No aplica') FiscalStatus
               FROM dbo.SalesDocuments d
               INNER JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId AND b.TenantId=@TenantId
               INNER JOIN dbo.Warehouses w ON w.WarehouseId=d.WarehouseId
@@ -54,6 +56,9 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
                       (product.ProductCode LIKE N'%'+@Search+N'%' OR
                        product.Reference LIKE N'%'+@Search+N'%' OR
                        product.Name LIKE N'%'+@Search+N'%')))
+                AND (@Customer IS NULL OR d.CustomerIdentification LIKE N'%'+@Customer+N'%'
+                  OR p.DisplayName LIKE N'%'+@Customer+N'%'
+                  OR p.LegalName LIKE N'%'+@Customer+N'%')
               GROUP BY d.DocumentId,d.DocumentNumber,d.FiscalNumber,d.CufeReceived,d.IssuedAt,
                        d.CustomerId,p.DisplayName,p.LegalName,d.CustomerIdentification,
                        d.WarehouseId,w.Name,d.PayableAmount,d.FiscalStatus
@@ -71,6 +76,7 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
         await using var command = new SqlCommand(sql, connection);
         Scope(command, user);
         command.Parameters.AddWithValue("@Search", (object?)query.Search ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Customer", (object?)query.Customer ?? DBNull.Value);
         command.Parameters.AddWithValue("@From", (object?)query.From?.ToDateTime(TimeOnly.MinValue) ?? DBNull.Value);
         command.Parameters.AddWithValue("@To", (object?)query.To?.ToDateTime(TimeOnly.MinValue) ?? DBNull.Value);
         command.Parameters.AddWithValue("@Available", (object?)query.WithAvailableQuantity ?? DBNull.Value);
@@ -97,7 +103,7 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         const string headerSql = """
-            SELECT d.DocumentNumber,d.FiscalNumber,d.CufeReceived,d.IssuedAt,d.CustomerId,
+            SELECT d.DocumentNumber,COALESCE(d.FiscalNumber,N''),COALESCE(d.CufeReceived,N''),d.IssuedAt,d.CustomerId,
                    COALESCE(NULLIF(p.DisplayName,N''),NULLIF(p.LegalName,N''),
                      NULLIF(d.CustomerIdentification,N''),N'Consumidor final'),
                    d.CustomerIdentification,d.WarehouseId,w.Name,d.PayableAmount,
@@ -107,7 +113,7 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
                              WHERE r.SourceDocumentId=d.DocumentId
                                AND r.SourceDocumentType=N'SalesInvoice'
                                AND r.Status IN(N'Open',N'PartiallyPaid')),0),
-                   d.FiscalStatus
+                   COALESCE(d.FiscalStatus,N'No aplica')
             FROM dbo.SalesDocuments d
             INNER JOIN dbo.Businesses b ON b.BusinessId=d.BusinessId AND b.TenantId=@TenantId
             INNER JOIN dbo.Warehouses w ON w.WarehouseId=d.WarehouseId

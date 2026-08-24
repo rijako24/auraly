@@ -30,6 +30,53 @@ public static class PrintTemplateFormats
     public const string HalfLetter = "HalfLetter";
 }
 
+public static class WindowsPrinterOutput
+{
+    public static bool RequiresRenderedDocument(string? printerName) =>
+        !string.IsNullOrWhiteSpace(printerName) &&
+        (printerName.Contains("PDF", StringComparison.OrdinalIgnoreCase) ||
+         printerName.Contains("XPS", StringComparison.OrdinalIgnoreCase));
+}
+
+public interface IWindowsRenderedPrintJob
+{
+    Task PrintAsync(
+        string printerName,
+        string documentName,
+        string html,
+        string outputDirectory,
+        CancellationToken cancellationToken);
+}
+
+public sealed class SystemWindowsRenderedPrintJob : IWindowsRenderedPrintJob
+{
+    public async Task PrintAsync(
+        string printerName,
+        string documentName,
+        string html,
+        string outputDirectory,
+        CancellationToken cancellationToken)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException(
+                "La impresión local renderizada requiere Windows.");
+        Directory.CreateDirectory(outputDirectory);
+        var target = Path.Combine(
+            outputDirectory,
+            $"{string.Concat(documentName.Select(character => Path.GetInvalidFileNameChars().Contains(character) ? '-' : character))}-{Guid.NewGuid():N}.html");
+        await File.WriteAllTextAsync(
+            target, html, new System.Text.UTF8Encoding(false), cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = Path.GetFullPath(target),
+            Verb = "printto",
+            Arguments = $"\"{printerName}\"",
+            UseShellExecute = true
+        });
+    }
+}
+
 public sealed record PrintTemplateRoute(
     string DocumentType,
     string Format,
@@ -303,7 +350,8 @@ public sealed class ConfigurablePosReceiptPrinter(
     HtmlReceiptPreviewRenderer html,
     IReceiptPreviewLauncher preview,
     ConfigurableOrderDocumentPrinter halfLetter,
-    IWindowsRawPrintJob rawPrintJob) : IPosReceiptPrinter
+    IWindowsRawPrintJob rawPrintJob,
+    IWindowsRenderedPrintJob renderedPrintJob) : IPosReceiptPrinter
 {
     public Task PrintAsync(
         PosReceipt receipt,
@@ -335,13 +383,11 @@ public sealed class ConfigurablePosReceiptPrinter(
                     settings.ReceiptOutputDirectory, html, preview),
             PosPrinterModes.File => new FileReceiptPrinter(
                 settings.ReceiptOutputDirectory, escPos),
-            PosPrinterModes.WindowsRaw => new WindowsRawReceiptPrinter(
+            PosPrinterModes.WindowsRaw => ReceiptPrinterForWindows(
                 workflowPrinterName ?? configuration.PrinterFor(
                     receipt.DocumentType, PrintTemplateFormats.Receipt)
                     ?? throw new InvalidOperationException(
-                        "La impresora de tirilla no esta configurada."),
-                escPos,
-                rawPrintJob),
+                        "La impresora de tirilla no esta configurada.")),
             _ => throw new InvalidOperationException(
                 "La configuracion de impresora no es valida.")
         };
@@ -353,6 +399,12 @@ public sealed class ConfigurablePosReceiptPrinter(
             },
             cancellationToken);
     }
+
+    private IPosReceiptPrinter ReceiptPrinterForWindows(string printerName) =>
+        WindowsPrinterOutput.RequiresRenderedDocument(printerName)
+            ? new RenderedWindowsReceiptPrinter(
+                printerName, settings.ReceiptOutputDirectory, html, renderedPrintJob)
+            : new WindowsRawReceiptPrinter(printerName, escPos, rawPrintJob);
 
     public Task PrintReceiptAsync(
         Auraly.Contracts.Sales.OnlineSalesReceipt receipt,
@@ -399,6 +451,23 @@ public sealed class ConfigurablePosReceiptPrinter(
                 : configuration.ReceiptPaperWidthMillimeters,
             cancellationToken);
     }
+}
+
+public sealed class RenderedWindowsReceiptPrinter(
+    string printerName,
+    string outputDirectory,
+    HtmlReceiptPreviewRenderer renderer,
+    IWindowsRenderedPrintJob printJob) : IPosReceiptPrinter
+{
+    public Task PrintAsync(
+        PosReceipt receipt,
+        CancellationToken cancellationToken = default) =>
+        printJob.PrintAsync(
+            printerName,
+            $"Auraly-{receipt.DocumentNumber}",
+            renderer.Render(receipt),
+            outputDirectory,
+            cancellationToken);
 }
 
 internal static class WindowsPrinterDiscovery

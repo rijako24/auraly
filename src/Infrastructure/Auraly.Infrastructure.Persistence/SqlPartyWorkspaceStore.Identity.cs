@@ -164,7 +164,8 @@ public sealed partial class SqlPartyWorkspaceStore
                 reader.GetGuid(42),
                 reader.GetString(43),
                 reader.GetString(44),
-                reader.GetBoolean(45));
+                reader.GetBoolean(45),
+                []);
         var roles = new List<string>(6);
         if (customer is not null) roles.Add("Customer");
         if (supplier is not null) roles.Add("Supplier");
@@ -212,6 +213,15 @@ public sealed partial class SqlPartyWorkspaceStore
             user,
             Convert.ToBase64String((byte[])reader[48]));
         await reader.CloseAsync();
+        if (detail.User is not null)
+            detail = detail with
+            {
+                User = detail.User with
+                {
+                    Roles = await LoadUserRolesAsync(
+                        connection, detail.User.UserId, ct)
+                }
+            };
         var sites = await LoadSitesAsync(connection, detail.PartyId, ct);
         return detail with
         {
@@ -219,6 +229,32 @@ public sealed partial class SqlPartyWorkspaceStore
                 ?? sites.FirstOrDefault(site => site.IsActive),
             Sites = sites
         };
+    }
+
+    private static async Task<IReadOnlyList<PartyUserRoleAssignment>> LoadUserRolesAsync(
+        SqlConnection connection,
+        Guid userId,
+        CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT assignment.RoleId,role.Name,assignment.BusinessId,assignment.AssignedAt
+            FROM dbo.UserRoles assignment
+            JOIN dbo.AppRoles role ON role.RoleId=assignment.RoleId
+            WHERE assignment.UserId=@UserId
+            ORDER BY role.Name,assignment.AssignedAt;
+            """;
+        command.Parameters.Add(P("@UserId", userId));
+        var roles = new List<PartyUserRoleAssignment>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            roles.Add(new PartyUserRoleAssignment(
+                reader.GetGuid(0),
+                reader.GetString(1),
+                reader.IsDBNull(2) ? null : reader.GetGuid(2),
+                new DateTimeOffset(DateTime.SpecifyKind(
+                    reader.GetDateTime(3), DateTimeKind.Utc))));
+        return roles;
     }
 
     private static async Task<IReadOnlyCollection<PartyWorkspaceSiteDetail>> LoadSitesAsync(

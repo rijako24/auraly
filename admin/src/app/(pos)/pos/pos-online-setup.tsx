@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { fiscalConfigurationApi, type FiscalResolutionConfiguration } from "@/services/api/fiscal-configuration";
 import type { PosSaleDocumentType } from "@/services/pos/pos-edge-client";
+import { fiscalConfigurationRequiredMessage } from "@/services/pos/pos-fiscal-guard";
 import { rememberedSalesWorkspaceKey, salesWorkspaceKey, type SalesWorkspaceOption } from "@/services/pos/online-pos-client";
 import { resolvePosWorkspaceSelection } from "@/services/pos/pos-workspace-selection";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -13,6 +14,7 @@ type Props = {
   options: SalesWorkspaceOption[];
   loading: boolean;
   error: string | null;
+  notice?: string | null;
   tenantName: string;
   userDisplayName: string;
   onSelect: (option: SalesWorkspaceOption, documentType: PosSaleDocumentType) => Promise<void>;
@@ -22,7 +24,7 @@ type Props = {
   onEnroll?: (option: SalesWorkspaceOption, documentType: PosSaleDocumentType) => Promise<void>;
 };
 
-export function PosOnlineSetup({ options, loading, error, tenantName, userDisplayName, onSelect, onCancel, edgeCapable = false, canEnrollOffline = false, onEnroll }: Props) {
+export function PosOnlineSetup({ options, loading, error, notice, tenantName, userDisplayName, onSelect, onCancel, edgeCapable = false, canEnrollOffline = false, onEnroll }: Props) {
   const businesses = useMemo(() => Array.from(new Map(options.map((option) => [option.businessId, option.businessName]))), [options]);
   const [businessId, setBusinessId] = useState("");
   const [warehouseId, setWarehouseId] = useState("");
@@ -67,7 +69,7 @@ export function PosOnlineSetup({ options, loading, error, tenantName, userDispla
         setFiscal(latest);
         const ready = mode === "enroll" ? latest.isReadyForEnrollment : latest.isReadyForOnlineSales;
         if (!ready) {
-          setFiscalError("La facturación electrónica todavía no está activa para esta sede. Completa la activación DIAN desde Configuración fiscal.");
+          setFiscalError(fiscalConfigurationRequiredMessage);
           return;
         }
       }
@@ -91,6 +93,7 @@ export function PosOnlineSetup({ options, loading, error, tenantName, userDispla
         {selected && invoice && !fiscalLoading && fiscal && !fiscal.isReadyForOnlineSales && <div className="rounded-2xl border border-amber-300/25 bg-amber-100/10 p-5 text-amber-100"><div className="flex gap-3"><FileKey2 className="h-6 w-6 shrink-0" /><div><p className="font-bold">Facturación electrónica pendiente</p><p className="mt-1 text-sm">El POS no configura certificados ni resoluciones. Un administrador debe completar la activación DIAN para esta sede.</p><Link href="/dashboard/settings/fiscal" className="mt-3 inline-block font-bold underline">Abrir configuración fiscal</Link></div></div></div>}
         {selected && invoice && fiscal?.isReadyForOnlineSales && <div className="flex items-center gap-2 rounded-xl border border-emerald-300/20 bg-emerald-300/10 p-3 text-sm text-emerald-100"><CheckCircle2 className="h-5 w-5" />Resolución {fiscal.authorizationNumber} activa para esta sede.</div>}
         {(error || fiscalError) && <p className="rounded-xl border border-red-300/20 bg-red-400/10 p-3 text-sm text-red-100">{error || fiscalError}</p>}
+        {notice && <p role="status" className="flex items-center gap-2 rounded-xl border border-teal-300/25 bg-teal-300/10 p-3 text-sm font-semibold text-teal-50"><Loader2 className="h-4 w-4 animate-spin" />{notice}</p>}
         {!options.length && !error && <p className="rounded-xl border border-amber-300/20 bg-amber-300/10 p-4 text-sm text-amber-100">No hay bodegas activas disponibles para este usuario.</p>}
         <button onClick={() => void choose("online")} disabled={!selected || busy || (invoice && fiscalLoading)} className="h-12 w-full rounded-xl bg-teal-300 font-bold text-[#071a1d] disabled:opacity-35">{busy ? "Preparando…" : "Entrar a ventas online"}</button>
         {edgeCapable && <div className="rounded-2xl border border-teal-300/20 bg-teal-300/10 p-4 text-sm text-teal-50"><p className="font-bold">Auraly POS está instalado</p><p className="mt-1 text-slate-300">Puedes configurar impresión directa y balanza desde Periféricos después de entrar.</p></div>}
