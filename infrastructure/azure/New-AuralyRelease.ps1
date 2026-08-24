@@ -234,6 +234,20 @@ catch {
 }
 finally {
     if (Test-Path -LiteralPath $temporaryPath) {
-        Remove-Item -LiteralPath $temporaryPath -Recurse -Force
+        $temporaryRemoved = $false
+        for ($attempt = 1; $attempt -le 6 -and -not $temporaryRemoved; $attempt++) {
+            try {
+                Remove-Item -LiteralPath $temporaryPath -Recurse -Force -ErrorAction Stop
+                $temporaryRemoved = $true
+            }
+            catch {
+                if ($attempt -eq 6) {
+                    Write-Warning "No fue posible limpiar el directorio temporal '$temporaryPath': $($_.Exception.Message)"
+                }
+                else {
+                    Start-Sleep -Seconds 1
+                }
+            }
+        }
     }
 }
