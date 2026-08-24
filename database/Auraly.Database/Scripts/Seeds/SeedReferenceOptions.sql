@@ -59,7 +59,11 @@ VALUES
 ('65000000-0000-0000-0000-000000000002',N'accounting-withholding-kind',N'Vat',N'ReteIVA',NULL,20),
 ('65000000-0000-0000-0000-000000000003',N'accounting-withholding-kind',N'IndustryCommerce',N'ReteICA',NULL,30),
 ('66000000-0000-0000-0000-000000000001',N'accounting-opening-balance-mode',N'ZeroDeclared',N'Iniciar en cero',N'La contabilidad comienza únicamente con documentos posteriores a la fecha efectiva.',10),
-('66000000-0000-0000-0000-000000000002',N'accounting-opening-balance-mode',N'ImportedAndApproved',N'Usar saldos aprobados',N'Genera el asiento de apertura aprobado antes de contabilizar movimientos posteriores.',20);
+('66000000-0000-0000-0000-000000000002',N'accounting-opening-balance-mode',N'ImportedAndApproved',N'Usar saldos aprobados',N'Genera el asiento de apertura aprobado antes de contabilizar movimientos posteriores.',20),
+('67000000-0000-0000-0000-000000000001',N'tenant-entity-type',N'NaturalPerson',N'Persona natural',NULL,10),
+('67000000-0000-0000-0000-000000000002',N'tenant-entity-type',N'Organization',N'Persona jurídica',NULL,20),
+('68000000-0000-0000-0000-000000000001',N'tenant-identification-type',N'CC',N'Cédula de ciudadanía',NULL,10),
+('68000000-0000-0000-0000-000000000002',N'tenant-identification-type',N'NIT',N'NIT',NULL,20);
 
 MERGE [reference].[Options] AS target
 USING @Source AS source
@@ -77,5 +81,6 @@ WHEN NOT MATCHED BY SOURCE
         N'inventory-operation-type',N'agent-bot-type',N'accounting-account-type',
         N'accounting-subledger-kind',N'accounting-adjustment-direction',
         N'accounting-manual-concept',N'accounting-report-type',
-        N'accounting-withholding-kind',N'accounting-opening-balance-mode')
+        N'accounting-withholding-kind',N'accounting-opening-balance-mode',
+        N'tenant-entity-type',N'tenant-identification-type')
 THEN UPDATE SET target.IsActive=0,target.UpdatedAt=@Now;

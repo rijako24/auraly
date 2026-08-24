@@ -292,6 +292,13 @@ export type PosWorkSessionPaymentTotal = {
   refundAmount: number;
   otherAmount: number;
   netAmount: number;
+  countedAmount: number | null;
+  difference: number | null;
+};
+
+export type PosWorkSessionPaymentCount = {
+  paymentMethodCode: string;
+  countedAmount: number;
 };
 
 export type PosWorkSessionClosure = {
@@ -331,6 +338,7 @@ export type PosCloseWorkSessionInput = {
   operationId: string;
   authorizationToken: string;
   countedCash: number;
+  paymentCounts: PosWorkSessionPaymentCount[];
   note: string | null;
 };
 

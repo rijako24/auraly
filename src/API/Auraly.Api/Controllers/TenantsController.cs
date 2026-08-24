@@ -15,6 +15,9 @@ namespace Auraly.Api.Controllers;
 [Authorize]
 public sealed class TenantsController(ITenantService tenantService, ITenantDeviceAdminStore deviceAdmin) : ControllerBase
 {
+    private const long MaxLogoBytes = 4 * 1024 * 1024;
+    private const long MaxLogoRequestBytes = MaxLogoBytes + 64 * 1024;
+
     [HttpGet]
     [PermissionAuthorize("tenants.read")]
     public async Task<ActionResult<PagedResponse<TenantDto>>> GetAll([FromQuery] PagedRequest request, CancellationToken ct) => Ok(await tenantService.GetPagedAsync(request, ct));
@@ -22,6 +25,10 @@ public sealed class TenantsController(ITenantService tenantService, ITenantDevic
     [HttpGet("{tenantId:guid}")]
     [PermissionAuthorize("tenants.read")]
     public async Task<ActionResult<TenantDto>> GetById(Guid tenantId, CancellationToken ct) => Ok(await tenantService.GetByIdAsync(tenantId, ct));
+
+    [HttpGet("branding")]
+    public async Task<ActionResult<TenantBrandingDto>> GetBranding(CancellationToken ct) =>
+        Ok(await tenantService.GetBrandingAsync(User.GetTenantId(), ct));
 
     [HttpPost]
     [PermissionAuthorize("tenants.create")]
@@ -34,9 +41,27 @@ public sealed class TenantsController(ITenantService tenantService, ITenantDevic
     [HttpPut("{tenantId:guid}")]
     public async Task<ActionResult<TenantDto>> Update(Guid tenantId, [FromBody] UpdateTenantRequest request, CancellationToken ct)
     {
-        if (request.Name is not null || request.Email is not null || request.LegalName is not null || request.Nit is not null || request.VerificationDigit is not null) EnsurePermission("tenants.update");
+        if (request.Name is not null || request.Email is not null || request.LegalName is not null
+            || request.Nit is not null || request.VerificationDigit is not null
+            || request.EntityType is not null || request.IdentificationTypeCode is not null)
+            EnsurePermission("tenants.update");
         if (request.MaximumUsers.HasValue || request.MaximumEnrolledDevices.HasValue) EnsurePermission("tenants.capacity.update");
-        return Ok(await tenantService.UpdateAsync(tenantId, request.Name, request.Email, request.MaximumUsers, request.MaximumEnrolledDevices, request.LegalName, request.Nit, request.VerificationDigit, ct));
+        return Ok(await tenantService.UpdateAsync(tenantId, request.Name, request.Email,
+            request.MaximumUsers, request.MaximumEnrolledDevices, request.LegalName, request.Nit,
+            request.VerificationDigit, request.EntityType, request.IdentificationTypeCode, ct));
+    }
+
+    [HttpPost("{tenantId:guid}/logo")]
+    [PermissionAuthorize("tenants.update")]
+    [RequestSizeLimit(MaxLogoRequestBytes)]
+    public async Task<ActionResult<TenantDto>> UploadLogo(Guid tenantId, IFormFile file,
+        CancellationToken ct)
+    {
+        if (file.Length is <= 0 or > MaxLogoBytes
+            || !file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new { error = "El logo debe ser una imagen JPG, PNG o WEBP de máximo 4 MB." });
+        await using var stream = file.OpenReadStream();
+        return Ok(await tenantService.UploadLogoAsync(tenantId, stream, file.FileName, ct));
     }
 
     [HttpGet("{tenantId:guid}/devices")]

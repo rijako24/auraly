@@ -13,9 +13,6 @@ public class Business
     public string Email { get; set; } = string.Empty;
     public string Website { get; set; } = string.Empty;
     
-    // Logo del negocio
-    public string? LogoUrl { get; set; }
-
     public string TimeZone { get; set; } = "America/Bogota";
 
     public bool IsActive { get; set; } = true;

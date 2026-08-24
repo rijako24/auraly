@@ -98,16 +98,33 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             Assert.Equal(HttpStatusCode.Forbidden, deniedResponse.StatusCode);
 
         await InsertMovementsAsync(opened.WorkSessionId, userId);
+        using (var previewResponse = await client.GetAsync(
+                   $"/api/commerce/v1/work-sessions/{opened.WorkSessionId:D}/closure-preview"))
+        {
+            previewResponse.EnsureSuccessStatusCode();
+            var preview = await previewResponse.Content
+                .ReadFromJsonAsync<WorkSessionClosurePreviewView>();
+            Assert.NotNull(preview);
+            Assert.Equal(opened.WorkSessionId, preview.WorkSessionId);
+            Assert.Equal(80_000m, preview.ExpectedCash);
+        }
         var key = $"close-{Guid.NewGuid():N}";
         var closure = await CloseAsync(
             client,
             opened.WorkSessionId,
             key,
-            new CloseWorkSessionRequest(75_000m, "Entrega verificada"));
+            new CloseWorkSessionRequest(
+                75_000m,
+                "Faltante de efectivo verificado",
+                PaymentCounts:
+                [
+                    new WorkSessionPaymentCount("Card", 50_000m),
+                    new WorkSessionPaymentCount("Cash", 75_000m)
+                ]));
         Assert.Equal(0m, closure.TotalSales);
         Assert.Equal(0m, closure.TotalRefunds);
-        Assert.Equal(130_000m, closure.TotalOther);
-        Assert.Equal(130_000m, closure.NetAmount);
+        Assert.Equal(160_000m, closure.TotalOther);
+        Assert.Equal(160_000m, closure.NetAmount);
         Assert.Equal(80_000m, closure.ExpectedCash);
         Assert.Equal(75_000m, closure.CountedCash);
         Assert.Equal(-5_000m, closure.CashDifference);
@@ -117,18 +134,36 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             {
                 Assert.Equal("Card", card.PaymentMethodCode);
                 Assert.Equal(50_000m, card.NetAmount);
+                Assert.Equal(50_000m, card.CountedAmount);
+                Assert.Equal(0m, card.Difference);
             },
             cash =>
             {
                 Assert.Equal("Cash", cash.PaymentMethodCode);
                 Assert.Equal(80_000m, cash.NetAmount);
+                Assert.Equal(75_000m, cash.CountedAmount);
+                Assert.Equal(-5_000m, cash.Difference);
+            },
+            transfer =>
+            {
+                Assert.Equal("Transfer", transfer.PaymentMethodCode);
+                Assert.Equal(30_000m, transfer.NetAmount);
+                Assert.Null(transfer.CountedAmount);
+                Assert.Null(transfer.Difference);
             });
 
         var replay = await CloseAsync(
             client,
             opened.WorkSessionId,
             key,
-            new CloseWorkSessionRequest(75_000m, "Entrega verificada"));
+            new CloseWorkSessionRequest(
+                75_000m,
+                "Faltante de efectivo verificado",
+                PaymentCounts:
+                [
+                    new WorkSessionPaymentCount("Card", 50_000m),
+                    new WorkSessionPaymentCount("Cash", 75_000m)
+                ]));
         Assert.Equal(closure.WorkSessionClosureId, replay.WorkSessionClosureId);
 
         using (var differentKey = CreateCloseRequest(
@@ -240,7 +275,9 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
               (NEWID(),@SessionId,NULL,NULL,CAST(SYSUTCDATETIME() AS date),
                N'CashOut',N'Cash',-20000,NULL,N'test:cash-out',SYSUTCDATETIME(),@UserId),
               (NEWID(),@SessionId,NULL,NULL,CAST(SYSUTCDATETIME() AS date),
-               N'CashIn',N'Card',50000,NULL,N'test:card',SYSUTCDATETIME(),@UserId);
+               N'CashIn',N'Card',50000,NULL,N'test:card',SYSUTCDATETIME(),@UserId),
+              (NEWID(),@SessionId,NULL,NULL,CAST(SYSUTCDATETIME() AS date),
+               N'CashIn',N'Transfer',30000,NULL,N'test:transfer',SYSUTCDATETIME(),@UserId);
             """;
         command.Parameters.AddWithValue("@SessionId", workSessionId);
         command.Parameters.AddWithValue("@UserId", userId);

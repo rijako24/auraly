@@ -1,11 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Download, Printer, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { AuralyLogo } from "@/components/brand/auraly-logo";
+import { TenantBrand } from "@/components/brand/tenant-brand";
 import { filterReportRows, reportCellText, safeReportFileName, toReportCsv, type ReportColumn, type ReportRow } from "@/lib/report-viewer";
+import { tenantsApi } from "@/services/api/tenants";
+import { useTenantContextStore } from "@/stores/tenant-context-store";
 
 type Props = {
   onClose: () => void;
@@ -18,6 +21,15 @@ type Props = {
 
 export function ReportViewer({ onClose, title, description, rows, columns, fileName }: Props) {
   const [search, setSearch] = useState("");
+  const selectedTenantId = useTenantContextStore(state => state.selectedTenantId);
+  const selectedTenantName = useTenantContextStore(state => state.tenants.find(item => item.tenantId === state.selectedTenantId)?.name ?? "Organización");
+  const branding = useQuery({
+    queryKey: ["tenant-branding", selectedTenantId],
+    queryFn: tenantsApi.getBranding,
+    enabled: Boolean(selectedTenantId),
+    staleTime: 10 * 60 * 1000,
+  });
+  const brandName = branding.data?.legalName ?? branding.data?.displayName ?? selectedTenantName;
   const generatedAt = useMemo(() => new Date(), []);
   const filtered = useMemo(() => filterReportRows(rows, columns, search), [columns, rows, search]);
   const recordCount = useMemo(() => filtered.filter(row => !row.__group).length, [filtered]);
@@ -32,7 +44,7 @@ export function ReportViewer({ onClose, title, description, rows, columns, fileN
   }
 
   return <div className="flex min-h-[calc(100dvh-9rem)] flex-col overflow-hidden rounded-2xl border bg-background">
-        <header className="flex flex-wrap items-center gap-4 border-b px-5 py-4"><AuralyLogo/><div><h1 className="text-lg font-semibold">{title}</h1><p className="text-sm text-muted-foreground">{description ?? `${recordCount.toLocaleString("es-CO")} registros`}</p></div></header>
+        <header className="flex flex-wrap items-center gap-4 border-b px-5 py-4"><TenantBrand displayName={brandName} logoUrl={branding.data?.logoUrl}/><div><h1 className="text-lg font-semibold">{title}</h1><p className="text-sm text-muted-foreground">{description ?? `${recordCount.toLocaleString("es-CO")} registros`}</p></div></header>
         <div className="flex flex-col gap-3 border-b bg-muted/30 p-4 sm:flex-row sm:items-center">
           <label className="relative min-w-0 flex-1">
             <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -44,7 +56,7 @@ export function ReportViewer({ onClose, title, description, rows, columns, fileN
         </div>
         <section id="auraly-report-print-area" className="min-h-0 flex-1 overflow-auto bg-white p-5 text-slate-950">
           <header className="mb-6 border-b-2 border-teal-700 pb-4">
-            <div className="flex flex-wrap items-start justify-between gap-4"><div><AuralyLogo className="mb-4"/><p className="text-[10px] font-bold uppercase tracking-[.24em] text-teal-700">Reporte corporativo</p><h1 className="mt-1 text-2xl font-bold tracking-tight">{title}</h1>{description && <p className="mt-1 text-sm text-slate-600">{description}</p>}</div><dl className="grid min-w-56 gap-1 rounded-lg border bg-slate-50 p-3 text-xs"><div className="flex justify-between gap-4"><dt className="text-slate-500">Generado</dt><dd className="font-medium">{generatedAt.toLocaleString("es-CO")}</dd></div><div className="flex justify-between gap-4"><dt className="text-slate-500">Registros</dt><dd className="font-medium">{recordCount.toLocaleString("es-CO")}</dd></div><div className="flex justify-between gap-4"><dt className="text-slate-500">Sistema</dt><dd className="font-medium">Auraly Commerce</dd></div></dl></div>
+            <div className="flex flex-wrap items-start justify-between gap-4"><div><TenantBrand className="mb-4" displayName={brandName} logoUrl={branding.data?.logoUrl}/><p className="text-[10px] font-bold uppercase tracking-[.24em] text-teal-700">Reporte corporativo</p><h1 className="mt-1 text-2xl font-bold tracking-tight">{title}</h1>{description && <p className="mt-1 text-sm text-slate-600">{description}</p>}</div><dl className="grid min-w-56 gap-1 rounded-lg border bg-slate-50 p-3 text-xs"><div className="flex justify-between gap-4"><dt className="text-slate-500">Generado</dt><dd className="font-medium">{generatedAt.toLocaleString("es-CO")}</dd></div><div className="flex justify-between gap-4"><dt className="text-slate-500">Registros</dt><dd className="font-medium">{recordCount.toLocaleString("es-CO")}</dd></div><div className="flex justify-between gap-4"><dt className="text-slate-500">Sistema</dt><dd className="font-medium">Auraly Commerce</dd></div></dl></div>
           </header>
           <table className="w-full min-w-max border-collapse text-xs sm:text-sm">
             <thead className="sticky top-0 bg-slate-100 print:static">
@@ -55,7 +67,7 @@ export function ReportViewer({ onClose, title, description, rows, columns, fileN
             </tr>)}</tbody>
           </table>
           {!filtered.length && <p className="py-16 text-center text-sm text-slate-500">No hay filas que coincidan con el filtro.</p>}
-          <footer className="mt-6 flex items-center justify-between gap-4 border-t pt-3 text-[10px] text-slate-500"><span>Auraly Commerce · Información generada desde el sistema</span><span>{title} · {recordCount.toLocaleString("es-CO")} registros</span></footer>
+          <footer className="mt-6 flex items-center justify-between gap-4 border-t pt-3 text-[10px] text-slate-500"><span>{brandName} · Información generada desde Auraly Commerce</span><span>{title} · {recordCount.toLocaleString("es-CO")} registros</span></footer>
         </section>
         <footer className="flex justify-end border-t px-5 py-3"><Button variant="outline" onClick={onClose}>Cerrar</Button></footer>
         <style jsx global>{`

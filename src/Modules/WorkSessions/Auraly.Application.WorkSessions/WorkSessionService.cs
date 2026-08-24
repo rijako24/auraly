@@ -107,6 +107,15 @@ public sealed class WorkSessionService(
         if (request.CountedCash < 0)
             throw new WorkSessionValidationException(
                 "Counted cash cannot be negative.");
+        if (request.PaymentCounts is not null &&
+            (request.PaymentCounts.Any(value =>
+                string.IsNullOrWhiteSpace(value.PaymentMethodCode) ||
+                value.PaymentMethodCode.Trim().Length > 32 ||
+                value.CountedAmount < 0) ||
+             request.PaymentCounts.Select(value => value.PaymentMethodCode.Trim())
+                 .Distinct(StringComparer.OrdinalIgnoreCase).Count() != request.PaymentCounts.Count))
+            throw new WorkSessionValidationException(
+                "Each payment method requires one valid non-negative counted amount.");
         if (request.ClosedByUserId == Guid.Empty)
             throw new WorkSessionValidationException(
                 "The supervisor identifier is invalid.");

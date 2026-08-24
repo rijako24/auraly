@@ -85,6 +85,7 @@ public sealed class SqlTenantProvisioningStore(
 
                 DECLARE @DocumentSeries TABLE(DocumentType nvarchar(64),Prefix nvarchar(8));
                 INSERT @DocumentSeries VALUES
+                  (N'SalesInvoice',N'VTA'),(N'SalesReceipt',N'CVI'),
                   (N'GoodsReceipt',N'EMC'),(N'StockCount',N'CTI'),
                   (N'InventoryAdjustment',N'AJI'),(N'WarehouseTransfer',N'TRB'),
                   (N'ProductConversion',N'CNV'),(N'Damage',N'AVE');

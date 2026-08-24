@@ -42,10 +42,17 @@ CREATE TABLE [dbo].[WorkSessionClosurePaymentTotals]
     [RefundAmount] DECIMAL(19,4) NOT NULL,
     [OtherAmount] DECIMAL(19,4) NOT NULL,
     [NetAmount] DECIMAL(19,4) NOT NULL,
+    [CountedAmount] DECIMAL(19,4) NULL,
+    [Difference] DECIMAL(19,4) NULL,
     CONSTRAINT [PK_WorkSessionClosurePaymentTotals]
         PRIMARY KEY CLUSTERED ([WorkSessionClosureId],[PaymentMethodCode]),
     CONSTRAINT [FK_WorkSessionClosurePaymentTotals_Closures]
         FOREIGN KEY ([WorkSessionClosureId])
-        REFERENCES [dbo].[WorkSessionClosures] ([WorkSessionClosureId])
+        REFERENCES [dbo].[WorkSessionClosures] ([WorkSessionClosureId]),
+    CONSTRAINT [CK_WorkSessionClosurePaymentTotals_Counted]
+        CHECK ([CountedAmount] IS NULL OR [CountedAmount] >= 0),
+    CONSTRAINT [CK_WorkSessionClosurePaymentTotals_Difference]
+        CHECK (([CountedAmount] IS NULL AND [Difference] IS NULL)
+            OR ([CountedAmount] IS NOT NULL AND [Difference]=[CountedAmount]-[NetAmount]))
 );
 GO

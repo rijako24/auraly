@@ -16,6 +16,10 @@ public class Tenant
     [NotMapped] public string? LegalName { get; set; }
     [NotMapped] public string? Nit { get; set; }
     [NotMapped] public string? VerificationDigit { get; set; }
+    [NotMapped] public string? EntityType { get; set; }
+    [NotMapped] public string? IdentificationTypeCode { get; set; }
+    [NotMapped] public Guid? PrimaryBusinessId { get; set; }
+    [NotMapped] public string? LogoMediaRef { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
     

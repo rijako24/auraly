@@ -49,6 +49,8 @@ import {
   loadBrowserPrinterConfiguration,
 } from "./pos-edge-client";
 import { fetchWithSessionRetry } from "@/services/api/client";
+import { tenantsApi } from "@/services/api/tenants";
+import { workSessionCloseRequest, workSessionClosureHtml, workSessionClosurePreviewPath } from "./pos-work-session-close";
 
 export type SalesWorkspaceOption = {
   businessId: string;
@@ -691,15 +693,39 @@ export class OnlinePosClient implements PosClient {
     return this.localEdge().savePrinterConfiguration(configuration);
   }
 
-  previewWorkSessionClosure(
+  async previewWorkSessionClosure(
     draftId: string,
     authorization?: PosSensitiveAuthorization,
   ): Promise<PosAuthorizedClosurePreview> {
-    return this.localEdge().previewWorkSessionClosure(draftId, authorization);
+    void draftId;
+    const preview = await request<PosAuthorizedClosurePreview["preview"]>(
+      workSessionClosurePreviewPath(this.context.workSessionId),
+    );
+    return {
+      authorizationToken: authorization?.operationId ?? crypto.randomUUID(),
+      preview,
+    };
   }
 
-  closeWorkSession(input: PosCloseWorkSessionInput): Promise<PosWorkSessionClosure> {
-    return this.localEdge().closeWorkSession(input);
+  async closeWorkSession(input: PosCloseWorkSessionInput): Promise<PosWorkSessionClosure> {
+    const printPreview = window.open("", "_blank", "popup=yes,width=760,height=840,resizable=yes,scrollbars=yes");
+    if (!printPreview) throw new PosEdgeError("El navegador bloqueó la vista previa del cierre. Habilita ventanas emergentes y reintenta.", 409);
+    const requestDefinition = workSessionCloseRequest(
+      this.context.workSessionId, input.operationId, input.countedCash,
+      input.paymentCounts, input.note);
+    try {
+      const [closure, branding] = await Promise.all([
+        request<PosWorkSessionClosure>(requestDefinition.path, requestDefinition.init),
+        tenantsApi.getBranding().catch(() => null),
+      ]);
+      printPreview.document.open();
+      printPreview.document.write(workSessionClosureHtml({ ...closure, logoUrl: branding?.logoUrl ?? null }));
+      printPreview.document.close();
+      return closure;
+    } catch (error) {
+      printPreview.close();
+      throw error;
+    }
   }
 
 

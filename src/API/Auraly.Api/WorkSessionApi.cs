@@ -58,6 +58,14 @@ public static class WorkSessionApi
                 return closure is null ? Results.NotFound() : Results.Ok(closure);
             }));
 
+        group.MapGet("/{workSessionId:guid}/closure-preview", async (
+            HttpContext context,
+            Guid workSessionId,
+            WorkSessionService service,
+            CancellationToken cancellationToken) =>
+            await Handle(async () => Results.Ok(await service.PreviewClosureAsync(
+                context.User.ToWorkSessionIdentity(), workSessionId, cancellationToken))));
+
         group.MapGet("/cash-reasons", async (
             HttpContext context,
             Guid businessId,
@@ -169,7 +177,8 @@ public static class WorkSessionApi
                     new CloseWorkSessionRequest(
                         request.CountedCash,
                         request.Note,
-                        request.AuthorizedByUserId),
+                        request.AuthorizedByUserId,
+                        request.PaymentCounts),
                     cancellationToken));
             }));
         deviceCloseGroup.MapGet("/work-sessions/{workSessionId:guid}/closure-preview", async (

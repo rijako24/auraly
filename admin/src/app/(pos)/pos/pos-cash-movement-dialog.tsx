@@ -96,7 +96,7 @@ export function PosCashMovementDialog({
         <div>
           <p className="text-xs font-bold uppercase tracking-[.16em] text-teal-700">Cajon de dinero</p>
           <h2 className="mt-1 text-xl font-bold">Entrada o salida de caja</h2>
-          <p className="mt-1 text-sm text-slate-600">Quedara incluida en el arqueo y en la contabilizacion.</p>
+          <p className="mt-1 text-sm text-slate-600">Quedará incluida en el cierre de sesión y en la contabilización.</p>
         </div>
         <button type="button" onClick={onClose} disabled={saving}
           className="grid h-10 w-10 place-items-center rounded-xl hover:bg-slate-100"

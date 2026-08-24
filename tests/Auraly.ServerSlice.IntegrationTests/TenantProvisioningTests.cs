@@ -46,6 +46,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.Equal(1, state.DefaultCostCenters);
         Assert.Equal(1, state.AccountingVoucherCursors);
         Assert.Equal(4, state.Roles);
+        Assert.Equal(2, state.OnlineSalesDocumentSeries);
         Assert.True(await RoleHasPermissionAsync(
             result.TenantId, "SUPERVISOR", "pos.approvals.receive_notifications"));
         Assert.False(await RoleHasPermissionAsync(
@@ -61,6 +62,39 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.Equal(HttpStatusCode.OK, attemptedKeyChange.StatusCode);
         var unchangedTenant = await attemptedKeyChange.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(result.TenantKey, unchangedTenant.GetProperty("tenantKey").GetString());
+
+        var naturalIdentification = $"10{Random.Shared.NextInt64(10000000, 99999999)}";
+        using (var updated = await admin.PutAsJsonAsync(
+                   $"/api/v1/tenants/{result.TenantId:D}",
+                   new
+                   {
+                       Name = $"Persona {suffix}",
+                       LegalName = $"Persona Natural {suffix}",
+                       Nit = naturalIdentification,
+                       VerificationDigit = (string?)null,
+                       EntityType = "NaturalPerson",
+                       IdentificationTypeCode = "CC"
+                   }))
+        {
+            updated.EnsureSuccessStatusCode();
+            var value = await updated.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("NaturalPerson", value.GetProperty("entityType").GetString());
+            Assert.Equal("CC", value.GetProperty("identificationTypeCode").GetString());
+            Assert.Equal(naturalIdentification, value.GetProperty("nit").GetString());
+            Assert.Equal(JsonValueKind.Null, value.GetProperty("verificationDigit").ValueKind);
+        }
+
+        using (var logo = new MultipartFormDataContent())
+        using (var image = new ByteArrayContent([0x89, 0x50, 0x4E, 0x47]))
+        {
+            image.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
+            logo.Add(image, "file", "marca.png");
+            using var uploaded = await admin.PostAsync(
+                $"/api/v1/tenants/{result.TenantId:D}/logo", logo);
+            uploaded.EnsureSuccessStatusCode();
+            var value = await uploaded.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Contains("tenant-branding", value.GetProperty("logoUrl").GetString());
+        }
 
         var token = await ReadInvitationTokenAsync(result.TenantId);
         using var publicClient = fixture.CreateClient();
@@ -176,7 +210,6 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
                 Address = "Carrera 2 # 3-4",
                 Phone = "3000000000",
                 Email = $"norte-{suffix}@auraly.test",
-                LogoUrl = (string?)null,
                 TimeZone = "America/Bogota"
             });
         var body = await response.Content.ReadAsStringAsync();
@@ -187,6 +220,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.NotNull(business);
         Assert.Equal(2, await CountDefaultWarehousesAsync(fixture.TenantId, business!.BusinessId));
         Assert.Equal(1, await CountDefaultCostCentersAsync(fixture.TenantId, business.BusinessId));
+        Assert.Equal(2, await CountOnlineSalesDocumentSeriesAsync(fixture.TenantId, business.BusinessId));
     }
 
     private async Task<(Guid CountryId, Guid DivisionId, Guid CityId)> ReadGeographyAsync()
@@ -222,6 +256,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
               (SELECT COUNT(*) FROM dbo.AccountingCostCenters c INNER JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId WHERE b.TenantId=@TenantId AND c.IsDefault=1 AND c.IsActive=1),
               (SELECT COUNT(*) FROM dbo.AccountingVoucherCursors WHERE TenantId=@TenantId),
               (SELECT COUNT(*) FROM dbo.AppRoles WHERE TenantId=@TenantId AND NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'ADMINISTRATOR')),
+              (SELECT COUNT(*) FROM dbo.DocumentSeries ds INNER JOIN dbo.Businesses b ON b.BusinessId=ds.BusinessId WHERE b.TenantId=@TenantId AND ds.DocumentType IN(N'SalesInvoice',N'SalesReceipt') AND ds.DeviceId IS NULL AND ds.SeriesCode=N'00' AND ds.IsActive=1),
               (SELECT COUNT(*) FROM dbo.UserRoles WHERE UserId=@UserId),
               (SELECT IsActive FROM dbo.AppUsers WHERE TenantId=@TenantId AND UserId=@UserId),
               (SELECT PasswordHash FROM dbo.AppUsers WHERE TenantId=@TenantId AND UserId=@UserId),
@@ -235,8 +270,8 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2), reader.GetInt32(3),
             reader.GetInt32(4), reader.GetInt32(5), reader.GetInt32(6), reader.GetInt32(7),
             reader.GetInt32(8), reader.GetInt32(9), reader.GetInt32(10), reader.GetInt32(11),
-            reader.IsDBNull(12) ? null : reader.GetBoolean(12),
-            reader.IsDBNull(13) ? null : reader.GetString(13), reader.GetString(14));
+            reader.GetInt32(12), reader.IsDBNull(13) ? null : reader.GetBoolean(13),
+            reader.IsDBNull(14) ? null : reader.GetString(14), reader.GetString(15));
     }
 
     private async Task<string> ReadInvitationTokenAsync(Guid tenantId)
@@ -288,6 +323,23 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
+    private async Task<int> CountOnlineSalesDocumentSeriesAsync(Guid tenantId, Guid businessId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT COUNT(*)
+            FROM dbo.DocumentSeries ds
+            INNER JOIN dbo.Businesses b ON b.BusinessId=ds.BusinessId
+            WHERE b.TenantId=@TenantId AND b.BusinessId=@BusinessId
+              AND ds.DocumentType IN(N'SalesInvoice',N'SalesReceipt')
+              AND ds.DeviceId IS NULL AND ds.SeriesCode=N'00' AND ds.IsActive=1;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
     private async Task<bool> RoleHasPermissionAsync(
         Guid tenantId,
         string normalizedRoleName,
@@ -329,6 +381,6 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         int Businesses, int Warehouses, int InventoryReasons, int ProductUnits,
         int DefaultCustomers, int AccountingAccounts, int AccountingMappings,
         int OpenAccountingPeriods, int DefaultCostCenters, int AccountingVoucherCursors,
-        int Roles, int UserRoles,
+        int Roles, int OnlineSalesDocumentSeries, int UserRoles,
         bool? UserActive, string? PasswordHash, string InvitationStatus);
 }

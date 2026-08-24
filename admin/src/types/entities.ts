@@ -32,6 +32,9 @@ export interface Tenant {
     legalName: string | null;
     nit: string | null;
     verificationDigit: string | null;
+    entityType: "NaturalPerson" | "Organization" | null;
+    identificationTypeCode: "CC" | "NIT" | null;
+    logoUrl: string | null;
   businesses?: Business[];
 }
 
@@ -44,7 +47,6 @@ export interface Business {
   phone: string;
   email: string;
   website: string;
-  logoUrl: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string | null;

@@ -27,14 +27,20 @@ public sealed record OpenWorkSessionRequest(
 public sealed record CloseWorkSessionRequest(
     decimal? CountedCash,
     string? Note,
-    Guid? ClosedByUserId = null);
+    Guid? ClosedByUserId = null,
+    IReadOnlyList<WorkSessionPaymentCount>? PaymentCounts = null);
+
+public sealed record WorkSessionPaymentCount(
+    string PaymentMethodCode,
+    decimal CountedAmount);
 
 public sealed record DeviceCloseWorkSessionRequest(
     Guid UserId,
     Guid WorkSessionId,
     decimal? CountedCash,
     string? Note,
-    Guid AuthorizedByUserId);
+    Guid AuthorizedByUserId,
+    IReadOnlyList<WorkSessionPaymentCount>? PaymentCounts = null);
 
 public sealed record WorkSessionView(
     Guid WorkSessionId,
@@ -54,7 +60,9 @@ public sealed record WorkSessionPaymentTotal(
     decimal SalesAmount,
     decimal RefundAmount,
     decimal OtherAmount,
-    decimal NetAmount);
+    decimal NetAmount,
+    decimal? CountedAmount = null,
+    decimal? Difference = null);
 
 public sealed record WorkSessionClosureView(
     Guid WorkSessionClosureId,

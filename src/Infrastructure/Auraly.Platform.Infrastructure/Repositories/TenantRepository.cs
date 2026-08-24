@@ -59,25 +59,50 @@ public class TenantRepository : ITenantRepository
     private async Task LoadLegalIdentityAsync(Tenant tenant, CancellationToken ct)
     {
         var profile = await _context.Database.SqlQuery<LegalIdentityRow>($"""
-            SELECT LegalName,Nit,VerificationDigit
+            SELECT LegalName,Nit,VerificationDigit,EntityType,IdentificationTypeCode,
+                   PrimaryBusinessId,LogoMediaRef
             FROM dbo.TenantLegalProfiles WHERE TenantId={tenant.TenantId}
             """).SingleOrDefaultAsync(ct);
         tenant.LegalName = profile?.LegalName;
         tenant.Nit = profile?.Nit;
         tenant.VerificationDigit = profile?.VerificationDigit;
+        tenant.EntityType = profile?.EntityType;
+        tenant.IdentificationTypeCode = profile?.IdentificationTypeCode;
+        tenant.PrimaryBusinessId = profile?.PrimaryBusinessId;
+        tenant.LogoMediaRef = profile?.LogoMediaRef;
     }
 
-    public Task UpdateLegalIdentityAsync(Guid tenantId, string legalName, string nit, string verificationDigit, DateTimeOffset now, CancellationToken ct = default)
+    public async Task<bool> UpdateLegalIdentityAsync(Guid tenantId, string legalName, string identification,
+        string? verificationDigit, string entityType, string identificationTypeCode,
+        DateTimeOffset now, CancellationToken ct = default)
     {
-        var normalizedNit = new string(nit.Where(char.IsDigit).ToArray());
-        return _context.Database.ExecuteSqlInterpolatedAsync($"""
+        var normalizedIdentification = new string(identification.Where(char.IsLetterOrDigit).ToArray()).ToUpperInvariant();
+        var affected = await _context.Database.ExecuteSqlInterpolatedAsync($"""
             UPDATE dbo.TenantLegalProfiles
-            SET LegalName={legalName},Nit={nit},NormalizedNit={normalizedNit},VerificationDigit={verificationDigit},UpdatedAt={now}
+            SET LegalName={legalName},Nit={identification},NormalizedNit={normalizedIdentification},
+                VerificationDigit={verificationDigit},EntityType={entityType},
+                IdentificationTypeCode={identificationTypeCode},UpdatedAt={now}
             WHERE TenantId={tenantId};
             """, ct);
+        return affected == 1;
     }
 
-    private sealed record LegalIdentityRow(string LegalName, string Nit, string VerificationDigit);
+    public async Task<bool> UpdateLogoAsync(Guid tenantId, string logoMediaRef, DateTimeOffset now,
+        CancellationToken ct = default) =>
+        await _context.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE dbo.TenantLegalProfiles SET LogoMediaRef={logoMediaRef},UpdatedAt={now}
+            WHERE TenantId={tenantId};
+            """, ct) == 1;
+
+    public Task<bool> IsReferenceOptionActiveAsync(string catalogCode, string code,
+        CancellationToken ct = default) => _context.Database
+        .SqlQuery<int>($"""
+            SELECT COUNT(*) AS [Value] FROM reference.Options
+            WHERE CatalogCode={catalogCode} AND Code={code} AND IsActive=1
+            """).AnyAsync(value => value > 0, ct);
+
+    private sealed record LegalIdentityRow(string LegalName, string Nit, string? VerificationDigit,
+        string EntityType, string IdentificationTypeCode, Guid PrimaryBusinessId, string? LogoMediaRef);
 
     public Task RevokeActiveAuthenticationSessionsAsync(Guid tenantId, DateTimeOffset now, CancellationToken ct = default) =>
         _context.Database.ExecuteSqlInterpolatedAsync($@"

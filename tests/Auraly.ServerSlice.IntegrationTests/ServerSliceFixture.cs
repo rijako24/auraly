@@ -21,6 +21,7 @@ using Auraly.Contracts.WorkSessions;
 using Auraly.Fiscal.Core;
 using Auraly.Infrastructure.Persistence;
 using Auraly.Contracts.Parties;
+using Auraly.Platform.Application.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -180,6 +181,10 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                 services.AddSingleton<IPosSynchronizationPushGateway>(provider =>
                     provider.GetRequiredService<
                         TestPosSynchronizationPushGateway>());
+                services.RemoveAll<IBlobStorageService>();
+                services.RemoveAll<IMediaUrlResolver>();
+                services.AddSingleton<IBlobStorageService, TestBlobStorageService>();
+                services.AddSingleton<IMediaUrlResolver, TestMediaUrlResolver>();
             });
         });
         using var client = CreateClient();
@@ -1125,4 +1130,25 @@ internal sealed class TestExecutionAccessResolver(
             ? access with { Permissions = profilePermissions }
             : access;
     }
+}
+
+internal sealed class TestBlobStorageService : IBlobStorageService
+{
+    public Task<string> UploadImageAsync(Guid businessId, Stream imageStream, string fileName) =>
+        Task.FromResult(fileName);
+
+    public Task<string> GetImageUrlAsync(Guid businessId, string fileName) =>
+        Task.FromResult($"https://media.auraly.test/{businessId:D}/{fileName}");
+
+    public Task<bool> ImageExistsAsync(Guid businessId, string fileName) =>
+        Task.FromResult(true);
+}
+
+internal sealed class TestMediaUrlResolver : IMediaUrlResolver
+{
+    public Task<string> ResolveAsync(
+        Guid businessId,
+        string mediaRef,
+        CancellationToken ct = default) =>
+        Task.FromResult($"https://media.auraly.test/{businessId:D}/{mediaRef}");
 }

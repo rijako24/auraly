@@ -163,8 +163,9 @@ public sealed partial class SqlWorkSessionStore(
                 throw new WorkSessionConflictException(
                     "The work session is not open and has no closure receipt.");
 
-            var totals = await ReadTotalsAsync(
+            var expectedTotals = await ReadTotalsAsync(
                 connection, transaction, workSessionId, cancellationToken);
+            var totals = ReconcileTotals(expectedTotals, request);
             var totalSales = totals.Sum(value => value.SalesAmount);
             var totalRefunds = totals.Sum(value => value.RefundAmount);
             var totalOther = totals.Sum(value => value.OtherAmount);
@@ -173,9 +174,12 @@ public sealed partial class SqlWorkSessionStore(
                 .Where(value => string.Equals(
                     value.PaymentMethodCode, "Cash", StringComparison.OrdinalIgnoreCase))
                 .Sum(value => value.NetAmount);
-            var difference = request.CountedCash is null
+            var countedCash = totals.FirstOrDefault(value => string.Equals(
+                value.PaymentMethodCode, "Cash", StringComparison.OrdinalIgnoreCase))?.CountedAmount
+                ?? request.CountedCash;
+            var difference = countedCash is null
                 ? (decimal?)null
-                : request.CountedCash.Value - expectedCash;
+                : countedCash.Value - expectedCash;
             var closedAt = timeProvider.GetUtcNow();
             var closure = new WorkSessionClosureView(
                 ids.NewId(),
@@ -194,7 +198,7 @@ public sealed partial class SqlWorkSessionStore(
                 totalOther,
                 netAmount,
                 expectedCash,
-                request.CountedCash,
+                countedCash,
                 difference,
                 request.Note,
                 totals);
@@ -500,9 +504,9 @@ public sealed partial class SqlWorkSessionStore(
             await using var command = new SqlCommand("""
                 INSERT dbo.WorkSessionClosurePaymentTotals
                   (WorkSessionClosureId,PaymentMethodCode,SalesAmount,
-                   RefundAmount,OtherAmount,NetAmount)
+                   RefundAmount,OtherAmount,NetAmount,CountedAmount,Difference)
                 VALUES
-                  (@ClosureId,@Method,@Sales,@Refund,@Other,@Net);
+                  (@ClosureId,@Method,@Sales,@Refund,@Other,@Net,@Counted,@Difference);
                 """, connection, transaction);
             command.Parameters.AddWithValue("@ClosureId", closureId);
             command.Parameters.AddWithValue("@Method", total.PaymentMethodCode);
@@ -510,9 +514,59 @@ public sealed partial class SqlWorkSessionStore(
             AddMoney(command, "@Refund", total.RefundAmount);
             AddMoney(command, "@Other", total.OtherAmount);
             AddMoney(command, "@Net", total.NetAmount);
+            command.Parameters.Add(new SqlParameter("@Counted", SqlDbType.Decimal)
+            { Precision = 19, Scale = 4, Value = (object?)total.CountedAmount ?? DBNull.Value });
+            command.Parameters.Add(new SqlParameter("@Difference", SqlDbType.Decimal)
+            { Precision = 19, Scale = 4, Value = (object?)total.Difference ?? DBNull.Value });
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
     }
+
+    private static IReadOnlyList<WorkSessionPaymentTotal> ReconcileTotals(
+        IReadOnlyList<WorkSessionPaymentTotal> expected,
+        CloseWorkSessionRequest request)
+    {
+        if (request.PaymentCounts is null)
+        {
+            return expected.Select(value =>
+                string.Equals(value.PaymentMethodCode, "Cash", StringComparison.OrdinalIgnoreCase) &&
+                request.CountedCash is decimal counted
+                    ? value with
+                    {
+                        CountedAmount = counted,
+                        Difference = counted - value.NetAmount
+                    }
+                    : value).ToArray();
+        }
+
+        var counts = request.PaymentCounts.ToDictionary(
+            value => value.PaymentMethodCode.Trim(),
+            value => value.CountedAmount,
+            StringComparer.OrdinalIgnoreCase);
+        var expectedCodes = expected
+            .Where(value => RequiresManualCount(value.PaymentMethodCode))
+            .Select(value => value.PaymentMethodCode)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var allExpectedCodes = expected.Select(value => value.PaymentMethodCode)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (expectedCodes.Any(code => !counts.ContainsKey(code))
+            || counts.Keys.Any(code => !allExpectedCodes.Contains(code)))
+            throw new WorkSessionValidationException(
+                "The count must include cash and card methods in the session exactly once.");
+        return expected.Select(value => RequiresManualCount(value.PaymentMethodCode)
+            ? value with
+            {
+                CountedAmount = counts[value.PaymentMethodCode],
+                Difference = counts[value.PaymentMethodCode] - value.NetAmount
+            }
+            : value).ToArray();
+    }
+
+    private static bool RequiresManualCount(string paymentMethodCode) =>
+        paymentMethodCode.Equals("Cash", StringComparison.OrdinalIgnoreCase) ||
+        paymentMethodCode.Equals("Card", StringComparison.OrdinalIgnoreCase) ||
+        paymentMethodCode.Equals("DebitCard", StringComparison.OrdinalIgnoreCase) ||
+        paymentMethodCode.Equals("CreditCard", StringComparison.OrdinalIgnoreCase);
 
     private static async Task<(string IdempotencyKey, WorkSessionClosureView Closure)?> ReadClosureAsync(
         SqlConnection connection,

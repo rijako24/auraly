@@ -13,6 +13,7 @@ public sealed record CloseLocalWorkSessionRequest(
     Guid OperationId,
     Guid AuthorizationToken,
     decimal CountedCash,
+    IReadOnlyList<WorkSessionPaymentCount> PaymentCounts,
     string? Note);
 
 public sealed record AuthorizedWorkSessionClosurePreview(
@@ -40,7 +41,7 @@ public sealed class PosWorkSessionClosureServerClient(
         return await response.Content.ReadFromJsonAsync<WorkSessionClosurePreviewView>(
                    cancellationToken: cancellationToken)
                ?? throw new InvalidDataException(
-                   "Auraly Server devolvió un arqueo vacío.");
+                   "Auraly Server devolvió una vista previa de cierre vacía.");
     }
 
     public async Task<WorkSessionClosureView> CloseAsync(
@@ -60,7 +61,8 @@ public sealed class PosWorkSessionClosureServerClient(
             session.WorkSessionId,
             input.CountedCash,
             input.Note,
-            authorizedByUserId));
+            authorizedByUserId,
+            input.PaymentCounts));
         using var response = await http.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
             throw new PosWorkSessionClosureException(
@@ -69,7 +71,7 @@ public sealed class PosWorkSessionClosureServerClient(
         return await response.Content.ReadFromJsonAsync<WorkSessionClosureView>(
                    cancellationToken: cancellationToken)
                ?? throw new InvalidDataException(
-                   "Auraly Server devolvió un cierre de caja vacío.");
+                   "Auraly Server devolvió un cierre de sesión vacío.");
     }
 }
 
@@ -162,7 +164,7 @@ public sealed class PosWorkSessionClosurePrinter(
         if (settings.ReceiptMode != PosPrinterModes.WindowsRaw ||
             string.IsNullOrWhiteSpace(settings.ReceiptPrinterName))
             throw new InvalidOperationException(
-                "Configura una impresora de tirilla antes de cerrar la caja.");
+                "Configura una impresora de tirilla antes de cerrar la sesión de venta.");
         var bytes = WorkSessionClosureReceiptRenderer.Render(
             closure,
             settings.ReceiptPaperWidthMillimeters);
@@ -229,10 +231,12 @@ public static class PosWorkSessionClosureEndpoints
         {
             if (request.OperationId == Guid.Empty ||
                 request.AuthorizationToken == Guid.Empty ||
-                request.CountedCash < 0)
+                request.CountedCash < 0 ||
+                request.PaymentCounts is null ||
+                request.PaymentCounts.Any(value => value.CountedAmount < 0))
                 return Results.ValidationProblem(new Dictionary<string, string[]>
                 {
-                    [nameof(request)] = ["El identificador y el efectivo contado son obligatorios."]
+                    [nameof(request)] = ["El identificador y los valores conciliados son obligatorios."]
                 });
             var session = sessions.Required();
             try
@@ -288,8 +292,7 @@ internal static class WorkSessionClosureReceiptRenderer
         using var stream = new MemoryStream();
         Write(stream, Initialize);
         Write(stream, AlignCenter);
-        Line(stream, "AURALY");
-        Line(stream, "CIERRE Y ARQUEO DE CAJA");
+        Line(stream, "CIERRE DE SESION DE VENTA");
         Line(stream, value.BusinessName);
         Line(stream, value.WarehouseName);
         Line(stream, new string('-', columns));
@@ -304,14 +307,21 @@ internal static class WorkSessionClosureReceiptRenderer
         Line(stream, Pair("OTROS MOVIMIENTOS", Money(value.TotalOther), columns));
         Line(stream, Pair("NETO", Money(value.NetAmount), columns));
         Line(stream, new string('-', columns));
-        Line(stream, "TOTALES POR MEDIO");
+        Line(stream, "CONCILIACION POR MEDIO");
         foreach (var payment in value.PaymentTotals)
         {
-            Wrapped(stream, payment.PaymentMethodCode.ToUpperInvariant(), columns);
-            Line(stream, Pair("  VENTAS", Money(payment.SalesAmount), columns));
-            Line(stream, Pair("  DEVOLUCIONES", Money(payment.RefundAmount), columns));
-            Line(stream, Pair("  OTROS", Money(payment.OtherAmount), columns));
-            Line(stream, Pair("  NETO", Money(payment.NetAmount), columns));
+            Wrapped(stream, PaymentMethodName(payment.PaymentMethodCode).ToUpperInvariant(), columns);
+            Line(stream, Pair("  ESPERADO", Money(payment.NetAmount), columns));
+            if (RequiresManualCount(payment.PaymentMethodCode))
+            {
+                Line(stream, Pair("  CONTADO", Money(payment.CountedAmount ?? 0), columns));
+                var paymentDifference = payment.Difference ?? 0;
+                Line(stream, Pair("  " + DifferenceLabel(paymentDifference), SignedMoney(paymentDifference), columns));
+            }
+            else
+            {
+                Line(stream, "  CONCILIACION AUTOMATICA");
+            }
         }
         Line(stream, new string('-', columns));
         Line(stream, Pair("EFECTIVO ESPERADO", Money(value.ExpectedCash), columns));
@@ -350,6 +360,20 @@ internal static class WorkSessionClosureReceiptRenderer
             : value < 0
                 ? "DIFERENCIA (-) FALTANTE"
                 : "DIFERENCIA (CUADRADO)";
+    private static string PaymentMethodName(string code) => code switch
+    {
+        "Cash" => "Efectivo",
+        "DebitCard" => "Tarjeta debito",
+        "CreditCard" => "Tarjeta credito",
+        "Card" => "Tarjeta",
+        "Transfer" => "Transferencia",
+        _ => code
+    };
+    private static bool RequiresManualCount(string code) =>
+        code.Equals("Cash", StringComparison.OrdinalIgnoreCase) ||
+        code.Equals("Card", StringComparison.OrdinalIgnoreCase) ||
+        code.Equals("DebitCard", StringComparison.OrdinalIgnoreCase) ||
+        code.Equals("CreditCard", StringComparison.OrdinalIgnoreCase);
     private static string Pair(string label, string value, int columns)
     {
         var available = Math.Max(1, columns - value.Length);

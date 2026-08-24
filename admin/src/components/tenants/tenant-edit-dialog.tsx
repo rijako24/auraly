@@ -1,0 +1,86 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { ImageUp } from "lucide-react";
+import { toast } from "sonner";
+
+import { Button } from "@/components/ui/button";
+import { TenantBrand } from "@/components/brand/tenant-brand";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useReferenceOptions } from "@/hooks/use-reference-options";
+import { tenantsApi } from "@/services/api/tenants";
+import type { Tenant } from "@/types/entities";
+
+type Props = { tenant: Tenant; open: boolean; onOpenChange: (open: boolean) => void; onSaved: () => Promise<unknown> };
+
+export function TenantEditDialog({ tenant, open, onOpenChange, onSaved }: Props) {
+  const entityTypes = useReferenceOptions("tenant-entity-type", open);
+  const identificationTypes = useReferenceOptions("tenant-identification-type", open);
+  const [form, setForm] = useState(() => initial(tenant));
+  const [logo, setLogo] = useState<File | null>(null);
+  const [saving, setSaving] = useState(false);
+  const preview = useMemo(() => logo ? URL.createObjectURL(logo) : tenant.logoUrl, [logo, tenant.logoUrl]);
+
+  useEffect(() => () => { if (logo && preview) URL.revokeObjectURL(preview); }, [logo, preview]);
+  useEffect(() => { if (open) { setForm(initial(tenant)); setLogo(null); } }, [open, tenant]);
+
+  const set = (key: keyof typeof form, value: string) => setForm(current => ({ ...current, [key]: value }));
+  const identityMatches = form.entityType === "NaturalPerson"
+    ? form.identificationTypeCode === "CC"
+    : form.identificationTypeCode === "NIT";
+  const valid = Boolean(form.name.trim() && form.email.trim() && form.legalName.trim()
+    && form.identification.trim() && identityMatches
+    && (form.identificationTypeCode !== "NIT" || form.verificationDigit.trim()));
+
+  async function save() {
+    if (!valid || saving) return;
+    setSaving(true);
+    let profileSaved = false;
+    try {
+      await tenantsApi.update(tenant.tenantId, {
+        name: form.name.trim(), email: form.email.trim(), legalName: form.legalName.trim(),
+        nit: form.identification.trim(), verificationDigit: form.identificationTypeCode === "NIT" ? form.verificationDigit.trim() : null,
+        entityType: form.entityType, identificationTypeCode: form.identificationTypeCode,
+      });
+      profileSaved = true;
+      if (logo) await tenantsApi.uploadLogo(tenant.tenantId, logo);
+      await onSaved();
+      onOpenChange(false);
+      toast.success("Información del tenant actualizada");
+    } catch (error) {
+      if (profileSaved) await onSaved();
+      toast.error(profileSaved ? "La información se guardó, pero no fue posible cargar el logo." : errorMessage(error));
+    } finally { setSaving(false); }
+  }
+
+  return <Dialog open={open} onOpenChange={value => !saving && onOpenChange(value)}>
+    <DialogContent className="max-h-[92dvh] max-w-3xl overflow-y-auto">
+      <DialogHeader><DialogTitle>Editar tenant</DialogTitle><DialogDescription>Actualiza la identidad, los datos de contacto y la marca que aparecerá en los reportes.</DialogDescription></DialogHeader>
+      <div className="space-y-6">
+        <section className="grid gap-4 sm:grid-cols-[11rem_1fr] sm:items-center">
+          <div className="grid h-28 place-items-center overflow-hidden rounded-xl border bg-white">
+            {preview ? <TenantBrand displayName={form.name || tenant.name} logoUrl={preview} showName={false} imageClassName="h-28 w-44 border-0" /> : <ImageUp className="h-8 w-8 text-muted-foreground" />}
+          </div>
+          <div className="space-y-2"><Label htmlFor="tenant-logo">Logo del tenant</Label><Input id="tenant-logo" type="file" accept="image/jpeg,image/png,image/webp" onChange={event => setLogo(event.target.files?.[0] ?? null)} /><p className="text-xs text-muted-foreground">JPG, PNG o WEBP, máximo 4 MB. Se usa en todos los reportes.</p></div>
+        </section>
+        <section className="grid gap-4 sm:grid-cols-2">
+          <Field label="Tipo de persona"><Select value={form.entityType} onValueChange={value => set("entityType", value)}><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(entityTypes.data ?? []).map(item => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></Field>
+          <Field label="Tipo de identificación"><Select value={form.identificationTypeCode} onValueChange={value => set("identificationTypeCode", value)}><SelectTrigger><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(identificationTypes.data ?? []).map(item => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select>{!identityMatches && <p className="text-xs text-destructive">Persona natural usa cédula; persona jurídica usa NIT.</p>}</Field>
+          <Field label="Nombre comercial"><Input value={form.name} onChange={event => set("name", event.target.value)} /></Field>
+          <Field label={form.entityType === "NaturalPerson" ? "Nombre completo" : "Razón social"}><Input value={form.legalName} onChange={event => set("legalName", event.target.value)} /></Field>
+          <Field label={form.identificationTypeCode === "CC" ? "Cédula" : "NIT"}><Input value={form.identification} onChange={event => set("identification", event.target.value)} /></Field>
+          {form.identificationTypeCode === "NIT" && <Field label="Dígito de verificación"><Input maxLength={4} value={form.verificationDigit} onChange={event => set("verificationDigit", event.target.value)} /></Field>}
+          <Field label="Correo empresarial" className="sm:col-span-2"><Input type="email" value={form.email} onChange={event => set("email", event.target.value)} /></Field>
+        </section>
+      </div>
+      <DialogFooter><Button variant="outline" disabled={saving} onClick={() => onOpenChange(false)}>Cancelar</Button><Button disabled={saving || !valid || entityTypes.isLoading || identificationTypes.isLoading} onClick={() => void save()}>{saving ? "Guardando…" : "Guardar cambios"}</Button></DialogFooter>
+    </DialogContent>
+  </Dialog>;
+}
+
+function Field({ label, className, children }: { label: string; className?: string; children: React.ReactNode }) { return <div className={`space-y-2 ${className ?? ""}`}><Label>{label}</Label>{children}</div>; }
+function initial(tenant: Tenant) { return { name: tenant.name, email: tenant.email, legalName: tenant.legalName ?? tenant.name, identification: tenant.nit ?? "", verificationDigit: tenant.verificationDigit ?? "", entityType: tenant.entityType ?? "Organization", identificationTypeCode: tenant.identificationTypeCode ?? "NIT" }; }
+function errorMessage(error: unknown) { return error instanceof Error ? error.message : "No fue posible actualizar el tenant."; }

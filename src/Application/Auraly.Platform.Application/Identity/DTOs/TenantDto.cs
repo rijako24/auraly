@@ -14,4 +14,13 @@ public record TenantDto(
     int ActiveEnrolledDeviceCount,
     string? LegalName,
     string? Nit,
-    string? VerificationDigit);
+    string? VerificationDigit,
+    string? EntityType,
+    string? IdentificationTypeCode,
+    string? LogoUrl);
+
+public sealed record TenantBrandingDto(
+    Guid TenantId,
+    string DisplayName,
+    string? LegalName,
+    string? LogoUrl);

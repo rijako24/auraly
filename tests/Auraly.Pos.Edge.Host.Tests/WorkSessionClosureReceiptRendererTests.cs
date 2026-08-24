@@ -22,14 +22,20 @@ public sealed class WorkSessionClosureReceiptRendererTests
             Guid.NewGuid(), "Bodega principal", Guid.NewGuid(), "Cajero",
             null, now.AddHours(-8), now, 100m, 10m, 5m, 95m, 100m,
             100m + difference, difference, "Conteo de prueba",
-            [new WorkSessionPaymentTotal("Cash", 100m, 10m, 5m, 95m)]);
+            [
+                new WorkSessionPaymentTotal("Cash", 100m, 10m, 5m, 95m,
+                    100m + difference, difference),
+                new WorkSessionPaymentTotal("Transfer", 40m, 0m, 0m, 40m)
+            ]);
 
         var receipt = Encoding.ASCII.GetString(
             WorkSessionClosureReceiptRenderer.Render(closure, 80));
 
         Assert.Contains(expectedLabel, receipt);
         Assert.Contains(expectedAmount, receipt);
-        Assert.Contains("TOTALES POR MEDIO", receipt);
+        Assert.Contains("CONCILIACION POR MEDIO", receipt);
+        Assert.Contains("TRANSFERENCIA", receipt);
+        Assert.Contains("CONCILIACION AUTOMATICA", receipt);
         Assert.Contains("EFECTIVO ESPERADO", receipt);
         Assert.Contains("EFECTIVO CONTADO", receipt);
     }

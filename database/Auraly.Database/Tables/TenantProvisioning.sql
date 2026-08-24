@@ -5,7 +5,10 @@ CREATE TABLE [dbo].[TenantLegalProfiles]
     [TradeName] NVARCHAR(200) NOT NULL,
     [Nit] NVARCHAR(32) NOT NULL,
     [NormalizedNit] NVARCHAR(32) NOT NULL,
-    [VerificationDigit] NVARCHAR(4) NOT NULL,
+    [VerificationDigit] NVARCHAR(4) NULL,
+    [EntityType] NVARCHAR(32) NOT NULL CONSTRAINT [DF_TenantLegalProfiles_EntityType] DEFAULT (N'Organization'),
+    [IdentificationTypeCode] NVARCHAR(16) NOT NULL CONSTRAINT [DF_TenantLegalProfiles_IdentificationType] DEFAULT (N'NIT'),
+    [LogoMediaRef] NVARCHAR(500) NULL,
     [CountryId] UNIQUEIDENTIFIER NOT NULL,
     [AdministrativeDivisionId] UNIQUEIDENTIFIER NOT NULL,
     [CityId] UNIQUEIDENTIFIER NOT NULL,
@@ -23,6 +26,11 @@ CREATE TABLE [dbo].[TenantLegalProfiles]
     CONSTRAINT [FK_TenantLegalProfiles_Cities] FOREIGN KEY ([CityId]) REFERENCES [dbo].[Cities]([CityId]),
     CONSTRAINT [FK_TenantLegalProfiles_PrimaryBusiness] FOREIGN KEY ([PrimaryBusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
     CONSTRAINT [UQ_TenantLegalProfiles_NormalizedNit] UNIQUE ([NormalizedNit])
+    ,CONSTRAINT [CK_TenantLegalProfiles_EntityType] CHECK ([EntityType] IN (N'NaturalPerson',N'Organization'))
+    ,CONSTRAINT [CK_TenantLegalProfiles_IdentificationType] CHECK ([IdentificationTypeCode] IN (N'CC',N'NIT'))
+    ,CONSTRAINT [CK_TenantLegalProfiles_IdentityCombination] CHECK (
+        ([EntityType]=N'NaturalPerson' AND [IdentificationTypeCode]=N'CC' AND [VerificationDigit] IS NULL)
+        OR ([EntityType]=N'Organization' AND [IdentificationTypeCode]=N'NIT' AND LEN(LTRIM(RTRIM([VerificationDigit])))>0))
 );
 GO
 

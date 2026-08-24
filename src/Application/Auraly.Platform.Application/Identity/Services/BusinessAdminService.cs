@@ -112,7 +112,6 @@ public class BusinessAdminService : IBusinessAdminService
         if (request.Phone is not null) business.Phone = request.Phone;
         if (request.Email is not null) business.Email = request.Email;
         if (request.Website is not null) business.Website = request.Website;
-        if (request.LogoUrl is not null) business.LogoUrl = request.LogoUrl;
         if (request.TimeZone is not null) business.TimeZone = NormalizeTimeZone(request.TimeZone);
 
         business.UpdatedAt = DateTime.UtcNow;
@@ -155,5 +154,5 @@ public class BusinessAdminService : IBusinessAdminService
 
     private static BusinessDto MapToDto(Business b) => new(
         b.BusinessId, b.TenantId, b.Name, b.Description, b.Address,
-        b.Phone, b.Email, b.Website, b.LogoUrl, b.TimeZone, b.IsActive, b.CreatedAt);
+        b.Phone, b.Email, b.Website, b.TimeZone, b.IsActive, b.CreatedAt);
 }

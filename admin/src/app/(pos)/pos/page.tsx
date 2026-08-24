@@ -44,6 +44,7 @@ import {
   PosEdgeError,
   type PosClient,
   type PosAuthorizedClosurePreview,
+  type PosWorkSessionPaymentCount,
   type PosCaptureResult,
   type PosSensitiveAuthorization,
   readEdgeTokenFromLaunch,
@@ -196,6 +197,7 @@ export default function PosPage() {
     useState<PosAuthorizedClosurePreview | null>(null);
   const [closureAttempt, setClosureAttempt] = useState<{
     countedCash: number;
+    paymentCounts: PosWorkSessionPaymentCount[];
     note: string | null;
   } | null>(null);
   const [printerOpen, setPrinterOpen] = useState(false);
@@ -1085,22 +1087,23 @@ export default function PosPage() {
     } catch (caught) {
       const detail = caught instanceof Error
         ? caught.message
-        : "No fue posible preparar el arqueo de la sesión.";
+        : "No fue posible preparar el cierre de la sesión de venta.";
       setError(detail);
-      setMessage("No se pudo iniciar el arqueo");
+      setMessage("No se pudo iniciar el cierre de sesión");
     } finally {
       setBusy(false);
     }
   }
 
-  async function confirmSalesSessionClosure(countedCash: number, note: string | null) {
+  async function confirmSalesSessionClosure(paymentCounts: PosWorkSessionPaymentCount[], note: string | null) {
     if (!client || !closurePreview || busy) return;
     setBusy(true);
     setError(null);
     try {
       const operationId = closureOperationId.current ?? crypto.randomUUID();
       closureOperationId.current = operationId;
-      const submitted = closureAttempt ?? { countedCash, note };
+      const countedCash = paymentCounts.find(value => value.paymentMethodCode === "Cash")?.countedAmount ?? 0;
+      const submitted = closureAttempt ?? { countedCash, paymentCounts, note };
       if (!closureAttempt) setClosureAttempt(submitted);
       if (draft?.sourceOrderId) {
         const orderId = draft.sourceOrderId;
@@ -1117,6 +1120,7 @@ export default function PosPage() {
         operationId,
         authorizationToken: closurePreview.authorizationToken,
         countedCash: submitted.countedCash,
+        paymentCounts: submitted.paymentCounts,
         note: submitted.note,
       });
 
@@ -1132,9 +1136,9 @@ export default function PosPage() {
     } catch (caught) {
       const detail = caught instanceof Error
         ? caught.message
-        : "No fue posible cerrar e imprimir el arqueo.";
+        : "No fue posible cerrar e imprimir la sesión de venta.";
       setError(detail);
-      setMessage("El arqueo no se completó; corrige la novedad y reintenta");
+      setMessage("El cierre no se completó; corrige la novedad y reintenta");
     } finally {
       setBusy(false);
     }

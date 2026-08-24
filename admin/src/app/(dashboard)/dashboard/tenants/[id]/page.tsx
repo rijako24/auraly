@@ -2,96 +2,78 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { ArrowLeft, Copy } from "lucide-react";
-import { Pencil } from "lucide-react";
+import { useParams, useSearchParams } from "next/navigation";
+import { ArrowLeft, Copy, FileText, Fingerprint, Mail, Pencil } from "lucide-react";
 import { toast } from "sonner";
 
+import { TenantBrand } from "@/components/brand/tenant-brand";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { TenantProvisioningSummary } from "@/components/tenants/tenant-provisioning-summary";
-import { TenantGovernancePanel } from "@/components/tenants/tenant-governance-panel";
 import { PageError } from "@/components/ui/page-error";
 import { PageLoading } from "@/components/ui/page-loading";
+import { TenantEditDialog } from "@/components/tenants/tenant-edit-dialog";
+import { TenantGovernancePanel } from "@/components/tenants/tenant-governance-panel";
+import { TenantProvisioningSummary } from "@/components/tenants/tenant-provisioning-summary";
 import { useTenant } from "@/hooks/use-tenants";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { tenantsApi } from "@/services/api/tenants";
 import { useAuthStore } from "@/stores/auth-store";
 
 export default function TenantDetailPage() {
-  const params = useParams();
-  const id = params.id as string;
+  const id = useParams().id as string;
+  const provisioned = useSearchParams().get("provisioned") === "1";
   const { data: tenant, isLoading, isError, refetch } = useTenant(id);
   const [loginUrl, setLoginUrl] = useState("");
   const [editing, setEditing] = useState(false);
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [legalName, setLegalName] = useState("");
-  const [nit, setNit] = useState("");
-  const [verificationDigit, setVerificationDigit] = useState("");
-  const [saving, setSaving] = useState(false);
-  const canEdit = useAuthStore((state) => state.user?.permissions.includes("tenants.update") ?? false);
+  const canEdit = useAuthStore(state => state.user?.permissions.includes("tenants.update") ?? false);
 
   useEffect(() => {
-    if (tenant?.tenantKey)
-      setLoginUrl(
-        window.location.origin + "/login?tenant=" + encodeURIComponent(tenant.tenantKey),
-      );
+    if (tenant?.tenantKey) setLoginUrl(`${window.location.origin}/login?tenant=${encodeURIComponent(tenant.tenantKey)}`);
   }, [tenant?.tenantKey]);
 
-  useEffect(() => { if (tenant) { setName(tenant.name); setEmail(tenant.email); setLegalName(tenant.legalName ?? tenant.name); setNit(tenant.nit ?? ""); setVerificationDigit(tenant.verificationDigit ?? ""); } }, [tenant]);
-
-  async function saveTenant() {
-    if (!tenant || !name.trim() || !email.trim()) return;
-    setSaving(true);
-    try {
-      await tenantsApi.update(tenant.tenantId, { name: name.trim(), email: email.trim(), legalName: legalName.trim(), nit: nit.trim(), verificationDigit: verificationDigit.trim() });
-      await refetch();
-      setEditing(false);
-      toast.success("Tenant actualizado");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "No fue posible actualizar el tenant.");
-    } finally { setSaving(false); }
-  }
-
-  if (isLoading) return <PageLoading cards={1} />;
+  if (isLoading) return <PageLoading cards={2} />;
   if (isError || !tenant) return <PageError onRetry={refetch} />;
 
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" asChild>
-          <Link href="/dashboard/tenants"><ArrowLeft className="h-4 w-4" /></Link>
-        </Button>
-        <div className="flex-1">
-          <h1 className="text-2xl font-semibold tracking-tight">{tenant.name}</h1>
-          <p className="text-muted-foreground">Detalle del tenant</p>
-        </div>
-        {canEdit && <Button type="button" variant="outline" onClick={() => setEditing(true)}><Pencil className="mr-2 h-4 w-4" />Editar</Button>}
-        <Badge variant={tenant.isActive ? "default" : "secondary"}>
-          {tenant.isActive ? "Activo" : "Inactivo"}
-        </Badge>
-      </div>
-      <TenantGovernancePanel tenant={tenant} />
+  const entityLabel = tenant.entityType === "NaturalPerson" ? "Persona natural" : "Persona jurídica";
+  const identification = tenant.nit
+    ? `${tenant.identificationTypeCode ?? "NIT"} ${tenant.nit}${tenant.identificationTypeCode !== "CC" && tenant.verificationDigit ? `-${tenant.verificationDigit}` : ""}`
+    : "Sin configurar";
 
-      <TenantProvisioningSummary tenant={tenant} />
+  return <div className="space-y-6">
+    <header className="flex flex-col gap-4 sm:flex-row sm:items-center">
+      <Button variant="ghost" size="icon" asChild><Link href="/dashboard/tenants" aria-label="Volver a tenants"><ArrowLeft className="h-4 w-4" /></Link></Button>
+      <TenantBrand className="min-w-0 flex-1" imageClassName="h-16 w-24" displayName={tenant.name} logoUrl={tenant.logoUrl} />
+      {canEdit && <Button type="button" variant="outline" onClick={() => setEditing(true)}><Pencil className="mr-2 h-4 w-4" />Editar información</Button>}
+      <Badge variant={tenant.isActive ? "default" : "secondary"}>{tenant.isActive ? "Activo" : "Inactivo"}</Badge>
+    </header>
+
+    {provisioned && <TenantProvisioningSummary tenant={tenant} />}
+
+    <div className="grid gap-5 xl:grid-cols-[1.15fr_.85fr]">
       <section className="rounded-2xl border bg-card p-6 shadow-sm">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div><p className="text-sm font-medium text-muted-foreground">Clave inmutable</p><p className="font-mono">{tenant.tenantKey}</p></div>
-          <div className="sm:col-span-2">
-            <p className="text-sm font-medium text-muted-foreground">Enlace de acceso empresarial</p>
-            <div className="mt-1 flex gap-2">
-              <code className="min-w-0 flex-1 truncate rounded-md bg-muted px-3 py-2 text-xs">{loginUrl}</code>
-              <Button type="button" variant="outline" size="icon" disabled={!loginUrl} onClick={() => navigator.clipboard.writeText(loginUrl)} aria-label="Copiar enlace de acceso">
-                <Copy className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
+        <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wide text-primary">Identidad</p><h2 className="mt-1 text-xl font-semibold">Información legal y comercial</h2></div><FileText className="h-5 w-5 text-muted-foreground" /></div>
+        <dl className="mt-6 grid gap-5 sm:grid-cols-2">
+          <Value label="Tipo de persona" value={entityLabel} />
+          <Value label={tenant.entityType === "NaturalPerson" ? "Nombre completo" : "Razón social"} value={tenant.legalName ?? tenant.name} />
+          <Value label="Nombre comercial" value={tenant.name} />
+          <Value label="Identificación" value={identification} mono />
+          <Value label="Correo empresarial" value={tenant.email} />
+          <Value label="Marca en reportes" value={tenant.logoUrl ? "Logo configurado" : "Pendiente de configurar"} />
+        </dl>
+      </section>
+
+      <section className="rounded-2xl border bg-card p-6 shadow-sm">
+        <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wide text-primary">Acceso</p><h2 className="mt-1 text-xl font-semibold">Ingreso empresarial</h2></div><Fingerprint className="h-5 w-5 text-muted-foreground" /></div>
+        <div className="mt-6 space-y-5">
+          <Value label="Clave inmutable" value={tenant.tenantKey} mono />
+          <div><p className="text-sm font-medium text-muted-foreground">Enlace de acceso</p><div className="mt-2 flex gap-2"><code className="min-w-0 flex-1 truncate rounded-md bg-muted px-3 py-2 text-xs">{loginUrl}</code><Button type="button" variant="outline" size="icon" disabled={!loginUrl} aria-label="Copiar enlace" onClick={() => void copy(loginUrl)}><Copy className="h-4 w-4" /></Button></div></div>
+          <p className="flex items-center gap-2 text-xs text-muted-foreground"><Mail className="h-3.5 w-3.5" />El correo y el enlace pueden compartirse con el administrador autorizado.</p>
         </div>
       </section>
-      <Dialog open={editing} onOpenChange={setEditing}><DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>Editar tenant</DialogTitle><DialogDescription>Actualiza la identidad legal y la información general en una sola operación.</DialogDescription></DialogHeader><div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="tenant-name">Nombre comercial</Label><Input id="tenant-name" value={name} onChange={(event)=>setName(event.target.value)} /></div><div className="space-y-2"><Label htmlFor="tenant-legal-name">Razón social</Label><Input id="tenant-legal-name" value={legalName} onChange={(event)=>setLegalName(event.target.value)} /></div><div className="space-y-2"><Label htmlFor="tenant-nit">NIT</Label><Input id="tenant-nit" value={nit} onChange={(event)=>setNit(event.target.value)} /></div><div className="space-y-2"><Label htmlFor="tenant-verification-digit">Dígito de verificación</Label><Input id="tenant-verification-digit" maxLength={4} value={verificationDigit} onChange={(event)=>setVerificationDigit(event.target.value)} /></div><div className="space-y-2 sm:col-span-2"><Label htmlFor="tenant-email">Correo</Label><Input id="tenant-email" type="email" value={email} onChange={(event)=>setEmail(event.target.value)} /></div></div><DialogFooter><Button variant="outline" onClick={()=>setEditing(false)}>Cancelar</Button><Button disabled={saving||!name.trim()||!legalName.trim()||!nit.trim()||!verificationDigit.trim()||!email.trim()} onClick={()=>void saveTenant()}>{saving?"Guardando…":"Guardar cambios"}</Button></DialogFooter></DialogContent></Dialog>
     </div>
-  );
+
+    <TenantGovernancePanel tenant={tenant} />
+    <TenantEditDialog tenant={tenant} open={editing} onOpenChange={setEditing} onSaved={refetch} />
+  </div>;
 }
+
+function Value({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) { return <div><dt className="text-sm font-medium text-muted-foreground">{label}</dt><dd className={`mt-1 break-words font-medium ${mono ? "font-mono text-sm" : ""}`}>{value}</dd></div>; }
+async function copy(value: string) { await navigator.clipboard.writeText(value); toast.success("Enlace copiado"); }
