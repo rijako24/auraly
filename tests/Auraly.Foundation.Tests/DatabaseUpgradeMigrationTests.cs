@@ -54,6 +54,7 @@ public sealed class DatabaseUpgradeMigrationTests
         Assert.True(remove > copy, "La columna anterior se retira antes de preservar el logo.");
         Assert.Contains("COL_LENGTH(N'dbo.Businesses', N'LogoUrl')", migration,
             StringComparison.Ordinal);
+        Assert.Contains("EXEC sys.sp_executesql", migration, StringComparison.Ordinal);
 
         var pipeline = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(), "infrastructure", "azure",
