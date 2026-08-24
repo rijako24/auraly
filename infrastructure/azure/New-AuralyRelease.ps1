@@ -38,6 +38,8 @@ if (-not $AllowDirty -and $gitStatus) {
 }
 
 $commit = (& git -C $repoRoot rev-parse HEAD).Trim()
+$commitTimestampText = (& git -C $repoRoot show -s --format=%cI $commit).Trim()
+$commitTimestamp = [DateTimeOffset]::Parse($commitTimestampText).ToUniversalTime()
 $temporaryPath = Join-Path ([IO.Path]::GetTempPath()) "auraly-release-$Version-$([guid]::NewGuid().ToString('N'))"
 $publishPath = Join-Path $temporaryPath 'publish'
 
@@ -50,7 +52,6 @@ function New-DeterministicZip {
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-    $normalizedTimestamp = [DateTimeOffset]::Parse('2000-01-01T00:00:00Z')
     $stream = [IO.File]::Open($DestinationPath, [IO.FileMode]::CreateNew)
     try {
         $archive = [IO.Compression.ZipArchive]::new(
@@ -66,7 +67,9 @@ function New-DeterministicZip {
                     $entry = $archive.CreateEntry(
                         $relativePath,
                         [IO.Compression.CompressionLevel]::Optimal)
-                    $entry.LastWriteTime = $normalizedTimestamp
+                    # Stable for the same commit, but distinct between releases so
+                    # Azure/Kudu cannot mistake a changed same-size DLL for an old file.
+                    $entry.LastWriteTime = $commitTimestamp
                     $input = [IO.File]::OpenRead($_.FullName)
                     $output = $entry.Open()
                     try {
