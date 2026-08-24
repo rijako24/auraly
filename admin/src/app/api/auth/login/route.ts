@@ -30,7 +30,11 @@ export async function POST(request: NextRequest) {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       return NextResponse.json(
-        { message: err.detail || err.message || err.title || "Error al iniciar sesión" },
+        {
+          message: res.status === 401
+            ? "Usuario, empresa o contraseña incorrectos."
+            : err.detail || err.message || err.title || "Error al iniciar sesión",
+        },
         { status: res.status },
       );
     }

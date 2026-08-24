@@ -118,6 +118,16 @@ public sealed record PosIssuedSaleSummary(
     string CustomerName,
     string? FiscalStatus);
 
+public sealed record PosLocalWorkSessionSale(
+    DateTimeOffset IssuedAt,
+    decimal Total,
+    IReadOnlyList<PosSalePaymentContract> Payments);
+
+public sealed record PosSaleOutboxStatus(
+    int PendingCount,
+    DateTimeOffset? OldestPendingAt,
+    string? LastError);
+
 public sealed class PosEdgeSaleStore
 {
     private readonly DbContextOptions<PosEdgeDbContext> _options;
@@ -532,6 +542,54 @@ public sealed class PosEdgeSaleStore
             .OrderBy(row => row.MessageId)
             .Select(ToOutboxItem)
             .ToArrayAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<PosLocalWorkSessionSale>> ReadWorkSessionSalesAsync(
+        Guid workSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = new PosEdgeDbContext(_options);
+        var payloads = await context.IssuedSales.AsNoTracking()
+            .Select(row => row.FiscalSnapshotJson)
+            .ToArrayAsync(cancellationToken);
+        return payloads
+            .Select(PosSaleContractSerializer.Deserialize)
+            .Where(value => value.WorkSessionId == workSessionId)
+            .OrderBy(value => value.CommercialSnapshot.IssuedAt)
+            .Select(value => new PosLocalWorkSessionSale(
+                value.CommercialSnapshot.IssuedAt,
+                value.CommercialSnapshot.PayableAmount,
+                value.Payments))
+            .ToArray();
+    }
+
+    public async Task<PosSaleOutboxStatus> ReadOutboxStatusAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = new PosEdgeDbContext(_options);
+        var rows = await context.Outbox.AsNoTracking()
+            .Where(row => row.Status != PosOutboxStatus.Uploaded)
+            .Select(row => new { row.CreatedAt, row.LastError })
+            .ToArrayAsync(cancellationToken);
+        rows = rows.OrderBy(row => row.CreatedAt).ToArray();
+        return new PosSaleOutboxStatus(
+            rows.Length,
+            rows.FirstOrDefault()?.CreatedAt,
+            rows.LastOrDefault(value => !string.IsNullOrWhiteSpace(value.LastError))?.LastError);
+    }
+
+    public async Task<bool> HasPendingOutboxForWorkSessionAsync(
+        Guid workSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = new PosEdgeDbContext(_options);
+        var payloads = await context.Outbox.AsNoTracking()
+            .Where(row => row.Status != PosOutboxStatus.Uploaded)
+            .Select(row => row.Payload)
+            .ToArrayAsync(cancellationToken);
+        return payloads
+            .Select(PosSaleContractSerializer.Deserialize)
+            .Any(value => value.WorkSessionId == workSessionId);
     }
 
     public async Task<PosEdgeOutboxItem?> ClaimNextOutboxAsync(

@@ -22,6 +22,11 @@ public sealed record LocalCashMovementAcceptance(
     string Status,
     bool IdempotentReplay);
 
+public sealed record PosCashMovementOutboxStatus(
+    int PendingCount,
+    DateTimeOffset? OldestPendingAt,
+    string? LastError);
+
 public sealed class PosCashMovementStore(
     string connectionString,
     TimeProvider timeProvider)
@@ -119,6 +124,78 @@ public sealed class PosCashMovementStore(
                        ?? throw new InvalidDataException(
                            "A cached cash-movement reason is invalid."));
         return values;
+    }
+
+    public async Task<decimal> ReadWorkSessionNetCashAsync(
+        Guid workSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT o.Payload,r.Direction
+            FROM PosCashMovementOutbox o
+            JOIN PosCashMovementReasons r
+              ON r.ReasonId=json_extract(o.Payload,'$.movement.reasonId');
+            """;
+        decimal total = 0;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var value = JsonSerializer.Deserialize<DeviceCashMovementRequest>(
+                reader.GetString(0), Json)
+                ?? throw new InvalidDataException("Un movimiento local de caja no es válido.");
+            if (value.Movement.WorkSessionId != workSessionId) continue;
+            total += reader.GetString(1) == CashMovementDirections.In
+                ? value.Movement.Amount
+                : -value.Movement.Amount;
+        }
+        return total;
+    }
+
+    public async Task<PosCashMovementOutboxStatus> ReadOutboxStatusAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT CreatedAt,LastError FROM PosCashMovementOutbox
+            WHERE Status<>'Uploaded' ORDER BY CreatedAt;
+            """;
+        var count = 0;
+        DateTimeOffset? oldest = null;
+        string? error = null;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            count++;
+            oldest ??= DateTimeOffset.Parse(reader.GetString(0));
+            if (!reader.IsDBNull(1)) error = reader.GetString(1);
+        }
+        return new PosCashMovementOutboxStatus(count, oldest, error);
+    }
+
+    public async Task<bool> HasPendingForWorkSessionAsync(
+        Guid workSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Payload FROM PosCashMovementOutbox WHERE Status<>'Uploaded';
+            """;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var value = JsonSerializer.Deserialize<DeviceCashMovementRequest>(
+                reader.GetString(0), Json)
+                ?? throw new InvalidDataException("Un movimiento local de caja no es válido.");
+            if (value.Movement.WorkSessionId == workSessionId) return true;
+        }
+        return false;
     }
 
     public async Task<LocalCashMovementAcceptance> QueueAsync(

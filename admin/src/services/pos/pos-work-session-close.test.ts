@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { workSessionCloseRequest, workSessionClosureHtml, workSessionClosurePreviewPath, workSessionPaymentMethodName, workSessionPaymentMethodRequiresCount } from "./pos-work-session-close";
+import { formatWorkSessionCountInput, normalizeWorkSessionCountInput, workSessionCloseRequest, workSessionClosureHtml, workSessionClosurePreviewPath, workSessionPaymentMethodName, workSessionPaymentMethodRequiresCount } from "./pos-work-session-close";
 
 test("online closure uses the authenticated server work-session endpoints", () => {
   assert.equal(workSessionClosurePreviewPath("session/1"), "/api/commerce/v1/work-sessions/session%2F1/closure-preview");
@@ -19,10 +19,17 @@ test("closure print view contains the tenant business and escapes external text"
   assert.match(html, /Automática/);
   assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/);
+  assert.doesNotMatch(html, /window\.print/);
 });
 
 test("closure count rules keep transfer automatic", () => {
   assert.equal(workSessionPaymentMethodName("Transfer"), "Transferencia");
   assert.equal(workSessionPaymentMethodRequiresCount("Transfer"), false);
   assert.equal(workSessionPaymentMethodRequiresCount("Cash"), true);
+});
+
+test("closure money inputs format Colombian thousands while typing", () => {
+  assert.equal(normalizeWorkSessionCountInput("$ 1.250.000"), "1250000");
+  assert.equal(formatWorkSessionCountInput("1250000"), "1.250.000");
+  assert.equal(formatWorkSessionCountInput(""), "");
 });

@@ -360,9 +360,14 @@ export interface PosClient {
     workSessionId?: string | null;
     deviceId?: string | null;
     fiscalReady: boolean;
+    identityReady: boolean;
+    catalogStatus: string;
     synchronizationInProgress: boolean;
     lastSynchronizationAt: string | null;
     lastSynchronizationFailed: boolean;
+    pendingSynchronizationCount: number;
+    oldestPendingSynchronizationAt: string | null;
+    lastSynchronizationError: string | null;
     catalogUpdatedAt: string | null;
     permissions?: string[];
   }>;
@@ -546,9 +551,14 @@ export class PosEdgeClient implements PosClient {
       deviceId: string;
       permissions: string[];
       fiscalReady: boolean;
+      identityReady: boolean;
+      catalogStatus: string;
       synchronizationInProgress: boolean;
       lastSynchronizationAt: string | null;
       lastSynchronizationFailed: boolean;
+      pendingSynchronizationCount: number;
+      oldestPendingSynchronizationAt: string | null;
+      lastSynchronizationError: string | null;
       catalogUpdatedAt: string | null;
     }>("/edge/v1/health");
   }

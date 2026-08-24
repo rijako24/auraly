@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 
 namespace Auraly.Desktop;
@@ -16,7 +17,7 @@ internal static class Program
     private static readonly CancellationTokenSource Shutdown = new();
 
     [STAThread]
-    private static async Task Main()
+    private static void Main()
     {
         using var mutex = new Mutex(true, "Local\\Auraly.Desktop", out var first);
         if (!first) return;
@@ -28,61 +29,14 @@ internal static class Program
             Shutdown.Cancel();
         };
 
-        var root = AppContext.BaseDirectory;
-        var configuration = LoadConfiguration(root);
-        var data = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Auraly",
-            "PosEdge");
-        Directory.CreateDirectory(data);
-        Directory.CreateDirectory(Path.Combine(data, "logs"));
-
-        var sessionToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-        var webOrigin = $"http://127.0.0.1:{configuration.WebPort}";
-        var edgeOrigin = $"http://127.0.0.1:{configuration.EdgePort}";
-
-        var web = StartWeb(root, configuration, webOrigin);
-        Children.Add(web);
-        var edge = StartEdge(root, configuration, data, sessionToken, webOrigin, edgeOrigin);
-        Children.Add(edge);
-
         try
         {
-            await WaitUntilReadyAsync($"{webOrigin}/pos", TimeSpan.FromSeconds(45), Shutdown.Token);
-            await WaitUntilReadyAsync($"{edgeOrigin}/edge/v1/health", TimeSpan.FromSeconds(45), Shutdown.Token);
-
-            var tokenFragment = Uri.EscapeDataString(sessionToken);
-            var target = $"{webOrigin}/pos-launch#edgeToken={tokenFragment}";
-            using var browser = LaunchApplicationWindow(target, data);
-
-            while (!Shutdown.IsCancellationRequested && !browser.HasExited)
-            {
-                if (edge.HasExited)
-                {
-                    Children.Remove(edge);
-                    await Task.Delay(1200, Shutdown.Token);
-                    edge = StartEdge(
-                        root, configuration, data, sessionToken, webOrigin, edgeOrigin);
-                    Children.Add(edge);
-                    await WaitUntilReadyAsync(
-                        $"{edgeOrigin}/edge/v1/health",
-                        TimeSpan.FromSeconds(30),
-                        Shutdown.Token);
-                }
-
-                await Task.Delay(500, Shutdown.Token);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (Exception exception)
-        {
-            var log = Path.Combine(data, "logs", "desktop-error.log");
-            await File.AppendAllTextAsync(
-                log,
-                $"{DateTimeOffset.Now:O} {exception}{Environment.NewLine}");
-            ShowError($"Auraly no pudo iniciar. Revisa {log}");
+            ApplicationConfiguration.Initialize();
+            using var context = new AuralyDesktopApplicationContext(
+                AppContext.BaseDirectory,
+                LoadConfiguration(AppContext.BaseDirectory),
+                Shutdown);
+            Application.Run(context);
         }
         finally
         {
@@ -99,7 +53,7 @@ internal static class Program
             : enrolled ? "enrolled" : "online";
     }
 
-    private static DesktopConfiguration LoadConfiguration(string root)
+    internal static DesktopConfiguration LoadConfiguration(string root)
     {
         var path = Path.Combine(root, "desktopsettings.json");
         var value = JsonSerializer.Deserialize<DesktopConfiguration>(
@@ -115,9 +69,10 @@ internal static class Program
         return value;
     }
 
-    private static Process StartWeb(
+    internal static Process StartWeb(
         string root,
         DesktopConfiguration configuration,
+        string data,
         string origin)
     {
         var info = new ProcessStartInfo(
@@ -134,12 +89,46 @@ internal static class Program
         info.Environment["AURALY_DESKTOP_LOCAL"] = "true";
         info.Environment["HOSTNAME"] = "127.0.0.1";
         info.Environment["PORT"] = configuration.WebPort.ToString();
-        info.Environment["NEXT_PUBLIC_API_URL"] =
-            $"{configuration.ApiUrl.TrimEnd('/')}/api";
+        info.Environment["NODE_EXTRA_CA_CERTS"] =
+            WriteSystemCertificateBundle(data);
+        var backendUrl = $"{configuration.ApiUrl.TrimEnd('/')}/api";
+        info.Environment["AURALY_API_URL"] = backendUrl;
+        info.Environment["NEXT_PUBLIC_API_URL"] = backendUrl;
         return StartLogged(info, "web", origin);
     }
 
-    private static Process StartEdge(
+    internal static string WriteSystemCertificateBundle(string dataDirectory)
+    {
+        Directory.CreateDirectory(dataDirectory);
+        var destination = Path.Combine(dataDirectory, "windows-trusted-roots.pem");
+        var certificates = new Dictionary<string, byte[]>(
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var location in new[] { StoreLocation.CurrentUser, StoreLocation.LocalMachine })
+        {
+            using var store = new X509Store(StoreName.Root, location);
+            store.Open(OpenFlags.ReadOnly);
+            foreach (var certificate in store.Certificates)
+            {
+                certificates.TryAdd(certificate.Thumbprint, certificate.RawData);
+            }
+        }
+
+        if (certificates.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "Windows did not provide trusted certificates for the local web runtime.");
+        }
+
+        var pem = string.Join(
+            Environment.NewLine,
+            certificates.Values.Select(certificate =>
+                PemEncoding.WriteString("CERTIFICATE", certificate)));
+        File.WriteAllText(destination, pem);
+        return destination;
+    }
+
+    internal static Process StartEdge(
         string root,
         DesktopConfiguration configuration,
         string data,
@@ -209,7 +198,7 @@ internal static class Program
         }
     }
 
-    private static async Task WaitUntilReadyAsync(
+    internal static async Task WaitUntilReadyAsync(
         string url,
         TimeSpan timeout,
         CancellationToken cancellationToken)
@@ -237,41 +226,15 @@ internal static class Program
         throw new TimeoutException($"The local component did not answer at {url}.");
     }
 
-    private static Process LaunchApplicationWindow(string url, string data)
+    internal static void RegisterChild(Process process) => Children.Add(process);
+
+    internal static void RemoveChild(Process process)
     {
-        var candidates = new[]
-        {
-            Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
-                "Microsoft",
-                "Edge",
-                "Application",
-                "msedge.exe"),
-            Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-                "Microsoft",
-                "Edge",
-                "Application",
-                "msedge.exe")
-        };
-        var edge = candidates.FirstOrDefault(File.Exists)
-            ?? throw new FileNotFoundException("Microsoft Edge is required to open Auraly.");
-        var profile = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Auraly",
-            "Desktop",
-            "Browser");
-        Directory.CreateDirectory(profile);
-        return Process.Start(new ProcessStartInfo(edge)
-        {
-            UseShellExecute = false,
-            Arguments =
-                $"--user-data-dir=\"{profile}\" --no-first-run --no-default-browser-check " +
-                $"--app=\"{url}\" --start-maximized"
-        }) ?? throw new InvalidOperationException("Could not open Auraly.");
+        Children.Remove(process);
+        process.Dispose();
     }
 
-    private static void StopChildren()
+    internal static void StopChildren()
     {
         foreach (var process in Children.ToArray())
         {

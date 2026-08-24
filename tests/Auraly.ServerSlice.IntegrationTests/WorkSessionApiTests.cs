@@ -57,6 +57,40 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Closure_preview_always_requests_blind_cash_and_consolidated_card_counts()
+    {
+        var userId = await CreateUserAsync("work-session-empty-count");
+        using var client = fixture.CreateUserClient(
+            userId,
+            WorkSessionPermissionCodes.Read,
+            WorkSessionPermissionCodes.Open,
+            WorkSessionPermissionCodes.Close);
+        var opened = await OpenAsync(client, new OpenWorkSessionRequest(
+            fixture.BusinessId,
+            fixture.WarehouseId,
+            null));
+
+        using var response = await client.GetAsync(
+            $"/api/commerce/v1/work-sessions/{opened.WorkSessionId:D}/closure-preview");
+        response.EnsureSuccessStatusCode();
+        var preview = await response.Content.ReadFromJsonAsync<WorkSessionClosurePreviewView>();
+
+        Assert.NotNull(preview);
+        Assert.Collection(
+            preview.PaymentTotals,
+            card =>
+            {
+                Assert.Equal("Card", card.PaymentMethodCode);
+                Assert.Equal(0m, card.NetAmount);
+            },
+            cash =>
+            {
+                Assert.Equal("Cash", cash.PaymentMethodCode);
+                Assert.Equal(0m, cash.NetAmount);
+            });
+    }
+
+    [Fact]
     public async Task Work_session_opens_resumes_closes_and_reopens_with_immutable_totals()
     {
         var userId = await CreateUserAsync("work-session");
@@ -275,7 +309,9 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
               (NEWID(),@SessionId,NULL,NULL,CAST(SYSUTCDATETIME() AS date),
                N'CashOut',N'Cash',-20000,NULL,N'test:cash-out',SYSUTCDATETIME(),@UserId),
               (NEWID(),@SessionId,NULL,NULL,CAST(SYSUTCDATETIME() AS date),
-               N'CashIn',N'Card',50000,NULL,N'test:card',SYSUTCDATETIME(),@UserId),
+               N'CashIn',N'DebitCard',30000,NULL,N'test:debit-card',SYSUTCDATETIME(),@UserId),
+              (NEWID(),@SessionId,NULL,NULL,CAST(SYSUTCDATETIME() AS date),
+               N'CashIn',N'CreditCard',20000,NULL,N'test:credit-card',SYSUTCDATETIME(),@UserId),
               (NEWID(),@SessionId,NULL,NULL,CAST(SYSUTCDATETIME() AS date),
                N'CashIn',N'Transfer',30000,NULL,N'test:transfer',SYSUTCDATETIME(),@UserId);
             """;

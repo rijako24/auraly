@@ -189,8 +189,16 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton<PosCashMovementServerClient>();
         builder.Services.AddSingleton<PosWorkSessionClosureServerClient>();
         builder.Services.AddSingleton<PosWorkSessionClosurePrinter>();
+        builder.Services.AddSingleton<IPosWorkSessionClosurePrinter>(sp =>
+            sp.GetRequiredService<PosWorkSessionClosurePrinter>());
+        builder.Services.AddSingleton(sp => new PosOfflineWorkSessionClosureStore(
+            connectionString,
+            sp.GetRequiredService<TimeProvider>()));
+        builder.Services.AddSingleton<PosOfflineWorkSessionClosureService>();
+        builder.Services.AddSingleton<PosWorkSessionClosureOutboxUploader>();
         builder.Services.AddSingleton<PosPendingClosureAuthorizationStore>();
         builder.Services.AddHostedService<PosCashMovementStorageInitializer>();
+        builder.Services.AddHostedService<PosWorkSessionClosureStorageInitializer>();
         builder.Services.AddSingleton<IPosSaleUploadClient>(sp =>
             new HttpPosSaleUploadClient(
                 sp.GetRequiredService<HttpClient>(),
@@ -371,7 +379,7 @@ public static class PosEdgeHostApplication
         });
         edge.MapPost("/print/work-session-closure", async (
             WorkSessionClosureView closure,
-            PosWorkSessionClosurePrinter printer,
+            IPosWorkSessionClosurePrinter printer,
             CancellationToken ct) =>
         {
             try
@@ -549,6 +557,9 @@ public static class PosEdgeHostApplication
             PosWorkstationIdentity workstation,
             PosCatalogStore catalog,
             PosLocalIdentityStore identities,
+            PosEdgeSaleStore sales,
+            PosCashMovementStore cashMovements,
+            PosOfflineWorkSessionClosureStore closures,
             PosSaleHostSettings saleSettings,
             PosStartupModeStore startupMode,
             PosSynchronizationState synchronizationState,
@@ -557,15 +568,31 @@ public static class PosEdgeHostApplication
             var catalogStatus = await catalog.StatusAsync(ct);
             var identityReady = await identities.HasValidSnapshotAsync(ct);
             var syncStatus = synchronizationState.Current;
+            var saleOutbox = await sales.ReadOutboxStatusAsync(ct);
+            var cashOutbox = await cashMovements.ReadOutboxStatusAsync(ct);
+            var closureOutbox = await closures.ReadStatusAsync(ct);
+            var pendingSynchronizationCount =
+                saleOutbox.PendingCount + cashOutbox.PendingCount + closureOutbox.PendingCount;
+            var oldestPendingSynchronizationAt = new[]
+                {
+                    saleOutbox.OldestPendingAt,
+                    cashOutbox.OldestPendingAt,
+                    closureOutbox.OldestPendingAt
+                }
+                .Where(value => value is not null)
+                .Min();
+            var lastSynchronizationError = closureOutbox.LastError
+                ?? cashOutbox.LastError
+                ?? saleOutbox.LastError;
             var user = await identities.ResolveAsync(
                 http.Request.Headers["X-Auraly-User-Session"].ToString(), ct);
             var status = !identityReady
                 ? "IdentitySynchronizing"
-                : user is null
-                    ? "LoginRequired"
-                    : catalogStatus.Status == "Ready"
-                        ? "Ready"
-                        : "Synchronizing";
+                : catalogStatus.Status != "Ready"
+                    ? "Synchronizing"
+                    : user is null
+                        ? "LoginRequired"
+                        : "Ready";
             return Results.Ok(new
             {
                 status,
@@ -581,12 +608,17 @@ public static class PosEdgeHostApplication
                 deviceId = runtime.DeviceId.Value,
                 fiscalReady = saleSettings.Fiscal is not null,
                 permissions = user?.Permissions ?? Array.Empty<string>(),
+                identityReady,
                 catalogStatus = catalogStatus.Status,
                 catalogCursor = catalogStatus.Cursor,
                 catalogUpdatedAt = catalogStatus.UpdatedAt,
                 synchronizationInProgress = syncStatus.IsSynchronizing,
                 lastSynchronizationAt = syncStatus.LastSuccessfulAt ?? catalogStatus.UpdatedAt,
-                lastSynchronizationFailed = syncStatus.LastAttemptFailed,
+                lastSynchronizationFailed = syncStatus.LastAttemptFailed ||
+                    !string.IsNullOrWhiteSpace(lastSynchronizationError),
+                pendingSynchronizationCount,
+                oldestPendingSynchronizationAt,
+                lastSynchronizationError,
                 startupMode = startupMode.Load(hasEnrollment: true)
             });
         });

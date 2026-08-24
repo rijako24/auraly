@@ -35,6 +35,16 @@ export function workSessionPaymentMethodRequiresCount(code: string): boolean {
   return code === "Cash" || code === "Card" || code === "DebitCard" || code === "CreditCard";
 }
 
+export function normalizeWorkSessionCountInput(value: string): string {
+  return value.replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+}
+
+export function formatWorkSessionCountInput(value: string): string {
+  if (!value) return "";
+  return new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 })
+    .format(Number(value));
+}
+
 type ClosureForPrint = {
   logoUrl?: string | null;
   businessName: string; warehouseName: string; userName: string; openedAt: string; closedAt: string;
@@ -53,7 +63,37 @@ export function workSessionClosureHtml(value: ClosureForPrint): string {
         row(`${workSessionPaymentMethodName(item.paymentMethodCode)} diferencia`, item.difference ?? null)
       : `<div><span>${escapeHtml(workSessionPaymentMethodName(item.paymentMethodCode))} conciliación</span><strong>Automática</strong></div>`)).join("");
   const logo = value.logoUrl ? `<img src="${escapeHtml(value.logoUrl)}" alt="Logo" />` : "";
-  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Cierre de sesión</title><style>@page{margin:10mm}body{font-family:Arial,sans-serif;color:#0f172a;max-width:720px;margin:auto}header{border-bottom:2px solid #0f766e;padding-bottom:12px}header img{display:block;max-height:72px;max-width:220px;object-fit:contain;margin-bottom:10px}h1{margin:0;color:#0f766e}p{margin:5px 0}.totals div,.payments div{display:flex;justify-content:space-between;gap:20px;padding:8px 0;border-bottom:1px solid #e2e8f0}.difference{font-size:20px}.note{margin-top:16px;padding:12px;background:#f8fafc}@media print{body{max-width:none}}</style></head><body><header>${logo}<h1>${escapeHtml(value.businessName)}</h1><p>Cierre de sesión de venta</p><p>${escapeHtml(value.warehouseName)} · ${escapeHtml(value.userName)}</p><p>${escapeHtml(new Date(value.openedAt).toLocaleString("es-CO"))} — ${escapeHtml(new Date(value.closedAt).toLocaleString("es-CO"))}</p></header><section class="totals">${row("Ventas", value.totalSales)}${row("Devoluciones", value.totalRefunds)}${row("Otros movimientos", value.totalOther)}${row("Neto", value.netAmount)}${row("Efectivo esperado", value.expectedCash)}${row("Efectivo contado", value.countedCash)}<div class="difference"><span>Diferencia de efectivo</span><strong>${escapeHtml(money(value.cashDifference))}</strong></div></section><h2>Consolidado por medio de pago</h2><section class="payments">${paymentRows || "<p>Sin movimientos</p>"}</section>${value.note ? `<p class="note"><strong>Observación:</strong> ${escapeHtml(value.note)}</p>` : ""}<script>addEventListener('load',()=>setTimeout(()=>window.print(),100))<\/script></body></html>`;
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Cierre de sesión</title><style>@page{margin:10mm}body{font-family:Arial,sans-serif;color:#0f172a;max-width:720px;margin:auto}header{border-bottom:2px solid #0f766e;padding-bottom:12px}header img{display:block;max-height:72px;max-width:220px;object-fit:contain;margin-bottom:10px}h1{margin:0;color:#0f766e}p{margin:5px 0}.totals div,.payments div{display:flex;justify-content:space-between;gap:20px;padding:8px 0;border-bottom:1px solid #e2e8f0}.difference{font-size:20px}.note{margin-top:16px;padding:12px;background:#f8fafc}@media print{body{max-width:none}}</style></head><body><header>${logo}<h1>${escapeHtml(value.businessName)}</h1><p>Cierre de sesión de venta</p><p>${escapeHtml(value.warehouseName)} · ${escapeHtml(value.userName)}</p><p>${escapeHtml(new Date(value.openedAt).toLocaleString("es-CO"))} — ${escapeHtml(new Date(value.closedAt).toLocaleString("es-CO"))}</p></header><section class="totals">${row("Ventas", value.totalSales)}${row("Devoluciones", value.totalRefunds)}${row("Otros movimientos", value.totalOther)}${row("Neto", value.netAmount)}${row("Efectivo esperado", value.expectedCash)}${row("Efectivo contado", value.countedCash)}<div class="difference"><span>Diferencia de efectivo</span><strong>${escapeHtml(money(value.cashDifference))}</strong></div></section><h2>Consolidado por medio de pago</h2><section class="payments">${paymentRows || "<p>Sin movimientos</p>"}</section>${value.note ? `<p class="note"><strong>Observación:</strong> ${escapeHtml(value.note)}</p>` : ""}</body></html>`;
+}
+
+export function printWorkSessionClosure(html: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const frame = document.createElement("iframe");
+    frame.setAttribute("aria-hidden", "true");
+    frame.style.position = "fixed";
+    frame.style.width = "1px";
+    frame.style.height = "1px";
+    frame.style.opacity = "0";
+    frame.style.pointerEvents = "none";
+    const remove = () => frame.remove();
+    frame.onload = () => {
+      window.setTimeout(() => {
+        const printWindow = frame.contentWindow;
+        if (!printWindow) {
+          remove();
+          reject(new Error("No fue posible abrir el diálogo de impresión del arqueo."));
+          return;
+        }
+        printWindow.addEventListener("afterprint", remove, { once: true });
+        printWindow.focus();
+        printWindow.print();
+        window.setTimeout(remove, 60_000);
+        resolve();
+      }, 150);
+    };
+    frame.srcdoc = html;
+    document.body.appendChild(frame);
+  });
 }
 
 function escapeHtml(value: string): string {

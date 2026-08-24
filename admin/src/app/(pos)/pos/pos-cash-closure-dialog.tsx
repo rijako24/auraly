@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { PosAuthorizedClosurePreview, PosWorkSessionPaymentCount } from "@/services/pos/pos-edge-client";
-import { workSessionPaymentMethodName, workSessionPaymentMethodRequiresCount } from "@/services/pos/pos-work-session-close";
+import { formatWorkSessionCountInput, normalizeWorkSessionCountInput, workSessionPaymentMethodName, workSessionPaymentMethodRequiresCount } from "@/services/pos/pos-work-session-close";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 
@@ -74,12 +74,11 @@ export function PosCashClosureDialog({ value, busy, submitted, onClose, onConfir
                   <Input
                     id={`count-${payment.paymentMethodCode}`}
                     autoFocus={index === 0}
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={counted[payment.paymentMethodCode] ?? ""}
+                    type="text"
+                    inputMode="numeric"
+                    value={formatWorkSessionCountInput(counted[payment.paymentMethodCode] ?? "")}
                     disabled={busy || submitted}
-                    onChange={(event) => setCounted((current) => ({ ...current, [payment.paymentMethodCode]: event.target.value }))}
+                    onChange={(event) => setCounted((current) => ({ ...current, [payment.paymentMethodCode]: normalizeWorkSessionCountInput(event.target.value) }))}
                     placeholder="0"
                     className="h-12 text-lg font-bold"
                   />

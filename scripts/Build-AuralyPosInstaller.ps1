@@ -91,7 +91,7 @@ $install = Join-Path $env:LOCALAPPDATA "Programs\Auraly POS"
 Get-Process -Name "Auraly.Desktop" -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction SilentlyContinue
 
-$browserProfile = Join-Path $env:LOCALAPPDATA "Auraly\Desktop\Browser"
+$webViewProfile = Join-Path $env:LOCALAPPDATA "Auraly\PosEdge\webview2"
 for ($attempt = 0; $attempt -lt 20; $attempt++) {
     $children = @(
         Get-CimInstance Win32_Process |
@@ -100,7 +100,7 @@ for ($attempt = 0; $attempt -lt 20; $attempt++) {
                 ($_.Name -eq "Auraly.Pos.Edge.Host.exe" -and
                     $_.ExecutablePath -like "$install*") -or
                 ($_.Name -eq "msedge.exe" -and
-                    $_.CommandLine -like "*$browserProfile*")
+                    $_.CommandLine -like "*$webViewProfile*")
             }
     )
     foreach ($process in $children) {
@@ -143,8 +143,8 @@ $link.WorkingDirectory = $install
 $link.Description = "Auraly POS"
 $link.Save()
 
-Start-Process -FilePath (Join-Path $install "Auraly.Desktop.exe") `
-    -WorkingDirectory $install
+$installedApp = Join-Path $install "Auraly.Desktop.exe"
+Start-Process -FilePath explorer.exe -ArgumentList @("`"$installedApp`"")
 '@
 [IO.File]::WriteAllText($installScript, $install, $utf8)
 

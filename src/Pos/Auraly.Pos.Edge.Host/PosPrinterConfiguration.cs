@@ -302,7 +302,8 @@ public sealed class ConfigurablePosReceiptPrinter(
     EscPosReceiptRenderer escPos,
     HtmlReceiptPreviewRenderer html,
     IReceiptPreviewLauncher preview,
-    ConfigurableOrderDocumentPrinter halfLetter) : IPosReceiptPrinter
+    ConfigurableOrderDocumentPrinter halfLetter,
+    IWindowsRawPrintJob rawPrintJob) : IPosReceiptPrinter
 {
     public Task PrintAsync(
         PosReceipt receipt,
@@ -339,7 +340,8 @@ public sealed class ConfigurablePosReceiptPrinter(
                     receipt.DocumentType, PrintTemplateFormats.Receipt)
                     ?? throw new InvalidOperationException(
                         "La impresora de tirilla no esta configurada."),
-                escPos),
+                escPos,
+                rawPrintJob),
             _ => throw new InvalidOperationException(
                 "La configuracion de impresora no es valida.")
         };

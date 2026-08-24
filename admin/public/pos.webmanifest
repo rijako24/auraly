@@ -6,15 +6,27 @@
   "start_url": "/pos",
   "scope": "/pos",
   "display": "standalone",
-  "background_color": "#07161A",
-  "theme_color": "#07161A",
+  "background_color": "#f8fafc",
+  "theme_color": "#f8fafc",
   "orientation": "landscape-primary",
   "icons": [
     {
-      "src": "/brand/auraly-mark.png",
+      "src": "/brand/auraly-app-icon-192-v4.png?v=5",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/brand/auraly-app-icon-512-v4.png?v=5",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/brand/auraly-maskable-512-v4.png?v=5",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }

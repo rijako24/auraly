@@ -139,7 +139,7 @@ try {
 
     $functionPublish = Join-Path $publishPath 'function'
     & dotnet publish (Join-Path $repoRoot 'src\API\Auraly.Platform.Worker\Auraly.Platform.Worker.csproj') `
-        -c Release --no-build -o $functionPublish `
+        -c Release --no-restore -o $functionPublish `
         -p:ContinuousIntegrationBuild=true `
         -p:Deterministic=true `
         "-p:PathMap=$repoRoot=/_/src"
@@ -147,7 +147,7 @@ try {
 
     $apiPublish = Join-Path $publishPath 'api'
     & dotnet publish (Join-Path $repoRoot 'src\API\Auraly.Api\Auraly.Api.csproj') `
-        -c Release --no-build -o $apiPublish `
+        -c Release --no-restore -o $apiPublish `
         -p:ContinuousIntegrationBuild=true `
         -p:Deterministic=true `
         "-p:PathMap=$repoRoot=/_/src"

@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, LockKeyhole, MonitorSmartphone, UserRound, Wifi, WifiOff } from "lucide-react";
+import { CheckCircle2, Loader2, LockKeyhole, MonitorSmartphone, UserRound, Wifi, WifiOff } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
 
 type Props = {
@@ -9,6 +9,8 @@ type Props = {
   warehouseName: string;
   serverConnected: boolean;
   preparing: boolean;
+  identityReady: boolean;
+  catalogReady: boolean;
   error: string | null;
   onLogin: (username: string, password: string) => Promise<void>;
   onOnlineLogin?: (username: string, password: string) => Promise<void>;
@@ -20,6 +22,8 @@ export function PosLocalLogin({
   warehouseName,
   serverConnected,
   preparing,
+  identityReady,
+  catalogReady,
   error,
   onLogin,
   onOnlineLogin,
@@ -95,10 +99,32 @@ export function PosLocalLogin({
         {preparing ? (
           <div className="mt-7 rounded-2xl border border-teal-200/15 bg-teal-200/10 p-6 text-center">
             <Loader2 className="mx-auto h-8 w-8 animate-spin text-teal-200" />
-            <p className="mt-3 font-bold">Preparando acceso local</p>
+            <p className="mt-3 font-bold">Preparando la caja desconectada</p>
             <p className="mt-1 text-sm text-slate-300">
-              Estamos descargando los usuarios y permisos autorizados para esta sede.
+              La primera vez descargamos al equipo lo necesario para facturar sin internet.
             </p>
+            <div className="mt-5 space-y-2 text-left text-sm" aria-live="polite">
+              <PreparationItem
+                label="Descargando usuarios y permisos"
+                complete={identityReady}
+                active={!identityReady}
+              />
+              <PreparationItem
+                label="Descargando productos, precios y clientes"
+                complete={catalogReady}
+                active={identityReady && !catalogReady}
+              />
+              <PreparationItem
+                label="Activando sincronización automática"
+                complete={identityReady && catalogReady}
+                active={identityReady && catalogReady}
+              />
+            </div>
+            {error && (
+              <p role="alert" className="mt-5 rounded-xl border border-red-300/20 bg-red-400/10 p-3 text-left text-sm text-red-100">
+                {error}
+              </p>
+            )}
           </div>
         ) : (
           <div className="mt-7 space-y-4">
@@ -160,5 +186,30 @@ export function PosLocalLogin({
         )}
       </form>
     </main>
+  );
+}
+
+function PreparationItem({
+  label,
+  complete,
+  active,
+}: {
+  label: string;
+  complete: boolean;
+  active: boolean;
+}) {
+  return (
+    <div
+      className={`flex items-center gap-2 overflow-hidden transition-all duration-700 ${
+        complete && !active ? "max-h-0 -translate-y-1 opacity-0" : "max-h-8 opacity-100"
+      }`}
+    >
+      {complete ? (
+        <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-300" />
+      ) : (
+        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${active ? "animate-pulse bg-teal-200" : "bg-white/20"}`} />
+      )}
+      <span className={active ? "font-semibold text-white" : "text-slate-400"}>{label}</span>
+    </div>
   );
 }

@@ -202,6 +202,7 @@ function ScaleConfiguration({ value, serialPorts, busy, onChange, onTest }: {
       <Field label="Puerto de la balanza">
         <Select value={value.portName||undefined} onValueChange={portName=>onChange({...value,portName})}><SelectTrigger><SelectValue placeholder="Selecciona un puerto"/></SelectTrigger><SelectContent>{serialPorts.map(port=><SelectItem key={port} value={port}>{port}</SelectItem>)}</SelectContent></Select>
       </Field>
+      {!serialPorts.length && <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Windows no reporta puertos COM. Conecta la balanza o instala su controlador y vuelve a abrir Periféricos.</p>}
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Velocidad"><Input type="number" min={1} value={value.baudRate} onChange={(event) => onChange({ ...value, baudRate: Number(event.target.value) })}/></Field>
         <Field label="Bits de datos"><Select value={String(value.dataBits)} onValueChange={dataBits=>onChange({...value,dataBits:Number(dataBits)})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{[5,6,7,8].map(bits=><SelectItem key={bits} value={String(bits)}>{bits}</SelectItem>)}</SelectContent></Select></Field>

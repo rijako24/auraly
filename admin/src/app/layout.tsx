@@ -53,10 +53,10 @@ export default function RootLayout({
     <html lang="es" suppressHydrationWarning style={{ backgroundColor: "#f8fafc", colorScheme: "light" }}>
       <head>
         <meta name="supported-color-schemes" content="light" />
-        <style>{`html,body{background:#f8fafc!important;color-scheme:light}#auraly-standalone-boot{display:none}@media(display-mode:standalone){#auraly-standalone-boot{display:block;position:fixed;inset:0;z-index:2147483647;background:#f8fafc url('/brand/launch/auraly-1170x2532-v4.png?v=5') center/cover no-repeat}}`}</style>
+        <style>{`html,body,#auraly-standalone-boot{background:#f8fafc!important;color-scheme:light}`}</style>
       </head>
       <body className="font-sans antialiased" style={{ backgroundColor: "#f8fafc" }}>
-        <AppBootScreen />
+        <div id="auraly-standalone-boot"><AppBootScreen /></div>
         <ThemeProvider
           attribute="class"
           defaultTheme="light"

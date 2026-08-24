@@ -164,7 +164,8 @@ public sealed class FileReceiptPrinter(
 
 public sealed class WindowsRawReceiptPrinter(
     string printerName,
-    EscPosReceiptRenderer renderer) : IPosReceiptPrinter
+    EscPosReceiptRenderer renderer,
+    IWindowsRawPrintJob? printJob = null) : IPosReceiptPrinter
 {
     public Task PrintAsync(PosReceipt receipt, CancellationToken cancellationToken = default)
     {
@@ -175,9 +176,23 @@ public sealed class WindowsRawReceiptPrinter(
             throw new InvalidOperationException("A receipt printer must be configured.");
 
         var bytes = renderer.Render(receipt);
-        WindowsRawPrintJob.Print(printerName, $"Auraly-{receipt.PrintJobId:N}", bytes);
+        (printJob ?? SystemWindowsRawPrintJob.Instance).Print(
+            printerName, $"Auraly-{receipt.PrintJobId:N}", bytes);
         return Task.CompletedTask;
     }
+}
+
+public interface IWindowsRawPrintJob
+{
+    void Print(string printerName, string documentName, byte[] bytes);
+}
+
+public sealed class SystemWindowsRawPrintJob : IWindowsRawPrintJob
+{
+    public static SystemWindowsRawPrintJob Instance { get; } = new();
+
+    public void Print(string printerName, string documentName, byte[] bytes) =>
+        WindowsRawPrintJob.Print(printerName, documentName, bytes);
 }
 
 public static class WindowsRawPrintJob

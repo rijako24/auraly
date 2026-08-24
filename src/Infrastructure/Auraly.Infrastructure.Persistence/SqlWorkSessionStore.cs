@@ -457,14 +457,30 @@ public sealed partial class SqlWorkSessionStore(
     {
         var values = new List<WorkSessionPaymentTotal>();
         await using var command = new SqlCommand("""
-            SELECT PaymentMethodCode,
-              COALESCE(SUM(CASE WHEN MovementType=N'SalePayment' THEN Amount ELSE 0 END),0),
-              COALESCE(SUM(CASE WHEN MovementType=N'Refund' THEN ABS(Amount) ELSE 0 END),0),
-              COALESCE(SUM(CASE WHEN MovementType NOT IN (N'SalePayment',N'Refund') THEN Amount ELSE 0 END),0),
-              COALESCE(SUM(Amount),0)
-            FROM dbo.WorkSessionMovements
-            WHERE WorkSessionId=@WorkSessionId
-            GROUP BY PaymentMethodCode
+            WITH PaymentMovements AS
+            (
+                SELECT CASE WHEN PaymentMethodCode IN (N'Card',N'DebitCard',N'CreditCard')
+                            THEN N'Card' ELSE PaymentMethodCode END PaymentMethodCode,
+                  MovementType,Amount
+                FROM dbo.WorkSessionMovements
+                WHERE WorkSessionId=@WorkSessionId
+            ),
+            Totals AS
+            (
+                SELECT PaymentMethodCode,
+                  COALESCE(SUM(CASE WHEN MovementType=N'SalePayment' THEN Amount ELSE 0 END),0) SalesAmount,
+                  COALESCE(SUM(CASE WHEN MovementType=N'Refund' THEN ABS(Amount) ELSE 0 END),0) RefundAmount,
+                  COALESCE(SUM(CASE WHEN MovementType NOT IN (N'SalePayment',N'Refund') THEN Amount ELSE 0 END),0) OtherAmount,
+                  COALESCE(SUM(Amount),0) NetAmount
+                FROM PaymentMovements
+                GROUP BY PaymentMethodCode
+            )
+            SELECT PaymentMethodCode,SalesAmount,RefundAmount,OtherAmount,NetAmount
+            FROM Totals
+            UNION ALL SELECT N'Cash',0,0,0,0
+              WHERE NOT EXISTS (SELECT 1 FROM Totals WHERE PaymentMethodCode=N'Cash')
+            UNION ALL SELECT N'Card',0,0,0,0
+              WHERE NOT EXISTS (SELECT 1 FROM Totals WHERE PaymentMethodCode=N'Card')
             ORDER BY PaymentMethodCode;
             """, connection, transaction);
         command.Parameters.AddWithValue("@WorkSessionId", workSessionId);

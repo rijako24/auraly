@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, type ReactNode } from "react";
-import Image from "next/image";
-import { LoaderCircle } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { defaultStartRoute, shouldRestoreOperationalStart } from "@/lib/default-start-route";
@@ -11,6 +9,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { useTenantContextStore } from "@/stores/tenant-context-store";
 import { PageError } from "@/components/ui/page-error";
+import { AuralyLoadingState } from "@/components/brand/auraly-loading-state";
 
 export function BusinessContextProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname();
@@ -100,16 +99,10 @@ export function BusinessContextProvider({ children }: { children: ReactNode }) {
     (Boolean(selectedBusinessId) && accessQuery.isLoading);
 
   if (loading) {
-    return (
-      <div className="flex min-h-[65dvh] items-center justify-center px-6">
-        <div className="flex max-w-sm flex-col items-center text-center">
-          <Image src="/brand/auraly-symbol.png" alt="Auraly" width={132} height={88} priority className="h-auto drop-shadow-[0_16px_28px_rgba(15,118,110,.18)]" />
-          <h1 className="mt-5 text-xl font-black tracking-tight">Preparando tu espacio</h1>
-          <p className="mt-2 text-sm text-muted-foreground">Estamos cargando el negocio, tus permisos y la operación asignada.</p>
-          <LoaderCircle className="mt-5 h-6 w-6 animate-spin text-teal-600" aria-label="Cargando" />
-        </div>
-      </div>
-    );
+    return <AuralyLoadingState
+      title="Preparando tu espacio"
+      description="Estamos cargando el negocio, tus permisos y la operación asignada."
+    />;
   }
 
   if (!selectedTenantId || !selectedBusinessId) {

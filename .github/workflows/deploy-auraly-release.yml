@@ -69,7 +69,11 @@ jobs:
       - name: Build and test release once in DEV
         if: inputs.environment == 'dev'
         shell: pwsh
-        run: ./infrastructure/azure/New-AuralyRelease.ps1 -Version '${{ inputs.version }}' -SkipAdmin
+        run: >-
+          ./infrastructure/azure/New-AuralyRelease.ps1
+          -Version '${{ inputs.version }}'
+          -PosApiUrl 'https://api-auraly-dev-w5usmo6w.azurewebsites.net'
+          -SkipAdmin
 
       - name: Login to Azure release archive with OIDC
         uses: azure/login@v2

@@ -50,19 +50,30 @@ public sealed class PosWorkSessionClosureServerClient(
         Guid authorizedByUserId,
         CancellationToken cancellationToken)
     {
+        return await CloseAsync(
+            new DeviceCloseWorkSessionRequest(
+                session.UserId,
+                session.WorkSessionId,
+                input.CountedCash,
+                input.Note,
+                authorizedByUserId,
+                input.PaymentCounts),
+            input.OperationId,
+            cancellationToken);
+    }
+
+    public async Task<WorkSessionClosureView> CloseAsync(
+        DeviceCloseWorkSessionRequest input,
+        Guid operationId,
+        CancellationToken cancellationToken)
+    {
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
-            $"/api/pos/v1/work-sessions/{session.WorkSessionId:D}/close");
+            $"/api/pos/v1/work-sessions/{input.WorkSessionId:D}/close");
         request.Headers.Add("X-Auraly-Device-Id", credentials.DeviceId.ToString("D"));
         request.Headers.Add("X-Auraly-Device-Secret", credentials.Secret);
-        request.Headers.Add("Idempotency-Key", input.OperationId.ToString("D"));
-        request.Content = JsonContent.Create(new DeviceCloseWorkSessionRequest(
-            session.UserId,
-            session.WorkSessionId,
-            input.CountedCash,
-            input.Note,
-            authorizedByUserId,
-            input.PaymentCounts));
+        request.Headers.Add("Idempotency-Key", operationId.ToString("D"));
+        request.Content = JsonContent.Create(input);
         using var response = await http.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
             throw new PosWorkSessionClosureException(
@@ -77,6 +88,7 @@ public sealed class PosWorkSessionClosureServerClient(
 
 public sealed class PosCashDrawer(
     PosPrinterConfigurationStore configuration,
+    IWindowsRawPrintJob rawPrintJob,
     ILogger<PosCashDrawer> logger)
 {
     // Same ESC/POS pulse used by Xion's RawPrinterHelper.AbrirCajon. This is a
@@ -90,7 +102,7 @@ public sealed class PosCashDrawer(
             string.IsNullOrWhiteSpace(settings.ReceiptPrinterName))
             throw new InvalidOperationException(
                 "Configura la impresora de tirilla conectada al cajón.");
-        WindowsRawPrintJob.Print(
+        rawPrintJob.Print(
             settings.ReceiptPrinterName,
             "Auraly-Abrir-Cajon",
             Pulse);
@@ -152,8 +164,17 @@ public sealed class PosPendingClosureAuthorizationStore(TimeProvider timeProvide
     }
 }
 
+public interface IPosWorkSessionClosurePrinter
+{
+    Task PrintAsync(
+        WorkSessionClosureView closure,
+        CancellationToken cancellationToken);
+}
+
 public sealed class PosWorkSessionClosurePrinter(
-    PosPrinterConfigurationStore configuration)
+    PosPrinterConfigurationStore configuration,
+    IWindowsRawPrintJob rawPrintJob)
+    : IPosWorkSessionClosurePrinter
 {
     public Task PrintAsync(
         WorkSessionClosureView closure,
@@ -161,15 +182,16 @@ public sealed class PosWorkSessionClosurePrinter(
     {
         cancellationToken.ThrowIfCancellationRequested();
         var settings = configuration.Load();
+        var printerName = settings.PosPrinterName ?? settings.ReceiptPrinterName;
         if (settings.ReceiptMode != PosPrinterModes.WindowsRaw ||
-            string.IsNullOrWhiteSpace(settings.ReceiptPrinterName))
+            string.IsNullOrWhiteSpace(printerName))
             throw new InvalidOperationException(
                 "Configura una impresora de tirilla antes de cerrar la sesión de venta.");
         var bytes = WorkSessionClosureReceiptRenderer.Render(
             closure,
             settings.ReceiptPaperWidthMillimeters);
-        WindowsRawPrintJob.Print(
-            settings.ReceiptPrinterName,
+        rawPrintJob.Print(
+            printerName,
             $"Auraly-Cierre-{closure.WorkSessionClosureId:N}",
             bytes);
         return Task.CompletedTask;
@@ -187,6 +209,8 @@ public static class PosWorkSessionClosureEndpoints
             PosSensitiveActionAuthorizer authorizer,
             PosPendingClosureAuthorizationStore pending,
             PosWorkSessionClosureServerClient server,
+            PosOfflineWorkSessionClosureService offline,
+            PosServerConnectionState connection,
             PosCashDrawer cashDrawer,
             CancellationToken ct) =>
         {
@@ -207,8 +231,10 @@ public static class PosWorkSessionClosureEndpoints
                 ct);
             try
             {
-                var preview = await server.PreviewAsync(session, ct);
-                cashDrawer.Open();
+                var preview = connection.IsConnected
+                    ? await PreviewWithOfflineFallbackAsync(server, offline, session, ct)
+                    : await offline.PreviewAsync(session, ct);
+                cashDrawer.TryOpen();
                 var token = pending.Add(session.WorkSessionId, authorization);
                 return Results.Ok(new AuthorizedWorkSessionClosurePreview(token, preview));
             }
@@ -226,7 +252,9 @@ public static class PosWorkSessionClosureEndpoints
             PosSensitiveActionAuthorizer authorizer,
             PosPendingClosureAuthorizationStore pending,
             PosWorkSessionClosureServerClient server,
-            PosWorkSessionClosurePrinter printer,
+            PosOfflineWorkSessionClosureService offline,
+            PosServerConnectionState connection,
+            IPosWorkSessionClosurePrinter printer,
             CancellationToken ct) =>
         {
             if (request.OperationId == Guid.Empty ||
@@ -244,10 +272,15 @@ public static class PosWorkSessionClosureEndpoints
                 var authorization = pending.Required(
                     request.AuthorizationToken,
                     session.WorkSessionId);
-                var closure = await server.CloseAsync(
-                    session, request, authorization.AuthorizedByUserId, ct);
+                var closure = connection.IsConnected
+                    ? await CloseWithOfflineFallbackAsync(
+                        server, offline, session, request,
+                        authorization.AuthorizedByUserId, ct)
+                    : await offline.CloseAsync(
+                        session, request, authorization.AuthorizedByUserId, ct);
                 await printer.PrintAsync(closure, ct);
                 await authorizer.CompleteAsync(authorization, ct);
+                await offline.MarkClosedAsync(session, closure.ClosedAt, ct);
                 pending.Remove(request.AuthorizationToken);
                 return Results.Ok(closure);
             }
@@ -265,6 +298,39 @@ public static class PosWorkSessionClosureEndpoints
             }
         });
         return edge;
+    }
+
+    private static async Task<WorkSessionClosurePreviewView> PreviewWithOfflineFallbackAsync(
+        PosWorkSessionClosureServerClient server,
+        PosOfflineWorkSessionClosureService offline,
+        PosLocalUserSession session,
+        CancellationToken cancellationToken)
+    {
+        try { return await server.PreviewAsync(session, cancellationToken); }
+        catch (HttpRequestException)
+        {
+            return await offline.PreviewAsync(session, cancellationToken);
+        }
+    }
+
+    private static async Task<WorkSessionClosureView> CloseWithOfflineFallbackAsync(
+        PosWorkSessionClosureServerClient server,
+        PosOfflineWorkSessionClosureService offline,
+        PosLocalUserSession session,
+        CloseLocalWorkSessionRequest request,
+        Guid authorizedByUserId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await server.CloseAsync(
+                session, request, authorizedByUserId, cancellationToken);
+        }
+        catch (HttpRequestException)
+        {
+            return await offline.CloseAsync(
+                session, request, authorizedByUserId, cancellationToken);
+        }
     }
 }
 

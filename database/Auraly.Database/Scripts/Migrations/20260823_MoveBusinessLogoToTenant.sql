@@ -1,6 +1,7 @@
 SET NOCOUNT ON;
 
-IF COL_LENGTH(N'dbo.TenantLegalProfiles', N'LogoMediaRef') IS NULL
+IF OBJECT_ID(N'dbo.TenantLegalProfiles', N'U') IS NOT NULL
+   AND COL_LENGTH(N'dbo.TenantLegalProfiles', N'LogoMediaRef') IS NULL
 BEGIN
     ALTER TABLE dbo.TenantLegalProfiles
         ADD LogoMediaRef NVARCHAR(500) NULL;

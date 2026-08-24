@@ -74,6 +74,10 @@ public sealed partial class PosLocalIdentityStore(
                 FOREIGN KEY(UserId) REFERENCES PosOfflineUsers(UserId));
             CREATE INDEX IF NOT EXISTS IX_PosLocalUserSessions_Active
                 ON PosLocalUserSessions(EndedAt,ExpiresAt);
+            CREATE TABLE IF NOT EXISTS PosClosedWorkSessions(
+                WorkSessionId TEXT NOT NULL PRIMARY KEY,
+                UserId TEXT NOT NULL,
+                ClosedAt TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS PosLocalApprovalAudits(
                 AuthorizationId TEXT NOT NULL PRIMARY KEY,
                 RequestedByUserId TEXT NOT NULL,
@@ -252,6 +256,8 @@ public sealed partial class PosLocalIdentityStore(
                 SELECT WorkSessionId
                 FROM PosLocalUserSessions
                 WHERE UserId=$userId
+                  AND WorkSessionId NOT IN (
+                      SELECT WorkSessionId FROM PosClosedWorkSessions)
                 ORDER BY StartedAt DESC
                 LIMIT 1;
                 """;
@@ -352,6 +358,50 @@ public sealed partial class PosLocalIdentityStore(
         command.Parameters.AddWithValue("$now", Format(timeProvider.GetUtcNow()));
         command.Parameters.AddWithValue("$hash", TokenHash(token));
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<DateTimeOffset> WorkSessionOpenedAtAsync(
+        Guid workSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT MIN(StartedAt) FROM PosLocalUserSessions
+            WHERE WorkSessionId=$workSession;
+            """;
+        command.Parameters.AddWithValue("$workSession", workSessionId.ToString("D"));
+        var value = await command.ExecuteScalarAsync(cancellationToken) as string;
+        return value is null
+            ? timeProvider.GetUtcNow()
+            : DateTimeOffset.Parse(value);
+    }
+
+    public async Task MarkWorkSessionClosedAsync(
+        Guid workSessionId,
+        Guid userId,
+        DateTimeOffset closedAt,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.Transaction = (SqliteTransaction)transaction;
+        command.CommandText = """
+            INSERT INTO PosClosedWorkSessions(WorkSessionId,UserId,ClosedAt)
+            VALUES($workSession,$user,$closed)
+            ON CONFLICT(WorkSessionId) DO NOTHING;
+            UPDATE PosLocalUserSessions
+            SET EndedAt=COALESCE(EndedAt,$closed),EndReason='WorkSessionClosed'
+            WHERE WorkSessionId=$workSession;
+            """;
+        command.Parameters.AddWithValue("$workSession", workSessionId.ToString("D"));
+        command.Parameters.AddWithValue("$user", userId.ToString("D"));
+        command.Parameters.AddWithValue("$closed", Format(closedAt));
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     private static async Task UpgradeWorkSessionsAsync(

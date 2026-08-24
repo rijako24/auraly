@@ -9,6 +9,7 @@ using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Organization;
 using Auraly.Contracts.Sales;
+using Auraly.Contracts.WorkSessions;
 using Auraly.Pos.Edge.Host;
 using Auraly.Pos.Edge.Infrastructure;
 using Microsoft.AspNetCore.Hosting;
@@ -32,6 +33,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     private string? _userSessionToken;
     private readonly List<string> _environmentKeys = [];
     private readonly RecordingPrinter _printer = new();
+    private readonly RecordingClosurePrinter _closurePrinter = new();
     private HttpClient Client =>
         _client ?? throw new InvalidOperationException("The test host has not started.");
 
@@ -568,6 +570,98 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Cashier_can_close_and_print_the_work_session_while_server_is_offline()
+    {
+        var capture = await Client.PostAsJsonAsync(
+            "/edge/v1/capture",
+            new CaptureRequest("770123", null));
+        capture.EnsureSuccessStatusCode();
+        var captured = await capture.Content.ReadFromJsonAsync<PosCaptureResult>();
+        var total = captured!.Draft!.PayableAmount;
+        var completed = await Client.PostAsJsonAsync(
+            $"/edge/v1/drafts/{captured.Draft.DraftId.Value:D}/complete",
+            new CompleteDraftRequest(
+                null,
+                [new CompletePaymentRequest("Cash", total, null)],
+                DocumentType: PosSaleDocumentTypes.Receipt));
+        completed.EnsureSuccessStatusCode();
+        var nextDraft = (await completed.Content.ReadFromJsonAsync<CompletePosSaleResult>())!
+            .NextDraft;
+
+        var previewResponse = await Client.PostAsJsonAsync(
+            "/edge/v1/work-sessions/current/closure-preview",
+            new PreviewLocalWorkSessionClosureRequest(nextDraft.DraftId.Value));
+        previewResponse.EnsureSuccessStatusCode();
+        var preview = await previewResponse.Content
+            .ReadFromJsonAsync<AuthorizedWorkSessionClosurePreview>();
+        Assert.NotNull(preview);
+        Assert.Equal(total, preview.Preview.TotalSales);
+        Assert.Equal(total, preview.Preview.ExpectedCash);
+        Assert.Equal(
+            new[] { "Cash", "Card" },
+            preview.Preview.PaymentTotals.Take(2)
+                .Select(value => value.PaymentMethodCode));
+
+        var operationId = Guid.NewGuid();
+        var closeRequest = new CloseLocalWorkSessionRequest(
+            operationId,
+            preview.AuthorizationToken,
+            total,
+            [
+                new WorkSessionPaymentCount("Cash", total),
+                new WorkSessionPaymentCount("Card", 0)
+            ],
+            null);
+        _closurePrinter.FailuresRemaining = 1;
+        var failedPrint = await Client.PostAsJsonAsync(
+            "/edge/v1/work-sessions/current/close",
+            closeRequest);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, failedPrint.StatusCode);
+
+        var closeResponse = await Client.PostAsJsonAsync(
+            "/edge/v1/work-sessions/current/close",
+            closeRequest);
+        closeResponse.EnsureSuccessStatusCode();
+        var closure = await closeResponse.Content.ReadFromJsonAsync<WorkSessionClosureView>();
+        Assert.NotNull(closure);
+        Assert.Equal(operationId, closure.WorkSessionClosureId);
+        Assert.Equal(0, closure.CashDifference);
+        Assert.Equal(
+            operationId,
+            Assert.Single(_closurePrinter.Closures).WorkSessionClosureId);
+
+        await using var database = new Microsoft.Data.Sqlite.SqliteConnection(
+            $"Data Source={_path}");
+        await database.OpenAsync();
+        await using var command = database.CreateCommand();
+        command.CommandText = """
+            SELECT Status FROM PosWorkSessionClosureOutbox
+            WHERE OperationId=$operation;
+            """;
+        command.Parameters.AddWithValue("$operation", operationId.ToString("D"));
+        Assert.Contains(
+            (string)(await command.ExecuteScalarAsync())!,
+            new[] { "Pending", "RetryScheduled", "Uploading" });
+
+        using var healthClient = _factory!.CreateClient();
+        healthClient.DefaultRequestHeaders.Add("X-Auraly-Edge-Session", Token);
+        var health = await healthClient.GetFromJsonAsync<JsonElement>("/edge/v1/health");
+        Assert.True(health.GetProperty("pendingSynchronizationCount").GetInt32() >= 2);
+        Assert.NotEqual(
+            JsonValueKind.Null,
+            health.GetProperty("oldestPendingSynchronizationAt").ValueKind);
+
+        using var nextLoginClient = _factory!.CreateClient();
+        nextLoginClient.DefaultRequestHeaders.Add("X-Auraly-Edge-Session", Token);
+        var login = await nextLoginClient.PostAsJsonAsync(
+            "/edge/v1/auth/login",
+            new PosLocalLoginRequest("cashier", "Cashier-Password-1"));
+        login.EnsureSuccessStatusCode();
+        var nextSession = await login.Content.ReadFromJsonAsync<PosLocalUserSession>();
+        Assert.NotEqual(closure.WorkSessionId, nextSession!.WorkSessionId);
+    }
+
+    [Fact]
     public async Task Five_wrong_passwords_lock_the_local_cashier_temporarily()
     {
         for (var attempt = 0; attempt < 5; attempt++)
@@ -692,6 +786,8 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             {
                 services.RemoveAll<IPosReceiptPrinter>();
                 services.AddSingleton<IPosReceiptPrinter>(_printer);
+                services.RemoveAll<IPosWorkSessionClosurePrinter>();
+                services.AddSingleton<IPosWorkSessionClosurePrinter>(_closurePrinter);
                 services.RemoveAll<HttpClient>();
                 services.AddSingleton(new HttpClient(new UnavailableServerHandler())
                     { BaseAddress = new Uri("http://127.0.0.1:59999") });
@@ -713,7 +809,8 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                     "Cajera de prueba",
                     ["sales.create", "sales.discount", "sales.reprint", "sales.void",
                         CommercePermissionCodes.SalesRemoveLine,
-                        CommercePermissionCodes.SalesRestartDraft],
+                        CommercePermissionCodes.SalesRestartDraft,
+                        Auraly.Contracts.WorkSessions.WorkSessionPermissionCodes.Close],
                     password)
             ]));
         var issuedAt = DateTimeOffset.UtcNow;
@@ -737,7 +834,8 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                     userId,
                     "cashier",
                     "Cajera de prueba",
-                    ["sales.create", "sales.discount", "sales.reprint", "sales.void"],
+                    ["sales.create", "sales.discount", "sales.reprint", "sales.void",
+                        Auraly.Contracts.WorkSessions.WorkSessionPermissionCodes.Close],
                     password.Salt,
                     password.Hash,
                     password.Iterations,
@@ -855,6 +953,25 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             CancellationToken cancellationToken = default)
         {
             Receipts.Add(receipt);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class RecordingClosurePrinter : IPosWorkSessionClosurePrinter
+    {
+        public List<WorkSessionClosureView> Closures { get; } = [];
+        public int FailuresRemaining { get; set; }
+
+        public Task PrintAsync(
+            WorkSessionClosureView closure,
+            CancellationToken cancellationToken)
+        {
+            if (FailuresRemaining > 0)
+            {
+                FailuresRemaining--;
+                throw new IOException("La impresora de prueba no respondió.");
+            }
+            Closures.Add(closure);
             return Task.CompletedTask;
         }
     }

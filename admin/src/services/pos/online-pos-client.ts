@@ -51,7 +51,7 @@ import {
 } from "./pos-edge-client";
 import { fetchWithSessionRetry } from "@/services/api/client";
 import { tenantsApi } from "@/services/api/tenants";
-import { workSessionCloseRequest, workSessionClosureHtml, workSessionClosurePreviewPath } from "./pos-work-session-close";
+import { printWorkSessionClosure, workSessionCloseRequest, workSessionClosureHtml, workSessionClosurePreviewPath } from "./pos-work-session-close";
 import { receiptBrandMarkup } from "./pos-receipt-brand";
 
 export type SalesWorkspaceOption = {
@@ -321,9 +321,14 @@ export class OnlinePosClient implements PosClient {
       workSessionId: this.context.workSessionId,
       deviceId: local?.deviceId ?? null,
       fiscalReady: true,
+      identityReady: true,
+      catalogStatus: "Ready",
       synchronizationInProgress: false,
       lastSynchronizationAt: null,
       lastSynchronizationFailed: false,
+      pendingSynchronizationCount: 0,
+      oldestPendingSynchronizationAt: null,
+      lastSynchronizationError: null,
       catalogUpdatedAt: null,
     };
   }
@@ -714,24 +719,15 @@ export class OnlinePosClient implements PosClient {
   }
 
   async closeWorkSession(input: PosCloseWorkSessionInput): Promise<PosWorkSessionClosure> {
-    const printPreview = window.open("", "_blank", "popup=yes,width=760,height=840,resizable=yes,scrollbars=yes");
-    if (!printPreview) throw new PosEdgeError("El navegador bloqueó la vista previa del cierre. Habilita ventanas emergentes y reintenta.", 409);
     const requestDefinition = workSessionCloseRequest(
       this.context.workSessionId, input.operationId, input.countedCash,
       input.paymentCounts, input.note);
-    try {
-      const [closure, branding] = await Promise.all([
-        request<PosWorkSessionClosure>(requestDefinition.path, requestDefinition.init),
-        tenantsApi.getBranding().catch(() => null),
-      ]);
-      printPreview.document.open();
-      printPreview.document.write(workSessionClosureHtml({ ...closure, logoUrl: branding?.logoUrl ?? null }));
-      printPreview.document.close();
-      return closure;
-    } catch (error) {
-      printPreview.close();
-      throw error;
-    }
+    const [closure, branding] = await Promise.all([
+      request<PosWorkSessionClosure>(requestDefinition.path, requestDefinition.init),
+      tenantsApi.getBranding().catch(() => null),
+    ]);
+    await printWorkSessionClosure(workSessionClosureHtml({ ...closure, logoUrl: branding?.logoUrl ?? null }));
+    return closure;
   }
 
 

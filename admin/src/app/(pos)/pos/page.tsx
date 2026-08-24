@@ -155,6 +155,10 @@ export default function PosPage() {
   const [localEnrollmentRequired, setLocalEnrollmentRequired] = useState(false);
   const [canEnrollOffline, setCanEnrollOffline] = useState(false);
   const [edgeLoginState, setEdgeLoginState] = useState<"preparing" | "required" | null>(null);
+  const [initialDownload, setInitialDownload] = useState({
+    identityReady: false,
+    catalogReady: false,
+  });
   const [edgeLoginError, setEdgeLoginError] = useState<string | null>(null);
   const [edgePermissions, setEdgePermissions] = useState<string[]>([]);
   const [setupLoading, setSetupLoading] = useState(true);
@@ -170,6 +174,9 @@ export default function PosPage() {
     inProgress: false,
     lastAt: null as string | null,
     failed: false,
+    pendingCount: 0,
+    oldestPendingAt: null as string | null,
+    error: null as string | null,
   });
   const [workstation, setWorkstation] = useState({
     deviceSeriesCode: "\u2014",
@@ -327,10 +334,17 @@ export default function PosPage() {
             if (active) {
               setLocalEnrollmentRequired(requiresEnrollment);
               setEdgePermissions(health.permissions ?? []);
+              setInitialDownload({
+                identityReady: health.identityReady,
+                catalogReady: health.catalogStatus === "Ready",
+              });
               setSynchronization({
                 inProgress: health.synchronizationInProgress,
                 lastAt: health.lastSynchronizationAt,
                 failed: health.lastSynchronizationFailed,
+                pendingCount: health.pendingSynchronizationCount,
+                oldestPendingAt: health.oldestPendingSynchronizationAt,
+                error: health.lastSynchronizationError,
               });
               setServerConnected(health.serverConnected);
               setWorkstation({
@@ -349,7 +363,7 @@ export default function PosPage() {
             if (!requiresEnrollment && edgeStartupMode === "enrolled") {
               if (active) {
                 setEdgeLoginState(
-                  health.status === "IdentitySynchronizing"
+                  health.status === "IdentitySynchronizing" || health.status === "Synchronizing"
                     ? "preparing"
                     : health.status === "LoginRequired"
                       ? "required"
@@ -427,10 +441,19 @@ export default function PosPage() {
         const health = await client.health();
         if (active) {
           if (client.mode === "edge") setEdgePermissions(health.permissions ?? []);
+          if (client.mode === "edge") {
+            setInitialDownload({
+              identityReady: health.identityReady,
+              catalogReady: health.catalogStatus === "Ready",
+            });
+          }
           setSynchronization({
             inProgress: health.synchronizationInProgress,
             lastAt: health.lastSynchronizationAt,
             failed: health.lastSynchronizationFailed,
+            pendingCount: health.pendingSynchronizationCount,
+            oldestPendingAt: health.oldestPendingSynchronizationAt,
+            error: health.lastSynchronizationError,
           });
           setServerConnected(health.serverConnected);
           setWorkstation({
@@ -447,21 +470,17 @@ export default function PosPage() {
         }
         if (
           client.mode === "edge" &&
-          (health.status === "IdentitySynchronizing" || health.status === "LoginRequired")
+          (health.status === "IdentitySynchronizing" ||
+            health.status === "Synchronizing" ||
+            health.status === "LoginRequired")
         ) {
           if (active) {
             setEdgeReady(false);
             setEdgeLoginState(
-              health.status === "IdentitySynchronizing" ? "preparing" : "required",
+              health.status === "IdentitySynchronizing" || health.status === "Synchronizing"
+                ? "preparing"
+                : "required",
             );
-          }
-          return;
-        }
-        if (client.mode === "edge" && health.status === "Synchronizing") {
-          if (active) {
-            setEdgeReady(false);
-            setEdgeLoginState(null);
-            setMessage("Sincronizando catálogo inicial…");
           }
           return;
         }
@@ -1542,9 +1561,13 @@ export default function PosPage() {
   }
 
   const synchronizationTitle = synchronization.inProgress
-    ? "Sincronizando datos locales"
+    ? synchronization.pendingCount > 0
+      ? `Subiendo ${synchronization.pendingCount} documento${synchronization.pendingCount === 1 ? "" : "s"} pendiente${synchronization.pendingCount === 1 ? "" : "s"}`
+      : "Descargando cambios para la caja"
     : synchronization.failed
-      ? "La última sincronización falló. Haz clic para reintentar."
+      ? `${synchronization.pendingCount} documento${synchronization.pendingCount === 1 ? "" : "s"} sin sincronizar. ${synchronization.error ?? "Haz clic para reintentar."}`
+      : synchronization.pendingCount > 0
+        ? `${synchronization.pendingCount} documento${synchronization.pendingCount === 1 ? "" : "s"} pendiente${synchronization.pendingCount === 1 ? "" : "s"} por subir`
       : synchronization.lastAt
         ? `Última sincronización: ${new Date(synchronization.lastAt).toLocaleString("es-CO")}`
         : "Sincronización local pendiente";
@@ -1888,7 +1911,13 @@ function changeOnlineWorkspace() {
         warehouseName={workstation.warehouseName}
         serverConnected={serverConnected}
         preparing={edgeLoginState === "preparing"}
-        error={edgeLoginError}
+        identityReady={initialDownload.identityReady}
+        catalogReady={initialDownload.catalogReady}
+        error={edgeLoginError ?? (
+          edgeLoginState === "preparing" && synchronization.failed
+            ? "No pudimos descargar los datos iniciales. Verifica internet e informa al supervisor si continúa. Auraly POS reintentará automáticamente."
+            : null
+        )}
         onLogin={loginLocal}
         onOnlineLogin={loginOnlineFromLocal}
       />
@@ -1982,10 +2011,16 @@ edgeCapable={edgeEnrollmentRequired}
               disabled={synchronization.inProgress}
               title={synchronizationTitle}
               aria-label={synchronizationTitle}
-              className={`flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition ${synchronization.failed ? "border-amber-300/40 text-amber-200" : "border-white/10 text-auraly-secondary hover:bg-white/10 hover:text-white"}`}
+              className={`flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition ${synchronization.failed || synchronization.pendingCount > 0 ? "border-amber-300/40 text-amber-200" : "border-white/10 text-auraly-secondary hover:bg-white/10 hover:text-white"}`}
             >
               <RotateCcw className={`h-3.5 w-3.5 ${synchronization.inProgress ? "animate-spin" : ""}`} />
-              <span>{synchronization.inProgress ? "Sincronizando" : synchronization.failed ? "Reintentar sync" : "Datos al día"}</span>
+              <span>{synchronization.inProgress
+                ? "Sincronizando"
+                : synchronization.failed
+                  ? `${synchronization.pendingCount} sin sincronizar`
+                  : synchronization.pendingCount > 0
+                    ? `${synchronization.pendingCount} por subir`
+                    : "Datos al día"}</span>
             </button>
           )}
         </div>
@@ -2071,6 +2106,31 @@ edgeCapable={edgeEnrollmentRequired}
           </span>
         </div>
       </header>
+
+      {client.mode === "edge" &&
+        (synchronization.failed || (!serverConnected && synchronization.pendingCount > 0)) && (
+        <div
+          role="alert"
+          className="flex items-center justify-between gap-4 border-b border-amber-300/30 bg-amber-100 px-5 py-2 text-sm text-amber-950"
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span className="truncate">
+              Esta caja no ha podido sincronizar {synchronization.pendingCount} documento{synchronization.pendingCount === 1 ? "" : "s"}.
+              {synchronization.oldestPendingAt && ` Pendiente desde ${new Date(synchronization.oldestPendingAt).toLocaleString("es-CO")}.`}
+              {" "}Informa al supervisor si el problema continúa.
+            </span>
+          </span>
+          <button
+            type="button"
+            onClick={() => void synchronizeNow()}
+            disabled={synchronization.inProgress}
+            className="shrink-0 rounded-lg border border-amber-900/20 bg-white/60 px-3 py-1 font-bold hover:bg-white disabled:opacity-50"
+          >
+            Reintentar
+          </button>
+        </div>
+      )}
 
       <section className="grid min-h-[calc(100vh-3.5rem)] grid-cols-1 gap-3 p-3 xl:h-[calc(100vh-3.5rem)] xl:min-h-0 xl:grid-cols-[minmax(0,1fr)_340px] 2xl:grid-cols-[minmax(0,1fr)_390px]">
         <div className="flex min-w-0 flex-col gap-3 xl:min-h-0">

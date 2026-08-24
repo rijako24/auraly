@@ -50,6 +50,7 @@ internal sealed class PosSynchronizationWork(
     PosCatalogSynchronizer catalog,
     PosEdgeOutboxUploader uploader,
     PosCashMovementServerClient cashMovements,
+    PosWorkSessionClosureOutboxUploader closures,
     PosFiscalStatusSynchronizer fiscalStatuses,
     PosFiscalProvisioningSynchronizer fiscalProvisioning,
     PosEdgeAuthenticationService authentication,
@@ -60,45 +61,44 @@ internal sealed class PosSynchronizationWork(
         PosSynchronizationTrigger trigger,
         CancellationToken cancellationToken)
     {
-        if (trigger.HasFlag(PosSynchronizationTrigger.Security))
-            await identities.SynchronizeAsync(cancellationToken);
-        if (trigger.HasFlag(PosSynchronizationTrigger.Catalog))
-        {
-            state.Begin();
-            uiState.Publish();
-            try
-            {
-                await catalog.SynchronizeAsync(cancellationToken);
-                state.Succeeded();
-            }
-            catch
-            {
-                state.Failed();
-                throw;
-            }
-            finally { uiState.Publish(); }
-        }
-        if (trigger.HasFlag(PosSynchronizationTrigger.LocalOutbox))
-        {
-            while (await uploader.UploadNextAsync(cancellationToken))
-            {
-            }
-            while (await cashMovements.UploadNextAsync(cancellationToken))
-            {
-            }
-        }
-        if (trigger.HasFlag(PosSynchronizationTrigger.Authentication))
-        {
-            while (await authentication.ReleasePendingAsync(cancellationToken))
-            {
-            }
-        }
-        if (trigger.HasFlag(PosSynchronizationTrigger.FiscalStatus))
-            await fiscalStatuses.SynchronizeAsync(cancellationToken);
-        if (trigger.HasFlag(PosSynchronizationTrigger.FiscalProvisioning))
-            await fiscalProvisioning.SynchronizeAsync(cancellationToken);
-
+        state.Begin();
         uiState.Publish();
+        try
+        {
+            if (trigger.HasFlag(PosSynchronizationTrigger.Security))
+                await identities.SynchronizeAsync(cancellationToken);
+            if (trigger.HasFlag(PosSynchronizationTrigger.Catalog))
+                await catalog.SynchronizeAsync(cancellationToken);
+            if (trigger.HasFlag(PosSynchronizationTrigger.LocalOutbox))
+            {
+                while (await uploader.UploadNextAsync(cancellationToken))
+                {
+                }
+                while (await cashMovements.UploadNextAsync(cancellationToken))
+                {
+                }
+                while (await closures.UploadNextAsync(cancellationToken))
+                {
+                }
+            }
+            if (trigger.HasFlag(PosSynchronizationTrigger.Authentication))
+            {
+                while (await authentication.ReleasePendingAsync(cancellationToken))
+                {
+                }
+            }
+            if (trigger.HasFlag(PosSynchronizationTrigger.FiscalStatus))
+                await fiscalStatuses.SynchronizeAsync(cancellationToken);
+            if (trigger.HasFlag(PosSynchronizationTrigger.FiscalProvisioning))
+                await fiscalProvisioning.SynchronizeAsync(cancellationToken);
+            state.Succeeded();
+        }
+        catch
+        {
+            state.Failed();
+            throw;
+        }
+        finally { uiState.Publish(); }
     }
 }
 
