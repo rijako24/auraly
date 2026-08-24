@@ -91,7 +91,8 @@ public static class PosApprovalApi
             CancellationToken cancellationToken) =>
         {
             await service.ConfigureCredentialAsync(
-                principal.ToPosApprovalIdentity(), request.Secret, request.ValidityHours, cancellationToken);
+                principal.ToPosApprovalIdentity(), request.Secret, request.ValidityHours,
+                request.IsOneTime, cancellationToken);
             return Results.NoContent();
         });
 
@@ -117,7 +118,7 @@ public static class PosApprovalApi
             await Handle(() => service.CredentialStatusForUserAsync(principal.ToPosApprovalIdentity(), userId, cancellationToken)));
         group.MapPut("/users/{userId:guid}/supervisor-credential", async (
             ClaimsPrincipal principal, Guid userId, ConfigureSupervisorCredentialRequest request, PosApprovalService service, CancellationToken cancellationToken) =>
-        { await service.ConfigureCredentialForUserAsync(principal.ToPosApprovalIdentity(), userId, request.Secret, request.ValidityHours, cancellationToken); return Results.NoContent(); });
+        { await service.ConfigureCredentialForUserAsync(principal.ToPosApprovalIdentity(), userId, request.Secret, request.ValidityHours, request.IsOneTime, cancellationToken); return Results.NoContent(); });
         group.MapDelete("/users/{userId:guid}/supervisor-credential", async (
             ClaimsPrincipal principal, Guid userId, PosApprovalService service, CancellationToken cancellationToken) =>
         { await service.RevokeCredentialForUserAsync(principal.ToPosApprovalIdentity(), userId, cancellationToken); return Results.NoContent(); });

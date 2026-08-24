@@ -9,6 +9,7 @@ CREATE TABLE [dbo].[SupervisorCredentials]
     [CreatedByUserId] UNIQUEIDENTIFIER NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [ValidUntil] DATETIMEOFFSET(7) NULL,
+    [IsOneTime] BIT NOT NULL CONSTRAINT [DF_SupervisorCredentials_IsOneTime] DEFAULT (0),
     [RevokedByUserId] UNIQUEIDENTIFIER NULL,
     [RevokedAt] DATETIMEOFFSET(7) NULL,
     CONSTRAINT [PK_SupervisorCredentials] PRIMARY KEY CLUSTERED ([CredentialId]),

@@ -93,6 +93,11 @@ public sealed partial class PosLocalIdentityStore(
                 FOREIGN KEY(AuthorizedByUserId) REFERENCES PosOfflineUsers(UserId));
             CREATE INDEX IF NOT EXISTS IX_PosLocalApprovalAudits_Draft
                 ON PosLocalApprovalAudits(DraftId,AuthorizedAt);
+            CREATE TABLE IF NOT EXISTS PosConsumedOneTimeSupervisorCredentials(
+                UserId TEXT NOT NULL,
+                ChangedAt TEXT NOT NULL,
+                ConsumedAt TEXT NOT NULL,
+                PRIMARY KEY(UserId,ChangedAt));
             """;
         await command.ExecuteNonQueryAsync(cancellationToken);
         await UpgradeWorkSessionsAsync(connection, cancellationToken);
@@ -114,7 +119,12 @@ public sealed partial class PosLocalIdentityStore(
         await ExecuteAsync(connection, transaction,
             "DELETE FROM PosLocalUserSessions WHERE EndedAt IS NOT NULL;", cancellationToken);
         await ExecuteAsync(connection, transaction,
-            "DELETE FROM PosOfflineUsers WHERE UserId NOT IN (SELECT UserId FROM PosLocalUserSessions WHERE EndedAt IS NULL);",
+            """
+            DELETE FROM PosOfflineUsers
+            WHERE UserId NOT IN (SELECT UserId FROM PosLocalUserSessions WHERE EndedAt IS NULL)
+              AND UserId NOT IN (SELECT RequestedByUserId FROM PosLocalApprovalAudits)
+              AND UserId NOT IN (SELECT AuthorizedByUserId FROM PosLocalApprovalAudits);
+            """,
             cancellationToken);
 
         foreach (var user in snapshot.Users)
@@ -122,11 +132,26 @@ public sealed partial class PosLocalIdentityStore(
             var protectedVerifier = PosEdgeProtectedSecret.ProtectIdentityVerifier(
                 keyDirectory,
                 JsonSerializer.Serialize(user.PasswordVerifier));
-            var protectedSupervisorCredential = user.SupervisorCredential is null
+            var supervisorCredential = user.SupervisorCredential;
+            if (supervisorCredential?.IsOneTime == true)
+            {
+                await using var consumed = connection.CreateCommand();
+                consumed.Transaction = (SqliteTransaction)transaction;
+                consumed.CommandText = """
+                    SELECT COUNT(1)
+                    FROM PosConsumedOneTimeSupervisorCredentials
+                    WHERE UserId=$id AND ChangedAt=$changedAt;
+                    """;
+                consumed.Parameters.AddWithValue("$id", user.UserId.ToString("D"));
+                consumed.Parameters.AddWithValue("$changedAt", Format(supervisorCredential.ChangedAt));
+                if (Convert.ToInt32(await consumed.ExecuteScalarAsync(cancellationToken)) > 0)
+                    supervisorCredential = null;
+            }
+            var protectedSupervisorCredential = supervisorCredential is null
                 ? null
                 : PosEdgeProtectedSecret.ProtectIdentityVerifier(
                     keyDirectory,
-                    JsonSerializer.Serialize(user.SupervisorCredential));
+                    JsonSerializer.Serialize(supervisorCredential));
             await using var userCommand = connection.CreateCommand();
             userCommand.Transaction = (SqliteTransaction)transaction;
             userCommand.CommandText = """

@@ -16,7 +16,7 @@ export type PosApprovalRequest = {
   decidedByName: string | null;
 };
 
-export type SupervisorCredentialStatus = { isConfigured: boolean; createdAt: string | null; validUntil: string | null };
+export type SupervisorCredentialStatus = { isConfigured: boolean; createdAt: string | null; validUntil: string | null; isOneTime?: boolean };
 export type PosApprovalPushSubscription = { endpoint: string; p256dh: string; auth: string };
 
 type Negotiation = { clientAccessUri: string; expiresAt: string };
@@ -91,10 +91,10 @@ export class PosApprovalClient {
     );
   }
 
-  configureCredential(secret: string, validityHours: 8 | 168 | null) {
+  configureCredential(secret: string, validityHours: 8 | 168 | null, isOneTime = false) {
     return this.request<void>(
       "/api/commerce/v1/pos/approvals/supervisor-credential",
-      { method: "PUT", body: JSON.stringify({ secret, validityHours }) },
+      { method: "PUT", body: JSON.stringify({ secret, validityHours, isOneTime }) },
     );
   }
 
@@ -110,8 +110,8 @@ export class PosApprovalClient {
     return this.request<SupervisorCredentialStatus>(`/api/commerce/v1/pos/approvals/users/${userId}/supervisor-credential`);
   }
 
-  configureUserCredential(userId: string, secret: string, validityHours: 8 | 168 | null) {
-    return this.request<void>(`/api/commerce/v1/pos/approvals/users/${userId}/supervisor-credential`, { method: "PUT", body: JSON.stringify({ secret, validityHours }) });
+  configureUserCredential(userId: string, secret: string, validityHours: 8 | 168 | null, isOneTime = false) {
+    return this.request<void>(`/api/commerce/v1/pos/approvals/users/${userId}/supervisor-credential`, { method: "PUT", body: JSON.stringify({ secret, validityHours, isOneTime }) });
   }
 
   revokeUserCredential(userId: string) {

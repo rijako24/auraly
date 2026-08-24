@@ -26,7 +26,7 @@ public sealed class SqlPosOfflineIdentityStore(
                    u.PosOfflinePasswordSalt,u.PosOfflinePasswordHash,
                    u.PosOfflinePasswordIterations,u.PosOfflinePasswordChangedAt,
                    credential.SecretSalt,credential.SecretHash,
-                   credential.SecretIterations,credential.CreatedAt,
+                   credential.SecretIterations,credential.CreatedAt,credential.IsOneTime,
                    p.Resource
             FROM dbo.AppUsers u
             LEFT JOIN dbo.SupervisorCredentials credential
@@ -88,10 +88,11 @@ public sealed class SqlPosOfflineIdentityStore(
                             (byte[])reader[7],
                             (byte[])reader[8],
                             reader.GetInt32(9),
-                            reader.GetFieldValue<DateTimeOffset>(10)));
+                            reader.GetFieldValue<DateTimeOffset>(10),
+                            reader.GetBoolean(11)));
                 users.Add(userId, user);
             }
-            user.Permissions.Add(reader.GetString(11));
+            user.Permissions.Add(reader.GetString(12));
         }
 
         var projections = users.Values
@@ -154,7 +155,8 @@ public sealed class SqlPosOfflineIdentityStore(
                     .Append(Convert.ToBase64String(user.SupervisorCredential.Salt)).Append('|')
                     .Append(Convert.ToBase64String(user.SupervisorCredential.Hash)).Append('|')
                     .Append(user.SupervisorCredential.Iterations).Append('|')
-                    .Append(user.SupervisorCredential.ChangedAt.ToUniversalTime().Ticks);
+                    .Append(user.SupervisorCredential.ChangedAt.ToUniversalTime().Ticks).Append('|')
+                    .Append(user.SupervisorCredential.IsOneTime);
             }
             canonical
                 .Append('|')

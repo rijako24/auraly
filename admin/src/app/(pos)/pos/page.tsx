@@ -149,6 +149,15 @@ export default function PosPage() {
   const recoveredOrderFromUrl = useRef<string | null>(null);
   const skipQuantityBlur = useRef<string | null>(null);
   const closureOperationId = useRef<string | null>(null);
+  const closureAuthorization = useRef<PosSensitiveAuthorization | null>(null);
+  const discountAuthorization = useRef<PosSensitiveAuthorization | null>(null);
+  const lineRemovalAuthorization = useRef<PosSensitiveAuthorization | null>(null);
+  const restartAuthorization = useRef<PosSensitiveAuthorization | null>(null);
+  const protectedActionHandlers = useRef({
+    discount: () => Promise.resolve(),
+    removeLine: (lineId: string) => { void lineId; return Promise.resolve(); },
+    restartSale: () => Promise.resolve(),
+  });
   const [client, setClient] = useState<PosClient | null>(null);
   const [workspaceChanging, setWorkspaceChanging] = useState(false);
   const [onlineOptions, setOnlineOptions] = useState<SalesWorkspaceOption[]>([]);
@@ -219,6 +228,7 @@ export default function PosPage() {
   const [selectedCustomer, setSelectedCustomer] = useState<PosCustomer | null>(null);
   const [pricingTransition, setPricingTransition] = useState(false);
   const [documentType, setDocumentType] = useState<PosSaleDocumentType>("SalesReceipt");
+  const [habilitationMode, setHabilitationMode] = useState(false);
 
   const [sidePanel, setSidePanel] = useState<"temporaries" | "orders">("temporaries");
   const [ordersRefreshVersion, setOrdersRefreshVersion] = useState(0);
@@ -238,6 +248,11 @@ export default function PosPage() {
     execute: (authorization: PosSensitiveAuthorization) => Promise<void>;
   } | null>(null);
   const [sensitiveApprovalError, setSensitiveApprovalError] = useState<string | null>(null);
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("fiscalHabilitation") !== "1") return;
+    setHabilitationMode(true);
+    setDocumentType("SalesInvoice");
+  }, []);
   const salesSessionButton = useRef<HTMLButtonElement>(null);
   const [lastSettlement, setLastSettlement] = useState<{
     documentId: string;
@@ -599,17 +614,46 @@ export default function PosPage() {
     };
   }, [client, draft?.sourceOrderId]);
 
+  protectedActionHandlers.current = {
+    discount: openDiscount,
+    removeLine: requestRemoveLine,
+    restartSale: requestCancelSale,
+  };
 
-  const requestRemoveLine = useCallback((lineId: string) => {
+  async function requestRemoveLine(lineId: string) {
     const line = draft?.lines.find((candidate) => candidate.lineId === lineId);
     if (!line || busy) return;
-    setConfirmation({ kind: "line", lineId, productName: line.description });
-  }, [busy, draft]);
+    try {
+      await authorizeSensitiveEntry(
+        "sales.lines.remove",
+        lineId,
+        { action: "OpenRemoveLine", product: line.description, quantity: line.quantity },
+        async (authorization) => {
+          lineRemovalAuthorization.current = authorization;
+          setConfirmation({ kind: "line", lineId, productName: line.description });
+        },
+      );
+    } catch (caught) {
+      showError(caught);
+    }
+  }
 
-  const requestCancelSale = useCallback(() => {
+  async function requestCancelSale() {
     if (!draft?.lines.length || busy) return;
-    setConfirmation({ kind: "sale" });
-  }, [busy, draft]);
+    try {
+      await authorizeSensitiveEntry(
+        "sales.drafts.restart",
+        null,
+        { action: "OpenRestartSale", lineCount: draft.lines.length, total: draft.payableAmount },
+        async (authorization) => {
+          restartAuthorization.current = authorization;
+          setConfirmation({ kind: "sale" });
+        },
+      );
+    } catch (caught) {
+      showError(caught);
+    }
+  }
 
   const persistTemporary = useCallback(async (name: string, reference: string) => {
     const normalizedName = name.trim();
@@ -825,7 +869,7 @@ export default function PosPage() {
         !confirmation
       ) {
         event.preventDefault();
-        setDiscountOpen(true);
+        void protectedActionHandlers.current.discount();
       } else if (
         event.key === "F4" &&
         !busy &&
@@ -839,7 +883,7 @@ export default function PosPage() {
         !confirmation
       ) {
         event.preventDefault();
-        requestRemoveLine(selectedLineId);
+        void protectedActionHandlers.current.removeLine(selectedLineId);
       } else if (
         event.key === "F5" &&
         !busy &&
@@ -851,7 +895,7 @@ export default function PosPage() {
         !confirmation
       ) {
         event.preventDefault();
-        requestCancelSale();
+        void protectedActionHandlers.current.restartSale();
       } else if (event.ctrlKey && event.key === "F8" && canOpenCashMovement) {
         event.preventDefault();
         setCashMovementDirection("In");
@@ -888,9 +932,7 @@ export default function PosPage() {
     hasSelectedLine,
     paymentOpen,
     productSearchOpen,
-    requestCancelSale,
     requestPauseSale,
-    requestRemoveLine,
     selectedLineId,
     temporaryOpen,
     printerOpen,
@@ -1062,41 +1104,92 @@ export default function PosPage() {
     }));
   }
 
-  function isApprovalRequired(caught: unknown) {
-    return caught instanceof PosEdgeError &&
-      (caught.code === "ApprovalRequired" || caught.status === 428 ||
-        caught.message.toLocaleLowerCase("es").includes("requiere aprobaci"));
-  }
-
-  async function executeSensitive(
+  async function requestSensitiveApproval(
     permissionResource: string,
     lineId: string | null,
     context: Record<string, unknown>,
+    operationId: string,
     execute: (authorization: PosSensitiveAuthorization) => Promise<void>,
   ) {
+    let approval: PosApprovalRequest | null = null;
+    const activeClient = client;
+    if (serverConnected && activeClient) {
+      const businessId = window.localStorage.getItem("selected_business_id");
+      if (!businessId || !draft)
+        throw new Error("No fue posible identificar el negocio de esta venta.");
+      approval = await activeClient.createApproval({
+        businessId,
+        deviceId: workstation.deviceId,
+        workSessionId: workstation.workSessionId,
+        draftId: draft.draftId.value,
+        lineId,
+        permissionResource,
+        contextJson: JSON.stringify(context),
+      });
+    }
+    setSensitiveApprovalError(null);
+    setSensitiveApproval({ approval, operationId, execute });
+  }
+
+  async function authorizeSensitiveEntry(
+    permissionResource: string,
+    lineId: string | null,
+    context: Record<string, unknown>,
+    onAuthorized: (authorization: PosSensitiveAuthorization) => Promise<void>,
+  ) {
     const operationId = crypto.randomUUID();
+    const activePermissions = client?.mode === "edge" ? edgePermissions : permissions;
+    if (activePermissions.includes(permissionResource)) {
+      await onAuthorized({ operationId });
+      return;
+    }
+    await requestSensitiveApproval(
+      permissionResource, lineId, context, operationId, onAuthorized,
+    );
+  }
+
+  function authorizationIsCurrent(authorization: PosSensitiveAuthorization | null) {
+    return Boolean(
+      authorization &&
+      (!authorization.expiresAt || Date.parse(authorization.expiresAt) > Date.now()),
+    );
+  }
+
+  async function authorizeSensitiveConfirmation(
+    permissionResource: string,
+    lineId: string | null,
+    context: Record<string, unknown>,
+    authorization: PosSensitiveAuthorization | null,
+    onAuthorized: (authorization: PosSensitiveAuthorization) => Promise<void>,
+  ) {
+    if (authorizationIsCurrent(authorization)) {
+      await onAuthorized(authorization!);
+      return;
+    }
+    await authorizeSensitiveEntry(
+      permissionResource,
+      lineId,
+      context,
+      onAuthorized,
+    );
+  }
+
+  async function openDiscount() {
+    if (!draft || !selectedLineId || busy) return;
+    const line = draft.lines.find((candidate) => candidate.lineId === selectedLineId);
+    if (!line) return;
     try {
-      await execute({ operationId });
+      await authorizeSensitiveEntry(
+        "sales.discount",
+        selectedLineId,
+        { action: "OpenDiscount", product: line.description },
+        async (authorization) => {
+          discountAuthorization.current = authorization;
+          setDiscountOpen(true);
+        },
+      );
     } catch (caught) {
-      if (!isApprovalRequired(caught)) throw caught;
-      let approval: PosApprovalRequest | null = null;
-      const activeClient = client;
-      if (serverConnected && activeClient) {
-        const businessId = window.localStorage.getItem("selected_business_id");
-        if (!businessId || !draft)
-          throw new Error("No fue posible identificar el negocio de esta venta.");
-        approval = await activeClient.createApproval({
-          businessId,
-          deviceId: workstation.deviceId,
-          workSessionId: workstation.workSessionId,
-          draftId: draft.draftId.value,
-          lineId,
-          permissionResource,
-          contextJson: JSON.stringify(context),
-        });
-      }
-      setSensitiveApprovalError(null);
-      setSensitiveApproval({ approval, operationId, execute });
+      showError(caught);
     }
   }
 
@@ -1105,30 +1198,25 @@ export default function PosPage() {
     setBusy(true);
     setError(null);
     try {
-      if (client.mode === "edge") {
-        await executeSensitive(
-          "work-sessions.close",
-          null,
-          {
-            action: "CloseWorkSession",
-            workSessionId: workstation.workSessionId,
-            businessName: workstation.businessName,
-            warehouseName: workstation.warehouseName,
-          },
-          async (authorization) => {
-            const preview = await client.previewWorkSessionClosure(
-              draft.draftId.value,
-              authorization,
-            );
-            closureOperationId.current = authorization.operationId ?? crypto.randomUUID();
-            setClosurePreview(preview);
-          },
-        );
-      } else {
-        const preview = await client.previewWorkSessionClosure(draft.draftId.value);
-        closureOperationId.current = null;
-        setClosurePreview(preview);
-      }
+      await authorizeSensitiveEntry(
+        "work-sessions.close",
+        null,
+        {
+          action: "OpenWorkSessionClosure",
+          workSessionId: workstation.workSessionId,
+          businessName: workstation.businessName,
+          warehouseName: workstation.warehouseName,
+        },
+        async (authorization) => {
+          const preview = await client.previewWorkSessionClosure(
+            draft.draftId.value,
+            authorization,
+          );
+          closureOperationId.current = authorization.operationId ?? crypto.randomUUID();
+          closureAuthorization.current = authorization;
+          setClosurePreview(preview);
+        },
+      );
     } catch (caught) {
       const detail = caught instanceof Error
         ? caught.message
@@ -1165,6 +1253,7 @@ export default function PosPage() {
         setClosurePreview(null);
         setClosureAttempt(null);
         closureOperationId.current = null;
+        closureAuthorization.current = null;
         if (client instanceof PosEdgeClient) {
           await logoutLocal(true);
           return;
@@ -1173,21 +1262,18 @@ export default function PosPage() {
         router.push("/dashboard");
       };
 
-      if (client.mode === "edge") {
-        await finish({ operationId: closureOperationId.current ?? crypto.randomUUID() });
-      } else {
-        await executeSensitive(
-          "work-sessions.close",
-          null,
-          {
-            action: "CloseWorkSession",
-            workSessionId: workstation.workSessionId,
-            businessName: workstation.businessName,
-            warehouseName: workstation.warehouseName,
-          },
-          finish,
-        );
-      }
+      await authorizeSensitiveConfirmation(
+        "work-sessions.close",
+        null,
+        {
+          action: "ConfirmWorkSessionClosure",
+          workSessionId: workstation.workSessionId,
+          businessName: workstation.businessName,
+          warehouseName: workstation.warehouseName,
+        },
+        closureAuthorization.current,
+        finish,
+      );
     } catch (caught) {
       const detail = caught instanceof Error
         ? caught.message
@@ -1207,6 +1293,7 @@ export default function PosPage() {
       await sensitiveApproval.execute({
         operationId: sensitiveApproval.operationId,
         approvalRequestId,
+        expiresAt: sensitiveApproval.approval?.expiresAt,
       });
       setSensitiveApproval(null);
     } catch (caught) {
@@ -1229,11 +1316,13 @@ export default function PosPage() {
         await sensitiveApproval.execute({
           operationId: sensitiveApproval.operationId,
           approvalRequestId: approval.approvalRequestId,
+          expiresAt: approval.expiresAt,
         });
       } else {
         await sensitiveApproval.execute({
           operationId: sensitiveApproval.operationId,
           supervisorSecret: secret,
+          expiresAt: new Date(Date.now() + 2 * 60 * 1000).toISOString(),
         });
       }
       setSensitiveApproval(null);
@@ -1250,12 +1339,15 @@ export default function PosPage() {
     setBusy(true);
     try {
       const line = draft.lines.find((candidate) => candidate.lineId === lineId);
-      await executeSensitive(
+      await authorizeSensitiveConfirmation(
         "sales.lines.remove",
         lineId,
-        { action: "RemoveLine", product: line?.description, quantity: line?.quantity },
+        { action: "ConfirmRemoveLine", product: line?.description ?? "Producto" },
+        lineRemovalAuthorization.current,
         async (authorization) => {
           const updated = await client.removeLine(draft.draftId.value, lineId, authorization);
+          lineRemovalAuthorization.current = null;
+          setConfirmation(null);
           setDraft(updated);
           setSelectedLineId(updated.lines.at(-1)?.lineId ?? null);
           setMessage("Producto retirado");
@@ -1274,12 +1366,15 @@ export default function PosPage() {
     setBusy(true);
     setError(null);
     try {
-      await executeSensitive(
+      await authorizeSensitiveConfirmation(
         "sales.drafts.restart",
         null,
-        { action: "RestartSale", lineCount: draft.lines.length, total: draft.payableAmount },
+        { action: "ConfirmRestartSale", lineCount: draft.lines.length, total: draft.payableAmount },
+        restartAuthorization.current,
         async (authorization) => {
           const next = await client.cancelDraft(draft.draftId.value, authorization);
+          restartAuthorization.current = null;
+          setConfirmation(null);
           setDraft(next);
           setSelectedLineId(null);
           setSelectedCustomer(null);
@@ -1301,13 +1396,15 @@ export default function PosPage() {
     setError(null);
     try {
       const line = draft.lines.find((candidate) => candidate.lineId === selectedLineId);
-      await executeSensitive(
+      await authorizeSensitiveConfirmation(
         "sales.discount",
         selectedLineId,
-        { action: "Discount", product: line?.description, discount },
+        { action: "ConfirmDiscount", product: line?.description ?? "Producto", discount },
+        discountAuthorization.current,
         async (authorization) => {
           setDraft(await client.setDiscount(
             draft.draftId.value, selectedLineId, discount, authorization));
+          discountAuthorization.current = null;
           setDiscountOpen(false);
           setMessage(discount > 0 ? "Descuento aplicado" : "Descuento retirado");
         },
@@ -1382,12 +1479,14 @@ export default function PosPage() {
     if (!confirmation) return;
     if (confirmation.kind === "line") {
       await removeLine(confirmation.lineId);
+      lineRemovalAuthorization.current = null;
     } else if (confirmation.kind === "temporary") {
       await deleteTemporary(confirmation.draftId);
     } else if (confirmation.kind === "order-save") {
       await saveOrder();
     } else {
       await cancelSale();
+      restartAuthorization.current = null;
     }
     setConfirmation(null);
   }
@@ -1520,6 +1619,11 @@ export default function PosPage() {
             ? `${result.issuedSale.documentNumber} ${issuedLabel} (DIAN ${result.issuedSale.fiscalNumber}). Pago registrado. Nueva venta lista.`
             : `${result.issuedSale.documentNumber} ${issuedLabel}. Pago registrado. Nueva venta lista.`,
       );
+      if (habilitationMode && effectiveDocumentType === "SalesInvoice") {
+        window.setTimeout(() => {
+          router.push("/dashboard/settings/fiscal?habilitationSubmitted=1");
+        }, 900);
+      }
     } catch (caught) {
       showError(caught);
     } finally {
@@ -1991,6 +2095,7 @@ function changeOnlineWorkspace() {
 edgeCapable={edgeEnrollmentRequired}
         canEnrollOffline={canEnrollOffline}
         onEnroll={enrollOffline}
+        forcedDocumentType={habilitationMode ? "SalesInvoice" : undefined}
       />
     );
   }
@@ -2161,6 +2266,13 @@ edgeCapable={edgeEnrollmentRequired}
         </div>
       </header>
 
+      {habilitationMode && (
+        <div className="flex items-center justify-between gap-4 border-b border-violet-200 bg-gradient-to-r from-violet-950 via-indigo-950 to-teal-950 px-5 py-2 text-sm text-white">
+          <span className="font-semibold">Asistente DIAN · esta factura se enviará al ambiente de habilitación</span>
+          <button type="button" onClick={() => router.push("/dashboard/settings/fiscal")} className="rounded-lg border border-white/20 px-3 py-1 text-xs font-bold hover:bg-white/10">Volver a configuración</button>
+        </div>
+      )}
+
       {client.mode === "edge" &&
         (synchronization.failed || (!serverConnected && synchronization.pendingCount > 0)) && (
         <div
@@ -2278,21 +2390,21 @@ edgeCapable={edgeEnrollmentRequired}
                 <span className="rounded bg-teal-50 px-1.5 py-0.5 text-[10px]">Ctrl+F6</span>
               </button>
               <button type="button" disabled={!hasSelectedLine || busy}
-                onClick={() => setDiscountOpen(true)}
+                onClick={() => void openDiscount()}
                 className="flex h-11 items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 text-sm font-semibold text-amber-900 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
                 <Percent className="h-4 w-4" />
                 Descuento
                 <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">F3</span>
               </button>
               <button type="button" disabled={!hasSelectedLine || busy}
-                onClick={() => selectedLineId && requestRemoveLine(selectedLineId)}
+                onClick={() => { if (selectedLineId) void requestRemoveLine(selectedLineId); }}
                 className="flex h-11 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 text-sm font-semibold text-red-800 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
                 <Trash2 className="h-4 w-4" />
                 Eliminar
                 <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">F4</span>
               </button>
               <button type="button" disabled={!draft?.lines.length || busy}
-                onClick={requestCancelSale}
+                onClick={() => void requestCancelSale()}
                 className="flex h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-slate-50 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-400">
                 <RotateCcw className="h-4 w-4" />
                 Reiniciar
@@ -2442,7 +2554,7 @@ edgeCapable={edgeEnrollmentRequired}
                       <td className="px-3 py-2 text-right">
                         <button
                           type="button"
-                          onClick={() => requestRemoveLine(line.lineId)}
+                          onClick={() => void requestRemoveLine(line.lineId)}
                           className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-slate-500 transition hover:bg-red-50 hover:text-red-700 focus:outline-none focus:ring-2 focus:ring-red-300"
                           aria-label={`Eliminar ${line.description}`}
                         >
@@ -2835,6 +2947,7 @@ edgeCapable={edgeEnrollmentRequired}
             setClosurePreview(null);
             setClosureAttempt(null);
             closureOperationId.current = null;
+            closureAuthorization.current = null;
             focusScanner();
           }}
           onConfirm={confirmSalesSessionClosure}
@@ -2908,6 +3021,7 @@ edgeCapable={edgeEnrollmentRequired}
             onConfirm={applyDiscount}
             onCancel={() => {
               setDiscountOpen(false);
+              discountAuthorization.current = null;
               focusScanner();
             }}
           />
@@ -2961,6 +3075,8 @@ edgeCapable={edgeEnrollmentRequired}
           busy={busy}
           onConfirm={confirmDestructiveAction}
           onCancel={() => {
+            if (confirmation.kind === "line") lineRemovalAuthorization.current = null;
+            if (confirmation.kind === "sale") restartAuthorization.current = null;
             setConfirmation(null);
             focusScanner();
           }}

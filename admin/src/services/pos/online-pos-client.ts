@@ -52,7 +52,7 @@ import {
 } from "./pos-edge-client";
 import { fetchWithSessionRetry } from "@/services/api/client";
 import { tenantsApi } from "@/services/api/tenants";
-import { printWorkSessionClosure, workSessionCloseRequest, workSessionClosureHtml, workSessionClosurePreviewPath } from "./pos-work-session-close";
+import { printWorkSessionClosure, workSessionCloseRequest, workSessionClosureHtml, workSessionClosurePreviewRequest } from "./pos-work-session-close";
 import { receiptBrandMarkup } from "./pos-receipt-brand";
 
 export type SalesWorkspaceOption = {
@@ -712,9 +712,15 @@ export class OnlinePosClient implements PosClient {
     draftId: string,
     authorization?: PosSensitiveAuthorization,
   ): Promise<PosAuthorizedClosurePreview> {
-    void draftId;
+    const requestDefinition = workSessionClosurePreviewRequest(
+      this.context.workSessionId,
+      draftId,
+      authorization?.approvalRequestId,
+      authorization?.operationId,
+    );
     const preview = await request<PosAuthorizedClosurePreview["preview"]>(
-      workSessionClosurePreviewPath(this.context.workSessionId),
+      requestDefinition.path,
+      requestDefinition.init,
     );
     return {
       authorizationToken: authorization?.operationId ?? crypto.randomUUID(),

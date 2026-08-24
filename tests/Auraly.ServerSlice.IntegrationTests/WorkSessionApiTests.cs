@@ -91,7 +91,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Cashier_can_count_before_close_and_is_then_asked_for_supervisor_approval()
+    public async Task Cashier_is_asked_for_supervisor_approval_before_opening_the_count()
     {
         var userId = await CreateUserAsync("work-session-supervised-close");
         using var client = fixture.CreateUserClient(
@@ -103,16 +103,11 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             fixture.WarehouseId,
             null));
 
-        using (var preview = await client.GetAsync(
-                   $"/api/commerce/v1/work-sessions/{opened.WorkSessionId:D}/closure-preview"))
-            preview.EnsureSuccessStatusCode();
-
-        using var close = CreateCloseRequest(
-            opened.WorkSessionId,
-            Guid.NewGuid().ToString("D"),
-            new CloseWorkSessionRequest(0m, null));
-        close.Headers.Add("X-Auraly-Draft-Id", Guid.NewGuid().ToString("D"));
-        using var response = await client.SendAsync(close);
+        using var preview = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"/api/commerce/v1/work-sessions/{opened.WorkSessionId:D}/closure-preview");
+        preview.Headers.Add("X-Auraly-Draft-Id", Guid.NewGuid().ToString("D"));
+        using var response = await client.SendAsync(preview);
         var problem = await response.Content.ReadAsStringAsync();
 
         Assert.Equal((HttpStatusCode)428, response.StatusCode);

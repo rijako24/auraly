@@ -59,6 +59,8 @@ La configuración fiscal visible se concentra en un solo onboarding. Razón soci
 
 Después de que el motor registra la aceptación del set de habilitación, Auraly usa `GetNumberingRange` contra producción. Las resoluciones devueltas forman un pool por tenant y conservan su clave técnica cifrada. La activación exige seleccionar una resolución libre para la sede activa. La reserva y la creación de emisor, autorización, series y cursores productivos ocurren en una sola transacción con bloqueo SQL, por lo que dos sedes no pueden tomar la misma resolución. Una asignación activa no se traslada desde la interfaz; una corrección excepcional debe tratarse como operación administrativa auditada y sólo antes de emitir documentos.
 
+El onboarding presenta los ambientes como una progresión, no como un interruptor reversible. El asistente de habilitación abre el POS con factura electrónica fijada y utiliza la venta, snapshot, firma y workers canónicos; no inserta documentos fiscales sintéticos por fuera del motor. Producción permanece bloqueada hasta la aceptación durable del set, la consulta de numeración y la selección explícita de una resolución disponible para la sede.
+
 El POS ya no captura resolución, prefijo, rango ni consecutivo inicial. Únicamente consume la configuración activa y bloquea la factura electrónica mientras la sede no haya completado la activación.
 
 ## Seguridad y despliegue

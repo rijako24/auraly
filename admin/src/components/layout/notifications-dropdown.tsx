@@ -38,7 +38,7 @@ export function NotificationsDropdown({ className }: { className?: string }) {
   const [credential, setCredential] = useState("");
   const [credentialConfirmation, setCredentialConfirmation] = useState("");
   const [savingCredential, setSavingCredential] = useState(false);
-  const [credentialValidity, setCredentialValidity] = useState<"8"|"168"|"always">("always");
+  const [credentialValidity, setCredentialValidity] = useState<"once"|"8"|"168"|"always">("always");
   const [credentialStatus, setCredentialStatus] = useState<SupervisorCredentialStatus | null>(null);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(() => typeof Notification === "undefined" ? "denied" : Notification.permission);
   const knownIds = useRef(new Set<string>());
@@ -103,7 +103,13 @@ export function NotificationsDropdown({ className }: { className?: string }) {
     setSavingCredential(true);
     setError(null);
     try {
-      await posApprovalClient.configureCredential(credential, credentialValidity === "always" ? null : Number(credentialValidity) as 8|168);
+      await posApprovalClient.configureCredential(
+        credential,
+        credentialValidity === "once" || credentialValidity === "always"
+          ? null
+          : Number(credentialValidity) as 8|168,
+        credentialValidity === "once",
+      );
       setCredentialStatus(await posApprovalClient.credentialStatus());
       setCredential("");
       setCredentialConfirmation("");
@@ -202,10 +208,10 @@ export function NotificationsDropdown({ className }: { className?: string }) {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            {credentialStatus?.isConfigured&&<div className="rounded-xl border bg-muted/40 p-3 text-sm"><strong>Credencial activa</strong><p className="text-muted-foreground">{credentialStatus.validUntil?`Vence ${new Date(credentialStatus.validUntil).toLocaleString("es-CO")}`:"Sin vencimiento"}</p></div>}
+            {credentialStatus?.isConfigured&&<div className="rounded-xl border bg-muted/40 p-3 text-sm"><strong>Credencial activa</strong><p className="text-muted-foreground">{credentialStatus.isOneTime?"Válida para una sola autorización":credentialStatus.validUntil?`Vence ${new Date(credentialStatus.validUntil).toLocaleString("es-CO")}`:"Sin vencimiento"}</p></div>}
             <Input type="password" autoComplete="new-password" minLength={6} maxLength={32} value={credential} onChange={(event) => setCredential(event.target.value)} placeholder="Nueva credencial" />
             <Input type="password" autoComplete="new-password" minLength={6} maxLength={32} value={credentialConfirmation} onChange={(event) => setCredentialConfirmation(event.target.value)} placeholder="Confirmar credencial" />
-            <Select value={credentialValidity} onValueChange={value=>setCredentialValidity(value as "8"|"168"|"always")}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="8">Válida por 8 horas</SelectItem><SelectItem value="168">Válida por 1 semana</SelectItem><SelectItem value="always">Siempre, hasta revocarla</SelectItem></SelectContent></Select>
+            <Select value={credentialValidity} onValueChange={value=>setCredentialValidity(value as "once"|"8"|"168"|"always")}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="once">Un solo uso</SelectItem><SelectItem value="8">Válida por 8 horas</SelectItem><SelectItem value="168">Válida por 1 semana</SelectItem><SelectItem value="always">Siempre, hasta revocarla</SelectItem></SelectContent></Select>
             {credentialConfirmation && credential !== credentialConfirmation && <p className="text-sm text-destructive">Las credenciales no coinciden.</p>}
           </div>
           <DialogFooter>
@@ -225,10 +231,10 @@ function describeContext(request: PosApprovalRequest) {
   const source = request.deviceId ? `Caja ${request.deviceId.slice(0,8).toLocaleUpperCase("es-CO")} · ` : "";
   try {
     const context = JSON.parse(request.contextJson) as { action?: string; product?: string; discount?: number; total?: number };
-    if (context.action === "RemoveLine") return `${source}Eliminar ${context.product || "un producto"} de la venta.`;
-    if (context.action === "RestartSale") return `${source}Reiniciar la venta por completo${context.total ? ` · Total ${context.total}` : ""}.`;
-    if (context.action === "Discount") return `${source}Aplicar descuento a ${context.product || "un producto"}.`;
-    if (context.action === "CloseWorkSession") return `${source}Cerrar y conciliar la caja abierta.`;
+    if (["RemoveLine", "OpenRemoveLine", "ConfirmRemoveLine"].includes(context.action ?? "")) return `${source}Eliminar ${context.product || "un producto"} de la venta.`;
+    if (["RestartSale", "OpenRestartSale", "ConfirmRestartSale"].includes(context.action ?? "")) return `${source}Reiniciar la venta por completo${context.total ? ` · Total ${context.total}` : ""}.`;
+    if (["Discount", "OpenDiscount", "ConfirmDiscount"].includes(context.action ?? "")) return `${source}Aplicar descuento a ${context.product || "un producto"}.`;
+    if (["CloseWorkSession", "OpenWorkSessionClosure", "ConfirmWorkSessionClosure"].includes(context.action ?? "")) return `${source}Cerrar y conciliar la caja abierta.`;
   } catch { /* preserve generic description */ }
   return `${source}Permiso solicitado: ${request.permissionResource}`;
 }

@@ -10,7 +10,8 @@ public sealed record PosOfflineSupervisorCredentialVerifier(
     byte[] Salt,
     byte[] Hash,
     int Iterations,
-    DateTimeOffset ChangedAt);
+    DateTimeOffset ChangedAt,
+    bool IsOneTime = false);
 
 public sealed record PosOfflineUserProjection(
     Guid UserId,

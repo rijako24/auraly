@@ -379,6 +379,54 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Null(revokedStatus.ValidUntil);
     }
 
+    [Fact]
+    public async Task One_time_secondary_credential_is_consumed_by_its_first_authorization()
+    {
+        var supervisorId = Guid.NewGuid();
+        await SeedSupervisorAsync(supervisorId);
+        using var supervisor = fixture.CreateUserClient(
+            supervisorId,
+            CommercePermissionCodes.PosApprovalsManageCredential);
+        using var configured = await supervisor.PutAsJsonAsync(
+            "/api/commerce/v1/pos/approvals/supervisor-credential",
+            new ConfigureSupervisorCredentialRequest(
+                "One-Time-Secondary-1", null, true));
+        configured.EnsureSuccessStatusCode();
+        var configuredStatus = await supervisor.GetFromJsonAsync<SupervisorCredentialStatusView>(
+            "/api/commerce/v1/pos/approvals/supervisor-credential");
+        Assert.True(configuredStatus!.IsConfigured);
+        Assert.True(configuredStatus.IsOneTime);
+
+        using var requester = fixture.CreateAdminClient(CommercePermissionCodes.SalesCreate);
+        async Task<PosApprovalRequestView> CreateRequestAsync()
+        {
+            using var response = await requester.PostAsJsonAsync(
+                "/api/commerce/v1/pos/approvals/",
+                new CreatePosApprovalRequest(
+                    fixture.BusinessId, null, null, Guid.NewGuid(), null,
+                    CommercePermissionCodes.SalesDiscount,
+                    "{\"action\":\"Discount\"}"));
+            response.EnsureSuccessStatusCode();
+            return (await response.Content.ReadFromJsonAsync<PosApprovalRequestView>())!;
+        }
+
+        var first = await CreateRequestAsync();
+        using var firstAuthorization = await requester.PostAsJsonAsync(
+            $"/api/commerce/v1/pos/approvals/{first.ApprovalRequestId:D}/local-authorization",
+            new AuthorizePosApprovalLocallyRequest("One-Time-Secondary-1"));
+        firstAuthorization.EnsureSuccessStatusCode();
+
+        var consumedStatus = await supervisor.GetFromJsonAsync<SupervisorCredentialStatusView>(
+            "/api/commerce/v1/pos/approvals/supervisor-credential");
+        Assert.False(consumedStatus!.IsConfigured);
+
+        var second = await CreateRequestAsync();
+        using var secondAuthorization = await requester.PostAsJsonAsync(
+            $"/api/commerce/v1/pos/approvals/{second.ApprovalRequestId:D}/local-authorization",
+            new AuthorizePosApprovalLocallyRequest("One-Time-Secondary-1"));
+        Assert.Equal(HttpStatusCode.BadRequest, secondAuthorization.StatusCode);
+    }
+
     private async Task SeedSupervisorAsync(Guid userId)
     {
         var roleId = Guid.NewGuid();

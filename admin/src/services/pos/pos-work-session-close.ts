@@ -2,6 +2,24 @@ export function workSessionClosurePreviewPath(workSessionId: string): string {
   return `/api/commerce/v1/work-sessions/${encodeURIComponent(workSessionId)}/closure-preview`;
 }
 
+export function workSessionClosurePreviewRequest(
+  workSessionId: string,
+  draftId: string,
+  approvalRequestId?: string,
+  operationId?: string,
+): { path: string; init: RequestInit } {
+  return {
+    path: workSessionClosurePreviewPath(workSessionId),
+    init: {
+      headers: {
+        "X-Auraly-Draft-Id": draftId,
+        ...(approvalRequestId ? { "X-Auraly-Approval-Id": approvalRequestId } : {}),
+        ...(operationId ? { "X-Auraly-Operation-Id": operationId } : {}),
+      },
+    },
+  };
+}
+
 export function workSessionCloseRequest(
   workSessionId: string,
   operationId: string,

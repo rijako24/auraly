@@ -89,6 +89,70 @@ public sealed class PosLocalApprovalTests : IAsyncLifetime
         Assert.Equal(0L, (long)(await count.ExecuteScalarAsync())!);
     }
 
+    [Fact]
+    public async Task One_time_supervisor_credential_cannot_be_reused_or_restored_by_the_same_snapshot()
+    {
+        var store = Assert.IsType<PosLocalIdentityStore>(_store);
+        var now = DateTimeOffset.UtcNow.AddMinutes(1);
+        var salt = RandomNumberGenerator.GetBytes(32);
+        const int iterations = 210_000;
+        var hash = Rfc2898DeriveBytes.Pbkdf2(
+            "One-Time-Supervisor-1", salt, iterations,
+            HashAlgorithmName.SHA256, 32);
+        var cashierPassword = PosOfflinePasswordHasher.Hash("Cashier-Password-1", now);
+        var supervisorPassword = PosOfflinePasswordHasher.Hash("Supervisor-Password-1", now);
+        var snapshot = new PosOfflineIdentitySnapshot(
+            "one-time-approval-test",
+            now,
+            now.AddDays(1),
+            [
+                new PosOfflineUserProjection(
+                    _cashierId, "cashier", "Cajero",
+                    [CommercePermissionCodes.SalesCreate], cashierPassword),
+                new PosOfflineUserProjection(
+                    _supervisorId, "supervisor", "Supervisora",
+                    [
+                        CommercePermissionCodes.SalesCreate,
+                        CommercePermissionCodes.SalesRemoveLine,
+                        CommercePermissionCodes.PosApprovalsAuthorize
+                    ],
+                    supervisorPassword,
+                    new PosOfflineSupervisorCredentialVerifier(
+                        salt, hash, iterations, now, true))
+            ]);
+        await store.ApplySnapshotAsync(snapshot);
+        var session = await store.LoginAsync(
+            new PosLocalLoginRequest("cashier", "Cashier-Password-1"),
+            _cashierId,
+            now.AddHours(8));
+
+        await store.AuthorizeSensitiveAsync(
+            session,
+            CommercePermissionCodes.SalesRemoveLine,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            "One-Time-Supervisor-1");
+
+        var second = await Assert.ThrowsAsync<PosLocalApprovalException>(() =>
+            store.AuthorizeSensitiveAsync(
+                session,
+                CommercePermissionCodes.SalesRemoveLine,
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                "One-Time-Supervisor-1"));
+        Assert.Equal("InvalidSupervisorCredential", second.Code);
+
+        await store.ApplySnapshotAsync(snapshot);
+        var afterRefresh = await Assert.ThrowsAsync<PosLocalApprovalException>(() =>
+            store.AuthorizeSensitiveAsync(
+                session,
+                CommercePermissionCodes.SalesRemoveLine,
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                "One-Time-Supervisor-1"));
+        Assert.Equal("InvalidSupervisorCredential", afterRefresh.Code);
+    }
+
     public async Task InitializeAsync()
     {
         _store = new PosLocalIdentityStore(

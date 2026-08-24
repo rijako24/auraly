@@ -155,6 +155,7 @@ export type PosSensitiveAuthorization = {
   approvalRequestId?: string;
   supervisorSecret?: string;
   operationId?: string;
+  expiresAt?: string;
 };
 
 export type PosDraft = {

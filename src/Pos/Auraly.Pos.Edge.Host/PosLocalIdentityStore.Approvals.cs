@@ -87,6 +87,11 @@ public sealed partial class PosLocalIdentityStore
             throw new InvalidOperationException("The local sensitive authorization is not active.");
     }
 
+    private sealed record ResolvedSupervisor(
+        Guid UserId,
+        bool IsOneTime,
+        DateTimeOffset ChangedAt);
+
     private async Task<Guid?> ResolveSupervisorAsync(
         Guid requesterId,
         string permissionResource,
@@ -111,22 +116,46 @@ public sealed partial class PosLocalIdentityStore
         command.Parameters.AddWithValue("$permission", permissionResource);
         command.Parameters.AddWithValue(
             "$authorize", CommercePermissionCodes.PosApprovalsAuthorize);
-        Guid? matched = null;
+        ResolvedSupervisor? matched = null;
         var secretBytes = Encoding.UTF8.GetBytes(secret);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
         {
-            var verifier = JsonSerializer.Deserialize<PosOfflineSupervisorCredentialVerifier>(
-                PosEdgeProtectedSecret.UnprotectIdentityVerifier(
-                    keyDirectory, reader.GetString(1)))
-                ?? throw new InvalidDataException("The local supervisor verifier is invalid.");
-            var derived = Rfc2898DeriveBytes.Pbkdf2(
-                secretBytes, verifier.Salt, verifier.Iterations,
-                HashAlgorithmName.SHA256, verifier.Hash.Length);
-            if (CryptographicOperations.FixedTimeEquals(derived, verifier.Hash))
-                matched = Guid.Parse(reader.GetString(0));
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var verifier = JsonSerializer.Deserialize<PosOfflineSupervisorCredentialVerifier>(
+                    PosEdgeProtectedSecret.UnprotectIdentityVerifier(
+                        keyDirectory, reader.GetString(1)))
+                    ?? throw new InvalidDataException("The local supervisor verifier is invalid.");
+                var derived = Rfc2898DeriveBytes.Pbkdf2(
+                    secretBytes, verifier.Salt, verifier.Iterations,
+                    HashAlgorithmName.SHA256, verifier.Hash.Length);
+                if (CryptographicOperations.FixedTimeEquals(derived, verifier.Hash))
+                    matched = new(
+                        Guid.Parse(reader.GetString(0)),
+                        verifier.IsOneTime,
+                        verifier.ChangedAt);
+            }
         }
-        return matched;
+        if (matched?.IsOneTime == true)
+        {
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            await using var consume = connection.CreateCommand();
+            consume.Transaction = (SqliteTransaction)transaction;
+            consume.CommandText = """
+                INSERT OR IGNORE INTO PosConsumedOneTimeSupervisorCredentials(
+                    UserId,ChangedAt,ConsumedAt)
+                VALUES($id,$changedAt,$now);
+                UPDATE PosOfflineUsers
+                SET ProtectedSupervisorCredential=NULL
+                WHERE UserId=$id AND ProtectedSupervisorCredential IS NOT NULL;
+                """;
+            consume.Parameters.AddWithValue("$id", matched.UserId.ToString("D"));
+            consume.Parameters.AddWithValue("$changedAt", Format(matched.ChangedAt));
+            consume.Parameters.AddWithValue("$now", Format(timeProvider.GetUtcNow()));
+            await consume.ExecuteNonQueryAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        return matched?.UserId;
     }
 
     private static void ValidateSensitivePermission(string permissionResource)

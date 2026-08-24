@@ -13,7 +13,8 @@ public sealed record SupervisorCredentialVerifier(
     Guid UserId,
     byte[] Salt,
     byte[] Hash,
-    int Iterations);
+    int Iterations,
+    bool IsOneTime);
 
 public interface IPosApprovalStore
 {
@@ -53,7 +54,11 @@ public interface IPosApprovalStore
         byte[] hash,
         int iterations,
         DateTimeOffset? validUntil,
+        bool isOneTime,
         CancellationToken cancellationToken);
+
+    Task<bool> ConsumeOneTimeCredentialAsync(
+        Guid tenantId, Guid userId, CancellationToken cancellationToken);
 
     Task<SupervisorCredentialStatusView> CredentialStatusAsync(
         PosApprovalUserIdentity user, Guid targetUserId, CancellationToken cancellationToken);
@@ -193,23 +198,30 @@ public sealed class PosApprovalService(
         var candidates = await store.AuthorizersAsync(
             requester.TenantId, approval.BusinessId, approval.PermissionResource, cancellationToken);
         var secretBytes = System.Text.Encoding.UTF8.GetBytes(secret);
-        Guid? authorizer = null;
+        SupervisorCredentialVerifier? authorizer = null;
         foreach (var candidate in candidates)
         {
             var derived = System.Security.Cryptography.Rfc2898DeriveBytes.Pbkdf2(
                 secretBytes, candidate.Salt, candidate.Iterations,
                 System.Security.Cryptography.HashAlgorithmName.SHA256, candidate.Hash.Length);
             if (System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(derived, candidate.Hash))
-                authorizer = candidate.UserId;
+                authorizer = candidate;
         }
 
         if (authorizer is null)
             throw new PosApprovalException("InvalidCredential", "La credencial no corresponde a un supervisor autorizado.");
-        if (authorizer.Value == requester.UserId)
+        if (authorizer.UserId == requester.UserId)
             throw new PosApprovalException("SelfApprovalForbidden", "Quien solicita no puede aprobar su propia acción.");
 
+        if (authorizer.IsOneTime &&
+            !await store.ConsumeOneTimeCredentialAsync(
+                requester.TenantId, authorizer.UserId, cancellationToken))
+            throw new PosApprovalException(
+                "InvalidCredential",
+                "La credencial de un solo uso ya fue utilizada.");
+
         var authorizerIdentity = new PosApprovalUserIdentity(
-            authorizer.Value,
+            authorizer.UserId,
             requester.TenantId,
             requester.BusinessId,
             new HashSet<string>(StringComparer.Ordinal)
@@ -249,6 +261,35 @@ public sealed class PosApprovalService(
         await store.CompleteAsync(
             user, approvalRequestId, operationId, cancellationToken);
         return result;
+    }
+
+    public async Task ValidateEntryAsync(
+        PosApprovalUserIdentity user,
+        Guid approvalRequestId,
+        Guid businessId,
+        Guid draftId,
+        Guid? lineId,
+        string permissionResource,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureBusiness(user, businessId);
+        ValidateSensitivePermission(permissionResource);
+        if (user.Permissions.Contains(permissionResource)) return;
+        if (approvalRequestId == Guid.Empty)
+            throw new PosApprovalException("ApprovalRequired", "Esta acción requiere aprobación de un supervisor.");
+
+        var approval = await store.GetAsync(user, approvalRequestId, cancellationToken)
+            ?? throw new PosApprovalException("InvalidApproval", "La autorización no existe.");
+        if (approval.RequestedByUserId != user.UserId ||
+            approval.BusinessId != businessId ||
+            approval.DraftId != draftId ||
+            approval.LineId != lineId ||
+            !string.Equals(approval.PermissionResource, permissionResource, StringComparison.Ordinal) ||
+            !string.Equals(approval.Status, PosApprovalStatus.Approved, StringComparison.Ordinal) ||
+            approval.ExpiresAt <= timeProvider.GetUtcNow())
+            throw new PosApprovalException(
+                "InvalidApproval",
+                "La autorización no corresponde a esta acción o ya no está vigente.");
     }
 
     public async Task<PosApprovalRequestView> CreateForDeviceAsync(
@@ -303,30 +344,34 @@ public sealed class PosApprovalService(
         PosApprovalUserIdentity user,
         string secret,
         int? validityHours,
+        bool isOneTime,
         CancellationToken cancellationToken = default)
     {
-        return ConfigureCredentialForUserAsync(user, user.UserId, secret, validityHours, cancellationToken);
+        return ConfigureCredentialForUserAsync(
+            user, user.UserId, secret, validityHours, isOneTime, cancellationToken);
     }
 
     public Task ConfigureCredentialForUserAsync(
         PosApprovalUserIdentity user, Guid targetUserId, string secret, int? validityHours,
+        bool isOneTime,
         CancellationToken cancellationToken = default)
     {
         Require(user, CommercePermissionCodes.PosApprovalsManageCredential);
         if (targetUserId == Guid.Empty) throw new PosApprovalException("InvalidUser", "El usuario autorizador es obligatorio.");
         if (string.IsNullOrWhiteSpace(secret) || secret.Length is < 6 or > 32)
             throw new PosApprovalException("WeakCredential", "La credencial debe tener entre 6 y 32 caracteres.");
-        if (validityHours is not (null or 8 or 168))
+        if (!isOneTime && validityHours is not (null or 8 or 168))
             throw new PosApprovalException("InvalidValidity", "La vigencia debe ser de 8 horas, 1 semana o permanente.");
 
         var salt = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
         var hash = System.Security.Cryptography.Rfc2898DeriveBytes.Pbkdf2(
             secret, salt, Iterations,
             System.Security.Cryptography.HashAlgorithmName.SHA256, 32);
-        DateTimeOffset? validUntil = validityHours.HasValue
+        DateTimeOffset? validUntil = !isOneTime && validityHours.HasValue
             ? timeProvider.GetUtcNow().AddHours(validityHours.Value)
             : null;
-        return store.ConfigureCredentialAsync(user, targetUserId, salt, hash, Iterations, validUntil, cancellationToken);
+        return store.ConfigureCredentialAsync(
+            user, targetUserId, salt, hash, Iterations, validUntil, isOneTime, cancellationToken);
     }
 
     public Task<SupervisorCredentialStatusView> CredentialStatusAsync(

@@ -107,7 +107,7 @@ public sealed class SqlPosApprovalStore(
     {
         await using var connection=connections.Create(); await connection.OpenAsync(cancellationToken);
         const string sql="""
-            SELECT DISTINCT u.UserId,c.SecretSalt,c.SecretHash,c.SecretIterations
+            SELECT DISTINCT u.UserId,c.SecretSalt,c.SecretHash,c.SecretIterations,c.IsOneTime
             FROM dbo.AppUsers u
             JOIN dbo.SupervisorCredentials c ON c.UserId=u.UserId AND c.IsActive=1 AND (c.ValidUntil IS NULL OR c.ValidUntil>SYSUTCDATETIME())
             JOIN dbo.UserRoles ur ON ur.UserId=u.UserId AND (ur.BusinessId IS NULL OR ur.BusinessId=@BusinessId)
@@ -115,19 +115,20 @@ public sealed class SqlPosApprovalStore(
             JOIN dbo.RolePermissions rp ON rp.RoleId=r.RoleId
             JOIN dbo.Permissions p ON p.PermissionId=rp.PermissionId
             WHERE u.TenantId=@TenantId AND u.IsActive=1 AND p.Resource IN(@Requested,@Authorize)
-            GROUP BY u.UserId,c.SecretSalt,c.SecretHash,c.SecretIterations
+            GROUP BY u.UserId,c.SecretSalt,c.SecretHash,c.SecretIterations,c.IsOneTime
             HAVING COUNT(DISTINCT p.Resource)=2;
             """;
         await using var command=new SqlCommand(sql,connection); Add(command,"@TenantId",tenantId); Add(command,"@BusinessId",businessId);
         Add(command,"@Requested",permissionResource); Add(command,"@Authorize",CommercePermissionCodes.PosApprovalsAuthorize);
         var values=new List<SupervisorCredentialVerifier>(); await using var reader=await command.ExecuteReaderAsync(cancellationToken);
-        while(await reader.ReadAsync(cancellationToken)) values.Add(new(reader.GetGuid(0),(byte[])reader[1],(byte[])reader[2],reader.GetInt32(3)));
+        while(await reader.ReadAsync(cancellationToken)) values.Add(new(reader.GetGuid(0),(byte[])reader[1],(byte[])reader[2],reader.GetInt32(3),reader.GetBoolean(4)));
         return values;
     }
 
     public async Task ConfigureCredentialAsync(
         PosApprovalUserIdentity user, Guid targetUserId, byte[] salt, byte[] hash, int iterations,
         DateTimeOffset? validUntil,
+        bool isOneTime,
         CancellationToken cancellationToken)
     {
         await using var connection=connections.Create(); await connection.OpenAsync(cancellationToken);
@@ -148,10 +149,10 @@ public sealed class SqlPosApprovalStore(
             UPDATE dbo.SupervisorCredentials
             SET IsActive=0,RevokedByUserId=@ActorUserId,RevokedAt=@Now
             WHERE UserId=@TargetUserId AND IsActive=1;
-            INSERT dbo.SupervisorCredentials(CredentialId,UserId,SecretSalt,SecretHash,SecretIterations,IsActive,CreatedByUserId,CreatedAt,ValidUntil)
-            VALUES(@Id,@TargetUserId,@Salt,@Hash,@Iterations,1,@ActorUserId,@Now,@ValidUntil);
+            INSERT dbo.SupervisorCredentials(CredentialId,UserId,SecretSalt,SecretHash,SecretIterations,IsActive,CreatedByUserId,CreatedAt,ValidUntil,IsOneTime)
+            VALUES(@Id,@TargetUserId,@Salt,@Hash,@Iterations,1,@ActorUserId,@Now,@ValidUntil,@IsOneTime);
             """,connection,transaction);
-        Add(command,"@Id",ids.NewId());Add(command,"@TargetUserId",targetUserId);Add(command,"@ActorUserId",user.UserId);Add(command,"@TenantId",user.TenantId);Add(command,"@BusinessId",user.BusinessId);Add(command,"@Salt",salt);Add(command,"@Hash",hash);Add(command,"@Iterations",iterations);Add(command,"@Now",now);Add(command,"@ValidUntil",validUntil);
+        Add(command,"@Id",ids.NewId());Add(command,"@TargetUserId",targetUserId);Add(command,"@ActorUserId",user.UserId);Add(command,"@TenantId",user.TenantId);Add(command,"@BusinessId",user.BusinessId);Add(command,"@Salt",salt);Add(command,"@Hash",hash);Add(command,"@Iterations",iterations);Add(command,"@Now",now);Add(command,"@ValidUntil",validUntil);Add(command,"@IsOneTime",isOneTime);
         try{await command.ExecuteNonQueryAsync(cancellationToken);}catch(SqlException exception)when(exception.Number==51070){throw new PosApprovalException("InvalidAuthorizer",exception.Message);}await transaction.CommitAsync(cancellationToken);
     }
 
@@ -160,7 +161,7 @@ public sealed class SqlPosApprovalStore(
     {
         await using var connection=connections.Create();await connection.OpenAsync(cancellationToken);
         await using var command=new SqlCommand("""
-            SELECT TOP(1) CreatedAt,ValidUntil
+            SELECT TOP(1) CreatedAt,ValidUntil,IsOneTime
             FROM dbo.SupervisorCredentials
             WHERE UserId=@TargetUserId AND IsActive=1 AND (ValidUntil IS NULL OR ValidUntil>SYSUTCDATETIME())
               AND EXISTS(SELECT 1 FROM dbo.AppUsers WHERE UserId=@TargetUserId AND TenantId=@TenantId)
@@ -168,8 +169,25 @@ public sealed class SqlPosApprovalStore(
             """,connection);Add(command,"@TargetUserId",targetUserId);Add(command,"@TenantId",user.TenantId);
         await using var reader=await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken)
-            ? new(true,reader.GetFieldValue<DateTimeOffset>(0),reader.IsDBNull(1)?null:reader.GetFieldValue<DateTimeOffset>(1))
+            ? new(true,reader.GetFieldValue<DateTimeOffset>(0),reader.IsDBNull(1)?null:reader.GetFieldValue<DateTimeOffset>(1),reader.GetBoolean(2))
             : new(false,null,null);
+    }
+
+    public async Task<bool> ConsumeOneTimeCredentialAsync(
+        Guid tenantId, Guid userId, CancellationToken cancellationToken)
+    {
+        await using var connection=connections.Create();await connection.OpenAsync(cancellationToken);
+        await using var command=new SqlCommand("""
+            UPDATE credential WITH(UPDLOCK,ROWLOCK)
+            SET IsActive=0,RevokedByUserId=@UserId,RevokedAt=@Now
+            FROM dbo.SupervisorCredentials credential
+            JOIN dbo.AppUsers userAccount ON userAccount.UserId=credential.UserId
+            WHERE credential.UserId=@UserId AND userAccount.TenantId=@TenantId
+              AND credential.IsActive=1 AND credential.IsOneTime=1
+              AND (credential.ValidUntil IS NULL OR credential.ValidUntil>@Now);
+            """,connection);
+        Add(command,"@UserId",userId);Add(command,"@TenantId",tenantId);Add(command,"@Now",timeProvider.GetUtcNow());
+        return await command.ExecuteNonQueryAsync(cancellationToken)==1;
     }
 
     public async Task RevokeCredentialAsync(

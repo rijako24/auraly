@@ -100,9 +100,36 @@ public static class WorkSessionApi
             HttpContext context,
             Guid workSessionId,
             WorkSessionService service,
+            PosApprovalService approvals,
             CancellationToken cancellationToken) =>
-            await Handle(async () => Results.Ok(await service.PreviewClosureAsync(
-                context.User.ToWorkSessionIdentity(), workSessionId, cancellationToken))));
+            await Handle(async () =>
+            {
+                var identity = context.User.ToWorkSessionIdentity();
+                if (!identity.Permissions.Contains(WorkSessionPermissionCodes.Close))
+                {
+                    if (!Guid.TryParse(
+                            context.Request.Headers["X-Auraly-Draft-Id"].ToString(),
+                            out var draftId) || draftId == Guid.Empty)
+                        throw new WorkSessionValidationException(
+                            "No fue posible identificar la venta activa para solicitar autorización.");
+                    var approvalId = Guid.TryParse(
+                        context.Request.Headers["X-Auraly-Approval-Id"].ToString(),
+                        out var parsedApprovalId)
+                        ? parsedApprovalId
+                        : Guid.Empty;
+                    var approvalIdentity = context.User.ToPosApprovalIdentity();
+                    await approvals.ValidateEntryAsync(
+                        approvalIdentity,
+                        approvalId,
+                        approvalIdentity.BusinessId,
+                        draftId,
+                        null,
+                        WorkSessionPermissionCodes.Close,
+                        cancellationToken);
+                }
+                return Results.Ok(await service.PreviewClosureAsync(
+                    identity, workSessionId, cancellationToken));
+            }));
 
         group.MapGet("/cash-differences", async (
             HttpContext context,

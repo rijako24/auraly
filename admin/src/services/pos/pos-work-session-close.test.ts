@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { formatWorkSessionCountInput, normalizeWorkSessionCountInput, workSessionCloseRequest, workSessionClosureHtml, workSessionClosurePreviewPath, workSessionPaymentMethodName, workSessionPaymentMethodRequiresCount } from "./pos-work-session-close";
+import { formatWorkSessionCountInput, normalizeWorkSessionCountInput, workSessionCloseRequest, workSessionClosureHtml, workSessionClosurePreviewRequest, workSessionPaymentMethodName, workSessionPaymentMethodRequiresCount } from "./pos-work-session-close";
 
 test("online closure uses the authenticated server work-session endpoints", () => {
-  assert.equal(workSessionClosurePreviewPath("session/1"), "/api/commerce/v1/work-sessions/session%2F1/closure-preview");
+  const preview = workSessionClosurePreviewRequest("session/1", "draft-1", "approval-1", "operation-1");
+  assert.equal(preview.path, "/api/commerce/v1/work-sessions/session%2F1/closure-preview");
+  assert.deepEqual(preview.init.headers, { "X-Auraly-Draft-Id": "draft-1", "X-Auraly-Approval-Id": "approval-1", "X-Auraly-Operation-Id": "operation-1" });
   const request = workSessionCloseRequest("session-1", "operation-1", "draft-1", "approval-1", 120000, [{ paymentMethodCode: "Cash", countedAmount: 120000 }], "Conteo");
   assert.equal(request.path, "/api/commerce/v1/work-sessions/session-1/close");
   assert.deepEqual(request.init.headers, { "Idempotency-Key": "operation-1", "X-Auraly-Draft-Id": "draft-1", "X-Auraly-Approval-Id": "approval-1" });
