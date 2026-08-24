@@ -34,6 +34,21 @@ public sealed class ReleasePackagingTests
             script, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Environment_verification_retries_during_post_deploy_warmup()
+    {
+        var workflow = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            ".github",
+            "workflows",
+            "deploy-auraly-release.yml"));
+
+        Assert.Contains("for ($attempt = 1; $attempt -le 6; $attempt++)", workflow,
+            StringComparison.Ordinal);
+        Assert.Contains("Start-Sleep -Seconds 10", workflow, StringComparison.Ordinal);
+        Assert.Contains("if (-not $healthy)", workflow, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

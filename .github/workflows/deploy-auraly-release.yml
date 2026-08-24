@@ -245,8 +245,20 @@ jobs:
             "https://func-auraly-$suffix.azurewebsites.net/api/health",
             "https://$admin")
           foreach ($uri in $uris) {
-            $response = Invoke-WebRequest -Uri $uri -TimeoutSec 60
-            if ($response.StatusCode -ne 200) { throw "$uri devolvio $($response.StatusCode)." }
+            $healthy = $false
+            for ($attempt = 1; $attempt -le 6; $attempt++) {
+              try {
+                $response = Invoke-WebRequest -Uri $uri -TimeoutSec 60
+                if ($response.StatusCode -eq 200) {
+                  $healthy = $true
+                  break
+                }
+              } catch {
+                if ($attempt -eq 6) { throw }
+              }
+              Start-Sleep -Seconds 10
+            }
+            if (-not $healthy) { throw "$uri no quedo saludable despues de 6 intentos." }
           }
           "## Verificacion final" >> $env:GITHUB_STEP_SUMMARY
           "Release ``${{ inputs.version }}`` saludable en ``${{ inputs.environment }}``." >> $env:GITHUB_STEP_SUMMARY
