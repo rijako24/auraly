@@ -43,16 +43,16 @@ public sealed class SqlProtectedFiscalCredentialVault(
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND IsActive=1)
                 THROW 51021,'Business is outside the authenticated tenant.',1;
             MERGE fiscal.FiscalCredentialSecrets AS target
-            USING (SELECT @BusinessId BusinessId) AS source
-            ON target.BusinessId=source.BusinessId
+            USING (SELECT @TenantId TenantId) AS source
+            ON target.TenantId=source.TenantId
             WHEN MATCHED THEN UPDATE SET
                 ProtectedSoftwarePin=@Pin,ProtectedCertificatePfx=@Pfx,
                 CertificateThumbprint=@Thumbprint,CertificateValidFrom=@ValidFrom,
                 CertificateValidTo=@ValidTo,UpdatedAt=@Now
             WHEN NOT MATCHED THEN INSERT(
-                BusinessId,ProtectedSoftwarePin,ProtectedCertificatePfx,
+                TenantId,ProtectedSoftwarePin,ProtectedCertificatePfx,
                 CertificateThumbprint,CertificateValidFrom,CertificateValidTo,CreatedAt,UpdatedAt)
-              VALUES(@BusinessId,@Pin,@Pfx,@Thumbprint,@ValidFrom,@ValidTo,@Now,@Now);
+              VALUES(@TenantId,@Pin,@Pfx,@Thumbprint,@ValidFrom,@ValidTo,@Now,@Now);
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
@@ -66,7 +66,7 @@ public sealed class SqlProtectedFiscalCredentialVault(
         Add(command, "@ValidTo", validTo);
         Add(command, "@Now", DateTimeOffset.UtcNow);
         await command.ExecuteNonQueryAsync(cancellationToken);
-        var reference = $"fiscal://{businessId:N}";
+        var reference = $"fiscal://tenant/{tenantId:N}";
         return new FiscalCredentialReference(
             "ProtectedDatabase", reference, reference, thumbprint, validFrom, validTo);
     }
@@ -74,37 +74,47 @@ public sealed class SqlProtectedFiscalCredentialVault(
     public async Task<string> ResolveSoftwarePinAsync(
         Guid businessId, string secretReference, CancellationToken cancellationToken)
     {
-        ValidateReference(businessId, secretReference);
+        var tenantId = ParseTenantReference(secretReference);
         var payload = await ReadAsync(
-            businessId, "ProtectedSoftwarePin", cancellationToken);
+            tenantId, businessId, "ProtectedSoftwarePin", cancellationToken);
         return Encoding.UTF8.GetString(Unprotect(payload));
     }
 
     public async Task<byte[]> ResolveCertificatePfxAsync(
         Guid businessId, string certificateKeyReference, CancellationToken cancellationToken)
     {
-        ValidateReference(businessId, certificateKeyReference);
+        var tenantId = ParseTenantReference(certificateKeyReference);
         var payload = await ReadAsync(
-            businessId, "ProtectedCertificatePfx", cancellationToken);
+            tenantId, businessId, "ProtectedCertificatePfx", cancellationToken);
         return Unprotect(payload);
     }
 
     private async Task<byte[]> ReadAsync(
-        Guid businessId, string column, CancellationToken cancellationToken)
+        Guid tenantId, Guid businessId, string column, CancellationToken cancellationToken)
     {
-        var sql = $"SELECT {column} FROM fiscal.FiscalCredentialSecrets WHERE BusinessId=@BusinessId;";
+        var sql = $"""
+            SELECT credentials.{column}
+            FROM fiscal.FiscalCredentialSecrets credentials
+            WHERE credentials.TenantId=@TenantId
+              AND EXISTS(SELECT 1 FROM dbo.Businesses
+                         WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND IsActive=1);
+            """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand(sql, connection);
+        Add(command, "@TenantId", tenantId);
         Add(command, "@BusinessId", businessId);
         return await command.ExecuteScalarAsync(cancellationToken) as byte[]
             ?? throw new InvalidOperationException("The configured fiscal credential is unavailable.");
     }
 
-    private static void ValidateReference(Guid businessId, string reference)
+    private static Guid ParseTenantReference(string reference)
     {
-        if (!string.Equals(reference, $"fiscal://{businessId:N}", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("The fiscal credential reference is invalid for this business.");
+        const string prefix = "fiscal://tenant/";
+        if (!reference.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
+            !Guid.TryParseExact(reference[prefix.Length..], "N", out var tenantId))
+            throw new InvalidOperationException("The fiscal credential reference is invalid for this tenant.");
+        return tenantId;
     }
 
     private byte[] Protect(byte[] plaintext)

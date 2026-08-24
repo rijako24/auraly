@@ -17,6 +17,7 @@ Pre-Deployment Script Template
 :r .\Migrations\20260811_ExpandAuditAction.sql
 :r .\Migrations\20260817_NormalizeAuralyPlatformTenantKey.sql
 :r .\Migrations\20260823_MoveBusinessLogoToTenant.sql
+:r .\Migrations\20260824_MoveFiscalCredentialsToTenant.sql
 :r .\Migrations\MoveDispatchReasonsToOwnedSchema.sql
 
 -- Scripts de pre-despliegue

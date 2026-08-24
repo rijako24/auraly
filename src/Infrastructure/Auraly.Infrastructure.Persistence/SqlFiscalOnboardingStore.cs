@@ -42,20 +42,29 @@ public sealed class SqlFiscalOnboardingStore(
             OUTER APPLY(
                 SELECT TOP(1) SoftwareIdentificationCode,TestSetId,CertificateThumbprint,
                        ValidFrom,ValidTo,Environment
-                FROM dbo.FiscalIssuerConfigurations
-                WHERE BusinessId=b.BusinessId AND IsActive=1
-                ORDER BY Version DESC) i
+                FROM dbo.FiscalIssuerConfigurations configuration
+                JOIN dbo.Businesses configuredBusiness
+                  ON configuredBusiness.BusinessId=configuration.BusinessId
+                 AND configuredBusiness.TenantId=b.TenantId
+                WHERE configuration.IsActive=1
+                ORDER BY CASE
+                           WHEN configuration.BusinessId=b.BusinessId AND Environment=1 THEN 0
+                           WHEN Environment=2 THEN 1
+                           ELSE 2
+                         END,
+                         configuration.CreatedAt DESC,configuration.Version DESC) i
             OUTER APPLY(
                 SELECT MAX(attempt.CompletedAt) AcceptedAt
                 FROM dbo.FiscalDocumentProcesses fp
                 JOIN dbo.FiscalIssuerConfigurations hi
                   ON hi.FiscalIssuerConfigurationId=fp.FiscalIssuerConfigurationId
+                JOIN dbo.Businesses processBusiness ON processBusiness.BusinessId=fp.BusinessId
                 JOIN dbo.FiscalTransmissionAttempts attempt
                   ON attempt.DocumentId=fp.DocumentId
                  AND attempt.Operation=N'GetStatusZip'
                  AND attempt.Disposition=N'Accepted'
                  AND attempt.StatusCode=N'2'
-                WHERE fp.BusinessId=b.BusinessId AND hi.Environment=2) accepted
+                WHERE processBusiness.TenantId=b.TenantId AND hi.Environment=2) accepted
             OUTER APPLY(
                 SELECT TOP(1) r.DianNumberingRangeId,r.AuthorizationNumber,r.ResolutionDate,
                        r.Prefix,r.RangeStart,r.RangeEnd,r.ValidFrom,r.ValidUntil
@@ -152,11 +161,16 @@ public sealed class SqlFiscalOnboardingStore(
             SET XACT_ABORT ON;
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND IsActive=1)
                 THROW 51021,'Business is outside the authenticated tenant.',1;
-            IF EXISTS(SELECT 1 FROM dbo.FiscalIssuerConfigurations WHERE BusinessId=@BusinessId AND IsActive=1 AND Environment=1)
-                THROW 51022,'La configuración DIAN de producción ya está activa.',1;
+            IF EXISTS(
+                SELECT 1 FROM dbo.FiscalIssuerConfigurations configuration
+                JOIN dbo.Businesses business ON business.BusinessId=configuration.BusinessId
+                WHERE business.TenantId=@TenantId AND configuration.IsActive=1 AND configuration.Environment=1)
+                THROW 51022,'La configuración DIAN de producción ya está activa en una sede del tenant.',1;
             DECLARE @Version int=ISNULL((SELECT MAX(Version) FROM dbo.FiscalIssuerConfigurations WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@BusinessId),0)+1;
-            UPDATE dbo.FiscalIssuerConfigurations SET IsActive=0
-            WHERE BusinessId=@BusinessId AND IsActive=1;
+            UPDATE configuration SET IsActive=0
+            FROM dbo.FiscalIssuerConfigurations configuration
+            JOIN dbo.Businesses business ON business.BusinessId=configuration.BusinessId
+            WHERE business.TenantId=@TenantId AND configuration.IsActive=1 AND configuration.Environment=2;
             INSERT dbo.FiscalIssuerConfigurations(
                 FiscalIssuerConfigurationId,BusinessId,Version,SupplierTaxId,SupplierCheckDigit,
                 LegalName,TradeName,TaxLevelCode,TaxSchemeId,TaxSchemeName,IdentificationTypeCode,
@@ -204,18 +218,23 @@ public sealed class SqlFiscalOnboardingStore(
         Guid tenantId, Guid businessId, CancellationToken cancellationToken)
     {
         const string sql = """
+            IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND IsActive=1)
+                THROW 51021,'Business is outside the authenticated tenant.',1;
+
             SELECT TOP(1) i.SupplierTaxId,i.SoftwareIdentificationCode,
                    i.CertificateProvider,i.CertificateKeyReference,i.CertificateThumbprint
             FROM dbo.FiscalIssuerConfigurations i
             JOIN dbo.Businesses b ON b.BusinessId=i.BusinessId
-            WHERE b.TenantId=@TenantId AND i.BusinessId=@BusinessId AND i.Environment=2
-            ORDER BY i.Version DESC;
+            WHERE b.TenantId=@TenantId AND i.Environment=2
+              AND i.ValidFrom<=@Now AND (i.ValidTo IS NULL OR i.ValidTo>@Now)
+            ORDER BY i.CreatedAt DESC,i.Version DESC;
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand(sql, connection);
         Add(command, "@TenantId", tenantId);
         Add(command, "@BusinessId", businessId);
+        Add(command, "@Now", timeProvider.GetUtcNow());
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
             throw new FiscalConfigurationValidationException("No existe una configuración DIAN de habilitación.");
@@ -292,8 +311,9 @@ public sealed class SqlFiscalOnboardingStore(
                  AND attempt.Operation=N'GetStatusZip'
                  AND attempt.Disposition=N'Accepted'
                  AND attempt.StatusCode=N'2'
-                WHERE fp.BusinessId=@BusinessId AND hi.Environment=2)
-                THROW 51022,'La DIAN todavía no ha aceptado el set de pruebas de esta sede.',1;
+                JOIN dbo.Businesses processBusiness ON processBusiness.BusinessId=fp.BusinessId
+                WHERE processBusiness.TenantId=@TenantId AND hi.Environment=2)
+                THROW 51022,'La DIAN todavía no ha aceptado el set de pruebas del tenant.',1;
 
             DECLARE @AuthorizationNumber nvarchar(64),@Prefix nvarchar(16),@RangeStart bigint,
                     @RangeEnd bigint,@ValidFrom date,@ValidUntil date,@ProtectedTechnicalKey varbinary(max),
@@ -318,10 +338,13 @@ public sealed class SqlFiscalOnboardingStore(
             IF @@ROWCOUNT<>1 THROW 51022,'La resolución fue asignada simultáneamente a otra sede.',1;
 
             SELECT TOP(1) @SupplierTaxId=SupplierTaxId
-            FROM dbo.FiscalIssuerConfigurations
-            WHERE BusinessId=@BusinessId AND Environment=2
-              AND ValidFrom<=@Now AND (ValidTo IS NULL OR ValidTo>@Now)
-            ORDER BY Version DESC;
+            FROM dbo.FiscalIssuerConfigurations configuration
+            JOIN dbo.Businesses configuredBusiness
+              ON configuredBusiness.BusinessId=configuration.BusinessId
+            WHERE configuredBusiness.TenantId=@TenantId AND configuration.Environment=2
+              AND configuration.ValidFrom<=@Now
+              AND (configuration.ValidTo IS NULL OR configuration.ValidTo>@Now)
+            ORDER BY configuration.CreatedAt DESC,Version DESC;
             IF @SupplierTaxId IS NULL
                 THROW 51022,'El certificado o la configuración de habilitación ya no están vigentes.',1;
             SET @Version=ISNULL((SELECT MAX(Version) FROM dbo.FiscalIssuerConfigurations WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@BusinessId),0)+1;
@@ -334,20 +357,20 @@ public sealed class SqlFiscalOnboardingStore(
                 Environment,TestSetId,CertificateProvider,CertificateKeyReference,
                 CertificateThumbprint,DianEndpoint,TechnicalAnnexVersion,GeneratorVersion,
                 ValidFrom,ValidTo,IsActive,CreatedAt,CreatedByUserId)
-            SELECT @NewIssuerId,BusinessId,@Version,SupplierTaxId,SupplierCheckDigit,
+            SELECT TOP(1) @NewIssuerId,@BusinessId,@Version,SupplierTaxId,SupplierCheckDigit,
                    LegalName,TradeName,TaxLevelCode,TaxSchemeId,TaxSchemeName,IdentificationTypeCode,
                    AddressLine,CityCode,CityName,DepartmentCode,DepartmentName,PostalZone,
                    CountryCode,CountryName,SoftwareIdentificationCode,SoftwarePinSecretReference,
                    1,NULL,CertificateProvider,CertificateKeyReference,CertificateThumbprint,
                    @ProductionEndpoint,TechnicalAnnexVersion,GeneratorVersion,ValidFrom,ValidTo,
                    1,@Now,@UserId
-            FROM dbo.FiscalIssuerConfigurations
-            WHERE BusinessId=@BusinessId AND Environment=2
-              AND Version=(
-                  SELECT MAX(Version)
-                  FROM dbo.FiscalIssuerConfigurations
-                  WHERE BusinessId=@BusinessId AND Environment=2)
-              AND ValidFrom<=@Now AND (ValidTo IS NULL OR ValidTo>@Now);
+            FROM dbo.FiscalIssuerConfigurations configuration
+            JOIN dbo.Businesses configuredBusiness
+              ON configuredBusiness.BusinessId=configuration.BusinessId
+            WHERE configuredBusiness.TenantId=@TenantId AND configuration.Environment=2
+              AND configuration.ValidFrom<=@Now
+              AND (configuration.ValidTo IS NULL OR configuration.ValidTo>@Now)
+            ORDER BY configuration.CreatedAt DESC,configuration.Version DESC;
             IF @@ROWCOUNT<>1 THROW 51022,'No existe una configuración de habilitación vigente para activar.',1;
 
             UPDATE dbo.FiscalAuthorizations SET IsActive=0 WHERE BusinessId=@BusinessId AND IsActive=1;

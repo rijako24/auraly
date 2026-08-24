@@ -29,8 +29,8 @@ public sealed class AzureKeyVaultFiscalCredentialVault(
         string thumbprint,
         CancellationToken cancellationToken)
     {
-        var certificateName = CertificateName(businessId);
-        var pinName = PinName(businessId);
+        var certificateName = CertificateName(tenantId);
+        var pinName = PinName(tenantId);
         var options = new ImportCertificateOptions(certificateName, certificatePfx)
         {
             Password = certificatePassword,
@@ -38,7 +38,6 @@ public sealed class AzureKeyVaultFiscalCredentialVault(
             Tags =
             {
                 ["tenant-id"] = tenantId.ToString("N"),
-                ["business-id"] = businessId.ToString("N"),
                 ["purpose"] = "dian-signing"
             }
         };
@@ -51,7 +50,6 @@ public sealed class AzureKeyVaultFiscalCredentialVault(
                     Tags =
                     {
                         ["tenant-id"] = tenantId.ToString("N"),
-                        ["business-id"] = businessId.ToString("N"),
                         ["purpose"] = "dian-software-pin"
                     }
                 }
@@ -69,21 +67,17 @@ public sealed class AzureKeyVaultFiscalCredentialVault(
     public async Task<string> ResolveSoftwarePinAsync(
         Guid businessId, string secretReference, CancellationToken cancellationToken)
     {
-        var expected = $"akv-secret://{PinName(businessId)}";
-        if (!string.Equals(secretReference, expected, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("The Azure Key Vault PIN reference is invalid for this business.");
-        var response = await secrets.GetSecretAsync(PinName(businessId), cancellationToken: cancellationToken);
+        var pinName = ParseName(secretReference, "akv-secret://", "-pin");
+        var response = await secrets.GetSecretAsync(pinName, cancellationToken: cancellationToken);
         return response.Value.Value;
     }
 
     public async Task<byte[]> ResolveCertificatePfxAsync(
         Guid businessId, string certificateKeyReference, CancellationToken cancellationToken)
     {
-        var expected = $"akv-certificate://{CertificateName(businessId)}";
-        if (!string.Equals(certificateKeyReference, expected, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("The Azure Key Vault certificate reference is invalid for this business.");
+        var certificateName = ParseName(certificateKeyReference, "akv-certificate://", null);
         var response = await secrets.GetSecretAsync(
-            CertificateName(businessId), cancellationToken: cancellationToken);
+            certificateName, cancellationToken: cancellationToken);
         try
         {
             return Convert.FromBase64String(response.Value.Value);
@@ -95,6 +89,23 @@ public sealed class AzureKeyVaultFiscalCredentialVault(
         }
     }
 
-    private static string CertificateName(Guid businessId) => $"dian-{businessId:N}";
-    private static string PinName(Guid businessId) => $"dian-{businessId:N}-pin";
+    private static string CertificateName(Guid tenantId) => $"dian-tenant-{tenantId:N}";
+    private static string PinName(Guid tenantId) => $"dian-tenant-{tenantId:N}-pin";
+
+    private static string ParseName(string reference, string scheme, string? suffix)
+    {
+        if (!reference.StartsWith(scheme, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The Azure Key Vault fiscal credential reference is invalid.");
+        var name = reference[scheme.Length..];
+        var idText = name.StartsWith("dian-tenant-", StringComparison.OrdinalIgnoreCase)
+            ? name[12..]
+            : string.Empty;
+        if (suffix is not null && idText.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            idText = idText[..^suffix.Length];
+        if (suffix is null && name.EndsWith("-pin", StringComparison.OrdinalIgnoreCase))
+            idText = string.Empty;
+        if (!Guid.TryParseExact(idText, "N", out _))
+            throw new InvalidOperationException("The Azure Key Vault fiscal credential reference is invalid.");
+        return name;
+    }
 }

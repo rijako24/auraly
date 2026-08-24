@@ -1,6 +1,6 @@
 CREATE TABLE [fiscal].[FiscalCredentialSecrets]
 (
-    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [ProtectedSoftwarePin] VARBINARY(MAX) NOT NULL,
     [ProtectedCertificatePfx] VARBINARY(MAX) NOT NULL,
     [CertificateThumbprint] NVARCHAR(128) NOT NULL,
@@ -9,8 +9,8 @@ CREATE TABLE [fiscal].[FiscalCredentialSecrets]
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [UpdatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
-    CONSTRAINT [PK_FiscalCredentialSecrets] PRIMARY KEY ([BusinessId]),
-    CONSTRAINT [FK_FiscalCredentialSecrets_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
+    CONSTRAINT [PK_FiscalCredentialSecrets] PRIMARY KEY ([TenantId]),
+    CONSTRAINT [FK_FiscalCredentialSecrets_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
     CONSTRAINT [CK_FiscalCredentialSecrets_Validity] CHECK ([CertificateValidTo] > [CertificateValidFrom])
 );
 GO
