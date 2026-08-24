@@ -111,7 +111,7 @@ public sealed class PosArchitectureTests
     }
 
     [Fact]
-    public void Pos_uses_Auraly_keyboard_shortcuts_and_returns_quantity_focus_to_the_scanner()
+    public void Pos_shortcuts_cycle_between_search_results_scanner_and_sale_quantities()
     {
         var repositoryRoot = FindRepositoryRoot();
         var posDirectory = Path.Combine(
@@ -162,9 +162,22 @@ public sealed class PosArchitectureTests
         Assert.Contains("event.key === \"ArrowUp\"", productSearchDialog, StringComparison.Ordinal);
         Assert.Contains("moveSelection(1)", productSearchDialog, StringComparison.Ordinal);
         Assert.Contains("moveSelection(-1)", productSearchDialog, StringComparison.Ordinal);
+        Assert.Contains("target < 0 || target >= results.length", productSearchDialog, StringComparison.Ordinal);
+        Assert.Contains("input.current?.focus()", productSearchDialog, StringComparison.Ordinal);
         Assert.Contains(
             "Flechas recorren; Tab entra al listado; Enter agrega; Esc vuelve al lector.",
             productSearchDialog,
+            StringComparison.Ordinal);
+        Assert.Contains("data-pos-focus-surface=\"modal\"", productSearchDialog, StringComparison.Ordinal);
+        Assert.Contains("input.current?.focus({ preventScroll: true })", productSearchDialog, StringComparison.Ordinal);
+        Assert.Contains("(event.key === \"ArrowDown\" || event.key === \"ArrowUp\")", page, StringComparison.Ordinal);
+        Assert.Contains("focusLastQuantity()", page, StringComparison.Ordinal);
+        Assert.Contains("revealLine(quantityToFocus)", page, StringComparison.Ordinal);
+        Assert.Contains("focusScanner()", page, StringComparison.Ordinal);
+        Assert.Contains("\"pos.devices.enroll\"", page, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "No tienes permiso para preparar este equipo para trabajar sin conexión.",
+            page,
             StringComparison.Ordinal);
     }
 

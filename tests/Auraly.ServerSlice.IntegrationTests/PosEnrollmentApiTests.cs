@@ -186,7 +186,7 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         }
     }
     [Fact]
-    public async Task User_without_enrollment_permission_is_denied()
+    public async Task User_without_enrollment_permission_must_present_supervisor_approval()
     {
         using var client = fixture.CreateAdminClient(
             CommercePermissionCodes.SalesCreate);
@@ -196,7 +196,11 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
                 fixture.BusinessId,
                 fixture.WarehouseId,
                 "Equipo no autorizado"));
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains(
+            "identificador de operación",
+            await response.Content.ReadAsStringAsync(),
+            StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<DeviceCapacityState> ReadDeviceCapacityAsync()

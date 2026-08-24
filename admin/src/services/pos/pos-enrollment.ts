@@ -1,5 +1,6 @@
 import type { SalesWorkspaceOption } from "@/services/pos/online-pos-client";
 import { fetchWithSessionRetry } from "@/services/api/client";
+import type { PosSensitiveAuthorization } from "@/services/pos/pos-edge-client";
 
 const EDGE_BASE_URL =
   process.env.NEXT_PUBLIC_AURALY_POS_EDGE_URL ?? "http://127.0.0.1:47831";
@@ -13,6 +14,8 @@ export type PosEnrollmentAuthorization = {
 
 export async function authorizePosEnrollment(
   option: SalesWorkspaceOption,
+  draftId?: string,
+  authorization?: PosSensitiveAuthorization,
 ): Promise<PosEnrollmentAuthorization> {
   const response = await fetchWithSessionRetry("/api/commerce/v1/pos/enrollments", {
     method: "POST",
@@ -24,6 +27,13 @@ export async function authorizePosEnrollment(
         ? { "X-Tenant-Id": window.localStorage.getItem("selected_tenant_id")! }
         : {}),
       "X-Business-Id": option.businessId,
+      ...(draftId ? { "X-Auraly-Draft-Id": draftId } : {}),
+      ...(authorization?.approvalRequestId
+        ? { "X-Auraly-Approval-Id": authorization.approvalRequestId }
+        : {}),
+      ...(authorization?.operationId
+        ? { "Idempotency-Key": authorization.operationId }
+        : {}),
     },
     body: JSON.stringify({
       businessId: option.businessId,

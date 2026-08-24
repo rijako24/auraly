@@ -1,6 +1,8 @@
 using System.Security.Claims;
 using Auraly.Application.Authentication;
+using Auraly.Application.Authorization;
 using Auraly.Application.Organization;
+using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Organization;
 
 namespace Auraly.Api;
@@ -16,9 +18,45 @@ public static class PosEnrollmentApi
                     HttpContext context,
                     CreatePosEnrollmentRequest request,
                     PosEnrollmentService service,
+                    PosApprovalService approvals,
                     CancellationToken ct) =>
-                    await Handle(() => service.AuthorizeAsync(
-                        context.User.ToPosEnrollmentUserIdentity(), request, ct)))
+                    await Handle(async () =>
+                    {
+                        var identity = context.User.ToPosEnrollmentUserIdentity();
+                        if (identity.Permissions.Contains(CommercePermissionCodes.EnrolledDevicesEnroll))
+                            return await service.AuthorizeAsync(identity, request, ct);
+
+                        if (!Guid.TryParse(context.Request.Headers["Idempotency-Key"].ToString(), out var operationId) ||
+                            operationId == Guid.Empty)
+                            throw new PosEnrollmentValidationException(
+                                "La preparación sin conexión requiere un identificador de operación válido.");
+                        if (!Guid.TryParse(context.Request.Headers["X-Auraly-Draft-Id"].ToString(), out var draftId) ||
+                            draftId == Guid.Empty)
+                            throw new PosEnrollmentValidationException(
+                                "No fue posible identificar la venta activa para solicitar autorización.");
+                        var approvalId = Guid.TryParse(
+                            context.Request.Headers["X-Auraly-Approval-Id"].ToString(),
+                            out var parsedApprovalId)
+                            ? parsedApprovalId
+                            : Guid.Empty;
+                        var approvalIdentity = context.User.ToPosApprovalIdentity();
+                        var authorizedIdentity = identity with
+                        {
+                            Permissions = identity.Permissions
+                                .Append(CommercePermissionCodes.EnrolledDevicesEnroll)
+                                .ToHashSet(StringComparer.Ordinal)
+                        };
+                        return await approvals.ExecuteSensitiveAsync(
+                            approvalIdentity,
+                            approvalId,
+                            request.BusinessId,
+                            draftId,
+                            null,
+                            CommercePermissionCodes.EnrolledDevicesEnroll,
+                            operationId,
+                            () => service.AuthorizeAsync(authorizedIdentity, request, ct),
+                            ct);
+                    }))
             .RequireAuthorization("pos.user");
 
         endpoints.MapPost(
@@ -38,6 +76,15 @@ public static class PosEnrollmentApi
         catch (PosEnrollmentForbiddenException exception)
         {
             return Results.Problem(exception.Message, statusCode: 403);
+        }
+        catch (PosApprovalException exception)
+        {
+            var statusCode = exception.Code is "Forbidden" or "SelfApprovalForbidden"
+                ? StatusCodes.Status403Forbidden
+                : exception.Code is "InvalidApproval" or "AlreadyDecidedOrExpired"
+                    ? StatusCodes.Status409Conflict
+                    : StatusCodes.Status400BadRequest;
+            return Results.Problem(exception.Message, statusCode: statusCode, title: exception.Code);
         }
         catch (PosEnrollmentValidationException exception)
         {

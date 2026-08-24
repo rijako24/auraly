@@ -287,6 +287,7 @@ export default function PosPage() {
     );
   }, []);
   const focusScanner = useCallback(() => {
+    if (document.querySelector('[data-pos-focus-surface="modal"]')) return;
     window.requestAnimationFrame(() => scanner.current?.focus());
   }, []);
   const showError = useCallback((caught: unknown) => {
@@ -1005,8 +1006,7 @@ export default function PosPage() {
       return false;
     } finally {
       setBusy(false);
-      if (quantityToFocus) focusQuantity(quantityToFocus);
-      else focusScanner();
+      focusScanner();
     }
   }
 
@@ -1095,13 +1095,6 @@ export default function PosPage() {
       quantityInputs.current.get(lastLineId)?.focus();
       quantityInputs.current.get(lastLineId)?.select();
     });
-  }
-
-  function focusQuantity(lineId: string) {
-    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
-      quantityInputs.current.get(lineId)?.focus();
-      quantityInputs.current.get(lineId)?.select();
-    }));
   }
 
   async function requestSensitiveApproval(
@@ -1785,8 +1778,7 @@ export default function PosPage() {
       return false;
     } finally {
       setBusy(false);
-      if (quantityToFocus) focusQuantity(quantityToFocus);
-      else focusScanner();
+      focusScanner();
     }
   }
   function openOrders() {
@@ -1892,16 +1884,24 @@ export default function PosPage() {
     }
   }
 
-  async function enrollOffline(option: SalesWorkspaceOption, initialDocumentType: PosSaleDocumentType) {
+  async function enrollOffline(
+    option: SalesWorkspaceOption,
+    initialDocumentType: PosSaleDocumentType,
+    authorization?: PosSensitiveAuthorization,
+  ) {
     if (!edgeEnrollmentToken) return;
     setSetupError(null);
     setSetupNotice("Autorizando este equipo para trabajar sin conexión…");
     window.localStorage.setItem("auraly.pos.document-type", initialDocumentType);
     setSetupLoading(true);
     try {
-      const authorization = await authorizePosEnrollment(option);
+      const enrollment = await authorizePosEnrollment(
+        option,
+        draft?.draftId.value,
+        authorization,
+      );
       setSetupNotice("Guardando la identidad segura de la caja…");
-      await redeemPosEnrollment(edgeEnrollmentToken, authorization);
+      await redeemPosEnrollment(edgeEnrollmentToken, enrollment);
       setSetupNotice("Reiniciando el servicio local y preparando usuarios, permisos y catálogo…");
       await waitForRedeemedPosEdge(edgeEnrollmentToken);
       window.location.reload();
@@ -1931,14 +1931,20 @@ export default function PosPage() {
       setError("Selecciona una sede de venta antes de preparar el modo sin conexión.");
       return;
     }
-    if (!canEnrollOffline) {
-      setError("No tienes permiso para preparar este equipo para trabajar sin conexión.");
-      return;
-    }
     try {
-      await enrollOffline(option, documentType);
-    } catch {
-      // enrollOffline already exposes the actionable error in the setup state.
+      await authorizeSensitiveEntry(
+        "pos.devices.enroll",
+        null,
+        {
+          action: "EnrollPosDevice",
+          businessName: option.businessName,
+          warehouseName: option.warehouseName,
+          deviceName: window.navigator.platform || "Windows",
+        },
+        async (authorization) => enrollOffline(option, documentType, authorization),
+      );
+    } catch (caught) {
+      showError(caught);
     }
   }
 
@@ -2332,7 +2338,10 @@ edgeCapable={edgeEnrollmentRequired}
                 value={scan}
                 onChange={(event) => setScan(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "ArrowDown" && draft?.lines.length) {
+                  if (
+                    (event.key === "ArrowDown" || event.key === "ArrowUp") &&
+                    draft?.lines.length
+                  ) {
                     event.preventDefault();
                     focusLastQuantity();
                   } else if (event.key === "Tab" && draft?.lines.length) {

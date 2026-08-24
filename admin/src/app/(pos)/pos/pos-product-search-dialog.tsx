@@ -38,6 +38,13 @@ export function PosProductSearchDialog({
   const resultElements = useRef(new Map<number, HTMLButtonElement>());
 
   useEffect(() => {
+    const frame = window.requestAnimationFrame(() =>
+      input.current?.focus({ preventScroll: true }),
+    );
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
     const version = ++requestVersion.current;
     const normalized = term.trim();
     const timer = window.setTimeout(() => {
@@ -151,6 +158,9 @@ export function PosProductSearchDialog({
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 p-4">
       <section
+        role="dialog"
+        aria-modal="true"
+        data-pos-focus-surface="modal"
         className="flex max-h-[85vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
         aria-labelledby="pos-product-search-title"
       >

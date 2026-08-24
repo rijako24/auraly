@@ -439,6 +439,7 @@ public sealed class PosApprovalService(
             CommercePermissionCodes.SalesDiscount or
             CommercePermissionCodes.SalesRemoveLine or
             CommercePermissionCodes.SalesRestartDraft or
+            CommercePermissionCodes.EnrolledDevicesEnroll or
             "work-sessions.close"))
             throw new PosApprovalException("UnsupportedPermission", "La acción no admite autorización delegada.");
     }

@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using Auraly.Application.Authorization;
 using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Contracts.Authorization;
+using Auraly.Contracts.Organization;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -238,6 +239,7 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
     [InlineData(CommercePermissionCodes.SalesRestartDraft, "RestartSale")]
     [InlineData(CommercePermissionCodes.SalesDiscount, "Discount")]
     [InlineData("work-sessions.close", "CloseWorkSession")]
+    [InlineData(CommercePermissionCodes.EnrolledDevicesEnroll, "EnrollPosDevice")]
     public async Task Every_sensitive_pos_action_accepts_local_window_and_remote_approval(
         string permissionResource,
         string action)
@@ -402,6 +404,48 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Cashier_can_enroll_the_installed_pos_after_supervisor_approval()
+    {
+        var supervisorId = Guid.NewGuid();
+        await SeedSupervisorAsync(supervisorId);
+        fixture.DrainSynchronizationMessages();
+        using var requester = fixture.CreateAdminClient(CommercePermissionCodes.SalesCreate);
+        using var supervisor = fixture.CreateUserClient(
+            supervisorId,
+            CommercePermissionCodes.EnrolledDevicesEnroll,
+            CommercePermissionCodes.PosApprovalsRead,
+            CommercePermissionCodes.PosApprovalsAuthorize);
+        var draftId = Guid.NewGuid();
+        using var createdResponse = await requester.PostAsJsonAsync(
+            "/api/commerce/v1/pos/approvals/",
+            new CreatePosApprovalRequest(
+                fixture.BusinessId, fixture.DeviceId, fixture.WorkSessionId,
+                draftId, null, CommercePermissionCodes.EnrolledDevicesEnroll,
+                "{\"action\":\"EnrollPosDevice\"}"));
+        createdResponse.EnsureSuccessStatusCode();
+        var approval = await createdResponse.Content.ReadFromJsonAsync<PosApprovalRequestView>();
+        Assert.NotNull(approval);
+        using var decision = await supervisor.PostAsJsonAsync(
+            $"/api/commerce/v1/pos/approvals/{approval.ApprovalRequestId:D}/decision",
+            new DecidePosApprovalRequest(true));
+        decision.EnsureSuccessStatusCode();
+
+        using var enrollmentRequest = new HttpRequestMessage(
+            HttpMethod.Post, "/api/commerce/v1/pos/enrollments")
+        {
+            Content = JsonContent.Create(new CreatePosEnrollmentRequest(
+                fixture.BusinessId, fixture.WarehouseId, "Caja autorizada"))
+        };
+        enrollmentRequest.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("D"));
+        enrollmentRequest.Headers.Add("X-Auraly-Draft-Id", draftId.ToString("D"));
+        enrollmentRequest.Headers.Add(
+            "X-Auraly-Approval-Id", approval.ApprovalRequestId.ToString("D"));
+        using var enrollment = await requester.SendAsync(enrollmentRequest);
+        enrollment.EnsureSuccessStatusCode();
+        Assert.NotNull(await enrollment.Content.ReadFromJsonAsync<PosEnrollmentAuthorization>());
+    }
+
+    [Fact]
     public async Task One_time_secondary_credential_is_consumed_by_its_first_authorization()
     {
         var supervisorId = Guid.NewGuid();
@@ -475,7 +519,7 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
             SELECT NEWID(),@RoleId,PermissionId,SYSUTCDATETIME()
             FROM dbo.Permissions WHERE Resource IN(
               N'sales.create',N'sales.discount',N'sales.lines.remove',N'sales.drafts.restart',
-              N'work-sessions.close',
+              N'work-sessions.close',N'pos.devices.enroll',
               N'pos.approvals.read',N'pos.approvals.authorize',N'pos.approvals.receive_notifications',N'pos.approvals.manage_credential');
             """;
         command.Parameters.AddWithValue("@UserId", userId);
