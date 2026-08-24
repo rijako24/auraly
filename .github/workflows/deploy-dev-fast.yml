@@ -87,8 +87,14 @@ jobs:
             try {
               $response = Invoke-WebRequest -Uri $health -TimeoutSec 15
               if ($response.StatusCode -eq 200) {
-                Write-Host $response.Content
-                exit 0
+                $functional = Invoke-WebRequest `
+                  -Uri 'https://api-auraly-dev-w5usmo6w.azurewebsites.net/api/v1/auth/me' `
+                  -SkipHttpErrorCheck -TimeoutSec 15
+                if ($functional.StatusCode -eq 401) {
+                  Write-Host $response.Content
+                  Write-Host 'Functional middleware probe returned the expected 401.'
+                  exit 0
+                }
               }
             } catch {
               Write-Host "API startup attempt $attempt/18: $($_.Exception.Message)"
