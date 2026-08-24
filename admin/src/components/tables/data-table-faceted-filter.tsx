@@ -36,7 +36,6 @@ export interface DataTableFacetedFilterProps {
 }
 
 export function DataTableFacetedFilter({
-  column,
   title,
   options,
   selectedValues,

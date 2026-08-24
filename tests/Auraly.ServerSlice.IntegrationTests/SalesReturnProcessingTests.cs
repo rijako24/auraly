@@ -52,9 +52,9 @@ public sealed class SalesReturnProcessingTests(ServerSliceFixture fixture)
         Assert.Equal(afterSale + .5m, await QuantityAsync());
         Assert.Equal(decimal.Round(valueAfterSale + (.5m * recognizedCost), 4, MidpointRounding.AwayFromZero), await InventoryValueAsync());
         Assert.Equal(5_000m, await ScalarAsync<decimal>(
-            "SELECT TaxableAmount FROM dbo.SalesReturnTaxSummaries WHERE ReturnId=@Id", request.ReturnId));
+            "SELECT SUM(UntaxedAmount) FROM dbo.SalesReturnLines WHERE ReturnId=@Id", request.ReturnId));
         Assert.Equal(950m, await ScalarAsync<decimal>(
-            "SELECT TaxAmount FROM dbo.SalesReturnTaxSummaries WHERE ReturnId=@Id", request.ReturnId));
+            "SELECT SUM(TaxAmount) FROM dbo.SalesReturnLines WHERE ReturnId=@Id", request.ReturnId));
 
         Assert.Equal(5_950m, await ScalarAsync<decimal>(
             "SELECT Amount FROM dbo.SalesReturnSettlements WHERE ReturnId=@Id", request.ReturnId));

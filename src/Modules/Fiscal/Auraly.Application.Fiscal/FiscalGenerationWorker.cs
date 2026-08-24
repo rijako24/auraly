@@ -22,6 +22,7 @@ public sealed record FiscalGenerationWorkItem(
     Guid DocumentId, Guid BusinessId, string WorkerId, string FiscalDocumentType,
     string FiscalNumber, PosSaleUploadRequest? Sale,
     SalesReturnCreditNoteSnapshot? CreditNote,
+    SalesDebitNoteFiscalSnapshot? DebitNote,
     FiscalIssuerWorkConfiguration Issuer, FiscalAuthorizationWorkConfiguration? Authorization);
 
 public sealed record FiscalGeneratedArtifacts(
@@ -55,6 +56,7 @@ public sealed class FiscalGenerationWorker(
     IFiscalSoftwarePinProvider pins,
     DianInvoiceUblBuilder builder,
     DianCreditNoteUblBuilder creditNoteBuilder,
+    DianDebitNoteUblBuilder debitNoteBuilder,
     DianSchemaValidator validator,
     IFiscalXmlSigner signer,
     TimeProvider timeProvider)
@@ -208,6 +210,8 @@ public sealed class FiscalGenerationWorker(
             return new FiscalUblBuildResult(
                 builder.Build(invoice), invoice.Cufe, invoice.QrPayload);
         }
+        if (work.FiscalDocumentType == FiscalDocumentTypeCodes.DebitNote)
+            return await BuildDebitNoteAsync(work, cancellationToken);
         if (work.FiscalDocumentType != FiscalDocumentTypeCodes.CreditNote)
             throw new FiscalSnapshotDataException(
                 $"Fiscal document type '{work.FiscalDocumentType}' is unsupported.");
@@ -278,6 +282,65 @@ public sealed class FiscalGenerationWorker(
         return new FiscalUblBuildResult(
             creditNoteBuilder.Build(note), cude.Cude, cude.QrPayload);
     }
+
+    private async Task<FiscalUblBuildResult> BuildDebitNoteAsync(
+        FiscalGenerationWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        var snapshot = work.DebitNote
+            ?? throw new FiscalSnapshotDataException("The debit-note fiscal payload is missing.");
+        var value = snapshot.DebitNote;
+        if (snapshot.FiscalIssuerConfigurationId != work.Issuer.Id ||
+            value.DebitNoteId != work.DocumentId || value.BusinessId != work.BusinessId ||
+            snapshot.FiscalNumber != work.FiscalNumber ||
+            snapshot.Environment != work.Issuer.Environment)
+            throw new FiscalSnapshotDataException(
+                "The debit-note snapshot differs from its durable fiscal root.");
+        var pin = await pins.ResolveAsync(work.BusinessId,
+            work.Issuer.SoftwarePinSecretReference, cancellationToken);
+        if (string.IsNullOrWhiteSpace(pin))
+            throw new FiscalSnapshotDataException("The software PIN secret could not be resolved.");
+        var lines = value.Lines.OrderBy(line => line.LineNumber)
+            .Select(line => new DianDebitNoteLine(
+                line.LineNumber, line.Description, "EA", line.Quantity, line.UnitPrice,
+                line.UntaxedAmount,
+                [new DianTax(line.TaxCode, TaxName(line.TaxCode), line.UntaxedAmount,
+                    line.TaxAmount, line.TaxRate)]))
+            .ToArray();
+        var taxes = lines.SelectMany(line => line.Taxes)
+            .GroupBy(tax => new { tax.Code, tax.Name, tax.Percent })
+            .OrderBy(group => group.Key.Code, StringComparer.Ordinal)
+            .ThenBy(group => group.Key.Percent)
+            .Select(group => new DianTax(group.Key.Code, group.Key.Name,
+                group.Sum(tax => tax.TaxableAmount), group.Sum(tax => tax.Amount),
+                group.Key.Percent)).ToArray();
+        var cude = CudeCalculator.Calculate(new CudeInput(
+            snapshot.FiscalNumber, value.IssuedAt, value.UntaxedAmount,
+            value.TotalAmount, work.Issuer.SupplierTaxId, value.CustomerIdentification,
+            pin, (FiscalEnvironment)snapshot.Environment,
+            taxes.Select(tax => new FiscalTaxAmount(tax.Code, tax.Amount))),
+            snapshot.QrValidationUrl);
+        var note = new DianDebitNote(
+            snapshot.FiscalNumber, cude.Cude, value.IssuedAt, snapshot.CurrencyCode,
+            DianDebitNoteCodes.ReferencesInvoiceOperation, value.ConceptCode,
+            value.ReasonDescription, snapshot.Environment,
+            new DianSoftware(work.Issuer.SupplierTaxId, work.Issuer.SupplierCheckDigit,
+                work.Issuer.SoftwareId, pin),
+            IssuerParty(work.Issuer), Party(snapshot.Customer),
+            new DianInvoiceReference(snapshot.OriginalInvoiceNumber,
+                snapshot.OriginalInvoiceCufe, snapshot.OriginalInvoiceIssuedOn),
+            lines, taxes, value.UntaxedAmount, value.TotalAmount, cude.QrPayload);
+        return new FiscalUblBuildResult(
+            debitNoteBuilder.Build(note), cude.Cude, cude.QrPayload);
+    }
+
+    private static string TaxName(string code) => code switch
+    {
+        "01" => "IVA",
+        "04" => "INC",
+        "22" => "INC Bolsas",
+        _ => "Impuesto"
+    };
 
     private static DianParty IssuerParty(FiscalIssuerWorkConfiguration issuer) => new(
         issuer.SupplierTaxId, issuer.SupplierCheckDigit, issuer.IdentificationTypeCode,

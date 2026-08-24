@@ -149,7 +149,7 @@ export function PosCustomerSearchDialog({
                   }}
                   className="h-14 w-full rounded-xl border-2 border-teal-700/25 bg-slate-50 pl-12 pr-12 text-lg font-medium outline-none focus:border-teal-600 focus:bg-white focus:ring-4 focus:ring-teal-600/10"
                   placeholder="Nombre o identificación" />
-                {loading && <Loader2 className="absolute right-4 top-1/2 h-5 w-5 -translate-y-1/2 animate-spin text-teal-700" />}
+                {loading && <span className="pointer-events-none absolute right-4 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center" role="status" aria-label="Cargando clientes"><Loader2 className="h-5 w-5 animate-spin text-teal-700" /></span>}
               </label>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 <button type="button" disabled={busy} onClick={() => void onSelect(null)} className="flex h-11 items-center gap-3 rounded-xl border border-slate-200 px-4 text-left font-semibold text-slate-700 hover:bg-slate-50">

@@ -62,7 +62,9 @@ WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE')
       N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.receive_notifications',N'pos.approvals.manage_credential',N'pos.workspace.change',
       N'pos.customer.create',N'pos.orders',N'orders.read',N'orders.invoice',
       N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',N'sales.reports.read',
+      N'sales.debit-notes.read',N'sales.debit-notes.create',
       N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
+      N'work-sessions.differences.read',
       N'inventory.read',N'inventory.costs.read',
       N'inventory.counts.confirm',N'inventory.adjustments.confirm',N'inventory.transfers.confirm',
       N'inventory.conversions.confirm',N'inventory.damages.confirm')
@@ -89,7 +91,9 @@ WHERE roleValue.IsActive=1
       N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.receive_notifications',N'pos.approvals.manage_credential',N'pos.workspace.change',
       N'pos.customer.create',N'pos.orders',N'orders.read',N'orders.invoice',
       N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',N'sales.reports.read',
+      N'sales.debit-notes.read',N'sales.debit-notes.create',
       N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
+      N'work-sessions.differences.read',
       N'inventory.read',N'inventory.costs.read',
       N'inventory.counts.confirm',N'inventory.adjustments.confirm',N'inventory.transfers.confirm',
       N'inventory.conversions.confirm',N'inventory.damages.confirm')

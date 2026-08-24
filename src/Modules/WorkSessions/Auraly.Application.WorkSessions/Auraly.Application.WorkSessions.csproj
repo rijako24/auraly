@@ -8,5 +8,6 @@
     <ProjectReference Include="..\Auraly.Contracts.WorkSessions\Auraly.Contracts.WorkSessions.csproj" />
     <ProjectReference Include="..\Auraly.Domain.WorkSessions\Auraly.Domain.WorkSessions.csproj" />
     <ProjectReference Include="..\..\DocumentProcessing\Auraly.Application.DocumentProcessing\Auraly.Application.DocumentProcessing.csproj" />
+    <ProjectReference Include="..\..\Accounting\Auraly.Commerce.Accounting.Application\Auraly.Commerce.Accounting.Application.csproj" />
   </ItemGroup>
 </Project>

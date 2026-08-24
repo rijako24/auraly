@@ -1,8 +1,7 @@
 "use client";
-import { Bell, CheckCircle2 } from "lucide-react";
+import { Bell } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { AgentNotificationDefinitions } from "@/types/agent-settings";
 const events=[{id:"reservation_confirmed",name:"Reserva confirmada",help:"Envía una confirmación al cliente."},{id:"reservation_reminder",name:"Recordatorio de reserva",help:"Recuerda al cliente su próxima reserva."},{id:"payment_confirmed",name:"Pago confirmado",help:"Confirma que el pago fue recibido."}];

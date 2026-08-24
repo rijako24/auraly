@@ -85,6 +85,7 @@ type OrdersWorkspaceProps = {
   }>;
   onExpand?: () => void;
   onConfigurePrinting?: () => void;
+  onCountChange?: (count: number) => void;
   routeOptions?: Array<{ routeId: string; name: string }>;
   onlyMine?: boolean;
   source?: number;
@@ -117,6 +118,7 @@ export function OrdersWorkspace({
   onInvoiceSelected,
   onExpand,
   onConfigurePrinting,
+  onCountChange,
   routeOptions = [],
   onlyMine = false,
   source,
@@ -147,6 +149,7 @@ export function OrdersWorkspace({
   const refresh = useCallback(async (silent = false) => {
     if (!connected) {
       setData(null);
+      onCountChange?.(0);
       return;
     }
     if (!silent) setLoading(true);
@@ -170,6 +173,7 @@ export function OrdersWorkspace({
         source,
       });
       setData(next);
+      onCountChange?.(next.totalCount);
       setSelected((current) => {
         const visible = new Set(next.items.map((item) => item.orderId));
         return new Set([...current].filter((id) => visible.has(id)));
@@ -191,6 +195,7 @@ export function OrdersWorkspace({
     query,
     routeId,
     onlyMine,
+    onCountChange,
     source,
     status,
   ]);

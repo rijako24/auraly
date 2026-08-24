@@ -16,9 +16,3 @@ public sealed record CatalogChange(
     long Version,
     string ChangeKind,
     PosCatalogProduct Product);
-
-public sealed record CatalogSyncPage(
-    string NextCursor,
-    bool HasMore,
-    string IntegrityHash,
-    IReadOnlyCollection<CatalogChange> Changes);

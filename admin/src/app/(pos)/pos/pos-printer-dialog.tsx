@@ -29,6 +29,7 @@ export function PosPrinterDialog({
   const [serialPorts, setSerialPorts] = useState<string[]>([]);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
   const [installer, setInstaller] = useState<PosInstaller | null>(null);
   const [installerError, setInstallerError] = useState<string | null>(null);
 
@@ -73,6 +74,7 @@ export function PosPrinterDialog({
     if (!value) return;
     setBusy(true);
     setError(null);
+    setFeedback(null);
     try {
       if (client) {
         const view = await client.savePrinterConfiguration(value);
@@ -139,10 +141,10 @@ export function PosPrinterDialog({
                   busy={busy}
                   onChange={(scale) => setValue({ ...value, scale })}
                   onTest={async () => {
-                    setBusy(true); setError(null);
+                    setBusy(true); setError(null); setFeedback(null);
                     try {
                       const result = await client.readScaleWeight();
-                      setError(`Balanza conectada: ${result.weight} ${result.unit} (${result.portName}).`);
+                      setFeedback(`Balanza conectada: ${result.weight} ${result.unit} (${result.portName}).`);
                     } catch (caught) {
                       setError(caught instanceof Error ? caught.message : "No fue posible leer la balanza.");
                     } finally { setBusy(false); }
@@ -154,12 +156,13 @@ export function PosPrinterDialog({
               </section>}
             </>
           ) : null}
+          {feedback && <p className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{feedback}</p>}
           {error && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         </div>
         <footer className="flex shrink-0 justify-end gap-2 border-t bg-white px-6 py-4">
           <button type="button" onClick={onClose} disabled={busy}
             className="h-10 rounded-xl border px-4 text-sm font-semibold">Cancelar</button>
-          <button type="button" onClick={() => void save()} disabled={busy || !value}
+          <button type="button" onClick={() => void save()} disabled={busy || !value || !validPeripheralConfiguration(value, Boolean(client))}
             className="flex h-10 items-center gap-2 rounded-xl bg-teal-700 px-4 text-sm font-bold text-white disabled:opacity-50">
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             Guardar
@@ -201,7 +204,20 @@ function ScaleConfiguration({ value, serialPorts, busy, onChange, onTest }: {
       </Field>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Velocidad"><Input type="number" min={1} value={value.baudRate} onChange={(event) => onChange({ ...value, baudRate: Number(event.target.value) })}/></Field>
+        <Field label="Bits de datos"><Select value={String(value.dataBits)} onValueChange={dataBits=>onChange({...value,dataBits:Number(dataBits)})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{[5,6,7,8].map(bits=><SelectItem key={bits} value={String(bits)}>{bits}</SelectItem>)}</SelectContent></Select></Field>
+        <Field label="Paridad"><Select value={value.parity} onValueChange={parity=>onChange({...value,parity:parity as typeof value.parity})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="None">Ninguna</SelectItem><SelectItem value="Odd">Impar</SelectItem><SelectItem value="Even">Par</SelectItem><SelectItem value="Mark">Marca</SelectItem><SelectItem value="Space">Espacio</SelectItem></SelectContent></Select></Field>
+        <Field label="Bits de parada"><Select value={value.stopBits} onValueChange={stopBits=>onChange({...value,stopBits:stopBits as typeof value.stopBits})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="One">1</SelectItem><SelectItem value="OnePointFive">1,5</SelectItem><SelectItem value="Two">2</SelectItem></SelectContent></Select></Field>
         <Field label="Tiempo de espera (ms)"><Input type="number" min={200} max={10000} value={value.timeoutMilliseconds} onChange={(event) => onChange({ ...value, timeoutMilliseconds: Number(event.target.value) })}/></Field>
+      </div>
+      <label className="flex items-center justify-between gap-3 text-sm font-semibold"><span>La balanza requiere comando de lectura</span><Switch checked={value.sendsRequest} onCheckedChange={sendsRequest=>onChange({...value,sendsRequest})}/></label>
+      {value.sendsRequest&&<Field label="Comando de lectura"><Input value={value.requestText} onChange={event=>onChange({...value,requestText:event.target.value})} placeholder="Ejemplo: P\\r\\n"/></Field>}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Posición inicial"><Input type="number" min={0} value={value.startIndex} onChange={event=>onChange({...value,startIndex:Number(event.target.value)})}/></Field>
+        <Field label="Longitud (0 = automática)"><Input type="number" min={0} value={value.length} onChange={event=>onChange({...value,length:Number(event.target.value)})}/></Field>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="flex items-center justify-between gap-3 rounded-xl border bg-white p-3 text-sm font-semibold"><span>Lectura invertida</span><Switch checked={value.reverse} onCheckedChange={reverse=>onChange({...value,reverse})}/></label>
+        <label className="flex items-center justify-between gap-3 rounded-xl border bg-white p-3 text-sm font-semibold"><span>Dividir el valor por 1.000</span><Switch checked={value.divideBy1000} onCheckedChange={divideBy1000=>onChange({...value,divideBy1000})}/></label>
       </div>
       <Button type="button" variant="outline" disabled={busy || !value.portName} onClick={() => void onTest()}>Probar balanza</Button>
     </>}
@@ -210,6 +226,15 @@ function ScaleConfiguration({ value, serialPorts, busy, onChange, onTest }: {
 
 function defaultScale(): NonNullable<PosPrinterConfiguration["scale"]> {
   return { enabled: false, portName: "", baudRate: 9600, dataBits: 8, parity: "None", stopBits: "One", sendsRequest: false, requestText: "", startIndex: 0, length: 0, reverse: false, divideBy1000: false, timeoutMilliseconds: 2000 };
+}
+
+export function validPeripheralConfiguration(value: PosPrinterConfiguration, direct: boolean) {
+  if (!direct) return true;
+  if (!value.posPrinterName || !value.ordersPrinterName) return false;
+  if (!value.scale?.enabled) return true;
+  return Boolean(value.scale.portName) && value.scale.baudRate > 0 &&
+    value.scale.dataBits >= 5 && value.scale.dataBits <= 8 &&
+    value.scale.timeoutMilliseconds >= 200 && value.scale.timeoutMilliseconds <= 10000;
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {

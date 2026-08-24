@@ -213,6 +213,30 @@ public sealed partial class SqlWorkSessionStore(
             await InsertTotalsAsync(
                 connection, transaction, closure.WorkSessionClosureId,
                 totals, cancellationToken);
+            if (difference is not null && difference != 0 && countedCash is not null)
+            {
+                var accountingPayload = JsonSerializer.Serialize(
+                    new WorkSessionCashDifferencePayload(
+                        closure.WorkSessionClosureId,
+                        closure.WorkSessionId,
+                        identity.TenantId,
+                        closure.BusinessId,
+                        closure.WarehouseId,
+                        closure.UserId,
+                        closure.UserName,
+                        closure.ExpectedCash,
+                        countedCash.Value,
+                        difference.Value,
+                        closure.ClosedAt),
+                    Json);
+                await InsertCashDifferenceAccountingJobAsync(
+                    connection,
+                    transaction,
+                    identity.TenantId,
+                    closure,
+                    accountingPayload,
+                    cancellationToken);
+            }
             await using var close = new SqlCommand("""
                 UPDATE dbo.WorkSessions
                 SET Status=N'Closed',ClosedAt=@ClosedAt,LastActivityAt=@ClosedAt
@@ -452,6 +476,55 @@ public sealed partial class SqlWorkSessionStore(
         return values;
     }
 
+    public async Task<IReadOnlyList<WorkSessionCashDifferenceView>> ListCashDifferencesAsync(
+        WorkSessionIdentity identity,
+        DateOnly from,
+        DateOnly to,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand("""
+            SELECT c.WorkSessionClosureId,c.WorkSessionId,s.BusinessId,b.Name,
+                   s.WarehouseId,w.Name,s.UserId,
+                   LTRIM(RTRIM(CONCAT(u.FirstName,N' ',u.LastName))),c.ClosedAt,
+                   c.ExpectedCash,c.CountedCash,c.CashDifference,
+                   CASE WHEN c.CashDifference>0 THEN N'SurplusIncome'
+                        ELSE N'ShortageExpense' END,
+                   COALESCE(j.Status,N'AccountingDisabled'),e.EntryId,e.EntryNumber
+            FROM dbo.WorkSessionClosures c
+            INNER JOIN dbo.WorkSessions s ON s.WorkSessionId=c.WorkSessionId
+            INNER JOIN dbo.Businesses b ON b.BusinessId=s.BusinessId
+            INNER JOIN dbo.Warehouses w ON w.WarehouseId=s.WarehouseId
+            INNER JOIN dbo.AppUsers u ON u.UserId=s.UserId
+            LEFT JOIN dbo.AccountingPostingJobs j
+              ON j.SourceDocumentId=c.WorkSessionClosureId
+             AND j.SourceDocumentType=N'WorkSessionCashDifference'
+            LEFT JOIN dbo.AccountingEntries e
+              ON e.SourceDocumentId=j.SourceDocumentId
+             AND e.SourceDocumentType=j.SourceDocumentType
+            WHERE b.TenantId=@TenantId AND c.CashDifference<>0
+              AND c.ClosedAt>=@From AND c.ClosedAt<@Until
+            ORDER BY c.ClosedAt DESC,c.WorkSessionClosureId DESC;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", identity.TenantId);
+        command.Parameters.AddWithValue(
+            "@From", new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero));
+        command.Parameters.AddWithValue(
+            "@Until", new DateTimeOffset(to.AddDays(1).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero));
+        var rows = new List<WorkSessionCashDifferenceView>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            rows.Add(new WorkSessionCashDifferenceView(
+                reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2), reader.GetString(3),
+                reader.GetGuid(4), reader.GetString(5), reader.GetGuid(6), reader.GetString(7),
+                reader.GetDateTimeOffset(8), reader.GetDecimal(9), reader.GetDecimal(10),
+                reader.GetDecimal(11), reader.GetString(12), reader.GetString(13),
+                reader.IsDBNull(14) ? null : reader.GetGuid(14),
+                reader.IsDBNull(15) ? null : reader.GetString(15)));
+        return rows;
+    }
+
     private static async Task InsertClosureAsync(
         SqlConnection connection,
         SqlTransaction transaction,
@@ -520,6 +593,55 @@ public sealed partial class SqlWorkSessionStore(
             { Precision = 19, Scale = 4, Value = (object?)total.Difference ?? DBNull.Value });
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
+    }
+
+    private async Task InsertCashDifferenceAccountingJobAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid tenantId,
+        WorkSessionClosureView closure,
+        string payload,
+        CancellationToken cancellationToken)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
+        await using var command = new SqlCommand("""
+            IF EXISTS
+            (
+                SELECT 1 FROM dbo.AccountingTenantSettings settings
+                WHERE settings.TenantId=@TenantId AND settings.Status=N'Ready'
+                  AND settings.EffectiveFrom<=CONVERT(date,@OccurredAt)
+            )
+            AND NOT EXISTS
+            (
+                SELECT 1 FROM dbo.AccountingSourceDocuments WITH(UPDLOCK,HOLDLOCK)
+                WHERE SourceDocumentId=@DocumentId
+                  AND SourceDocumentType=N'WorkSessionCashDifference'
+            )
+            BEGIN
+                INSERT dbo.AccountingSourceDocuments
+                  (SourceDocumentId,SourceDocumentType,TenantId,BusinessId,
+                   PayloadJson,PayloadHash,OccurredAt,AcceptedAt)
+                VALUES
+                  (@DocumentId,N'WorkSessionCashDifference',@TenantId,@BusinessId,
+                   @Payload,@Hash,@OccurredAt,@OccurredAt);
+
+                INSERT dbo.AccountingPostingJobs
+                  (AccountingPostingJobId,TenantId,BusinessId,SourceDocumentId,
+                   SourceDocumentType,SourcePayloadHash,OccurredAt,Status,
+                   AttemptCount,CreatedAt)
+                VALUES
+                  (@JobId,@TenantId,@BusinessId,@DocumentId,
+                   N'WorkSessionCashDifference',@Hash,@OccurredAt,N'Pending',0,@OccurredAt);
+            END;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@JobId", ids.NewId());
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@BusinessId", closure.BusinessId);
+        command.Parameters.AddWithValue("@DocumentId", closure.WorkSessionClosureId);
+        command.Parameters.AddWithValue("@Payload", payload);
+        command.Parameters.Add("@Hash", SqlDbType.Binary, 32).Value = hash;
+        command.Parameters.AddWithValue("@OccurredAt", closure.ClosedAt);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static IReadOnlyList<WorkSessionPaymentTotal> ReconcileTotals(

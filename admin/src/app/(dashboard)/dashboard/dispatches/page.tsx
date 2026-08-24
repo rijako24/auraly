@@ -8,6 +8,7 @@ import { ReportViewer } from "@/components/reports/report-viewer";
 import { DispatchSettlementPanel } from "@/components/dispatching/transport-dispatch-app";
 import { DataTablePagination } from "@/components/tables/data-table-pagination";
 import { buildDispatchReportRows, dispatchReportColumns, type DispatchReportGroup } from "@/lib/dispatch-report";
+import { shouldCloseDispatchAfterSettlement } from "@/lib/dispatch-settlement-navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -43,7 +44,7 @@ export default function DispatchesPage(){
     <div className="hidden overflow-x-auto rounded-2xl border bg-card md:block"><table className="w-full text-sm"><thead className="border-b bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground"><tr>{["Despacho","Programado","Transportador","Documentos","Verificación","Estado"].map(value=><th key={value} className="px-4 py-3 text-left font-semibold">{value}</th>)}</tr></thead><tbody>{query.isLoading?<tr><td colSpan={6} className="p-10 text-center">Cargando…</td></tr>:query.data?.items.map(item=><tr key={item.dispatchId} onClick={()=>openItem(item)} className="cursor-pointer border-b hover:bg-muted/40"><td className="px-4 py-3 font-semibold">{item.dispatchNumber}</td><td className="px-4 py-3">{item.scheduledDate}</td><td className="px-4 py-3">{item.driverName}<small className="block text-muted-foreground">{item.vehiclePlate??"Sin placa"}</small></td><td className="px-4 py-3">{item.documentCount} · {item.lineCount} líneas</td><td className="px-4 py-3">{quantity.format(item.verifiedQuantity)} / {quantity.format(item.expectedQuantity)}{item.shortageQuantity>0&&<small className="block text-red-700">{quantity.format(item.shortageQuantity)} faltante</small>}</td><td className="px-4 py-3"><Status value={item.status}/></td></tr>)}</tbody></table></div>
     <DataTablePagination pageIndex={Math.max(0,(query.data?.page??page)-1)} pageSize={query.data?.pageSize??pageSize} pageCount={query.data?.totalPages??0} totalItems={query.data?.totalCount??0} onPageChange={index=>setPage(index+1)} onPageSizeChange={size=>{setPageSize(size);setPage(1)}}/>
     <CreateDispatch open={createOpen} businessId={businessId} onClose={()=>setCreateOpen(false)} onCreated={id=>{setCreateOpen(false);setSelectedId(id)}}/>
-    <DispatchWorkspace id={selectedId} permissions={permissions} onClose={()=>setSelectedId(undefined)}/>
+    <DispatchWorkspace id={selectedId} permissions={permissions} onClose={()=>{setSelectedId(undefined);void query.refetch()}}/>
   </div>;
 }
 
@@ -77,13 +78,13 @@ function DispatchWorkspace({id,permissions,onClose}:{id?:string;permissions:Set<
     </DialogContent></Dialog>
     <Dialog open={reportOpen} onOpenChange={setReportOpen}><DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>Reportes del despacho</DialogTitle><DialogDescription>Elige una presentación. Se abrirá en el visor con impresión y exportación.</DialogDescription></DialogHeader><div className="grid gap-3 sm:grid-cols-2"><ReportChoice title="Detalle por factura" description="Cada factura conserva sus productos y totales." onClick={()=>void report("detail")}/><ReportChoice title="Consolidado por producto" description="Agrupa cantidades del mismo producto." onClick={()=>void report("product")}/><ReportChoice title="Por cliente" description="Agrupa el despacho por cliente y factura." onClick={()=>void report("customer")}/><ReportChoice title="Por vendedor" description="Resume la operación de cada vendedor." onClick={()=>void report("seller")}/></div><DialogFooter><Button variant="outline" onClick={()=>setReportOpen(false)}>Cancelar</Button></DialogFooter></DialogContent></Dialog>
     <Dialog open={Boolean(viewer)} onOpenChange={open=>!open&&setViewer(null)}><DialogContent showClose={false} className="h-[96dvh] max-h-[96dvh] w-[98vw] max-w-[1500px] overflow-hidden p-2 sm:p-4">{viewer&&<ReportViewer onClose={()=>setViewer(null)} title={viewer.title} description={viewer.description} fileName={viewer.fileName} rows={viewer.rows} columns={viewer.columns}/>}</DialogContent></Dialog>
-    <DispatchSettlementDialog id={settlementOpen?id:undefined} onClose={()=>setSettlementOpen(false)} onChanged={async()=>{await detail.refetch()}}/>
+    <DispatchSettlementDialog id={settlementOpen?id:undefined} onClose={()=>setSettlementOpen(false)} onChanged={async()=>{await detail.refetch()}} onSettled={()=>{setSettlementOpen(false);onClose()}}/>
   </>;
 }
 
-function DispatchSettlementDialog({id,onClose,onChanged}:{id?:string;onClose:()=>void;onChanged:()=>Promise<void>}){
+function DispatchSettlementDialog({id,onClose,onChanged,onSettled}:{id?:string;onClose:()=>void;onChanged:()=>Promise<void>;onSettled:()=>void}){
   const execution=useQuery({queryKey:["dispatches","execution","settlement",id],queryFn:()=>dispatchesApi.execution(id!),enabled:!!id});
-  return <Dialog open={!!id} onOpenChange={open=>!open&&onClose()}><DialogContent className="max-h-[94dvh] max-w-5xl overflow-y-auto"><DialogHeader><DialogTitle>Recepción y liquidación del despacho</DialogTitle><DialogDescription>El usuario receptor valida recaudos, gastos, devoluciones y confirma el cierre.</DialogDescription></DialogHeader>{execution.isLoading?<p className="p-10 text-center text-muted-foreground">Cargando cuadre…</p>:execution.data?<DispatchSettlementPanel data={execution.data} onChanged={async updated=>{await onChanged();if(["SettlementProcessing","SettlementAttention","Closed"].includes(updated.status))onClose();else await execution.refetch()}}/>:<p className="p-8 text-center text-destructive">No fue posible cargar el cierre.</p>}</DialogContent></Dialog>;
+  return <Dialog open={!!id} onOpenChange={open=>!open&&onClose()}><DialogContent className="max-h-[94dvh] max-w-5xl overflow-y-auto"><DialogHeader><DialogTitle>Recepción y liquidación del despacho</DialogTitle><DialogDescription>El usuario receptor valida recaudos, gastos, devoluciones y confirma el cierre.</DialogDescription></DialogHeader>{execution.isLoading?<p className="p-10 text-center text-muted-foreground">Cargando cuadre…</p>:execution.data?<DispatchSettlementPanel data={execution.data} onChanged={async updated=>{await onChanged();if(shouldCloseDispatchAfterSettlement(updated.status))onSettled();else await execution.refetch()}}/>:<p className="p-8 text-center text-destructive">No fue posible cargar el cierre.</p>}</DialogContent></Dialog>;
 }
 
 function Field({label,children}:{label:string;children:React.ReactNode}){return <div className="space-y-2"><Label>{label}</Label>{children}</div>}

@@ -308,6 +308,9 @@ public sealed class SqlFiscalSubmissionWorkStore(
 
             UPDATE dbo.SalesReturns SET FiscalStatus=@Status
             WHERE ReturnId=@DocumentId AND BusinessId=@BusinessId;
+
+            UPDATE dbo.SalesDebitNotes SET FiscalStatus=@Status
+            WHERE DebitNoteId=@DocumentId AND BusinessId=@BusinessId;
             """;
         await using (var command = new SqlCommand(sql, connection, transaction))
         {
@@ -386,6 +389,8 @@ public sealed class SqlFiscalSubmissionWorkStore(
             WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId;
             UPDATE dbo.SalesReturns SET FiscalStatus=@Status
             WHERE ReturnId=@DocumentId AND BusinessId=@BusinessId;
+            UPDATE dbo.SalesDebitNotes SET FiscalStatus=@Status
+            WHERE DebitNoteId=@DocumentId AND BusinessId=@BusinessId;
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);

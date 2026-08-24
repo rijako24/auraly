@@ -1,6 +1,7 @@
 using Auraly.Application.DocumentProcessing;
 using Auraly.Domain.WorkSessions;
 using Auraly.Contracts.WorkSessions;
+using Auraly.Commerce.Accounting.Application;
 
 namespace Auraly.Application.WorkSessions;
 
@@ -37,6 +38,11 @@ public interface IWorkSessionStore
         WorkSessionIdentity identity,
         Guid workSessionId,
         CancellationToken cancellationToken);
+    Task<IReadOnlyList<WorkSessionCashDifferenceView>> ListCashDifferencesAsync(
+        WorkSessionIdentity identity,
+        DateOnly from,
+        DateOnly to,
+        CancellationToken cancellationToken);
     Task<IReadOnlyList<CashMovementReasonView>> ListCashReasonsAsync(
         WorkSessionIdentity identity,
         Guid businessId,
@@ -63,7 +69,8 @@ public interface IWorkSessionStore
 
 public sealed class WorkSessionService(
     IWorkSessionStore store,
-    IDocumentProcessingSignalPublisher signalPublisher)
+    IDocumentProcessingSignalPublisher signalPublisher,
+    AccountingProcessingCoordinator accountingProcessing)
 {
     public Task<WorkSessionView?> CurrentAsync(
         WorkSessionIdentity identity,
@@ -91,7 +98,7 @@ public sealed class WorkSessionService(
         return store.OpenOrResumeAsync(identity, request, cancellationToken);
     }
 
-    public Task<WorkSessionClosureView> CloseAsync(
+    public async Task<WorkSessionClosureView> CloseAsync(
         WorkSessionIdentity identity,
         Guid workSessionId,
         string idempotencyKey,
@@ -122,12 +129,19 @@ public sealed class WorkSessionService(
         if (request.Note?.Trim().Length > 500)
             throw new WorkSessionValidationException(
                 "The closure note cannot exceed 500 characters.");
-        return store.CloseAsync(
+        var closure = await store.CloseAsync(
             identity,
             workSessionId,
             idempotencyKey.Trim(),
             request with { Note = NullIfWhiteSpace(request.Note) },
             cancellationToken);
+        if (closure.CashDifference is not null && closure.CashDifference != 0)
+            await accountingProcessing.RequestPostingAsync(
+                closure.BusinessId,
+                closure.WorkSessionClosureId,
+                WorkSessionAccountingDocumentTypes.CashDifference,
+                cancellationToken);
+        return closure;
     }
 
     public Task<WorkSessionClosureView?> CloseForLoginAsync(
@@ -184,6 +198,19 @@ public sealed class WorkSessionService(
         if (workSessionId == Guid.Empty)
             throw new WorkSessionValidationException("WorkSessionId is required.");
         return store.PreviewClosureAsync(identity, workSessionId, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<WorkSessionCashDifferenceView>> ListCashDifferencesAsync(
+        WorkSessionIdentity identity,
+        DateOnly from,
+        DateOnly to,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(identity, WorkSessionPermissionCodes.ReadCashDifferences);
+        if (from == default || to == default || from > to || to.DayNumber - from.DayNumber > 366)
+            throw new WorkSessionValidationException(
+                "The cash-difference date range must contain at most 367 days.");
+        return store.ListCashDifferencesAsync(identity, from, to, cancellationToken);
     }
 
     public Task<IReadOnlyList<CashMovementReasonView>> ListCashReasonsAsync(

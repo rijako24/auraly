@@ -287,7 +287,7 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
 
     private FiscalGenerationWorker CreateWorker(IFiscalGenerationWorkStore store, TimeProvider clock) =>
         new(store, new TestPin(), new DianInvoiceUblBuilder(), new DianCreditNoteUblBuilder(),
-            new DianSchemaValidator(), new TestSigner(), clock);
+            new DianDebitNoteUblBuilder(), new DianSchemaValidator(), new TestSigner(), clock);
 
     private PosSaleUploadRequest WithUblSnapshot(PosSaleUploadRequest request)
     {

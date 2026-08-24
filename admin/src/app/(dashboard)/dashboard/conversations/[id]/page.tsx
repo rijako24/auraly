@@ -67,7 +67,7 @@ export default function ConversationDetailPage() {
     try {
       await updateOwner.mutateAsync({ conversationId: id, owner });
       toast.success(checked ? "Bot activado" : "Bot desactivado");
-    } catch (error) {
+    } catch {
       toast.error("No se pudo actualizar el bot.");
     }
   };

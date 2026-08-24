@@ -9,7 +9,6 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { AgentFlowStage, StageActionDefinition, StageConditionDefinition, StageEffectDefinition, StageResponseDefinition, StageSignalDefinition, StageTransitionDefinition } from "@/types/agent-settings";
 
-const selectClass = "h-10 w-full rounded-md border border-input bg-background px-3 text-sm";
 const lines = (value?: string[]) => (value ?? []).join("\n");
 const split = (value: string) => value.split("\n").map((item) => item.trim()).filter(Boolean);
 

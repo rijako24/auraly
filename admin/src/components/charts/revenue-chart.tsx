@@ -20,7 +20,7 @@ export interface RevenueChartProps {
   className?: string;
 }
 
-export function RevenueChart({ data, period = "7d", className }: RevenueChartProps) {
+export function RevenueChart({ data, className }: RevenueChartProps) {
   const formattedData = React.useMemo(
     () =>
       data.map((d) => ({

@@ -130,7 +130,7 @@ export function PosInvoiceSearchDialog({
               className="h-14 w-full rounded-xl border-2 border-teal-700/25 bg-slate-50 pl-12 pr-12 text-lg font-medium outline-none focus:border-teal-600 focus:bg-white focus:ring-4 focus:ring-teal-600/10"
               placeholder="Número de factura o comprobante"
               aria-label="Número de factura o comprobante" />
-            {loading && <Loader2 className="absolute right-4 top-1/2 h-5 w-5 -translate-y-1/2 animate-spin text-teal-700" />}
+            {loading && <span className="pointer-events-none absolute right-4 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center" role="status" aria-label="Cargando comprobantes"><Loader2 className="h-5 w-5 animate-spin text-teal-700" /></span>}
           </label>
           <p className="mt-2 text-xs text-slate-500">
             Se muestran las 50 más recientes. Tab recorre; Enter reimprime; Esc cierra.

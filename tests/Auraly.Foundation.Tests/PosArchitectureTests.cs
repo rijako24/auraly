@@ -221,7 +221,63 @@ public sealed class PosArchitectureTests
         Assert.Contains("setOrdersExpanded(true)", page, StringComparison.Ordinal);
         Assert.Contains("<OrdersWorkspace", page, StringComparison.Ordinal);
         Assert.Contains("ordersExpanded && client", page, StringComparison.Ordinal);
+        Assert.Contains("{ordersCount}", page, StringComparison.Ordinal);
+        Assert.Contains("setSelectedCustomer(recoveredCustomer)", page, StringComparison.Ordinal);
         Assert.Contains("setMessage(\"Los pedidos se consultan", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Pos_search_loading_indicators_spin_without_moving_their_vertical_anchor()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var dialogs = new[]
+        {
+            "pos-product-search-dialog.tsx",
+            "pos-customer-search-dialog.tsx",
+            "pos-invoice-search-dialog.tsx",
+        };
+
+        foreach (var dialog in dialogs)
+        {
+            var source = File.ReadAllText(Path.Combine(
+                repositoryRoot,
+                "admin",
+                "src",
+                "app",
+                "(pos)",
+                "pos",
+                dialog));
+
+            Assert.Contains(
+                "absolute right-4 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center",
+                source,
+                StringComparison.Ordinal);
+            Assert.DoesNotContain(
+                "h-5 w-5 -translate-y-1/2 animate-spin",
+                source,
+                StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void Installed_pos_exposes_independent_printers_scale_and_tenant_branding()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var peripheralDialog = File.ReadAllText(Path.Combine(
+            repositoryRoot, "admin", "src", "app", "(pos)", "pos",
+            "pos-printer-dialog.tsx"));
+        var onlineClient = File.ReadAllText(Path.Combine(
+            repositoryRoot, "admin", "src", "services", "pos",
+            "online-pos-client.ts"));
+
+        Assert.Contains("title=\"Punto de venta\"", peripheralDialog, StringComparison.Ordinal);
+        Assert.Contains("title=\"Pedidos\"", peripheralDialog, StringComparison.Ordinal);
+        Assert.Contains("Impresora del sistema", peripheralDialog, StringComparison.Ordinal);
+        Assert.Contains("Posición inicial", peripheralDialog, StringComparison.Ordinal);
+        Assert.Contains("Dividir el valor por 1.000", peripheralDialog, StringComparison.Ordinal);
+        Assert.Contains("Probar balanza", peripheralDialog, StringComparison.Ordinal);
+        Assert.Contains("receiptBrandMarkup(branding)", onlineClient, StringComparison.Ordinal);
+        Assert.DoesNotContain("<h1>Auraly</h1>", onlineClient, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -234,6 +290,7 @@ public sealed class PosArchitectureTests
             repositoryRoot, "admin", "src", "lib", "backend-request-url.ts"));
         var desktop = File.ReadAllText(Path.Combine(
             repositoryRoot, "src", "Desktop", "Auraly.Desktop", "Program.cs"));
+        Assert.Contains("/pos-launch#edgeToken=", desktop, StringComparison.Ordinal);
         var apiProjects = Directory.GetFiles(
             Path.Combine(repositoryRoot, "src", "API"),
             "*.csproj",

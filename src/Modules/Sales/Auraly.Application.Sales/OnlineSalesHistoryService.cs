@@ -119,9 +119,13 @@ public static class OnlineSalesReceiptMapper
                 line.TaxAmount,
                 line.LineTotal)).ToArray(),
             request.Payments.Select(payment => new OnlineSalesPayment(
-                payment.MethodCode,
-                payment.Amount,
-                payment.Reference)).ToArray(),
+                    payment.MethodCode,
+                    payment.Amount,
+                    payment.Reference))
+                .Concat(request.Credit is null
+                    ? []
+                    : [new OnlineSalesPayment("Credit", request.Credit.Amount, request.Credit.DueDate.ToString("O"))])
+                .ToArray(),
             snapshot.UntaxedAmount,
             snapshot.TaxAmount,
             snapshot.PayableAmount,

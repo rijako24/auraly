@@ -31,6 +31,13 @@ export function calculateBaseQuantity(presentationQuantity: number, unitsPerPres
   return presentationQuantity * unitsPerPresentation;
 }
 
+export function goodsReceiptUnitLabel(unitCode: string | null | undefined, quantity = 1) {
+  const normalized = unitCode?.trim().toUpperCase();
+  if (!normalized || normalized === "EA" || normalized === "NIU")
+    return quantity === 1 ? "unidad" : "unidades";
+  return unitCode!.trim();
+}
+
 export function nextGoodsReceiptQuantityIndex(
   currentIndex: number,
   offset: number,

@@ -1,10 +1,9 @@
 "use client";
 
-import { Loader2, Plus, SearchCheck, Tags } from "lucide-react";
+import { Loader2, SearchCheck, Tags } from "lucide-react";
 import { forwardRef, useCallback, useImperativeHandle, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAddProductAlias } from "@/hooks/use-products";
 import { toast } from "sonner";

@@ -22,6 +22,7 @@ public sealed class DianSchemaValidator
         AddSchema(schemas, null, Path.Combine(main, "DIAN_UBL_Structures.xsd"), resolver);
         AddSchema(schemas, null, Path.Combine(main, "UBL-Invoice-2.1.xsd"), resolver);
         AddSchema(schemas, null, Path.Combine(main, "UBL-CreditNote-2.1.xsd"), resolver);
+        AddSchema(schemas, null, Path.Combine(main, "UBL-DebitNote-2.1.xsd"), resolver);
         schemas.Compile();
     }
 

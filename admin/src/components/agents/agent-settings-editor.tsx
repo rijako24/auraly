@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import { Eye, Plus, Route, Trash2 } from "lucide-react";
 
 import { StageTechnicalEditor } from "@/components/agents/stage-technical-editor";
@@ -8,7 +8,6 @@ import { CheckoutCommerceEditor, GlobalActionsEditor, MessageSequencesEditor, Re
 import { ConversationFollowUpSettingsEditor } from "@/components/agents/conversation-follow-up-settings";
 import { ConfigurationSelect } from "@/components/agents/configuration-controls";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";

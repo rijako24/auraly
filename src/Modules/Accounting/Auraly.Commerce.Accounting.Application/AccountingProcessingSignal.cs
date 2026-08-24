@@ -78,6 +78,7 @@ public static class AccountingProcessingPolicy
         "SalesInvoice",
         "SalesReceipt",
         "SalesReturn",
+        "SalesDebitNote",
         "GoodsReceipt",
         "PurchaseReturn",
         "PayablePayment",
@@ -87,7 +88,8 @@ public static class AccountingProcessingPolicy
         "Expense",
         AccountingManualDocumentTypes.AccountAdjustment,
         AccountingManualDocumentTypes.ManualVoucher,
-        AccountingManualDocumentTypes.OpeningBalance
+        AccountingManualDocumentTypes.OpeningBalance,
+        Auraly.Contracts.WorkSessions.WorkSessionAccountingDocumentTypes.CashDifference
     ];
 
 

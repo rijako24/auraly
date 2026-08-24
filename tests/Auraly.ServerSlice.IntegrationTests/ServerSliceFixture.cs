@@ -34,7 +34,7 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
-public sealed record SalesDocumentTaxSummary(
+public sealed record SalesDocumentTaxBreakdown(
     string TaxCode,
     decimal TaxRate,
     decimal TaxableAmount,
@@ -96,6 +96,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public Guid OnlineDocumentSeriesId { get; } = Guid.NewGuid();
     public Guid OnlineSalesReceiptSeriesId { get; } = Guid.NewGuid();
     public Guid SalesReturnSeriesId { get; } = Guid.NewGuid();
+    public Guid SalesDebitNoteSeriesId { get; } = Guid.NewGuid();
     public Guid OnlineSeriesId { get; } = Guid.NewGuid();
     public Guid FiscalAuthorizationId { get; } = Guid.NewGuid();
     public Guid FiscalIssuerConfigurationId { get; } = Guid.NewGuid();
@@ -585,15 +586,17 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         return message;
     }
 
-    public async Task<IReadOnlyList<SalesDocumentTaxSummary>> GetTaxSummariesAsync(Guid documentId)
+    public async Task<IReadOnlyList<SalesDocumentTaxBreakdown>> GetLineTaxBreakdownAsync(Guid documentId)
     {
         const string sql = """
-            SELECT TaxCode, TaxRate, TaxableAmount, TaxAmount, TotalAmount
-            FROM dbo.SalesDocumentTaxSummaries
+            SELECT TaxCode, TaxRate,
+                   SUM(UntaxedAmount), SUM(TaxAmount), SUM(LineTotal)
+            FROM dbo.SalesDocumentLines
             WHERE DocumentId = @DocumentId
+            GROUP BY TaxCode, TaxRate
             ORDER BY TaxCode, TaxRate;
             """;
-        var rows = new List<SalesDocumentTaxSummary>();
+        var rows = new List<SalesDocumentTaxBreakdown>();
         await using var connection = new SqlConnection(ConnectionString);
         await connection.OpenAsync();
         await using var command = new SqlCommand(sql, connection);
@@ -601,7 +604,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
-            rows.Add(new SalesDocumentTaxSummary(
+            rows.Add(new SalesDocumentTaxBreakdown(
                 reader.GetString(0),
                 reader.GetDecimal(1),
                 reader.GetDecimal(2),
@@ -640,7 +643,6 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         {
             "SalesDocuments",
             "SalesDocumentLines",
-            "SalesDocumentTaxSummaries",
             "SalesPayments",
             "FiscalSnapshots",
             "FiscalDocumentProcesses",
@@ -895,7 +897,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             (@PurchaseReturnSeriesId, @BusinessId, NULL, N'PurchaseReturn',
              N'DCP', N'00', 8, 1, 99999999, 0, 1, SYSDATETIMEOFFSET()),
             (@SalesReturnSeriesId, @BusinessId, NULL, N'SalesReturn',
-             N'DVT', N'00', 8, 1, 99999999, 0, 1, SYSDATETIMEOFFSET());
+             N'DVT', N'00', 8, 1, 99999999, 0, 1, SYSDATETIMEOFFSET()),
+            (@SalesDebitNoteSeriesId, @BusinessId, NULL, N'SalesDebitNote',
+             N'NDB', N'00', 8, 1, 99999999, 0, 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.FiscalSeries
             (SeriesId, BusinessId, DeviceId, EmitterKind, FiscalAuthorizationId,
@@ -977,6 +981,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         command.Parameters.AddWithValue("@GoodsReceiptSeriesId", GoodsReceiptSeriesId);
         command.Parameters.AddWithValue("@PurchaseReturnSeriesId", PurchaseReturnSeriesId);
         command.Parameters.AddWithValue("@SalesReturnSeriesId", SalesReturnSeriesId);
+        command.Parameters.AddWithValue("@SalesDebitNoteSeriesId", SalesDebitNoteSeriesId);
         command.Parameters.AddWithValue("@GoodsSupplierId", SupplierId);
         command.Parameters.AddWithValue("@GoodsSupplierPartyId", SupplierPartyId);
         command.Parameters.AddWithValue("@Prefix", Prefix);
@@ -1012,6 +1017,10 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                 CreateNoWindow = true
             }
         };
+        // SqlPackage can target a newer servicing patch than the SDK used by
+        // the application tests. Roll forward only this child process so the
+        // TestServer itself continues running on its declared .NET runtime.
+        process.StartInfo.Environment["DOTNET_ROLL_FORWARD"] = "LatestMajor";
         process.StartInfo.ArgumentList.Add("/Action:Publish");
         process.StartInfo.ArgumentList.Add($"/SourceFile:{dacpac}");
         process.StartInfo.ArgumentList.Add($"/TargetConnectionString:{ConnectionString}");

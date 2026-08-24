@@ -208,7 +208,9 @@ export function PosProductSearchDialog({
               aria-activedescendant={results[selected] ? `pos-product-${results[selected].productId}` : undefined}
             />
             {loading && (
-              <Loader2 className="absolute right-4 top-1/2 h-5 w-5 -translate-y-1/2 animate-spin text-teal-700" />
+              <span className="pointer-events-none absolute right-4 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center" role="status" aria-label="Cargando productos">
+                <Loader2 className="h-5 w-5 animate-spin text-teal-700" />
+              </span>
             )}
           </label>
           <p className="mt-2 text-xs text-slate-500">

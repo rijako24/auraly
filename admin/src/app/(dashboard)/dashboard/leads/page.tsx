@@ -16,7 +16,6 @@ import { PageError } from "@/components/ui/page-error";
 import {
   ConversationLifecycleStatusLabels,
   ConversationLifecycleStatus,
-  LeadStatus,
   LeadStatusLabels,
   LeadStatusColors,
   getConversationStageLabel,

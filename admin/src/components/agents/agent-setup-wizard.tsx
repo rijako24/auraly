@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
 import { ArrowLeft, ArrowRight, MessageCircle, Save } from "lucide-react";
 import { toast } from "sonner";
@@ -94,15 +93,6 @@ export function AgentSetupWizard({
 
   const goNext = () => setStepIndex((i) => Math.min(i + 1, steps.length - 1));
   const goPrev = () => setStepIndex((i) => Math.max(i - 1, 0));
-
-  const handleSave = async () => {
-    try {
-      await onSave();
-      toast.success("Configuración guardada");
-    } catch {
-      toast.error("No se pudo guardar");
-    }
-  };
 
   const handlePublish = async () => {
     try {

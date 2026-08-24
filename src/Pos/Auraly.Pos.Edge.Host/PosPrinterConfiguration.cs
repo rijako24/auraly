@@ -162,9 +162,15 @@ public sealed class PosPrinterConfigurationStore(
             throw new ArgumentException("Selecciona el puerto COM de la balanza.");
         if (scale.BaudRate <= 0 || scale.DataBits is < 5 or > 8)
             throw new ArgumentException("La comunicación de la balanza no es válida.");
+        if (!Enum.TryParse<Parity>(scale.Parity, true, out _) ||
+            !Enum.TryParse<StopBits>(scale.StopBits, true, out var stopBits) ||
+            stopBits == StopBits.None)
+            throw new ArgumentException("La paridad o los bits de parada de la balanza no son válidos.");
         if (scale.StartIndex < 0 || scale.Length < 0 ||
             scale.TimeoutMilliseconds is < 200 or > 10000)
             throw new ArgumentException("La regla de lectura de la balanza no es válida.");
+        if (scale.SendsRequest && string.IsNullOrWhiteSpace(scale.RequestText))
+            throw new ArgumentException("Escribe el comando de lectura que requiere la balanza.");
         return scale with { PortName = scale.PortName.Trim(), RequestText = scale.RequestText ?? string.Empty };
     }
 

@@ -71,7 +71,24 @@ export interface CustomerPaymentAcceptance {
   idempotentReplay: boolean;
 }
 
+export interface CustomerCreditProfile {
+  customerId: string;
+  creditLimit: number | null;
+  defaultDueDays: number;
+  isCreditEnabled: boolean;
+  outstandingAmount: number;
+  availableCredit: number | null;
+}
+
 export const receivablesApi = {
+  getCreditProfile: (customerId: string) =>
+    apiClient.get<CustomerCreditProfile>(`/commerce/v1/customers/${customerId}/credit`),
+  updateCreditProfile: (customerId: string, request: {
+    businessId: string;
+    creditLimit: number | null;
+    defaultDueDays: number;
+    isCreditEnabled: boolean;
+  }) => apiClient.put<CustomerCreditProfile>(`/commerce/v1/customers/${customerId}/credit`, request),
   list: (params: {
     page?: number;
     pageSize?: number;

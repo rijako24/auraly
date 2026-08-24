@@ -8,6 +8,7 @@ public static class FiscalDocumentTypeCodes
 {
     public const string Invoice = "Invoice";
     public const string CreditNote = "CreditNote";
+    public const string DebitNote = "DebitNote";
 }
 
 public sealed record CreditNoteLineMetadata(
@@ -50,4 +51,28 @@ public static class SalesReturnCreditNoteSnapshotSerializer
         return JsonSerializer.Deserialize<SalesReturnCreditNoteSnapshot>(value, Options)
             ?? throw new InvalidOperationException("The credit-note fiscal snapshot is invalid.");
     }
+}
+
+public sealed record SalesDebitNoteFiscalSnapshot(
+    SalesDebitNoteDocumentPayload DebitNote,
+    Guid FiscalIssuerConfigurationId,
+    string FiscalNumber,
+    string CurrencyCode,
+    int Environment,
+    string QrValidationUrl,
+    PosSaleUblPartyContract Customer,
+    string OriginalInvoiceNumber,
+    string OriginalInvoiceCufe,
+    DateOnly OriginalInvoiceIssuedOn);
+
+public static class SalesDebitNoteFiscalSnapshotSerializer
+{
+    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
+
+    public static string Serialize(SalesDebitNoteFiscalSnapshot snapshot) =>
+        JsonSerializer.Serialize(snapshot, Options);
+
+    public static SalesDebitNoteFiscalSnapshot Deserialize(string value) =>
+        JsonSerializer.Deserialize<SalesDebitNoteFiscalSnapshot>(value, Options)
+        ?? throw new InvalidOperationException("The debit-note fiscal snapshot is invalid.");
 }

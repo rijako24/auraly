@@ -131,7 +131,8 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             WorkSessionPermissionCodes.Read,
             WorkSessionPermissionCodes.Open,
             WorkSessionPermissionCodes.Close,
-            WorkSessionPermissionCodes.ManageCash);
+            WorkSessionPermissionCodes.ManageCash,
+            WorkSessionPermissionCodes.ReadCashDifferences);
         // Expense permissions exercise the complete concept -> expense -> AP -> accounting flow below.
         using (var defaultsResponse = await accounting.PutAsync(
                    "/api/commerce/v1/accounting/defaults", null))
@@ -142,8 +143,8 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                 ?? throw new InvalidOperationException(
                     "The accounting defaults response is empty.");
             Assert.True(defaults.IsReady);
-            Assert.True(defaults.AccountCount >= 26);
-            Assert.Equal(26, defaults.MappingCount);
+            Assert.True(defaults.AccountCount >= 28);
+            Assert.Equal(28, defaults.MappingCount);
             Assert.True(defaults.HasDefaultCostCenter);
             Assert.True(defaults.HasOpenPeriod);
         }
@@ -185,7 +186,8 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                    WorkSessionPermissionCodes.Read,
                    WorkSessionPermissionCodes.Open,
                    WorkSessionPermissionCodes.Close,
-                   WorkSessionPermissionCodes.ManageCash))
+                   WorkSessionPermissionCodes.ManageCash,
+                   WorkSessionPermissionCodes.ReadCashDifferences))
         {
             using var openResponse = await cashier.PostAsJsonAsync(
                 "/api/commerce/v1/work-sessions/current",
@@ -230,17 +232,66 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                 $"/api/commerce/v1/work-sessions/{session.WorkSessionId:D}/close")
             {
                 Content = JsonContent.Create(
-                    new CloseWorkSessionRequest(15_000m, "Arqueo contable verificado"))
+                    new CloseWorkSessionRequest(14_000m, "Faltante nocturno verificado"))
             };
             closeRequest.Headers.Add("Idempotency-Key", $"close-{session.WorkSessionId:N}");
             using var closeResponse = await cashier.SendAsync(closeRequest);
-            closeResponse.EnsureSuccessStatusCode();
+            Assert.True(closeResponse.IsSuccessStatusCode,
+                await closeResponse.Content.ReadAsStringAsync());
             var closure = await closeResponse.Content.ReadFromJsonAsync<WorkSessionClosureView>()
                 ?? throw new InvalidOperationException("The work session closure is empty.");
             Assert.Equal(15_000m, closure.TotalOther);
             Assert.Equal(15_000m, closure.ExpectedCash);
-            Assert.Equal(15_000m, closure.CountedCash);
-            Assert.Equal(0m, closure.CashDifference);
+            Assert.Equal(14_000m, closure.CountedCash);
+            Assert.Equal(-1_000m, closure.CashDifference);
+            await AssertBalancedAsync(closure.WorkSessionClosureId);
+            Assert.Equal(1_000m, await AccountAmountAsync(
+                closure.WorkSessionClosureId, "539596", debit: true));
+            Assert.Equal(1_000m, await AccountAmountAsync(
+                closure.WorkSessionClosureId, "110505", debit: false));
+
+            using var secondOpenResponse = await cashier.PostAsJsonAsync(
+                "/api/commerce/v1/work-sessions/current",
+                new OpenWorkSessionRequest(
+                    fixture.BusinessId, fixture.WarehouseId, null, 10_000m));
+            secondOpenResponse.EnsureSuccessStatusCode();
+            var secondSession = await secondOpenResponse.Content
+                .ReadFromJsonAsync<WorkSessionView>()
+                ?? throw new InvalidOperationException("The second work session response is empty.");
+            using var secondCloseRequest = new HttpRequestMessage(
+                HttpMethod.Post,
+                $"/api/commerce/v1/work-sessions/{secondSession.WorkSessionId:D}/close")
+            {
+                Content = JsonContent.Create(
+                    new CloseWorkSessionRequest(11_000m, "Sobrante nocturno verificado"))
+            };
+            secondCloseRequest.Headers.Add(
+                "Idempotency-Key", $"close-{secondSession.WorkSessionId:N}");
+            using var secondCloseResponse = await cashier.SendAsync(secondCloseRequest);
+            secondCloseResponse.EnsureSuccessStatusCode();
+            var secondClosure = await secondCloseResponse.Content
+                .ReadFromJsonAsync<WorkSessionClosureView>()
+                ?? throw new InvalidOperationException("The second work-session closure is empty.");
+            Assert.Equal(1_000m, secondClosure.CashDifference);
+            await AssertBalancedAsync(secondClosure.WorkSessionClosureId);
+            Assert.Equal(1_000m, await AccountAmountAsync(
+                secondClosure.WorkSessionClosureId, "110505", debit: true));
+            Assert.Equal(1_000m, await AccountAmountAsync(
+                secondClosure.WorkSessionClosureId, "429596", debit: false));
+
+            using var differencesResponse = await cashier.GetAsync(
+                "/api/commerce/v1/work-sessions/cash-differences?from=2026-01-01&to=2026-12-31");
+            differencesResponse.EnsureSuccessStatusCode();
+            var differences = await differencesResponse.Content
+                .ReadFromJsonAsync<WorkSessionCashDifferenceView[]>() ?? [];
+            Assert.Contains(differences, value =>
+                value.WorkSessionClosureId == closure.WorkSessionClosureId &&
+                value.Treatment == "ShortageExpense" &&
+                value.AccountingStatus == AccountingPostingStatuses.Posted);
+            Assert.Contains(differences, value =>
+                value.WorkSessionClosureId == secondClosure.WorkSessionClosureId &&
+                value.Treatment == "SurplusIncome" &&
+                value.AccountingStatus == AccountingPostingStatuses.Posted);
         }
         using (var retry = await accounting.PostAsync($"/api/commerce/v1/accounting/postings/{invoice.DocumentId:D}/retry", null))
         {
@@ -1431,9 +1482,11 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             [AccountingCategories.DebitCardClearing] = ("111005", "Tarjetas debito por cobrar", "Asset"),
             [AccountingCategories.Bank] = ("111020", "Bancos", "Asset"),
             [AccountingCategories.OtherIncome] = ("429595", "Otros ingresos de caja", "Revenue"),
+            [AccountingCategories.CashOverageIncome] = ("429596", "Sobrantes de caja", "Revenue"),
             [AccountingCategories.OwnerContributions] = ("311505", "Aportes del propietario", "Equity"),
             [AccountingCategories.OperatingExpense] = ("519510", "Gastos operativos", "Expense"),
             [AccountingCategories.OtherExpense] = ("539595", "Otras salidas de caja", "Expense"),
+            [AccountingCategories.CashShortageExpense] = ("539596", "Faltantes de caja", "Expense"),
             [AccountingCategories.CreditCardClearing] = ("111010", "Tarjetas credito por cobrar", "Asset"),
             [AccountingCategories.TransferClearing] = ("111015", "Transferencias por conciliar", "Asset"),
             [AccountingCategories.AccountsReceivable] = ("130505", "Clientes", "Asset"),
@@ -1641,7 +1694,8 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Contains(
             accountCode,
             new[] { "143505", "240810", "519595", "220505",
-                "236540", "236701", "236805", "110505", "111005", "130505", "429595" });
+                "236540", "236701", "236805", "110505", "111005", "130505",
+                "429595", "429596", "539596" });
         var column = debit ? "Debit" : "Credit";
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();

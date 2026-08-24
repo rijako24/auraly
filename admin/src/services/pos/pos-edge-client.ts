@@ -40,6 +40,9 @@ export type PosCustomer = {
   name: string;
   priceChannelId: string | null;
   requiresElectronicInvoice: boolean;
+  isCreditEnabled?: boolean;
+  defaultCreditDueDays?: number;
+  availableCredit?: number | null;
   isActive: boolean;
 };
 
@@ -295,6 +298,7 @@ export type PosWorkSessionPaymentTotal = {
   countedAmount: number | null;
   difference: number | null;
 };
+export type PosCreditTerms = { amount: number; dueDate: string };
 
 export type PosWorkSessionPaymentCount = {
   paymentMethodCode: string;
@@ -399,6 +403,7 @@ export interface PosClient {
     customerIdentification: string | null,
     payments: PosPaymentInput[],
     documentType: PosSaleDocumentType,
+    credit?: PosCreditTerms | null,
   ): Promise<PosCompleteSaleResult>;
   searchIssuedSales(search?: string, skip?: number, take?: number): Promise<PosIssuedSaleSearchPage>;
   reprint(documentId: string): Promise<void>;
@@ -463,8 +468,8 @@ export type PosScaleConfiguration = {
   portName: string;
   baudRate: number;
   dataBits: number;
-  parity: "None" | "Even" | "Odd";
-  stopBits: "One" | "Two";
+  parity: "None" | "Even" | "Odd" | "Mark" | "Space";
+  stopBits: "One" | "OnePointFive" | "Two";
   sendsRequest: boolean;
   requestText: string;
   startIndex: number;
@@ -835,7 +840,11 @@ export class PosEdgeClient implements PosClient {
     customerIdentification: string | null,
     payments: PosPaymentInput[],
     documentType: PosSaleDocumentType,
+    credit: PosCreditTerms | null = null,
   ) {
+    if (credit)
+      return Promise.reject(new PosEdgeError(
+        "La venta a crédito requiere conexión para validar el cupo actual del cliente.", 409));
     return this.request<PosCompleteSaleResult>(
       `/edge/v1/drafts/${draftId}/complete`,
       {

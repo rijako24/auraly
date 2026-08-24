@@ -89,34 +89,6 @@ public static class LocalizationConstants
     }
 
     /// <summary>
-    /// Mensajes de éxito del sistema.
-    /// </summary>
-    public static class SuccessMessages
-    {
-        public const string ReservationCreated = "¡Reserva creada exitosamente! 🎉";
-        public const string InformationSaved = "Perfecto, he guardado tu información.";
-        public const string AvailabilityChecked = "He verificado la disponibilidad.";
-    }
-
-    /// <summary>
-    /// Mensajes de escalado a humano.
-    /// </summary>
-    public static class EscalationMessages
-    {
-        public const string PleaseRepeat =
-            "Disculpa, estoy teniendo un inconveniente procesando tu mensaje. ¿Podrías repetirlo?";
-
-        public const string TechnicalIssues =
-            "Disculpa, estamos teniendo inconvenientes técnicos. Un asesor se comunicará contigo pronto para ayudarte.";
-
-        public const string Redirect =
-            "Gracias por contactarnos. Estamos redirigiendo tu conversación a un asesor que te atenderá personalmente muy pronto.";
-
-        public const string ErrorRetry =
-            "Disculpa, ha ocurrido un error. Por favor intenta nuevamente.";
-    }
-
-    /// <summary>
     /// Frases comunes del sistema.
     /// </summary>
     public static class CommonPhrases

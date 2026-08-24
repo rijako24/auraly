@@ -99,27 +99,6 @@ CREATE INDEX [IX_SalesReturnLines_Original]
   INCLUDE ([Quantity],[DiscountAmount],[UntaxedAmount],[TaxAmount],[LineTotal]);
 GO
 
-CREATE TABLE [dbo].[SalesReturnTaxSummaries]
-(
-    [ReturnId] UNIQUEIDENTIFIER NOT NULL,
-    [TaxCode] NVARCHAR(16) NOT NULL,
-    [TaxRate] DECIMAL(9,6) NOT NULL,
-    [TaxableAmount] DECIMAL(19,4) NOT NULL,
-    [TaxAmount] DECIMAL(19,4) NOT NULL,
-    [TotalAmount] DECIMAL(19,4) NOT NULL,
-    [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
-    CONSTRAINT [PK_SalesReturnTaxSummaries]
-      PRIMARY KEY CLUSTERED ([ReturnId],[TaxCode],[TaxRate]),
-    CONSTRAINT [FK_SalesReturnTaxSummaries_Return]
-      FOREIGN KEY ([ReturnId]) REFERENCES [dbo].[SalesReturns] ([ReturnId]),
-    CONSTRAINT [CK_SalesReturnTaxSummaries_Values] CHECK
-      ([TaxRate]>=0 AND [TaxableAmount]>=0 AND [TaxAmount]>=0 AND [TotalAmount]>0)
-);
-GO
-CREATE INDEX [IX_SalesReturnTaxSummaries_Tax]
-  ON [dbo].[SalesReturnTaxSummaries] ([TaxCode],[TaxRate],[ReturnId]);
-GO
-
 CREATE TABLE [dbo].[SalesReturnSettlements]
 (
     [ReturnId] UNIQUEIDENTIFIER NOT NULL,

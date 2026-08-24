@@ -59,7 +59,10 @@ public sealed class PosConfigurationTests
             var saved = store.Save(new PosPrinterConfiguration(
                 PosPrinterModes.WindowsRaw, "  Tirilla  ", 58, "  Carta  ",
                 PosPrinterName: "  Caja POS  ", OrdersPrinterName: "  Pedidos  ",
-                OrdersReceiptPaperWidthMillimeters: 80));
+                OrdersReceiptPaperWidthMillimeters: 80,
+                Scale: new PosScaleConfiguration(
+                    true, "  COM8  ", 19_200, 7, "Even", "Two", true,
+                    "P\\r\\n", 2, 8, true, true, 3_000)));
             var reloaded = new PosPrinterConfigurationStore(
                 path, Path.Combine(directory, "receipts")).Load();
 
@@ -69,6 +72,11 @@ public sealed class PosConfigurationTests
             Assert.Equal("Pedidos", reloaded.OrdersPrinterName);
             Assert.Equal(80, reloaded.OrdersReceiptPaperWidthMillimeters);
             Assert.Equal(58, reloaded.ReceiptPaperWidthMillimeters);
+            Assert.True(reloaded.Scale?.Enabled);
+            Assert.Equal("COM8", reloaded.Scale?.PortName);
+            Assert.Equal(19_200, reloaded.Scale?.BaudRate);
+            Assert.Equal("P\\r\\n", reloaded.Scale?.RequestText);
+            Assert.True(reloaded.Scale?.DivideBy1000);
             Assert.Equal(PrintTemplateFormats.Receipt, reloaded.PosOutputFormat);
             Assert.Equal(PrintTemplateFormats.HalfLetter, reloaded.OrdersOutputFormat);
             Assert.Equal(4, reloaded.TemplateRoutes?.Count);
@@ -85,6 +93,33 @@ public sealed class PosConfigurationTests
                 reloaded with { TemplateRoutes = null });
             Assert.Equal<PrintTemplateRoute>(
                 saved.TemplateRoutes!, reloaded.TemplateRoutes!);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Scale_configuration_rejects_invalid_serial_parameters()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(), "auraly-scale-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new PosPrinterConfigurationStore(
+                Path.Combine(directory, "settings.json"),
+                Path.Combine(directory, "receipts"));
+            var invalid = PosPrinterConfiguration.Default with
+            {
+                PosPrinterName = "Caja",
+                OrdersPrinterName = "Pedidos",
+                Scale = new PosScaleConfiguration(
+                    true, "COM1", 9_600, 8, "Invalid", "One")
+            };
+
+            Assert.Throws<ArgumentException>(() => store.Save(invalid));
         }
         finally
         {

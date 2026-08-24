@@ -5,16 +5,10 @@ using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Commerce.Accounting.Domain;
+using Auraly.Contracts.WorkSessions;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Commerce.Accounting.Infrastructure;
-
-public sealed class SqlAccountingCompletionObserver(
-    SqlAccountingPostingProcessor processor) : IDocumentProcessingCompletionObserver
-{
-    public Task ObserveAsync(DocumentProcessingSignal signal, CancellationToken cancellationToken) =>
-        processor.ProcessAsync(signal.DocumentId, signal.DocumentType, signal.BusinessId, cancellationToken);
-}
 
 public sealed partial class SqlAccountingPostingProcessor(
     AccountingSqlConnectionFactory connections,
@@ -77,6 +71,9 @@ public sealed partial class SqlAccountingPostingProcessor(
                 "SalesReturn" => FinancialFactsResult.Ready(
                     await LoadReturnFactsAsync(
                         connection, transaction, source, cancellationToken)),
+                "SalesDebitNote" => FinancialFactsResult.Ready(
+                    await LoadDebitNoteFactsAsync(
+                        connection, transaction, source, cancellationToken)),
                 "GoodsReceipt" => await LoadGoodsReceiptFactsAsync(
                     connection, transaction, source, cancellationToken),
                 "Expense" => await LoadExpenseFactsAsync(
@@ -99,6 +96,8 @@ public sealed partial class SqlAccountingPostingProcessor(
                     FinancialFactsResult.Ready(LoadManualVoucherFacts(source)),
                 AccountingManualDocumentTypes.OpeningBalance =>
                     FinancialFactsResult.Ready(LoadManualVoucherFacts(source)),
+                WorkSessionAccountingDocumentTypes.CashDifference =>
+                    FinancialFactsResult.Ready(LoadWorkSessionCashDifferenceFacts(source)),
                 _ => throw new InvalidOperationException(
                     $"Document type '{source.DocumentType}' is not supported for accounting.")
             };
@@ -183,6 +182,29 @@ public sealed partial class SqlAccountingPostingProcessor(
             reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
             reader.GetString(3), (byte[])reader[4], reader.GetDateTimeOffset(5),
             reader.GetString(6));
+    }
+
+    private static FinancialFacts LoadWorkSessionCashDifferenceFacts(
+        SourceEnvelope source)
+    {
+        var payload = JsonSerializer.Deserialize<WorkSessionCashDifferencePayload>(
+            source.PayloadJson,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            ?? throw new InvalidOperationException(
+                "The work-session cash-difference payload is invalid.");
+        if (payload.WorkSessionClosureId != source.DocumentId ||
+            payload.BusinessId != source.BusinessId || payload.TenantId != source.TenantId ||
+            payload.Difference == 0 ||
+            decimal.Round(payload.CountedCash - payload.ExpectedCash, 4) !=
+            decimal.Round(payload.Difference, 4))
+            throw new InvalidOperationException(
+                "The work-session cash-difference payload is inconsistent.");
+        var surplus = payload.Difference > 0;
+        return FinancialFacts.CashDifference(
+            payload.WorkSessionClosureId,
+            payload.UserName,
+            surplus,
+            Math.Abs(payload.Difference));
     }
 
     private static async Task<string> LockPostingStatusAsync(
@@ -835,6 +857,28 @@ public sealed partial class SqlAccountingPostingProcessor(
         await command.ExecuteNonQueryAsync(token);
     }
 
+    private static async Task<FinancialFacts> LoadDebitNoteFactsAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        SourceEnvelope source,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            SELECT n.DocumentNumber,n.UntaxedAmount,n.TaxAmount,n.TotalAmount,c.PartyId
+            FROM dbo.SalesDebitNotes n
+            INNER JOIN dbo.Customers c ON c.CustomerId=n.CustomerId
+            WHERE n.DebitNoteId=@DocumentId AND n.BusinessId=@BusinessId;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
+        command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            throw new InvalidOperationException("The sales debit note was not found for accounting.");
+        return FinancialFacts.DebitNote(
+            reader.GetString(0), reader.GetGuid(4), reader.GetDecimal(1),
+            reader.GetDecimal(2), reader.GetDecimal(3));
+    }
+
     private static async Task CompleteOpeningActivationAsync(
         SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,
         CancellationToken token)
@@ -1021,6 +1065,9 @@ public sealed partial class SqlAccountingPostingProcessor(
         }
         public static FinancialFacts Invoice(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Factura de venta {number}", party, untaxed, tax, total, cost, settlements, false, false, false, false);
         public static FinancialFacts Return(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Devolucion de venta {number}", party, untaxed, tax, total, cost, settlements, true, false, false, false);
+        public static FinancialFacts DebitNote(string number, Guid party, decimal untaxed, decimal tax, decimal total) =>
+            new($"Nota débito de venta {number}", party, untaxed, tax, total, 0,
+                [(AccountingCategories.AccountsReceivable, total)], false, false, false, false);
         public static FinancialFacts Purchase(string number, Guid party, decimal inventory, decimal expense, decimal deductibleVat, decimal total, IReadOnlyList<(string Category, decimal Amount)> settlements) =>
             new($"Entrada de mercancia {number}", party, expense, deductibleVat, total, inventory, settlements, false, true, false, false);
         public static FinancialFacts Expense(string number, Guid? party, decimal untaxed, decimal vat,
@@ -1034,6 +1081,13 @@ public sealed partial class SqlAccountingPostingProcessor(
             string number, bool isIn, decimal amount, string counterpart, Guid? costCenter) =>
             new($"{(isIn ? "Ingreso" : "Egreso")} de caja {number}", null, 0, 0,
                 amount, 0, [(counterpart, amount)], false, false, false, false, true, isIn, costCenter);
+        public static FinancialFacts CashDifference(
+            Guid closureId, string userName, bool surplus, decimal amount) =>
+            new(
+                $"{(surplus ? "Sobrante" : "Faltante")} de efectivo en cierre {closureId:D} · {userName}",
+                null, 0, 0, amount, 0,
+                [(surplus ? AccountingCategories.CashOverageIncome : AccountingCategories.CashShortageExpense, amount)],
+                false, false, false, false, true, surplus);
         public static FinancialFacts Manual(string description, IReadOnlyList<ManualLineSpec> lines) =>
             new(description, null, 0, 0, 0, 0, [], false, false, false, false,
                 DirectLines: lines);

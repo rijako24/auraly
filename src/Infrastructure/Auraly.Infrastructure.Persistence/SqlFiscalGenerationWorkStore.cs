@@ -133,6 +133,9 @@ public sealed class SqlFiscalGenerationWorkStore(
             UPDATE dbo.SalesReturnFiscalSnapshots
             SET UniqueCode=@UniqueCode,QrPayload=@QrPayload
             WHERE DocumentId=@DocumentId AND @FiscalDocumentType=N'CreditNote';
+            UPDATE dbo.SalesDebitNoteFiscalSnapshots
+            SET UniqueCode=@UniqueCode,QrPayload=@QrPayload
+            WHERE DocumentId=@DocumentId AND @FiscalDocumentType=N'DebitNote';
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@Status", FiscalDocumentStatusCodes.PendingSubmission);
@@ -145,7 +148,8 @@ public sealed class SqlFiscalGenerationWorkStore(
         command.Parameters.AddWithValue("@UniqueCode", artifacts.UniqueCode);
         command.Parameters.AddWithValue("@QrPayload", artifacts.QrPayload);
         command.Parameters.AddWithValue("@FiscalDocumentType", work.FiscalDocumentType);
-        var expectedRows = work.FiscalDocumentType == FiscalDocumentTypeCodes.CreditNote ? 3 : 2;
+        var expectedRows = work.FiscalDocumentType is
+            FiscalDocumentTypeCodes.CreditNote or FiscalDocumentTypeCodes.DebitNote ? 3 : 2;
         if (await command.ExecuteNonQueryAsync(cancellationToken) != expectedRows)
             throw new InvalidOperationException(
                 "The fiscal generation lease is no longer owned by this worker.");
@@ -172,6 +176,10 @@ public sealed class SqlFiscalGenerationWorkStore(
             SET FiscalStatus=@Status
             WHERE ReturnId=@DocumentId AND BusinessId=@BusinessId
               AND @FiscalDocumentType=N'CreditNote';
+            UPDATE dbo.SalesDebitNotes
+            SET FiscalStatus=@Status
+            WHERE DebitNoteId=@DocumentId AND BusinessId=@BusinessId
+              AND @FiscalDocumentType=N'DebitNote';
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
@@ -204,11 +212,12 @@ public sealed class SqlFiscalGenerationWorkStore(
                    c.Environment, c.CertificateProvider, c.CertificateKeyReference,
                    c.CertificateThumbprint, c.TechnicalAnnexVersion, c.GeneratorVersion,
                    a.AuthorizationNumber, a.ValidFrom, a.ValidUntil,
-                   fs.Prefix, fs.RangeStart, fs.RangeEnd
+                   fs.Prefix, fs.RangeStart, fs.RangeEnd,debit.SnapshotJson
             FROM dbo.FiscalDocumentProcesses p
             INNER JOIN dbo.FiscalDocuments fd ON fd.DocumentId=p.DocumentId
             LEFT JOIN dbo.FiscalSnapshots s ON s.DocumentId=p.DocumentId
             LEFT JOIN dbo.SalesReturnFiscalSnapshots credit ON credit.DocumentId=p.DocumentId
+            LEFT JOIN dbo.SalesDebitNoteFiscalSnapshots debit ON debit.DocumentId=p.DocumentId
             LEFT JOIN dbo.SalesDocuments d ON d.DocumentId=p.DocumentId
             INNER JOIN dbo.FiscalIssuerConfigurations c
                 ON c.FiscalIssuerConfigurationId=p.FiscalIssuerConfigurationId
@@ -236,6 +245,9 @@ public sealed class SqlFiscalGenerationWorkStore(
         var creditNote = reader.IsDBNull(4)
             ? null
             : SalesReturnCreditNoteSnapshotSerializer.Deserialize(reader.GetString(4));
+        var debitNote = reader.IsDBNull(35)
+            ? null
+            : SalesDebitNoteFiscalSnapshotSerializer.Deserialize(reader.GetString(35));
         var issuer = new FiscalIssuerWorkConfiguration(
             reader.GetGuid(5), businessId, reader.GetString(6), reader.GetString(7),
             reader.GetString(8), reader.GetString(9), reader.GetString(10),
@@ -254,7 +266,7 @@ public sealed class SqlFiscalGenerationWorkStore(
                 reader.GetInt64(33), reader.GetInt64(34));
         return new FiscalGenerationWorkItem(
             documentId, businessId, workerId, documentType, fiscalNumber,
-            sale, creditNote, issuer, authorization);
+            sale, creditNote, debitNote, issuer, authorization);
     }
 
     private async Task InsertArtifactAsync(SqlConnection connection, SqlTransaction transaction,

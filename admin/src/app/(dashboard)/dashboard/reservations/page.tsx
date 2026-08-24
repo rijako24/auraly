@@ -17,7 +17,7 @@ import { PageLoading } from "@/components/ui/page-loading";
 import { PageError } from "@/components/ui/page-error";
 import { ReservationStatus, ReservationStatusLabels, ReservationStatusColors } from "@/types/enums";
 import type { Reservation } from "@/types/entities";
-import { formatCurrency, formatDateTime, truncate, cn } from "@/lib/utils";
+import { formatDateTime, truncate, cn } from "@/lib/utils";
 import { useReservations } from "@/hooks/use-reservations";
 
 export default function ReservationsPage() {

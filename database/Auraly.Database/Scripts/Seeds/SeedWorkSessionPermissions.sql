@@ -12,7 +12,8 @@ INSERT @WorkSessionPermissions ([Module],[Action],[Resource],[Description])
 VALUES
     (N'WorkSessions',N'Read',N'work-sessions.read',N'Consultar la sesión de trabajo propia'),
     (N'WorkSessions',N'Open',N'work-sessions.open',N'Abrir o recuperar la sesión de trabajo propia'),
-    (N'WorkSessions',N'Close',N'work-sessions.close',N'Cerrar y conciliar la sesión de trabajo propia');
+    (N'WorkSessions',N'Close',N'work-sessions.close',N'Cerrar y conciliar la sesión de trabajo propia'),
+    (N'WorkSessions',N'ReadDifferences',N'work-sessions.differences.read',N'Consultar cierres con diferencias de efectivo');
 
 INSERT dbo.Permissions
     (PermissionId,Module,Action,Resource,Description,CreatedAt)
@@ -27,7 +28,8 @@ JOIN dbo.Permissions p ON p.Resource IN
 (
     N'work-sessions.read',
     N'work-sessions.open',
-    N'work-sessions.close'
+    N'work-sessions.close',
+    N'work-sessions.differences.read'
 )
 WHERE r.IsActive=1
   AND r.NormalizedName IN(N'ADMINISTRATOR',N'TENANTADMINISTRATOR')

@@ -25,6 +25,9 @@ public sealed partial class SqlAccountingPostingProcessor
         "SalesReturn" => ApplySalesReturnFinancialEffectsAsync(
             connection, transaction,
             SalesReturnContractSerializer.Deserialize(source.PayloadJson), cancellationToken),
+        "SalesDebitNote" => ApplySalesDebitNoteFinancialEffectsAsync(
+            connection, transaction,
+            SalesDebitNoteContractSerializer.Deserialize(source.PayloadJson), cancellationToken),
         "GoodsReceipt" => ApplyGoodsReceiptFinancialEffectsAsync(
             connection, transaction,
             GoodsReceiptContractSerializer.Deserialize(source.PayloadJson), cancellationToken),
@@ -48,6 +51,37 @@ public sealed partial class SqlAccountingPostingProcessor
         AccountingManualDocumentTypes.ManualVoucher => Task.CompletedTask,
         _ => Task.CompletedTask
     };
+
+    private async Task ApplySalesDebitNoteFinancialEffectsAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        SalesDebitNoteDocumentPayload value,
+        CancellationToken token)
+    {
+        await using var command = new SqlCommand("""
+            INSERT dbo.Receivables
+              (ReceivableId,BusinessId,CustomerId,SourceDocumentId,SourceDocumentType,
+               DocumentNumber,CurrencyCode,OriginalAmount,OutstandingAmount,DueDate,Status,CreatedAt)
+            VALUES(@ReceivableId,@BusinessId,@CustomerId,@DocumentId,N'SalesDebitNote',
+               @Number,N'COP',@Amount,@Amount,@DueDate,N'Open',@Now);
+            INSERT dbo.ReceivableTransactions
+              (ReceivableTransactionId,ReceivableId,TransactionType,Amount,
+               SourceDocumentId,OccurredAt,CreatedAt)
+            VALUES(@TransactionId,@ReceivableId,N'Opening',@Amount,@DocumentId,@OccurredAt,@Now);
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@ReceivableId", ids.NewId());
+        command.Parameters.AddWithValue("@TransactionId", ids.NewId());
+        command.Parameters.AddWithValue("@BusinessId", value.BusinessId);
+        command.Parameters.AddWithValue("@CustomerId", value.CustomerId);
+        command.Parameters.AddWithValue("@DocumentId", value.DebitNoteId);
+        command.Parameters.AddWithValue("@Number", value.DocumentNumber);
+        AddMoney(command, "@Amount", value.TotalAmount);
+        command.Parameters.AddWithValue("@DueDate", value.DueAt);
+        command.Parameters.AddWithValue("@OccurredAt", value.IssuedAt);
+        command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
+        if (await command.ExecuteNonQueryAsync(token) != 2)
+            throw new DBConcurrencyException("The debit-note receivable was not opened atomically.");
+    }
 
     private async Task ApplyAccountAdjustmentFinancialEffectsAsync(
         SqlConnection connection, SqlTransaction transaction, SourceEnvelope source,

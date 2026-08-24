@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, KeyRound, ReceiptText, Scissors, X } from "lucide-react";
+import { CalendarDays, CircleDollarSign, KeyRound, ReceiptText, Scissors, X } from "lucide-react";
 import { ScheduleExceptionsEditor } from "@/components/settings/schedule-exceptions-editor";
 import { WorkingHoursEditor } from "@/components/settings/working-hours-editor";
 import { Badge } from "@/components/ui/badge";
@@ -17,12 +17,60 @@ import { useCities } from "@/hooks/use-parties";
 import { employeesApi, usersApi } from "@/services/api";
 import type { PartySiteDetail } from "@/services/api/parties";
 import { taxationApi } from "@/services/api/taxation";
+import { receivablesApi } from "@/services/api/receivables";
+import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import type { WorkingHour } from "@/types/entities";
 
 const defaultHours: WorkingHour[] = [{ dayOfWeek: 1, openTime: "08:00", closeTime: "17:00", isActive: true }];
 
 type RegisterSave = (key: string, handler: () => Promise<void>) => () => void;
+
+const creditMoney = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
+
+export function PartyCustomerCreditRolePanel({ customerId, editing, registerSave }: { customerId: string; editing: boolean; registerSave: RegisterSave }) {
+  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
+  const permissions = useAuthStore((state) => new Set(state.user?.permissions ?? []));
+  const canRead = permissions.has("receivables.read");
+  const canManage = permissions.has("receivables.credit.manage");
+  const queryClient = useQueryClient();
+  const profile = useQuery({ queryKey: ["customer-credit", businessId, customerId], queryFn: () => receivablesApi.getCreditProfile(customerId), enabled: Boolean(businessId && customerId && canRead), retry: false });
+  const [enabled, setEnabled] = useState(false);
+  const [limit, setLimit] = useState("");
+  const [dueDays, setDueDays] = useState("30");
+  useEffect(() => {
+    if (!profile.data) return;
+    setEnabled(profile.data.isCreditEnabled);
+    setLimit(profile.data.creditLimit == null ? "" : String(profile.data.creditLimit));
+    setDueDays(String(profile.data.defaultDueDays));
+  }, [profile.data]);
+  const save = async () => {
+    if (!businessId || !canManage) return;
+    const days = Number(dueDays);
+    const parsedLimit = limit.trim() ? Number(limit) : null;
+    if (!Number.isInteger(days) || days < 0 || days > 3650 || (parsedLimit != null && (!Number.isFinite(parsedLimit) || parsedLimit < 0)))
+      throw new Error("Revisa el cupo y el plazo de crédito.");
+    await receivablesApi.updateCreditProfile(customerId, { businessId, creditLimit: parsedLimit, defaultDueDays: days, isCreditEnabled: enabled });
+    await queryClient.invalidateQueries({ queryKey: ["customer-credit", businessId, customerId] });
+  };
+  useEffect(() => registerSave(`customer-credit-${customerId}`, save), [registerSave, customerId, businessId, canManage, enabled, limit, dueDays]);
+
+  if (!canRead) return <PanelError text="No tienes permiso para consultar la configuración de cartera de este cliente." />;
+  if (profile.isLoading) return <PanelLoading />;
+  if (!profile.data) return <PanelError text="No fue posible cargar la configuración de crédito." />;
+  return <div className="space-y-4">
+    <PanelHeader icon={CircleDollarSign} title="Crédito y cartera" description="Define si este cliente puede dejar saldo pendiente al facturar.">
+      <div className="flex items-center gap-3"><span className="text-sm">Crédito habilitado</span><Switch checked={enabled} onCheckedChange={setEnabled} disabled={!editing || !canManage}/></div>
+    </PanelHeader>
+    <section className="grid gap-4 rounded-2xl border p-5 md:grid-cols-2">
+      <div className="space-y-2"><Label>Cupo de crédito</Label>{editing&&canManage?<Input type="number" min="0" step="1" value={limit} onChange={(event)=>setLimit(event.target.value)} placeholder="Sin límite"/>:<p className="rounded-xl border bg-muted/20 p-3 font-medium">{profile.data.creditLimit == null ? "Sin límite configurado" : creditMoney.format(profile.data.creditLimit)}</p>}<p className="text-xs text-muted-foreground">Vacío significa sin límite monetario; la habilitación sigue siendo obligatoria.</p></div>
+      <div className="space-y-2"><Label>Plazo predeterminado</Label>{editing&&canManage?<Input type="number" min="0" max="3650" step="1" value={dueDays} onChange={(event)=>setDueDays(event.target.value)}/>:<p className="rounded-xl border bg-muted/20 p-3 font-medium">{profile.data.defaultDueDays} días</p>}<p className="text-xs text-muted-foreground">Se usa para calcular el vencimiento de la cuenta por cobrar.</p></div>
+      <div><Label>Saldo pendiente</Label><p className="mt-2 text-lg font-semibold">{creditMoney.format(profile.data.outstandingAmount)}</p></div>
+      <div><Label>Cupo disponible</Label><p className="mt-2 text-lg font-semibold">{profile.data.availableCredit == null ? "Sin límite" : creditMoney.format(profile.data.availableCredit)}</p></div>
+      {!canManage&&editing&&<p className="md:col-span-2 text-sm text-amber-700">Puedes editar la ficha, pero no las condiciones de cartera porque falta el permiso correspondiente.</p>}
+    </section>
+  </div>;
+}
 
 export function PartySupplierTaxRolePanel({ supplierId, editing, primarySite, registerSave }: { supplierId: string; editing: boolean; primarySite: PartySiteDetail | null; registerSave: RegisterSave }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);

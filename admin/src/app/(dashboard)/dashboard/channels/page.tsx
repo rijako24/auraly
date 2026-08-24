@@ -46,7 +46,8 @@ export default function ChannelsPage() {
     try {
       const status = await validateChannel.mutateAsync(channelId);
       setStatuses((current) => ({ ...current, [channelId]: status }));
-      status.isConnected ? toast.success("Conexion con Meta validada") : toast.error(status.message);
+      if (status.isConnected) toast.success("Conexion con Meta validada");
+      else toast.error(status.message);
       return status;
     } catch (error) { toast.error(getErrorMessage(error)); return null; }
   };

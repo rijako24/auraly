@@ -29,10 +29,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useMediaQuery } from "@/hooks/use-media-query";
 
-import {
-  DataTablePagination,
-  type DataTablePaginationProps,
-} from "./data-table-pagination";
+import { DataTablePagination } from "./data-table-pagination";
 import {
   DataTableToolbar,
   type ViewMode,
@@ -252,7 +249,7 @@ export function DataTable<TData, TValue>({
 
   return (
     <div className={cn("space-y-4", className)}>
-      <DataTableToolbar<TData>
+      <DataTableToolbar
         searchKey={searchKey}
         searchPlaceholder={searchPlaceholder}
         searchValue={searchValue}

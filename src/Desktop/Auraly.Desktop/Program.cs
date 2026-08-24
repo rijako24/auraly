@@ -51,14 +51,8 @@ internal static class Program
             await WaitUntilReadyAsync($"{webOrigin}/pos", TimeSpan.FromSeconds(45), Shutdown.Token);
             await WaitUntilReadyAsync($"{edgeOrigin}/edge/v1/health", TimeSpan.FromSeconds(45), Shutdown.Token);
 
-            var enrollment = Path.Combine(data, "enrollment.protected");
-            var startupModePath = Path.Combine(data, "startup-mode");
-            var enrolled = File.Exists(enrollment);
-            var startupMode = LoadStartupMode(startupModePath, enrolled);
             var tokenFragment = Uri.EscapeDataString(sessionToken);
-            var target = enrolled && startupMode == "enrolled"
-                ? $"{webOrigin}/pos#edgeToken={tokenFragment}"
-                : $"{webOrigin}/login#edgeToken={tokenFragment}";
+            var target = $"{webOrigin}/pos-launch#edgeToken={tokenFragment}";
             using var browser = LaunchApplicationWindow(target, data);
 
             while (!Shutdown.IsCancellationRequested && !browser.HasExited)

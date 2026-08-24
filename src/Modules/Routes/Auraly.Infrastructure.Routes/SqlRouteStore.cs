@@ -225,7 +225,7 @@ public sealed class SqlRouteStore(
                 reader.IsDBNull(8) ? null : reader.GetString(8), reader.IsDBNull(9) ? null : reader.GetString(9),
                 reader.IsDBNull(10) ? null : reader.GetDecimal(10), reader.IsDBNull(11) ? null : reader.GetDecimal(11),
                 reader.GetBoolean(12), conflict is not null,
-                conflict is null ? null : $"Already scheduled in route '{conflict}' on an overlapping day."));
+                conflict is null ? null : $"Ya está programado en la ruta «{conflict}» en uno de los mismos días."));
         }
         return new(items, query.Page, query.PageSize, total, total == 0 ? 0 : (int)Math.Ceiling(total / (decimal)query.PageSize));
     }
@@ -236,7 +236,7 @@ public sealed class SqlRouteStore(
         await connection.OpenAsync(ct);
         await using var command = new SqlCommand("""
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId AND IsActive=1)
-              THROW 51701,'The business is outside the authenticated tenant.',1;
+              THROW 51701,'El negocio no pertenece al tenant autenticado.',1;
             INSERT dbo.SalesZones(ZoneId,BusinessId,Code,Name,IsActive,CreatedBy,CreatedAt)
             VALUES(@ZoneId,@BusinessId,@Code,@Name,1,@UserId,@Now);
             SELECT ZoneId,Code,Name,IsActive,RowVersion FROM dbo.SalesZones WHERE ZoneId=@ZoneId;
@@ -252,7 +252,7 @@ public sealed class SqlRouteStore(
             await reader.ReadAsync(ct);
             return new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetBoolean(3), Version(reader, 4));
         }
-        catch (SqlException exception) { throw Translate(exception, "A zone with this code already exists in the business."); }
+        catch (SqlException exception) { throw Translate(exception, "Ya existe una zona con este código en el negocio."); }
     }
 
     public async Task<RouteMutationResult> CreateAsync(RouteActorIdentity actor, Guid routeId, CreateSalesRouteRequest request,
@@ -276,7 +276,7 @@ public sealed class SqlRouteStore(
             await transaction.CommitAsync(ct);
             return await MutationAsync(actor, routeId, ct);
         }
-        catch (SqlException exception) { await SafeRollbackAsync(transaction, ct); throw Translate(exception, "A route with this code already exists in the business."); }
+        catch (SqlException exception) { await SafeRollbackAsync(transaction, ct); throw Translate(exception, "Ya existe una ruta con este código en el negocio."); }
     }
 
     public async Task<RouteMutationResult> UpdateAsync(RouteActorIdentity actor, Guid routeId, UpdateSalesRouteRequest request,
@@ -302,7 +302,7 @@ public sealed class SqlRouteStore(
             await transaction.CommitAsync(ct);
             return await MutationAsync(actor, routeId, ct);
         }
-        catch (SqlException exception) { await SafeRollbackAsync(transaction, ct); throw Translate(exception, "The route changed or conflicts with another active route."); }
+        catch (SqlException exception) { await SafeRollbackAsync(transaction, ct); throw Translate(exception, "La ruta cambió o entra en conflicto con otra ruta activa."); }
     }
 
     public Task<RouteMutationResult> SetStatusAsync(RouteActorIdentity actor, Guid routeId, bool isActive, byte[] rowVersion, DateTimeOffset now, CancellationToken ct) =>
@@ -340,7 +340,7 @@ public sealed class SqlRouteStore(
             await using var command = new SqlCommand("""
                 UPDATE dbo.SalesRouteStops SET PlannedVisitTime=@PlannedVisitTime,VisitNote=@VisitNote,UpdatedBy=@UserId,UpdatedAt=@Now
                 WHERE RouteStopId=@StopId AND RouteId=@RouteId AND IsActive=1;
-                IF @@ROWCOUNT=0 THROW 51704,'The route stop does not exist.',1;
+                IF @@ROWCOUNT=0 THROW 51704,'El establecimiento no existe en esta ruta.',1;
                 """, connection, transaction);
             AddScope(command,actor);command.Parameters.AddWithValue("@RouteId",routeId);command.Parameters.AddWithValue("@StopId",stopId);
             command.Parameters.AddWithValue("@PlannedVisitTime",request.PlannedVisitTime?.ToTimeSpan()??(object)DBNull.Value);
@@ -354,7 +354,7 @@ public sealed class SqlRouteStore(
             await using var command = new SqlCommand("""
                 UPDATE dbo.SalesRouteStops SET IsActive=0,RemovedBy=@UserId,RemovedAt=@Now,UpdatedBy=@UserId,UpdatedAt=@Now
                 WHERE RouteStopId=@StopId AND RouteId=@RouteId AND IsActive=1;
-                IF @@ROWCOUNT=0 THROW 51704,'The route stop does not exist.',1;
+                IF @@ROWCOUNT=0 THROW 51704,'El establecimiento no existe en esta ruta.',1;
                 ;WITH ordered AS(SELECT RouteStopId,ROW_NUMBER() OVER(ORDER BY Sequence,RouteStopId) NewSequence FROM dbo.SalesRouteStops WHERE RouteId=@RouteId AND IsActive=1)
                 UPDATE stop SET Sequence=ordered.NewSequence FROM dbo.SalesRouteStops stop INNER JOIN ordered ON ordered.RouteStopId=stop.RouteStopId;
                 """, connection, transaction);
@@ -396,7 +396,7 @@ public sealed class SqlRouteStore(
             return await MutationAsync(actor, routeId, ct);
         }
         catch (RouteConflictException) { await SafeRollbackAsync(transaction, ct); throw; }
-        catch (SqlException exception) { await SafeRollbackAsync(transaction, ct); throw Translate(exception, "The route operation conflicts with its current state."); }
+        catch (SqlException exception) { await SafeRollbackAsync(transaction, ct); throw Translate(exception, "La operación entra en conflicto con el estado actual de la ruta."); }
     }
 
     public async Task<IReadOnlyCollection<SalesRouteVisit>> VisitsAsync(RouteActorIdentity actor, Guid routeId, DateOnly date, CancellationToken ct)
@@ -441,7 +441,7 @@ public sealed class SqlRouteStore(
                 {
                     var value = ReadVisit(reader);
                     if (value.RouteStopId != request.RouteStopId || value.VisitDate != request.VisitDate || value.Status != request.Status || value.OrderId != request.OrderId)
-                        throw new RouteConflictException("The idempotency key was already used for a different route visit.");
+                        throw new RouteConflictException("La operación ya se utilizó para registrar una visita diferente.");
                     await reader.DisposeAsync();
                     await transaction.CommitAsync(ct);
                     return value;
@@ -452,12 +452,12 @@ public sealed class SqlRouteStore(
             var createdAt = DateTimeOffset.UtcNow;
             await using var command = new SqlCommand("""
                 IF NOT EXISTS(SELECT 1 FROM dbo.SalesRouteStops WHERE RouteStopId=@RouteStopId AND RouteId=@RouteId AND IsActive=1)
-                  THROW 51702,'The route stop is not active in this route.',1;
+                  THROW 51702,'El establecimiento no está activo en esta ruta.',1;
                 IF @OrderId IS NOT NULL AND NOT EXISTS(
                     SELECT 1 FROM dbo.Orders orders
                     INNER JOIN dbo.SalesRouteStops stop ON stop.RouteStopId=@RouteStopId AND stop.CustomerId=orders.CustomerId
                     WHERE orders.OrderId=@OrderId AND orders.BusinessId=@BusinessId)
-                  THROW 51702,'The order does not belong to this route customer.',1;
+                  THROW 51702,'El pedido no pertenece al cliente de esta ruta.',1;
                 INSERT dbo.SalesRouteVisits(RouteVisitId,BusinessId,RouteId,RouteStopId,VisitDate,Status,SkipReason,VisitObservation,OrderId,OccurredAt,RecordedBy,IdempotencyKey,CreatedAt)
                 VALUES(@RouteVisitId,@BusinessId,@RouteId,@RouteStopId,@VisitDate,@Status,@SkipReason,@VisitObservation,@OrderId,@OccurredAt,@UserId,@IdempotencyKey,@CreatedAt);
                 """, connection, transaction);
@@ -478,13 +478,13 @@ public sealed class SqlRouteStore(
             return new(visitId, request.RouteStopId, request.VisitDate, request.Status, reason, request.OrderId, request.OccurredAt, actor.UserId, observation);
         }
         catch (RouteConflictException) { await SafeRollbackAsync(transaction, ct); throw; }
-        catch (SqlException exception) { await SafeRollbackAsync(transaction, ct); throw Translate(exception, "This customer already has a route result for the selected date."); }
+        catch (SqlException exception) { await SafeRollbackAsync(transaction, ct); throw Translate(exception, "Este cliente ya tiene un resultado de visita para la fecha seleccionada."); }
     }
 
     private async Task EnsureRouteAccessAsync(RouteActorIdentity actor, Guid routeId, CancellationToken ct)
     {
         var route = await GetAsync(actor, routeId, ct);
-        if (route is null) throw new RouteNotFoundException("The route does not exist in the authenticated business.");
+        if (route is null) throw new RouteNotFoundException("La ruta no existe en el negocio autenticado.");
     }
 
     private async Task<bool> UserOwnsSellerAsync(RouteActorIdentity actor, Guid sellerId, CancellationToken ct)
@@ -510,9 +510,9 @@ public sealed class SqlRouteStore(
     {
         await using var command = new SqlCommand("""
             IF NOT EXISTS(SELECT 1 FROM dbo.SalesRoutes route WITH(UPDLOCK,HOLDLOCK) INNER JOIN dbo.Businesses business ON business.BusinessId=route.BusinessId AND business.TenantId=@TenantId WHERE route.RouteId=@RouteId AND route.BusinessId=@BusinessId)
-              THROW 51704,'The route does not exist.',1;
+              THROW 51704,'La ruta no existe.',1;
             IF NOT EXISTS(SELECT 1 FROM dbo.SalesRoutes WHERE RouteId=@RouteId AND BusinessId=@BusinessId AND RowVersion=@RowVersion)
-              THROW 51703,'The route was modified by another user.',1;
+              THROW 51703,'La ruta fue modificada por otro usuario. Actualiza e inténtalo nuevamente.',1;
             """, connection, transaction);
         AddScope(command, actor); command.Parameters.AddWithValue("@RouteId", routeId); command.Parameters.Add("@RowVersion", SqlDbType.Timestamp).Value=rowVersion;
         await command.ExecuteNonQueryAsync(ct);
@@ -524,14 +524,14 @@ public sealed class SqlRouteStore(
         {
             await using var command = new SqlCommand("""
                 IF NOT EXISTS(SELECT 1 FROM dbo.CommerceSellers WHERE SellerId=@SellerId AND BusinessId=@BusinessId AND IsActive=1)
-                  THROW 51702,'The seller is not active in this business.',1;
+                  THROW 51702,'El vendedor no está activo en este negocio.',1;
                 IF @ZoneId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.SalesZones WHERE ZoneId=@ZoneId AND BusinessId=@BusinessId AND IsActive=1)
-                  THROW 51702,'The sales zone is not active in this business.',1;
+                  THROW 51702,'La zona de ventas no está activa en este negocio.',1;
                 IF EXISTS(SELECT 1 FROM dbo.SalesRoutes otherRoute WITH(UPDLOCK,HOLDLOCK)
                           INNER JOIN dbo.SalesRouteSchedules otherSchedule ON otherSchedule.RouteId=otherRoute.RouteId AND otherSchedule.IsActive=1
                           WHERE otherRoute.BusinessId=@BusinessId AND otherRoute.SellerId=@SellerId AND otherRoute.IsActive=1
                             AND otherRoute.RouteId<>@RouteId AND otherSchedule.DayOfWeek=@DayOfWeek AND otherSchedule.RunOrder=@RunOrder)
-                  THROW 51705,'The seller already has another route with the same day and run order.',1;
+                  THROW 51705,'El vendedor ya tiene otra ruta con el mismo día y orden de recorrido.',1;
                 """, connection, transaction);
             AddScope(command, actor); command.Parameters.AddWithValue("@RouteId", routeId); command.Parameters.AddWithValue("@SellerId", sellerId);
             command.Parameters.AddWithValue("@ZoneId", (object?)zoneId ?? DBNull.Value); command.Parameters.AddWithValue("@DayOfWeek", schedule.DayOfWeek); command.Parameters.AddWithValue("@RunOrder", schedule.RunOrder);
@@ -543,14 +543,14 @@ public sealed class SqlRouteStore(
     {
         await using var command = new SqlCommand("""
             IF NOT EXISTS(SELECT 1 FROM dbo.Customers customer INNER JOIN dbo.Parties party ON party.PartyId=customer.PartyId AND party.TenantId=@TenantId AND party.IsActive=1 INNER JOIN dbo.PartySites site ON site.PartyId=party.PartyId AND site.PartySiteId=@PartySiteId AND site.IsActive=1 WHERE customer.CustomerId=@CustomerId AND customer.BusinessId=@BusinessId AND customer.IsActive=1)
-              THROW 51702,'The customer site is not active in this business.',1;
+              THROW 51702,'El establecimiento del cliente no está activo en este negocio.',1;
             IF EXISTS(SELECT 1 FROM dbo.SalesRouteStops WHERE RouteId=@RouteId AND PartySiteId=@PartySiteId AND IsActive=1)
-              THROW 51706,'The customer site is already part of this route.',1;
+              THROW 51706,'Este establecimiento ya pertenece a esta ruta.',1;
             IF EXISTS(SELECT 1 FROM dbo.SalesRouteStops otherStop WITH(UPDLOCK,HOLDLOCK)
                       INNER JOIN dbo.SalesRoutes otherRoute ON otherRoute.RouteId=otherStop.RouteId AND otherRoute.BusinessId=@BusinessId AND otherRoute.IsActive=1
                       WHERE otherStop.PartySiteId=@PartySiteId AND otherStop.IsActive=1 AND otherRoute.RouteId<>@RouteId
                         AND EXISTS(SELECT 1 FROM dbo.SalesRouteSchedules candidateDay INNER JOIN dbo.SalesRouteSchedules otherDay ON otherDay.DayOfWeek=candidateDay.DayOfWeek AND otherDay.RouteId=otherRoute.RouteId AND otherDay.IsActive=1 WHERE candidateDay.RouteId=@RouteId AND candidateDay.IsActive=1))
-              THROW 51706,'The customer site already belongs to an active route on an overlapping day.',1;
+              THROW 51706,'Este establecimiento ya está asignado a otra ruta activa en uno de los días seleccionados.',1;
             """, connection, transaction);
         AddScope(command, actor); command.Parameters.AddWithValue("@RouteId", routeId); command.Parameters.AddWithValue("@CustomerId", customerId); command.Parameters.AddWithValue("@PartySiteId", partySiteId);
         await command.ExecuteNonQueryAsync(ct);
@@ -564,7 +564,7 @@ public sealed class SqlRouteStore(
                       INNER JOIN dbo.SalesRoutes otherRoute ON otherRoute.RouteId=otherStop.RouteId AND otherRoute.BusinessId=@BusinessId AND otherRoute.IsActive=1
                       WHERE candidateStop.RouteId=@RouteId AND candidateStop.IsActive=1
                         AND EXISTS(SELECT 1 FROM dbo.SalesRouteSchedules candidateDay INNER JOIN dbo.SalesRouteSchedules otherDay ON otherDay.DayOfWeek=candidateDay.DayOfWeek AND otherDay.RouteId=otherRoute.RouteId AND otherDay.IsActive=1 WHERE candidateDay.RouteId=@RouteId AND candidateDay.IsActive=1))
-              THROW 51706,'The new calendar overlaps another active route containing the same customer site.',1;
+              THROW 51706,'Uno de los establecimientos ya está asignado a otra ruta activa en uno de los días seleccionados.',1;
             """, connection, transaction);
         AddScope(command, actor); command.Parameters.AddWithValue("@RouteId", routeId); await command.ExecuteNonQueryAsync(ct);
     }
@@ -598,7 +598,7 @@ public sealed class SqlRouteStore(
         AddScope(command, actor);
         command.Parameters.AddWithValue("@RouteId", routeId);
         await using var reader = await command.ExecuteReaderAsync(ct);
-        if (!await reader.ReadAsync(ct)) throw new RouteNotFoundException("The route does not exist.");
+        if (!await reader.ReadAsync(ct)) throw new RouteNotFoundException("La ruta no existe.");
         return new(reader.GetGuid(0), Version(reader, 1), reader.GetBoolean(2), reader.GetString(3), reader.GetInt32(4));
     }
 

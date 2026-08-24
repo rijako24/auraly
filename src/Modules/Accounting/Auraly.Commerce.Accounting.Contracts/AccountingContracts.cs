@@ -38,6 +38,8 @@ public static class AccountingCategories
     public const string OwnerContributions = "OwnerContributions";
     public const string OperatingExpense = "OperatingExpense";
     public const string OtherExpense = "OtherExpense";
+    public const string CashOverageIncome = "CashOverageIncome";
+    public const string CashShortageExpense = "CashShortageExpense";
 
 }
 

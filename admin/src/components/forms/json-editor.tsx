@@ -103,19 +103,6 @@ function KeyValueEditor({
     onChange(Object.keys(obj).length ? obj : {});
   };
 
-  const handleObjectKeyRename = (oldKey: string, newKey: string) => {
-    if (oldKey === newKey) return;
-    const obj = (typeof value === "object" && value !== null && !Array.isArray(value)
-      ? value
-      : {}) as Record<string, unknown>;
-    const entries = Object.entries(obj);
-    const updated: Record<string, unknown> = {};
-    for (const [k, v] of entries) {
-      updated[k === oldKey ? newKey : k] = v;
-    }
-    onChange(updated);
-  };
-
   const handleArrayItemChange = (idx: number, itemVal: unknown) => {
     const arr = Array.isArray(value) ? [...value] : [];
     if (itemVal === undefined) {

@@ -4,7 +4,6 @@ import * as React from "react";
 import {
   Bar,
   BarChart,
-  Cell,
   ResponsiveContainer,
   Tooltip,
   XAxis,

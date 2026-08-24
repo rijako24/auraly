@@ -42,9 +42,11 @@ Los documentos históricos anteriores que no tengan estos datos pasan a `Missing
 - `FiscalGenerationSqlTests.Snapshot_is_leased_once_and_persisted_without_reading_changed_master_values` usa SQL Server real, cambia `Businesses` y `FiscalIssuerConfigurations` después de recibir la venta, ejecuta dos workers concurrentes y verifica un único procesamiento y dos artefactos durables basados en el snapshot.
 ## Impuestos totalizados por tarifa
 
-Xion conserva en `SalidasDeMercanciaImpuestos` una proyección por documento e impuesto con base, IVA, impoconsumo y total. Esta capacidad sí se conserva, pero con un modelo normalizado: `SalesDocumentLines` congela `TaxCode`, `TaxRate`, base e impuesto por línea; al procesar una venta verificada, el servidor genera `SalesDocumentTaxSummaries` agrupando por `DocumentId + TaxCode + TaxRate`.
+Xion conserva en `SalidasDeMercanciaImpuestos` una proyección por documento e impuesto con base, IVA, impoconsumo y total. Auraly conserva esa capacidad sin una tabla duplicada: `SalesDocumentLines` congela `TaxCode`, `TaxRate`, base e impuesto por línea y permite agrupar por `DocumentId + TaxCode + TaxRate`; reporting materializa su proyección de lectura en `reporting.SalesReportTaxFacts`. La contabilidad usa el documento fuente inmutable y no depende de una proyección tributaria lateral.
 
-La proyección se escribe en la misma transacción que detalle, inventario, pagos y outbox. No se crea en SQLite: POS Edge conserva las líneas y el snapshot exactos, suficientes para reintentar; el resumen pertenece al servidor y sirve a reportes. Un conflicto fiscal no genera resumen y un reintento idempotente no duplica filas.
+El retiro de las antiguas `SalesDocumentTaxSummaries` y `SalesReturnTaxSummaries` se hace en dos pasos. Esta versión deja de escribirlas y las retira del modelo declarativo. El pipeline normal publica con `DropObjectsNotInSource=False`, por lo que no borra físicamente las tablas mientras todavía pueda existir una API anterior. Después de confirmar que API y workers de esta versión están activos y que no existen consumidores externos, un cutover controlado puede eliminarlas con respaldo, plan destructivo explícitamente revisado y rollback documentado. No se debe habilitar `DropObjectsNotInSource=True` para todo el esquema.
+
+POS Edge conserva las líneas y el snapshot fiscal exactos, suficientes para reintentar. Un conflicto fiscal no genera documento servidor y un reintento idempotente no duplica líneas. La proyección de reporting continúa siendo un modelo de lectura derivado, no otra fuente operativa del impuesto.
 
 ## Pagos y Tesorería
 

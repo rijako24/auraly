@@ -857,10 +857,18 @@ public sealed partial class SqlOnlineSalesDraftStore(
                             CONCAT(p.FirstName,N' ',p.LastName),N'Sin nombre'),
                    CASE WHEN s.ValidFrom<=SYSDATETIMEOFFSET()
                           AND(s.ValidUntil IS NULL OR s.ValidUntil>SYSDATETIMEOFFSET())
-                        THEN s.PriceChannelId END,c.RequiresElectronicInvoice
+                        THEN s.PriceChannelId END,c.RequiresElectronicInvoice,
+                   CAST(COALESCE(cp.IsCreditEnabled,0) AS bit),COALESCE(cp.DefaultDueDays,0),
+                   CASE WHEN cp.CreditLimit IS NULL THEN NULL
+                        ELSE CASE WHEN cp.CreditLimit-COALESCE(balance.Outstanding,0)<0 THEN 0
+                                  ELSE cp.CreditLimit-COALESCE(balance.Outstanding,0) END END
             FROM dbo.Customers c
             JOIN dbo.Parties p ON p.PartyId=c.PartyId
             LEFT JOIN dbo.CustomerPricingSettings s ON s.CustomerId=c.CustomerId
+            LEFT JOIN dbo.CustomerCreditProfiles cp ON cp.CustomerId=c.CustomerId AND cp.BusinessId=c.BusinessId
+            OUTER APPLY(SELECT SUM(r.OutstandingAmount) Outstanding FROM dbo.Receivables r
+                        WHERE r.CustomerId=c.CustomerId AND r.BusinessId=c.BusinessId
+                          AND r.Status IN(N'Open',N'PartiallyPaid')) balance
             WHERE c.CustomerId=@CustomerId AND c.BusinessId=@BusinessId
               AND c.IsActive=1 AND p.IsActive=1;
             """;
@@ -872,7 +880,8 @@ public sealed partial class SqlOnlineSalesDraftStore(
             ? new(
                 reader.GetGuid(0), reader.GetString(1), reader.GetString(2).Trim(),
                 reader.IsDBNull(3) ? null : reader.GetGuid(3),
-                reader.GetBoolean(4))
+                reader.GetBoolean(4), reader.GetBoolean(5), reader.GetInt32(6),
+                reader.IsDBNull(7) ? null : reader.GetDecimal(7))
             : null;
     }
 

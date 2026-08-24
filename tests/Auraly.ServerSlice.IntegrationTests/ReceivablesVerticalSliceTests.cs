@@ -16,6 +16,33 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Credit_sale_is_rejected_when_customer_credit_is_not_enabled()
+    {
+        var (customerId, userId) = await ConfigureAsync();
+        using var client = fixture.CreateUserClient(userId,
+            CommercePermissionCodes.SalesCreate,
+            WorkSessionPermissionCodes.Open);
+        var workSession = await fixture.OpenWorkSessionAsync(client);
+        var draft = await CaptureAsync(client, await OpenDraftAsync(client, workSession.WorkSessionId));
+        var selection = await SelectCustomerAsync(client, draft, customerId);
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/complete")
+        {
+            Content = JsonContent.Create(new CompleteOnlineSalesDraftRequest(
+                selection.Draft.Version, [],
+                new OnlineSalesCreditTerms(selection.Draft.PayableAmount,
+                    DateTimeOffset.UtcNow.AddDays(30))))
+        };
+        request.Headers.Add("Idempotency-Key", $"disabled-credit-{Guid.NewGuid():N}");
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("no tiene habilitada la venta a crédito",
+            await response.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.SalesDocuments WHERE CustomerId=@Id", customerId));
+    }
+
+    [Fact]
     public async Task Credit_sale_and_customer_payment_are_scoped_idempotent_and_accounted_once()
     {
         var (customerId, userId) = await ConfigureAsync();
@@ -42,6 +69,10 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         var draft = await OpenDraftAsync(client, workSession.WorkSessionId);
         draft = await CaptureAsync(client, draft);
         var selection = await SelectCustomerAsync(client, draft, customerId);
+        Assert.NotNull(selection.Customer);
+        Assert.True(selection.Customer.IsCreditEnabled);
+        Assert.Equal(30, selection.Customer.DefaultCreditDueDays);
+        Assert.Equal(500_000m, selection.Customer.AvailableCredit);
         var dueDate = DateTimeOffset.UtcNow.AddDays(30);
         var checkoutKey = $"receivable-sale-{Guid.NewGuid():N}";
         var checkout = await CompleteAsync(client, selection.Draft,

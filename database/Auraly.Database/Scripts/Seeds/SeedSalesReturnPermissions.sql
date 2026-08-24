@@ -9,6 +9,8 @@ INSERT @Permissions VALUES
     (N'Read',N'sales.returns.read',N'Consultar devoluciones de venta'),
     (N'Create',N'sales.returns.create',N'Crear devoluciones de venta'),
     (N'Confirm',N'sales.returns.confirm',N'Confirmar devoluciones de venta'),
+    (N'Read',N'sales.debit-notes.read',N'Consultar notas débito de venta'),
+    (N'Create',N'sales.debit-notes.create',N'Crear notas débito de venta'),
     (N'ReadReports',N'sales.reports.read',N'Consultar analítica y reportes de ventas');
 INSERT dbo.Permissions(PermissionId,Module,Action,Resource,Description,CreatedAt)
 SELECT NEWID(),N'Returns',p.Action,p.Resource,p.Description,SYSUTCDATETIME()
@@ -18,7 +20,8 @@ INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
 SELECT NEWID(),r.RoleId,p.PermissionId,SYSUTCDATETIME()
 FROM dbo.AppRoles r
 JOIN dbo.Permissions p ON p.Resource IN
-  (N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',N'sales.reports.read')
+  (N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',
+   N'sales.debit-notes.read',N'sales.debit-notes.create',N'sales.reports.read')
 WHERE r.IsActive=1 AND r.NormalizedName=N'ADMINISTRATOR'
 AND NOT EXISTS
 (

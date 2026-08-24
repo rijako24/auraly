@@ -33,7 +33,6 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         Assert.Single(receipts.Select(receipt => receipt!.DocumentId).Distinct());
         Assert.Equal(1, await fixture.CountAsync("SalesDocuments", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("SalesDocumentLines", request.DocumentId));
-        Assert.Equal(1, await fixture.CountAsync("SalesDocumentTaxSummaries", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("SalesPayments", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("WorkSessionMovements", request.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("InventoryMovements", request.DocumentId));
@@ -50,7 +49,7 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Multiple_tax_rates_are_grouped_on_the_server_when_the_sale_is_processed()
+    public async Task Multiple_tax_rates_remain_queryable_from_the_canonical_line_snapshot()
     {
         var request = fixture.CreateMultiRateRequest(151);
         using var client = fixture.CreateClient();
@@ -58,7 +57,7 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         using var response = await client.SendAsync(upload);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var summaries = await fixture.GetTaxSummariesAsync(request.DocumentId);
+        var summaries = await fixture.GetLineTaxBreakdownAsync(request.DocumentId);
         Assert.Collection(
             summaries,
             fivePercent =>
@@ -81,7 +80,7 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         using var duplicate = fixture.CreateUploadMessage(request);
         using var duplicateResponse = await client.SendAsync(duplicate);
         Assert.Equal(HttpStatusCode.OK, duplicateResponse.StatusCode);
-        Assert.Equal(2, await fixture.CountAsync("SalesDocumentTaxSummaries", request.DocumentId));
+        Assert.Equal(2, await fixture.CountAsync("SalesDocumentLines", request.DocumentId));
     }
 
     [Fact]
@@ -206,7 +205,6 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         Assert.Equal(1, await fixture.CountAsync("SalesDocuments", original.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("FiscalSnapshots", original.DocumentId));
         Assert.Equal(0, await fixture.CountAsync("SalesPayments", original.DocumentId));
-        Assert.Equal(0, await fixture.CountAsync("SalesDocumentTaxSummaries", original.DocumentId));
         Assert.Equal(0, await fixture.CountAsync("InventoryMovements", original.DocumentId));
         Assert.Equal(0, await fixture.CountAsync("ServerOutboxMessages", original.DocumentId));
         Assert.Equal(1, await fixture.CountAsync("FiscalDocumentProcesses", original.DocumentId));

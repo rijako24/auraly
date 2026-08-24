@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { taxProfilesApi, type ProductTaxConfiguration } from "@/services/api/tax-profiles";
-import { formatCurrency } from "@/lib/utils";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
 export interface ProductTaxEditorHandle { save: () => Promise<void> }

@@ -29,10 +29,12 @@ USING (VALUES
   (N'SalesRevenue',N'Ingresos por ventas',N'413595',N'Ingresos por venta de mercancías',N'Revenue',0,20),
   (N'SalesReturns',N'Devoluciones en ventas',N'417595',N'Devoluciones en ventas',N'ContraRevenue',0,21),
   (N'OtherIncome',N'Otros ingresos de caja',N'429595',N'Otros ingresos',N'Revenue',0,22),
-  (N'OperatingExpense',N'Gastos operativos',N'519510',N'Gastos operativos',N'Expense',0,23),
-  (N'PurchasesExpense',N'Compras no inventariables',N'519595',N'Compras no inventariables',N'Expense',0,24),
-  (N'OtherExpense',N'Otras salidas de caja',N'539595',N'Otras salidas de caja',N'Expense',0,25),
-  (N'CostOfGoodsSold',N'Costo de ventas',N'613595',N'Costo de mercancía vendida',N'Expense',0,26)
+  (N'CashOverageIncome',N'Sobrantes de caja',N'429596',N'Sobrantes de caja',N'Revenue',0,23),
+  (N'OperatingExpense',N'Gastos operativos',N'519510',N'Gastos operativos',N'Expense',0,24),
+  (N'PurchasesExpense',N'Compras no inventariables',N'519595',N'Compras no inventariables',N'Expense',0,25),
+  (N'OtherExpense',N'Otras salidas de caja',N'539595',N'Otras salidas de caja',N'Expense',0,26),
+  (N'CashShortageExpense',N'Faltantes de caja',N'539596',N'Faltantes de caja',N'Expense',0,27),
+  (N'CostOfGoodsSold',N'Costo de ventas',N'613595',N'Costo de mercancía vendida',N'Expense',0,28)
 ) AS source(Category,DisplayName,AccountCode,AccountName,AccountType,RequiresParty,DisplayOrder)
 ON target.ProfileCode=N'AURALY_CO' AND target.Category=source.Category
 WHEN MATCHED THEN UPDATE SET DisplayName=source.DisplayName,AccountCode=source.AccountCode,

@@ -227,7 +227,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Platform.Application
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Console", "Console", "{57582746-CCA3-46B1-9441-B64051A56925}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Platform.Console", "src\Console\Auraly.Platform.Console\Auraly.Platform.Console.csproj", "{C54931C3-404C-497A-A77D-FD6998E0181B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Console", "src\Console\Auraly.Console\Auraly.Console.csproj", "{C54931C3-404C-497A-A77D-FD6998E0181B}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Domain", "Domain", "{7EEBD262-1F4F-4A4E-BEFA-EC2E1899607B}"
 EndProject

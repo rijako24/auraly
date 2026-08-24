@@ -64,7 +64,8 @@ public sealed class FiscalGenerationWorkerTests
         Assert.Contains("tax rate differs", store.ErrorMessage, StringComparison.OrdinalIgnoreCase);
     }
     private static FiscalGenerationWorker CreateWorker(TestStore store) => new(
-        store, new TestPinProvider(), new DianInvoiceUblBuilder(), new DianCreditNoteUblBuilder(), new DianSchemaValidator(),
+        store, new TestPinProvider(), new DianInvoiceUblBuilder(), new DianCreditNoteUblBuilder(),
+        new DianDebitNoteUblBuilder(), new DianSchemaValidator(),
         new PassthroughSigner(), new FixedTimeProvider(new DateTimeOffset(2026, 7, 29, 10, 0, 0, TimeSpan.Zero)));
 
     private static FiscalGenerationWorkItem CreateWork()
@@ -106,7 +107,8 @@ public sealed class FiscalGenerationWorkerTests
         var authorization = new FiscalAuthorizationWorkConfiguration("18760000001",
             new DateOnly(2026, 1, 1), new DateOnly(2027, 1, 1), "SETP", 1, 1000);
         return new FiscalGenerationWorkItem(documentId, businessId, "worker-a",
-            FiscalDocumentTypeCodes.Invoice, sale.FiscalSnapshot!.FiscalNumber, sale, null, issuer, authorization);
+            FiscalDocumentTypeCodes.Invoice, sale.FiscalSnapshot!.FiscalNumber, sale, null, null,
+            issuer, authorization);
     }
 
     private sealed class TestStore(FiscalGenerationWorkItem work) : IFiscalGenerationWorkStore

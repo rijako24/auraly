@@ -36,7 +36,7 @@ export interface ColumnVisibilityOption {
   label: string;
 }
 
-export interface DataTableToolbarProps<TData> {
+export interface DataTableToolbarProps {
   searchKey?: string;
   searchPlaceholder?: string;
   searchValue?: string;
@@ -58,7 +58,7 @@ export interface DataTableToolbarProps<TData> {
   className?: string;
 }
 
-export function DataTableToolbar<TData>({
+export function DataTableToolbar({
   searchKey,
   searchPlaceholder = "Buscar...",
   searchValue = "",
@@ -75,7 +75,7 @@ export function DataTableToolbar<TData>({
   table,
   children,
   className,
-}: DataTableToolbarProps<TData>) {
+}: DataTableToolbarProps) {
   const columns =
     table?.getAllLeafColumns?.() ?? table?.getAllColumns?.() ?? [];
   const hasFilters =

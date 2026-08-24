@@ -22,15 +22,15 @@ La solución, proyectos, ensamblados, namespaces, carpetas y textos técnicos de
 | `Auraly.Commerce.sln` | `Auraly.Commerce.sln` |
 | `Auraly.WebAPI` | `Auraly.Api` |
 | `Auraly.Platform.Worker` — actualmente Azure Functions | `Auraly.Functions` |
-| `Auraly.Platform.Console` | `Auraly.Tools.Console` |
+| `Auraly.Platform.Console` | `Auraly.Console` |
 | `Auraly.Platform.Tests` | `Auraly.Tests` |
 | `Auraly.Database.sln` | `Auraly.Database.sln` |
 | `Auraly.Database.sqlproj` | `Auraly.Database.sqlproj` |
 | `Auraly.Platform.Domain` | `Auraly.Domain.Platform` como transición |
 | `Auraly.Platform.Application` | `Auraly.Application.Platform` como transición |
 | `Auraly.Platform.Infrastructure` | `Auraly.Infrastructure.Platform` como transición |
-| `HashGen` | `Auraly.Tools.HashGen` |
-| `TestOpenAI` | `Auraly.Tests.OpenAI` o se elimina si ya no tiene propósito |
+| `HashGen` | Eliminado: proyecto incompleto sin punto de entrada |
+| `TestOpenAI` | Eliminado: prueba aislada reemplazada por las verificaciones del host canónico |
 
 Los proyectos `Platform` son transitorios para el código actual. Los nuevos módulos y el código que se vaya extrayendo usarán:
 

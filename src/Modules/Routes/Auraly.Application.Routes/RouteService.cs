@@ -31,11 +31,11 @@ public sealed class RouteService(
     {
         Require(actor, RoutePermissionCodes.Read);
         if (query.Page < 1 || query.PageSize is < 1 or > 100)
-            throw new RouteValidationException("Page and PageSize are outside the allowed range.");
+            throw new RouteValidationException("La página o el tamaño de página están fuera del rango permitido.");
         if (query.DayOfWeek is < 1 or > 7)
-            throw new RouteValidationException("DayOfWeek must use ISO values from 1 to 7.");
+            throw new RouteValidationException("El día de la semana debe usar valores del 1 al 7.");
         if (query.PreparationStatus is not null && query.PreparationStatus is not ("Draft" or "Ready" or "AttentionRequired"))
-            throw new RouteValidationException("PreparationStatus is invalid.");
+            throw new RouteValidationException("El estado de preparación no es válido.");
         return store.PageAsync(actor, query with { Search = query.Search?.Trim() }, ct);
     }
 
@@ -44,7 +44,7 @@ public sealed class RouteService(
         Require(actor, RoutePermissionCodes.Read);
         Required(routeId, "RouteId");
         return await store.GetAsync(actor, routeId, ct)
-            ?? throw new RouteNotFoundException("The route does not exist in the authenticated business.");
+            ?? throw new RouteNotFoundException("La ruta no existe en el negocio autenticado.");
     }
 
     public async Task<SalesRouteDetail> ExportAsync(RouteActorIdentity actor, Guid routeId, CancellationToken ct)
@@ -52,7 +52,7 @@ public sealed class RouteService(
         Require(actor, RoutePermissionCodes.Export);
         Required(routeId, "RouteId");
         return await store.GetAsync(actor, routeId, ct)
-            ?? throw new RouteNotFoundException("The route does not exist in the authenticated business.");
+            ?? throw new RouteNotFoundException("La ruta no existe en el negocio autenticado.");
     }
 
     public Task<RouteOptions> OptionsAsync(RouteActorIdentity actor, CancellationToken ct)
@@ -66,7 +66,7 @@ public sealed class RouteService(
         RequireAny(actor, RoutePermissionCodes.Read, RoutePermissionCodes.ManageStops);
         Required(routeId, "RouteId");
         if (query.Page < 1 || query.PageSize is < 1 or > 100)
-            throw new RouteValidationException("Page and PageSize are outside the allowed range.");
+            throw new RouteValidationException("La página o el tamaño de página están fuera del rango permitido.");
         return store.CandidateSitesAsync(actor, routeId, query with
         {
             Search = query.Search?.Trim(),
@@ -78,7 +78,7 @@ public sealed class RouteService(
     {
         Require(actor, RoutePermissionCodes.Read);
         if (query.Page < 1 || query.PageSize is < 1 or > 100)
-            throw new RouteValidationException("Page and PageSize are outside the allowed range.");
+            throw new RouteValidationException("La página o el tamaño de página están fuera del rango permitido.");
         return store.CandidateSitesAsync(actor, null, query with
         {
             Search = query.Search?.Trim(),
@@ -130,16 +130,16 @@ public sealed class RouteService(
     {
         Require(actor, RoutePermissionCodes.ManageStops);
         Required(routeId, "RouteId");
-        if (request.Stops.Count == 0) throw new RouteValidationException("Select at least one customer site.");
-        if (request.Stops.Count > 100) throw new RouteValidationException("At most 100 stops can be added per request.");
+        if (request.Stops.Count == 0) throw new RouteValidationException("Selecciona al menos un establecimiento del cliente.");
+        if (request.Stops.Count > 100) throw new RouteValidationException("Solo se pueden agregar hasta 100 paradas por solicitud.");
         if (request.Stops.Select(stop => stop.PartySiteId).Distinct().Count() != request.Stops.Count)
-            throw new RouteValidationException("A customer site can only appear once in the request.");
+            throw new RouteValidationException("Un establecimiento del cliente solo puede aparecer una vez en la solicitud.");
         foreach (var stop in request.Stops)
         {
             Required(stop.CustomerId, "CustomerId");
             Required(stop.PartySiteId, "PartySiteId");
             if (stop.VisitNote?.Trim().Length > 300)
-                throw new RouteValidationException("VisitNote cannot exceed 300 characters.");
+                throw new RouteValidationException("La nota de visita no puede superar 300 caracteres.");
         }
         var values = request.Stops.Select(stop => (ids.NewId(), stop with { VisitNote = stop.VisitNote?.Trim() })).ToArray();
         return store.AddStopsAsync(actor, routeId, values, RowVersion(request.RouteRowVersion), time.GetUtcNow(), ct);
@@ -148,7 +148,7 @@ public sealed class RouteService(
     public Task<RouteMutationResult> UpdateStopAsync(RouteActorIdentity actor, Guid routeId, Guid stopId, UpdateRouteStopRequest request, CancellationToken ct)
     {
         Require(actor,RoutePermissionCodes.ManageStops);Required(routeId,"RouteId");Required(stopId,"RouteStopId");
-        var note=request.VisitNote?.Trim();if(note?.Length>300)throw new RouteValidationException("VisitNote cannot exceed 300 characters.");
+        var note=request.VisitNote?.Trim();if(note?.Length>300)throw new RouteValidationException("La nota de visita no puede superar 300 caracteres.");
         return store.UpdateStopAsync(actor,routeId,stopId,request,note,RowVersion(request.RouteRowVersion),time.GetUtcNow(),ct);
     }
 
@@ -165,9 +165,9 @@ public sealed class RouteService(
         Require(actor, RoutePermissionCodes.ManageStops);
         Required(routeId, "RouteId");
         if (request.OrderedStopIds.Any(id => id == Guid.Empty))
-            throw new RouteValidationException("Every RouteStopId is required.");
+            throw new RouteValidationException("Todos los establecimientos de la ruta son obligatorios.");
         if (request.OrderedStopIds.Count != request.OrderedStopIds.Distinct().Count())
-            throw new RouteValidationException("The stop order cannot contain duplicates.");
+            throw new RouteValidationException("El orden de establecimientos no puede contener duplicados.");
         return store.ReorderStopsAsync(actor, routeId, request.OrderedStopIds, RowVersion(request.RouteRowVersion), time.GetUtcNow(), ct);
     }
 
@@ -180,16 +180,16 @@ public sealed class RouteService(
     public Task<SalesRouteVisit> RecordVisitAsync(RouteActorIdentity actor, Guid routeId, RecordSalesRouteVisitRequest request, CancellationToken ct)
     {
         Require(actor, RoutePermissionCodes.RecordVisits); Required(routeId, "RouteId"); Required(request.RouteStopId, "RouteStopId");
-        if (request.Status is not ("Visited" or "Skipped")) throw new RouteValidationException("Visit status must be Visited or Skipped.");
+        if (request.Status is not ("Visited" or "Skipped")) throw new RouteValidationException("El estado de la visita debe ser visitado u omitido.");
         var reason = request.SkipReason?.Trim();
         var observation = request.VisitObservation?.Trim();
-        if (request.Status == "Skipped" && string.IsNullOrWhiteSpace(reason)) throw new RouteValidationException("A reason is required when a customer is skipped.");
-        if (request.Status == "Visited" && request.OrderId is null) throw new RouteValidationException("A visited customer requires its order.");
-        if (reason?.Length > 300) throw new RouteValidationException("SkipReason cannot exceed 300 characters.");
-        if (request.Status == "Skipped" && string.IsNullOrWhiteSpace(observation)) throw new RouteValidationException("An observation is required when a visit finishes without an order.");
-        if (observation?.Length > 1000) throw new RouteValidationException("VisitObservation cannot exceed 1000 characters.");
-        if (request.Status == "Visited" && observation is not null) throw new RouteValidationException("VisitObservation only applies to a visit without an order.");
-        if (string.IsNullOrWhiteSpace(request.IdempotencyKey) || request.IdempotencyKey.Trim().Length > 128) throw new RouteValidationException("IdempotencyKey is required.");
+        if (request.Status == "Skipped" && string.IsNullOrWhiteSpace(reason)) throw new RouteValidationException("Debes indicar el motivo cuando se omite un cliente.");
+        if (request.Status == "Visited" && request.OrderId is null) throw new RouteValidationException("Una visita completada requiere el pedido correspondiente.");
+        if (reason?.Length > 300) throw new RouteValidationException("El motivo no puede superar 300 caracteres.");
+        if (request.Status == "Skipped" && string.IsNullOrWhiteSpace(observation)) throw new RouteValidationException("Debes escribir una observación cuando la visita termina sin pedido.");
+        if (observation?.Length > 1000) throw new RouteValidationException("La observación de la visita no puede superar 1.000 caracteres.");
+        if (request.Status == "Visited" && observation is not null) throw new RouteValidationException("La observación de visita solo aplica cuando la visita termina sin pedido.");
+        if (string.IsNullOrWhiteSpace(request.IdempotencyKey) || request.IdempotencyKey.Trim().Length > 128) throw new RouteValidationException("La identificación de la operación es obligatoria.");
         return store.RecordVisitAsync(actor, routeId, request with { IdempotencyKey=request.IdempotencyKey.Trim() }, reason, observation, ct);
     }
 
@@ -209,7 +209,7 @@ public sealed class RouteService(
         }
         catch (FormatException)
         {
-            throw new RouteValidationException("RowVersion is invalid.");
+            throw new RouteValidationException("La versión de la ruta no es válida. Actualiza e inténtalo nuevamente.");
         }
     }
 
@@ -222,23 +222,23 @@ public sealed class RouteService(
     private static void Scope(RouteActorIdentity actor, Guid businessId)
     {
         if (businessId != actor.BusinessId)
-            throw new RouteForbiddenException("The route business does not match the authenticated context.");
+            throw new RouteForbiddenException("El negocio de la ruta no coincide con el contexto autenticado.");
     }
 
     private static void Required(Guid value, string field)
     {
-        if (value == Guid.Empty) throw new RouteValidationException($"{field} is required.");
+        if (value == Guid.Empty) throw new RouteValidationException($"El campo {field} es obligatorio.");
     }
 
     private static void Require(RouteActorIdentity actor, string permission)
     {
         if (!actor.Permissions.Contains(permission))
-            throw new RouteForbiddenException($"Permission '{permission}' is required.");
+            throw new RouteForbiddenException($"Se requiere el permiso '{permission}'.");
     }
 
     private static void RequireAny(RouteActorIdentity actor, params string[] permissions)
     {
         if (!permissions.Any(actor.Permissions.Contains))
-            throw new RouteForbiddenException($"One of these permissions is required: {string.Join(", ", permissions)}.");
+            throw new RouteForbiddenException($"Se requiere uno de estos permisos: {string.Join(", ", permissions)}.");
     }
 }

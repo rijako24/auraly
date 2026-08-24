@@ -39,7 +39,8 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import {
-  calculateBaseQuantity, calculateGoodsReceiptLine, calculateGoodsReceiptTotals, nextGoodsReceiptQuantityIndex,
+  calculateBaseQuantity, calculateGoodsReceiptLine, calculateGoodsReceiptTotals, goodsReceiptUnitLabel,
+  nextGoodsReceiptQuantityIndex,
 } from "@/lib/goods-receipt-calculator";
 
 type PendingSupplierChange = { supplierId: string; supplierName: string };
@@ -686,7 +687,7 @@ function ReceiptEditor({
                 return <tr key={line.productId} className="border-t align-middle">
                   <td className="px-4 py-3"><p className="font-semibold">{line.description}</p>
                     <p className="text-xs text-muted-foreground">IVA de compra {line.taxRate} % · {purchaseTaxTreatmentLabels[line.taxTreatment] ?? line.taxTreatment}</p>
-                    <p className="text-xs text-muted-foreground">{line.presentationQuantity} {line.presentationName.toLowerCase()} × {line.unitsPerPresentation} = {line.quantity} {line.baseUnitCode ?? "unidades"}</p></td>
+                    <p className="text-xs text-muted-foreground">{line.presentationQuantity} {line.presentationName.toLowerCase()} × {line.unitsPerPresentation} = {line.quantity} {goodsReceiptUnitLabel(line.baseUnitCode, line.quantity)}</p></td>
                   <td className="px-3 py-2"><Input type="number" min="0.000001" step="0.001"
                     ref={(element) => {
                       if (element) quantityRefs.current.set(line.productId, element);
@@ -711,16 +712,16 @@ function ReceiptEditor({
                       value={line.unitsPerPresentation === 1 ? "base" : "package"}
                       onValueChange={(value) => {
                         const factor = value === "base" ? 1 : (line.preferredUnitsPerPresentation ?? line.unitsPerPresentation);
-                        const name = value === "base" ? (line.baseUnitCode ?? "Unidad") : (line.preferredPresentationName ?? line.presentationName);
+                        const name = value === "base" ? goodsReceiptUnitLabel(line.baseUnitCode) : (line.preferredPresentationName ?? line.presentationName);
                         updateLine(line.productId, { presentationName: name, unitsPerPresentation: factor, quantity: calculateBaseQuantity(line.presentationQuantity, factor) });
                       }}>
                       <SelectTrigger className="mt-1 h-7 border-0 px-1 text-xs"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="base">{line.baseUnitCode ?? "Unidad"}</SelectItem>
-                        <SelectItem value="package">{line.preferredPresentationName ?? line.presentationName} · {line.preferredUnitsPerPresentation ?? line.unitsPerPresentation} {line.baseUnitCode ?? "unidades"}</SelectItem>
+                        <SelectItem value="base">{goodsReceiptUnitLabel(line.baseUnitCode)}</SelectItem>
+                        <SelectItem value="package">{line.preferredPresentationName ?? line.presentationName} · {line.preferredUnitsPerPresentation ?? line.unitsPerPresentation} {goodsReceiptUnitLabel(line.baseUnitCode, line.preferredUnitsPerPresentation ?? line.unitsPerPresentation)}</SelectItem>
                       </SelectContent>
                     </Select>}
-                    {(line.preferredUnitsPerPresentation ?? line.unitsPerPresentation) <= 1 && <span className="mt-1 block text-xs text-muted-foreground">{line.baseUnitCode ?? line.presentationName}</span>}
+                    {(line.preferredUnitsPerPresentation ?? line.unitsPerPresentation) <= 1 && <span className="mt-1 block text-xs text-muted-foreground">{goodsReceiptUnitLabel(line.baseUnitCode)}</span>}
                   </td>
                   <td className="px-3 py-2"><FormattedNumberInput kind="currency"
                     ariaLabel={`Costo unitario de ${line.description}`}

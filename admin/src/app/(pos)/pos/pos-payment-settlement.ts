@@ -1,4 +1,4 @@
-import type { PosPaymentInput } from "@/services/pos/pos-edge-client";
+import type { PosCreditTerms, PosCustomer, PosPaymentInput } from "@/services/pos/pos-edge-client";
 
 export type PosPaymentSettlement = {
   isValid: boolean;
@@ -20,6 +20,26 @@ export function chooseAdditionalPaymentMethod(
 
 const precision = 100;
 const tolerance = 0.005;
+
+export function splitCreditCheckout(
+  payments: PosPaymentInput[],
+  customer: PosCustomer | null,
+  now: Date = new Date(),
+): { payments: PosPaymentInput[]; credit: PosCreditTerms | null } {
+  const creditRows = payments.filter((payment) => payment.methodCode === "Credit");
+  if (creditRows.length === 0) return { payments, credit: null };
+  if (creditRows.length > 1) throw new Error("La venta admite una sola línea de crédito.");
+  const creditRow = creditRows[0];
+  if (!customer?.isCreditEnabled)
+    throw new Error("El cliente no está habilitado para ventas a crédito.");
+  if (customer.availableCredit != null && creditRow.amount - customer.availableCredit > tolerance)
+    throw new Error("La venta supera el cupo disponible del cliente.");
+  const dueDate = new Date(now.getTime() + (customer.defaultCreditDueDays ?? 0) * 86_400_000);
+  return {
+    payments: payments.filter((payment) => payment.methodCode !== "Credit"),
+    credit: { amount: creditRow.amount, dueDate: dueDate.toISOString() },
+  };
+}
 
 function round(value: number) {
   return Math.round(value * precision) / precision;

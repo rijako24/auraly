@@ -57,7 +57,6 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         Assert.Equal(1, persisted.WorkSessionMovementCount);
         Assert.Equal(1, persisted.ServerOutboxCount);
         Assert.Equal(1, persisted.ProcessingJobCount);
-        Assert.Equal(1, persisted.TaxSummaryCount);
         Assert.Equal("Completed", persisted.CheckoutStatus);
         Assert.Equal("Consumed", persisted.DraftStatus);
 
@@ -142,7 +141,6 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         Assert.Equal(1, afterReplay.WorkSessionMovementCount);
         Assert.Equal(1, afterReplay.ServerOutboxCount);
         Assert.Equal(1, afterReplay.ProcessingJobCount);
-        Assert.Equal(1, afterReplay.TaxSummaryCount);
 
         using var conflictRequest = Mutation(
             captured.DraftId,
@@ -545,7 +543,6 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
                    (SELECT COUNT(*) FROM dbo.WorkSessionMovements x WHERE x.DocumentId=d.DocumentId),
                    (SELECT COUNT(*) FROM dbo.ServerOutboxMessages x WHERE x.DocumentId=d.DocumentId),
                    (SELECT COUNT(*) FROM dbo.DocumentProcessingJobs x WHERE x.DocumentId=d.DocumentId),
-                   (SELECT COUNT(*) FROM dbo.SalesDocumentTaxSummaries x WHERE x.DocumentId=d.DocumentId),
                    receipt.Status,draft.Status
             FROM dbo.SalesDocuments d
             JOIN dbo.OnlineSalesCheckoutReceipts receipt
@@ -570,9 +567,8 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             reader.GetInt32(9),
             reader.GetInt32(10),
             reader.GetInt32(11),
-            reader.GetInt32(12),
-            reader.GetString(13),
-            reader.GetString(14));
+            reader.GetString(12),
+            reader.GetString(13));
     }
 
     private async Task<IReadOnlyList<ConsecutiveEvidence>> ReadConsecutivesAsync(
@@ -649,7 +645,6 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         int WorkSessionMovementCount,
         int ServerOutboxCount,
         int ProcessingJobCount,
-        int TaxSummaryCount,
         string CheckoutStatus,
         string DraftStatus);
 

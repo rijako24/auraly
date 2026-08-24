@@ -80,6 +80,7 @@ import { PosPaymentDialog } from "./pos-payment-dialog";
 import { PosPrinterDialog } from "./pos-printer-dialog";
 import {
   shouldShowCashChange,
+  splitCreditCheckout,
   type PosPaymentSettlement,
 } from "./pos-payment-settlement";
 import { PosProductSearchDialog } from "./pos-product-search-dialog";
@@ -151,6 +152,7 @@ export default function PosPage() {
   const [onlineUserId, setOnlineUserId] = useState("");
   const [edgeEnrollmentToken, setEdgeEnrollmentToken] = useState<string | null>(null);
   const [edgeEnrollmentRequired, setEdgeEnrollmentRequired] = useState(false);
+  const [localEnrollmentRequired, setLocalEnrollmentRequired] = useState(false);
   const [canEnrollOffline, setCanEnrollOffline] = useState(false);
   const [edgeLoginState, setEdgeLoginState] = useState<"preparing" | "required" | null>(null);
   const [edgeLoginError, setEdgeLoginError] = useState<string | null>(null);
@@ -207,6 +209,7 @@ export default function PosPage() {
 
   const [sidePanel, setSidePanel] = useState<"temporaries" | "orders">("temporaries");
   const [ordersRefreshVersion, setOrdersRefreshVersion] = useState(0);
+  const [ordersCount, setOrdersCount] = useState(0);
   const [ordersExpanded, setOrdersExpanded] = useState(false);
   const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<
@@ -322,6 +325,7 @@ export default function PosPage() {
             edgeStartupMode = health.startupMode;
             requiresEnrollment = health.status === "EnrollmentRequired";
             if (active) {
+              setLocalEnrollmentRequired(requiresEnrollment);
               setEdgePermissions(health.permissions ?? []);
               setSynchronization({
                 inProgress: health.synchronizationInProgress,
@@ -1423,11 +1427,13 @@ export default function PosPage() {
     setBusy(true);
     setError(null);
     try {
+      const checkout = splitCreditCheckout(payments, selectedCustomer);
       const result = await client.completeSale(
         draft.draftId.value,
         selectedCustomer?.identification ?? null,
-        payments,
+        checkout.payments,
         effectiveDocumentType,
+        checkout.credit,
       );
       setDraft(result.nextDraft);
       setNextNumber(result.nextDocumentNumber);
@@ -1617,7 +1623,13 @@ export default function PosPage() {
   async function recoverPosOrder(orderId: string) {
     if (!client) throw new Error("El punto de venta no está disponible.");
     const recovered = await client.recoverOrder(orderId);
+    const recoveredCustomer = recovered.customerId
+      ? await client.customer(recovered.customerId).catch(() => null)
+      : null;
     setDraft(recovered);
+    setSelectedCustomer(recoveredCustomer);
+    if (recovered.customerId && !recoveredCustomer)
+      setError("El pedido se recuperó, pero no fue posible cargar los datos del cliente.");
     setSelectedLineId(recovered.lines[0]?.lineId ?? null);
     setOrdersExpanded(false);
     setSidePanel("orders");
@@ -1714,14 +1726,38 @@ export default function PosPage() {
       );
       window.setTimeout(() => window.location.reload(), 2_500);
     } catch (caught) {
-      setSetupError(
-        caught instanceof Error
-          ? caught.message
-          : "No fue posible enrolar esta estación.",
-      );
+      const message = caught instanceof Error
+        ? caught.message
+        : "No fue posible enrolar esta estación.";
+      setSetupError(message);
+      setError(message);
       throw caught;
     } finally {
       setSetupLoading(false);
+    }
+  }
+
+  async function prepareOfflineMode() {
+    if (!edgeEnrollmentToken) return;
+    if (!localEnrollmentRequired) {
+      await switchExecutionMode("enrolled");
+      return;
+    }
+    const remembered = rememberedSalesWorkspaceKey();
+    const option = onlineOptions.find(candidate =>
+      salesWorkspaceKey(candidate.businessId, candidate.warehouseId) === remembered);
+    if (!option) {
+      setError("Selecciona una sede de venta antes de preparar el modo sin conexión.");
+      return;
+    }
+    if (!canEnrollOffline) {
+      setError("No tienes permiso para preparar este equipo para trabajar sin conexión.");
+      return;
+    }
+    try {
+      await enrollOffline(option, documentType);
+    } catch {
+      // enrollOffline already exposes the actionable error in the setup state.
     }
   }
 
@@ -1971,13 +2007,13 @@ edgeCapable={edgeEnrollmentRequired}
           {client.mode === "online" && edgeEnrollmentToken && (
             <button
               type="button"
-              onClick={() => void switchExecutionMode("enrolled")}
+              onClick={() => void prepareOfflineMode()}
               disabled={busy}
-              title="Trabajar con el POS preparado para desconexión"
+              title={localEnrollmentRequired?"Preparar este equipo para trabajar sin conexión":"Cambiar al modo de trabajo sin conexión"}
               className="flex h-8 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-xs font-semibold text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
             >
               <WifiOff className="h-4 w-4" />
-              <span className="hidden lg:inline">Modo offline</span>
+              <span className="hidden lg:inline">{localEnrollmentRequired?"Activar modo sin conexión":"Trabajar desconectado"}</span>
             </button>
           )}
           {client.mode === "edge" && (
@@ -2284,7 +2320,7 @@ edgeCapable={edgeEnrollmentRequired}
                         />
                       </td>
                       <td className="px-3 py-3 text-right font-medium tabular-nums text-slate-700">
-                        {money.format(calculateRetailUnitPrice(line.unitPrice, line.taxRate))}
+                        {money.format(calculateRetailUnitPrice(line.unitPrice))}
                       </td>
                       <td className="px-3 py-3 text-right text-base font-bold tabular-nums text-slate-950">
                         {money.format(line.total)}
@@ -2497,7 +2533,7 @@ edgeCapable={edgeEnrollmentRequired}
                 <ClipboardList className="h-4 w-4" />
                 Pedidos
                 <span className="rounded-full bg-teal-50 px-2 py-0.5 text-xs text-teal-800">
-                  0
+                   {ordersCount}
                 </span>
                 <span className="text-[10px] text-slate-400">F9</span>
               </button>
@@ -2569,6 +2605,7 @@ edgeCapable={edgeEnrollmentRequired}
                   )
                 }
                 onConfigurePrinting={() => setPrinterOpen(true)}
+                onCountChange={setOrdersCount}
                 onExpand={openOrders}
               />
             )}
@@ -2614,6 +2651,7 @@ edgeCapable={edgeEnrollmentRequired}
                 )
               }
               onConfigurePrinting={() => setPrinterOpen(true)}
+              onCountChange={setOrdersCount}
             />
           </main>
         </div>
@@ -2696,6 +2734,7 @@ edgeCapable={edgeEnrollmentRequired}
           documentType={selectedCustomer?.requiresElectronicInvoice ? "SalesInvoice" : documentType}
           documentTypeLocked={selectedCustomer?.requiresElectronicInvoice ?? false}
           documentTypeReady
+          customer={selectedCustomer}
           onChangeDocumentType={() => setDocumentTypeOpen(true)}
           onCancel={() => {
             setPaymentOpen(false);

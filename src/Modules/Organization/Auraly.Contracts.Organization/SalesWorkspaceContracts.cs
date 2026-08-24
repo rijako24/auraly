@@ -88,10 +88,3 @@ public sealed record PosEnrollmentPackage(
     PosEnrollmentDocumentSeries ReceiptDocumentSeries,
     IReadOnlyDictionary<string, string>? OfflineLeaseTrustedPublicKeys,
     DateTimeOffset EnrolledAt);
-
-public sealed record PosEnrollmentReceipt(
-    Guid DeviceId,
-    Guid BusinessId,
-    Guid WarehouseId,
-    string DeviceName,
-    DateTimeOffset EnrolledAt);

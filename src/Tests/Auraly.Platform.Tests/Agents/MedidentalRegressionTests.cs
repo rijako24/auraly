@@ -242,7 +242,7 @@ public sealed class MedidentalRegressionTests
             FindSolutionRoot(),
             "src",
             "Console",
-            "Auraly.Platform.Console",
+            "Auraly.Console",
             "ExtractorEvaluations");
         var cjSuites = Directory.GetFiles(evaluationDirectory, "cj-*.json")
             .OrderBy(Path.GetFileName)

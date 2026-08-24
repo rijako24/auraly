@@ -45,7 +45,8 @@ export default function NewUserPage() {
   const toggleRole = (roleId: string) => {
     setSelectedRoles((prev) => {
       const next = new Set(prev);
-      next.has(roleId) ? next.delete(roleId) : next.add(roleId);
+      if (next.has(roleId)) next.delete(roleId);
+      else next.add(roleId);
       return next;
     });
   };

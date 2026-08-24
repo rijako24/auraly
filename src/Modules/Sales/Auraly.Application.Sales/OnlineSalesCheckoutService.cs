@@ -115,7 +115,7 @@ public sealed class OnlineSalesCheckoutService(
         if (request.Payments.Count > 10 ||
             (request.Payments.Count == 0 && request.Credit is null))
             throw new OnlineSalesDraftValidationException(
-                "La venta requiere pagos reales, saldo a cr?dito o ambos.");
+                "La venta requiere pagos reales, saldo a crédito o ambos.");
         if (request.Payments.Any(payment =>
                 !PaymentMethods.Contains(payment.MethodCode) ||
                 payment.Amount <= 0 ||
@@ -128,7 +128,7 @@ public sealed class OnlineSalesCheckoutService(
         if (request.Credit is not null &&
             (request.Credit.Amount <= 0 || request.Credit.DueDate == default))
             throw new OnlineSalesDraftValidationException(
-                "El valor y vencimiento del cr?dito no son v?lidos.");
+                "El valor y vencimiento del crédito no son válidos.");
 
     }
 }

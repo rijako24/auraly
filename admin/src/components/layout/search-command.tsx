@@ -2,24 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  BarChart3,
-  Building2,
-  Calendar,
-  CalendarDays,
-  CreditCard,
-  FileSearch,
-  LayoutDashboard,
-  MessageSquare,
-  Package,
-  Search,
-  Settings,
-  Shield,
-  Store,
-  UserCog,
-  UserPlus,
-  Users,
-} from "lucide-react";
+import { Search } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 
@@ -32,24 +15,6 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { navigation } from "./sidebar-nav-config";
-
-const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
-  LayoutDashboard,
-  BarChart3,
-  Package,
-  Users,
-  CalendarDays,
-  Calendar,
-  MessageSquare,
-  UserPlus,
-  CreditCard,
-  Building2,
-  Store,
-  UserCog,
-  Shield,
-  FileSearch,
-  Settings,
-};
 
 export function SearchCommand() {
   const [open, setOpen] = useState(false);

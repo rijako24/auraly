@@ -67,10 +67,6 @@ public sealed record FiscalCredentialReference(
     DateTimeOffset CertificateValidFrom,
     DateTimeOffset CertificateValidTo);
 
-public sealed record FiscalCredentialMaterial(
-    string SoftwarePin,
-    byte[] CertificatePfx);
-
 public sealed record DianNumberingRangeContext(
     Guid BusinessId,
     string SupplierTaxId,

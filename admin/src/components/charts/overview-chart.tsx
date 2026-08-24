@@ -3,9 +3,7 @@
 import * as React from "react";
 import {
   Area,
-  AreaChart,
   Bar,
-  BarChart,
   ComposedChart,
   ResponsiveContainer,
   Tooltip,

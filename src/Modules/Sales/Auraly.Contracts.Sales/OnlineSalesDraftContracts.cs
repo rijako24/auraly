@@ -77,7 +77,10 @@ public sealed record OnlineSalesCustomer(
     string Identification,
     string Name,
     Guid? PriceChannelId,
-    bool RequiresElectronicInvoice);
+    bool RequiresElectronicInvoice,
+    bool IsCreditEnabled,
+    int DefaultCreditDueDays,
+    decimal? AvailableCredit);
 
 public sealed record OnlineSalesCustomerSelection(
     OnlineSalesDraft Draft,

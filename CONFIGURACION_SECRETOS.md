@@ -5,7 +5,7 @@ Los archivos `appsettings.json` y `appSettings.json` **no se commitean** porque 
 ## Configuración inicial
 
 1. Copia la plantilla correspondiente:
-   - Console: `src/Console/Auraly.Platform.Console/appSettings.Example.json` → `appSettings.json`
+   - Console: `src/Console/Auraly.Console/appSettings.Example.json` → `appSettings.json`
 
 2. Reemplaza los placeholders (`<...>`) con tus credenciales reales.
 
@@ -14,7 +14,7 @@ Los archivos `appsettings.json` y `appSettings.json` **no se commitean** porque 
 ## Alternativa: User Secrets (recomendado para desarrollo)
 
 ```bash
-cd src/Console/Auraly.Platform.Console
+cd src/Console/Auraly.Console
 dotnet user-secrets init
 dotnet user-secrets set "OpenAI:ApiKey" "tu-api-key"
 # etc.

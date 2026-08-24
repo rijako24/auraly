@@ -52,7 +52,6 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                 session, request, inventoryWarehouseId, line, cancellationToken);
         }
 
-        await InsertTaxSummariesAsync(session, request, _timeProvider.GetUtcNow(), cancellationToken);
         await LinkSourceOrderAsync(session, request, cancellationToken);
 
         foreach (var payment in request.Payments.OrderBy(payment => payment.PaymentNumber))
@@ -103,42 +102,6 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         AddDecimal(command, "@UntaxedAmount", line.UntaxedAmount, 19, 4);
         AddDecimal(command, "@LineTotal", line.LineTotal, 19, 4);
         await command.ExecuteNonQueryAsync(cancellationToken);
-    }
-
-    private static async Task InsertTaxSummariesAsync(
-        SqlDocumentProcessingSessionAccessor.Session session,
-        PosSaleUploadRequest request,
-        DateTimeOffset createdAt,
-        CancellationToken cancellationToken)
-    {
-        const string sql = """
-            INSERT INTO dbo.SalesDocumentTaxSummaries
-            (
-                DocumentId, TaxCode, TaxRate, TaxableAmount,
-                TaxAmount, TotalAmount, CreatedAt
-            )
-            VALUES
-            (
-                @DocumentId, @TaxCode, @TaxRate, @TaxableAmount,
-                @TaxAmount, @TotalAmount, @CreatedAt
-            );
-            """;
-        var summaries = request.Lines
-            .GroupBy(line => new { line.TaxCode, line.TaxRate })
-            .OrderBy(group => group.Key.TaxCode, StringComparer.Ordinal)
-            .ThenBy(group => group.Key.TaxRate);
-        foreach (var summary in summaries)
-        {
-            await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
-            command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
-            command.Parameters.AddWithValue("@TaxCode", summary.Key.TaxCode);
-            AddDecimal(command, "@TaxRate", summary.Key.TaxRate, 9, 6);
-            AddDecimal(command, "@TaxableAmount", summary.Sum(line => line.UntaxedAmount), 19, 4);
-            AddDecimal(command, "@TaxAmount", summary.Sum(line => line.TaxAmount), 19, 4);
-            AddDecimal(command, "@TotalAmount", summary.Sum(line => line.LineTotal), 19, 4);
-            command.Parameters.AddWithValue("@CreatedAt", createdAt);
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
     }
 
     private async Task InsertInventoryMovementAsync(

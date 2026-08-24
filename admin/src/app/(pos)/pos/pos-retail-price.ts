@@ -6,7 +6,6 @@ const roundMoney = (value: number) => Math.round(value * 100) / 100;
  */
 export function calculateRetailUnitPrice(
   publishedUnitPrice: number,
-  _taxRate: number,
 ): number {
   if (!Number.isFinite(publishedUnitPrice)) {
     return 0;
@@ -17,9 +16,6 @@ export function calculateRetailUnitPrice(
 
 export function calculateReceiptRetailUnitPrice(
   publishedUnitPrice: number,
-  _quantity: number,
-  _discount: number,
-  _tax: number,
 ): number {
-  return calculateRetailUnitPrice(publishedUnitPrice, 0);
+  return calculateRetailUnitPrice(publishedUnitPrice);
 }

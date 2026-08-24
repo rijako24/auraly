@@ -15,22 +15,12 @@ import { Badge } from "@/components/ui/badge";
 import { PageError } from "@/components/ui/page-error";
 import { PageLoading } from "@/components/ui/page-loading";
 import {
-  ReservationStatus,
   ReservationStatusColors,
   ReservationStatusLabels,
 } from "@/types/enums";
 import type { Reservation } from "@/types/entities";
 import { formatDateTime, cn } from "@/lib/utils";
 import { useReservations } from "@/hooks/use-reservations";
-
-const STATUS_DOT_COLORS: Record<number, string> = {
-  [ReservationStatus.Pending]: "bg-yellow-500",
-  [ReservationStatus.Confirmed]: "bg-green-500",
-  [ReservationStatus.Completed]: "bg-blue-500",
-  [ReservationStatus.Cancelled]: "bg-red-500",
-  [ReservationStatus.PendingCalendar]: "bg-orange-500",
-  [ReservationStatus.OnHold]: "bg-gray-500",
-};
 
 const DAYS = ["Dom", "Lun", "Mar", "Mie", "Jue", "Vie", "Sab"];
 

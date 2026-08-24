@@ -4,6 +4,7 @@ import {
   calculateGoodsReceiptLine,
   calculateBaseQuantity,
   calculateGoodsReceiptTotals,
+  goodsReceiptUnitLabel,
   nextGoodsReceiptQuantityIndex,
 } from "./goods-receipt-calculator";
 
@@ -27,6 +28,13 @@ describe("goods receipt calculator", () => {
   it("converts purchasing presentations into inventory units", () => {
     assert.equal(calculateBaseQuantity(3, 24), 72);
     assert.throws(() => calculateBaseQuantity(1, 0));
+  });
+
+  it("shows the technical EA inventory unit in Spanish", () => {
+    assert.equal(goodsReceiptUnitLabel("EA", 1), "unidad");
+    assert.equal(goodsReceiptUnitLabel("EA", 10), "unidades");
+    assert.equal(goodsReceiptUnitLabel("NIU", 2), "unidades");
+    assert.equal(goodsReceiptUnitLabel("KGM", 2), "KGM");
   });
 
   it("moves through quantity cells without changing the quantity", () => {

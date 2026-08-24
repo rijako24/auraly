@@ -11,7 +11,6 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { AgentGlobalAction, AgentSettings, CheckoutModeDefinition, CheckoutPaymentMethodDefinition, MessageSequence, MessageSequenceStep, ReservationAutomationConfig, ReservationAutomationDefinitions, WebhookDefinitions } from "@/types/agent-settings";
 
-const selectClass = "h-10 w-full rounded-md border border-input bg-background px-3 text-sm";
 const split = (value: string) => value.split("\n").map((item) => item.trim()).filter(Boolean);
 const join = (value?: string[] | null) => (value ?? []).join("\n");
 

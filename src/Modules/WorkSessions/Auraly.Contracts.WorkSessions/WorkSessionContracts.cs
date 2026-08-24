@@ -11,6 +11,12 @@ public static class WorkSessionPermissionCodes
     public const string ManageCash = "work-sessions.cash.manage";
     public const string OpenCashDrawer = "work-sessions.cash.drawer.open";
     public const string ConfigureCashReasons = "work-sessions.cash-reasons.configure";
+    public const string ReadCashDifferences = "work-sessions.differences.read";
+}
+
+public static class WorkSessionAccountingDocumentTypes
+{
+    public const string CashDifference = "WorkSessionCashDifference";
 }
 
 public sealed record WorkSessionIdentity(
@@ -102,6 +108,37 @@ public sealed record WorkSessionClosurePreviewView(
     decimal NetAmount,
     decimal ExpectedCash,
     IReadOnlyList<WorkSessionPaymentTotal> PaymentTotals);
+
+public sealed record WorkSessionCashDifferencePayload(
+    Guid WorkSessionClosureId,
+    Guid WorkSessionId,
+    Guid TenantId,
+    Guid BusinessId,
+    Guid WarehouseId,
+    Guid UserId,
+    string UserName,
+    decimal ExpectedCash,
+    decimal CountedCash,
+    decimal Difference,
+    DateTimeOffset ClosedAt);
+
+public sealed record WorkSessionCashDifferenceView(
+    Guid WorkSessionClosureId,
+    Guid WorkSessionId,
+    Guid BusinessId,
+    string BusinessName,
+    Guid WarehouseId,
+    string WarehouseName,
+    Guid UserId,
+    string UserName,
+    DateTimeOffset ClosedAt,
+    decimal ExpectedCash,
+    decimal CountedCash,
+    decimal Difference,
+    string Treatment,
+    string AccountingStatus,
+    Guid? AccountingEntryId,
+    string? AccountingEntryNumber);
 public static class CashMovementDirections
 {
     public const string In = "In";

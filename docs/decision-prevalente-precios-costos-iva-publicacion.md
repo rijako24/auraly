@@ -208,7 +208,7 @@ TaxAmount
 LineTotal
 ```
 
-La factura conserva además totales agrupados por `TaxCode + TaxRate` en `SalesDocumentTaxSummaries`. Esto permite que una venta tenga productos al 0 %, 5 %, 19 % u otras tarifas aplicables y conocer exactamente la base y el impuesto de cada grupo.
+La factura conserva `TaxCode`, `TaxRate`, base e impuesto en cada línea inmutable. Los totales por tarifa se obtienen agrupando esas líneas y reporting los materializa en `reporting.SalesReportTaxFacts`; no se mantiene una segunda tabla operacional con los mismos importes.
 
 En modo desconectado, `TaxCode`, `TaxRate`, base e impuesto vienen del catálogo SQLite vigente al capturar la línea y quedan dentro del snapshot fiscal y de la outbox local. Al subir la factura:
 

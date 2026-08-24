@@ -40,13 +40,13 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.True(state.InventoryReasons >= 12);
         Assert.Equal(4, state.ProductUnits);
         Assert.Equal(1, state.DefaultCustomers);
-        Assert.Equal(26, state.AccountingAccounts);
-        Assert.Equal(26, state.AccountingMappings);
+        Assert.Equal(28, state.AccountingAccounts);
+        Assert.Equal(28, state.AccountingMappings);
         Assert.Equal(1, state.OpenAccountingPeriods);
         Assert.Equal(1, state.DefaultCostCenters);
         Assert.Equal(1, state.AccountingVoucherCursors);
         Assert.Equal(4, state.Roles);
-        Assert.Equal(2, state.OnlineSalesDocumentSeries);
+        Assert.Equal(3, state.OnlineSalesDocumentSeries);
         Assert.True(await RoleHasPermissionAsync(
             result.TenantId, "SUPERVISOR", "pos.approvals.receive_notifications"));
         Assert.False(await RoleHasPermissionAsync(
@@ -220,7 +220,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.NotNull(business);
         Assert.Equal(2, await CountDefaultWarehousesAsync(fixture.TenantId, business!.BusinessId));
         Assert.Equal(1, await CountDefaultCostCentersAsync(fixture.TenantId, business.BusinessId));
-        Assert.Equal(2, await CountOnlineSalesDocumentSeriesAsync(fixture.TenantId, business.BusinessId));
+        Assert.Equal(3, await CountOnlineSalesDocumentSeriesAsync(fixture.TenantId, business.BusinessId));
     }
 
     private async Task<(Guid CountryId, Guid DivisionId, Guid CityId)> ReadGeographyAsync()
@@ -256,7 +256,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
               (SELECT COUNT(*) FROM dbo.AccountingCostCenters c INNER JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId WHERE b.TenantId=@TenantId AND c.IsDefault=1 AND c.IsActive=1),
               (SELECT COUNT(*) FROM dbo.AccountingVoucherCursors WHERE TenantId=@TenantId),
               (SELECT COUNT(*) FROM dbo.AppRoles WHERE TenantId=@TenantId AND NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'ADMINISTRATOR')),
-              (SELECT COUNT(*) FROM dbo.DocumentSeries ds INNER JOIN dbo.Businesses b ON b.BusinessId=ds.BusinessId WHERE b.TenantId=@TenantId AND ds.DocumentType IN(N'SalesInvoice',N'SalesReceipt') AND ds.DeviceId IS NULL AND ds.SeriesCode=N'00' AND ds.IsActive=1),
+              (SELECT COUNT(*) FROM dbo.DocumentSeries ds INNER JOIN dbo.Businesses b ON b.BusinessId=ds.BusinessId WHERE b.TenantId=@TenantId AND ds.DocumentType IN(N'SalesInvoice',N'SalesReceipt',N'SalesDebitNote') AND ds.DeviceId IS NULL AND ds.SeriesCode=N'00' AND ds.IsActive=1),
               (SELECT COUNT(*) FROM dbo.UserRoles WHERE UserId=@UserId),
               (SELECT IsActive FROM dbo.AppUsers WHERE TenantId=@TenantId AND UserId=@UserId),
               (SELECT PasswordHash FROM dbo.AppUsers WHERE TenantId=@TenantId AND UserId=@UserId),
@@ -332,7 +332,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             FROM dbo.DocumentSeries ds
             INNER JOIN dbo.Businesses b ON b.BusinessId=ds.BusinessId
             WHERE b.TenantId=@TenantId AND b.BusinessId=@BusinessId
-              AND ds.DocumentType IN(N'SalesInvoice',N'SalesReceipt')
+              AND ds.DocumentType IN(N'SalesInvoice',N'SalesReceipt',N'SalesDebitNote')
               AND ds.DeviceId IS NULL AND ds.SeriesCode=N'00' AND ds.IsActive=1;
             """, connection);
         command.Parameters.AddWithValue("@TenantId", tenantId);

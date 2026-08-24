@@ -66,6 +66,15 @@ public static class WorkSessionApi
             await Handle(async () => Results.Ok(await service.PreviewClosureAsync(
                 context.User.ToWorkSessionIdentity(), workSessionId, cancellationToken))));
 
+        group.MapGet("/cash-differences", async (
+            HttpContext context,
+            DateOnly from,
+            DateOnly to,
+            WorkSessionService service,
+            CancellationToken cancellationToken) =>
+            await Handle(async () => Results.Ok(await service.ListCashDifferencesAsync(
+                context.User.ToWorkSessionIdentity(), from, to, cancellationToken))));
+
         group.MapGet("/cash-reasons", async (
             HttpContext context,
             Guid businessId,

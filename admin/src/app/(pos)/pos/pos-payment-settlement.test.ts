@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   calculatePaymentSettlement,
   chooseAdditionalPaymentMethod,
+  splitCreditCheckout,
   shouldShowCashChange,
 } from "./pos-payment-settlement";
 
@@ -20,6 +21,28 @@ describe("chooseAdditionalPaymentMethod", () => {
       chooseAdditionalPaymentMethod(["DebitCard", "Cash", "CreditCard"], new Set(["Cash"])),
       "DebitCard",
     );
+  });
+});
+
+describe("splitCreditCheckout", () => {
+  const customer = {
+    customerId: "customer-1", identification: "9001", name: "Cliente crédito",
+    priceChannelId: null, requiresElectronicInvoice: false, isActive: true,
+    isCreditEnabled: true, defaultCreditDueDays: 30, availableCredit: 500,
+  };
+
+  it("converts customer credit into financed terms instead of received money", () => {
+    const value = splitCreditCheckout([
+      { methodCode: "Cash", amount: 40, reference: null },
+      { methodCode: "Credit", amount: 60, reference: null },
+    ], customer, new Date("2026-08-23T12:00:00.000Z"));
+    assert.deepEqual(value.payments, [{ methodCode: "Cash", amount: 40, reference: null }]);
+    assert.deepEqual(value.credit, { amount: 60, dueDate: "2026-09-22T12:00:00.000Z" });
+  });
+
+  it("blocks disabled credit and insufficient available credit", () => {
+    assert.throws(() => splitCreditCheckout([{ methodCode: "Credit", amount: 60, reference: null }], { ...customer, isCreditEnabled: false }), /no está habilitado/);
+    assert.throws(() => splitCreditCheckout([{ methodCode: "Credit", amount: 600, reference: null }], customer), /supera el cupo/);
   });
 });
 

@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PosPaymentInput, type PosSaleDocumentType } from "@/services/pos/pos-edge-client";
+import { PosPaymentInput, type PosCustomer, type PosSaleDocumentType } from "@/services/pos/pos-edge-client";
 import {
   calculatePaymentSettlement,
   chooseAdditionalPaymentMethod,
@@ -37,6 +37,7 @@ export function PosPaymentDialog({
   documentType,
   documentTypeLocked,
   documentTypeReady,
+  customer,
   onChangeDocumentType,
   onCancel,
   onConfirm,
@@ -46,6 +47,7 @@ export function PosPaymentDialog({
   documentType: PosSaleDocumentType;
   documentTypeLocked: boolean;
   documentTypeReady: boolean;
+  customer: PosCustomer | null;
   onChangeDocumentType: () => void;
   onCancel: () => void;
   onConfirm: (
@@ -66,6 +68,7 @@ export function PosPaymentDialog({
   const [amountDrafts, setAmountDrafts] = useState<Record<string, string>>({});
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
   const [activePaymentId, setActivePaymentId] = useState<string | null>(null);
+  const [creditError, setCreditError] = useState<string | null>(null);
   const amountRefs = useRef(new Map<string, HTMLInputElement>());
   const settlement = useMemo(
     () => calculatePaymentSettlement(total, payments),
@@ -108,6 +111,13 @@ export function PosPaymentDialog({
 
   const addPayment = useCallback((requestedMethod?: string) => {
     if (busy) return;
+    if (requestedMethod === "Credit" && !customer?.isCreditEnabled) {
+      setCreditError(customer
+        ? "Este cliente no está habilitado para ventas a crédito. Actívalo en su ficha antes de facturar."
+        : "Selecciona un cliente habilitado para crédito antes de usar este medio.");
+      return;
+    }
+    setCreditError(null);
     const active = activePaymentId
       ? payments.find((payment) => payment.id === activePaymentId)
       : null;
@@ -154,7 +164,7 @@ export function PosPaymentDialog({
     ]);
     setActivePaymentId(id);
     setPendingFocusId(id);
-  }, [activePaymentId, busy, focusAmount, methods, payments, settlement.change, settlement.isValid, settlement.missing]);
+  }, [activePaymentId, busy, customer, focusAmount, methods, payments, settlement.change, settlement.isValid, settlement.missing]);
 
   useEffect(() => {
     if (!pendingFocusId) return;
@@ -260,6 +270,8 @@ export function PosPaymentDialog({
             No fue posible cargar los medios de pago. Cierra e intenta nuevamente.
           </p>
         )}
+        {creditError && <p role="alert" className="mt-3 rounded-lg bg-amber-50 p-3 text-sm font-medium text-amber-900">{creditError}</p>}
+        {customer?.isCreditEnabled && <p className="mt-3 text-xs text-slate-500">Crédito habilitado · plazo {customer.defaultCreditDueDays ?? 0} días · cupo disponible {customer.availableCredit == null ? "sin límite" : money.format(customer.availableCredit)}</p>}
 
         <div className="mt-4 space-y-3">
           {payments.map((payment, index) => (

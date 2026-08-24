@@ -23,10 +23,10 @@ public class ApplicationDbContextFactory : IDesignTimeDbContextFactory<Applicati
         var assemblyDir = AppContext.BaseDirectory;
         var candidateDirs = new[]
         {
-            Path.Combine(baseDir, "src", "Console", "Auraly.Platform.Console"),
-            Path.Combine(baseDir, "Console", "Auraly.Platform.Console"),
-            Path.Combine(assemblyDir, "..", "..", "..", "..", "src", "Console", "Auraly.Platform.Console"),
-            Path.Combine(baseDir, "..", "..", "Console", "Auraly.Platform.Console")
+            Path.Combine(baseDir, "src", "Console", "Auraly.Console"),
+            Path.Combine(baseDir, "Console", "Auraly.Console"),
+            Path.Combine(assemblyDir, "..", "..", "..", "..", "src", "Console", "Auraly.Console"),
+            Path.Combine(baseDir, "..", "..", "Console", "Auraly.Console")
         };
         var appSettingsNames = new[] { "appsettings.json", "appSettings.json" };
         foreach (var dir in candidateDirs)

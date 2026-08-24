@@ -39,6 +39,65 @@ public static class ReturnsApi
                 }
             })
             .RequireAuthorization("returns.user");
+
+        endpoints.MapPost("/api/commerce/v1/sales-debit-notes/confirm", async (
+                HttpContext context,
+                ConfirmSalesDebitNoteRequest request,
+                SalesDebitNoteService service,
+                CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    var key = context.Request.Headers["Idempotency-Key"].ToString();
+                    var result = await service.ConfirmAsync(
+                        context.User.ToSalesReturnIdentity(), key, request, cancellationToken);
+                    return Results.Accepted(
+                        $"/api/commerce/v1/sales-debit-notes/{result.DebitNoteId:D}", result);
+                }
+                catch (SalesReturnForbiddenException exception)
+                { return Results.Problem(exception.Message, statusCode: 403); }
+                catch (SalesReturnValidationException exception)
+                { return Results.Problem(exception.Message, statusCode: 400); }
+                catch (SalesReturnConflictException exception)
+                { return Results.Problem(exception.Message, statusCode: 409); }
+            })
+            .RequireAuthorization("returns.user");
+
+        endpoints.MapGet("/api/commerce/v1/sales-debit-notes", async (
+                HttpContext context, int page, int pageSize, string? search,
+                DateOnly? from, DateOnly? to, SalesDebitNoteService service,
+                CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    return Results.Ok(await service.ListAsync(
+                        context.User.ToSalesReturnIdentity(),
+                        new SalesDebitNoteQuery(page, pageSize, search, from, to),
+                        cancellationToken));
+                }
+                catch (SalesReturnForbiddenException exception)
+                { return Results.Problem(exception.Message, statusCode: 403); }
+                catch (SalesReturnValidationException exception)
+                { return Results.Problem(exception.Message, statusCode: 400); }
+            })
+            .RequireAuthorization("returns.user");
+
+        endpoints.MapGet("/api/commerce/v1/sales-debit-notes/{debitNoteId:guid}", async (
+                HttpContext context, Guid debitNoteId, SalesDebitNoteService service,
+                CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    var value = await service.GetAsync(
+                        context.User.ToSalesReturnIdentity(), debitNoteId, cancellationToken);
+                    return value is null ? Results.NotFound() : Results.Ok(value);
+                }
+                catch (SalesReturnForbiddenException exception)
+                { return Results.Problem(exception.Message, statusCode: 403); }
+                catch (SalesReturnValidationException exception)
+                { return Results.Problem(exception.Message, statusCode: 400); }
+            })
+            .RequireAuthorization("returns.user");
         return endpoints;
     }
 

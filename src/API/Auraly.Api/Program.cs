@@ -148,6 +148,7 @@ builder.Services.AddScoped<IDianProductionTransport, DianProductionTransport>();
 builder.Services.AddScoped<IDianNumberingRangeClient, DianNumberingRangeClient>();
 builder.Services.AddSingleton<DianInvoiceUblBuilder>();
 builder.Services.AddSingleton<DianCreditNoteUblBuilder>();
+builder.Services.AddSingleton<DianDebitNoteUblBuilder>();
 builder.Services.AddSingleton<DianSchemaValidator>();
 builder.Services.AddSingleton<FiscalSubmissionPackageBuilder>();
 builder.Services.AddScoped<FiscalGenerationWorker>();
@@ -172,6 +173,7 @@ builder.Services.AddScoped<IConfirmedDocumentHandler, SqlCashReceiptDocumentHand
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlCashDisbursementDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlReceivablePaymentDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlSalesReturnDocumentHandler>();
+builder.Services.AddScoped<IConfirmedDocumentHandler, SqlSalesDebitNoteDocumentHandler>();
 builder.Services.AddScoped<SqlInventoryOperationProcessor>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlStockCountDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlInventoryDamageDocumentHandler>();
@@ -442,6 +444,8 @@ if (!builder.Environment.IsEnvironment("Testing"))
     builder.Services.AddHostedService<DispatchSettlementHostedService>();
 builder.Services.AddScoped<ISalesReturnStore, SqlSalesReturnStore>();
 builder.Services.AddScoped<SalesReturnService>();
+builder.Services.AddScoped<ISalesDebitNoteStore, SqlSalesDebitNoteStore>();
+builder.Services.AddScoped<SalesDebitNoteService>();
 builder.Services.AddScoped<ISalesReturnQueryStore, SqlSalesReturnQueryStore>();
 builder.Services.AddScoped<SalesReturnQueryService>();
 builder.Services.AddResponseCompression(options => options.EnableForHttps = true);

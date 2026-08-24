@@ -37,7 +37,7 @@ El 2026-08-21 se generó con el motor de Auraly la nota crédito `NC260821113748
 
 ## Impuestos y pagos
 
-`SalesDocumentLines` conserva el impuesto de cada línea. Durante el procesamiento idempotente, el servidor agrupa por código y tarifa y crea `SalesDocumentTaxSummaries` con base, impuesto y total. Esta proyección sirve a reportes y no se replica en SQLite.
+`SalesDocumentLines` conserva el impuesto de cada línea. Reporting agrupa la instantánea comercial por código y tarifa en `reporting.SalesReportTaxFacts`; DIAN y contabilidad consumen sus snapshots o documentos fuente inmutables. No existe una segunda tabla tributaria operacional y esa proyección no se replica en SQLite.
 
 `SalesPayments` es el modelo canónico inicial de los medios de pago de la venta y reemplaza la responsabilidad útil de Tesorería para esta rebanada. Su clave `(DocumentId, PaymentNumber)` impide duplicados. Cartera, cuentas por cobrar/pagar y movimientos de tesorería más amplios pertenecen a rebanadas posteriores.
 
