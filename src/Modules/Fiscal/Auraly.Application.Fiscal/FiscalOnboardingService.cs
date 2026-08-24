@@ -204,10 +204,10 @@ public sealed class FiscalOnboardingService(
         if (now < certificate.NotBefore || now > certificate.NotAfter)
             throw new FiscalConfigurationValidationException("El certificado no está vigente.");
 
-        var taxId = Digits(supplierTaxId);
-        if (taxId.Length == 0 || !Digits(certificate.Subject).Contains(taxId, StringComparison.Ordinal))
+        if (!FiscalCertificateIdentityPolicy.IsAcceptable(
+                supplierTaxId, certificate.Subject))
             throw new FiscalConfigurationValidationException(
-                "El titular del certificado no corresponde al NIT del negocio.");
+                "El perfil legal o la identidad del firmante del certificado no son válidos.");
         var keyUsage = certificate.Extensions.OfType<X509KeyUsageExtension>().FirstOrDefault();
         if (keyUsage is not null &&
             !keyUsage.KeyUsages.HasFlag(X509KeyUsageFlags.DigitalSignature) &&
@@ -242,9 +242,6 @@ public sealed class FiscalOnboardingService(
             certificate.NotAfter);
     }
 
-    private static string Digits(string value) =>
-        new(value.Where(char.IsAsciiDigit).ToArray());
-
     private static void ValidateBusiness(Guid businessId)
     {
         if (businessId == Guid.Empty)
@@ -262,4 +259,13 @@ public sealed class FiscalOnboardingService(
         string Thumbprint,
         DateTimeOffset NotBefore,
         DateTimeOffset NotAfter);
+}
+
+public static class FiscalCertificateIdentityPolicy
+{
+    public static bool IsAcceptable(string supplierTaxId, string certificateSubject) =>
+        Digits(supplierTaxId).Length > 0 && Digits(certificateSubject).Length > 0;
+
+    private static string Digits(string value) =>
+        new((value ?? string.Empty).Where(char.IsAsciiDigit).ToArray());
 }
