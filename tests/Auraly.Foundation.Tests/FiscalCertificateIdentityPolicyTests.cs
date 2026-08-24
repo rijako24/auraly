@@ -29,6 +29,21 @@ public sealed class FiscalCertificateIdentityPolicyTests
         Assert.False(FiscalCertificateTrustPolicy.IsOfficialRoot(root));
     }
 
+    [Fact]
+    public void An_unavailable_revocation_service_does_not_look_like_a_revoked_certificate()
+    {
+        Assert.True(FiscalCertificateTrustPolicy.AreOnlyRevocationAvailabilityFailures([
+            X509ChainStatusFlags.RevocationStatusUnknown,
+            X509ChainStatusFlags.OfflineRevocation
+        ]));
+        Assert.False(FiscalCertificateTrustPolicy.AreOnlyRevocationAvailabilityFailures([
+            X509ChainStatusFlags.Revoked
+        ]));
+        Assert.False(FiscalCertificateTrustPolicy.AreOnlyRevocationAvailabilityFailures([
+            X509ChainStatusFlags.PartialChain
+        ]));
+    }
+
     [Theory]
     [InlineData("", "SERIALNUMBER=49693606, CN=Representante Legal")]
     [InlineData("1002269668", "CN=Firmante sin identificación")]

@@ -249,7 +249,13 @@ public sealed class FiscalOnboardingService(
         using var customChain = CreateChain(collection, certificate, now);
         customChain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
         customChain.ChainPolicy.CustomTrustStore.Add(trustedRoot);
-        return customChain.Build(certificate);
+        if (customChain.Build(certificate)) return true;
+
+        return customChain.ChainElements.Count >= 2 &&
+               FiscalCertificateTrustPolicy.IsOfficialRoot(
+                   customChain.ChainElements[^1].Certificate) &&
+               FiscalCertificateTrustPolicy.AreOnlyRevocationAvailabilityFailures(
+                   customChain.ChainStatus.Select(status => status.Status));
     }
 
     private static X509Chain CreateChain(
@@ -306,6 +312,16 @@ public static class FiscalCertificateTrustPolicy
         certificate.SubjectName.RawData.AsSpan().SequenceEqual(certificate.IssuerName.RawData) &&
         string.Equals(Normalize(certificate.Thumbprint), GseRootThumbprint,
             StringComparison.OrdinalIgnoreCase);
+
+    public static bool AreOnlyRevocationAvailabilityFailures(
+        IEnumerable<X509ChainStatusFlags> statuses)
+    {
+        const X509ChainStatusFlags allowed =
+            X509ChainStatusFlags.RevocationStatusUnknown |
+            X509ChainStatusFlags.OfflineRevocation;
+        return statuses.All(status => status == X509ChainStatusFlags.NoError ||
+                                      (status & ~allowed) == X509ChainStatusFlags.NoError);
+    }
 
     private static string Normalize(string value) =>
         value.Replace(" ", string.Empty, StringComparison.Ordinal);
