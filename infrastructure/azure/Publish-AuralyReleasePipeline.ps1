@@ -82,6 +82,31 @@ function Wait-HttpHealthy {
     }
 }
 
+function Invoke-ReviewedPreDacpacMigration {
+    param(
+        [Parameter(Mandatory)][string]$MigrationPath,
+        [Parameter(Mandatory)][string]$AccessToken
+    )
+    if (-not (Test-Path -LiteralPath $MigrationPath)) {
+        throw "No existe la migracion previa al DACPAC: $MigrationPath"
+    }
+    $connection = [System.Data.SqlClient.SqlConnection]::new(
+        "Server=tcp:$($configuration.SqlServer).database.windows.net,1433;" +
+        "Initial Catalog=$($configuration.Database);Encrypt=True;TrustServerCertificate=False;Connection Timeout=60;")
+    $connection.AccessToken = $AccessToken
+    try {
+        $connection.Open()
+        $command = $connection.CreateCommand()
+        $command.CommandTimeout = 120
+        $command.CommandText = Get-Content -LiteralPath $MigrationPath -Raw
+        [void]$command.ExecuteNonQuery()
+        Write-Information "Migracion previa al DACPAC aplicada: $(Split-Path $MigrationPath -Leaf)." -InformationAction Continue
+    }
+    finally {
+        $connection.Dispose()
+    }
+}
+
 function Test-Release {
     if (-not (Test-Path -LiteralPath $manifestPath)) {
         throw "No existe el manifiesto $manifestPath."
@@ -137,6 +162,13 @@ function Publish-Database {
             '--output', 'json')
         $accessToken = if ($tokenResponse.accessToken) { $tokenResponse.accessToken } else { $tokenResponse.token }
         if ([string]::IsNullOrWhiteSpace($accessToken)) { throw 'Azure no devolvio token para SQL.' }
+
+        # Esta migracion retira una columna solo despues de preservar su valor.
+        # Se ejecuta antes del DeployReport para que BlockOnPossibleDataLoss siga
+        # protegiendo cualquier otra eliminacion no revisada del DACPAC.
+        Invoke-ReviewedPreDacpacMigration `
+            -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260823_MoveBusinessLogoToTenant.sql') `
+            -AccessToken $accessToken
 
         $commonArguments = @(
             "/SourceFile:$dacpac",

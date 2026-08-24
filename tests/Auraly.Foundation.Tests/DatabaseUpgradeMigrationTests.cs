@@ -33,6 +33,40 @@ public sealed class DatabaseUpgradeMigrationTests
         Assert.Contains("TenantId<>@AuralyTenantId", migration, StringComparison.Ordinal);
         Assert.Contains("UPDATE dbo.Tenants", migration, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Tenant_branding_migration_preserves_the_existing_business_logo_before_removing_it()
+    {
+        var migration = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "database",
+            "Auraly.Database",
+            "Scripts",
+            "Migrations",
+            "20260823_MoveBusinessLogoToTenant.sql"));
+
+        var copy = migration.IndexOf(
+            "SET LogoMediaRef = business.LogoUrl", StringComparison.Ordinal);
+        var remove = migration.IndexOf(
+            "ALTER TABLE dbo.Businesses DROP COLUMN LogoUrl", StringComparison.Ordinal);
+
+        Assert.True(copy >= 0, "La migración no preserva el logo existente.");
+        Assert.True(remove > copy, "La columna anterior se retira antes de preservar el logo.");
+        Assert.Contains("COL_LENGTH(N'dbo.Businesses', N'LogoUrl')", migration,
+            StringComparison.Ordinal);
+
+        var pipeline = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "infrastructure", "azure",
+            "Publish-AuralyReleasePipeline.ps1"));
+        var reviewedMigration = pipeline.IndexOf(
+            "Invoke-ReviewedPreDacpacMigration", StringComparison.Ordinal);
+        var deployReport = pipeline.IndexOf(
+            "'/Action:DeployReport'", StringComparison.Ordinal);
+        Assert.True(reviewedMigration >= 0 && reviewedMigration < deployReport,
+            "La migración revisada debe ejecutarse antes de generar el DeployReport.");
+        Assert.Contains("20260823_MoveBusinessLogoToTenant.sql", pipeline,
+            StringComparison.Ordinal);
+    }
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
