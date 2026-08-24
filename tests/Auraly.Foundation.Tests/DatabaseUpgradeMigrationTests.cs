@@ -83,6 +83,7 @@ public sealed class DatabaseUpgradeMigrationTests
         Assert.True(remove > consolidate,
             "La migración elimina BusinessId antes de preservar una credencial por tenant.");
         Assert.Contains("FK_FiscalCredentialSecrets_Tenants", migration, StringComparison.Ordinal);
+        Assert.Contains("EXEC sys.sp_executesql", migration, StringComparison.Ordinal);
 
         var preDeployment = File.ReadAllText(Path.Combine(
             root, "database", "Auraly.Database", "Scripts", "PreDeployment.sql"));
