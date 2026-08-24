@@ -39,8 +39,11 @@ BEGIN
         ALTER TABLE fiscal.FiscalCredentialSecrets DROP CONSTRAINT PK_FiscalCredentialSecrets;
 
     EXEC sys.sp_executesql N'
-        ALTER TABLE fiscal.FiscalCredentialSecrets ALTER COLUMN TenantId UNIQUEIDENTIFIER NOT NULL;
-        ALTER TABLE fiscal.FiscalCredentialSecrets DROP COLUMN BusinessId;
+        ALTER TABLE fiscal.FiscalCredentialSecrets
+        ALTER COLUMN TenantId UNIQUEIDENTIFIER NOT NULL;';
+    EXEC sys.sp_executesql N'
+        ALTER TABLE fiscal.FiscalCredentialSecrets DROP COLUMN BusinessId;';
+    EXEC sys.sp_executesql N'
         ALTER TABLE fiscal.FiscalCredentialSecrets
             ADD CONSTRAINT PK_FiscalCredentialSecrets PRIMARY KEY (TenantId);
         ALTER TABLE fiscal.FiscalCredentialSecrets

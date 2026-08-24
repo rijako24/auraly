@@ -55,6 +55,8 @@ public sealed class DatabaseUpgradeMigrationTests
         Assert.Contains("COL_LENGTH(N'dbo.Businesses', N'LogoUrl')", migration,
             StringComparison.Ordinal);
         Assert.Contains("EXEC sys.sp_executesql", migration, StringComparison.Ordinal);
+        Assert.True(migration.Split("EXEC sys.sp_executesql", StringSplitOptions.None).Length >= 5,
+            "Cada cambio de metadatos dependiente debe compilarse después del anterior.");
 
         var pipeline = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(), "infrastructure", "azure",
