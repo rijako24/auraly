@@ -183,10 +183,11 @@ public sealed class PosArchitectureTests
         var dialog = File.ReadAllText(Path.Combine(posDirectory, "pos-confirm-dialog.tsx"));
 
         Assert.Contains("event.key === \"F3\"", page, StringComparison.Ordinal);
-        Assert.Contains("requestRemoveLine(selectedLineId)", page, StringComparison.Ordinal);
+        Assert.Contains("protectedActionHandlers.current.removeLine(selectedLineId)", page, StringComparison.Ordinal);
         Assert.Contains("event.key === \"F4\"", page, StringComparison.Ordinal);
         Assert.Contains("event.key === \"F5\"", page, StringComparison.Ordinal);
-        Assert.Contains("requestCancelSale();", page, StringComparison.Ordinal);
+        Assert.Contains("protectedActionHandlers.current.restartSale()", page, StringComparison.Ordinal);
+        Assert.Contains("restartSale: requestCancelSale", page, StringComparison.Ordinal);
         Assert.Contains("<PosConfirmDialog", page, StringComparison.Ordinal);
         Assert.Contains("role=\"alertdialog\"", dialog, StringComparison.Ordinal);
         Assert.Contains("aria-modal=\"true\"", dialog, StringComparison.Ordinal);
