@@ -19,6 +19,21 @@ public sealed class ReleasePackagingTests
             StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Pos_installer_hash_tolerates_the_transient_iexpress_file_lock()
+    {
+        var script = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "scripts",
+            "Build-AuralyPosInstaller.ps1"));
+
+        Assert.Contains("for ($attempt = 1; $attempt -le 60; $attempt++)", script,
+            StringComparison.Ordinal);
+        Assert.Contains("catch [IO.IOException]", script, StringComparison.Ordinal);
+        Assert.Contains("Get-FileHash -LiteralPath $setup -Algorithm SHA256 -ErrorAction Stop",
+            script, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

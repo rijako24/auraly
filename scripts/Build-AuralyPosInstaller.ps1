@@ -214,7 +214,17 @@ if (-not (Test-Path -LiteralPath $setup)) {
 }
 
 $file = Get-Item -LiteralPath $setup
-$hash = Get-FileHash -LiteralPath $setup -Algorithm SHA256
+$hash = $null
+for ($attempt = 1; $attempt -le 60; $attempt++) {
+    try {
+        $hash = Get-FileHash -LiteralPath $setup -Algorithm SHA256 -ErrorAction Stop
+        break
+    }
+    catch [IO.IOException] {
+        if ($attempt -eq 60) { throw }
+        Start-Sleep -Seconds 1
+    }
+}
 [pscustomobject]@{
     Path = $file.FullName
     Bytes = $file.Length
