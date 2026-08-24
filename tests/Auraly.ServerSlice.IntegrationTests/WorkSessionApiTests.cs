@@ -91,6 +91,36 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Cashier_can_count_before_close_and_is_then_asked_for_supervisor_approval()
+    {
+        var userId = await CreateUserAsync("work-session-supervised-close");
+        using var client = fixture.CreateUserClient(
+            userId,
+            WorkSessionPermissionCodes.Read,
+            WorkSessionPermissionCodes.Open);
+        var opened = await OpenAsync(client, new OpenWorkSessionRequest(
+            fixture.BusinessId,
+            fixture.WarehouseId,
+            null));
+
+        using (var preview = await client.GetAsync(
+                   $"/api/commerce/v1/work-sessions/{opened.WorkSessionId:D}/closure-preview"))
+            preview.EnsureSuccessStatusCode();
+
+        using var close = CreateCloseRequest(
+            opened.WorkSessionId,
+            Guid.NewGuid().ToString("D"),
+            new CloseWorkSessionRequest(0m, null));
+        close.Headers.Add("X-Auraly-Draft-Id", Guid.NewGuid().ToString("D"));
+        using var response = await client.SendAsync(close);
+        var problem = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal((HttpStatusCode)428, response.StatusCode);
+        Assert.Contains("ApprovalRequired", problem, StringComparison.Ordinal);
+        Assert.DoesNotContain("work-sessions.close' is required", problem, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Work_session_opens_resumes_closes_and_reopens_with_immutable_totals()
     {
         var userId = await CreateUserAsync("work-session");

@@ -194,7 +194,10 @@ public sealed class WorkSessionService(
         Guid workSessionId,
         CancellationToken cancellationToken = default)
     {
-        Demand(identity, WorkSessionPermissionCodes.Close);
+        // The count must remain blind, but opening the non-mutating preview is
+        // part of the cashier workflow. Supervisor approval belongs to the
+        // final close, where the sensitive state transition actually occurs.
+        Demand(identity, WorkSessionPermissionCodes.Read);
         if (workSessionId == Guid.Empty)
             throw new WorkSessionValidationException("WorkSessionId is required.");
         return store.PreviewClosureAsync(identity, workSessionId, cancellationToken);

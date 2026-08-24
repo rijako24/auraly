@@ -1,5 +1,7 @@
 using System.Security.Claims;
+using Auraly.Application.Authorization;
 using Auraly.Application.WorkSessions;
+using Auraly.Contracts.Authorization;
 using Auraly.Contracts.WorkSessions;
 
 namespace Auraly.Api;
@@ -36,13 +38,49 @@ public static class WorkSessionApi
             Guid workSessionId,
             CloseWorkSessionRequest request,
             WorkSessionService service,
+            PosApprovalService approvals,
             CancellationToken cancellationToken) =>
-            await Handle(async () => Results.Ok(await service.CloseAsync(
-                context.User.ToWorkSessionIdentity(),
-                workSessionId,
-                context.Request.Headers["Idempotency-Key"].ToString(),
-                request,
-                cancellationToken))));
+            await Handle(async () =>
+            {
+                var identity = context.User.ToWorkSessionIdentity();
+                var idempotencyKey = context.Request.Headers["Idempotency-Key"].ToString();
+                if (identity.Permissions.Contains(WorkSessionPermissionCodes.Close))
+                    return Results.Ok(await service.CloseAsync(
+                        identity, workSessionId, idempotencyKey, request, cancellationToken));
+
+                if (!Guid.TryParse(idempotencyKey, out var operationId) || operationId == Guid.Empty)
+                    throw new WorkSessionValidationException(
+                        "El cierre requiere un identificador de operación válido.");
+                if (!Guid.TryParse(context.Request.Headers["X-Auraly-Draft-Id"].ToString(), out var draftId) ||
+                    draftId == Guid.Empty)
+                    throw new WorkSessionValidationException(
+                        "No fue posible identificar la venta activa para solicitar autorización.");
+                var approvalId = Guid.TryParse(
+                    context.Request.Headers["X-Auraly-Approval-Id"].ToString(),
+                    out var parsedApprovalId)
+                    ? parsedApprovalId
+                    : Guid.Empty;
+                var approvalIdentity = context.User.ToPosApprovalIdentity();
+                var authorizedIdentity = identity with
+                {
+                    Permissions = identity.Permissions
+                        .Append(WorkSessionPermissionCodes.Close)
+                        .ToHashSet(StringComparer.Ordinal)
+                };
+                var closure = await approvals.ExecuteSensitiveAsync(
+                    approvalIdentity,
+                    approvalId,
+                    approvalIdentity.BusinessId,
+                    draftId,
+                    null,
+                    WorkSessionPermissionCodes.Close,
+                    operationId,
+                    () => service.CloseAsync(
+                        authorizedIdentity, workSessionId, idempotencyKey, request,
+                        cancellationToken),
+                    cancellationToken);
+                return Results.Ok(closure);
+            }));
 
         group.MapGet("/{workSessionId:guid}/closure", async (
             HttpContext context,
@@ -221,6 +259,18 @@ public static class WorkSessionApi
         {
             return Results.Problem(
                 exception.Message, statusCode: StatusCodes.Status403Forbidden);
+        }
+        catch (PosApprovalException exception)
+        {
+            var statusCode = exception.Code is "Forbidden" or "SelfApprovalForbidden"
+                ? StatusCodes.Status403Forbidden
+                : exception.Code is "InvalidApproval" or "AlreadyDecidedOrExpired"
+                    ? StatusCodes.Status409Conflict
+                    : exception.Code == "ApprovalRequired"
+                        ? StatusCodes.Status428PreconditionRequired
+                        : StatusCodes.Status400BadRequest;
+            return Results.Problem(
+                exception.Message, statusCode: statusCode, title: exception.Code);
         }
         catch (WorkSessionValidationException exception)
         {

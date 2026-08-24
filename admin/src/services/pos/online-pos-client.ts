@@ -724,7 +724,8 @@ export class OnlinePosClient implements PosClient {
 
   async closeWorkSession(input: PosCloseWorkSessionInput): Promise<PosWorkSessionClosure> {
     const requestDefinition = workSessionCloseRequest(
-      this.context.workSessionId, input.operationId, input.countedCash,
+      this.context.workSessionId, input.operationId, input.draftId,
+      input.authorization?.approvalRequestId, input.countedCash,
       input.paymentCounts, input.note);
     const [closure, branding] = await Promise.all([
       request<PosWorkSessionClosure>(requestDefinition.path, requestDefinition.init),

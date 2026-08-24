@@ -341,6 +341,8 @@ export type PosAuthorizedClosurePreview = {
 export type PosCloseWorkSessionInput = {
   operationId: string;
   authorizationToken: string;
+  draftId: string;
+  authorization?: PosSensitiveAuthorization;
   countedCash: number;
   paymentCounts: PosWorkSessionPaymentCount[];
   note: string | null;

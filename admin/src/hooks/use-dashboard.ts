@@ -22,57 +22,57 @@ export const dashboardKeys = {
     [...dashboardKeys.all, "subscription", businessId] as const,
 };
 
-export function useDashboardStats(period?: string) {
+export function useDashboardStats(period?: string, enabled = true) {
   const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
   return useQuery({
     queryKey: dashboardKeys.stats(businessId, period),
     queryFn: () => dashboardApi.getStats(businessId!, { period }),
-    enabled: !!businessId,
+    enabled: !!businessId && enabled,
   });
 }
 
-export function useRevenueChart(period: "daily" | "monthly") {
+export function useRevenueChart(period: "daily" | "monthly", enabled = true) {
   const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
   return useQuery({
     queryKey: dashboardKeys.revenueChart(businessId, period),
     queryFn: () => dashboardApi.getRevenueChart(businessId!, period),
-    enabled: !!businessId,
+    enabled: !!businessId && enabled,
   });
 }
 
-export function useOverviewChart(period?: string) {
+export function useOverviewChart(period?: string, enabled = true) {
   const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
   return useQuery({
     queryKey: dashboardKeys.overviewChart(businessId, period),
     queryFn: () => dashboardApi.getOverviewChart(businessId!, period),
-    enabled: !!businessId,
+    enabled: !!businessId && enabled,
   });
 }
 
-export function useTopServices(limit?: number) {
+export function useTopServices(limit?: number, enabled = true) {
   const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
   return useQuery({
     queryKey: dashboardKeys.topServices(businessId, limit),
     queryFn: () => dashboardApi.getTopServices(businessId!, limit),
-    enabled: !!businessId,
+    enabled: !!businessId && enabled,
   });
 }
 
-export function useRecentReservations(limit?: number) {
+export function useRecentReservations(limit?: number, enabled = true) {
   const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
   return useQuery({
     queryKey: dashboardKeys.recentReservations(businessId, limit),
     queryFn: () => dashboardApi.getRecentReservations(businessId!, limit),
-    enabled: !!businessId,
+    enabled: !!businessId && enabled,
   });
 }
 
-export function useBusinessUsage() {
+export function useBusinessUsage(enabled = true) {
   const businessId = useBusinessContextStore((s) => s.selectedBusinessId);
   return useQuery({
     queryKey: dashboardKeys.usage(businessId),
     queryFn: () => dashboardApi.getUsage(businessId!),
-    enabled: !!businessId,
+    enabled: !!businessId && enabled,
   });
 }
 

@@ -47,6 +47,18 @@ export function PosCustomerSearchDialog({
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestVersion = useRef(0);
+  const searchInput = useRef<HTMLInputElement>(null);
+  const resultButtons = useRef(new Map<number, HTMLButtonElement>());
+
+  const focusResult = (index: number) => {
+    if (index < 0 || index >= results.length) {
+      setSelected(0);
+      searchInput.current?.focus();
+      return;
+    }
+    setSelected(index);
+    resultButtons.current.get(index)?.focus();
+  };
 
   useEffect(() => {
     if (creating) return;
@@ -140,8 +152,18 @@ export function PosCustomerSearchDialog({
             <div className="p-5 pb-3">
               <label className="relative block">
                 <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
-                <input autoFocus value={term} onChange={(event) => setTerm(event.target.value)}
+                <input ref={searchInput} autoFocus value={term} onChange={(event) => setTerm(event.target.value)}
                   onKeyDown={(event) => {
+                    if (event.key === "ArrowDown" && results.length) {
+                      event.preventDefault();
+                      focusResult(0);
+                      return;
+                    }
+                    if (event.key === "ArrowUp" && results.length) {
+                      event.preventDefault();
+                      focusResult(results.length - 1);
+                      return;
+                    }
                     if (event.key === "Enter" && results[selected]) {
                       event.preventDefault();
                       void onSelect(results[selected]);
@@ -167,7 +189,20 @@ export function PosCustomerSearchDialog({
             }}>
               {results.map((customer, index) => (
                 <button key={customer.customerId} type="button" disabled={busy}
+                  ref={(element) => { if (element) resultButtons.current.set(index, element); else resultButtons.current.delete(index); }}
                   onFocus={() => { setSelected(index); if (index === results.length - 1) void loadMore(); }}
+                  onKeyDown={(event) => {
+                    if (event.key === "ArrowDown") {
+                      event.preventDefault();
+                      focusResult(index + 1);
+                    } else if (event.key === "ArrowUp") {
+                      event.preventDefault();
+                      focusResult(index - 1);
+                    } else if (event.key === "Enter") {
+                      event.preventDefault();
+                      void onSelect(customer);
+                    }
+                  }}
                   onMouseEnter={() => setSelected(index)} onClick={() => void onSelect(customer)}
                   className={`grid w-full grid-cols-[minmax(0,1fr)_180px] items-center gap-4 border-b border-slate-100 px-3 py-3 text-left outline-none ${selected === index ? "bg-teal-50 ring-2 ring-inset ring-teal-600/25" : "hover:bg-slate-50"}`}>
                   <span className="truncate font-semibold text-slate-900">{customer.name}</span>

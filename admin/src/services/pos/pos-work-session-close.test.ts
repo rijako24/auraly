@@ -5,9 +5,9 @@ import { formatWorkSessionCountInput, normalizeWorkSessionCountInput, workSessio
 
 test("online closure uses the authenticated server work-session endpoints", () => {
   assert.equal(workSessionClosurePreviewPath("session/1"), "/api/commerce/v1/work-sessions/session%2F1/closure-preview");
-  const request = workSessionCloseRequest("session-1", "operation-1", 120000, [{ paymentMethodCode: "Cash", countedAmount: 120000 }], "Conteo");
+  const request = workSessionCloseRequest("session-1", "operation-1", "draft-1", "approval-1", 120000, [{ paymentMethodCode: "Cash", countedAmount: 120000 }], "Conteo");
   assert.equal(request.path, "/api/commerce/v1/work-sessions/session-1/close");
-  assert.deepEqual(request.init.headers, { "Idempotency-Key": "operation-1" });
+  assert.deepEqual(request.init.headers, { "Idempotency-Key": "operation-1", "X-Auraly-Draft-Id": "draft-1", "X-Auraly-Approval-Id": "approval-1" });
   assert.deepEqual(JSON.parse(String(request.init.body)), { countedCash: 120000, paymentCounts: [{ paymentMethodCode: "Cash", countedAmount: 120000 }], note: "Conteo" });
 });
 

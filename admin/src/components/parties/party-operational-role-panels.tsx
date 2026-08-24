@@ -18,6 +18,7 @@ import { employeesApi, usersApi } from "@/services/api";
 import type { PartySiteDetail, UserRoleDetail } from "@/services/api/parties";
 import { taxationApi } from "@/services/api/taxation";
 import { receivablesApi } from "@/services/api/receivables";
+import { posApprovalClient } from "@/services/pos/pos-approval-client";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import type { WorkingHour } from "@/types/entities";
@@ -60,7 +61,7 @@ export function PartyCustomerCreditRolePanel({ customerId, editing, registerSave
   if (!profile.data) return <PanelError text="No fue posible cargar la configuración de crédito." />;
   return <div className="space-y-4">
     <PanelHeader icon={CircleDollarSign} title="Crédito y cartera" description="Define si este cliente puede dejar saldo pendiente al facturar.">
-      <div className="flex items-center gap-3"><span className="text-sm">Crédito habilitado</span><Switch checked={enabled} onCheckedChange={setEnabled} disabled={!editing || !canManage}/></div>
+      <div className="flex items-center gap-3"><span className="text-sm">Permite ventas a crédito</span><Switch checked={enabled} onCheckedChange={setEnabled} disabled={!editing || !canManage}/></div>
     </PanelHeader>
     <section className="grid gap-4 rounded-2xl border p-5 md:grid-cols-2">
       <div className="space-y-2"><Label>Cupo de crédito</Label>{editing&&canManage?<Input type="number" min="0" step="1" value={limit} onChange={(event)=>setLimit(event.target.value)} placeholder="Sin límite"/>:<p className="rounded-xl border bg-muted/20 p-3 font-medium">{profile.data.creditLimit == null ? "Sin límite configurado" : creditMoney.format(profile.data.creditLimit)}</p>}<p className="text-xs text-muted-foreground">Vacío significa sin límite monetario; la habilitación sigue siendo obligatoria.</p></div>
@@ -172,6 +173,18 @@ export function PartyUserRolePanel({ user, editing, registerSave }: { user: User
   const [newPassword, setNewPassword] = useState("");
   const [roleError, setRoleError] = useState("");
   const [passwordError, setPasswordError] = useState("");
+  const canManageApprovalCredential = useAuthStore((state) =>
+    state.user?.permissions.includes("pos.approvals.manage_credential") ?? false);
+  const approvalCredential = useQuery({
+    queryKey: ["supervisor-credential", userId],
+    queryFn: () => posApprovalClient.userCredentialStatus(userId),
+    enabled: canManageApprovalCredential,
+    retry: false,
+  });
+  const [approvalSecret, setApprovalSecret] = useState("");
+  const [approvalConfirmation, setApprovalConfirmation] = useState("");
+  const [approvalValidity, setApprovalValidity] = useState<"8" | "168" | "always">("always");
+  const [revokeApprovalCredential, setRevokeApprovalCredential] = useState(false);
   const scopedAssignments = useMemo(() => user.roles.filter((item) => item.businessId === businessId), [user.roles, businessId]);
 
   useEffect(() => { setActive(user.isActive); }, [user.isActive]);
@@ -190,17 +203,34 @@ export function PartyUserRolePanel({ user, editing, registerSave }: { user: User
     ]);
     if (active !== user.isActive) await (active ? usersApi.activate(userId) : usersApi.deactivate(userId));
     if (newPassword) await usersApi.resetPassword(userId, newPassword);
+    if (canManageApprovalCredential && revokeApprovalCredential) {
+      await posApprovalClient.revokeUserCredential(userId);
+      setRevokeApprovalCredential(false);
+      await approvalCredential.refetch();
+    } else if (canManageApprovalCredential && approvalSecret) {
+      if (approvalSecret.length < 6 || approvalSecret !== approvalConfirmation)
+        throw new Error("La clave de autorización debe tener mínimo 6 caracteres y coincidir.");
+      await posApprovalClient.configureUserCredential(
+        userId,
+        approvalSecret,
+        approvalValidity === "always" ? null : Number(approvalValidity) as 8 | 168,
+      );
+      setApprovalSecret("");
+      setApprovalConfirmation("");
+      await approvalCredential.refetch();
+    }
     setNewPassword("");
   };
-  useEffect(() => registerSave(`user-${userId}`, save), [registerSave, userId, businessId, user, scopedAssignments, selectedIds, active, newPassword]);
+  useEffect(() => registerSave(`user-${userId}`, save), [registerSave, userId, businessId, user, scopedAssignments, selectedIds, active, newPassword, canManageApprovalCredential, revokeApprovalCredential, approvalSecret, approvalConfirmation, approvalValidity]);
 
   const available = (roles.data?.items ?? []).filter((item) => item.isActive && !selectedIds.has(item.roleId));
   return <div className="space-y-5">
-    <PanelHeader icon={KeyRound} title="Configuración del usuario" description="Acceso, contraseña unificada y permisos por rol.">
-      <div className="flex items-center gap-3"><span className="text-sm text-muted-foreground">Activo</span><Switch checked={active} onCheckedChange={setActive} disabled={!editing}/></div>
+    <PanelHeader icon={KeyRound} title="Acceso al sistema" description="Inicio de sesión, roles y autorizaciones de caja.">
+      <div className="flex items-center gap-3"><span className="text-sm text-slate-300">Usuario habilitado</span><Switch checked={active} onCheckedChange={setActive} disabled={!editing}/></div>
     </PanelHeader>
     <section className={`space-y-3 rounded-2xl border p-5 ${roleError ? "border-destructive" : ""}`}><div><h3 className="font-semibold">Roles en este negocio</h3><p className="text-sm text-muted-foreground">Definen los menús visibles y las acciones habilitadas en cada vista.</p></div>{editing&&<Select value={roleToAdd} onValueChange={(value) => { setRoleToAdd(""); setRoleError(""); setSelectedIds((current) => new Set(current).add(value)); }}><SelectTrigger aria-invalid={Boolean(roleError)} className={roleError ? "border-destructive" : ""}><SelectValue placeholder={roles.isLoading ? "Cargando roles..." : "Agregar rol"} /></SelectTrigger><SelectContent>{available.map((role) => <SelectItem key={role.roleId} value={role.roleId}>{role.name}</SelectItem>)}{available.length === 0 && <SelectItem value="_none" disabled>Sin datos</SelectItem>}</SelectContent></Select>}{roleError && <p className="text-sm text-destructive">{roleError}</p>}<div className="grid gap-3 sm:grid-cols-2">{[...selectedIds].map((roleId) => { const role = roles.data?.items.find((item) => item.roleId === roleId); const assigned = scopedAssignments.find((item) => item.roleId === roleId); return <div key={roleId} className="flex items-center justify-between rounded-xl border bg-card p-4"><div><p className="font-medium">{role?.name ?? assigned?.roleName ?? "Rol"}</p><p className="text-xs text-muted-foreground">{role?.description ?? "Permisos asignados"}</p></div>{editing&&<Button type="button" variant="ghost" size="icon" onClick={() => setSelectedIds((current) => { const next = new Set(current); next.delete(roleId); return next; })}><X className="h-4 w-4" /></Button>}</div>; })}{selectedIds.size === 0 && <EmptyState text="Sin roles asignados en este negocio." />}</div></section>
     {editing&&<section className={`space-y-3 rounded-2xl border p-5 ${passwordError ? "border-destructive" : ""}`}><div><Label htmlFor={`reset-${userId}`}>Contraseña de acceso y modo sin conexión POS</Label><p className="text-sm text-muted-foreground">Déjala vacía para conservar la actual. Al cambiarla se actualiza también el acceso sin conexión.</p></div><Input id={`reset-${userId}`} type="password" autoComplete="new-password" value={newPassword} onChange={(event) => { setNewPassword(event.target.value); setPasswordError(""); }} aria-invalid={Boolean(passwordError)} className={passwordError ? "border-destructive" : ""} placeholder="Nueva contraseña" />{passwordError && <p className="text-sm text-destructive">{passwordError}</p>}</section>}
+    {canManageApprovalCredential&&<section className="space-y-4 rounded-2xl border p-5"><div><h3 className="font-semibold">Clave de autorización de supervisor</h3><p className="text-sm text-muted-foreground">Permite que este usuario autorice una sola acción sensible en la caja, como cerrar una sesión de venta. Es independiente de su contraseña de acceso.</p></div>{approvalCredential.data?.isConfigured&&<div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-emerald-50 p-4 text-sm"><div><strong>Clave configurada</strong><p className="text-muted-foreground">{approvalCredential.data.validUntil?`Vence ${new Date(approvalCredential.data.validUntil).toLocaleString("es-CO")}`:"Sin vencimiento"}</p></div>{editing&&<Button type="button" variant={revokeApprovalCredential?"outline":"destructive"} size="sm" onClick={()=>setRevokeApprovalCredential(value=>!value)}>{revokeApprovalCredential?"Conservar clave":"Revocar al guardar"}</Button>}</div>}{editing&&<div className="grid gap-4 md:grid-cols-3"><div className="space-y-2"><Label>Nueva clave</Label><Input type="password" minLength={6} maxLength={32} value={approvalSecret} onChange={event=>{setApprovalSecret(event.target.value);setRevokeApprovalCredential(false)}} autoComplete="new-password" placeholder="Mínimo 6 caracteres"/></div><div className="space-y-2"><Label>Confirmar clave</Label><Input type="password" minLength={6} maxLength={32} value={approvalConfirmation} onChange={event=>setApprovalConfirmation(event.target.value)} autoComplete="new-password"/></div><div className="space-y-2"><Label>Vigencia</Label><Select value={approvalValidity} onValueChange={value=>setApprovalValidity(value as typeof approvalValidity)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="8">8 horas</SelectItem><SelectItem value="168">1 semana</SelectItem><SelectItem value="always">Sin vencimiento</SelectItem></SelectContent></Select></div>{approvalConfirmation&&approvalSecret!==approvalConfirmation&&<p className="text-sm text-destructive md:col-span-3">Las claves no coinciden.</p>}<p className="text-xs text-muted-foreground md:col-span-3">La nueva clave o la revocación se aplicará al pulsar “Guardar tercero”.</p></div>}</section>}
   </div>;
 }
 

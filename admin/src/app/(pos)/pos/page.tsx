@@ -933,13 +933,15 @@ export default function PosPage() {
     }
     setBusy(true);
     setError(null);
+    let quantityToFocus: string | null = null;
     try {
       const startsNewSale = !draft?.lines.length;
       const result = await client.capture(value, draft?.customerId ?? null);
       if (result.status === "Added" && result.draft) {
         setDraft(result.draft);
-        setSelectedLineId(result.draft.lines.at(-1)?.lineId ?? null);
-        revealLine(result.draft.lines.at(-1)?.lineId ?? null);
+        quantityToFocus = result.draft.lines.at(-1)?.lineId ?? null;
+        setSelectedLineId(quantityToFocus);
+        revealLine(quantityToFocus);
         setMessage(`${result.draft.lines.at(-1)?.description ?? "Producto"} agregado`);
         if (startsNewSale) setLastSettlement(null);
         setScan("");
@@ -961,7 +963,8 @@ export default function PosPage() {
       return false;
     } finally {
       setBusy(false);
-      focusScanner();
+      if (quantityToFocus) focusQuantity(quantityToFocus);
+      else focusScanner();
     }
   }
 
@@ -1052,6 +1055,13 @@ export default function PosPage() {
     });
   }
 
+  function focusQuantity(lineId: string) {
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      quantityInputs.current.get(lineId)?.focus();
+      quantityInputs.current.get(lineId)?.select();
+    }));
+  }
+
   function isApprovalRequired(caught: unknown) {
     return caught instanceof PosEdgeError &&
       (caught.code === "ApprovalRequired" || caught.status === 428 ||
@@ -1095,24 +1105,30 @@ export default function PosPage() {
     setBusy(true);
     setError(null);
     try {
-      await executeSensitive(
-        "work-sessions.close",
-        null,
-        {
-          action: "CloseWorkSession",
-          workSessionId: workstation.workSessionId,
-          businessName: workstation.businessName,
-          warehouseName: workstation.warehouseName,
-        },
-        async (authorization) => {
-          const preview = await client.previewWorkSessionClosure(
-            draft.draftId.value,
-            authorization,
-          );
-          closureOperationId.current = authorization.operationId ?? crypto.randomUUID();
-          setClosurePreview(preview);
-        },
-      );
+      if (client.mode === "edge") {
+        await executeSensitive(
+          "work-sessions.close",
+          null,
+          {
+            action: "CloseWorkSession",
+            workSessionId: workstation.workSessionId,
+            businessName: workstation.businessName,
+            warehouseName: workstation.warehouseName,
+          },
+          async (authorization) => {
+            const preview = await client.previewWorkSessionClosure(
+              draft.draftId.value,
+              authorization,
+            );
+            closureOperationId.current = authorization.operationId ?? crypto.randomUUID();
+            setClosurePreview(preview);
+          },
+        );
+      } else {
+        const preview = await client.previewWorkSessionClosure(draft.draftId.value);
+        closureOperationId.current = null;
+        setClosurePreview(preview);
+      }
     } catch (caught) {
       const detail = caught instanceof Error
         ? caught.message
@@ -1129,39 +1145,49 @@ export default function PosPage() {
     setBusy(true);
     setError(null);
     try {
-      const operationId = closureOperationId.current ?? crypto.randomUUID();
-      closureOperationId.current = operationId;
       const countedCash = paymentCounts.find(value => value.paymentMethodCode === "Cash")?.countedAmount ?? 0;
       const submitted = closureAttempt ?? { countedCash, paymentCounts, note };
       if (!closureAttempt) setClosureAttempt(submitted);
-      if (draft?.sourceOrderId) {
-        const orderId = draft.sourceOrderId;
-        try {
-          await client.cancelDraft(draft.draftId.value);
-        } catch {
-          // Releasing the lease is the safety invariant. The stale draft can be
-          // reset on the next entry, but it must never keep the order occupied.
-          await client.releaseRecoveredOrder(orderId).catch(() => undefined);
+      const finish = async (authorization: PosSensitiveAuthorization) => {
+        const operationId = authorization.operationId ?? closureOperationId.current ?? crypto.randomUUID();
+        closureOperationId.current = operationId;
+        await client.closeWorkSession({
+          operationId,
+          authorizationToken: closurePreview.authorizationToken,
+          draftId: draft?.draftId.value ?? "",
+          authorization,
+          countedCash: submitted.countedCash,
+          paymentCounts: submitted.paymentCounts,
+          note: submitted.note,
+        });
+        if (draft?.sourceOrderId)
+          await client.releaseRecoveredOrder(draft.sourceOrderId).catch(() => undefined);
+        setClosurePreview(null);
+        setClosureAttempt(null);
+        closureOperationId.current = null;
+        if (client instanceof PosEdgeClient) {
+          await logoutLocal(true);
+          return;
         }
-      }
+        forgetSalesWorkspace();
+        router.push("/dashboard");
+      };
 
-      await client.closeWorkSession({
-        operationId,
-        authorizationToken: closurePreview.authorizationToken,
-        countedCash: submitted.countedCash,
-        paymentCounts: submitted.paymentCounts,
-        note: submitted.note,
-      });
-
-      setClosurePreview(null);
-      setClosureAttempt(null);
-      closureOperationId.current = null;
-      if (client instanceof PosEdgeClient) {
-        await logoutLocal(true);
-        return;
+      if (client.mode === "edge") {
+        await finish({ operationId: closureOperationId.current ?? crypto.randomUUID() });
+      } else {
+        await executeSensitive(
+          "work-sessions.close",
+          null,
+          {
+            action: "CloseWorkSession",
+            workSessionId: workstation.workSessionId,
+            businessName: workstation.businessName,
+            warehouseName: workstation.warehouseName,
+          },
+          finish,
+        );
       }
-      forgetSalesWorkspace();
-      router.push("/dashboard");
     } catch (caught) {
       const detail = caught instanceof Error
         ? caught.message
@@ -1594,6 +1620,7 @@ export default function PosPage() {
     if (!client || busy) return false;
     setBusy(true);
     setError(null);
+    let quantityToFocus: string | null = null;
     try {
       let scaleWeight: number | null = null;
       let manualWeight = false;
@@ -1629,24 +1656,22 @@ export default function PosPage() {
         if (changed.draft) confirmedDraft = changed.draft;
       }
       setDraft(confirmedDraft);
-      setSelectedLineId(addedLine?.lineId ?? null);
-      revealLine(addedLine?.lineId ?? null);
+      quantityToFocus = addedLine?.lineId ?? null;
+      setSelectedLineId(quantityToFocus);
+      revealLine(quantityToFocus);
       setMessage(scaleWeight !== null
         ? `${product.name}: ${scaleWeight.toLocaleString("es-CO",{maximumFractionDigits:3})} kg leídos de la balanza`
         : `${product.name} agregado${manualWeight ? "; escribe el peso" : ""}`);
       if (startsNewSale) setLastSettlement(null);
       setScan("");
-      if (manualWeight && addedLine) window.requestAnimationFrame(()=>{
-        quantityInputs.current.get(addedLine.lineId)?.focus();
-        quantityInputs.current.get(addedLine.lineId)?.select();
-      });
       return true;
     } catch (caught) {
       showError(caught);
       return false;
     } finally {
       setBusy(false);
-      focusScanner();
+      if (quantityToFocus) focusQuantity(quantityToFocus);
+      else focusScanner();
     }
   }
   function openOrders() {
@@ -1803,10 +1828,19 @@ export default function PosPage() {
   }
 
   async function loginLocal(username: string, password: string) {
-    if (!(client instanceof PosEdgeClient) || !edgeEnrollmentToken) return;
+    const launchToken = edgeEnrollmentToken ?? readEdgeTokenFromLaunch();
+    if (!launchToken) {
+      const message =
+        "Auraly POS perdió la conexión segura con el servicio local. Cierra y vuelve a abrir la aplicación.";
+      setEdgeLoginError(message);
+      throw new Error(message);
+    }
+    const edgeClient = client instanceof PosEdgeClient
+      ? client
+      : new PosEdgeClient(launchToken, readEdgeUserSession());
     setEdgeLoginError(null);
     try {
-      const session = await client.login(username, password);
+      const session = await edgeClient.login(username, password);
       setWorkstation((current) => ({
         ...current,
         userDisplayName: session.displayName,
@@ -1814,7 +1848,8 @@ export default function PosPage() {
       }));
       setEdgePermissions(session.permissions);
       setEdgeLoginState(null);
-      setClient(new PosEdgeClient(edgeEnrollmentToken, session.token));
+      setEdgeEnrollmentToken(launchToken);
+      setClient(new PosEdgeClient(launchToken, session.token));
 
       if (serverConnected) {
         try {

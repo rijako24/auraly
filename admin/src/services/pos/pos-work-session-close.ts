@@ -5,6 +5,8 @@ export function workSessionClosurePreviewPath(workSessionId: string): string {
 export function workSessionCloseRequest(
   workSessionId: string,
   operationId: string,
+  draftId: string,
+  approvalRequestId: string | undefined,
   countedCash: number,
   paymentCounts: Array<{ paymentMethodCode: string; countedAmount: number }>,
   note: string | null,
@@ -13,7 +15,11 @@ export function workSessionCloseRequest(
     path: `/api/commerce/v1/work-sessions/${encodeURIComponent(workSessionId)}/close`,
     init: {
       method: "POST",
-      headers: { "Idempotency-Key": operationId },
+      headers: {
+        "Idempotency-Key": operationId,
+        "X-Auraly-Draft-Id": draftId,
+        ...(approvalRequestId ? { "X-Auraly-Approval-Id": approvalRequestId } : {}),
+      },
       body: JSON.stringify({ countedCash, paymentCounts, note }),
     },
   };

@@ -48,7 +48,6 @@ export function PosProductSearchDialog({
           if (requestVersion.current !== version) return;
           setResults(page.items);
           setSelected(0);
-          window.requestAnimationFrame(() => resultElements.current.get(0)?.focus());
           setHasMore(page.hasMore);
           setNextOffset(page.nextOffset);
         })
@@ -103,10 +102,11 @@ export function PosProductSearchDialog({
 
   function moveSelection(direction: -1 | 1) {
     if (!results.length) return;
-    const target = Math.max(
-      0,
-      Math.min(results.length - 1, selected + direction),
-    );
+    const target = selected + direction;
+    if (target < 0 || target >= results.length) {
+      input.current?.focus();
+      return;
+    }
     setSelected(target);
     window.requestAnimationFrame(() => {
       const element = resultElements.current.get(target);
@@ -186,12 +186,15 @@ export function PosProductSearchDialog({
               onKeyDown={(event) => {
                 if (event.key === "ArrowDown") {
                   event.preventDefault();
-                  moveSelection(1);
+                  setSelected(0);
+                  resultElements.current.get(0)?.focus();
                   return;
                 }
                 if (event.key === "ArrowUp") {
                   event.preventDefault();
-                  moveSelection(-1);
+                  const last = results.length - 1;
+                  setSelected(last);
+                  resultElements.current.get(last)?.focus();
                   return;
                 }
                 if (event.key === "Enter" && results[selected]) {

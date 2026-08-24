@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { CalendarDays, DollarSign, Gauge, MessageSquare, Users } from "lucide-react";
 
 import { StatCard } from "@/components/cards/stat-card";
@@ -9,6 +10,8 @@ import { RevenueChart } from "@/components/charts/revenue-chart";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageError } from "@/components/ui/page-error";
 import { PageLoading } from "@/components/ui/page-loading";
+import { BrandedEmptyState } from "@/components/ui/branded-empty-state";
+import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -23,6 +26,7 @@ import {
 } from "@/hooks/use-dashboard";
 import { formatCurrency, formatRelativeTime } from "@/lib/utils";
 import { useBusinessContextStore } from "@/stores/business-context-store";
+import { useAuthStore } from "@/stores/auth-store";
 
 function reservationStatusLabel(status: string | number) {
   if (typeof status === "number") {
@@ -48,14 +52,22 @@ function reservationStatusLabel(status: string | number) {
 
 export default function DashboardPage() {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
+  const canReadDashboard = useAuthStore((state) =>
+    state.user?.permissions.includes("dashboard.read") ?? false);
   const [period, setPeriod] = useState("30d");
-  const statsQuery = useDashboardStats(period);
-  const dailyRevenueQuery = useRevenueChart("daily");
-  const monthlyRevenueQuery = useRevenueChart("monthly");
-  const overviewQuery = useOverviewChart(period);
-  const topServicesQuery = useTopServices(4);
-  const recentReservationsQuery = useRecentReservations(5);
-  const usageQuery = useBusinessUsage();
+  const statsQuery = useDashboardStats(period, canReadDashboard);
+  const dailyRevenueQuery = useRevenueChart("daily", canReadDashboard);
+  const monthlyRevenueQuery = useRevenueChart("monthly", canReadDashboard);
+  const overviewQuery = useOverviewChart(period, canReadDashboard);
+  const topServicesQuery = useTopServices(4, canReadDashboard);
+  const recentReservationsQuery = useRecentReservations(5, canReadDashboard);
+  const usageQuery = useBusinessUsage(canReadDashboard);
+
+  if (!canReadDashboard) return <BrandedEmptyState
+    title="Tu operación está lista donde realmente importa"
+    description="Esta cuenta está enfocada en el punto de venta. No tienes indicadores de dashboard asignados, pero puedes continuar atendiendo y facturando con Auraly."
+    action={<Button asChild><Link href="/pos">Volver al punto de venta</Link></Button>}
+  />;
 
   if (!businessId) {
     return (
