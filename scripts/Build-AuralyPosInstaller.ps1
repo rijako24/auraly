@@ -36,6 +36,9 @@ Push-Location (Join-Path $root "admin")
 try {
     $env:NEXT_PUBLIC_AURALY_POS_EDGE_URL = "http://127.0.0.1:47831"
     npm run build
+    if ($LASTEXITCODE -ne 0) {
+        throw "The POS web application could not be built."
+    }
 }
 finally {
     Pop-Location

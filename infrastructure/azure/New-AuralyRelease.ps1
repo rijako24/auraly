@@ -157,13 +157,15 @@ try {
         -c Release --no-restore
     if ($LASTEXITCODE) { throw 'La compilacion de base de datos fallo.' }
 
-    if (-not $SkipAdmin) {
+    if (-not $SkipAdmin -or $PosApiUrl) {
         Push-Location (Join-Path $repoRoot 'admin')
         try {
             & npm ci
             if ($LASTEXITCODE) { throw 'npm ci fallo.' }
-            & npm run build
-            if ($LASTEXITCODE) { throw 'La compilacion del frontend fallo.' }
+            if (-not $SkipAdmin) {
+                & npm run build
+                if ($LASTEXITCODE) { throw 'La compilacion del frontend fallo.' }
+            }
         }
         finally {
             Pop-Location
