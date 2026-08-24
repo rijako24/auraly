@@ -1,4 +1,4 @@
-const VERSION = "auraly-pwa-v6";
+const VERSION = "auraly-pwa-v7";
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 const APP_SHELL = ["/login", "/app.webmanifest", "/brand/auraly-app-icon-192-v4.png", "/brand/auraly-app-icon-512-v4.png", "/brand/auraly-ios-icon-512-v4.png", "/brand/auraly-maskable-512-v4.png"];
@@ -47,7 +47,7 @@ self.addEventListener("push", (event) => {
     badge: "/brand/auraly-app-icon-192-v4.png",
     requireInteraction: true,
     data: { url: data.url || "/dashboard?posApproval=pending" },
-    actions: [{ action: "open", title: "Revisar" }],
+    actions: [{ action: "open", title: "Revisar solicitud" }],
   }));
 });
 

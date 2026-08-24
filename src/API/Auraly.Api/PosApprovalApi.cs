@@ -167,6 +167,25 @@ public static class PosApprovalApi
             });
         });
 
+        device.MapGet("/{approvalRequestId:guid}", async (
+            ClaimsPrincipal principal,
+            Guid approvalRequestId,
+            HttpContext context,
+            PosApprovalService service,
+            CancellationToken cancellationToken) =>
+        {
+            if (!Guid.TryParse(context.Request.Headers["X-Auraly-User-Id"], out var userId) ||
+                !Guid.TryParse(context.Request.Headers["X-Auraly-Work-Session-Id"], out var workSessionId))
+                return Results.Problem("El dispositivo no identificó el usuario y su sesión.", statusCode: 400, title: "InvalidScope");
+            return await Handle(() => service.GetForDeviceAsync(
+                RequiredDeviceGuid(principal, PosAuthenticationDefaults.TenantIdClaim),
+                RequiredDeviceGuid(principal, PosAuthenticationDefaults.DeviceIdClaim),
+                userId,
+                workSessionId,
+                approvalRequestId,
+                cancellationToken));
+        });
+
         device.MapPost("/{approvalRequestId:guid}/reserve", async (
             ClaimsPrincipal principal,
             Guid approvalRequestId,

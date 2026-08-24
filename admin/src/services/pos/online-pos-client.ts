@@ -728,6 +728,12 @@ export class OnlinePosClient implements PosClient {
     };
   }
 
+  approval(approvalRequestId: string): Promise<PosApprovalSummary> {
+    return request<PosApprovalSummary>(
+      `/api/commerce/v1/pos/approvals/${encodeURIComponent(approvalRequestId)}`,
+    );
+  }
+
   async closeWorkSession(input: PosCloseWorkSessionInput): Promise<PosWorkSessionClosure> {
     const requestDefinition = workSessionCloseRequest(
       this.context.workSessionId, input.operationId, input.draftId,

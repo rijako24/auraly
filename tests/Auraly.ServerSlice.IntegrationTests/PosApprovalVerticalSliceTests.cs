@@ -58,6 +58,28 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
         Assert.NotNull(created);
         Assert.Equal(PosApprovalStatus.Pending, created.Status);
 
+        using var deviceStatusRequest = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"/api/pos/v1/approvals/{created.ApprovalRequestId:D}");
+        deviceStatusRequest.Headers.Add("X-Auraly-Device-Id", fixture.DeviceId.ToString("D"));
+        deviceStatusRequest.Headers.Add("X-Auraly-Device-Secret", ServerSliceFixture.DeviceSecret);
+        deviceStatusRequest.Headers.Add("X-Auraly-User-Id", fixture.UserId.ToString("D"));
+        deviceStatusRequest.Headers.Add("X-Auraly-Work-Session-Id", fixture.WorkSessionId.ToString("D"));
+        using var deviceStatusResponse = await deviceCreationClient.SendAsync(deviceStatusRequest);
+        deviceStatusResponse.EnsureSuccessStatusCode();
+        var deviceStatus = await deviceStatusResponse.Content.ReadFromJsonAsync<PosApprovalRequestView>();
+        Assert.Equal(PosApprovalStatus.Pending, deviceStatus!.Status);
+
+        using var foreignDeviceStatusRequest = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"/api/pos/v1/approvals/{created.ApprovalRequestId:D}");
+        foreignDeviceStatusRequest.Headers.Add("X-Auraly-Device-Id", fixture.DeviceId.ToString("D"));
+        foreignDeviceStatusRequest.Headers.Add("X-Auraly-Device-Secret", ServerSliceFixture.DeviceSecret);
+        foreignDeviceStatusRequest.Headers.Add("X-Auraly-User-Id", Guid.NewGuid().ToString("D"));
+        foreignDeviceStatusRequest.Headers.Add("X-Auraly-Work-Session-Id", fixture.WorkSessionId.ToString("D"));
+        using var foreignDeviceStatusResponse = await deviceCreationClient.SendAsync(foreignDeviceStatusRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, foreignDeviceStatusResponse.StatusCode);
+
         var createPush = await fixture.ReadSynchronizationMessageAsync();
         Assert.Equal(PosSynchronizationStreams.Approvals, createPush.Stream);
         Assert.Equal(fixture.BusinessId, createPush.BusinessId);

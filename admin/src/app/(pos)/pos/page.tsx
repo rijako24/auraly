@@ -1491,6 +1491,17 @@ export default function PosPage() {
     setConfirmation(null);
   }
 
+  const loadSensitiveApproval = useCallback(async (approvalRequestId: string) => {
+    if (!client) throw new Error("La caja no está disponible para consultar la autorización.");
+    return client.approval(approvalRequestId) as Promise<PosApprovalRequest>;
+  }, [client]);
+
+  const subscribeSensitiveApprovals = useCallback(async (onChanged: () => void) => {
+    if (client instanceof PosEdgeClient)
+      return client.watchLocalState(onChanged);
+    return posApprovalClient.subscribe(onChanged);
+  }, [client]);
+
   async function saveTemporary(event: FormEvent) {
     event.preventDefault();
     await persistTemporary(temporaryName, temporaryReference);
@@ -3034,6 +3045,8 @@ edgeCapable={edgeEnrollmentRequired}
           allowRemote={serverConnected && Boolean(sensitiveApproval.approval)}
           busy={busy}
           error={sensitiveApprovalError}
+          loadApproval={loadSensitiveApproval}
+          subscribeApprovals={subscribeSensitiveApprovals}
           onRemoteApproved={completeRemoteApproval}
           onLocalSecret={completeLocalApproval}
           onCancel={() => {

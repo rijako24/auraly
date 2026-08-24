@@ -385,6 +385,7 @@ export interface PosClient {
   customerCities(divisionId: string): Promise<PosCity[]>;
   createCustomer(input: PosCreateCustomerInput): Promise<PosCustomer>;
   createApproval(input: PosApprovalCreateInput): Promise<PosApprovalSummary>;
+  approval(approvalRequestId: string): Promise<PosApprovalSummary>;
   activeDraft(): Promise<PosDraft>;
   nextNumbers(documentType?: PosSaleDocumentType): Promise<PosNextNumbers | null>;
   capture(value: string, customerId: string | null): Promise<PosCaptureResult>;
@@ -896,6 +897,12 @@ export class PosEdgeClient implements PosClient {
     return this.request<PosDraft>(`/edge/v1/orders/${orderId}/recover`, {
       method: "POST",
     });
+  }
+
+  approval(approvalRequestId: string) {
+    return this.request<PosApprovalSummary>(
+      `/edge/v1/approvals/${encodeURIComponent(approvalRequestId)}`,
+    );
   }
 
   renewRecoveredOrder(orderId: string) {

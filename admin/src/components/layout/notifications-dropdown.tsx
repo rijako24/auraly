@@ -199,6 +199,48 @@ export function NotificationsDropdown({ className }: { className?: string }) {
         </DropdownMenuContent>
       </DropdownMenu>
 
+      {canApprove && requests[0] && (
+        <section
+          role="alertdialog"
+          aria-label="Solicitud de autorización de caja"
+          className="fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-[90] rounded-3xl border border-slate-200 bg-white p-4 shadow-[0_24px_80px_rgba(15,23,42,0.35)] md:hidden"
+        >
+          <div className="flex items-start gap-3">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-teal-50 text-teal-700">
+              <ShieldCheck className="h-5 w-5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-2">
+                <p className="font-bold text-slate-950">Autorizar acción en caja</p>
+                {requests.length > 1 && <Badge variant="secondary">+{requests.length - 1}</Badge>}
+              </div>
+              <p className="mt-0.5 text-sm text-slate-600">{requests[0].requestedByName}</p>
+              <p className="mt-2 rounded-xl bg-slate-50 p-2 text-xs text-slate-600">
+                {describeContext(requests[0])}
+              </p>
+            </div>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <Button
+              variant="destructive"
+              className="h-12 rounded-xl bg-red-600 text-base font-bold hover:bg-red-700"
+              disabled={busyId === requests[0].approvalRequestId}
+              onClick={() => void decide(requests[0], false)}
+            >
+              <X className="mr-2 h-5 w-5" /> Denegar
+            </Button>
+            <Button
+              className="h-12 rounded-xl bg-emerald-600 text-base font-bold hover:bg-emerald-700"
+              disabled={busyId === requests[0].approvalRequestId}
+              onClick={() => void decide(requests[0], true)}
+            >
+              <Check className="mr-2 h-5 w-5" /> Aprobar
+            </Button>
+          </div>
+          {error && <p className="mt-3 text-sm font-medium text-red-700">{error}</p>}
+        </section>
+      )}
+
       <Dialog open={credentialOpen} onOpenChange={setCredentialOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>

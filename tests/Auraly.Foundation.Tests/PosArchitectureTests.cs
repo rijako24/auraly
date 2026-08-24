@@ -228,6 +228,33 @@ public sealed class PosArchitectureTests
     }
 
     [Fact]
+    public void Supervisor_approval_is_realtime_on_register_bell_and_mobile_sheet()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var posDirectory = Path.Combine(repositoryRoot, "admin", "src", "app", "(pos)", "pos");
+        var dialog = File.ReadAllText(Path.Combine(posDirectory, "pos-supervisor-approval-dialog.tsx"));
+        var notifications = File.ReadAllText(Path.Combine(
+            repositoryRoot, "admin", "src", "components", "layout", "notifications-dropdown.tsx"));
+        var client = File.ReadAllText(Path.Combine(
+            repositoryRoot, "admin", "src", "services", "pos", "pos-approval-client.ts"));
+        var synchronization = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "Pos", "Auraly.Pos.Edge.Host", "PosSynchronization.cs"));
+        var serviceWorker = File.ReadAllText(Path.Combine(
+            repositoryRoot, "admin", "public", "app-sw.js"));
+
+        Assert.Contains("Credencial del supervisor", dialog, StringComparison.Ordinal);
+        Assert.DoesNotContain("animate-spin", dialog, StringComparison.Ordinal);
+        Assert.Contains("subscribeApprovals", dialog, StringComparison.Ordinal);
+        Assert.Contains("md:hidden", notifications, StringComparison.Ordinal);
+        Assert.Contains(" Denegar", notifications, StringComparison.Ordinal);
+        Assert.Contains(" Aprobar", notifications, StringComparison.Ordinal);
+        Assert.Contains("setRequests(pending)", notifications, StringComparison.Ordinal);
+        Assert.Contains("reconnectTimer", client, StringComparison.Ordinal);
+        Assert.Contains("PosSynchronizationStreams.Approvals => PosSynchronizationTrigger.Approvals", synchronization, StringComparison.Ordinal);
+        Assert.Contains("self.addEventListener(\"push\"", serviceWorker, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Pos_search_loading_indicators_spin_without_moving_their_vertical_anchor()
     {
         var repositoryRoot = FindRepositoryRoot();

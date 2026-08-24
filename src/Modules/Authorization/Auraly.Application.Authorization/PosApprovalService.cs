@@ -152,6 +152,31 @@ public sealed class PosApprovalService(
         return approval;
     }
 
+    public async Task<PosApprovalRequestView> GetForDeviceAsync(
+        Guid tenantId,
+        Guid deviceId,
+        Guid userId,
+        Guid workSessionId,
+        Guid approvalRequestId,
+        CancellationToken cancellationToken = default)
+    {
+        var approval = await store.GetAsync(
+            new PosApprovalUserIdentity(
+                userId, tenantId, Guid.Empty,
+                new HashSet<string>(StringComparer.Ordinal)),
+            approvalRequestId,
+            cancellationToken)
+            ?? throw new PosApprovalException("NotFound", "La solicitud de autorización no existe.");
+        if (approval.TenantId != tenantId ||
+            approval.DeviceId != deviceId ||
+            approval.RequestedByUserId != userId ||
+            approval.WorkSessionId != workSessionId)
+            throw new PosApprovalException(
+                "Forbidden",
+                "La solicitud de autorización no corresponde a este dispositivo y sesión.");
+        return approval;
+    }
+
     public Task<IReadOnlyList<PosApprovalRequestView>> PendingAsync(
         PosApprovalUserIdentity user,
         Guid businessId,

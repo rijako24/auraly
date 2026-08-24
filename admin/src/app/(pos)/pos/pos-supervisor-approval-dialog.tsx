@@ -1,14 +1,16 @@
 "use client";
 
-import { CheckCircle2, KeyRound, Loader2, ShieldCheck, Smartphone } from "lucide-react";
-import { FormEvent, useEffect, useState } from "react";
-import { posApprovalClient, type PosApprovalRequest } from "@/services/pos/pos-approval-client";
+import { CheckCircle2, KeyRound, ShieldCheck, Smartphone } from "lucide-react";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import type { PosApprovalRequest } from "@/services/pos/pos-approval-client";
 
 export function PosSupervisorApprovalDialog({
   approval,
   allowRemote,
   busy,
   error,
+  loadApproval,
+  subscribeApprovals,
   onRemoteApproved,
   onLocalSecret,
   onCancel,
@@ -17,29 +19,32 @@ export function PosSupervisorApprovalDialog({
   allowRemote: boolean;
   busy: boolean;
   error: string | null;
+  loadApproval: (approvalRequestId: string) => Promise<PosApprovalRequest>;
+  subscribeApprovals: (onChanged: () => void) => Promise<() => void>;
   onRemoteApproved: (approvalId: string) => Promise<void>;
   onLocalSecret: (secret: string) => Promise<void>;
   onCancel: () => void;
 }) {
   const [secret, setSecret] = useState("");
-  const [showLocal, setShowLocal] = useState(!allowRemote);
   const [channelError, setChannelError] = useState<string | null>(null);
+  const onRemoteApprovedRef = useRef(onRemoteApproved);
+  useEffect(() => { onRemoteApprovedRef.current = onRemoteApproved; }, [onRemoteApproved]);
 
   useEffect(() => {
     if (!approval || !allowRemote) return;
     let active = true;
     let dispose: (() => void) | undefined;
     const refresh = async () => {
-      const current = await posApprovalClient.get(approval.approvalRequestId);
+      const current = await loadApproval(approval.approvalRequestId);
       if (!active) return;
       if (current.status === "Approved")
-        await onRemoteApproved(current.approvalRequestId);
+        await onRemoteApprovedRef.current(current.approvalRequestId);
       else if (current.status === "Rejected" || current.status === "Expired")
         setChannelError(current.status === "Rejected"
           ? "El supervisor rechazó la acción."
           : "La solicitud venció; inténtala nuevamente.");
     };
-    void posApprovalClient.subscribe(() => void refresh())
+    void subscribeApprovals(() => void refresh())
       .then((stop) => {
         dispose = stop;
         return refresh();
@@ -47,10 +52,9 @@ export function PosSupervisorApprovalDialog({
       .catch((caught) => {
         if (!active) return;
         setChannelError(caught instanceof Error ? caught.message : "Falló el canal de aprobación.");
-        setShowLocal(true);
       });
     return () => { active = false; dispose?.(); };
-  }, [allowRemote, approval, onRemoteApproved]);
+  }, [allowRemote, approval, loadApproval, subscribeApprovals]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -72,15 +76,14 @@ export function PosSupervisorApprovalDialog({
           </div>
         </header>
         <div className="p-6">
-          {allowRemote && !showLocal ? (
+          {allowRemote && (
             <div className="rounded-2xl border border-teal-200 bg-teal-50 p-5 text-center">
               <Smartphone className="mx-auto h-8 w-8 text-teal-700" />
               <h3 className="mt-3 font-bold text-slate-950">Esperando respuesta remota</h3>
-              <p className="mt-1 text-sm text-slate-600">El supervisor recibió la solicitud. La venta continuará automáticamente al aprobarse.</p>
-              <Loader2 className="mx-auto mt-4 h-5 w-5 animate-spin text-teal-700" />
+              <p className="mt-1 text-sm text-slate-600">El supervisor puede aprobar desde su teléfono. También puedes autorizar aquí con su clave.</p>
             </div>
-          ) : (
-            <form onSubmit={submit}>
+          )}
+          <form onSubmit={submit} className={allowRemote ? "mt-4" : undefined}>
               <div className="flex items-start gap-3 rounded-2xl bg-amber-50 p-4 text-amber-950">
                 <KeyRound className="mt-0.5 h-5 w-5 shrink-0" />
                 <p className="text-sm">Un supervisor autorizado puede escribir aquí su credencial secundaria. No se guarda ni se reutiliza.</p>
@@ -93,11 +96,10 @@ export function PosSupervisorApprovalDialog({
               </label>
               <button type="submit" disabled={busy || !secret.trim()}
                 className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-teal-700 font-bold text-white disabled:opacity-50">
-                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                Autorizar una vez
+                <CheckCircle2 className="h-4 w-4" />
+                {busy ? "Validando clave…" : "Autorizar una vez"}
               </button>
             </form>
-          )}
           {(channelError || error) && <p className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-medium text-red-700">{error || channelError}</p>}
           <div className="mt-5 flex items-center justify-between gap-3">
             <span />

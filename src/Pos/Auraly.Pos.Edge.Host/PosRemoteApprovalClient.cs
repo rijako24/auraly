@@ -37,6 +37,23 @@ public sealed class PosRemoteApprovalClient(
             ?? throw new PosRemoteApprovalException("InvalidApprovalResponse", "El servidor no creó la solicitud remota.");
     }
 
+    public async Task<PosApprovalRequestView> GetAsync(
+        Guid approvalRequestId,
+        PosLocalUserSession user,
+        CancellationToken cancellationToken)
+    {
+        using var request = DeviceRequest(
+            HttpMethod.Get,
+            $"api/pos/v1/approvals/{approvalRequestId:D}");
+        request.Headers.Add("X-Auraly-User-Id", user.UserId.ToString("D"));
+        request.Headers.Add("X-Auraly-Work-Session-Id", user.WorkSessionId.ToString("D"));
+        using var response = await http.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw await PosRemoteApprovalException.FromAsync(response, cancellationToken);
+        return await response.Content.ReadFromJsonAsync<PosApprovalRequestView>(cancellationToken)
+            ?? throw new PosRemoteApprovalException("InvalidApprovalResponse", "El servidor no devolvió la solicitud remota.");
+    }
+
     public async Task<PosApprovalDeviceReservation> ReserveAsync(
         Guid approvalRequestId,
         PosLocalUserSession user,
@@ -85,6 +102,14 @@ public sealed class PosRemoteApprovalClient(
     private HttpRequestMessage DeviceRequest(HttpMethod method, string path, HttpContent content)
     {
         var request = new HttpRequestMessage(method, path) { Content = content };
+        request.Headers.Add("X-Auraly-Device-Id", credentials.DeviceId.ToString("D"));
+        request.Headers.Add("X-Auraly-Device-Secret", credentials.Secret);
+        return request;
+    }
+
+    private HttpRequestMessage DeviceRequest(HttpMethod method, string path)
+    {
+        var request = new HttpRequestMessage(method, path);
         request.Headers.Add("X-Auraly-Device-Id", credentials.DeviceId.ToString("D"));
         request.Headers.Add("X-Auraly-Device-Secret", credentials.Secret);
         return request;

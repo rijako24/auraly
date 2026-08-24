@@ -131,45 +131,65 @@ export class PosApprovalClient {
   }
 
   async subscribe(onApprovalsChanged: () => void): Promise<() => void> {
-    const negotiation = await this.request<Negotiation>(
-      "/api/commerce/v1/pos/approvals/synchronization/negotiate",
-      { method: "POST" },
-    );
-    const socket = new WebSocket(
-      negotiation.clientAccessUri,
-      "json.webpubsub.azure.v1",
-    );
-    const onMessage = (event: MessageEvent<string>) => {
+    let stopped = false;
+    let socket: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+    const connect = async (initial: boolean) => {
       try {
-        const envelope = JSON.parse(event.data) as {
-          type?: string;
-          data?: { stream?: string } | string;
-        };
-        const data = typeof envelope.data === "string"
-          ? JSON.parse(envelope.data) as { stream?: string }
-          : envelope.data;
-        if (envelope.type === "message" && data?.stream === "Approvals")
-          onApprovalsChanged();
-      } catch { /* ignore protocol frames that are not data messages */ }
+        const negotiation = await this.request<Negotiation>(
+          "/api/commerce/v1/pos/approvals/synchronization/negotiate",
+          { method: "POST" },
+        );
+        if (stopped) return;
+        const current = new WebSocket(
+          negotiation.clientAccessUri,
+          "json.webpubsub.azure.v1",
+        );
+        socket = current;
+        current.addEventListener("message", (event: MessageEvent<string>) => {
+          try {
+            const envelope = JSON.parse(event.data) as {
+              type?: string;
+              data?: { stream?: string } | string;
+            };
+            const data = typeof envelope.data === "string"
+              ? JSON.parse(envelope.data) as { stream?: string }
+              : envelope.data;
+            if (envelope.type === "message" && data?.stream === "Approvals")
+              onApprovalsChanged();
+          } catch { /* ignore protocol frames that are not data messages */ }
+        });
+        await new Promise<void>((resolve, reject) => {
+          const timeout = window.setTimeout(
+            () => reject(new Error("No fue posible abrir el canal de aprobación.")),
+            8_000,
+          );
+          current.addEventListener("open", () => {
+            window.clearTimeout(timeout);
+            resolve();
+          }, { once: true });
+          current.addEventListener("error", () => {
+            window.clearTimeout(timeout);
+            reject(new Error("No fue posible abrir el canal de aprobación."));
+          }, { once: true });
+        });
+        current.addEventListener("close", () => {
+          if (stopped || socket !== current) return;
+          reconnectTimer = window.setTimeout(() => void connect(false), 1_000);
+        });
+        if (!initial) onApprovalsChanged();
+      } catch (error) {
+        socket?.close();
+        socket = null;
+        if (stopped || initial) throw error;
+        reconnectTimer = window.setTimeout(() => void connect(false), 2_000);
+      }
     };
-    socket.addEventListener("message", onMessage);
-    await new Promise<void>((resolve, reject) => {
-      const timeout = window.setTimeout(
-        () => reject(new Error("No fue posible abrir el canal de aprobación.")),
-        8_000,
-      );
-      socket.addEventListener("open", () => {
-        window.clearTimeout(timeout);
-        resolve();
-      }, { once: true });
-      socket.addEventListener("error", () => {
-        window.clearTimeout(timeout);
-        reject(new Error("No fue posible abrir el canal de aprobación."));
-      }, { once: true });
-    });
+    await connect(true);
     return () => {
-      socket.removeEventListener("message", onMessage);
-      socket.close();
+      stopped = true;
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      socket?.close();
     };
   }
 }

@@ -536,6 +536,13 @@ public static class PosEdgeHostApplication
             return Results.Ok(await approvals.CreateAsync(
                 user, request.DraftId, request.LineId, request.PermissionResource, request.ContextJson, ct));
         });
+        edge.MapGet("/approvals/{approvalRequestId:guid}", async (
+            Guid approvalRequestId,
+            PosRemoteApprovalClient approvals,
+            PosLocalSessionAccessor sessions,
+            CancellationToken ct) =>
+            Results.Ok(await approvals.GetAsync(
+                approvalRequestId, sessions.Required(), ct)));
         edge.MapGet("/auth/session", (
             PosLocalSessionAccessor sessions) =>
             Results.Ok(sessions.Required()));

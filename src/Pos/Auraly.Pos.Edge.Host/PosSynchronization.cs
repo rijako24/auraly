@@ -16,7 +16,8 @@ public enum PosSynchronizationTrigger
     LocalOutbox = 8,
     Authentication = 16,
     FiscalProvisioning = 32,
-    All = Catalog | Security | FiscalStatus | LocalOutbox | Authentication | FiscalProvisioning
+    Approvals = 64,
+    All = Catalog | Security | FiscalStatus | LocalOutbox | Authentication | FiscalProvisioning | Approvals
 }
 
 public sealed class PosSynchronizationSignal
@@ -220,6 +221,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
             PosSynchronizationStreams.FiscalProvisioning => PosSynchronizationTrigger.FiscalProvisioning,
             PosSynchronizationStreams.LocalOutbox => PosSynchronizationTrigger.LocalOutbox,
             PosSynchronizationStreams.Authentication => PosSynchronizationTrigger.Authentication,
+            PosSynchronizationStreams.Approvals => PosSynchronizationTrigger.Approvals,
             _ => PosSynchronizationTrigger.None
         };
 }

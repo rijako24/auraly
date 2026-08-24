@@ -64,7 +64,7 @@ El POS Edge conserva SQLite, catálogo local, identidad offline, consecutivos, d
 
 ## Seguridad y autorización sensible
 
-El aprovisionamiento crea permisos mínimos por rol. Acciones sensibles del POS se validan en backend. Cuando el cajero no posee el permiso se crea una solicitud auditable para supervisor antes de abrir el flujo; al confirmar se vuelve a comprobar su vigencia. La aprobación remota es el camino normal y la credencial secundaria local cifrada queda disponible para operación Edge sin conexión. La credencial puede vencer a las 8 horas, en una semana, permanecer hasta revocación o consumirse tras un solo uso. La aprobación identifica usuario, acción, dispositivo y documento; no es un booleano anónimo.
+El aprovisionamiento crea permisos mínimos por rol. Acciones sensibles del POS se validan en backend. Cuando el cajero no posee el permiso se crea una solicitud auditable para supervisor antes de abrir el flujo; al confirmar se vuelve a comprobar su vigencia. La aprobación remota es el camino normal y la credencial secundaria local cifrada permanece disponible en el mismo diálogo para operación Edge sin conexión. La solicitud se publica en tiempo real, sin recargar, tanto al aviso móvil inferior como a la campana; Web Push cubre la aplicación cerrada. La respuesta vuelve por el canal del dispositivo y continúa la acción exacta en la caja. La credencial puede vencer a las 8 horas, en una semana, permanecer hasta revocación o consumirse tras un solo uso. La aprobación identifica usuario, acción, dispositivo y documento; no es un booleano anónimo.
 
 No se versionaron certificados, claves privadas, contraseñas de producción ni cadenas de conexión. Los proveedores de prueba viven en proyectos de prueba.
 
