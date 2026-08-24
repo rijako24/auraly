@@ -215,15 +215,7 @@ public sealed class FiscalOnboardingService(
             throw new FiscalConfigurationValidationException(
                 "El certificado no permite firma digital.");
 
-        using var chain = new X509Chain();
-        chain.ChainPolicy.RevocationMode = X509RevocationMode.Online;
-        chain.ChainPolicy.RevocationFlag = X509RevocationFlag.ExcludeRoot;
-        chain.ChainPolicy.UrlRetrievalTimeout = TimeSpan.FromSeconds(10);
-        chain.ChainPolicy.DisableCertificateDownloads = false;
-        chain.ChainPolicy.VerificationTime = now.UtcDateTime;
-        foreach (var extra in collection.OfType<X509Certificate2>().Where(item => item != certificate))
-            chain.ChainPolicy.ExtraStore.Add(extra);
-        if (!chain.Build(certificate))
+        if (!BuildTrustedChain(certificate, collection, now))
             throw new FiscalConfigurationValidationException(
                 "La cadena de confianza del certificado no es válida.");
 
@@ -240,6 +232,40 @@ public sealed class FiscalOnboardingService(
             certificate.Thumbprint.Replace(" ", string.Empty, StringComparison.Ordinal).ToUpperInvariant(),
             certificate.NotBefore,
             certificate.NotAfter);
+    }
+
+    private static bool BuildTrustedChain(
+        X509Certificate2 certificate,
+        X509Certificate2Collection collection,
+        DateTimeOffset now)
+    {
+        using var systemChain = CreateChain(collection, certificate, now);
+        if (systemChain.Build(certificate)) return true;
+
+        var trustedRoot = collection.OfType<X509Certificate2>()
+            .SingleOrDefault(FiscalCertificateTrustPolicy.IsOfficialRoot);
+        if (trustedRoot is null) return false;
+
+        using var customChain = CreateChain(collection, certificate, now);
+        customChain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
+        customChain.ChainPolicy.CustomTrustStore.Add(trustedRoot);
+        return customChain.Build(certificate);
+    }
+
+    private static X509Chain CreateChain(
+        X509Certificate2Collection collection,
+        X509Certificate2 certificate,
+        DateTimeOffset now)
+    {
+        var chain = new X509Chain();
+        chain.ChainPolicy.RevocationMode = X509RevocationMode.Online;
+        chain.ChainPolicy.RevocationFlag = X509RevocationFlag.ExcludeRoot;
+        chain.ChainPolicy.UrlRetrievalTimeout = TimeSpan.FromSeconds(10);
+        chain.ChainPolicy.DisableCertificateDownloads = false;
+        chain.ChainPolicy.VerificationTime = now.UtcDateTime;
+        foreach (var extra in collection.OfType<X509Certificate2>().Where(item => item != certificate))
+            chain.ChainPolicy.ExtraStore.Add(extra);
+        return chain;
     }
 
     private static void ValidateBusiness(Guid businessId)
@@ -268,4 +294,19 @@ public static class FiscalCertificateIdentityPolicy
 
     private static string Digits(string value) =>
         new((value ?? string.Empty).Where(char.IsAsciiDigit).ToArray());
+}
+
+public static class FiscalCertificateTrustPolicy
+{
+    // GSE publishes this CA as "Autoridad Raiz GSE" in its current certification
+    // practices. It is not shipped by the standard Linux trust store used by App Service.
+    private const string GseRootThumbprint = "032D6DCFE71F2C57ECADA9A99F2F6CE9825A6550";
+
+    public static bool IsOfficialRoot(X509Certificate2 certificate) =>
+        certificate.SubjectName.RawData.AsSpan().SequenceEqual(certificate.IssuerName.RawData) &&
+        string.Equals(Normalize(certificate.Thumbprint), GseRootThumbprint,
+            StringComparison.OrdinalIgnoreCase);
+
+    private static string Normalize(string value) =>
+        value.Replace(" ", string.Empty, StringComparison.Ordinal);
 }
