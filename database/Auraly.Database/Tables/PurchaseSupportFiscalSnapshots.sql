@@ -1,4 +1,4 @@
-CREATE TABLE [dbo].[PurchaseSupportFiscalSnapshots]
+CREATE TABLE [fiscal].[PurchaseSupportFiscalSnapshots]
 (
     [DocumentId] UNIQUEIDENTIFIER NOT NULL,
     [SnapshotJson] NVARCHAR(MAX) NOT NULL,

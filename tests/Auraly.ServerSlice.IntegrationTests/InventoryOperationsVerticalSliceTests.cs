@@ -311,6 +311,10 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.Contains(searchedMovements!.Items, x => x.DocumentId == damageId);
         var searchedOperations = await client.GetFromJsonAsync<InventoryOperationPage>("/api/commerce/v1/inventory/operations?search=Insumo&page=1&pageSize=20");
         Assert.Contains(searchedOperations!.Items, x => x.DocumentId == damageId);
+        var filteredOperations = await client.GetFromJsonAsync<InventoryOperationPage>("/api/commerce/v1/inventory/operations?documentType=Damage&reasonCode=DAMAGE&page=1&pageSize=20");
+        Assert.Contains(filteredOperations!.Items, x => x.DocumentId == damageId);
+        var excludedOperations = await client.GetFromJsonAsync<InventoryOperationPage>("/api/commerce/v1/inventory/operations?documentType=Damage&reasonCode=EXPIRED&page=1&pageSize=20");
+        Assert.DoesNotContain(excludedOperations!.Items, x => x.DocumentId == damageId);
         using var restricted = fixture.CreateAdminClient(InventoryPermissionCodes.Read);
         var hidden = await restricted.GetFromJsonAsync<InventoryBalancePage>($"/api/commerce/v1/inventory/balances?warehouseId={fixture.WarehouseId:D}&search=Insumo&page=1&pageSize=20");
         var hiddenRow = Assert.Single(hidden!.Items.Where(x => x.ProductId == product)); Assert.Null(hiddenRow.AverageUnitCost); Assert.Null(hiddenRow.InventoryValue);

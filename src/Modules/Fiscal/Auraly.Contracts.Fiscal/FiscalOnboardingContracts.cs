@@ -28,7 +28,8 @@ public sealed record FiscalOnboardingConfiguration(
     DianNumberingRangeOption? AssignedRange,
     IReadOnlyList<DianNumberingRangeOption> AvailableRanges,
     IReadOnlyList<string> MissingRequirements,
-    FiscalHabilitationAttempt? LatestHabilitationAttempt);
+    FiscalHabilitationAttempt? LatestHabilitationAttempt,
+    DianNumberingRangeOption? AssignedSupportDocumentRange = null);
 
 public sealed record FiscalHabilitationAttempt(
     Guid DocumentId,

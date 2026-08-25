@@ -62,6 +62,7 @@ export type FiscalOnboardingConfiguration = {
   availableRanges: DianNumberingRangeOption[];
   missingRequirements: string[];
   latestHabilitationAttempt: FiscalHabilitationAttempt | null;
+  assignedSupportDocumentRange: DianNumberingRangeOption | null;
 };
 
 export type FiscalHabilitationAttempt = {
@@ -153,6 +154,11 @@ export const fiscalConfigurationApi = {
   activateProduction: (businessId: string, dianNumberingRangeId: string) =>
     apiClient.post<FiscalOnboardingConfiguration>(
       `/commerce/v1/fiscal/configuration/onboarding/activate-production?businessId=${encodeURIComponent(businessId)}`,
+      { dianNumberingRangeId },
+    ),
+  activateSupportDocument: (businessId: string, dianNumberingRangeId: string) =>
+    apiClient.post<FiscalOnboardingConfiguration>(
+      `/commerce/v1/fiscal/configuration/onboarding/activate-support-document?businessId=${encodeURIComponent(businessId)}`,
       { dianNumberingRangeId },
     ),
   get: (businessId: string) =>

@@ -37,6 +37,10 @@ public sealed class SqlFiscalConfigurationStore(
                   AND k.TechnicalKeyVersion=a.TechnicalKeyVersion
                   AND k.Environment=a.Environment) secret
             WHERE a.BusinessId=@BusinessId AND a.IsActive=1
+              AND EXISTS(SELECT 1 FROM dbo.FiscalSeries salesSeries
+                  WHERE salesSeries.FiscalAuthorizationId=a.FiscalAuthorizationId
+                    AND salesSeries.BusinessId=a.BusinessId
+                    AND salesSeries.DocumentType=N'SalesInvoice')
             ORDER BY a.CreatedAt DESC,a.FiscalAuthorizationId;
             """;
         await using var connection = connections.Create();

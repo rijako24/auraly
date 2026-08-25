@@ -100,7 +100,14 @@ public sealed class InventoryQueryService(IInventoryQueryStore store)
     {
         Validate(user, query.BusinessId, query.Page, query.PageSize);
         if (query.From is not null && query.To is not null && query.From > query.To) throw new InventoryValidationException("The starting date cannot be after the ending date.");
-        return store.GetOperationsAsync(user, query with { Search = Normalize(query.Search), DocumentType = Normalize(query.DocumentType), Status = Normalize(query.Status) }, user.Permissions.Contains(InventoryPermissionCodes.ReadCosts), token);
+        return store.GetOperationsAsync(user, query with
+        {
+            Search = Normalize(query.Search),
+            DocumentType = Normalize(query.DocumentType),
+            Status = Normalize(query.Status),
+            ReasonCode = Normalize(query.ReasonCode),
+            PurchaseEvidenceType = Normalize(query.PurchaseEvidenceType)
+        }, user.Permissions.Contains(InventoryPermissionCodes.ReadCosts), token);
     }
     public Task<InventoryOperationDetail?> GetOperationDetailAsync(
         InventoryUserIdentity user, Guid documentId, CancellationToken token = default)

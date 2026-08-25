@@ -117,6 +117,16 @@ public static class FiscalConfigurationApi
                 context.User.ToFiscalConfigurationUser(), businessId,
                 request.DianNumberingRangeId, ct)));
 
+        group.MapPost("/onboarding/activate-support-document", async (
+            HttpContext context,
+            Guid businessId,
+            ActivateFiscalProductionRequest request,
+            FiscalOnboardingService service,
+            CancellationToken ct) =>
+            await Handle(() => service.ActivateSupportDocumentAsync(
+                context.User.ToFiscalConfigurationUser(), businessId,
+                request.DianNumberingRangeId, ct)));
+
         return endpoints;
     }
 

@@ -32,7 +32,7 @@ export const inventoryApi = {
   },
   balances: (params:{warehouseId?:string;productId?:string;search?:string;onlyWithStock?:boolean;page?:number;pageSize?:number}) => apiClient.get<Page<InventoryBalanceItem>>("/commerce/v1/inventory/balances",withPagedDefaults(params)),
   movements: (params:{warehouseId?:string;productId?:string;search?:string;documentType?:string;movementType?:string;from?:string;to?:string;page?:number;pageSize?:number}) => apiClient.get<Page<InventoryMovementItem>>("/commerce/v1/inventory/movements",withPagedDefaults(params)),
-  operations: (params:{warehouseId?:string;search?:string;documentType?:string;status?:string;from?:string;to?:string;page?:number;pageSize?:number}) => apiClient.get<Page<InventoryOperationItem>>("/commerce/v1/inventory/operations",withPagedDefaults(params)),
+  operations: (params:{warehouseId?:string;search?:string;documentType?:string;status?:string;from?:string;to?:string;reasonCode?:string;destinationWarehouseId?:string;supplierId?:string;purchaseEvidenceType?:string;page?:number;pageSize?:number}) => apiClient.get<Page<InventoryOperationItem>>("/commerce/v1/inventory/operations",withPagedDefaults(params)),
   operationDetail: (documentId:string) => apiClient.get<InventoryOperationDetail>(`/commerce/v1/inventory/operations/${documentId}`),
   physicalCounts: (params:{warehouseId?:string;search?:string;status?:string;page?:number;pageSize?:number}) => apiClient.get<Page<InventoryPhysicalCountItem>>("/commerce/v1/inventory/physical-counts",withPagedDefaults(params)),
   physicalCount: (countId:string) => apiClient.get<InventoryPhysicalCountDetail>(`/commerce/v1/inventory/physical-counts/${countId}`),

@@ -34,10 +34,10 @@ public static class InventoryApi
             var identity = principal.ToInventoryIdentity();
             return await ExecuteAsync(() => service.GetMovementsAsync(identity, new(identity.BusinessId, warehouseId, productId, search, documentType, movementType, from, to, page == 0 ? 1 : page, pageSize == 0 ? 50 : pageSize), token), Results.Ok);
         }).RequireAuthorization("inventory.user");
-        endpoints.MapGet("/api/commerce/v1/inventory/operations", async (ClaimsPrincipal principal, Guid? warehouseId, string? search, string? documentType, string? status, DateTimeOffset? from, DateTimeOffset? to, int page, int pageSize, InventoryQueryService service, CancellationToken token) =>
+        endpoints.MapGet("/api/commerce/v1/inventory/operations", async (ClaimsPrincipal principal, Guid? warehouseId, string? search, string? documentType, string? status, DateTimeOffset? from, DateTimeOffset? to, string? reasonCode, Guid? destinationWarehouseId, Guid? supplierId, string? purchaseEvidenceType, int page, int pageSize, InventoryQueryService service, CancellationToken token) =>
         {
             var identity = principal.ToInventoryIdentity();
-            return await ExecuteAsync(() => service.GetOperationsAsync(identity, new(identity.BusinessId, warehouseId, search, documentType, status, from, to, page == 0 ? 1 : page, pageSize == 0 ? 50 : pageSize), token), Results.Ok);
+            return await ExecuteAsync(() => service.GetOperationsAsync(identity, new(identity.BusinessId, warehouseId, search, documentType, status, from, to, reasonCode, destinationWarehouseId, supplierId, purchaseEvidenceType, page == 0 ? 1 : page, pageSize == 0 ? 50 : pageSize), token), Results.Ok);
         }).RequireAuthorization("inventory.user");
         endpoints.MapGet("/api/commerce/v1/inventory/operations/{documentId:guid}",
             async (ClaimsPrincipal principal, Guid documentId, InventoryQueryService service, CancellationToken token) =>

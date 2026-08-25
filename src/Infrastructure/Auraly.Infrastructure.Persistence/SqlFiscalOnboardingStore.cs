@@ -39,7 +39,11 @@ public sealed class SqlFiscalOnboardingStore(
                    assigned.ValidFrom,assigned.ValidUntil,
                    latest.DocumentId,latest.Status,latest.LastStatusCode,
                    latest.LastStatusDescription,latest.LastErrorCode,
-                   latest.LastErrorMessage,latest.UpdatedAt
+                   latest.LastErrorMessage,latest.UpdatedAt,
+                   supportAssigned.DianNumberingRangeId,supportAssigned.AuthorizationNumber,
+                   supportAssigned.ResolutionDate,supportAssigned.Prefix,
+                   supportAssigned.RangeStart,supportAssigned.RangeEnd,
+                   supportAssigned.ValidFrom,supportAssigned.ValidUntil
             FROM dbo.Businesses b
             LEFT JOIN dbo.TenantLegalProfiles p ON p.TenantId=b.TenantId
             OUTER APPLY(
@@ -75,6 +79,9 @@ public sealed class SqlFiscalOnboardingStore(
                 JOIN dbo.FiscalAuthorizations a
                   ON a.BusinessId=b.BusinessId AND a.AuthorizationNumber=r.AuthorizationNumber
                  AND a.Environment=1 AND a.IsActive=1
+                JOIN dbo.FiscalSeries series
+                  ON series.FiscalAuthorizationId=a.FiscalAuthorizationId
+                 AND series.DocumentType=N'SalesInvoice' AND series.IsActive=1
                 WHERE r.TenantId=b.TenantId AND r.AssignedBusinessId=b.BusinessId
                 ORDER BY r.AssignedAt DESC) assigned
             OUTER APPLY(
@@ -86,6 +93,18 @@ public sealed class SqlFiscalOnboardingStore(
                   ON configuration.FiscalIssuerConfigurationId=fp.FiscalIssuerConfigurationId
                 WHERE fp.BusinessId=b.BusinessId AND configuration.Environment=2
                 ORDER BY fp.CreatedAt DESC,fp.DocumentId DESC) latest
+            OUTER APPLY(
+                SELECT TOP(1) r.DianNumberingRangeId,r.AuthorizationNumber,r.ResolutionDate,
+                       r.Prefix,r.RangeStart,r.RangeEnd,r.ValidFrom,r.ValidUntil
+                FROM fiscal.DianNumberingRanges r
+                JOIN dbo.FiscalAuthorizations a
+                  ON a.BusinessId=b.BusinessId AND a.AuthorizationNumber=r.AuthorizationNumber
+                 AND a.Environment=1 AND a.IsActive=1
+                JOIN dbo.FiscalSeries series
+                  ON series.FiscalAuthorizationId=a.FiscalAuthorizationId
+                 AND series.DocumentType=N'SupportDocument' AND series.IsActive=1
+                WHERE r.TenantId=b.TenantId AND r.AssignedBusinessId=b.BusinessId
+                ORDER BY r.AssignedAt DESC) supportAssigned
             WHERE b.BusinessId=@BusinessId;
 
             SELECT r.DianNumberingRangeId,r.AuthorizationNumber,r.ResolutionDate,r.Prefix,
@@ -135,6 +154,10 @@ public sealed class SqlFiscalOnboardingStore(
                 terminalFailure ? Text(reader, 24) ?? Text(reader, 22) : null,
                 reader.GetDateTimeOffset(25));
         }
+        DianNumberingRangeOption? assignedSupport = reader.IsDBNull(26) ? null : new(
+            reader.GetGuid(26), reader.GetString(27), Date(reader, 28), reader.GetString(29),
+            reader.GetInt64(30), reader.GetInt64(31), reader.GetFieldValue<DateOnly>(32),
+            reader.GetFieldValue<DateOnly>(33), false, businessId, businessName);
 
         var ranges = new List<DianNumberingRangeOption>();
         await reader.NextResultAsync(cancellationToken);
@@ -170,7 +193,7 @@ public sealed class SqlFiscalOnboardingStore(
             testSetId, thumbprint is not null,
             thumbprint is null ? null : thumbprint[^Math.Min(8, thumbprint.Length)..],
             certificateFrom, certificateTo, acceptedAt is not null, acceptedAt,
-            productionActive, assigned, ranges, missing, latestAttempt);
+            productionActive, assigned, ranges, missing, latestAttempt, assignedSupport);
     }
 
     private static bool IsTerminalFailure(string status) => status is
@@ -451,6 +474,73 @@ public sealed class SqlFiscalOnboardingStore(
         Add(command, "@ProductionEndpoint", ProductionEndpoint);
         Add(command, "@QrUrl", QrValidationUrl);
         Add(command, "@TechnicalKeyVersion", TechnicalKeyVersion);
+        Add(command, "@Now", timeProvider.GetUtcNow());
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task ActivateSupportDocumentAsync(
+        Guid tenantId,
+        Guid businessId,
+        Guid userId,
+        Guid dianNumberingRangeId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SET XACT_ABORT ON;
+            IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND IsActive=1)
+                THROW 51021,'Business is outside the authenticated tenant.',1;
+            IF NOT EXISTS(SELECT 1 FROM dbo.FiscalIssuerConfigurations WHERE BusinessId=@BusinessId AND Environment=1 AND IsActive=1)
+                THROW 51022,'Activa primero la configuración DIAN de producción.',1;
+
+            DECLARE @AuthorizationNumber nvarchar(64),@Prefix nvarchar(16),
+                    @RangeStart bigint,@RangeEnd bigint,@ValidFrom date,@ValidUntil date,
+                    @SupplierTaxId nvarchar(32),@AuthorizationId uniqueidentifier=@NewAuthorizationId;
+            SELECT @AuthorizationNumber=AuthorizationNumber,@Prefix=Prefix,
+                   @RangeStart=RangeStart,@RangeEnd=RangeEnd,
+                   @ValidFrom=ValidFrom,@ValidUntil=ValidUntil
+            FROM fiscal.DianNumberingRanges WITH(UPDLOCK,HOLDLOCK)
+            WHERE DianNumberingRangeId=@RangeId AND TenantId=@TenantId
+              AND AssignedBusinessId IS NULL AND ValidUntil>=CONVERT(date,@Now);
+            IF @AuthorizationNumber IS NULL
+                THROW 51022,'La resolución de documento soporte ya fue asignada, venció o no existe.',1;
+            SELECT @SupplierTaxId=SupplierTaxId
+            FROM dbo.FiscalIssuerConfigurations
+            WHERE BusinessId=@BusinessId AND Environment=1 AND IsActive=1;
+
+            UPDATE fiscal.DianNumberingRanges
+            SET AssignedBusinessId=@BusinessId,AssignedAt=@Now,AssignedByUserId=@UserId
+            WHERE DianNumberingRangeId=@RangeId AND AssignedBusinessId IS NULL;
+            IF @@ROWCOUNT<>1
+                THROW 51022,'La resolución fue asignada simultáneamente a otra sede.',1;
+
+            UPDATE dbo.FiscalSeries SET IsActive=0
+            WHERE BusinessId=@BusinessId AND DocumentType=N'SupportDocument' AND IsActive=1;
+            INSERT dbo.FiscalAuthorizations(
+                FiscalAuthorizationId,BusinessId,AuthorizationNumber,SupplierTaxId,Environment,
+                QrValidationUrl,TechnicalKeyVersion,ValidFrom,ValidUntil,
+                AuthorizedRangeStart,AuthorizedRangeEnd,IsActive,CreatedAt)
+            VALUES(@AuthorizationId,@BusinessId,@AuthorizationNumber,@SupplierTaxId,1,
+                   @QrUrl,N'cuds-sha384',@ValidFrom,@ValidUntil,@RangeStart,@RangeEnd,1,@Now);
+            INSERT dbo.FiscalSeries(
+                SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
+                DocumentType,Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)
+            VALUES(@SeriesId,@BusinessId,NULL,N'Server',@AuthorizationId,
+                   N'SupportDocument',@Prefix,@RangeStart,@RangeEnd,1,@Now);
+            INSERT dbo.FiscalSeriesCursors(SeriesId,NextConsecutive,UpdatedAt)
+            VALUES(@SeriesId,@RangeStart,@Now);
+            """;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection, transaction);
+        Add(command, "@TenantId", tenantId);
+        Add(command, "@BusinessId", businessId);
+        Add(command, "@UserId", userId);
+        Add(command, "@RangeId", dianNumberingRangeId);
+        Add(command, "@NewAuthorizationId", ids.NewId());
+        Add(command, "@SeriesId", ids.NewId());
+        Add(command, "@QrUrl", QrValidationUrl);
         Add(command, "@Now", timeProvider.GetUtcNow());
         await command.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);

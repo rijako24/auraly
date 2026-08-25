@@ -159,7 +159,8 @@ public sealed class GoodsReceiptWorkspaceTests(ServerSliceFixture fixture)
             draftRequest.SupplierInvoiceNumber, draftRequest.SupplierInvoiceDate,
             draftRequest.ReceivedAt, draftRequest.CreatesPayable, draftRequest.DueDate,
             draftRequest.CurrencyCode, draftRequest.Notes, draftRequest.Lines,
-            savedDraft.ConcurrencyToken);
+            savedDraft.ConcurrencyToken,
+            PurchaseEvidenceType: PurchaseEvidenceTypes.SupplierElectronicInvoice);
         using var message = new HttpRequestMessage(HttpMethod.Post, "/api/commerce/v1/goods-receipts/confirm")
         {
             Content = JsonContent.Create(confirm)
@@ -187,6 +188,15 @@ public sealed class GoodsReceiptWorkspaceTests(ServerSliceFixture fixture)
         Assert.Equal(accepted.DocumentNumber, historyItem.DocumentNumber);
         Assert.Equal(1, historyItem.LineCount);
         Assert.Null(historyItem.TotalValueChange);
+
+        var filteredHistory = await client.GetFromJsonAsync<InventoryOperationPage>(
+            $"/api/commerce/v1/inventory/operations?documentType=GoodsReceipt" +
+            $"&supplierId={fixture.SupplierId:D}&purchaseEvidenceType=SupplierElectronicInvoice&page=1&pageSize=20");
+        Assert.Contains(filteredHistory!.Items, item => item.DocumentId == accepted.DocumentId);
+        var excludedHistory = await client.GetFromJsonAsync<InventoryOperationPage>(
+            $"/api/commerce/v1/inventory/operations?documentType=GoodsReceipt" +
+            $"&supplierId={fixture.SupplierId:D}&purchaseEvidenceType=BuyerElectronicSupportDocument&page=1&pageSize=20");
+        Assert.DoesNotContain(excludedHistory!.Items, item => item.DocumentId == accepted.DocumentId);
 
         using var draftGone = await client.GetAsync(
             $"/api/commerce/v1/goods-receipts/drafts/{draftRequest.DraftId:D}");

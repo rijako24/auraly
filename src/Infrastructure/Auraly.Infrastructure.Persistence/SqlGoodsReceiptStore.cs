@@ -389,6 +389,7 @@ public sealed class SqlGoodsReceiptStore(
             FROM dbo.FiscalSeries fs WITH (UPDLOCK,HOLDLOCK)
             JOIN dbo.FiscalAuthorizations a ON a.FiscalAuthorizationId=fs.FiscalAuthorizationId
             JOIN dbo.FiscalIssuerConfigurations c ON c.BusinessId=fs.BusinessId AND c.IsActive=1
+              AND c.Environment=a.Environment
               AND c.ValidFrom<=@IssuedAt AND (c.ValidTo IS NULL OR c.ValidTo>@IssuedAt)
             JOIN dbo.Suppliers s ON s.SupplierId=@SupplierId AND s.BusinessId=fs.BusinessId AND s.IsActive=1
             JOIN dbo.Parties p ON p.PartyId=s.PartyId AND p.IsActive=1
@@ -430,19 +431,18 @@ public sealed class SqlGoodsReceiptStore(
         var issuerId = reader.GetGuid(10);
         if (reader.IsDBNull(12))
             throw new PurchasingValidationException("El proveedor necesita identificación para generar el documento soporte.");
+        if (reader.IsDBNull(14) || Enumerable.Range(17, 7).Any(reader.IsDBNull))
+            throw new PurchasingValidationException(
+                "El proveedor necesita tipo de identificación y una sede principal con dirección DIAN completa para generar el documento soporte.");
         var seller = new PosSaleUblPartyContract(
             reader.GetString(12), reader.IsDBNull(13) ? "0" : reader.GetString(13),
-            reader.IsDBNull(14) ? "13" : reader.GetString(14),
+            reader.GetString(14),
             reader.GetString(11) == "Organization" ? "1" : "2",
             reader.GetString(15), reader.GetString(16), "R-99-PN", "01", "IVA",
             new PosSaleUblAddressContract(
-                reader.IsDBNull(21) ? "11001" : reader.GetString(21),
-                reader.IsDBNull(22) ? "Bogotá" : reader.GetString(22),
-                reader.IsDBNull(20) ? "Bogotá D.C." : reader.GetString(20),
-                reader.IsDBNull(19) ? "11" : reader.GetString(19),
-                reader.IsDBNull(23) ? "Sin dirección" : reader.GetString(23),
-                reader.IsDBNull(17) ? "CO" : reader.GetString(17),
-                reader.IsDBNull(18) ? "Colombia" : reader.GetString(18)),
+                reader.GetString(21), reader.GetString(22), reader.GetString(20),
+                reader.GetString(19), reader.GetString(23), reader.GetString(17),
+                reader.GetString(18)),
             reader.IsDBNull(24) ? null : reader.GetString(24),
             reader.IsDBNull(25) ? null : reader.GetString(25));
         await reader.CloseAsync();
@@ -498,7 +498,7 @@ public sealed class SqlGoodsReceiptStore(
               AuralyDocumentNumber,FiscalNumber,UniqueCodeType,UniqueCode,IssuedAt,FiscalStatus,CreatedAt,UpdatedAt)
             VALUES(@DocumentId,@BusinessId,N'GoodsReceipt',N'SupportDocument',@AuralyNumber,@FiscalNumber,
               N'CUDS',NULL,@IssuedAt,@Status,@Now,@Now);
-            INSERT dbo.PurchaseSupportFiscalSnapshots(DocumentId,SnapshotJson,Environment,CreatedAt)
+            INSERT fiscal.PurchaseSupportFiscalSnapshots(DocumentId,SnapshotJson,Environment,CreatedAt)
             VALUES(@DocumentId,@SnapshotJson,@Environment,@Now);
             INSERT dbo.FiscalDocumentProcesses(DocumentId,BusinessId,FiscalIssuerConfigurationId,Status,
               AttemptCount,NextAttemptAt,CreatedAt,UpdatedAt)
@@ -604,6 +604,7 @@ public sealed class SqlGoodsReceiptStore(
             request.DueDate,
             Currency = request.CurrencyCode.ToUpperInvariant(),
             request.Notes,
+            request.PurchaseEvidenceType,
             calculation.NetAmount,
             calculation.TaxAmount,
             calculation.GrandTotal,

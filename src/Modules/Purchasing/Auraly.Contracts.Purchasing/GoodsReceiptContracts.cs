@@ -77,7 +77,7 @@ public sealed record ConfirmGoodsReceiptRequest(
     string? DraftConcurrencyToken = null,
     string? WithholdingConceptCode = null,
     string? WithholdingJurisdictionCode = null,
-    string PurchaseEvidenceType = PurchaseEvidenceTypes.InternalReceiptVoucher);
+    string PurchaseEvidenceType = PurchaseEvidenceTypes.SupplierElectronicInvoice);
 
 public sealed record GoodsReceiptLineSnapshot(
     int LineNumber,
@@ -122,7 +122,7 @@ public sealed record GoodsReceiptDocumentPayload(
     WithholdingCalculationSnapshot Withholding,
     string? SupplierNameSnapshot = null,
     string? WarehouseNameSnapshot = null,
-    string PurchaseEvidenceType = PurchaseEvidenceTypes.InternalReceiptVoucher);
+    string PurchaseEvidenceType = PurchaseEvidenceTypes.SupplierElectronicInvoice);
 
 public sealed record GoodsReceiptAcceptance(
     Guid DocumentId,
@@ -165,7 +165,7 @@ public sealed record GoodsReceiptDetail(
     string CurrencyCode, string? Notes, decimal NetAmount, decimal TaxAmount,
     decimal GrandTotal, DateTimeOffset AcceptedAt, DateTimeOffset? ProcessedAt,
     IReadOnlyList<GoodsReceiptLineSnapshot> Lines,
-    string PurchaseEvidenceType = PurchaseEvidenceTypes.InternalReceiptVoucher);
+    string PurchaseEvidenceType = PurchaseEvidenceTypes.SupplierElectronicInvoice);
 
 public sealed record GoodsReceiptListItem(
     Guid DocumentId, string? DocumentNumber, string Status,

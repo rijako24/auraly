@@ -38,6 +38,34 @@ public sealed class FiscalOnboardingServiceTests
         Assert.False(store.SaveCalled);
     }
 
+    [Fact]
+    public async Task Support_document_range_requires_production_and_uses_the_onboarding_store()
+    {
+        var inactiveStore = new TestOnboardingStore(Configuration("1002269668"));
+        var user = new FiscalConfigurationUser(
+            Guid.NewGuid(), Guid.NewGuid(),
+            new HashSet<string> { FiscalPermissionCodes.ConfigurationManage });
+        var inactiveService = new FiscalOnboardingService(
+            inactiveStore, new TestCredentialVault(), new TestNumberingRangeClient(),
+            new FixedTimeProvider(Now));
+
+        await Assert.ThrowsAsync<FiscalConfigurationValidationException>(() =>
+            inactiveService.ActivateSupportDocumentAsync(
+                user, inactiveStore.Configuration.BusinessId, Guid.NewGuid()));
+        Assert.False(inactiveStore.SupportActivationCalled);
+
+        var activeStore = new TestOnboardingStore(
+            Configuration("1002269668") with { ProductionActive = true });
+        var activeService = new FiscalOnboardingService(
+            activeStore, new TestCredentialVault(), new TestNumberingRangeClient(),
+            new FixedTimeProvider(Now));
+
+        await activeService.ActivateSupportDocumentAsync(
+            user, activeStore.Configuration.BusinessId, Guid.NewGuid());
+
+        Assert.True(activeStore.SupportActivationCalled);
+    }
+
     private static byte[] CreatePfx(string certificateIdentity, string password)
     {
         using var key = RSA.Create(2048);
@@ -79,6 +107,7 @@ public sealed class FiscalOnboardingServiceTests
     {
         public FiscalOnboardingConfiguration Configuration { get; } = configuration;
         public bool SaveCalled { get; private set; }
+        public bool SupportActivationCalled { get; private set; }
 
         public Task<FiscalOnboardingConfiguration> GetAsync(
             Guid tenantId, Guid businessId, CancellationToken cancellationToken) =>
@@ -112,6 +141,17 @@ public sealed class FiscalOnboardingServiceTests
             Guid userId,
             Guid dianNumberingRangeId,
             CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task ActivateSupportDocumentAsync(
+            Guid tenantId,
+            Guid businessId,
+            Guid userId,
+            Guid dianNumberingRangeId,
+            CancellationToken cancellationToken)
+        {
+            SupportActivationCalled = true;
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class TestCredentialVault : IFiscalCredentialVault

@@ -33,6 +33,13 @@ public interface IFiscalOnboardingStore
         Guid userId,
         Guid dianNumberingRangeId,
         CancellationToken cancellationToken);
+
+    Task ActivateSupportDocumentAsync(
+        Guid tenantId,
+        Guid businessId,
+        Guid userId,
+        Guid dianNumberingRangeId,
+        CancellationToken cancellationToken);
 }
 
 public interface IFiscalCredentialVault
@@ -153,6 +160,26 @@ public sealed class FiscalOnboardingService(
         if (dianNumberingRangeId == Guid.Empty)
             throw new FiscalConfigurationValidationException("Selecciona una resolución DIAN disponible.");
         await store.ActivateProductionAsync(
+            user.TenantId, businessId, user.UserId, dianNumberingRangeId, cancellationToken);
+        return await store.GetAsync(user.TenantId, businessId, cancellationToken);
+    }
+
+    public async Task<FiscalOnboardingConfiguration> ActivateSupportDocumentAsync(
+        FiscalConfigurationUser user,
+        Guid businessId,
+        Guid dianNumberingRangeId,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, FiscalPermissionCodes.ConfigurationManage);
+        ValidateBusiness(businessId);
+        if (dianNumberingRangeId == Guid.Empty)
+            throw new FiscalConfigurationValidationException(
+                "Selecciona una resolución DIAN de documento soporte disponible.");
+        var current = await store.GetAsync(user.TenantId, businessId, cancellationToken);
+        if (!current.ProductionActive)
+            throw new FiscalConfigurationValidationException(
+                "Activa primero la facturación electrónica de producción para esta sede.");
+        await store.ActivateSupportDocumentAsync(
             user.TenantId, businessId, user.UserId, dianNumberingRangeId, cancellationToken);
         return await store.GetAsync(user.TenantId, businessId, cancellationToken);
     }

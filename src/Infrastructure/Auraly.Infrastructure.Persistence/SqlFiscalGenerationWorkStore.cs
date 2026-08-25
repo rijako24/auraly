@@ -228,7 +228,7 @@ public sealed class SqlFiscalGenerationWorkStore(
             LEFT JOIN dbo.FiscalSnapshots s ON s.DocumentId=p.DocumentId
             LEFT JOIN dbo.SalesReturnFiscalSnapshots credit ON credit.DocumentId=p.DocumentId
             LEFT JOIN dbo.SalesDebitNoteFiscalSnapshots debit ON debit.DocumentId=p.DocumentId
-            LEFT JOIN dbo.PurchaseSupportFiscalSnapshots support ON support.DocumentId=p.DocumentId
+            LEFT JOIN fiscal.PurchaseSupportFiscalSnapshots support ON support.DocumentId=p.DocumentId
             LEFT JOIN dbo.SalesDocuments d ON d.DocumentId=p.DocumentId
             INNER JOIN dbo.FiscalIssuerConfigurations c
                 ON c.FiscalIssuerConfigurationId=p.FiscalIssuerConfigurationId
