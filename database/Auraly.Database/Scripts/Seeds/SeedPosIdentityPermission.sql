@@ -37,6 +37,7 @@ INSERT @PosCashierPermissions(Module,Action,Resource,Description)
 VALUES
     (N'Sales',N'Create',N'sales.create',N'Crear y emitir ventas desde una caja'),
     (N'Sales',N'Discount',N'sales.discount',N'Aplicar descuentos en líneas de venta'),
+    (N'Sales',N'ChangePrice',N'sales.change-price',N'Editar descripción, precio y descuento de las líneas de una venta'),
     (N'Sales',N'Reprint',N'sales.reprint',N'Reimprimir facturas con trazabilidad'),
     (N'Sales',N'Void',N'sales.void',N'Eliminar líneas o reiniciar ventas');
 
@@ -50,7 +51,7 @@ INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
 SELECT NEWID(),r.RoleId,p.PermissionId,SYSUTCDATETIME()
 FROM dbo.AppRoles r
 JOIN dbo.Permissions p
-  ON p.Resource IN(N'sales.create',N'sales.discount',N'sales.reprint',N'sales.void')
+  ON p.Resource IN(N'sales.create',N'sales.discount',N'sales.change-price',N'sales.reprint',N'sales.void')
 WHERE r.IsActive=1
   AND r.NormalizedName=N'ADMINISTRATOR'
   AND NOT EXISTS(

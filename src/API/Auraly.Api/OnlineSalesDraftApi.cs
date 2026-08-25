@@ -173,6 +173,24 @@ group.MapPost("/{draftId:guid}/items", async (
                     draftId, lineId, request, IdempotencyKey(context), ct),
                 ct)));
 
+        group.MapPut("/{draftId:guid}/lines", async (
+            HttpContext context,
+            Guid draftId,
+            UpdateOnlineSalesDraftLinesRequest request,
+            OnlineSalesDraftService service,
+            PosApprovalService approvals,
+            CancellationToken ct) =>
+            await Handle(() => ExecuteSensitiveAsync(
+                context,
+                approvals,
+                draftId,
+                null,
+                CommercePermissionCodes.SalesChangePrice,
+                () => service.UpdateLinesAsync(
+                    context.User.ToOnlineSalesUserIdentity(),
+                    draftId, request, IdempotencyKey(context), ct),
+                ct)));
+
         group.MapPost("/{draftId:guid}/lines/{lineId:guid}/remove", async (
             HttpContext context,
             Guid draftId,

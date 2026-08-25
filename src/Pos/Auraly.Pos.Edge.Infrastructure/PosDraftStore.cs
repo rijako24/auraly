@@ -100,6 +100,12 @@ public sealed record PosDraftLinePriceUpdate(
     string PriceSource,
     Guid? PriceChannelId);
 
+public sealed record PosDraftLineDocumentUpdate(
+    Guid LineId,
+    string Description,
+    decimal UnitPrice,
+    decimal Discount);
+
 public sealed class PosDraftStore
 {
     private readonly string _connectionString;
@@ -301,6 +307,53 @@ public sealed class PosDraftStore
             "UPDATE PosDraftLines SET Discount=@Value WHERE DraftId=@DraftId AND LineId=@LineId;",
             P("@Value", discount),
             cancellationToken);
+        return await GetRequiredAsync(draftId, cancellationToken);
+    }
+
+    public async Task<PosDraft> UpdateLinesAsync(
+        DraftId draftId,
+        IReadOnlyCollection<PosDraftLineDocumentUpdate> updates,
+        CancellationToken cancellationToken = default)
+    {
+        if (updates.Count == 0 ||
+            updates.Select(value => value.LineId).Distinct().Count() != updates.Count ||
+            updates.Any(value => string.IsNullOrWhiteSpace(value.Description) ||
+                                 value.Description.Trim().Length > 250 ||
+                                 value.UnitPrice < 0 || value.Discount < 0))
+            throw new ArgumentException("Every line requires a unique id, description and non-negative values.", nameof(updates));
+
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = connection.BeginTransaction(IsolationLevel.Serializable);
+        await RequireActiveAsync(connection, transaction, draftId, cancellationToken);
+        var current = await ReadLinesAsync(connection, transaction, draftId, cancellationToken);
+        if (updates.Count != current.Count ||
+            current.Any(line => updates.All(value => value.LineId != line.LineId)))
+            throw new InvalidOperationException("Every active line must receive exactly one update.");
+
+        foreach (var update in updates)
+        {
+            var line = current.Single(value => value.LineId == update.LineId);
+            if (update.Discount > line.Quantity * update.UnitPrice)
+                throw new ArgumentOutOfRangeException(nameof(updates), "Discount cannot exceed line value.");
+            var affected = await ExecuteAsync(connection, transaction, """
+                UPDATE PosDraftLines
+                SET Description=@Description,UnitPrice=@UnitPrice,
+                    Discount=@Discount,PriceSource='ManualOverride',PriceChannelId=NULL
+                WHERE DraftId=@DraftId AND LineId=@LineId;
+                """,
+                [
+                    P("@Description", update.Description.Trim()),
+                    P("@UnitPrice", update.UnitPrice),
+                    P("@Discount", update.Discount),
+                    P("@DraftId", draftId.Value),
+                    P("@LineId", update.LineId)
+                ], cancellationToken);
+            if (affected != 1)
+                throw new KeyNotFoundException("The draft line does not exist.");
+        }
+
+        await TouchAsync(connection, transaction, draftId, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         return await GetRequiredAsync(draftId, cancellationToken);
     }
 

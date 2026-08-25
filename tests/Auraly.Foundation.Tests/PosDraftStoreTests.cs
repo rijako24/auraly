@@ -67,6 +67,37 @@ public sealed class PosDraftStoreTests
     }
 
     [Fact]
+    public async Task Document_line_edits_are_atomic_and_preserve_catalog_price()
+    {
+        await WithStoreAsync(async (store, _, scope, _) =>
+        {
+            var first = await store.AddOrIncrementLineAsync(scope, Line(quantity: 1m));
+            var draft = await store.AddOrIncrementLineAsync(scope, Line(quantity: 2m));
+
+            var updated = await store.UpdateLinesAsync(
+                draft.DraftId,
+                [
+                    new(first.Lines.Single().LineId, "Descripción puntual", 12_000m, 1_000m),
+                    new(draft.Lines[1].LineId, "Segunda línea", 9_000m, 0m)
+                ]);
+
+            Assert.Equal(29_000m, updated.PayableAmount);
+            Assert.Equal("Descripción puntual", updated.Lines[0].Description);
+            Assert.Equal(12_000m, updated.Lines[0].UnitPrice);
+            Assert.Equal(10_000m, updated.Lines[0].BaseUnitPrice);
+            Assert.Equal("ManualOverride", updated.Lines[0].PriceSource);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                store.UpdateLinesAsync(
+                    draft.DraftId,
+                    [new(updated.Lines[0].LineId, "Incompleta", 5_000m, 0m)]));
+            var unchanged = await store.GetOrCreateActiveAsync(scope);
+            Assert.Equal("Descripción puntual", unchanged.Lines[0].Description);
+            Assert.Equal("Segunda línea", unchanged.Lines[1].Description);
+        });
+    }
+
+    [Fact]
     public async Task Order_recovery_is_atomic_durable_and_uses_current_tax_configuration()
     {
         await WithStoreAsync(async (store, path, scope, ids) =>

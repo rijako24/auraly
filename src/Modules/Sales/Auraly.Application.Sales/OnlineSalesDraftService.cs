@@ -87,6 +87,14 @@ public interface IOnlineSalesDraftStore
         string idempotencyKey,
         CancellationToken cancellationToken);
 
+    Task<OnlineSalesDraft> UpdateLinesAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        IReadOnlyList<UpdateOnlineSalesDraftLineRequest> lines,
+        long expectedVersion,
+        string idempotencyKey,
+        CancellationToken cancellationToken);
+
     Task<OnlineSalesInventoryValidation> ValidateInventoryAsync(
         OnlineSalesUserIdentity user,
         Guid draftId,
@@ -194,6 +202,30 @@ public sealed class OnlineSalesDraftService(
         return await drafts.SetDiscountAsync(
             user, draftId, lineId, request.Discount,
             request.ExpectedVersion, idempotencyKey, cancellationToken);
+    }
+
+    public async Task<OnlineSalesDraft> UpdateLinesAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        UpdateOnlineSalesDraftLinesRequest request,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        ValidateMutation(draftId, request.ExpectedVersion, idempotencyKey);
+        if (request.Lines.Count == 0 ||
+            request.Lines.Select(line => line.LineId).Distinct().Count() != request.Lines.Count ||
+            request.Lines.Any(line =>
+                line.LineId == Guid.Empty ||
+                string.IsNullOrWhiteSpace(line.Description) ||
+                line.Description.Trim().Length > 250 ||
+                line.UnitPrice < 0 ||
+                line.Discount < 0))
+            throw new OnlineSalesDraftValidationException(
+                "Cada línea debe tener un identificador único, una descripción y valores no negativos.");
+        return await drafts.UpdateLinesAsync(
+            user, draftId, request.Lines, request.ExpectedVersion,
+            idempotencyKey, cancellationToken);
     }
 
     public async Task<OnlineSalesDraft> RemoveLineAsync(

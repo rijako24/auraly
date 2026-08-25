@@ -158,6 +158,11 @@ export type PosSensitiveAuthorization = {
   expiresAt?: string;
 };
 
+export type PosDraftLineUpdate = Pick<
+  PosDraftLine,
+  "lineId" | "description" | "unitPrice" | "discount"
+>;
+
 export type PosDraft = {
   draftId: DraftId;
   customerId: string | null;
@@ -410,6 +415,7 @@ export interface PosClient {
   ): Promise<PosCaptureResult>;
   changeQuantity(draftId: string, lineId: string, quantity: number): Promise<PosCaptureResult>;
   setDiscount(draftId: string, lineId: string, discount: number, authorization?: PosSensitiveAuthorization): Promise<PosDraft>;
+  updateLines(draftId: string, lines: PosDraftLineUpdate[], authorization?: PosSensitiveAuthorization): Promise<PosDraft>;
   selectCustomer(draftId: string, customerId: string | null): Promise<PosCustomerSelection>;
   removeLine(draftId: string, lineId: string, authorization?: PosSensitiveAuthorization): Promise<PosDraft>;
   cancelDraft(draftId: string, authorization?: PosSensitiveAuthorization): Promise<PosDraft>;
@@ -924,6 +930,14 @@ export class PosEdgeClient implements PosClient {
     return this.request<PosInventoryValidation>(
       `/edge/v1/drafts/${draftId}/inventory-validation`,
     );
+  }
+
+  updateLines(draftId: string, lines: PosDraftLineUpdate[], authorization?: PosSensitiveAuthorization) {
+    return this.request<PosDraft>(`/edge/v1/drafts/${draftId}/lines`, {
+      method: "PUT",
+      body: JSON.stringify({ lines }),
+      headers: sensitiveHeaders(authorization),
+    });
   }
 
   approval(approvalRequestId: string) {

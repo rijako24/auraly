@@ -287,6 +287,75 @@ public sealed partial class SqlOnlineSalesDraftStore(
         return result;
     }
 
+    public async Task<OnlineSalesDraft> UpdateLinesAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        IReadOnlyList<UpdateOnlineSalesDraftLineRequest> lines,
+        long expectedVersion,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        const string operation = "UpdateLines";
+        var payload = string.Join('|', lines
+            .OrderBy(line => line.LineId)
+            .Select(line => $"{line.LineId:D}:{line.Description.Trim()}:{Invariant(line.UnitPrice)}:{Invariant(line.Discount)}"));
+        var hash = Hash($"{operation}|{draftId:D}|{payload}");
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        var state = await LockDraftAsync(connection, transaction, user, draftId, cancellationToken);
+        var replay = await ReplayAsync(
+            connection, transaction, state.BusinessId, idempotencyKey,
+            operation, hash, cancellationToken);
+        if (replay is not null)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return replay;
+        }
+
+        DemandActiveVersion(state, expectedVersion);
+        var activeLines = await ReadLineProductsAsync(
+            connection, transaction, draftId, cancellationToken);
+        if (lines.Count != activeLines.Count ||
+            activeLines.Any(current => lines.All(line => line.LineId != current.LineId)))
+            throw new OnlineSalesDraftValidationException(
+                "Debes enviar exactamente todas las líneas de la venta activa.");
+
+        foreach (var line in lines)
+        {
+            var current = activeLines.Single(value => value.LineId == line.LineId);
+            if (line.Discount > current.Quantity * line.UnitPrice)
+                throw new OnlineSalesDraftValidationException(
+                    "El descuento no puede superar el valor de la línea.");
+            var affected = await ExecuteAsync(connection, transaction, """
+                UPDATE dbo.SalesDraftLines
+                SET Description=@Description,UnitPrice=@UnitPrice,
+                    DiscountAmount=@Discount,PriceSource=N'ManualOverride',PriceChannelId=NULL
+                WHERE SalesDraftId=@DraftId AND SalesDraftLineId=@LineId;
+                """,
+                [
+                    P("@Description", line.Description.Trim()),
+                    P("@UnitPrice", line.UnitPrice),
+                    P("@Discount", line.Discount),
+                    P("@DraftId", draftId),
+                    P("@LineId", line.LineId)
+                ], cancellationToken);
+            if (affected != 1)
+                throw new OnlineSalesDraftValidationException(
+                    "Una línea ya no pertenece a la venta activa.");
+        }
+
+        var version = await AdvanceVersionAsync(
+            connection, transaction, draftId, expectedVersion, cancellationToken);
+        await SaveReceiptAsync(
+            connection, transaction, state.BusinessId, draftId,
+            idempotencyKey, operation, hash, version, cancellationToken);
+        var result = await ReadDraftAsync(connection, transaction, draftId, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return result;
+    }
+
     public async Task<OnlineSalesDraft> RemoveLineAsync(
         OnlineSalesUserIdentity user,
         Guid draftId,

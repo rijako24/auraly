@@ -20,6 +20,16 @@ public sealed record SetOnlineSalesDraftDiscountRequest(
     decimal Discount,
     long ExpectedVersion);
 
+public sealed record UpdateOnlineSalesDraftLinesRequest(
+    IReadOnlyList<UpdateOnlineSalesDraftLineRequest> Lines,
+    long ExpectedVersion);
+
+public sealed record UpdateOnlineSalesDraftLineRequest(
+    Guid LineId,
+    string Description,
+    decimal UnitPrice,
+    decimal Discount);
+
 public sealed record SelectOnlineSalesDraftCustomerRequest(
     Guid? CustomerId,
     long ExpectedVersion);

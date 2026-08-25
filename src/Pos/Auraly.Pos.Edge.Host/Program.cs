@@ -33,6 +33,8 @@ public sealed record PosWorkstationIdentity(
 public sealed record CaptureRequest(string Value, Guid? CustomerId);
 public sealed record QuantityRequest(decimal Quantity);
 public sealed record DiscountRequest(decimal Discount);
+public sealed record UpdateDraftLinesRequest(IReadOnlyList<UpdateDraftLineRequest> Lines);
+public sealed record UpdateDraftLineRequest(Guid LineId, string Description, decimal UnitPrice, decimal Discount);
 public sealed record SelectCustomerRequest(Guid? CustomerId);
 public sealed record SaveTemporaryRequest(string Name, string? Reference, string? Observation);
 public sealed record DirectPrintReceiptRequest(
@@ -807,6 +809,28 @@ public static class PosEdgeHostApplication
                 http.Request.Headers["X-Auraly-Supervisor-Secret"], ct);
             var result = await drafts.SetDiscountAsync(
                 new DraftId(draftId), lineId, request.Discount, ct);
+            await authorizer.CompleteAsync(authorization, ct);
+            return Results.Ok(result);
+        });
+        edge.MapPut("/drafts/{draftId:guid}/lines", async (
+            Guid draftId,
+            UpdateDraftLinesRequest request,
+            HttpContext http,
+            PosDraftStore drafts,
+            PosSensitiveActionAuthorizer authorizer,
+            PosLocalSessionAccessor sessions,
+            CancellationToken ct) =>
+        {
+            var authorization = await authorizer.AuthorizeAsync(
+                sessions.Required(), CommercePermissionCodes.SalesChangePrice, draftId, null,
+                http.Request.Headers["X-Auraly-Approval-Id"],
+                http.Request.Headers["X-Auraly-Operation-Id"],
+                http.Request.Headers["X-Auraly-Supervisor-Secret"], ct);
+            var result = await drafts.UpdateLinesAsync(
+                new DraftId(draftId),
+                request.Lines.Select(line => new PosDraftLineDocumentUpdate(
+                    line.LineId, line.Description, line.UnitPrice, line.Discount)).ToArray(),
+                ct);
             await authorizer.CompleteAsync(authorization, ct);
             return Results.Ok(result);
         });

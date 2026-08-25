@@ -12,7 +12,7 @@ import {
   Loader2,
   LogOut,
   PackageOpen,
-  Percent,
+  PencilLine,
   Printer,
   RotateCcw,
   Save,
@@ -48,6 +48,7 @@ import {
   type PosCaptureResult,
   type PosInventoryValidation,
   type PosSensitiveAuthorization,
+  type PosDraftLineUpdate,
   readEdgeTokenFromLaunch,
   readEdgeUserSession,
 } from "@/services/pos/pos-edge-client";
@@ -76,7 +77,7 @@ import { PosCashMovementDialog } from "./pos-cash-movement-dialog";
 import { PosCashClosureDialog } from "./pos-cash-closure-dialog";
 import { PosCustomerSearchDialog } from "./pos-customer-search-dialog";
 import { PosDocumentTypeDialog } from "./pos-document-type-dialog";
-import { PosDiscountDialog } from "./pos-discount-dialog";
+import { PosLineEditorDialog } from "./pos-line-editor-dialog";
 import { PosExitMenuButton } from "./pos-exit-menu-button";
 import { PosInvoiceSearchDialog } from "./pos-invoice-search-dialog";
 import { PosInventoryResolutionDialog } from "./pos-inventory-resolution-dialog";
@@ -872,7 +873,7 @@ export default function PosPage() {
       } else if (
         event.key === "F3" &&
         !busy &&
-        hasSelectedLine &&
+        Boolean(draft?.lines.length) &&
         !temporaryOpen &&
         !paymentOpen &&
         !productSearchOpen &&
@@ -1173,14 +1174,12 @@ export default function PosPage() {
   }
 
   async function openDiscount() {
-    if (!draft || !selectedLineId || busy) return;
-    const line = draft.lines.find((candidate) => candidate.lineId === selectedLineId);
-    if (!line) return;
+    if (!draft?.lines.length || busy) return;
     try {
       await authorizeSensitiveEntry(
-        "sales.discount",
-        selectedLineId,
-        { action: "OpenDiscount", product: line.description },
+        "sales.change-price",
+        null,
+        { action: "OpenLineEditor", lineCount: draft.lines.length },
         async (authorization) => {
           discountAuthorization.current = authorization;
           setDiscountOpen(true);
@@ -1390,23 +1389,21 @@ export default function PosPage() {
     }
   }
 
-  async function applyDiscount(discount: number) {
-    if (!client || !draft || !selectedLineId || busy) return;
+  async function applyLineEdits(lines: PosDraftLineUpdate[]) {
+    if (!client || !draft || busy) return;
     setBusy(true);
     setError(null);
     try {
-      const line = draft.lines.find((candidate) => candidate.lineId === selectedLineId);
       await authorizeSensitiveConfirmation(
-        "sales.discount",
-        selectedLineId,
-        { action: "ConfirmDiscount", product: line?.description ?? "Producto", discount },
+        "sales.change-price",
+        null,
+        { action: "ConfirmLineEditor", lineCount: lines.length },
         discountAuthorization.current,
         async (authorization) => {
-          setDraft(await client.setDiscount(
-            draft.draftId.value, selectedLineId, discount, authorization));
+          setDraft(await client.updateLines(draft.draftId.value, lines, authorization));
           discountAuthorization.current = null;
           setDiscountOpen(false);
-          setMessage(discount > 0 ? "Descuento aplicado" : "Descuento retirado");
+          setMessage("Cambios aplicados solamente a esta venta");
         },
       );
     } catch (caught) {
@@ -2437,11 +2434,11 @@ edgeCapable={edgeEnrollmentRequired}
                 Devoluciones
                 <span className="rounded bg-teal-50 px-1.5 py-0.5 text-[10px]">Ctrl+F6</span>
               </button>
-              <button type="button" disabled={!hasSelectedLine || busy}
+              <button type="button" disabled={!draft?.lines.length || busy}
                 onClick={() => void openDiscount()}
                 className="flex h-11 items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 text-sm font-semibold text-amber-900 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-400">
-                <Percent className="h-4 w-4" />
-                Descuento
+                <PencilLine className="h-4 w-4" />
+                Editar líneas
                 <span className="rounded bg-white/70 px-1.5 py-0.5 text-[10px]">F3</span>
               </button>
               <button type="button" disabled={!hasSelectedLine || busy}
@@ -3067,24 +3064,16 @@ edgeCapable={edgeEnrollmentRequired}
         />
       )}
 
-      {discountOpen && draft && selectedLineId && (() => {
-        const line = draft.lines.find((candidate) => candidate.lineId === selectedLineId);
-        return line ? (
-          <PosDiscountDialog
-            productName={line.description}
-            currentDiscount={line.discount}
-            maximum={line.quantity * line.unitPrice}
-            taxRate={line.taxRate}
-            busy={busy}
-            onConfirm={applyDiscount}
-            onCancel={() => {
-              setDiscountOpen(false);
-              discountAuthorization.current = null;
-              focusScanner();
-            }}
-          />
-        ) : null;
-      })()}
+      {discountOpen && draft && <PosLineEditorDialog
+        lines={draft.lines}
+        busy={busy}
+        onConfirm={applyLineEdits}
+        onCancel={() => {
+          setDiscountOpen(false);
+          discountAuthorization.current = null;
+          focusScanner();
+        }}
+      />}
 
       {sensitiveApproval && (
         <PosSupervisorApprovalDialog

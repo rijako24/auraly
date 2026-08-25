@@ -28,6 +28,7 @@ import {
   PosCustomerSelection,
   PosDraft,
   PosDraftLine,
+  PosDraftLineUpdate,
   PosEdgeError,
   PosEdgeClient,
   readEdgeUserSession,
@@ -736,6 +737,20 @@ export class OnlinePosClient implements PosClient {
   validateDraftInventory(draftId: string) {
     return request<import("./pos-edge-client").PosInventoryValidation>(
       `/api/commerce/v1/pos/drafts/${draftId}/inventory-validation`,
+    );
+  }
+
+  async updateLines(draftId: string, lines: PosDraftLineUpdate[], authorization?: PosSensitiveAuthorization) {
+    return this.mapDraft(
+      await request<OnlineDraft>(
+        `/api/commerce/v1/pos/drafts/${draftId}/lines`,
+        this.mutation(
+          { lines, expectedVersion: this.version(draftId) },
+          "PUT",
+          authorization?.operationId,
+          authorization?.approvalRequestId,
+        ),
+      ),
     );
   }
 
