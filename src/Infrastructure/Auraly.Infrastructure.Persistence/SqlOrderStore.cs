@@ -444,8 +444,11 @@ public sealed class SqlOrderStore(
             Guid jobId;
             string documentType;
             string jobStatus;
+            long processingSequence;
+            long lastCompletedSequence;
             await using (var read = new SqlCommand("""
-                SELECT link.DocumentId,document.DocumentType,job.JobId,job.Status
+                SELECT link.DocumentId,document.DocumentType,job.JobId,job.Status,
+                       job.ProcessingSequence,processingCursor.LastCompletedSequence
                 FROM dbo.Orders orderRow WITH(UPDLOCK,HOLDLOCK)
                 INNER JOIN dbo.Businesses business ON business.BusinessId=orderRow.BusinessId
                 INNER JOIN dbo.OrderInvoiceLinks link WITH(UPDLOCK,HOLDLOCK)
@@ -454,6 +457,8 @@ public sealed class SqlOrderStore(
                   ON document.DocumentId=link.DocumentId AND document.BusinessId=orderRow.BusinessId
                 INNER JOIN dbo.DocumentProcessingJobs job WITH(UPDLOCK,HOLDLOCK)
                   ON job.DocumentId=document.DocumentId AND job.DocumentType=document.DocumentType
+                INNER JOIN dbo.BusinessProcessingCursors processingCursor WITH(UPDLOCK,HOLDLOCK)
+                  ON processingCursor.BusinessId=orderRow.BusinessId
                 WHERE orderRow.OrderId=@OrderId AND orderRow.BusinessId=@BusinessId
                   AND business.TenantId=@TenantId;
                 """, connection, transaction))
@@ -470,6 +475,8 @@ public sealed class SqlOrderStore(
                 documentType = reader.GetString(1);
                 jobId = reader.GetGuid(2);
                 jobStatus = reader.GetString(3);
+                processingSequence = reader.GetInt64(4);
+                lastCompletedSequence = reader.GetInt64(5);
             }
 
             if (!string.Equals(jobStatus, "DeadLettered", StringComparison.Ordinal))
@@ -477,9 +484,32 @@ public sealed class SqlOrderStore(
                     "La emisión no está detenida y no requiere recuperación manual.");
 
             var now = time.GetUtcNow();
+            var targetSequence = processingSequence;
+            if (processingSequence <= lastCompletedSequence)
+            {
+                await using var allocate = new SqlCommand("""
+                    DECLARE @MaximumJobSequence BIGINT=(
+                      SELECT ISNULL(MAX(ProcessingSequence),0)
+                      FROM dbo.DocumentProcessingJobs WITH(UPDLOCK,HOLDLOCK)
+                      WHERE BusinessId=@BusinessId);
+                    UPDATE dbo.BusinessProcessingCursors WITH(UPDLOCK,HOLDLOCK)
+                    SET LastAssignedSequence=
+                          CASE WHEN LastAssignedSequence>@MaximumJobSequence
+                               THEN LastAssignedSequence+1 ELSE @MaximumJobSequence+1 END,
+                        UpdatedAt=@Now
+                    OUTPUT inserted.LastAssignedSequence
+                    WHERE BusinessId=@BusinessId;
+                    """, connection, transaction);
+                allocate.Parameters.AddRange([
+                    P("@Now", now), P("@BusinessId", actor.BusinessId)
+                ]);
+                targetSequence = Convert.ToInt64(
+                    await allocate.ExecuteScalarAsync(cancellationToken));
+            }
+
             await using (var update = new SqlCommand("""
                 UPDATE dbo.DocumentProcessingJobs
-                SET Status=N'Pending',AttemptCount=0,
+                SET ProcessingSequence=@Sequence,Status=N'Pending',AttemptCount=0,
                     AvailableAt=@Now,StartedAt=NULL,CompletedAt=NULL,
                     LeaseOwner=NULL,LeaseExpiresAt=NULL,LastError=NULL
                 WHERE JobId=@JobId AND BusinessId=@BusinessId AND Status=N'DeadLettered';
@@ -491,7 +521,7 @@ public sealed class SqlOrderStore(
                 """, connection, transaction))
             {
                 update.Parameters.AddRange([
-                    P("@Now", now), P("@JobId", jobId),
+                    P("@Sequence", targetSequence), P("@Now", now), P("@JobId", jobId),
                     P("@DocumentId", documentId), P("@BusinessId", actor.BusinessId)
                 ]);
                 if (await update.ExecuteNonQueryAsync(cancellationToken) != 2)

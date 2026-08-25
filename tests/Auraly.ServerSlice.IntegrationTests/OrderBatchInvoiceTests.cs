@@ -116,8 +116,11 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
         Assert.Equal(0, reader.GetInt32(5));
     }
 
-    [Fact]
-    public async Task Failed_order_emission_retries_the_same_processing_sequence()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Failed_order_emission_retries_in_the_next_processable_sequence(
+        bool cursorAlreadyAdvanced)
     {
         var userId = Guid.NewGuid();
         var orderId = Guid.NewGuid();
@@ -159,10 +162,25 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
                     UPDATE dbo.DocumentProcessingJobs
                     SET Status=N'DeadLettered',AttemptCount=5,LastError=N'forced regression failure'
                     WHERE DocumentId=@DocumentId;
+                    IF @CursorAlreadyAdvanced=1
+                      UPDATE dbo.BusinessProcessingCursors
+                      SET LastCompletedSequence=(
+                            SELECT ProcessingSequence FROM dbo.DocumentProcessingJobs
+                            WHERE DocumentId=@DocumentId),
+                          LastAssignedSequence=CASE
+                            WHEN LastAssignedSequence<(
+                              SELECT ProcessingSequence FROM dbo.DocumentProcessingJobs
+                              WHERE DocumentId=@DocumentId)
+                            THEN (SELECT ProcessingSequence FROM dbo.DocumentProcessingJobs
+                                  WHERE DocumentId=@DocumentId)
+                            ELSE LastAssignedSequence END
+                      WHERE BusinessId=@BusinessId;
                     SELECT ProcessingSequence FROM dbo.DocumentProcessingJobs
                     WHERE DocumentId=@DocumentId;
                     """;
                 fail.Parameters.AddWithValue("@DocumentId", documentId);
+                fail.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+                fail.Parameters.AddWithValue("@CursorAlreadyAdvanced", cursorAlreadyAdvanced);
                 originalSequence = Convert.ToInt64(await fail.ExecuteScalarAsync());
             }
 
@@ -189,7 +207,9 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
                 verify.Parameters.AddWithValue("@DocumentId", documentId);
                 await using var reader = await verify.ExecuteReaderAsync();
                 Assert.True(await reader.ReadAsync());
-                Assert.Equal(originalSequence, reader.GetInt64(0));
+                Assert.Equal(
+                    cursorAlreadyAdvanced ? originalSequence + 1 : originalSequence,
+                    reader.GetInt64(0));
                 Assert.Equal("Pending", reader.GetString(1));
                 Assert.Equal(0, reader.GetInt32(2));
                 Assert.True(reader.IsDBNull(3));
