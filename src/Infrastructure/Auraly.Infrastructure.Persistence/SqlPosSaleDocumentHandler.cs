@@ -52,6 +52,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             session, request, cancellationToken);
         foreach (var line in request.Lines.OrderBy(line => line.LineNumber))
         {
+            await ValidateDocumentCostAsync(session, request.BusinessId, line, cancellationToken);
             await InsertLineAsync(session, request, line, cancellationToken);
             await InsertInventoryMovementAsync(
                 session, request, inventoryWarehouseId, line, cancellationToken);
@@ -83,13 +84,13 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             INSERT INTO dbo.SalesDocumentLines
             (
                 DocumentId, LineNumber, ProductId, Description, TaxCode, TaxRate,
-                Quantity, UnitPrice, DiscountAmount, TaxAmount,
+                Quantity, UnitPrice, UnitCostSnapshot, DiscountAmount, TaxAmount,
                 UntaxedAmount, LineTotal
             )
             VALUES
             (
                 @DocumentId, @LineNumber, @ProductId, @Description, @TaxCode, @TaxRate,
-                @Quantity, @UnitPrice, @DiscountAmount, @TaxAmount,
+                @Quantity, @UnitPrice, @UnitCostSnapshot, @DiscountAmount, @TaxAmount,
                 @UntaxedAmount, @LineTotal
             );
             """;
@@ -102,6 +103,10 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         AddDecimal(command, "@TaxRate", line.TaxRate, 9, 6);
         AddDecimal(command, "@Quantity", line.Quantity, 19, 6);
         AddDecimal(command, "@UnitPrice", line.UnitPrice, 19, 4);
+        var unitCost = command.Parameters.Add("@UnitCostSnapshot", SqlDbType.Decimal);
+        unitCost.Precision = 19;
+        unitCost.Scale = 6;
+        unitCost.Value = (object?)line.DocumentUnitCost ?? DBNull.Value;
         AddDecimal(command, "@DiscountAmount", line.DiscountAmount, 19, 4);
         AddDecimal(command, "@TaxAmount", line.TaxAmount, 19, 4);
         AddDecimal(command, "@UntaxedAmount", line.UntaxedAmount, 19, 4);
@@ -165,6 +170,27 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                 InventoryValuationModes.AverageCost,
                 request.CommercialSnapshot.IssuedAt),
             cancellationToken);
+    }
+
+    private static async Task ValidateDocumentCostAsync(
+        SqlDocumentProcessingSessionAccessor.Session session,
+        Guid businessId,
+        PosSaleLineContract line,
+        CancellationToken cancellationToken)
+    {
+        if (line.DocumentUnitCost is null) return;
+        if (line.DocumentUnitCost < 0)
+            throw new InvalidOperationException("The document unit cost cannot be negative.");
+        await using var command = new SqlCommand(
+            "SELECT ManageStock FROM dbo.Products WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND IsActive=1;",
+            session.Connection, session.Transaction);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@ProductId", line.ProductId);
+        if (await command.ExecuteScalarAsync(cancellationToken) is not bool managesStock)
+            throw new InvalidOperationException("The sale product is not active in this business.");
+        if (managesStock)
+            throw new InvalidOperationException(
+                "The cost of an inventory-managed product must come from inventory valuation.");
     }
 
     private static async Task<Guid> ResolveInventoryWarehouseAsync(

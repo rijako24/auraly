@@ -2,12 +2,125 @@ using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Sales;
+using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
 public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Generic_product_accepts_document_only_name_cost_price_and_discount()
+    {
+        var productId = Guid.NewGuid();
+        var priceId = Guid.NewGuid();
+        var code = $"GEN-{productId:N}"[..20];
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var seed = new SqlCommand(
+                """
+                INSERT dbo.Products
+                  (ProductId,BusinessId,Source,Sku,Name,
+                   UnitPrice,Currency,ManageStock,IsActive,CreatedAt)
+                VALUES
+                  (@ProductId,@BusinessId,0,@Code,N'Producto genérico',
+                   10000,N'COP',0,1,SYSUTCDATETIME());
+                INSERT dbo.ProductPrices
+                  (ProductPriceId,BusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,
+                   CostBasisType,CostBasisAmount,TargetMarginPercent,EffectiveMarginPercent,
+                   InputMode,RoundingIncrement,RoundingMode,ValidFrom,IsActive,CreatedAt)
+                VALUES
+                  (@PriceId,@BusinessId,@ProductId,10000,10000,N'COP',
+                   N'AverageCost',4000,60,60,N'SalePrice',1,N'Nearest',
+                   DATEADD(day,-1,SYSDATETIMEOFFSET()),1,SYSDATETIMEOFFSET());
+                """, connection);
+            seed.Parameters.AddWithValue("@ProductId", productId);
+            seed.Parameters.AddWithValue("@PriceId", priceId);
+            seed.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            seed.Parameters.AddWithValue("@Code", code);
+            await seed.ExecuteNonQueryAsync();
+        }
+
+        using var client = fixture.CreateAdminClient(
+            CommercePermissionCodes.SalesCreate,
+            CommercePermissionCodes.SalesChangePrice,
+            CommercePermissionCodes.SalesRestartDraft);
+        var opened = await OpenAsync(client, new(
+            fixture.BusinessId, fixture.WarehouseId, fixture.WorkSessionId));
+        if (opened.Lines.Count > 0)
+        {
+            using var reset = Mutation(
+                HttpMethod.Post,
+                $"/api/commerce/v1/pos/drafts/{opened.DraftId:D}/reset",
+                new ResetOnlineSalesDraftRequest(opened.Version),
+                Guid.NewGuid().ToString("D"));
+            using var resetResponse = await client.SendAsync(reset);
+            resetResponse.EnsureSuccessStatusCode();
+            opened = await resetResponse.Content.ReadFromJsonAsync<OnlineSalesDraft>()
+                ?? throw new InvalidOperationException("The reset draft response was empty.");
+        }
+        using var add = Mutation(
+            HttpMethod.Post,
+            $"/api/commerce/v1/pos/drafts/{opened.DraftId:D}/items",
+            new AddOnlineSalesDraftItemRequest(code, 2m, opened.Version),
+            $"generic-add-{Guid.NewGuid():N}");
+        using var addResponse = await client.SendAsync(add);
+        addResponse.EnsureSuccessStatusCode();
+        var captured = await addResponse.Content.ReadFromJsonAsync<OnlineSalesDraft>();
+        var line = Assert.Single(captured!.Lines);
+        Assert.True(line.AllowsDocumentCostOverride);
+        Assert.Equal(4_000m, line.DocumentUnitCost);
+
+        using var update = Mutation(
+            HttpMethod.Put,
+            $"/api/commerce/v1/pos/drafts/{opened.DraftId:D}/lines",
+            new UpdateOnlineSalesDraftLinesRequest(
+                [new(line.LineId, "Servicio puntual", 12_000m, 2_000m, 4_500m)],
+                captured.Version),
+            Guid.NewGuid().ToString("D"));
+        using var updateResponse = await client.SendAsync(update);
+        updateResponse.EnsureSuccessStatusCode();
+        var changed = await updateResponse.Content.ReadFromJsonAsync<OnlineSalesDraft>();
+        var changedLine = Assert.Single(changed!.Lines);
+        Assert.Equal("Servicio puntual", changedLine.Description);
+        Assert.Equal(12_000m, changedLine.UnitPrice);
+        Assert.Equal(2_000m, changedLine.Discount);
+        Assert.Equal(4_500m, changedLine.DocumentUnitCost);
+
+        await using var checkConnection = new SqlConnection(fixture.ConnectionString);
+        await checkConnection.OpenAsync();
+        await using var check = new SqlCommand(
+            """
+            SELECT p.Name,pp.Amount,pp.CostBasisAmount,l.Description,l.UnitPrice,
+                   l.DiscountAmount,l.DocumentUnitCost
+            FROM dbo.Products p
+            INNER JOIN dbo.ProductPrices pp ON pp.ProductId=p.ProductId AND pp.IsActive=1
+            INNER JOIN dbo.SalesDraftLines l ON l.ProductId=p.ProductId
+            WHERE p.ProductId=@ProductId AND l.SalesDraftId=@DraftId;
+            """, checkConnection);
+        check.Parameters.AddWithValue("@ProductId", productId);
+        check.Parameters.AddWithValue("@DraftId", opened.DraftId);
+        await using var reader = await check.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal("Producto genérico", reader.GetString(0));
+        Assert.Equal(10_000m, reader.GetDecimal(1));
+        Assert.Equal(4_000m, reader.GetDecimal(2));
+        Assert.Equal("Servicio puntual", reader.GetString(3));
+        Assert.Equal(12_000m, reader.GetDecimal(4));
+        Assert.Equal(2_000m, reader.GetDecimal(5));
+        Assert.Equal(4_500m, reader.GetDecimal(6));
+        await reader.DisposeAsync();
+
+        using var cleanup = Mutation(
+            HttpMethod.Post,
+            $"/api/commerce/v1/pos/drafts/{changed.DraftId:D}/reset",
+            new ResetOnlineSalesDraftRequest(changed.Version),
+            Guid.NewGuid().ToString("D"));
+        using var cleanupResponse = await client.SendAsync(cleanup);
+        cleanupResponse.EnsureSuccessStatusCode();
+    }
+
     [Fact]
     public async Task Draft_survives_client_restart_and_mutations_are_idempotent()
     {

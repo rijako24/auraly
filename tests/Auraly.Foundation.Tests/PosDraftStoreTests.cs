@@ -71,20 +71,21 @@ public sealed class PosDraftStoreTests
     {
         await WithStoreAsync(async (store, _, scope, _) =>
         {
-            var first = await store.AddOrIncrementLineAsync(scope, Line(quantity: 1m));
-            var draft = await store.AddOrIncrementLineAsync(scope, Line(quantity: 2m));
+            var first = await store.AddOrIncrementLineAsync(scope, Line(quantity: 1m) with { DocumentUnitCost = 4_000m, AllowsDocumentCostOverride = true });
+            var draft = await store.AddOrIncrementLineAsync(scope, Line(quantity: 2m) with { DocumentUnitCost = 4_000m, AllowsDocumentCostOverride = true });
 
             var updated = await store.UpdateLinesAsync(
                 draft.DraftId,
                 [
-                    new(first.Lines.Single().LineId, "Descripción puntual", 12_000m, 1_000m),
-                    new(draft.Lines[1].LineId, "Segunda línea", 9_000m, 0m)
+                    new(first.Lines.Single().LineId, "Descripción puntual", 12_000m, 1_000m, 4_500m),
+                    new(draft.Lines[1].LineId, "Segunda línea", 9_000m, 0m, 5_000m)
                 ]);
 
             Assert.Equal(29_000m, updated.PayableAmount);
             Assert.Equal("Descripción puntual", updated.Lines[0].Description);
             Assert.Equal(12_000m, updated.Lines[0].UnitPrice);
             Assert.Equal(10_000m, updated.Lines[0].BaseUnitPrice);
+            Assert.Equal(4_500m, updated.Lines[0].DocumentUnitCost);
             Assert.Equal("ManualOverride", updated.Lines[0].PriceSource);
 
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -94,6 +95,18 @@ public sealed class PosDraftStoreTests
             var unchanged = await store.GetOrCreateActiveAsync(scope);
             Assert.Equal("Descripción puntual", unchanged.Lines[0].Description);
             Assert.Equal("Segunda línea", unchanged.Lines[1].Description);
+        });
+    }
+
+    [Fact]
+    public async Task Document_cost_cannot_override_inventory_valuation()
+    {
+        await WithStoreAsync(async (store, _, scope, _) =>
+        {
+            var draft = await store.AddOrIncrementLineAsync(scope, Line(1m) with { DocumentUnitCost = 4_000m });
+            await Assert.ThrowsAsync<InvalidOperationException>(() => store.UpdateLinesAsync(
+                draft.DraftId,
+                [new(draft.Lines.Single().LineId, "Producto", 10_000m, 0m, 5_000m)]));
         });
     }
 

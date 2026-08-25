@@ -17,7 +17,8 @@ public sealed record OfflineSaleLine(
     decimal Quantity,
     decimal UnitPrice,
     decimal Discount,
-    decimal TaxAmount);
+    decimal TaxAmount,
+    decimal? DocumentUnitCost = null);
 
 public sealed record PrepareOfflineSaleCommand(
     UserId UserId,

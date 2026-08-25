@@ -116,7 +116,9 @@ public sealed record PosCatalogItem(
     bool AllowsFractionalSale,
     ScaleConfigurationInput? Scale,
     IReadOnlyCollection<string> Barcodes,
-    IReadOnlyCollection<ProductIdentifierInput> Identifiers)
+    IReadOnlyCollection<ProductIdentifierInput> Identifiers,
+    decimal UnitCost = 0,
+    bool ManagesStock = true)
 {
     public PosCatalogItem(
         Guid productId,

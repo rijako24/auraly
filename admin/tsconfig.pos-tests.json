@@ -21,6 +21,8 @@
     "src/app/(pos)/pos/pos-discount-calculation.test.ts",
     "src/app/(pos)/pos/pos-retail-price.ts",
     "src/app/(pos)/pos/pos-retail-price.test.ts",
+    "src/app/(pos)/pos/pos-line-editor-calculation.ts",
+    "src/app/(pos)/pos/pos-line-editor-calculation.test.ts",
     "src/app/(pos)/pos/pos-temporary-name.ts",
     "src/app/(pos)/pos/pos-temporary-name.test.ts",
     "src/app/(pos)/pos/pos-order-save-availability.ts",

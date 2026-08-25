@@ -10,6 +10,7 @@ CREATE TABLE [dbo].[SalesDraftLines] (
     [Quantity] DECIMAL(18, 4) NOT NULL,
     [BaseUnitPrice] DECIMAL(18, 2) NOT NULL,
     [UnitPrice] DECIMAL(18, 2) NOT NULL,
+    [DocumentUnitCost] DECIMAL(19, 6) NOT NULL CONSTRAINT [DF_SalesDraftLines_DocumentUnitCost] DEFAULT 0,
     [CurrencyCode] NVARCHAR(3) NOT NULL,
     [PriceSource] NVARCHAR(24) NOT NULL,
     [PriceChannelId] UNIQUEIDENTIFIER NULL,
@@ -22,7 +23,7 @@ CREATE TABLE [dbo].[SalesDraftLines] (
     CONSTRAINT [FK_SalesDraftLines_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
     CONSTRAINT [CK_SalesDraftLines_Quantity] CHECK ([Quantity] > 0),
     CONSTRAINT [CK_SalesDraftLines_Amounts]
-        CHECK ([BaseUnitPrice] >= 0 AND [UnitPrice] >= 0 AND [DiscountAmount] >= 0),
+        CHECK ([BaseUnitPrice] >= 0 AND [UnitPrice] >= 0 AND [DocumentUnitCost] >= 0 AND [DiscountAmount] >= 0),
     CONSTRAINT [CK_SalesDraftLines_TaxRate] CHECK ([TaxRate] >= 0)
 );
 GO

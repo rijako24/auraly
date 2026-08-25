@@ -43,7 +43,9 @@ public sealed class PosOrderRecoveryService(
                     "Order",
                     Discount: orderLine.DiscountAmount,
                     Note: $"Pedido {order.OrderNumber}",
-                    AllowsFractionalSale: product.AllowsFractionalSale));
+                    AllowsFractionalSale: product.AllowsFractionalSale,
+                    DocumentUnitCost: product.UnitCost,
+                    AllowsDocumentCostOverride: !product.ManagesStock));
             }
 
             return await drafts.ImportOrderAsync(

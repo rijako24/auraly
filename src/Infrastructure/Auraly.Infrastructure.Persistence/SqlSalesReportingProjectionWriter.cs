@@ -33,9 +33,11 @@ public sealed class SqlSalesReportingProjectionWriter(
 
         foreach (var line in value.Lines.OrderBy(line => line.LineNumber))
         {
-            var lineCost = await ReadSaleLineCostAsync(
-                session, value.DocumentId, value.CommercialSnapshot.DocumentType,
-                line.LineNumber, cancellationToken);
+            var lineCost = line.DocumentUnitCost is decimal documentUnitCost
+                ? decimal.Round(line.Quantity * documentUnitCost, 4, MidpointRounding.AwayFromZero)
+                : await ReadSaleLineCostAsync(
+                    session, value.DocumentId, value.CommercialSnapshot.DocumentType,
+                    line.LineNumber, cancellationToken);
             recognizedCost += lineCost;
             await InsertSaleLineFactAsync(
                 session, value, line, lineCost, localDate.Date, now, cancellationToken);
@@ -243,7 +245,7 @@ public sealed class SqlSalesReportingProjectionWriter(
             SELECT @FactId,@TenantId,@BusinessId,@DocumentId,@DocumentType,@LineNumber,
                    @DocumentId,@LineNumber,N'Sale',@OccurredAt,@LocalDate,@WarehouseId,
                    @WorkSessionId,@SellerId,@CustomerId,p.ProductId,
-                   COALESCE(p.ProductCode,p.Sku,p.Reference,N''),p.Name,p.ProductCategoryId,
+                   COALESCE(p.ProductCode,p.Sku,p.Reference,N''),@ProductName,p.ProductCategoryId,
                    COALESCE(pc.Name,p.CategoryName),supplier.SupplierId,supplier.Name,
                    @Quantity,@Gross,@Discount,@Untaxed,@Tax,
                    @Total,@Cost,@Version,@ProjectedAt
@@ -280,6 +282,7 @@ public sealed class SqlSalesReportingProjectionWriter(
         command.Parameters.AddWithValue("@SellerId", value.SoldByUserId);
         command.Parameters.AddWithValue("@CustomerId", (object?)value.CustomerId ?? DBNull.Value);
         command.Parameters.AddWithValue("@ProductId", line.ProductId);
+        command.Parameters.AddWithValue("@ProductName", line.Description);
         AddDecimal(command, "@Quantity", line.Quantity, 19, 6);
         AddDecimal(command, "@Gross", line.UntaxedAmount + line.DiscountAmount, 19, 4);
         AddDecimal(command, "@Discount", line.DiscountAmount, 19, 4);

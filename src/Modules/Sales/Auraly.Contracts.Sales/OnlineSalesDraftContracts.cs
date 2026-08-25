@@ -28,7 +28,8 @@ public sealed record UpdateOnlineSalesDraftLineRequest(
     Guid LineId,
     string Description,
     decimal UnitPrice,
-    decimal Discount);
+    decimal Discount,
+    decimal DocumentUnitCost = 0);
 
 public sealed record SelectOnlineSalesDraftCustomerRequest(
     Guid? CustomerId,
@@ -110,6 +111,8 @@ public sealed record OnlineSalesDraftLine(
     string CurrencyCode,
     string PriceSource,
     decimal Discount,
+    decimal DocumentUnitCost,
+    bool AllowsDocumentCostOverride,
     bool AllowsFractionalSale,
     decimal Net,
     decimal Tax,

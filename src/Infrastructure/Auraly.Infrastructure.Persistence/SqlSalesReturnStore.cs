@@ -242,7 +242,7 @@ public sealed class SqlSalesReturnStore(
                    COALESCE(SUM(r.Quantity),0),COALESCE(SUM(r.DiscountAmount),0),
                    COALESCE(SUM(r.UntaxedAmount),0),COALESCE(SUM(r.TaxAmount),0),
                    COALESCE(SUM(r.LineTotal),0),
-                   COALESCE((SELECT TOP(1) m.RecognizedUnitCost
+                   COALESCE(l.UnitCostSnapshot,(SELECT TOP(1) m.RecognizedUnitCost
                      FROM dbo.InventoryMovements m
                      WHERE m.DocumentId=l.DocumentId AND m.LineNumber=l.LineNumber
                        AND m.DocumentType IN(N'SalesInvoice',N'SalesReceipt')

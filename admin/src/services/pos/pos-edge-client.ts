@@ -109,6 +109,8 @@ export type PosDraftLine = {
   currencyCode: string;
   priceSource: string;
   discount: number;
+  documentUnitCost: number;
+  allowsDocumentCostOverride: boolean;
   allowsFractionalSale: boolean;
   net: number;
   tax: number;
@@ -160,7 +162,7 @@ export type PosSensitiveAuthorization = {
 
 export type PosDraftLineUpdate = Pick<
   PosDraftLine,
-  "lineId" | "description" | "unitPrice" | "discount"
+  "lineId" | "description" | "unitPrice" | "discount" | "documentUnitCost"
 >;
 
 export type PosDraft = {

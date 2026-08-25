@@ -124,7 +124,9 @@ public sealed class PosCaptureService(
                 price.CurrencyCode,
                 price.Source,
                 price.PriceChannelId,
-                AllowsFractionalSale: captured.Product.AllowsFractionalSale),
+                AllowsFractionalSale: captured.Product.AllowsFractionalSale,
+                DocumentUnitCost: captured.Product.UnitCost,
+                AllowsDocumentCostOverride: !captured.Product.ManagesStock),
             cancellationToken);
         updated = await RepriceAsync(
             updated,

@@ -327,13 +327,13 @@ public sealed partial class PosCatalogStore(string connectionString)
         var identifiers = staging ? "PosCatalogStagingIdentifiers" : "PosCatalogIdentifiers";
         await ExecuteAsync(connection, transaction, $"""
             INSERT INTO {products}
-              (ProductId,ProductCode,Reference,Name,BaseUnitCode,TaxCode,TaxRate,UnitPrice,CurrencyCode,IsActive,IsWeighable,AllowsFractionalSale,ScaleJson,ScalePrefix)
+              (ProductId,ProductCode,Reference,Name,BaseUnitCode,TaxCode,TaxRate,UnitPrice,UnitCost,ManagesStock,CurrencyCode,IsActive,IsWeighable,AllowsFractionalSale,ScaleJson,ScalePrefix)
             VALUES
-              (@ProductId,@ProductCode,@Reference,@Name,@BaseUnitCode,@TaxCode,@TaxRate,@UnitPrice,@CurrencyCode,@IsActive,@IsWeighable,@AllowsFractionalSale,@ScaleJson,@ScalePrefix)
+              (@ProductId,@ProductCode,@Reference,@Name,@BaseUnitCode,@TaxCode,@TaxRate,@UnitPrice,@UnitCost,@ManagesStock,@CurrencyCode,@IsActive,@IsWeighable,@AllowsFractionalSale,@ScaleJson,@ScalePrefix)
             ON CONFLICT(ProductId) DO UPDATE SET
               ProductCode=excluded.ProductCode,Reference=excluded.Reference,Name=excluded.Name,
               BaseUnitCode=excluded.BaseUnitCode,TaxCode=excluded.TaxCode,TaxRate=excluded.TaxRate,
-              UnitPrice=excluded.UnitPrice,CurrencyCode=excluded.CurrencyCode,IsActive=excluded.IsActive,
+              UnitPrice=excluded.UnitPrice,UnitCost=excluded.UnitCost,ManagesStock=excluded.ManagesStock,CurrencyCode=excluded.CurrencyCode,IsActive=excluded.IsActive,
               IsWeighable=excluded.IsWeighable,AllowsFractionalSale=excluded.AllowsFractionalSale,
               ScaleJson=excluded.ScaleJson,ScalePrefix=excluded.ScalePrefix;
             DELETE FROM {barcodes} WHERE ProductId=@ProductId;
@@ -343,6 +343,7 @@ public sealed partial class PosCatalogStore(string connectionString)
                 P("@ProductId", item.ProductId.ToString("D")), P("@ProductCode", item.ProductCode),
                 P("@Reference", item.Reference), P("@Name", item.Name), P("@BaseUnitCode", item.BaseUnitCode),
                 P("@TaxCode", item.TaxCode), P("@TaxRate", item.TaxRate), P("@UnitPrice", item.UnitPrice),
+                P("@UnitCost", item.UnitCost), P("@ManagesStock", item.ManagesStock ? 1 : 0),
                 P("@CurrencyCode", item.CurrencyCode), P("@IsActive", item.IsActive ? 1 : 0),
                 P("@IsWeighable", item.IsWeighable ? 1 : 0),
                 P("@AllowsFractionalSale", item.AllowsFractionalSale ? 1 : 0),
@@ -381,7 +382,9 @@ public sealed partial class PosCatalogStore(string connectionString)
             reader.GetInt64(reader.GetOrdinal("AllowsFractionalSale")) == 1,
             scale,
             [],
-            []);
+            [],
+            Convert.ToDecimal(reader.GetValue(reader.GetOrdinal("UnitCost")), CultureInfo.InvariantCulture),
+            reader.GetInt64(reader.GetOrdinal("ManagesStock")) == 1);
     }
 
     private static async Task<PosCatalogStatus> StatusAsync(
@@ -437,6 +440,18 @@ public sealed partial class PosCatalogStore(string connectionString)
                 alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0;";
                 await alter.ExecuteNonQueryAsync(ct);
             }
+            if (!columns.Contains("UnitCost"))
+            {
+                await using var alter = connection.CreateCommand();
+                alter.CommandText = $"ALTER TABLE {table} ADD COLUMN UnitCost TEXT NOT NULL DEFAULT '0';";
+                await alter.ExecuteNonQueryAsync(ct);
+            }
+            if (!columns.Contains("ManagesStock"))
+            {
+                await using var alter = connection.CreateCommand();
+                alter.CommandText = $"ALTER TABLE {table} ADD COLUMN ManagesStock INTEGER NOT NULL DEFAULT 1;";
+                await alter.ExecuteNonQueryAsync(ct);
+            }
         }
     }
 
@@ -449,6 +464,8 @@ public sealed partial class PosCatalogStore(string connectionString)
         TaxCode TEXT NOT NULL,
         TaxRate TEXT NOT NULL,
         UnitPrice TEXT NOT NULL,
+        UnitCost TEXT NOT NULL DEFAULT '0',
+        ManagesStock INTEGER NOT NULL DEFAULT 1,
         CurrencyCode TEXT NOT NULL,
         IsActive INTEGER NOT NULL,
         IsWeighable INTEGER NOT NULL DEFAULT 0,

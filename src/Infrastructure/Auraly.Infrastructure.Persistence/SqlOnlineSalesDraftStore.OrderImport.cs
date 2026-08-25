@@ -84,6 +84,7 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
                 connection,
                 transaction,
                 state.BusinessId,
+                state.WarehouseId,
                 line.ProductId,
                 cancellationToken);
             // A confirmed order already owns this quantity in the system
@@ -93,11 +94,11 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
             await ExecuteAsync(connection, transaction, """
                 INSERT dbo.SalesDraftLines(
                   SalesDraftLineId,SalesDraftId,ProductId,ProductCode,Description,
-                  UnitCode,TaxCode,TaxRate,Quantity,BaseUnitPrice,UnitPrice,
+                  UnitCode,TaxCode,TaxRate,Quantity,BaseUnitPrice,UnitPrice,DocumentUnitCost,
                   CurrencyCode,PriceSource,DiscountAmount,Position)
                 VALUES(
                   @LineId,@DraftId,@ProductId,@ProductCode,@Description,
-                  @UnitCode,@TaxCode,@TaxRate,@Quantity,@BaseUnitPrice,@UnitPrice,
+                  @UnitCode,@TaxCode,@TaxRate,@Quantity,@BaseUnitPrice,@UnitPrice,@DocumentUnitCost,
                   @CurrencyCode,N'Order',@Discount,@Position);
                 """,
                 [
@@ -112,6 +113,7 @@ public sealed partial class SqlOnlineSalesDraftStore : IOnlineSalesOrderImportSt
                     P("@Quantity", line.Quantity),
                     P("@BaseUnitPrice", product.UnitPrice),
                     P("@UnitPrice", line.UnitPrice),
+                    P("@DocumentUnitCost", product.UnitCost),
                     P("@CurrencyCode", product.CurrencyCode),
                     P("@Discount", line.DiscountAmount),
                     P("@Position", position)
