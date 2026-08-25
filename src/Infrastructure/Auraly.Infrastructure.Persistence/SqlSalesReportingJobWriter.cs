@@ -16,10 +16,13 @@ internal static class SqlSalesReportingJobWriter
         await using var command = new SqlCommand("""
             INSERT reporting.SalesReportingJobs
               (SalesReportingJobId,BusinessId,SourceDocumentId,SourceDocumentType,
-               SourcePayloadHash,Status,AttemptCount,CreatedAt)
-            SELECT @JobId,p.BusinessId,p.DocumentId,p.DocumentType,p.PayloadHash,
+               SourceVersion,SourcePayloadHash,SourceDocumentProcessingJobId,
+               Status,AttemptCount,CreatedAt)
+            SELECT @JobId,p.BusinessId,p.DocumentId,p.DocumentType,1,p.PayloadHash,j.JobId,
                    N'Pending',0,@CreatedAt
             FROM dbo.DocumentProcessingPayloads p
+            INNER JOIN dbo.DocumentProcessingJobs j
+              ON j.DocumentId=p.DocumentId AND j.DocumentType=p.DocumentType AND j.BusinessId=p.BusinessId
             WHERE p.DocumentId=@DocumentId AND p.DocumentType=@DocumentType
               AND p.BusinessId=@BusinessId
               AND NOT EXISTS
@@ -27,6 +30,7 @@ internal static class SqlSalesReportingJobWriter
                 SELECT 1 FROM reporting.SalesReportingJobs r WITH(UPDLOCK,HOLDLOCK)
                 WHERE r.SourceDocumentId=p.DocumentId
                   AND r.SourceDocumentType=p.DocumentType
+                  AND r.SourceVersion=1
               );
             """, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@JobId", ids.NewId());

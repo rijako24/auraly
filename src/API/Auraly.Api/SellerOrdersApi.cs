@@ -2,6 +2,7 @@ using System.Data;
 using System.Security.Claims;
 using System.Text.Json;
 using Auraly.Application.Inventory;
+using Auraly.Application.Sales;
 using Auraly.Contracts.Inventory;
 using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
@@ -62,7 +63,8 @@ public static class SellerOrdersApi
 
 public sealed record SellerOrderActor(Guid UserId,Guid TenantId,Guid BusinessId,IReadOnlySet<string> Permissions);
 
-public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,SqlInventoryOperationStore inventory)
+public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,SqlInventoryOperationStore inventory,
+    SalesReportingProcessingCoordinator reporting,SqlSellerOrderReportingJobWriter reportingJobs)
 {
     public async Task<SellerOrdersApi.SellerOrderResult> UpdateReviewAsync(SellerOrderActor actor, Guid orderId,
         SellerOrdersApi.UpdateSellerOrderRequest request,CancellationToken token)
@@ -135,7 +137,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
         try
         {
             var replay=await ReplayAsync(connection,transaction,actor.BusinessId,request.IdempotencyKey,token);
-            if(replay is not null){await transaction.CommitAsync(token);return replay;}
+            if(replay is not null){await reportingJobs.EnsureAsync(connection,transaction,actor.TenantId,actor.BusinessId,replay.OrderId,token);await transaction.CommitAsync(token);await reporting.RequestProjectionAsync(actor.BusinessId,replay.OrderId,"SellerOrder",token);return replay;}
             var context=await LoadContextAsync(connection,transaction,actor,request,token);
             var requested=request.Lines.GroupBy(line=>line.ProductId).Select(group=>new SellerOrdersApi.SellerOrderLineInput(group.Key,group.Sum(line=>line.Quantity))).ToArray();
             var lines=new List<OrderLine>();var warnings=new List<string>();var position=0;
@@ -149,14 +151,16 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
             if(warnings.Count>0&&!request.CapturedOffline)throw new SellerOrderConflictException("Inventario insuficiente: "+string.Join(" ",warnings));
             var review=warnings.Count>0;var number=$"PED-{DateTime.UtcNow:yyyyMMdd}-{orderId.ToString("N")[..8].ToUpperInvariant()}";
             var total=lines.Sum(line=>decimal.Round(line.UnitPrice*line.Quantity,2,MidpointRounding.AwayFromZero));
-            var reservationTransferId=DeterministicGuid($"seller-order-transfer:{orderId:N}");var attributes=JsonSerializer.Serialize(new{request.WarehouseId,ordersWarehouseId=context.OrdersWarehouseId,reservationTransferId,request.RouteId,request.RouteStopId,request.PartySiteId,request.CapturedOffline,requiresStockReview=review,createdBy=actor.UserId});
+            var reservationTransferId=DeterministicGuid($"seller-order-transfer:{orderId:N}");
             var persistedLines=lines.Select(line=>{var lineTotal=decimal.Round(line.UnitPrice*line.Quantity,2,MidpointRounding.AwayFromZero);var tax=line.TaxRate<=0?0:decimal.Round(lineTotal*line.TaxRate/(100+line.TaxRate),2,MidpointRounding.AwayFromZero);return new{productId=line.ProductId,code=line.Code,name=line.Name,unitCode=line.UnitCode,quantity=line.Quantity,unitPrice=line.UnitPrice,taxAmount=tax,lineTotal,rawPayloadJson=JsonSerializer.Serialize(new{line.PriceSource,line.Available})};});
             await using(var insert=Procedure("dbo.SellerOrderCreate",connection,transaction))
-            {insert.Parameters.AddRange([P("@OrderId",orderId),P("@BusinessId",request.BusinessId),P("@CustomerId",request.CustomerId),P("@Status",review?5:3),P("@CustomerName",context.Name),P("@Email",context.Email),P("@Phone",context.Phone),P("@Identification",context.Identification),P("@Address",context.Address),P("@Notes",request.Notes),Money("@Total",total),P("@Number",number),P("@ExternalStatus",review?"StockReview":"InventoryTransferPending"),P("@IdempotencyKey",request.IdempotencyKey.Trim()),P("@Attributes",attributes),P("@LinesJson",JsonSerializer.Serialize(persistedLines))]);await insert.ExecuteNonQueryAsync(token);}
+            {insert.Parameters.AddRange([P("@OrderId",orderId),P("@BusinessId",request.BusinessId),P("@CustomerId",request.CustomerId),P("@WarehouseId",request.WarehouseId),P("@OrdersWarehouseId",context.OrdersWarehouseId),P("@ReservationTransferId",reservationTransferId),P("@RouteId",request.RouteId),P("@RouteStopId",request.RouteStopId),P("@PartySiteId",request.PartySiteId),P("@CapturedByUserId",actor.UserId),P("@CapturedOffline",request.CapturedOffline),P("@RequiresStockReview",review),P("@Status",review?5:3),P("@CustomerName",context.Name),P("@Email",context.Email),P("@Phone",context.Phone),P("@Identification",context.Identification),P("@Address",context.Address),P("@Notes",request.Notes),Money("@Total",total),P("@Number",number),P("@ExternalStatus",review?"StockReview":"InventoryTransferPending"),P("@IdempotencyKey",request.IdempotencyKey.Trim()),P("@LinesJson",JsonSerializer.Serialize(persistedLines))]);await insert.ExecuteNonQueryAsync(token);}
             var stockLines=lines.Where(line=>line.ManageStock).Select((line,index)=>new WarehouseTransferLineRequest(index+1,line.ProductId,line.Quantity)).ToArray();
             if(review)
             {
+                await reportingJobs.EnsureAsync(connection,transaction,actor.TenantId,actor.BusinessId,orderId,token);
                 await transaction.CommitAsync(token);
+                await reporting.RequestProjectionAsync(actor.BusinessId,orderId,"SellerOrder",token);
                 return new(orderId,number,"InReview",total,true,warnings);
             }
 
@@ -169,7 +173,9 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
             }
             await using(var confirm=Procedure("dbo.SellerOrderConfirm",connection,transaction))
             {confirm.Parameters.AddRange([P("@ExternalStatus",stockLines.Length>0?"InventoryTransferProcessed":"Confirmed"),P("@OrderId",orderId),P("@BusinessId",request.BusinessId)]);await confirm.ExecuteNonQueryAsync(token);}
+            await reportingJobs.EnsureAsync(connection,transaction,actor.TenantId,actor.BusinessId,orderId,token);
             await transaction.CommitAsync(token);
+            await reporting.RequestProjectionAsync(actor.BusinessId,orderId,"SellerOrder",token);
             return new(orderId,number,"Confirmed",total,false,[]);
         }
         catch{if(transaction.Connection is not null)await transaction.RollbackAsync(token);throw;}

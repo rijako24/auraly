@@ -5,9 +5,122 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
-public sealed class SqlSalesReportingStore(SqlServerConnectionFactory connections)
+public sealed class SqlSalesReportingStore(
+    SqlServerConnectionFactory connections,
+    TimeProvider timeProvider)
     : ISalesReportingStore
 {
+    public async Task<IReadOnlyList<SellerOrderReportRow>> ListSellerOrdersAsync(SalesReportingUserIdentity user,DateOnly from,DateOnly to,CancellationToken ct)
+    {
+        await using var connection=connections.Create();await connection.OpenAsync(ct);
+        await using var command=new SqlCommand("""
+          SELECT SellerId,SellerName,COUNT_BIG(*),COUNT_BIG(DISTINCT CustomerId),SUM(TotalAmount),
+            SUM(CONVERT(bigint,CASE WHEN Status IN(2,3,4) THEN 1 ELSE 0 END)),SUM(CONVERT(bigint,CASE WHEN RequiresStockReview=1 OR Status=5 THEN 1 ELSE 0 END)),
+            SUM(CONVERT(bigint,CASE WHEN InvoiceDocumentId IS NOT NULL THEN 1 ELSE 0 END))
+          FROM reporting.CommercialReportOrderFacts WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND CreatedDate BETWEEN @From AND @To
+          GROUP BY SellerId,SellerName ORDER BY SUM(TotalAmount) DESC,SellerName;
+          """,connection);
+        command.Parameters.AddWithValue("@TenantId",user.TenantId);command.Parameters.AddWithValue("@BusinessId",user.BusinessId);
+        command.Parameters.Add("@From",SqlDbType.Date).Value=from.ToDateTime(TimeOnly.MinValue);command.Parameters.Add("@To",SqlDbType.Date).Value=to.ToDateTime(TimeOnly.MinValue);
+        var rows=new List<SellerOrderReportRow>();await using var reader=await command.ExecuteReaderAsync(ct);
+        while(await reader.ReadAsync(ct))rows.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetInt64(2),reader.GetInt64(3),reader.GetDecimal(4),reader.GetInt64(5),reader.GetInt64(6),reader.GetInt64(7)));
+        return rows;
+    }
+
+    public async Task<CommercialVisitReportPage> ListVisitsAsync(SalesReportingUserIdentity user,
+        DateOnly from,DateOnly to,Guid? sellerId,Guid? routeId,string? status,bool? hasOrder,
+        int page,int pageSize,CancellationToken cancellationToken)
+    {
+        await using var connection=connections.Create();await connection.OpenAsync(cancellationToken);
+        await using var command=new SqlCommand("""
+            SELECT RouteVisitId,VisitDate,OccurredAt,SellerId,SellerName,RouteId,RouteName,ZoneName,
+              CustomerId,CustomerName,Status,HasOrder,OrderId,SkipReason,VisitObservation,
+              COUNT(*) OVER(),SUM(CONVERT(bigint,CASE WHEN Status=N'Visited' THEN 1 ELSE 0 END)) OVER(),
+              SUM(CONVERT(bigint,CASE WHEN HasOrder=1 THEN 1 ELSE 0 END)) OVER()
+            FROM reporting.CommercialReportVisitFacts
+            WHERE TenantId=@TenantId AND BusinessId=@BusinessId AND VisitDate BETWEEN @From AND @To
+              AND (@SellerId IS NULL OR SellerId=@SellerId) AND (@RouteId IS NULL OR RouteId=@RouteId)
+              AND (@Status IS NULL OR Status=@Status) AND (@HasOrder IS NULL OR HasOrder=@HasOrder)
+            ORDER BY VisitDate DESC,OccurredAt DESC,RouteVisitId
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            """,connection);
+        Scope(command,user);Date(command,"@From",from);Date(command,"@To",to);
+        command.Parameters.AddWithValue("@SellerId",(object?)sellerId??DBNull.Value);
+        command.Parameters.AddWithValue("@RouteId",(object?)routeId??DBNull.Value);
+        command.Parameters.AddWithValue("@Status",(object?)status??DBNull.Value);
+        command.Parameters.AddWithValue("@HasOrder",(object?)hasOrder??DBNull.Value);
+        command.Parameters.AddWithValue("@Offset",(page-1)*pageSize);command.Parameters.AddWithValue("@PageSize",pageSize);
+        var rows=new List<CommercialVisitReportRow>();var total=0;long visited=0,ordered=0;
+        await using var reader=await command.ExecuteReaderAsync(cancellationToken);
+        while(await reader.ReadAsync(cancellationToken))
+        {
+            rows.Add(new(reader.GetGuid(0),DateOnly.FromDateTime(reader.GetDateTime(1)),reader.GetDateTimeOffset(2),
+                reader.GetGuid(3),reader.GetString(4),reader.GetGuid(5),reader.GetString(6),reader.IsDBNull(7)?null:reader.GetString(7),
+                reader.GetGuid(8),reader.GetString(9),reader.GetString(10),reader.GetBoolean(11),reader.IsDBNull(12)?null:reader.GetGuid(12),
+                reader.IsDBNull(13)?null:reader.GetString(13),reader.IsDBNull(14)?null:reader.GetString(14)));
+            total=reader.GetInt32(15);visited=reader.GetInt64(16);ordered=reader.GetInt64(17);
+        }
+        return new(rows,page,pageSize,total,visited,ordered,visited==0?0:decimal.Round(ordered*100m/visited,2));
+    }
+
+    public async Task<SalesTodayOverview> GetTodayAsync(
+        SalesReportingUserIdentity user, CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+
+        await using var business = new SqlCommand("""
+            SELECT TimeZone FROM dbo.Businesses
+            WHERE BusinessId=@BusinessId AND TenantId=@TenantId;
+            """, connection);
+        Scope(business, user);
+        var timeZoneId = (string?)await business.ExecuteScalarAsync(cancellationToken)
+            ?? throw new SalesReportingForbiddenException(
+                "The reporting business is outside the authenticated tenant.");
+        TimeZoneInfo timeZone;
+        try
+        {
+            timeZone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
+        }
+        catch (TimeZoneNotFoundException exception)
+        {
+            throw new InvalidOperationException(
+                $"Business time zone '{timeZoneId}' is not available on this host.", exception);
+        }
+
+        var businessDate = DateOnly.FromDateTime(
+            TimeZoneInfo.ConvertTime(timeProvider.GetUtcNow(), timeZone).Date);
+        var totals = await ReadTotalsAsync(
+            connection, user, businessDate, businessDate, cancellationToken);
+
+        await using var detail = new SqlCommand("""
+            SELECT COUNT_BIG(DISTINCT CustomerId),MAX(ProjectedAt)
+            FROM reporting.SalesReportDocuments
+            WHERE TenantId=@TenantId AND BusinessId=@BusinessId
+              AND BusinessLocalDate=@BusinessDate;
+            """, connection);
+        Scope(detail, user);
+        Date(detail, "@BusinessDate", businessDate);
+        long customers;
+        DateTimeOffset? projectedThrough;
+        await using (var reader = await detail.ExecuteReaderAsync(cancellationToken))
+        {
+            await reader.ReadAsync(cancellationToken);
+            customers = reader.GetInt64(0);
+            projectedThrough = reader.IsDBNull(1) ? null : reader.GetDateTimeOffset(1);
+        }
+
+        var averageTicket = totals.DocumentCount == 0
+            ? 0
+            : decimal.Round(totals.NetTotalSales / totals.DocumentCount, 2);
+        var returnBase = totals.NetTotalSales + totals.Returns;
+        var returnRate = returnBase == 0
+            ? 0
+            : decimal.Round(totals.Returns / returnBase * 100m, 2);
+        return new(businessDate, totals, customers, averageTicket, returnRate,
+            projectedThrough);
+    }
+
     public async Task<SalesReportSummary> GetSummaryAsync(
         SalesReportingUserIdentity user, SalesReportFilter filter,
         DateOnly? comparisonFrom, DateOnly? comparisonTo, CancellationToken cancellationToken)
@@ -49,9 +162,9 @@ public sealed class SqlSalesReportingStore(SqlServerConnectionFactory connection
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        if (dimension is SalesReportingDimensions.Customer or SalesReportingDimensions.Seller or
+        if ((dimension is SalesReportingDimensions.Customer or SalesReportingDimensions.Seller or
             SalesReportingDimensions.Supplier or SalesReportingDimensions.Product or
-            SalesReportingDimensions.Category or SalesReportingDimensions.Warehouse &&
+            SalesReportingDimensions.Category or SalesReportingDimensions.Warehouse) &&
             filter.CustomerId is null && filter.SellerId is null && filter.SupplierId is null &&
             filter.ProductId is null && filter.CategoryId is null && filter.WarehouseId is null &&
             filter.DocumentType is null)
@@ -297,6 +410,7 @@ public sealed class SqlSalesReportingStore(SqlServerConnectionFactory connection
             "category" => ("COALESCE(CONVERT(nvarchar(36),f.CategoryId),N'no-category')","COALESCE(f.CategoryName,N'Sin categoría')"),
             "warehouse" => ("CONVERT(nvarchar(36),d.WarehouseId)","d.WarehouseName"),
             "day" => ("CONVERT(nvarchar(10),f.BusinessLocalDate,23)","CONVERT(nvarchar(10),f.BusinessLocalDate,23)"),
+            "hour" => ("RIGHT(N'0'+CONVERT(nvarchar(2),DATEPART(HOUR,f.OccurredAt)),2)+N':00'","RIGHT(N'0'+CONVERT(nvarchar(2),DATEPART(HOUR,f.OccurredAt)),2)+N':00'"),
             "month" => ("CONVERT(nvarchar(7),f.BusinessLocalDate,126)","CONVERT(nvarchar(7),f.BusinessLocalDate,126)"),
             _ => throw new InvalidOperationException("Unsupported line dimension.")
         };

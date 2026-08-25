@@ -137,7 +137,11 @@ CREATE TABLE [dbo].[SalesRouteVisits] (
     CONSTRAINT [FK_SalesRouteVisits_Orders] FOREIGN KEY ([OrderId]) REFERENCES [dbo].[Orders] ([OrderId]),
     CONSTRAINT [FK_SalesRouteVisits_Users] FOREIGN KEY ([RecordedBy]) REFERENCES [dbo].[AppUsers] ([UserId]),
     CONSTRAINT [CK_SalesRouteVisits_Status] CHECK ([Status] IN (N'Visited',N'Skipped')),
-    CONSTRAINT [CK_SalesRouteVisits_Shape] CHECK (([Status]=N'Visited' AND [OrderId] IS NOT NULL AND [SkipReason] IS NULL AND [VisitObservation] IS NULL) OR ([Status]=N'Skipped' AND [OrderId] IS NULL AND [SkipReason] IS NOT NULL)),
+    CONSTRAINT [CK_SalesRouteVisits_Shape] CHECK
+      (([Status]=N'Visited' AND [SkipReason] IS NULL AND
+          (([OrderId] IS NOT NULL AND [VisitObservation] IS NULL) OR
+           ([OrderId] IS NULL AND [VisitObservation] IS NOT NULL))) OR
+       ([Status]=N'Skipped' AND [OrderId] IS NULL AND [SkipReason] IS NOT NULL AND [VisitObservation] IS NOT NULL)),
     CONSTRAINT [UQ_SalesRouteVisits_Stop_Date] UNIQUE ([RouteStopId],[VisitDate]),
     CONSTRAINT [UQ_SalesRouteVisits_Business_Idempotency] UNIQUE ([BusinessId],[IdempotencyKey])
 );

@@ -7,6 +7,16 @@ CREATE TABLE [dbo].[Orders] (
     [CommerceWarehouseCode] NVARCHAR(100) NULL,
     [PaymentTransactionId] UNIQUEIDENTIFIER NULL,
     [CustomerId] UNIQUEIDENTIFIER NULL,
+    [WarehouseId] UNIQUEIDENTIFIER NULL,
+    [OrdersWarehouseId] UNIQUEIDENTIFIER NULL,
+    [ReservationTransferId] UNIQUEIDENTIFIER NULL,
+    [SellerId] UNIQUEIDENTIFIER NULL,
+    [RouteId] UNIQUEIDENTIFIER NULL,
+    [RouteStopId] UNIQUEIDENTIFIER NULL,
+    [PartySiteId] UNIQUEIDENTIFIER NULL,
+    [CapturedByUserId] UNIQUEIDENTIFIER NULL,
+    [CapturedOffline] BIT NOT NULL CONSTRAINT [DF_Orders_CapturedOffline] DEFAULT (0),
+    [RequiresStockReview] BIT NOT NULL CONSTRAINT [DF_Orders_RequiresStockReview] DEFAULT (0),
     [Source] INT NOT NULL DEFAULT 0,
     [FulfillmentMode] INT NOT NULL DEFAULT 0,
     [Status] INT NOT NULL DEFAULT 0,
@@ -49,6 +59,13 @@ CREATE TABLE [dbo].[Orders] (
     CONSTRAINT [FK_Orders_Customers] FOREIGN KEY ([CustomerId])
         REFERENCES [dbo].[Customers] ([CustomerId])
         ON DELETE NO ACTION,
+    CONSTRAINT [FK_Orders_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
+    CONSTRAINT [FK_Orders_OrdersWarehouse] FOREIGN KEY ([OrdersWarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
+    CONSTRAINT [FK_Orders_Seller] FOREIGN KEY ([SellerId]) REFERENCES [dbo].[CommerceSellers] ([SellerId]),
+    CONSTRAINT [FK_Orders_Route] FOREIGN KEY ([RouteId]) REFERENCES [dbo].[SalesRoutes] ([RouteId]),
+    CONSTRAINT [FK_Orders_RouteStop] FOREIGN KEY ([RouteStopId]) REFERENCES [dbo].[SalesRouteStops] ([RouteStopId]),
+    CONSTRAINT [FK_Orders_PartySite] FOREIGN KEY ([PartySiteId]) REFERENCES [dbo].[PartySites] ([PartySiteId]),
+    CONSTRAINT [FK_Orders_CapturedBy] FOREIGN KEY ([CapturedByUserId]) REFERENCES [dbo].[AppUsers] ([UserId]),
     CONSTRAINT [CK_Orders_Source] CHECK ([Source] IN (0, 1, 2)),
     CONSTRAINT [CK_Orders_FulfillmentMode] CHECK ([FulfillmentMode] IN (0, 1)),
     CONSTRAINT [CK_Orders_Status] CHECK ([Status] IN (0, 1, 2, 3, 4, 5, 6, 7, 91))
@@ -61,6 +78,16 @@ GO
 CREATE INDEX [IX_Orders_ConversationId_Status] ON [dbo].[Orders] ([ConversationId], [Status]);
 GO
 CREATE INDEX [IX_Orders_BusinessId_CreatedAt] ON [dbo].[Orders] ([BusinessId], [CreatedAt]);
+GO
+CREATE INDEX [IX_Orders_BusinessId_Seller_CreatedAt]
+    ON [dbo].[Orders] ([BusinessId], [SellerId], [CreatedAt] DESC)
+    INCLUDE ([CustomerId], [RouteId], [Status], [Total])
+    WHERE [SellerId] IS NOT NULL;
+GO
+CREATE INDEX [IX_Orders_BusinessId_Route_CreatedAt]
+    ON [dbo].[Orders] ([BusinessId], [RouteId], [CreatedAt] DESC)
+    INCLUDE ([SellerId], [CustomerId], [RouteStopId], [Status], [Total])
+    WHERE [RouteId] IS NOT NULL;
 GO
 CREATE INDEX [IX_Orders_BusinessId_Status] ON [dbo].[Orders] ([BusinessId], [Status]);
 GO

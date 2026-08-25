@@ -13,7 +13,7 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 const pathLabels: Record<string, string> = {
-  dashboard: "Dashboard",
+  dashboard: "Hoy",
   analytics: "Analítica de ventas",
   services: "Servicios",
   employees: "Empleados",
@@ -48,7 +48,7 @@ export function BreadcrumbNav({ className }: BreadcrumbNavProps) {
       <Breadcrumb className={className}>
         <BreadcrumbList>
           <BreadcrumbItem>
-            <BreadcrumbPage>Dashboard</BreadcrumbPage>
+            <BreadcrumbPage>Hoy</BreadcrumbPage>
           </BreadcrumbItem>
         </BreadcrumbList>
       </Breadcrumb>

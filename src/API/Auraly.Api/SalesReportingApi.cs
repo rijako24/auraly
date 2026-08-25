@@ -10,6 +10,9 @@ public static class SalesReportingApi
     {
         var group=endpoints.MapGroup("/api/commerce/v1/sales-reports")
             .RequireAuthorization("sales-reporting.user");
+        group.MapGet("/today",async(HttpContext context,SalesReportingService service,
+            CancellationToken token)=>await Execute(
+                ()=>service.GetTodayAsync(Identity(context.User),token),Results.Ok));
         group.MapGet("/summary",async(HttpContext context,DateOnly from,DateOnly to,
             DateOnly? comparisonFrom,DateOnly? comparisonTo,Guid? customerId,Guid? sellerId,
             Guid? supplierId,Guid? productId,Guid? categoryId,Guid? warehouseId,string? documentType,
@@ -34,6 +37,14 @@ public static class SalesReportingApi
                 var value=await service.GetDocumentAsync(Identity(context.User),documentId,token);
                 return value is null?Results.NotFound():Results.Ok(value);
             }));
+        group.MapGet("/visits",async(HttpContext context,DateOnly from,DateOnly to,Guid? sellerId,
+            Guid? routeId,string? status,bool? hasOrder,int? page,int? pageSize,
+            SalesReportingService service,CancellationToken token)=>await Execute(
+                ()=>service.ListVisitsAsync(Identity(context.User),from,to,sellerId,routeId,status,
+                    hasOrder,page??1,pageSize??50,token),Results.Ok));
+        group.MapGet("/seller-orders",async(HttpContext context,DateOnly from,DateOnly to,
+            SalesReportingService service,CancellationToken token)=>await Execute(
+                ()=>service.ListSellerOrdersAsync(Identity(context.User),from,to,token),Results.Ok));
         return endpoints;
     }
 

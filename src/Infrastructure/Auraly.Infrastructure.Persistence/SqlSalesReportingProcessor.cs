@@ -1,4 +1,6 @@
 using System.Data;
+using System.Security.Cryptography;
+using System.Text;
 using Auraly.Application.Sales;
 using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
@@ -15,6 +17,7 @@ public sealed class SqlSalesReportingProcessor(
         Guid documentId,
         string documentType,
         Guid businessId,
+        long sourceVersion,
         CancellationToken cancellationToken)
     {
         if (!SalesReportingProcessingPolicy.Supports(documentType)) return;
@@ -28,7 +31,7 @@ public sealed class SqlSalesReportingProcessor(
         {
             var source = await LockSourceAsync(
                 connection, transaction, documentId, documentType, businessId,
-                cancellationToken);
+                sourceVersion,cancellationToken);
             if (source is null)
                 throw new InvalidOperationException(
                     "The completed document has no immutable reporting source.");
@@ -46,12 +49,14 @@ public sealed class SqlSalesReportingProcessor(
                 WHERE SourceDocumentId=@DocumentId
                   AND SourceDocumentType=@DocumentType
                   AND BusinessId=@BusinessId
+                  AND SourceVersion=@SourceVersion
                   AND Status IN(N'Pending',N'Failed');
                 """, connection, transaction))
             {
                 start.Parameters.AddWithValue("@DocumentId", documentId);
                 start.Parameters.AddWithValue("@DocumentType", documentType);
                 start.Parameters.AddWithValue("@BusinessId", businessId);
+                start.Parameters.AddWithValue("@SourceVersion", sourceVersion);
                 start.Parameters.AddWithValue("@StartedAt", startedAt);
                 if (await start.ExecuteNonQueryAsync(cancellationToken) != 1)
                     throw new DBConcurrencyException(
@@ -67,20 +72,26 @@ public sealed class SqlSalesReportingProcessor(
                         session, PosSaleContractSerializer.Deserialize(source.Payload),
                         cancellationToken);
                 else
-                    await projectionWriter.ProjectReturnAsync(
-                        session, SalesReturnContractSerializer.Deserialize(source.Payload),
-                        cancellationToken);
+                if (documentType == "SalesReturn")
+                    await projectionWriter.ProjectReturnAsync(session,
+                        SalesReturnContractSerializer.Deserialize(source.Payload),cancellationToken);
+                else if(documentType=="RouteVisit")
+                    await projectionWriter.ProjectVisitAsync(session,source.Payload,sourceVersion,cancellationToken);
+                else
+                    await projectionWriter.ProjectOrderAsync(session,source.Payload,cancellationToken);
 
                 await using var complete = new SqlCommand("""
                     UPDATE reporting.SalesReportingJobs
                     SET Status=N'Projected',CompletedAt=SYSDATETIMEOFFSET(),LastError=NULL
                     WHERE SourceDocumentId=@DocumentId
                       AND SourceDocumentType=@DocumentType
-                      AND BusinessId=@BusinessId AND Status=N'Processing';
+                      AND BusinessId=@BusinessId AND Status=N'Processing'
+                      AND SourceVersion=@SourceVersion;
                     """, connection, transaction);
                 complete.Parameters.AddWithValue("@DocumentId", documentId);
                 complete.Parameters.AddWithValue("@DocumentType", documentType);
                 complete.Parameters.AddWithValue("@BusinessId", businessId);
+                complete.Parameters.AddWithValue("@SourceVersion", sourceVersion);
                 if (await complete.ExecuteNonQueryAsync(cancellationToken) != 1)
                     throw new DBConcurrencyException(
                         "The sales reporting job could not be completed.");
@@ -93,11 +104,13 @@ public sealed class SqlSalesReportingProcessor(
                     SET Status=N'Failed',CompletedAt=SYSDATETIMEOFFSET(),LastError=@Error
                     WHERE SourceDocumentId=@DocumentId
                       AND SourceDocumentType=@DocumentType
-                      AND BusinessId=@BusinessId AND Status=N'Processing';
+                      AND BusinessId=@BusinessId AND Status=N'Processing'
+                      AND SourceVersion=@SourceVersion;
                     """, connection, transaction);
                 fail.Parameters.AddWithValue("@DocumentId", documentId);
                 fail.Parameters.AddWithValue("@DocumentType", documentType);
                 fail.Parameters.AddWithValue("@BusinessId", businessId);
+                fail.Parameters.AddWithValue("@SourceVersion", sourceVersion);
                 fail.Parameters.AddWithValue(
                     "@Error", error.Message.Length <= 2000
                         ? error.Message : error.Message[..2000]);
@@ -121,33 +134,37 @@ public sealed class SqlSalesReportingProcessor(
     private static async Task<ReportingSource?> LockSourceAsync(
         SqlConnection connection, SqlTransaction transaction,
         Guid documentId, string documentType, Guid businessId,
+        long sourceVersion,
         CancellationToken cancellationToken)
     {
         const string sql = """
-            SELECT p.PayloadJson,r.Status
+            SELECT COALESCE(r.SourcePayloadJson,p.PayloadJson),r.Status,r.SourcePayloadHash
             FROM reporting.SalesReportingJobs r WITH(UPDLOCK,HOLDLOCK)
-            INNER JOIN dbo.DocumentProcessingPayloads p
+            LEFT JOIN dbo.DocumentProcessingPayloads p
               ON p.DocumentId=r.SourceDocumentId
              AND p.DocumentType=r.SourceDocumentType
              AND p.BusinessId=r.BusinessId
              AND p.PayloadHash=r.SourcePayloadHash
-            INNER JOIN dbo.DocumentProcessingJobs j
-              ON j.DocumentId=p.DocumentId
-             AND j.DocumentType=p.DocumentType
-             AND j.BusinessId=p.BusinessId
-            WHERE p.DocumentId=@DocumentId
-              AND p.DocumentType=@DocumentType
-              AND p.BusinessId=@BusinessId
-              AND j.Status=N'Completed';
+            LEFT JOIN dbo.DocumentProcessingJobs j
+              ON j.JobId=r.SourceDocumentProcessingJobId
+            WHERE r.SourceDocumentId=@DocumentId
+              AND r.SourceDocumentType=@DocumentType
+              AND r.BusinessId=@BusinessId AND r.SourceVersion=@SourceVersion
+              AND ((r.SourceDocumentProcessingJobId IS NULL AND r.SourcePayloadJson IS NOT NULL)
+                OR j.Status=N'Completed');
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@DocumentId", documentId);
         command.Parameters.AddWithValue("@DocumentType", documentType);
         command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@SourceVersion", sourceVersion);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        return await reader.ReadAsync(cancellationToken)
-            ? new ReportingSource(reader.GetString(0), reader.GetString(1))
-            : null;
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        var payload=reader.GetString(0);var expected=(byte[])reader[2];
+        var actual=SHA256.HashData(Encoding.UTF8.GetBytes(payload));
+        if (!CryptographicOperations.FixedTimeEquals(expected,actual))
+            throw new InvalidOperationException("The immutable reporting source hash is invalid.");
+        return new ReportingSource(payload,reader.GetString(1));
     }
 
     private sealed record ReportingSource(string Payload, string Status);

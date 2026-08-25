@@ -184,11 +184,10 @@ public sealed class RouteService(
         var reason = request.SkipReason?.Trim();
         var observation = request.VisitObservation?.Trim();
         if (request.Status == "Skipped" && string.IsNullOrWhiteSpace(reason)) throw new RouteValidationException("Debes indicar el motivo cuando se omite un cliente.");
-        if (request.Status == "Visited" && request.OrderId is null) throw new RouteValidationException("Una visita completada requiere el pedido correspondiente.");
         if (reason?.Length > 300) throw new RouteValidationException("El motivo no puede superar 300 caracteres.");
-        if (request.Status == "Skipped" && string.IsNullOrWhiteSpace(observation)) throw new RouteValidationException("Debes escribir una observación cuando la visita termina sin pedido.");
+        if (request.OrderId is null && string.IsNullOrWhiteSpace(observation)) throw new RouteValidationException("Debes escribir una observación cuando la visita termina sin pedido.");
         if (observation?.Length > 1000) throw new RouteValidationException("La observación de la visita no puede superar 1.000 caracteres.");
-        if (request.Status == "Visited" && observation is not null) throw new RouteValidationException("La observación de visita solo aplica cuando la visita termina sin pedido.");
+        if (request.Status == "Visited" && request.OrderId is not null && observation is not null) throw new RouteValidationException("La observación solo aplica cuando la visita termina sin pedido.");
         if (string.IsNullOrWhiteSpace(request.IdempotencyKey) || request.IdempotencyKey.Trim().Length > 128) throw new RouteValidationException("La identificación de la operación es obligatoria.");
         return store.RecordVisitAsync(actor, routeId, request with { IdempotencyKey=request.IdempotencyKey.Trim() }, reason, observation, ct);
     }

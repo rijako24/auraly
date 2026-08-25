@@ -4,6 +4,8 @@ namespace Auraly.Application.Sales;
 
 public interface ISalesReportingStore
 {
+    Task<SalesTodayOverview> GetTodayAsync(SalesReportingUserIdentity user,
+        CancellationToken cancellationToken);
     Task<SalesReportSummary> GetSummaryAsync(SalesReportingUserIdentity user,
         SalesReportFilter filter, DateOnly? comparisonFrom, DateOnly? comparisonTo,
         CancellationToken cancellationToken);
@@ -15,10 +17,22 @@ public interface ISalesReportingStore
         CancellationToken cancellationToken);
     Task<SalesReportDocumentDetail?> GetDocumentAsync(SalesReportingUserIdentity user,
         Guid documentId, CancellationToken cancellationToken);
+    Task<CommercialVisitReportPage> ListVisitsAsync(SalesReportingUserIdentity user,
+        DateOnly from,DateOnly to,Guid? sellerId,Guid? routeId,string? status,bool? hasOrder,
+        int page,int pageSize,CancellationToken cancellationToken);
+    Task<IReadOnlyList<SellerOrderReportRow>> ListSellerOrdersAsync(SalesReportingUserIdentity user,
+        DateOnly from,DateOnly to,CancellationToken cancellationToken);
 }
 
 public sealed class SalesReportingService(ISalesReportingStore store)
 {
+    public Task<SalesTodayOverview> GetTodayAsync(SalesReportingUserIdentity user,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user);
+        return store.GetTodayAsync(user, cancellationToken);
+    }
+
     public Task<SalesReportSummary> GetSummaryAsync(SalesReportingUserIdentity user,
         SalesReportFilter filter, DateOnly? comparisonFrom, DateOnly? comparisonTo,
         CancellationToken cancellationToken = default)
@@ -62,6 +76,22 @@ public sealed class SalesReportingService(ISalesReportingStore store)
             throw new SalesReportingValidationException("DocumentId is required.");
         return store.GetDocumentAsync(user, documentId, cancellationToken);
     }
+
+    public Task<CommercialVisitReportPage> ListVisitsAsync(SalesReportingUserIdentity user,
+        DateOnly from,DateOnly to,Guid? sellerId,Guid? routeId,string? status,bool? hasOrder,
+        int page,int pageSize,CancellationToken cancellationToken=default)
+    {
+        Demand(user);
+        if(from==default||to<from||to.DayNumber-from.DayNumber>366||page<1||pageSize is <1 or >200)
+            throw new SalesReportingValidationException("The visit report range or pagination is invalid.");
+        if(status is not null && status is not ("Visited" or "Skipped"))
+            throw new SalesReportingValidationException("The visit status is invalid.");
+        return store.ListVisitsAsync(user,from,to,sellerId,routeId,status,hasOrder,page,pageSize,cancellationToken);
+    }
+
+    public Task<IReadOnlyList<SellerOrderReportRow>> ListSellerOrdersAsync(SalesReportingUserIdentity user,
+        DateOnly from,DateOnly to,CancellationToken cancellationToken=default)
+    {Demand(user);if(from==default||to<from||to.DayNumber-from.DayNumber>1827)throw new SalesReportingValidationException("The order report range is invalid.");return store.ListSellerOrdersAsync(user,from,to,cancellationToken);}
 
     private static void Demand(SalesReportingUserIdentity user)
     {

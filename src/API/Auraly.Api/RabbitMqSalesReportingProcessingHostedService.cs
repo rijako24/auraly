@@ -54,7 +54,7 @@ public sealed class RabbitMqSalesReportingProcessingHostedService(
                         .GetRequiredService<SqlSalesReportingProcessor>();
                     await processor.ProcessAsync(
                         signal.DocumentId, signal.DocumentType,
-                        signal.BusinessId, args.CancellationToken);
+                        signal.BusinessId,signal.SourceVersion,args.CancellationToken);
                     await channel.BasicAckAsync(
                         args.DeliveryTag, false, args.CancellationToken);
                     return;

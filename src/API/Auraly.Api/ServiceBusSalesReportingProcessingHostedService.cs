@@ -92,6 +92,7 @@ public sealed class SalesReportingProcessingHostedService(
             var worker = scope.ServiceProvider.GetRequiredService<SqlSalesReportingProcessor>();
             await worker.ProcessAsync(
                 signal.DocumentId, signal.DocumentType, signal.BusinessId,
+                signal.SourceVersion,
                 args.CancellationToken);
             await args.CompleteMessageAsync(args.Message, args.CancellationToken);
         }
@@ -133,7 +134,7 @@ internal static class SalesReportingProcessingSignalCodec
     {
         ArgumentNullException.ThrowIfNull(signal);
         if (signal.SignalId == Guid.Empty || signal.BusinessId == Guid.Empty ||
-            signal.DocumentId == Guid.Empty ||
+            signal.DocumentId == Guid.Empty || signal.SourceVersion<=0 ||
             !SalesReportingProcessingPolicy.Supports(signal.DocumentType))
             throw new InvalidOperationException(
                 "The sales-reporting signal has invalid identifiers or document type.");

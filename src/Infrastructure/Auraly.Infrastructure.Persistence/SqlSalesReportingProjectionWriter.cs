@@ -1,4 +1,5 @@
 using System.Data;
+using System.Text.Json;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
@@ -19,7 +20,69 @@ public sealed class SqlSalesReportingProjectionWriter(
     IAuralyIdGenerator ids,
     TimeProvider timeProvider)
 {
-    private const short ProjectionVersion = 1;
+    private const short ProjectionVersion = 2;
+
+    public async Task ProjectOrderAsync(SalesReportingSqlSession session,string payload,CancellationToken ct)
+    {
+        var v=JsonSerializer.Deserialize<CommercialOrderProjectionSource>(payload,new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            ?? throw new InvalidOperationException("The seller order reporting source is invalid.");
+        await using var c=new SqlCommand("""
+          INSERT reporting.CommercialReportOrderFacts(OrderId,TenantId,BusinessId,CreatedDate,CreatedAt,OrderNumber,
+            SellerId,SellerName,CustomerId,CustomerName,RouteId,TotalAmount,Status,RequiresStockReview,ProjectionVersion,ProjectedAt)
+          VALUES(@Id,@Tenant,@Business,@Date,@At,@Number,@Seller,@SellerName,@Customer,@CustomerName,@Route,@Total,@Status,@Review,@Version,SYSDATETIMEOFFSET());
+          """,session.Connection,session.Transaction);
+        c.Parameters.AddWithValue("@Id",v.OrderId);c.Parameters.AddWithValue("@Tenant",v.TenantId);c.Parameters.AddWithValue("@Business",v.BusinessId);
+        c.Parameters.Add("@Date",SqlDbType.Date).Value=v.CreatedDate.ToDateTime(TimeOnly.MinValue);c.Parameters.AddWithValue("@At",v.CreatedAt);
+        c.Parameters.AddWithValue("@Number",v.OrderNumber);c.Parameters.AddWithValue("@Seller",v.SellerId);c.Parameters.AddWithValue("@SellerName",v.SellerName);
+        c.Parameters.AddWithValue("@Customer",v.CustomerId);c.Parameters.AddWithValue("@CustomerName",v.CustomerName);c.Parameters.AddWithValue("@Route",(object?)v.RouteId??DBNull.Value);
+        AddDecimal(c,"@Total",v.TotalAmount,19,4);c.Parameters.AddWithValue("@Status",v.Status);c.Parameters.AddWithValue("@Review",v.RequiresStockReview);
+        c.Parameters.AddWithValue("@Version",ProjectionVersion);await c.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task ProjectVisitAsync(SalesReportingSqlSession session,string payload,
+        long sourceVersion,CancellationToken cancellationToken)
+    {
+        var value=JsonSerializer.Deserialize<CommercialVisitProjectionSource>(payload,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            ?? throw new InvalidOperationException("The commercial visit reporting source is invalid.");
+        await using var command=new SqlCommand("""
+            INSERT reporting.CommercialReportVisitFacts
+              (RouteVisitId,TenantId,BusinessId,VisitDate,OccurredAt,RouteId,RouteCode,RouteName,
+               ZoneId,ZoneName,SellerId,SellerName,RouteStopId,CustomerId,CustomerName,PartySiteId,
+               Status,HasOrder,OrderId,SkipReason,VisitObservation,RecordedByUserId,
+               ProjectionVersion,SourceVersion,ProjectedAt)
+            VALUES(@VisitId,@TenantId,@BusinessId,@VisitDate,@OccurredAt,@RouteId,@RouteCode,@RouteName,
+               @ZoneId,@ZoneName,@SellerId,@SellerName,@StopId,@CustomerId,@CustomerName,@SiteId,
+               @Status,@HasOrder,@OrderId,@Reason,@Observation,@RecordedBy,@ProjectionVersion,@SourceVersion,@Now);
+            """,session.Connection,session.Transaction);
+        command.Parameters.AddWithValue("@VisitId",value.RouteVisitId);
+        command.Parameters.AddWithValue("@TenantId",value.TenantId);
+        command.Parameters.AddWithValue("@BusinessId",value.BusinessId);
+        command.Parameters.Add("@VisitDate",SqlDbType.Date).Value=value.VisitDate.ToDateTime(TimeOnly.MinValue);
+        command.Parameters.AddWithValue("@OccurredAt",value.OccurredAt);
+        command.Parameters.AddWithValue("@RouteId",value.RouteId);
+        command.Parameters.AddWithValue("@RouteCode",value.RouteCode);
+        command.Parameters.AddWithValue("@RouteName",value.RouteName);
+        command.Parameters.AddWithValue("@ZoneId",(object?)value.ZoneId??DBNull.Value);
+        command.Parameters.AddWithValue("@ZoneName",(object?)value.ZoneName??DBNull.Value);
+        command.Parameters.AddWithValue("@SellerId",value.SellerId);
+        command.Parameters.AddWithValue("@SellerName",value.SellerName);
+        command.Parameters.AddWithValue("@StopId",value.RouteStopId);
+        command.Parameters.AddWithValue("@CustomerId",value.CustomerId);
+        command.Parameters.AddWithValue("@CustomerName",value.CustomerName);
+        command.Parameters.AddWithValue("@SiteId",value.PartySiteId);
+        command.Parameters.AddWithValue("@Status",value.Status);
+        command.Parameters.AddWithValue("@HasOrder",value.OrderId.HasValue);
+        command.Parameters.AddWithValue("@OrderId",(object?)value.OrderId??DBNull.Value);
+        command.Parameters.AddWithValue("@Reason",(object?)value.SkipReason??DBNull.Value);
+        command.Parameters.AddWithValue("@Observation",(object?)value.VisitObservation??DBNull.Value);
+        command.Parameters.AddWithValue("@RecordedBy",value.RecordedByUserId);
+        command.Parameters.AddWithValue("@ProjectionVersion",ProjectionVersion);
+        command.Parameters.AddWithValue("@SourceVersion",sourceVersion);
+        command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());
+        if(await command.ExecuteNonQueryAsync(cancellationToken)!=1)
+            throw new InvalidOperationException("The commercial visit could not be projected.");
+    }
 
     public async Task ProjectSaleAsync(
         SalesReportingSqlSession session,
@@ -30,6 +93,7 @@ public sealed class SqlSalesReportingProjectionWriter(
             session, value.BusinessId, value.CommercialSnapshot.IssuedAt, cancellationToken);
         var now = timeProvider.GetUtcNow();
         var recognizedCost = 0m;
+        var seller = await ResolveSellerAttributionAsync(session, value, cancellationToken);
 
         foreach (var line in value.Lines.OrderBy(line => line.LineNumber))
         {
@@ -40,11 +104,15 @@ public sealed class SqlSalesReportingProjectionWriter(
                     line.LineNumber, cancellationToken);
             recognizedCost += lineCost;
             await InsertSaleLineFactAsync(
-                session, value, line, lineCost, localDate.Date, now, cancellationToken);
+                session, value, line, seller.SellerId, lineCost, localDate.Date, now,
+                cancellationToken);
         }
 
         await InsertSaleDocumentAsync(
-            session, value, localDate, recognizedCost, now, cancellationToken);
+            session, value, seller, localDate, recognizedCost, now, cancellationToken);
+        if(value.SourceOrderId is not null)
+            await MarkOrderInvoicedAsync(session,value.SourceOrderId.Value,value.DocumentId,
+                value.CommercialSnapshot.IssuedAt,cancellationToken);
         await InsertSalePaymentFactsAsync(session, value, localDate.Date, now, cancellationToken);
         await InsertSaleTaxFactsAsync(session, value, localDate.Date, now, cancellationToken);
         await ApplyDimensionDeltasAsync(session, value.BusinessId, value.DocumentId,
@@ -152,6 +220,45 @@ public sealed class SqlSalesReportingProjectionWriter(
         return (DateOnly.FromDateTime(local.Date), timeZoneId);
     }
 
+    private static async Task MarkOrderInvoicedAsync(SalesReportingSqlSession session,Guid orderId,
+        Guid documentId,DateTimeOffset invoicedAt,CancellationToken ct)
+    {await using var command=new SqlCommand("""
+       UPDATE reporting.CommercialReportOrderFacts SET InvoiceDocumentId=@DocumentId,InvoicedAt=@InvoicedAt,ProjectedAt=SYSDATETIMEOFFSET()
+       WHERE OrderId=@OrderId AND (InvoiceDocumentId IS NULL OR InvoiceDocumentId=@DocumentId);
+       """,session.Connection,session.Transaction);command.Parameters.AddWithValue("@OrderId",orderId);
+       command.Parameters.AddWithValue("@DocumentId",documentId);command.Parameters.AddWithValue("@InvoicedAt",invoicedAt);
+       await command.ExecuteNonQueryAsync(ct);}
+
+    private static async Task<SellerAttribution> ResolveSellerAttributionAsync(
+        SalesReportingSqlSession session,
+        PosSaleUploadRequest value,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT TOP(1) seller.SellerId,
+              COALESCE(NULLIF(party.DisplayName,N''),NULLIF(party.LegalName,N''),
+                       NULLIF(CONCAT(party.FirstName,N' ',party.LastName),N' '),seller.Code)
+            FROM dbo.CommerceSellers seller
+            INNER JOIN dbo.Parties party ON party.PartyId=seller.PartyId
+            LEFT JOIN dbo.AppUsers app ON app.PartyId=seller.PartyId
+            LEFT JOIN dbo.Orders sourceOrder
+              ON sourceOrder.OrderId=@SourceOrderId AND sourceOrder.BusinessId=@BusinessId
+            WHERE seller.BusinessId=@BusinessId
+              AND ((@SourceOrderId IS NOT NULL AND seller.SellerId=sourceOrder.SellerId)
+                OR (@SourceOrderId IS NULL AND app.UserId=@SoldByUserId))
+            ORDER BY CASE WHEN sourceOrder.SellerId=seller.SellerId THEN 0 ELSE 1 END,seller.SellerId;
+            """;
+        await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
+        command.Parameters.AddWithValue("@BusinessId", value.BusinessId);
+        command.Parameters.AddWithValue("@SourceOrderId", (object?)value.SourceOrderId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@SoldByUserId", value.SoldByUserId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (await reader.ReadAsync(cancellationToken))
+            return new SellerAttribution(reader.GetGuid(0), reader.GetString(1));
+
+        return new SellerAttribution(null, "Sin vendedor");
+    }
+
     private static async Task<decimal> ReadSaleLineCostAsync(
         SalesReportingSqlSession session,
         Guid documentId,
@@ -160,10 +267,16 @@ public sealed class SqlSalesReportingProjectionWriter(
         CancellationToken cancellationToken)
     {
         const string sql = """
-            SELECT COALESCE(ABS(ValueChange),0)
-            FROM dbo.InventoryMovements
-            WHERE DocumentId=@DocumentId AND DocumentType=@DocumentType
-              AND LineNumber=@LineNumber AND MovementType=N'Sale';
+            SELECT CASE WHEN line.AttributionSnapshotVersion>0
+                        THEN COALESCE(line.UnitCostSnapshot*line.Quantity,0)
+                        ELSE COALESCE(ABS(movement.ValueChange),0) END
+            FROM dbo.SalesDocumentLines line
+            LEFT JOIN dbo.InventoryMovements movement
+              ON movement.DocumentId=line.DocumentId
+             AND movement.DocumentType=@DocumentType
+             AND movement.LineNumber=line.LineNumber
+             AND movement.MovementType=N'Sale'
+            WHERE line.DocumentId=@DocumentId AND line.LineNumber=@LineNumber;
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@DocumentId", documentId);
@@ -173,9 +286,12 @@ public sealed class SqlSalesReportingProjectionWriter(
         return result is null or DBNull ? 0m : Convert.ToDecimal(result);
     }
 
+    private sealed record SellerAttribution(Guid? SellerId, string SellerName);
+
     private async Task InsertSaleDocumentAsync(
         SalesReportingSqlSession session,
         PosSaleUploadRequest value,
+        SellerAttribution seller,
         (DateOnly Date, string TimeZoneId) localDate,
         decimal recognizedCost,
         DateTimeOffset now,
@@ -192,8 +308,7 @@ public sealed class SqlSalesReportingProjectionWriter(
               SourcePayloadHash,ProjectedAt
             )
             SELECT d.DocumentId,@TenantId,d.BusinessId,d.DocumentType,d.DocumentNumber,d.FiscalNumber,
-                   d.IssuedAt,@LocalDate,@TimeZoneId,d.WarehouseId,w.Name,d.WorkSessionId,d.SoldByUserId,
-                   COALESCE(NULLIF(CONCAT(u.FirstName,N' ',u.LastName),N' '),u.Username,N'Sin vendedor'),
+                   d.IssuedAt,@LocalDate,@TimeZoneId,d.WarehouseId,w.Name,d.WorkSessionId,@SellerId,@SellerName,
                    d.CustomerId,d.CustomerIdentification,
                    COALESCE(NULLIF(p.DisplayName,N''),NULLIF(p.LegalName,N''),
                             NULLIF(CONCAT(p.FirstName,N' ',p.LastName),N' '),N'Consumidor final'),
@@ -202,7 +317,6 @@ public sealed class SqlSalesReportingProjectionWriter(
                    d.PayloadHash,@ProjectedAt
             FROM dbo.SalesDocuments d
             INNER JOIN dbo.Warehouses w ON w.WarehouseId=d.WarehouseId
-            LEFT JOIN dbo.AppUsers u ON u.UserId=d.SoldByUserId
             LEFT JOIN dbo.Customers c ON c.CustomerId=d.CustomerId
             LEFT JOIN dbo.Parties p ON p.PartyId=c.PartyId
             WHERE d.DocumentId=@DocumentId AND d.BusinessId=@BusinessId;
@@ -214,6 +328,8 @@ public sealed class SqlSalesReportingProjectionWriter(
         command.Parameters.AddWithValue("@LocalDate", localDate.Date.ToDateTime(TimeOnly.MinValue));
         command.Parameters.AddWithValue("@TimeZoneId", localDate.TimeZoneId);
         command.Parameters.AddWithValue("@Currency", value.UblSnapshot?.CurrencyCode ?? "COP");
+        command.Parameters.AddWithValue("@SellerId", (object?)seller.SellerId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@SellerName", seller.SellerName);
         AddDecimal(command, "@Gross", value.CommercialSnapshot.UntaxedAmount + value.Lines.Sum(x => x.DiscountAmount), 19, 4);
         AddDecimal(command, "@Discount", value.Lines.Sum(x => x.DiscountAmount), 19, 4);
         AddDecimal(command, "@Collected", value.Payments.Sum(x => x.Amount), 19, 4);
@@ -228,6 +344,7 @@ public sealed class SqlSalesReportingProjectionWriter(
         SalesReportingSqlSession session,
         PosSaleUploadRequest value,
         PosSaleLineContract line,
+        Guid? sellerId,
         decimal cost,
         DateOnly localDate,
         DateTimeOffset now,
@@ -245,21 +362,35 @@ public sealed class SqlSalesReportingProjectionWriter(
             SELECT @FactId,@TenantId,@BusinessId,@DocumentId,@DocumentType,@LineNumber,
                    @DocumentId,@LineNumber,N'Sale',@OccurredAt,@LocalDate,@WarehouseId,
                    @WorkSessionId,@SellerId,@CustomerId,p.ProductId,
-                   COALESCE(p.ProductCode,p.Sku,p.Reference,N''),@ProductName,p.ProductCategoryId,
-                   COALESCE(pc.Name,p.CategoryName),supplier.SupplierId,supplier.Name,
+                   CASE WHEN sourceLine.AttributionSnapshotVersion>0
+                        THEN COALESCE(sourceLine.ProductCodeSnapshot,N'')
+                        ELSE COALESCE(p.ProductCode,p.Sku,p.Reference,N'') END,
+                   CASE WHEN sourceLine.AttributionSnapshotVersion>0
+                        THEN COALESCE(sourceLine.ProductNameSnapshot,sourceLine.Description)
+                        ELSE p.Name END,
+                   CASE WHEN sourceLine.AttributionSnapshotVersion>0
+                        THEN sourceLine.CategoryIdSnapshot ELSE p.ProductCategoryId END,
+                   CASE WHEN sourceLine.AttributionSnapshotVersion>0
+                        THEN sourceLine.CategoryNameSnapshot ELSE COALESCE(pc.Name,p.CategoryName) END,
+                   CASE WHEN sourceLine.AttributionSnapshotVersion>0
+                        THEN sourceLine.SupplierIdSnapshot ELSE supplier.SupplierId END,
+                   CASE WHEN sourceLine.AttributionSnapshotVersion>0
+                        THEN sourceLine.SupplierNameSnapshot ELSE supplier.Name END,
                    @Quantity,@Gross,@Discount,@Untaxed,@Tax,
                    @Total,@Cost,@Version,@ProjectedAt
-            FROM dbo.Products p
+            FROM dbo.SalesDocumentLines sourceLine
+            INNER JOIN dbo.Products p ON p.ProductId=sourceLine.ProductId
             LEFT JOIN dbo.ProductCategories pc ON pc.ProductCategoryId=p.ProductCategoryId
             OUTER APPLY(SELECT TOP(1) s.SupplierId,s.Name FROM dbo.SupplierProducts sp
               INNER JOIN dbo.Suppliers s ON s.SupplierId=sp.SupplierId AND s.BusinessId=p.BusinessId
               WHERE sp.ProductId=p.ProductId AND sp.BusinessId=p.BusinessId AND sp.IsActive=1 AND s.IsActive=1
               ORDER BY sp.IsPrimary DESC,sp.CreatedAt,sp.SupplierProductId) supplier
-            WHERE p.ProductId=@ProductId AND p.BusinessId=@BusinessId;
+            WHERE sourceLine.DocumentId=@DocumentId AND sourceLine.LineNumber=@LineNumber
+              AND p.ProductId=@ProductId AND p.BusinessId=@BusinessId;
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@FactId", ids.NewId());
-        AddSaleFactParameters(command, value, line, localDate, now);
+        AddSaleFactParameters(command, value, line, sellerId, localDate, now);
         AddDecimal(command, "@Cost", cost, 19, 4);
         command.Parameters.AddWithValue("@Version", ProjectionVersion);
         if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
@@ -268,7 +399,7 @@ public sealed class SqlSalesReportingProjectionWriter(
 
     private static void AddSaleFactParameters(
         SqlCommand command, PosSaleUploadRequest value, PosSaleLineContract line,
-        DateOnly localDate, DateTimeOffset now)
+        Guid? sellerId, DateOnly localDate, DateTimeOffset now)
     {
         command.Parameters.AddWithValue("@TenantId", value.TenantId);
         command.Parameters.AddWithValue("@BusinessId", value.BusinessId);
@@ -279,7 +410,7 @@ public sealed class SqlSalesReportingProjectionWriter(
         command.Parameters.AddWithValue("@LocalDate", localDate.ToDateTime(TimeOnly.MinValue));
         command.Parameters.AddWithValue("@WarehouseId", value.WarehouseId);
         command.Parameters.AddWithValue("@WorkSessionId", value.WorkSessionId);
-        command.Parameters.AddWithValue("@SellerId", value.SoldByUserId);
+        command.Parameters.AddWithValue("@SellerId", (object?)sellerId ?? DBNull.Value);
         command.Parameters.AddWithValue("@CustomerId", (object?)value.CustomerId ?? DBNull.Value);
         command.Parameters.AddWithValue("@ProductId", line.ProductId);
         command.Parameters.AddWithValue("@ProductName", line.Description);

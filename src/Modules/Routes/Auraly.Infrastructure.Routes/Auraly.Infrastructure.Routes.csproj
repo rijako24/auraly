@@ -11,6 +11,8 @@
     <ProjectReference Include="..\Auraly.Contracts.Routes\Auraly.Contracts.Routes.csproj" />
     <ProjectReference Include="..\Auraly.Domain.Routes\Auraly.Domain.Routes.csproj" />
     <ProjectReference Include="..\Auraly.Application.Routes\Auraly.Application.Routes.csproj" />
+    <ProjectReference Include="..\..\Sales\Auraly.Application.Sales\Auraly.Application.Sales.csproj" />
+    <ProjectReference Include="..\..\Sales\Auraly.Contracts.Sales\Auraly.Contracts.Sales.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
   </ItemGroup>
 </Project>

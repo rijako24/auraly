@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Sales;
+using Auraly.Infrastructure.Persistence;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -14,6 +16,27 @@ public sealed class SalesReportingSliceCollection : ICollectionFixture<ServerSli
 [Trait("EngineCertification", "Reporting")]
 public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Seller_order_is_projected_and_aggregated_by_seller()
+    {
+        var orderId=Guid.NewGuid();var sellerId=Guid.NewGuid();var customerId=Guid.NewGuid();
+        var source=new CommercialOrderProjectionSource(fixture.TenantId,fixture.BusinessId,orderId,
+            new DateOnly(2026,7,27),new DateTimeOffset(2026,7,27,14,0,0,TimeSpan.Zero),"PED-REPORT-1",
+            sellerId,"Vendedor proyectado",customerId,"Cliente proyectado",null,125000m,2,false);
+        var payload=System.Text.Json.JsonSerializer.Serialize(source,new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        var hash=System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(payload));
+        await using(var connection=new Microsoft.Data.SqlClient.SqlConnection(fixture.ConnectionString))
+        {await connection.OpenAsync();await using var command=connection.CreateCommand();command.CommandText="""
+          INSERT reporting.SalesReportingJobs(SalesReportingJobId,BusinessId,SourceDocumentId,SourceDocumentType,SourceVersion,SourcePayloadHash,SourcePayloadJson,Status,AttemptCount,CreatedAt)
+          VALUES(NEWID(),@BusinessId,@OrderId,N'SellerOrder',1,@Hash,@Payload,N'Pending',0,SYSDATETIMEOFFSET());
+          """;command.Parameters.AddWithValue("@BusinessId",fixture.BusinessId);command.Parameters.AddWithValue("@OrderId",orderId);
+          command.Parameters.Add("@Hash",System.Data.SqlDbType.Binary,32).Value=hash;command.Parameters.AddWithValue("@Payload",payload);await command.ExecuteNonQueryAsync();}
+        await fixture.Services.GetRequiredService<SqlSalesReportingProcessor>().ProcessAsync(orderId,"SellerOrder",fixture.BusinessId,1,CancellationToken.None);
+        using var client=fixture.CreateAdminClient(SalesReportingPermissionCodes.Read);
+        var rows=await client.GetFromJsonAsync<SellerOrderReportRow[]>("/api/commerce/v1/sales-reports/seller-orders?from=2026-07-27&to=2026-07-27");
+        var row=Assert.Single(rows??[],x=>x.SellerId==sellerId);Assert.Equal(1,row.OrderCount);Assert.Equal(125000m,row.OrderAmount);Assert.Equal(1,row.ConfirmedCount);Assert.Equal(0,row.InvoicedCount);
+    }
+
     [Fact]
     public async Task Confirmed_sale_is_projected_and_reported_without_operational_joins()
     {
@@ -37,6 +60,17 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
                 """;
             command.Parameters.AddWithValue("@DocumentId", sale.DocumentId);
             Assert.Equal(1L, Convert.ToInt64(await command.ExecuteScalarAsync()));
+
+            command.CommandText = """
+                SELECT AttributionSnapshotVersion,SupplierIdSnapshot,UnitCostSnapshot
+                FROM dbo.SalesDocumentLines
+                WHERE DocumentId=@DocumentId AND LineNumber=1;
+                """;
+            await using var attribution = await command.ExecuteReaderAsync();
+            Assert.True(await attribution.ReadAsync());
+            Assert.Equal((short)1, attribution.GetInt16(0));
+            Assert.Equal(fixture.SupplierId, attribution.GetGuid(1));
+            Assert.True(attribution.GetDecimal(2) >= 0);
         }
 
         using var reporting = fixture.CreateAdminClient(
@@ -78,5 +112,18 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
         Assert.NotNull(detail);
         Assert.Equal(sale.DocumentId, detail.Document.DocumentId);
         Assert.Single(detail.Lines);
+
+        using var hourlyResponse = await reporting.GetAsync(
+            "/api/commerce/v1/sales-reports/breakdown?from=2026-07-27&to=2026-07-27&dimension=hour");
+        Assert.Equal(HttpStatusCode.OK, hourlyResponse.StatusCode);
+        var hours = await hourlyResponse.Content
+            .ReadFromJsonAsync<SalesReportBreakdownRow[]>();
+        Assert.Equal(11_900m, Assert.Single(hours ?? []).NetSales);
+
+        using var todayResponse = await reporting.GetAsync(
+            "/api/commerce/v1/sales-reports/today");
+        Assert.Equal(HttpStatusCode.OK, todayResponse.StatusCode);
+        Assert.NotNull(await todayResponse.Content
+            .ReadFromJsonAsync<SalesTodayOverview>());
     }
 }

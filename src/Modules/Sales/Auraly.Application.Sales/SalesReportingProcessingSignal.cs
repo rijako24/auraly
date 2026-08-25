@@ -6,7 +6,8 @@ public sealed record SalesReportingProcessingSignal(
     Guid SignalId,
     Guid BusinessId,
     Guid DocumentId,
-    string DocumentType);
+    string DocumentType,
+    long SourceVersion = 1);
 
 public interface ISalesReportingProcessingSignalPublisher
 {
@@ -23,16 +24,17 @@ public sealed class SalesReportingProcessingCoordinator(
         Guid businessId,
         Guid documentId,
         string documentType,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        long sourceVersion = 1)
     {
         if (businessId == Guid.Empty || documentId == Guid.Empty ||
-            !SalesReportingProcessingPolicy.Supports(documentType))
+            sourceVersion <= 0 || !SalesReportingProcessingPolicy.Supports(documentType))
             throw new ArgumentException(
                 "Business, document and a reportable document type are required.");
 
         return publisher.PublishAsync(
             new SalesReportingProcessingSignal(
-                ids.NewId(), businessId, documentId, documentType.Trim()),
+                ids.NewId(), businessId, documentId, documentType.Trim(),sourceVersion),
             cancellationToken);
     }
 }
@@ -40,5 +42,5 @@ public sealed class SalesReportingProcessingCoordinator(
 public static class SalesReportingProcessingPolicy
 {
     public static bool Supports(string? documentType) =>
-        documentType is "SalesInvoice" or "SalesReceipt" or "SalesReturn";
+        documentType is "SalesInvoice" or "SalesReceipt" or "SalesReturn" or "RouteVisit" or "SellerOrder";
 }

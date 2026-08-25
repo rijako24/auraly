@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Routes;
+using Auraly.Contracts.Sales;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -16,7 +17,7 @@ public sealed class RoutesVerticalSliceTests(ServerSliceFixture fixture)
             RoutePermissionCodes.Read, RoutePermissionCodes.Create, RoutePermissionCodes.Update,
             RoutePermissionCodes.ManageStops, RoutePermissionCodes.ManageZones,
             RoutePermissionCodes.Activate, RoutePermissionCodes.Deactivate, RoutePermissionCodes.Export,
-            RoutePermissionCodes.RecordVisits, RoutePermissionCodes.ReadAll);
+            RoutePermissionCodes.RecordVisits, RoutePermissionCodes.ReadAll,SalesReportingPermissionCodes.Read);
 
         var zoneResponse = await client.PostAsJsonAsync("/api/commerce/v1/route-zones",
             new CreateSalesZoneRequest(fixture.BusinessId, $"ZN-{Guid.NewGuid():N}"[..12], "Zona norte"));
@@ -78,6 +79,19 @@ public sealed class RoutesVerticalSliceTests(ServerSliceFixture fixture)
         var skipped = Assert.Single(visits!);
         Assert.Equal("Cliente cerrado", skipped.SkipReason);
         Assert.Equal(observation, skipped.VisitObservation);
+
+        var visitedStop=reordered.Stops.Last();
+        using(var visitedWithoutOrder=await client.PutAsJsonAsync($"/api/commerce/v1/routes/{created.RouteId:D}/visits",
+                  new RecordSalesRouteVisitRequest(visitedStop.RouteStopId,visitDate,"Visited",null,null,
+                      DateTimeOffset.UtcNow,$"visit-{Guid.NewGuid():N}","Cliente atendido; no realizó pedido.")))
+            Assert.Equal(HttpStatusCode.OK,visitedWithoutOrder.StatusCode);
+
+        var projected=await client.GetFromJsonAsync<CommercialVisitReportPage>(
+            $"/api/commerce/v1/sales-reports/visits?from={visitDate:yyyy-MM-dd}&to={visitDate:yyyy-MM-dd}&page=1&pageSize=20");
+        Assert.NotNull(projected);Assert.Equal(2,projected.TotalCount);
+        Assert.Equal(1,projected.VisitedCount);Assert.Equal(0,projected.OrderedCount);
+        Assert.Equal(0m,projected.EffectivenessPercent);
+        Assert.Contains(projected.Items,item=>item.Status=="Visited"&&!item.HasOrder);
 
         var page = await client.GetFromJsonAsync<SalesRoutePage>(
             "/api/commerce/v1/routes?page=1&pageSize=20&search=prueba&dayOfWeek=1&isActive=true");
