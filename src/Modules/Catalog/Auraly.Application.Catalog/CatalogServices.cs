@@ -38,7 +38,7 @@ public sealed class CatalogService(
         Require(user, CatalogPermissionCodes.Create);
         RequireCapabilities(user, request);
         ValidateScope(user, request);
-        Validate(request, requireCompletePricing: true);
+        Validate(request);
         var product = await store.CreateAsync(
             user, ids.NewId(), request, timeProvider.GetUtcNow(), ct);
         await synchronization.DispatchPendingAsync(
@@ -55,7 +55,7 @@ public sealed class CatalogService(
         Require(user, CatalogPermissionCodes.Update);
         RequireCapabilities(user, request);
         ValidateScope(user, request);
-        Validate(request, requireCompletePricing: false);
+        Validate(request);
         var product = await store.UpdateAsync(
             user, productId, request, timeProvider.GetUtcNow(), ct);
         await synchronization.DispatchPendingAsync(
@@ -152,11 +152,12 @@ public sealed class CatalogService(
         if (!user.Permissions.Contains(permission)) throw new CatalogForbiddenException($"Permission '{permission}' is required.");
     }
 
-    private static void Validate(SaveProductRequest request, bool requireCompletePricing)
+    private static void Validate(SaveProductRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Name) ||
-            string.IsNullOrWhiteSpace(request.BaseUnitCode) || request.TaxProfileId == Guid.Empty)
-            throw new CatalogValidationException("Name, base unit and sales tax profile are required.");
+            string.IsNullOrWhiteSpace(request.BaseUnitCode) || request.TaxProfileId == Guid.Empty ||
+            request.PurchaseTaxProfileId == Guid.Empty)
+            throw new CatalogValidationException("Name, base unit, sales VAT and purchase VAT are required.");
         if (!PurchasingTaxTreatmentIsSupported(request.PurchaseTaxTreatment))
             throw new CatalogValidationException("The purchase VAT treatment is invalid.");
         if (request.IsWeighable != (request.Scale is not null))
@@ -164,17 +165,15 @@ public sealed class CatalogService(
         if (request.Prices.Count != 1 || request.Prices.Any(price => price.Amount <= 0))
             throw new CatalogValidationException(
                 "Every sellable product requires exactly one positive base price for its business.");
-        if (requireCompletePricing && request.Prices.Any(price =>
-                price.CostBasisAmount is null or <= 0 ||
-                price.TargetMarginPercent is null or <= 0 or >= 100))
-            throw new CatalogValidationException(
-                "Every new product requires a positive cost and a margin greater than zero and less than 100 percent.");
         if (request.Prices.Any(price =>
-                price.CostBasisAmount is < 0 ||
-                price.TargetMarginPercent is < 0 or >= 100))
-            throw new CatalogValidationException("Product cost and margin are invalid.");
-        if (request.Suppliers.Any(supplier => supplier.BaseUnitCost < 0))
-            throw new CatalogValidationException("Supplier costs cannot be negative.");
+                price.CostBasisAmount is null or <= 0 ||
+                price.TargetMarginPercent is null or < 0 or >= 100))
+            throw new CatalogValidationException(
+                "Every product requires a positive cost and a margin between zero and less than 100 percent.");
+        if (request.Suppliers.Count == 0 || request.Suppliers.Count(supplier => supplier.IsPrimary) != 1)
+            throw new CatalogValidationException("Every product requires exactly one primary supplier.");
+        if (request.Suppliers.Any(supplier => supplier.SupplierId == Guid.Empty || supplier.BaseUnitCost <= 0))
+            throw new CatalogValidationException("Every product supplier requires an identifier and a positive cost.");
         if (request.Suppliers.Any(supplier => string.IsNullOrWhiteSpace(supplier.PurchasePresentationName)
             || supplier.PurchasePresentationName.Trim().Length > 80 || supplier.UnitsPerPresentation <= 0))
             throw new CatalogValidationException("Every supplier presentation requires a name and a positive conversion factor.");

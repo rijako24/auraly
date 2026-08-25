@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { taxProfilesApi, type ProductTaxConfiguration } from "@/services/api/tax-profiles";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
-export interface ProductTaxEditorHandle { save: () => Promise<void> }
+export interface ProductTaxEditorHandle { validate: () => void; save: () => Promise<void> }
 
 export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: string; embedded?: boolean; onSalesTaxRateChange?: (rate: number) => void }>(function ProductTaxEditor({ productId, embedded = false, onSalesTaxRateChange }, ref) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
@@ -55,8 +55,7 @@ export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: 
     },
     onError: () => toast.error("No fue posible actualizar los IVA del producto."),
   });
-  useImperativeHandle(ref, () => ({
-    save: async () => {
+  const validate = () => {
       if (!salesTaxProfileId || !purchaseTaxProfileId) {
         const message = !salesTaxProfileId && !purchaseTaxProfileId ? "Selecciona el IVA de venta y el IVA de compra." : !salesTaxProfileId ? "Selecciona el IVA de venta." : "Selecciona el IVA de compra.";
         setValidationError(message);
@@ -74,6 +73,11 @@ export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: 
         throw new Error(message);
       }
       setValidationError(undefined);
+  };
+  useImperativeHandle(ref, () => ({
+    validate,
+    save: async () => {
+      validate();
       await save.mutateAsync();
     },
   }), [purchaseTaxProfileId, purchaseTaxTreatment, salesTaxProfileId, save, taxes.data]);

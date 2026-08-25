@@ -167,8 +167,8 @@ public sealed class PricingService(
         {
             if (request.InputMode == PriceInputModes.Margin)
             {
-                if (request.TargetMarginPercent is null or <= 0 or >= 100)
-                    throw new PricingValidationException("TargetMarginPercent must be greater than zero and less than 100.");
+                if (request.TargetMarginPercent is null or < 0 or >= 100)
+                    throw new PricingValidationException("TargetMarginPercent must be between zero and less than 100.");
                 target = request.TargetMarginPercent;
                 raw = PriceMargin.CalculateGrossSalePrice(request.CostBasisAmount, target.Value, request.SalesTaxRate);
             }

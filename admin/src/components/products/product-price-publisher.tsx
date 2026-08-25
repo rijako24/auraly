@@ -16,7 +16,7 @@ import {
 } from "@/lib/product-pricing-calculator";
 import type { PreparedProductPrice, PricingRoundingMode } from "@/services/api/pricing";
 
-export interface ProductPricingEditorHandle { save: () => Promise<void> }
+export interface ProductPricingEditorHandle { validate: () => void; save: () => Promise<void> }
 
 export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
   embedded?: boolean;
@@ -34,6 +34,7 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
   const [roundingMode, setRoundingMode] = useState<PricingRoundingMode>("Nearest");
   const [lastEdited, setLastEdited] = useState<ProductPricingField>("salePrice");
   const [dirty, setDirty] = useState(false);
+  const [validationAttempted, setValidationAttempted] = useState(false);
 
   useEffect(() => {
     if (!context.data) return;
@@ -86,7 +87,7 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
   const resolvedSale = decimalOrNull(salePrice);
   const resolvedIncrement = decimalOrNull(increment);
   const savesBySalePrice = lastEdited === "salePrice" || resolvedCost === null;
-  const validMargin = resolvedMargin !== null && resolvedMargin > 0 && resolvedMargin < 100;
+  const validMargin = resolvedMargin !== null && resolvedMargin >= 0 && resolvedMargin < 100;
   const valid = resolvedSale !== null && resolvedSale > 0
     && validMargin
     && resolvedCost !== null && resolvedCost > 0
@@ -120,8 +121,18 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
   }, [context, onSaved, productId, resolvedCost, resolvedIncrement, resolvedMargin, resolvedSale, roundingMode, savePrepared, savesBySalePrice, valid]);
 
   useImperativeHandle(ref, () => ({
-    save: async () => { if (dirty) await save(); },
-  }), [dirty, save]);
+    validate: () => {
+      if (!valid) {
+        setValidationAttempted(true);
+        throw new Error("El costo y el precio de venta deben ser mayores que cero; el margen puede ser 0 % y debe ser menor que 100 %.");
+      }
+      setValidationAttempted(false);
+    },
+    save: async () => {
+      if (!valid) throw new Error("El costo y el precio de venta deben ser mayores que cero; el margen puede ser 0 % y debe ser menor que 100 %.");
+      if (dirty) await save();
+    },
+  }), [dirty, save, valid]);
   const costOrigin = context.data?.costBasisOrigin === "ObservedSupplierCost"
     ? "Último proveedor"
     : context.data?.costBasisOrigin === "Manual" ? "Costo manual" : "Sin costo registrado";
@@ -147,8 +158,8 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
       <section>
         <div className="mb-3"><h4 className="font-semibold">Datos para calcular el precio</h4><p className="text-xs text-muted-foreground">Costo y margen determinan primero el precio antes de IVA.</p></div>
         <div className="grid gap-4 lg:grid-cols-2">
-          <PriceInput label="Costo base" helper={costOrigin} kind="currency" value={cost} onChange={(value) => change("cost", value)} />
-          <PriceInput label="Margen sobre el precio antes de IVA" helper="No incluye IVA" kind="percent" value={margin} onChange={(value) => change("margin", value)} />
+          <PriceInput label="Costo base *" helper={costOrigin} kind="currency" value={cost} onChange={(value) => change("cost", value)} />
+          <PriceInput label="Margen sobre el precio antes de IVA *" helper="Puede ser 0 %" kind="percent" value={margin} onChange={(value) => change("margin", value)} />
         </div>
       </section>
 
@@ -186,7 +197,7 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
         </Button>}
       </div>
 
-      {!valid && dirty && <p className="text-sm text-destructive">El costo y el precio no pueden ser negativos; el margen debe ser menor de 100 % y el múltiplo debe ser mayor que cero.</p>}
+      {!valid && (dirty || validationAttempted) && <p className="text-sm text-destructive">El costo y el precio de venta deben ser mayores que cero; el margen puede ser 0 % y debe ser menor que 100 %.</p>}
       {resolvedMargin !== null && resolvedMargin < 0 && savesBySalePrice && <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">Este precio produce una pérdida de {editableNumber(Math.abs(resolvedMargin))} %. Puedes guardarlo como precio explícito.</p>}
       <p className="flex items-center gap-2 text-xs text-muted-foreground"><CheckCircle2 className="h-4 w-4 text-emerald-600" />Guardar prepara el precio. Solo la vista Rentabilidad y precios lo publica en POS, pedidos y bot.</p>
     </div>
@@ -212,7 +223,7 @@ function PricingFormula({ cost, marginPercent, marginAmount, netSalePrice, sales
       <FormulaOperator value="+" />
       <FormulaStep label={`IVA de venta (${editableNumber(salesTaxRate)}%)`} value={formatCurrency(taxAmount)} />
       <FormulaOperator value="=" />
-      <div className="rounded-xl bg-emerald-600 p-3 text-white"><div className="mb-2 flex items-center justify-between gap-2"><Label className="text-xs text-white">Precio de venta preparado</Label><span className="text-xs text-white/75">IVA incluido · editable</span></div><FormattedNumberInput className="h-11 border-white/30 bg-white text-lg font-bold text-emerald-950" kind="currency" value={salePrice} onValueChange={(next) => onSalePriceChange(next === null ? "" : next.toString())} /><p className="mt-2 text-xs text-white/75">Al cambiarlo se conserva el costo y se recalcula el margen.</p></div>
+      <div className="rounded-xl bg-emerald-600 p-3 text-white"><div className="mb-2 flex items-center justify-between gap-2"><Label className="text-xs text-white">Precio de venta preparado *</Label><span className="text-xs text-white/75">IVA incluido · editable</span></div><FormattedNumberInput className="h-11 border-white/30 bg-white text-lg font-bold text-emerald-950" kind="currency" value={salePrice} onValueChange={(next) => onSalePriceChange(next === null ? "" : next.toString())} /><p className="mt-2 text-xs text-white/75">Al cambiarlo se conserva el costo y se recalcula el margen.</p></div>
     </div>
     <p className="mt-3 rounded-lg bg-white/70 px-3 py-2 text-xs">Fórmula completa: precio antes de IVA = costo ÷ (1 − margen %). Precio de venta = precio antes de IVA + IVA.</p>
   </section>;

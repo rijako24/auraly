@@ -36,6 +36,7 @@ import {
   AdjustmentCaptureGrid,
   adjustmentUnitValue,
 } from "@/components/inventory/adjustment-capture-grid";
+import { PhysicalCountCreationForm } from "@/components/inventory/inventory-physical-count-workspace";
 import { Textarea } from "@/components/ui/textarea";
 import { ProductPicker } from "@/components/products/product-picker";
 import {
@@ -94,7 +95,7 @@ const operationOptions: Array<{
     label: "Conteo físico",
     description: "Compara el conteo real con el saldo del sistema.",
     icon: ClipboardCheck,
-    permission: "inventory.counts.confirm",
+    permission: "inventory.physical-counts.manage",
   },
   {
     id: "adjustment",
@@ -131,11 +132,15 @@ export function InventoryOperationWorkspace({
   warehouses,
   permissions,
   initialKind = defaultInventoryOperationKind,
+  onCancel,
+  onCompleted,
 }: {
   businessId: string;
   warehouses: WarehouseOption[];
   permissions: Set<string>;
   initialKind?: InventoryOperationKind;
+  onCancel: () => void;
+  onCompleted: () => void;
 }) {
   const queryClient = useQueryClient();
   const [kind, setKind] = useState<OperationKind>(initialKind);
@@ -145,7 +150,6 @@ export function InventoryOperationWorkspace({
   const [notes, setNotes] = useState("");
   const [lines, setLines] = useState<Line[]>([]);
   const [valuationBasis, setValuationBasis] = useState<"Cost" | "SalePrice">("Cost");
-  const [countDocumentId, setCountDocumentId] = useState<string | null>(null);
   const [conversionType, setConversionType] = useState<"SPLIT" | "MERGE">("SPLIT");
   const [documentId, setDocumentId] = useState(() => crypto.randomUUID());
   const [hydratedKey, setHydratedKey] = useState<string | null>(null);
@@ -178,7 +182,6 @@ export function InventoryOperationWorkspace({
           setDestinationId(draft.destinationId);
           setReason(draft.reason);
           setNotes(draft.notes);
-          setCountDocumentId(draft.countDocumentId);
           setConversionType(draft.conversionType);
           setValuationBasis(draft.valuationBasis ?? "Cost");
           setLines(draft.lines.map((line) => ({ ...line, salePrice: line.salePrice ?? "" })));
@@ -188,7 +191,6 @@ export function InventoryOperationWorkspace({
           setDestinationId("");
           setReason("");
           setNotes("");
-          setCountDocumentId(null);
           setValuationBasis("Cost");
           setConversionType("SPLIT");
           setLines([]);
@@ -206,7 +208,7 @@ export function InventoryOperationWorkspace({
   useEffect(() => {
     if (hydratedKey !== draftKey) return;
     const timer = window.setTimeout(() => {
-      if (lines.length === 0 && notes.trim() === "" && !countDocumentId) {
+      if (lines.length === 0 && notes.trim() === "") {
         void removeInventoryOperationDraft(draftKey);
         return;
       }
@@ -219,7 +221,7 @@ export function InventoryOperationWorkspace({
         destinationId,
         reason,
         notes,
-        countDocumentId,
+        countDocumentId: null,
         conversionType,
         valuationBasis,
         lines,
@@ -230,7 +232,6 @@ export function InventoryOperationWorkspace({
   }, [
     businessId,
     conversionType,
-    countDocumentId,
     destinationId,
     valuationBasis,
     documentId,
@@ -266,7 +267,6 @@ export function InventoryOperationWorkspace({
   }
 
   function addProduct(product: InventoryProductItem) {
-    if (countDocumentId) return;
     const existing = lines.findIndex((line) => line.productId === product.productId);
     if (existing >= 0) {
       focusQuantity(existing);
@@ -327,7 +327,6 @@ export function InventoryOperationWorkspace({
     void removeInventoryOperationDraft(draftKey);
     setDocumentId(crypto.randomUUID());
     setLines([]);
-    setCountDocumentId(null);
     setNotes("");
     focusSearch();
   }
@@ -335,47 +334,10 @@ export function InventoryOperationWorkspace({
   const mutation = useMutation({
     mutationFn: async () => {
       const now = new Date().toISOString();
-      if (kind === "count" && !countDocumentId) {
-        const draft = await inventoryApi.startCount({
-          documentId,
-          businessId,
-          warehouseId,
-          occurredAt: now,
-          reasonCode: reason.trim(),
-          notes: notes.trim() || null,
-          lines: lines.map((line) => ({
-            productId: line.productId,
-            preCountQuantity: Number(line.quantity),
-          })),
-        });
-        setCountDocumentId(documentId);
-        setLines((current) =>
-          current.map((line) => ({
-            ...line,
-            preCount: String(
-              draft.lines.find((candidate) => candidate.productId === line.productId)
-                ?.preCountQuantity ?? Number(line.quantity),
-            ),
-            quantity: "",
-            systemQuantity:
-              draft.lines.find((candidate) => candidate.productId === line.productId)
-                ?.systemQuantityAtBase ?? 0,
-          })),
-        );
-        return null;
-      }
-
+      if (kind === "count")
+        throw new Error("El conteo físico se crea desde su flujo unificado de listas.");
       let result: InventoryAcceptance;
-      if (kind === "count") {
-        result = await inventoryApi.confirmCount(countDocumentId!, {
-          businessId,
-          lines: lines.map((line, index) => ({
-            lineNumber: index + 1,
-            productId: line.productId,
-            countedQuantity: Number(line.quantity),
-          })),
-        });
-      } else if (kind === "adjustment") {
+      if (kind === "adjustment") {
         result = await inventoryApi.confirmAdjustment({
           documentId,
           businessId,
@@ -443,11 +405,6 @@ export function InventoryOperationWorkspace({
       return result;
     },
     onSuccess: async (result) => {
-      if (!result) {
-        toast.success("Preconteo guardado. Ingresa ahora la cantidad contada.");
-        focusQuantity(0);
-        return;
-      }
       toast.success(`${result.documentNumber} fue enviado al motor`);
       clear();
       await Promise.all([
@@ -470,8 +427,7 @@ export function InventoryOperationWorkspace({
       return (
         line.quantity !== "" &&
         Number.isFinite(value) &&
-        (kind === "adjustment" ? value !== 0 : value >= 0) &&
-        (kind === "count" || value > 0)
+        (kind === "adjustment" ? value !== 0 : value > 0)
       );
     });
   const conversionValid =
@@ -534,18 +490,24 @@ export function InventoryOperationWorkspace({
         })}
       </div>
 
-      <Card>
+      {kind === "count" ? (
+        <PhysicalCountCreationForm
+          businessId={businessId}
+          warehouses={warehouses}
+          onCancel={onCancel}
+          onCreated={() => onCompleted()}
+        />
+      ) : <Card>
         <CardHeader><CardTitle>{selected.label}</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-3">
             <Field label={kind === "transfer" ? "Bodega de origen" : "Bodega"}>
               <Select
                 value={warehouseId}
-                disabled={mutation.isPending || Boolean(countDocumentId)}
+                disabled={mutation.isPending}
                 onValueChange={(value) => {
                   setWarehouseId(value);
                   setLines([]);
-                  setCountDocumentId(null);
                 }}
               >
                 <SelectTrigger><SelectValue placeholder="Selecciona una bodega" /></SelectTrigger>
@@ -593,7 +555,7 @@ export function InventoryOperationWorkspace({
               </Field>
             )}
             <Field label="Motivo">
-              <Select value={reason} disabled={mutation.isPending || Boolean(countDocumentId) || reasonsQuery.isLoading || reasons.length === 0} onValueChange={setReason}>
+              <Select value={reason} disabled={mutation.isPending || reasonsQuery.isLoading || reasons.length === 0} onValueChange={setReason}>
                 <SelectTrigger data-testid="inventory-reason-select"><SelectValue placeholder={reasonsQuery.isLoading ? "Cargando motivos..." : "Selecciona un motivo"} /></SelectTrigger>
                 <SelectContent>
                   {reasons.map((item) => <SelectItem key={item.inventoryReasonId} value={item.code}>{item.name}</SelectItem>)}
@@ -603,8 +565,7 @@ export function InventoryOperationWorkspace({
             </Field>
           </div>
 
-          {!countDocumentId && (
-            <ProductPicker
+          <ProductPicker
               businessId={businessId}
               warehouseId={warehouseId}
               selectedProductIds={selectedProductIds}
@@ -613,14 +574,12 @@ export function InventoryOperationWorkspace({
               conversionFamilyRootProductId={kind === "conversion" ? lines[0]?.familyRootProductId : undefined}
               inputId="inventory-product-search"
               onSelect={addProduct}
-            />
-          )}
+          />
 
           <div className="[&_strong]:font-normal">
           {kind === "adjustment" ? <AdjustmentCaptureGrid lines={lines} valuationBasis={valuationBasis} update={update} remove={(index) => setLines((current) => current.filter((_, currentIndex) => currentIndex !== index))} onKey={gridKey} /> : (
           <CaptureGrid
             kind={kind}
-            prepared={Boolean(countDocumentId)}
             lines={lines}
             update={update}
             remove={(index) => {
@@ -647,27 +606,19 @@ export function InventoryOperationWorkspace({
             <Button disabled={!ready || mutation.isPending} onClick={() => mutation.mutate()}>
               {mutation.isPending
                 ? "Procesando…"
-                : kind === "count" && !countDocumentId
-                  ? "Preparar conteo"
-                  : `Confirmar ${selected.label.toLowerCase()}`}
+                : `Confirmar ${selected.label.toLowerCase()}`}
             </Button>
             <Button type="button" variant="outline" disabled={mutation.isPending || lines.length === 0} onClick={clear}>Limpiar</Button>
             {!allowed && <span className="text-sm text-amber-700">No tienes permiso para confirmar esta operación.</span>}
-            {countDocumentId && <span className="text-sm text-muted-foreground">El preconteo quedó congelado; confirma las cantidades contadas para aplicar las diferencias.</span>}
           </div>
         </CardContent>
-      </Card>
+      </Card>}
     </div>
   );
 }
 
-function CountCaptureGrid({ prepared, lines, update, remove, onKey }: { prepared: boolean; lines: Line[]; update: (index: number, patch: Partial<Line>) => void; remove: (index: number) => void; onKey: (event: KeyboardEvent<HTMLInputElement>, index: number) => void }) {
-  return <div className="overflow-x-auto rounded-xl border"><table className="w-full min-w-[760px] text-sm"><thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-3 py-3 text-left">Producto</th><th className="px-3 py-3 text-right">Existencia sistema</th><th className="px-3 py-3 text-right">Preconteo</th>{prepared && <th className="px-3 py-3 text-left">Cantidad contada</th>}{prepared && <th className="px-3 py-3 text-right">Diferencia</th>}<th className="w-14" /></tr></thead><tbody>{lines.length === 0 ? <tr><td colSpan={prepared ? 6 : 4} className="p-10 text-center text-muted-foreground">Selecciona una bodega y agrega los productos del conteo.</td></tr> : lines.map((line, index) => { const preCount = Number(prepared ? line.preCount ?? 0 : line.quantity || 0); const difference = Number(line.quantity || 0) - preCount; return <tr key={line.productId} className="border-t focus-within:bg-emerald-50/60"><td className="px-3 py-2"><strong>{line.productName}</strong><span className="block text-xs text-muted-foreground">{line.productCode} · {line.unitCode}</span></td><td className="px-3 py-2 text-right tabular-nums">{prepared ? line.systemQuantity ?? line.stock : line.stock}</td><td className="px-3 py-2 text-right tabular-nums">{prepared ? preCount : <Input data-inventory-row={index} data-testid={`inventory-quantity-${index}`} className="ml-auto w-36 text-right tabular-nums" inputMode="decimal" value={line.quantity} onChange={(event) => update(index, { quantity: event.target.value })} onKeyDown={(event) => onKey(event, index)} aria-label={`Preconteo de ${line.productName}`} />}</td>{prepared && <td className="px-3 py-2"><Input data-inventory-row={index} data-testid={`inventory-quantity-${index}`} className="w-36 text-right tabular-nums" inputMode="decimal" value={line.quantity} onChange={(event) => update(index, { quantity: event.target.value })} onKeyDown={(event) => onKey(event, index)} aria-label={`Cantidad contada de ${line.productName}`} /></td>}{prepared && <td className={`px-3 py-2 text-right font-semibold tabular-nums ${difference > 0 ? "text-emerald-700" : difference < 0 ? "text-red-700" : "text-muted-foreground"}`}>{line.quantity === "" ? "—" : <>{difference > 0 ? "+" : ""}{difference}</>}</td>}<td className="px-2 py-2"><Button type="button" size="icon" variant="ghost" disabled={prepared} onClick={() => remove(index)} aria-label={`Eliminar ${line.productName}`}><Trash2 className="h-4 w-4" /></Button></td></tr>; })}</tbody></table></div>;
-}
-
-function CaptureGrid({ kind, prepared, lines, update, remove, onKey }: { kind: OperationKind; prepared: boolean; lines: Line[]; update: (index: number, patch: Partial<Line>) => void; remove: (index: number) => void; onKey: (event: KeyboardEvent<HTMLInputElement>, index: number) => void }) {
-  if (kind === "count") return <CountCaptureGrid prepared={prepared} lines={lines} update={update} remove={remove} onKey={onKey} />;
-  return <div className="overflow-x-auto rounded-xl border"><table className="w-full min-w-[760px] text-sm"><thead className="bg-muted/60"><tr><th className="px-3 py-3 text-left">Producto</th>{kind === "conversion" && <th className="px-3 py-3 text-left">Movimiento</th>}<th className="px-3 py-3 text-right">Saldo</th>{prepared && <th className="px-3 py-3 text-right">Saldo base</th>}<th className="px-3 py-3 text-left">{kind === "adjustment" ? "Cantidad (+ / −)" : "Cantidad"}</th>{kind === "adjustment" && <th className="px-3 py-3 text-left">Costo entrada</th>}<th className="w-14" /></tr></thead><tbody>{lines.length === 0 ? <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">Selecciona una bodega y agrega los productos de la operación.</td></tr> : lines.map((line, index) => <tr key={line.productId} className="border-t focus-within:bg-emerald-50/60"><td className="px-3 py-2"><strong>{line.productName}</strong><span className="block text-xs text-muted-foreground">{line.productCode} · {line.unitCode}</span></td>{kind === "conversion" && <td className="px-3 py-2"><Select value={line.direction} onValueChange={(value) => update(index, { direction: value as Direction })}><SelectTrigger className="w-32"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="INPUT">Consume</SelectItem><SelectItem value="OUTPUT">Produce</SelectItem></SelectContent></Select></td>}<td className="px-3 py-2 text-right tabular-nums">{line.stock}</td>{prepared && <td className="px-3 py-2 text-right tabular-nums">{line.systemQuantity ?? 0}</td>}<td className="px-3 py-2"><Input data-inventory-row={index} data-testid={`inventory-quantity-${index}`} className="w-36 text-right tabular-nums" inputMode="decimal" value={line.quantity} onChange={(event) => update(index, { quantity: event.target.value })} onKeyDown={(event) => onKey(event, index)} aria-label={`Cantidad de ${line.productName}`} /></td>{kind === "adjustment" && <td className="px-3 py-2"><Input className="w-36 text-right tabular-nums" inputMode="decimal" disabled={Number(line.quantity) <= 0} value={line.cost} onChange={(event) => update(index, { cost: event.target.value })} aria-label={`Costo de ${line.productName}`} /></td>}<td className="px-2 py-2"><Button type="button" size="icon" variant="ghost" disabled={prepared} onClick={() => remove(index)} aria-label={`Eliminar ${line.productName}`}><Trash2 className="h-4 w-4" /></Button></td></tr>)}</tbody></table></div>;
+function CaptureGrid({ kind, lines, update, remove, onKey }: { kind: Exclude<OperationKind, "count">; lines: Line[]; update: (index: number, patch: Partial<Line>) => void; remove: (index: number) => void; onKey: (event: KeyboardEvent<HTMLInputElement>, index: number) => void }) {
+  return <div className="overflow-x-auto rounded-xl border"><table className="w-full min-w-[760px] text-sm"><thead className="bg-muted/60"><tr><th className="px-3 py-3 text-left">Producto</th>{kind === "conversion" && <th className="px-3 py-3 text-left">Movimiento</th>}<th className="px-3 py-3 text-right">Saldo</th><th className="px-3 py-3 text-left">{kind === "adjustment" ? "Cantidad (+ / −)" : "Cantidad"}</th>{kind === "adjustment" && <th className="px-3 py-3 text-left">Costo entrada</th>}<th className="w-14" /></tr></thead><tbody>{lines.length === 0 ? <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">Selecciona una bodega y agrega los productos de la operación.</td></tr> : lines.map((line, index) => <tr key={line.productId} className="border-t focus-within:bg-emerald-50/60"><td className="px-3 py-2"><strong>{line.productName}</strong><span className="block text-xs text-muted-foreground">{line.productCode} · {line.unitCode}</span></td>{kind === "conversion" && <td className="px-3 py-2"><Select value={line.direction} onValueChange={(value) => update(index, { direction: value as Direction })}><SelectTrigger className="w-32"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="INPUT">Consume</SelectItem><SelectItem value="OUTPUT">Produce</SelectItem></SelectContent></Select></td>}<td className="px-3 py-2 text-right tabular-nums">{line.stock}</td><td className="px-3 py-2"><Input data-inventory-row={index} data-testid={`inventory-quantity-${index}`} className="w-36 text-right tabular-nums" inputMode="decimal" value={line.quantity} onChange={(event) => update(index, { quantity: event.target.value })} onKeyDown={(event) => onKey(event, index)} aria-label={`Cantidad de ${line.productName}`} /></td>{kind === "adjustment" && <td className="px-3 py-2"><Input className="w-36 text-right tabular-nums" inputMode="decimal" disabled={Number(line.quantity) <= 0} value={line.cost} onChange={(event) => update(index, { cost: event.target.value })} aria-label={`Costo de ${line.productName}`} /></td>}<td className="px-2 py-2"><Button type="button" size="icon" variant="ghost" onClick={() => remove(index)} aria-label={`Eliminar ${line.productName}`}><Trash2 className="h-4 w-4" /></Button></td></tr>)}</tbody></table></div>;
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {

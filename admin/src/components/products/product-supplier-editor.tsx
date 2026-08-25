@@ -11,8 +11,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useGoodsReceiptOptions } from "@/hooks/use-goods-receipts";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { goodsReceiptsApi } from "@/services/api/goods-receipts";
+import { productsApi } from "@/services/api/products";
 
-export interface ProductSupplierEditorHandle { save: () => Promise<void> }
+export interface ProductSupplierEditorHandle { validate: () => void; save: () => Promise<void> }
 
 export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
   embedded?: boolean;
@@ -27,6 +28,22 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
   const [supplierProductCode, setSupplierProductCode] = useState("");
   const [packageName, setPackageName] = useState("Unidad");
   const [unitsPerPackage, setUnitsPerPackage] = useState("1");
+  const [validationError, setValidationError] = useState<string>();
+
+  const catalogProduct = useQuery({
+    queryKey: ["catalog-product", productId],
+    queryFn: () => productsApi.getCatalog(productId),
+  });
+
+  useEffect(() => {
+    const primary = catalogProduct.data?.suppliers?.find((supplier) => supplier.isPrimary)
+      ?? catalogProduct.data?.suppliers?.[0];
+    if (!primary) return;
+    setSupplierId(primary.supplierId);
+    setSupplierProductCode(primary.supplierProductCode ?? "");
+    setPackageName(primary.purchasePresentationName || "Unidad");
+    setUnitsPerPackage(String(primary.unitsPerPresentation || 1));
+  }, [catalogProduct.data]);
 
   const relation = useQuery({
     queryKey: ["product-supplier-relation", supplierId, productId],
@@ -68,8 +85,21 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
   });
 
   useImperativeHandle(ref, () => ({
+    validate: () => {
+      if (!supplierId) {
+        const message = "Selecciona el proveedor principal del producto.";
+        setValidationError(message);
+        throw new Error(message);
+      }
+      if (!packageName || Number(unitsPerPackage) <= 0) {
+        const message = "Revisa el empaque del proveedor.";
+        setValidationError(message);
+        throw new Error(message);
+      }
+      setValidationError(undefined);
+    },
     save: async () => {
-      if (!supplierId) return;
+      if (!supplierId) throw new Error("Selecciona el proveedor principal del producto.");
       if (!packageName || Number(unitsPerPackage) <= 0) throw new Error("Revisa el empaque del proveedor.");
       await save.mutateAsync();
     },
@@ -87,15 +117,16 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
 
     <div className="grid items-start gap-4 lg:grid-cols-[minmax(260px,1.3fr)_minmax(180px,.8fr)_minmax(180px,.8fr)]">
       <div className="space-y-2">
-        <Label>Proveedor</Label>
-        <Select value={supplierId} onValueChange={setSupplierId}>
-          <SelectTrigger><SelectValue placeholder="Selecciona un proveedor" /></SelectTrigger>
+        <Label>Proveedor <span className="text-destructive">*</span></Label>
+        <Select value={supplierId} onValueChange={(value) => { setSupplierId(value); setValidationError(undefined); }}>
+          <SelectTrigger aria-invalid={Boolean(validationError && !supplierId)}><SelectValue placeholder="Selecciona un proveedor" /></SelectTrigger>
           <SelectContent>
             {(options.data?.suppliers ?? []).map((supplier) => <SelectItem key={supplier.supplierId} value={supplier.supplierId}>
               {supplier.name} · {supplier.identification}
             </SelectItem>)}
           </SelectContent>
         </Select>
+        {validationError && !supplierId && <p className="text-sm text-destructive">{validationError}</p>}
         <p className="text-xs text-muted-foreground">Al guardar, este proveedor queda como el principal del producto.</p>
       </div>
 

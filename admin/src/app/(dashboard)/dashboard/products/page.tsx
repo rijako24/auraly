@@ -188,6 +188,16 @@ export default function ProductsPage() {
       requestAnimationFrame(() => document.getElementById("product-name")?.focus());
       return;
     }
+    try {
+      supplierEditorRef.current?.validate();
+      taxEditorRef.current?.validate();
+      pricingEditorRef.current?.validate();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Revisa los campos requeridos del producto.";
+      setProductValidationError(message);
+      toast.error(message);
+      return;
+    }
     setSavingProduct(true);
     try {
       const updated = await updateProduct.mutateAsync({
@@ -458,7 +468,7 @@ export default function ProductsPage() {
 
                 <ProductMerchandisingEditor ref={merchandisingEditorRef} embedded productId={selectedProduct.productId} />
 
-                <ProductFormSection id="product-supplier" icon={Truck} title="Proveedor principal y empaque habitual" description="Opcional. Permite recibir por caja, bulto o paquete y convertir a la unidad del producto.">
+                <ProductFormSection id="product-supplier" icon={Truck} title="Proveedor principal y empaque habitual" description="Requerido. Permite recibir por caja, bulto o paquete y convertir a la unidad del producto.">
                   <ProductSupplierEditor ref={supplierEditorRef} embedded productId={selectedProduct.productId} productName={selectedProduct.name} />
                 </ProductFormSection>
 
