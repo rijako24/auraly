@@ -4,6 +4,7 @@ using System.Security.Cryptography.X509Certificates;
 using System.Security.Cryptography.Xml;
 using System.Text;
 using System.Xml;
+using Auraly.Application.Fiscal;
 using Auraly.Contracts.Fiscal;
 using Auraly.Fiscal.Ubl;
 
@@ -158,12 +159,8 @@ public sealed class DianXadesSigner(IFiscalSigningCertificateProvider certificat
             throw new CryptographicException("The fiscal certificate is not enabled for digital signatures.");
         if (material.RequireTrustedChain)
         {
-            using var chain = new X509Chain();
-            chain.ChainPolicy.RevocationMode = X509RevocationMode.Online;
-            chain.ChainPolicy.RevocationFlag = X509RevocationFlag.EntireChain;
-            chain.ChainPolicy.VerificationTime = request.SigningTime.UtcDateTime;
-            foreach (var extra in material.Chain) chain.ChainPolicy.ExtraStore.Add(extra);
-            if (!chain.Build(certificate))
+            if (!FiscalCertificateTrustPolicy.IsTrustedChain(
+                    certificate, material.Chain, request.SigningTime))
                 throw new CryptographicException("The fiscal certificate chain could not be validated.");
         }
     }

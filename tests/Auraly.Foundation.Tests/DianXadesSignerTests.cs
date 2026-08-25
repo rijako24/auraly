@@ -75,6 +75,16 @@ public sealed class DianXadesSignerTests : IDisposable
             CreateSigner(publicOnly).SignAsync(CreateRequest(unsigned, publicOnly)));
     }
 
+    [Fact]
+    public async Task Untrusted_certificate_chain_is_still_rejected()
+    {
+        var unsigned = new DianInvoiceUblBuilder().Build(CreateInvoice()).Xml;
+        var signer = new DianXadesSigner(new TrustedChainCertificateProvider(certificate));
+
+        await Assert.ThrowsAsync<CryptographicException>(() =>
+            signer.SignAsync(CreateRequest(unsigned, certificate)));
+    }
+
     public void Dispose() => certificate.Dispose();
 
     private static DianXadesSigner CreateSigner(X509Certificate2 value) =>
@@ -136,5 +146,16 @@ public sealed class DianXadesSignerTests : IDisposable
             FiscalCertificateReference reference,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(new FiscalCertificateMaterial(certificate, [], RequireTrustedChain: false));
+    }
+
+
+    private sealed class TrustedChainCertificateProvider(X509Certificate2 certificate)
+        : IFiscalSigningCertificateProvider
+    {
+        public Task<FiscalCertificateMaterial> ResolveAsync(
+            FiscalCertificateReference reference,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new FiscalCertificateMaterial(
+                certificate, [], RequireTrustedChain: true));
     }
 }
