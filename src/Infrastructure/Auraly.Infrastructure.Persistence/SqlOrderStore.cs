@@ -454,8 +454,6 @@ public sealed class SqlOrderStore(
                   ON document.DocumentId=link.DocumentId AND document.BusinessId=orderRow.BusinessId
                 INNER JOIN dbo.DocumentProcessingJobs job WITH(UPDLOCK,HOLDLOCK)
                   ON job.DocumentId=document.DocumentId AND job.DocumentType=document.DocumentType
-                INNER JOIN dbo.BusinessProcessingCursors cursor WITH(UPDLOCK,HOLDLOCK)
-                  ON cursor.BusinessId=orderRow.BusinessId
                 WHERE orderRow.OrderId=@OrderId AND orderRow.BusinessId=@BusinessId
                   AND business.TenantId=@TenantId;
                 """, connection, transaction))
@@ -479,21 +477,9 @@ public sealed class SqlOrderStore(
                     "La emisión no está detenida y no requiere recuperación manual.");
 
             var now = time.GetUtcNow();
-            long sequence;
-            await using (var allocate = new SqlCommand("""
-                UPDATE dbo.BusinessProcessingCursors WITH(UPDLOCK,HOLDLOCK)
-                SET LastAssignedSequence=LastAssignedSequence+1,UpdatedAt=@Now
-                OUTPUT inserted.LastAssignedSequence
-                WHERE BusinessId=@BusinessId;
-                """, connection, transaction))
-            {
-                allocate.Parameters.AddRange([P("@Now", now), P("@BusinessId", actor.BusinessId)]);
-                sequence = Convert.ToInt64(await allocate.ExecuteScalarAsync(cancellationToken));
-            }
-
             await using (var update = new SqlCommand("""
                 UPDATE dbo.DocumentProcessingJobs
-                SET ProcessingSequence=@Sequence,Status=N'Pending',AttemptCount=0,
+                SET Status=N'Pending',AttemptCount=0,
                     AvailableAt=@Now,StartedAt=NULL,CompletedAt=NULL,
                     LeaseOwner=NULL,LeaseExpiresAt=NULL,LastError=NULL
                 WHERE JobId=@JobId AND BusinessId=@BusinessId AND Status=N'DeadLettered';
@@ -505,7 +491,7 @@ public sealed class SqlOrderStore(
                 """, connection, transaction))
             {
                 update.Parameters.AddRange([
-                    P("@Sequence", sequence), P("@Now", now), P("@JobId", jobId),
+                    P("@Now", now), P("@JobId", jobId),
                     P("@DocumentId", documentId), P("@BusinessId", actor.BusinessId)
                 ]);
                 if (await update.ExecuteNonQueryAsync(cancellationToken) != 2)

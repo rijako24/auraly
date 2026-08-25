@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using Auraly.Application.Orders;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Orders;
 using Microsoft.Data.SqlClient;
@@ -113,6 +114,99 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
         Assert.Equal(2, reader.GetInt32(3));
         Assert.Equal(0, reader.GetInt32(4));
         Assert.Equal(0, reader.GetInt32(5));
+    }
+
+    [Fact]
+    public async Task Failed_order_emission_retries_the_same_processing_sequence()
+    {
+        var userId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var otherOrderId = Guid.NewGuid();
+        var workSessionId = Guid.NewGuid();
+        await SeedAsync(userId, workSessionId, orderId, otherOrderId);
+
+        using var client = fixture.CreateUserClient(
+            userId,
+            CommercePermissionCodes.SalesCreate,
+            OrderPermissionCodes.Read,
+            OrderPermissionCodes.Recover,
+            OrderPermissionCodes.Invoice);
+        var command = new InvoiceOrdersRequest(
+            workSessionId,
+            fixture.WarehouseId,
+            userId,
+            [orderId],
+            "Cash",
+            null);
+
+        fixture.PauseDocumentProcessing();
+        try
+        {
+            var invoice = await InvoiceAsync(
+                client,
+                command,
+                $"retry-source-{Guid.NewGuid():N}");
+            var originalSignal = Assert.Single(fixture.DrainDocumentSignals());
+            var documentId = Assert.Single(invoice.Results).DocumentId!.Value;
+            Assert.Equal(documentId, originalSignal.DocumentId);
+
+            long originalSequence;
+            await using (var connection = new SqlConnection(fixture.ConnectionString))
+            {
+                await connection.OpenAsync();
+                await using var fail = connection.CreateCommand();
+                fail.CommandText = """
+                    UPDATE dbo.DocumentProcessingJobs
+                    SET Status=N'DeadLettered',AttemptCount=5,LastError=N'forced regression failure'
+                    WHERE DocumentId=@DocumentId;
+                    SELECT ProcessingSequence FROM dbo.DocumentProcessingJobs
+                    WHERE DocumentId=@DocumentId;
+                    """;
+                fail.Parameters.AddWithValue("@DocumentId", documentId);
+                originalSequence = Convert.ToInt64(await fail.ExecuteScalarAsync());
+            }
+
+            using var response = await client.PostAsync(
+                $"/api/commerce/v1/orders/{orderId:D}/emission/retry",
+                content: null);
+            response.EnsureSuccessStatusCode();
+            var retry = await response.Content.ReadFromJsonAsync<OrderEmissionRetry>();
+            Assert.NotNull(retry);
+            Assert.Equal(documentId, retry.DocumentId);
+
+            var retrySignal = Assert.Single(fixture.DrainDocumentSignals());
+            Assert.Equal(originalSignal.MovementId, retrySignal.MovementId);
+            Assert.Equal(originalSignal.DocumentId, retrySignal.DocumentId);
+
+            await using (var connection = new SqlConnection(fixture.ConnectionString))
+            {
+                await connection.OpenAsync();
+                await using var verify = connection.CreateCommand();
+                verify.CommandText = """
+                    SELECT ProcessingSequence,Status,AttemptCount,LastError
+                    FROM dbo.DocumentProcessingJobs WHERE DocumentId=@DocumentId;
+                    """;
+                verify.Parameters.AddWithValue("@DocumentId", documentId);
+                await using var reader = await verify.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal(originalSequence, reader.GetInt64(0));
+                Assert.Equal("Pending", reader.GetString(1));
+                Assert.Equal(0, reader.GetInt32(2));
+                Assert.True(reader.IsDBNull(3));
+            }
+
+            fixture.ResumeDocumentProcessing();
+            await fixture.DocumentSignals.PublishAsync(retrySignal);
+
+            var completed = await client.GetFromJsonAsync<OrderDetail>(
+                $"/api/commerce/v1/orders/{orderId:D}");
+            Assert.NotNull(completed);
+            Assert.Equal("Invoiced", completed.Status);
+        }
+        finally
+        {
+            fixture.ResumeDocumentProcessing();
+        }
     }
 
     [Fact]
