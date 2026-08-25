@@ -64,9 +64,9 @@ public sealed class DianInvoiceUblTests
     {
         var support = CreateInvoice() with
         {
-            DocumentTypeCode = "05",
+            InvoiceTypeCode = "05",
             ProfileId = "DIAN 2.1: documento soporte en adquisiciones efectuadas a no obligados a facturar.",
-            UuidSchemeName = "CUDS-SHA384",
+            UniqueCodeScheme = "CUDS-SHA384",
             BuyerGenerated = true
         };
 
