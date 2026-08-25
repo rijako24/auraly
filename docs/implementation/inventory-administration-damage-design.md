@@ -2,6 +2,8 @@
 
 Fecha: 2026-08-09
 
+Actualizado: 2026-08-25
+
 ## Alcance conectado
 
 Esta rebanada extiende el modelo canónico existente; no crea un segundo inventario. `InventoryBalances`, `InventoryMovements`, `InventoryOperations` y el motor ordenado continúan siendo las únicas fuentes operativas.
@@ -22,19 +24,35 @@ Esta rebanada extiende el modelo canónico existente; no crea un segundo inventa
 - `GET /api/commerce/v1/inventory/movements`
 - `GET /api/commerce/v1/inventory/operations`
 - `POST /api/commerce/v1/inventory-damages/confirm`
+- `GET|POST /api/commerce/v1/inventory/physical-counts`
+- `GET /api/commerce/v1/inventory/physical-counts/{countId}`
+- `POST /api/commerce/v1/inventory/physical-counts/{countId}/start`
+- `PUT /api/commerce/v1/inventory/physical-counts/{countId}/lists/{listId}/pre-count`
+- `PUT /api/commerce/v1/inventory/physical-counts/{countId}/lists/{listId}/count`
+- `POST /api/commerce/v1/inventory/physical-counts/{countId}/close`
 
 Todas las consultas usan el Business autenticado y paginación del servidor. El cuerpo no puede cambiar el alcance del usuario.
 
 ## Interfaz
 
-`/dashboard/inventory` concentra cuatro contextos: Existencias, Kárdex, Operaciones y Registrar avería. Usa los componentes visuales de Auraly, selector de bodega no nativo, búsqueda combinada y estados vacíos/carga. El menú requiere `inventory.read`; confirmar averías requiere `inventory.damages.confirm`.
+`/dashboard/inventory` concentra tres contextos estables: Existencias, Kárdex y Operaciones. Operaciones lista y filtra inventarios físicos, ajustes, traslados, conversiones y averías. `Nueva operación` es una acción global que abre el formulario específico sin convertir cada captura en una pestaña principal. Usa los componentes visuales de Auraly, selector de bodega no nativo, búsqueda combinada y estados vacíos/carga. El menú requiere `inventory.read`; confirmar averías requiere `inventory.damages.confirm`.
+
+## Coordinación de inventario físico
+
+Un inventario físico divide productos sin repetirlos en listas de trabajo, creadas manualmente o desde categorías. Cada lista completa primero el preconteo y luego el conteo; cuando todas terminan, la coordinación muestra un único consolidado para revisión. El alcance parcial permite escoger una parte del catálogo. El alcance general exige incluir todos los productos inventariables activos del negocio.
+
+`InventoryPhysicalCounts`, `InventoryPhysicalCountLists` e `InventoryPhysicalCountLines` son estado de coordinación y captura, no otro libro de inventario. Al cerrar, el coordinador crea y confirma un solo documento canónico `StockCount` mediante `InventoryOperationService`. Ese documento continúa siendo el único que modifica `InventoryBalances`, escribe `InventoryMovements`, obtiene numeración CTI y entra al motor ordenado.
+
+Cada conteo conserva la secuencia procesada en la que se capturó. El cierre suma al valor contado los movimientos posteriores a esa captura antes de confirmar el `StockCount`; por eso una venta, recepción, ajuste o traslado ocurrido mientras otros equipos terminan no se pierde ni se vuelve a contar como diferencia. La creación bloquea que un producto participe simultáneamente en dos inventarios físicos activos de la misma bodega.
+
+Los permisos se separan por responsabilidad: `inventory.physical-counts.manage` crea, inicia y cierra; `inventory.physical-counts.capture` guarda y envía preconteos/conteos; el cierre también exige `inventory.counts.confirm` porque genera el documento definitivo.
 
 ## Numeración y permisos
 
 El proyecto SQL provisiona las series operativas CTI, AJI, TRB, CNV y AVE para negocios que aún no poseen una serie activa. No son prefijos DIAN. Los permisos se asignan al rol Administrator mediante el postdeployment.
 ## Cierre de la captura operativa
 
-La vista `Inventario > Nueva operación` es el único espacio de captura para conteos físicos, ajustes, traslados, conversiones y averías. No replica reglas de negocio: consume los casos de uso canónicos y todos los documentos confirmados entran al mismo motor ordenado mediante su señal RabbitMQ.
+La acción `Inventario > Nueva operación` es el único punto de entrada para inventarios físicos, ajustes, traslados, conversiones y averías. No replica reglas de negocio: consume los casos de uso canónicos y todos los documentos confirmados entran al mismo motor ordenado mediante su señal RabbitMQ.
 
 Reglas de teclado comunes a sus grillas:
 

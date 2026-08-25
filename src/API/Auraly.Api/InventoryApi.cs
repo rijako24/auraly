@@ -6,10 +6,10 @@ public static class InventoryApi
 {
     public static IEndpointRouteBuilder MapInventoryApi(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGet("/api/commerce/v1/inventory/products", async (ClaimsPrincipal principal, Guid warehouseId, string? search, int page, int pageSize, InventoryQueryService service, CancellationToken token) =>
+        endpoints.MapGet("/api/commerce/v1/inventory/products", async (ClaimsPrincipal principal, Guid warehouseId, Guid? productCategoryId, string? search, int page, int pageSize, InventoryQueryService service, CancellationToken token) =>
         {
             var identity = principal.ToInventoryIdentity();
-            return await ExecuteAsync(() => service.GetProductsAsync(identity, new(identity.BusinessId, warehouseId, search, page == 0 ? 1 : page, pageSize == 0 ? 50 : pageSize), token), Results.Ok);
+            return await ExecuteAsync(() => service.GetProductsAsync(identity, new(identity.BusinessId, warehouseId, search, page == 0 ? 1 : page, pageSize == 0 ? 50 : pageSize, productCategoryId), token), Results.Ok);
         }).RequireAuthorization("inventory.user");
         endpoints.MapGet("/api/commerce/v1/inventory/conversion-products", async (ClaimsPrincipal principal, Guid warehouseId, Guid? familyRootProductId, string? search, int page, int pageSize, InventoryQueryService service, CancellationToken token) =>
         {
@@ -45,6 +45,23 @@ public static class InventoryApi
                     () => service.GetOperationDetailAsync(principal.ToInventoryIdentity(), documentId, token),
                     result => result is null ? Results.NotFound() : Results.Ok(result)))
             .RequireAuthorization("inventory.user");
+        endpoints.MapGet("/api/commerce/v1/inventory/physical-counts", async (ClaimsPrincipal principal, Guid? warehouseId, string? search, string? status, int page, int pageSize, InventoryPhysicalCountService service, CancellationToken token) =>
+        {
+            var identity = principal.ToInventoryIdentity();
+            return await ExecuteAsync(() => service.ListAsync(identity, new(identity.BusinessId, warehouseId, search, status, page == 0 ? 1 : page, pageSize == 0 ? 50 : pageSize), token), Results.Ok);
+        }).RequireAuthorization("inventory.user");
+        endpoints.MapGet("/api/commerce/v1/inventory/physical-counts/{countId:guid}", async (ClaimsPrincipal principal, Guid countId, InventoryPhysicalCountService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.GetAsync(principal.ToInventoryIdentity(), countId, token), value => value is null ? Results.NotFound() : Results.Ok(value))).RequireAuthorization("inventory.user");
+        endpoints.MapPost("/api/commerce/v1/inventory/physical-counts", async (ClaimsPrincipal principal, CreateInventoryPhysicalCountRequest request, InventoryPhysicalCountService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.CreateAsync(principal.ToInventoryIdentity(), request, token), value => Results.Created($"/api/commerce/v1/inventory/physical-counts/{value.InventoryPhysicalCountId:D}", value))).RequireAuthorization("inventory.user");
+        endpoints.MapPost("/api/commerce/v1/inventory/physical-counts/{countId:guid}/start", async (ClaimsPrincipal principal, Guid countId, InventoryPhysicalCountService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.StartAsync(principal.ToInventoryIdentity(), countId, token), Results.Ok)).RequireAuthorization("inventory.user");
+        endpoints.MapPut("/api/commerce/v1/inventory/physical-counts/{countId:guid}/lists/{listId:guid}/pre-count", async (ClaimsPrincipal principal, Guid countId, Guid listId, SaveInventoryPhysicalCountCaptureRequest request, InventoryPhysicalCountService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.SavePreCountAsync(principal.ToInventoryIdentity(), countId, listId, request, token), Results.Ok)).RequireAuthorization("inventory.user");
+        endpoints.MapPut("/api/commerce/v1/inventory/physical-counts/{countId:guid}/lists/{listId:guid}/count", async (ClaimsPrincipal principal, Guid countId, Guid listId, SaveInventoryPhysicalCountCaptureRequest request, InventoryPhysicalCountService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.SaveCountAsync(principal.ToInventoryIdentity(), countId, listId, request, token), Results.Ok)).RequireAuthorization("inventory.user");
+        endpoints.MapPost("/api/commerce/v1/inventory/physical-counts/{countId:guid}/close", async (ClaimsPrincipal principal, Guid countId, CloseInventoryPhysicalCountRequest request, InventoryPhysicalCountService service, CancellationToken token) =>
+            await ExecuteAsync(() => service.CloseAsync(principal.ToInventoryIdentity(), countId, request, token), Results.Ok)).RequireAuthorization("inventory.user");
         endpoints.MapPost("/api/commerce/v1/stock-counts/start", async (ClaimsPrincipal user, StartStockCountRequest request, InventoryOperationService service, CancellationToken token) => await ExecuteAsync(() => service.StartCountAsync(user.ToInventoryIdentity(), request, token), Results.Ok)).RequireAuthorization("inventory.user");
         endpoints.MapPost("/api/commerce/v1/stock-counts/{documentId:guid}/confirm", async (HttpContext context, Guid documentId, ConfirmStockCountRequest request, InventoryOperationService service, CancellationToken token) => await AcceptedAsync(() => service.ConfirmCountAsync(context.User.ToInventoryIdentity(), documentId, Key(context), request, token))).RequireAuthorization("inventory.user");
         endpoints.MapPost("/api/commerce/v1/inventory-adjustments/confirm", async (HttpContext context, ConfirmInventoryAdjustmentRequest request, InventoryOperationService service, CancellationToken token) => await AcceptedAsync(() => service.ConfirmAdjustmentAsync(context.User.ToInventoryIdentity(), Key(context), request, token))).RequireAuthorization("inventory.user");

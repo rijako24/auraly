@@ -120,6 +120,88 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
     }
 
     [Fact]
+    public async Task Physical_count_consolidates_disjoint_team_lists_and_preserves_movements_after_capture()
+    {
+        var first = Guid.NewGuid();
+        var second = Guid.NewGuid();
+        await SeedAsync(first, second, Guid.NewGuid(), Guid.NewGuid());
+        using var client = fixture.CreateAdminClient(
+            InventoryPermissionCodes.Read,
+            InventoryPermissionCodes.Adjust,
+            InventoryPermissionCodes.Count,
+            InventoryPermissionCodes.ManagePhysicalCounts,
+            InventoryPermissionCodes.CapturePhysicalCounts);
+        var occurred = new DateTimeOffset(2026, 8, 20, 9, 0, 0, TimeSpan.FromHours(-5));
+
+        await ConfirmAdjustmentAsync(client, new(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, occurred,
+            "INITIAL_BALANCE", null, "Base para inventario físico",
+            [new(1, first, 10m, 5m), new(2, second, 20m, 5m)]));
+
+        var countId = Guid.NewGuid();
+        var firstList = Guid.NewGuid();
+        var secondList = Guid.NewGuid();
+        using (var create = await client.PostAsJsonAsync(
+                   "/api/commerce/v1/inventory/physical-counts",
+                   new CreateInventoryPhysicalCountRequest(
+                       countId, fixture.BusinessId, fixture.WarehouseId, "Partial", "PHYSICAL_COUNT", null,
+                       [
+                           new(firstList, "Equipo A", null, [first]),
+                           new(secondList, "Equipo B", null, [second])
+                       ])))
+        {
+            Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        }
+
+        using (var start = await client.PostAsync(
+                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/start", null))
+        {
+            Assert.Equal(HttpStatusCode.OK, start.StatusCode);
+        }
+
+        foreach (var capture in new[] { (firstList, first, 10m), (secondList, second, 20m) })
+        {
+            using var response = await client.PutAsJsonAsync(
+                $"/api/commerce/v1/inventory/physical-counts/{countId:D}/lists/{capture.Item1:D}/pre-count",
+                new SaveInventoryPhysicalCountCaptureRequest(
+                    fixture.BusinessId, [new(capture.Item2, capture.Item3)], true));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+
+        foreach (var capture in new[] { (firstList, first, 9m), (secondList, second, 22m) })
+        {
+            using var response = await client.PutAsJsonAsync(
+                $"/api/commerce/v1/inventory/physical-counts/{countId:D}/lists/{capture.Item1:D}/count",
+                new SaveInventoryPhysicalCountCaptureRequest(
+                    fixture.BusinessId, [new(capture.Item2, capture.Item3)], true));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+
+        await ConfirmAdjustmentAsync(client, new(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, occurred.AddMinutes(5),
+            "FOUND_SURPLUS", null, "Movimiento posterior al conteo",
+            [new(1, first, 3m, 5m)]));
+
+        Guid finalOperationId;
+        using (var close = await client.PostAsJsonAsync(
+                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/close",
+                   new CloseInventoryPhysicalCountRequest(fixture.BusinessId)))
+        {
+            var body = await close.Content.ReadAsStringAsync();
+            Assert.True(close.IsSuccessStatusCode, body);
+            var detail = await close.Content.ReadFromJsonAsync<InventoryPhysicalCountDetail>();
+            Assert.NotNull(detail);
+            Assert.Equal("Closed", detail.Status);
+            finalOperationId = Assert.IsType<Guid>(detail.FinalInventoryOperationId);
+            Assert.Equal(2, detail.Lists.Count);
+        }
+
+        Assert.Equal(12m, (await BalanceAsync(fixture.WarehouseId, first)).Quantity);
+        Assert.Equal(22m, (await BalanceAsync(fixture.WarehouseId, second)).Quantity);
+        Assert.Equal(2, await CountAsync("InventoryMovements", finalOperationId));
+    }
+
+    [Fact]
     public async Task Stock_count_with_two_changed_products_creates_two_kardex_movements()
     {
         var first = Guid.NewGuid();

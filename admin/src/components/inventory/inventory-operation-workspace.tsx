@@ -126,13 +126,17 @@ export function InventoryOperationWorkspace({
   businessId,
   warehouses,
   permissions,
+  initialKind,
+  hidePhysicalCount = false,
 }: {
   businessId: string;
   warehouses: WarehouseOption[];
   permissions: Set<string>;
+  initialKind?: Exclude<OperationKind, "count">;
+  hidePhysicalCount?: boolean;
 }) {
   const queryClient = useQueryClient();
-  const [kind, setKind] = useState<OperationKind>("count");
+  const [kind, setKind] = useState<OperationKind>(initialKind ?? (hidePhysicalCount ? "adjustment" : "count"));
   const [warehouseId, setWarehouseId] = useState("");
   const [destinationId, setDestinationId] = useState("");
   const [reason, setReason] = useState("");
@@ -144,6 +148,7 @@ export function InventoryOperationWorkspace({
   const [documentId, setDocumentId] = useState(() => crypto.randomUUID());
   const [hydratedKey, setHydratedKey] = useState<string | null>(null);
 
+  const visibleOperationOptions = hidePhysicalCount ? operationOptions.filter((option) => option.id !== "count") : operationOptions;
   const selected = operationOptions.find((option) => option.id === kind)!;
   const allowed = permissions.has(selected.permission);
   const reasonsQuery = useQuery({
@@ -503,7 +508,7 @@ export function InventoryOperationWorkspace({
   return (
     <div className="space-y-4">
       <div className="grid gap-3 md:grid-cols-5">
-        {operationOptions.map((option) => {
+        {visibleOperationOptions.map((option) => {
           const Icon = option.icon;
           const enabled = permissions.has(option.permission);
           return (

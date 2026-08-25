@@ -16,14 +16,14 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
             LEFT JOIN dbo.ProductLinks link ON link.BusinessId=p.BusinessId AND link.ChildProductId=p.ProductId AND link.SharesInventory=1 AND link.IsActive=1
             LEFT JOIN dbo.Products root ON root.BusinessId=p.BusinessId AND root.ProductId=link.ParentProductId
             WHERE p.BusinessId=@BusinessId AND p.IsActive=1 AND COALESCE(root.ManageStock,p.ManageStock)=1
-              AND link.ProductLinkId IS NULL
+              AND link.ProductLinkId IS NULL AND (@ProductCategoryId IS NULL OR p.ProductCategoryId=@ProductCategoryId)
               AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Reference LIKE @Pattern OR p.Name LIKE @Pattern OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes barcode WHERE barcode.BusinessId=p.BusinessId AND barcode.ProductId=p.ProductId AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1));
             SELECT p.ProductId,COALESCE(p.ProductCode,N''),p.Reference,p.Name,COALESCE(p.BaseUnitCode,N'UN'),
                    COALESCE(b.QuantityOnHand,0) / COALESCE(NULLIF(link.InventoryFactor,0),1),
                    CASE WHEN @IncludeCosts=1
                         THEN COALESCE(NULLIF(b.AverageUnitCost,0),price.CostBasisAmount,0) * COALESCE(NULLIF(link.InventoryFactor,0),1)
                    END,
-                   price.Amount * COALESCE(NULLIF(link.PriceFactor,0),1)
+                   price.Amount * COALESCE(NULLIF(link.PriceFactor,0),1),p.ProductCategoryId,p.CategoryName
             FROM dbo.Products p
             LEFT JOIN dbo.ProductLinks link ON link.BusinessId=p.BusinessId AND link.ChildProductId=p.ProductId AND link.SharesInventory=1 AND link.IsActive=1
             LEFT JOIN dbo.Products root ON root.BusinessId=p.BusinessId AND root.ProductId=link.ParentProductId
@@ -31,14 +31,14 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
             LEFT JOIN dbo.ProductPrices price ON price.BusinessId=p.BusinessId AND price.ProductId=p.ProductId
               AND price.IsActive=1 AND price.ValidFrom<=SYSUTCDATETIME() AND (price.ValidUntil IS NULL OR price.ValidUntil>SYSUTCDATETIME())
             WHERE p.BusinessId=@BusinessId AND p.IsActive=1 AND COALESCE(root.ManageStock,p.ManageStock)=1
-              AND link.ProductLinkId IS NULL
+              AND link.ProductLinkId IS NULL AND (@ProductCategoryId IS NULL OR p.ProductCategoryId=@ProductCategoryId)
               AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Reference LIKE @Pattern OR p.Name LIKE @Pattern OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes barcode WHERE barcode.BusinessId=p.BusinessId AND barcode.ProductId=p.ProductId AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1))
             ORDER BY p.Name,p.ProductId OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             """;
         await using var connection=connections.Create(); await connection.OpenAsync(token); await using var command=new SqlCommand(sql,connection);
-        AddCommon(command,user.BusinessId,query.WarehouseId,query.Search,query.Page,query.PageSize); command.Parameters.AddWithValue("@IncludeCosts",includeCosts);
+        AddCommon(command,user.BusinessId,query.WarehouseId,query.Search,query.Page,query.PageSize); command.Parameters.AddWithValue("@IncludeCosts",includeCosts); command.Parameters.AddWithValue("@ProductCategoryId",(object?)query.ProductCategoryId??DBNull.Value);
         await using var reader=await command.ExecuteReaderAsync(token); await reader.ReadAsync(token); var total=reader.GetInt32(0); await reader.NextResultAsync(token); var items=new List<InventoryProductItem>();
-        while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.IsDBNull(2)?null:reader.GetString(2),reader.GetString(3),reader.GetString(4),reader.GetDecimal(5),reader.IsDBNull(6)?null:reader.GetDecimal(6),reader.IsDBNull(7)?null:reader.GetDecimal(7)));
+        while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.IsDBNull(2)?null:reader.GetString(2),reader.GetString(3),reader.GetString(4),reader.GetDecimal(5),reader.IsDBNull(6)?null:reader.GetDecimal(6),reader.IsDBNull(7)?null:reader.GetDecimal(7),reader.IsDBNull(8)?null:reader.GetGuid(8),reader.IsDBNull(9)?null:reader.GetString(9)));
         return new(items,query.Page,query.PageSize,total,Pages(total,query.PageSize));
     }
 
