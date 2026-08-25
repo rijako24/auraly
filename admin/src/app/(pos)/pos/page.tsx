@@ -101,6 +101,7 @@ import { approvalRequestConfirmsExistingPermission } from "@/services/pos/pos-ap
 import { calculateRetailUnitPrice } from "./pos-retail-price";
 import { canRequestOrderSave } from "./pos-order-save-availability";
 import { capturedLineAfterAddition } from "./pos-capture-presentation";
+import { resolvePosFunctionShortcut } from "./pos-function-shortcut";
 import { useAuthStore } from "@/stores/auth-store";
 
 
@@ -769,6 +770,7 @@ export default function PosPage() {
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
+      const shortcut = resolvePosFunctionShortcut(event.key, event.code);
       if (
         invoiceSearchOpen ||
         returnsOpen ||
@@ -789,7 +791,7 @@ export default function PosPage() {
         !confirmation;
       if (
         event.ctrlKey &&
-        event.key === "F6" &&
+        shortcut === "F6" &&
         client?.mode === "online" &&
         serverConnected &&
         !busy &&
@@ -804,7 +806,7 @@ export default function PosPage() {
         setReturnsOpen(true);
       } else
       if (
-        event.key === "F6" &&
+        shortcut === "F6" &&
         !busy &&
         !temporaryOpen &&
         !productSearchOpen &&
@@ -816,7 +818,7 @@ export default function PosPage() {
         event.preventDefault();
         setInvoiceSearchOpen(true);
       } else if (
-        event.key === "F1" &&
+        shortcut === "F1" &&
         !busy &&
         Boolean(draft?.lines.length) &&
         !temporaryOpen &&
@@ -829,7 +831,7 @@ export default function PosPage() {
         event.preventDefault();
         setPaymentOpen(true);
       } else if (
-        event.key === "F2" &&
+        shortcut === "F2" &&
         !busy &&
         !temporaryOpen &&
         !paymentOpen &&
@@ -841,7 +843,7 @@ export default function PosPage() {
         setProductSearchOpen(true);
       } else if (
         !event.ctrlKey &&
-        event.key === "F10" &&
+        shortcut === "F10" &&
         !busy &&
         Boolean(draft) &&
         !temporaryOpen &&
@@ -854,7 +856,7 @@ export default function PosPage() {
         setCustomerSearchOpen(true);
       } else if (
         event.ctrlKey &&
-        event.key === "F7" &&
+        shortcut === "F7" &&
         canOpenCashDrawer &&
         canOpenCashMovement
       ) {
@@ -862,7 +864,7 @@ export default function PosPage() {
         void openCashDrawer();
       } else if (
         !event.ctrlKey &&
-        event.key === "F7" &&
+        shortcut === "F7" &&
         !busy &&
         Boolean(draft?.lines.length) &&
         !temporaryOpen &&
@@ -875,7 +877,7 @@ export default function PosPage() {
         event.preventDefault();
         void requestPauseSale();
       } else if (
-        event.key === "F3" &&
+        shortcut === "F3" &&
         !busy &&
         Boolean(draft?.lines.length) &&
         !temporaryOpen &&
@@ -887,7 +889,7 @@ export default function PosPage() {
         event.preventDefault();
         void protectedActionHandlers.current.discount();
       } else if (
-        event.key === "F4" &&
+        shortcut === "F4" &&
         !busy &&
         hasSelectedLine &&
         selectedLineId &&
@@ -901,7 +903,7 @@ export default function PosPage() {
         event.preventDefault();
         void protectedActionHandlers.current.removeLine(selectedLineId);
       } else if (
-        event.key === "F5" &&
+        shortcut === "F5" &&
         !busy &&
         !temporaryOpen &&
         !paymentOpen &&
@@ -912,25 +914,25 @@ export default function PosPage() {
       ) {
         event.preventDefault();
         void protectedActionHandlers.current.restartSale();
-      } else if (event.ctrlKey && event.key === "F8" && canOpenCashMovement) {
+      } else if (event.ctrlKey && shortcut === "F8" && canOpenCashMovement) {
         event.preventDefault();
         setCashMovementDirection("In");
-      } else if (event.ctrlKey && event.key === "F9" && canOpenCashMovement) {
+      } else if (event.ctrlKey && shortcut === "F9" && canOpenCashMovement) {
         event.preventDefault();
         setCashMovementDirection("Out");
-      } else if (event.ctrlKey && event.key === "F10" && canOpenCashMovement) {
+      } else if (event.ctrlKey && shortcut === "F10" && canOpenCashMovement) {
         event.preventDefault();
         salesSessionButton.current?.click();
-      } else if (!event.ctrlKey && event.key === "F8" && !busy) {
+      } else if (!event.ctrlKey && shortcut === "F8" && !busy) {
         event.preventDefault();
         setSidePanel("temporaries");
-      } else if (!event.ctrlKey && event.key === "F9" && !busy) {
+      } else if (!event.ctrlKey && shortcut === "F9" && !busy) {
         event.preventDefault();
         setSidePanel("orders");
       }
     };
-    window.addEventListener("keydown", handleShortcut);
-    return () => window.removeEventListener("keydown", handleShortcut);
+    window.addEventListener("keydown", handleShortcut, true);
+    return () => window.removeEventListener("keydown", handleShortcut, true);
   }, [
     busy,
     client,
@@ -1122,14 +1124,15 @@ export default function PosPage() {
     operationId: string,
     execute: (authorization: PosSensitiveAuthorization) => Promise<void>,
   ) {
-    let approval: PosApprovalRequest | null = null;
+    setSensitiveApprovalError(null);
+    setSensitiveApproval({ approval: null, operationId, execute });
     const activeClient = client;
     if (serverConnected && activeClient) {
       const businessId = window.localStorage.getItem("selected_business_id");
       if (!businessId || !draft)
         throw new Error("No fue posible identificar el negocio de esta venta.");
       try {
-        approval = await activeClient.createApproval({
+        const approval = await activeClient.createApproval({
           businessId,
           deviceId: workstation.deviceId,
           workSessionId: workstation.workSessionId,
@@ -1138,16 +1141,21 @@ export default function PosPage() {
           permissionResource,
           contextJson: JSON.stringify(context),
         });
+        setSensitiveApproval((current) => current?.operationId === operationId
+          ? { ...current, approval }
+          : current);
       } catch (caught) {
         // The API resolves current permissions from the authoritative store. The
         // browser token can lag behind a role/seed update until its next renewal.
-        if (!approvalRequestConfirmsExistingPermission(caught)) throw caught;
+        if (!approvalRequestConfirmsExistingPermission(caught)) {
+          setSensitiveApproval((current) => current?.operationId === operationId ? null : current);
+          throw caught;
+        }
+        setSensitiveApproval((current) => current?.operationId === operationId ? null : current);
         await execute({ operationId });
         return;
       }
     }
-    setSensitiveApprovalError(null);
-    setSensitiveApproval({ approval, operationId, execute });
   }
 
   async function authorizeSensitiveEntry(

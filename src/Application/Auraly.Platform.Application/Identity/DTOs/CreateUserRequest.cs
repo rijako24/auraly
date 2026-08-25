@@ -7,4 +7,5 @@ public record CreateUserRequest(
     string FirstName,
     string LastName,
     string? PhoneNumber,
-    Guid? PartyId = null);
+    Guid? PartyId = null,
+    IReadOnlyList<AssignRoleRequest>? Roles = null);

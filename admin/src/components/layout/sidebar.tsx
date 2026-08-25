@@ -114,7 +114,7 @@ export function Sidebar() {
                       const linkContent = (
                         <>
                           <Icon className={cn("h-4 w-4 shrink-0", isCollapsed && "mx-auto")} />
-                          {<span className={cn("min-w-0 overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-150 ease-out", isCollapsed ? "max-w-0 translate-x-1 opacity-0" : "max-w-[12rem] translate-x-0 opacity-100")}>{item.name}</span>}
+                          <span className={cn("min-w-0 flex-1 leading-5 transition-[max-width,opacity,transform] duration-150 ease-out", isCollapsed ? "max-w-0 translate-x-1 overflow-hidden whitespace-nowrap opacity-0" : "max-w-none whitespace-normal opacity-100")}>{item.name}</span>
                         </>
                       );
 

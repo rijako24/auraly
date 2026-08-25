@@ -2,11 +2,22 @@ import { apiClient, withPagedDefaults } from "./client";
 import { PagedResponse, PagedRequest } from "@/types/api";
 import { AppUser, UserRole } from "@/types/entities";
 
+export interface CreateUserInput {
+  username: string;
+  email: string;
+  password: string;
+  firstName: string;
+  lastName: string;
+  phoneNumber: string | null;
+  partyId?: string | null;
+  roles?: Array<{ roleId: string; businessId?: string | null }>;
+}
+
 export const usersApi = {
   list: (params?: Partial<PagedRequest> & { tenantId?: string }) =>
     apiClient.get<PagedResponse<AppUser>>("/users", withPagedDefaults(params)),
   getById: (id: string) => apiClient.get<AppUser>(`/users/${id}`),
-  create: (data: Partial<AppUser>) => apiClient.post<AppUser>("/users", data),
+  create: (data: CreateUserInput) => apiClient.post<AppUser>("/users", data),
   update: (id: string, data: Partial<AppUser>) => apiClient.put<AppUser>(`/users/${id}`, data),
   resetPassword: (id: string, password: string) => apiClient.post(`/users/${id}/reset-password`, { password }),
   deactivate: (id: string) => apiClient.post(`/users/${id}/deactivate`, {}),

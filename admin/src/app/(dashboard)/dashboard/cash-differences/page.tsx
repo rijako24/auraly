@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Banknote, CheckCircle2, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Label } from "@/components/ui/label";
 import { workSessionDifferencesApi } from "@/services/api/work-session-differences";
 
@@ -40,11 +40,11 @@ export default function CashDifferencesPage() {
     </div>
 
     <Card className="rounded-3xl">
-      <CardHeader className="gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <CardTitle>Historial auditable</CardTitle>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1"><Label htmlFor="difference-from">Desde</Label><Input id="difference-from" type="date" value={from} onChange={(event) => setFrom(event.target.value)} /></div>
-          <div className="space-y-1"><Label htmlFor="difference-to">Hasta</Label><Input id="difference-to" type="date" value={to} onChange={(event) => setTo(event.target.value)} /></div>
+      <CardHeader className="gap-4 border-b sm:flex-row sm:items-end sm:justify-between">
+        <div><CardTitle>Historial auditable</CardTitle><p className="mt-1 text-sm text-muted-foreground">Consulta los cierres con diferencia dentro del periodo seleccionado.</p></div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="min-w-0 space-y-1.5"><Label>Desde</Label><DatePicker value={from} onChange={setFrom} className="sm:w-56" /></div>
+          <div className="min-w-0 space-y-1.5"><Label>Hasta</Label><DatePicker value={to} onChange={setTo} className="sm:w-56" /></div>
         </div>
       </CardHeader>
       <CardContent className="p-0">

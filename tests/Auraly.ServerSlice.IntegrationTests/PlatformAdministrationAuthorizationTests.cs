@@ -55,8 +55,8 @@ public sealed class PlatformAdministrationAuthorizationTests(ServerSliceFixture 
         var delegatedRole = await CreateRoleAsync(root, "Consulta multitenant delegada");
         var delegatedResources = new[] { "users.read", "tenants.users.read" };
         await AssignPermissionsAsync(root, delegatedRole.RoleId, PermissionIds(permissions, delegatedResources), HttpStatusCode.NoContent);
-        var delegatedUser = await CreateUserAsync(root, "delegated");
-        await AssignRoleAsync(root, delegatedUser.UserId, delegatedRole.RoleId);
+        var delegatedUser = await CreateUserAsync(root, "delegated", delegatedRole.RoleId);
+        Assert.Contains(delegatedUser.Roles, assignment => assignment.RoleId == delegatedRole.RoleId);
 
         using var delegated = fixture.CreateTenantUserClient(AuralyTenantId, delegatedUser.UserId, delegatedResources);
         using var allowedUsers = await delegated.GetAsync($"/api/v1/users?tenantId={fixture.TenantId:D}&page=1&pageSize=10");
@@ -135,10 +135,13 @@ public sealed class PlatformAdministrationAuthorizationTests(ServerSliceFixture 
         return await response.Content.ReadFromJsonAsync<RoleDto>() ?? throw new InvalidOperationException("Empty role response.");
     }
 
-    private static async Task<UserDto> CreateUserAsync(HttpClient client, string prefix)
+    private static async Task<UserDto> CreateUserAsync(HttpClient client, string prefix, Guid? roleId = null)
     {
         var suffix = Guid.NewGuid().ToString("N");
-        using var response = await client.PostAsJsonAsync("/api/v1/users", new { username = $"{prefix}-{suffix}", email = $"{prefix}-{suffix}@auraly.test", password = "Auraly-Test-2026!", firstName = "Prueba", lastName = prefix, phoneNumber = (string?)null });
+        var roles = roleId.HasValue
+            ? new[] { new { roleId = roleId.Value, businessId = (Guid?)null } }
+            : [];
+        using var response = await client.PostAsJsonAsync("/api/v1/users", new { username = $"{prefix}-{suffix}", email = $"{prefix}-{suffix}@auraly.test", password = "Auraly-Test-2026!", firstName = "Prueba", lastName = prefix, phoneNumber = (string?)null, roles });
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<UserDto>() ?? throw new InvalidOperationException("Empty user response.");
     }

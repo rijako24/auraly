@@ -53,12 +53,18 @@ public class UserService : IUserService
         {
             var normalizedUsername = request.Username.ToUpperInvariant();
             var normalizedEmail = request.Email.ToUpperInvariant();
+            var requestedRoles = request.Roles ?? [];
             await EnsureTenantCanAddActiveUserAsync(tenantId, ct);
 
             if (await _unitOfWork.AppUsers.ExistsWithUsernameAsync(tenantId, normalizedUsername, ct: ct))
                 throw new ConflictException($"El nombre de usuario '{request.Username}' ya está en uso.");
             if (await _unitOfWork.AppUsers.ExistsWithEmailAsync(tenantId, normalizedEmail, ct: ct))
                 throw new ConflictException($"El email '{request.Email}' ya está registrado.");
+
+            if (requestedRoles
+                .GroupBy(item => new { item.RoleId, item.BusinessId })
+                .Any(group => group.Count() > 1))
+                throw new ConflictException("No se puede asignar dos veces el mismo rol en el mismo alcance.");
 
             var offlinePassword = PosOfflinePasswordHasher.Hash(request.Password, DateTimeOffset.UtcNow);
             var user = new AppUser
@@ -84,11 +90,35 @@ public class UserService : IUserService
             };
 
             await _unitOfWork.AppUsers.AddAsync(user, ct);
+            foreach (var assignment in requestedRoles)
+            {
+                var role = await AuthorizeRoleDelegationAsync(user, assignment.RoleId, createdByUserId, ct);
+                if (!role.IsActive) throw new ConflictException("El rol está inactivo.");
+                if (assignment.BusinessId.HasValue)
+                {
+                    var business = await _unitOfWork.Businesses.GetByIdAsync(assignment.BusinessId.Value)
+                        ?? throw new NotFoundException(nameof(Business), assignment.BusinessId.Value);
+                    if (business.TenantId != tenantId)
+                        throw new ForbiddenException("El negocio, el rol y el usuario deben pertenecer a la misma organización.");
+                }
+
+                await _unitOfWork.UserRoles.AddAsync(new UserRole
+                {
+                    UserRoleId = Guid.NewGuid(),
+                    UserId = user.UserId,
+                    RoleId = role.RoleId,
+                    BusinessId = assignment.BusinessId,
+                    AssignedAt = DateTime.UtcNow,
+                    AssignedByUserId = createdByUserId
+                }, ct);
+            }
             await _unitOfWork.SaveChangesAsync(ct);
             _logger.LogInformation(
                 "User {Username} created by {CreatedBy} [CorrelationId: {CorrelationId}]",
                 user.Username, createdByUserId, _correlationIdProvider.CorrelationId);
-            return MapToDto(user);
+            var created = await _unitOfWork.AppUsers.GetWithRolesAndPermissionsAsync(user.UserId, ct)
+                ?? throw new NotFoundException(nameof(AppUser), user.UserId);
+            return MapToDto(created);
         }, ct);
 
     public async Task<UserDto> UpdateAsync(Guid userId, UpdateUserRequest request, CancellationToken ct)

@@ -49,9 +49,13 @@ import {
   removeInventoryOperationDraft,
   saveInventoryOperationDraft,
 } from "@/lib/operation-draft-store";
+import {
+  defaultInventoryOperationKind,
+  type InventoryOperationKind,
+} from "@/lib/inventory-operation-launch";
 
 export type WarehouseOption = { id: string; name: string };
-type OperationKind = "count" | "adjustment" | "transfer" | "conversion" | "damage";
+type OperationKind = InventoryOperationKind;
 type Direction = "INPUT" | "OUTPUT";
 export type InventoryOperationLine = {
   productId: string;
@@ -126,17 +130,15 @@ export function InventoryOperationWorkspace({
   businessId,
   warehouses,
   permissions,
-  initialKind,
-  hidePhysicalCount = false,
+  initialKind = defaultInventoryOperationKind,
 }: {
   businessId: string;
   warehouses: WarehouseOption[];
   permissions: Set<string>;
-  initialKind?: Exclude<OperationKind, "count">;
-  hidePhysicalCount?: boolean;
+  initialKind?: InventoryOperationKind;
 }) {
   const queryClient = useQueryClient();
-  const [kind, setKind] = useState<OperationKind>(initialKind ?? (hidePhysicalCount ? "adjustment" : "count"));
+  const [kind, setKind] = useState<OperationKind>(initialKind);
   const [warehouseId, setWarehouseId] = useState("");
   const [destinationId, setDestinationId] = useState("");
   const [reason, setReason] = useState("");
@@ -148,7 +150,6 @@ export function InventoryOperationWorkspace({
   const [documentId, setDocumentId] = useState(() => crypto.randomUUID());
   const [hydratedKey, setHydratedKey] = useState<string | null>(null);
 
-  const visibleOperationOptions = hidePhysicalCount ? operationOptions.filter((option) => option.id !== "count") : operationOptions;
   const selected = operationOptions.find((option) => option.id === kind)!;
   const allowed = permissions.has(selected.permission);
   const reasonsQuery = useQuery({
@@ -508,7 +509,7 @@ export function InventoryOperationWorkspace({
   return (
     <div className="space-y-4">
       <div className="grid gap-3 md:grid-cols-5">
-        {visibleOperationOptions.map((option) => {
+        {operationOptions.map((option) => {
           const Icon = option.icon;
           const enabled = permissions.has(option.permission);
           return (
