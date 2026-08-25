@@ -127,8 +127,9 @@ public sealed class PosArchitectureTests
         var productSearchDialog = File.ReadAllText(
             Path.Combine(posDirectory, "pos-product-search-dialog.tsx"));
 
-        Assert.Contains("event.key === \"F1\"", page, StringComparison.Ordinal);
-        Assert.Contains("event.key === \"F2\"", page, StringComparison.Ordinal);
+        Assert.Contains("shortcut === \"F1\"", page, StringComparison.Ordinal);
+        Assert.Contains("shortcut === \"F2\"", page, StringComparison.Ordinal);
+        Assert.Contains("resolvePosFunctionShortcut(event.key, event.code)", page, StringComparison.Ordinal);
         Assert.Contains("Buscar <span", page, StringComparison.Ordinal);
         Assert.Contains(">F2</span>", page, StringComparison.Ordinal);
         Assert.Contains(">F1</span>", page, StringComparison.Ordinal);
@@ -195,10 +196,10 @@ public sealed class PosArchitectureTests
         var page = File.ReadAllText(Path.Combine(posDirectory, "page.tsx"));
         var dialog = File.ReadAllText(Path.Combine(posDirectory, "pos-confirm-dialog.tsx"));
 
-        Assert.Contains("event.key === \"F3\"", page, StringComparison.Ordinal);
+        Assert.Contains("shortcut === \"F3\"", page, StringComparison.Ordinal);
         Assert.Contains("protectedActionHandlers.current.removeLine(selectedLineId)", page, StringComparison.Ordinal);
-        Assert.Contains("event.key === \"F4\"", page, StringComparison.Ordinal);
-        Assert.Contains("event.key === \"F5\"", page, StringComparison.Ordinal);
+        Assert.Contains("shortcut === \"F4\"", page, StringComparison.Ordinal);
+        Assert.Contains("shortcut === \"F5\"", page, StringComparison.Ordinal);
         Assert.Contains("protectedActionHandlers.current.restartSale()", page, StringComparison.Ordinal);
         Assert.Contains("restartSale: requestCancelSale", page, StringComparison.Ordinal);
         Assert.Contains("<PosConfirmDialog", page, StringComparison.Ordinal);
