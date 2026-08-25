@@ -1,5 +1,8 @@
 import { PosEdgeError } from "./pos-edge-client";
-import { isApprovalSynchronizationMessage } from "./pos-approval-synchronization";
+import {
+  isApprovalSynchronizationMessage,
+  shouldMaintainApprovalRealtimeConnection,
+} from "./pos-approval-synchronization";
 import { fetchWithSessionRetry } from "@/services/api/client";
 
 export type PosApprovalRequest = {
@@ -133,15 +136,34 @@ export class PosApprovalClient {
 
   async subscribe(onApprovalsChanged: () => void): Promise<() => void> {
     let stopped = false;
+    let connecting = false;
     let socket: WebSocket | null = null;
     let reconnectTimer: number | null = null;
+    const disconnect = () => {
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+      const current = socket;
+      socket = null;
+      current?.close();
+    };
+    const scheduleReconnect = () => {
+      if (stopped || !shouldMaintainApprovalRealtimeConnection(document.visibilityState)) return;
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        void connect();
+      }, 1_000);
+    };
     const connect = async () => {
+      if (stopped || connecting || socket ||
+        !shouldMaintainApprovalRealtimeConnection(document.visibilityState)) return;
+      connecting = true;
       try {
         const negotiation = await this.request<Negotiation>(
           "/api/commerce/v1/pos/approvals/synchronization/negotiate",
           { method: "POST" },
         );
-        if (stopped) return;
+        if (stopped || !shouldMaintainApprovalRealtimeConnection(document.visibilityState)) return;
         const current = new WebSocket(
           negotiation.clientAccessUri,
           "json.webpubsub.azure.v1",
@@ -166,21 +188,27 @@ export class PosApprovalClient {
         });
         current.addEventListener("close", () => {
           if (stopped || socket !== current) return;
-          reconnectTimer = window.setTimeout(() => void connect(), 1_000);
+          socket = null;
+          scheduleReconnect();
         });
         onApprovalsChanged();
       } catch {
-        socket?.close();
-        socket = null;
-        if (stopped) return;
-        reconnectTimer = window.setTimeout(() => void connect(), 2_000);
+        disconnect();
+        scheduleReconnect();
+      } finally {
+        connecting = false;
       }
     };
+    const visibilityChanged = () => {
+      if (shouldMaintainApprovalRealtimeConnection(document.visibilityState)) void connect();
+      else disconnect();
+    };
+    document.addEventListener("visibilitychange", visibilityChanged);
     void connect();
     return () => {
       stopped = true;
-      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
-      socket?.close();
+      document.removeEventListener("visibilitychange", visibilityChanged);
+      disconnect();
     };
   }
 }

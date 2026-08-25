@@ -1,7 +1,7 @@
 "use client";
 
 import { Bell, Check, KeyRound, Loader2, ShieldCheck, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { Badge } from "@/components/ui/badge";
@@ -45,7 +45,6 @@ export function NotificationsDropdown({ className }: { className?: string }) {
   const [activatingNotifications, setActivatingNotifications] = useState(false);
   const [backgroundPushState, setBackgroundPushState] = useState<"idle"|"checking"|"active"|"error">("idle");
   const [portalReady, setPortalReady] = useState(false);
-  const knownIds = useRef(new Set<string>());
 
   useEffect(() => setPortalReady(true), []);
   useEffect(()=>{if(new URLSearchParams(window.location.search).has("posApproval"))setDropdownOpen(true)},[]);
@@ -70,22 +69,10 @@ export function NotificationsDropdown({ className }: { className?: string }) {
     return () => { active = false; };
   }, [businessId, canReceivePush]);
 
-  const refresh = useCallback(async (notify = false) => {
+  const refresh = useCallback(async () => {
     if (!canApprove || !businessId) return;
     try {
       const pending = await posApprovalClient.pending();
-      if (notify && typeof Notification !== "undefined" && Notification.permission === "granted") {
-        for (const request of pending) {
-          if (!knownIds.current.has(request.approvalRequestId)) {
-            const notification = new Notification("Auraly · autorización POS", {
-              body: `${request.requestedByName} solicita autorización para una acción protegida.`,
-              tag: request.approvalRequestId,
-            });
-            notification.onclick = () => { window.focus(); notification.close(); };
-          }
-        }
-      }
-      knownIds.current = new Set(pending.map((request) => request.approvalRequestId));
       setRequests(pending);
       setError(null);
     } catch (caught) {
@@ -101,17 +88,17 @@ export function NotificationsDropdown({ className }: { className?: string }) {
     let active = true;
     let dispose: (() => void) | undefined;
     const refreshVisible = () => {
-      if (document.visibilityState === "visible") void refresh(true);
+      if (document.visibilityState === "visible") void refresh();
     };
     const receiveServiceWorkerMessage = (event: MessageEvent<{ type?: string }>) => {
-      if (event.data?.type === "auraly:pos-approvals-changed") void refresh(true);
+      if (event.data?.type === "auraly:pos-approvals-changed") void refresh();
     };
     const fallback = window.setInterval(refreshVisible, 15_000);
     window.addEventListener("focus", refreshVisible);
     document.addEventListener("visibilitychange", refreshVisible);
     navigator.serviceWorker?.addEventListener("message", receiveServiceWorkerMessage);
-    void refresh(false)
-      .then(() => posApprovalClient.subscribe(() => active && void refresh(true)))
+    void refresh()
+      .then(() => posApprovalClient.subscribe(() => active && void refresh()))
       .then((stop) => { dispose = stop; })
       .catch((caught) => {
         if (active) setError(caught instanceof Error ? caught.message : "No fue posible conectar las autorizaciones.");

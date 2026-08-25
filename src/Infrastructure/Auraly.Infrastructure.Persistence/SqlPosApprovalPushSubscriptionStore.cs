@@ -66,7 +66,8 @@ public sealed class SqlPosApprovalPushSubscriptionStore(SqlServerConnectionFacto
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand("""
-            SELECT DISTINCT subscription.SubscriptionId,subscription.Endpoint,subscription.P256dh,subscription.Auth
+            SELECT DISTINCT subscription.SubscriptionId,subscription.UserId,
+                subscription.Endpoint,subscription.P256dh,subscription.Auth
             FROM dbo.PosApprovalPushSubscriptions subscription
             JOIN dbo.AppUsers app ON app.UserId=subscription.UserId AND app.IsActive=1
             WHERE subscription.TenantId=@TenantId AND subscription.BusinessId=@BusinessId
@@ -85,7 +86,12 @@ public sealed class SqlPosApprovalPushSubscriptionStore(SqlServerConnectionFacto
         var rows = new List<PosApprovalPushRecipient>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
-            rows.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetString(3)));
+            rows.Add(new(
+                reader.GetGuid(0),
+                reader.GetGuid(1),
+                reader.GetString(2),
+                reader.GetString(3),
+                reader.GetString(4)));
         return rows;
     }
 

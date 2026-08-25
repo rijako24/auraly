@@ -4,6 +4,7 @@ namespace Auraly.Application.Authorization;
 
 public sealed record PosApprovalPushRecipient(
     Guid SubscriptionId,
+    Guid UserId,
     string Endpoint,
     string P256dh,
     string Auth);

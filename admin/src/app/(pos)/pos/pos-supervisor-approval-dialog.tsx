@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, KeyRound, ShieldCheck, Smartphone } from "lucide-react";
+import { CheckCircle2, KeyRound, RefreshCw, ShieldCheck, Smartphone } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import type { PosApprovalRequest } from "@/services/pos/pos-approval-client";
 
@@ -13,6 +13,7 @@ export function PosSupervisorApprovalDialog({
   subscribeApprovals,
   onRemoteApproved,
   onLocalSecret,
+  onRetry,
   onCancel,
 }: {
   approval: PosApprovalRequest | null;
@@ -23,15 +24,19 @@ export function PosSupervisorApprovalDialog({
   subscribeApprovals: (onChanged: () => void) => Promise<() => void>;
   onRemoteApproved: (approvalId: string) => Promise<void>;
   onLocalSecret: (secret: string) => Promise<void>;
+  onRetry: () => Promise<void>;
   onCancel: () => void;
 }) {
   const [secret, setSecret] = useState("");
   const [channelError, setChannelError] = useState<string | null>(null);
+  const [expired, setExpired] = useState(false);
   const onRemoteApprovedRef = useRef(onRemoteApproved);
   useEffect(() => { onRemoteApprovedRef.current = onRemoteApproved; }, [onRemoteApproved]);
 
   useEffect(() => {
     if (!approval || !allowRemote) return;
+    setChannelError(null);
+    setExpired(false);
     let active = true;
     let resolved = false;
     let refreshing = false;
@@ -47,6 +52,7 @@ export function PosSupervisorApprovalDialog({
           await onRemoteApprovedRef.current(current.approvalRequestId);
         } else if (current.status === "Rejected" || current.status === "Expired") {
           resolved = true;
+          setExpired(current.status === "Expired");
           setChannelError(current.status === "Rejected"
             ? "El supervisor rechazó la acción."
             : "La solicitud venció; inténtala nuevamente.");
@@ -117,6 +123,17 @@ export function PosSupervisorApprovalDialog({
               </button>
             </form>
           {(channelError || error) && <p className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-medium text-red-700">{error || channelError}</p>}
+          {expired && (
+            <button
+              type="button"
+              onClick={() => void onRetry()}
+              disabled={busy}
+              className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-teal-700 font-bold text-white transition hover:bg-teal-800 disabled:opacity-50"
+            >
+              <RefreshCw className="h-4 w-4" />
+              {busy ? "Reenviando…" : "Reenviar solicitud"}
+            </button>
+          )}
           <div className="mt-5 flex items-center justify-between gap-3">
             <span />
             <button type="button" onClick={onCancel} disabled={busy} className="h-10 rounded-xl border border-slate-300 px-4 font-semibold text-slate-700">

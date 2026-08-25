@@ -260,6 +260,9 @@ export default function PosPage() {
   const [sensitiveApproval, setSensitiveApproval] = useState<{
     approval: PosApprovalRequest | null;
     operationId: string;
+    permissionResource: string;
+    lineId: string | null;
+    context: Record<string, unknown>;
     execute: (authorization: PosSensitiveAuthorization) => Promise<void>;
   } | null>(null);
   const [sensitiveApprovalError, setSensitiveApprovalError] = useState<string | null>(null);
@@ -1091,7 +1094,14 @@ export default function PosPage() {
     execute: (authorization: PosSensitiveAuthorization) => Promise<void>,
   ) {
     setSensitiveApprovalError(null);
-    setSensitiveApproval({ approval: null, operationId, execute });
+    setSensitiveApproval({
+      approval: null,
+      operationId,
+      permissionResource,
+      lineId,
+      context,
+      execute,
+    });
     const activeClient = client;
     if (serverConnected && activeClient) {
       const businessId = window.localStorage.getItem("selected_business_id");
@@ -1284,6 +1294,28 @@ export default function PosPage() {
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "No fue posible aplicar la acción autorizada.");
       setMessage("La autorización fue aprobada, pero la acción no pudo completarse");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function retrySensitiveApproval() {
+    if (!sensitiveApproval || busy) return;
+    const pending = sensitiveApproval;
+    setBusy(true);
+    setSensitiveApprovalError(null);
+    try {
+      await requestSensitiveApproval(
+        pending.permissionResource,
+        pending.lineId,
+        pending.context,
+        pending.operationId,
+        pending.execute,
+      );
+    } catch (caught) {
+      setSensitiveApprovalError(caught instanceof Error
+        ? caught.message
+        : "No fue posible reenviar la solicitud de autorización.");
     } finally {
       setBusy(false);
     }
@@ -3082,6 +3114,7 @@ edgeCapable={edgeEnrollmentRequired}
           subscribeApprovals={subscribeSensitiveApprovals}
           onRemoteApproved={completeRemoteApproval}
           onLocalSecret={completeLocalApproval}
+          onRetry={retrySensitiveApproval}
           onCancel={() => {
             setSensitiveApproval(null);
             setSensitiveApprovalError(null);

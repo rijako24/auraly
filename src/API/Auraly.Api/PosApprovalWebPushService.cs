@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using Auraly.Application.Authorization;
+using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Contracts.Authorization;
 using Lib.Net.Http.WebPush;
 using Lib.Net.Http.WebPush.Authentication;
@@ -15,12 +16,14 @@ public sealed record PosApprovalPushSubscriptionRequest(
 public sealed class PosApprovalWebPushService(
     IPosApprovalPushSubscriptionStore subscriptions,
     PushServiceClient pushClient,
+    IPosSynchronizationPushGateway synchronization,
     IConfiguration configuration,
     ILogger<PosApprovalWebPushService> logger)
 {
     private readonly string? publicKey = configuration["Notifications:WebPush:PublicKey"];
     private readonly string? privateKey = configuration["Notifications:WebPush:PrivateKey"];
     private readonly string subject = configuration["Notifications:WebPush:Subject"] ?? "mailto:soporte@auraly.app";
+    private readonly Uri publicAppUri = ResolvePublicAppUri(configuration);
 
     public string PublicKey() => !string.IsNullOrWhiteSpace(publicKey)
         ? publicKey
@@ -72,38 +75,124 @@ public sealed class PosApprovalWebPushService(
             return;
         }
         if (recipients.Count == 0) return;
+        var title = "Auraly · autorización POS";
+        var body = request.DeviceId is { } deviceId
+            ? $"Caja {deviceId.ToString("N")[..8].ToUpperInvariant()} · {request.RequestedByName} solicita autorización."
+            : $"{request.RequestedByName} solicita autorización para una acción protegida.";
+        var relativeUrl = $"/dashboard?posApproval={request.ApprovalRequestId:D}";
+        var navigateUrl = new Uri(publicAppUri, relativeUrl).AbsoluteUri;
         var payload = JsonSerializer.Serialize(new
         {
-            title = "Auraly · autorización POS",
-            body = request.DeviceId is { } deviceId
-                ? $"Caja {deviceId.ToString("N")[..8].ToUpperInvariant()} · {request.RequestedByName} solicita autorización."
-                : $"{request.RequestedByName} solicita autorización para una acción protegida.",
+            web_push = 8030,
+            notification = new
+            {
+                title,
+                body,
+                navigate = navigateUrl,
+                silent = false
+            },
+            title,
+            body,
             tag = request.ApprovalRequestId.ToString("D"),
-            url = $"/dashboard?posApproval={request.ApprovalRequestId:D}"
+            url = relativeUrl
         });
-        using var authentication = new VapidAuthentication(publicKey, privateKey) { Subject = subject };
+        foreach (var userSubscriptions in recipients.GroupBy(recipient => recipient.UserId))
+        {
+            if (await IsUserConnectedAsync(userSubscriptions.Key, request.ApprovalRequestId, cancellationToken))
+                continue;
 
-        foreach (var subscription in recipients)
+            await Task.WhenAll(userSubscriptions.Select(subscription =>
+                DeliverAsync(subscription, request.ApprovalRequestId, payload, cancellationToken)));
+        }
+    }
+
+    private async Task DeliverAsync(
+        PosApprovalPushRecipient subscription,
+        Guid approvalRequestId,
+        string payload,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var target = new PushSubscription
+            {
+                Endpoint = subscription.Endpoint,
+                Keys = new Dictionary<string, string>
+                {
+                    ["p256dh"] = subscription.P256dh,
+                    ["auth"] = subscription.Auth
+                }
+            };
+            var message = new PushMessage(payload)
+            {
+                TimeToLive = 600,
+                Topic = $"pos-{approvalRequestId:N}",
+                Urgency = PushMessageUrgency.High
+            };
+            using var authentication = new VapidAuthentication(publicKey!, privateKey!)
+            {
+                Subject = subject
+            };
+            await pushClient.RequestPushMessageDeliveryAsync(
+                target,
+                message,
+                authentication,
+                cancellationToken);
+        }
+        catch (PushServiceClientException exception)
+            when (exception.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
         {
             try
             {
-                var target = new PushSubscription
-                {
-                    Endpoint = subscription.Endpoint,
-                    Keys = new Dictionary<string, string> { ["p256dh"] = subscription.P256dh, ["auth"] = subscription.Auth }
-                };
-                var message = new PushMessage(payload) { TimeToLive = 600, Topic = $"pos-{request.ApprovalRequestId:N}", Urgency = PushMessageUrgency.High };
-                await pushClient.RequestPushMessageDeliveryAsync(target, message, authentication, cancellationToken);
-            }
-            catch (PushServiceClientException exception) when (exception.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
-            {
                 await subscriptions.DeleteAsync(subscription.SubscriptionId, cancellationToken);
             }
-            catch (Exception exception)
+            catch (Exception cleanupException) when (cleanupException is not OperationCanceledException)
             {
-                logger.LogWarning(exception, "Web Push delivery failed for POS approval {ApprovalRequestId}.", request.ApprovalRequestId);
+                logger.LogWarning(
+                    cleanupException,
+                    "Expired Web Push subscription {SubscriptionId} could not be removed.",
+                    subscription.SubscriptionId);
             }
         }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(
+                exception,
+                "Web Push delivery failed for POS approval {ApprovalRequestId}.",
+                approvalRequestId);
+        }
+    }
+
+    private async Task<bool> IsUserConnectedAsync(
+        Guid userId,
+        Guid approvalRequestId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await synchronization.IsUserConnectedAsync(userId, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning(
+                exception,
+                "POS approval {ApprovalRequestId} could not verify foreground presence for user {UserId}; Web Push will be preserved.",
+                approvalRequestId,
+                userId);
+            return false;
+        }
+    }
+
+    private static Uri ResolvePublicAppUri(IConfiguration configuration)
+    {
+        var configured = configuration["Notifications:WebPush:PublicAppUrl"]
+            ?? configuration["Auraly:Email:PublicAppUrl"]
+            ?? "https://auralyapp.co";
+        if (!Uri.TryCreate(configured.TrimEnd('/') + "/", UriKind.Absolute, out var uri) ||
+            uri.Scheme != Uri.UriSchemeHttps)
+            throw new InvalidOperationException(
+                "Notifications:WebPush:PublicAppUrl must be an absolute HTTPS URL.");
+        return uri;
     }
 
 }

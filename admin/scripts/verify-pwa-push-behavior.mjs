@@ -48,10 +48,10 @@ function createPushHarness(visibilityStates) {
   };
 }
 
-test("refreshes an open Auraly window without showing a system notification", async () => {
+test("every received push remains user-visible even if Auraly has a visible window", async () => {
   const harness = createPushHarness(["visible"]);
   await harness.push({ title: "Autorización" });
-  assert.equal(harness.notifications.length, 0);
+  assert.equal(harness.notifications.length, 1);
   assert.equal(harness.postedMessages.length, 1);
   assert.equal(harness.postedMessages[0].visibilityState, "visible");
   assert.equal(harness.postedMessages[0].message.type, "auraly:pos-approvals-changed");
@@ -69,4 +69,22 @@ test("shows the system notification when Auraly has no open window", async () =>
   const harness = createPushHarness([]);
   await harness.push();
   assert.equal(harness.notifications.length, 1);
+});
+
+test("shows the declarative notification payload used as the Apple fallback", async () => {
+  const harness = createPushHarness([]);
+  await harness.push({
+    web_push: 8030,
+    notification: {
+      title: "Autorización declarativa",
+      body: "Revisar caja",
+      navigate: "https://auralyapp.co/dashboard?posApproval=request-1",
+    },
+  });
+  assert.equal(harness.notifications[0].title, "Autorización declarativa");
+  assert.equal(harness.notifications[0].options.body, "Revisar caja");
+  assert.equal(
+    harness.notifications[0].options.data.url,
+    "https://auralyapp.co/dashboard?posApproval=request-1",
+  );
 });

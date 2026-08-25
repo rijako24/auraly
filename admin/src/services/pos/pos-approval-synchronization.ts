@@ -3,6 +3,12 @@ type WebPubSubEnvelope = {
   data?: { stream?: string; Stream?: string } | string;
 };
 
+export function shouldMaintainApprovalRealtimeConnection(
+  visibilityState: DocumentVisibilityState,
+) {
+  return visibilityState === "visible";
+}
+
 export function isApprovalSynchronizationMessage(raw: string) {
   try {
     const envelope = JSON.parse(raw) as WebPubSubEnvelope;
