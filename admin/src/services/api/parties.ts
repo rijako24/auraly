@@ -2,6 +2,7 @@ import { apiClient } from "./client";
 
 export type PartyRole = "Customer" | "Supplier" | "Seller" | "Carrier" | "Employee" | "User";
 export type CommercialPartyRole = Exclude<PartyRole, "Employee" | "User">;
+export type PurchaseEvidencePolicy = "SupplierElectronicInvoice" | "BuyerElectronicSupportDocument" | "InternalReceiptVoucher";
 export interface PartyWorkspaceItem {
   partyId: string; partyType: "NaturalPerson" | "Organization";
   identificationTypeCode: string | null; identification: string | null; verificationDigit: string | null;
@@ -21,7 +22,7 @@ export interface PartySiteDetail {
   googleMapsUrl: string | null; googlePlaceId: string | null; latitude: number | null; longitude: number | null; rowVersion: string;
 }
 export interface CustomerRoleDetail { customerId: string; priceChannelId: string | null; requiresElectronicInvoice: boolean; isActive: boolean; validFrom: string; validUntil: string | null; }
-export interface SupplierRoleDetail { supplierId: string; isActive: boolean; }
+export interface SupplierRoleDetail { supplierId: string; isActive: boolean; purchaseEvidencePolicy: PurchaseEvidencePolicy | null; }
 export interface SupplierAcceptance { supplierId: string; partyId: string; idempotentReplay: boolean; }
 export interface CustomerAcceptance { customerId: string; partyId: string; }
 export interface SellerRoleDetail { sellerId: string; code: string; defaultCommissionPercent: number | null; commissionBasis: string; commissionTrigger: string; isActive: boolean; }
@@ -48,7 +49,7 @@ export interface GeographyHierarchyItem { id: string; parentId: string | null; l
 export interface PartyInput { partyType: string; identificationCountryId: string; identificationTypeCode: string; identification: string; verificationDigit: string | null; displayName: string; legalName: string | null; firstName: string | null; lastName: string | null; email: string | null; phone: string | null; }
 export interface PartySiteInput { code: string; name: string; countryId: string; administrativeDivisionId: string; cityId: string; addressLine: string; neighborhood: string | null; postalCode: string | null; email: string | null; phone: string | null; isPrimary: boolean; googleMapsUrl: string | null; googlePlaceId: string | null; latitude: number | null; longitude: number | null; }
 export interface PartySiteSaveInput { partySiteId: string | null; rowVersion: string | null; site: PartySiteInput; }
-export interface CreateThirdPartyRequest { operationId: string; businessId: string; party: PartyInput; primarySite: PartySiteInput; additionalSites?: PartySiteInput[]; pricing?: { priceChannelId: string | null; validFrom?: string | null; validUntil?: string | null } | null; requiresElectronicInvoice?: boolean; code?: string; defaultCommissionPercent?: number | null; commissionBasis?: string; commissionTrigger?: string; transportationMode?: string; }
+export interface CreateThirdPartyRequest { operationId: string; businessId: string; party: PartyInput; primarySite: PartySiteInput; additionalSites?: PartySiteInput[]; pricing?: { priceChannelId: string | null; validFrom?: string | null; validUntil?: string | null } | null; requiresElectronicInvoice?: boolean; purchaseEvidencePolicy?: PurchaseEvidencePolicy | null; code?: string; defaultCommissionPercent?: number | null; commissionBasis?: string; commissionTrigger?: string; transportationMode?: string; }
 export interface CustomerPricingOption { id: string; code: string; name: string; }
 export interface CustomerPricingOptions { priceChannels: CustomerPricingOption[]; }
 export interface SellerUserAccess { userId:string; partyId:string; username:string; email:string; isActive:boolean; roleName:string; businessId:string; }
@@ -72,7 +73,7 @@ export const partiesApi = {
   pricingOptions: () => apiClient.get<CustomerPricingOptions>("/commerce/v1/parties/customer-pricing-options"),
   sellerAccess: (partyId:string) => apiClient.get<SellerUserAccess|null>(`/commerce/v1/parties/${partyId}/seller-access`),
   createSellerAccess: (partyId:string,request:CreateSellerUserAccess) => apiClient.post<SellerUserAccess>(`/commerce/v1/parties/${partyId}/seller-access`,request),
-  update: (partyId: string, request: { partyType: string; displayName: string; legalName: string | null; firstName: string | null; lastName: string | null; verificationDigit: string | null; email: string | null; phone: string | null; rowVersion: string; sites?: PartySiteSaveInput[]; customer?: { priceChannelId: string | null; requiresElectronicInvoice: boolean; validFrom?: string | null; validUntil?: string | null }; seller?: { code: string; defaultCommissionPercent: number | null; commissionBasis: string; commissionTrigger: string }; carrier?: { code: string; transportationMode: string } }) =>
+  update: (partyId: string, request: { partyType: string; displayName: string; legalName: string | null; firstName: string | null; lastName: string | null; verificationDigit: string | null; email: string | null; phone: string | null; rowVersion: string; sites?: PartySiteSaveInput[]; customer?: { priceChannelId: string | null; requiresElectronicInvoice: boolean; validFrom?: string | null; validUntil?: string | null }; supplier?: { purchaseEvidencePolicy: PurchaseEvidencePolicy | null }; seller?: { code: string; defaultCommissionPercent: number | null; commissionBasis: string; commissionTrigger: string }; carrier?: { code: string; transportationMode: string } }) =>
     apiClient.put<PartyWorkspaceItem>(`/commerce/v1/parties/${partyId}`, request),
   setStatus: (partyId: string, isActive: boolean, rowVersion: string) =>
     apiClient.post<PartyWorkspaceItem>(`/commerce/v1/parties/${partyId}/status`, { isActive, rowVersion }),

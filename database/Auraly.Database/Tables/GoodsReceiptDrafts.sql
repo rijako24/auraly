@@ -4,6 +4,7 @@ CREATE TABLE [dbo].[GoodsReceiptDrafts]
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [WarehouseId] UNIQUEIDENTIFIER NULL,
     [SupplierId] UNIQUEIDENTIFIER NULL,
+    [PurchaseEvidenceType] NVARCHAR(40) NULL,
     [SupplierInvoiceNumber] NVARCHAR(80) NULL,
     [SupplierInvoiceDate] DATETIMEOFFSET(7) NULL,
     [ReceivedAt] DATETIMEOFFSET(7) NOT NULL,
@@ -24,7 +25,9 @@ CREATE TABLE [dbo].[GoodsReceiptDrafts]
     CONSTRAINT [FK_GoodsReceiptDrafts_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
     CONSTRAINT [FK_GoodsReceiptDrafts_Suppliers] FOREIGN KEY ([SupplierId]) REFERENCES [dbo].[Suppliers] ([SupplierId]),
     CONSTRAINT [CK_GoodsReceiptDrafts_Amounts] CHECK ([NetAmount] >= 0 AND [TaxAmount] >= 0 AND [GrandTotal] = [NetAmount] + [TaxAmount]),
-    CONSTRAINT [CK_GoodsReceiptDrafts_Payable] CHECK (([CreatesPayable] = 0) OR ([DueDate] IS NOT NULL))
+    CONSTRAINT [CK_GoodsReceiptDrafts_Payable] CHECK (([CreatesPayable] = 0) OR ([DueDate] IS NOT NULL)),
+    CONSTRAINT [CK_GoodsReceiptDrafts_PurchaseEvidenceType] CHECK ([PurchaseEvidenceType] IS NULL OR [PurchaseEvidenceType] IN
+      (N'SupplierElectronicInvoice',N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher'))
 );
 GO
 CREATE INDEX [IX_GoodsReceiptDrafts_Business_Updated]

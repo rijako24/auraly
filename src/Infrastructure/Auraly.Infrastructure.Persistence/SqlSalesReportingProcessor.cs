@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Auraly.Application.Sales;
 using Auraly.Contracts.Returns;
+using Auraly.Contracts.Purchasing;
 using Auraly.Contracts.Sales;
 using Microsoft.Data.SqlClient;
 
@@ -77,8 +78,16 @@ public sealed class SqlSalesReportingProcessor(
                         SalesReturnContractSerializer.Deserialize(source.Payload),cancellationToken);
                 else if(documentType=="RouteVisit")
                     await projectionWriter.ProjectVisitAsync(session,source.Payload,sourceVersion,cancellationToken);
+                else if(documentType=="CommercialCoveragePlan")
+                    await projectionWriter.ProjectCoverageAsync(session,source.Payload,sourceVersion,cancellationToken);
+                else if(documentType=="GoodsReceipt")
+                    await projectionWriter.ProjectGoodsReceiptAsync(session,
+                        GoodsReceiptContractSerializer.Deserialize(source.Payload),cancellationToken);
+                else if(documentType=="PurchaseReturn")
+                    await projectionWriter.ProjectPurchaseReturnAsync(session,
+                        PurchaseReturnContractSerializer.Deserialize(source.Payload),cancellationToken);
                 else
-                    await projectionWriter.ProjectOrderAsync(session,source.Payload,cancellationToken);
+                    await projectionWriter.ProjectOrderAsync(session,source.Payload,sourceVersion,cancellationToken);
 
                 await using var complete = new SqlCommand("""
                     UPDATE reporting.SalesReportingJobs

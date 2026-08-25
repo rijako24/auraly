@@ -206,9 +206,9 @@ public static class PriceSegmentsApi
     private static decimal? ValidateChannelValue(string strategy, decimal? value) => strategy switch
     {
         "PercentageOverBasePrice" when value is >= -100 and <= 1000 => value,
-        "PercentageOverAverageCost" when value is >= 0 and <= 1000 => value,
+        "PercentageOverAverageCost" when value is >= -100 and <= 1000 => value,
         "PercentageBelowBasePrice" when value is >= 0 and <= 100 => value,
-        "FixedMarginOverAverageCost" when value is >= 0 and < 100 => value,
+        "FixedMarginOverAverageCost" when value is >= -100 and < 100 => value,
         "TieredProductPrice" or "SellAtAverageCost" => null,
         _ => throw new BadHttpRequestException("El valor no es válido para el modo de precio seleccionado.")
     };

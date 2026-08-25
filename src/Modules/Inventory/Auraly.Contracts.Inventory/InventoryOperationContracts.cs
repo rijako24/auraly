@@ -188,7 +188,7 @@ public sealed record SaveWarehouseRequest(string Name, bool AllowNegativeStockSa
 public sealed record InventoryReasonItem(Guid InventoryReasonId, string OperationType, string Code, string Name, bool IsSystem, bool IsActive, int DisplayOrder);
 public sealed record SaveInventoryReasonRequest(string OperationType, string Name, bool IsActive, int DisplayOrder);
 public sealed record InventoryBalanceQuery(Guid BusinessId, Guid? WarehouseId, string? Search, bool OnlyWithStock, int Page = 1, int PageSize = 50, Guid? ProductId = null);
-public sealed record InventoryBalanceItem(Guid WarehouseId, string WarehouseCode, string WarehouseName, Guid ProductId, string ProductCode, string ProductName, decimal QuantityOnHand, decimal? AverageUnitCost, decimal? InventoryValue, DateTimeOffset? UpdatedAt);
+public sealed record InventoryBalanceItem(Guid WarehouseId, string WarehouseCode, string WarehouseName, Guid ProductId, string ProductCode, string ProductName, bool ManagesInventory, decimal QuantityOnHand, decimal? UnitCost, decimal? AverageUnitCost, decimal? InventoryValue, DateTimeOffset? UpdatedAt);
 public sealed record InventoryBalancePage(IReadOnlyList<InventoryBalanceItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);
 
 public sealed record InventoryMovementQuery(Guid BusinessId, Guid? WarehouseId, Guid? ProductId, string? Search, string? DocumentType, string? MovementType, DateTimeOffset? From, DateTimeOffset? To, int Page = 1, int PageSize = 50);

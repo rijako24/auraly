@@ -22,6 +22,12 @@ public interface ISalesReportingStore
         int page,int pageSize,CancellationToken cancellationToken);
     Task<IReadOnlyList<SellerOrderReportRow>> ListSellerOrdersAsync(SalesReportingUserIdentity user,
         DateOnly from,DateOnly to,CancellationToken cancellationToken);
+    Task<SellerPerformanceOverview> GetSellerPerformanceAsync(SalesReportingUserIdentity user,
+        DateOnly from,DateOnly to,CancellationToken cancellationToken);
+    Task<CommercialCoverageOverview> GetCoverageAsync(SalesReportingUserIdentity user,
+        DateOnly from,DateOnly to,CancellationToken cancellationToken);
+    Task<SupplierImpactOverview> GetSupplierImpactAsync(SalesReportingUserIdentity user,
+        DateOnly from,DateOnly to,CancellationToken cancellationToken);
 }
 
 public sealed class SalesReportingService(ISalesReportingStore store)
@@ -93,6 +99,18 @@ public sealed class SalesReportingService(ISalesReportingStore store)
         DateOnly from,DateOnly to,CancellationToken cancellationToken=default)
     {Demand(user);if(from==default||to<from||to.DayNumber-from.DayNumber>1827)throw new SalesReportingValidationException("The order report range is invalid.");return store.ListSellerOrdersAsync(user,from,to,cancellationToken);}
 
+    public Task<SellerPerformanceOverview> GetSellerPerformanceAsync(SalesReportingUserIdentity user,
+        DateOnly from,DateOnly to,CancellationToken cancellationToken=default)
+    {Demand(user);ValidateRange(from,to);return store.GetSellerPerformanceAsync(user,from,to,cancellationToken);}
+
+    public Task<CommercialCoverageOverview> GetCoverageAsync(SalesReportingUserIdentity user,
+        DateOnly from,DateOnly to,CancellationToken cancellationToken=default)
+    {Demand(user);ValidateRange(from,to);return store.GetCoverageAsync(user,from,to,cancellationToken);}
+
+    public Task<SupplierImpactOverview> GetSupplierImpactAsync(SalesReportingUserIdentity user,
+        DateOnly from,DateOnly to,CancellationToken cancellationToken=default)
+    {Demand(user);ValidateRange(from,to);return store.GetSupplierImpactAsync(user,from,to,cancellationToken);}
+
     private static void Demand(SalesReportingUserIdentity user)
     {
         if (!user.Permissions.Contains(SalesReportingPermissionCodes.Read))
@@ -106,5 +124,11 @@ public sealed class SalesReportingService(ISalesReportingStore store)
             throw new SalesReportingValidationException("The date range is invalid or exceeds five years.");
         if (filter.DocumentType is not null && filter.DocumentType is not ("SalesInvoice" or "SalesReceipt"))
             throw new SalesReportingValidationException("The document type is invalid.");
+    }
+
+    private static void ValidateRange(DateOnly from,DateOnly to)
+    {
+        if(from==default||to<from||to.DayNumber-from.DayNumber>1827)
+            throw new SalesReportingValidationException("The report range is invalid or exceeds five years.");
     }
 }

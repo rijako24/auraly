@@ -23,10 +23,14 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             FROM dbo.Warehouses
             WHERE BusinessId=@BusinessId AND IsActive=1 AND UseForSales=1
             ORDER BY Name,Code;
-            SELECT SupplierId,Identification,Name
+            SELECT SupplierId,Identification,Name,PurchaseEvidencePolicy
             FROM dbo.Suppliers
             WHERE BusinessId=@BusinessId AND IsActive=1
             ORDER BY Name,Identification;
+            SELECT Code,Label,Description
+            FROM reference.Options
+            WHERE CatalogCode=N'purchase-evidence-type' AND IsActive=1
+            ORDER BY SortOrder,Label;
             """;
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
@@ -37,8 +41,17 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         await reader.NextResultAsync(cancellationToken);
         var suppliers = new List<GoodsReceiptSupplierOption>();
         while (await reader.ReadAsync(cancellationToken))
-            suppliers.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2)));
-        return new(warehouses, suppliers);
+        {
+            var policy = reader.IsDBNull(3) ? null : reader.GetString(3);
+            suppliers.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
+                policy, PurchaseEvidenceTypes.AllowedFor(policy)));
+        }
+        await reader.NextResultAsync(cancellationToken);
+        var evidenceTypes = new List<PurchaseEvidenceTypeOption>();
+        while (await reader.ReadAsync(cancellationToken))
+            evidenceTypes.Add(new(reader.GetString(0), reader.GetString(1),
+                reader.IsDBNull(2) ? null : reader.GetString(2)));
+        return new(warehouses, suppliers, evidenceTypes);
     }
 
     public async Task<GoodsReceiptProductPage> FindProductsAsync(
@@ -243,14 +256,14 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             WITH Entries AS (
               SELECT d.GoodsReceiptDraftId DocumentId,CAST(NULL AS NVARCHAR(40)) DocumentNumber,
                      N'Draft' Status,d.WarehouseId,w.Name WarehouseName,d.SupplierId,s.Name SupplierName,
-                     d.SupplierInvoiceNumber,d.ReceivedAt,d.GrandTotal,d.UpdatedAt
+                     d.SupplierInvoiceNumber,d.ReceivedAt,d.GrandTotal,d.UpdatedAt,d.PurchaseEvidenceType
               FROM dbo.GoodsReceiptDrafts d
               LEFT JOIN dbo.Warehouses w ON w.WarehouseId=d.WarehouseId
               LEFT JOIN dbo.Suppliers s ON s.SupplierId=d.SupplierId
               WHERE d.BusinessId=@BusinessId
               UNION ALL
               SELECT r.GoodsReceiptId,r.DocumentNumber,r.Status,r.WarehouseId,w.Name,r.SupplierId,s.Name,
-                     r.SupplierInvoiceNumber,r.ReceivedAt,r.GrandTotal,COALESCE(r.ProcessedAt,r.AcceptedAt)
+                     r.SupplierInvoiceNumber,r.ReceivedAt,r.GrandTotal,COALESCE(r.ProcessedAt,r.AcceptedAt),r.PurchaseEvidenceType
               FROM dbo.GoodsReceipts r
               INNER JOIN dbo.Warehouses w ON w.WarehouseId=r.WarehouseId
               INNER JOIN dbo.Suppliers s ON s.SupplierId=r.SupplierId
@@ -267,21 +280,21 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             WITH Entries AS (
               SELECT d.GoodsReceiptDraftId DocumentId,CAST(NULL AS NVARCHAR(40)) DocumentNumber,
                      N'Draft' Status,d.WarehouseId,w.Name WarehouseName,d.SupplierId,s.Name SupplierName,
-                     d.SupplierInvoiceNumber,d.ReceivedAt,d.GrandTotal,d.UpdatedAt
+                     d.SupplierInvoiceNumber,d.ReceivedAt,d.GrandTotal,d.UpdatedAt,d.PurchaseEvidenceType
               FROM dbo.GoodsReceiptDrafts d
               LEFT JOIN dbo.Warehouses w ON w.WarehouseId=d.WarehouseId
               LEFT JOIN dbo.Suppliers s ON s.SupplierId=d.SupplierId
               WHERE d.BusinessId=@BusinessId
               UNION ALL
               SELECT r.GoodsReceiptId,r.DocumentNumber,r.Status,r.WarehouseId,w.Name,r.SupplierId,s.Name,
-                     r.SupplierInvoiceNumber,r.ReceivedAt,r.GrandTotal,COALESCE(r.ProcessedAt,r.AcceptedAt)
+                     r.SupplierInvoiceNumber,r.ReceivedAt,r.GrandTotal,COALESCE(r.ProcessedAt,r.AcceptedAt),r.PurchaseEvidenceType
               FROM dbo.GoodsReceipts r
               INNER JOIN dbo.Warehouses w ON w.WarehouseId=r.WarehouseId
               INNER JOIN dbo.Suppliers s ON s.SupplierId=r.SupplierId
               WHERE r.BusinessId=@BusinessId
             )
             SELECT DocumentId,DocumentNumber,Status,WarehouseId,WarehouseName,SupplierId,SupplierName,
-                   SupplierInvoiceNumber,ReceivedAt,GrandTotal,UpdatedAt
+                   SupplierInvoiceNumber,ReceivedAt,GrandTotal,UpdatedAt,PurchaseEvidenceType
             FROM Entries
             WHERE (@Status IS NULL OR Status=@Status)
               AND (@Search IS NULL OR DocumentNumber LIKE N'%'+@Search+N'%'
@@ -308,7 +321,8 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                 reader.IsDBNull(3) ? null : reader.GetGuid(3), reader.IsDBNull(4) ? null : reader.GetString(4),
                 reader.IsDBNull(5) ? null : reader.GetGuid(5), reader.IsDBNull(6) ? null : reader.GetString(6),
                 reader.IsDBNull(7) ? null : reader.GetString(7), reader.GetDateTimeOffset(8),
-                reader.GetDecimal(9), reader.GetDateTimeOffset(10)));
+                reader.GetDecimal(9), reader.GetDateTimeOffset(10),
+                reader.IsDBNull(11) ? null : reader.GetString(11)));
         return new(items, page, pageSize, total, (int)Math.Ceiling(total / (double)pageSize));
     }
 
@@ -321,7 +335,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             SELECT r.DocumentNumber,r.Status,r.WarehouseId,w.Name,r.SupplierId,s.Name,
                    r.SupplierInvoiceNumber,r.SupplierInvoiceDate,r.ReceivedAt,r.CreatesPayable,
                    r.DueDate,r.CurrencyCode,r.Notes,r.NetAmount,r.TaxAmount,r.GrandTotal,
-                   r.AcceptedAt,r.ProcessedAt
+                   r.AcceptedAt,r.ProcessedAt,r.PurchaseEvidenceType
             FROM dbo.GoodsReceipts r
             INNER JOIN dbo.Businesses b
               ON b.BusinessId=r.BusinessId AND b.TenantId=@TenantId
@@ -362,6 +376,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         var grandTotal = reader.GetDecimal(15);
         var acceptedAt = reader.GetDateTimeOffset(16);
         DateTimeOffset? processedAt = reader.IsDBNull(17) ? null : reader.GetDateTimeOffset(17);
+        var purchaseEvidenceType = reader.GetString(18);
 
         await reader.NextResultAsync(cancellationToken);
         var lines = new List<GoodsReceiptLineSnapshot>();
@@ -377,7 +392,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             documentId, number, status, warehouseId, warehouseName, supplierId,
             supplierName, supplierInvoiceNumber, supplierInvoiceDate, receivedAt,
             createsPayable, dueDate, currencyCode, notes, netAmount, taxAmount,
-            grandTotal, acceptedAt, processedAt, lines);
+            grandTotal, acceptedAt, processedAt, lines, purchaseEvidenceType);
     }
     public async Task<GoodsReceiptDraft?> GetDraftAsync(
         PurchasingUserIdentity user, Guid draftId, CancellationToken cancellationToken)
@@ -458,6 +473,14 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             IF @SupplierId IS NOT NULL AND NOT EXISTS (
               SELECT 1 FROM dbo.Suppliers WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1)
               THROW 51123,'The supplier is outside the authenticated business.',1;
+            IF @SupplierId IS NOT NULL AND @PurchaseEvidenceType IS NOT NULL AND NOT EXISTS (
+              SELECT 1 FROM dbo.Suppliers
+              WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1
+                AND (PurchaseEvidencePolicy IS NULL
+                  OR PurchaseEvidencePolicy=N'InternalReceiptVoucher' AND @PurchaseEvidenceType=N'InternalReceiptVoucher'
+                  OR PurchaseEvidencePolicy=N'SupplierElectronicInvoice' AND @PurchaseEvidenceType IN (N'SupplierElectronicInvoice',N'InternalReceiptVoucher')
+                  OR PurchaseEvidencePolicy=N'BuyerElectronicSupportDocument' AND @PurchaseEvidenceType IN (N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher')))
+              THROW 51126,'The selected evidence type is not allowed by the supplier configuration.',1;
             IF @ProductsJson<>N'[]' AND EXISTS (
               SELECT x.ProductId
               FROM OPENJSON(@ProductsJson) WITH (ProductId UNIQUEIDENTIFIER '$') x
@@ -472,9 +495,10 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@WarehouseId", (object?)request.WarehouseId ?? DBNull.Value);
         command.Parameters.AddWithValue("@SupplierId", (object?)request.SupplierId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@PurchaseEvidenceType", (object?)request.PurchaseEvidenceType ?? DBNull.Value);
         command.Parameters.AddWithValue("@ProductsJson", JsonSerializer.Serialize(request.Lines.Select(x => x.ProductId).Distinct()));
         try { await command.ExecuteNonQueryAsync(cancellationToken); }
-        catch (SqlException exception) when (exception.Number is >= 51121 and <= 51124)
+        catch (SqlException exception) when (exception.Number is >= 51121 and <= 51126)
         { throw new PurchasingValidationException(exception.Message); }
     }
 
@@ -503,10 +527,10 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
     {
         const string sql = """
             INSERT dbo.GoodsReceiptDrafts
-              (GoodsReceiptDraftId,BusinessId,WarehouseId,SupplierId,SupplierInvoiceNumber,
+              (GoodsReceiptDraftId,BusinessId,WarehouseId,SupplierId,PurchaseEvidenceType,SupplierInvoiceNumber,
                SupplierInvoiceDate,ReceivedAt,CreatesPayable,DueDate,CurrencyCode,Notes,
                NetAmount,TaxAmount,GrandTotal,CreatedByUserId,UpdatedByUserId,CreatedAt,UpdatedAt)
-            VALUES(@Id,@BusinessId,@WarehouseId,@SupplierId,@InvoiceNumber,@InvoiceDate,@ReceivedAt,
+            VALUES(@Id,@BusinessId,@WarehouseId,@SupplierId,@PurchaseEvidenceType,@InvoiceNumber,@InvoiceDate,@ReceivedAt,
                    @CreatesPayable,@DueDate,@Currency,@Notes,@Net,@Tax,@Total,@UserId,@UserId,@Now,@Now);
             """;
         await using var command = DraftCommand(sql, connection, transaction, user, request, calculation, now);
@@ -520,7 +544,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
     {
         const string sql = """
             UPDATE dbo.GoodsReceiptDrafts
-            SET WarehouseId=@WarehouseId,SupplierId=@SupplierId,SupplierInvoiceNumber=@InvoiceNumber,
+            SET WarehouseId=@WarehouseId,SupplierId=@SupplierId,PurchaseEvidenceType=@PurchaseEvidenceType,SupplierInvoiceNumber=@InvoiceNumber,
                 SupplierInvoiceDate=@InvoiceDate,ReceivedAt=@ReceivedAt,CreatesPayable=@CreatesPayable,
                 DueDate=@DueDate,CurrencyCode=@Currency,Notes=@Notes,NetAmount=@Net,TaxAmount=@Tax,
                 GrandTotal=@Total,UpdatedByUserId=@UserId,UpdatedAt=@Now
@@ -542,6 +566,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@WarehouseId", (object?)request.WarehouseId ?? DBNull.Value);
         command.Parameters.AddWithValue("@SupplierId", (object?)request.SupplierId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@PurchaseEvidenceType", (object?)request.PurchaseEvidenceType ?? DBNull.Value);
         command.Parameters.AddWithValue("@InvoiceNumber", (object?)request.SupplierInvoiceNumber ?? DBNull.Value);
         command.Parameters.AddWithValue("@InvoiceDate", (object?)request.SupplierInvoiceDate ?? DBNull.Value);
         command.Parameters.AddWithValue("@ReceivedAt", request.ReceivedAt);
@@ -610,7 +635,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         const string sql = """
             SELECT GoodsReceiptDraftId,BusinessId,WarehouseId,SupplierId,SupplierInvoiceNumber,
                    SupplierInvoiceDate,ReceivedAt,CreatesPayable,DueDate,CurrencyCode,Notes,
-                   NetAmount,TaxAmount,GrandTotal,UpdatedAt,RowVersion
+                   NetAmount,TaxAmount,GrandTotal,UpdatedAt,RowVersion,PurchaseEvidenceType
             FROM dbo.GoodsReceiptDrafts
             WHERE GoodsReceiptDraftId=@Id AND BusinessId=@BusinessId;
             SELECT LineNumber,ProductId,DescriptionSnapshot,Quantity,UnitCost,DiscountAmount,
@@ -635,7 +660,8 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             Due = reader.IsDBNull(8) ? (DateTimeOffset?)null : reader.GetDateTimeOffset(8),
             Currency = reader.GetString(9), Notes = reader.IsDBNull(10) ? null : reader.GetString(10),
             Net = reader.GetDecimal(11), Tax = reader.GetDecimal(12), Total = reader.GetDecimal(13),
-            Updated = reader.GetDateTimeOffset(14), Token = Convert.ToBase64String(reader.GetFieldValue<byte[]>(15))
+            Updated = reader.GetDateTimeOffset(14), Token = Convert.ToBase64String(reader.GetFieldValue<byte[]>(15)),
+            EvidenceType = reader.IsDBNull(16) ? null : reader.GetString(16)
         };
         await reader.NextResultAsync(cancellationToken);
         var lines = new List<GoodsReceiptLineSnapshot>();
@@ -647,7 +673,8 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                 reader.GetString(12), reader.GetDecimal(13), reader.GetDecimal(14)));
         return new(header.Id, header.Business, header.Warehouse, header.Supplier, header.Invoice,
             header.InvoiceDate, header.Received, header.Payable, header.Due, header.Currency,
-            header.Notes, header.Net, header.Tax, header.Total, lines, header.Updated, header.Token);
+            header.Notes, header.Net, header.Tax, header.Total, lines, header.Updated, header.Token,
+            header.EvidenceType);
     }
 
     private static byte[] ParseToken(string value)

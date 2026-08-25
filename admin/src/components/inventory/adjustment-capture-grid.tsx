@@ -49,7 +49,7 @@ export function AdjustmentCaptureGrid({
           {lines.length === 0 ? (
             <tr>
               <td colSpan={6} className="p-10 text-center text-muted-foreground">
-                Selecciona una bodega y agrega los productos del ajuste.
+                Selecciona una bodega y agrega los productos del movimiento de mercancía.
               </td>
             </tr>
           ) : lines.map((line, index) => {

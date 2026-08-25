@@ -11,6 +11,10 @@ CREATE TABLE [dbo].[GoodsReceipts]
     [DocumentConsecutive] BIGINT NOT NULL,
     [IdempotencyKey] NVARCHAR(160) NOT NULL,
     [PayloadHash] BINARY(32) NOT NULL,
+    [PurchaseEvidenceType] NVARCHAR(40) NOT NULL,
+    [SupportFiscalSeriesId] UNIQUEIDENTIFIER NULL,
+    [SupportFiscalAuthorizationId] UNIQUEIDENTIFIER NULL,
+    [SupportFiscalNumber] NVARCHAR(64) NULL,
     [SupplierInvoiceNumber] NVARCHAR(80) NULL,
     [SupplierInvoiceDate] DATETIMEOFFSET(7) NULL,
     [ReceivedAt] DATETIMEOFFSET(7) NOT NULL,
@@ -31,11 +35,18 @@ CREATE TABLE [dbo].[GoodsReceipts]
     CONSTRAINT [FK_GoodsReceipts_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
     CONSTRAINT [FK_GoodsReceipts_Suppliers] FOREIGN KEY ([SupplierId]) REFERENCES [dbo].[Suppliers] ([SupplierId]),
     CONSTRAINT [FK_GoodsReceipts_DocumentSeries] FOREIGN KEY ([DocumentSeriesId]) REFERENCES [dbo].[DocumentSeries] ([DocumentSeriesId]),
+    CONSTRAINT [FK_GoodsReceipts_SupportFiscalSeries] FOREIGN KEY ([SupportFiscalSeriesId]) REFERENCES [dbo].[FiscalSeries] ([SeriesId]),
+    CONSTRAINT [FK_GoodsReceipts_SupportFiscalAuthorization] FOREIGN KEY ([SupportFiscalAuthorizationId]) REFERENCES [dbo].[FiscalAuthorizations] ([FiscalAuthorizationId]),
     CONSTRAINT [UQ_GoodsReceipts_Business_Number] UNIQUE ([BusinessId], [DocumentNumber]),
     CONSTRAINT [UQ_GoodsReceipts_Business_Idempotency] UNIQUE ([BusinessId], [IdempotencyKey]),
     CONSTRAINT [CK_GoodsReceipts_Amounts] CHECK ([NetAmount] >= 0 AND [TaxAmount] >= 0 AND [GrandTotal] = [NetAmount] + [TaxAmount]),
     CONSTRAINT [CK_GoodsReceipts_Payable] CHECK (([CreatesPayable] = 0) OR ([DueDate] IS NOT NULL)),
     CONSTRAINT [CK_GoodsReceipts_Status] CHECK ([Status] IN (N'Accepted', N'Processed'))
+    ,CONSTRAINT [CK_GoodsReceipts_PurchaseEvidenceType] CHECK ([PurchaseEvidenceType] IN
+      (N'SupplierElectronicInvoice',N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher'))
+    ,CONSTRAINT [CK_GoodsReceipts_SupportFiscalData] CHECK (
+      ([PurchaseEvidenceType]=N'BuyerElectronicSupportDocument' AND [SupportFiscalSeriesId] IS NOT NULL AND [SupportFiscalAuthorizationId] IS NOT NULL AND [SupportFiscalNumber] IS NOT NULL)
+      OR ([PurchaseEvidenceType]<>N'BuyerElectronicSupportDocument' AND [SupportFiscalSeriesId] IS NULL AND [SupportFiscalAuthorizationId] IS NULL AND [SupportFiscalNumber] IS NULL))
 );
 GO
 CREATE INDEX [IX_GoodsReceipts_Business_Received]

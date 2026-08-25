@@ -63,7 +63,10 @@ VALUES
 ('67000000-0000-0000-0000-000000000001',N'tenant-entity-type',N'NaturalPerson',N'Persona natural',NULL,10),
 ('67000000-0000-0000-0000-000000000002',N'tenant-entity-type',N'Organization',N'Persona jurídica',NULL,20),
 ('68000000-0000-0000-0000-000000000001',N'tenant-identification-type',N'CC',N'Cédula de ciudadanía',NULL,10),
-('68000000-0000-0000-0000-000000000002',N'tenant-identification-type',N'NIT',N'NIT',NULL,20);
+('68000000-0000-0000-0000-000000000002',N'tenant-identification-type',N'NIT',N'NIT',NULL,20),
+('69000000-0000-0000-0000-000000000001',N'purchase-evidence-type',N'SupplierElectronicInvoice',N'Factura electrónica del proveedor',N'La factura la emite el proveedor; Auraly no genera un documento fiscal.',10),
+('69000000-0000-0000-0000-000000000002',N'purchase-evidence-type',N'BuyerElectronicSupportDocument',N'Documento soporte electrónico',N'Auraly genera, firma y envía el documento soporte a la DIAN.',20),
+('69000000-0000-0000-0000-000000000003',N'purchase-evidence-type',N'InternalReceiptVoucher',N'Comprobante interno',N'Registra la entrada y sus efectos contables sin emitir un documento fiscal.',30);
 
 MERGE [reference].[Options] AS target
 USING @Source AS source
@@ -82,5 +85,5 @@ WHEN NOT MATCHED BY SOURCE
         N'accounting-subledger-kind',N'accounting-adjustment-direction',
         N'accounting-manual-concept',N'accounting-report-type',
         N'accounting-withholding-kind',N'accounting-opening-balance-mode',
-        N'tenant-entity-type',N'tenant-identification-type')
+        N'tenant-entity-type',N'tenant-identification-type',N'purchase-evidence-type')
 THEN UPDATE SET target.IsActive=0,target.UpdatedAt=@Now;

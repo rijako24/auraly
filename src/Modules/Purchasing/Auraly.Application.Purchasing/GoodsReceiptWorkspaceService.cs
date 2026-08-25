@@ -95,11 +95,19 @@ public sealed class GoodsReceiptWorkspaceService(IGoodsReceiptWorkspaceStore sto
             throw new PurchasingValidationException("DueDate is required for a credit purchase.");
         if (request.DueDate < request.ReceivedAt)
             throw new PurchasingValidationException("DueDate cannot be earlier than ReceivedAt.");
+        if (request.PurchaseEvidenceType is not null &&
+            !PurchaseEvidenceTypes.IsValid(request.PurchaseEvidenceType))
+            throw new PurchasingValidationException("PurchaseEvidenceType is invalid.");
         var currency = request.CurrencyCode.Trim().ToUpperInvariant();
         if (currency.Length != 3) throw new PurchasingValidationException("CurrencyCode must contain three characters.");
 
         GoodsReceiptCalculation? calculation = null;
         var normalizedLines = GoodsReceiptLineNormalizer.Normalize(request.Lines);
+        if (request.PurchaseEvidenceType == PurchaseEvidenceTypes.InternalReceiptVoucher &&
+            normalizedLines.Any(line => line.TaxRate > 0 &&
+                line.TaxTreatment == PurchasingTaxTreatments.DeductibleInputVat))
+            throw new PurchasingValidationException(
+                "An internal receipt voucher cannot recognize deductible input VAT; use CapitalizedCost.");
         if (normalizedLines.Length > 0)
         {
             if (request.SupplierId is null)

@@ -103,7 +103,11 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
     }),
     onSuccess: async (value) => {
       setForm(value);
-      await client.invalidateQueries({ queryKey: ["products"] });
+      client.setQueryData(["product-merchandising", productId], value);
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["products"] }),
+        client.invalidateQueries({ queryKey: ["product-merchandising"] }),
+      ]);
       toast.success("Configuración comercial actualizada.");
     },
     onError: (error: { message?: string }) =>

@@ -2,6 +2,10 @@ import { apiClient, withPagedDefaults } from "./client";
 
 export type GoodsReceiptStatus = "Draft" | "Accepted" | "Processed";
 export type PurchaseTaxTreatment = "DeductibleInputVat" | "CapitalizedCost" | "NotApplicable";
+export type PurchaseEvidenceType =
+  | "SupplierElectronicInvoice"
+  | "BuyerElectronicSupportDocument"
+  | "InternalReceiptVoucher";
 
 export interface GoodsReceiptLine {
   lineNumber: number;
@@ -45,6 +49,7 @@ export interface GoodsReceiptDraft {
   lines: GoodsReceiptLineSnapshot[];
   updatedAt: string;
   concurrencyToken: string;
+  purchaseEvidenceType: PurchaseEvidenceType | null;
 }
 
 export interface GoodsReceiptDetail {
@@ -68,6 +73,7 @@ export interface GoodsReceiptDetail {
   acceptedAt: string;
   processedAt: string | null;
   lines: GoodsReceiptLineSnapshot[];
+  purchaseEvidenceType: PurchaseEvidenceType;
 }
 
 export interface SaveGoodsReceiptDraftRequest {
@@ -84,6 +90,7 @@ export interface SaveGoodsReceiptDraftRequest {
   notes: string | null;
   lines: GoodsReceiptLine[];
   concurrencyToken: string | null;
+  purchaseEvidenceType: PurchaseEvidenceType | null;
 }
 
 export interface GoodsReceiptListItem {
@@ -98,6 +105,7 @@ export interface GoodsReceiptListItem {
   receivedAt: string;
   grandTotal: number;
   updatedAt: string;
+  purchaseEvidenceType: PurchaseEvidenceType | null;
 }
 
 export interface GoodsReceiptPage {
@@ -110,7 +118,12 @@ export interface GoodsReceiptPage {
 
 export interface GoodsReceiptOptions {
   warehouses: Array<{ warehouseId: string; code: string; name: string }>;
-  suppliers: Array<{ supplierId: string; identification: string; name: string }>;
+  suppliers: Array<{
+    supplierId: string; identification: string; name: string;
+    purchaseEvidencePolicy: PurchaseEvidenceType | null;
+    allowedPurchaseEvidenceTypes: PurchaseEvidenceType[];
+  }>;
+  purchaseEvidenceTypes: Array<{ code: PurchaseEvidenceType; label: string; description: string | null }>;
 }
 
 export interface GoodsReceiptProduct {
@@ -179,6 +192,7 @@ export const goodsReceiptsApi = {
     currencyCode: string; notes: string | null; lines: GoodsReceiptLine[];
     draftConcurrencyToken: string | null;
     withholdingConceptCode: string | null; withholdingJurisdictionCode: string | null;
+    purchaseEvidenceType: PurchaseEvidenceType;
   }) => apiClient.postIdempotent<GoodsReceiptAcceptance>(
     "/commerce/v1/goods-receipts/confirm", request, `goods-receipt-${request.documentId}`,
   ),

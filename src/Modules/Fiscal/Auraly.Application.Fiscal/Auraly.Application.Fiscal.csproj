@@ -12,5 +12,6 @@
     <ProjectReference Include="..\Auraly.Domain.Fiscal\Auraly.Domain.Fiscal.csproj" />
     <ProjectReference Include="..\..\Sales\Auraly.Contracts.Sales\Auraly.Contracts.Sales.csproj" />
     <ProjectReference Include="..\..\Returns\Auraly.Contracts.Returns\Auraly.Contracts.Returns.csproj" />
+    <ProjectReference Include="..\..\Purchasing\Auraly.Contracts.Purchasing\Auraly.Contracts.Purchasing.csproj" />
   </ItemGroup>
 </Project>

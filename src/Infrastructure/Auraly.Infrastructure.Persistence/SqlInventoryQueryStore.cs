@@ -173,7 +173,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
         await using var connection=connections.Create(); await connection.OpenAsync(token); await using var command=new SqlCommand("dbo.InventoryBalancesSearch",connection){CommandType=CommandType.StoredProcedure};
         AddCommon(command,user.BusinessId,query.WarehouseId,query.Search,query.Page,query.PageSize); command.Parameters.AddWithValue("@ProductId",(object?)query.ProductId??DBNull.Value); command.Parameters.AddWithValue("@OnlyWithStock",query.OnlyWithStock); command.Parameters.AddWithValue("@IncludeCosts",includeCosts);
         await using var reader=await command.ExecuteReaderAsync(token); await reader.ReadAsync(token); var total=reader.GetInt32(0); await reader.NextResultAsync(token); var items=new List<InventoryBalanceItem>();
-        while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetGuid(3),reader.GetString(4),reader.GetString(5),reader.GetDecimal(6),reader.IsDBNull(7)?null:reader.GetDecimal(7),reader.IsDBNull(8)?null:reader.GetDecimal(8),reader.IsDBNull(9)?null:reader.GetFieldValue<DateTimeOffset>(9)));
+        while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetGuid(3),reader.GetString(4),reader.GetString(5),reader.GetBoolean(6),reader.GetDecimal(7),reader.IsDBNull(8)?null:reader.GetDecimal(8),reader.IsDBNull(9)?null:reader.GetDecimal(9),reader.IsDBNull(10)?null:reader.GetDecimal(10),reader.IsDBNull(11)?null:reader.GetFieldValue<DateTimeOffset>(11)));
         return new(items,query.Page,query.PageSize,total,Pages(total,query.PageSize));
     }
 

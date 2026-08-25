@@ -59,6 +59,31 @@ public sealed class DianInvoiceUblTests
             "56f2ae4e-9812-4fad-9255-08fcfcd5ccb0", "20191", "SETP990000002"));
     }
 
+    [Fact]
+    public void Buyer_generated_support_document_places_authorization_on_the_buyer()
+    {
+        var support = CreateInvoice() with
+        {
+            DocumentTypeCode = "05",
+            ProfileId = "DIAN 2.1: documento soporte en adquisiciones efectuadas a no obligados a facturar.",
+            UuidSchemeName = "CUDS-SHA384",
+            BuyerGenerated = true
+        };
+
+        var built = new DianInvoiceUblBuilder().Build(support);
+        var document = XDocument.Parse(Encoding.UTF8.GetString(built.Xml));
+        var supplier = document.Descendants(DianUblNamespaces.Cac + "AccountingSupplierParty").Single();
+        var customer = document.Descendants(DianUblNamespaces.Cac + "AccountingCustomerParty").Single();
+
+        Assert.Equal("05", document.Root?.Element(DianUblNamespaces.Cbc + "InvoiceTypeCode")?.Value);
+        Assert.Equal("CUDS-SHA384", document.Root?.Element(DianUblNamespaces.Cbc + "UUID")?.Attribute("schemeName")?.Value);
+        Assert.Null(supplier.Descendants(DianUblNamespaces.Cac + "CorporateRegistrationScheme").SingleOrDefault());
+        Assert.Equal(
+            support.Authorization.Prefix,
+            customer.Descendants(DianUblNamespaces.Cac + "CorporateRegistrationScheme")
+                .Single().Element(DianUblNamespaces.Cbc + "ID")?.Value);
+    }
+
     private static DianInvoice CreateInvoice()
     {
         var address = new DianAddress("11001", "Bogotá", "Bogotá D.C.", "11", "Carrera 8 # 6C-38");

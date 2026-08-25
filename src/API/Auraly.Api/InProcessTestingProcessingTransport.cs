@@ -44,6 +44,10 @@ public sealed class InProcessTestingProcessingTransport(
                 string.Equals(
                     signal.DocumentType,
                     Auraly.Contracts.Returns.SalesReturnDocumentTypes.SalesReturn,
+                    StringComparison.Ordinal) ||
+                string.Equals(
+                    signal.DocumentType,
+                    Auraly.Contracts.Purchasing.PurchasingDocumentTypes.GoodsReceipt,
                     StringComparison.Ordinal))
             {
                 var fiscal = scope.ServiceProvider.GetRequiredService<FiscalProcessingCoordinator>();

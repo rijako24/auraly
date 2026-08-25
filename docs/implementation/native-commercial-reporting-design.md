@@ -65,10 +65,62 @@ reporting. `reporting.CommercialReportOrderFacts` conserva el grano pedido con
 vendedor, cliente, ruta, valor y estado; el informe de vendedores obtiene de
 allí pedidos, clientes atendidos, confirmados y pendientes de revisión.
 
-## Siguientes granos
+## Informes semánticos cerrados
 
-La cobertura planificada ingresará por la cola existente
-`auraly-sales-reporting` y su único inbox `SalesReportingJobs`. No consultarán
-tablas operativas desde la interfaz ni crearán otro motor o cola. Antes de
-habilitar sus vistas se deben completar conjuntamente productor durable,
-payload inmutable, proyección idempotente, reconciliación y prueba de rebuild.
+Los informes no son variantes visuales de una misma consulta:
+
+- **Ventas** explica venta bruta, devoluciones, venta neta, costo, utilidad,
+  recaudo y comprobantes; permite navegar por producto, categoría, cliente,
+  vendedor, sede y proveedor.
+- **Vendedores** presenta el embudo agenda → visita → pedido → factura, sus
+  conversiones y la utilidad resultante. No incluye metas ni comisiones.
+- **Clientes y cobertura** compara la visita planeada, el cierre operativo
+  (visitada u omitida), el faltante sin cierre y la visita que produjo pedido,
+  por ruta, zona y vendedor.
+- **Impacto de proveedores** relaciona sell-in (recepciones menos devoluciones
+  de compra) con sell-out, utilidad, penetración en clientes y crecimiento
+  contra el período anterior equivalente.
+- **Visitas** conserva su grano de evento y su trazabilidad individual.
+
+## Granos físicos necesarios
+
+`CommercialCoveragePlan` se captura dentro de cada mutación transaccional de
+ruta y se proyecta en `CommercialCoverageAssignmentFacts`. Cada fila representa
+una combinación horario–parada con snapshots de ruta, zona, vendedor, cliente,
+sede y coordenadas, además del intervalo
+`[ValidFromBusinessDate, ValidToBusinessDateExclusive)`. Así una edición futura
+no reescribe el plan histórico.
+
+`GoodsReceipt` y `PurchaseReturn` reutilizan la tubería documental y la única
+cola de reporting. Sus fuentes inmutables se proyectan en
+`PurchaseReportDocuments` y `PurchaseReportLineFacts`; las devoluciones se
+guardan con signo negativo. Se conservan proveedor, bodega, producto, moneda,
+cantidades y valores históricos. Los agregados se calculan desde estos hechos;
+no se crea una tabla por pantalla.
+
+`SellerOrder` evoluciona por versiones de fuente. Una nueva versión solo se
+crea cuando cambia el hash del snapshot y actualiza idempotentemente el mismo
+hecho de pedido. Conserva ruta, zona, parada, sede, canal, captura offline y
+marcas de confirmación, cancelación y facturación.
+
+## Aislamiento por identidad
+
+El alcance se resuelve en servidor mediante `AppUsers.PartyId` y la relación
+canónica del negocio con `CommerceSellers` o `Suppliers`:
+
+- un vendedor solo puede leer sus ventas, clientes, rutas, visitas y pedidos;
+- un proveedor solo puede leer las líneas de sus productos y su propio impacto;
+- filtros, URL, detalle y futuras exportaciones no pueden ampliar ese alcance;
+- una identidad asociada simultáneamente a vendedor y proveedor, inexistente o
+  ambigua falla cerrada;
+- una cuenta sin esas asociaciones conserva el alcance administrativo que le
+  otorgue `sales.reports.read`.
+
+Las restricciones se aplican antes de ejecutar cada consulta semántica. No son
+filtros cosméticos del navegador.
+
+## Fuera de alcance
+
+Metas, comisiones, geocercas, seguimiento GPS y predicciones quedan fuera de
+este corte. No se inventan datos históricos de cobertura: la interfaz informa
+la primera fecha realmente disponible en la proyección.

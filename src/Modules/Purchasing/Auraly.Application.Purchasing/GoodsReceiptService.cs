@@ -40,6 +40,16 @@ public sealed class GoodsReceiptService(
         if (string.IsNullOrWhiteSpace(idempotencyKey)) throw new PurchasingValidationException("Idempotency-Key is required.");
         if (idempotencyKey.Length > 160) throw new PurchasingValidationException("Idempotency-Key is too long.");
         if (request.ReceivedAt == default) throw new PurchasingValidationException("ReceivedAt is required.");
+        if (!PurchaseEvidenceTypes.IsValid(request.PurchaseEvidenceType))
+            throw new PurchasingValidationException("PurchaseEvidenceType is invalid.");
+        if (request.PurchaseEvidenceType == PurchaseEvidenceTypes.SupplierElectronicInvoice &&
+            (string.IsNullOrWhiteSpace(request.SupplierInvoiceNumber) || request.SupplierInvoiceDate is null))
+            throw new PurchasingValidationException(
+                "Supplier invoice number and date are required for an electronic supplier invoice.");
+        if (request.PurchaseEvidenceType != PurchaseEvidenceTypes.SupplierElectronicInvoice &&
+            (!string.IsNullOrWhiteSpace(request.SupplierInvoiceNumber) || request.SupplierInvoiceDate is not null))
+            throw new PurchasingValidationException(
+                "Supplier invoice data is only valid for an electronic supplier invoice.");
         if (request.CreatesPayable && request.DueDate is null)
             throw new PurchasingValidationException("DueDate is required when the receipt creates a payable.");
         if (request.DueDate < request.ReceivedAt)
@@ -48,6 +58,11 @@ public sealed class GoodsReceiptService(
         if (currency.Length != 3) throw new PurchasingValidationException("CurrencyCode must contain three characters.");
 
         var normalizedLines = GoodsReceiptLineNormalizer.Normalize(request.Lines);
+        if (request.PurchaseEvidenceType == PurchaseEvidenceTypes.InternalReceiptVoucher &&
+            normalizedLines.Any(line => line.TaxRate > 0 &&
+                line.TaxTreatment == PurchasingTaxTreatments.DeductibleInputVat))
+            throw new PurchasingValidationException(
+                "An internal receipt voucher cannot recognize deductible input VAT; use CapitalizedCost.");
         GoodsReceiptCalculation calculation;
         try
         {

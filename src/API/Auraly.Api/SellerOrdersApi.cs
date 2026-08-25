@@ -95,7 +95,9 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
             if(releases.Length>0)await TransferAsync(identity,$"seller-order-edit-release:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-release:{orderId:N}:{key}"),ordersWarehouseId,warehouseId,$"Liberación de reserva del pedido {number}",releases.Select(line=>(line.Key,line.Quantity)).ToArray(),connection,transaction,token);
             await SellerOrderReviewPersistence.ReplaceAsync(connection,transaction,orderId,actor.BusinessId,customerId,context.Name,context.Identification,context.Email,context.Phone,context.Address,request.Notes,total,DeterministicGuid($"seller-order-edit:{orderId:N}:{key}"),
                 lines.Select(line=>new SellerOrderReplacementLine(line.ProductId,line.Code,line.Name,line.UnitCode,line.Quantity,line.UnitPrice,line.DiscountAmount,line.LineTotal,JsonSerializer.Serialize(new{line.PriceSource,line.Available}))).ToArray(),token);
+            var reportingVersion=await reportingJobs.EnsureAsync(connection,transaction,actor.TenantId,actor.BusinessId,orderId,token);
             await transaction.CommitAsync(token);
+            await reporting.RequestProjectionAsync(actor.BusinessId,orderId,"SellerOrder",token,reportingVersion);
             return new(orderId,number,"Confirmed",total,false,[]);
         }
         catch(Exception error)
@@ -137,7 +139,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
         try
         {
             var replay=await ReplayAsync(connection,transaction,actor.BusinessId,request.IdempotencyKey,token);
-            if(replay is not null){await reportingJobs.EnsureAsync(connection,transaction,actor.TenantId,actor.BusinessId,replay.OrderId,token);await transaction.CommitAsync(token);await reporting.RequestProjectionAsync(actor.BusinessId,replay.OrderId,"SellerOrder",token);return replay;}
+            if(replay is not null){var version=await reportingJobs.EnsureAsync(connection,transaction,actor.TenantId,actor.BusinessId,replay.OrderId,token);await transaction.CommitAsync(token);await reporting.RequestProjectionAsync(actor.BusinessId,replay.OrderId,"SellerOrder",token,version);return replay;}
             var context=await LoadContextAsync(connection,transaction,actor,request,token);
             var requested=request.Lines.GroupBy(line=>line.ProductId).Select(group=>new SellerOrdersApi.SellerOrderLineInput(group.Key,group.Sum(line=>line.Quantity))).ToArray();
             var lines=new List<OrderLine>();var warnings=new List<string>();var position=0;
@@ -158,9 +160,9 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
             var stockLines=lines.Where(line=>line.ManageStock).Select((line,index)=>new WarehouseTransferLineRequest(index+1,line.ProductId,line.Quantity)).ToArray();
             if(review)
             {
-                await reportingJobs.EnsureAsync(connection,transaction,actor.TenantId,actor.BusinessId,orderId,token);
+                var reportingVersion=await reportingJobs.EnsureAsync(connection,transaction,actor.TenantId,actor.BusinessId,orderId,token);
                 await transaction.CommitAsync(token);
-                await reporting.RequestProjectionAsync(actor.BusinessId,orderId,"SellerOrder",token);
+                await reporting.RequestProjectionAsync(actor.BusinessId,orderId,"SellerOrder",token,reportingVersion);
                 return new(orderId,number,"InReview",total,true,warnings);
             }
 
@@ -173,9 +175,9 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
             }
             await using(var confirm=Procedure("dbo.SellerOrderConfirm",connection,transaction))
             {confirm.Parameters.AddRange([P("@ExternalStatus",stockLines.Length>0?"InventoryTransferProcessed":"Confirmed"),P("@OrderId",orderId),P("@BusinessId",request.BusinessId)]);await confirm.ExecuteNonQueryAsync(token);}
-            await reportingJobs.EnsureAsync(connection,transaction,actor.TenantId,actor.BusinessId,orderId,token);
+            var finalReportingVersion=await reportingJobs.EnsureAsync(connection,transaction,actor.TenantId,actor.BusinessId,orderId,token);
             await transaction.CommitAsync(token);
-            await reporting.RequestProjectionAsync(actor.BusinessId,orderId,"SellerOrder",token);
+            await reporting.RequestProjectionAsync(actor.BusinessId,orderId,"SellerOrder",token,finalReportingVersion);
             return new(orderId,number,"Confirmed",total,false,[]);
         }
         catch{if(transaction.Connection is not null)await transaction.RollbackAsync(token);throw;}

@@ -2,6 +2,7 @@
 
 import { KeyboardEvent, useRef, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BarChart3, CircleDollarSign, Images, PackagePlus, Pencil, Power, Search, Truck } from "lucide-react";
 import { toast } from "sonner";
 
@@ -72,6 +73,7 @@ function productToForm(product: Product): ProductFormState {
 }
 
 export default function ProductsPage() {
+  const queryClient = useQueryClient();
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
@@ -107,6 +109,14 @@ export default function ProductsPage() {
   const openDetails = (product: Product) => {
     setSelectedProduct(product);
     setModalMode("details");
+  };
+
+  const openEditing = (product: Product) => {
+    setSelectedProduct(product);
+    setForm(productToForm(product));
+    setProductValidationError(undefined);
+    setEditingSalesTaxRate(undefined);
+    setModalMode("edit");
   };
 
   const closeModal = () => {
@@ -228,7 +238,10 @@ export default function ProductsPage() {
         aliases,
         images,
       });
-      await refetch();
+      await Promise.all([
+        refetch(),
+        queryClient.invalidateQueries({ queryKey: ["product-merchandising"] }),
+      ]);
       setProductValidationError(undefined);
       toast.success("Producto guardado completamente");
       closeModal();
@@ -286,6 +299,9 @@ export default function ProductsPage() {
       header: "",
       cell: ({ row }) => (
         <div className="flex justify-end gap-1" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+          <Button type="button" variant="ghost" size="sm" onClick={() => openEditing(row.original)}>
+            <Pencil className="mr-2 h-4 w-4" />Editar
+          </Button>
           <Button
             type="button"
             variant="ghost"
@@ -337,6 +353,9 @@ export default function ProductsPage() {
         </div>
       </dl>
       <div className="flex justify-end border-t pt-3" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+        <Button type="button" variant="ghost" size="sm" onClick={() => openEditing(product)}>
+          <Pencil className="mr-2 h-4 w-4" />Editar
+        </Button>
         <Button
           type="button"
           variant="ghost"

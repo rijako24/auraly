@@ -23,7 +23,8 @@ public sealed record FiscalGenerationWorkItem(
     string FiscalNumber, PosSaleUploadRequest? Sale,
     SalesReturnCreditNoteSnapshot? CreditNote,
     SalesDebitNoteFiscalSnapshot? DebitNote,
-    FiscalIssuerWorkConfiguration Issuer, FiscalAuthorizationWorkConfiguration? Authorization);
+    FiscalIssuerWorkConfiguration Issuer, FiscalAuthorizationWorkConfiguration? Authorization,
+    PurchaseSupportFiscalSnapshot? SupportDocument = null);
 
 public sealed record FiscalGeneratedArtifacts(
     byte[] UnsignedXml, string UnsignedSha256Hex, byte[] SignedXml, string SignedSha256Hex,
@@ -210,6 +211,8 @@ public sealed class FiscalGenerationWorker(
             return new FiscalUblBuildResult(
                 builder.Build(invoice), invoice.Cufe, invoice.QrPayload);
         }
+        if (work.FiscalDocumentType == FiscalDocumentTypeCodes.SupportDocument)
+            return await BuildSupportDocumentAsync(work, cancellationToken);
         if (work.FiscalDocumentType == FiscalDocumentTypeCodes.DebitNote)
             return await BuildDebitNoteAsync(work, cancellationToken);
         if (work.FiscalDocumentType != FiscalDocumentTypeCodes.CreditNote)
@@ -332,6 +335,59 @@ public sealed class FiscalGenerationWorker(
             lines, taxes, value.UntaxedAmount, value.TotalAmount, cude.QrPayload);
         return new FiscalUblBuildResult(
             debitNoteBuilder.Build(note), cude.Cude, cude.QrPayload);
+    }
+
+    private async Task<FiscalUblBuildResult> BuildSupportDocumentAsync(
+        FiscalGenerationWorkItem work, CancellationToken cancellationToken)
+    {
+        var snapshot = work.SupportDocument
+            ?? throw new FiscalSnapshotDataException("The support-document fiscal payload is missing.");
+        var receipt = snapshot.Receipt;
+        if (snapshot.FiscalIssuerConfigurationId != work.Issuer.Id ||
+            receipt.DocumentId != work.DocumentId || receipt.BusinessId != work.BusinessId ||
+            snapshot.FiscalNumber != work.FiscalNumber || snapshot.Environment != work.Issuer.Environment)
+            throw new FiscalSnapshotDataException(
+                "The support-document snapshot differs from its durable fiscal root.");
+        var pin = await pins.ResolveAsync(work.BusinessId,
+            work.Issuer.SoftwarePinSecretReference, cancellationToken);
+        if (string.IsNullOrWhiteSpace(pin))
+            throw new FiscalSnapshotDataException("The software PIN secret could not be resolved.");
+        var metadata = snapshot.Lines.ToDictionary(line => line.LineNumber);
+        var lines = receipt.Lines.OrderBy(line => line.LineNumber).Select(line =>
+        {
+            if (!metadata.TryGetValue(line.LineNumber, out var item))
+                throw new FiscalSnapshotDataException(
+                    $"Support-document metadata is missing for line {line.LineNumber}.");
+            return new DianInvoiceLine(line.LineNumber, item.ProductCode, item.ProductCodeScheme,
+                line.Description, item.UnitCode, line.Quantity, line.UnitCost, line.DiscountAmount,
+                line.NetAmount, [new DianTax(line.TaxCode, item.TaxName,
+                    line.NetAmount, line.TaxAmount, line.TaxRate)]);
+        }).ToArray();
+        var taxes = lines.SelectMany(line => line.Taxes)
+            .GroupBy(tax => new { tax.Code, tax.Name, tax.Percent })
+            .Select(group => new DianTax(group.Key.Code, group.Key.Name,
+                group.Sum(x => x.TaxableAmount), group.Sum(x => x.Amount), group.Key.Percent))
+            .ToArray();
+        var cuds = CudsCalculator.Calculate(new CudsInput(snapshot.FiscalNumber,
+            receipt.ReceivedAt, receipt.NetAmount,
+            taxes.Where(x => x.Code == "01").Sum(x => x.Amount), receipt.GrandTotal,
+            snapshot.Seller.Identification, work.Issuer.SupplierTaxId, pin,
+            (FiscalEnvironment)snapshot.Environment), snapshot.QrValidationUrl);
+        var auth = snapshot.Authorization;
+        var invoice = new DianInvoice(snapshot.FiscalNumber, cuds.Cuds, receipt.ReceivedAt,
+            receipt.CurrencyCode, "05", snapshot.Environment,
+            new DianAuthorization(auth.Number, auth.ValidFrom, auth.ValidUntil,
+                auth.Prefix, auth.RangeStart, auth.RangeEnd),
+            new DianSoftware(work.Issuer.SupplierTaxId, work.Issuer.SupplierCheckDigit,
+                work.Issuer.SoftwareId, pin), Party(snapshot.Seller), IssuerParty(work.Issuer),
+            lines, taxes, new DianPayment(receipt.CreatesPayable ? "2" : "1", "42",
+                DateOnly.FromDateTime((receipt.DueDate ?? receipt.ReceivedAt).Date), null),
+            receipt.NetAmount, receipt.NetAmount, receipt.GrandTotal,
+            receipt.Lines.Sum(x => x.DiscountAmount), receipt.GrandTotal, cuds.QrPayload,
+            snapshot.SellerOriginCode,
+            "DIAN 2.1: documento soporte en adquisiciones efectuadas a no obligados a facturar.",
+            "CUDS-SHA384", true);
+        return new FiscalUblBuildResult(builder.Build(invoice), cuds.Cuds, cuds.QrPayload);
     }
 
     private static string TaxName(string code) => code switch

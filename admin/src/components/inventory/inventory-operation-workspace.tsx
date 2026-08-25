@@ -99,8 +99,8 @@ const operationOptions: Array<{
   },
   {
     id: "adjustment",
-    label: "Ajuste",
-    description: "Registra una entrada o salida justificada.",
+    label: "Movimientos de mercancía",
+    description: "Registra una entrada o salida de mercancía con su motivo.",
     icon: Scale,
     permission: "inventory.adjustments.confirm",
   },

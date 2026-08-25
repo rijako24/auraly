@@ -71,7 +71,7 @@ CREATE TABLE [dbo].[PriceChannels] (
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [FK_PriceChannels_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [CK_PriceChannels_Strategy] CHECK ([Strategy] IN (N'TieredProductPrice',N'PercentageOverBasePrice',N'PercentageBelowBasePrice',N'PercentageOverAverageCost',N'FixedMarginOverAverageCost',N'SellAtAverageCost')),
-    CONSTRAINT [CK_PriceChannels_Value] CHECK (([Strategy] IN (N'TieredProductPrice',N'SellAtAverageCost') AND [Value] IS NULL) OR ([Strategy] IN (N'PercentageOverBasePrice',N'PercentageOverAverageCost') AND [Value] BETWEEN -100 AND 1000) OR ([Strategy]=N'PercentageBelowBasePrice' AND [Value] BETWEEN 0 AND 100) OR ([Strategy]=N'FixedMarginOverAverageCost' AND [Value] BETWEEN 0 AND 99.999999)),
+    CONSTRAINT [CK_PriceChannels_Value] CHECK (([Strategy] IN (N'TieredProductPrice',N'SellAtAverageCost') AND [Value] IS NULL) OR ([Strategy] IN (N'PercentageOverBasePrice',N'PercentageOverAverageCost') AND [Value] BETWEEN -100 AND 1000) OR ([Strategy]=N'PercentageBelowBasePrice' AND [Value] BETWEEN 0 AND 100) OR ([Strategy]=N'FixedMarginOverAverageCost' AND [Value] BETWEEN -100 AND 99.999999)),
     CONSTRAINT [UQ_PriceChannels_Business_Code] UNIQUE ([BusinessId], [Code])
 );
 GO
@@ -117,12 +117,15 @@ CREATE TABLE [dbo].[Suppliers] (
     [PartyId] UNIQUEIDENTIFIER NULL,
     [Identification] NVARCHAR(40) NOT NULL,
     [Name] NVARCHAR(200) NOT NULL,
+    [PurchaseEvidencePolicy] NVARCHAR(40) NULL,
     [IsActive] BIT NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [FK_Suppliers_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_Suppliers_Parties] FOREIGN KEY ([PartyId]) REFERENCES [dbo].[Parties] ([PartyId]),
-    CONSTRAINT [UQ_Suppliers_Business_Identification] UNIQUE ([BusinessId], [Identification])
+    CONSTRAINT [UQ_Suppliers_Business_Identification] UNIQUE ([BusinessId], [Identification]),
+    CONSTRAINT [CK_Suppliers_PurchaseEvidencePolicy] CHECK ([PurchaseEvidencePolicy] IS NULL OR [PurchaseEvidencePolicy] IN
+      (N'SupplierElectronicInvoice',N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher'))
 );
 GO
 CREATE UNIQUE INDEX [UX_Suppliers_Business_Party]

@@ -33,7 +33,7 @@ import {
 import {
   goodsReceiptsApi, type GoodsReceiptDetail, type GoodsReceiptDraft, type GoodsReceiptLine,
   type GoodsReceiptListItem, type GoodsReceiptProduct, type GoodsReceiptStatus,
-  type SaveGoodsReceiptDraftRequest,
+  type SaveGoodsReceiptDraftRequest, type PurchaseEvidenceType,
 } from "@/services/api/goods-receipts";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
@@ -48,6 +48,7 @@ type PendingSupplierChange = { supplierId: string; supplierName: string };
 type EditorDraft = {
   draftId: string; warehouseId: string; supplierId: string;
   supplierInvoiceNumber: string; supplierInvoiceDate: string; receivedAt: string;
+  purchaseEvidenceType: PurchaseEvidenceType | "";
   createsPayable: boolean; dueDate: string; notes: string;
   withholdingConceptCode: string; withholdingJurisdictionCode: string;
   lines: GoodsReceiptLine[]; concurrencyToken: string | null;
@@ -60,6 +61,11 @@ const purchaseTaxTreatmentLabels: Record<string, string> = {
   DeductibleInputVat: "IVA descontable",
   CapitalizedCost: "Mayor valor del costo",
   NotApplicable: "No aplica",
+};
+const purchaseEvidenceLabels: Record<string, string> = {
+  SupplierElectronicInvoice: "Factura electrónica del proveedor",
+  BuyerElectronicSupportDocument: "Documento soporte electrónico",
+  InternalReceiptVoucher: "Comprobante interno",
 };
 
 
@@ -98,7 +104,7 @@ export default function GoodsReceiptsPage() {
         <p className="text-xs text-muted-foreground">
           {row.original.supplierInvoiceNumber
             ? `Factura proveedor ${row.original.supplierInvoiceNumber}`
-            : "Sin factura de proveedor"}
+            : purchaseEvidenceLabels[row.original.purchaseEvidenceType ?? ""] ?? "Tipo por seleccionar"}
         </p>
       </div>,
     },
@@ -227,7 +233,8 @@ function ReceiptDetailDialog({
           <DetailValue label="Bodega" value={detail.warehouseName} />
           <DetailValue label="Estado" value={statusLabels[detail.status]} />
           <DetailValue label="Recibida" value={formatDateTime(detail.receivedAt)} />
-          <DetailValue label="Factura del proveedor" value={detail.supplierInvoiceNumber ?? "Sin factura"} />
+          <DetailValue label="Tipo de soporte" value={purchaseEvidenceLabels[detail.purchaseEvidenceType]} />
+          <DetailValue label="Factura del proveedor" value={detail.supplierInvoiceNumber ?? "No aplica"} />
           <DetailValue label="Fecha de factura" value={detail.supplierInvoiceDate ? formatDateTime(detail.supplierInvoiceDate) : "Sin fecha"} />
           <DetailValue label="Forma de pago" value={detail.createsPayable ? "Crédito" : "Contado"} />
           <DetailValue label="Vencimiento" value={detail.dueDate ? formatDateTime(detail.dueDate) : "No aplica"} />
@@ -341,11 +348,18 @@ function ReceiptEditor({
 
   if (!draft || !businessId) return null;
   const totals = calculateGoodsReceiptTotals(draft.lines);
+  const selectedSupplier = options.data?.suppliers.find((item) => item.supplierId === draft.supplierId);
+  const allowedEvidenceTypes = selectedSupplier?.allowedPurchaseEvidenceTypes ?? [];
+  const visibleEvidenceTypes = options.data?.purchaseEvidenceTypes.filter((item) =>
+    allowedEvidenceTypes.includes(item.code)) ?? [];
 
   const change = (values: Partial<EditorDraft>) => onChange({ ...draft, ...values });
 
   const applySupplierChange = (supplierId: string) => {
-    change({ supplierId, lines: [] });
+    const supplier = options.data?.suppliers.find((item) => item.supplierId === supplierId);
+    const evidenceType = supplier?.purchaseEvidencePolicy ?? "";
+    change({ supplierId, lines: [], purchaseEvidenceType: evidenceType,
+      supplierInvoiceNumber: "", supplierInvoiceDate: "" });
     setPendingSupplierChange(undefined);
     setIncludeUnassociated(false);
     setProductSearch("");
@@ -363,12 +377,15 @@ function ReceiptEditor({
   const request = (): SaveGoodsReceiptDraftRequest => ({
     draftId: draft.draftId, businessId,
     warehouseId: draft.warehouseId || null, supplierId: draft.supplierId || null,
-    supplierInvoiceNumber: draft.supplierInvoiceNumber.trim() || null,
-    supplierInvoiceDate: toIsoOrNull(draft.supplierInvoiceDate),
+    supplierInvoiceNumber: draft.purchaseEvidenceType === "SupplierElectronicInvoice"
+      ? draft.supplierInvoiceNumber.trim() || null : null,
+    supplierInvoiceDate: draft.purchaseEvidenceType === "SupplierElectronicInvoice"
+      ? toIsoOrNull(draft.supplierInvoiceDate) : null,
     receivedAt: toIso(draft.receivedAt), createsPayable: draft.createsPayable,
     dueDate: draft.createsPayable ? toIsoOrNull(draft.dueDate) : null,
     currencyCode: "COP", notes: draft.notes.trim() || null,
     lines: draft.lines, concurrencyToken: draft.concurrencyToken,
+    purchaseEvidenceType: draft.purchaseEvidenceType || null,
   });
 
   const persist = async (notify = true) => {
@@ -504,8 +521,13 @@ function ReceiptEditor({
   };
 
   const confirmEntry = async () => {
-    if (!draft.warehouseId || !draft.supplierId || draft.lines.length === 0) {
-      toast.error("Selecciona proveedor y bodega, y agrega al menos un producto.");
+    if (!draft.warehouseId || !draft.supplierId || !draft.purchaseEvidenceType || draft.lines.length === 0) {
+      toast.error("Selecciona proveedor, bodega, tipo de soporte y agrega al menos un producto.");
+      return;
+    }
+    if (draft.purchaseEvidenceType === "SupplierElectronicInvoice" &&
+      (!draft.supplierInvoiceNumber.trim() || !draft.supplierInvoiceDate)) {
+      toast.error("La factura electrónica requiere número y fecha de factura.");
       return;
     }
     try {
@@ -518,14 +540,17 @@ function ReceiptEditor({
       const accepted = await confirm.mutateAsync({
         documentId: draft.draftId, businessId, warehouseId: draft.warehouseId,
         supplierId: draft.supplierId,
-        supplierInvoiceNumber: draft.supplierInvoiceNumber.trim() || null,
-        supplierInvoiceDate: toIsoOrNull(draft.supplierInvoiceDate),
+        supplierInvoiceNumber: draft.purchaseEvidenceType === "SupplierElectronicInvoice"
+          ? draft.supplierInvoiceNumber.trim() || null : null,
+        supplierInvoiceDate: draft.purchaseEvidenceType === "SupplierElectronicInvoice"
+          ? toIsoOrNull(draft.supplierInvoiceDate) : null,
         receivedAt: toIso(draft.receivedAt), createsPayable: draft.createsPayable,
         dueDate: draft.createsPayable ? toIsoOrNull(draft.dueDate) : null,
         currencyCode: "COP", notes: draft.notes.trim() || null, lines: draft.lines,
         draftConcurrencyToken: confirmationToken,
         withholdingConceptCode: draft.withholdingConceptCode.trim() || null,
         withholdingJurisdictionCode: draft.withholdingJurisdictionCode.trim() || null,
+        purchaseEvidenceType: draft.purchaseEvidenceType,
       });
       toast.success(`${accepted.documentNumber} fue confirmada y enviada al motor.`, {
         duration: 12000,
@@ -560,7 +585,7 @@ function ReceiptEditor({
         <button type="button" onClick={() => setDetailsExpanded((current) => !current)}
           className="flex w-full items-center justify-between rounded-2xl border bg-muted/20 px-4 py-3 text-left"
           aria-expanded={detailsExpanded}>
-          <span><strong className="block">Datos de la recepción</strong><small className="text-muted-foreground">Proveedor, bodega, factura y condición de pago</small></span>
+          <span><strong className="block">Datos de la recepción</strong><small className="text-muted-foreground">Proveedor, bodega, soporte y condición de pago</small></span>
           <ChevronDown className={`h-5 w-5 transition-transform ${detailsExpanded ? "rotate-180" : ""}`} />
         </button>
         {detailsExpanded && <>
@@ -583,6 +608,23 @@ function ReceiptEditor({
                 </SelectItem>)}</SelectContent>
             </Select>
           </Field>
+          <Field label="Tipo de soporte">
+            <Select value={draft.purchaseEvidenceType} disabled={!draft.supplierId}
+              onValueChange={(value: PurchaseEvidenceType) => change({
+                purchaseEvidenceType: value,
+                supplierInvoiceNumber: value === "SupplierElectronicInvoice" ? draft.supplierInvoiceNumber : "",
+                supplierInvoiceDate: value === "SupplierElectronicInvoice" ? draft.supplierInvoiceDate : "",
+                lines: value === "InternalReceiptVoucher"
+                  ? draft.lines.map((line) => line.taxRate > 0 && line.taxTreatment === "DeductibleInputVat"
+                    ? { ...line, taxTreatment: "CapitalizedCost" as const } : line)
+                  : draft.lines,
+              })}>
+              <SelectTrigger><SelectValue placeholder="Seleccionar soporte" /></SelectTrigger>
+              <SelectContent>{visibleEvidenceTypes.map((item) =>
+                <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent>
+            </Select>
+          </Field>
+          {draft.purchaseEvidenceType === "SupplierElectronicInvoice" && <>
           <Field label="Factura del proveedor">
             <Input value={draft.supplierInvoiceNumber}
               onChange={(event) => change({ supplierInvoiceNumber: event.target.value })}
@@ -591,6 +633,15 @@ function ReceiptEditor({
           <Field label="Fecha factura">
             <DatePicker value={draft.supplierInvoiceDate} onChange={(value) => change({ supplierInvoiceDate: value })} />
           </Field>
+          </>}
+          {draft.purchaseEvidenceType === "BuyerElectronicSupportDocument" &&
+            <p className="self-end rounded-lg bg-primary/5 p-3 text-sm text-muted-foreground md:col-span-2">
+              Auraly asignará numeración, generará el CUDS y enviará el documento soporte a la DIAN.
+            </p>}
+          {draft.purchaseEvidenceType === "InternalReceiptVoucher" &&
+            <p className="self-end rounded-lg bg-amber-50 p-3 text-sm text-amber-900 md:col-span-2">
+              Sólo registra inventario, cuenta por pagar y contabilidad. No genera documento fiscal ni IVA descontable.
+            </p>}
           <Field label="Fecha de recepción">
             <DateTimePicker value={draft.receivedAt} onChange={(value) => change({ receivedAt: value })} />
           </Field>
@@ -851,7 +902,7 @@ function ReceiptEditor({
 function emptyDraft(): EditorDraft {
   return {
     draftId: crypto.randomUUID(), warehouseId: "", supplierId: "",
-    supplierInvoiceNumber: "", supplierInvoiceDate: new Date().toISOString().slice(0, 10),
+    supplierInvoiceNumber: "", supplierInvoiceDate: "", purchaseEvidenceType: "",
     receivedAt: localDateTime(), createsPayable: true, dueDate: plusDays(30),
     notes: "", lines: [], concurrencyToken: null,
     withholdingConceptCode: "", withholdingJurisdictionCode: "",
@@ -863,6 +914,7 @@ function fromDraft(draft: GoodsReceiptDraft): EditorDraft {
     draftId: draft.draftId, warehouseId: draft.warehouseId ?? "",
     supplierId: draft.supplierId ?? "", supplierInvoiceNumber: draft.supplierInvoiceNumber ?? "",
     supplierInvoiceDate: draft.supplierInvoiceDate?.slice(0, 10) ?? "",
+    purchaseEvidenceType: draft.purchaseEvidenceType ?? "",
     receivedAt: localDateTime(draft.receivedAt), createsPayable: draft.createsPayable,
     dueDate: draft.dueDate?.slice(0, 10) ?? "", notes: draft.notes ?? "",
     lines: draft.lines.map((line) => ({

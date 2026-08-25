@@ -1,1 +1,1 @@
-export {default} from "../../analytics/page";
+export {SellerPerformanceReport as default} from "@/components/reports/commercial-semantic-reports";

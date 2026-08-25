@@ -41,7 +41,7 @@ export function ProductPicker({
 }) {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [inventoryBlocked, setInventoryBlocked] = useState<InventoryProductItem | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
@@ -62,7 +62,7 @@ export function ProductPicker({
   const products = useMemo(() => allProducts.filter((product) => !excludedProductIds.has(product.productId)), [allProducts, excludedProductIds]);
   const totalCount = Math.max(0, (query.data?.pages[0]?.totalCount ?? 0) - allProducts.filter((product) => excludedProductIds.has(product.productId)).length);
 
-  useEffect(() => { setActiveIndex(0); listRef.current?.scrollTo({ top: 0 }); }, [search, warehouseId, conversionOnly, conversionFamilyRootProductId]);
+  useEffect(() => { setActiveIndex(null); listRef.current?.scrollTo({ top: 0 }); }, [search, warehouseId, conversionOnly, conversionFamilyRootProductId]);
   useEffect(() => {
     if (!open) return;
     const closeOnOutsidePointer = (event: PointerEvent) => {
@@ -71,7 +71,7 @@ export function ProductPicker({
     document.addEventListener("pointerdown", closeOnOutsidePointer, true);
     return () => document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
   }, [open]);
-  useEffect(() => { if (activeIndex >= products.length) setActiveIndex(Math.max(0, products.length - 1)); }, [activeIndex, products.length]);
+  useEffect(() => { if (activeIndex !== null && activeIndex >= products.length) setActiveIndex(null); }, [activeIndex, products.length]);
 
   function choose(product: InventoryProductItem) {
     if (requireZeroInventory && product.quantityOnHand !== 0) {
@@ -81,16 +81,12 @@ export function ProductPicker({
     }
     onSelect(product); setSearch(""); setOpen(false);
   }
-  async function chooseActive() {
-    let product: InventoryProductItem | undefined = products[activeIndex];
-    if (!product && !query.isFetching) {
-      const refreshed = await query.refetch();
-      product = refreshed.data?.pages.flatMap((page) => page.items).find((item) => !excludedProductIds.has(item.productId));
-    }
-    if (product) choose(product);
+  function chooseActive() {
+    if (activeIndex !== null) choose(products[activeIndex]);
   }
   async function moveDown() {
-    if (activeIndex < products.length - 1) { setActiveIndex((current) => current + 1); return; }
+    if (activeIndex === null) { if (products.length) setActiveIndex(0); return; }
+    if (activeIndex < products.length - 1) { setActiveIndex((current) => current === null ? 0 : current + 1); return; }
     if (!query.hasNextPage || query.isFetchingNextPage) return;
     const previousLength = products.length;
     const next = await query.fetchNextPage();
@@ -99,8 +95,8 @@ export function ProductPicker({
   }
   function keyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "ArrowDown") { event.preventDefault(); setOpen(true); void moveDown(); }
-    else if (event.key === "ArrowUp") { event.preventDefault(); setActiveIndex((current) => Math.max(0, current - 1)); }
-    else if (event.key === "Enter") { event.preventDefault(); void chooseActive(); }
+    else if (event.key === "ArrowUp") { event.preventDefault(); setActiveIndex((current) => current === null ? Math.max(0, products.length - 1) : Math.max(0, current - 1)); }
+    else if (event.key === "Enter") { event.preventDefault(); if (activeIndex === null && products.length) choose(products[0]); else chooseActive(); }
     else if (event.key === "Escape") { event.preventDefault(); setOpen(false); }
   }
   function scroll(event: UIEvent<HTMLDivElement>) {
@@ -129,7 +125,7 @@ export function ProductPicker({
     <Label htmlFor={inputId}>{label}</Label>
     <div className="mt-2 flex gap-2">
       <div className="relative min-w-0 flex-1"><Barcode className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-primary" /><Input id={inputId} data-testid="product-picker-search" className="pl-9" disabled={disabled} value={search} onFocus={() => setOpen(true)} onClick={() => setOpen(true)} onChange={(event) => { setSearch(event.target.value); setOpen(true); }} onKeyDown={keyDown} autoComplete="off" aria-autocomplete="list" aria-expanded={open} aria-controls={`${inputId}-results`} placeholder="Código interno, código de barras, referencia o nombre" /></div>
-      <Button type="button" disabled={disabled || query.isFetching || products.length === 0} onMouseDown={(event) => event.preventDefault()} onClick={() => void chooseActive()}>{query.isFetching && !query.isFetchingNextPage ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />} Agregar</Button>
+      <Button type="button" disabled={disabled || query.isFetching || activeIndex === null} onMouseDown={(event) => event.preventDefault()} onClick={chooseActive}>{query.isFetching && !query.isFetchingNextPage ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />} Agregar</Button>
     </div>
     {resultsMode === "inline" ? <div id={`${inputId}-results`} ref={listRef} role="listbox" onScroll={scroll} className="relative mt-2 grid min-h-40 max-h-72 w-full grid-cols-[minmax(0,1fr)_minmax(120px,0.55fr)_100px] content-start overflow-auto rounded-xl border bg-background">
       <div className="sticky top-0 z-10 bg-muted/80 px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Producto</div>

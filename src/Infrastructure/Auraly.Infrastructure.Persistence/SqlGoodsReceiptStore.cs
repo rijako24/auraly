@@ -7,6 +7,9 @@ using Auraly.Application.Purchasing;
 using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Purchasing;
+using Auraly.Contracts.Fiscal;
+using Auraly.Contracts.Sales;
+using Auraly.Application.Fiscal;
 using Auraly.Domain.Purchasing;
 using Microsoft.Data.SqlClient;
 
@@ -48,6 +51,10 @@ public sealed class SqlGoodsReceiptStore(
             await ValidateScopeAsync(connection, transaction, user, request, cancellationToken);
             var number = await AllocateNumberAsync(connection, transaction, user.BusinessId, cancellationToken);
             var now = timeProvider.GetUtcNow();
+            var support = request.PurchaseEvidenceType == PurchaseEvidenceTypes.BuyerElectronicSupportDocument
+                ? await AllocateSupportFiscalAsync(connection, transaction, user.BusinessId,
+                    request.SupplierId, request.ReceivedAt, now, cancellationToken)
+                : null;
             var sequence = await AllocateProcessingSequenceAsync(
                 connection, transaction, user.BusinessId, now, cancellationToken);
             var payload = new GoodsReceiptDocumentPayload(
@@ -81,18 +88,22 @@ public sealed class SqlGoodsReceiptStore(
                         line.TaxTreatment.ToString(), line.NetAmount, line.TaxAmount, line.LineTotal,
                         source.PresentationName, source.PresentationQuantity, source.UnitsPerPresentation);
                 }).ToArray(),
-                withholding);
+                withholding,
+                PurchaseEvidenceType: request.PurchaseEvidenceType);
             var payloadJson = GoodsReceiptContractSerializer.Serialize(payload);
             var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(payloadJson));
 
             var movementId = ids.NewId();
             await InsertReceiptAsync(
                 connection, transaction, user, request, calculation, number,
-                idempotencyKey, requestHash, now, cancellationToken);
+                support, idempotencyKey, requestHash, now, cancellationToken);
             await InsertLinesAsync(connection, transaction, request.DocumentId, request.Lines, calculation, cancellationToken);
             await InsertJobAsync(
                 connection, transaction, user.BusinessId, request.DocumentId, movementId,
                 sequence, payloadJson, payloadHash, now, cancellationToken);
+            if (support is not null)
+                await InsertSupportFiscalAsync(connection, transaction, payload, support,
+                    request.Lines, now, cancellationToken);
             await DeleteDraftIfPresentAsync(
                 connection, transaction, user.BusinessId, request.DocumentId, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
@@ -160,6 +171,15 @@ public sealed class SqlGoodsReceiptStore(
               THROW 51101,'Selecciona una bodega de venta válida para recibir mercancía.',1;
             IF NOT EXISTS (SELECT 1 FROM dbo.Suppliers WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1)
               THROW 51102,'The supplier is outside the authenticated business.',1;
+            IF NOT EXISTS (
+              SELECT 1 FROM dbo.Suppliers
+              WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1
+                AND (
+                  PurchaseEvidencePolicy IS NULL
+                  OR PurchaseEvidencePolicy=N'InternalReceiptVoucher' AND @PurchaseEvidenceType=N'InternalReceiptVoucher'
+                  OR PurchaseEvidencePolicy=N'SupplierElectronicInvoice' AND @PurchaseEvidenceType IN (N'SupplierElectronicInvoice',N'InternalReceiptVoucher')
+                  OR PurchaseEvidencePolicy=N'BuyerElectronicSupportDocument' AND @PurchaseEvidenceType IN (N'BuyerElectronicSupportDocument',N'InternalReceiptVoucher')))
+              THROW 51104,'The selected evidence type is not allowed by the supplier configuration.',1;
             IF EXISTS (
               SELECT x.ProductId
               FROM OPENJSON(@ProductsJson)
@@ -174,6 +194,7 @@ public sealed class SqlGoodsReceiptStore(
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
         command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
         command.Parameters.AddWithValue("@SupplierId", request.SupplierId);
+        command.Parameters.AddWithValue("@PurchaseEvidenceType", request.PurchaseEvidenceType);
         command.Parameters.AddWithValue(
             "@ProductsJson",
             JsonSerializer.Serialize(request.Lines.Select(line => line.ProductId).Distinct()));
@@ -181,7 +202,7 @@ public sealed class SqlGoodsReceiptStore(
         {
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
-        catch (SqlException exception) when (exception.Number is >= 51100 and <= 51103)
+        catch (SqlException exception) when (exception.Number is >= 51100 and <= 51104)
         {
             throw new PurchasingValidationException(exception.Message);
         }
@@ -271,18 +292,21 @@ public sealed class SqlGoodsReceiptStore(
     private static async Task InsertReceiptAsync(
         SqlConnection connection, SqlTransaction transaction, PurchasingUserIdentity user,
         ConfirmGoodsReceiptRequest request, GoodsReceiptCalculation calculation,
-        AuralyDocumentNumberAssignment number, string idempotencyKey, byte[] requestHash,
+        AuralyDocumentNumberAssignment number, SupportFiscalAllocation? support,
+        string idempotencyKey, byte[] requestHash,
         DateTimeOffset now, CancellationToken cancellationToken)
     {
         const string sql = """
             INSERT dbo.GoodsReceipts
               (GoodsReceiptId,BusinessId,WarehouseId,SupplierId,DocumentSeriesId,DocumentNumber,
                DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,IdempotencyKey,PayloadHash,
+               PurchaseEvidenceType,SupportFiscalSeriesId,SupportFiscalAuthorizationId,SupportFiscalNumber,
                SupplierInvoiceNumber,SupplierInvoiceDate,ReceivedAt,CreatesPayable,DueDate,CurrencyCode,
                Notes,NetAmount,TaxAmount,GrandTotal,Status,ConfirmedByUserId,AcceptedAt)
             VALUES
               (@Id,@BusinessId,@WarehouseId,@SupplierId,@SeriesId,@Number,@Prefix,@SeriesCode,@Consecutive,
-               @IdempotencyKey,@PayloadHash,@SupplierInvoiceNumber,@SupplierInvoiceDate,@ReceivedAt,
+               @IdempotencyKey,@PayloadHash,@PurchaseEvidenceType,@SupportFiscalSeriesId,@SupportFiscalAuthorizationId,@SupportFiscalNumber,
+               @SupplierInvoiceNumber,@SupplierInvoiceDate,@ReceivedAt,
                @CreatesPayable,@DueDate,@CurrencyCode,@Notes,@NetAmount,@TaxAmount,@GrandTotal,N'Accepted',@UserId,@Now);
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
@@ -297,6 +321,10 @@ public sealed class SqlGoodsReceiptStore(
         command.Parameters.AddWithValue("@Consecutive", number.Consecutive);
         command.Parameters.AddWithValue("@IdempotencyKey", idempotencyKey);
         command.Parameters.Add("@PayloadHash", SqlDbType.Binary, 32).Value = requestHash;
+        command.Parameters.AddWithValue("@PurchaseEvidenceType", request.PurchaseEvidenceType);
+        command.Parameters.AddWithValue("@SupportFiscalSeriesId", (object?)support?.SeriesId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@SupportFiscalAuthorizationId", (object?)support?.AuthorizationId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@SupportFiscalNumber", (object?)support?.FiscalNumber ?? DBNull.Value);
         command.Parameters.AddWithValue("@SupplierInvoiceNumber", (object?)request.SupplierInvoiceNumber ?? DBNull.Value);
         command.Parameters.AddWithValue("@SupplierInvoiceDate", (object?)request.SupplierInvoiceDate ?? DBNull.Value);
         command.Parameters.AddWithValue("@ReceivedAt", request.ReceivedAt);
@@ -344,6 +372,150 @@ public sealed class SqlGoodsReceiptStore(
             AddDecimal(command, "@UnitsPerPresentation", source.UnitsPerPresentation, 19, 6);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
+    }
+
+    private static async Task<SupportFiscalAllocation> AllocateSupportFiscalAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid businessId, Guid supplierId,
+        DateTimeOffset issuedAt, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT TOP(1) fs.SeriesId,fs.FiscalAuthorizationId,fs.Prefix,fs.RangeStart,fs.RangeEnd,
+                   a.AuthorizationNumber,a.ValidFrom,a.ValidUntil,a.Environment,a.QrValidationUrl,
+                   c.FiscalIssuerConfigurationId,
+                   p.PartyType,p.Identification,p.VerificationDigit,p.IdentificationTypeCode,
+                   COALESCE(p.LegalName,p.DisplayName),COALESCE(p.DisplayName,p.LegalName),
+                   country.Code,country.Name,division.Code,division.Name,city.Code,city.Name,site.AddressLine,
+                   email.Value,phone.Value
+            FROM dbo.FiscalSeries fs WITH (UPDLOCK,HOLDLOCK)
+            JOIN dbo.FiscalAuthorizations a ON a.FiscalAuthorizationId=fs.FiscalAuthorizationId
+            JOIN dbo.FiscalIssuerConfigurations c ON c.BusinessId=fs.BusinessId AND c.IsActive=1
+              AND c.ValidFrom<=@IssuedAt AND (c.ValidTo IS NULL OR c.ValidTo>@IssuedAt)
+            JOIN dbo.Suppliers s ON s.SupplierId=@SupplierId AND s.BusinessId=fs.BusinessId AND s.IsActive=1
+            JOIN dbo.Parties p ON p.PartyId=s.PartyId AND p.IsActive=1
+            OUTER APPLY(SELECT TOP(1) value.* FROM dbo.PartySites value
+              WHERE value.PartyId=p.PartyId AND value.IsActive=1
+              ORDER BY value.IsPrimary DESC,value.CreatedAt,value.PartySiteId) site
+            LEFT JOIN dbo.Countries country ON country.CountryId=site.CountryId
+            LEFT JOIN dbo.AdministrativeDivisions division ON division.AdministrativeDivisionId=site.AdministrativeDivisionId
+            LEFT JOIN dbo.Cities city ON city.CityId=site.CityId
+            OUTER APPLY(SELECT TOP(1) value.Value FROM dbo.PartyContacts value
+              WHERE value.PartyId=p.PartyId AND value.ContactType=N'Email' AND value.IsActive=1
+              ORDER BY value.IsPrimary DESC,value.CreatedAt) email
+            OUTER APPLY(SELECT TOP(1) value.Value FROM dbo.PartyContacts value
+              WHERE value.PartyId=p.PartyId AND value.ContactType=N'Phone' AND value.IsActive=1
+              ORDER BY value.IsPrimary DESC,value.CreatedAt) phone
+            WHERE fs.BusinessId=@BusinessId AND fs.DocumentType=N'SupportDocument'
+              AND fs.EmitterKind=N'Server' AND fs.DeviceId IS NULL AND fs.IsActive=1
+              AND a.IsActive=1 AND a.ValidFrom<=CONVERT(date,@IssuedAt) AND a.ValidUntil>=CONVERT(date,@IssuedAt)
+            ORDER BY a.ValidUntil DESC,fs.SeriesId;
+            """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@SupplierId", supplierId);
+        command.Parameters.AddWithValue("@IssuedAt", issuedAt);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            throw new PurchasingValidationException(
+                "No hay numeración DIAN ni configuración fiscal activa para generar el documento soporte.");
+        var seriesId = reader.GetGuid(0);
+        var authorizationId = reader.GetGuid(1);
+        var prefix = reader.GetString(2);
+        var rangeStart = reader.GetInt64(3);
+        var rangeEnd = reader.GetInt64(4);
+        var authorization = new PosSaleUblAuthorizationContract(reader.GetString(5),
+            DateOnly.FromDateTime(reader.GetDateTime(6)), DateOnly.FromDateTime(reader.GetDateTime(7)),
+            prefix, rangeStart, rangeEnd);
+        var environment = reader.GetByte(8);
+        var qrUrl = reader.GetString(9);
+        var issuerId = reader.GetGuid(10);
+        if (reader.IsDBNull(12))
+            throw new PurchasingValidationException("El proveedor necesita identificación para generar el documento soporte.");
+        var seller = new PosSaleUblPartyContract(
+            reader.GetString(12), reader.IsDBNull(13) ? "0" : reader.GetString(13),
+            reader.IsDBNull(14) ? "13" : reader.GetString(14),
+            reader.GetString(11) == "Organization" ? "1" : "2",
+            reader.GetString(15), reader.GetString(16), "R-99-PN", "01", "IVA",
+            new PosSaleUblAddressContract(
+                reader.IsDBNull(21) ? "11001" : reader.GetString(21),
+                reader.IsDBNull(22) ? "Bogotá" : reader.GetString(22),
+                reader.IsDBNull(20) ? "Bogotá D.C." : reader.GetString(20),
+                reader.IsDBNull(19) ? "11" : reader.GetString(19),
+                reader.IsDBNull(23) ? "Sin dirección" : reader.GetString(23),
+                reader.IsDBNull(17) ? "CO" : reader.GetString(17),
+                reader.IsDBNull(18) ? "Colombia" : reader.GetString(18)),
+            reader.IsDBNull(24) ? null : reader.GetString(24),
+            reader.IsDBNull(25) ? null : reader.GetString(25));
+        await reader.CloseAsync();
+
+        const string cursorSql = """
+            IF NOT EXISTS(SELECT 1 FROM dbo.FiscalSeriesCursors WITH (UPDLOCK,HOLDLOCK) WHERE SeriesId=@SeriesId)
+              INSERT dbo.FiscalSeriesCursors(SeriesId,NextConsecutive,UpdatedAt) VALUES(@SeriesId,@RangeStart,@Now);
+            DECLARE @Value BIGINT;
+            SELECT @Value=NextConsecutive FROM dbo.FiscalSeriesCursors WITH (UPDLOCK,HOLDLOCK) WHERE SeriesId=@SeriesId;
+            UPDATE dbo.FiscalSeriesCursors SET NextConsecutive=@Value+1,UpdatedAt=@Now WHERE SeriesId=@SeriesId;
+            SELECT @Value;
+            """;
+        await using var cursor = new SqlCommand(cursorSql, connection, transaction);
+        cursor.Parameters.AddWithValue("@SeriesId", seriesId);
+        cursor.Parameters.AddWithValue("@RangeStart", rangeStart);
+        cursor.Parameters.AddWithValue("@Now", now);
+        var consecutive = Convert.ToInt64(await cursor.ExecuteScalarAsync(cancellationToken));
+        if (consecutive > rangeEnd)
+            throw new PurchasingValidationException("La numeración DIAN de documento soporte está agotada.");
+        return new(seriesId, authorizationId, issuerId, prefix + consecutive,
+            environment, qrUrl, authorization, seller);
+    }
+
+    private static async Task InsertSupportFiscalAsync(
+        SqlConnection connection, SqlTransaction transaction, GoodsReceiptDocumentPayload receipt,
+        SupportFiscalAllocation support, IReadOnlyCollection<GoodsReceiptLineRequest> requestLines,
+        DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        const string productsSql = """
+            SELECT ProductId,COALESCE(NULLIF(ProductCode,N''),CONVERT(nvarchar(36),ProductId)),COALESCE(BaseUnitCode,N'EA')
+            FROM dbo.Products WHERE BusinessId=@BusinessId AND ProductId IN
+              (SELECT value FROM OPENJSON(@Ids) WITH (value uniqueidentifier '$'));
+            """;
+        var metadata = new Dictionary<Guid, (string Code, string Unit)>();
+        await using (var products = new SqlCommand(productsSql, connection, transaction))
+        {
+            products.Parameters.AddWithValue("@BusinessId", receipt.BusinessId);
+            products.Parameters.AddWithValue("@Ids", JsonSerializer.Serialize(requestLines.Select(x => x.ProductId)));
+            await using var reader = await products.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                metadata[reader.GetGuid(0)] = (reader.GetString(1), reader.GetString(2));
+        }
+        var snapshot = new PurchaseSupportFiscalSnapshot(receipt, support.IssuerConfigurationId,
+            support.FiscalNumber, support.Environment, support.QrValidationUrl, support.Seller,
+            support.Authorization, receipt.Lines.Select(line =>
+            {
+                var product = metadata[line.ProductId];
+                return new PurchaseSupportLineMetadata(line.LineNumber, product.Code, "999",
+                    product.Unit, line.TaxCode == "01" ? "IVA" : "Impuesto");
+            }).ToArray());
+        const string sql = """
+            INSERT dbo.FiscalDocuments(DocumentId,BusinessId,SourceDocumentType,FiscalDocumentType,
+              AuralyDocumentNumber,FiscalNumber,UniqueCodeType,UniqueCode,IssuedAt,FiscalStatus,CreatedAt,UpdatedAt)
+            VALUES(@DocumentId,@BusinessId,N'GoodsReceipt',N'SupportDocument',@AuralyNumber,@FiscalNumber,
+              N'CUDS',NULL,@IssuedAt,@Status,@Now,@Now);
+            INSERT dbo.PurchaseSupportFiscalSnapshots(DocumentId,SnapshotJson,Environment,CreatedAt)
+            VALUES(@DocumentId,@SnapshotJson,@Environment,@Now);
+            INSERT dbo.FiscalDocumentProcesses(DocumentId,BusinessId,FiscalIssuerConfigurationId,Status,
+              AttemptCount,NextAttemptAt,CreatedAt,UpdatedAt)
+            VALUES(@DocumentId,@BusinessId,@IssuerId,@Status,0,@Now,@Now,@Now);
+            """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@DocumentId", receipt.DocumentId);
+        command.Parameters.AddWithValue("@BusinessId", receipt.BusinessId);
+        command.Parameters.AddWithValue("@AuralyNumber", receipt.DocumentNumber);
+        command.Parameters.AddWithValue("@FiscalNumber", support.FiscalNumber);
+        command.Parameters.AddWithValue("@IssuedAt", receipt.ReceivedAt);
+        command.Parameters.AddWithValue("@Status", FiscalDocumentStatusCodes.PendingGeneration);
+        command.Parameters.AddWithValue("@Now", now);
+        command.Parameters.AddWithValue("@SnapshotJson", PurchaseSupportFiscalSnapshotSerializer.Serialize(snapshot));
+        command.Parameters.AddWithValue("@Environment", support.Environment);
+        command.Parameters.AddWithValue("@IssuerId", support.IssuerConfigurationId);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private async Task InsertJobAsync(SqlConnection connection, SqlTransaction transaction,
@@ -446,4 +618,9 @@ public sealed class SqlGoodsReceiptStore(
         parameter.Scale = scale;
         parameter.Value = value;
     }
+
+    private sealed record SupportFiscalAllocation(
+        Guid SeriesId, Guid AuthorizationId, Guid IssuerConfigurationId,
+        string FiscalNumber, int Environment, string QrValidationUrl,
+        PosSaleUblAuthorizationContract Authorization, PosSaleUblPartyContract Seller);
 }

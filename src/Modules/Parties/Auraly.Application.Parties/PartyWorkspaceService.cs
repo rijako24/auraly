@@ -129,6 +129,7 @@ public sealed class PartyWorkspaceService(
             throw new PartyForbiddenException("The supplier business does not match the authenticated identity.");
         ValidateParty(request.Party);
         ValidateSite(request.PrimarySite);
+        ValidatePurchaseEvidencePolicy(request.PurchaseEvidencePolicy);
         var normalized = Translate(() => PartyIdentityNormalizer.Normalize(
             request.Party.IdentificationTypeCode, request.Party.Identification));
         return store.CreateSupplierAsync(
@@ -159,6 +160,8 @@ public sealed class PartyWorkspaceService(
             throw new PartyValidationException("La fecha final del canal debe ser posterior a la fecha inicial.");
         if (request.Customer is not null)
             Require(actor, PartyPermissionCodes.ManagePricing);
+        if (request.Supplier is not null)
+            ValidatePurchaseEvidencePolicy(request.Supplier.PurchaseEvidencePolicy);
         if (request.Seller is not null)
         {
             Translate(() => PartyValidation.NormalizeCode(request.Seller.Code, "SellerCode", 32));
@@ -214,6 +217,13 @@ public sealed class PartyWorkspaceService(
             throw new PartyValidationException("The site coordinates are outside the valid range.");
         if (site.GoogleMapsUrl?.Length > 1000 || site.GooglePlaceId?.Length > 255)
             throw new PartyValidationException("The Google Maps location is too long.");
+    }
+
+    private static void ValidatePurchaseEvidencePolicy(string? value)
+    {
+        if (value is not null && value is not
+            ("SupplierElectronicInvoice" or "BuyerElectronicSupportDocument" or "InternalReceiptVoucher"))
+            throw new PartyValidationException("PurchaseEvidencePolicy is invalid.");
     }
 
     private static byte[] RowVersion(string value)

@@ -28,6 +28,25 @@ public static class PurchasingTaxTreatments
     public const string NotApplicable = "NotApplicable";
 }
 
+public static class PurchaseEvidenceTypes
+{
+    public const string SupplierElectronicInvoice = "SupplierElectronicInvoice";
+    public const string BuyerElectronicSupportDocument = "BuyerElectronicSupportDocument";
+    public const string InternalReceiptVoucher = "InternalReceiptVoucher";
+
+    public static bool IsValid(string? value) => value is
+        SupplierElectronicInvoice or BuyerElectronicSupportDocument or InternalReceiptVoucher;
+
+    public static IReadOnlyList<string> AllowedFor(string? supplierPolicy) => supplierPolicy switch
+    {
+        SupplierElectronicInvoice => [SupplierElectronicInvoice, InternalReceiptVoucher],
+        BuyerElectronicSupportDocument => [BuyerElectronicSupportDocument, InternalReceiptVoucher],
+        InternalReceiptVoucher => [InternalReceiptVoucher],
+        null => [SupplierElectronicInvoice, BuyerElectronicSupportDocument, InternalReceiptVoucher],
+        _ => []
+    };
+}
+
 public sealed record GoodsReceiptLineRequest(
     int LineNumber,
     Guid ProductId,
@@ -57,7 +76,8 @@ public sealed record ConfirmGoodsReceiptRequest(
     IReadOnlyCollection<GoodsReceiptLineRequest> Lines,
     string? DraftConcurrencyToken = null,
     string? WithholdingConceptCode = null,
-    string? WithholdingJurisdictionCode = null);
+    string? WithholdingJurisdictionCode = null,
+    string PurchaseEvidenceType = PurchaseEvidenceTypes.InternalReceiptVoucher);
 
 public sealed record GoodsReceiptLineSnapshot(
     int LineNumber,
@@ -99,7 +119,10 @@ public sealed record GoodsReceiptDocumentPayload(
     decimal TaxAmount,
     decimal GrandTotal,
     IReadOnlyList<GoodsReceiptLineSnapshot> Lines,
-    WithholdingCalculationSnapshot Withholding);
+    WithholdingCalculationSnapshot Withholding,
+    string? SupplierNameSnapshot = null,
+    string? WarehouseNameSnapshot = null,
+    string PurchaseEvidenceType = PurchaseEvidenceTypes.InternalReceiptVoucher);
 
 public sealed record GoodsReceiptAcceptance(
     Guid DocumentId,
@@ -122,7 +145,8 @@ public sealed record SaveGoodsReceiptDraftRequest(
     string CurrencyCode,
     string? Notes,
     IReadOnlyCollection<GoodsReceiptLineRequest> Lines,
-    string? ConcurrencyToken);
+    string? ConcurrencyToken,
+    string? PurchaseEvidenceType = null);
 
 public sealed record GoodsReceiptDraft(
     Guid DraftId, Guid BusinessId, Guid? WarehouseId, Guid? SupplierId,
@@ -130,7 +154,8 @@ public sealed record GoodsReceiptDraft(
     DateTimeOffset ReceivedAt, bool CreatesPayable, DateTimeOffset? DueDate,
     string CurrencyCode, string? Notes, decimal NetAmount, decimal TaxAmount,
     decimal GrandTotal, IReadOnlyList<GoodsReceiptLineSnapshot> Lines,
-    DateTimeOffset UpdatedAt, string ConcurrencyToken);
+    DateTimeOffset UpdatedAt, string ConcurrencyToken,
+    string? PurchaseEvidenceType = null);
 
 public sealed record GoodsReceiptDetail(
     Guid DocumentId, string DocumentNumber, string Status,
@@ -139,13 +164,15 @@ public sealed record GoodsReceiptDetail(
     DateTimeOffset ReceivedAt, bool CreatesPayable, DateTimeOffset? DueDate,
     string CurrencyCode, string? Notes, decimal NetAmount, decimal TaxAmount,
     decimal GrandTotal, DateTimeOffset AcceptedAt, DateTimeOffset? ProcessedAt,
-    IReadOnlyList<GoodsReceiptLineSnapshot> Lines);
+    IReadOnlyList<GoodsReceiptLineSnapshot> Lines,
+    string PurchaseEvidenceType = PurchaseEvidenceTypes.InternalReceiptVoucher);
 
 public sealed record GoodsReceiptListItem(
     Guid DocumentId, string? DocumentNumber, string Status,
     Guid? WarehouseId, string? WarehouseName, Guid? SupplierId, string? SupplierName,
     string? SupplierInvoiceNumber, DateTimeOffset ReceivedAt,
-    decimal GrandTotal, DateTimeOffset UpdatedAt);
+    decimal GrandTotal, DateTimeOffset UpdatedAt,
+    string? PurchaseEvidenceType = null);
 
 public sealed record GoodsReceiptPage(
     IReadOnlyList<GoodsReceiptListItem> Items, int Page, int PageSize,
@@ -153,10 +180,15 @@ public sealed record GoodsReceiptPage(
 
 public sealed record GoodsReceiptWorkspaceOptions(
     IReadOnlyList<GoodsReceiptWarehouseOption> Warehouses,
-    IReadOnlyList<GoodsReceiptSupplierOption> Suppliers);
+    IReadOnlyList<GoodsReceiptSupplierOption> Suppliers,
+    IReadOnlyList<PurchaseEvidenceTypeOption> PurchaseEvidenceTypes);
 
 public sealed record GoodsReceiptWarehouseOption(Guid WarehouseId, string Code, string Name);
-public sealed record GoodsReceiptSupplierOption(Guid SupplierId, string Identification, string Name);
+public sealed record GoodsReceiptSupplierOption(
+    Guid SupplierId, string Identification, string Name,
+    string? PurchaseEvidencePolicy,
+    IReadOnlyList<string> AllowedPurchaseEvidenceTypes);
+public sealed record PurchaseEvidenceTypeOption(string Code, string Label, string? Description);
 
 public sealed record GoodsReceiptProductOption(
     Guid ProductId, string ProductCode, string? Reference, string Name,
@@ -213,7 +245,8 @@ public sealed record PurchaseReturnDocumentPayload(
     string DocumentNumber, Guid DocumentSeriesId, string DocumentPrefix,
     string DocumentSeriesCode, long DocumentConsecutive, DateTimeOffset ReturnedAt,
     string ReasonCode, string? Notes, string CurrencyCode, decimal NetAmount,
-    decimal TaxAmount, decimal TotalAmount, IReadOnlyList<PurchaseReturnLineSnapshot> Lines);
+    decimal TaxAmount, decimal TotalAmount, IReadOnlyList<PurchaseReturnLineSnapshot> Lines,
+    string? SupplierNameSnapshot = null,string? WarehouseNameSnapshot = null);
 
 public sealed record PurchaseReturnAcceptance(
     Guid ReturnId, Guid MovementId, string DocumentNumber, string Status,

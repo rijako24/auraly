@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
+using Auraly.Contracts.Purchasing;
 
 namespace Auraly.Contracts.Fiscal;
 
@@ -9,6 +10,34 @@ public static class FiscalDocumentTypeCodes
     public const string Invoice = "Invoice";
     public const string CreditNote = "CreditNote";
     public const string DebitNote = "DebitNote";
+    public const string SupportDocument = "SupportDocument";
+}
+
+public sealed record PurchaseSupportLineMetadata(
+    int LineNumber, string ProductCode, string ProductCodeScheme,
+    string UnitCode, string TaxName);
+
+public sealed record PurchaseSupportFiscalSnapshot(
+    GoodsReceiptDocumentPayload Receipt,
+    Guid FiscalIssuerConfigurationId,
+    string FiscalNumber,
+    int Environment,
+    string QrValidationUrl,
+    PosSaleUblPartyContract Seller,
+    PosSaleUblAuthorizationContract Authorization,
+    IReadOnlyList<PurchaseSupportLineMetadata> Lines,
+    string SellerOriginCode = "10");
+
+public static class PurchaseSupportFiscalSnapshotSerializer
+{
+    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
+
+    public static string Serialize(PurchaseSupportFiscalSnapshot snapshot) =>
+        JsonSerializer.Serialize(snapshot, Options);
+
+    public static PurchaseSupportFiscalSnapshot Deserialize(string value) =>
+        JsonSerializer.Deserialize<PurchaseSupportFiscalSnapshot>(value, Options)
+        ?? throw new InvalidOperationException("The purchase support fiscal snapshot is invalid.");
 }
 
 public sealed record CreditNoteLineMetadata(

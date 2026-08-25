@@ -70,9 +70,55 @@ public sealed record CommercialVisitReportPage(
 
 public sealed record CommercialOrderProjectionSource(Guid TenantId,Guid BusinessId,Guid OrderId,
     DateOnly CreatedDate,DateTimeOffset CreatedAt,string OrderNumber,Guid SellerId,string SellerName,
-    Guid CustomerId,string CustomerName,Guid? RouteId,decimal TotalAmount,int Status,bool RequiresStockReview);
+    Guid CustomerId,string CustomerName,Guid? RouteId,decimal TotalAmount,int Status,bool RequiresStockReview,
+    Guid? PartySiteId=null,Guid? RouteStopId=null,Guid? ZoneId=null,string? RouteName=null,string? ZoneName=null,
+    string SourceChannel="SellerOrder",bool CapturedOffline=false,DateTimeOffset? ConfirmedAt=null,
+    DateTimeOffset? CancelledAt=null,Guid? InvoiceDocumentId=null,DateTimeOffset? InvoicedAt=null);
 public sealed record SellerOrderReportRow(Guid SellerId,string SellerName,long OrderCount,long CustomerCount,
     decimal OrderAmount,long ConfirmedCount,long ReviewCount,long InvoicedCount);
+
+public sealed record CommercialCoverageScheduleProjectionSource(
+    Guid RouteScheduleId,byte DayOfWeek,int RunOrder,TimeOnly? PlannedStartTime);
+public sealed record CommercialCoverageStopProjectionSource(
+    Guid RouteStopId,Guid CustomerId,string CustomerName,Guid PartySiteId,string PartySiteName,
+    int Sequence,TimeOnly? PlannedVisitTime,string? CityName,string? Neighborhood,
+    decimal? Latitude,decimal? Longitude);
+public sealed record CommercialCoveragePlanProjectionSource(
+    Guid TenantId,Guid BusinessId,Guid RouteId,string RouteCode,string RouteName,
+    Guid? ZoneId,string? ZoneName,Guid SellerId,string SellerName,string TimeZoneId,
+    DateTimeOffset EffectiveAt,bool IsActive,
+    IReadOnlyList<CommercialCoverageScheduleProjectionSource> Schedules,
+    IReadOnlyList<CommercialCoverageStopProjectionSource> Stops);
+
+public sealed record SellerPerformanceRow(
+    Guid SellerId,string SellerName,long PlannedVisits,long VisitedCount,long SkippedCount,
+    long OrderCount,long InvoicedCount,long CustomerCount,decimal OrderAmount,
+    decimal NetSales,decimal GrossProfit,decimal VisitCoveragePercent,
+    decimal VisitToOrderPercent,decimal OrderToInvoicePercent);
+public sealed record SellerPerformanceOverview(
+    long PlannedVisits,long VisitedCount,long SkippedCount,long OrderCount,long InvoicedCount,
+    decimal NetSales,decimal GrossProfit,decimal VisitCoveragePercent,
+    decimal VisitToOrderPercent,decimal OrderToInvoicePercent,
+    IReadOnlyList<SellerPerformanceRow> Sellers,DateTimeOffset? ProjectedThrough);
+
+public sealed record CommercialCoverageRow(
+    Guid SellerId,string SellerName,Guid RouteId,string RouteName,Guid? ZoneId,string? ZoneName,
+    long PlannedVisits,long VisitedCount,long SkippedCount,long MissingCount,long OrderedCount,
+    decimal OperationalCoveragePercent,decimal VisitCoveragePercent,decimal EffectiveCoveragePercent);
+public sealed record CommercialCoverageOverview(
+    long PlannedVisits,long VisitedCount,long SkippedCount,long MissingCount,long OrderedCount,
+    decimal OperationalCoveragePercent,decimal VisitCoveragePercent,decimal EffectiveCoveragePercent,
+    DateOnly? CoverageAvailableFrom,IReadOnlyList<CommercialCoverageRow> Rows,
+    DateTimeOffset? ProjectedThrough);
+
+public sealed record SupplierImpactRow(
+    Guid SupplierId,string SupplierName,long CoveredCustomers,long ImpactedCustomers,
+    decimal PenetrationPercent,decimal NetSales,decimal GrossProfit,decimal SalesParticipationPercent,
+    decimal NetPurchases,decimal ComparableNetSales,decimal ComparableNetPurchases,
+    decimal? SalesGrowthPercent,decimal? PurchaseGrowthPercent);
+public sealed record SupplierImpactOverview(
+    long CoveredCustomers,long ImpactedCustomers,decimal NetSales,decimal NetPurchases,
+    IReadOnlyList<SupplierImpactRow> Suppliers,DateTimeOffset? ProjectedThrough);
 
 public sealed record SalesReportBreakdownRow(
     string Key, string Label, long DocumentCount, decimal Quantity,

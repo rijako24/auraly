@@ -81,7 +81,11 @@ public sealed record DianInvoice(
     decimal TaxInclusiveAmount,
     decimal DiscountAmount,
     decimal PayableAmount,
-    string QrPayload)
+    string QrPayload,
+    string CustomizationId = "10",
+    string ProfileId = "DIAN 2.1: Factura Electrónica de Venta",
+    string UniqueCodeScheme = "CUFE-SHA384",
+    bool BuyerGenerated = false)
 {
     public void Validate()
     {

@@ -26,7 +26,8 @@ public sealed record CreateSupplierRequest(
     Guid OperationId,
     Guid BusinessId,
     PartyInput Party,
-    PartySiteInput PrimarySite);
+    PartySiteInput PrimarySite,
+    string? PurchaseEvidencePolicy = null);
 
 public sealed record UpdatePartyRequest(
     string PartyType,
@@ -41,7 +42,10 @@ public sealed record UpdatePartyRequest(
     IReadOnlyCollection<PartySiteSaveInput>? Sites = null,
     UpdateCustomerRoleRequest? Customer = null,
     UpdateSellerRoleRequest? Seller = null,
-    UpdateCarrierRoleRequest? Carrier = null);
+    UpdateCarrierRoleRequest? Carrier = null,
+    UpdateSupplierRoleRequest? Supplier = null);
+
+public sealed record UpdateSupplierRoleRequest(string? PurchaseEvidencePolicy);
 
 public sealed record UpdateCustomerRoleRequest(
     Guid? PriceChannelId,
@@ -139,7 +143,8 @@ public sealed record CustomerRoleDetail(
     DateTimeOffset ValidFrom,
     DateTimeOffset? ValidUntil);
 
-public sealed record SupplierRoleDetail(Guid SupplierId, bool IsActive);
+public sealed record SupplierRoleDetail(
+    Guid SupplierId, bool IsActive, string? PurchaseEvidencePolicy = null);
 
 public sealed record SellerRoleDetail(
     Guid SellerId,

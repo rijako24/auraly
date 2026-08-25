@@ -220,10 +220,11 @@ public sealed partial class SqlPartyWorkspaceStore(
             if(resolvedSupplierId==supplierId)
             {
                 await ExecuteAsync(connection,transaction,"""
-                    INSERT dbo.Suppliers(SupplierId,BusinessId,PartyId,Identification,Name,IsActive,CreatedAt)
-                    VALUES(@SupplierId,@BusinessId,@PartyId,@Identification,@Name,1,@Now);
+                    INSERT dbo.Suppliers(SupplierId,BusinessId,PartyId,Identification,Name,PurchaseEvidencePolicy,IsActive,CreatedAt)
+                    VALUES(@SupplierId,@BusinessId,@PartyId,@Identification,@Name,@PurchaseEvidencePolicy,1,@Now);
                     """,[P("@SupplierId",supplierId),P("@BusinessId",actor.BusinessId),P("@PartyId",resolvedPartyId),
-                    P("@Identification",request.Party.Identification.Trim()),P("@Name",request.Party.DisplayName.Trim()),P("@Now",now)],ct);
+                    P("@Identification",request.Party.Identification.Trim()),P("@Name",request.Party.DisplayName.Trim()),
+                    P("@PurchaseEvidencePolicy",request.PurchaseEvidencePolicy),P("@Now",now)],ct);
                 await InsertSiteAsync(connection,transaction,actor,resolvedPartyId,siteId,request.PrimarySite,now,ct);
             }
             await ExecuteAsync(connection,transaction,"""
@@ -282,6 +283,18 @@ public sealed partial class SqlPartyWorkspaceStore(
                     P("@ValidFrom",request.Customer.ValidFrom),P("@ValidUntil",request.Customer.ValidUntil),
                     P("@ActorId",actor.ActorId),P("@Now",now)]);
                 await customer.ExecuteNonQueryAsync(ct);
+            }
+            if(request.Supplier is not null)
+            {
+                await using var supplier=connection.CreateCommand(); supplier.Transaction=transaction;
+                supplier.CommandText="""
+                    UPDATE dbo.Suppliers SET PurchaseEvidencePolicy=@PurchaseEvidencePolicy
+                    WHERE PartyId=@PartyId AND BusinessId=@BusinessId;
+                    IF @@ROWCOUNT=0 THROW 51063,'The Party is not a supplier in the authenticated business.',1;
+                    """;
+                supplier.Parameters.AddRange([P("@PartyId",partyId),P("@BusinessId",actor.BusinessId),
+                    P("@PurchaseEvidencePolicy",request.Supplier.PurchaseEvidencePolicy)]);
+                await supplier.ExecuteNonQueryAsync(ct);
             }
             if(request.Seller is not null)
             {

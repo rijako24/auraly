@@ -188,6 +188,7 @@
     <Build Include="Tables/DocumentWithholdings.sql" />
     <Build Include="Tables\GoodsReceiptProcessing.sql" />
     <Build Include="Tables\GoodsReceiptDrafts.sql" />
+    <Build Include="Tables\PurchaseSupportFiscalSnapshots.sql" />
     <Build Include="Tables\PurchaseReturns.sql" />
     <Build Include="Tables\Pricing.sql" />
     <Build Include="Tables\PayablePayments.sql" />

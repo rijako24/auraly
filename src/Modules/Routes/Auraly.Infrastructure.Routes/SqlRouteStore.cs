@@ -280,7 +280,9 @@ public sealed class SqlRouteStore(
                 await command.ExecuteNonQueryAsync(ct);
             }
             await ReplaceSchedulesAsync(connection, transaction, actor, routeId, schedules, now, ct);
+            var reportingVersion=await InsertCoverageReportingJobAsync(connection,transaction,actor,routeId,now,ct);
             await transaction.CommitAsync(ct);
+            await reporting.RequestProjectionAsync(actor.BusinessId,routeId,"CommercialCoveragePlan",ct,reportingVersion);
             return await MutationAsync(actor, routeId, ct);
         }
         catch (SqlException exception) { await SafeRollbackAsync(transaction, ct); throw Translate(exception, "Ya existe una ruta con este código en el negocio."); }
@@ -306,7 +308,9 @@ public sealed class SqlRouteStore(
             }
             await ReplaceSchedulesAsync(connection, transaction, actor, routeId, schedules, now, ct);
             await ValidateExistingStopConflictsAsync(connection, transaction, actor, routeId, ct);
+            var reportingVersion=await InsertCoverageReportingJobAsync(connection,transaction,actor,routeId,now,ct);
             await transaction.CommitAsync(ct);
+            await reporting.RequestProjectionAsync(actor.BusinessId,routeId,"CommercialCoveragePlan",ct,reportingVersion);
             return await MutationAsync(actor, routeId, ct);
         }
         catch (SqlException exception) { await SafeRollbackAsync(transaction, ct); throw Translate(exception, "La ruta cambió o entra en conflicto con otra ruta activa."); }
@@ -399,7 +403,10 @@ public sealed class SqlRouteStore(
         try
         {
             await LockRouteAsync(connection, transaction, actor, routeId, rowVersion, ct);
-            await mutation(connection, transaction); await transaction.CommitAsync(ct);
+            await mutation(connection, transaction);
+            var reportingVersion=await InsertCoverageReportingJobAsync(connection,transaction,actor,routeId,now,ct);
+            await transaction.CommitAsync(ct);
+            await reporting.RequestProjectionAsync(actor.BusinessId,routeId,"CommercialCoveragePlan",ct,reportingVersion);
             return await MutationAsync(actor, routeId, ct);
         }
         catch (RouteConflictException) { await SafeRollbackAsync(transaction, ct); throw; }
@@ -542,6 +549,68 @@ public sealed class SqlRouteStore(
         job.Parameters.AddWithValue("@VisitId",visitId);job.Parameters.Add("@Hash",SqlDbType.Binary,32).Value=hash;
         job.Parameters.AddWithValue("@Payload",payload);job.Parameters.AddWithValue("@CreatedAt",createdAt);
         await job.ExecuteNonQueryAsync(ct);
+    }
+
+    private async Task<long> InsertCoverageReportingJobAsync(SqlConnection connection,SqlTransaction transaction,
+        RouteActorIdentity actor,Guid routeId,DateTimeOffset effectiveAt,CancellationToken ct)
+    {
+        await using var sourceCommand=new SqlCommand("""
+          SELECT business.TenantId,route.BusinessId,route.RouteId,route.Code,route.Name,zone.ZoneId,zone.Name,
+            seller.SellerId,COALESCE(NULLIF(sellerParty.DisplayName,N''),NULLIF(sellerParty.LegalName,N''),seller.Code),
+            business.TimeZone,route.IsActive
+          FROM dbo.SalesRoutes route
+          INNER JOIN dbo.Businesses business ON business.BusinessId=route.BusinessId
+          INNER JOIN dbo.CommerceSellers seller ON seller.SellerId=route.SellerId
+          INNER JOIN dbo.Parties sellerParty ON sellerParty.PartyId=seller.PartyId
+          LEFT JOIN dbo.SalesZones zone ON zone.ZoneId=route.ZoneId
+          WHERE route.RouteId=@RouteId AND route.BusinessId=@BusinessId AND business.TenantId=@TenantId;
+
+          SELECT RouteScheduleId,DayOfWeek,RunOrder,PlannedStartTime
+          FROM dbo.SalesRouteSchedules WHERE RouteId=@RouteId AND IsActive=1 ORDER BY DayOfWeek,RunOrder;
+
+          SELECT stop.RouteStopId,stop.CustomerId,
+            COALESCE(NULLIF(party.DisplayName,N''),NULLIF(party.LegalName,N''),N'Sin cliente'),
+            stop.PartySiteId,site.Name,stop.Sequence,stop.PlannedVisitTime,city.Name,site.Neighborhood,site.Latitude,site.Longitude
+          FROM dbo.SalesRouteStops stop
+          INNER JOIN dbo.Customers customer ON customer.CustomerId=stop.CustomerId
+          INNER JOIN dbo.Parties party ON party.PartyId=customer.PartyId
+          INNER JOIN dbo.PartySites site ON site.PartySiteId=stop.PartySiteId
+          LEFT JOIN dbo.Cities city ON city.CityId=site.CityId
+          WHERE stop.RouteId=@RouteId AND stop.IsActive=1 ORDER BY stop.Sequence;
+          """,connection,transaction);
+        AddScope(sourceCommand,actor);sourceCommand.Parameters.AddWithValue("@RouteId",routeId);
+        CommercialCoveragePlanProjectionSource source;
+        await using(var reader=await sourceCommand.ExecuteReaderAsync(ct))
+        {
+            if(!await reader.ReadAsync(ct))throw new InvalidOperationException("The route coverage source could not be captured.");
+            var tenantId=reader.GetGuid(0);var businessId=reader.GetGuid(1);var id=reader.GetGuid(2);
+            var code=reader.GetString(3);var name=reader.GetString(4);Guid? zoneId=reader.IsDBNull(5)?null:reader.GetGuid(5);
+            var zoneName=reader.IsDBNull(6)?null:reader.GetString(6);var sellerId=reader.GetGuid(7);var sellerName=reader.GetString(8);
+            var timeZone=reader.GetString(9);var active=reader.GetBoolean(10);
+            var schedules=new List<CommercialCoverageScheduleProjectionSource>();await reader.NextResultAsync(ct);
+            while(await reader.ReadAsync(ct))schedules.Add(new(reader.GetGuid(0),reader.GetByte(1),reader.GetInt32(2),
+                reader.IsDBNull(3)?null:TimeOnly.FromTimeSpan(reader.GetTimeSpan(3))));
+            var stops=new List<CommercialCoverageStopProjectionSource>();await reader.NextResultAsync(ct);
+            while(await reader.ReadAsync(ct))stops.Add(new(reader.GetGuid(0),reader.GetGuid(1),reader.GetString(2),reader.GetGuid(3),
+                reader.GetString(4),reader.GetInt32(5),reader.IsDBNull(6)?null:TimeOnly.FromTimeSpan(reader.GetTimeSpan(6)),
+                reader.IsDBNull(7)?null:reader.GetString(7),reader.IsDBNull(8)?null:reader.GetString(8),
+                reader.IsDBNull(9)?null:reader.GetDecimal(9),reader.IsDBNull(10)?null:reader.GetDecimal(10)));
+            source=new(tenantId,businessId,id,code,name,zoneId,zoneName,sellerId,sellerName,timeZone,effectiveAt,active,schedules,stops);
+        }
+        var payload=JsonSerializer.Serialize(source,new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var hash=SHA256.HashData(Encoding.UTF8.GetBytes(payload));
+        await using var job=new SqlCommand("""
+          DECLARE @Version bigint=(SELECT COALESCE(MAX(SourceVersion),0)+1 FROM reporting.SalesReportingJobs WITH(UPDLOCK,HOLDLOCK)
+            WHERE SourceDocumentId=@RouteId AND SourceDocumentType=N'CommercialCoveragePlan');
+          INSERT reporting.SalesReportingJobs(SalesReportingJobId,BusinessId,SourceDocumentId,SourceDocumentType,SourceVersion,
+            SourcePayloadHash,SourcePayloadJson,Status,AttemptCount,CreatedAt)
+          VALUES(@JobId,@BusinessId,@RouteId,N'CommercialCoveragePlan',@Version,@Hash,@Payload,N'Pending',0,@CreatedAt);
+          SELECT @Version;
+          """,connection,transaction);
+        job.Parameters.AddWithValue("@JobId",ids.NewId());job.Parameters.AddWithValue("@BusinessId",actor.BusinessId);
+        job.Parameters.AddWithValue("@RouteId",routeId);job.Parameters.Add("@Hash",SqlDbType.Binary,32).Value=hash;
+        job.Parameters.AddWithValue("@Payload",payload);job.Parameters.AddWithValue("@CreatedAt",effectiveAt);
+        return Convert.ToInt64(await job.ExecuteScalarAsync(ct));
     }
 
     private async Task EnsureRouteAccessAsync(RouteActorIdentity actor, Guid routeId, CancellationToken ct)

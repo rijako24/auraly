@@ -340,13 +340,82 @@ CREATE TABLE [reporting].[CommercialReportOrderFacts] (
   [OrderId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,[TenantId] UNIQUEIDENTIFIER NOT NULL,[BusinessId] UNIQUEIDENTIFIER NOT NULL,
   [CreatedDate] DATE NOT NULL,[CreatedAt] DATETIMEOFFSET(7) NOT NULL,[OrderNumber] NVARCHAR(300) NOT NULL,
   [SellerId] UNIQUEIDENTIFIER NOT NULL,[SellerName] NVARCHAR(240) NOT NULL,[CustomerId] UNIQUEIDENTIFIER NOT NULL,
-  [CustomerName] NVARCHAR(240) NOT NULL,[RouteId] UNIQUEIDENTIFIER NULL,[TotalAmount] DECIMAL(19,4) NOT NULL,
+  [CustomerName] NVARCHAR(240) NOT NULL,[RouteId] UNIQUEIDENTIFIER NULL,[RouteName] NVARCHAR(160) NULL,
+  [ZoneId] UNIQUEIDENTIFIER NULL,[ZoneName] NVARCHAR(160) NULL,[RouteStopId] UNIQUEIDENTIFIER NULL,[PartySiteId] UNIQUEIDENTIFIER NULL,
+  [SourceChannel] NVARCHAR(32) NOT NULL CONSTRAINT [DF_CommercialReportOrderFacts_Channel] DEFAULT N'SellerOrder',
+  [CapturedOffline] BIT NOT NULL CONSTRAINT [DF_CommercialReportOrderFacts_Offline] DEFAULT 0,
+  [TotalAmount] DECIMAL(19,4) NOT NULL,
   [Status] INT NOT NULL,[RequiresStockReview] BIT NOT NULL,[ProjectionVersion] SMALLINT NOT NULL,[ProjectedAt] DATETIMEOFFSET(7) NOT NULL,
+  [SourceVersion] BIGINT NOT NULL CONSTRAINT [DF_CommercialReportOrderFacts_SourceVersion] DEFAULT 1,
+  [ConfirmedAt] DATETIMEOFFSET(7) NULL,[CancelledAt] DATETIMEOFFSET(7) NULL,
   [InvoiceDocumentId] UNIQUEIDENTIFIER NULL,[InvoicedAt] DATETIMEOFFSET(7) NULL,
   CONSTRAINT [FK_CommercialReportOrderFacts_Tenant] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
-  CONSTRAINT [FK_CommercialReportOrderFacts_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId])
+  CONSTRAINT [FK_CommercialReportOrderFacts_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
+  CONSTRAINT [CK_CommercialReportOrderFacts_SourceVersion] CHECK ([SourceVersion]>0)
 );
 GO
 CREATE INDEX [IX_CommercialReportOrderFacts_Business_Date_Seller]
-ON [reporting].[CommercialReportOrderFacts]([BusinessId],[CreatedDate] DESC,[SellerId]) INCLUDE([Status],[TotalAmount],[CustomerId]);
+ON [reporting].[CommercialReportOrderFacts]([BusinessId],[CreatedDate] DESC,[SellerId]) INCLUDE([Status],[TotalAmount],[CustomerId],[RouteId],[ZoneId],[InvoiceDocumentId]);
+GO
+
+CREATE TABLE [reporting].[CommercialCoverageAssignmentFacts] (
+  [CoverageAssignmentFactId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
+  [TenantId] UNIQUEIDENTIFIER NOT NULL,[BusinessId] UNIQUEIDENTIFIER NOT NULL,
+  [RouteId] UNIQUEIDENTIFIER NOT NULL,[RouteCode] NVARCHAR(32) NOT NULL,[RouteName] NVARCHAR(160) NOT NULL,
+  [RouteScheduleId] UNIQUEIDENTIFIER NOT NULL,[DayOfWeek] TINYINT NOT NULL,[RunOrder] INT NOT NULL,[PlannedStartTime] TIME(0) NULL,
+  [ZoneId] UNIQUEIDENTIFIER NULL,[ZoneName] NVARCHAR(160) NULL,
+  [SellerId] UNIQUEIDENTIFIER NOT NULL,[SellerName] NVARCHAR(240) NOT NULL,
+  [RouteStopId] UNIQUEIDENTIFIER NOT NULL,[CustomerId] UNIQUEIDENTIFIER NOT NULL,[CustomerName] NVARCHAR(240) NOT NULL,
+  [PartySiteId] UNIQUEIDENTIFIER NOT NULL,[PartySiteName] NVARCHAR(200) NOT NULL,[Sequence] INT NOT NULL,[PlannedVisitTime] TIME(0) NULL,
+  [CityName] NVARCHAR(160) NULL,[Neighborhood] NVARCHAR(160) NULL,[Latitude] DECIMAL(9,6) NULL,[Longitude] DECIMAL(9,6) NULL,
+  [TimeZoneId] NVARCHAR(100) NOT NULL,[ValidFromBusinessDate] DATE NOT NULL,[ValidToBusinessDateExclusive] DATE NULL,
+  [SourceVersion] BIGINT NOT NULL,[ProjectionVersion] SMALLINT NOT NULL,[ProjectedAt] DATETIMEOFFSET(7) NOT NULL,
+  CONSTRAINT [FK_CommercialCoverageAssignmentFacts_Tenant] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
+  CONSTRAINT [FK_CommercialCoverageAssignmentFacts_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
+  CONSTRAINT [UQ_CommercialCoverageAssignmentFacts_Validity] UNIQUE([BusinessId],[RouteScheduleId],[RouteStopId],[ValidFromBusinessDate]),
+  CONSTRAINT [CK_CommercialCoverageAssignmentFacts_Day] CHECK([DayOfWeek] BETWEEN 1 AND 7),
+  CONSTRAINT [CK_CommercialCoverageAssignmentFacts_Validity] CHECK([ValidToBusinessDateExclusive] IS NULL OR [ValidToBusinessDateExclusive]>[ValidFromBusinessDate]),
+  CONSTRAINT [CK_CommercialCoverageAssignmentFacts_Version] CHECK([SourceVersion]>0 AND [ProjectionVersion]>0)
+);
+GO
+CREATE INDEX [IX_CommercialCoverageAssignmentFacts_Query]
+ON [reporting].[CommercialCoverageAssignmentFacts]([BusinessId],[ValidFromBusinessDate],[ValidToBusinessDateExclusive],[DayOfWeek])
+INCLUDE([SellerId],[RouteId],[ZoneId],[CustomerId],[PartySiteId]);
+GO
+
+CREATE TABLE [reporting].[PurchaseReportDocuments] (
+  [SourceDocumentId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,[TenantId] UNIQUEIDENTIFIER NOT NULL,[BusinessId] UNIQUEIDENTIFIER NOT NULL,
+  [SourceDocumentType] NVARCHAR(32) NOT NULL,[OriginalGoodsReceiptId] UNIQUEIDENTIFIER NULL,[DocumentNumber] NVARCHAR(64) NOT NULL,
+  [OccurredAt] DATETIMEOFFSET(7) NOT NULL,[BusinessLocalDate] DATE NOT NULL,[TimeZoneId] NVARCHAR(100) NOT NULL,
+  [SupplierId] UNIQUEIDENTIFIER NOT NULL,[SupplierName] NVARCHAR(240) NOT NULL,[WarehouseId] UNIQUEIDENTIFIER NOT NULL,[WarehouseName] NVARCHAR(200) NOT NULL,
+  [CurrencyCode] CHAR(3) NOT NULL,[NetAmount] DECIMAL(19,4) NOT NULL,[TaxAmount] DECIMAL(19,4) NOT NULL,[TotalAmount] DECIMAL(19,4) NOT NULL,
+  [ProjectionVersion] SMALLINT NOT NULL,[ProjectedAt] DATETIMEOFFSET(7) NOT NULL,
+  CONSTRAINT [FK_PurchaseReportDocuments_Tenant] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
+  CONSTRAINT [FK_PurchaseReportDocuments_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
+  CONSTRAINT [CK_PurchaseReportDocuments_Type] CHECK([SourceDocumentType] IN(N'GoodsReceipt',N'PurchaseReturn')),
+  CONSTRAINT [CK_PurchaseReportDocuments_Sign] CHECK(([SourceDocumentType]=N'GoodsReceipt' AND [TotalAmount]>=0) OR ([SourceDocumentType]=N'PurchaseReturn' AND [TotalAmount]<=0))
+);
+GO
+CREATE INDEX [IX_PurchaseReportDocuments_Query]
+ON [reporting].[PurchaseReportDocuments]([BusinessId],[BusinessLocalDate],[SupplierId]) INCLUDE([WarehouseId],[NetAmount],[TaxAmount],[TotalAmount]);
+GO
+
+CREATE TABLE [reporting].[PurchaseReportLineFacts] (
+  [PurchaseFactId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,[TenantId] UNIQUEIDENTIFIER NOT NULL,[BusinessId] UNIQUEIDENTIFIER NOT NULL,
+  [SourceDocumentId] UNIQUEIDENTIFIER NOT NULL,[SourceDocumentType] NVARCHAR(32) NOT NULL,[SourceLineNumber] INT NOT NULL,
+  [OriginalGoodsReceiptId] UNIQUEIDENTIFIER NULL,[OriginalLineNumber] INT NULL,[OccurredAt] DATETIMEOFFSET(7) NOT NULL,[BusinessLocalDate] DATE NOT NULL,
+  [SupplierId] UNIQUEIDENTIFIER NOT NULL,[SupplierName] NVARCHAR(240) NOT NULL,[WarehouseId] UNIQUEIDENTIFIER NOT NULL,[WarehouseName] NVARCHAR(200) NOT NULL,
+  [ProductId] UNIQUEIDENTIFIER NOT NULL,[ProductName] NVARCHAR(300) NOT NULL,[Quantity] DECIMAL(19,6) NOT NULL,
+  [UnitCost] DECIMAL(19,6) NOT NULL,[DiscountAmount] DECIMAL(19,4) NOT NULL,[NetAmount] DECIMAL(19,4) NOT NULL,
+  [TaxAmount] DECIMAL(19,4) NOT NULL,[TotalAmount] DECIMAL(19,4) NOT NULL,[CurrencyCode] CHAR(3) NOT NULL,
+  [ProjectionVersion] SMALLINT NOT NULL,[ProjectedAt] DATETIMEOFFSET(7) NOT NULL,
+  CONSTRAINT [FK_PurchaseReportLineFacts_Tenant] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
+  CONSTRAINT [FK_PurchaseReportLineFacts_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
+  CONSTRAINT [UQ_PurchaseReportLineFacts_Source] UNIQUE([SourceDocumentId],[SourceDocumentType],[SourceLineNumber]),
+  CONSTRAINT [CK_PurchaseReportLineFacts_Type] CHECK([SourceDocumentType] IN(N'GoodsReceipt',N'PurchaseReturn')),
+  CONSTRAINT [CK_PurchaseReportLineFacts_Sign] CHECK(([SourceDocumentType]=N'GoodsReceipt' AND [Quantity]>0 AND [TotalAmount]>=0) OR ([SourceDocumentType]=N'PurchaseReturn' AND [Quantity]<0 AND [TotalAmount]<=0))
+);
+GO
+CREATE INDEX [IX_PurchaseReportLineFacts_Query]
+ON [reporting].[PurchaseReportLineFacts]([BusinessId],[BusinessLocalDate],[SupplierId]) INCLUDE([WarehouseId],[ProductId],[Quantity],[NetAmount],[TotalAmount]);
 GO

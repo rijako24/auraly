@@ -91,6 +91,29 @@ public sealed class CufeCalculatorTests
         Assert.Contains("[REDACTED]", key.ToString(), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Support_document_uses_official_cuds_sha384_composition()
+    {
+        var result = CudsCalculator.Calculate(
+            new CudsInput(
+                "DS123",
+                new DateTimeOffset(2026, 8, 25, 10, 20, 30, TimeSpan.FromHours(-5)),
+                100_000m,
+                19_000m,
+                119_000m,
+                "222",
+                "900",
+                "PIN",
+                FiscalEnvironment.Test),
+            "https://catalogo-vpfe-hab.dian.gov.co/document/searchqr");
+
+        Assert.Equal(
+            "8750add3919be5a2b3c4eb1edc59ee3709bc04d53f8f0bc9c6dc22394b96d4002dbe6aeb2d2dc2dd4fefdc556ed8f7e7",
+            result.Cuds);
+        Assert.Contains($"CUDS: {result.Cuds}", result.QrPayload, StringComparison.Ordinal);
+        Assert.EndsWith($"?documentkey={result.Cuds}", result.QrPayload, StringComparison.Ordinal);
+    }
+
     private static CufeInput CreateInput(string number, decimal untaxed, decimal payable) =>
         new(
             number,
