@@ -49,8 +49,15 @@ jobs:
             d.PayableAmount,
             d.ProcessingStatus,
             p.Status AS ProcessingJobStatus,
+            p.ProcessingSequence,
             p.AttemptCount AS ProcessingAttempts,
             COALESCE(p.LastError,N'') AS ProcessingError,
+            cursor.LastCompletedSequence,
+            cursor.LastAssignedSequence,
+            (SELECT COUNT(*) FROM dbo.DocumentProcessingJobs predecessor
+             WHERE predecessor.BusinessId=o.BusinessId
+               AND predecessor.ProcessingSequence<p.ProcessingSequence
+               AND predecessor.Status<>N'Completed') AS PriorIncompleteJobs,
             COALESCE(r.Status,N'NotCreated') AS ReportingStatus,
             COALESCE(r.LastError,N'') AS ReportingError
           FROM dbo.Orders o
@@ -58,6 +65,8 @@ jobs:
           LEFT JOIN dbo.SalesDocuments d ON d.DocumentId=l.DocumentId
           LEFT JOIN dbo.DocumentProcessingJobs p
             ON p.DocumentId=d.DocumentId AND p.DocumentType=d.DocumentType
+          LEFT JOIN dbo.BusinessProcessingCursors cursor
+            ON cursor.BusinessId=o.BusinessId
           LEFT JOIN reporting.SalesReportingJobs r
             ON r.SourceDocumentId=d.DocumentId AND r.SourceDocumentType=d.DocumentType
           WHERE o.ExternalDocumentNumber=@OrderNumber
@@ -75,8 +84,12 @@ jobs:
                 payableAmount = if ($reader['PayableAmount'] -is [DBNull]) { $null } else { $reader['PayableAmount'] }
                 processingStatus = if ($reader['ProcessingStatus'] -is [DBNull]) { $null } else { $reader['ProcessingStatus'] }
                 processingJobStatus = if ($reader['ProcessingJobStatus'] -is [DBNull]) { $null } else { $reader['ProcessingJobStatus'] }
+                processingSequence = if ($reader['ProcessingSequence'] -is [DBNull]) { $null } else { $reader['ProcessingSequence'] }
                 processingAttempts = if ($reader['ProcessingAttempts'] -is [DBNull]) { $null } else { $reader['ProcessingAttempts'] }
                 processingError = $reader['ProcessingError']
+                lastCompletedSequence = if ($reader['LastCompletedSequence'] -is [DBNull]) { $null } else { $reader['LastCompletedSequence'] }
+                lastAssignedSequence = if ($reader['LastAssignedSequence'] -is [DBNull]) { $null } else { $reader['LastAssignedSequence'] }
+                priorIncompleteJobs = $reader['PriorIncompleteJobs']
                 reportingStatus = $reader['ReportingStatus']
                 reportingError = $reader['ReportingError']
               } | ConvertTo-Json -Compress | Write-Output
