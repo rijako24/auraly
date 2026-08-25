@@ -7,7 +7,15 @@ export function buildBackendProxyHeaders(
   };
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
 
-  for (const name of ["X-Tenant-Id", "X-Business-Id", "Idempotency-Key", "X-Correlation-Id"]) {
+  for (const name of [
+    "X-Tenant-Id",
+    "X-Business-Id",
+    "Idempotency-Key",
+    "X-Correlation-Id",
+    "X-Auraly-Draft-Id",
+    "X-Auraly-Approval-Id",
+    "X-Auraly-Operation-Id",
+  ]) {
     const value = requestHeaders.get(name);
     if (value) headers[name] = value;
   }

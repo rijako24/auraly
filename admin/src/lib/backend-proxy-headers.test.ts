@@ -11,6 +11,9 @@ describe("buildBackendProxyHeaders", () => {
       "X-Business-Id": "business-1",
       "Idempotency-Key": "online-sale-document-1",
       "X-Correlation-Id": "correlation-1",
+      "X-Auraly-Draft-Id": "draft-1",
+      "X-Auraly-Approval-Id": "approval-1",
+      "X-Auraly-Operation-Id": "operation-1",
       Cookie: "must-not-leak=true",
     });
 
@@ -21,6 +24,9 @@ describe("buildBackendProxyHeaders", () => {
       "X-Business-Id": "business-1",
       "Idempotency-Key": "online-sale-document-1",
       "X-Correlation-Id": "correlation-1",
+      "X-Auraly-Draft-Id": "draft-1",
+      "X-Auraly-Approval-Id": "approval-1",
+      "X-Auraly-Operation-Id": "operation-1",
     });
   });
 

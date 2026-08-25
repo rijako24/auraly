@@ -1308,41 +1308,49 @@ export default function PosPage() {
         expiresAt: pending.approval?.expiresAt,
       });
     } catch (caught) {
-      setSensitiveApproval(pending);
-      setSensitiveApprovalError(caught instanceof Error ? caught.message : "No fue posible aplicar la acción autorizada.");
+      setError(caught instanceof Error ? caught.message : "No fue posible aplicar la acción autorizada.");
+      setMessage("La autorización fue aprobada, pero la acción no pudo completarse");
     } finally {
       setBusy(false);
-      focusScanner();
     }
   }
 
   async function completeLocalApproval(secret: string) {
     if (!sensitiveApproval) return;
+    const pending = sensitiveApproval;
+    let approvedOnline = false;
     setBusy(true);
     setSensitiveApprovalError(null);
     try {
       if (client?.mode === "online") {
-        const approval = sensitiveApproval.approval;
+        const approval = pending.approval;
         if (!approval) throw new Error("La solicitud de aprobación no está disponible.");
         await posApprovalClient.authorizeLocally(approval.approvalRequestId, secret);
-        await sensitiveApproval.execute({
-          operationId: sensitiveApproval.operationId,
+        approvedOnline = true;
+        setSensitiveApproval(null);
+        await pending.execute({
+          operationId: pending.operationId,
           approvalRequestId: approval.approvalRequestId,
           expiresAt: approval.expiresAt,
         });
       } else {
-        await sensitiveApproval.execute({
-          operationId: sensitiveApproval.operationId,
+        await pending.execute({
+          operationId: pending.operationId,
           supervisorSecret: secret,
           expiresAt: new Date(Date.now() + 2 * 60 * 1000).toISOString(),
         });
+        setSensitiveApproval(null);
       }
-      setSensitiveApproval(null);
     } catch (caught) {
-      setSensitiveApprovalError(caught instanceof Error ? caught.message : "La credencial no pudo autorizar la acción.");
+      const detail = caught instanceof Error ? caught.message : "La credencial no pudo autorizar la acción.";
+      if (approvedOnline) {
+        setError(detail);
+        setMessage("La autorización fue aprobada, pero la acción no pudo completarse");
+      } else {
+        setSensitiveApprovalError(detail);
+      }
     } finally {
       setBusy(false);
-      focusScanner();
     }
   }
 

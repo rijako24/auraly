@@ -12,8 +12,14 @@ test("transporter-only users start in assigned dispatches", () => {
   assert.equal(defaultStartRoute(["driver"], ["dispatches.delivery.execute"]), "/dashboard/deliveries");
 });
 
-test("mixed roles and users without operational access keep the dashboard", () => {
-  assert.equal(defaultStartRoute(["Vendedor", "Administrador"], ["orders.read"]), "/dashboard");
+test("the first authorized view owns the generic landing", () => {
+  assert.equal(defaultStartRoute(["Vendedor", "Administrador"], ["orders.read"]), "/dashboard/orders");
+  assert.equal(defaultStartRoute(["Cajero"], ["sales.create"]), "/pos");
+  assert.equal(defaultStartRoute(["Administrador"], ["parties.read", "catalog.read"]), "/dashboard/products");
+  assert.equal(defaultStartRoute(["Administrador"], ["sales.reports.read", "catalog.read"]), "/dashboard");
+});
+
+test("users without any navigable permission keep the neutral dashboard", () => {
   assert.equal(defaultStartRoute(["Vendedor"], []), "/dashboard");
   assert.equal(defaultStartRoute(["Transportador"], []), "/dashboard");
 });

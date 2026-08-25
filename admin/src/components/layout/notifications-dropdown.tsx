@@ -43,11 +43,32 @@ export function NotificationsDropdown({ className }: { className?: string }) {
   const [credentialStatus, setCredentialStatus] = useState<SupervisorCredentialStatus | null>(null);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(() => typeof Notification === "undefined" ? "denied" : Notification.permission);
   const [activatingNotifications, setActivatingNotifications] = useState(false);
+  const [backgroundPushState, setBackgroundPushState] = useState<"idle"|"checking"|"active"|"error">("idle");
   const [portalReady, setPortalReady] = useState(false);
   const knownIds = useRef(new Set<string>());
 
   useEffect(() => setPortalReady(true), []);
   useEffect(()=>{if(new URLSearchParams(window.location.search).has("posApproval"))setDropdownOpen(true)},[]);
+  useEffect(() => {
+    if (!canReceivePush || !businessId || typeof Notification === "undefined") return;
+    setNotificationPermission(Notification.permission);
+    if (Notification.permission !== "granted") {
+      setBackgroundPushState("idle");
+      return;
+    }
+    let active = true;
+    setBackgroundPushState("checking");
+    void ensurePosApprovalPushSubscription()
+      .then((subscribed) => {
+        if (active) setBackgroundPushState(subscribed ? "active" : "error");
+      })
+      .catch((caught) => {
+        if (!active) return;
+        setBackgroundPushState("error");
+        setError(caught instanceof Error ? caught.message : "No fue posible registrar este teléfono para alertas cerradas.");
+      });
+    return () => { active = false; };
+  }, [businessId, canReceivePush]);
 
   const refresh = useCallback(async (notify = false) => {
     if (!canApprove || !businessId) return;
@@ -132,7 +153,9 @@ export function NotificationsDropdown({ className }: { className?: string }) {
       }
       const subscribed = await ensurePosApprovalPushSubscription();
       if (!subscribed) throw new Error("Este dispositivo no permite notificaciones en segundo plano. Instala Auraly en la pantalla de inicio e inténtalo de nuevo.");
+      setBackgroundPushState("active");
     } catch (caught) {
+      setBackgroundPushState("error");
       setError(caught instanceof Error ? caught.message : "No fue posible activar las notificaciones.");
     } finally {
       setActivatingNotifications(false);
@@ -200,6 +223,10 @@ export function NotificationsDropdown({ className }: { className?: string }) {
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
           {canApprove && canReceivePush && notificationPermission === "default" && <div className="border-b p-2"><Button variant="outline" size="sm" className="w-full" disabled={activatingNotifications} onClick={()=>void activateNotifications()}>{activatingNotifications?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:<Bell className="mr-2 h-4 w-4"/>}Activar alertas de autorización</Button></div>}
+          {canApprove && canReceivePush && notificationPermission === "denied" && <p className="border-b bg-amber-50 p-3 text-xs font-medium text-amber-900">Las notificaciones del sistema están bloqueadas. Habilita Auraly en Ajustes → Notificaciones del iPhone.</p>}
+          {canApprove && canReceivePush && notificationPermission === "granted" && backgroundPushState === "checking" && <p className="border-b p-3 text-xs text-muted-foreground"><Loader2 className="mr-2 inline h-3.5 w-3.5 animate-spin"/>Verificando alertas con Auraly cerrada…</p>}
+          {canApprove && canReceivePush && notificationPermission === "granted" && backgroundPushState === "active" && <p className="border-b bg-emerald-50 p-3 text-xs font-semibold text-emerald-800"><ShieldCheck className="mr-2 inline h-3.5 w-3.5"/>Alertas con Auraly cerrada: activas</p>}
+          {canApprove && canReceivePush && notificationPermission === "granted" && backgroundPushState === "error" && <div className="border-b p-2"><Button variant="outline" size="sm" className="w-full" disabled={activatingNotifications} onClick={()=>void activateNotifications()}><Bell className="mr-2 h-4 w-4"/>Reactivar alertas en segundo plano</Button></div>}
           <ScrollArea className="max-h-[22rem]">
             {!canApprove ? (
               <div className="py-8 text-center text-sm text-muted-foreground">No hay notificaciones nuevas</div>
