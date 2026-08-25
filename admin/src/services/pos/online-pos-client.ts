@@ -733,6 +733,12 @@ export class OnlinePosClient implements PosClient {
     };
   }
 
+  validateDraftInventory(draftId: string) {
+    return request<import("./pos-edge-client").PosInventoryValidation>(
+      `/api/commerce/v1/pos/drafts/${draftId}/inventory-validation`,
+    );
+  }
+
   approval(approvalRequestId: string): Promise<PosApprovalSummary> {
     return request<PosApprovalSummary>(
       `/api/commerce/v1/pos/approvals/${encodeURIComponent(approvalRequestId)}`,

@@ -782,6 +782,14 @@ public static class PosEdgeHostApplication
                 ? Results.Ok(result)
                 : Results.Conflict(result);
         });
+        edge.MapGet("/drafts/{draftId:guid}/inventory-validation", async (
+            Guid draftId,
+            PosCaptureService capture,
+            PosEdgeRuntimeContext context,
+            IAuralyIdGenerator ids,
+            CancellationToken ct) => Results.Ok(await capture.ValidateDraftInventoryAsync(
+                new DraftId(draftId), context.WarehouseAllowsNegativeStock,
+                ids.NewId(), ct)));
         edge.MapPut("/drafts/{draftId:guid}/lines/{lineId:guid}/discount", async (
             Guid draftId,
             Guid lineId,

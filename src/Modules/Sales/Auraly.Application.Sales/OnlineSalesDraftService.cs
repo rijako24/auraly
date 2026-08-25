@@ -87,6 +87,11 @@ public interface IOnlineSalesDraftStore
         string idempotencyKey,
         CancellationToken cancellationToken);
 
+    Task<OnlineSalesInventoryValidation> ValidateInventoryAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        CancellationToken cancellationToken);
+
     Task<OnlineSalesDraft> RemoveTemporaryAsync(
         OnlineSalesUserIdentity user,
         Guid temporaryDraftId,
@@ -123,6 +128,17 @@ public sealed class OnlineSalesDraftService(
                 "Negocio, bodega y sesión de trabajo son obligatorios.");
         return await drafts.GetOrCreateActiveAsync(
             user, request.Context, cancellationToken);
+    }
+
+    public async Task<OnlineSalesInventoryValidation> ValidateInventoryAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        if (draftId == Guid.Empty)
+            throw new OnlineSalesDraftValidationException("La venta es obligatoria.");
+        return await drafts.ValidateInventoryAsync(user, draftId, cancellationToken);
     }
 
     public async Task<OnlineSalesDraft> AddProductAsync(

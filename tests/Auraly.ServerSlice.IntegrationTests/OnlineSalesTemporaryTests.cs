@@ -141,6 +141,62 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
         Assert.Equal("Active", recovered.Status);
         Assert.Single(recovered.Lines);
 
+        var balanceExisted = await ScalarAsync<int>(
+            "SELECT COUNT(1) FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;",
+            new("@BusinessId", fixture.BusinessId), new("@WarehouseId", fixture.WarehouseId),
+            new("@ProductId", fixture.ProductId)) > 0;
+        var previousStock = balanceExisted
+            ? await ScalarAsync<decimal>(
+                "SELECT QuantityOnHand FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;",
+                new("@BusinessId", fixture.BusinessId), new("@WarehouseId", fixture.WarehouseId),
+                new("@ProductId", fixture.ProductId))
+            : 0m;
+        var previousNegativeStockPolicy = await ScalarAsync<bool>(
+            "SELECT AllowNegativeStockSales FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId;",
+            new("@BusinessId", fixture.BusinessId), new("@WarehouseId", fixture.WarehouseId));
+        try
+        {
+            await ExecuteAsync(
+                """
+                UPDATE dbo.Warehouses SET AllowNegativeStockSales=0
+                WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId;
+                IF EXISTS(SELECT 1 FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId)
+                  UPDATE dbo.InventoryBalances SET QuantityOnHand=0,InventoryValue=0,UpdatedAt=SYSDATETIMEOFFSET()
+                  WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
+                ELSE
+                  INSERT dbo.InventoryBalances(BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,InventoryValue,LastProcessingSequence,UpdatedAt)
+                  VALUES(@BusinessId,@WarehouseId,@ProductId,0,0,0,1,SYSDATETIMEOFFSET());
+                """,
+                new("@BusinessId", fixture.BusinessId), new("@WarehouseId", fixture.WarehouseId),
+                new("@ProductId", fixture.ProductId));
+            var validation = await restarted.GetFromJsonAsync<OnlineSalesInventoryValidation>(
+                $"/api/commerce/v1/pos/drafts/{recovered.DraftId:D}/inventory-validation");
+            Assert.NotNull(validation);
+            Assert.True(validation.WasValidated);
+            Assert.False(validation.IsValid);
+            var issue = Assert.Single(validation.Issues);
+            Assert.Equal(recovered.Lines[0].LineId, issue.LineId);
+            Assert.Equal(1m, issue.RequestedQuantity);
+            Assert.Equal(0m, issue.AvailableQuantity);
+        }
+        finally
+        {
+            await ExecuteAsync(
+                "UPDATE dbo.Warehouses SET AllowNegativeStockSales=@AllowNegative WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId;",
+                new("@AllowNegative", previousNegativeStockPolicy), new("@BusinessId", fixture.BusinessId),
+                new("@WarehouseId", fixture.WarehouseId));
+            if (balanceExisted)
+                await ExecuteAsync(
+                    "UPDATE dbo.InventoryBalances SET QuantityOnHand=@Quantity,UpdatedAt=SYSDATETIMEOFFSET() WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;",
+                    new("@Quantity", previousStock), new("@BusinessId", fixture.BusinessId),
+                    new("@WarehouseId", fixture.WarehouseId), new("@ProductId", fixture.ProductId));
+            else
+                await ExecuteAsync(
+                    "DELETE dbo.InventoryBalances WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;",
+                    new("@BusinessId", fixture.BusinessId), new("@WarehouseId", fixture.WarehouseId),
+                    new("@ProductId", fixture.ProductId));
+        }
+
         var afterSecondPause = await MutateAsync<OnlineSalesDraft>(
             restarted,
             $"/api/commerce/v1/pos/drafts/{recovered.DraftId:D}/pause",
@@ -217,5 +273,17 @@ public sealed class OnlineSalesTemporaryTests(ServerSliceFixture fixture)
         command.CommandText = sql;
         command.Parameters.AddRange(parameters);
         await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task<T> ScalarAsync<T>(string sql, params SqlParameter[] parameters)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.Parameters.AddRange(parameters);
+        var value = await command.ExecuteScalarAsync()
+            ?? throw new InvalidOperationException("Expected scalar value was not returned.");
+        return (T)Convert.ChangeType(value, typeof(T));
     }
 }

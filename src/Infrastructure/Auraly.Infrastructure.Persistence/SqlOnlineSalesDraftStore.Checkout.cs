@@ -124,6 +124,11 @@ public sealed partial class SqlOnlineSalesDraftStore
         if (draft.Lines.Count == 0)
             throw new OnlineSalesDraftValidationException(
                 "La venta debe tener al menos un producto.");
+        var inventoryValidation = await ValidateInventoryAsync(
+            connection, transaction, state, draftId, cancellationToken);
+        if (!inventoryValidation.IsValid)
+            throw new OnlineSalesDraftValidationException(
+                "El inventario cambió y uno o más productos ya no tienen existencias suficientes. Ajusta sus cantidades o elimínalos antes de cobrar.");
         if (request.Payments.Sum(payment => payment.Amount) + (request.Credit?.Amount ?? 0m) != draft.PayableAmount)
             throw new OnlineSalesDraftValidationException(
                 "Los pagos reales y el saldo financiado deben ser iguales al total de la venta.");

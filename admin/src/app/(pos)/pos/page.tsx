@@ -46,6 +46,7 @@ import {
   type PosAuthorizedClosurePreview,
   type PosWorkSessionPaymentCount,
   type PosCaptureResult,
+  type PosInventoryValidation,
   type PosSensitiveAuthorization,
   readEdgeTokenFromLaunch,
   readEdgeUserSession,
@@ -78,6 +79,7 @@ import { PosDocumentTypeDialog } from "./pos-document-type-dialog";
 import { PosDiscountDialog } from "./pos-discount-dialog";
 import { PosExitMenuButton } from "./pos-exit-menu-button";
 import { PosInvoiceSearchDialog } from "./pos-invoice-search-dialog";
+import { PosInventoryResolutionDialog } from "./pos-inventory-resolution-dialog";
 import { temporaryNameForCustomer } from "./pos-temporary-name";
 import { PosLocalLogin } from "./pos-local-login";
 import { PosOnlineSetup } from "./pos-online-setup";
@@ -210,6 +212,7 @@ export default function PosPage() {
   const [temporaryOpen, setTemporaryOpen] = useState(false);
   const [temporaryName, setTemporaryName] = useState("");
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [inventoryResolution, setInventoryResolution] = useState<PosInventoryValidation | null>(null);
   const [productSearchOpen, setProductSearchOpen] = useState(false);
   const [customerSearchOpen, setCustomerSearchOpen] = useState(false);
   const [discountOpen, setDiscountOpen] = useState(false);
@@ -1022,6 +1025,8 @@ export default function PosPage() {
       );
       if (result.status === "Added") {
         if (result.draft) setDraft(result.draft);
+        if (inventoryResolution && result.draft)
+          await validateRecoveredInventory(result.draft.draftId.value);
         setMessage("Cantidad actualizada");
       } else {
         const confirmed = draft.lines.find((line) => line.lineId === lineId);
@@ -1342,6 +1347,8 @@ export default function PosPage() {
           lineRemovalAuthorization.current = null;
           setConfirmation(null);
           setDraft(updated);
+          if (inventoryResolution)
+            await validateRecoveredInventory(updated.draftId.value);
           setSelectedLineId(updated.lines.at(-1)?.lineId ?? null);
           setMessage("Producto retirado");
         },
@@ -1503,16 +1510,26 @@ export default function PosPage() {
   async function recoverTemporary(id: string) {
     if (!client) return;
     setBusy(true);
+    let requiresResolution = false;
     try {
-      setDraft(await client.recoverTemporary(id));
+      const recovered = await client.recoverTemporary(id);
+      setDraft(recovered);
+      requiresResolution = !(await validateRecoveredInventory(recovered.draftId.value));
       await refreshTemporaries();
-      setMessage("Venta en espera recuperada");
+      setMessage(requiresResolution ? "Venta recuperada: corrige el inventario" : "Venta en espera recuperada");
     } catch (caught) {
       showError(caught);
     } finally {
       setBusy(false);
-      focusScanner();
+      if (!requiresResolution) focusScanner();
     }
+  }
+
+  async function validateRecoveredInventory(draftId: string) {
+    if (!client) return false;
+    const validation = await client.validateDraftInventory(draftId);
+    setInventoryResolution(validation.isValid ? null : validation);
+    return validation.isValid;
   }
 
   function requestDeleteTemporary(id: string, name: string) {
@@ -1538,6 +1555,10 @@ export default function PosPage() {
 
   function openPayment() {
     if (!draft?.lines.length || busy) return;
+    if (inventoryResolution) {
+      setError("Resuelve primero los productos con inventario insuficiente.");
+      return;
+    }
     setError(null);
     setPaymentOpen(true);
   }
@@ -1633,6 +1654,10 @@ export default function PosPage() {
       }
     } catch (caught) {
       showError(caught);
+      if (caught instanceof Error && caught.message.toLocaleLowerCase("es-CO").includes("inventario")) {
+        setPaymentOpen(false);
+        await validateRecoveredInventory(draft.draftId.value).catch(() => undefined);
+      }
     } finally {
       setBusy(false);
       focusScanner();
@@ -2974,6 +2999,16 @@ edgeCapable={edgeEnrollmentRequired}
             focusScanner();
           }}
           onConfirm={confirmSalesSessionClosure}
+        />
+      )}
+
+      {inventoryResolution && draft && (
+        <PosInventoryResolutionDialog
+          value={inventoryResolution}
+          busy={busy}
+          onChangeQuantity={(lineId, quantity) => changeQuantity(lineId, quantity, false)}
+          onRemove={(lineId) => { void requestRemoveLine(lineId); }}
+          onRetry={() => validateRecoveredInventory(draft.draftId.value).then(() => undefined)}
         />
       )}
 

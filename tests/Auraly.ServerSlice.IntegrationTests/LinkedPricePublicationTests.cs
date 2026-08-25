@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using Auraly.Contracts.Inventory;
 using Auraly.Contracts.Pricing;
+using Auraly.Contracts.Catalog;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -9,7 +10,7 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class LinkedPricePublicationTests(ServerSliceFixture fixture)
 {
     [Fact]
-    public async Task Linked_prices_change_only_when_the_root_price_is_published()
+    public async Task Linked_cost_prepares_the_child_price_with_its_margin_without_publishing_it()
     {
         fixture.DrainSynchronizationMessages();
         var rootId = Guid.NewGuid();
@@ -22,17 +23,53 @@ public sealed class LinkedPricePublicationTests(ServerSliceFixture fixture)
             await connection.OpenAsync();
             await using var command = connection.CreateCommand();
             command.CommandText = """
-                INSERT dbo.ProductLinks
-                  (ProductLinkId,BusinessId,ChildProductId,ParentProductId,
-                   InventoryFactor,PriceFactor,SharesInventory,SharesPrice,IsActive,CreatedAt)
-                VALUES
-                  (NEWID(),@BusinessId,@ChildId,@RootId,2,2,1,1,1,SYSDATETIMEOFFSET());
+                INSERT dbo.InventoryBalances
+                  (BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,
+                   InventoryValue,LastProcessingSequence,UpdatedAt)
+                VALUES(@BusinessId,@WarehouseId,@ChildId,1,800,800,1,SYSDATETIMEOFFSET());
                 """;
             command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            command.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
             command.Parameters.AddWithValue("@ChildId", childId);
-            command.Parameters.AddWithValue("@RootId", rootId);
             await command.ExecuteNonQueryAsync();
         }
+        using (var catalog = fixture.CreateAdminClient(
+                   CatalogPermissionCodes.Read, CatalogPermissionCodes.Update,
+                   CatalogPermissionCodes.ManagePrices, CatalogPermissionCodes.ManageCosts))
+        {
+            var configuration = (await catalog.GetFromJsonAsync<ProductMerchandisingConfiguration>(
+                $"/api/commerce/v1/products/{rootId:D}/merchandising"))!;
+            var request = new SaveProductMerchandisingRequest(
+                configuration.ProductCategoryId, configuration.ProductBrandId,
+                configuration.BaseUnitCode, configuration.ManageInventory,
+                configuration.AllowsFractionalSale, configuration.IsWeighable,
+                configuration.Scale, configuration.Barcodes, null,
+                [new LinkedProductInput(childId, true, 2m, true, 2m)]);
+            using var blocked = await catalog.PutAsJsonAsync(
+                $"/api/commerce/v1/products/{rootId:D}/merchandising", request);
+            Assert.Equal(System.Net.HttpStatusCode.BadRequest, blocked.StatusCode);
+            Assert.Contains("inventario en cero", await blocked.Content.ReadAsStringAsync(),
+                StringComparison.OrdinalIgnoreCase);
+
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var clear = connection.CreateCommand();
+            clear.CommandText = "UPDATE dbo.InventoryBalances SET QuantityOnHand=0,InventoryValue=0 WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ChildId;";
+            clear.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            clear.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+            clear.Parameters.AddWithValue("@ChildId", childId);
+            await clear.ExecuteNonQueryAsync();
+
+            using var saved = await catalog.PutAsJsonAsync(
+                $"/api/commerce/v1/products/{rootId:D}/merchandising", request);
+            saved.EnsureSuccessStatusCode();
+        }
+        Assert.Equal(6_400m, await ScalarAsync<decimal>(
+            "SELECT CostBasisAmount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", childId));
+        Assert.Equal(8_000m, await ScalarAsync<decimal>(
+            "SELECT PreparedAmount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", childId));
+        Assert.Equal(1_000m, await ScalarAsync<decimal>(
+            "SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", childId));
         using (var inventory = fixture.CreateAdminClient(InventoryPermissionCodes.Read))
         {
             var childResults = await inventory.GetFromJsonAsync<InventoryProductPage>(
@@ -77,18 +114,21 @@ public sealed class LinkedPricePublicationTests(ServerSliceFixture fixture)
                 PricingRoundingModes.Nearest, candidate.ConcurrencyToken)]));
         publish.EnsureSuccessStatusCode();
 
-        Assert.Equal(10_000m, await ScalarAsync<decimal>(
+        Assert.Equal(1_000m, await ScalarAsync<decimal>(
             "SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", childId));
         Assert.Equal(10_000m, await ScalarAsync<decimal>(
             "SELECT PreparedAmount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", childId));
         Assert.Equal(8_000m, await ScalarAsync<decimal>(
             "SELECT CostBasisAmount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", childId));
-        Assert.Equal(2, await ScalarAsync<int>(
+        Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.ProductPrices WHERE ProductId=@Product", childId));
-        Assert.Equal(1, await ScalarAsync<int>(
+        Assert.Equal(0, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.PricePublicationAudits WHERE ProductId=@Product AND PublicationOrigin=N'LinkedProduct'", childId));
-        Assert.Equal(1, await ScalarAsync<int>(
-            "SELECT COUNT(*) FROM dbo.CatalogChanges WHERE ProductId=@Product AND ChangeKind=N'Upsert'", childId));
+
+        var childCandidates = await pricing.GetFromJsonAsync<PriceRevisionPage>(
+            "/api/commerce/v1/pricing/proposals?page=1&pageSize=100&status=Approved");
+        var childCandidate = Assert.Single(childCandidates!.Items.Where(x => x.ProductId == childId));
+        Assert.Equal(10_000m, childCandidate.SuggestedSalePrice);
     }
 
     private async Task SeedProductAsync(Guid productId, decimal price)
@@ -111,15 +151,19 @@ public sealed class LinkedPricePublicationTests(ServerSliceFixture fixture)
                N'Producto vinculado',N'Prueba de publicacion vinculada',N'EA',
                @TaxProfileId,1,0,1,0,@Price,N'COP',SYSDATETIMEOFFSET());
             INSERT dbo.ProductPrices
-              (ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,IsActive,CreatedAt)
+              (ProductPriceId,BusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,
+               CostBasisType,CostBasisAmount,TargetMarginPercent,EffectiveMarginPercent,
+               InputMode,RoundingIncrement,RoundingMode,ValidFrom,IsActive,CreatedAt)
             VALUES
-              (NEWID(),@BusinessId,@ProductId,@Price,N'COP',SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET());
+              (NEWID(),@BusinessId,@ProductId,@Price,@Price,N'COP',N'Manual',@Cost,20,20,
+               N'Margin',1,N'Nearest',SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET());
             """;
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
         command.Parameters.AddWithValue("@ProductId", productId);
         command.Parameters.AddWithValue("@ProductCode", $"LINK-{productId:N}");
         command.Parameters.AddWithValue("@TaxCode", $"TL-{productId:N}"[..32]);
         command.Parameters.AddWithValue("@Price", price);
+        command.Parameters.AddWithValue("@Cost", price * 0.8m);
         await command.ExecuteNonQueryAsync();
     }
 

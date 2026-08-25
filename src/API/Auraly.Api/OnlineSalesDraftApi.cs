@@ -222,6 +222,14 @@ group.MapPost("/{draftId:guid}/items", async (
                 context.User.ToOnlineSalesUserIdentity(),
                 draftId, request, IdempotencyKey(context), ct)));
 
+        group.MapGet("/{draftId:guid}/inventory-validation", async (
+            HttpContext context,
+            Guid draftId,
+            OnlineSalesDraftService service,
+            CancellationToken ct) =>
+            await Handle(() => service.ValidateInventoryAsync(
+                context.User.ToOnlineSalesUserIdentity(), draftId, ct)));
+
         group.MapPost("/temporaries/{draftId:guid}/remove", async (
             HttpContext context,
             Guid draftId,

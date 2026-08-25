@@ -59,6 +59,10 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                   THROW 51022, 'A product cannot be linked to itself.', 1;
                 IF @ParentProductId IS NOT NULL AND EXISTS (SELECT 1 FROM dbo.ProductLinks WHERE BusinessId=@BusinessId AND ChildProductId=@ParentProductId AND IsActive=1)
                   THROW 51022, 'Linked product chains are not allowed.', 1;
+                IF @ParentProductId IS NOT NULL AND EXISTS (
+                  SELECT 1 FROM dbo.InventoryBalances
+                  WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND QuantityOnHand<>0)
+                  THROW 51024, 'El producto tiene existencias. Deja su inventario en cero antes de vincularlo.', 1;
                 IF @ManageInventory=0 AND EXISTS (
                   SELECT 1 FROM dbo.ProductLinks WHERE BusinessId=@BusinessId AND ParentProductId=@ProductId
                     AND IsActive=1 AND AllowsConversion=1)
@@ -134,6 +138,11 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                     P("@Currency", price.CurrencyCode.ToUpperInvariant()), P("@Now", now)], ct);
             }
             }
+
+            if (request.Link is { SharesPrice: true } linkedCost)
+                await SqlLinkedProductCostPreparation.PrepareAsync(
+                    connection, transaction, user.BusinessId, linkedCost.ParentProductId,
+                    productId, linkedCost.PriceFactor!.Value, ct);
 
             if (request.Scale is not null)
             {

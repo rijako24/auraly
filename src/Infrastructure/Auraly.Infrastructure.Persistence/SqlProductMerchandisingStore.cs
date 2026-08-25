@@ -155,6 +155,8 @@ public sealed class SqlProductMerchandisingStore(
                 await ExecuteAsync(connection, transaction, """
                     IF NOT EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ParentId AND BusinessId=@BusinessId AND IsActive=1)
                       THROW 51020,'The parent product is outside the business or inactive.',1;
+                    IF EXISTS(SELECT 1 FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND QuantityOnHand<>0)
+                      THROW 51020,'El producto tiene existencias. Deja su inventario en cero antes de vincularlo.',1;
                     IF @AllowsConversion=1 AND NOT EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ParentId AND BusinessId=@BusinessId AND ManageStock=1 AND ConversionMaximumLossPercent IS NOT NULL)
                       THROW 51020,'The parent product must manage inventory and define a maximum conversion loss.',1;
                     IF EXISTS(SELECT 1 FROM dbo.ProductLinks WHERE BusinessId=@BusinessId AND ChildProductId=@ParentId AND IsActive=1)
@@ -166,6 +168,9 @@ public sealed class SqlProductMerchandisingStore(
                       INSERT dbo.ProductLinks(ProductLinkId,BusinessId,ChildProductId,ParentProductId,InventoryFactor,PriceFactor,ConversionFactor,SharesInventory,SharesPrice,AllowsConversion,IsActive,CreatedAt) VALUES(@Id,@BusinessId,@ProductId,@ParentId,@InventoryFactor,@PriceFactor,@ConversionFactor,@SharesInventory,@SharesPrice,@AllowsConversion,1,@Now);
                     UPDATE dbo.Products SET ManageStock=CASE WHEN @SharesInventory=1 THEN 0 WHEN @AllowsConversion=1 THEN 1 ELSE ManageStock END,UpdatedAt=@Now WHERE ProductId=@ProductId AND BusinessId=@BusinessId;
                     """, [P("@Id", ids.NewId()), P("@BusinessId", user.BusinessId), P("@ProductId", productId), P("@ParentId", link.ParentProductId), P("@SharesInventory", link.SharesInventory), P("@InventoryFactor", link.SharesInventory ? link.InventoryFactor : null), P("@SharesPrice", link.SharesPrice), P("@PriceFactor", link.SharesPrice ? link.PriceFactor : null), P("@AllowsConversion", link.AllowsConversion), P("@ConversionFactor", link.AllowsConversion ? link.ConversionFactor : null), P("@Now", now)], ct);
+                if (link.SharesPrice)
+                    await SqlLinkedProductCostPreparation.PrepareAsync(connection, transaction, user.BusinessId,
+                        link.ParentProductId, productId, link.PriceFactor!.Value, ct);
             }
 
             await ExecuteAsync(connection, transaction, """
@@ -182,6 +187,8 @@ public sealed class SqlProductMerchandisingStore(
                 await ExecuteAsync(connection, transaction, """
                     IF NOT EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ChildId AND BusinessId=@BusinessId AND IsActive=1)
                       THROW 51020,'The linked product is outside the business or inactive.',1;
+                    IF EXISTS(SELECT 1 FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND ProductId=@ChildId AND QuantityOnHand<>0)
+                      THROW 51020,'El producto tiene existencias. Deja su inventario en cero antes de vincularlo.',1;
                     IF @AllowsConversion=1 AND NOT EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ProductId AND BusinessId=@BusinessId AND ManageStock=1 AND ConversionMaximumLossPercent IS NOT NULL)
                       THROW 51020,'A convertible family must manage inventory and define a maximum conversion loss.',1;
                     IF EXISTS(SELECT 1 FROM dbo.ProductLinks WHERE BusinessId=@BusinessId AND ParentProductId=@ChildId AND IsActive=1)
@@ -206,6 +213,9 @@ public sealed class SqlProductMerchandisingStore(
                     P("@SharesPrice", child.SharesPrice), P("@PriceFactor", child.SharesPrice ? child.PriceFactor : null),
                     P("@AllowsConversion", child.AllowsConversion), P("@ConversionFactor", child.AllowsConversion ? child.ConversionFactor : null),
                     P("@Now", now)], ct);
+                if (child.SharesPrice)
+                    await SqlLinkedProductCostPreparation.PrepareAsync(connection, transaction, user.BusinessId,
+                        productId, child.ChildProductId, child.PriceFactor!.Value, ct);
             }
 
             await ExecuteAsync(connection, transaction, """
@@ -214,6 +224,11 @@ public sealed class SqlProductMerchandisingStore(
                 INSERT dbo.PosSynchronizationOutboxMessages(NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt) SELECT @NotificationId,@BusinessId,N'Catalog',CatalogChangeId,@Now FROM @Change;
                 """, [P("@NotificationId", ids.NewId()), P("@BusinessId", user.BusinessId), P("@ProductId", productId), P("@Now", now)], ct);
             await transaction.CommitAsync(ct);
+        }
+        catch (SqlException ex) when (ex.Number is 51020 or 51021 or 51022 or 51024)
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw new CatalogValidationException(ex.Message);
         }
         catch (SqlException ex) when (ex.Number is 2601 or 2627)
         {

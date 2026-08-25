@@ -299,6 +299,21 @@ export type PosWorkSessionPaymentTotal = {
   countedAmount: number | null;
   difference: number | null;
 };
+
+export type PosInventoryIssue = {
+  lineId: string;
+  productId: string;
+  productCode: string;
+  description: string;
+  requestedQuantity: number;
+  availableQuantity: number;
+};
+
+export type PosInventoryValidation = {
+  isValid: boolean;
+  wasValidated: boolean;
+  issues: PosInventoryIssue[];
+};
 export type PosCreditTerms = { amount: number; dueDate: string };
 
 export type PosWorkSessionPaymentCount = {
@@ -407,6 +422,7 @@ export interface PosClient {
   temporaries(search?: string): Promise<PosDraft[]>;
   deleteTemporary(draftId: string): Promise<void>;
   recoverTemporary(draftId: string): Promise<PosDraft>;
+  validateDraftInventory(draftId: string): Promise<PosInventoryValidation>;
   completeSale(
     draftId: string,
     customerIdentification: string | null,
@@ -902,6 +918,12 @@ export class PosEdgeClient implements PosClient {
     return this.request<PosDraft>(`/edge/v1/orders/${orderId}/recover`, {
       method: "POST",
     });
+  }
+
+  validateDraftInventory(draftId: string) {
+    return this.request<PosInventoryValidation>(
+      `/edge/v1/drafts/${draftId}/inventory-validation`,
+    );
   }
 
   approval(approvalRequestId: string) {

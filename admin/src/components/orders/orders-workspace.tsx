@@ -800,7 +800,7 @@ export function OrdersWorkspace({
                   <Check className="mb-1 h-4 w-4" />
                   Al facturar se aplicarán los impuestos vigentes y se generará una factura independiente.
                 </div>
-                {detail.status === "EmissionFailed" && onRetryEmission && (
+                {(detail.status === "EmissionFailed" || detail.status === "ProcessingEmission") && onRetryEmission && (
                   <Button
                     type="button"
                     className="w-full"
@@ -821,7 +821,7 @@ export function OrdersWorkspace({
                     }}
                   >
                     {working ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
-                    Reanudar emisión
+                    {detail.status === "ProcessingEmission" ? "Verificar y reanudar emisión" : "Reanudar emisión"}
                   </Button>
                 )}
               </aside>

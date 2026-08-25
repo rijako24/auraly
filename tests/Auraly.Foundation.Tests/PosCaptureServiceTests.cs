@@ -62,6 +62,50 @@ public sealed class PosCaptureServiceTests
     }
 
     [Fact]
+    public async Task Recovered_draft_reports_the_lines_that_no_longer_have_inventory()
+    {
+        await WithServiceAsync(async (service, _, scope, productId, customerId, availability) =>
+        {
+            availability.Response = new(
+                productId, scope.WarehouseId.Value, 1m, 10m, true, true, "Available");
+            var captured = await service.CaptureAsync(
+                "770123", scope, customerId, false, Guid.NewGuid());
+            availability.Response = new(
+                productId, scope.WarehouseId.Value, 1m, 0m, true, false, "Insufficient");
+
+            var validation = await service.ValidateDraftInventoryAsync(
+                captured.Draft!.DraftId, false, Guid.NewGuid());
+
+            Assert.True(validation.WasValidated);
+            Assert.False(validation.IsValid);
+            var issue = Assert.Single(validation.Issues);
+            Assert.Equal(captured.Draft.Lines.Single().LineId, issue.LineId);
+            Assert.Equal(1m, issue.RequestedQuantity);
+            Assert.Equal(0m, issue.AvailableQuantity);
+        });
+    }
+
+    [Fact]
+    public async Task Recovered_draft_is_blocked_when_inventory_cannot_be_revalidated()
+    {
+        await WithServiceAsync(async (service, _, scope, productId, customerId, availability) =>
+        {
+            availability.Response = new(
+                productId, scope.WarehouseId.Value, 1m, 10m, true, true, "Available");
+            var captured = await service.CaptureAsync(
+                "770123", scope, customerId, false, Guid.NewGuid());
+            availability.Failure = new HttpRequestException("offline");
+
+            var validation = await service.ValidateDraftInventoryAsync(
+                captured.Draft!.DraftId, false, Guid.NewGuid());
+
+            Assert.False(validation.WasValidated);
+            Assert.False(validation.IsValid);
+            Assert.Empty(validation.Issues);
+        });
+    }
+
+    [Fact]
     public async Task Blocking_warehouse_does_not_add_a_product_with_zero_inventory()
     {
         await WithServiceAsync(async (service, _, scope, productId, customerId, availability) =>

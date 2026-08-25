@@ -1,5 +1,6 @@
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Catalog;
+using Auraly.Contracts.Sales;
 
 namespace Auraly.Pos.Edge.Infrastructure;
 
@@ -32,6 +33,51 @@ public sealed class PosCaptureService(
     PosDraftStore drafts,
     IPosInventoryAvailabilityClient availability)
 {
+    public async Task<OnlineSalesInventoryValidation> ValidateDraftInventoryAsync(
+        DraftId draftId,
+        bool warehouseAllowsNegativeStock,
+        Guid operationId,
+        CancellationToken cancellationToken = default)
+    {
+        var draft = await drafts.GetAsync(draftId, cancellationToken)
+            ?? throw new KeyNotFoundException("The draft does not exist.");
+        if (warehouseAllowsNegativeStock)
+            return new OnlineSalesInventoryValidation(true, true, []);
+
+        var issues = new List<OnlineSalesInventoryIssue>();
+        foreach (var group in draft.Lines.GroupBy(line => line.ProductId))
+        {
+            InventoryAvailabilityResponse availabilityResult;
+            try
+            {
+                availabilityResult = await availability.CheckAvailabilityAsync(
+                    new InventoryAvailabilityRequest(
+                        group.Key.Value, draft.Scope.WarehouseId.Value,
+                        group.Sum(line => line.Quantity), operationId),
+                    cancellationToken);
+            }
+            catch (HttpRequestException)
+            {
+                return new OnlineSalesInventoryValidation(false, false, []);
+            }
+            catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return new OnlineSalesInventoryValidation(false, false, []);
+            }
+
+            var remaining = availabilityResult.AvailableQuantity;
+            foreach (var line in group.OrderBy(line => line.Position))
+            {
+                if (line.Quantity > remaining)
+                    issues.Add(new OnlineSalesInventoryIssue(
+                        line.LineId, line.ProductId.Value, line.ProductCode,
+                        line.Description, line.Quantity, Math.Max(0, remaining)));
+                remaining = Math.Max(0, remaining - line.Quantity);
+            }
+        }
+        return new OnlineSalesInventoryValidation(issues.Count == 0, true, issues);
+    }
+
     public async Task<PosCaptureResult> CaptureAsync(
         string scannedValue,
         PosDraftScope scope,

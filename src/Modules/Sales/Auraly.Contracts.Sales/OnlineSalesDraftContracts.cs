@@ -125,6 +125,19 @@ public sealed record OnlineSalesDraft(
     decimal PayableAmount,
     Guid? SourceOrderId = null);
 
+public sealed record OnlineSalesInventoryIssue(
+    Guid LineId,
+    Guid ProductId,
+    string ProductCode,
+    string Description,
+    decimal RequestedQuantity,
+    decimal AvailableQuantity);
+
+public sealed record OnlineSalesInventoryValidation(
+    bool IsValid,
+    bool WasValidated,
+    IReadOnlyList<OnlineSalesInventoryIssue> Issues);
+
 public sealed record GetOnlineSalesCustomerRequest(
     OnlineSalesDraftContext Context,
     Guid CustomerId);

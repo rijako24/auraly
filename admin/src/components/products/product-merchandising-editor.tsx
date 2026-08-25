@@ -307,7 +307,7 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
             <p className="font-semibold">Este producto está vinculado a {form.link.parentProductName}</p>
             <p className="mt-1 text-xs">Esta relacion permite encontrar todas las opciones de la familia. El inventario solo se bloquea cuando se comparte con el producto principal.</p>
           </div> : <>
-            {businessId && <div className="rounded-xl border bg-muted/20 p-3"><ProductPicker businessId={businessId} selectedProductIds={new Set(form.linkedProducts.map((item) => item.childProductId))} excludedProductIds={new Set([productId, ...form.linkedProducts.map((item) => item.childProductId)])} disabled={save.isPending} label="Agregar producto a la lista" resultsMode="inline" inputId={`linked-search-${productId}`} onSelect={(product) => setForm({ ...form, linkedProducts: [...form.linkedProducts, { childProductId: product.productId, childProductCode: product.productCode, childProductName: product.productName, sharesInventory: false, inventoryFactor: null, sharesPrice: false, priceFactor: null, allowsConversion: false, conversionFactor: null }] })} /></div>}
+            {businessId && <div className="rounded-xl border bg-muted/20 p-3"><ProductPicker businessId={businessId} selectedProductIds={new Set(form.linkedProducts.map((item) => item.childProductId))} excludedProductIds={new Set([productId, ...form.linkedProducts.map((item) => item.childProductId)])} disabled={save.isPending} requireZeroInventory label="Agregar producto a la lista" resultsMode="inline" inputId={`linked-search-${productId}`} onSelect={(product) => setForm({ ...form, linkedProducts: [...form.linkedProducts, { childProductId: product.productId, childProductCode: product.productCode, childProductName: product.productName, sharesInventory: false, inventoryFactor: null, sharesPrice: false, priceFactor: null, allowsConversion: false, conversionFactor: null }] })} /></div>}
 
             <div className="mt-3 space-y-3">
               {form.linkedProducts.some((item) => item.allowsConversion) && <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
@@ -338,8 +338,8 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
                     <Input className="mt-1" type="number" min="0.000001" step="0.001" disabled={!item.sharesInventory} value={item.inventoryFactor ?? ""} onChange={(event) => updateLinkedProduct(index, { inventoryFactor: Number(event.target.value) })} />
                   </div>
                   <div>
-                    <Toggle label="Compartir precio" detail="Al publicar el principal, este precio se actualizará por el factor." checked={item.sharesPrice} onChange={(checked) => updateLinkedProduct(index, { sharesPrice: checked, priceFactor: checked ? item.priceFactor ?? 1 : null })} />
-                    <Label>Multiplicador del precio principal</Label>
+                    <Toggle label="Vincular costo" detail="Deriva el costo del producto principal y prepara el precio conservando el margen propio." checked={item.sharesPrice} onChange={(checked) => updateLinkedProduct(index, { sharesPrice: checked, priceFactor: checked ? item.priceFactor ?? 1 : null })} />
+                    <Label>Multiplicador del costo principal</Label>
                     <Input className="mt-1" type="number" min="0.000001" step="0.001" disabled={!item.sharesPrice} value={item.priceFactor ?? ""} onChange={(event) => updateLinkedProduct(index, { priceFactor: Number(event.target.value) })} />
                   </div>
                   <div>

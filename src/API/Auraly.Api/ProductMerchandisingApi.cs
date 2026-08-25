@@ -14,7 +14,21 @@ public static class ProductMerchandisingApi
             return result is null ? Results.NotFound() : Results.Ok(result);
         });
         products.MapPut("/{productId:guid}/merchandising", async (HttpContext context, ProductMerchandisingService service, Guid productId, SaveProductMerchandisingRequest request, CancellationToken ct) =>
-            Results.Ok(await service.SaveAsync(context.User.ToCatalogUserIdentity(), productId, request, ct)));
+        {
+            try
+            {
+                return Results.Ok(await service.SaveAsync(
+                    context.User.ToCatalogUserIdentity(), productId, request, ct));
+            }
+            catch (CatalogValidationException exception)
+            {
+                return Results.Problem(exception.Message, statusCode: StatusCodes.Status400BadRequest);
+            }
+            catch (CatalogConflictException exception)
+            {
+                return Results.Problem(exception.Message, statusCode: StatusCodes.Status409Conflict);
+            }
+        });
 
         var brands = endpoints.MapGroup("/api/commerce/v1/product-brands").RequireAuthorization("catalog.user");
         brands.MapGet("/", async (HttpContext context, ProductMerchandisingService service, bool? includeInactive, CancellationToken ct) =>

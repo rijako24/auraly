@@ -312,7 +312,7 @@ public sealed class SqlPricingStore(
                 highestCursor = Math.Max(highestCursor, cursor);
                 published.Add(new(priceId, value.ProposalId, value.ProductId,
                     value.SalePrice, value.EffectiveMarginPercent, cursor, now));
-                var linked = await PropagateLinkedPricesAsync(connection, transaction, user, value, now, ct);
+                var linked = await PrepareLinkedCostsAsync(connection, transaction, user, value, ct);
                 published.AddRange(linked);
                 if (linked.Count > 0) highestCursor = Math.Max(highestCursor, linked.Max(item => item.CatalogCursor));
             }
@@ -331,12 +331,11 @@ public sealed class SqlPricingStore(
         }
     }
 
-    private async Task<IReadOnlyList<PublishedPrice>> PropagateLinkedPricesAsync(
+    private static async Task<IReadOnlyList<PublishedPrice>> PrepareLinkedCostsAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         PricingUserIdentity user,
         PreparedPricePublication source,
-        DateTimeOffset now,
         CancellationToken ct)
     {
         var links = new List<(Guid ProductId, decimal Factor)>();
@@ -355,71 +354,42 @@ public sealed class SqlPricingStore(
                 links.Add((reader.GetGuid(0), reader.GetDecimal(1)));
         }
 
-        var result = new List<PublishedPrice>(links.Count);
+        var result = new List<PublishedPrice>();
         foreach (var link in links)
         {
-            var priceId = ids.NewId();
-            var notificationId = ids.NewId();
-            var salePrice = decimal.Round(source.SalePrice * link.Factor, 4, MidpointRounding.AwayFromZero);
-            decimal? costBasis = source.CostBasisAmount is null
-                ? null
-                : decimal.Round(source.CostBasisAmount.Value * link.Factor, 6, MidpointRounding.AwayFromZero);
+            if (source.CostBasisAmount is null or <= 0)
+                throw new PricingConflictException(
+                    "El producto principal necesita un costo válido para actualizar sus productos vinculados.");
+            var costBasis = decimal.Round(
+                source.CostBasisAmount.Value * link.Factor, 6,
+                MidpointRounding.AwayFromZero);
             await using var command = new SqlCommand("""
-                DECLARE @PreviousSalePrice DECIMAL(19,4)=(
-                  SELECT TOP(1) Amount FROM dbo.ProductPrices WITH(UPDLOCK,HOLDLOCK)
-                  WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND IsActive=1
-                  ORDER BY ValidFrom DESC,ProductPriceId);
-
-                UPDATE dbo.ProductPrices SET IsActive=0,ValidUntil=@Now
-                WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND IsActive=1;
-
-                INSERT dbo.ProductPrices
-                  (ProductPriceId,BusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,
-                   CostBasisType,CostBasisAmount,TargetMarginPercent,EffectiveMarginPercent,
-                   InputMode,RoundingIncrement,RoundingMode,ValidFrom,IsActive,CreatedAt,
-                   PublishedByUserId,PublishedAt)
-                VALUES
-                  (@ProductPriceId,@BusinessId,@ProductId,@SalePrice,@SalePrice,N'COP',
-                   N'LinkedProduct',@CostBasis,@TargetMargin,@EffectiveMargin,@InputMode,
-                   @RoundingIncrement,@RoundingMode,@Now,1,@Now,@UserId,@Now);
-
-                DECLARE @Change TABLE(CatalogChangeId BIGINT NOT NULL);
-                INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
-                  OUTPUT inserted.CatalogChangeId INTO @Change
-                  VALUES(@BusinessId,@ProductId,N'Upsert',@Now);
-                INSERT dbo.PosSynchronizationOutboxMessages
-                  (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
-                SELECT @NotificationId,@BusinessId,N'Catalog',CatalogChangeId,@Now FROM @Change;
-
-                INSERT dbo.PricePublicationAudits
-                  (PricePublicationAuditId,BusinessId,ProductId,ProductPriceId,
-                   ProposalId,PublicationOrigin,PreviousSalePrice,PublishedSalePrice,
-                   CostBasisAmount,EffectiveMarginPercent,InputMode,PublishedByUserId,PublishedAt)
-                VALUES
-                  (@AuditId,@BusinessId,@ProductId,@ProductPriceId,NULL,@PublicationOrigin,
-                   @PreviousSalePrice,@SalePrice,@CostBasis,@EffectiveMargin,@InputMode,@UserId,@Now);
-
-                SELECT CatalogChangeId FROM @Change;
+                DECLARE @PriceId UNIQUEIDENTIFIER,@Margin DECIMAL(9,6),@TaxRate DECIMAL(9,6);
+                SELECT TOP(1) @PriceId=price.ProductPriceId,
+                  @Margin=COALESCE(price.TargetMarginPercent,price.EffectiveMarginPercent),
+                  @TaxRate=COALESCE(tax.Rate,0)
+                FROM dbo.Products product
+                JOIN dbo.ProductPrices price WITH(UPDLOCK,HOLDLOCK)
+                  ON price.BusinessId=product.BusinessId AND price.ProductId=product.ProductId AND price.IsActive=1
+                LEFT JOIN dbo.TaxProfiles tax
+                  ON tax.BusinessId=product.BusinessId AND tax.TaxProfileId=product.TaxProfileId
+                WHERE product.BusinessId=@BusinessId AND product.ProductId=@ProductId
+                ORDER BY price.ValidFrom DESC,price.ProductPriceId;
+                IF @PriceId IS NULL OR @Margin IS NULL OR @Margin<0 OR @Margin>=100
+                  THROW 51600,'El producto vinculado necesita un margen válido para preparar su precio.',1;
+                DECLARE @PreparedAmount DECIMAL(19,4)=ROUND(
+                  (@CostBasis/(1-(@Margin/100)))*(1+(@TaxRate/100)),4);
+                UPDATE dbo.ProductPrices
+                SET CostBasisType=N'LinkedProduct',CostBasisAmount=@CostBasis,
+                    TargetMarginPercent=@Margin,PreparedAmount=@PreparedAmount
+                WHERE ProductPriceId=@PriceId AND BusinessId=@BusinessId;
                 """, connection, transaction);
             AddScope(command, user);
-            command.Parameters.AddWithValue("@ProductPriceId", priceId);
-            command.Parameters.AddWithValue("@AuditId", ids.NewId());
-            command.Parameters.AddWithValue("@NotificationId", notificationId);
             command.Parameters.AddWithValue("@ProductId", link.ProductId);
-            command.Parameters.AddWithValue("@SalePrice", salePrice);
-            command.Parameters.Add("@CostBasis", SqlDbType.Decimal).Value = (object?)costBasis ?? DBNull.Value;
+            command.Parameters.Add("@CostBasis", SqlDbType.Decimal).Value = costBasis;
             command.Parameters["@CostBasis"].Precision = 19;
             command.Parameters["@CostBasis"].Scale = 6;
-            command.Parameters.AddWithValue("@TargetMargin", (object?)source.TargetMarginPercent ?? DBNull.Value);
-            command.Parameters.AddWithValue("@EffectiveMargin", (object?)source.EffectiveMarginPercent ?? DBNull.Value);
-            command.Parameters.AddWithValue("@InputMode", source.InputMode);
-            command.Parameters.AddWithValue("@RoundingIncrement", source.RoundingIncrement);
-            command.Parameters.AddWithValue("@RoundingMode", source.RoundingMode);
-            command.Parameters.AddWithValue("@PublicationOrigin", "LinkedProduct");
-            command.Parameters.AddWithValue("@Now", now);
-            var cursor = Convert.ToInt64(await command.ExecuteScalarAsync(ct));
-            result.Add(new(priceId, source.ProposalId, link.ProductId, salePrice,
-                source.EffectiveMarginPercent, cursor, now));
+            await command.ExecuteNonQueryAsync(ct);
         }
         return result;
     }
@@ -596,11 +566,6 @@ public sealed class SqlPricingStore(
                 AND pp.RowVersion=@RowVersion AND pp.IsActive=1
                 AND ABS(pp.PreparedAmount-pp.Amount)>=0.0001)
               THROW 51600,'The prepared product price is outside scope, changed or already published.',1;
-            IF EXISTS(
-              SELECT 1 FROM dbo.ProductLinks WITH(UPDLOCK,HOLDLOCK)
-              WHERE BusinessId=@BusinessId AND ChildProductId=@ProductId
-                AND SharesPrice=1 AND IsActive=1)
-              THROW 51600,'Publish the root product; linked prices are derived only during publication.',1;
             """, connection, transaction);
         AddScope(command, user);
         command.Parameters.AddWithValue("@ProposalId", value.ProposalId);
