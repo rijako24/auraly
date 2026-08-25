@@ -39,6 +39,16 @@ export function recalculateProductPricing(
   };
 }
 
+export function recalculateProductPricingForSalesTaxChange(
+  salesTaxRate: number,
+  current: ProductPricingValues,
+): ProductPricingValues {
+  return recalculateProductPricing("margin", current.margin, {
+    ...current,
+    salesTaxRate,
+  });
+}
+
 export function marginFromCostAndSale(cost: number, salePrice: number): number {
   return marginFromCostAndGrossSale(cost, salePrice, 0);
 }

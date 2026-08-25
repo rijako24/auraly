@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useEffect, useImperativeHandle, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -55,7 +55,7 @@ export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: 
     },
     onError: () => toast.error("No fue posible actualizar los IVA del producto."),
   });
-  const validate = () => {
+  const validate = useCallback(() => {
       if (!salesTaxProfileId || !purchaseTaxProfileId) {
         const message = !salesTaxProfileId && !purchaseTaxProfileId ? "Selecciona el IVA de venta y el IVA de compra." : !salesTaxProfileId ? "Selecciona el IVA de venta." : "Selecciona el IVA de compra.";
         setValidationError(message);
@@ -73,17 +73,19 @@ export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: 
         throw new Error(message);
       }
       setValidationError(undefined);
-  };
+  }, [purchaseTaxProfileId, purchaseTaxTreatment, salesTaxProfileId, taxes.data]);
   useImperativeHandle(ref, () => ({
     validate,
     save: async () => {
       validate();
       await save.mutateAsync();
     },
-  }), [purchaseTaxProfileId, purchaseTaxTreatment, salesTaxProfileId, save, taxes.data]);
+  }), [save, validate]);
   const salesTax = taxes.data?.find((tax) => tax.taxProfileId === salesTaxProfileId);
   const purchaseTax = taxes.data?.find((tax) => tax.taxProfileId === purchaseTaxProfileId);
-  useEffect(() => { onSalesTaxRateChange?.(salesTax?.rate ?? 0); }, [onSalesTaxRateChange, salesTax?.rate]);
+  useEffect(() => {
+    if (salesTax) onSalesTaxRateChange?.(salesTax.rate);
+  }, [onSalesTaxRateChange, salesTax]);
 return <section className={`space-y-4 ${embedded ? "" : "rounded-xl border bg-muted/15 p-4"}`}>
     <div>
       <h3 className="text-sm font-semibold">IVA de compra y venta</h3>

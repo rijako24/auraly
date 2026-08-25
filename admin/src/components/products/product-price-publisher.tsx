@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { ArrowRight, CheckCircle2, CircleDollarSign, Send } from "lucide-react";
 import { toast } from "sonner";
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input";
@@ -12,6 +12,7 @@ import { formatCurrency } from "@/lib/utils";
 import {
   marginFromCostAndGrossSale,
   recalculateProductPricing,
+  recalculateProductPricingForSalesTaxChange,
   type ProductPricingField,
 } from "@/lib/product-pricing-calculator";
 import type { PreparedProductPrice, PricingRoundingMode } from "@/services/api/pricing";
@@ -35,6 +36,7 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
   const [lastEdited, setLastEdited] = useState<ProductPricingField>("salePrice");
   const [dirty, setDirty] = useState(false);
   const [validationAttempted, setValidationAttempted] = useState(false);
+  const previousSalesTaxRate = useRef<number | null>(null);
 
   useEffect(() => {
     if (!context.data) return;
@@ -53,10 +55,38 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
     setIncrement(editableNumber(context.data.roundingIncrement));
     setRoundingMode(context.data.roundingMode);
     setLastEdited(loadedCost === null ? "salePrice" : "margin");
+    previousSalesTaxRate.current = context.data.salesTaxRate;
     setDirty(false);
   }, [context.data]);
 
   const effectiveSalesTaxRate = salesTaxRateOverride ?? context.data?.salesTaxRate ?? 0;
+
+  useEffect(() => {
+    if (!context.data || previousSalesTaxRate.current === null) return;
+    if (previousSalesTaxRate.current === effectiveSalesTaxRate) return;
+    const priorSalesTaxRate = previousSalesTaxRate.current;
+    previousSalesTaxRate.current = effectiveSalesTaxRate;
+    const currentCost = decimalOrNull(cost);
+    const currentMargin = decimalOrNull(margin);
+    const currentSalePrice = decimalOrNull(salePrice);
+    if (currentCost === null || currentMargin === null || currentSalePrice === null) return;
+    try {
+      const calculated = recalculateProductPricingForSalesTaxChange(
+        effectiveSalesTaxRate,
+        {
+          cost: currentCost,
+          margin: currentMargin,
+          salePrice: currentSalePrice,
+          salesTaxRate: priorSalesTaxRate,
+        },
+      );
+      setSalePrice(editableNumber(calculated.salePrice));
+      setLastEdited("margin");
+      setDirty(true);
+    } catch {
+      // Existing field validation explains invalid legacy pricing to the user.
+    }
+  }, [context.data, cost, effectiveSalesTaxRate, margin, salePrice]);
 
   function change(field: ProductPricingField, raw: string) {
     setLastEdited(field);

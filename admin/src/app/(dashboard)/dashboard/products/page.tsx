@@ -114,17 +114,20 @@ export default function ProductsPage() {
   const openEditor = (product: Product) => {
     setSelectedProduct(product);
     setForm(productToForm(product));
+    setEditingSalesTaxRate(undefined);
     setModalMode("edit");
   };
 
   const closeModal = () => {
     setSelectedProduct(null);
+    setEditingSalesTaxRate(undefined);
     setModalMode("details");
   };
 
   const beginEditing = () => {
     if (!selectedProduct) return;
     setForm(productToForm(selectedProduct));
+    setEditingSalesTaxRate(undefined);
     setModalMode("edit");
   };
 

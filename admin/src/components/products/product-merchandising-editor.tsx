@@ -310,40 +310,20 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
             {businessId && <div className="rounded-xl border bg-muted/20 p-3"><ProductPicker businessId={businessId} selectedProductIds={new Set(form.linkedProducts.map((item) => item.childProductId))} excludedProductIds={new Set([productId, ...form.linkedProducts.map((item) => item.childProductId)])} disabled={save.isPending} requireZeroInventory label="Agregar producto a la lista" resultsMode="inline" inputId={`linked-search-${productId}`} onSelect={(product) => setForm({ ...form, linkedProducts: [...form.linkedProducts, { childProductId: product.productId, childProductCode: product.productCode, childProductName: product.productName, sharesInventory: false, inventoryFactor: null, sharesPrice: false, priceFactor: null, allowsConversion: false, conversionFactor: null }] })} /></div>}
 
             <div className="mt-3 space-y-3">
-              {form.linkedProducts.some((item) => item.allowsConversion) && <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
-                <Label htmlFor={`conversion-loss-${productId}`}>Merma máxima permitida en conversiones (%)</Label>
-                <Input
-                  id={`conversion-loss-${productId}`}
-                  className="mt-2 max-w-52 bg-background"
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="0.000001"
-                  value={form.conversionMaximumLossPercent ?? ""}
-                  onChange={(event) => setForm({ ...form, conversionMaximumLossPercent: event.target.value === "" ? null : Number(event.target.value) })}
-                  placeholder="Ej. 5"
-                />
-                <p className="mt-2 text-xs text-muted-foreground">Se aplica a toda la familia. Una salida nunca puede superar las unidades equivalentes consumidas.</p>
-              </div>}
               {form.linkedProducts.length === 0 && <div className="rounded-xl border border-dashed p-5 text-center text-sm text-muted-foreground">Todavia no has agregado opciones a esta familia.</div>}
               {form.linkedProducts.map((item, index) => <article key={item.childProductId} className="rounded-xl border p-4">
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <div><p className="font-semibold">{item.childProductName}</p><p className="text-xs text-muted-foreground">{item.childProductCode || "Sin código"}</p></div>
                   <Button type="button" size="icon" variant="ghost" aria-label={`Quitar ${item.childProductName}`} onClick={() => setForm({ ...form, linkedProducts: form.linkedProducts.filter((_, current) => current !== index) })}><Trash2 className="h-4 w-4" /></Button>
                 </div>
-                <div className="grid gap-3 md:grid-cols-3">
-                  <div>
-                    <Toggle label="Compartir inventario" detail="Cada venta descontará del producto principal." checked={item.sharesInventory} onChange={(checked) => updateLinkedProduct(index, { sharesInventory: checked, inventoryFactor: checked ? item.inventoryFactor ?? 1 : null, allowsConversion: checked ? false : item.allowsConversion, conversionFactor: checked ? null : item.conversionFactor })} />
-                    <Label>Unidades del principal por cada unidad vendida</Label>
-                    <Input className="mt-1" type="number" min="0.000001" step="0.001" disabled={!item.sharesInventory} value={item.inventoryFactor ?? ""} onChange={(event) => updateLinkedProduct(index, { inventoryFactor: Number(event.target.value) })} />
-                  </div>
-                  <div>
-                    <Toggle label="Vincular costo" detail="Deriva el costo del producto principal y prepara el precio conservando el margen propio." checked={item.sharesPrice} onChange={(checked) => updateLinkedProduct(index, { sharesPrice: checked, priceFactor: checked ? item.priceFactor ?? 1 : null })} />
-                    <Label>Multiplicador del costo principal</Label>
-                    <Input className="mt-1" type="number" min="0.000001" step="0.001" disabled={!item.sharesPrice} value={item.priceFactor ?? ""} onChange={(event) => updateLinkedProduct(index, { priceFactor: Number(event.target.value) })} />
-                  </div>
-                  <div>
-                    <Toggle label="Permitir conversión" detail="Habilita conversiones en ambos sentidos con cualquier integrante habilitado de la familia." checked={item.allowsConversion} onChange={(checked) => {
+                <div className="grid items-stretch gap-3 md:grid-cols-3">
+                  <LinkedOptionPanel label="Compartir inventario" detail="Cada venta descontará del producto principal." checked={item.sharesInventory} onChange={(checked) => updateLinkedProduct(index, { sharesInventory: checked, inventoryFactor: checked ? item.inventoryFactor ?? 1 : null, allowsConversion: checked ? false : item.allowsConversion, conversionFactor: checked ? null : item.conversionFactor })}>
+                    <LinkedNumberField label="Unidades del principal por cada unidad vendida" disabled={!item.sharesInventory} value={item.inventoryFactor} min="0.000001" step="0.001" onChange={(value) => updateLinkedProduct(index, { inventoryFactor: value })} />
+                  </LinkedOptionPanel>
+                  <LinkedOptionPanel label="Vincular costo" detail="Deriva el costo del producto principal y prepara el precio conservando el margen propio." checked={item.sharesPrice} onChange={(checked) => updateLinkedProduct(index, { sharesPrice: checked, priceFactor: checked ? item.priceFactor ?? 1 : null })}>
+                    <LinkedNumberField label="Multiplicador del costo principal" disabled={!item.sharesPrice} value={item.priceFactor} min="0.000001" step="0.001" onChange={(value) => updateLinkedProduct(index, { priceFactor: value })} />
+                  </LinkedOptionPanel>
+                  <LinkedOptionPanel label="Permitir conversión" detail="Habilita conversiones en ambos sentidos con cualquier integrante habilitado de la familia." checked={item.allowsConversion} onChange={(checked) => {
                       setForm((current) => current && ({
                         ...current,
                         manageInventory: checked ? true : current.manageInventory,
@@ -356,10 +336,12 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
                           inventoryFactor: checked ? null : linked.inventoryFactor,
                         } : linked),
                       }));
-                    }} />
-                    <Label>Unidades equivalentes al producto principal</Label>
-                    <Input className="mt-1" type="number" min="0.000001" step="0.000001" disabled={!item.allowsConversion} value={item.conversionFactor ?? ""} onChange={(event) => updateLinkedProduct(index, { conversionFactor: Number(event.target.value) })} />
-                  </div>
+                    }}>
+                    <div className="grid grid-cols-2 gap-3">
+                      <LinkedNumberField label="Unidades equivalentes al producto principal" disabled={!item.allowsConversion} value={item.conversionFactor} min="0.000001" step="0.000001" onChange={(value) => updateLinkedProduct(index, { conversionFactor: value })} />
+                      <LinkedNumberField label="Merma máxima permitida (%)" disabled={!item.allowsConversion} value={form.conversionMaximumLossPercent} min="0" max="100" step="0.000001" placeholder="Ej. 5" onChange={(value) => setForm({ ...form, conversionMaximumLossPercent: value })} />
+                    </div>
+                  </LinkedOptionPanel>
                 </div>
               </article>)}
             </div>
@@ -403,6 +385,38 @@ function Toggle({ label, detail, checked, disabled = false, invalid = false, onC
   return <div className={`mb-2 flex items-center justify-between gap-3 rounded-lg border p-3 ${disabled ? "opacity-60" : ""} ${invalid ? "border-destructive/60 bg-destructive/5" : ""}`}>
     <div><p className={`text-sm font-medium ${invalid ? "text-destructive" : ""}`}>{label}</p><p className={`text-xs ${invalid ? "text-destructive" : "text-muted-foreground"}`}>{detail}</p></div>
     <Switch checked={checked} disabled={disabled} onCheckedChange={onChange} />
+  </div>;
+}
+
+function LinkedOptionPanel({ label, detail, checked, onChange, children }: {
+  label: string;
+  detail: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  children: React.ReactNode;
+}) {
+  return <div className="flex h-full min-w-0 flex-col rounded-xl border bg-background p-3">
+    <div className="flex min-h-16 items-start justify-between gap-3">
+      <div><p className="text-sm font-medium">{label}</p><p className="text-xs text-muted-foreground">{detail}</p></div>
+      <Switch checked={checked} onCheckedChange={onChange} />
+    </div>
+    <div className="mt-auto border-t pt-3">{children}</div>
+  </div>;
+}
+
+function LinkedNumberField({ label, disabled, value, min, max, step, placeholder, onChange }: {
+  label: string;
+  disabled: boolean;
+  value: number | null;
+  min: string;
+  max?: string;
+  step: string;
+  placeholder?: string;
+  onChange: (value: number | null) => void;
+}) {
+  return <div className="min-w-0 space-y-1.5">
+    <Label className="flex min-h-10 items-end text-xs leading-tight">{label}</Label>
+    <Input type="number" min={min} max={max} step={step} disabled={disabled} value={value ?? ""} placeholder={placeholder} onChange={(event) => onChange(event.target.value === "" ? null : Number(event.target.value))} />
   </div>;
 }
 

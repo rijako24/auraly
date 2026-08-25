@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { marginFromCostAndSale, recalculateProductPricing } from "./product-pricing-calculator";
+import {
+  marginFromCostAndSale,
+  recalculateProductPricing,
+  recalculateProductPricingForSalesTaxChange,
+} from "./product-pricing-calculator";
 
 describe("product pricing calculator", () => {
   it("keeps margin and recalculates sale price when cost changes", () => {
@@ -28,6 +32,18 @@ describe("product pricing calculator", () => {
     assert.deepEqual(
       recalculateProductPricing("margin", 20, {
         cost: 80, margin: 10, salePrice: 100, salesTaxRate: 19,
+      }),
+      { cost: 80, margin: 20, salePrice: 119, salesTaxRate: 19 },
+    );
+  });
+
+  it("recalculates the VAT-included sale price when sales VAT changes and preserves margin", () => {
+    assert.deepEqual(
+      recalculateProductPricingForSalesTaxChange(19, {
+        cost: 80,
+        margin: 20,
+        salePrice: 100,
+        salesTaxRate: 0,
       }),
       { cost: 80, margin: 20, salePrice: 119, salesTaxRate: 19 },
     );
