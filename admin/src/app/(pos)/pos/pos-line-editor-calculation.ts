@@ -21,6 +21,13 @@ export function salePriceForMargin(
   return round(netUnit * (1 + taxRate / 100) / (1 - discountPercent / 100), 6);
 }
 
+export function nextFocusableIndex(currentIndex: number, length: number, backwards: boolean): number {
+  if (length <= 0) return -1;
+  if (currentIndex < 0) return backwards ? length - 1 : 0;
+  const direction = backwards ? -1 : 1;
+  return (currentIndex + direction + length) % length;
+}
+
 function round(value: number, decimals: number): number {
   const factor = 10 ** decimals;
   return Math.round((value + Number.EPSILON) * factor) / factor;

@@ -5,7 +5,7 @@ import { FormEvent, KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, use
 
 import type { PosDraftLine, PosDraftLineUpdate } from "@/services/pos/pos-edge-client";
 import { formatMoneyValue, parseMoneyDraft } from "./pos-money-input";
-import { lineDiscountPercent, lineMarginPercent, salePriceForMargin } from "./pos-line-editor-calculation";
+import { lineDiscountPercent, lineMarginPercent, nextFocusableIndex, salePriceForMargin } from "./pos-line-editor-calculation";
 
 type EditableLine = {
   lineId: string;
@@ -114,7 +114,22 @@ export function PosLineEditorDialog({
   }
 
   return <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-950/70 sm:items-center sm:p-4">
-    <form aria-keyshortcuts="Enter Escape" onSubmit={submit} onKeyDown={(event)=>{if(event.key==="Enter"){event.preventDefault();event.currentTarget.requestSubmit();}}} className="flex max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-t-3xl bg-slate-50 shadow-2xl sm:rounded-3xl">
+    <form aria-keyshortcuts="Enter Escape" onSubmit={submit} onKeyDown={(event)=>{
+      if (event.key === "Tab") {
+        event.preventDefault();
+        const controls = Array.from(event.currentTarget.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input:not(:disabled), button:not(:disabled)"));
+        const current = controls.indexOf(document.activeElement as HTMLInputElement | HTMLButtonElement);
+        const next = nextFocusableIndex(current, controls.length, event.shiftKey);
+        const target = controls[next];
+        target?.focus({ preventScroll: true });
+        if (target instanceof HTMLInputElement) target.select();
+        return;
+      }
+      if(event.key==="Enter"){
+        event.preventDefault();
+        event.currentTarget.requestSubmit();
+      }
+    }} className="flex max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-t-3xl bg-slate-50 shadow-2xl sm:rounded-3xl">
       <header className="flex shrink-0 items-start justify-between gap-4 bg-gradient-to-r from-slate-950 to-teal-950 px-5 py-5 text-white sm:px-6">
         <div className="flex items-start gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white/10 text-teal-200"><PencilLine className="h-5 w-5"/></span><div><p className="text-xs font-bold uppercase tracking-[.18em] text-teal-300">Cambio puntual</p><h2 className="text-xl font-bold">Editar líneas de esta venta</h2><p className="mt-1 text-sm text-slate-300">Nombre, costo para margen, descuento y precio. El producto maestro no se modifica.</p></div></div>
         <span className="hidden items-center gap-2 rounded-full border border-teal-300/30 bg-teal-300/10 px-3 py-1.5 text-xs font-semibold text-teal-100 sm:flex"><ShieldCheck className="h-4 w-4"/>Solo este documento</span>
