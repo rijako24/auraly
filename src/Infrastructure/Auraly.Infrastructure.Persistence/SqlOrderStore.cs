@@ -479,7 +479,12 @@ public sealed class SqlOrderStore(
                 lastCompletedSequence = reader.GetInt64(5);
             }
 
-            if (!string.Equals(jobStatus, "DeadLettered", StringComparison.Ordinal))
+            var isDeadLettered = string.Equals(
+                jobStatus, "DeadLettered", StringComparison.Ordinal);
+            var isPendingBehindCursor = string.Equals(
+                    jobStatus, "Pending", StringComparison.Ordinal) &&
+                processingSequence <= lastCompletedSequence;
+            if (!isDeadLettered && !isPendingBehindCursor)
                 throw new OrderConflictException(
                     "La emisión no está detenida y no requiere recuperación manual.");
 
@@ -512,7 +517,9 @@ public sealed class SqlOrderStore(
                 SET ProcessingSequence=@Sequence,Status=N'Pending',AttemptCount=0,
                     AvailableAt=@Now,StartedAt=NULL,CompletedAt=NULL,
                     LeaseOwner=NULL,LeaseExpiresAt=NULL,LastError=NULL
-                WHERE JobId=@JobId AND BusinessId=@BusinessId AND Status=N'DeadLettered';
+                WHERE JobId=@JobId AND BusinessId=@BusinessId
+                  AND (Status=N'DeadLettered' OR
+                       (Status=N'Pending' AND ProcessingSequence<=@LastCompletedSequence));
 
                 UPDATE dbo.SalesDocuments
                 SET ProcessingStatus=N'Received'
@@ -521,7 +528,8 @@ public sealed class SqlOrderStore(
                 """, connection, transaction))
             {
                 update.Parameters.AddRange([
-                    P("@Sequence", targetSequence), P("@Now", now), P("@JobId", jobId),
+                    P("@Sequence", targetSequence), P("@LastCompletedSequence", lastCompletedSequence),
+                    P("@Now", now), P("@JobId", jobId),
                     P("@DocumentId", documentId), P("@BusinessId", actor.BusinessId)
                 ]);
                 if (await update.ExecuteNonQueryAsync(cancellationToken) != 2)

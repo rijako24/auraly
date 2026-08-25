@@ -160,7 +160,8 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
                 await using var fail = connection.CreateCommand();
                 fail.CommandText = """
                     UPDATE dbo.DocumentProcessingJobs
-                    SET Status=N'DeadLettered',AttemptCount=5,LastError=N'forced regression failure'
+                    SET Status=CASE WHEN @CursorAlreadyAdvanced=1 THEN N'Pending' ELSE N'DeadLettered' END,
+                        AttemptCount=5,LastError=N'forced regression failure'
                     WHERE DocumentId=@DocumentId;
                     IF @CursorAlreadyAdvanced=1
                       UPDATE dbo.BusinessProcessingCursors
