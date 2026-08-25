@@ -6,6 +6,7 @@ const AUTHENTICATION_PATHS = [
 ];
 
 export const SESSION_EXPIRED_EVENT = "auraly:session-expired";
+export type SessionRefreshResult = "refreshed" | "expired" | "unavailable";
 
 export function isAuthenticationRequest(url: string): boolean {
   return AUTHENTICATION_PATHS.some((path) => url.includes(path));
@@ -18,16 +19,18 @@ export function shouldRefreshSession(status: number, url: string): boolean {
 export async function retryAuthenticatedRequest<T extends { status: number }>(
   url: string,
   send: () => Promise<T>,
-  refresh: () => Promise<boolean>,
+  refresh: () => Promise<SessionRefreshResult>,
   expire: () => Promise<void>,
 ): Promise<T> {
   const response = await send();
   if (!shouldRefreshSession(response.status, url)) return response;
 
-  if (!await refresh()) {
+  const refreshResult = await refresh();
+  if (refreshResult === "expired") {
     await expire();
     return response;
   }
+  if (refreshResult === "unavailable") return response;
 
   const retried = await send();
   if (retried.status === 401) await expire();

@@ -19,6 +19,7 @@ import type { PartySiteDetail, UserRoleDetail } from "@/services/api/parties";
 import { taxationApi } from "@/services/api/taxation";
 import { receivablesApi } from "@/services/api/receivables";
 import { posApprovalClient } from "@/services/pos/pos-approval-client";
+import { formatDecimalInput, parseDecimalInput } from "@/lib/formatted-decimal-input";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import type { WorkingHour } from "@/types/entities";
@@ -42,13 +43,13 @@ export function PartyCustomerCreditRolePanel({ customerId, editing, registerSave
   useEffect(() => {
     if (!profile.data) return;
     setEnabled(profile.data.isCreditEnabled);
-    setLimit(profile.data.creditLimit == null ? "" : String(profile.data.creditLimit));
+    setLimit(profile.data.creditLimit == null ? "" : formatDecimalInput(String(profile.data.creditLimit), 0));
     setDueDays(String(profile.data.defaultDueDays));
   }, [profile.data]);
   const save = async () => {
     if (!businessId || !canManage) return;
     const days = Number(dueDays);
-    const parsedLimit = limit.trim() ? Number(limit) : null;
+    const parsedLimit = limit.trim() ? parseDecimalInput(limit) : null;
     if (!Number.isInteger(days) || days < 0 || days > 3650 || (parsedLimit != null && (!Number.isFinite(parsedLimit) || parsedLimit < 0)))
       throw new Error("Revisa el cupo y el plazo de crédito.");
     await receivablesApi.updateCreditProfile(customerId, { businessId, creditLimit: parsedLimit, defaultDueDays: days, isCreditEnabled: enabled });
@@ -63,15 +64,24 @@ export function PartyCustomerCreditRolePanel({ customerId, editing, registerSave
     <PanelHeader icon={CircleDollarSign} title="Crédito y cartera" description="Define si este cliente puede dejar saldo pendiente al facturar.">
       <div className="flex items-center gap-3"><span className="text-sm">Permite ventas a crédito</span><Switch checked={enabled} onCheckedChange={setEnabled} disabled={!editing || !canManage}/></div>
     </PanelHeader>
-    <section className="grid gap-4 rounded-2xl border p-5 md:grid-cols-2">
-      <div className="space-y-2"><Label>Cupo de crédito</Label>{editing&&canManage?<Input type="number" min="0" step="1" value={limit} onChange={(event)=>setLimit(event.target.value)} placeholder="Sin límite"/>:<p className="rounded-xl border bg-muted/20 p-3 font-medium">{profile.data.creditLimit == null ? "Sin límite configurado" : creditMoney.format(profile.data.creditLimit)}</p>}<p className="text-xs text-muted-foreground">Vacío significa sin límite monetario; la habilitación sigue siendo obligatoria.</p></div>
-      <div className="space-y-2"><Label>Plazo predeterminado</Label>{editing&&canManage?<Input type="number" min="0" max="3650" step="1" value={dueDays} onChange={(event)=>setDueDays(event.target.value)}/>:<p className="rounded-xl border bg-muted/20 p-3 font-medium">{profile.data.defaultDueDays} días</p>}<p className="text-xs text-muted-foreground">Se usa para calcular el vencimiento de la cuenta por cobrar.</p></div>
+    <section className="grid gap-4 rounded-2xl border bg-muted/10 p-5 md:grid-cols-2">
+      {editing&&canManage?<CustomerCreditTermsFields enabled={enabled} limit={limit} dueDays={dueDays} onLimitChange={setLimit} onDueDaysChange={setDueDays}/>:<><CreditReadValue label="Cupo de crédito" value={profile.data.creditLimit == null ? "Sin límite configurado" : creditMoney.format(profile.data.creditLimit)} help="Límite máximo de saldo pendiente."/><CreditReadValue label="Vencimiento predeterminado (días)" value={`${profile.data.defaultDueDays} días`} help="Se suma a la fecha de la venta para calcular el vencimiento."/></>}
       <div><Label>Saldo pendiente</Label><p className="mt-2 text-lg font-semibold">{creditMoney.format(profile.data.outstandingAmount)}</p></div>
       <div><Label>Cupo disponible</Label><p className="mt-2 text-lg font-semibold">{profile.data.availableCredit == null ? "Sin límite" : creditMoney.format(profile.data.availableCredit)}</p></div>
       {!canManage&&editing&&<p className="md:col-span-2 text-sm text-amber-700">Puedes editar la ficha, pero no las condiciones de cartera porque falta el permiso correspondiente.</p>}
     </section>
   </div>;
 }
+
+export function CustomerCreditTermsFields({ enabled, limit, dueDays, onLimitChange, onDueDaysChange }: { enabled: boolean; limit: string; dueDays: string; onLimitChange: (value: string) => void; onDueDaysChange: (value: string) => void }) {
+  return <>
+    <div className="space-y-2"><Label>Cupo de crédito (COP)</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 font-semibold text-muted-foreground">$</span><Input className="pl-8 text-right tabular-nums" inputMode="numeric" value={limit} disabled={!enabled} onChange={(event)=>onLimitChange(formatDecimalInput(event.target.value,0))} placeholder="Sin límite"/></div><p className="text-xs text-muted-foreground">Vacío significa que no hay un límite monetario.</p></div>
+    <div className="space-y-2"><Label>Vencimiento predeterminado (días)</Label><div className="relative"><Input className="pr-14 text-right tabular-nums" inputMode="numeric" value={dueDays} disabled={!enabled} onChange={(event)=>onDueDaysChange(event.target.value.replace(/\D/g,"").slice(0,4))}/><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">días</span></div><p className="text-xs text-muted-foreground">Se suma a la fecha de venta para calcular cuándo vence la cuenta por cobrar.</p></div>
+    {!enabled&&<p className="rounded-xl border border-dashed bg-background p-3 text-sm text-muted-foreground md:col-span-2">Activa “Permite ventas a crédito” para configurar el cupo y el vencimiento.</p>}
+  </>;
+}
+
+function CreditReadValue({label,value,help}:{label:string;value:string;help:string}) { return <div className="space-y-2"><Label>{label}</Label><p className="rounded-xl border bg-background p-3 font-medium">{value}</p><p className="text-xs text-muted-foreground">{help}</p></div>; }
 
 export function PartySupplierTaxRolePanel({ supplierId, editing, primarySite, registerSave }: { supplierId: string; editing: boolean; primarySite: PartySiteDetail | null; registerSave: RegisterSave }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);

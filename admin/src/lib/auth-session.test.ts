@@ -34,7 +34,7 @@ describe("auth session decisions", () => {
     const response = await retryAuthenticatedRequest(
       "/api/commerce/v1/pos/drafts/products/search",
       async () => ({ status: statuses[sends++] }),
-      async () => { refreshes += 1; return true; },
+      async () => { refreshes += 1; return "refreshed"; },
       async () => { expirations += 1; },
     );
 
@@ -49,11 +49,24 @@ describe("auth session decisions", () => {
     const response = await retryAuthenticatedRequest(
       "/api/commerce/v1/orders",
       async () => ({ status: 401 }),
-      async () => false,
+      async () => "expired",
       async () => { expirations += 1; },
     );
 
     assert.equal(response.status, 401);
     assert.equal(expirations, 1);
+  });
+
+  it("preserves the signed-in shell when renewal is temporarily unavailable", async () => {
+    let expirations = 0;
+    const response = await retryAuthenticatedRequest(
+      "/api/commerce/v1/parties/countries",
+      async () => ({ status: 401 }),
+      async () => "unavailable",
+      async () => { expirations += 1; },
+    );
+
+    assert.equal(response.status, 401);
+    assert.equal(expirations, 0);
   });
 });

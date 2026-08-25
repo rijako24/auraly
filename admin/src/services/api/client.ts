@@ -6,13 +6,14 @@ import {
   isInstalledApplicationDisplay,
   retryAuthenticatedRequest,
   SESSION_EXPIRED_EVENT,
+  type SessionRefreshResult,
 } from "@/lib/auth-session";
 
 const API_BASE = "/api";
 const SELECTED_TENANT_STORAGE_KEY = "selected_tenant_id";
 const SELECTED_BUSINESS_STORAGE_KEY = "selected_business_id";
 
-let activeRefresh: Promise<boolean> | null = null;
+let activeRefresh: Promise<SessionRefreshResult> | null = null;
 
 let applicationRuntime: Promise<boolean> | null = null;
 const REQUEST_TIMEOUT_MS = 45_000;
@@ -96,16 +97,17 @@ async function expireWebSession(): Promise<void> {
   window.location.replace(destination);
 }
 
-async function refreshSession(): Promise<boolean> {
+async function refreshSession(): Promise<SessionRefreshResult> {
   try {
     const res = await fetchWithTimeout(`${API_BASE}/auth/refresh`, {
       method: "POST",
       credentials: "include",
       headers: buildJsonHeaders(false),
     }, 15_000);
-    return res.ok;
+    if (res.ok) return "refreshed";
+    return res.status === 401 || res.status === 403 ? "expired" : "unavailable";
   } catch {
-    return false;
+    return "unavailable";
   }
 }
 

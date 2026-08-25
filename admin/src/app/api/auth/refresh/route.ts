@@ -27,7 +27,11 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({ accessToken, refreshToken }),
     });
 
-    if (!res.ok) return expiredResponse();
+    if (!res.ok) {
+      if (res.status === 400 || res.status === 401 || res.status === 403)
+        return expiredResponse();
+      return temporarilyUnavailableResponse();
+    }
 
     const data = (await res.json()) as AuthResponse;
     const response = NextResponse.json(
@@ -47,11 +51,15 @@ export async function POST(request: NextRequest) {
     return response;
   } catch (error) {
     console.error("[auth/refresh]", error);
-    return NextResponse.json(
-      { message: "Error al renovar la sesión" },
-      { status: 500 },
-    );
+    return temporarilyUnavailableResponse();
   }
+}
+
+function temporarilyUnavailableResponse() {
+  return NextResponse.json(
+    { message: "No fue posible renovar la sesión temporalmente. Intente de nuevo." },
+    { status: 503 },
+  );
 }
 
 function expiredResponse() {
