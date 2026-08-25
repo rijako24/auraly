@@ -1,4 +1,4 @@
-const VERSION = "auraly-pwa-v10";
+const VERSION = "auraly-pwa-v11";
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 const APP_SHELL = ["/login", "/app.webmanifest", "/brand/auraly-app-icon-192-v4.png", "/brand/auraly-app-icon-512-v4.png", "/brand/auraly-ios-icon-512-v4.png", "/brand/auraly-maskable-512-v4.png"];
@@ -29,7 +29,15 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  if (url.pathname.startsWith("/_next/static/") || url.pathname.startsWith("/brand/")) {
+  if (url.pathname.startsWith("/_next/static/")) {
+    event.respondWith(fetch(request).then((response) => {
+      if (response.ok) void caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, response.clone()));
+      return response;
+    }).catch(async () => (await caches.match(request)) ?? Response.error()));
+    return;
+  }
+
+  if (url.pathname.startsWith("/brand/")) {
     event.respondWith(caches.match(request).then((cached) => cached ?? fetch(request).then((response) => {
       if (response.ok) void caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, response.clone()));
       return response;

@@ -43,8 +43,13 @@ if (!layout.includes("#auraly-standalone-boot") ||
   throw new Error("The first standalone DOM frame must force the light launch screen.");
 
 const worker = await readFile(path.join(root, "public", "app-sw.js"), "utf8");
-if (!worker.includes('VERSION = "auraly-pwa-v10"') ||
+if (!worker.includes('VERSION = "auraly-pwa-v11"') ||
     /APP_SHELL\s*=\s*\[[^\]]*"\/dashboard"/.test(worker))
   throw new Error("The current worker must not pre-cache an unauthenticated dashboard response.");
+const nextStaticStrategy = worker.match(/if \(url\.pathname\.startsWith\("\/_next\/static\/"\)\) \{([\s\S]*?)\n  \}/)?.[1] ?? "";
+if (!nextStaticStrategy.includes("fetch(request).then") ||
+    !nextStaticStrategy.includes("caches.match(request)") ||
+    nextStaticStrategy.indexOf("fetch(request).then") > nextStaticStrategy.indexOf("caches.match(request)"))
+  throw new Error("Next.js chunks must use network-first caching so a deployment cannot reuse stale POS code.");
 
 console.log(`Verified ${expectedScreens.length} opaque iOS launch screens and ${manifest.icons.length} Android PWA icons.`);
