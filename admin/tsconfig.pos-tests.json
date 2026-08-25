@@ -31,6 +31,8 @@
     "src/services/pos/pos-work-session-close.ts",
     "src/services/pos/pos-work-session-close.test.ts",
     "src/services/pos/pos-receipt-brand.test.ts",
+    "src/services/pos/pos-approval-synchronization.ts",
+    "src/services/pos/pos-approval-synchronization.test.ts",
     "src/lib/auth-client.ts",
     "src/lib/auth-client.test.ts",
     "src/lib/auth-cookies.ts",

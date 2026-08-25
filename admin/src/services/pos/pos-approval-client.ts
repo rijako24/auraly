@@ -1,4 +1,5 @@
 import { PosEdgeError } from "./pos-edge-client";
+import { isApprovalSynchronizationMessage } from "./pos-approval-synchronization";
 import { fetchWithSessionRetry } from "@/services/api/client";
 
 export type PosApprovalRequest = {
@@ -134,7 +135,7 @@ export class PosApprovalClient {
     let stopped = false;
     let socket: WebSocket | null = null;
     let reconnectTimer: number | null = null;
-    const connect = async (initial: boolean) => {
+    const connect = async () => {
       try {
         const negotiation = await this.request<Negotiation>(
           "/api/commerce/v1/pos/approvals/synchronization/negotiate",
@@ -147,17 +148,7 @@ export class PosApprovalClient {
         );
         socket = current;
         current.addEventListener("message", (event: MessageEvent<string>) => {
-          try {
-            const envelope = JSON.parse(event.data) as {
-              type?: string;
-              data?: { stream?: string } | string;
-            };
-            const data = typeof envelope.data === "string"
-              ? JSON.parse(envelope.data) as { stream?: string }
-              : envelope.data;
-            if (envelope.type === "message" && data?.stream === "Approvals")
-              onApprovalsChanged();
-          } catch { /* ignore protocol frames that are not data messages */ }
+          if (isApprovalSynchronizationMessage(event.data)) onApprovalsChanged();
         });
         await new Promise<void>((resolve, reject) => {
           const timeout = window.setTimeout(
@@ -175,17 +166,17 @@ export class PosApprovalClient {
         });
         current.addEventListener("close", () => {
           if (stopped || socket !== current) return;
-          reconnectTimer = window.setTimeout(() => void connect(false), 1_000);
+          reconnectTimer = window.setTimeout(() => void connect(), 1_000);
         });
-        if (!initial) onApprovalsChanged();
-      } catch (error) {
+        onApprovalsChanged();
+      } catch {
         socket?.close();
         socket = null;
-        if (stopped || initial) throw error;
-        reconnectTimer = window.setTimeout(() => void connect(false), 2_000);
+        if (stopped) return;
+        reconnectTimer = window.setTimeout(() => void connect(), 2_000);
       }
     };
-    await connect(true);
+    void connect();
     return () => {
       stopped = true;
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);

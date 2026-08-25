@@ -2,6 +2,7 @@
 
 import { Bell, Check, KeyRound, Loader2, ShieldCheck, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -41,8 +42,11 @@ export function NotificationsDropdown({ className }: { className?: string }) {
   const [credentialValidity, setCredentialValidity] = useState<"once"|"8"|"168"|"always">("always");
   const [credentialStatus, setCredentialStatus] = useState<SupervisorCredentialStatus | null>(null);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(() => typeof Notification === "undefined" ? "denied" : Notification.permission);
+  const [activatingNotifications, setActivatingNotifications] = useState(false);
+  const [portalReady, setPortalReady] = useState(false);
   const knownIds = useRef(new Set<string>());
 
+  useEffect(() => setPortalReady(true), []);
   useEffect(()=>{if(new URLSearchParams(window.location.search).has("posApproval"))setDropdownOpen(true)},[]);
 
   const refresh = useCallback(async (notify = false) => {
@@ -75,13 +79,30 @@ export function NotificationsDropdown({ className }: { className?: string }) {
     }
     let active = true;
     let dispose: (() => void) | undefined;
+    const refreshVisible = () => {
+      if (document.visibilityState === "visible") void refresh(true);
+    };
+    const receiveServiceWorkerMessage = (event: MessageEvent<{ type?: string }>) => {
+      if (event.data?.type === "auraly:pos-approvals-changed") void refresh(true);
+    };
+    const fallback = window.setInterval(refreshVisible, 15_000);
+    window.addEventListener("focus", refreshVisible);
+    document.addEventListener("visibilitychange", refreshVisible);
+    navigator.serviceWorker?.addEventListener("message", receiveServiceWorkerMessage);
     void refresh(false)
       .then(() => posApprovalClient.subscribe(() => active && void refresh(true)))
       .then((stop) => { dispose = stop; })
       .catch((caught) => {
         if (active) setError(caught instanceof Error ? caught.message : "No fue posible conectar las autorizaciones.");
       });
-    return () => { active = false; dispose?.(); };
+    return () => {
+      active = false;
+      window.clearInterval(fallback);
+      window.removeEventListener("focus", refreshVisible);
+      document.removeEventListener("visibilitychange", refreshVisible);
+      navigator.serviceWorker?.removeEventListener("message", receiveServiceWorkerMessage);
+      dispose?.();
+    };
   }, [businessId, canApprove, refresh]);
 
   async function decide(request: PosApprovalRequest, approve: boolean) {
@@ -95,6 +116,26 @@ export function NotificationsDropdown({ className }: { className?: string }) {
       setError(caught instanceof Error ? caught.message : "No fue posible responder la solicitud.");
     } finally {
       setBusyId(null);
+    }
+  }
+
+  async function activateNotifications() {
+    if (typeof Notification === "undefined") return;
+    setActivatingNotifications(true);
+    setError(null);
+    try {
+      const permission = await Notification.requestPermission();
+      setNotificationPermission(permission);
+      if (permission !== "granted") {
+        setError("Debes permitir las notificaciones para recibir aprobaciones con Auraly cerrada.");
+        return;
+      }
+      const subscribed = await ensurePosApprovalPushSubscription();
+      if (!subscribed) throw new Error("Este dispositivo no permite notificaciones en segundo plano. Instala Auraly en la pantalla de inicio e inténtalo de nuevo.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "No fue posible activar las notificaciones.");
+    } finally {
+      setActivatingNotifications(false);
     }
   }
 
@@ -158,7 +199,7 @@ export function NotificationsDropdown({ className }: { className?: string }) {
             )}
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          {canApprove && canReceivePush && notificationPermission === "default" && <div className="border-b p-2"><Button variant="outline" size="sm" className="w-full" onClick={async()=>{const permission=await Notification.requestPermission();setNotificationPermission(permission);if(permission==="granted")await ensurePosApprovalPushSubscription()}}><Bell className="mr-2 h-4 w-4"/>Activar alertas de autorización</Button></div>}
+          {canApprove && canReceivePush && notificationPermission === "default" && <div className="border-b p-2"><Button variant="outline" size="sm" className="w-full" disabled={activatingNotifications} onClick={()=>void activateNotifications()}>{activatingNotifications?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:<Bell className="mr-2 h-4 w-4"/>}Activar alertas de autorización</Button></div>}
           <ScrollArea className="max-h-[22rem]">
             {!canApprove ? (
               <div className="py-8 text-center text-sm text-muted-foreground">No hay notificaciones nuevas</div>
@@ -199,11 +240,11 @@ export function NotificationsDropdown({ className }: { className?: string }) {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {canApprove && requests[0] && (
+      {portalReady && canApprove && requests[0] && createPortal(
         <section
           role="alertdialog"
           aria-label="Solicitud de autorización de caja"
-          className="fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-[90] rounded-3xl border border-slate-200 bg-white p-4 shadow-[0_24px_80px_rgba(15,23,42,0.35)] md:hidden"
+          className="fixed inset-x-3 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-[100] max-h-[calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)-6rem)] overflow-y-auto overscroll-contain rounded-3xl border border-slate-200 bg-white p-4 shadow-[0_24px_80px_rgba(15,23,42,0.35)] md:hidden"
         >
           <div className="flex items-start gap-3">
             <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-teal-50 text-teal-700">
@@ -238,7 +279,25 @@ export function NotificationsDropdown({ className }: { className?: string }) {
             </Button>
           </div>
           {error && <p className="mt-3 text-sm font-medium text-red-700">{error}</p>}
-        </section>
+        </section>,
+        document.body,
+      )}
+
+      {portalReady && canApprove && canReceivePush && requests.length === 0 && notificationPermission === "default" && createPortal(
+        <section
+          role="status"
+          className="fixed inset-x-3 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-[100] rounded-3xl border border-teal-200 bg-white p-4 shadow-[0_24px_80px_rgba(15,23,42,0.28)] md:hidden"
+        >
+          <div className="flex items-start gap-3">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-teal-50 text-teal-700"><Bell className="h-5 w-5" /></span>
+            <div className="min-w-0 flex-1"><p className="font-bold text-slate-950">Recibe aprobaciones con Auraly cerrada</p><p className="mt-1 text-sm text-slate-600">Activa una vez las notificaciones de este teléfono.</p></div>
+          </div>
+          <Button className="mt-4 h-11 w-full rounded-xl bg-teal-700 font-bold hover:bg-teal-800" disabled={activatingNotifications} onClick={()=>void activateNotifications()}>
+            {activatingNotifications?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:<Bell className="mr-2 h-4 w-4"/>}Activar notificaciones
+          </Button>
+          {error && <p className="mt-3 text-sm font-medium text-red-700">{error}</p>}
+        </section>,
+        document.body,
       )}
 
       <Dialog open={credentialOpen} onOpenChange={setCredentialOpen}>

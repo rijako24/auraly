@@ -250,6 +250,8 @@ public sealed class PosArchitectureTests
             repositoryRoot, "admin", "src", "components", "layout", "notifications-dropdown.tsx"));
         var client = File.ReadAllText(Path.Combine(
             repositoryRoot, "admin", "src", "services", "pos", "pos-approval-client.ts"));
+        var messageParser = File.ReadAllText(Path.Combine(
+            repositoryRoot, "admin", "src", "services", "pos", "pos-approval-synchronization.ts"));
         var synchronization = File.ReadAllText(Path.Combine(
             repositoryRoot, "src", "Pos", "Auraly.Pos.Edge.Host", "PosSynchronization.cs"));
         var serviceWorker = File.ReadAllText(Path.Combine(
@@ -263,8 +265,14 @@ public sealed class PosArchitectureTests
         Assert.Contains(" Aprobar", notifications, StringComparison.Ordinal);
         Assert.Contains("setRequests(pending)", notifications, StringComparison.Ordinal);
         Assert.Contains("reconnectTimer", client, StringComparison.Ordinal);
+        Assert.Contains("data?.stream ?? data?.Stream", messageParser, StringComparison.Ordinal);
+        Assert.Contains("void connect();", client, StringComparison.Ordinal);
+        Assert.Contains("createPortal(", notifications, StringComparison.Ordinal);
+        Assert.Contains("Recibe aprobaciones con Auraly cerrada", notifications, StringComparison.Ordinal);
+        Assert.Contains("auraly:pos-approvals-changed", notifications, StringComparison.Ordinal);
         Assert.Contains("PosSynchronizationStreams.Approvals => PosSynchronizationTrigger.Approvals", synchronization, StringComparison.Ordinal);
         Assert.Contains("self.addEventListener(\"push\"", serviceWorker, StringComparison.Ordinal);
+        Assert.Contains("client.postMessage({ type: \"auraly:pos-approvals-changed\" })", serviceWorker, StringComparison.Ordinal);
     }
 
     [Fact]
