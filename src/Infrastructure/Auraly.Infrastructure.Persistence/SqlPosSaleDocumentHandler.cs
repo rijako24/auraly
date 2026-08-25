@@ -41,6 +41,11 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         }
 
         var session = _sessions.Current;
+        if (request.FiscalHabilitationOnly)
+        {
+            await MarkDocumentProcessedAsync(session, request, cancellationToken);
+            return;
+        }
         await EnsureWorkSessionAsync(
             session, request, cancellationToken);
         var inventoryWarehouseId = await ResolveInventoryWarehouseAsync(

@@ -105,6 +105,10 @@ public sealed class OnlineSalesCheckoutService(
         if (!PosSaleDocumentTypes.IsSupported(request.DocumentType))
             throw new OnlineSalesDraftValidationException(
                 "El tipo de documento de venta no es valido.");
+        if (request.FiscalHabilitationOnly &&
+            request.DocumentType != PosSaleDocumentTypes.Invoice)
+            throw new OnlineSalesDraftValidationException(
+                "La habilitación DIAN sólo admite factura electrónica.");
 
         if (draftId == Guid.Empty || request.ExpectedVersion < 1)
             throw new OnlineSalesDraftValidationException(

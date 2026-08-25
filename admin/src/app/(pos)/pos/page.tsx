@@ -1598,6 +1598,7 @@ export default function PosPage() {
         checkout.payments,
         effectiveDocumentType,
         checkout.credit,
+        habilitationMode,
       );
       setDraft(result.nextDraft);
       setNextNumber(result.nextDocumentNumber);
@@ -1617,7 +1618,9 @@ export default function PosPage() {
           ? "emitida e impresa directamente"
           : "emitida e impresa";
       setMessage(
-        settlement.change > 0
+        habilitationMode
+          ? `${result.issuedSale.documentNumber} enviado únicamente a habilitación DIAN. No registró venta, inventario ni contabilidad.`
+          : settlement.change > 0
           ? `${result.issuedSale.documentNumber} ${issuedLabel}. Entregar ${money.format(settlement.change)} de cambio. Nueva venta lista.`
           : effectiveDocumentType === "SalesInvoice"
             ? `${result.issuedSale.documentNumber} ${issuedLabel} (DIAN ${result.issuedSale.fiscalNumber}). Pago registrado. Nueva venta lista.`
@@ -2285,7 +2288,7 @@ edgeCapable={edgeEnrollmentRequired}
 
       {habilitationMode && (
         <div className="flex items-center justify-between gap-4 border-b border-violet-200 bg-gradient-to-r from-violet-950 via-indigo-950 to-teal-950 px-5 py-2 text-sm text-white">
-          <span className="font-semibold">Asistente DIAN · esta factura se enviará al ambiente de habilitación</span>
+          <span className="font-semibold">Asistente DIAN · documento técnico de prueba, sin inventario, ventas ni contabilidad</span>
           <button type="button" onClick={() => router.push("/dashboard/settings/fiscal")} className="rounded-lg border border-white/20 px-3 py-1 text-xs font-bold hover:bg-white/10">Volver a configuración</button>
         </div>
       )}

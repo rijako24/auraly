@@ -53,7 +53,7 @@ public sealed class InProcessTestingProcessingTransport(
                     cancellationToken);
             }
 
-            if (AccountingProcessingPolicy.Supports(signal.DocumentType))
+            if (signal.EconomicEffectsEnabled && AccountingProcessingPolicy.Supports(signal.DocumentType))
             {
                 var accounting = scope.ServiceProvider
                     .GetRequiredService<AccountingProcessingCoordinator>();
@@ -64,7 +64,7 @@ public sealed class InProcessTestingProcessingTransport(
                     cancellationToken);
             }
 
-            if (SalesReportingProcessingPolicy.Supports(signal.DocumentType))
+            if (signal.EconomicEffectsEnabled && SalesReportingProcessingPolicy.Supports(signal.DocumentType))
             {
                 var reporting = scope.ServiceProvider
                     .GetRequiredService<SalesReportingProcessingCoordinator>();

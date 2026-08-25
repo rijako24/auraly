@@ -281,7 +281,8 @@ public sealed partial class SqlOnlineSalesDraftStore
             SaleSourceModes.Online,
             state.SourceOrderId,
             Credit: request.Credit is null || state.CustomerId is null ? null :
-                new PosSaleCreditContract(state.CustomerId.Value, request.Credit.Amount, request.Credit.DueDate));
+                new PosSaleCreditContract(state.CustomerId.Value, request.Credit.Amount, request.Credit.DueDate),
+            FiscalHabilitationOnly: request.FiscalHabilitationOnly);
 
         var nextDraftId = ids.NewId();
         var acquired = await ExecuteAsync(connection, transaction, """
@@ -799,7 +800,8 @@ public sealed partial class SqlOnlineSalesDraftStore
             .Append(draftId.ToString("D"))
             .Append('|')
             .Append(request.ExpectedVersion.ToString(CultureInfo.InvariantCulture))
-            .Append('|').Append(request.DocumentType);
+            .Append('|').Append(request.DocumentType)
+            .Append('|').Append(request.FiscalHabilitationOnly ? "habilitation" : "economic");
         foreach (var payment in request.Payments)
         {
             value.Append('|')

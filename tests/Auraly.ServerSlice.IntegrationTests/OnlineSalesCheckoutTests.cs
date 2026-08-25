@@ -11,6 +11,57 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Habilitation_invoice_keeps_only_fiscal_evidence_and_has_no_economic_effects()
+    {
+        var userId = await CreateUserAsync("habilitation-only");
+        using var client = fixture.CreateUserClient(
+            userId,
+            CommercePermissionCodes.SalesCreate,
+            WorkSessionPermissionCodes.Open);
+        client.Timeout = TimeSpan.FromSeconds(60);
+
+        var captured = await CaptureAsync(client, await OpenAsync(client));
+        var completed = await CompleteAsync(
+            client,
+            captured.DraftId,
+            new CompleteOnlineSalesDraftRequest(
+                captured.Version,
+                [new OnlineSalesPayment("Cash", captured.PayableAmount, null)],
+                FiscalHabilitationOnly: true),
+            $"habilitation-{Guid.NewGuid():N}");
+
+        var persisted = await ReadPersistenceAsync(completed.Receipt.DocumentId);
+        Assert.Equal(1, persisted.DocumentCount);
+        Assert.Equal(0, persisted.LineCount);
+        Assert.Equal(0, persisted.PaymentCount);
+        Assert.Equal(0, persisted.InventoryMovementCount);
+        Assert.Equal(0, persisted.WorkSessionMovementCount);
+        Assert.Equal(0, persisted.ServerOutboxCount);
+        Assert.Equal(1, persisted.ProcessingJobCount);
+
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT
+                  (SELECT COUNT(*) FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@DocumentId),
+                  (SELECT COUNT(*) FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@DocumentId),
+                  (SELECT COUNT(*) FROM reporting.SalesReportDocuments WHERE DocumentId=@DocumentId);
+                """;
+            command.Parameters.AddWithValue("@DocumentId", completed.Receipt.DocumentId);
+            await using var reader = await command.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(0, reader.GetInt32(0));
+            Assert.Equal(0, reader.GetInt32(1));
+            Assert.Equal(0, reader.GetInt32(2));
+        }
+
+        var page = await SearchAsync(client, captured.WorkSessionId, completed.Receipt.DocumentNumber);
+        Assert.Empty(page.Items);
+    }
+
+    [Fact]
     public async Task Online_checkout_uses_the_server_series_and_processes_once()
     {
         var userId = await CreateUserAsync("checkout");
@@ -583,6 +634,26 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         return await response.Content
             .ReadFromJsonAsync<CompleteOnlineSalesDraftResponse>()
             ?? throw new InvalidOperationException("Empty checkout response.");
+    }
+
+    private async Task<OnlineSalesIssuedSalePage> SearchAsync(
+        HttpClient client,
+        Guid workSessionId,
+        string search)
+    {
+        using var response = await client.PostAsJsonAsync(
+            "/api/commerce/v1/pos/drafts/sales/search",
+            new SearchOnlineSalesIssuedSalesRequest(
+                new OnlineSalesDraftContext(
+                    fixture.BusinessId,
+                    fixture.WarehouseId,
+                    workSessionId),
+                search,
+                0,
+                50));
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<OnlineSalesIssuedSalePage>()
+            ?? throw new InvalidOperationException("Empty issued sales response.");
     }
 
     private static HttpRequestMessage Mutation(

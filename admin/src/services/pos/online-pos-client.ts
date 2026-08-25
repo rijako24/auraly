@@ -623,18 +623,22 @@ export class OnlinePosClient implements PosClient {
     payments: PosPaymentInput[],
     documentType: PosSaleDocumentType,
     credit: PosCreditTerms | null = null,
+    fiscalHabilitationOnly = false,
   ) {
-    const browserPreview = this.edgeSessionToken ? null : openHalfLetterPrintPreview();
+    const browserPreview = this.edgeSessionToken || fiscalHabilitationOnly
+      ? null
+      : openHalfLetterPrintPreview();
     try {
       const result = await request<OnlineCheckoutResponse>(
         `/api/commerce/v1/pos/drafts/${draftId}/complete`,
         this.mutation({
           expectedVersion: this.version(draftId),
-          payments, credit, documentType,
+          payments, credit, documentType, fiscalHabilitationOnly,
         }, "POST", `online-sale-${draftId}`),
       );
       const nextDraft = this.mapDraft(result.nextDraft);
-      await this.printDirect([result.receipt], !result.isDuplicate, "pos", browserPreview);
+      if (!fiscalHabilitationOnly)
+        await this.printDirect([result.receipt], !result.isDuplicate, "pos", browserPreview);
       return {
         issuedSale: {
           documentId: { value: result.receipt.documentId },

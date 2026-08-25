@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, FileKey2, FlaskConical, Loader2, LockKeyhole, RefreshCw, Rocket, ShieldCheck, Upload } from "lucide-react";
+import { CheckCircle2, FileKey2, FlaskConical, Loader2, LockKeyhole, Pencil, RefreshCw, Rocket, ShieldCheck, Upload } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -33,6 +33,7 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
   const [certificate, setCertificate] = useState<File | null>(null);
   const [selectedRangeId, setSelectedRangeId] = useState("");
   const [confirmed, setConfirmed] = useState(false);
+  const [editingCredentials, setEditingCredentials] = useState(false);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -42,6 +43,7 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
       setValue(result);
       setSoftwareId(result.softwareIdentificationCode ?? "");
       setTestSetId(result.testSetId ?? "");
+      setEditingCredentials(!result.hasCertificate);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "No fue posible cargar la configuración fiscal.";
       setLoadError(errorMessage);
@@ -80,6 +82,7 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
       setSoftwarePin("");
       setCertificatePassword("");
       setCertificate(null);
+      setEditingCredentials(false);
       toast.success("Credenciales DIAN verificadas y almacenadas de forma segura.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "No fue posible guardar la configuración.");
@@ -147,11 +150,11 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
         </CardContent>
       </Card>
 
-      <Card className="overflow-hidden border-slate-800 bg-slate-950 text-white">
+      <Card className="overflow-hidden border-slate-200 bg-white">
         <CardContent className="p-5 md:p-6">
           <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-center">
-            <div><p className="text-xs font-bold uppercase tracking-[.18em] text-teal-300">Ambiente fiscal</p><h2 className="mt-1 text-xl font-black">De pruebas reales a producción, sin atajos</h2><p className="mt-1 max-w-2xl text-sm text-slate-300">Auraly cambia el transporte únicamente cuando la DIAN acepta el set y queda asignada una resolución productiva.</p></div>
-            <div className="grid min-w-[min(100%,32rem)] grid-cols-2 rounded-2xl border border-white/10 bg-white/5 p-1.5">
+            <div><p className="text-xs font-bold uppercase tracking-[.18em] text-teal-700">Ambiente fiscal</p><h2 className="mt-1 text-xl font-black text-slate-950">De pruebas reales a producción, sin atajos</h2><p className="mt-1 max-w-2xl text-sm text-slate-600">Auraly cambia el transporte únicamente cuando la DIAN acepta el set y queda asignada una resolución productiva.</p></div>
+            <div className="grid min-w-[min(100%,32rem)] grid-cols-2 rounded-2xl border border-slate-200 bg-slate-50 p-1.5">
               <EnvironmentMode icon={FlaskConical} title="Habilitación" subtitle={value.habilitationAccepted ? "Set aceptado" : "Pruebas DIAN"} active={!value.productionActive} complete={value.habilitationAccepted} />
               <EnvironmentMode icon={value.productionActive ? Rocket : LockKeyhole} title="Producción" subtitle={value.productionActive ? "Emisión activa" : value.habilitationAccepted ? "Asigna resolución" : "Bloqueada"} active={value.productionActive} complete={value.productionActive} />
             </div>
@@ -169,12 +172,12 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
           </CardHeader>
           <CardContent>
             <form className="grid gap-4 md:grid-cols-2" onSubmit={saveHabilitation}>
-              <Field label="Software ID"><Input required value={softwareId} onChange={(event) => setSoftwareId(event.target.value)} /></Field>
-              <Field label="TestSetId"><Input required value={testSetId} onChange={(event) => setTestSetId(event.target.value)} /></Field>
-              <Field label="PIN del software"><Input required type="password" autoComplete="new-password" value={softwarePin} onChange={(event) => setSoftwarePin(event.target.value)} /></Field>
-              <Field label="Certificado PFX/P12"><Input required accept=".pfx,.p12,application/x-pkcs12" type="file" onChange={(event) => setCertificate(event.target.files?.[0] ?? null)} /></Field>
-              <Field label="Contraseña del certificado"><Input required type="password" autoComplete="new-password" value={certificatePassword} onChange={(event) => setCertificatePassword(event.target.value)} /></Field>
-              <div className="flex items-end"><Button className="w-full" disabled={!canManage || saving} type="submit">{saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileKey2 className="mr-2 h-4 w-4" />} Validar y guardar</Button></div>
+              <Field label="Software ID"><Input required disabled={!editingCredentials} value={softwareId} onChange={(event) => setSoftwareId(event.target.value)} /></Field>
+              <Field label="TestSetId"><Input required disabled={!editingCredentials} value={testSetId} onChange={(event) => setTestSetId(event.target.value)} /></Field>
+              <Field label="PIN del software"><Input required={editingCredentials} disabled={!editingCredentials} type="password" autoComplete="new-password" value={editingCredentials ? softwarePin : "••••••••"} onChange={(event) => setSoftwarePin(event.target.value)} /></Field>
+              <Field label="Certificado PFX/P12"><Input required={editingCredentials} disabled={!editingCredentials} accept=".pfx,.p12,application/x-pkcs12" type="file" onChange={(event) => setCertificate(event.target.files?.[0] ?? null)} /></Field>
+              <Field label="Contraseña del certificado"><Input required={editingCredentials} disabled={!editingCredentials} type="password" autoComplete="new-password" value={editingCredentials ? certificatePassword : "••••••••"} onChange={(event) => setCertificatePassword(event.target.value)} /></Field>
+              <div className="flex items-end">{value.hasCertificate && !editingCredentials ? <Button className="w-full" variant="outline" disabled={!canManage} type="button" onClick={() => setEditingCredentials(true)}><Pencil className="mr-2 h-4 w-4" />Editar configuración</Button> : <Button className="w-full" disabled={!canManage || saving} type="submit">{saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileKey2 className="mr-2 h-4 w-4" />} Validar y guardar</Button>}</div>
             </form>
             {value.hasCertificate && <p className="mt-4 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-900">Certificado ••••{value.certificateThumbprintSuffix} válido hasta {formatDate(value.certificateValidTo)}. El PIN, la contraseña y la clave privada nunca se muestran.</p>}
           </CardContent>
@@ -190,9 +193,9 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
           {value.habilitationAccepted ? (
             <p className="flex items-center gap-2 rounded-xl bg-emerald-50 p-4 text-sm font-medium text-emerald-900"><CheckCircle2 className="h-5 w-5" /> Set de pruebas aceptado por la DIAN {value.habilitationAcceptedAt ? `el ${formatDate(value.habilitationAcceptedAt)}` : ""}.</p>
           ) : value.stage === "HabilitationReady" ? (
-            <div className="overflow-hidden rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-teal-50 p-5">
+            <div className="overflow-hidden rounded-2xl border border-violet-200 bg-white p-5">
               <div className="flex flex-col justify-between gap-5 md:flex-row md:items-center"><div><p className="flex items-center gap-2 font-bold text-violet-950"><FlaskConical className="h-5 w-5" />Asistente de habilitación</p><p className="mt-1 max-w-2xl text-sm text-slate-600">Abre la caja con factura electrónica protegida en ambiente de pruebas. La venta recorre numeración, UBL, firma, worker y envío real al TestSetId.</p></div><Button disabled={!canManage} onClick={startHabilitationInvoice} className="h-11 shrink-0 bg-violet-700 px-5 hover:bg-violet-800"><Rocket className="mr-2 h-4 w-4" />Emitir factura de habilitación</Button></div>
-              <div className="mt-4 flex items-center gap-3 rounded-xl bg-white/80 p-3 text-xs text-slate-600"><Loader2 className="h-4 w-4 animate-spin text-violet-600" />Después de emitir, esta vista consultará el resultado hasta que la DIAN acepte o reporte una novedad.</div>
+              <div className="mt-4 flex items-center gap-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600"><Loader2 className="h-4 w-4 animate-spin text-violet-600" />Después de emitir, esta vista consultará el resultado hasta que la DIAN acepte o reporte una novedad.</div>
             </div>
           ) : (
             <p className="rounded-xl bg-muted p-4 text-sm text-muted-foreground">Primero carga y valida las credenciales.</p>
@@ -235,5 +238,5 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
 function Stage({ number, label, active }: { number: string; label: string; active: boolean }) { return <div className={`rounded-xl border p-3 text-sm ${active ? "border-emerald-200 bg-emerald-50 text-emerald-950" : "text-muted-foreground"}`}><b className="mr-2">{number}.</b>{label}</div>; }
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="space-y-2"><Label>{label}</Label>{children}</label>; }
 function Detail({ label, value }: { label: string; value: string }) { return <div><span className="block text-xs text-muted-foreground">{label}</span><b>{value}</b></div>; }
-function EnvironmentMode({ icon: Icon, title, subtitle, active, complete }: { icon: typeof FlaskConical; title: string; subtitle: string; active: boolean; complete: boolean }) { return <div className={`relative rounded-xl p-3 transition ${active ? "bg-gradient-to-br from-teal-300 to-emerald-300 text-slate-950 shadow-lg shadow-teal-950/30" : "text-slate-400"}`}><div className="flex items-center gap-2"><Icon className="h-5 w-5"/><b>{title}</b>{complete&&<CheckCircle2 className="ml-auto h-4 w-4"/>}</div><p className={`mt-1 text-xs ${active ? "text-slate-700" : "text-slate-500"}`}>{subtitle}</p></div>; }
+function EnvironmentMode({ icon: Icon, title, subtitle, active, complete }: { icon: typeof FlaskConical; title: string; subtitle: string; active: boolean; complete: boolean }) { return <div className={`relative rounded-xl p-3 transition ${active ? "bg-gradient-to-br from-teal-200 to-emerald-200 text-slate-950" : "text-slate-500"}`}><div className="flex items-center gap-2"><Icon className="h-5 w-5"/><b>{title}</b>{complete&&<CheckCircle2 className="ml-auto h-4 w-4"/>}</div><p className={`mt-1 text-xs ${active ? "text-slate-700" : "text-slate-500"}`}>{subtitle}</p></div>; }
 function formatDate(value: string | null) { return value ? new Intl.DateTimeFormat("es-CO", { dateStyle: "medium" }).format(new Date(value)) : "sin fecha"; }

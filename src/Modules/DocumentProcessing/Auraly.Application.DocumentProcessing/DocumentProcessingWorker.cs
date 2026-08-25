@@ -6,7 +6,8 @@ public sealed record DocumentProcessingSignal(
     Guid MovementId,
     Guid BusinessId,
     Guid DocumentId,
-    string DocumentType);
+    string DocumentType,
+    bool EconomicEffectsEnabled = true);
 
 public interface IDocumentProcessingSignalPublisher
 {

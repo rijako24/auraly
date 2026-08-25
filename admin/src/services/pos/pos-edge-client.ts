@@ -413,6 +413,7 @@ export interface PosClient {
     payments: PosPaymentInput[],
     documentType: PosSaleDocumentType,
     credit?: PosCreditTerms | null,
+    fiscalHabilitationOnly?: boolean,
   ): Promise<PosCompleteSaleResult>;
   searchIssuedSales(search?: string, skip?: number, take?: number): Promise<PosIssuedSaleSearchPage>;
   reprint(documentId: string): Promise<void>;
@@ -855,7 +856,11 @@ export class PosEdgeClient implements PosClient {
     payments: PosPaymentInput[],
     documentType: PosSaleDocumentType,
     credit: PosCreditTerms | null = null,
+    fiscalHabilitationOnly = false,
   ) {
+    if (fiscalHabilitationOnly)
+      return Promise.reject(new PosEdgeError(
+        "La habilitación DIAN requiere conexión con Auraly Server.", 409));
     if (credit)
       return Promise.reject(new PosEdgeError(
         "La venta a crédito requiere conexión para validar el cupo actual del cliente.", 409));

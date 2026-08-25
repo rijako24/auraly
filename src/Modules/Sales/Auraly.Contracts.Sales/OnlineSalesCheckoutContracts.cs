@@ -13,7 +13,8 @@ public sealed record CompleteOnlineSalesDraftRequest(
     long ExpectedVersion,
     IReadOnlyList<OnlineSalesPayment> Payments,
     OnlineSalesCreditTerms? Credit = null,
-    string DocumentType = PosSaleDocumentTypes.Invoice);
+    string DocumentType = PosSaleDocumentTypes.Invoice,
+    bool FiscalHabilitationOnly = false);
 
 public sealed record OnlineSalesReceiptLine(
     string ProductCode,

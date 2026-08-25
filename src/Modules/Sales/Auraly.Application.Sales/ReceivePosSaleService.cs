@@ -196,7 +196,8 @@ public sealed class ReceivePosSaleService(
                     "The accepted sale has no durable processing movement."),
                 request.BusinessId,
                 request.DocumentId,
-                request.CommercialSnapshot.DocumentType),
+                request.CommercialSnapshot.DocumentType,
+                EconomicEffectsEnabled: !request.FiscalHabilitationOnly),
             cancellationToken);
 
         var completed = await store.FindAsync(

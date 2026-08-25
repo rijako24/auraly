@@ -165,7 +165,8 @@ public sealed record PosSaleUploadRequest(
     Guid? CustomerId = null,
     string SourceMode = SaleSourceModes.PosEdge,
     Guid? SourceOrderId = null,
-    PosSaleCreditContract? Credit = null);
+    PosSaleCreditContract? Credit = null,
+    bool FiscalHabilitationOnly = false);
 
 public sealed record PosSaleUploadResponse(
     Guid ReceiptId,

@@ -61,6 +61,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             JOIN dbo.FiscalSnapshots snapshot
               ON snapshot.DocumentId=d.DocumentId
             WHERE d.BusinessId=@BusinessId AND d.WorkSessionId=@WorkSessionId
+              AND ISNULL(JSON_VALUE(snapshot.SnapshotJson,'$.fiscalHabilitationOnly'),N'false')<>N'true'
               AND (@Search=N'' OR d.DocumentNumber LIKE @Contains
                    OR d.FiscalNumber LIKE @Contains
                    OR d.CufeReceived LIKE @Contains
@@ -135,7 +136,8 @@ public sealed partial class SqlOnlineSalesDraftStore
               ON snapshot.DocumentId=document.DocumentId
             WHERE document.DocumentId=@DocumentId
               AND document.BusinessId=@BusinessId
-              AND document.WorkSessionId=@WorkSessionId;
+              AND document.WorkSessionId=@WorkSessionId
+              AND ISNULL(JSON_VALUE(snapshot.SnapshotJson,'$.fiscalHabilitationOnly'),N'false')<>N'true';
             """;
         command.Parameters.AddRange([
             P("@DocumentId", documentId),

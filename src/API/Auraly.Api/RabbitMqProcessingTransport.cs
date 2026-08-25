@@ -370,13 +370,13 @@ public sealed class RabbitMqDocumentProcessingHostedService(
                             signal.BusinessId,
                             signal.DocumentId,
                             args.CancellationToken);
-                    if (AccountingProcessingPolicy.Supports(signal.DocumentType))
+                    if (signal.EconomicEffectsEnabled && AccountingProcessingPolicy.Supports(signal.DocumentType))
                         await accountingProcessing.RequestPostingAsync(
                             signal.BusinessId,
                             signal.DocumentId,
                             signal.DocumentType,
                             args.CancellationToken);
-                    if (SalesReportingProcessingPolicy.Supports(signal.DocumentType))
+                    if (signal.EconomicEffectsEnabled && SalesReportingProcessingPolicy.Supports(signal.DocumentType))
                         await salesReporting.RequestProjectionAsync(
                             signal.BusinessId,
                             signal.DocumentId,
