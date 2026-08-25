@@ -114,7 +114,7 @@ export function PosLineEditorDialog({
   }
 
   return <div className="fixed inset-0 z-[60] flex items-end justify-center bg-slate-950/70 sm:items-center sm:p-4">
-    <form onSubmit={submit} onKeyDown={(event)=>{if(event.key==="Enter"){event.preventDefault();event.currentTarget.requestSubmit();}}} className="flex max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-t-3xl bg-slate-50 shadow-2xl sm:rounded-3xl">
+    <form aria-keyshortcuts="Enter Escape" onSubmit={submit} onKeyDown={(event)=>{if(event.key==="Enter"){event.preventDefault();event.currentTarget.requestSubmit();}}} className="flex max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-t-3xl bg-slate-50 shadow-2xl sm:rounded-3xl">
       <header className="flex shrink-0 items-start justify-between gap-4 bg-gradient-to-r from-slate-950 to-teal-950 px-5 py-5 text-white sm:px-6">
         <div className="flex items-start gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white/10 text-teal-200"><PencilLine className="h-5 w-5"/></span><div><p className="text-xs font-bold uppercase tracking-[.18em] text-teal-300">Cambio puntual</p><h2 className="text-xl font-bold">Editar líneas de esta venta</h2><p className="mt-1 text-sm text-slate-300">Nombre, costo para margen, descuento y precio. El producto maestro no se modifica.</p></div></div>
         <span className="hidden items-center gap-2 rounded-full border border-teal-300/30 bg-teal-300/10 px-3 py-1.5 text-xs font-semibold text-teal-100 sm:flex"><ShieldCheck className="h-4 w-4"/>Solo este documento</span>
@@ -138,7 +138,18 @@ export function PosLineEditorDialog({
           </article>;
         })}
       </div>
-      <footer className="flex shrink-0 flex-col-reverse gap-2 border-t bg-white px-4 py-4 sm:flex-row sm:justify-end sm:px-6"><button type="button" onClick={onCancel} disabled={busy} className="h-11 rounded-xl border border-slate-300 px-5 font-semibold text-slate-700">Cancelar</button><button type="submit" disabled={busy||!valid} className="h-11 rounded-xl bg-teal-700 px-6 font-bold text-white shadow-sm disabled:opacity-50">{busy?"Guardando…":"Guardar cambios de la venta"}</button></footer>
+      <footer className="flex shrink-0 flex-col gap-3 border-t bg-white px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+        <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-600" aria-label="Atajos del editor">
+          <span className="rounded-lg bg-slate-100 px-2.5 py-1.5"><kbd>↑</kbd>/<kbd>↓</kbd> líneas</span>
+          <span className="rounded-lg bg-slate-100 px-2.5 py-1.5"><kbd>Tab</kbd> campos</span>
+          <span className="rounded-lg bg-teal-50 px-2.5 py-1.5 text-teal-800"><kbd>Enter</kbd> aplicar todo</span>
+          <span className="rounded-lg bg-slate-100 px-2.5 py-1.5"><kbd>Esc</kbd> cerrar</span>
+        </div>
+        <div className="flex flex-col-reverse gap-2 sm:flex-row">
+          <button type="button" aria-keyshortcuts="Escape" onClick={onCancel} disabled={busy} className="h-11 rounded-xl border border-slate-300 px-5 font-semibold text-slate-700">Cancelar <span className="ml-2 text-xs text-slate-400">Esc</span></button>
+          <button type="submit" aria-keyshortcuts="Enter" disabled={busy||!valid} className="h-11 rounded-xl bg-teal-700 px-6 font-bold text-white shadow-sm disabled:opacity-50">{busy?"Guardando…":<>Aplicar cambios <span className="ml-2 text-xs text-teal-100">Enter</span></>}</button>
+        </div>
+      </footer>
     </form>
   </div>;
 }

@@ -100,6 +100,7 @@ import {
 import { approvalRequestConfirmsExistingPermission } from "@/services/pos/pos-approval-permission";
 import { calculateRetailUnitPrice } from "./pos-retail-price";
 import { canRequestOrderSave } from "./pos-order-save-availability";
+import { capturedLineAfterAddition } from "./pos-capture-presentation";
 import { useAuthStore } from "@/stores/auth-store";
 
 
@@ -293,14 +294,14 @@ export default function PosPage() {
       window.requestAnimationFrame(() =>
         lineRows.current.get(lineId)?.scrollIntoView({
           block: "end",
-          behavior: "smooth",
+          behavior: "auto",
         }),
       ),
     );
   }, []);
   const focusScanner = useCallback(() => {
     if (document.querySelector('[data-pos-focus-surface="modal"]')) return;
-    window.requestAnimationFrame(() => scanner.current?.focus());
+    window.requestAnimationFrame(() => scanner.current?.focus({ preventScroll: true }));
   }, []);
   const showError = useCallback((caught: unknown) => {
     const status = caught instanceof PosEdgeError ? caught.status : 0;
@@ -993,11 +994,12 @@ export default function PosPage() {
       const startsNewSale = !draft?.lines.length;
       const result = await client.capture(value, draft?.customerId ?? null);
       if (result.status === "Added" && result.draft) {
+        const capturedLine = capturedLineAfterAddition(draft?.lines ?? [], result.draft.lines);
         setDraft(result.draft);
-        quantityToFocus = result.draft.lines.at(-1)?.lineId ?? null;
+        quantityToFocus = capturedLine?.lineId ?? null;
         setSelectedLineId(quantityToFocus);
         revealLine(quantityToFocus);
-        setMessage(`${result.draft.lines.at(-1)?.description ?? "Producto"} agregado`);
+        setMessage(`${capturedLine?.description ?? "Producto"} agregado`);
         if (startsNewSale) setLastSettlement(null);
         setScan("");
         return true;
@@ -1777,6 +1779,7 @@ export default function PosPage() {
         }
       }
       const startsNewSale = !draft?.lines.length;
+      const linesBeforeCapture = draft?.lines ?? [];
       const result = await client.captureSelectedProduct(
         product,
         draft?.customerId ?? null,
@@ -1790,8 +1793,7 @@ export default function PosPage() {
         return false;
       }
       let confirmedDraft = result.draft;
-      const addedLine = confirmedDraft.lines.find(line=>line.productId.value===product.productId)
-        ?? confirmedDraft.lines.at(-1);
+      const addedLine = capturedLineAfterAddition(linesBeforeCapture, confirmedDraft.lines);
       if (addedLine && scaleWeight !== null) {
         const targetQuantity = Math.max(0.001, addedLine.quantity - 1 + scaleWeight);
         const changed = await client.changeQuantity(confirmedDraft.draftId.value, addedLine.lineId, targetQuantity);
