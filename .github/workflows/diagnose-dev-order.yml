@@ -1,0 +1,88 @@
+name: Diagnose DEV order
+
+on:
+  workflow_dispatch:
+    inputs:
+      order_number:
+        description: Pedido externo exacto (PED-...)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  inspect:
+    runs-on: windows-latest
+    environment: dev
+    steps:
+      - name: Login to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Inspect order processing without exposing customer data
+        shell: pwsh
+        env:
+          ORDER_NUMBER: ${{ inputs.order_number }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $rule = "github-diagnose-$([guid]::NewGuid().ToString('N').Substring(0,10))"
+          try {
+            $ip = (Invoke-RestMethod -Uri 'https://api.ipify.org').Trim()
+            az sql server firewall-rule create --resource-group RG-AURALY-DEV --server sql-auraly-dev-w5usmo6w --name $rule --start-ip-address $ip --end-ip-address $ip --output none
+            $token = az account get-access-token --resource https://database.windows.net/ --query accessToken -o tsv
+            $connection = [System.Data.SqlClient.SqlConnection]::new('Server=tcp:sql-auraly-dev-w5usmo6w.database.windows.net,1433;Initial Catalog=auraly-dev;Encrypt=True;TrustServerCertificate=False;Connection Timeout=60;')
+            $connection.AccessToken = $token
+            $connection.Open()
+            try {
+              $command = $connection.CreateCommand()
+              $command.CommandText = @'
+          SELECT TOP(1)
+            o.ExternalDocumentNumber AS OrderNumber,
+            o.Total AS OrderTotal,
+            d.DocumentNumber,
+            d.DocumentType,
+            d.PayableAmount,
+            d.ProcessingStatus,
+            p.Status AS ProcessingJobStatus,
+            p.AttemptCount AS ProcessingAttempts,
+            COALESCE(p.LastError,N'') AS ProcessingError,
+            COALESCE(r.Status,N'NotCreated') AS ReportingStatus,
+            COALESCE(r.LastError,N'') AS ReportingError
+          FROM dbo.Orders o
+          LEFT JOIN dbo.OrderInvoiceLinks l ON l.OrderId=o.OrderId
+          LEFT JOIN dbo.SalesDocuments d ON d.DocumentId=l.DocumentId
+          LEFT JOIN dbo.DocumentProcessingJobs p
+            ON p.DocumentId=d.DocumentId AND p.DocumentType=d.DocumentType
+          LEFT JOIN reporting.SalesReportingJobs r
+            ON r.SourceDocumentId=d.DocumentId AND r.SourceDocumentType=d.DocumentType
+          WHERE o.ExternalDocumentNumber=@OrderNumber
+          ORDER BY l.CreatedAt DESC;
+          '@
+              [void]$command.Parameters.Add('@OrderNumber',[System.Data.SqlDbType]::NVarChar,64)
+              $command.Parameters['@OrderNumber'].Value = $env:ORDER_NUMBER
+              $reader = $command.ExecuteReader()
+              if (-not $reader.Read()) { throw "Order was not found: $env:ORDER_NUMBER" }
+              [ordered]@{
+                orderNumber = $reader['OrderNumber']
+                orderTotal = $reader['OrderTotal']
+                documentNumber = if ($reader['DocumentNumber'] -is [DBNull]) { $null } else { $reader['DocumentNumber'] }
+                documentType = if ($reader['DocumentType'] -is [DBNull]) { $null } else { $reader['DocumentType'] }
+                payableAmount = if ($reader['PayableAmount'] -is [DBNull]) { $null } else { $reader['PayableAmount'] }
+                processingStatus = if ($reader['ProcessingStatus'] -is [DBNull]) { $null } else { $reader['ProcessingStatus'] }
+                processingJobStatus = if ($reader['ProcessingJobStatus'] -is [DBNull]) { $null } else { $reader['ProcessingJobStatus'] }
+                processingAttempts = if ($reader['ProcessingAttempts'] -is [DBNull]) { $null } else { $reader['ProcessingAttempts'] }
+                processingError = $reader['ProcessingError']
+                reportingStatus = $reader['ReportingStatus']
+                reportingError = $reader['ReportingError']
+              } | ConvertTo-Json -Compress | Write-Output
+            } finally {
+              $connection.Dispose()
+            }
+          } finally {
+            az sql server firewall-rule delete --resource-group RG-AURALY-DEV --server sql-auraly-dev-w5usmo6w --name $rule --output none 2>$null
+          }

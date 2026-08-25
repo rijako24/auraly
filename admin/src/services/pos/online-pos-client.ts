@@ -50,6 +50,7 @@ import {
   type PosPrinterConfiguration,
   loadBrowserPrinterConfiguration,
 } from "./pos-edge-client";
+import { resolvePosOrderPrintRoute } from "./pos-order-print-routing";
 import { fetchWithSessionRetry } from "@/services/api/client";
 import { tenantsApi } from "@/services/api/tenants";
 import { printWorkSessionClosure, workSessionCloseRequest, workSessionClosureHtml, workSessionClosurePreviewRequest } from "./pos-work-session-close";
@@ -808,7 +809,18 @@ export class OnlinePosClient implements PosClient {
     paymentMethodCode: string,
     documentType: "SalesInvoice" | "SalesReceipt",
   ): Promise<InvoiceOrdersResponse> {
-    const browserPreview = this.edgeSessionToken ? null : openHalfLetterPrintPreview();
+    // The installed POS owns its system printers. Its orders endpoint invoices
+    // against the server and prints through the printer assigned to the orders
+    // workflow; routing the resulting receipt through printReceipt would use
+    // the regular POS printer instead.
+    if (resolvePosOrderPrintRoute(this.edgeSessionToken) === "installed-pos")
+      return this.localEdge().invoiceOrders(
+        orderIds,
+        paymentMethodCode,
+        documentType,
+      );
+
+    const browserPreview = openHalfLetterPrintPreview();
     const response = await invoiceCommerceOrders({
       workSessionId: this.context.workSessionId,
       warehouseId: this.context.warehouseId,

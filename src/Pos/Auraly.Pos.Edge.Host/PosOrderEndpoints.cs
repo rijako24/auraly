@@ -163,7 +163,9 @@ public static class PosOrderEndpoints
                 {
                     PrintStatus = "Failed",
                     PrintError = "Los pedidos se facturaron, pero no fue posible imprimir: " +
-                                 error.Message
+                                 (string.IsNullOrWhiteSpace(error.Message)
+                                     ? "la impresora configurada no respondió. Revisa la impresora de Pedidos en Periféricos."
+                                     : error.Message)
                 });
             }
         });

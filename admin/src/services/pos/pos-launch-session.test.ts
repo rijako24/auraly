@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { resolvePosOrderPrintRoute } from "./pos-order-print-routing";
 import {
   clearInstalledPosUserSession,
   installedPosLaunchDestination,
@@ -39,4 +40,8 @@ test("a desktop launch removes a prior cashier lease", () => {
   const removed: string[] = [];
   clearInstalledPosUserSession({ removeItem: (key) => removed.push(key) });
   assert.deepEqual(removed, ["auraly.pos.user-session"]);
+});
+test("connected Auraly POS orders use the installed orders printer", () => {
+  assert.equal(resolvePosOrderPrintRoute("edge-session"), "installed-pos");
+  assert.equal(resolvePosOrderPrintRoute(null), "browser");
 });
