@@ -1,6 +1,16 @@
 {
   "version": 1,
   "dependencies": {
-    "net8.0": {}
+    "net8.0": {
+      "auraly.buildingblocks.domain": {
+        "type": "Project"
+      },
+      "auraly.domain.catalog": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      }
+    }
   }
 }

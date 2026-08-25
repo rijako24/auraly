@@ -1668,7 +1668,10 @@
         }
       },
       "auraly.platform.domain": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "Auraly.Domain.Catalog": "[1.0.0, )"
+        }
       },
       "auraly.platform.infrastructure": {
         "type": "Project",

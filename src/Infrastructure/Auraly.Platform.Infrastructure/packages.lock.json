@@ -813,6 +813,12 @@
       "auraly.contracts.parties": {
         "type": "Project"
       },
+      "auraly.domain.catalog": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
       "auraly.platform.application": {
         "type": "Project",
         "dependencies": {
@@ -826,7 +832,10 @@
         }
       },
       "auraly.platform.domain": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "Auraly.Domain.Catalog": "[1.0.0, )"
+        }
       }
     }
   }
