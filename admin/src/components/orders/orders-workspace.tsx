@@ -74,6 +74,7 @@ type OrdersWorkspaceProps = {
   }) => Promise<CommerceOrderPage>;
   loadDetail: (orderId: string) => Promise<CommerceOrderDetail>;
   onRecover?: (order: CommerceOrderListItem) => Promise<void>;
+  onRetryEmission?: (orderId: string) => Promise<void>;
   onInvoiceSelected?: (
     orders: CommerceOrderListItem[],
     paymentMethodCode: string,
@@ -115,6 +116,7 @@ export function OrdersWorkspace({
   loadPage,
   loadDetail,
   onRecover,
+  onRetryEmission,
   onInvoiceSelected,
   onExpand,
   onConfigurePrinting,
@@ -404,6 +406,8 @@ export function OrdersWorkspace({
           <SelectContent>
             <SelectItem value="Available">Disponibles</SelectItem>
             <SelectItem value="Invoiced">Facturados</SelectItem>
+            <SelectItem value="ProcessingEmission">Procesando emisión</SelectItem>
+            <SelectItem value="EmissionFailed">Con error de emisión</SelectItem>
             <SelectItem value="Cancelled">Cancelados</SelectItem>
             <SelectItem value="All">Todos</SelectItem>
           </SelectContent>
@@ -796,6 +800,30 @@ export function OrdersWorkspace({
                   <Check className="mb-1 h-4 w-4" />
                   Al facturar se aplicarán los impuestos vigentes y se generará una factura independiente.
                 </div>
+                {detail.status === "EmissionFailed" && onRetryEmission && (
+                  <Button
+                    type="button"
+                    className="w-full"
+                    disabled={working}
+                    onClick={async () => {
+                      setWorking(true);
+                      setError(null);
+                      try {
+                        await onRetryEmission(detail.orderId);
+                        setDetail((current) => current ? { ...current, status: "ProcessingEmission" } : current);
+                        setNotice("La emisión existente se reanudó sin crear otro comprobante.");
+                        await refresh(true);
+                      } catch (retryError) {
+                        setError(retryError instanceof Error ? retryError.message : "No fue posible reanudar la emisión.");
+                      } finally {
+                        setWorking(false);
+                      }
+                    }}
+                  >
+                    {working ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
+                    Reanudar emisión
+                  </Button>
+                )}
               </aside>
             </div>
           </section>

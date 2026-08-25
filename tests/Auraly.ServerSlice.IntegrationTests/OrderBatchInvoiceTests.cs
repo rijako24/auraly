@@ -32,7 +32,24 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
             null);
         var idempotencyKey = $"orders-{Guid.NewGuid():N}";
 
-        var first = await InvoiceAsync(client, command, idempotencyKey);
+        // Production brokers process after checkout has committed. Reproduce that
+        // ordering so the durable order/document link already exists when the
+        // canonical sales engine consumes each document.
+        fixture.PauseDocumentProcessing();
+        InvoiceOrdersResponse first;
+        try
+        {
+            first = await InvoiceAsync(client, command, idempotencyKey);
+            var queued = fixture.DrainDocumentSignals();
+            Assert.Equal(2, queued.Count);
+            fixture.ResumeDocumentProcessing();
+            foreach (var signal in queued)
+                await fixture.DocumentSignals.PublishAsync(signal);
+        }
+        finally
+        {
+            fixture.ResumeDocumentProcessing();
+        }
         Assert.Equal("Completed", first.Status);
         Assert.Equal(2, first.CompletedCount);
         Assert.Equal(0, first.FailedCount);
@@ -55,6 +72,15 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
             first.Results.Select(result => result.DocumentId),
             replay.Results.Select(result => result.DocumentId));
 
+        var invoicedPage = await client.GetFromJsonAsync<OrderPage>(
+            "/api/commerce/v1/orders?page=1&pageSize=20&status=Invoiced");
+        Assert.NotNull(invoicedPage);
+        Assert.Contains(invoicedPage.Items, item => item.OrderId == firstOrderId);
+        Assert.Contains(invoicedPage.Items, item => item.OrderId == secondOrderId);
+        Assert.All(
+            invoicedPage.Items.Where(item => item.OrderId == firstOrderId || item.OrderId == secondOrderId),
+            item => Assert.Equal("Invoiced", item.Status));
+
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var verify = connection.CreateCommand();
@@ -69,7 +95,8 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
               (SELECT COUNT(*) FROM dbo.SalesDocuments
                WHERE DocumentId IN (
                  SELECT DocumentId FROM dbo.OrderInvoiceLinks
-                 WHERE OrderId IN (@FirstOrderId,@SecondOrderId))),
+                 WHERE OrderId IN (@FirstOrderId,@SecondOrderId))
+                 AND ProcessingStatus=N'Completed'),
               (SELECT COUNT(*) FROM dbo.Orders
                WHERE OrderId IN (@FirstOrderId,@SecondOrderId) AND TaxTotal<>0),
               (SELECT COUNT(*) FROM dbo.OrderItems

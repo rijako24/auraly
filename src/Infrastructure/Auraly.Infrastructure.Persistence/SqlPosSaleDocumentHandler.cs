@@ -198,10 +198,19 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                   AND CustomerConfirmed=1 AND Status IN (2,4))
                 THROW 51000, 'El pedido de origen no esta disponible en este negocio.', 1;
 
-            INSERT INTO dbo.OrderInvoiceLinks
-                (OrderInvoiceLinkId,BusinessId,OrderId,DocumentId,OperationId,CreatedAt)
-            VALUES
-                (@LinkId,@BusinessId,@OrderId,@DocumentId,NULL,@CreatedAt);
+            IF EXISTS (
+                SELECT 1 FROM dbo.OrderInvoiceLinks WITH (UPDLOCK,HOLDLOCK)
+                WHERE OrderId=@OrderId
+                  AND (BusinessId<>@BusinessId OR DocumentId<>@DocumentId))
+                THROW 51000, 'El pedido de origen ya esta vinculado a otro documento.', 1;
+
+            IF NOT EXISTS (
+                SELECT 1 FROM dbo.OrderInvoiceLinks WITH (UPDLOCK,HOLDLOCK)
+                WHERE OrderId=@OrderId AND BusinessId=@BusinessId AND DocumentId=@DocumentId)
+                INSERT INTO dbo.OrderInvoiceLinks
+                    (OrderInvoiceLinkId,BusinessId,OrderId,DocumentId,OperationId,CreatedAt)
+                VALUES
+                    (@LinkId,@BusinessId,@OrderId,@DocumentId,NULL,@CreatedAt);
 
             UPDATE dbo.OrderClaims
             SET ReleasedAt=COALESCE(ReleasedAt,@CreatedAt)

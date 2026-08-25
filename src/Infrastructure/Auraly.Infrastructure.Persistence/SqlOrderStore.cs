@@ -108,6 +108,7 @@ public sealed class SqlOrderStore(
               o.CustomerPhoneSnapshot,o.Currency,o.Total,
               (SELECT COUNT_BIG(1) FROM dbo.OrderItems oi WHERE oi.OrderId=o.OrderId) LineCount,
               o.CreatedAt,o.CustomerConfirmed,link.DocumentId,
+              document.ProcessingStatus,processingJob.Status,
               claim.OrderClaimId,claim.WorkSessionId,claim.DeviceId,claim.UserId,claim.ExpiresAt,
               COUNT_BIG(1) OVER() TotalRows
             FROM dbo.Orders o
@@ -115,6 +116,10 @@ public sealed class SqlOrderStore(
             LEFT JOIN dbo.PaymentTransactions pt
               ON pt.PaymentTransactionId=o.PaymentTransactionId
             LEFT JOIN dbo.OrderInvoiceLinks link ON link.OrderId=o.OrderId
+            LEFT JOIN dbo.SalesDocuments document ON document.DocumentId=link.DocumentId
+            LEFT JOIN dbo.DocumentProcessingJobs processingJob
+              ON processingJob.DocumentId=document.DocumentId
+             AND processingJob.DocumentType=document.DocumentType
             OUTER APPLY (
               SELECT TOP(1) c.OrderClaimId,c.WorkSessionId,c.DeviceId,c.UserId,c.ExpiresAt
               FROM dbo.OrderClaims c
@@ -135,12 +140,16 @@ public sealed class SqlOrderStore(
         {
             var hasInvoice = !reader.IsDBNull(12);
             var storedStatus = reader.GetInt32(2);
-            var claim = ReadClaim(reader, 13, actor);
-            total = checked((int)reader.GetInt64(18));
+            var claim = ReadClaim(reader, 15, actor);
+            total = checked((int)reader.GetInt64(20));
             items.Add(new OrderListItem(
                 reader.GetGuid(0),
                 reader.GetString(1),
-                OrderRules.CanonicalStatus(storedStatus, hasInvoice),
+                OrderRules.CanonicalStatus(
+                    storedStatus,
+                    hasInvoice,
+                    NullableString(reader, 13),
+                    NullableString(reader, 14)),
                 reader.GetInt32(3),
                 NullableString(reader, 4),
                 NullableString(reader, 5),
@@ -180,6 +189,7 @@ public sealed class SqlOrderStore(
               CASE pt.Status WHEN 2 THEN N'Confirmed' WHEN 3 THEN N'Failed'
                    WHEN 1 THEN N'Pending' ELSE NULL END,
               o.CreatedAt,o.CustomerConfirmed,link.DocumentId,
+              document.ProcessingStatus,processingJob.Status,
               claim.OrderClaimId,claim.WorkSessionId,claim.DeviceId,claim.UserId,claim.ExpiresAt,
               TRY_CONVERT(uniqueidentifier,JSON_VALUE(o.CustomAttributesJson,'$.WarehouseId'))
             FROM dbo.Orders o
@@ -187,6 +197,10 @@ public sealed class SqlOrderStore(
             LEFT JOIN dbo.PaymentTransactions pt
               ON pt.PaymentTransactionId=o.PaymentTransactionId
             LEFT JOIN dbo.OrderInvoiceLinks link ON link.OrderId=o.OrderId
+            LEFT JOIN dbo.SalesDocuments document ON document.DocumentId=link.DocumentId
+            LEFT JOIN dbo.DocumentProcessingJobs processingJob
+              ON processingJob.DocumentId=document.DocumentId
+             AND processingJob.DocumentType=document.DocumentType
             OUTER APPLY (
               SELECT TOP(1) c.OrderClaimId,c.WorkSessionId,c.DeviceId,c.UserId,c.ExpiresAt
               FROM dbo.OrderClaims c
@@ -206,13 +220,17 @@ public sealed class SqlOrderStore(
 
         var storedStatus = header.GetInt32(3);
         var hasInvoice = !header.IsDBNull(20);
-        var claim = ReadClaim(header, 21, actor);
+        var claim = ReadClaim(header, 23, actor);
         var values = new
         {
             Id = header.GetGuid(0),
             BusinessId = header.GetGuid(1),
             Number = header.GetString(2),
-            Status = OrderRules.CanonicalStatus(storedStatus, hasInvoice),
+            Status = OrderRules.CanonicalStatus(
+                storedStatus,
+                hasInvoice,
+                NullableString(header, 21),
+                NullableString(header, 22)),
             Source = header.GetInt32(4),
             CustomerId = header.IsDBNull(5) ? (Guid?)null : header.GetGuid(5),
             CustomerName = NullableString(header, 6),
@@ -230,7 +248,7 @@ public sealed class SqlOrderStore(
             CreatedAt = DateTime.SpecifyKind(header.GetDateTime(18), DateTimeKind.Utc),
             Confirmed = header.GetBoolean(19),
             DocumentId = hasInvoice ? header.GetGuid(20) : (Guid?)null,
-            WarehouseId = header.IsDBNull(26) ? (Guid?)null : header.GetGuid(26)
+            WarehouseId = header.IsDBNull(28) ? (Guid?)null : header.GetGuid(28)
         };
         await header.CloseAsync();
 
@@ -411,6 +429,100 @@ public sealed class SqlOrderStore(
             cancellationToken);
     }
 
+    public async Task<OrderEmissionRetry> PrepareEmissionRetryAsync(
+        OrderActor actor,
+        Guid orderId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        try
+        {
+            Guid documentId;
+            Guid jobId;
+            string documentType;
+            string jobStatus;
+            await using (var read = new SqlCommand("""
+                SELECT link.DocumentId,document.DocumentType,job.JobId,job.Status
+                FROM dbo.Orders orderRow WITH(UPDLOCK,HOLDLOCK)
+                INNER JOIN dbo.Businesses business ON business.BusinessId=orderRow.BusinessId
+                INNER JOIN dbo.OrderInvoiceLinks link WITH(UPDLOCK,HOLDLOCK)
+                  ON link.OrderId=orderRow.OrderId AND link.BusinessId=orderRow.BusinessId
+                INNER JOIN dbo.SalesDocuments document WITH(UPDLOCK,HOLDLOCK)
+                  ON document.DocumentId=link.DocumentId AND document.BusinessId=orderRow.BusinessId
+                INNER JOIN dbo.DocumentProcessingJobs job WITH(UPDLOCK,HOLDLOCK)
+                  ON job.DocumentId=document.DocumentId AND job.DocumentType=document.DocumentType
+                INNER JOIN dbo.BusinessProcessingCursors cursor WITH(UPDLOCK,HOLDLOCK)
+                  ON cursor.BusinessId=orderRow.BusinessId
+                WHERE orderRow.OrderId=@OrderId AND orderRow.BusinessId=@BusinessId
+                  AND business.TenantId=@TenantId;
+                """, connection, transaction))
+            {
+                read.Parameters.AddRange([
+                    P("@OrderId", orderId), P("@BusinessId", actor.BusinessId),
+                    P("@TenantId", actor.TenantId)
+                ]);
+                await using var reader = await read.ExecuteReaderAsync(cancellationToken);
+                if (!await reader.ReadAsync(cancellationToken))
+                    throw new OrderNotFoundException(
+                        "El pedido no tiene una emisión recuperable en esta sede.");
+                documentId = reader.GetGuid(0);
+                documentType = reader.GetString(1);
+                jobId = reader.GetGuid(2);
+                jobStatus = reader.GetString(3);
+            }
+
+            if (!string.Equals(jobStatus, "DeadLettered", StringComparison.Ordinal))
+                throw new OrderConflictException(
+                    "La emisión no está detenida y no requiere recuperación manual.");
+
+            var now = time.GetUtcNow();
+            long sequence;
+            await using (var allocate = new SqlCommand("""
+                UPDATE dbo.BusinessProcessingCursors WITH(UPDLOCK,HOLDLOCK)
+                SET LastAssignedSequence=LastAssignedSequence+1,UpdatedAt=@Now
+                OUTPUT inserted.LastAssignedSequence
+                WHERE BusinessId=@BusinessId;
+                """, connection, transaction))
+            {
+                allocate.Parameters.AddRange([P("@Now", now), P("@BusinessId", actor.BusinessId)]);
+                sequence = Convert.ToInt64(await allocate.ExecuteScalarAsync(cancellationToken));
+            }
+
+            await using (var update = new SqlCommand("""
+                UPDATE dbo.DocumentProcessingJobs
+                SET ProcessingSequence=@Sequence,Status=N'Pending',AttemptCount=0,
+                    AvailableAt=@Now,StartedAt=NULL,CompletedAt=NULL,
+                    LeaseOwner=NULL,LeaseExpiresAt=NULL,LastError=NULL
+                WHERE JobId=@JobId AND BusinessId=@BusinessId AND Status=N'DeadLettered';
+
+                UPDATE dbo.SalesDocuments
+                SET ProcessingStatus=N'Received'
+                WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId
+                  AND ProcessingStatus<>N'Completed';
+                """, connection, transaction))
+            {
+                update.Parameters.AddRange([
+                    P("@Sequence", sequence), P("@Now", now), P("@JobId", jobId),
+                    P("@DocumentId", documentId), P("@BusinessId", actor.BusinessId)
+                ]);
+                if (await update.ExecuteNonQueryAsync(cancellationToken) != 2)
+                    throw new DBConcurrencyException(
+                        "La emisión cambió mientras se preparaba su recuperación.");
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+            return new OrderEmissionRetry(jobId, actor.BusinessId, documentId, documentType);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+    }
+
     private static async Task DemandContextAsync(
         SqlConnection connection,
         SqlTransaction transaction,
@@ -457,7 +569,13 @@ public sealed class SqlOrderStore(
         switch (normalized.ToUpperInvariant())
         {
             case "INVOICED":
-                filters.Add("link.OrderId IS NOT NULL");
+                filters.Add("link.OrderId IS NOT NULL AND document.ProcessingStatus=N'Completed'");
+                break;
+            case "PROCESSINGEMISSION":
+                filters.Add("link.OrderId IS NOT NULL AND ISNULL(document.ProcessingStatus,N'')<>N'Completed' AND ISNULL(processingJob.Status,N'')<>N'DeadLettered'");
+                break;
+            case "EMISSIONFAILED":
+                filters.Add("link.OrderId IS NOT NULL AND processingJob.Status=N'DeadLettered'");
                 break;
             case "AVAILABLE":
                 filters.Add("link.OrderId IS NULL AND o.CustomerConfirmed=1 AND o.Status IN(2,4)");

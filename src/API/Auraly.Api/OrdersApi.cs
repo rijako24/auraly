@@ -108,6 +108,14 @@ public static class OrdersApi
                     ct);
             }));
 
+        group.MapPost("/{orderId:guid}/emission/retry", async (
+            HttpContext context,
+            Guid orderId,
+            OrderService service,
+            CancellationToken ct) =>
+            await Handle(() => service.RetryEmissionAsync(
+                context.User.ToOrderUserActor(), orderId, ct)));
+
 
         return endpoints;
     }

@@ -10,6 +10,7 @@ import { PageError } from "@/components/ui/page-error";
 import {
   loadCommerceOrder,
   loadCommerceOrders,
+  retryCommerceOrderEmission,
 } from "@/services/orders/commerce-orders-client";
 import {
   loadSalesWorkspaceOptions,
@@ -134,6 +135,9 @@ export default function OrdersPage() {
         source={user && isSellerOperationalProfile(user.roles ?? [], user.permissions ?? []) ? 1 : undefined}
         loadPage={loadCommerceOrders}
         loadDetail={loadCommerceOrder}
+        onRetryEmission={async (orderId) => {
+          await retryCommerceOrderEmission(orderId);
+        }}
         onRecover={
           workspace && user
             ? async (order) => {

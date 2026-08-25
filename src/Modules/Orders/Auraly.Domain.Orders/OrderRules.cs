@@ -4,10 +4,16 @@ public static class OrderRules
 {
     public static string CanonicalStatus(
         int storedStatus,
-        bool hasInvoice)
+        bool hasInvoice,
+        string? processingStatus = null,
+        string? processingJobStatus = null)
     {
         if (hasInvoice)
-            return "Invoiced";
+            return string.Equals(processingStatus, "Completed", StringComparison.Ordinal)
+                ? "Invoiced"
+                : string.Equals(processingJobStatus, "DeadLettered", StringComparison.Ordinal)
+                    ? "EmissionFailed"
+                    : "ProcessingEmission";
 
         return storedStatus switch
         {

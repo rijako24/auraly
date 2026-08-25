@@ -190,6 +190,17 @@ export function invoiceCommerceOrders(request: {
   );
 }
 
+export function retryCommerceOrderEmission(orderId: string) {
+  return orderRequest<{
+    jobId: string;
+    businessId: string;
+    documentId: string;
+    documentType: string;
+  }>(`/api/commerce/v1/orders/${orderId}/emission/retry`, {
+    method: "POST",
+  });
+}
+
 async function orderRequest<T>(
   path: string,
   init: RequestInit = {},

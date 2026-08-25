@@ -1,5 +1,6 @@
 using Auraly.Contracts.Orders;
 using Auraly.Domain.Orders;
+using Auraly.Application.DocumentProcessing;
 
 namespace Auraly.Application.Orders;
 
@@ -41,9 +42,22 @@ public interface IOrderStore
         Guid retainedOrderId,
         Guid workSessionId,
         CancellationToken cancellationToken);
+
+    Task<OrderEmissionRetry> PrepareEmissionRetryAsync(
+        OrderActor actor,
+        Guid orderId,
+        CancellationToken cancellationToken);
 }
 
-public sealed class OrderService(IOrderStore orders)
+public sealed record OrderEmissionRetry(
+    Guid JobId,
+    Guid BusinessId,
+    Guid DocumentId,
+    string DocumentType);
+
+public sealed class OrderService(
+    IOrderStore orders,
+    IDocumentProcessingSignalPublisher processingSignals)
 {
     public Task<OrderPage> PageAsync(
         OrderActor actor,
@@ -121,6 +135,25 @@ public sealed class OrderService(IOrderStore orders)
             retainedOrderId,
             workSessionId,
             cancellationToken);
+    }
+
+    public async Task<OrderEmissionRetry> RetryEmissionAsync(
+        OrderActor actor,
+        Guid orderId,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(actor, OrderPermissionCodes.Invoice);
+        if (orderId == Guid.Empty)
+            throw new OrderValidationException("El pedido es obligatorio.");
+        var retry = await orders.PrepareEmissionRetryAsync(actor, orderId, cancellationToken);
+        await processingSignals.PublishAsync(
+            new DocumentProcessingSignal(
+                retry.JobId,
+                retry.BusinessId,
+                retry.DocumentId,
+                retry.DocumentType),
+            cancellationToken);
+        return retry;
     }
 
     private static void ValidateActorRequest(

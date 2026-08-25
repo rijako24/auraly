@@ -189,10 +189,16 @@ public sealed class ArchitectureDebtRatchetTests
             "SqlPosSaleDocumentHandler.cs"));
         var ordersApi = File.ReadAllText(Path.Combine(
             RepositoryRoot, "src", "API", "Auraly.Api", "OrdersApi.cs"));
+        var batch = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "Modules", "Orders", "Auraly.Application.Orders",
+            "OrderBatchService.cs"));
 
         Assert.Contains("state.SourceOrderId", checkout, StringComparison.Ordinal);
         Assert.Contains("ResolveInventoryWarehouseAsync", handler, StringComparison.Ordinal);
         Assert.Contains("inventoryWarehouseId", handler, StringComparison.Ordinal);
+        Assert.Contains("OnlineSalesCheckoutService checkout", batch, StringComparison.Ordinal);
+        Assert.Contains("checkout.CompleteAsync", batch, StringComparison.Ordinal);
+        Assert.DoesNotContain("IConfirmedDocumentHandler", batch, StringComparison.Ordinal);
         Assert.DoesNotContain("SellerOrderInvoiceInventoryService", ordersApi, StringComparison.Ordinal);
         Assert.False(File.Exists(Path.Combine(
             RepositoryRoot, "src", "API", "Auraly.Api", "SellerOrderInvoiceInventoryService.cs")));
