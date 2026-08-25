@@ -326,12 +326,13 @@ public sealed partial class SqlOnlineSalesDraftStore(
         foreach (var line in lines)
         {
             var current = activeLines.Single(value => value.LineId == line.LineId);
-            if (line.DocumentUnitCost < 0)
+            var managesStock = await ProductManagesStockAsync(
+                connection, transaction, state.BusinessId, current.ProductId, cancellationToken);
+            if (!managesStock && line.DocumentUnitCost < 0)
                 throw new OnlineSalesDraftValidationException("El costo de la línea no puede ser negativo.");
-            if (await ProductManagesStockAsync(connection, transaction, state.BusinessId, current.ProductId, cancellationToken) &&
-                line.DocumentUnitCost != current.DocumentUnitCost)
-                throw new OnlineSalesDraftValidationException(
-                    "El costo de un producto con inventario se determina por la valoración de existencias.");
+            var documentUnitCost = managesStock
+                ? current.DocumentUnitCost
+                : line.DocumentUnitCost;
             if (line.Discount > current.Quantity * line.UnitPrice)
                 throw new OnlineSalesDraftValidationException(
                     "El descuento no puede superar el valor de la línea.");
@@ -344,7 +345,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 [
                     P("@Description", line.Description.Trim()),
                     P("@UnitPrice", line.UnitPrice),
-                    P("@DocumentUnitCost", line.DocumentUnitCost),
+                    P("@DocumentUnitCost", documentUnitCost),
                     P("@Discount", line.Discount),
                     P("@DraftId", draftId),
                     P("@LineId", line.LineId)

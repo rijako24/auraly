@@ -122,6 +122,67 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Stocked_product_preserves_inventory_cost_when_document_lines_are_applied()
+    {
+        using var client = fixture.CreateAdminClient(
+            CommercePermissionCodes.SalesCreate,
+            CommercePermissionCodes.SalesChangePrice,
+            CommercePermissionCodes.SalesRestartDraft);
+        var opened = await OpenAsync(client, new(
+            fixture.BusinessId, fixture.WarehouseId, fixture.WorkSessionId));
+        if (opened.Lines.Count > 0)
+        {
+            using var reset = Mutation(
+                HttpMethod.Post,
+                $"/api/commerce/v1/pos/drafts/{opened.DraftId:D}/reset",
+                new ResetOnlineSalesDraftRequest(opened.Version),
+                Guid.NewGuid().ToString("D"));
+            using var resetResponse = await client.SendAsync(reset);
+            resetResponse.EnsureSuccessStatusCode();
+            opened = await resetResponse.Content.ReadFromJsonAsync<OnlineSalesDraft>()
+                ?? throw new InvalidOperationException("The reset draft response was empty.");
+        }
+
+        using var add = Mutation(
+            HttpMethod.Post,
+            $"/api/commerce/v1/pos/drafts/{opened.DraftId:D}/items",
+            new AddOnlineSalesDraftItemRequest(fixture.ProductId.ToString("D"), 1m, opened.Version),
+            $"stock-cost-add-{Guid.NewGuid():N}");
+        using var addResponse = await client.SendAsync(add);
+        addResponse.EnsureSuccessStatusCode();
+        var captured = await addResponse.Content.ReadFromJsonAsync<OnlineSalesDraft>()
+            ?? throw new InvalidOperationException("The add item response was empty.");
+        var line = Assert.Single(captured.Lines);
+        Assert.False(line.AllowsDocumentCostOverride);
+
+        using var update = Mutation(
+            HttpMethod.Put,
+            $"/api/commerce/v1/pos/drafts/{captured.DraftId:D}/lines",
+            new UpdateOnlineSalesDraftLinesRequest(
+                [new(
+                    line.LineId,
+                    line.Description,
+                    line.UnitPrice,
+                    line.Discount,
+                    line.DocumentUnitCost + 1_000m)],
+                captured.Version),
+            Guid.NewGuid().ToString("D"));
+        using var updateResponse = await client.SendAsync(update);
+        updateResponse.EnsureSuccessStatusCode();
+        var changed = await updateResponse.Content.ReadFromJsonAsync<OnlineSalesDraft>()
+            ?? throw new InvalidOperationException("The update lines response was empty.");
+        Assert.Equal(line.DocumentUnitCost, Assert.Single(changed.Lines).DocumentUnitCost);
+
+        using var cleanup = Mutation(
+            HttpMethod.Post,
+            $"/api/commerce/v1/pos/drafts/{changed.DraftId:D}/reset",
+            new ResetOnlineSalesDraftRequest(changed.Version),
+            Guid.NewGuid().ToString("D"));
+        using var cleanupResponse = await client.SendAsync(cleanup);
+        cleanupResponse.EnsureSuccessStatusCode();
+    }
+
+    [Fact]
     public async Task Draft_survives_client_restart_and_mutations_are_idempotent()
     {
         var context = new OnlineSalesDraftContext(
