@@ -71,7 +71,8 @@ public sealed class FiscalOnboardingServiceTests
         false,
         null,
         [],
-        []);
+        [],
+        null);
 
     private sealed class TestOnboardingStore(FiscalOnboardingConfiguration configuration)
         : IFiscalOnboardingStore

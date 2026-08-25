@@ -342,6 +342,7 @@ builder.Services.AddSingleton<IPosSynchronizationPushGateway,
 builder.Services.AddSingleton<SqlPosSynchronizationOutboxDispatcher>();
 builder.Services.AddSingleton<IPosSynchronizationOutboxDispatcher>(provider =>
     provider.GetRequiredService<SqlPosSynchronizationOutboxDispatcher>());
+builder.Services.AddSingleton<FiscalStatusSynchronizationNotifier>();
 if (builder.Configuration.GetValue(
         "Auraly:PosSynchronization:Worker:Enabled", true))
     builder.Services.AddHostedService<PosSynchronizationOutboxHostedService>();

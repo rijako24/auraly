@@ -36,7 +36,10 @@ public sealed class SqlFiscalOnboardingStore(
                    accepted.AcceptedAt,
                    assigned.DianNumberingRangeId,assigned.AuthorizationNumber,
                    assigned.ResolutionDate,assigned.Prefix,assigned.RangeStart,assigned.RangeEnd,
-                   assigned.ValidFrom,assigned.ValidUntil
+                   assigned.ValidFrom,assigned.ValidUntil,
+                   latest.DocumentId,latest.Status,latest.LastStatusCode,
+                   latest.LastStatusDescription,latest.LastErrorCode,
+                   latest.LastErrorMessage,latest.UpdatedAt
             FROM dbo.Businesses b
             LEFT JOIN dbo.TenantLegalProfiles p ON p.TenantId=b.TenantId
             OUTER APPLY(
@@ -74,6 +77,15 @@ public sealed class SqlFiscalOnboardingStore(
                  AND a.Environment=1 AND a.IsActive=1
                 WHERE r.TenantId=b.TenantId AND r.AssignedBusinessId=b.BusinessId
                 ORDER BY r.AssignedAt DESC) assigned
+            OUTER APPLY(
+                SELECT TOP(1) fp.DocumentId,fp.Status,fp.LastStatusCode,
+                       fp.LastStatusDescription,fp.LastErrorCode,
+                       fp.LastErrorMessage,fp.UpdatedAt
+                FROM dbo.FiscalDocumentProcesses fp
+                JOIN dbo.FiscalIssuerConfigurations configuration
+                  ON configuration.FiscalIssuerConfigurationId=fp.FiscalIssuerConfigurationId
+                WHERE fp.BusinessId=b.BusinessId AND configuration.Environment=2
+                ORDER BY fp.CreatedAt DESC,fp.DocumentId DESC) latest
             WHERE b.BusinessId=@BusinessId;
 
             SELECT r.DianNumberingRangeId,r.AuthorizationNumber,r.ResolutionDate,r.Prefix,
@@ -110,6 +122,19 @@ public sealed class SqlFiscalOnboardingStore(
             reader.GetGuid(11), reader.GetString(12), Date(reader, 13), reader.GetString(14),
             reader.GetInt64(15), reader.GetInt64(16), reader.GetFieldValue<DateOnly>(17),
             reader.GetFieldValue<DateOnly>(18), false, businessId, businessName);
+        FiscalHabilitationAttempt? latestAttempt = null;
+        if (!reader.IsDBNull(19))
+        {
+            var status = reader.GetString(20);
+            var terminalFailure = IsTerminalFailure(status);
+            latestAttempt = new FiscalHabilitationAttempt(
+                reader.GetGuid(19),
+                status,
+                terminalFailure,
+                terminalFailure ? Text(reader, 23) ?? Text(reader, 21) : null,
+                terminalFailure ? Text(reader, 24) ?? Text(reader, 22) : null,
+                reader.GetDateTimeOffset(25));
+        }
 
         var ranges = new List<DianNumberingRangeOption>();
         await reader.NextResultAsync(cancellationToken);
@@ -145,8 +170,16 @@ public sealed class SqlFiscalOnboardingStore(
             testSetId, thumbprint is not null,
             thumbprint is null ? null : thumbprint[^Math.Min(8, thumbprint.Length)..],
             certificateFrom, certificateTo, acceptedAt is not null, acceptedAt,
-            productionActive, assigned, ranges, missing);
+            productionActive, assigned, ranges, missing, latestAttempt);
     }
+
+    private static bool IsTerminalFailure(string status) => status is
+        FiscalDocumentStatusCodes.FiscalIntegrityConflict or
+        FiscalDocumentStatusCodes.MissingMandatoryFiscalData or
+        FiscalDocumentStatusCodes.SchemaValidationFailed or
+        FiscalDocumentStatusCodes.SignatureFailed or
+        FiscalDocumentStatusCodes.DianRejected or
+        FiscalDocumentStatusCodes.PermanentFailure;
 
     public async Task SaveHabilitationAsync(
         Guid tenantId,

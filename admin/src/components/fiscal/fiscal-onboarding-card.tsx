@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, FileKey2, FlaskConical, Loader2, LockKeyhole, Pencil, RefreshCw, Rocket, ShieldCheck, Upload } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileKey2, FlaskConical, Loader2, LockKeyhole, Pencil, RefreshCw, Rocket, ShieldCheck, Upload } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -15,6 +15,7 @@ import {
   fiscalConfigurationApi,
   type FiscalOnboardingConfiguration,
 } from "@/services/api/fiscal-configuration";
+import { habilitationFeedbackKind } from "@/services/api/fiscal-onboarding-events";
 
 type Props = { businessId: string; canManage: boolean };
 
@@ -54,6 +55,11 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
   }, [businessId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => fiscalConfigurationApi.subscribeToOnboarding(
+    businessId,
+    () => { void load(true); },
+  ), [businessId, load]);
 
   useEffect(() => {
     if (value?.stage !== "HabilitationReady") return;
@@ -132,6 +138,7 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
   }
 
   const missingLegalProfile = value.missingRequirements.includes("PerfilLegal");
+  const feedbackKind = habilitationFeedbackKind(value.latestHabilitationAttempt);
 
   return (
     <div className="space-y-5">
@@ -195,7 +202,17 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
           ) : value.stage === "HabilitationReady" ? (
             <div className="overflow-hidden rounded-2xl border border-violet-200 bg-white p-5">
               <div className="flex flex-col justify-between gap-5 md:flex-row md:items-center"><div><p className="flex items-center gap-2 font-bold text-violet-950"><FlaskConical className="h-5 w-5" />Asistente de habilitación</p><p className="mt-1 max-w-2xl text-sm text-slate-600">Abre la caja con factura electrónica protegida en ambiente de pruebas. La venta recorre numeración, UBL, firma, worker y envío real al TestSetId.</p></div><Button disabled={!canManage} onClick={startHabilitationInvoice} className="h-11 shrink-0 bg-violet-700 px-5 hover:bg-violet-800"><Rocket className="mr-2 h-4 w-4" />Emitir factura de habilitación</Button></div>
-              <div className="mt-4 flex items-center gap-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600"><Loader2 className="h-4 w-4 animate-spin text-violet-600" />Después de emitir, esta vista consultará el resultado hasta que la DIAN acepte o reporte una novedad.</div>
+              {feedbackKind === "failure" ? (
+                <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-950">
+                  <p className="flex items-center gap-2 font-bold"><AlertTriangle className="h-5 w-5" />La prueba de habilitación falló</p>
+                  <p className="mt-1">{value.latestHabilitationAttempt?.errorMessage ?? "El proceso fiscal terminó con un error."}</p>
+                  <p className="mt-2 text-xs text-red-800">Estado: {value.latestHabilitationAttempt?.status}{value.latestHabilitationAttempt?.errorCode ? ` · Código: ${value.latestHabilitationAttempt.errorCode}` : ""}. Corrige la configuración y emite otra factura de habilitación.</p>
+                </div>
+              ) : feedbackKind === "processing" ? (
+                <div className="mt-4 flex items-center gap-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600"><Loader2 className="h-4 w-4 animate-spin text-violet-600" />Procesando la prueba fiscal: {value.latestHabilitationAttempt?.status}.</div>
+              ) : (
+                <div className="mt-4 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">Emite una factura de prueba. La confirmación o el error aparecerán aquí automáticamente.</div>
+              )}
             </div>
           ) : (
             <p className="rounded-xl bg-muted p-4 text-sm text-muted-foreground">Primero carga y valida las credenciales.</p>

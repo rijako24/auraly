@@ -1,4 +1,5 @@
 import { apiClient } from "./client";
+import { isFiscalStatusSynchronizationMessage } from "./fiscal-onboarding-events";
 
 export type FiscalResolutionConfiguration = {
   businessId: string;
@@ -60,6 +61,21 @@ export type FiscalOnboardingConfiguration = {
   assignedRange: DianNumberingRangeOption | null;
   availableRanges: DianNumberingRangeOption[];
   missingRequirements: string[];
+  latestHabilitationAttempt: FiscalHabilitationAttempt | null;
+};
+
+export type FiscalHabilitationAttempt = {
+  documentId: string;
+  status: string;
+  isTerminalFailure: boolean;
+  errorCode: string | null;
+  errorMessage: string | null;
+  updatedAt: string;
+};
+
+type FiscalSynchronizationNegotiation = {
+  clientAccessUri: string;
+  expiresAt: string;
 };
 
 export type SaveDianHabilitationConfiguration = {
@@ -76,6 +92,45 @@ export const fiscalConfigurationApi = {
       "/commerce/v1/fiscal/configuration/onboarding",
       { businessId },
     ),
+  subscribeToOnboarding: (
+    businessId: string,
+    onStatusChanged: () => void,
+  ) => {
+    let stopped = false;
+    let socket: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+    const connect = async () => {
+      try {
+        const negotiation = await apiClient.post<FiscalSynchronizationNegotiation>(
+          `/commerce/v1/fiscal/configuration/onboarding/synchronization/negotiate?businessId=${encodeURIComponent(businessId)}`,
+        );
+        if (stopped) return;
+        const current = new WebSocket(
+          negotiation.clientAccessUri,
+          "json.webpubsub.azure.v1",
+        );
+        socket = current;
+        current.addEventListener("message", (event: MessageEvent<string>) => {
+          if (isFiscalStatusSynchronizationMessage(event.data)) onStatusChanged();
+        });
+        current.addEventListener("close", () => {
+          if (stopped || socket !== current) return;
+          reconnectTimer = window.setTimeout(() => void connect(), 1_000);
+        });
+      } catch {
+        socket?.close();
+        socket = null;
+        if (!stopped)
+          reconnectTimer = window.setTimeout(() => void connect(), 2_000);
+      }
+    };
+    void connect();
+    return () => {
+      stopped = true;
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      socket?.close();
+    };
+  },
   configureHabilitation: (
     businessId: string,
     request: SaveDianHabilitationConfiguration,

@@ -27,7 +27,16 @@ public sealed record FiscalOnboardingConfiguration(
     bool ProductionActive,
     DianNumberingRangeOption? AssignedRange,
     IReadOnlyList<DianNumberingRangeOption> AvailableRanges,
-    IReadOnlyList<string> MissingRequirements);
+    IReadOnlyList<string> MissingRequirements,
+    FiscalHabilitationAttempt? LatestHabilitationAttempt);
+
+public sealed record FiscalHabilitationAttempt(
+    Guid DocumentId,
+    string Status,
+    bool IsTerminalFailure,
+    string? ErrorCode,
+    string? ErrorMessage,
+    DateTimeOffset UpdatedAt);
 
 public sealed record DianNumberingRangeOption(
     Guid DianNumberingRangeId,

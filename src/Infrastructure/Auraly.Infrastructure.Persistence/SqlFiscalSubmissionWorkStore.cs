@@ -339,6 +339,9 @@ public sealed class SqlFiscalSubmissionWorkStore(
 
         if (status is FiscalDocumentStatusCodes.DianAccepted or FiscalDocumentStatusCodes.DianRejected)
             await InsertStatusEventAsync(connection, transaction, work, status, result, completedAt, cancellationToken);
+        if (terminal)
+            await SqlFiscalStatusSynchronizationOutbox.InsertAsync(
+                connection, transaction, ids, work.BusinessId, completedAt, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
 
@@ -394,7 +397,9 @@ public sealed class SqlFiscalSubmissionWorkStore(
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand(sql, connection);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@Status", status);
         command.Parameters.AddWithValue("@ErrorCode", Limit(errorCode, 128));
         command.Parameters.AddWithValue("@ErrorMessage", Limit(errorMessage, 2000));
@@ -405,6 +410,10 @@ public sealed class SqlFiscalSubmissionWorkStore(
         command.Parameters.AddWithValue("@PermanentFailure", FiscalDocumentStatusCodes.PermanentFailure);
         if (await command.ExecuteNonQueryAsync(cancellationToken) != 3)
             throw new InvalidOperationException("The fiscal submission lease could not be released.");
+        if (status == FiscalDocumentStatusCodes.PermanentFailure)
+            await SqlFiscalStatusSynchronizationOutbox.InsertAsync(
+                connection, transaction, ids, work.BusinessId, occurredAt, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     private static string Status(DianSubmissionResult result, string? existingTrackId) =>

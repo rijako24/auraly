@@ -45,6 +45,7 @@ public sealed class FiscalProcessingHostedService(
     FiscalProcessingServiceBusOptions options,
     IServiceScopeFactory scopes,
     FiscalProcessingCoordinator processing,
+    FiscalStatusSynchronizationNotifier synchronization,
     TimeProvider timeProvider,
     ILogger<FiscalProcessingHostedService> logger) : BackgroundService
 {
@@ -153,6 +154,7 @@ public sealed class FiscalProcessingHostedService(
                         args.CancellationToken);
             }
 
+            await synchronization.DispatchAsync(signal.BusinessId, args.CancellationToken);
             await args.CompleteMessageAsync(args.Message, args.CancellationToken);
         }
         catch (OperationCanceledException) when (args.CancellationToken.IsCancellationRequested)

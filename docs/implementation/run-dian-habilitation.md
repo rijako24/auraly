@@ -61,4 +61,17 @@ Protegida por `X-Auraly-Edge-Session` y limitada a loopback/origen configurado:
 
 El worker se controla con `Auraly:Fiscal:Worker:Enabled` (activo por defecto). No versionar PIN, PFX, PEM, contraseña ni clave privada.
 
+El onboarding administrativo expone el último intento de habilitación en
+`GET /api/commerce/v1/fiscal/configuration/onboarding?businessId=...`. Los estados terminales
+incluyen el código y el mensaje técnico persistidos para que la interfaz permita
+corregir la configuración y repetir la prueba, en vez de mantener un indicador
+de carga indefinido.
+
+La interfaz negocia su conexión de Azure Web PubSub mediante
+`POST /api/commerce/v1/fiscal/configuration/onboarding/synchronization/negotiate?businessId=...`.
+Cada transición fiscal terminal escribe, en la misma transacción SQL, una
+invalidación durable del stream `FiscalStatus`; el navegador recibe el evento y
+vuelve a consultar el onboarding como fuente canónica. El sondeo periódico se
+conserva únicamente como respaldo ante una desconexión.
+
 No apuntar esta rama a producción. La prueba real solo puede ejecutarse después de aprovisionar credenciales de habilitación válidas.

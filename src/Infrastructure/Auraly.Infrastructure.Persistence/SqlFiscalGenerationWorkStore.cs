@@ -183,7 +183,9 @@ public sealed class SqlFiscalGenerationWorkStore(
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        await using var command = new SqlCommand(sql, connection);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@Status", status);
         command.Parameters.AddWithValue("@ErrorCode", Limit(errorCode, 128));
         command.Parameters.AddWithValue("@ErrorMessage", Limit(errorMessage, 2000));
@@ -194,6 +196,9 @@ public sealed class SqlFiscalGenerationWorkStore(
         command.Parameters.AddWithValue("@FiscalDocumentType", work.FiscalDocumentType);
         if (await command.ExecuteNonQueryAsync(cancellationToken) != 3)
             throw new InvalidOperationException("The fiscal generation failure could not release its lease.");
+        await SqlFiscalStatusSynchronizationOutbox.InsertAsync(
+            connection, transaction, ids, work.BusinessId, failedAt, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     private static async Task<FiscalGenerationWorkItem> LoadAsync(

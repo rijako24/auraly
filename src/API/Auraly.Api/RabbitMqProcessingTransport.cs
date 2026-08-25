@@ -454,6 +454,7 @@ public sealed class RabbitMqFiscalProcessingHostedService(
     RabbitMqProcessingOptions options,
     IServiceScopeFactory scopes,
     FiscalProcessingCoordinator processing,
+    FiscalStatusSynchronizationNotifier synchronization,
     TimeProvider timeProvider,
     ILogger<RabbitMqFiscalProcessingHostedService> logger) : BackgroundService
 {
@@ -546,6 +547,7 @@ public sealed class RabbitMqFiscalProcessingHostedService(
                         nextAttemptAt, args.CancellationToken);
             }
 
+            await synchronization.DispatchAsync(signal.BusinessId, args.CancellationToken);
             await channel.BasicAckAsync(args.DeliveryTag, false, args.CancellationToken);
         }
         catch (OperationCanceledException) when (args.CancellationToken.IsCancellationRequested)

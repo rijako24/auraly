@@ -40,6 +40,8 @@
     "src/services/pos/pos-approval-client.test.ts",
     "src/services/pos/pos-approval-synchronization.ts",
     "src/services/pos/pos-approval-synchronization.test.ts",
+    "src/services/api/fiscal-onboarding-events.ts",
+    "src/services/api/fiscal-onboarding-events.test.ts",
     "src/lib/auth-client.ts",
     "src/lib/auth-client.test.ts",
     "src/lib/auth-cookies.ts",

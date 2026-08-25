@@ -113,6 +113,17 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         Assert.Equal(1, await ScalarIntAsync(
             "SELECT COUNT(*) FROM dbo.ServerOutboxMessages WHERE DocumentId=@DocumentId AND Type='FiscalDocument.DianAccepted'",
             request.DocumentId));
+        Assert.Equal(1, await ScalarIntAsync(
+            """
+            SELECT COUNT(*)
+            FROM dbo.PosSynchronizationOutboxMessages notification
+            JOIN dbo.FiscalDocumentProcesses process
+              ON process.DocumentId=@DocumentId
+             AND notification.BusinessId=process.BusinessId
+             AND notification.OccurredAt=process.CompletedAt
+            WHERE notification.Stream=N'FiscalStatus'
+            """,
+            request.DocumentId));
         Assert.Equal(1, transport.SendCalls);
         Assert.Equal(1, transport.QueryCalls);
 

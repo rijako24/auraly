@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Auraly.Application.Fiscal;
+using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Contracts.Fiscal;
 using Microsoft.AspNetCore.Mvc;
 
@@ -45,6 +46,21 @@ public static class FiscalConfigurationApi
             FiscalOnboardingService service, CancellationToken ct) =>
             await Handle(() => service.GetAsync(
                 context.User.ToFiscalConfigurationUser(), businessId, ct)));
+
+        group.MapPost("/onboarding/synchronization/negotiate", async (
+            HttpContext context,
+            Guid businessId,
+            FiscalOnboardingService service,
+            IPosSynchronizationPushGateway gateway,
+            CancellationToken ct) => await Handle(async () =>
+        {
+            var user = context.User.ToFiscalConfigurationUser();
+            await service.GetAsync(user, businessId, ct);
+            var uri = gateway.CreateUserClientAccessUri(
+                user.TenantId, businessId, user.UserId, ct);
+            return new PosSynchronizationNegotiationResponse(
+                uri, DateTimeOffset.UtcNow.AddMinutes(15));
+        }));
 
         group.MapPost("/onboarding/habilitation", async (
             HttpContext context,
