@@ -101,7 +101,7 @@ import { approvalRequestConfirmsExistingPermission } from "@/services/pos/pos-ap
 import { calculateRetailUnitPrice } from "./pos-retail-price";
 import { canRequestOrderSave } from "./pos-order-save-availability";
 import { capturedLineAfterAddition } from "./pos-capture-presentation";
-import { resolvePosFunctionShortcut } from "./pos-function-shortcut";
+import { capturePosFunctionShortcut } from "./pos-function-shortcut";
 import { useAuthStore } from "@/stores/auth-store";
 
 
@@ -918,10 +918,7 @@ export default function PosPage() {
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
-      const shortcut = resolvePosFunctionShortcut(event.key, event.code);
-      if (!/^F(?:[1-9]|1[0-2])$/.test(shortcut)) return;
-      event.preventDefault();
-      shortcutAction.current(event, shortcut);
+      capturePosFunctionShortcut(event, shortcut => shortcutAction.current(event, shortcut));
     };
     window.addEventListener("keydown", handleShortcut, true);
     return () => window.removeEventListener("keydown", handleShortcut, true);

@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { capturedLineAfterAddition } from "./pos-capture-presentation";
-import { resolvePosFunctionShortcut } from "./pos-function-shortcut";
+import {
+  capturePosFunctionShortcut,
+  resolvePosFunctionShortcut,
+} from "./pos-function-shortcut";
 
 test("selecciona la nueva línea aunque el mismo producto ya exista", () => {
   const previous = [
@@ -37,4 +40,35 @@ test("reconoce las teclas F por su código físico aunque el sistema cambie even
   assert.equal(resolvePosFunctionShortcut("AudioVolumeDown", "F2"), "F2");
   assert.equal(resolvePosFunctionShortcut("Unidentified", "F10"), "F10");
   assert.equal(resolvePosFunctionShortcut("F3", ""), "F3");
+  assert.equal(resolvePosFunctionShortcut("LaunchApplication1", "LaunchApp1"), "F2");
+  assert.equal(resolvePosFunctionShortcut("Unidentified", "", 113), "F2");
+  assert.equal(resolvePosFunctionShortcut("a", "KeyA", 65), "");
+});
+
+test("cancela la acción de Windows antes de ejecutar el atajo POS", () => {
+  const calls: string[] = [];
+  const event = {
+    key: "LaunchApplication1",
+    code: "LaunchApp1",
+    keyCode: 0,
+    preventDefault: () => calls.push("preventDefault"),
+    stopImmediatePropagation: () => calls.push("stopImmediatePropagation"),
+  };
+
+  assert.equal(capturePosFunctionShortcut(event, shortcut => calls.push(shortcut)), true);
+  assert.deepEqual(calls, ["preventDefault", "stopImmediatePropagation", "F2"]);
+});
+
+test("no interfiere con teclas que no pertenecen al POS", () => {
+  let cancelled = false;
+  const captured = capturePosFunctionShortcut({
+    key: "a",
+    code: "KeyA",
+    keyCode: 65,
+    preventDefault: () => { cancelled = true; },
+    stopImmediatePropagation: () => { cancelled = true; },
+  }, () => { cancelled = true; });
+
+  assert.equal(captured, false);
+  assert.equal(cancelled, false);
 });
