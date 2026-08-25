@@ -97,6 +97,7 @@ import {
   posApprovalClient,
   type PosApprovalRequest,
 } from "@/services/pos/pos-approval-client";
+import { approvalRequestConfirmsExistingPermission } from "@/services/pos/pos-approval-permission";
 import { calculateRetailUnitPrice } from "./pos-retail-price";
 import { canRequestOrderSave } from "./pos-order-save-availability";
 import { useAuthStore } from "@/stores/auth-store";
@@ -1123,15 +1124,23 @@ export default function PosPage() {
       const businessId = window.localStorage.getItem("selected_business_id");
       if (!businessId || !draft)
         throw new Error("No fue posible identificar el negocio de esta venta.");
-      approval = await activeClient.createApproval({
-        businessId,
-        deviceId: workstation.deviceId,
-        workSessionId: workstation.workSessionId,
-        draftId: draft.draftId.value,
-        lineId,
-        permissionResource,
-        contextJson: JSON.stringify(context),
-      });
+      try {
+        approval = await activeClient.createApproval({
+          businessId,
+          deviceId: workstation.deviceId,
+          workSessionId: workstation.workSessionId,
+          draftId: draft.draftId.value,
+          lineId,
+          permissionResource,
+          contextJson: JSON.stringify(context),
+        });
+      } catch (caught) {
+        // The API resolves current permissions from the authoritative store. The
+        // browser token can lag behind a role/seed update until its next renewal.
+        if (!approvalRequestConfirmsExistingPermission(caught)) throw caught;
+        await execute({ operationId });
+        return;
+      }
     }
     setSensitiveApprovalError(null);
     setSensitiveApproval({ approval, operationId, execute });
