@@ -192,7 +192,11 @@ export function PosProductSearchDialog({
               ref={input}
               autoFocus
               value={term}
-              onChange={(event) => setTerm(event.target.value)}
+              onChange={(event) => {
+                setTerm(event.target.value);
+                setSelected(0);
+              }}
+              onFocus={() => setSelected(0)}
               onKeyDown={(event) => {
                 if (event.key === "ArrowDown") {
                   event.preventDefault();
@@ -257,7 +261,6 @@ export function PosProductSearchDialog({
                 setSelected(index);
                 if (index === results.length - 1) void loadMore();
               }}
-              onMouseEnter={() => setSelected(index)}
               onClick={() => void choose(product)}
               onKeyDown={handleListNavigation}
               disabled={busy}
