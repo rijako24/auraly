@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { defaultStartRoute, ordersLandingView, shouldApplyDefaultStart, shouldRestoreOperationalStart } from "./default-start-route";
+import { defaultStartRoute, ordersLandingView, shouldRestoreOperationalStart } from "./default-start-route";
 
 test("seller-only users start in today's route", () => {
   assert.equal(defaultStartRoute(["Vendedor"], ["orders.read"]), "/dashboard/orders?view=today-route");
@@ -29,9 +29,9 @@ test("users without any navigable permission keep the neutral dashboard", () => 
   assert.equal(defaultStartRoute(["Transportador"], []), "/dashboard");
 });
 
-test("the automatic redirect only owns the dashboard root", () => {
-  assert.equal(shouldApplyDefaultStart("/dashboard"), true);
-  assert.equal(shouldApplyDefaultStart("/dashboard/orders"), false);
+test("the dashboard root remains available after the initial login redirect", () => {
+  assert.equal(shouldRestoreOperationalStart("/dashboard", "/pos"), false);
+  assert.equal(shouldRestoreOperationalStart("/dashboard/", "/dashboard/orders?view=today-route"), false);
 });
 
 test("exclusive operational profiles recover from a route restored for another user", () => {

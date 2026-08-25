@@ -82,6 +82,8 @@
     "src/lib/pwa-install-visibility.ts",
     "src/lib/pwa-install-visibility.test.ts",
     "src/lib/pos-approval-push-key.ts",
-    "src/lib/pos-approval-push-key.test.ts"
+    "src/lib/pos-approval-push-key.test.ts",
+    "src/lib/sales-payment-breakdown.ts",
+    "src/lib/sales-payment-breakdown.test.ts"
   ]
 }

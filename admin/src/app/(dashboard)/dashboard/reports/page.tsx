@@ -10,6 +10,8 @@ import {Button} from "@/components/ui/button";
 import {Card,CardContent,CardDescription,CardHeader,CardTitle} from "@/components/ui/card";
 import {PageError} from "@/components/ui/page-error";
 import {PageLoading} from "@/components/ui/page-loading";
+import {useReferenceOptions} from "@/hooks/use-reference-options";
+import {completePaymentBreakdown} from "@/lib/sales-payment-breakdown";
 
 const money=new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maximumFractionDigits:0});
 const number=new Intl.NumberFormat("es-CO",{maximumFractionDigits:2});
@@ -21,6 +23,7 @@ export default function TodayReportPage(){
   const filter=useMemo<SalesReportFilter|undefined>(()=>date?{from:date,to:date}:undefined,[date]);
   const hourly=useBreakdown(filter,"hour",24);
   const payments=useBreakdown(filter,"payment-method",20);
+  const paymentMethods=useReferenceOptions("payment-method");
   const sellers=useBreakdown(filter,"seller",8);
   const products=useBreakdown(filter,"product",8);
   const suppliers=useBreakdown(filter,"supplier",8);
@@ -31,6 +34,8 @@ export default function TodayReportPage(){
   if(today.isLoading)return <PageLoading/>;
   if(today.isError||!today.data)return <PageError onRetry={()=>void today.refetch()}/>;
   const value=today.data,totals=value.totals;
+  const paymentRows=completePaymentBreakdown(paymentMethods.data??[],payments.data??[]);
+  const hasPayments=paymentRows.some(row=>row.netSales!==0);
   const noProjection=!value.projectedThrough;
   return <div className="space-y-6">
     <header className="relative overflow-hidden rounded-3xl bg-slate-950 p-6 text-white shadow-xl lg:p-8">
@@ -56,7 +61,7 @@ export default function TodayReportPage(){
 
     <section className="grid gap-4 xl:grid-cols-[1.55fr_1fr]">
       <Card className="rounded-3xl"><CardHeader><CardTitle>Ritmo de venta por hora</CardTitle><CardDescription>Venta neta proyectada en cada hora del día comercial.</CardDescription></CardHeader><CardContent><div className="h-80"><ResponsiveContainer width="100%" height="100%"><AreaChart data={hourly.data??[]}><defs><linearGradient id="todaySales" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#0f766e" stopOpacity={.45}/><stop offset="95%" stopColor="#0f766e" stopOpacity={.03}/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="label"/><YAxis tickFormatter={compact}/><Tooltip formatter={value=>money.format(Number(value))}/><Area type="monotone" dataKey="netSales" name="Venta neta" stroke="#0f766e" fill="url(#todaySales)" strokeWidth={3}/></AreaChart></ResponsiveContainer></div></CardContent></Card>
-      <Card className="rounded-3xl"><CardHeader><CardTitle>Cómo pagaron</CardTitle><CardDescription>Recaudo y crédito registrados en los comprobantes.</CardDescription></CardHeader><CardContent><div className="h-56"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={payments.data??[]} dataKey="netSales" nameKey="label" innerRadius={55} outerRadius={90} paddingAngle={3}>{(payments.data??[]).map((row,index)=><Cell key={row.key} fill={palette[index%palette.length]}/>)}</Pie><Tooltip formatter={value=>money.format(Number(value))}/></PieChart></ResponsiveContainer></div><Ranking rows={payments.data??[]} value="netSales"/></CardContent></Card>
+      <Card className="rounded-3xl"><CardHeader><CardTitle>Cómo pagaron</CardTitle><CardDescription>Recaudo y crédito registrados en los comprobantes.</CardDescription></CardHeader><CardContent>{paymentMethods.isLoading?<p className="py-20 text-center text-sm text-muted-foreground">Cargando medios de pago…</p>:paymentMethods.isError?<p className="py-20 text-center text-sm text-destructive">No fue posible cargar los medios de pago.</p>:<><div className="h-56">{hasPayments?<ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={paymentRows} dataKey="netSales" nameKey="label" innerRadius={55} outerRadius={90} paddingAngle={3}>{paymentRows.map((row,index)=><Cell key={row.key} fill={palette[index%palette.length]}/>)}</Pie><Tooltip formatter={value=>money.format(Number(value))}/></PieChart></ResponsiveContainer>:<div className="grid h-full place-items-center rounded-2xl bg-muted/30 px-6 text-center text-sm text-muted-foreground">Los medios de pago están disponibles; todavía no registran recaudo hoy.</div>}</div><Ranking rows={paymentRows} value="netSales"/></>}</CardContent></Card>
     </section>
 
     <section className="grid gap-4 lg:grid-cols-2">

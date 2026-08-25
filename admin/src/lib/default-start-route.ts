@@ -36,12 +36,8 @@ export function defaultStartRoute(roles: readonly string[], permissions: readonl
     : "/dashboard";
 }
 
-export function shouldApplyDefaultStart(pathname: string): boolean {
-  return pathname === "/dashboard" || pathname === "/dashboard/";
-}
-
 export function shouldRestoreOperationalStart(pathname: string, target: string): boolean {
-  if (shouldApplyDefaultStart(pathname)) return target !== "/dashboard";
+  if (pathname === "/dashboard" || pathname === "/dashboard/") return false;
   if (target === "/dashboard/deliveries")
     return pathname.startsWith("/dashboard/orders");
   if (target.startsWith("/dashboard/orders"))
