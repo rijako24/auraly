@@ -10,6 +10,82 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Accepted_order_finishes_processing_after_its_work_session_closes()
+    {
+        var userId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var otherOrderId = Guid.NewGuid();
+        var workSessionId = Guid.NewGuid();
+        await SeedAsync(userId, workSessionId, orderId, otherOrderId);
+
+        using var client = fixture.CreateUserClient(
+            userId,
+            CommercePermissionCodes.SalesCreate,
+            OrderPermissionCodes.Read,
+            OrderPermissionCodes.Recover,
+            OrderPermissionCodes.Invoice);
+        var command = new InvoiceOrdersRequest(
+            workSessionId,
+            fixture.WarehouseId,
+            userId,
+            [orderId],
+            "Cash",
+            null);
+
+        fixture.PauseDocumentProcessing();
+        try
+        {
+            var invoice = await InvoiceAsync(
+                client,
+                command,
+                $"closed-session-{Guid.NewGuid():N}");
+            var signal = Assert.Single(fixture.DrainDocumentSignals());
+            var documentId = Assert.Single(invoice.Results).DocumentId!.Value;
+
+            await using (var connection = new SqlConnection(fixture.ConnectionString))
+            {
+                await connection.OpenAsync();
+                await using var close = connection.CreateCommand();
+                close.CommandText = """
+                    UPDATE dbo.WorkSessions
+                    SET Status=N'Closed',ClosedAt=SYSDATETIMEOFFSET(),
+                        LastActivityAt=SYSDATETIMEOFFSET()
+                    WHERE WorkSessionId=@WorkSessionId;
+                    """;
+                close.Parameters.AddWithValue("@WorkSessionId", workSessionId);
+                Assert.Equal(1, await close.ExecuteNonQueryAsync());
+            }
+
+            fixture.ResumeDocumentProcessing();
+            await fixture.DocumentSignals.PublishAsync(signal);
+
+            await using var verifyConnection = new SqlConnection(fixture.ConnectionString);
+            await verifyConnection.OpenAsync();
+            await using var verify = verifyConnection.CreateCommand();
+            verify.CommandText = """
+                SELECT d.ProcessingStatus,j.Status,w.Status,
+                       (SELECT COUNT_BIG(1) FROM dbo.SalesDocuments
+                        WHERE DocumentId=@DocumentId)
+                FROM dbo.SalesDocuments d
+                JOIN dbo.DocumentProcessingJobs j ON j.DocumentId=d.DocumentId
+                JOIN dbo.WorkSessions w ON w.WorkSessionId=d.WorkSessionId
+                WHERE d.DocumentId=@DocumentId;
+                """;
+            verify.Parameters.AddWithValue("@DocumentId", documentId);
+            await using var reader = await verify.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal("Completed", reader.GetString(0));
+            Assert.Equal("Completed", reader.GetString(1));
+            Assert.Equal("Closed", reader.GetString(2));
+            Assert.Equal(1, reader.GetInt64(3));
+        }
+        finally
+        {
+            fixture.ResumeDocumentProcessing();
+        }
+    }
+
+    [Fact]
     public async Task Selected_orders_create_independent_invoices_exactly_once()
     {
         var userId = Guid.NewGuid();
