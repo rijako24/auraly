@@ -126,24 +126,34 @@ public sealed class PosArchitectureTests
             Path.Combine(posDirectory, "pos-payment-dialog.tsx"));
         var productSearchDialog = File.ReadAllText(
             Path.Combine(posDirectory, "pos-product-search-dialog.tsx"));
+        var functionShortcut = File.ReadAllText(
+            Path.Combine(posDirectory, "pos-function-shortcut.ts"));
 
         Assert.Contains("shortcut === \"F1\"", page, StringComparison.Ordinal);
         Assert.Contains("shortcut === \"F2\"", page, StringComparison.Ordinal);
-        Assert.Contains("resolvePosFunctionShortcut(event.key, event.code)", page, StringComparison.Ordinal);
-        var shortcutResolution = page.IndexOf(
-            "const shortcut = resolvePosFunctionShortcut(event.key, event.code);",
+        Assert.Contains("capturePosFunctionShortcut(event", page, StringComparison.Ordinal);
+        Assert.Contains("LaunchApplication1: \"F2\"", functionShortcut, StringComparison.Ordinal);
+        Assert.Contains("LaunchApp1: \"F2\"", functionShortcut, StringComparison.Ordinal);
+        var shortcutResolution = functionShortcut.IndexOf(
+            "const shortcut = resolvePosFunctionShortcut(event.key, event.code, event.keyCode);",
             StringComparison.Ordinal);
-        var shortcutReservation = page.IndexOf(
+        var shortcutReservation = functionShortcut.IndexOf(
             "event.preventDefault();",
             shortcutResolution,
             StringComparison.Ordinal);
-        var shortcutDispatch = page.IndexOf(
-            "shortcutAction.current(event, shortcut);",
+        var shortcutPropagation = functionShortcut.IndexOf(
+            "event.stopImmediatePropagation();",
+            shortcutResolution,
+            StringComparison.Ordinal);
+        var shortcutDispatch = functionShortcut.IndexOf(
+            "onShortcut(shortcut);",
             shortcutResolution,
             StringComparison.Ordinal);
         Assert.True(shortcutResolution >= 0, "The POS shortcut resolver was not found.");
         Assert.True(
-            shortcutReservation > shortcutResolution && shortcutReservation < shortcutDispatch,
+            shortcutReservation > shortcutResolution &&
+            shortcutPropagation > shortcutReservation &&
+            shortcutPropagation < shortcutDispatch,
             "Function keys must be reserved before dispatching the POS action.");
         Assert.Contains(
             "return () => window.removeEventListener(\"keydown\", handleShortcut, true);\n  }, []);",
