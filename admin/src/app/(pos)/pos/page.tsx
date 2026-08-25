@@ -166,6 +166,7 @@ export default function PosPage() {
   const discountAuthorization = useRef<PosSensitiveAuthorization | null>(null);
   const lineRemovalAuthorization = useRef<PosSensitiveAuthorization | null>(null);
   const restartAuthorization = useRef<PosSensitiveAuthorization | null>(null);
+  const shortcutAction = useRef<(event: KeyboardEvent, shortcut: string) => void>(() => undefined);
   const protectedActionHandlers = useRef({
     discount: () => Promise.resolve(),
     removeLine: (lineId: string) => { void lineId; return Promise.resolve(); },
@@ -768,17 +769,15 @@ export default function PosPage() {
     }
   }, [busy, client, showError, workstation.workSessionId]);
 
-  useEffect(() => {
-    const handleShortcut = (event: KeyboardEvent) => {
-      const shortcut = resolvePosFunctionShortcut(event.key, event.code);
-      if (
-        invoiceSearchOpen ||
-        returnsOpen ||
-        documentTypeOpen ||
-        cashMovementDirection ||
-        closurePreview
-      ) return;
-      const canOpenCashMovement =
+  shortcutAction.current = (event, shortcut) => {
+    if (
+      invoiceSearchOpen ||
+      returnsOpen ||
+      documentTypeOpen ||
+      cashMovementDirection ||
+      closurePreview
+    ) return;
+    const canOpenCashMovement =
         Boolean(workstation.workSessionId) &&
         !busy &&
         !temporaryOpen &&
@@ -789,7 +788,7 @@ export default function PosPage() {
         !printerOpen &&
         !closurePreview &&
         !confirmation;
-      if (
+    if (
         event.ctrlKey &&
         shortcut === "F6" &&
         client?.mode === "online" &&
@@ -802,7 +801,6 @@ export default function PosPage() {
         !paymentOpen &&
         !confirmation
       ) {
-        event.preventDefault();
         setReturnsOpen(true);
       } else
       if (
@@ -815,7 +813,6 @@ export default function PosPage() {
         !paymentOpen &&
         !confirmation
       ) {
-        event.preventDefault();
         setInvoiceSearchOpen(true);
       } else if (
         shortcut === "F1" &&
@@ -828,7 +825,6 @@ export default function PosPage() {
         !paymentOpen &&
         !confirmation
       ) {
-        event.preventDefault();
         setPaymentOpen(true);
       } else if (
         shortcut === "F2" &&
@@ -839,7 +835,6 @@ export default function PosPage() {
         !discountOpen &&
         !confirmation
       ) {
-        event.preventDefault();
         setProductSearchOpen(true);
       } else if (
         !event.ctrlKey &&
@@ -852,7 +847,6 @@ export default function PosPage() {
         !discountOpen &&
         !confirmation
       ) {
-        event.preventDefault();
         setCustomerSearchOpen(true);
       } else if (
         event.ctrlKey &&
@@ -860,7 +854,6 @@ export default function PosPage() {
         canOpenCashDrawer &&
         canOpenCashMovement
       ) {
-        event.preventDefault();
         void openCashDrawer();
       } else if (
         !event.ctrlKey &&
@@ -874,7 +867,6 @@ export default function PosPage() {
         !discountOpen &&
         !confirmation
       ) {
-        event.preventDefault();
         void requestPauseSale();
       } else if (
         shortcut === "F3" &&
@@ -886,7 +878,6 @@ export default function PosPage() {
         !customerSearchOpen &&
         !confirmation
       ) {
-        event.preventDefault();
         void protectedActionHandlers.current.discount();
       } else if (
         shortcut === "F4" &&
@@ -900,7 +891,6 @@ export default function PosPage() {
         !discountOpen &&
         !confirmation
       ) {
-        event.preventDefault();
         void protectedActionHandlers.current.removeLine(selectedLineId);
       } else if (
         shortcut === "F5" &&
@@ -912,51 +902,30 @@ export default function PosPage() {
         !discountOpen &&
         !confirmation
       ) {
-        event.preventDefault();
         void protectedActionHandlers.current.restartSale();
       } else if (event.ctrlKey && shortcut === "F8" && canOpenCashMovement) {
-        event.preventDefault();
         setCashMovementDirection("In");
       } else if (event.ctrlKey && shortcut === "F9" && canOpenCashMovement) {
-        event.preventDefault();
         setCashMovementDirection("Out");
       } else if (event.ctrlKey && shortcut === "F10" && canOpenCashMovement) {
-        event.preventDefault();
         salesSessionButton.current?.click();
       } else if (!event.ctrlKey && shortcut === "F8" && !busy) {
-        event.preventDefault();
         setSidePanel("temporaries");
       } else if (!event.ctrlKey && shortcut === "F9" && !busy) {
-        event.preventDefault();
         setSidePanel("orders");
-      }
+    }
+  };
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      const shortcut = resolvePosFunctionShortcut(event.key, event.code);
+      if (!/^F(?:[1-9]|1[0-2])$/.test(shortcut)) return;
+      event.preventDefault();
+      shortcutAction.current(event, shortcut);
     };
     window.addEventListener("keydown", handleShortcut, true);
     return () => window.removeEventListener("keydown", handleShortcut, true);
-  }, [
-    busy,
-    client,
-    cashMovementDirection,
-    closurePreview,
-    canOpenCashDrawer,
-    returnsOpen,
-    confirmation,
-    customerSearchOpen,
-    discountOpen,
-    documentTypeOpen,
-    invoiceSearchOpen,
-    draft,
-    serverConnected,
-    hasSelectedLine,
-    paymentOpen,
-    productSearchOpen,
-    requestPauseSale,
-    selectedLineId,
-    temporaryOpen,
-    printerOpen,
-    openCashDrawer,
-    workstation.workSessionId,
-  ]);
+  }, []);
 
   async function capture(event: FormEvent) {
     event.preventDefault();

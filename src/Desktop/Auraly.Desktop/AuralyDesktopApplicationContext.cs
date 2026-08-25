@@ -168,6 +168,7 @@ internal sealed class AuralyPosForm : Form
         await browser.EnsureCoreWebView2Async(environment);
         browser.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
         browser.CoreWebView2.Settings.AreDevToolsEnabled = false;
+        browser.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = false;
         browser.CoreWebView2.Settings.IsStatusBarEnabled = false;
         browser.CoreWebView2.Navigate(target);
     }

@@ -130,6 +130,25 @@ public sealed class PosArchitectureTests
         Assert.Contains("shortcut === \"F1\"", page, StringComparison.Ordinal);
         Assert.Contains("shortcut === \"F2\"", page, StringComparison.Ordinal);
         Assert.Contains("resolvePosFunctionShortcut(event.key, event.code)", page, StringComparison.Ordinal);
+        var shortcutResolution = page.IndexOf(
+            "const shortcut = resolvePosFunctionShortcut(event.key, event.code);",
+            StringComparison.Ordinal);
+        var shortcutReservation = page.IndexOf(
+            "event.preventDefault();",
+            shortcutResolution,
+            StringComparison.Ordinal);
+        var shortcutDispatch = page.IndexOf(
+            "shortcutAction.current(event, shortcut);",
+            shortcutResolution,
+            StringComparison.Ordinal);
+        Assert.True(shortcutResolution >= 0, "The POS shortcut resolver was not found.");
+        Assert.True(
+            shortcutReservation > shortcutResolution && shortcutReservation < shortcutDispatch,
+            "Function keys must be reserved before dispatching the POS action.");
+        Assert.Contains(
+            "return () => window.removeEventListener(\"keydown\", handleShortcut, true);\n  }, []);",
+            page.Replace("\r\n", "\n", StringComparison.Ordinal),
+            StringComparison.Ordinal);
         Assert.Contains("Buscar <span", page, StringComparison.Ordinal);
         Assert.Contains(">F2</span>", page, StringComparison.Ordinal);
         Assert.Contains(">F1</span>", page, StringComparison.Ordinal);
@@ -179,6 +198,17 @@ public sealed class PosArchitectureTests
         Assert.DoesNotContain(
             "No tienes permiso para preparar este equipo para trabajar sin conexión.",
             page,
+            StringComparison.Ordinal);
+
+        var desktopHost = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "src",
+            "Desktop",
+            "Auraly.Desktop",
+            "AuralyDesktopApplicationContext.cs"));
+        Assert.Contains(
+            "AreBrowserAcceleratorKeysEnabled = false",
+            desktopHost,
             StringComparison.Ordinal);
     }
 
