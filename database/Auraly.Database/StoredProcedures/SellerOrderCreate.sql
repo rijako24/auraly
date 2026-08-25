@@ -2,6 +2,15 @@ CREATE PROCEDURE [dbo].[SellerOrderCreate]
     @OrderId UNIQUEIDENTIFIER,
     @BusinessId UNIQUEIDENTIFIER,
     @CustomerId UNIQUEIDENTIFIER,
+    @WarehouseId UNIQUEIDENTIFIER,
+    @OrdersWarehouseId UNIQUEIDENTIFIER,
+    @ReservationTransferId UNIQUEIDENTIFIER,
+    @RouteId UNIQUEIDENTIFIER = NULL,
+    @RouteStopId UNIQUEIDENTIFIER = NULL,
+    @PartySiteId UNIQUEIDENTIFIER = NULL,
+    @CapturedByUserId UNIQUEIDENTIFIER,
+    @CapturedOffline BIT,
+    @RequiresStockReview BIT,
     @Status INT,
     @CustomerName NVARCHAR(200),
     @Email NVARCHAR(254) = NULL,
@@ -13,19 +22,40 @@ CREATE PROCEDURE [dbo].[SellerOrderCreate]
     @Number NVARCHAR(300),
     @ExternalStatus NVARCHAR(100),
     @IdempotencyKey NVARCHAR(200),
-    @Attributes NVARCHAR(MAX),
     @LinesJson NVARCHAR(MAX)
 AS
 BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
-    INSERT dbo.Orders(OrderId,BusinessId,CustomerId,Source,FulfillmentMode,Status,CustomerNameSnapshot,
+    DECLARE @SellerId UNIQUEIDENTIFIER=(
+      SELECT seller.SellerId
+      FROM dbo.AppUsers appUser
+      INNER JOIN dbo.CommerceSellers seller
+        ON seller.PartyId=appUser.PartyId AND seller.BusinessId=@BusinessId AND seller.IsActive=1
+      WHERE appUser.UserId=@CapturedByUserId);
+    IF @SellerId IS NULL THROW 51300,'El usuario autenticado no tiene un vendedor comercial activo.',1;
+    IF @RouteId IS NOT NULL AND NOT EXISTS(
+      SELECT 1 FROM dbo.SalesRoutes route
+      WHERE route.RouteId=@RouteId AND route.BusinessId=@BusinessId
+        AND route.SellerId=@SellerId AND route.IsActive=1)
+      THROW 51300,'La ruta no pertenece al vendedor autenticado.',1;
+    IF @RouteStopId IS NOT NULL AND NOT EXISTS(
+      SELECT 1 FROM dbo.SalesRouteStops stop
+      WHERE stop.RouteStopId=@RouteStopId AND stop.RouteId=@RouteId
+        AND stop.CustomerId=@CustomerId AND stop.PartySiteId=@PartySiteId AND stop.IsActive=1)
+      THROW 51300,'La parada no corresponde a la ruta, cliente y sede seleccionados.',1;
+
+    INSERT dbo.Orders(OrderId,BusinessId,CustomerId,WarehouseId,OrdersWarehouseId,ReservationTransferId,
+        SellerId,RouteId,RouteStopId,PartySiteId,CapturedByUserId,CapturedOffline,RequiresStockReview,
+        Source,FulfillmentMode,Status,CustomerNameSnapshot,
         CustomerEmailSnapshot,CustomerPhoneSnapshot,CustomerDocumentSnapshot,DeliveryAddressSnapshot,Notes,
         Currency,Subtotal,DiscountTotal,TaxTotal,Total,CustomerConfirmed,ExternalDocumentNumber,ExternalStatus,
-        IdempotencyKey,CustomAttributesJson,CreatedAt,UpdatedAt)
-    VALUES(@OrderId,@BusinessId,@CustomerId,1,0,@Status,@CustomerName,@Email,@Phone,@Identification,@Address,@Notes,
-        N'COP',@Total,0,0,@Total,1,@Number,@ExternalStatus,@IdempotencyKey,@Attributes,SYSUTCDATETIME(),SYSUTCDATETIME());
+        IdempotencyKey,CreatedAt,UpdatedAt)
+    VALUES(@OrderId,@BusinessId,@CustomerId,@WarehouseId,@OrdersWarehouseId,@ReservationTransferId,
+        @SellerId,@RouteId,@RouteStopId,@PartySiteId,@CapturedByUserId,@CapturedOffline,@RequiresStockReview,
+        1,0,@Status,@CustomerName,@Email,@Phone,@Identification,@Address,@Notes,
+        N'COP',@Total,0,0,@Total,1,@Number,@ExternalStatus,@IdempotencyKey,SYSUTCDATETIME(),SYSUTCDATETIME());
 
     INSERT dbo.OrderItems(OrderItemId,OrderId,BusinessId,ProductId,Sku,ProductCodeSnapshot,ProductNameSnapshot,
         DescriptionSnapshot,UnitCodeSnapshot,Quantity,UnitPrice,DiscountAmount,TaxAmount,LineTotal,RawPayloadJson,CreatedAt)

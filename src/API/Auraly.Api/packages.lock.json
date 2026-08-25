@@ -1359,8 +1359,10 @@
         "type": "Project",
         "dependencies": {
           "Auraly.Application.Routes": "[1.0.0, )",
+          "Auraly.Application.Sales": "[1.0.0, )",
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
           "Auraly.Contracts.Routes": "[1.0.0, )",
+          "Auraly.Contracts.Sales": "[1.0.0, )",
           "Auraly.Domain.Routes": "[1.0.0, )",
           "Microsoft.Data.SqlClient": "[5.2.2, )"
         }

@@ -72,17 +72,17 @@ public sealed class SqlOrderStore(
 
         if (request.WarehouseId is not null)
         {
-            filters.Add("ISJSON(o.CustomAttributesJson)=1 AND TRY_CONVERT(uniqueidentifier,JSON_VALUE(o.CustomAttributesJson,'$.WarehouseId'))=@WarehouseId");
+            filters.Add("COALESCE(o.WarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(o.CustomAttributesJson,'$.WarehouseId')))=@WarehouseId");
             parameters.Add(P("@WarehouseId", request.WarehouseId.Value));
         }
         if (request.RouteId is not null)
         {
-            filters.Add("ISJSON(o.CustomAttributesJson)=1 AND TRY_CONVERT(uniqueidentifier,JSON_VALUE(o.CustomAttributesJson,'$.RouteId'))=@RouteId");
+            filters.Add("COALESCE(o.RouteId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(o.CustomAttributesJson,'$.RouteId')))=@RouteId");
             parameters.Add(P("@RouteId", request.RouteId.Value));
         }
         if (request.OnlyCreatedByActor)
         {
-            filters.Add("ISJSON(o.CustomAttributesJson)=1 AND TRY_CONVERT(uniqueidentifier,JSON_VALUE(o.CustomAttributesJson,'$.createdBy'))=@CreatedByActor");
+            filters.Add("COALESCE(o.CapturedByUserId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(o.CustomAttributesJson,'$.createdBy')))=@CreatedByActor");
             parameters.Add(P("@CreatedByActor", actor.UserId));
         }
 
@@ -191,7 +191,7 @@ public sealed class SqlOrderStore(
               o.CreatedAt,o.CustomerConfirmed,link.DocumentId,
               document.ProcessingStatus,processingJob.Status,
               claim.OrderClaimId,claim.WorkSessionId,claim.DeviceId,claim.UserId,claim.ExpiresAt,
-              TRY_CONVERT(uniqueidentifier,JSON_VALUE(o.CustomAttributesJson,'$.WarehouseId'))
+              COALESCE(o.WarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(o.CustomAttributesJson,'$.WarehouseId')))
             FROM dbo.Orders o
             INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
             LEFT JOIN dbo.PaymentTransactions pt

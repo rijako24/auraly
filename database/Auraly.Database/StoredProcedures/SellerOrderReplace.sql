@@ -28,7 +28,7 @@ BEGIN
         CustomerPhoneSnapshot=@CustomerPhone,DeliveryAddressSnapshot=@CustomerAddress,
         Notes=@Notes,Subtotal=@Subtotal,DiscountTotal=@DiscountTotal,Total=@Total,
         Status=2,ExternalStatus=N'InventoryTransferAccepted',
-        CustomAttributesJson=JSON_MODIFY(JSON_MODIFY(CustomAttributesJson,'$.reservationTransferId',CONVERT(nvarchar(36),@ReservationTransferId)),'$.requiresStockReview',CAST(0 AS bit)),
+        ReservationTransferId=@ReservationTransferId,RequiresStockReview=0,
         UpdatedAt=SYSUTCDATETIME()
     WHERE OrderId=@OrderId AND BusinessId=@BusinessId;
     IF @@ROWCOUNT <> 1 THROW 51303, 'No se pudo actualizar el pedido.', 1;

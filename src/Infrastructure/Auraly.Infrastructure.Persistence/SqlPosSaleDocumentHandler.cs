@@ -53,9 +53,9 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         foreach (var line in request.Lines.OrderBy(line => line.LineNumber))
         {
             await ValidateDocumentCostAsync(session, request.BusinessId, line, cancellationToken);
-            await InsertLineAsync(session, request, line, cancellationToken);
             await InsertInventoryMovementAsync(
                 session, request, inventoryWarehouseId, line, cancellationToken);
+            await InsertLineAsync(session, request, line, cancellationToken);
         }
 
         await LinkSourceOrderAsync(session, request, cancellationToken);
@@ -85,17 +85,43 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             (
                 DocumentId, LineNumber, ProductId, Description, TaxCode, TaxRate,
                 Quantity, UnitPrice, UnitCostSnapshot, DiscountAmount, TaxAmount,
-                UntaxedAmount, LineTotal
+                UntaxedAmount, LineTotal,ProductCodeSnapshot,ProductNameSnapshot,
+                CategoryIdSnapshot,CategoryNameSnapshot,SupplierIdSnapshot,SupplierNameSnapshot,
+                AttributionSnapshotVersion
             )
-            VALUES
-            (
+            SELECT
                 @DocumentId, @LineNumber, @ProductId, @Description, @TaxCode, @TaxRate,
-                @Quantity, @UnitPrice, @UnitCostSnapshot, @DiscountAmount, @TaxAmount,
-                @UntaxedAmount, @LineTotal
-            );
+                @Quantity, @UnitPrice,
+                COALESCE(@UnitCostSnapshot,CASE WHEN @Quantity=0 THEN 0 ELSE COALESCE(ABS(movement.ValueChange)/@Quantity,0) END),
+                @DiscountAmount, @TaxAmount,
+                @UntaxedAmount, @LineTotal,COALESCE(p.ProductCode,p.Sku,p.Reference,N''),p.Name,
+                p.ProductCategoryId,COALESCE(category.Name,p.CategoryName),supplier.SupplierId,supplier.Name,
+                1
+            FROM dbo.Products p
+            LEFT JOIN dbo.ProductCategories category
+              ON category.ProductCategoryId=p.ProductCategoryId AND category.BusinessId=p.BusinessId
+            OUTER APPLY
+            (
+              SELECT TOP(1) s.SupplierId,s.Name
+              FROM dbo.SupplierProducts sp
+              INNER JOIN dbo.Suppliers s
+                ON s.SupplierId=sp.SupplierId AND s.BusinessId=sp.BusinessId AND s.IsActive=1
+              WHERE sp.BusinessId=p.BusinessId AND sp.ProductId=p.ProductId AND sp.IsActive=1
+              ORDER BY sp.IsPrimary DESC,sp.CreatedAt,sp.SupplierProductId
+            ) supplier
+            OUTER APPLY
+            (
+              SELECT TOP(1) movement.ValueChange
+              FROM dbo.InventoryMovements movement
+              WHERE movement.DocumentId=@DocumentId AND movement.DocumentType=@DocumentType
+                AND movement.LineNumber=@LineNumber AND movement.MovementType=N'Sale'
+            ) movement
+            WHERE p.ProductId=@ProductId AND p.BusinessId=@BusinessId;
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+        command.Parameters.AddWithValue("@DocumentType", request.CommercialSnapshot.DocumentType);
+        command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         command.Parameters.AddWithValue("@LineNumber", line.LineNumber);
         command.Parameters.AddWithValue("@ProductId", line.ProductId);
         command.Parameters.AddWithValue("@Description", line.Description);
@@ -111,7 +137,9 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         AddDecimal(command, "@TaxAmount", line.TaxAmount, 19, 4);
         AddDecimal(command, "@UntaxedAmount", line.UntaxedAmount, 19, 4);
         AddDecimal(command, "@LineTotal", line.LineTotal, 19, 4);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+            throw new InvalidOperationException(
+                $"The immutable attribution for sale line {line.LineNumber} could not be captured.");
     }
 
     private async Task InsertInventoryMovementAsync(
@@ -201,7 +229,8 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         if (request.SourceOrderId is null) return request.WarehouseId;
         const string sql = """
             SELECT ExternalStatus,
-                   TRY_CONVERT(uniqueidentifier,JSON_VALUE(CustomAttributesJson,'$.ordersWarehouseId'))
+                   COALESCE(OrdersWarehouseId,
+                     TRY_CONVERT(uniqueidentifier,JSON_VALUE(CustomAttributesJson,'$.ordersWarehouseId')))
             FROM dbo.Orders WITH(UPDLOCK,HOLDLOCK)
             WHERE OrderId=@OrderId AND BusinessId=@BusinessId;
             """;

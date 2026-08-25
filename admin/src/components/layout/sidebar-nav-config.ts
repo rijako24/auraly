@@ -14,7 +14,6 @@ import {
   FileKey2,
   Gem,
   Landmark,
-  LayoutDashboard,
   MessageSquare,
   Megaphone,
   Radio,
@@ -32,6 +31,7 @@ import {
   Undo2,
   UserCog,
   UserPlus,
+  Users,
 } from "lucide-react";
 
 export interface NavItem {
@@ -50,8 +50,13 @@ export interface NavSeparator {
 export type NavEntry = NavItem | NavSeparator;
 
 export const navigation: NavEntry[] = [
-  { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard, permission: "dashboard.read" },
-  { name: "Analítica de ventas", href: "/dashboard/analytics", icon: BarChart3, permission: "sales.reports.read" },
+  { name: "Hoy", href: "/dashboard", icon: TrendingUp, permission: "sales.reports.read" },
+  { type: "separator", label: "Reportes" },
+  { name: "Ventas", href: "/dashboard/reports/sales", icon: BarChart3, permission: "sales.reports.read" },
+  { name: "Vendedores", href: "/dashboard/reports/sellers", icon: Users, permission: "sales.reports.read" },
+  { name: "Clientes y cobertura", href: "/dashboard/reports/customers", icon: ContactRound, permission: "sales.reports.read" },
+  { name: "Visitas comerciales", href: "/dashboard/reports/visits", icon: Route, permission: "sales.reports.read" },
+  { name: "Impacto proveedores", href: "/dashboard/reports/supplier-impact", icon: Truck, permission: "sales.reports.read" },
   { type: "separator", label: "Negocio" },
   { name: "Servicios", href: "/dashboard/services", icon: Package, permission: "services.read" },
   { name: "Productos", href: "/dashboard/products", icon: Package, permission: "catalog.read" },

@@ -7,12 +7,12 @@ AS
 BEGIN
     SET NOCOUNT ON;
     SELECT o.ExternalDocumentNumber,o.CustomerId,o.Status,
-           TRY_CONVERT(uniqueidentifier,JSON_VALUE(o.CustomAttributesJson,'$.WarehouseId')),
-           TRY_CONVERT(uniqueidentifier,JSON_VALUE(o.CustomAttributesJson,'$.ordersWarehouseId'))
+           COALESCE(o.WarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(o.CustomAttributesJson,'$.WarehouseId'))),
+           COALESCE(o.OrdersWarehouseId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(o.CustomAttributesJson,'$.ordersWarehouseId')))
     FROM dbo.Orders o
     WHERE o.OrderId=@OrderId AND o.BusinessId=@BusinessId AND o.Source=1
       AND (
-        TRY_CONVERT(uniqueidentifier,JSON_VALUE(o.CustomAttributesJson,'$.createdBy'))=@UserId
+        COALESCE(o.CapturedByUserId,TRY_CONVERT(uniqueidentifier,JSON_VALUE(o.CustomAttributesJson,'$.createdBy')))=@UserId
         OR EXISTS(
           SELECT 1 FROM dbo.OrderClaims claim
           WHERE claim.OrderId=o.OrderId AND claim.BusinessId=o.BusinessId

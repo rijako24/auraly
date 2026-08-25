@@ -263,7 +263,10 @@ CREATE TABLE [reporting].[SalesReportingJobs]
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [SourceDocumentId] UNIQUEIDENTIFIER NOT NULL,
     [SourceDocumentType] NVARCHAR(64) NOT NULL,
+    [SourceVersion] BIGINT NOT NULL CONSTRAINT [DF_SalesReportingJobs_SourceVersion] DEFAULT (1),
     [SourcePayloadHash] BINARY(32) NOT NULL,
+    [SourcePayloadJson] NVARCHAR(MAX) NULL,
+    [SourceDocumentProcessingJobId] UNIQUEIDENTIFIER NULL,
     [Status] NVARCHAR(24) NOT NULL,
     [AttemptCount] INT NOT NULL CONSTRAINT [DF_SalesReportingJobs_Attempts] DEFAULT 0,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
@@ -273,12 +276,16 @@ CREATE TABLE [reporting].[SalesReportingJobs]
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [PK_SalesReportingJobs] PRIMARY KEY CLUSTERED ([SalesReportingJobId]),
     CONSTRAINT [UQ_SalesReportingJobs_Source]
-        UNIQUE ([SourceDocumentId],[SourceDocumentType]),
+        UNIQUE ([SourceDocumentId],[SourceDocumentType],[SourceVersion]),
     CONSTRAINT [FK_SalesReportingJobs_Business]
         FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
     CONSTRAINT [FK_SalesReportingJobs_Source]
-        FOREIGN KEY ([SourceDocumentId],[SourceDocumentType])
-        REFERENCES [dbo].[DocumentProcessingJobs]([DocumentId],[DocumentType]),
+        FOREIGN KEY ([SourceDocumentProcessingJobId])
+        REFERENCES [dbo].[DocumentProcessingJobs]([JobId]),
+    CONSTRAINT [CK_SalesReportingJobs_SourceVersion] CHECK ([SourceVersion]>0),
+    CONSTRAINT [CK_SalesReportingJobs_SourceShape] CHECK
+      (([SourceDocumentProcessingJobId] IS NOT NULL AND [SourcePayloadJson] IS NULL) OR
+       ([SourceDocumentProcessingJobId] IS NULL AND ISJSON([SourcePayloadJson])=1)),
     CONSTRAINT [CK_SalesReportingJobs_Status]
         CHECK ([Status] IN (N'Pending',N'Processing',N'Projected',N'Failed')),
     CONSTRAINT [CK_SalesReportingJobs_Attempts] CHECK ([AttemptCount]>=0)
@@ -288,4 +295,58 @@ GO
 CREATE INDEX [IX_SalesReportingJobs_Dispatch]
     ON [reporting].[SalesReportingJobs]([BusinessId],[Status],[CreatedAt])
     INCLUDE([SourceDocumentId],[SourceDocumentType],[AttemptCount]);
+GO
+
+CREATE TABLE [reporting].[CommercialReportVisitFacts]
+(
+    [RouteVisitId] UNIQUEIDENTIFIER NOT NULL,
+    [TenantId] UNIQUEIDENTIFIER NOT NULL,
+    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [VisitDate] DATE NOT NULL,
+    [OccurredAt] DATETIMEOFFSET(7) NOT NULL,
+    [RouteId] UNIQUEIDENTIFIER NOT NULL,
+    [RouteCode] NVARCHAR(32) NOT NULL,
+    [RouteName] NVARCHAR(160) NOT NULL,
+    [ZoneId] UNIQUEIDENTIFIER NULL,
+    [ZoneName] NVARCHAR(160) NULL,
+    [SellerId] UNIQUEIDENTIFIER NOT NULL,
+    [SellerName] NVARCHAR(240) NOT NULL,
+    [RouteStopId] UNIQUEIDENTIFIER NOT NULL,
+    [CustomerId] UNIQUEIDENTIFIER NOT NULL,
+    [CustomerName] NVARCHAR(240) NOT NULL,
+    [PartySiteId] UNIQUEIDENTIFIER NOT NULL,
+    [Status] NVARCHAR(16) NOT NULL,
+    [HasOrder] BIT NOT NULL,
+    [OrderId] UNIQUEIDENTIFIER NULL,
+    [SkipReason] NVARCHAR(300) NULL,
+    [VisitObservation] NVARCHAR(1000) NULL,
+    [RecordedByUserId] UNIQUEIDENTIFIER NOT NULL,
+    [ProjectionVersion] SMALLINT NOT NULL,
+    [SourceVersion] BIGINT NOT NULL,
+    [ProjectedAt] DATETIMEOFFSET(7) NOT NULL,
+    CONSTRAINT [PK_CommercialReportVisitFacts] PRIMARY KEY ([RouteVisitId]),
+    CONSTRAINT [FK_CommercialReportVisitFacts_Tenant] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
+    CONSTRAINT [FK_CommercialReportVisitFacts_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId]),
+    CONSTRAINT [CK_CommercialReportVisitFacts_Status] CHECK ([Status] IN (N'Visited',N'Skipped')),
+    CONSTRAINT [CK_CommercialReportVisitFacts_Order] CHECK (([HasOrder]=1 AND [OrderId] IS NOT NULL) OR ([HasOrder]=0 AND [OrderId] IS NULL))
+);
+GO
+CREATE INDEX [IX_CommercialReportVisitFacts_Business_Date_Seller]
+  ON [reporting].[CommercialReportVisitFacts]([BusinessId],[VisitDate] DESC,[SellerId])
+  INCLUDE([RouteId],[CustomerId],[Status],[HasOrder],[OrderId]);
+GO
+
+CREATE TABLE [reporting].[CommercialReportOrderFacts] (
+  [OrderId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,[TenantId] UNIQUEIDENTIFIER NOT NULL,[BusinessId] UNIQUEIDENTIFIER NOT NULL,
+  [CreatedDate] DATE NOT NULL,[CreatedAt] DATETIMEOFFSET(7) NOT NULL,[OrderNumber] NVARCHAR(300) NOT NULL,
+  [SellerId] UNIQUEIDENTIFIER NOT NULL,[SellerName] NVARCHAR(240) NOT NULL,[CustomerId] UNIQUEIDENTIFIER NOT NULL,
+  [CustomerName] NVARCHAR(240) NOT NULL,[RouteId] UNIQUEIDENTIFIER NULL,[TotalAmount] DECIMAL(19,4) NOT NULL,
+  [Status] INT NOT NULL,[RequiresStockReview] BIT NOT NULL,[ProjectionVersion] SMALLINT NOT NULL,[ProjectedAt] DATETIMEOFFSET(7) NOT NULL,
+  [InvoiceDocumentId] UNIQUEIDENTIFIER NULL,[InvoicedAt] DATETIMEOFFSET(7) NULL,
+  CONSTRAINT [FK_CommercialReportOrderFacts_Tenant] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants]([TenantId]),
+  CONSTRAINT [FK_CommercialReportOrderFacts_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses]([BusinessId])
+);
+GO
+CREATE INDEX [IX_CommercialReportOrderFacts_Business_Date_Seller]
+ON [reporting].[CommercialReportOrderFacts]([BusinessId],[CreatedDate] DESC,[SellerId]) INCLUDE([Status],[TotalAmount],[CustomerId]);
 GO

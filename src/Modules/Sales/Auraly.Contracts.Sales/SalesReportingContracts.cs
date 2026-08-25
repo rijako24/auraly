@@ -14,12 +14,13 @@ public static class SalesReportingDimensions
     public const string Category = "category";
     public const string Warehouse = "warehouse";
     public const string Day = "day";
+    public const string Hour = "hour";
     public const string Month = "month";
     public const string PaymentMethod = "payment-method";
     public const string Tax = "tax";
 
     public static bool IsSupported(string value) => value is Customer or Seller or Supplier or Product or
-        Category or Warehouse or Day or Month or PaymentMethod or Tax;
+        Category or Warehouse or Day or Hour or Month or PaymentMethod or Tax;
 }
 
 public sealed record SalesReportingUserIdentity(
@@ -44,6 +45,34 @@ public sealed record SalesReportSummary(
     SalesReportTotals Current, SalesReportTotals? Comparison,
     decimal? NetSalesChangePercent, IReadOnlyList<SalesReportTrendPoint> Trend,
     DateTimeOffset? ProjectedThrough);
+
+public sealed record SalesTodayOverview(
+    DateOnly BusinessDate, SalesReportTotals Totals, long CustomerCount,
+    decimal AverageTicket, decimal ReturnRatePercent,
+    DateTimeOffset? ProjectedThrough);
+
+public sealed record CommercialVisitProjectionSource(
+    Guid TenantId,Guid BusinessId,Guid RouteVisitId,DateOnly VisitDate,
+    DateTimeOffset OccurredAt,Guid RouteId,string RouteCode,string RouteName,
+    Guid? ZoneId,string? ZoneName,Guid SellerId,string SellerName,
+    Guid RouteStopId,Guid CustomerId,string CustomerName,Guid PartySiteId,
+    string Status,Guid? OrderId,string? SkipReason,string? VisitObservation,
+    Guid RecordedByUserId);
+
+public sealed record CommercialVisitReportRow(
+    Guid RouteVisitId,DateOnly VisitDate,DateTimeOffset OccurredAt,
+    Guid SellerId,string SellerName,Guid RouteId,string RouteName,string? ZoneName,
+    Guid CustomerId,string CustomerName,string Status,bool HasOrder,Guid? OrderId,
+    string? SkipReason,string? VisitObservation);
+public sealed record CommercialVisitReportPage(
+    IReadOnlyList<CommercialVisitReportRow> Items,int Page,int PageSize,int TotalCount,
+    long VisitedCount,long OrderedCount,decimal EffectivenessPercent);
+
+public sealed record CommercialOrderProjectionSource(Guid TenantId,Guid BusinessId,Guid OrderId,
+    DateOnly CreatedDate,DateTimeOffset CreatedAt,string OrderNumber,Guid SellerId,string SellerName,
+    Guid CustomerId,string CustomerName,Guid? RouteId,decimal TotalAmount,int Status,bool RequiresStockReview);
+public sealed record SellerOrderReportRow(Guid SellerId,string SellerName,long OrderCount,long CustomerCount,
+    decimal OrderAmount,long ConfirmedCount,long ReviewCount,long InvoicedCount);
 
 public sealed record SalesReportBreakdownRow(
     string Key, string Label, long DocumentCount, decimal Quantity,

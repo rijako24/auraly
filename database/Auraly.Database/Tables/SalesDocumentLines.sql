@@ -4,6 +4,14 @@ CREATE TABLE [dbo].[SalesDocumentLines]
     [LineNumber] INT NOT NULL,
     [ProductId] UNIQUEIDENTIFIER NOT NULL,
     [Description] NVARCHAR(300) NOT NULL,
+    [ProductCodeSnapshot] NVARCHAR(80) NULL,
+    [ProductNameSnapshot] NVARCHAR(300) NULL,
+    [CategoryIdSnapshot] UNIQUEIDENTIFIER NULL,
+    [CategoryNameSnapshot] NVARCHAR(160) NULL,
+    [SupplierIdSnapshot] UNIQUEIDENTIFIER NULL,
+    [SupplierNameSnapshot] NVARCHAR(240) NULL,
+    [AttributionSnapshotVersion] SMALLINT NOT NULL
+        CONSTRAINT [DF_SalesDocumentLines_AttributionVersion] DEFAULT (0),
     [TaxCode] NVARCHAR(16) NOT NULL,
     [TaxRate] DECIMAL(9, 6) NOT NULL CONSTRAINT [DF_SalesDocumentLines_TaxRate] DEFAULT (0),
     [Quantity] DECIMAL(19, 6) NOT NULL,
@@ -17,7 +25,9 @@ CREATE TABLE [dbo].[SalesDocumentLines]
     CONSTRAINT [FK_SalesDocumentLines_SalesDocuments] FOREIGN KEY ([DocumentId]) REFERENCES [dbo].[SalesDocuments] ([DocumentId]),
     CONSTRAINT [FK_SalesDocumentLines_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
     CONSTRAINT [CK_SalesDocumentLines_Values] CHECK
-        ([LineNumber] > 0 AND [Quantity] > 0 AND [UnitPrice] >= 0 AND ([UnitCostSnapshot] IS NULL OR [UnitCostSnapshot] >= 0) AND [DiscountAmount] >= 0 AND [TaxAmount] >= 0 AND [TaxRate] >= 0)
+        ([LineNumber] > 0 AND [Quantity] > 0 AND [UnitPrice] >= 0 AND
+         ([UnitCostSnapshot] IS NULL OR [UnitCostSnapshot] >= 0) AND [DiscountAmount] >= 0 AND
+         [TaxAmount] >= 0 AND [TaxRate] >= 0 AND [AttributionSnapshotVersion] >= 0)
 );
 
 GO

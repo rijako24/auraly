@@ -127,6 +127,7 @@ public sealed class InProcessTestingProcessingTransport(
                 signal.DocumentId,
                 signal.DocumentType,
                 signal.BusinessId,
+                signal.SourceVersion,
                 cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
