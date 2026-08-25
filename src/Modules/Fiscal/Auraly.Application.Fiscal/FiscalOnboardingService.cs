@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text.RegularExpressions;
 using Auraly.Contracts.Fiscal;
 
 namespace Auraly.Application.Fiscal;
@@ -207,7 +208,7 @@ public sealed class FiscalOnboardingService(
         if (!FiscalCertificateIdentityPolicy.IsAcceptable(
                 supplierTaxId, certificate.Subject))
             throw new FiscalConfigurationValidationException(
-                "El perfil legal o la identidad del firmante del certificado no son válidos.");
+                "El NIT del certificado no coincide con el NIT del perfil legal.");
         var keyUsage = certificate.Extensions.OfType<X509KeyUsageExtension>().FirstOrDefault();
         if (keyUsage is not null &&
             !keyUsage.KeyUsages.HasFlag(X509KeyUsageFlags.DigitalSignature) &&
@@ -295,8 +296,19 @@ public sealed class FiscalOnboardingService(
 
 public static class FiscalCertificateIdentityPolicy
 {
-    public static bool IsAcceptable(string supplierTaxId, string certificateSubject) =>
-        Digits(supplierTaxId).Length > 0 && Digits(certificateSubject).Length > 0;
+    private static readonly Regex SubjectSerialNumber = new(
+        """(?:^|[,;+])\s*(?:SERIALNUMBER|OID\.2\.5\.4\.5|2\.5\.4\.5)\s*=\s*(?<value>"[^"]*"|[^,;+]*)""",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    public static bool IsAcceptable(string supplierTaxId, string certificateSubject)
+    {
+        var expected = Digits(supplierTaxId);
+        if (expected.Length == 0 || string.IsNullOrWhiteSpace(certificateSubject)) return false;
+
+        return SubjectSerialNumber.Matches(certificateSubject)
+            .Select(match => Digits(match.Groups["value"].Value))
+            .Any(identity => string.Equals(identity, expected, StringComparison.Ordinal));
+    }
 
     private static string Digits(string value) =>
         new((value ?? string.Empty).Where(char.IsAsciiDigit).ToArray());

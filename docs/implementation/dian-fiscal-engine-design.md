@@ -55,7 +55,7 @@ El 2026-08-21 se generó con el motor de Auraly la nota crédito `NC260821113748
 
 ## Activación y numeración por sede
 
-La configuración fiscal visible se concentra en un solo onboarding. Razón social, NIT, responsabilidad fiscal y dirección provienen del perfil legal; el usuario sólo entrega `SoftwareId`, `TestSetId`, PIN y certificado PFX/P12. El servidor valida tamaño, contraseña, clave privada única, vigencia, titular/NIT, uso de firma, cadena de confianza y una firma criptográfica de prueba antes de guardar.
+La configuración fiscal visible se concentra en un solo onboarding. Razón social, NIT, responsabilidad fiscal y dirección provienen del perfil legal; el usuario sólo entrega `SoftwareId`, `TestSetId`, PIN y certificado PFX/P12. El servidor valida tamaño, contraseña, clave privada única, vigencia, coincidencia exacta normalizada entre el NIT del perfil legal y el `SERIALNUMBER` del titular del certificado, uso de firma, cadena de confianza y una firma criptográfica de prueba antes de guardar.
 
 Después de que el motor registra la aceptación del set de habilitación, Auraly usa `GetNumberingRange` contra producción. Las resoluciones devueltas forman un pool por tenant y conservan su clave técnica cifrada. La activación exige seleccionar una resolución libre para la sede activa. La reserva y la creación de emisor, autorización, series y cursores productivos ocurren en una sola transacción con bloqueo SQL, por lo que dos sedes no pueden tomar la misma resolución. Una asignación activa no se traslada desde la interfaz; una corrección excepcional debe tratarse como operación administrativa auditada y sólo antes de emitir documentos.
 

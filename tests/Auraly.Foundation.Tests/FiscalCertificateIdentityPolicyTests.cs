@@ -7,11 +7,23 @@ namespace Auraly.Foundation.Tests;
 public sealed class FiscalCertificateIdentityPolicyTests
 {
     [Fact]
-    public void Legal_representative_certificate_can_sign_for_a_company_with_a_different_nit()
+    public void Certificate_identity_must_match_the_legal_profile_nit()
     {
-        Assert.True(FiscalCertificateIdentityPolicy.IsAcceptable(
+        Assert.False(FiscalCertificateIdentityPolicy.IsAcceptable(
             "1002269668",
             "SERIALNUMBER=49693606, CN=Representante Legal"));
+    }
+
+    [Theory]
+    [InlineData("1002269668", "SERIALNUMBER=1002269668, CN=Empresa")]
+    [InlineData("1.002.269.668", "CN=Empresa, OID.2.5.4.5=1.002.269.668")]
+    [InlineData("1002269668", "CN=Empresa+2.5.4.5=\"1002269668\"")]
+    public void Matching_certificate_identity_is_accepted_after_normalization(
+        string supplierTaxId,
+        string certificateSubject)
+    {
+        Assert.True(FiscalCertificateIdentityPolicy.IsAcceptable(
+            supplierTaxId, certificateSubject));
     }
 
     [Fact]
