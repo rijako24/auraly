@@ -59,6 +59,14 @@ export function PendingProductImagePicker({ images, onChange }: {
 }
 
 export interface ProductImageEditorHandle {
+  stage: () => Promise<Array<{
+    productImageId: string;
+    productOfferId: string | null;
+    mediaReference: string;
+    altText: string | null;
+    displayOrder: number;
+    isPrimary: boolean;
+  }>>;
   save: () => Promise<void>;
 }
 
@@ -139,6 +147,30 @@ export const ProductImageEditor = forwardRef<ProductImageEditorHandle, { product
     }
 
     useImperativeHandle(ref, () => ({
+      stage: async () => {
+        if (!businessId) throw new Error("Selecciona un negocio antes de guardar las imágenes.");
+        const existing = remoteImages.map((image, index) => ({
+          productImageId: image.productImageId,
+          productOfferId: image.productOfferId ?? null,
+          mediaReference: image.storageReference ?? image.mediaUrl,
+          altText: image.altText ?? null,
+          displayOrder: index,
+          isPrimary: image.productImageId === primaryId,
+        }));
+        const staged = [];
+        for (let index = 0; index < pending.length; index += 1) {
+          const image = pending[index];
+          staged.push({
+            productImageId: image.id,
+            productOfferId: null,
+            mediaReference: await productOffersApi.stageImage(businessId, productId, image.file),
+            altText: image.file.name,
+            displayOrder: existing.length + index,
+            isPrimary: image.id === primaryId,
+          });
+        }
+        return [...existing, ...staged];
+      },
       save: async () => {
         if (!businessId) throw new Error("Selecciona un negocio antes de guardar las imágenes.");
         let savedPrimaryId = primaryId;

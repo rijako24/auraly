@@ -461,6 +461,84 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             "SELECT COUNT(*) FROM dbo.SupplierCostAgreements WHERE SupplierProductId=@Id;",
             new SqlParameter("@Id", supplierProductId)));
     }
+
+    [Fact]
+    public async Task Complete_product_edit_is_one_transaction_including_aliases_images_and_prepared_price()
+    {
+        var (taxProfileId, _, _) = await ConfigureCatalogAsync();
+        var firstBaseRequest = ProductRequest(taxProfileId, [new ProductPriceInput(12_500m)], []);
+        var firstRequest = firstBaseRequest with
+        {
+            PurchaseTaxProfileId = taxProfileId,
+            PurchaseTaxTreatment = "DeductibleInputVat",
+            Suppliers = [firstBaseRequest.Suppliers.Single() with { SupplierId = Guid.NewGuid() }]
+        };
+        var secondBaseRequest = ProductRequest(taxProfileId, [new ProductPriceInput(15_000m)], []);
+        var secondRequest = secondBaseRequest with
+        {
+            PurchaseTaxProfileId = taxProfileId,
+            PurchaseTaxTreatment = "DeductibleInputVat",
+            Suppliers = [secondBaseRequest.Suppliers.Single() with { SupplierId = Guid.NewGuid() }]
+        };
+        using var admin = fixture.CreateAdminClient(
+            CatalogPermissionCodes.Create,
+            CatalogPermissionCodes.Read,
+            CatalogPermissionCodes.Update,
+            CatalogPermissionCodes.ManagePrices,
+            CatalogPermissionCodes.ManageCosts);
+
+        using var firstCreation = await admin.PostAsJsonAsync("/api/commerce/v1/products", firstRequest);
+        using var secondCreation = await admin.PostAsJsonAsync("/api/commerce/v1/products", secondRequest);
+        Assert.True(firstCreation.IsSuccessStatusCode, await firstCreation.Content.ReadAsStringAsync());
+        Assert.True(secondCreation.IsSuccessStatusCode, await secondCreation.Content.ReadAsStringAsync());
+        var first = (await firstCreation.Content.ReadFromJsonAsync<ProductDetail>())!;
+        var second = (await secondCreation.Content.ReadFromJsonAsync<ProductDetail>())!;
+        var alias = $"Presentación especial {Guid.NewGuid():N}";
+        var firstImageId = Guid.NewGuid();
+        var successfulEdit = firstRequest with
+        {
+            Name = "Producto editado completamente",
+            Prices = [firstRequest.Prices.Single() with { PreparedAmount = 13_900m }],
+            Suppliers = first.Suppliers!.Select(supplier => supplier with { BaseUnitCost = 8_000m }).ToArray(),
+            Aliases = [new ProductAliasInput(alias)],
+            Images = [new ProductImageInput(firstImageId, null, $"products/{first.ProductId:N}/image.webp", "Portada", 0, true)]
+        };
+
+        using var success = await admin.PutAsJsonAsync(
+            $"/api/commerce/v1/products/{first.ProductId:D}", successfulEdit);
+        success.EnsureSuccessStatusCode();
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.ProductAliases WHERE ProductId=@Product AND Alias=@Alias AND Status=1;",
+            new SqlParameter("@Product", first.ProductId), new SqlParameter("@Alias", alias)));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.ProductImages WHERE ProductId=@Product AND ProductImageId=@Image AND IsPrimary=1;",
+            new SqlParameter("@Product", first.ProductId), new SqlParameter("@Image", firstImageId)));
+        Assert.Equal(13_900m, await ScalarAsync<decimal>(
+            "SELECT PreparedAmount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1;",
+            new SqlParameter("@Product", first.ProductId)));
+
+        var rejectedImageId = Guid.NewGuid();
+        var rejectedEdit = secondRequest with
+        {
+            Name = "Este nombre debe revertirse",
+            Prices = [secondRequest.Prices.Single() with { PreparedAmount = 99_000m }],
+            Suppliers = second.Suppliers!.Select(supplier => supplier with { BaseUnitCost = 8_000m }).ToArray(),
+            Aliases = [new ProductAliasInput(alias)],
+            Images = [new ProductImageInput(rejectedImageId, null, $"products/{second.ProductId:N}/rejected.webp", null, 0, true)]
+        };
+        using var rejected = await admin.PutAsJsonAsync(
+            $"/api/commerce/v1/products/{second.ProductId:D}", rejectedEdit);
+        Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+        Assert.Equal(secondRequest.Name, await ScalarAsync<string>(
+            "SELECT Name FROM dbo.Products WHERE ProductId=@Product;",
+            new SqlParameter("@Product", second.ProductId)));
+        Assert.Equal(secondRequest.Prices.Single().Amount, await ScalarAsync<decimal>(
+            "SELECT PreparedAmount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1;",
+            new SqlParameter("@Product", second.ProductId)));
+        Assert.Equal(0, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.ProductImages WHERE ProductId=@Product AND ProductImageId=@Image;",
+            new SqlParameter("@Product", second.ProductId), new SqlParameter("@Image", rejectedImageId)));
+    }
     [Fact]
     public async Task Security_uniqueness_and_warehouse_negative_policy_are_enforced()
     {

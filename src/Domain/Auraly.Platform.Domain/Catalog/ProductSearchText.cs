@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Auraly.Domain.Catalog;
 
 namespace Auraly.Platform.Domain.Catalog;
 
@@ -24,8 +25,7 @@ public static class ProductSearchText
         "adas", "ados", "idas", "idos", "ando", "iendo", "ada", "ado", "ida", "ido"
     ];
 
-    public static string NormalizeAlias(string? value) =>
-        string.Join(' ', GetTokens(value));
+    public static string NormalizeAlias(string? value) => ProductAliasNormalizer.Normalize(value);
 
     public static IReadOnlyList<string> GetTokens(string? value)
     {

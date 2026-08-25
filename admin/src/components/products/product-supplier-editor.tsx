@@ -13,7 +13,15 @@ import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { goodsReceiptsApi } from "@/services/api/goods-receipts";
 import { productsApi } from "@/services/api/products";
 
-export interface ProductSupplierEditorHandle { validate: () => void; save: () => Promise<void> }
+export interface ProductSupplierEditorValue {
+  supplierId: string;
+  identification: string;
+  name: string;
+  supplierProductCode: string | null;
+  purchasePresentationName: string;
+  unitsPerPresentation: number;
+}
+export interface ProductSupplierEditorHandle { getValue: () => ProductSupplierEditorValue; validate: () => void; save: () => Promise<void> }
 
 export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
   embedded?: boolean;
@@ -85,6 +93,20 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
   });
 
   useImperativeHandle(ref, () => ({
+    getValue: () => {
+      if (!supplierId) throw new Error("Selecciona el proveedor principal del producto.");
+      if (!packageName || Number(unitsPerPackage) <= 0) throw new Error("Revisa el empaque del proveedor.");
+      const supplier = options.data?.suppliers.find((item) => item.supplierId === supplierId);
+      if (!supplier) throw new Error("El proveedor seleccionado ya no está disponible.");
+      return {
+        supplierId,
+        identification: supplier.identification,
+        name: supplier.name,
+        supplierProductCode: supplierProductCode.trim() || null,
+        purchasePresentationName: packageName,
+        unitsPerPresentation: Number(unitsPerPackage),
+      };
+    },
     validate: () => {
       if (!supplierId) {
         const message = "Selecciona el proveedor principal del producto.";
@@ -103,7 +125,7 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
       if (!packageName || Number(unitsPerPackage) <= 0) throw new Error("Revisa el empaque del proveedor.");
       await save.mutateAsync();
     },
-  }), [packageName, save, supplierId, unitsPerPackage]);
+  }), [options.data?.suppliers, packageName, save, supplierId, supplierProductCode, unitsPerPackage]);
   const valid = Boolean(supplierId && packageName) && Number(unitsPerPackage) > 0;
   const directUnit = Number(unitsPerPackage) === 1 && packageName.toLocaleLowerCase("es-CO") === "unidad";
 

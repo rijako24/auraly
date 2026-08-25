@@ -9,7 +9,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { taxProfilesApi, type ProductTaxConfiguration } from "@/services/api/tax-profiles";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
-export interface ProductTaxEditorHandle { validate: () => void; save: () => Promise<void> }
+export interface ProductTaxEditorHandle {
+  getValue: () => Omit<ProductTaxConfiguration, "productId">;
+  validate: () => void;
+  save: () => Promise<void>;
+}
 
 export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: string; embedded?: boolean; onSalesTaxRateChange?: (rate: number) => void }>(function ProductTaxEditor({ productId, embedded = false, onSalesTaxRateChange }, ref) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
@@ -75,12 +79,16 @@ export const ProductTaxEditor = forwardRef<ProductTaxEditorHandle, { productId: 
       setValidationError(undefined);
   }, [purchaseTaxProfileId, purchaseTaxTreatment, salesTaxProfileId, taxes.data]);
   useImperativeHandle(ref, () => ({
+    getValue: () => {
+      validate();
+      return { salesTaxProfileId, purchaseTaxProfileId, purchaseTaxTreatment };
+    },
     validate,
     save: async () => {
       validate();
       await save.mutateAsync();
     },
-  }), [save, validate]);
+  }), [purchaseTaxProfileId, purchaseTaxTreatment, salesTaxProfileId, save, validate]);
   const salesTax = taxes.data?.find((tax) => tax.taxProfileId === salesTaxProfileId);
   const purchaseTax = taxes.data?.find((tax) => tax.taxProfileId === purchaseTaxProfileId);
   useEffect(() => {

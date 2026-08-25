@@ -34,7 +34,6 @@ import {
   usePromoteProductAlias,
   useReviewProductAlias,
   useProducts,
-  useUpdateProduct,
   useUpdateProductStatus,
 } from "@/hooks/use-products";
 import { formatCurrency } from "@/lib/utils";
@@ -90,7 +89,6 @@ export default function ProductsPage() {
   const configurationQuery = useProductConfiguration(selectedProduct?.productId);
   const reviewAlias = useReviewProductAlias();
   const promoteAlias = usePromoteProductAlias();
-  const updateProduct = useUpdateProduct();
   const updateStatus = useUpdateProductStatus();
   const merchandisingEditorRef = useRef<ProductMerchandisingEditorHandle>(null);
   const pricingEditorRef = useRef<ProductPricingEditorHandle>(null);
@@ -109,13 +107,6 @@ export default function ProductsPage() {
   const openDetails = (product: Product) => {
     setSelectedProduct(product);
     setModalMode("details");
-  };
-
-  const openEditor = (product: Product) => {
-    setSelectedProduct(product);
-    setForm(productToForm(product));
-    setEditingSalesTaxRate(undefined);
-    setModalMode("edit");
   };
 
   const closeModal = () => {
@@ -191,36 +182,52 @@ export default function ProductsPage() {
       requestAnimationFrame(() => document.getElementById("product-name")?.focus());
       return;
     }
-    try {
-      supplierEditorRef.current?.validate();
-      taxEditorRef.current?.validate();
-      pricingEditorRef.current?.validate();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Revisa los campos requeridos del producto.";
-      setProductValidationError(message);
-      toast.error(message);
-      return;
-    }
     setSavingProduct(true);
     try {
-      const updated = await updateProduct.mutateAsync({
-        productId: selectedProduct.productId,
-        request: {
-          name: form.name.trim(),
-          reference: form.reference.trim() || null,
-          description: form.description.trim() || null,
-          categoryName: selectedProduct.categoryName ?? null,
-          unitPrice: selectedProduct.unitPrice,
-          currency: selectedProduct.currency || "COP",
-        },
+      if (!businessId || !merchandisingEditorRef.current || !taxEditorRef.current
+          || !pricingEditorRef.current || !supplierEditorRef.current)
+        throw new Error("Espera a que termine de cargar la ficha del producto.");
+      const merchandising = merchandisingEditorRef.current.getValue();
+      const taxes = taxEditorRef.current.getValue();
+      const pricing = pricingEditorRef.current.getValue();
+      const supplier = supplierEditorRef.current.getValue();
+      const images = imageEditorRef.current ? await imageEditorRef.current.stage() : [];
+      const aliases = recognitionEditorRef.current?.getValue().map((alias) => ({ alias })) ?? [];
+      await productsApi.updateCatalog(selectedProduct.productId, {
+        businessId,
+        productCode: selectedProduct.productCode ?? selectedProduct.sku ?? "",
+        reference: form.reference.trim() || null,
+        name: form.name.trim(),
+        description: form.description.trim() || null,
+        baseUnitCode: merchandising.baseUnitCode,
+        taxProfileId: taxes.salesTaxProfileId,
+        purchaseTaxProfileId: taxes.purchaseTaxProfileId,
+        purchaseTaxTreatment: taxes.purchaseTaxTreatment,
+        manageInventory: merchandising.manageInventory,
+        isWeighable: merchandising.isWeighable,
+        barcodes: merchandising.barcodes,
+        identifiers: [],
+        prices: [{
+          amount: selectedProduct.unitPrice,
+          preparedAmount: pricing.amount,
+          currencyCode: selectedProduct.currency || "COP",
+          costBasisAmount: pricing.costBasisAmount,
+          targetMarginPercent: pricing.targetMarginPercent,
+          inputMode: pricing.inputMode,
+          roundingIncrement: pricing.roundingIncrement,
+          roundingMode: pricing.roundingMode,
+        }],
+        suppliers: [{ ...supplier, baseUnitCost: pricing.costBasisAmount, isPrimary: true }],
+        scale: merchandising.scale,
+        productCategoryId: merchandising.productCategoryId,
+        productBrandId: merchandising.productBrandId,
+        allowsFractionalSale: merchandising.allowsFractionalSale,
+        link: merchandising.link,
+        linkedProducts: merchandising.linkedProducts,
+        conversionMaximumLossPercent: merchandising.conversionMaximumLossPercent,
+        aliases,
+        images,
       });
-      await merchandisingEditorRef.current?.save();
-      await taxEditorRef.current?.save();
-      await imageEditorRef.current?.save();
-      await pricingEditorRef.current?.save();
-      await supplierEditorRef.current?.save();
-      await recognitionEditorRef.current?.save();
-      setSelectedProduct(updated);
       await refetch();
       setProductValidationError(undefined);
       toast.success("Producto guardado completamente");
@@ -279,10 +286,6 @@ export default function ProductsPage() {
       header: "",
       cell: ({ row }) => (
         <div className="flex justify-end gap-1" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
-          <Button type="button" variant="ghost" size="sm" onClick={() => openEditor(row.original)}>
-            <Pencil className="mr-2 h-4 w-4" />
-            Editar
-          </Button>
           <Button
             type="button"
             variant="ghost"
@@ -333,11 +336,7 @@ export default function ProductsPage() {
           <dd className="font-medium">{formatCurrency(product.unitPrice, product.currency || "COP")}</dd>
         </div>
       </dl>
-      <div className="grid grid-cols-2 gap-2 border-t pt-3" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
-        <Button type="button" variant="outline" size="sm" onClick={() => openEditor(product)}>
-          <Pencil className="mr-2 h-4 w-4" />
-          Editar
-        </Button>
+      <div className="flex justify-end border-t pt-3" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
         <Button
           type="button"
           variant="ghost"
@@ -481,7 +480,7 @@ export default function ProductsPage() {
                     <ProductPricingEditor ref={pricingEditorRef} embedded productId={selectedProduct.productId} productName={selectedProduct.name} salesTaxRateOverride={editingSalesTaxRate} />
                   </div>
                 </ProductFormSection>
-                <ProductFormSection id="product-images" icon={Images} title="Imágenes del producto" description="Carga varias imágenes, revisa su vista previa y elige una portada. Se guardarán junto con el producto.">
+                <ProductFormSection id="product-images" icon={Images} title="Imágenes del producto" description="Los archivos se transfieren al almacenamiento y su metadata se confirma con el único guardado del producto.">
                   <ProductImageEditor ref={imageEditorRef} productId={selectedProduct.productId} />
                 </ProductFormSection>
                 <details id="product-recognition" className="group scroll-mt-5 rounded-xl border bg-muted/10">

@@ -27,6 +27,7 @@ export interface ProductImage {
   displayOrder: number;
   isPrimary: boolean;
   isActive: boolean;
+  storageReference?: string | null;
 }
 
 export const productOffersApi = {
@@ -74,6 +75,13 @@ export const productOffersApi = {
     body.append("isPrimary", String(isPrimary));
     return apiClient.postForm<ProductImage>(
       `/businesses/${businessId}/products/${productId}/images/upload`, body);
+  },
+  stageImage: async (businessId: string, productId: string, file: File): Promise<string> => {
+    const body = new FormData();
+    body.append("file", file);
+    const staged = await apiClient.postForm<{ storageReference: string }>(
+      `/businesses/${businessId}/products/${productId}/images/stage`, body);
+    return staged.storageReference;
   },
   setPrimaryImage: (businessId: string, productId: string, productImageId: string) =>
     apiClient.put<ProductImage>(

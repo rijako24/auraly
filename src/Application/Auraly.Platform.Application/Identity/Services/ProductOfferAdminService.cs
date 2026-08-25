@@ -128,6 +128,22 @@ public sealed class ProductOfferAdminService : IProductOfferAdminService
         return await AddImageAsync(businessId, productId, productOfferId, url, altText, 0, isPrimary, ct);
     }
 
+    public async Task<StagedProductImageDto> StageImageAsync(
+        Guid tenantId,
+        Guid businessId,
+        Guid productId,
+        Stream stream,
+        string fileName,
+        CancellationToken ct = default)
+    {
+        await EnsureProductAsync(tenantId, businessId, productId, ct);
+        var extension = Path.GetExtension(fileName).ToLowerInvariant();
+        if (extension is not (".jpg" or ".jpeg" or ".png" or ".webp"))
+            throw new DomainValidationException("file", "Use una imagen JPG, PNG o WEBP.");
+        var blobName = $"products/{productId:N}/{Guid.NewGuid():N}{extension}";
+        return new StagedProductImageDto(await _blobStorage.UploadImageAsync(businessId, stream, blobName));
+    }
+
     public async Task DeleteImageAsync(
         Guid tenantId,
         Guid businessId,
@@ -295,5 +311,5 @@ public sealed class ProductOfferAdminService : IProductOfferAdminService
 
     private static ProductImageDto MapImage(ProductImage value, string? resolvedMediaUrl = null) => new(
         value.ProductImageId, value.ProductId, value.ProductOfferId, resolvedMediaUrl ?? value.MediaUrl, value.AltText,
-        value.DisplayOrder, value.IsPrimary, value.IsActive);
+        value.DisplayOrder, value.IsPrimary, value.IsActive, value.MediaUrl);
 }

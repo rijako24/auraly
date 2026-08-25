@@ -88,7 +88,16 @@ export interface CreateCatalogProductRequest {
   isWeighable: boolean;
   barcodes: Array<{ value: string; isPrimary: boolean }>;
   identifiers: Array<{ type: string; value: string }>;
-  prices: Array<{ amount: number; currencyCode: string; costBasisAmount: number; targetMarginPercent: number }>;
+  prices: Array<{
+    amount: number;
+    currencyCode: string;
+    costBasisAmount: number;
+    targetMarginPercent: number;
+    preparedAmount?: number | null;
+    inputMode?: "Margin" | "SalePrice";
+    roundingIncrement?: number;
+    roundingMode?: "Nearest" | "Up" | "Down";
+  }>;
   suppliers: Array<{
     supplierId: string;
     identification: string;
@@ -111,7 +120,19 @@ export interface CreateCatalogProductRequest {
   productBrandId: string | null;
   allowsFractionalSale: boolean;
   link: null | { parentProductId: string; sharesInventory: boolean; inventoryFactor: number | null;
-    sharesPrice: boolean; priceFactor: number | null };
+    sharesPrice: boolean; priceFactor: number | null; allowsConversion: boolean; conversionFactor: number | null };
+  linkedProducts?: Array<{ childProductId: string; sharesInventory: boolean; inventoryFactor: number | null;
+    sharesPrice: boolean; priceFactor: number | null; allowsConversion: boolean; conversionFactor: number | null }>;
+  conversionMaximumLossPercent?: number | null;
+  aliases?: Array<{ alias: string }>;
+  images?: Array<{
+    productImageId: string;
+    productOfferId: string | null;
+    mediaReference: string;
+    altText: string | null;
+    displayOrder: number;
+    isPrimary: boolean;
+  }>;
 
 
 }
@@ -122,6 +143,8 @@ export interface PromoteProductAliasRequest { resolutionMode: ProductAliasResolu
 
 export const productsApi = {
   createCatalog: (request: CreateCatalogProductRequest) => apiClient.post<CatalogProductDetail>("/commerce/v1/products", request),
+  updateCatalog: (productId: string, request: CreateCatalogProductRequest) =>
+    apiClient.put<CatalogProductDetail>(`/commerce/v1/products/${productId}`, request),
   getCatalog: (productId: string) => apiClient.get<{
     productId: string; businessId: string; productCode: string; reference: string | null; name: string;
     isActive: boolean; barcodes: string[]; prices: Array<{ amount: number; currencyCode: string; costBasisAmount: number | null; targetMarginPercent: number | null }>;

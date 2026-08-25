@@ -14,7 +14,23 @@ public static class CatalogPermissionCodes
 
 public sealed record ProductBarcodeInput(string Value, bool IsPrimary = false);
 public sealed record ProductIdentifierInput(string Type, string Value);
-public sealed record ProductPriceInput(decimal Amount, string CurrencyCode = "COP", decimal? CostBasisAmount = null, decimal? TargetMarginPercent = null);
+public sealed record ProductAliasInput(string Alias, string? NormalizedAlias = null);
+public sealed record ProductImageInput(
+    Guid ProductImageId,
+    Guid? ProductOfferId,
+    string MediaReference,
+    string? AltText,
+    int DisplayOrder,
+    bool IsPrimary);
+public sealed record ProductPriceInput(
+    decimal Amount,
+    string CurrencyCode = "COP",
+    decimal? CostBasisAmount = null,
+    decimal? TargetMarginPercent = null,
+    decimal? PreparedAmount = null,
+    string InputMode = "Margin",
+    decimal RoundingIncrement = 1,
+    string RoundingMode = "Nearest");
 public sealed record SupplierCostInput(
     Guid SupplierId,
     string Identification,
@@ -52,7 +68,11 @@ public sealed record SaveProductRequest(
     Guid? ProductCategoryId = null,
     Guid? ProductBrandId = null,
     bool AllowsFractionalSale = false,
-    ProductLinkInput? Link = null);
+    ProductLinkInput? Link = null,
+    IReadOnlyCollection<LinkedProductInput>? LinkedProducts = null,
+    decimal? ConversionMaximumLossPercent = null,
+    IReadOnlyCollection<ProductAliasInput>? Aliases = null,
+    IReadOnlyCollection<ProductImageInput>? Images = null);
 
 public sealed record ProductDetail(
     Guid ProductId,

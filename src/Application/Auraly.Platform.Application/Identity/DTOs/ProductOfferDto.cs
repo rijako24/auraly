@@ -38,7 +38,10 @@ public sealed record ProductImageDto(
     string? AltText,
     int DisplayOrder,
     bool IsPrimary,
-    bool IsActive);
+    bool IsActive,
+    string? StorageReference = null);
+
+public sealed record StagedProductImageDto(string StorageReference);
 
 public sealed record AddProductImageUrlRequest(
     Guid? ProductOfferId,

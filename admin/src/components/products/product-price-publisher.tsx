@@ -17,7 +17,15 @@ import {
 } from "@/lib/product-pricing-calculator";
 import type { PreparedProductPrice, PricingRoundingMode } from "@/services/api/pricing";
 
-export interface ProductPricingEditorHandle { validate: () => void; save: () => Promise<void> }
+export interface ProductPricingEditorValue {
+  amount: number;
+  costBasisAmount: number;
+  targetMarginPercent: number;
+  inputMode: "Margin" | "SalePrice";
+  roundingIncrement: number;
+  roundingMode: PricingRoundingMode;
+}
+export interface ProductPricingEditorHandle { getValue: () => ProductPricingEditorValue; validate: () => void; save: () => Promise<void> }
 
 export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
   embedded?: boolean;
@@ -151,6 +159,18 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
   }, [context, onSaved, productId, resolvedCost, resolvedIncrement, resolvedMargin, resolvedSale, roundingMode, savePrepared, savesBySalePrice, valid]);
 
   useImperativeHandle(ref, () => ({
+    getValue: () => {
+      if (!valid || resolvedSale === null || resolvedCost === null || resolvedMargin === null || resolvedIncrement === null)
+        throw new Error("El costo y el precio de venta deben ser mayores que cero; el margen puede ser 0 % y debe ser menor que 100 %.");
+      return {
+        amount: resolvedSale,
+        costBasisAmount: resolvedCost,
+        targetMarginPercent: resolvedMargin,
+        inputMode: savesBySalePrice ? "SalePrice" : "Margin",
+        roundingIncrement: resolvedIncrement,
+        roundingMode,
+      };
+    },
     validate: () => {
       if (!valid) {
         setValidationAttempted(true);
@@ -162,7 +182,7 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
       if (!valid) throw new Error("El costo y el precio de venta deben ser mayores que cero; el margen puede ser 0 % y debe ser menor que 100 %.");
       if (dirty) await save();
     },
-  }), [dirty, save, valid]);
+  }), [dirty, resolvedCost, resolvedIncrement, resolvedMargin, resolvedSale, roundingMode, save, savesBySalePrice, valid]);
   const costOrigin = context.data?.costBasisOrigin === "ObservedSupplierCost"
     ? "Último proveedor"
     : context.data?.costBasisOrigin === "Manual" ? "Costo manual" : "Sin costo registrado";

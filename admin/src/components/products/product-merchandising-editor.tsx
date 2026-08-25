@@ -29,7 +29,10 @@ const emptyScale = {
   decimalPlaces: 3,
 };
 
-export interface ProductMerchandisingEditorHandle { save: () => Promise<void> }
+export interface ProductMerchandisingEditorHandle {
+  getValue: () => import("@/services/api/product-merchandising").SaveProductMerchandising;
+  save: () => Promise<void>;
+}
 
 export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorHandle, { productId: string; embedded?: boolean }>(function ProductMerchandisingEditor({ productId, embedded = false }, ref) {
   const client = useQueryClient();
@@ -108,8 +111,40 @@ export const ProductMerchandisingEditor = forwardRef<ProductMerchandisingEditorH
   });
 
   useImperativeHandle(ref, () => ({
+    getValue: () => {
+      if (!form) throw new Error("Espera a que termine de cargar la configuración comercial.");
+      return {
+        productCategoryId: form.productCategoryId,
+        productBrandId: form.productBrandId,
+        baseUnitCode: form.baseUnitCode,
+        manageInventory: form.link?.sharesInventory ? false : form.manageInventory,
+        allowsFractionalSale: form.allowsFractionalSale,
+        isWeighable: form.isWeighable,
+        scale: form.isWeighable ? form.scale : null,
+        barcodes: form.barcodes,
+        conversionMaximumLossPercent: form.conversionMaximumLossPercent,
+        link: form.link ? {
+          parentProductId: form.link.parentProductId,
+          sharesInventory: form.link.sharesInventory,
+          inventoryFactor: form.link.sharesInventory ? form.link.inventoryFactor : null,
+          sharesPrice: form.link.sharesPrice,
+          priceFactor: form.link.sharesPrice ? form.link.priceFactor : null,
+          allowsConversion: form.link.allowsConversion,
+          conversionFactor: form.link.allowsConversion ? form.link.conversionFactor : null,
+        } : null,
+        linkedProducts: form.linkedProducts.map((item) => ({
+          childProductId: item.childProductId,
+          sharesInventory: item.sharesInventory,
+          inventoryFactor: item.sharesInventory ? item.inventoryFactor : null,
+          sharesPrice: item.sharesPrice,
+          priceFactor: item.sharesPrice ? item.priceFactor : null,
+          allowsConversion: item.allowsConversion,
+          conversionFactor: item.allowsConversion ? item.conversionFactor : null,
+        })),
+      };
+    },
     save: async () => { await save.mutateAsync(); },
-  }), [save]);
+  }), [form, save]);
   const createBrand = useMutation({
     mutationFn: () => productMerchandisingApi.createBrand(newBrand.trim()),
     onSuccess: async (value) => {

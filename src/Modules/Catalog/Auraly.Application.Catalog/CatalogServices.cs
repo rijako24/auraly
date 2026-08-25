@@ -1,6 +1,7 @@
 using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Catalog;
+using Auraly.Domain.Catalog;
 
 namespace Auraly.Application.Catalog;
 
@@ -38,6 +39,7 @@ public sealed class CatalogService(
         Require(user, CatalogPermissionCodes.Create);
         RequireCapabilities(user, request);
         ValidateScope(user, request);
+        request = NormalizeRelatedData(request);
         Validate(request);
         var product = await store.CreateAsync(
             user, ids.NewId(), request, timeProvider.GetUtcNow(), ct);
@@ -55,6 +57,7 @@ public sealed class CatalogService(
         Require(user, CatalogPermissionCodes.Update);
         RequireCapabilities(user, request);
         ValidateScope(user, request);
+        request = NormalizeRelatedData(request);
         Validate(request);
         var product = await store.UpdateAsync(
             user, productId, request, timeProvider.GetUtcNow(), ct);
@@ -147,6 +150,14 @@ public sealed class CatalogService(
 
     private static bool PurchasingTaxTreatmentIsSupported(string value) =>
         value is "DeductibleInputVat" or "CapitalizedCost" or "NotApplicable";
+    private static SaveProductRequest NormalizeRelatedData(SaveProductRequest request) => request with
+    {
+        Aliases = request.Aliases is null ? null : request.Aliases
+            .Select(value => new ProductAliasInput(value.Alias.Trim(), ProductAliasNormalizer.Normalize(value.Alias)))
+            .Where(value => value.NormalizedAlias!.Length > 0)
+            .DistinctBy(value => value.NormalizedAlias, StringComparer.Ordinal)
+            .ToArray()
+    };
     private static void Require(CatalogUserIdentity user, string permission)
     {
         if (!user.Permissions.Contains(permission)) throw new CatalogForbiddenException($"Permission '{permission}' is required.");
@@ -170,6 +181,19 @@ public sealed class CatalogService(
                 price.TargetMarginPercent is null or < 0 or >= 100))
             throw new CatalogValidationException(
                 "Every product requires a positive cost and a margin between zero and less than 100 percent.");
+        if (request.Prices.Any(price =>
+                (price.PreparedAmount ?? price.Amount) <= 0 ||
+                price.RoundingIncrement <= 0 ||
+                price.InputMode is not ("Margin" or "SalePrice") ||
+                price.RoundingMode is not ("Nearest" or "Up" or "Down")))
+            throw new CatalogValidationException("The prepared product price configuration is invalid.");
+        if ((request.Images ?? []).Count(image => image.IsPrimary) > 1
+            || (request.Images ?? []).Any(image => image.ProductImageId == Guid.Empty
+                || string.IsNullOrWhiteSpace(image.MediaReference)
+                || image.MediaReference.Length > 1500
+                || image.AltText?.Length > 300
+                || image.DisplayOrder < 0))
+            throw new CatalogValidationException("The product image configuration is invalid.");
         if (request.Suppliers.Count == 0 || request.Suppliers.Count(supplier => supplier.IsPrimary) != 1)
             throw new CatalogValidationException("Every product requires exactly one primary supplier.");
         if (request.Suppliers.Any(supplier => supplier.SupplierId == Guid.Empty || supplier.BaseUnitCost <= 0))

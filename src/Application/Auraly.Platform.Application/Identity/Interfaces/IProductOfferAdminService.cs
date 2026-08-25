@@ -17,6 +17,9 @@ public interface IProductOfferAdminService
     Task<ProductImageDto> UploadImageAsync(
         Guid tenantId, Guid businessId, Guid productId, Guid? productOfferId, Stream stream,
         string fileName, string? altText, bool isPrimary, CancellationToken ct = default);
+    Task<StagedProductImageDto> StageImageAsync(
+        Guid tenantId, Guid businessId, Guid productId, Stream stream,
+        string fileName, CancellationToken ct = default);
     Task<ProductImageDto> SetPrimaryImageAsync(
         Guid tenantId, Guid businessId, Guid productId, Guid productImageId, CancellationToken ct = default);
     Task DeleteImageAsync(

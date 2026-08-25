@@ -68,6 +68,22 @@ public sealed class ProductOffersController : ControllerBase
             stream, file.FileName, altText, isPrimary, ct));
     }
 
+    [HttpPost("images/stage")]
+    [PermissionAuthorize("products.update")]
+    [RequestSizeLimit(MaxImageBytes)]
+    public async Task<ActionResult<StagedProductImageDto>> StageImage(
+        Guid businessId,
+        Guid productId,
+        IFormFile file,
+        CancellationToken ct = default)
+    {
+        if (file.Length == 0 || file.Length > MaxImageBytes)
+            return BadRequest(new { error = "La imagen debe pesar entre 1 byte y 8 MB." });
+        await using var stream = file.OpenReadStream();
+        return Ok(await _service.StageImageAsync(
+            User.GetTenantId(), businessId, productId, stream, file.FileName, ct));
+    }
+
     [HttpDelete("images/{productImageId:guid}")]
     [PermissionAuthorize("products.update")]
     public async Task<IActionResult> DeleteImage(

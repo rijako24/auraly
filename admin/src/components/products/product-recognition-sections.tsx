@@ -77,7 +77,7 @@ function ConfiguredAliasCard({ alias }: { alias: ProductAlias }) {
   );
 }
 
-export interface ProductRecognitionSectionsHandle { save: () => Promise<void> }
+export interface ProductRecognitionSectionsHandle { getValue: () => string[]; save: () => Promise<void> }
 
 interface ProductRecognitionSectionsProps {
   aliases: ProductAlias[];
@@ -110,7 +110,10 @@ export const ProductRecognitionSections = forwardRef<ProductRecognitionSectionsH
       toast.error(error instanceof Error ? error.message : "No fue posible agregar el alias.");
     }
   }, [addAlias, alias, productId]);
-  useImperativeHandle(ref, () => ({ save: submitAlias }), [submitAlias]);
+  useImperativeHandle(ref, () => ({
+    getValue: () => alias.trim() ? [alias.trim()] : [],
+    save: submitAlias,
+  }), [alias, submitAlias]);
   const configuredAliases = aliases.filter((alias) => alias.source !== ProductAliasSource.Learned);
 
   return (

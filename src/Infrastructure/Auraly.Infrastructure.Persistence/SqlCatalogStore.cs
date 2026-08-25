@@ -76,15 +76,15 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                 ? """
                   INSERT dbo.Products
                     (ProductId,BusinessId,ProductCode,Reference,Sku,Name,Description,ProductCategoryId,CategoryName,ProductBrandId,BaseUnitCode,TaxProfileId,
-                     PurchaseTaxProfileId,PurchaseTaxTreatment,ManageStock,AllowsFractionalSale,IsWeighable,IsActive,Source,UnitPrice,Currency,CreatedAt,UpdatedAt,CreatedByUserId,UpdatedByUserId)
+                     PurchaseTaxProfileId,PurchaseTaxTreatment,ManageStock,ConversionMaximumLossPercent,AllowsFractionalSale,IsWeighable,IsActive,Source,UnitPrice,Currency,CreatedAt,UpdatedAt,CreatedByUserId,UpdatedByUserId)
                   VALUES
                     (@ProductId,@BusinessId,@ProductCode,@Reference,@Reference,@Name,@Description,@ProductCategoryId,(SELECT Name FROM dbo.ProductCategories WHERE ProductCategoryId=@ProductCategoryId),@ProductBrandId,@BaseUnitCode,@TaxProfileId,
-                     @PurchaseTaxProfileId,@PurchaseTaxTreatment,@ManageInventory,@AllowsFractionalSale,@IsWeighable,1,0,@InitialPrice,N'COP',@Now,NULL,@UserId,NULL);
+                     @PurchaseTaxProfileId,@PurchaseTaxTreatment,@ManageInventory,@ConversionMaximumLossPercent,@AllowsFractionalSale,@IsWeighable,1,0,@InitialPrice,N'COP',@Now,NULL,@UserId,NULL);
                   """
                 : """
                   UPDATE dbo.Products SET ProductCode=@ProductCode,Reference=@Reference,Sku=@Reference,Name=@Name,
                     Description=@Description,ProductCategoryId=@ProductCategoryId,CategoryName=(SELECT Name FROM dbo.ProductCategories WHERE ProductCategoryId=@ProductCategoryId),ProductBrandId=@ProductBrandId,BaseUnitCode=@BaseUnitCode,TaxProfileId=@TaxProfileId,
-                    PurchaseTaxProfileId=@PurchaseTaxProfileId,PurchaseTaxTreatment=@PurchaseTaxTreatment,ManageStock=@ManageInventory,AllowsFractionalSale=@AllowsFractionalSale,IsWeighable=@IsWeighable,UpdatedAt=@Now,UpdatedByUserId=@UserId
+                    PurchaseTaxProfileId=@PurchaseTaxProfileId,PurchaseTaxTreatment=@PurchaseTaxTreatment,ManageStock=@ManageInventory,ConversionMaximumLossPercent=@ConversionMaximumLossPercent,AllowsFractionalSale=@AllowsFractionalSale,IsWeighable=@IsWeighable,UpdatedAt=@Now,UpdatedByUserId=@UserId
                   WHERE ProductId=@ProductId AND BusinessId=@BusinessId;
                   IF @@ROWCOUNT=0 THROW 51010, 'Product was not found in the authenticated scope.', 1;
                   DELETE FROM dbo.ProductBarcodes WHERE ProductId=@ProductId;
@@ -94,8 +94,16 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             await ExecuteAsync(connection, transaction, """
                 UPDATE dbo.ProductLinks SET IsActive=0,UpdatedAt=@Now WHERE BusinessId=@BusinessId AND ChildProductId=@ProductId AND IsActive=1;
                 IF @ParentProductId IS NOT NULL
-                  INSERT dbo.ProductLinks(ProductLinkId,BusinessId,ChildProductId,ParentProductId,InventoryFactor,PriceFactor,ConversionFactor,SharesInventory,SharesPrice,AllowsConversion,IsActive,CreatedAt)
-                  VALUES(@ProductLinkId,@BusinessId,@ProductId,@ParentProductId,@InventoryFactor,@PriceFactor,@ConversionFactor,@SharesInventory,@SharesPrice,@AllowsConversion,1,@Now);
+                BEGIN
+                  IF EXISTS(SELECT 1 FROM dbo.ProductLinks WHERE BusinessId=@BusinessId AND ChildProductId=@ProductId)
+                    UPDATE dbo.ProductLinks SET ParentProductId=@ParentProductId,InventoryFactor=@InventoryFactor,
+                      PriceFactor=@PriceFactor,ConversionFactor=@ConversionFactor,SharesInventory=@SharesInventory,
+                      SharesPrice=@SharesPrice,AllowsConversion=@AllowsConversion,IsActive=1,UpdatedAt=@Now
+                    WHERE BusinessId=@BusinessId AND ChildProductId=@ProductId;
+                  ELSE
+                    INSERT dbo.ProductLinks(ProductLinkId,BusinessId,ChildProductId,ParentProductId,InventoryFactor,PriceFactor,ConversionFactor,SharesInventory,SharesPrice,AllowsConversion,IsActive,CreatedAt)
+                    VALUES(@ProductLinkId,@BusinessId,@ProductId,@ParentProductId,@InventoryFactor,@PriceFactor,@ConversionFactor,@SharesInventory,@SharesPrice,@AllowsConversion,1,@Now);
+                END;
                 """, [P("@ProductLinkId", ids.NewId()), P("@BusinessId", user.BusinessId), P("@ProductId", productId), P("@ParentProductId", request.Link?.ParentProductId),
                 P("@InventoryFactor", request.Link is { SharesInventory: true } ? request.Link.InventoryFactor : null), P("@PriceFactor", request.Link is { SharesPrice: true } ? request.Link.PriceFactor : null),
                 P("@ConversionFactor", request.Link is { AllowsConversion: true } ? request.Link.ConversionFactor : null), P("@SharesInventory", request.Link?.SharesInventory ?? false),
@@ -137,6 +145,21 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                     P("@Amount", price.Amount), P("@CostBasis", price.CostBasisAmount), P("@TargetMargin", price.TargetMarginPercent),
                     P("@Currency", price.CurrencyCode.ToUpperInvariant()), P("@Now", now)], ct);
             }
+            }
+            else
+            {
+                var price = request.Prices.Single();
+                await ExecuteAsync(connection, transaction, """
+                    UPDATE dbo.ProductPrices
+                    SET PreparedAmount=@PreparedAmount,CostBasisType=N'Manual',CostBasisAmount=@CostBasis,
+                        TargetMarginPercent=@TargetMargin,EffectiveMarginPercent=@TargetMargin,
+                        InputMode=@InputMode,RoundingIncrement=@RoundingIncrement,RoundingMode=@RoundingMode
+                    WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND IsActive=1;
+                    IF @@ROWCOUNT=0 THROW 51024,'The product has no active base price.',1;
+                    """, [P("@BusinessId", user.BusinessId), P("@ProductId", productId),
+                    P("@PreparedAmount", price.PreparedAmount ?? price.Amount), P("@CostBasis", price.CostBasisAmount),
+                    P("@TargetMargin", price.TargetMarginPercent), P("@InputMode", price.InputMode),
+                    P("@RoundingIncrement", price.RoundingIncrement), P("@RoundingMode", price.RoundingMode)], ct);
             }
 
             if (request.Link is { SharesPrice: true } linkedCost)
@@ -209,6 +232,99 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                     P("@Name", supplier.Name), P("@Code", supplier.SupplierProductCode), P("@Primary", supplier.IsPrimary),
                     P("@PresentationName", supplier.PurchasePresentationName.Trim()), P("@UnitsPerPresentation", supplier.UnitsPerPresentation),
                     P("@Cost", supplier.BaseUnitCost), P("@Now", now)], ct);
+            }
+
+            await ExecuteAsync(connection, transaction, """
+                INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
+                SELECT @BusinessId,ChildProductId,N'Upsert',@Now
+                FROM dbo.ProductLinks
+                WHERE BusinessId=@BusinessId AND ParentProductId=@ProductId AND IsActive=1;
+                UPDATE dbo.ProductLinks SET IsActive=0,UpdatedAt=@Now
+                WHERE BusinessId=@BusinessId AND ParentProductId=@ProductId AND IsActive=1;
+                """, [P("@BusinessId", user.BusinessId), P("@ProductId", productId), P("@Now", now)], ct);
+
+            foreach (var child in request.LinkedProducts ?? [])
+            {
+                await ExecuteAsync(connection, transaction, """
+                    IF @ChildId=@ProductId
+                      THROW 51024,'A product cannot be linked to itself.',1;
+                    IF NOT EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ChildId AND BusinessId=@BusinessId AND IsActive=1)
+                      THROW 51024,'The linked product is outside the business or inactive.',1;
+                    IF EXISTS(SELECT 1 FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND ProductId=@ChildId AND QuantityOnHand<>0)
+                      THROW 51024,'El producto tiene existencias. Deja su inventario en cero antes de vincularlo.',1;
+                    IF @AllowsConversion=1 AND NOT EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ProductId AND BusinessId=@BusinessId AND ManageStock=1 AND ConversionMaximumLossPercent IS NOT NULL)
+                      THROW 51024,'A convertible family must manage inventory and define a maximum conversion loss.',1;
+                    IF EXISTS(SELECT 1 FROM dbo.ProductLinks WHERE BusinessId=@BusinessId AND ParentProductId=@ChildId AND IsActive=1)
+                      THROW 51024,'Linked products cannot contain other linked products.',1;
+                    IF EXISTS(SELECT 1 FROM dbo.ProductLinks WHERE BusinessId=@BusinessId AND ChildProductId=@ChildId AND ParentProductId<>@ProductId AND IsActive=1)
+                      THROW 51024,'The product is already linked to another root product.',1;
+                    IF EXISTS(SELECT 1 FROM dbo.ProductLinks WHERE BusinessId=@BusinessId AND ChildProductId=@ChildId)
+                      UPDATE dbo.ProductLinks SET ParentProductId=@ProductId,SharesInventory=@SharesInventory,
+                          InventoryFactor=@InventoryFactor,SharesPrice=@SharesPrice,PriceFactor=@PriceFactor,
+                          AllowsConversion=@AllowsConversion,ConversionFactor=@ConversionFactor,IsActive=1,UpdatedAt=@Now
+                      WHERE BusinessId=@BusinessId AND ChildProductId=@ChildId;
+                    ELSE
+                      INSERT dbo.ProductLinks(ProductLinkId,BusinessId,ChildProductId,ParentProductId,InventoryFactor,PriceFactor,ConversionFactor,SharesInventory,SharesPrice,AllowsConversion,IsActive,CreatedAt)
+                      VALUES(@Id,@BusinessId,@ChildId,@ProductId,@InventoryFactor,@PriceFactor,@ConversionFactor,@SharesInventory,@SharesPrice,@AllowsConversion,1,@Now);
+                    INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
+                    VALUES(@BusinessId,@ChildId,N'Upsert',@Now);
+                    UPDATE dbo.Products SET ManageStock=CASE WHEN @SharesInventory=1 THEN 0 WHEN @AllowsConversion=1 THEN 1 ELSE ManageStock END,UpdatedAt=@Now
+                    WHERE ProductId=@ChildId AND BusinessId=@BusinessId;
+                    """, [P("@Id", ids.NewId()), P("@BusinessId", user.BusinessId), P("@ProductId", productId),
+                    P("@ChildId", child.ChildProductId), P("@SharesInventory", child.SharesInventory),
+                    P("@InventoryFactor", child.SharesInventory ? child.InventoryFactor : null),
+                    P("@SharesPrice", child.SharesPrice), P("@PriceFactor", child.SharesPrice ? child.PriceFactor : null),
+                    P("@AllowsConversion", child.AllowsConversion), P("@ConversionFactor", child.AllowsConversion ? child.ConversionFactor : null),
+                    P("@Now", now)], ct);
+                if (child.SharesPrice)
+                    await SqlLinkedProductCostPreparation.PrepareAsync(connection, transaction, user.BusinessId,
+                        productId, child.ChildProductId, child.PriceFactor!.Value, ct);
+            }
+
+            foreach (var alias in request.Aliases ?? [])
+            {
+                await ExecuteAsync(connection, transaction, """
+                    IF EXISTS(SELECT 1 FROM dbo.ProductAliases
+                              WHERE BusinessId=@BusinessId AND Scope=0 AND CustomerKey=N''
+                                AND NormalizedAlias=@NormalizedAlias AND ProductId<>@ProductId
+                                AND Status=1 AND ResolutionMode=1)
+                      THROW 51024,'El alias ya resuelve a otro producto del negocio.',1;
+                    IF EXISTS(SELECT 1 FROM dbo.ProductAliases
+                              WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND Scope=0
+                                AND CustomerKey=N'' AND NormalizedAlias=@NormalizedAlias)
+                      UPDATE dbo.ProductAliases SET Alias=@Alias,Kind=0,ResolutionMode=1,Source=0,
+                        Status=1,UpdatedAt=@Now
+                      WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND Scope=0
+                        AND CustomerKey=N'' AND NormalizedAlias=@NormalizedAlias;
+                    ELSE
+                      INSERT dbo.ProductAliases(ProductAliasId,BusinessId,ProductId,Scope,CustomerKey,Alias,
+                        NormalizedAlias,Kind,ResolutionMode,Source,Status,UsageCount,CreatedAt)
+                      VALUES(@Id,@BusinessId,@ProductId,0,N'',@Alias,@NormalizedAlias,0,1,0,1,0,@Now);
+                    """, [P("@Id", ids.NewId()), P("@BusinessId", user.BusinessId), P("@ProductId", productId),
+                    P("@Alias", alias.Alias), P("@NormalizedAlias", alias.NormalizedAlias), P("@Now", now)], ct);
+            }
+
+            if (request.Images is not null)
+            {
+                await ExecuteAsync(connection, transaction,
+                    "DELETE dbo.ProductImages WHERE BusinessId=@BusinessId AND ProductId=@ProductId;",
+                    [P("@BusinessId", user.BusinessId), P("@ProductId", productId)], ct);
+                foreach (var image in request.Images)
+                {
+                    await ExecuteAsync(connection, transaction, """
+                        IF @ProductOfferId IS NOT NULL AND NOT EXISTS(
+                          SELECT 1 FROM dbo.ProductOffers WHERE ProductOfferId=@ProductOfferId
+                            AND BusinessId=@BusinessId AND ProductId=@ProductId)
+                          THROW 51024,'La imagen referencia una oferta que no pertenece al producto.',1;
+                        INSERT dbo.ProductImages(ProductImageId,ProductId,BusinessId,ProductOfferId,MediaUrl,
+                          AltText,DisplayOrder,IsPrimary,IsActive,CreatedAt)
+                        VALUES(@Id,@ProductId,@BusinessId,@ProductOfferId,@MediaReference,@AltText,@DisplayOrder,
+                          @IsPrimary,1,@Now);
+                        """, [P("@Id", image.ProductImageId), P("@ProductId", productId),
+                        P("@BusinessId", user.BusinessId), P("@ProductOfferId", image.ProductOfferId),
+                        P("@MediaReference", image.MediaReference.Trim()), P("@AltText", image.AltText?.Trim()),
+                        P("@DisplayOrder", image.DisplayOrder), P("@IsPrimary", image.IsPrimary), P("@Now", now)], ct);
+                }
             }
 
             await ExecuteAsync(connection, transaction, """
@@ -455,7 +571,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
     private const string ProductSelect = """
         SELECT p.ProductId,p.BusinessId,COALESCE(p.ProductCode,p.Sku),p.Reference,p.Name,p.IsActive,
           (SELECT Barcode AS [Value] FROM dbo.ProductBarcodes b WHERE b.ProductId=p.ProductId AND b.IsActive=1 FOR JSON PATH),
-          (SELECT Amount,CurrencyCode,CostBasisAmount,TargetMarginPercent FROM dbo.ProductPrices x WHERE x.ProductId=p.ProductId AND x.IsActive=1 FOR JSON PATH),
+          (SELECT Amount,CurrencyCode,CostBasisAmount,TargetMarginPercent,PreparedAmount,InputMode,RoundingIncrement,RoundingMode FROM dbo.ProductPrices x WHERE x.ProductId=p.ProductId AND x.IsActive=1 FOR JSON PATH),
           (SELECT s.SupplierId,s.Identification,s.Name,sp.SupplierProductCode,c.BaseUnitCost,sp.IsPrimary,sp.PurchasePresentationName,sp.UnitsPerPresentation
              FROM dbo.SupplierProducts sp JOIN dbo.Suppliers s ON s.SupplierId=sp.SupplierId
              JOIN dbo.SupplierCostAgreements c ON c.SupplierProductId=sp.SupplierProductId AND c.IsActive=1
@@ -598,6 +714,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
          P("@Reference", r.Reference), P("@Name", r.Name.Trim()), P("@Description", r.Description), P("@BaseUnitCode", r.BaseUnitCode.Trim()),
          P("@TaxProfileId", r.TaxProfileId), P("@PurchaseTaxProfileId", r.PurchaseTaxProfileId == Guid.Empty ? r.TaxProfileId : r.PurchaseTaxProfileId),
          P("@PurchaseTaxTreatment", r.PurchaseTaxTreatment), P("@ManageInventory", r.ManageInventory), P("@IsWeighable", r.IsWeighable),
+         P("@ConversionMaximumLossPercent", r.ConversionMaximumLossPercent),
          P("@ProductCategoryId", r.ProductCategoryId), P("@ProductBrandId", r.ProductBrandId), P("@AllowsFractionalSale", r.AllowsFractionalSale),
          P("@ParentProductId", r.Link?.ParentProductId),
          P("@AllowsConversion", r.Link?.AllowsConversion ?? false),
