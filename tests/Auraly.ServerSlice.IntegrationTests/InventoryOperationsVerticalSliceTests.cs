@@ -182,18 +182,41 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             "FOUND_SURPLUS", null, "Movimiento posterior al conteo",
             [new(1, first, 3m, 5m)]));
 
-        Guid finalOperationId;
-        using (var close = await client.PostAsJsonAsync(
-                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/close",
-                   new CloseInventoryPhysicalCountRequest(fixture.BusinessId)))
+        Guid finalOperationId = Guid.Empty;
+        fixture.PauseDocumentProcessing();
+        try
         {
-            var body = await close.Content.ReadAsStringAsync();
-            Assert.True(close.IsSuccessStatusCode, body);
-            var detail = await close.Content.ReadFromJsonAsync<InventoryPhysicalCountDetail>();
-            Assert.NotNull(detail);
-            Assert.Equal("Closed", detail.Status);
-            finalOperationId = Assert.IsType<Guid>(detail.FinalInventoryOperationId);
-            Assert.Equal(2, detail.Lists.Count);
+            using (var close = await client.PostAsJsonAsync(
+                       $"/api/commerce/v1/inventory/physical-counts/{countId:D}/close",
+                       new CloseInventoryPhysicalCountRequest(fixture.BusinessId)))
+            {
+                Assert.Equal(HttpStatusCode.Accepted, close.StatusCode);
+                var detail = await close.Content.ReadFromJsonAsync<InventoryPhysicalCountDetail>();
+                Assert.NotNull(detail);
+                Assert.Equal("Closing", detail.Status);
+                finalOperationId = Assert.IsType<Guid>(detail.FinalInventoryOperationId);
+                Assert.Equal(2, detail.Lists.Count);
+            }
+
+            Assert.Equal(0, await CountAsync("InventoryMovements", finalOperationId));
+            Assert.Equal(13m, (await BalanceAsync(fixture.WarehouseId, first)).Quantity);
+            Assert.Equal(20m, (await BalanceAsync(fixture.WarehouseId, second)).Quantity);
+
+            var signal = Assert.Single(fixture.DrainDocumentSignals());
+            Assert.Equal(finalOperationId, signal.DocumentId);
+            Assert.Equal(InventoryDocumentTypes.StockCount, signal.DocumentType);
+            fixture.ResumeDocumentProcessing();
+            await fixture.DocumentSignals.PublishAsync(signal);
+
+            var completed = await client.GetFromJsonAsync<InventoryPhysicalCountDetail>(
+                $"/api/commerce/v1/inventory/physical-counts/{countId:D}");
+            Assert.NotNull(completed);
+            Assert.Equal("Closed", completed.Status);
+        }
+        finally
+        {
+            fixture.ResumeDocumentProcessing();
+            fixture.DrainDocumentSignals();
         }
 
         Assert.Equal(12m, (await BalanceAsync(fixture.WarehouseId, first)).Quantity);

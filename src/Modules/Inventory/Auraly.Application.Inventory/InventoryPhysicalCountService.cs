@@ -10,7 +10,7 @@ public interface IInventoryPhysicalCountStore
     Task<InventoryPhysicalCountDetail> StartAsync(InventoryUserIdentity user, Guid countId, CancellationToken token);
     Task<InventoryPhysicalCountDetail> SaveCaptureAsync(InventoryUserIdentity user, Guid countId, Guid listId, bool isFinalCount, SaveInventoryPhysicalCountCaptureRequest request, CancellationToken token);
     Task<InventoryPhysicalCountClosePreparation> PrepareCloseAsync(InventoryUserIdentity user, Guid countId, CancellationToken token);
-    Task<InventoryPhysicalCountDetail> CompleteCloseAsync(InventoryUserIdentity user, Guid countId, InventoryOperationAcceptance acceptance, CancellationToken token);
+    Task<InventoryPhysicalCountDetail> RecordCloseAcceptanceAsync(InventoryUserIdentity user, Guid countId, InventoryOperationAcceptance acceptance, CancellationToken token);
 }
 
 public sealed class InventoryPhysicalCountService(
@@ -90,7 +90,7 @@ public sealed class InventoryPhysicalCountService(
         var acceptance = await operations.ConfirmCountAsync(user, prepared.FinalInventoryOperationId,
             $"physical-count:{countId:D}:close", new(prepared.BusinessId,
                 prepared.Lines.Select((line, index) => new StockCountLineRequest(index + 1, line.ProductId, line.AdjustedCountQuantity)).ToArray()), token);
-        return await store.CompleteCloseAsync(user, countId, acceptance, token);
+        return await store.RecordCloseAcceptanceAsync(user, countId, acceptance, token);
     }
 
     private Task<InventoryPhysicalCountDetail> SaveAsync(InventoryUserIdentity user, Guid countId, Guid listId, bool final, SaveInventoryPhysicalCountCaptureRequest request, CancellationToken token)

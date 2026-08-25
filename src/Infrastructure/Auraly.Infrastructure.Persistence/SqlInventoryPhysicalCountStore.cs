@@ -265,15 +265,15 @@ public sealed class SqlInventoryPhysicalCountStore(
         catch(SqlException exception){await transaction.RollbackAsync(CancellationToken.None);throw Translate(exception);}catch{await transaction.RollbackAsync(CancellationToken.None);throw;}
     }
 
-    public async Task<InventoryPhysicalCountDetail> CompleteCloseAsync(InventoryUserIdentity user, Guid countId, InventoryOperationAcceptance acceptance, CancellationToken token)
+    public async Task<InventoryPhysicalCountDetail> RecordCloseAcceptanceAsync(InventoryUserIdentity user, Guid countId, InventoryOperationAcceptance acceptance, CancellationToken token)
     {
         const string sql="""
-            UPDATE dbo.InventoryPhysicalCounts SET Status=N'Closed',ClosedAt=@Now,FinalDocumentNumber=@Number
+            UPDATE dbo.InventoryPhysicalCounts SET FinalDocumentNumber=@Number
             WHERE InventoryPhysicalCountId=@CountId AND BusinessId=@BusinessId AND Status=N'Closing' AND FinalInventoryOperationId=@DocumentId;
             IF @@ROWCOUNT=0 AND NOT EXISTS(SELECT 1 FROM dbo.InventoryPhysicalCounts WHERE InventoryPhysicalCountId=@CountId AND BusinessId=@BusinessId AND Status=N'Closed' AND FinalInventoryOperationId=@DocumentId)
-              THROW 51202,'Physical count close state is inconsistent.',1;
+              THROW 51202,'Physical count acceptance state is inconsistent.',1;
             """;
-        await using var connection=connections.Create();await connection.OpenAsync(token);await using var command=new SqlCommand(sql,connection);command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());command.Parameters.AddWithValue("@Number",acceptance.DocumentNumber);command.Parameters.AddWithValue("@CountId",countId);command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@DocumentId",acceptance.DocumentId);try{await command.ExecuteNonQueryAsync(token);}catch(SqlException exception){throw Translate(exception);}return(await GetAsync(user,countId,token))!;
+        await using var connection=connections.Create();await connection.OpenAsync(token);await using var command=new SqlCommand(sql,connection);command.Parameters.AddWithValue("@Number",acceptance.DocumentNumber);command.Parameters.AddWithValue("@CountId",countId);command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@DocumentId",acceptance.DocumentId);try{await command.ExecuteNonQueryAsync(token);}catch(SqlException exception){throw Translate(exception);}return(await GetAsync(user,countId,token))!;
     }
 
     private async Task<InventoryPhysicalCountDetail> MutateAsync(InventoryUserIdentity user,Guid countId,string sql,CancellationToken token)

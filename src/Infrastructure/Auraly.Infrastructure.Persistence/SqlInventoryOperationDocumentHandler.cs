@@ -54,6 +54,8 @@ public sealed class SqlInventoryOperationProcessor(
         };
         await InsertOutboxAsync(session, operation, document.Payload, cancellationToken);
         await MarkProcessedAsync(session, operation, totalValueChange, cancellationToken);
+        if (operation.DocumentType == InventoryDocumentTypes.StockCount)
+            await CompleteCoordinatedPhysicalCountAsync(session, operation, cancellationToken);
     }
 
     private static async Task<Dictionary<(Guid Warehouse, Guid Product), BalanceState>> LockBalancesAsync(
@@ -258,6 +260,24 @@ public sealed class SqlInventoryOperationProcessor(
     {
         const string sql="UPDATE dbo.InventoryOperations SET Status=N'Processed',ProcessedAt=@Now,TotalValueChange=@Total WHERE InventoryOperationId=@Id AND BusinessId=@BusinessId AND Status=N'Accepted';";
         await using var command=new SqlCommand(sql,session.Connection,session.Transaction);command.Parameters.AddWithValue("@Id",operation.DocumentId);command.Parameters.AddWithValue("@BusinessId",operation.BusinessId);command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());AddDecimal(command,"@Total",total,19,4);if(await command.ExecuteNonQueryAsync(cancellationToken)!=1)throw new DBConcurrencyException("The inventory operation could not be marked as processed.");
+    }
+
+    private async Task CompleteCoordinatedPhysicalCountAsync(
+        SqlDocumentProcessingSessionAccessor.Session session,
+        InventoryOperationDocumentPayload operation,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            UPDATE dbo.InventoryPhysicalCounts
+            SET Status=N'Closed',ClosedAt=@Now,FinalDocumentNumber=@DocumentNumber
+            WHERE BusinessId=@BusinessId AND FinalInventoryOperationId=@DocumentId AND Status=N'Closing';
+            """;
+        await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
+        command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
+        command.Parameters.AddWithValue("@DocumentNumber", operation.DocumentNumber);
+        command.Parameters.AddWithValue("@BusinessId", operation.BusinessId);
+        command.Parameters.AddWithValue("@DocumentId", operation.DocumentId);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static void AddDecimal(SqlCommand command,string name,decimal value,byte precision,byte scale){var p=command.Parameters.Add(name,SqlDbType.Decimal);p.Precision=precision;p.Scale=scale;p.Value=value;}
