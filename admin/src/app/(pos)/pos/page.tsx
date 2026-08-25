@@ -142,6 +142,13 @@ function describeCaptureFailure(result: PosCaptureResult) {
   return null;
 }
 
+function authorizationIsCurrent(authorization: PosSensitiveAuthorization | null) {
+  return Boolean(
+    authorization &&
+    (!authorization.expiresAt || Date.parse(authorization.expiresAt) > Date.now()),
+  );
+}
+
 export default function PosPage() {
   const scanner = useRef<HTMLInputElement>(null);
   const router = useRouter();
@@ -1143,13 +1150,6 @@ export default function PosPage() {
     }
     await requestSensitiveApproval(
       permissionResource, lineId, context, operationId, onAuthorized,
-    );
-  }
-
-  function authorizationIsCurrent(authorization: PosSensitiveAuthorization | null) {
-    return Boolean(
-      authorization &&
-      (!authorization.expiresAt || Date.parse(authorization.expiresAt) > Date.now()),
     );
   }
 
