@@ -437,6 +437,7 @@ public sealed class PosApprovalService(
     {
         if (permission is not (
             CommercePermissionCodes.SalesDiscount or
+            CommercePermissionCodes.SalesChangePrice or
             CommercePermissionCodes.SalesRemoveLine or
             CommercePermissionCodes.SalesRestartDraft or
             CommercePermissionCodes.EnrolledDevicesEnroll or

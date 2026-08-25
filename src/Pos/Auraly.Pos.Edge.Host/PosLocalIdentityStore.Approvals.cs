@@ -162,6 +162,7 @@ public sealed partial class PosLocalIdentityStore
     {
         if (permissionResource is not (
             CommercePermissionCodes.SalesDiscount or
+            CommercePermissionCodes.SalesChangePrice or
             CommercePermissionCodes.SalesRemoveLine or
             CommercePermissionCodes.SalesRestartDraft or
             Auraly.Contracts.WorkSessions.WorkSessionPermissionCodes.Close))

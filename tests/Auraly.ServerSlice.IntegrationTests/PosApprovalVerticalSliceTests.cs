@@ -238,6 +238,7 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
     [InlineData(CommercePermissionCodes.SalesRemoveLine, "RemoveLine")]
     [InlineData(CommercePermissionCodes.SalesRestartDraft, "RestartSale")]
     [InlineData(CommercePermissionCodes.SalesDiscount, "Discount")]
+    [InlineData(CommercePermissionCodes.SalesChangePrice, "ChangePrice")]
     [InlineData("work-sessions.close", "CloseWorkSession")]
     [InlineData(CommercePermissionCodes.EnrolledDevicesEnroll, "EnrollPosDevice")]
     public async Task Every_sensitive_pos_action_accepts_local_window_and_remote_approval(

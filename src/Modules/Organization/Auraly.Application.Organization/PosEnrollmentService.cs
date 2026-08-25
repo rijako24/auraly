@@ -55,6 +55,7 @@ public sealed class PosEnrollmentService(
     [
         CommercePermissionCodes.SalesCreate,
         CommercePermissionCodes.SalesDiscount,
+        CommercePermissionCodes.SalesChangePrice,
         CommercePermissionCodes.SalesReprint,
         CommercePermissionCodes.SalesRemoveLine,
         CommercePermissionCodes.SalesRestartDraft,
