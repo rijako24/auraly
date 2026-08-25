@@ -52,8 +52,8 @@ jobs:
             p.ProcessingSequence,
             p.AttemptCount AS ProcessingAttempts,
             COALESCE(p.LastError,N'') AS ProcessingError,
-            cursor.LastCompletedSequence,
-            cursor.LastAssignedSequence,
+            processingCursor.LastCompletedSequence,
+            processingCursor.LastAssignedSequence,
             (SELECT COUNT(*) FROM dbo.DocumentProcessingJobs predecessor
              WHERE predecessor.BusinessId=o.BusinessId
                AND predecessor.ProcessingSequence<p.ProcessingSequence
@@ -65,8 +65,8 @@ jobs:
           LEFT JOIN dbo.SalesDocuments d ON d.DocumentId=l.DocumentId
           LEFT JOIN dbo.DocumentProcessingJobs p
             ON p.DocumentId=d.DocumentId AND p.DocumentType=d.DocumentType
-          LEFT JOIN dbo.BusinessProcessingCursors cursor
-            ON cursor.BusinessId=o.BusinessId
+          LEFT JOIN dbo.BusinessProcessingCursors processingCursor
+            ON processingCursor.BusinessId=o.BusinessId
           LEFT JOIN reporting.SalesReportingJobs r
             ON r.SourceDocumentId=d.DocumentId AND r.SourceDocumentType=d.DocumentType
           WHERE o.ExternalDocumentNumber=@OrderNumber
