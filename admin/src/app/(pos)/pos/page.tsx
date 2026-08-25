@@ -300,8 +300,10 @@ export default function PosPage() {
     );
   }, []);
   const focusScanner = useCallback(() => {
-    if (document.querySelector('[data-pos-focus-surface="modal"]')) return;
-    window.requestAnimationFrame(() => scanner.current?.focus({ preventScroll: true }));
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      if (document.querySelector('[data-pos-focus-surface="modal"]')) return;
+      scanner.current?.focus({ preventScroll: true });
+    }));
   }, []);
   const showError = useCallback((caught: unknown) => {
     const status = caught instanceof PosEdgeError ? caught.status : 0;
