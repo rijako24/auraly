@@ -1297,16 +1297,18 @@ export default function PosPage() {
 
   async function completeRemoteApproval(approvalRequestId: string) {
     if (!sensitiveApproval) return;
+    const pending = sensitiveApproval;
+    setSensitiveApproval(null);
     setBusy(true);
     setSensitiveApprovalError(null);
     try {
-      await sensitiveApproval.execute({
-        operationId: sensitiveApproval.operationId,
+      await pending.execute({
+        operationId: pending.operationId,
         approvalRequestId,
-        expiresAt: sensitiveApproval.approval?.expiresAt,
+        expiresAt: pending.approval?.expiresAt,
       });
-      setSensitiveApproval(null);
     } catch (caught) {
+      setSensitiveApproval(pending);
       setSensitiveApprovalError(caught instanceof Error ? caught.message : "No fue posible aplicar la acción autorizada.");
     } finally {
       setBusy(false);

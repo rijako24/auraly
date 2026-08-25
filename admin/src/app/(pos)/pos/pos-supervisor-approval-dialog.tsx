@@ -33,17 +33,33 @@ export function PosSupervisorApprovalDialog({
   useEffect(() => {
     if (!approval || !allowRemote) return;
     let active = true;
+    let resolved = false;
+    let refreshing = false;
     let dispose: (() => void) | undefined;
     const refresh = async () => {
-      const current = await loadApproval(approval.approvalRequestId);
-      if (!active) return;
-      if (current.status === "Approved")
-        await onRemoteApprovedRef.current(current.approvalRequestId);
-      else if (current.status === "Rejected" || current.status === "Expired")
-        setChannelError(current.status === "Rejected"
-          ? "El supervisor rechazó la acción."
-          : "La solicitud venció; inténtala nuevamente.");
+      if (!active || resolved || refreshing) return;
+      refreshing = true;
+      try {
+        const current = await loadApproval(approval.approvalRequestId);
+        if (!active || resolved) return;
+        if (current.status === "Approved") {
+          resolved = true;
+          await onRemoteApprovedRef.current(current.approvalRequestId);
+        } else if (current.status === "Rejected" || current.status === "Expired") {
+          resolved = true;
+          setChannelError(current.status === "Rejected"
+            ? "El supervisor rechazó la acción."
+            : "La solicitud venció; inténtala nuevamente.");
+        }
+      } catch (caught) {
+        if (active) setChannelError(caught instanceof Error
+          ? caught.message
+          : "No fue posible confirmar la respuesta del supervisor.");
+      } finally {
+        refreshing = false;
+      }
     };
+    const fallback = window.setInterval(() => void refresh(), 1_500);
     void subscribeApprovals(() => void refresh())
       .then((stop) => {
         dispose = stop;
@@ -53,7 +69,7 @@ export function PosSupervisorApprovalDialog({
         if (!active) return;
         setChannelError(caught instanceof Error ? caught.message : "Falló el canal de aprobación.");
       });
-    return () => { active = false; dispose?.(); };
+    return () => { active = false; window.clearInterval(fallback); dispose?.(); };
   }, [allowRemote, approval, loadApproval, subscribeApprovals]);
 
   async function submit(event: FormEvent) {
