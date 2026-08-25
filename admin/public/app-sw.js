@@ -1,4 +1,4 @@
-const VERSION = "auraly-pwa-v9";
+const VERSION = "auraly-pwa-v10";
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 const APP_SHELL = ["/login", "/app.webmanifest", "/brand/auraly-app-icon-192-v4.png", "/brand/auraly-app-icon-512-v4.png", "/brand/auraly-ios-icon-512-v4.png", "/brand/auraly-maskable-512-v4.png"];
@@ -40,11 +40,10 @@ self.addEventListener("fetch", (event) => {
 self.addEventListener("push", (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch { data = {}; }
-  event.waitUntil(Promise.all([
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
-      for (const client of clients) client.postMessage({ type: "auraly:pos-approvals-changed" });
-    }),
-    self.registration.showNotification(data.title || "Auraly · autorización POS", {
+  event.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (clients) => {
+    for (const client of clients) client.postMessage({ type: "auraly:pos-approvals-changed" });
+    if (clients.some((client) => client.visibilityState === "visible")) return;
+    await self.registration.showNotification(data.title || "Auraly · autorización POS", {
       body: data.body || "Hay una solicitud de autorización pendiente.",
       tag: data.tag || "auraly-pos-approval",
       icon: "/brand/auraly-app-icon-192-v4.png",
@@ -52,8 +51,8 @@ self.addEventListener("push", (event) => {
       requireInteraction: true,
       data: { url: data.url || "/dashboard?posApproval=pending" },
       actions: [{ action: "open", title: "Revisar solicitud" }],
-    }),
-  ]));
+    });
+  }));
 });
 
 self.addEventListener("notificationclick", (event) => {

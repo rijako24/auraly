@@ -43,7 +43,7 @@ if (!layout.includes("#auraly-standalone-boot") ||
   throw new Error("The first standalone DOM frame must force the light launch screen.");
 
 const worker = await readFile(path.join(root, "public", "app-sw.js"), "utf8");
-if (!worker.includes('VERSION = "auraly-pwa-v6"') ||
+if (!worker.includes('VERSION = "auraly-pwa-v10"') ||
     /APP_SHELL\s*=\s*\[[^\]]*"\/dashboard"/.test(worker))
   throw new Error("The current worker must not pre-cache an unauthenticated dashboard response.");
 
