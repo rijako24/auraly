@@ -3,9 +3,11 @@ import { buildLoginRedirect } from "@/lib/login-redirect";
 import { shouldIncludeExecutionContext } from "@/lib/api-execution-context";
 
 import {
-  isInstalledApplicationDisplay,
+  classifySessionRuntime,
   retryAuthenticatedRequest,
   SESSION_EXPIRED_EVENT,
+  shouldExpireSession,
+  type SessionRuntime,
   type SessionRefreshResult,
 } from "@/lib/auth-session";
 
@@ -15,7 +17,7 @@ const SELECTED_BUSINESS_STORAGE_KEY = "selected_business_id";
 
 let activeRefresh: Promise<SessionRefreshResult> | null = null;
 
-let applicationRuntime: Promise<boolean> | null = null;
+let sessionRuntime: Promise<SessionRuntime> | null = null;
 const REQUEST_TIMEOUT_MS = 45_000;
 function getSelectedTenantId(): string | null {
   if (typeof window === "undefined") return null;
@@ -62,28 +64,32 @@ function fetchWithTimeout(
   return fetch(input, { ...init, signal: AbortSignal.timeout(timeoutMs) });
 }
 
-async function isApplicationRuntime(): Promise<boolean> {
-  if (typeof window === "undefined") return false;
+async function detectSessionRuntime(): Promise<SessionRuntime> {
+  if (typeof window === "undefined") return "web";
   const iosNavigator = navigator as Navigator & { standalone?: boolean };
-  if (isInstalledApplicationDisplay(
-    window.matchMedia?.("(display-mode: standalone)").matches ?? false,
-    iosNavigator.standalone === true,
-  )) return true;
+  const standaloneDisplayMode =
+    window.matchMedia?.("(display-mode: standalone)").matches ?? false;
+  const iosStandalone = iosNavigator.standalone === true;
 
-  applicationRuntime ??= fetchWithTimeout(
+  sessionRuntime ??= fetchWithTimeout(
     "/api/runtime",
     { method: "GET", credentials: "same-origin" },
     5_000,
   )
     .then(async (response) => response.ok
-      ? Boolean((await response.json() as { desktop?: boolean }).desktop)
-      : false)
-    .catch(() => false);
-  return applicationRuntime;
+      ? classifySessionRuntime(
+          Boolean((await response.json() as { desktop?: boolean }).desktop),
+          standaloneDisplayMode,
+          iosStandalone,
+        )
+      : classifySessionRuntime(false, standaloneDisplayMode, iosStandalone))
+    .catch(() => classifySessionRuntime(false, standaloneDisplayMode, iosStandalone));
+  return sessionRuntime;
 }
 
 async function expireWebSession(): Promise<void> {
-  if (typeof window === "undefined" || await isApplicationRuntime()) return;
+  if (typeof window === "undefined") return;
+  if (!shouldExpireSession(await detectSessionRuntime())) return;
   try {
     localStorage.removeItem("auth-state");
   } catch {

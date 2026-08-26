@@ -1,11 +1,10 @@
-const VERSION = "auraly-pwa-v12";
+const VERSION = "auraly-pwa-v13";
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 const APP_SHELL = ["/login", "/app.webmanifest", "/brand/auraly-app-icon-192-v4.png", "/brand/auraly-app-icon-512-v4.png", "/brand/auraly-ios-icon-512-v4.png", "/brand/auraly-maskable-512-v4.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.addAll(APP_SHELL)));
-  self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
@@ -13,7 +12,6 @@ self.addEventListener("activate", (event) => {
     keys.filter((key) => key.startsWith("auraly-pwa-") && ![SHELL_CACHE, RUNTIME_CACHE].includes(key))
       .map((key) => caches.delete(key)),
   )));
-  self.clients.claim();
 });
 
 self.addEventListener("fetch", (event) => {
@@ -23,7 +21,9 @@ self.addEventListener("fetch", (event) => {
 
   if (request.mode === "navigate") {
     event.respondWith(fetch(request).then((response) => {
-      if (response.ok) void caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, response.clone()));
+      const responseUrl = new URL(response.url);
+      if (response.ok && !response.redirected && responseUrl.origin === url.origin && responseUrl.pathname === url.pathname)
+        void caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, response.clone()));
       return response;
     }).catch(async () => (await caches.match(request)) ?? (await caches.match("/dashboard")) ?? (await caches.match("/login"))));
     return;
@@ -50,6 +50,7 @@ self.addEventListener("push", (event) => {
   try { data = event.data ? event.data.json() : {}; } catch { data = {}; }
   event.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (clients) => {
     for (const client of clients) client.postMessage({ type: "auraly:pos-approvals-changed" });
+    if (clients.some((client) => client.visibilityState === "visible")) return;
     const proposed = data.notification || data;
     await self.registration.showNotification(proposed.title || "Auraly · autorización POS", {
       body: proposed.body || "Hay una solicitud de autorización pendiente.",

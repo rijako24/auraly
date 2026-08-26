@@ -1,4 +1,4 @@
-const RUNTIME_CACHE = "auraly-pwa-v5-runtime";
+const RUNTIME_CACHE = "auraly-pwa-v13-runtime";
 
 export async function prepareSellerAppShell() {
   if (typeof caches === "undefined") return;

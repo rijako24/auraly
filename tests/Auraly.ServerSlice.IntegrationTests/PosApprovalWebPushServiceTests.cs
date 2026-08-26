@@ -12,30 +12,25 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class PosApprovalWebPushServiceTests
 {
     [Fact]
-    public async Task Visible_supervisor_uses_realtime_without_redundant_web_push()
+    public async Task Registered_supervisor_receives_web_push_independently_of_realtime_presence()
     {
         var userId = Guid.NewGuid();
-        var gateway = new TestPosSynchronizationPushGateway();
-        gateway.SetUserConnected(userId, true);
         var delivery = new ConcurrentPushHandler(1);
         var service = CreateService(
-            gateway,
             delivery,
             [Recipient(userId, "https://push.test/visible")]);
 
         await service.NotifyAsync(Approval(), CancellationToken.None);
 
-        Assert.Equal(0, delivery.RequestCount);
+        Assert.Equal(1, delivery.RequestCount);
     }
 
     [Fact]
     public async Task Closed_supervisor_receives_all_registered_devices_in_parallel()
     {
         var userId = Guid.NewGuid();
-        var gateway = new TestPosSynchronizationPushGateway();
         var delivery = new ConcurrentPushHandler(2);
         var service = CreateService(
-            gateway,
             delivery,
             [
                 Recipient(userId, "https://push.test/device-one"),
@@ -49,7 +44,6 @@ public sealed class PosApprovalWebPushServiceTests
     }
 
     private static PosApprovalWebPushService CreateService(
-        TestPosSynchronizationPushGateway gateway,
         ConcurrentPushHandler delivery,
         IReadOnlyList<PosApprovalPushRecipient> recipients)
     {
@@ -66,7 +60,6 @@ public sealed class PosApprovalWebPushServiceTests
         return new PosApprovalWebPushService(
             new StubSubscriptionStore(recipients),
             new PushServiceClient(new HttpClient(delivery)),
-            gateway,
             configuration,
             NullLogger<PosApprovalWebPushService>.Instance);
     }

@@ -7,6 +7,7 @@ const AUTHENTICATION_PATHS = [
 
 export const SESSION_EXPIRED_EVENT = "auraly:session-expired";
 export type SessionRefreshResult = "refreshed" | "expired" | "unavailable";
+export type SessionRuntime = "web" | "installed-web" | "desktop";
 
 export function isAuthenticationRequest(url: string): boolean {
   return AUTHENTICATION_PATHS.some((path) => url.includes(path));
@@ -42,4 +43,19 @@ export function isInstalledApplicationDisplay(
   iosStandalone: boolean,
 ): boolean {
   return standaloneDisplayMode || iosStandalone;
+}
+
+export function classifySessionRuntime(
+  desktopRuntime: boolean,
+  standaloneDisplayMode: boolean,
+  iosStandalone: boolean,
+): SessionRuntime {
+  if (desktopRuntime) return "desktop";
+  return isInstalledApplicationDisplay(standaloneDisplayMode, iosStandalone)
+    ? "installed-web"
+    : "web";
+}
+
+export function shouldExpireSession(runtime: SessionRuntime): boolean {
+  return runtime !== "desktop";
 }

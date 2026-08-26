@@ -34,10 +34,6 @@ public interface IPosSynchronizationPushGateway
         Guid userId,
         CancellationToken cancellationToken = default);
 
-    Task<bool> IsUserConnectedAsync(
-        Guid userId,
-        CancellationToken cancellationToken = default);
-
     Task SendAsync(
         PosSynchronizationInvalidation invalidation,
         CancellationToken cancellationToken = default);

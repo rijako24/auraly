@@ -48,10 +48,10 @@ function createPushHarness(visibilityStates) {
   };
 }
 
-test("every received push remains user-visible even if Auraly has a visible window", async () => {
+test("a visible Auraly window refreshes in-app without duplicating a system notification", async () => {
   const harness = createPushHarness(["visible"]);
   await harness.push({ title: "Autorización" });
-  assert.equal(harness.notifications.length, 1);
+  assert.equal(harness.notifications.length, 0);
   assert.equal(harness.postedMessages.length, 1);
   assert.equal(harness.postedMessages[0].visibilityState, "visible");
   assert.equal(harness.postedMessages[0].message.type, "auraly:pos-approvals-changed");

@@ -41,16 +41,6 @@ public sealed class AzureWebPubSubSynchronizationGateway(
             ],
             cancellationToken: cancellationToken);
 
-    public async Task<bool> IsUserConnectedAsync(
-        Guid userId,
-        CancellationToken cancellationToken = default)
-    {
-        var response = await client.UserExistsAsync(
-            userId.ToString("D"),
-            new RequestContext { CancellationToken = cancellationToken });
-        return response.Value;
-    }
-
     public Task SendAsync(
         PosSynchronizationInvalidation invalidation,
         CancellationToken cancellationToken = default) =>

@@ -39,6 +39,12 @@ Todas las consultas usan el Business autenticado y paginación del servidor. El 
 
 ## Coordinación de inventario físico
 
+El diseño canónico de la siguiente iteración está cerrado en
+`docs/implementation/inventory-physical-count-unified-design.md`. Ese diseño
+reemplaza la presentación basada en listas por sesiones con alcance, capturas de
+usuario, revisión por producto, pendientes y conflictos. Esta sección documenta
+el comportamiento de la implementación vigente hasta completar el cutover.
+
 Un inventario físico se abre sobre un único alcance, sin exigir listas previas al usuario. El alcance parcial permite escoger una parte del catálogo y el general incluye automáticamente todos los productos inventariables activos del negocio. Durante la captura, los avances se presentan como borradores; la vista mantiene juntos el borrador activo, los productos no contados y un único consolidado que puede abrirse y cerrarse sin abandonar el conteo. Las listas internas siguen siendo una partición técnica compatible para coordinar capturas disjuntas, pero no constituyen inventarios separados ni se muestran simultáneamente como formularios de conteo.
 
 `InventoryPhysicalCounts`, `InventoryPhysicalCountLists` e `InventoryPhysicalCountLines` son estado de coordinación y captura, no otro libro de inventario. Al solicitar el cierre, la capa HTTP congela el consolidado, crea y acepta un solo documento canónico `StockCount` mediante `InventoryOperationService`, y publica su señal; no modifica existencias ni declara cerrado el inventario físico. El handler de inventario del motor ordenado es el único que modifica `InventoryBalances`, escribe `InventoryMovements` y cambia la coordinación a `Closed`, todo dentro de la misma transacción de procesamiento. La numeración CTI y el trabajo durable se reservan al aceptar el documento.

@@ -7,17 +7,10 @@ internal sealed class TestPosSynchronizationPushGateway
     : IPosSynchronizationPushGateway
 {
     private readonly ConcurrentQueue<PosSynchronizationInvalidation> messages = new();
-    private readonly ConcurrentDictionary<Guid, byte> connectedUsers = new();
     private readonly SemaphoreSlim available = new(0);
     private int failNext;
 
     public void FailNext() => Interlocked.Exchange(ref failNext, 1);
-
-    public void SetUserConnected(Guid userId, bool connected)
-    {
-        if (connected) connectedUsers[userId] = 0;
-        else connectedUsers.TryRemove(userId, out _);
-    }
 
     public Uri CreateClientAccessUri(
         Guid tenantId,
@@ -41,14 +34,6 @@ internal sealed class TestPosSynchronizationPushGateway
         return new Uri(
             $"wss://push.auraly.test/client/hubs/auraly_pos" +
             $"?tenant={tenantId:D}&business={businessId:D}&user={userId:D}");
-    }
-
-    public Task<bool> IsUserConnectedAsync(
-        Guid userId,
-        CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(connectedUsers.ContainsKey(userId));
     }
 
     public Task SendAsync(

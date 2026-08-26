@@ -1,7 +1,6 @@
 using System.Net;
 using System.Text.Json;
 using Auraly.Application.Authorization;
-using Auraly.BuildingBlocks.Application.Synchronization;
 using Auraly.Contracts.Authorization;
 using Lib.Net.Http.WebPush;
 using Lib.Net.Http.WebPush.Authentication;
@@ -16,7 +15,6 @@ public sealed record PosApprovalPushSubscriptionRequest(
 public sealed class PosApprovalWebPushService(
     IPosApprovalPushSubscriptionStore subscriptions,
     PushServiceClient pushClient,
-    IPosSynchronizationPushGateway synchronization,
     IConfiguration configuration,
     ILogger<PosApprovalWebPushService> logger)
 {
@@ -96,14 +94,8 @@ public sealed class PosApprovalWebPushService(
             tag = request.ApprovalRequestId.ToString("D"),
             url = relativeUrl
         });
-        foreach (var userSubscriptions in recipients.GroupBy(recipient => recipient.UserId))
-        {
-            if (await IsUserConnectedAsync(userSubscriptions.Key, request.ApprovalRequestId, cancellationToken))
-                continue;
-
-            await Task.WhenAll(userSubscriptions.Select(subscription =>
-                DeliverAsync(subscription, request.ApprovalRequestId, payload, cancellationToken)));
-        }
+        await Task.WhenAll(recipients.Select(subscription =>
+            DeliverAsync(subscription, request.ApprovalRequestId, payload, cancellationToken)));
     }
 
     private async Task DeliverAsync(
@@ -160,26 +152,6 @@ public sealed class PosApprovalWebPushService(
                 exception,
                 "Web Push delivery failed for POS approval {ApprovalRequestId}.",
                 approvalRequestId);
-        }
-    }
-
-    private async Task<bool> IsUserConnectedAsync(
-        Guid userId,
-        Guid approvalRequestId,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            return await synchronization.IsUserConnectedAsync(userId, cancellationToken);
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            logger.LogWarning(
-                exception,
-                "POS approval {ApprovalRequestId} could not verify foreground presence for user {UserId}; Web Push will be preserved.",
-                approvalRequestId,
-                userId);
-            return false;
         }
     }
 

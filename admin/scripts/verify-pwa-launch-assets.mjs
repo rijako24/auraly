@@ -43,9 +43,17 @@ if (!layout.includes("#auraly-standalone-boot") ||
   throw new Error("The first standalone DOM frame must force the light launch screen.");
 
 const worker = await readFile(path.join(root, "public", "app-sw.js"), "utf8");
-if (!worker.includes('VERSION = "auraly-pwa-v11"') ||
+if (!worker.includes('VERSION = "auraly-pwa-v13"') ||
     /APP_SHELL\s*=\s*\[[^\]]*"\/dashboard"/.test(worker))
   throw new Error("The current worker must not pre-cache an unauthenticated dashboard response.");
+if (worker.includes("self.skipWaiting()") || worker.includes("self.clients.claim()"))
+  throw new Error("A new worker must wait for existing tabs before replacing their Next.js asset cache.");
+if (!worker.includes("!response.redirected") ||
+    !worker.includes("responseUrl.pathname === url.pathname"))
+  throw new Error("Authenticated navigation caches must reject redirected login responses.");
+const offlineShell = await readFile(path.join(root, "src", "lib", "offline-app-shell.ts"), "utf8");
+if (!offlineShell.includes('RUNTIME_CACHE = "auraly-pwa-v13-runtime"'))
+  throw new Error("The offline shell writer must use the active service-worker runtime cache.");
 const nextStaticStrategy = worker.match(/if \(url\.pathname\.startsWith\("\/_next\/static\/"\)\) \{([\s\S]*?)\n  \}/)?.[1] ?? "";
 if (!nextStaticStrategy.includes("fetch(request).then") ||
     !nextStaticStrategy.includes("caches.match(request)") ||
