@@ -42,6 +42,72 @@ test.describe("conteo y detalle de inventario", () => {
     await expect(dialog.getByText("8",{exact:true})).toBeVisible();
   });
 
+  test("otro usuario crea una captura separada dentro del mismo inventario", async ({ page }) => {
+    const countId = "11111111-1111-1111-1111-111111111111";
+    const firstDraft = "22222222-2222-2222-2222-222222222222";
+    const productIds = [
+      "44444444-4444-4444-4444-444444444444",
+      "55555555-5555-5555-5555-555555555555",
+    ];
+    const firstDraftSummary = {
+      inventoryPhysicalCountId: countId, draftId: firstDraft, name: "Equipo A",
+      warehouseId: "66666666-6666-6666-6666-666666666666", warehouseName: "Principal",
+      scopeType: "General", ownerUserId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      status: "InProgress", version: 1, productCount: 2, countedProductCount: 0,
+      updatedAt: "2026-08-25T12:10:00Z",
+    };
+    const line = (productId: string, index: number) => ({
+      productId, productCode: `PRD-${index + 1}`, productName: `Producto ${index + 1}`,
+      initialQuantity: null, verificationQuantity: null, pendingReason: null,
+      initialCountedAt: null, verifiedAt: null,
+    });
+    const detail = (drafts: Array<Record<string, unknown>>) => ({
+      inventoryPhysicalCountId: countId,
+      warehouseId: firstDraftSummary.warehouseId,
+      warehouseName: "Principal",
+      scopeType: "General",
+      reasonCode: "PHYSICAL_COUNT",
+      notes: null,
+      baseInventorySequence: 30,
+      status: "Open",
+      createdByUserId: firstDraftSummary.ownerUserId,
+      createdAt: "2026-08-25T12:00:00Z",
+      startedAt: "2026-08-25T12:00:00Z",
+      reviewStartedAt: null,
+      closedAt: null,
+      finalInventoryOperationId: null,
+      finalDocumentNumber: null,
+      drafts,
+    });
+    const initialDraft = {
+      draftId: firstDraft, name: "Equipo A", ownerUserId: firstDraftSummary.ownerUserId,
+      status: "InProgress", version: 1, createdAt: "2026-08-25T12:00:00Z",
+      updatedAt: "2026-08-25T12:10:00Z", lines: productIds.map(line),
+    };
+    await page.route(/\/api\/commerce\/v1\/inventory\/physical-count-drafts(?:\?.*)?$/, route =>
+      route.fulfill({ contentType: "application/json", body: JSON.stringify([firstDraftSummary]) }));
+    await page.route(`**/api/commerce/v1/inventory/physical-counts/${countId}`, async route => {
+      if (route.request().method() !== "GET") return route.continue();
+      await route.fulfill({ contentType: "application/json", body: JSON.stringify(detail([initialDraft])) });
+    });
+    await page.route(`**/api/commerce/v1/inventory/physical-counts/${countId}/drafts`, async route => {
+      const request = route.request().postDataJSON() as { draftId: string; name: string; productIds: string[] };
+      expect(request.name).toBe("Equipo B");
+      expect(request.productIds).toEqual(productIds);
+      const nextDraft = { ...initialDraft, draftId: request.draftId, name: request.name };
+      await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify(detail([initialDraft, nextDraft])) });
+    });
+
+    await page.goto("/dashboard/inventory");
+    await page.getByRole("tab", { name: "Operaciones" }).click();
+    await page.getByRole("button", { name: "Inventarios" }).click();
+    await page.getByRole("button", { name: "Otro borrador" }).click();
+    const createDialog = page.getByRole("dialog", { name: "Otro borrador del mismo inventario" });
+    await createDialog.getByRole("textbox", { name: "Nombre del borrador" }).fill("Equipo B");
+    await createDialog.getByRole("button", { name: "Crear y empezar" }).click();
+    await expect(page.getByRole("dialog", { name: "Continuar conteo · Principal" })).toBeVisible();
+  });
+
   test("historial abre detalle con motivo y todas las lineas", async ({ page }) => {
     const documentId = "55555555-5555-5555-5555-555555555555";
     await page.route(/\/api\/commerce\/v1\/inventory\/operations\?.*/, async (route) => {
