@@ -115,6 +115,8 @@ public sealed class DatabaseUpgradeMigrationTests
             "EXEC sys.sp_executesql", addColumn, StringComparison.Ordinal);
         Assert.True(addColumn >= 0 && deferredBackfill > addColumn,
             "El backfill debe compilarse después de crear PurchaseEvidenceType.");
+        Assert.DoesNotContain("\nGO", migration.Replace("\r\n", "\n"),
+            StringComparison.Ordinal);
 
         var pipeline = File.ReadAllText(Path.Combine(
             root, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
