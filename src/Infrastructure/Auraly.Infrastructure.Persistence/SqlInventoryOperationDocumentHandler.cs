@@ -271,6 +271,27 @@ public sealed class SqlInventoryOperationProcessor(
             UPDATE dbo.InventoryPhysicalCounts
             SET Status=N'Closed',ClosedAt=@Now,FinalDocumentNumber=@DocumentNumber
             WHERE BusinessId=@BusinessId AND FinalInventoryOperationId=@DocumentId AND Status=N'Closing';
+
+            UPDATE reconciliation SET
+              CountedApplicationStatus=CASE WHEN CountedDocumentId=@DocumentId THEN N'Applied' ELSE CountedApplicationStatus END,
+              CountedDocumentNumber=CASE WHEN CountedDocumentId=@DocumentId THEN @DocumentNumber ELSE CountedDocumentNumber END,
+              UncountedApplicationStatus=CASE WHEN UncountedDocumentId=@DocumentId THEN N'Applied' ELSE UncountedApplicationStatus END,
+              UncountedDocumentNumber=CASE WHEN UncountedDocumentId=@DocumentId THEN @DocumentNumber ELSE UncountedDocumentNumber END
+            FROM dbo.InventoryPhysicalCountReconciliations reconciliation
+            INNER JOIN dbo.InventoryPhysicalCounts countHeader ON countHeader.InventoryPhysicalCountId=reconciliation.InventoryPhysicalCountId
+            WHERE countHeader.BusinessId=@BusinessId AND (reconciliation.CountedDocumentId=@DocumentId OR reconciliation.UncountedDocumentId=@DocumentId);
+
+            UPDATE reconciliation SET Status=N'Applied',AppliedAt=@Now
+            FROM dbo.InventoryPhysicalCountReconciliations reconciliation
+            INNER JOIN dbo.InventoryPhysicalCounts countHeader ON countHeader.InventoryPhysicalCountId=reconciliation.InventoryPhysicalCountId
+            WHERE countHeader.BusinessId=@BusinessId AND reconciliation.Status=N'Active'
+              AND (reconciliation.CountedProductCount=0 OR reconciliation.CountedApplicationStatus=N'Applied')
+              AND (reconciliation.UncountedProductCount=0 OR reconciliation.UncountedApplicationStatus=N'Applied');
+
+            UPDATE countHeader SET Status=N'Closed',ClosedAt=@Now,FinalInventoryOperationId=@DocumentId,FinalDocumentNumber=@DocumentNumber
+            FROM dbo.InventoryPhysicalCounts countHeader
+            INNER JOIN dbo.InventoryPhysicalCountReconciliations reconciliation ON reconciliation.InventoryPhysicalCountId=countHeader.InventoryPhysicalCountId
+            WHERE countHeader.BusinessId=@BusinessId AND countHeader.Status=N'Reconciling' AND reconciliation.Status=N'Applied';
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());

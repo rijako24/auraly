@@ -131,6 +131,39 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Buyer_support_document_creates_the_inventory_entry_and_immutable_fiscal_work()
+    {
+        await ConfigureSupportDocumentAsync();
+        var request = CreateRequest() with
+        {
+            DocumentId = Guid.NewGuid(),
+            SupplierInvoiceNumber = null,
+            SupplierInvoiceDate = null,
+            PurchaseEvidenceType = PurchaseEvidenceTypes.BuyerElectronicSupportDocument
+        };
+        using var client = fixture.CreateAdminClient(
+            PurchasingPermissionCodes.CreateGoodsReceipts,
+            PurchasingPermissionCodes.ConfirmGoodsReceipts);
+        using var message = CreateMessage(request, $"support-document-{request.DocumentId:N}");
+        using var response = await client.SendAsync(message);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+
+        Assert.Equal("Processed", await ScalarAsync<string>(
+            "SELECT Status FROM dbo.GoodsReceipts WHERE GoodsReceiptId=@Id", request.DocumentId));
+        Assert.Equal(1, await CountAsync("InventoryMovements", request.DocumentId));
+        Assert.Equal("SupportDocument", await ScalarAsync<string>(
+            "SELECT FiscalDocumentType FROM dbo.FiscalDocuments WHERE DocumentId=@Id", request.DocumentId));
+        Assert.Equal("CUDS", await ScalarAsync<string>(
+            "SELECT UniqueCodeType FROM dbo.FiscalDocuments WHERE DocumentId=@Id", request.DocumentId));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM fiscal.PurchaseSupportFiscalSnapshots WHERE DocumentId=@Id", request.DocumentId));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.FiscalDocumentProcesses WHERE DocumentId=@Id", request.DocumentId));
+        Assert.NotNull(await ScalarAsync<string>(
+            "SELECT SupportFiscalNumber FROM dbo.GoodsReceipts WHERE GoodsReceiptId=@Id", request.DocumentId));
+    }
+
+    [Fact]
     public async Task Receipt_requires_both_backend_permissions_and_authenticated_business()
     {
         using var client = fixture.CreateAdminClient(PurchasingPermissionCodes.CreateGoodsReceipts);
@@ -171,6 +204,53 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             [new GoodsReceiptLineRequest(
                 1, fixture.ProductId, "Producto E2E", 10m, 6_000m,
                 10_000m, "01", 19m, PurchasingTaxTreatments.DeductibleInputVat)]);
+    }
+
+    private async Task ConfigureSupportDocumentAsync()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            DECLARE @CountryId UNIQUEIDENTIFIER,@DivisionId UNIQUEIDENTIFIER,@CityId UNIQUEIDENTIFIER;
+            SELECT TOP(1) @CountryId=country.CountryId,@DivisionId=division.AdministrativeDivisionId,@CityId=city.CityId
+            FROM dbo.Countries country
+            INNER JOIN dbo.AdministrativeDivisions division ON division.CountryId=country.CountryId
+            INNER JOIN dbo.Cities city ON city.AdministrativeDivisionId=division.AdministrativeDivisionId
+            WHERE country.Code=N'CO' ORDER BY city.Code;
+            IF @CityId IS NULL THROW 51201,'Colombian geography seed is required.',1;
+
+            UPDATE party SET IdentificationCountryId=@CountryId,IdentificationTypeCode=N'31',
+              Identification=N'900999001',NormalizedIdentification=N'900999001',VerificationDigit=N'1',
+              LegalName=N'PROVEEDOR DOCUMENTO SOPORTE',DisplayName=N'PROVEEDOR DOCUMENTO SOPORTE',CompletionStatus=N'Complete'
+            FROM dbo.Parties party INNER JOIN dbo.Suppliers supplier ON supplier.PartyId=party.PartyId
+            WHERE supplier.SupplierId=@SupplierId;
+            IF NOT EXISTS(SELECT 1 FROM dbo.PartySites WHERE PartyId=@PartyId AND IsPrimary=1 AND IsActive=1)
+              INSERT dbo.PartySites(PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,
+                AddressLine,IsPrimary,IsActive,CreatedBy,CreatedAt)
+              VALUES(NEWID(),@PartyId,N'PRINCIPAL',N'Sede principal',@CountryId,@DivisionId,@CityId,
+                N'Carrera 1 # 2-3',1,1,@UserId,SYSDATETIMEOFFSET());
+
+            INSERT dbo.FiscalAuthorizations(FiscalAuthorizationId,BusinessId,AuthorizationNumber,SupplierTaxId,
+              Environment,QrValidationUrl,TechnicalKeyVersion,ValidFrom,ValidUntil,AuthorizedRangeStart,
+              AuthorizedRangeEnd,IsActive,CreatedAt)
+            VALUES(@AuthorizationId,@BusinessId,@AuthorizationNumber,@IssuerTaxId,2,
+              N'https://catalogo-vpfe-hab.dian.gov.co/document/searchqr?documentkey=',N'1',
+              '2026-01-01','2028-12-31',1,999,1,SYSDATETIMEOFFSET());
+            INSERT dbo.FiscalSeries(SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
+              DocumentType,Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)
+            VALUES(@SeriesId,@BusinessId,NULL,N'Server',@AuthorizationId,N'SupportDocument',N'DS',1,999,1,SYSDATETIMEOFFSET());
+            """;
+        var authorizationId = Guid.NewGuid();
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@SupplierId", fixture.SupplierId);
+        command.Parameters.AddWithValue("@PartyId", fixture.SupplierPartyId);
+        command.Parameters.AddWithValue("@UserId", fixture.UserId);
+        command.Parameters.AddWithValue("@AuthorizationId", authorizationId);
+        command.Parameters.AddWithValue("@SeriesId", Guid.NewGuid());
+        command.Parameters.AddWithValue("@AuthorizationNumber", $"SUP-{authorizationId:N}");
+        command.Parameters.AddWithValue("@IssuerTaxId", ServerSliceFixture.SupplierTaxId);
+        await command.ExecuteNonQueryAsync();
     }
 
     private static HttpRequestMessage CreateMessage(

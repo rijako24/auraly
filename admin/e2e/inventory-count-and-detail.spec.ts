@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const user = process.env.AURALY_E2E_USERNAME ?? "admin";
 const password = process.env.AURALY_E2E_PASSWORD ?? "Admin123!";
@@ -11,67 +11,35 @@ async function login(page: Page) {
   await expect(page).toHaveURL(/\/dashboard(?:\/|$)/, { timeout: 60_000 });
 }
 
-function field(scope: Locator, label: string) {
-  return scope.getByText(label, { exact: true }).locator("..");
-}
-
-async function selectFirst(page: Page, scope: Locator, label: string) {
-  const combo = field(scope, label).getByRole("combobox");
-  await combo.click();
-  await page.getByRole("option").first().click();
-}
-
 test.describe("conteo y detalle de inventario", () => {
   test.beforeEach(async ({ page }) => login(page));
   test.setTimeout(120_000);
 
-  test("preparar conteo conserva el saldo base retornado por el servidor", async ({ page }) => {
-    await page.route("**/api/commerce/v1/stock-counts/start", async (route) => {
-      const request = route.request().postDataJSON() as {
-        documentId: string;
-        productIds: string[];
-      };
+  test("conciliacion selecciona borradores y suma productos repetidos", async ({ page }) => {
+    const countId = "11111111-1111-1111-1111-111111111111";
+    const firstDraft = "22222222-2222-2222-2222-222222222222";
+    const secondDraft = "33333333-3333-3333-3333-333333333333";
+    const productId = "44444444-4444-4444-4444-444444444444";
+    await page.route(/\/api\/commerce\/v1\/inventory\/physical-count-drafts(?:\?.*)?$/, async (route) => {
       await route.fulfill({
         contentType: "application/json",
-        body: JSON.stringify({
-          documentId: request.documentId,
-          status: "Draft",
-          baseInventorySequence: 25,
-          lines: request.productIds.map((productId, index) => ({
-            lineNumber: index + 1,
-            direction: "COUNT",
-            productId,
-            productCode: `PRD-${index + 1}`,
-            description: "Producto contado",
-            quantity: 0,
-            systemQuantityAtBase: 10,
-            explicitUnitCost: null,
-            allocationWeight: null,
-          })),
-        }),
+        body: JSON.stringify([
+          {inventoryPhysicalCountId:countId,draftId:firstDraft,name:"Pasillo A",warehouseId:"66666666-6666-6666-6666-666666666666",warehouseName:"Principal",scopeType:"General",ownerUserId:"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",status:"Ready",version:2,productCount:1,countedProductCount:1,updatedAt:"2026-08-25T12:10:00Z"},
+          {inventoryPhysicalCountId:countId,draftId:secondDraft,name:"Pasillo B",warehouseId:"66666666-6666-6666-6666-666666666666",warehouseName:"Principal",scopeType:"General",ownerUserId:"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",status:"Ready",version:2,productCount:1,countedProductCount:1,updatedAt:"2026-08-25T12:12:00Z"}
+        ]),
       });
     });
+    await page.route(`**/api/commerce/v1/inventory/physical-counts/${countId}/reconciliations`, async (route) => route.fulfill({contentType:"application/json",body:JSON.stringify({reconciliationId:"55555555-5555-5555-5555-555555555555",inventoryPhysicalCountId:countId,snapshotInventorySequence:30,status:"Active",createdAt:"2026-08-25T12:15:00Z",createdByUserId:"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",isStale:false,countedApplicationStatus:null,countedDocumentId:null,countedDocumentNumber:null,uncountedApplicationStatus:null,uncountedDocumentId:null,uncountedDocumentNumber:null,drafts:[{draftId:firstDraft,name:"Pasillo A",ownerUserId:"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",version:2,countedProducts:1,pendingProducts:0},{draftId:secondDraft,name:"Pasillo B",ownerUserId:"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",version:2,countedProducts:1,pendingProducts:0}],products:[{productId,productCode:"PRD-1",productName:"Arroz",status:"Counted",proposedQuantity:8,systemQuantity:7,unitCost:2000,averageUnitCost:1800,sources:[{draftId:firstDraft,draftName:"Pasillo A",ownerUserId:"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",initialQuantity:3,verificationQuantity:null,finalQuantity:3},{draftId:secondDraft,draftName:"Pasillo B",ownerUserId:"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",initialQuantity:5,verificationQuantity:null,finalQuantity:5}]}]})}));
 
     await page.goto("/dashboard/inventory");
-    await page.getByRole("tab", { name: /Nueva operaci.n/ }).click();
-    await page.getByRole("button", { name: /Conteo f.sico/ }).click();
-    await selectFirst(page, page.locator("main"), "Bodega");
-
-    const search = page.getByTestId("inventory-product-search");
-    await search.click();
-    const product = page.getByRole("option").first();
-    await expect(product).toBeVisible({ timeout: 20_000 });
-    await product.click();
-
-    const row = page.locator("table tbody tr").filter({
-      has: page.getByTestId("inventory-quantity-0"),
-    });
-    await page.getByTestId("inventory-quantity-0").fill("3");
-    await page.getByRole("button", { name: "Preparar conteo" }).click();
-
-    await expect(row.getByText("10", { exact: true })).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByTestId("inventory-quantity-0")).toHaveValue("3");
-    await expect(page.getByText(/saldo base qued. congelado/i)).toBeVisible();
+    await page.getByRole("button", { name: "Conciliación de inventario" }).click();
+    const dialog=page.getByRole("dialog",{name:"Conciliación de inventario"});
+    await dialog.getByText("Pasillo A",{exact:true}).click();
+    await dialog.getByText("Pasillo B",{exact:true}).click();
+    await dialog.getByRole("button",{name:"Conciliar seleccionados"}).click();
+    await expect(dialog.getByRole("tab",{name:/Contados · 1/})).toBeVisible();
+    await expect(dialog.getByText("Pasillo A: 3 + Pasillo B: 5")).toBeVisible();
+    await expect(dialog.getByText("8",{exact:true})).toBeVisible();
   });
 
   test("historial abre detalle con motivo y todas las lineas", async ({ page }) => {
@@ -129,7 +97,8 @@ test.describe("conteo y detalle de inventario", () => {
     });
 
     await page.goto("/dashboard/inventory");
-    await page.getByRole("tab", { name: "Historial" }).click();
+    await page.getByRole("tab", { name: "Operaciones" }).click();
+    await page.getByRole("button", { name: "Inventarios" }).click();
     await page.getByText("CTI-000001", { exact: true }).click();
 
     const detail = page.getByRole("dialog", { name: "CTI-000001" });

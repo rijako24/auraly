@@ -189,7 +189,8 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         };
         returnMessage.Headers.Add("Idempotency-Key", $"credit-{returnId:N}");
         using var returnResponse = await user.SendAsync(returnMessage);
-        Assert.Equal(HttpStatusCode.Accepted, returnResponse.StatusCode);
+        Assert.True(returnResponse.StatusCode == HttpStatusCode.Accepted,
+            $"Expected Accepted but received {returnResponse.StatusCode}: {await returnResponse.Content.ReadAsStringAsync()}");
         var accepted = await returnResponse.Content.ReadFromJsonAsync<SalesReturnAcceptance>();
         Assert.NotNull(accepted);
 

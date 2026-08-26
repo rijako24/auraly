@@ -120,7 +120,7 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
     }
 
     [Fact]
-    public async Task Physical_count_consolidates_disjoint_team_lists_and_preserves_movements_after_capture()
+    public async Task Physical_count_reconciliation_sums_selected_drafts_and_preserves_movements_after_capture()
     {
         var first = Guid.NewGuid();
         var second = Guid.NewGuid();
@@ -139,43 +139,56 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             [new(1, first, 10m, 5m), new(2, second, 20m, 5m)]));
 
         var countId = Guid.NewGuid();
-        var firstList = Guid.NewGuid();
-        var secondList = Guid.NewGuid();
+        Guid firstDraft;
         using (var create = await client.PostAsJsonAsync(
                    "/api/commerce/v1/inventory/physical-counts",
                    new CreateInventoryPhysicalCountRequest(
                        countId, fixture.BusinessId, fixture.WarehouseId, "Partial", "PHYSICAL_COUNT", null,
-                       [
-                           new(firstList, "Equipo A", null, [first]),
-                           new(secondList, "Equipo B", null, [second])
-                       ])))
+                       "Equipo A", [first, second])))
         {
             Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+            var detail = await create.Content.ReadFromJsonAsync<InventoryPhysicalCountDetail>();
+            firstDraft = Assert.Single(Assert.IsType<InventoryPhysicalCountDetail>(detail).Drafts).DraftId;
         }
 
-        using (var start = await client.PostAsync(
-                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/start", null))
+        var secondDraft = Guid.NewGuid();
+        using (var createDraft = await client.PostAsJsonAsync(
+                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/drafts",
+                   new CreateInventoryPhysicalCountDraftRequest(fixture.BusinessId, secondDraft, "Equipo B", [first])))
         {
-            Assert.Equal(HttpStatusCode.OK, start.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, createDraft.StatusCode);
         }
 
-        foreach (var capture in new[] { (firstList, first, 10m), (secondList, second, 20m) })
+        using (var response = await client.PutAsJsonAsync(
+                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/drafts/{firstDraft:D}",
+                   new SaveInventoryPhysicalCountDraftRequest(fixture.BusinessId, 1, "Equipo A",
+                       [new(first, 10m, 9m, null), new(second, 20m, 22m, null)], true)))
         {
-            using var response = await client.PutAsJsonAsync(
-                $"/api/commerce/v1/inventory/physical-counts/{countId:D}/lists/{capture.Item1:D}/pre-count",
-                new SaveInventoryPhysicalCountCaptureRequest(
-                    fixture.BusinessId, [new(capture.Item2, capture.Item3)], true));
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }
 
-        foreach (var capture in new[] { (firstList, first, 9m), (secondList, second, 22m) })
+        using (var response = await client.PutAsJsonAsync(
+                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/drafts/{secondDraft:D}",
+                   new SaveInventoryPhysicalCountDraftRequest(fixture.BusinessId, 1, "Equipo B",
+                       [new(first, 2m, null, null)], true)))
         {
-            using var response = await client.PutAsJsonAsync(
-                $"/api/commerce/v1/inventory/physical-counts/{countId:D}/lists/{capture.Item1:D}/count",
-                new SaveInventoryPhysicalCountCaptureRequest(
-                    fixture.BusinessId, [new(capture.Item2, capture.Item3)], true));
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }
+
+        InventoryReconciliationDetail reconciliation;
+        using (var prepare = await client.PostAsJsonAsync(
+                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/reconciliations",
+                   new PrepareInventoryReconciliationRequest(fixture.BusinessId,
+                       [new(firstDraft, 2), new(secondDraft, 2)])))
+        {
+            Assert.True(prepare.StatusCode == HttpStatusCode.Created,
+                $"Expected Created but received {prepare.StatusCode}: {await prepare.Content.ReadAsStringAsync()}");
+            reconciliation = Assert.IsType<InventoryReconciliationDetail>(
+                await prepare.Content.ReadFromJsonAsync<InventoryReconciliationDetail>());
+        }
+        Assert.Equal(11m, Assert.Single(reconciliation.Products, product => product.ProductId == first).ProposedQuantity);
+        Assert.Equal(22m, Assert.Single(reconciliation.Products, product => product.ProductId == second).ProposedQuantity);
+        Assert.DoesNotContain(reconciliation.Products, product => product.Status == "Uncounted");
 
         await ConfirmAdjustmentAsync(client, new(
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, occurred.AddMinutes(5),
@@ -186,17 +199,16 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         fixture.PauseDocumentProcessing();
         try
         {
-            using (var close = await client.PostAsJsonAsync(
-                       $"/api/commerce/v1/inventory/physical-counts/{countId:D}/close",
-                       new CloseInventoryPhysicalCountRequest(fixture.BusinessId)))
+            using (var apply = await client.PostAsJsonAsync(
+                       $"/api/commerce/v1/inventory/physical-counts/{countId:D}/reconciliations/{reconciliation.ReconciliationId:D}/apply",
+                       new ApplyInventoryReconciliationRequest(fixture.BusinessId, "Counted")))
             {
-                Assert.Equal(HttpStatusCode.Accepted, close.StatusCode);
-                var detail = await close.Content.ReadFromJsonAsync<InventoryPhysicalCountDetail>();
-                Assert.NotNull(detail);
-                Assert.Equal("Closing", detail.Status);
-                finalOperationId = Assert.IsType<Guid>(detail.FinalInventoryOperationId);
-                Assert.Equal(2, detail.Lists.Count);
+                Assert.True(apply.StatusCode == HttpStatusCode.Accepted,
+                    $"Expected Accepted but received {apply.StatusCode}: {await apply.Content.ReadAsStringAsync()}");
             }
+            var applying = await client.GetFromJsonAsync<InventoryReconciliationDetail>(
+                $"/api/commerce/v1/inventory/physical-counts/{countId:D}/reconciliation");
+            finalOperationId = Assert.IsType<Guid>(Assert.IsType<InventoryReconciliationDetail>(applying).CountedDocumentId);
 
             Assert.Equal(0, await CountAsync("InventoryMovements", finalOperationId));
             Assert.Equal(13m, (await BalanceAsync(fixture.WarehouseId, first)).Quantity);
@@ -219,9 +231,85 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             fixture.DrainDocumentSignals();
         }
 
-        Assert.Equal(12m, (await BalanceAsync(fixture.WarehouseId, first)).Quantity);
+        Assert.Equal(14m, (await BalanceAsync(fixture.WarehouseId, first)).Quantity);
         Assert.Equal(22m, (await BalanceAsync(fixture.WarehouseId, second)).Quantity);
         Assert.Equal(2, await CountAsync("InventoryMovements", finalOperationId));
+    }
+
+    [Fact]
+    public async Task Reconciliation_saves_all_uncounted_products_as_a_populated_draft_and_can_apply_them_at_zero()
+    {
+        var countedProduct = Guid.NewGuid();
+        var uncountedProduct = Guid.NewGuid();
+        await SeedAsync(countedProduct, uncountedProduct, Guid.NewGuid(), Guid.NewGuid());
+        using var client = fixture.CreateAdminClient(
+            InventoryPermissionCodes.Read,
+            InventoryPermissionCodes.Adjust,
+            InventoryPermissionCodes.Count,
+            InventoryPermissionCodes.ManagePhysicalCounts,
+            InventoryPermissionCodes.CapturePhysicalCounts);
+        await ConfirmAdjustmentAsync(client, new(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
+            "INITIAL_BALANCE", null, null,
+            [new(1, countedProduct, 5m, 2m), new(2, uncountedProduct, 6m, 2m)]));
+
+        var countId = Guid.NewGuid();
+        InventoryPhysicalCountDetail created;
+        using (var response = await client.PostAsJsonAsync(
+                   "/api/commerce/v1/inventory/physical-counts",
+                   new CreateInventoryPhysicalCountRequest(countId, fixture.BusinessId,
+                       fixture.WarehouseId, "Partial", "PHYSICAL_COUNT", null,
+                       "Conteo parcial", [countedProduct, uncountedProduct])))
+        {
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            created = Assert.IsType<InventoryPhysicalCountDetail>(
+                await response.Content.ReadFromJsonAsync<InventoryPhysicalCountDetail>());
+        }
+        var sourceDraft = Assert.Single(created.Drafts);
+        using (var response = await client.PutAsJsonAsync(
+                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/drafts/{sourceDraft.DraftId:D}",
+                   new SaveInventoryPhysicalCountDraftRequest(fixture.BusinessId, 1,
+                       sourceDraft.Name,
+                       [new(countedProduct, 4m, null, null), new(uncountedProduct, null, null, "Pendiente")], true)))
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        InventoryReconciliationDetail reconciliation;
+        using (var response = await client.PostAsJsonAsync(
+                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/reconciliations",
+                   new PrepareInventoryReconciliationRequest(fixture.BusinessId,
+                       [new(sourceDraft.DraftId, 2)])))
+        {
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+            reconciliation = Assert.IsType<InventoryReconciliationDetail>(
+                await response.Content.ReadFromJsonAsync<InventoryReconciliationDetail>());
+        }
+        Assert.Equal("Uncounted", Assert.Single(reconciliation.Products,
+            product => product.ProductId == uncountedProduct).Status);
+
+        var pendingDraftId = Guid.NewGuid();
+        using (var response = await client.PostAsJsonAsync(
+                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/reconciliations/{reconciliation.ReconciliationId:D}/drafts",
+                   new SaveInventoryReconciliationDraftRequest(fixture.BusinessId,
+                       "Uncounted", pendingDraftId, "Pendientes de la conciliación")))
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var detail = Assert.IsType<InventoryPhysicalCountDetail>(
+                await response.Content.ReadFromJsonAsync<InventoryPhysicalCountDetail>());
+            var pendingDraft = Assert.Single(detail.Drafts, draft => draft.DraftId == pendingDraftId);
+            var line = Assert.Single(pendingDraft.Lines);
+            Assert.Equal(uncountedProduct, line.ProductId);
+            Assert.Null(line.InitialQuantity);
+        }
+
+        using (var response = await client.PostAsJsonAsync(
+                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/reconciliations/{reconciliation.ReconciliationId:D}/apply",
+                   new ApplyInventoryReconciliationRequest(fixture.BusinessId, "Uncounted")))
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+
+        for (var attempt = 0; attempt < 80 && (await BalanceAsync(fixture.WarehouseId, uncountedProduct)).Quantity != 0; attempt++)
+            await Task.Delay(25);
+        Assert.Equal(0m, (await BalanceAsync(fixture.WarehouseId, uncountedProduct)).Quantity);
+        Assert.Equal(5m, (await BalanceAsync(fixture.WarehouseId, countedProduct)).Quantity);
     }
 
     [Fact]

@@ -25,33 +25,36 @@ Esta rebanada extiende el modelo canónico existente; no crea un segundo inventa
 - `GET /api/commerce/v1/inventory/operations`
 - `POST /api/commerce/v1/inventory-damages/confirm`
 - `GET|POST /api/commerce/v1/inventory/physical-counts`
+- `GET /api/commerce/v1/inventory/physical-count-drafts`
 - `GET /api/commerce/v1/inventory/physical-counts/{countId}`
-- `POST /api/commerce/v1/inventory/physical-counts/{countId}/start`
-- `PUT /api/commerce/v1/inventory/physical-counts/{countId}/lists/{listId}/pre-count`
-- `PUT /api/commerce/v1/inventory/physical-counts/{countId}/lists/{listId}/count`
-- `POST /api/commerce/v1/inventory/physical-counts/{countId}/close`
+- `POST /api/commerce/v1/inventory/physical-counts/{countId}/drafts`
+- `PUT /api/commerce/v1/inventory/physical-counts/{countId}/drafts/{draftId}`
+- `POST /api/commerce/v1/inventory/physical-counts/{countId}/reconciliations`
+- `GET /api/commerce/v1/inventory/physical-counts/{countId}/reconciliation`
+- `POST /api/commerce/v1/inventory/physical-counts/{countId}/reconciliations/{reconciliationId}/drafts`
+- `POST /api/commerce/v1/inventory/physical-counts/{countId}/reconciliations/{reconciliationId}/apply`
 
 Todas las consultas usan el Business autenticado y paginación del servidor. El cuerpo no puede cambiar el alcance del usuario.
 
 ## Interfaz
 
-`/dashboard/inventory` concentra tres contextos estables: Existencias, Kárdex y Operaciones. Operaciones lista y filtra inventarios físicos, ajustes, traslados, conversiones y averías. `Nueva operación` es una acción global que abre el formulario específico sin convertir cada captura en una pestaña principal. Usa los componentes visuales de Auraly, selector de bodega no nativo, búsqueda combinada y estados vacíos/carga. El menú requiere `inventory.read`; confirmar averías requiere `inventory.damages.confirm`.
+`/dashboard/inventory` concentra tres contextos estables: Existencias, Kárdex y Operaciones. Operaciones lista y filtra inventarios físicos, ajustes, traslados, conversiones y averías. `Nueva operación` es una acción global que abre el formulario específico sin convertir cada formulario en una pestaña principal. Usa los componentes visuales de Auraly, selector de bodega no nativo, búsqueda combinada y estados vacíos/carga. El menú requiere `inventory.read`; confirmar averías requiere `inventory.damages.confirm`.
 
 ## Coordinación de inventario físico
 
 El diseño canónico de la siguiente iteración está cerrado en
 `docs/implementation/inventory-physical-count-unified-design.md`. Ese diseño
-reemplaza la presentación basada en listas por sesiones con alcance, capturas de
-usuario, revisión por producto, pendientes y conflictos. Esta sección documenta
-el comportamiento de la implementación vigente hasta completar el cutover.
+reemplaza la presentación basada en listas por sesiones con alcance, borradores
+por usuario y conciliación por producto con resultados `Contados` y `No
+contados`.
 
-Un inventario físico se abre sobre un único alcance, sin exigir listas previas al usuario. El alcance parcial permite escoger una parte del catálogo y el general incluye automáticamente todos los productos inventariables activos del negocio. Durante la captura, los avances se presentan como borradores; la vista mantiene juntos el borrador activo, los productos no contados y un único consolidado que puede abrirse y cerrarse sin abandonar el conteo. Las listas internas siguen siendo una partición técnica compatible para coordinar capturas disjuntas, pero no constituyen inventarios separados ni se muestran simultáneamente como formularios de conteo.
+Un inventario físico se abre sobre un único alcance, sin exigir listas previas al usuario. El alcance parcial permite escoger una parte del catálogo y el general incluye automáticamente todos los productos inventariables activos del negocio. Durante la captura, los avances se presentan como borradores recuperables desde `Operaciones > Inventarios`. La conciliación es una acción separada: selecciona borradores listos, suma por producto su verificación o conteo inicial y sólo muestra `Contados` y `No contados`.
 
-`InventoryPhysicalCounts`, `InventoryPhysicalCountLists` e `InventoryPhysicalCountLines` son estado de coordinación y captura, no otro libro de inventario. Al solicitar el cierre, la capa HTTP congela el consolidado, crea y acepta un solo documento canónico `StockCount` mediante `InventoryOperationService`, y publica su señal; no modifica existencias ni declara cerrado el inventario físico. El handler de inventario del motor ordenado es el único que modifica `InventoryBalances`, escribe `InventoryMovements` y cambia la coordinación a `Closed`, todo dentro de la misma transacción de procesamiento. La numeración CTI y el trabajo durable se reservan al aceptar el documento.
+`InventoryPhysicalCounts`, `InventoryPhysicalCountLists` e `InventoryPhysicalCountLines` son estado de coordinación y captura, no otro libro de inventario. Guardar una sección conciliada crea otro borrador y no afecta saldos. Aplicar `Contados` o `No contados` crea y acepta un documento canónico `StockCount` mediante `InventoryOperationService`; ambas secciones pueden producir documentos independientes. El handler de inventario del motor ordenado es el único que modifica `InventoryBalances`, escribe `InventoryMovements` y completa la coordinación, todo dentro de la misma transacción de procesamiento.
 
 Cada conteo conserva la secuencia procesada en la que se capturó. El cierre suma al valor contado los movimientos posteriores a esa captura antes de confirmar el `StockCount`; por eso una venta, recepción, ajuste o traslado ocurrido mientras otros equipos terminan no se pierde ni se vuelve a contar como diferencia. La creación bloquea que un producto participe simultáneamente en dos inventarios físicos activos de la misma bodega.
 
-Los permisos se separan por responsabilidad: `inventory.physical-counts.manage` crea, inicia y cierra; `inventory.physical-counts.capture` guarda y envía preconteos/conteos; el cierre también exige `inventory.counts.confirm` porque genera el documento definitivo.
+Los permisos se separan por responsabilidad: `inventory.physical-counts.manage` crea sesiones y concilia; `inventory.physical-counts.capture` crea y edita borradores; aplicar también exige `inventory.counts.confirm` porque genera el documento definitivo.
 
 ## Numeración y permisos
 

@@ -253,7 +253,7 @@ public sealed class SqlSalesReturnStore(
             WHERE l.DocumentId=@DocumentId AND l.LineNumber=@LineNumber
             GROUP BY l.DocumentId,l.LineNumber,l.ProductId,l.Description,l.Quantity,
                      l.UnitPrice,l.DiscountAmount,l.TaxCode,l.TaxRate,l.UntaxedAmount,
-                     l.TaxAmount,l.LineTotal;
+                     l.TaxAmount,l.LineTotal,l.UnitCostSnapshot;
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@DocumentId", originalDocumentId);

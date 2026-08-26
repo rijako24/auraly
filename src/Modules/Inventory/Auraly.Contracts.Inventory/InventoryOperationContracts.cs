@@ -232,44 +232,72 @@ public sealed record InventoryOperationDetail(
 
 public sealed record InventoryOperationPage(IReadOnlyList<InventoryOperationItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);
 
-public sealed record CreateInventoryPhysicalCountListRequest(
-    Guid ListId, string Name, Guid? AssignedUserId, IReadOnlyCollection<Guid> ProductIds);
 public sealed record CreateInventoryPhysicalCountRequest(
     Guid InventoryPhysicalCountId, Guid BusinessId, Guid WarehouseId, string ScopeType,
-    string ReasonCode, string? Notes, IReadOnlyCollection<CreateInventoryPhysicalCountListRequest> Lists);
-public sealed record InventoryPhysicalCountCaptureLine(Guid ProductId, decimal Quantity);
-public sealed record SaveInventoryPhysicalCountCaptureRequest(
-    Guid BusinessId, IReadOnlyCollection<InventoryPhysicalCountCaptureLine> Lines, bool Submit);
-public sealed record CloseInventoryPhysicalCountRequest(Guid BusinessId);
+    string ReasonCode, string? Notes, string InitialDraftName, IReadOnlyCollection<Guid> ProductIds);
+public sealed record CreateInventoryPhysicalCountDraftRequest(
+    Guid BusinessId, Guid DraftId, string Name, IReadOnlyCollection<Guid> ProductIds);
+public sealed record InventoryPhysicalCountDraftLineInput(
+    Guid ProductId, decimal? InitialQuantity, decimal? VerificationQuantity, string? PendingReason);
+public sealed record SaveInventoryPhysicalCountDraftRequest(
+    Guid BusinessId, long Version, string Name,
+    IReadOnlyCollection<InventoryPhysicalCountDraftLineInput> Lines, bool ReadyForReconciliation);
+public sealed record PrepareInventoryReconciliationDraft(Guid DraftId, long Version);
+public sealed record PrepareInventoryReconciliationRequest(
+    Guid BusinessId, IReadOnlyCollection<PrepareInventoryReconciliationDraft> Drafts);
+public sealed record SaveInventoryReconciliationDraftRequest(
+    Guid BusinessId, string Section, Guid DraftId, string Name);
+public sealed record ApplyInventoryReconciliationRequest(Guid BusinessId, string Section);
 public sealed record InventoryPhysicalCountQuery(
     Guid BusinessId, Guid? WarehouseId, string? Search, string? Status, int Page = 1, int PageSize = 50);
 public sealed record InventoryPhysicalCountItem(
     Guid InventoryPhysicalCountId, Guid WarehouseId, string WarehouseName, string ScopeType,
-    string ReasonCode, string Status, int ListCount, int ProductCount, int PreCountedCount,
-    int CountedCount, int DifferenceCount, DateTimeOffset CreatedAt, string? FinalDocumentNumber);
+    string ReasonCode, string Status, int DraftCount, int ProductCount, int InitialCountedCount,
+    int VerifiedCount, int PendingCount, DateTimeOffset CreatedAt, string? FinalDocumentNumber);
 public sealed record InventoryPhysicalCountPage(
     IReadOnlyList<InventoryPhysicalCountItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);
-public sealed record InventoryPhysicalCountLine(
-    Guid ProductId, string ProductCode, string ProductName, decimal SystemQuantityAtBase,
-    decimal? PreCountQuantity, decimal? CountedQuantity, decimal? ExpectedQuantityAtCount,
-    decimal? ApprovedDifference, bool IsExcluded, string? ExclusionReason);
-public sealed record InventoryPhysicalCountList(
-    Guid ListId, string Name, Guid? AssignedUserId, string Status,
-    DateTimeOffset? PreCountSubmittedAt, DateTimeOffset? CountSubmittedAt,
-    IReadOnlyList<InventoryPhysicalCountLine> Lines);
+public sealed record InventoryPhysicalCountDraftSummary(
+    Guid InventoryPhysicalCountId, Guid DraftId, string Name, Guid WarehouseId, string WarehouseName,
+    string ScopeType, Guid OwnerUserId, string Status, long Version, int ProductCount,
+    int CountedProductCount, DateTimeOffset UpdatedAt);
+public sealed record InventoryPhysicalCountDraftLine(
+    Guid ProductId, string ProductCode, string ProductName,
+    decimal? InitialQuantity, decimal? VerificationQuantity, string? PendingReason,
+    DateTimeOffset? InitialCountedAt, DateTimeOffset? VerifiedAt);
+public sealed record InventoryPhysicalCountDraft(
+    Guid DraftId, string Name, Guid OwnerUserId, string Status, long Version,
+    DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
+    IReadOnlyList<InventoryPhysicalCountDraftLine> Lines);
 public sealed record InventoryPhysicalCountDetail(
     Guid InventoryPhysicalCountId, Guid WarehouseId, string WarehouseName, string ScopeType,
     string ReasonCode, string? Notes, long BaseInventorySequence, string Status,
     Guid CreatedByUserId, DateTimeOffset CreatedAt, DateTimeOffset? StartedAt,
     DateTimeOffset? ReviewStartedAt, DateTimeOffset? ClosedAt,
     Guid? FinalInventoryOperationId, string? FinalDocumentNumber,
-    IReadOnlyList<InventoryPhysicalCountList> Lists);
+    IReadOnlyList<InventoryPhysicalCountDraft> Drafts);
+public sealed record InventoryReconciliationSource(
+    Guid DraftId, string DraftName, Guid OwnerUserId, decimal InitialQuantity,
+    decimal? VerificationQuantity, decimal FinalQuantity);
+public sealed record InventoryReconciliationProduct(
+    Guid ProductId, string ProductCode, string ProductName, string Status,
+    decimal? ProposedQuantity, decimal SystemQuantity,
+    decimal? UnitCost, decimal? AverageUnitCost,
+    IReadOnlyList<InventoryReconciliationSource> Sources);
+public sealed record InventoryReconciliationDraft(
+    Guid DraftId, string Name, Guid OwnerUserId, long Version, int CountedProducts, int PendingProducts);
+public sealed record InventoryReconciliationDetail(
+    Guid ReconciliationId, Guid InventoryPhysicalCountId, long SnapshotInventorySequence,
+    string Status, DateTimeOffset CreatedAt, Guid CreatedByUserId, bool IsStale,
+    string? CountedApplicationStatus, Guid? CountedDocumentId, string? CountedDocumentNumber,
+    string? UncountedApplicationStatus, Guid? UncountedDocumentId, string? UncountedDocumentNumber,
+    IReadOnlyList<InventoryReconciliationDraft> Drafts,
+    IReadOnlyList<InventoryReconciliationProduct> Products);
 public sealed record InventoryPhysicalCountClosePreparation(
     Guid InventoryPhysicalCountId, Guid BusinessId, Guid WarehouseId, string ReasonCode,
-    string? Notes, Guid FinalInventoryOperationId,
+    string? Notes, Guid FinalInventoryOperationId, string Section,
     IReadOnlyList<InventoryPhysicalCountCloseLine> Lines);
 public sealed record InventoryPhysicalCountCloseLine(
-    Guid ProductId, decimal PreCountQuantity, decimal AdjustedCountQuantity);
+    Guid ProductId, decimal InitialQuantity, decimal AdjustedCountQuantity);
 public static class InventoryOperationContractSerializer
 {
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);

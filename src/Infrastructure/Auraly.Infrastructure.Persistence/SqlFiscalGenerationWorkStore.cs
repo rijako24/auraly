@@ -136,7 +136,7 @@ public sealed class SqlFiscalGenerationWorkStore(
             UPDATE dbo.SalesDebitNoteFiscalSnapshots
             SET UniqueCode=@UniqueCode,QrPayload=@QrPayload
             WHERE DocumentId=@DocumentId AND @FiscalDocumentType=N'DebitNote';
-            UPDATE dbo.PurchaseSupportFiscalSnapshots
+            UPDATE fiscal.PurchaseSupportFiscalSnapshots
             SET UniqueCode=@UniqueCode,QrPayload=@QrPayload
             WHERE DocumentId=@DocumentId AND @FiscalDocumentType=N'SupportDocument';
             """;
