@@ -48,7 +48,27 @@ public sealed class CommerceCompositionArchitectureTests
                 postDeployment.IndexOf("MigrateMedidentalWhatsAppToDigitalShop.sql", StringComparison.Ordinal));
         finalRoute.Should().Contain("SET BusinessId = @CJBusinessId")
             .And.Contain("AgentId = @CJAgentId")
+            .And.Contain("N'573117323198'")
+            .And.Contain("N'1234810033044432'")
+            .And.Contain("N'4841200399440958'")
+            .And.Contain("$(CJWhatsAppAccessToken)")
+            .And.Contain("canal inactivo hasta cargar un access token valido")
             .And.Contain("IntegrationChannelWarehouses");
+    }
+
+    [Fact]
+    public void Dev_release_injects_cj_whatsapp_secrets_without_committing_values()
+    {
+        var root = FindSolutionRoot();
+        var workflow = Read(root, ".github/workflows/deploy-auraly-release.yml");
+        var publisher = Read(root, "infrastructure/azure/Publish-AuralyReleasePipeline.ps1");
+
+        workflow.Should().Contain("secrets.CJ_WHATSAPP_ACCESS_TOKEN")
+            .And.Contain("secrets.CJ_WHATSAPP_FUNCTION_KEY")
+            .And.Contain("secrets.CJ_WHATSAPP_VERIFY_TOKEN");
+        publisher.Should().Contain("/v:CJWhatsAppAccessToken=$($env:CJ_WHATSAPP_ACCESS_TOKEN)")
+            .And.Contain("--key-name 'meta-cj'")
+            .And.Contain("WhatsApp__Webhook__VerifyToken");
     }
 
     private static string Read(string root, string relativePath) =>

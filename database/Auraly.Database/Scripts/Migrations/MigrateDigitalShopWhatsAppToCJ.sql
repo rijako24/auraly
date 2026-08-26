@@ -1,16 +1,22 @@
 -- =============================================================================
 -- MigrateDigitalShopWhatsAppToCJ.sql
 --
--- Reasigna a CJ Distribuciones el canal real que estaba operando Digital Shop.
--- Conserva las credenciales existentes sin imprimirlas ni duplicarlas.
+-- Deja como ruta final el numero Meta asignado a CJ Distribuciones.
+-- Conserva sus credenciales si el numero ya existe. Si el token aun no fue
+-- cargado, crea una configuracion preparada e inactiva para no simular que el
+-- canal esta listo antes de poder autenticarse contra Meta.
 -- =============================================================================
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 
-DECLARE @DigitalShopBusinessId UNIQUEIDENTIFIER = 'D1617A10-0000-0000-0000-000000000010';
 DECLARE @CJBusinessId UNIQUEIDENTIFIER = 'C1D15A00-0000-0000-0000-000000000010';
 DECLARE @CJAgentId UNIQUEIDENTIFIER = 'C1D15A00-0000-0000-0000-000000000020';
 DECLARE @CJCommerceConnectionId UNIQUEIDENTIFIER = 'C1D15A00-0000-0000-0000-000000000030';
+DECLARE @CJWhatsAppNumberId UNIQUEIDENTIFIER = 'C1D15A00-0000-0000-0000-000000000050';
+DECLARE @PhoneNumber NVARCHAR(20) = N'573117323198';
+DECLARE @WhatsAppPhoneNumberId NVARCHAR(100) = N'1234810033044432';
+DECLARE @WhatsAppBusinessAccountId NVARCHAR(100) = N'4841200399440958';
+DECLARE @ConfiguredAccessToken NVARCHAR(500) = NULLIF(LTRIM(RTRIM(N'$(CJWhatsAppAccessToken)')), N'');
 DECLARE @WhatsAppNumberId UNIQUEIDENTIFIER;
 
 IF NOT EXISTS (
@@ -27,17 +33,48 @@ END
 SELECT TOP (1)
     @WhatsAppNumberId = BusinessWhatsAppNumberId
 FROM dbo.BusinessWhatsAppNumbers
-WHERE BusinessId IN (@DigitalShopBusinessId, @CJBusinessId)
-  AND IsActive = 1
-  AND NULLIF(LTRIM(RTRIM(WhatsAppAccessToken)), N'') IS NOT NULL
-ORDER BY
-    CASE WHEN BusinessId = @CJBusinessId THEN 0 ELSE 1 END,
-    CreatedAt DESC;
+WHERE WhatsAppPhoneNumberId = @WhatsAppPhoneNumberId;
 
 IF @WhatsAppNumberId IS NULL
 BEGIN
-    PRINT N'MigrateDigitalShopWhatsAppToCJ: no existe un canal activo transferible; configura el canal de CJ por la administracion autorizada.';
-    RETURN;
+    INSERT INTO dbo.BusinessWhatsAppNumbers
+        (BusinessWhatsAppNumberId, BusinessId, AgentId, PhoneNumber,
+         WhatsAppBusinessAccountId, WhatsAppPhoneNumberId, WhatsAppAccessToken,
+         IsActive, CreatedAt)
+    VALUES
+        (@CJWhatsAppNumberId, @CJBusinessId, @CJAgentId, @PhoneNumber,
+         @WhatsAppBusinessAccountId, @WhatsAppPhoneNumberId, COALESCE(@ConfiguredAccessToken, N''),
+         CASE WHEN @ConfiguredAccessToken IS NULL THEN 0 ELSE 1 END, GETUTCDATE());
+
+    SET @WhatsAppNumberId = @CJWhatsAppNumberId;
+    IF @ConfiguredAccessToken IS NULL
+    BEGIN
+        PRINT N'MigrateDigitalShopWhatsAppToCJ: identificadores Meta preparados en CJ; canal inactivo hasta cargar un access token valido.';
+        RETURN;
+    END
+END
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM dbo.BusinessWhatsAppNumbers
+    WHERE BusinessWhatsAppNumberId = @WhatsAppNumberId
+      AND NULLIF(LTRIM(RTRIM(WhatsAppAccessToken)), N'') IS NOT NULL
+)
+BEGIN
+    UPDATE dbo.BusinessWhatsAppNumbers
+    SET BusinessId = @CJBusinessId,
+        AgentId = @CJAgentId,
+        PhoneNumber = @PhoneNumber,
+        WhatsAppBusinessAccountId = @WhatsAppBusinessAccountId,
+        WhatsAppAccessToken = COALESCE(@ConfiguredAccessToken, WhatsAppAccessToken),
+        IsActive = CASE WHEN @ConfiguredAccessToken IS NULL THEN 0 ELSE 1 END
+    WHERE BusinessWhatsAppNumberId = @WhatsAppNumberId;
+
+    IF @ConfiguredAccessToken IS NULL
+    BEGIN
+        PRINT N'MigrateDigitalShopWhatsAppToCJ: identificadores Meta actualizados en CJ; canal inactivo hasta cargar un access token valido.';
+        RETURN;
+    END
 END
 
 BEGIN TRANSACTION;
@@ -51,6 +88,10 @@ WHERE BusinessId = @CJBusinessId
 UPDATE dbo.BusinessWhatsAppNumbers
 SET BusinessId = @CJBusinessId,
     AgentId = @CJAgentId,
+    PhoneNumber = @PhoneNumber,
+    WhatsAppPhoneNumberId = @WhatsAppPhoneNumberId,
+    WhatsAppBusinessAccountId = @WhatsAppBusinessAccountId,
+    WhatsAppAccessToken = COALESCE(@ConfiguredAccessToken, WhatsAppAccessToken),
     IsActive = 1
 WHERE BusinessWhatsAppNumberId = @WhatsAppNumberId;
 

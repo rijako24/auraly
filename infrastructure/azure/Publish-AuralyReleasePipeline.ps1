@@ -182,6 +182,7 @@ function Publish-Database {
             "/TargetServerName:tcp:$($configuration.SqlServer).database.windows.net,1433",
             "/TargetDatabaseName:$($configuration.Database)",
             "/AccessToken:$accessToken",
+            "/v:CJWhatsAppAccessToken=$($env:CJ_WHATSAPP_ACCESS_TOKEN)",
             '/p:BlockOnPossibleDataLoss=True',
             '/p:DropObjectsNotInSource=False',
             '/p:CommandTimeout=120',
@@ -269,6 +270,25 @@ function Publish-Function {
             --settings "Release__Version=$ReleaseVersion" `
             --output none
         Assert-LastExitCode 'No se pudo registrar Release__Version en Function'
+
+        if ($Environment -eq 'dev' -and
+            -not [string]::IsNullOrWhiteSpace($env:CJ_WHATSAPP_FUNCTION_KEY) -and
+            -not [string]::IsNullOrWhiteSpace($env:CJ_WHATSAPP_VERIFY_TOKEN)) {
+            & az functionapp function keys set `
+                --resource-group $configuration.ResourceGroup `
+                --name $configuration.Function `
+                --function-name 'WhatsAppWebhook' `
+                --key-name 'meta-cj' `
+                --key-value $env:CJ_WHATSAPP_FUNCTION_KEY `
+                --output none
+            Assert-LastExitCode 'No se pudo configurar la Function key dedicada de Meta para CJ'
+            & az functionapp config appsettings set `
+                --resource-group $configuration.ResourceGroup `
+                --name $configuration.Function `
+                --settings "WhatsApp__Webhook__VerifyToken=$($env:CJ_WHATSAPP_VERIFY_TOKEN)" `
+                --output none
+            Assert-LastExitCode 'No se pudo configurar el verify token de Meta para CJ'
+        }
     }
     finally {
         $packageUri = $null

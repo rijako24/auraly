@@ -13,6 +13,10 @@
       <DefaultValue></DefaultValue>
       <Value>$(SqlCmdVar__BootstrapAdminPasswordHash)</Value>
     </SqlCmdVariable>
+    <SqlCmdVariable Include="CJWhatsAppAccessToken">
+      <DefaultValue></DefaultValue>
+      <Value>$(SqlCmdVar__CJWhatsAppAccessToken)</Value>
+    </SqlCmdVariable>
   </ItemGroup>
   <ItemGroup>
     <Build Remove="Scripts\**\*.sql" />

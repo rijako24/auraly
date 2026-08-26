@@ -182,6 +182,10 @@ jobs:
 
       - name: Publish cloud release
         shell: pwsh
+        env:
+          CJ_WHATSAPP_ACCESS_TOKEN: ${{ inputs.environment == 'dev' && secrets.CJ_WHATSAPP_ACCESS_TOKEN || '' }}
+          CJ_WHATSAPP_FUNCTION_KEY: ${{ inputs.environment == 'dev' && secrets.CJ_WHATSAPP_FUNCTION_KEY || '' }}
+          CJ_WHATSAPP_VERIFY_TOKEN: ${{ inputs.environment == 'dev' && secrets.CJ_WHATSAPP_VERIFY_TOKEN || '' }}
         run: >-
           ./infrastructure/azure/Publish-AuralyReleasePipeline.ps1
           -Environment '${{ inputs.environment }}'
