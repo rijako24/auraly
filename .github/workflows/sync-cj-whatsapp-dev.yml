@@ -76,7 +76,12 @@ jobs:
           for ($attempt = 1; $attempt -le 12; $attempt++) {
             try {
               $response = Invoke-WebRequest -Uri $uri -TimeoutSec 30
-              if ($response.StatusCode -eq 200 -and $response.Content -eq $challenge) {
+              $content = if ($response.Content -is [byte[]]) {
+                [Text.Encoding]::UTF8.GetString($response.Content)
+              } else {
+                [string]$response.Content
+              }
+              if ($response.StatusCode -eq 200 -and $content -eq $challenge) {
                 Write-Information 'Callback de Meta validado.' -InformationAction Continue
                 exit 0
               }
