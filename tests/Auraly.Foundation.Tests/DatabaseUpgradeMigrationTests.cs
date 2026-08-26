@@ -147,19 +147,20 @@ public sealed class DatabaseUpgradeMigrationTests
     }
 
     [Fact]
-    public void Authentication_session_upgrade_removes_the_legacy_global_unique_index()
+    public void Authentication_session_schema_leaves_index_replacement_to_the_dacpac_plan()
     {
         var root = FindRepositoryRoot();
-        var migration = File.ReadAllText(Path.Combine(
-            root, "database", "Auraly.Database", "Scripts", "Migrations",
-            "20260826_AllowAuthenticationSessionsPerClient.sql"));
+        var table = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Tables",
+            "AuthenticationSessions.sql"));
         var preDeployment = File.ReadAllText(Path.Combine(
             root, "database", "Auraly.Database", "Scripts", "PreDeployment.sql"));
 
-        Assert.Contains("UX_AuthenticationSessions_User_Active", migration,
+        Assert.DoesNotContain("UX_AuthenticationSessions_User_Active", table,
             StringComparison.Ordinal);
-        Assert.Contains("DROP INDEX", migration, StringComparison.Ordinal);
-        Assert.Contains("20260826_AllowAuthenticationSessionsPerClient.sql", preDeployment,
+        Assert.Contains("UX_AuthenticationSessions_User_Client_Active", table,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("AllowAuthenticationSessionsPerClient", preDeployment,
             StringComparison.Ordinal);
     }
 
