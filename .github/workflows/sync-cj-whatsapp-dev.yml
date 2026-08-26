@@ -1,0 +1,78 @@
+name: Sync CJ WhatsApp DEV
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      FUNCTION_KEY: ${{ secrets.CJ_WHATSAPP_FUNCTION_KEY }}
+      VERIFY_TOKEN: ${{ secrets.CJ_WHATSAPP_VERIFY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Synchronize CJ webhook credentials
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:FUNCTION_KEY) -or
+              [string]::IsNullOrWhiteSpace($env:VERIFY_TOKEN)) {
+            throw 'Faltan los secretos CJ de WhatsApp en el ambiente dev.'
+          }
+          az functionapp function keys set `
+            --resource-group RG-AURALY-DEV `
+            --name func-auraly-dev-w5usmo6w `
+            --function-name WhatsAppWebhook `
+            --key-name meta-cj `
+            --key-value $env:FUNCTION_KEY `
+            --output none
+          if ($LASTEXITCODE -ne 0) { throw 'No se pudo sincronizar la Function key.' }
+
+          az functionapp config appsettings set `
+            --resource-group RG-AURALY-DEV `
+            --name func-auraly-dev-w5usmo6w `
+            --settings "WhatsApp__Webhook__VerifyToken=$($env:VERIFY_TOKEN)" `
+            --output none
+          if ($LASTEXITCODE -ne 0) { throw 'No se pudo sincronizar el app setting.' }
+
+          az deployment group create `
+            --name auraly-dev-whatsapp-cj-sync `
+            --resource-group RG-AURALY-DEV `
+            --template-file infrastructure/azure/whatsapp-config.bicep `
+            --parameters `
+              appConfigurationName=cfg-auraly-dev-w5usmo6w `
+              "verifyToken=$($env:VERIFY_TOKEN)" `
+            --output none
+          if ($LASTEXITCODE -ne 0) { throw 'No se pudo sincronizar Azure App Configuration.' }
+
+      - name: Verify Meta callback
+        shell: pwsh
+        run: |
+          $challenge = 'cj-webhook-ready'
+          $uri = "https://func-auraly-dev-w5usmo6w.azurewebsites.net/api/WhatsAppWebhook?code=$($env:FUNCTION_KEY)&hub.mode=subscribe&hub.verify_token=$($env:VERIFY_TOKEN)&hub.challenge=$challenge"
+          for ($attempt = 1; $attempt -le 12; $attempt++) {
+            try {
+              $response = Invoke-WebRequest -Uri $uri -TimeoutSec 30
+              if ($response.StatusCode -eq 200 -and $response.Content -eq $challenge) {
+                Write-Information 'Callback de Meta validado.' -InformationAction Continue
+                exit 0
+              }
+            } catch {
+              if ($attempt -eq 12) { throw }
+            }
+            Start-Sleep -Seconds 10
+          }
+          throw 'El callback no devolvio el challenge esperado.'
