@@ -21,6 +21,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\BuildingBlocks\Auraly.BuildingBlocks.Infrastructure\Auraly.BuildingBlocks.Infrastructure.csproj" />
     <ProjectReference Include="..\..\Application\Auraly.Platform.Application\Auraly.Platform.Application.csproj" />
     <ProjectReference Include="..\..\Infrastructure\Auraly.Platform.Infrastructure\Auraly.Platform.Infrastructure.csproj" />
   </ItemGroup>

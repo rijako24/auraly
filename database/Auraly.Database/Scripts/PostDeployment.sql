@@ -112,6 +112,8 @@ GO
 GO
 :r .\Migrations\MigrateMedidentalWhatsAppToDigitalShop.sql
 GO
+:r .\Migrations\MigrateDigitalShopWhatsAppToCJ.sql
+GO
 :r .\Migrations\RenameDigitalShopAgentCatalina.sql
 GO
 :r .\Migrations\BackfillConversationAgents.sql

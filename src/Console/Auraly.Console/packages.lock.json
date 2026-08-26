@@ -662,6 +662,12 @@
       "auraly.buildingblocks.domain": {
         "type": "Project"
       },
+      "auraly.buildingblocks.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
       "auraly.contracts.authorization": {
         "type": "Project",
         "dependencies": {

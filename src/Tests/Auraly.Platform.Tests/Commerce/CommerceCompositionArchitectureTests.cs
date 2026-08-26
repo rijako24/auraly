@@ -1,0 +1,70 @@
+using FluentAssertions;
+using Xunit;
+
+namespace Auraly.Platform.Tests.Commerce;
+
+public sealed class CommerceCompositionArchitectureTests
+{
+    [Theory]
+    [InlineData("src/API/Auraly.Platform.Worker/Program.cs")]
+    [InlineData("src/Console/Auraly.Console/Program.cs")]
+    public void Agent_hosts_register_the_canonical_commerce_customer_lookup(string relativePath)
+    {
+        var program = File.ReadAllText(Path.Combine(
+            FindSolutionRoot(),
+            relativePath.Replace('/', Path.DirectorySeparatorChar)));
+
+        program.Should().Contain(
+            "AddScoped<ICanonicalCommerceCustomerLookup, CanonicalCommerceCustomerLookup>()",
+            "every host that resolves CommerceCustomerResolver must provide its canonical lookup dependency");
+    }
+
+    [Fact]
+    public void Console_registers_the_id_generator_required_by_its_unit_of_work()
+    {
+        var program = File.ReadAllText(Path.Combine(
+            FindSolutionRoot(),
+            "src/Console/Auraly.Console/Program.cs".Replace('/', Path.DirectorySeparatorChar)));
+
+        program.Should().Contain(
+            "AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>()",
+            "the console must compose the same UnitOfWork dependency as the live worker");
+    }
+
+    [Fact]
+    public void Cj_seed_provisions_one_active_subscription_and_the_final_channel_route()
+    {
+        var root = FindSolutionRoot();
+        var seed = Read(root, "database/Auraly.Database/Scripts/Seeds/SeedCJDistribuciones.sql");
+        var postDeployment = Read(root, "database/Auraly.Database/Scripts/PostDeployment.sql");
+        var finalRoute = Read(root,
+            "database/Auraly.Database/Scripts/Migrations/MigrateDigitalShopWhatsAppToCJ.sql");
+
+        seed.Should().Contain("MERGE dbo.BusinessSubscriptions")
+            .And.Contain("INSERT INTO dbo.BusinessUsagePeriods")
+            .And.Contain("debe existir exactamente una suscripcion activa");
+        postDeployment.IndexOf("MigrateDigitalShopWhatsAppToCJ.sql", StringComparison.Ordinal)
+            .Should().BeGreaterThan(
+                postDeployment.IndexOf("MigrateMedidentalWhatsAppToDigitalShop.sql", StringComparison.Ordinal));
+        finalRoute.Should().Contain("SET BusinessId = @CJBusinessId")
+            .And.Contain("AgentId = @CJAgentId")
+            .And.Contain("IntegrationChannelWarehouses");
+    }
+
+    private static string Read(string root, string relativePath) =>
+        File.ReadAllText(Path.Combine(root,
+            relativePath.Replace('/', Path.DirectorySeparatorChar)));
+
+    private static string FindSolutionRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "Auraly.Commerce.sln")))
+                return directory.FullName;
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate Auraly.Commerce.sln.");
+    }
+}

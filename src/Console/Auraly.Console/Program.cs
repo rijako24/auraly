@@ -25,6 +25,10 @@ using Auraly.Platform.Infrastructure.Services;
 
 using Auraly.Platform.Infrastructure.Configuration;
 
+using Auraly.BuildingBlocks.Domain.Identifiers;
+
+using Auraly.BuildingBlocks.Infrastructure.Identifiers;
+
 using Auraly.Console.Services;
 
 using Azure.AI.OpenAI;
@@ -295,6 +299,8 @@ services.AddScoped<IServiceCatalogPricingService, ServiceCatalogPricingService>(
 
 services.AddSingleton(TimeProvider.System);
 
+services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
+
 services.AddScoped<IBusinessClock, BusinessClock>();
 
 services.AddSingleton<ITemporalReferenceBuilder, TemporalReferenceBuilder>();
@@ -310,6 +316,7 @@ services.AddScoped<IProductCatalogAvailabilityService, ProductCatalogAvailabilit
 services.AddScoped<ICommerceService, CommerceService>();
 services.AddScoped<ICommerceOrderWorkspaceResolver, Auraly.Platform.Infrastructure.Commerce.CommerceOrderWorkspaceResolver>();
 services.AddScoped<ICommerceCustomerResolver, CommerceCustomerResolver>();
+services.AddScoped<ICanonicalCommerceCustomerLookup, CanonicalCommerceCustomerLookup>();
 
 services.AddScoped<IProductLookupService>(provider => (IProductLookupService)provider.GetRequiredService<ICommerceService>());
 

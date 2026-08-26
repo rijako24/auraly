@@ -14,7 +14,9 @@ DECLARE @BusinessId UNIQUEIDENTIFIER = 'C1D15A00-0000-0000-0000-000000000010';
 DECLARE @WarehouseId UNIQUEIDENTIFIER = 'C1D15A00-0000-7000-8000-000000000011';
 DECLARE @AgentId UNIQUEIDENTIFIER = 'C1D15A00-0000-0000-0000-000000000020';
 DECLARE @MantisCommerceConnectionId UNIQUEIDENTIFIER = 'C1D15A00-0000-0000-0000-000000000030';
+DECLARE @SubscriptionId UNIQUEIDENTIFIER = 'C1D15A00-0000-0000-0000-000000000040';
 DECLARE @AgentTypeId UNIQUEIDENTIFIER;
+DECLARE @PlanId UNIQUEIDENTIFIER;
 
 SELECT TOP (1) @AgentTypeId = AgentTypeId
 FROM dbo.AgentTypes
@@ -2316,6 +2318,97 @@ BEGIN
     WHERE AgentId = @AgentId;
 END
 
-PRINT N'SeedCJDistribuciones: negocio, Mantis y agente configurados.';
+SELECT @PlanId = SubscriptionPlanId
+FROM dbo.SubscriptionPlans
+WHERE Code = N'essential'
+  AND IsActive = 1;
+
+IF @PlanId IS NULL
+BEGIN
+    THROW 51000, 'SeedCJDistribuciones: plan essential activo no encontrado; no se puede completar el aprovisionamiento.', 1;
+END
+
+MERGE dbo.BusinessSubscriptions AS target
+USING (
+    SELECT
+        @SubscriptionId AS BusinessSubscriptionId,
+        @BusinessId AS BusinessId,
+        SubscriptionPlanId,
+        Code,
+        [Name],
+        MonthlyPriceCop,
+        IncludedCredits,
+        MaxVariableCostCop,
+        MaxVariableCostPercent
+    FROM dbo.SubscriptionPlans
+    WHERE SubscriptionPlanId = @PlanId
+) AS source
+ON target.BusinessSubscriptionId = source.BusinessSubscriptionId
+WHEN MATCHED THEN UPDATE SET
+    SubscriptionPlanId = source.SubscriptionPlanId,
+    [Status] = 1,
+    CurrentPeriodStart = DATEFROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1),
+    CurrentPeriodEnd = DATEADD(MONTH, 1, DATEFROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1)),
+    PlanCodeSnapshot = source.Code,
+    PlanNameSnapshot = source.[Name],
+    MonthlyPriceCop = source.MonthlyPriceCop,
+    IncludedCredits = source.IncludedCredits,
+    MaxVariableCostCop = source.MaxVariableCostCop,
+    MaxVariableCostPercent = source.MaxVariableCostPercent,
+    AutoRenew = 1,
+    UpdatedAt = SYSUTCDATETIME()
+WHEN NOT MATCHED THEN INSERT
+    (BusinessSubscriptionId, BusinessId, SubscriptionPlanId, [Status], CurrentPeriodStart, CurrentPeriodEnd,
+     PlanCodeSnapshot, PlanNameSnapshot, MonthlyPriceCop, IncludedCredits, MaxVariableCostCop,
+     MaxVariableCostPercent, ExtraCredits, ExtraVariableCostCop, AutoRenew, CreatedAt, UpdatedAt)
+VALUES
+    (source.BusinessSubscriptionId, source.BusinessId, source.SubscriptionPlanId, 1,
+     DATEFROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1),
+     DATEADD(MONTH, 1, DATEFROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1)),
+     source.Code, source.[Name], source.MonthlyPriceCop, source.IncludedCredits, source.MaxVariableCostCop,
+     source.MaxVariableCostPercent, 0, 0, 1, SYSUTCDATETIME(), SYSUTCDATETIME());
+
+UPDATE dbo.BusinessSubscriptions
+SET [Status] = 4,
+    UpdatedAt = SYSUTCDATETIME()
+WHERE BusinessId = @BusinessId
+  AND BusinessSubscriptionId <> @SubscriptionId
+  AND [Status] IN (1, 2, 3);
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM dbo.BusinessUsagePeriods
+    WHERE BusinessSubscriptionId = @SubscriptionId
+      AND PeriodStart = DATEFROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1)
+      AND PeriodEnd = DATEADD(MONTH, 1, DATEFROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1))
+)
+BEGIN
+    INSERT INTO dbo.BusinessUsagePeriods
+        (BusinessSubscriptionId, BusinessId, PeriodStart, PeriodEnd, CreditsIncluded, CreditsExtra,
+         CreditsUsed, VariableCostLimitCop, VariableCostExtraCop, VariableCostUsedCop, [Status], CreatedAt, UpdatedAt)
+    SELECT
+        @SubscriptionId,
+        @BusinessId,
+        DATEFROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1),
+        DATEADD(MONTH, 1, DATEFROMPARTS(YEAR(SYSUTCDATETIME()), MONTH(SYSUTCDATETIME()), 1)),
+        IncludedCredits,
+        0,
+        0,
+        MaxVariableCostCop,
+        0,
+        0,
+        1,
+        SYSUTCDATETIME(),
+        SYSUTCDATETIME()
+    FROM dbo.SubscriptionPlans
+    WHERE SubscriptionPlanId = @PlanId;
+END
+
+IF (SELECT COUNT(*) FROM dbo.BusinessSubscriptions WHERE BusinessId = @BusinessId AND [Status] IN (1, 2, 3)) <> 1
+BEGIN
+    THROW 51000, 'SeedCJDistribuciones: debe existir exactamente una suscripcion activa.', 1;
+END
+
+PRINT N'SeedCJDistribuciones: negocio, Mantis, agente y suscripcion configurados.';
 
 GO

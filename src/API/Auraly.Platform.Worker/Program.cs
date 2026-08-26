@@ -189,6 +189,7 @@ services.AddScoped<ServiceSelectionResolver>();
         services.AddScoped<ICommerceService, CommerceService>();
         services.AddScoped<ICommerceOrderWorkspaceResolver, Auraly.Platform.Infrastructure.Commerce.CommerceOrderWorkspaceResolver>();
         services.AddScoped<ICommerceCustomerResolver, CommerceCustomerResolver>();
+        services.AddScoped<ICanonicalCommerceCustomerLookup, CanonicalCommerceCustomerLookup>();
 
         services.AddScoped<IProductLookupService>(provider => (IProductLookupService)provider.GetRequiredService<ICommerceService>());
 
