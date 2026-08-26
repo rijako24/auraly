@@ -100,6 +100,31 @@ public sealed class DatabaseUpgradeMigrationTests
         Assert.True(reviewedMigration >= 0 && reviewedMigration < deployReport,
             "La migración fiscal revisada debe ejecutarse antes del DeployReport.");
     }
+
+    [Fact]
+    public void Purchase_evidence_migration_compiles_column_dependent_work_after_the_alter()
+    {
+        var root = FindRepositoryRoot();
+        var migration = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "Migrations",
+            "20260825_AddPurchaseEvidence.sql"));
+
+        var addColumn = migration.IndexOf(
+            "ALTER TABLE dbo.GoodsReceipts ADD PurchaseEvidenceType", StringComparison.Ordinal);
+        var deferredBackfill = migration.IndexOf(
+            "EXEC sys.sp_executesql", addColumn, StringComparison.Ordinal);
+        Assert.True(addColumn >= 0 && deferredBackfill > addColumn,
+            "El backfill debe compilarse después de crear PurchaseEvidenceType.");
+
+        var pipeline = File.ReadAllText(Path.Combine(
+            root, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
+        var reviewedMigration = pipeline.IndexOf(
+            "20260825_AddPurchaseEvidence.sql", StringComparison.Ordinal);
+        var deployReport = pipeline.IndexOf("'/Action:DeployReport'", StringComparison.Ordinal);
+        Assert.True(reviewedMigration >= 0 && reviewedMigration < deployReport,
+            "La migración de soportes debe ejecutarse antes del DeployReport.");
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

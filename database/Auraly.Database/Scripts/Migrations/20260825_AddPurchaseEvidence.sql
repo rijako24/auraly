@@ -12,14 +12,17 @@ IF OBJECT_ID(N'dbo.GoodsReceipts',N'U') IS NOT NULL
    AND COL_LENGTH(N'dbo.GoodsReceipts',N'PurchaseEvidenceType') IS NULL
 BEGIN
     ALTER TABLE dbo.GoodsReceipts ADD PurchaseEvidenceType NVARCHAR(40) NULL;
-    UPDATE dbo.GoodsReceipts
-    SET PurchaseEvidenceType=CASE
-      WHEN SupplierInvoiceNumber IS NOT NULL OR SupplierInvoiceDate IS NOT NULL
-        THEN N'SupplierElectronicInvoice'
-      ELSE N'InternalReceiptVoucher'
-    END
-    WHERE PurchaseEvidenceType IS NULL;
-    ALTER TABLE dbo.GoodsReceipts ALTER COLUMN PurchaseEvidenceType NVARCHAR(40) NOT NULL;
+    EXEC sys.sp_executesql N'
+        UPDATE dbo.GoodsReceipts
+        SET PurchaseEvidenceType=CASE
+          WHEN SupplierInvoiceNumber IS NOT NULL OR SupplierInvoiceDate IS NOT NULL
+            THEN N''SupplierElectronicInvoice''
+          ELSE N''InternalReceiptVoucher''
+        END
+        WHERE PurchaseEvidenceType IS NULL;
+
+        ALTER TABLE dbo.GoodsReceipts
+        ALTER COLUMN PurchaseEvidenceType NVARCHAR(40) NOT NULL;';
 END;
 GO
 
