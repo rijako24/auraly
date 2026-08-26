@@ -175,7 +175,8 @@ public interface IPosWorkSessionClosurePrinter
 public sealed class PosWorkSessionClosurePrinter(
     PosPrinterConfigurationStore configuration,
     IWindowsRawPrintJob rawPrintJob,
-    IWindowsRenderedPrintJob renderedPrintJob)
+    IWindowsRenderedPrintJob renderedPrintJob,
+    PosWorkstationIdentity? workstation = null)
     : IPosWorkSessionClosurePrinter
 {
     public Task PrintAsync(
@@ -189,16 +190,20 @@ public sealed class PosWorkSessionClosurePrinter(
             string.IsNullOrWhiteSpace(printerName))
             throw new InvalidOperationException(
                 "Configura una impresora de tirilla antes de cerrar la sesión de venta.");
-        var documentName = $"Auraly-Cierre-{closure.WorkSessionClosureId:N}";
-        if (WindowsPrinterOutput.RequiresRenderedDocument(printerName))
+        var companyName = workstation?.CompanyName ?? closure.BusinessName;
+        var companyLogoSource = workstation?.CompanyLogoSource;
+        var documentName = $"Cierre-{closure.WorkSessionClosureId:N}";
+        if (WindowsPrinterOutput.RequiresRenderedDocument(printerName) ||
+            !string.IsNullOrWhiteSpace(companyLogoSource))
             return renderedPrintJob.PrintAsync(
                 printerName,
                 documentName,
-                WorkSessionClosureReceiptRenderer.RenderHtml(closure),
+                WorkSessionClosureReceiptRenderer.RenderHtml(
+                    closure, companyName, companyLogoSource),
                 configuration.ReceiptOutputDirectory,
                 cancellationToken);
         var bytes = WorkSessionClosureReceiptRenderer.Render(
-            closure, settings.ReceiptPaperWidthMillimeters);
+            closure, settings.ReceiptPaperWidthMillimeters, companyName);
         rawPrintJob.Print(printerName, documentName, bytes);
         return Task.CompletedTask;
     }
@@ -353,7 +358,10 @@ internal static class WorkSessionClosureReceiptRenderer
     private static readonly byte[] AlignCenter = [0x1B, 0x61, 0x01];
     private static readonly byte[] Cut = [0x1D, 0x56, 0x41, 0x03];
 
-    public static byte[] Render(WorkSessionClosureView value, int width)
+    public static byte[] Render(
+        WorkSessionClosureView value,
+        int width,
+        string? companyName = null)
     {
         var columns = width switch
         {
@@ -364,12 +372,14 @@ internal static class WorkSessionClosureReceiptRenderer
         using var stream = new MemoryStream();
         Write(stream, Initialize);
         Write(stream, AlignCenter);
-        Line(stream, "CIERRE DE SESION DE VENTA");
-        Line(stream, value.BusinessName);
+        Line(stream, companyName ?? value.BusinessName);
+        Line(stream, $"SEDE: {value.BusinessName}");
+        Line(stream, "ARQUEO DE CAJA");
+        Line(stream, "CIERRE CONFIRMADO");
         Line(stream, value.WarehouseName);
         Line(stream, new string('-', columns));
         Write(stream, AlignLeft);
-        Wrapped(stream, $"CAJERO: {value.UserName}", columns);
+        Wrapped(stream, $"USUARIO QUE TRABAJO: {value.UserName}", columns);
         Line(stream, $"APERTURA: {Date(value.OpenedAt)}");
         Line(stream, $"CIERRE:   {Date(value.ClosedAt)}");
         Line(stream, $"DURACION: {Duration(value.OpenedAt, value.ClosedAt)}");
@@ -383,6 +393,9 @@ internal static class WorkSessionClosureReceiptRenderer
         foreach (var payment in value.PaymentTotals)
         {
             Wrapped(stream, PaymentMethodName(payment.PaymentMethodCode).ToUpperInvariant(), columns);
+            Line(stream, Pair("  VENTAS", Money(payment.SalesAmount), columns));
+            Line(stream, Pair("  DEVOLUCIONES", Money(payment.RefundAmount), columns));
+            Line(stream, Pair("  OTROS MOV.", Money(payment.OtherAmount), columns));
             Line(stream, Pair("  ESPERADO", Money(payment.NetAmount), columns));
             if (RequiresManualCount(payment.PaymentMethodCode))
             {
@@ -413,25 +426,31 @@ internal static class WorkSessionClosureReceiptRenderer
         return stream.ToArray();
     }
 
-    public static string RenderHtml(WorkSessionClosureView value)
+    public static string RenderHtml(
+        WorkSessionClosureView value,
+        string? companyName = null,
+        string? companyLogoSource = null)
     {
         var payments = string.Join(string.Empty, value.PaymentTotals.Select(payment =>
         {
             var counted = RequiresManualCount(payment.PaymentMethodCode)
                 ? $"<td>{Money(payment.CountedAmount ?? 0)}</td><td>{SignedMoney(payment.Difference ?? 0)}</td>"
                 : "<td colspan=\"2\">Conciliación automática</td>";
-            return $"<tr><td>{Encode(PaymentMethodName(payment.PaymentMethodCode))}</td><td>{Money(payment.NetAmount)}</td>{counted}</tr>";
+            return $"<tr><td>{Encode(PaymentMethodName(payment.PaymentMethodCode))}</td><td>{Money(payment.SalesAmount)}</td><td>{Money(payment.RefundAmount)}</td><td>{Money(payment.OtherAmount)}</td><td>{Money(payment.NetAmount)}</td>{counted}</tr>";
         }));
         var note = string.IsNullOrWhiteSpace(value.Note)
             ? string.Empty
             : $"<p><strong>Nota:</strong> {Encode(value.Note)}</p>";
+        var logo = string.IsNullOrWhiteSpace(companyLogoSource)
+            ? string.Empty
+            : $"<img class=\"brand-logo\" src=\"{Encode(companyLogoSource)}\" alt=\"Logo de {Encode(companyName ?? value.BusinessName)}\">";
         return $$"""
 <!doctype html><html lang="es"><head><meta charset="utf-8"><title>Cierre de sesión de venta</title>
-<style>@page{size:auto;margin:10mm}body{font:12px Arial,sans-serif;color:#111;max-width:760px;margin:auto}h1{text-align:center;font-size:20px}h2{text-align:center;font-size:14px;font-weight:normal}table{width:100%;border-collapse:collapse;margin:14px 0}th,td{padding:6px;border-bottom:1px solid #ddd;text-align:right}th:first-child,td:first-child{text-align:left}.summary{font-weight:bold}.difference{font-size:15px}</style></head><body>
-<h1>CIERRE DE SESIÓN DE VENTA</h1><h2>{{Encode(value.BusinessName)}} · {{Encode(value.WarehouseName)}}</h2>
-<p><strong>Cajero:</strong> {{Encode(value.UserName)}}<br><strong>Apertura:</strong> {{Date(value.OpenedAt)}}<br><strong>Cierre:</strong> {{Date(value.ClosedAt)}}<br><strong>Duración:</strong> {{Duration(value.OpenedAt, value.ClosedAt)}}</p>
+<style>@page{size:80mm auto;margin:4mm}body{width:72mm;font:10px Arial,sans-serif;color:#111;margin:auto}.brand-logo{display:block;max-width:48mm;max-height:18mm;object-fit:contain;margin:0 auto 3mm}h1{text-align:center;font-size:15px;margin:3px 0}h2{text-align:center;font-size:11px;margin:3px 0}table{width:100%;border-collapse:collapse;margin:8px 0}th,td{padding:3px 1px;border-bottom:1px solid #ddd;text-align:right;font-size:8px}th:first-child,td:first-child{text-align:left}.summary{font-weight:bold}.difference{font-size:13px}</style></head><body>
+{{logo}}<h1>{{Encode(companyName ?? value.BusinessName)}}</h1><h2>ARQUEO DE CAJA · CIERRE CONFIRMADO</h2><h2>Sede: {{Encode(value.BusinessName)}} · {{Encode(value.WarehouseName)}}</h2>
+<p><strong>Usuario que trabajó:</strong> {{Encode(value.UserName)}}<br><strong>Apertura:</strong> {{Date(value.OpenedAt)}}<br><strong>Cierre:</strong> {{Date(value.ClosedAt)}}<br><strong>Duración:</strong> {{Duration(value.OpenedAt, value.ClosedAt)}}</p>
 <table><tbody><tr><td>Ventas</td><td>{{Money(value.TotalSales)}}</td></tr><tr><td>Devoluciones</td><td>{{Money(value.TotalRefunds)}}</td></tr><tr><td>Otros movimientos</td><td>{{Money(value.TotalOther)}}</td></tr><tr class="summary"><td>Neto</td><td>{{Money(value.NetAmount)}}</td></tr></tbody></table>
-<h3>Conciliación por medio</h3><table><thead><tr><th>Medio</th><th>Esperado</th><th>Contado</th><th>Diferencia</th></tr></thead><tbody>{{payments}}</tbody></table>
+<h3>Todos los medios de pago</h3><table><thead><tr><th>Medio</th><th>Venta</th><th>Dev.</th><th>Otros</th><th>Esper.</th><th>Cont.</th><th>Dif.</th></tr></thead><tbody>{{payments}}</tbody></table>
 <p>Efectivo esperado: <strong>{{Money(value.ExpectedCash)}}</strong><br>Efectivo contado: <strong>{{Money(value.CountedCash ?? 0)}}</strong></p>
 <p class="difference"><strong>{{Encode(DifferenceLabel(value.CashDifference ?? 0))}}:</strong> {{SignedMoney(value.CashDifference ?? 0)}}</p>{{note}}
 <p>Cierre: {{value.WorkSessionClosureId:D}}</p></body></html>
@@ -464,6 +483,11 @@ internal static class WorkSessionClosureReceiptRenderer
         "CreditCard" => "Tarjeta credito",
         "Card" => "Tarjeta",
         "Transfer" => "Transferencia",
+        "Deposit" => "Consignacion",
+        "Credit" => "Credito / cartera",
+        "Voucher" => "Bono / vale",
+        "Check" => "Cheque",
+        "Withholding" => "Retencion",
         _ => code
     };
     private static bool RequiresManualCount(string code) =>

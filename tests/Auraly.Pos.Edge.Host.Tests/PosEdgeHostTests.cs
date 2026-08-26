@@ -598,8 +598,8 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         Assert.Equal(total, preview.Preview.TotalSales);
         Assert.Equal(total, preview.Preview.ExpectedCash);
         Assert.Equal(
-            new[] { "Cash", "Card" },
-            preview.Preview.PaymentTotals.Take(2)
+            new[] { "Cash" },
+            preview.Preview.PaymentTotals
                 .Select(value => value.PaymentMethodCode));
 
         var operationId = Guid.NewGuid();
@@ -608,8 +608,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             preview.AuthorizationToken,
             total,
             [
-                new WorkSessionPaymentCount("Cash", total),
-                new WorkSessionPaymentCount("Card", 0)
+                new WorkSessionPaymentCount("Cash", total)
             ],
             null);
         _closurePrinter.FailuresRemaining = 1;

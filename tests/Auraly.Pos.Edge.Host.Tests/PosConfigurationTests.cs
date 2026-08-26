@@ -69,7 +69,7 @@ public sealed class PosConfigurationTests
                 html => Assert.Contains("<!doctype html>", html,
                     StringComparison.OrdinalIgnoreCase));
             Assert.Contains(rendered.Documents,
-                html => html.Contains("CIERRE DE SESIÓN DE VENTA",
+                html => html.Contains("ARQUEO DE CAJA",
                     StringComparison.Ordinal));
         }
         finally
@@ -100,7 +100,9 @@ public sealed class PosConfigurationTests
             new PosEnrollmentDocumentSeries(
                 Guid.NewGuid(), "SalesReceipt", "CVI", "01", 8, 1, 99_999_999),
             null,
-            DateTimeOffset.UtcNow);
+            DateTimeOffset.UtcNow,
+            "Comercializadora Uno",
+            "data:image/png;base64,AA==");
 
         var configuration = PosEdgeEnrollmentStore.ToConfiguration(
             package,
@@ -110,6 +112,9 @@ public sealed class PosConfigurationTests
         Assert.Equal(
             package.ReceiptDocumentSeries.SeriesId.ToString("D"),
             configuration["PosEdge:Documents:SalesReceipt:SeriesId"]);
+        Assert.Equal("Comercializadora Uno", configuration["PosEdge:CompanyName"]);
+        Assert.Equal("data:image/png;base64,AA==",
+            configuration["PosEdge:CompanyLogoSource"]);
         Assert.DoesNotContain(
             configuration.Keys,
             key => key.StartsWith("PosEdge:Fiscal:", StringComparison.Ordinal));

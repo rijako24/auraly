@@ -10,7 +10,7 @@ public sealed class EscPosReceiptRendererTests
     [Theory]
     [InlineData(58)]
     [InlineData(80)]
-    public void Receipt_contains_Auraly_and_fiscal_numbers_cufe_exact_qr_and_cut_command(int width)
+    public void Receipt_contains_company_fiscal_numbers_cufe_exact_qr_and_cut_command(int width)
     {
         var qr = """
             NumFac: FV100
@@ -25,23 +25,30 @@ public sealed class EscPosReceiptRendererTests
             "VTA03-00000100",
             new DateTimeOffset(2026, 7, 28, 14, 30, 0, TimeSpan.FromHours(-5)),
             "222222222",
-            [new PosReceiptLine("P-001", "Café molido", 2m, 10_000m, 500m, 3_705m, 23_205m)],
-            [new OfflineSalePayment("Cash", 23_205m)],
+            [new PosReceiptLine("P-001", "Café molido", 2m, 10_000m, 500m, 3_705m, 23_205m, "01", 19m)],
+            [new OfflineSalePayment("Cash", 10_000m), new OfflineSalePayment("Transfer", 13_205m)],
             19_500m,
             3_705m,
             23_205m,
             "abc123",
             qr,
-            width);
+            width,
+            CompanyName: "Comercializadora Uno");
 
         var bytes = new EscPosReceiptRenderer().Render(receipt);
         var printable = Encoding.UTF8.GetString(bytes);
 
         Assert.Contains("FV100", printable);
+        Assert.Contains("COMERCIALIZADORA UNO", printable);
         Assert.Contains("VTA03-00000100", printable);
         Assert.Contains("CUFE: abc123", printable);
         Assert.Contains(qr, printable);
         Assert.Contains("23205.00", printable);
+        Assert.Contains("IMPUESTOS POR TARIFA", printable);
+        Assert.Contains("IVA 19%", printable);
+        Assert.Contains("MEDIOS DE PAGO", printable);
+        Assert.Contains("EFECTIVO", printable);
+        Assert.Contains("TRANSFERENCIA", printable);
         Assert.Equal(new byte[] { 0x1D, 0x56, 0x41, 0x03 }, bytes.TakeLast(4).ToArray());
     }
 
@@ -114,7 +121,9 @@ public sealed class EscPosReceiptRendererTests
 
         var html = new HtmlReceiptPreviewRenderer().Render(receipt);
 
-        Assert.Contains("<title>Auraly VTA01-00000042</title>", html);
+        Assert.Contains("<title>Comercializadora Uno VTA01-00000042</title>", html);
+        Assert.Contains("Comercializadora Uno", html);
+        Assert.Contains("data:image/png;base64,AA==", html);
         Assert.Contains("@page { size: 80mm auto;", html);
         Assert.Contains("window.print()", html);
         Assert.Contains("Producto &amp; prueba", html);
@@ -123,6 +132,9 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("abc123", html);
         Assert.Contains("<svg", html);
         Assert.Contains("Efectivo", html);
+        Assert.Contains("Impuestos por tarifa", html);
+        Assert.Contains("IVA 19%", html);
+        Assert.Contains("Medios de pago", html);
     }
 
     [Fact]
@@ -202,15 +214,17 @@ public sealed class EscPosReceiptRendererTests
             DateTimeOffset.UtcNow,
             "222222222",
             [new OnlineSalesReceiptLine(
-                "P-001", "Producto", 2m, 10_000m, 0m, 3_800m, 23_800m)],
-            [new OnlineSalesPayment("Cash", 23_800m, null)],
+                "P-001", "Producto", 2m, 10_000m, 0m, 3_800m, 23_800m, "01", 19m)],
+            [new OnlineSalesPayment("Cash", 10_000m, null), new OnlineSalesPayment("Transfer", 13_800m, "TRX-1")],
             20_000m,
             3_800m,
             23_800m,
             "cufe-999",
             "https://catalogo-vpfe.dian.gov.co/document/searchqr?documentkey=cufe-999",
             "Accepted",
-            "Cliente prueba");
+            "Cliente prueba",
+            "Comercializadora Uno",
+            "data:image/png;base64,AA==");
 
         var html = new HalfLetterDocumentRenderer().Render([receipt]);
 
@@ -219,6 +233,12 @@ public sealed class EscPosReceiptRendererTests
         Assert.Equal(2, html.Split("VTA01-00000999").Length - 1);
         Assert.Equal(2, html.Split("Cliente prueba").Length - 1);
         Assert.Contains("data:image/svg+xml;base64", html);
+        Assert.Contains("Impuestos por tarifa", html);
+        Assert.Contains("IVA 19%", html);
+        Assert.Contains("Medios de pago", html);
+        Assert.Contains("Transferencia", html);
+        Assert.Equal(2, html.Split("<h1>Comercializadora Uno</h1>").Length - 1);
+        Assert.Equal(2, html.Split("data:image/png;base64,AA==").Length - 1);
     }
 
     private static PosReceipt Receipt() =>
@@ -236,14 +256,18 @@ public sealed class EscPosReceiptRendererTests
                 12_500m,
                 0m,
                 2_375m,
-                14_875m)],
+                14_875m,
+                "01",
+                19m)],
             [new OfflineSalePayment("Cash", 14_875m)],
             12_500m,
             2_375m,
             14_875m,
             "abc123",
             "https://catalogo-vpfe.dian.gov.co/document/searchqr?documentkey=abc123",
-            80);
+            80,
+            CompanyName: "Comercializadora Uno",
+            CompanyLogoSource: "data:image/png;base64,AA==");
 
     private sealed class RecordingReceiptPreviewLauncher : IReceiptPreviewLauncher
     {

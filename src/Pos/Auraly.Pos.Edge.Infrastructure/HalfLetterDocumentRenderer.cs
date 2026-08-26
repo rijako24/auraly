@@ -22,7 +22,7 @@ public sealed class HalfLetterDocumentRenderer
             <html lang="es">
             <head>
               <meta charset="utf-8">
-              <title>Documentos de pedidos Auraly</title>
+              <title>Documentos de venta</title>
               <style>
                 @page { size: Letter portrait; margin: 0; }
                 * { box-sizing: border-box; }
@@ -35,6 +35,8 @@ public sealed class HalfLetterDocumentRenderer
                 .document { transform-origin: top left; font-size: 8pt; line-height: 1.2; }
                 .top { display: grid; grid-template-columns: 1fr auto; gap: 6mm; border-bottom: 1px solid #0f766e; padding-bottom: 2mm; }
                 h1 { margin: 0; font-size: 14pt; color: #065f5b; }
+                .brand-lockup { display: flex; align-items: center; gap: 3mm; }
+                .brand-logo { max-width: 30mm; max-height: 16mm; object-fit: contain; }
                 h2 { margin: 1mm 0 0; font-size: 9pt; }
                 .number { text-align: right; }
                 .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 1mm 5mm; margin: 2mm 0; }
@@ -48,6 +50,8 @@ public sealed class HalfLetterDocumentRenderer
                 .totals { border: 1px solid #cbd5e1; border-radius: 2mm; padding: 2mm; }
                 .total { font-size: 10pt; color: #065f5b; }
                 .fiscal { overflow-wrap: anywhere; font-size: 6.5pt; }
+                .financial { margin-top: 1.5mm; display: grid; gap: .7mm; }
+                .financial > strong { margin-top: .7mm; color: #065f5b; }
                 .qr { display: block; width: 27mm; height: 27mm; margin: 0 auto; }
                 .caption { text-align: center; color: #64748b; font-size: 6.5pt; }
                 @media screen { body { background: #e2e8f0; } .sheet { margin: 8mm auto; background: white; box-shadow: 0 4px 24px #0f172a33; } }
@@ -90,13 +94,31 @@ public sealed class HalfLetterDocumentRenderer
         var cufe = string.IsNullOrWhiteSpace(receipt.Cufe)
             ? string.Empty
             : $"<div class=\"fiscal\"><strong>CUFE</strong><br>{Encode(receipt.Cufe)}</div>";
+        var taxes = string.Join("", receipt.Lines
+            .GroupBy(line => new { line.TaxCode, line.TaxRate })
+            .Select(group => new
+            {
+                group.Key.TaxCode,
+                group.Key.TaxRate,
+                Base = group.Sum(line => line.Total - line.Tax),
+                Amount = group.Sum(line => line.Tax)
+            })
+            .OrderBy(value => value.TaxCode, StringComparer.Ordinal)
+            .ThenBy(value => value.TaxRate)
+            .Select(tax => $"<div class=\"pair\"><span>{Encode(TaxName(tax.TaxCode))} {Rate(tax.TaxRate)}% · base {Money(tax.Base)}</span><strong>{Money(tax.Amount)}</strong></div>"));
+        var payments = string.Join("", receipt.Payments.Select(payment =>
+            $"<div class=\"pair\"><span>{Encode(PaymentName(payment.MethodCode))}</span><strong>{Money(payment.Amount)}</strong></div>"));
+        var companyName = Encode(receipt.CompanyName);
+        var companyLogo = string.IsNullOrWhiteSpace(receipt.CompanyLogoSource)
+            ? string.Empty
+            : $"<img class=\"brand-logo\" src=\"{Encode(receipt.CompanyLogoSource)}\" alt=\"Logo de {companyName}\">";
 
         return $$"""
           <article class="document">
-            <header class="top"><div><h1>Auraly</h1><h2>{{documentName}}</h2></div><div class="number"><strong>{{Encode(receipt.DocumentNumber)}}</strong><br>{{receipt.IssuedAt.ToString("yyyy-MM-dd HH:mm", ColombianCulture)}}</div></header>
+            <header class="top"><div><div class="brand-lockup">{{companyLogo}}<h1>{{companyName}}</h1></div><h2>{{documentName}}</h2></div><div class="number"><strong>{{Encode(receipt.DocumentNumber)}}</strong><br>{{receipt.IssuedAt.ToString("yyyy-MM-dd HH:mm", ColombianCulture)}}</div></header>
             <section class="meta"><div class="pair"><span>Cliente</span><strong>{{Encode(receipt.CustomerName)}}</strong></div><div class="pair"><span>Identificación</span><strong>{{Encode(receipt.CustomerIdentification)}}</strong></div>{{fiscalNumber}}</section>
             <table><thead><tr><th>Producto</th><th class="numeric">Cant.</th><th class="numeric">Precio</th><th class="numeric">Total</th></tr></thead><tbody>{{rows}}</tbody></table>
-            <section class="bottom"><div>{{cufe}}<div class="caption">Representación gráfica · copia cliente / control</div></div><div><div class="totals"><div class="pair"><span>Subtotal</span><strong>{{Money(receipt.UntaxedAmount)}}</strong></div><div class="pair"><span>Impuestos</span><strong>{{Money(receipt.TaxAmount)}}</strong></div><div class="pair total"><span>Total</span><strong>{{Money(receipt.PayableAmount)}}</strong></div></div>{{qr}}</div></section>
+            <section class="bottom"><div>{{cufe}}<div class="financial"><strong>Impuestos por tarifa</strong>{{taxes}}<strong>Medios de pago</strong>{{payments}}</div><div class="caption">Representación gráfica · copia cliente / control</div></div><div><div class="totals"><div class="pair"><span>Subtotal</span><strong>{{Money(receipt.UntaxedAmount)}}</strong></div><div class="pair"><span>Total impuestos</span><strong>{{Money(receipt.TaxAmount)}}</strong></div><div class="pair total"><span>Total</span><strong>{{Money(receipt.PayableAmount)}}</strong></div></div>{{qr}}</div></section>
           </article>
           """;
     }
@@ -111,4 +133,7 @@ public sealed class HalfLetterDocumentRenderer
     private static string Encode(string? value) => WebUtility.HtmlEncode(value ?? string.Empty);
     private static string Money(decimal value) => value.ToString("C0", ColombianCulture);
     private static string Quantity(decimal value) => value.ToString("0.###", ColombianCulture);
+    private static string Rate(decimal value) => value.ToString("0.##", ColombianCulture);
+    private static string TaxName(string code) => code switch { "01" => "IVA", "02" => "IC", "03" => "ICA", "04" => "INC", _ => code };
+    private static string PaymentName(string code) => code switch { "Cash" => "Efectivo", "Card" => "Tarjeta", "DebitCard" => "Tarjeta débito", "CreditCard" => "Tarjeta crédito", "Transfer" => "Transferencia", "Deposit" => "Consignación", "Credit" => "Crédito / cartera", "Voucher" => "Bono / vale", "Check" => "Cheque", "Withholding" => "Retención", _ => code };
 }

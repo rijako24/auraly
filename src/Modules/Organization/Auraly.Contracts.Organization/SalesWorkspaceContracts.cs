@@ -87,4 +87,6 @@ public sealed record PosEnrollmentPackage(
     PosEnrollmentFiscalSeries? FiscalSeries,
     PosEnrollmentDocumentSeries ReceiptDocumentSeries,
     IReadOnlyDictionary<string, string>? OfflineLeaseTrustedPublicKeys,
-    DateTimeOffset EnrolledAt);
+    DateTimeOffset EnrolledAt,
+    string? CompanyName = null,
+    string? CompanyLogoSource = null);

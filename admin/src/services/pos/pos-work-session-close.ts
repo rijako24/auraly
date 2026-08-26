@@ -49,6 +49,11 @@ const paymentMethodNames: Record<string, string> = {
   CreditCard: "Tarjeta crédito",
   Card: "Tarjeta",
   Transfer: "Transferencia",
+  Deposit: "Consignación",
+  Credit: "Crédito / cartera",
+  Voucher: "Bono / vale",
+  Check: "Cheque",
+  Withholding: "Retención",
 };
 
 export function workSessionPaymentMethodName(code: string): string {
@@ -70,24 +75,33 @@ export function formatWorkSessionCountInput(value: string): string {
 }
 
 type ClosureForPrint = {
+  companyName?: string | null;
   logoUrl?: string | null;
+  workSessionClosureId?: string;
   businessName: string; warehouseName: string; userName: string; openedAt: string; closedAt: string;
   totalSales: number; totalRefunds: number; totalOther: number; netAmount: number;
   expectedCash: number; countedCash: number | null; cashDifference: number | null; note: string | null;
-  paymentTotals: Array<{ paymentMethodCode: string; netAmount: number; countedAmount?: number | null; difference?: number | null }>;
+  paymentTotals: Array<{ paymentMethodCode: string; salesAmount?: number; refundAmount?: number; otherAmount?: number; netAmount: number; countedAmount?: number | null; difference?: number | null }>;
 };
 
 export function workSessionClosureHtml(value: ClosureForPrint): string {
   const money = (amount: number | null) => amount == null ? "—" : new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(amount);
   const row = (label: string, amount: number | null) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(money(amount))}</strong></div>`;
-  const paymentRows = value.paymentTotals.map(item =>
-    row(`${workSessionPaymentMethodName(item.paymentMethodCode)} esperado`, item.netAmount) +
+  const paymentRows = value.paymentTotals.map(item => {
+    const name = workSessionPaymentMethodName(item.paymentMethodCode);
+    return `<h3>${escapeHtml(name)}</h3>` +
+    row("Ventas", item.salesAmount ?? 0) +
+    row("Devoluciones", item.refundAmount ?? 0) +
+    row("Otros movimientos", item.otherAmount ?? 0) +
+    row("Esperado", item.netAmount) +
     (workSessionPaymentMethodRequiresCount(item.paymentMethodCode)
-      ? row(`${workSessionPaymentMethodName(item.paymentMethodCode)} contado`, item.countedAmount ?? null) +
-        row(`${workSessionPaymentMethodName(item.paymentMethodCode)} diferencia`, item.difference ?? null)
-      : `<div><span>${escapeHtml(workSessionPaymentMethodName(item.paymentMethodCode))} conciliación</span><strong>Automática</strong></div>`)).join("");
+      ? row("Contado", item.countedAmount ?? null) + row("Diferencia", item.difference ?? null)
+      : `<div><span>Conciliación</span><strong>Automática</strong></div>`);
+  }).join("");
   const logo = value.logoUrl ? `<img src="${escapeHtml(value.logoUrl)}" alt="Logo" />` : "";
-  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Cierre de sesión</title><style>@page{margin:10mm}body{font-family:Arial,sans-serif;color:#0f172a;max-width:720px;margin:auto}header{border-bottom:2px solid #0f766e;padding-bottom:12px}header img{display:block;max-height:72px;max-width:220px;object-fit:contain;margin-bottom:10px}h1{margin:0;color:#0f766e}p{margin:5px 0}.totals div,.payments div{display:flex;justify-content:space-between;gap:20px;padding:8px 0;border-bottom:1px solid #e2e8f0}.difference{font-size:20px}.note{margin-top:16px;padding:12px;background:#f8fafc}@media print{body{max-width:none}}</style></head><body><header>${logo}<h1>${escapeHtml(value.businessName)}</h1><p>Cierre de sesión de venta</p><p>${escapeHtml(value.warehouseName)} · ${escapeHtml(value.userName)}</p><p>${escapeHtml(new Date(value.openedAt).toLocaleString("es-CO"))} — ${escapeHtml(new Date(value.closedAt).toLocaleString("es-CO"))}</p></header><section class="totals">${row("Ventas", value.totalSales)}${row("Devoluciones", value.totalRefunds)}${row("Otros movimientos", value.totalOther)}${row("Neto", value.netAmount)}${row("Efectivo esperado", value.expectedCash)}${row("Efectivo contado", value.countedCash)}<div class="difference"><span>Diferencia de efectivo</span><strong>${escapeHtml(money(value.cashDifference))}</strong></div></section><h2>Consolidado por medio de pago</h2><section class="payments">${paymentRows || "<p>Sin movimientos</p>"}</section>${value.note ? `<p class="note"><strong>Observación:</strong> ${escapeHtml(value.note)}</p>` : ""}</body></html>`;
+  const closureId = value.workSessionClosureId ? `<p class="id">Cierre: ${escapeHtml(value.workSessionClosureId)}</p>` : "";
+  const companyName = value.companyName || value.businessName;
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Arqueo de caja</title><style>@page{size:80mm auto;margin:4mm}*{box-sizing:border-box}body{width:72mm;margin:0 auto;font:11px/1.35 ui-monospace,Consolas,monospace;color:#111}header{text-align:center;border-bottom:1px dashed #555;padding-bottom:8px}header img{display:block;max-height:18mm;max-width:48mm;object-fit:contain;margin:0 auto 3mm}h1{margin:3px 0;font:800 15px/1.2 Arial,sans-serif}h2{margin:10px 0 4px;font-size:11px;text-transform:uppercase;border-bottom:1px dashed #555;padding-bottom:4px}h3{margin:8px 0 2px;font-size:11px;text-transform:uppercase}p{margin:3px 0}.totals div,.payments div{display:flex;justify-content:space-between;gap:8px;padding:2px 0}.difference{margin-top:5px;border-top:1px dashed #555;padding-top:5px!important;font-size:13px}.note{margin-top:10px;padding:7px;border:1px dashed #555}.id{overflow-wrap:anywhere;border-top:1px dashed #555;margin-top:10px;padding-top:7px;font-size:9px}@media screen{body{margin:16px auto;padding:4mm;box-shadow:0 8px 30px #0002}}@media print{body{padding:0;box-shadow:none}}</style></head><body><header>${logo}<h1>${escapeHtml(companyName)}</h1><p><strong>ARQUEO DE CAJA · CIERRE CONFIRMADO</strong></p><p>Sede: ${escapeHtml(value.businessName)} · ${escapeHtml(value.warehouseName)}</p><p>Usuario que trabajó: <strong>${escapeHtml(value.userName)}</strong></p><p>${escapeHtml(new Date(value.openedAt).toLocaleString("es-CO"))}<br>${escapeHtml(new Date(value.closedAt).toLocaleString("es-CO"))}</p></header><h2>Resumen del turno</h2><section class="totals">${row("Ventas", value.totalSales)}${row("Devoluciones", value.totalRefunds)}${row("Otros movimientos", value.totalOther)}${row("Neto", value.netAmount)}${row("Efectivo esperado", value.expectedCash)}${row("Efectivo contado", value.countedCash)}<div class="difference"><span>Diferencia de efectivo</span><strong>${escapeHtml(money(value.cashDifference))}</strong></div></section><h2>Todos los medios de pago</h2><section class="payments">${paymentRows || "<p>Sin movimientos</p>"}</section>${value.note ? `<p class="note"><strong>Observación:</strong> ${escapeHtml(value.note)}</p>` : ""}${closureId}</body></html>`;
 }
 
 export function printWorkSessionClosure(html: string): Promise<void> {

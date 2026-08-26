@@ -6,6 +6,7 @@ import type {
 } from "@/services/orders/commerce-orders-client";
 import { savePosDraftAsOrder } from "@/services/orders/save-pos-order";
 import type { SellerOrderResult } from "@/services/api/seller-orders";
+import type { TenantBranding } from "@/services/api/tenants";
 
 export type PosSaleDocumentType = "SalesInvoice" | "SalesReceipt";
 const EDGE_BASE_URL =
@@ -224,6 +225,8 @@ export type PosReceiptLine = {
   discount: number;
   tax: number;
   total: number;
+  taxCode: string;
+  taxRate: number;
 };
 
 export type PosPrintableReceipt = {
@@ -620,10 +623,14 @@ export class PosEdgeClient implements PosClient {
     return this.requestVoid("/edge/v1/cash-drawer/open", { method: "POST" });
   }
 
-  printReceipt(receipt: PosPrintableReceipt) {
+  printReceipt(receipt: PosPrintableReceipt, branding?: TenantBranding | null) {
     return this.requestVoid("/edge/v1/print/receipt", {
       method: "POST",
-      body: JSON.stringify(receipt),
+      body: JSON.stringify({
+        ...receipt,
+        companyName: branding?.displayName ?? branding?.legalName ?? null,
+        companyLogoSource: branding?.logoUrl ?? null,
+      }),
     });
   }
 

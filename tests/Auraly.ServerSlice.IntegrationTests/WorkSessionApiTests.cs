@@ -57,7 +57,7 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Closure_preview_always_requests_blind_cash_and_consolidated_card_counts()
+    public async Task Closure_preview_always_requests_blind_cash_and_only_reports_used_payment_methods()
     {
         var userId = await CreateUserAsync("work-session-empty-count");
         using var client = fixture.CreateUserClient(
@@ -78,11 +78,6 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         Assert.NotNull(preview);
         Assert.Collection(
             preview.PaymentTotals,
-            card =>
-            {
-                Assert.Equal("Card", card.PaymentMethodCode);
-                Assert.Equal(0m, card.NetAmount);
-            },
             cash =>
             {
                 Assert.Equal("Cash", cash.PaymentMethodCode);
@@ -177,7 +172,8 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
                 "Faltante de efectivo verificado",
                 PaymentCounts:
                 [
-                    new WorkSessionPaymentCount("Card", 50_000m),
+                    new WorkSessionPaymentCount("DebitCard", 30_000m),
+                    new WorkSessionPaymentCount("CreditCard", 20_000m),
                     new WorkSessionPaymentCount("Cash", 75_000m)
                 ]));
         Assert.Equal(0m, closure.TotalSales);
@@ -189,19 +185,26 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         Assert.Equal(-5_000m, closure.CashDifference);
         Assert.Collection(
             closure.PaymentTotals,
-            card =>
-            {
-                Assert.Equal("Card", card.PaymentMethodCode);
-                Assert.Equal(50_000m, card.NetAmount);
-                Assert.Equal(50_000m, card.CountedAmount);
-                Assert.Equal(0m, card.Difference);
-            },
             cash =>
             {
                 Assert.Equal("Cash", cash.PaymentMethodCode);
                 Assert.Equal(80_000m, cash.NetAmount);
                 Assert.Equal(75_000m, cash.CountedAmount);
                 Assert.Equal(-5_000m, cash.Difference);
+            },
+            debitCard =>
+            {
+                Assert.Equal("DebitCard", debitCard.PaymentMethodCode);
+                Assert.Equal(30_000m, debitCard.NetAmount);
+                Assert.Equal(30_000m, debitCard.CountedAmount);
+                Assert.Equal(0m, debitCard.Difference);
+            },
+            creditCard =>
+            {
+                Assert.Equal("CreditCard", creditCard.PaymentMethodCode);
+                Assert.Equal(20_000m, creditCard.NetAmount);
+                Assert.Equal(20_000m, creditCard.CountedAmount);
+                Assert.Equal(0m, creditCard.Difference);
             },
             transfer =>
             {
@@ -220,7 +223,8 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
                 "Faltante de efectivo verificado",
                 PaymentCounts:
                 [
-                    new WorkSessionPaymentCount("Card", 50_000m),
+                    new WorkSessionPaymentCount("DebitCard", 30_000m),
+                    new WorkSessionPaymentCount("CreditCard", 20_000m),
                     new WorkSessionPaymentCount("Cash", 75_000m)
                 ]));
         Assert.Equal(closure.WorkSessionClosureId, replay.WorkSessionClosureId);

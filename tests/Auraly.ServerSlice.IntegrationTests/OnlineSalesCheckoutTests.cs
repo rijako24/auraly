@@ -147,7 +147,11 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             Assert.Equal(completed.Receipt.Cufe, printable.Cufe);
             Assert.Equal(completed.Receipt.QrPayload, printable.QrPayload);
             Assert.Equal(completed.Receipt.CustomerName, printable.CustomerName);
-            Assert.Single(printable.Lines);
+            var printableLine = Assert.Single(printable.Lines);
+            Assert.Equal(captured.Lines[0].TaxCode, printableLine.TaxCode);
+            Assert.Equal(captured.Lines[0].TaxRate, printableLine.TaxRate);
+            Assert.Equal(captured.TaxAmount, printable.TaxAmount);
+            Assert.Equal(captured.TaxAmount, printableLine.Tax);
             Assert.Single(printable.Payments);
         }
         var qrUrl =

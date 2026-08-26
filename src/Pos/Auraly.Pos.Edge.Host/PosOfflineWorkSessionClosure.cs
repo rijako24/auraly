@@ -305,23 +305,17 @@ public sealed class PosOfflineWorkSessionClosureService(
         decimal otherCash,
         IReadOnlyList<WorkSessionPaymentCount>? counts)
     {
-        static string Normalize(string code) => code switch
-        {
-            "DebitCard" or "CreditCard" => "Card",
-            _ => code
-        };
         var amounts = sales.SelectMany(value => value.Payments)
-            .GroupBy(value => Normalize(value.MethodCode), StringComparer.OrdinalIgnoreCase)
+            .GroupBy(value => value.MethodCode, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.Sum(value => value.Amount),
                 StringComparer.OrdinalIgnoreCase);
         amounts.TryAdd("Cash", 0);
-        amounts.TryAdd("Card", 0);
         var counted = (counts ?? [])
-            .GroupBy(value => Normalize(value.PaymentMethodCode), StringComparer.OrdinalIgnoreCase)
+            .GroupBy(value => value.PaymentMethodCode, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.Sum(value => value.CountedAmount),
                 StringComparer.OrdinalIgnoreCase);
         return amounts
-            .OrderBy(value => value.Key == "Cash" ? 0 : value.Key == "Card" ? 1 : 2)
+            .OrderBy(value => PaymentOrder(value.Key))
             .ThenBy(value => value.Key, StringComparer.Ordinal)
             .Select(value =>
             {
@@ -329,7 +323,7 @@ public sealed class PosOfflineWorkSessionClosureService(
                     ? otherCash
                     : 0;
                 var net = value.Value + other;
-                var manual = value.Key is "Cash" or "Card";
+                var manual = RequiresManualCount(value.Key);
                 var hasCount = counted.TryGetValue(value.Key, out var countedAmount);
                 return new WorkSessionPaymentTotal(
                     value.Key, value.Value, 0, other, net,
@@ -338,6 +332,23 @@ public sealed class PosOfflineWorkSessionClosureService(
             })
             .ToArray();
     }
+
+    private static int PaymentOrder(string code) => code switch
+    {
+        "Cash" => 0,
+        "DebitCard" => 1,
+        "CreditCard" => 2,
+        "Card" => 3,
+        "Transfer" => 4,
+        "Deposit" => 5,
+        _ => 10
+    };
+
+    private static bool RequiresManualCount(string code) =>
+        code.Equals("Cash", StringComparison.OrdinalIgnoreCase) ||
+        code.Equals("Card", StringComparison.OrdinalIgnoreCase) ||
+        code.Equals("DebitCard", StringComparison.OrdinalIgnoreCase) ||
+        code.Equals("CreditCard", StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed class PosWorkSessionClosureOutboxUploader(

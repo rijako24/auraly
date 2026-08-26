@@ -56,6 +56,8 @@ public sealed class PosEdgeEnrollmentStore(
             ["PosEdge:BusinessId"] = package.BusinessId.ToString("D"),
             ["PosEdge:WarehouseId"] = package.WarehouseId.ToString("D"),
             ["PosEdge:BusinessName"] = package.BusinessName,
+            ["PosEdge:CompanyName"] = package.CompanyName ?? package.BusinessName,
+            ["PosEdge:CompanyLogoSource"] = package.CompanyLogoSource,
             ["PosEdge:WarehouseCode"] = package.WarehouseCode,
             ["PosEdge:WarehouseName"] = package.WarehouseName,
             ["PosEdge:WarehouseAllowsNegativeStock"] =
@@ -152,6 +154,7 @@ public sealed class PosEdgeEnrollmentClient(
             cancellationToken: cancellationToken)
             ?? throw new InvalidDataException(
                 "The Auraly server returned an empty enrollment package.");
+        package = await CacheCompanyLogoAsync(package, cancellationToken);
         store.Save(package);
         startupMode.Save(PosStartupModes.Enrolled);
         return new LocalPosEnrollmentResult(
@@ -159,5 +162,30 @@ public sealed class PosEdgeEnrollmentClient(
             package.DeviceId,
             package.DocumentSeries.SeriesCode,
             RestartRequired: true);
+    }
+
+    private static async Task<PosEnrollmentPackage> CacheCompanyLogoAsync(
+        PosEnrollmentPackage package,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(package.CompanyLogoSource)) return package;
+        if (!Uri.TryCreate(package.CompanyLogoSource, UriKind.Absolute, out var uri) ||
+            uri.Scheme != Uri.UriSchemeHttps)
+            throw new InvalidDataException(
+                "El logo de la empresa no tiene una dirección HTTPS válida.");
+
+        using var client = new HttpClient();
+        using var response = await client.GetAsync(uri, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        var mediaType = response.Content.Headers.ContentType?.MediaType;
+        if (string.IsNullOrWhiteSpace(mediaType) ||
+            !mediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException(
+                "El archivo configurado como logo de la empresa no es una imagen válida.");
+        var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        return package with
+        {
+            CompanyLogoSource = $"data:{mediaType};base64,{Convert.ToBase64String(bytes)}"
+        };
     }
 }

@@ -4,6 +4,7 @@ using Auraly.Application.Authorization;
 using Auraly.Application.Organization;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Organization;
+using Auraly.Platform.Application.Identity.Interfaces;
 
 namespace Auraly.Api;
 
@@ -64,8 +65,18 @@ public static class PosEnrollmentApi
                 async (
                     RedeemPosEnrollmentRequest request,
                     PosEnrollmentService service,
+                    ITenantService tenants,
                     CancellationToken ct) =>
-                    await Handle(() => service.RedeemAsync(request, ct)))
+                    await Handle(async () =>
+                    {
+                        var package = await service.RedeemAsync(request, ct);
+                        var branding = await tenants.GetBrandingAsync(package.TenantId, ct);
+                        return package with
+                        {
+                            CompanyName = branding.DisplayName,
+                            CompanyLogoSource = branding.LogoUrl
+                        };
+                    }))
             .AllowAnonymous();
         return endpoints;
     }

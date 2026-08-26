@@ -26,10 +26,10 @@ public sealed class EscPosReceiptRenderer
         using var stream = new MemoryStream();
         Write(stream, Initialize);
         Write(stream, AlignCenter);
-        WriteLine(stream, "AURALY");
+        WriteLine(stream, (receipt.CompanyName ?? string.Empty).ToUpperInvariant());
         var isFiscal = PosSaleDocumentTypes.IsFiscal(receipt.DocumentType);
         WriteLine(stream, isFiscal ? "FACTURA ELECTRONICA DE VENTA" : "COMPROBANTE DE VENTA");
-        WriteLine(stream, $"DOCUMENTO AURALY: {receipt.DocumentNumber}");
+        WriteLine(stream, $"DOCUMENTO: {receipt.DocumentNumber}");
         if (isFiscal) WriteLine(stream, $"NUMERO DIAN: {receipt.FiscalNumber}");
         WriteLine(stream, receipt.IssuedAt.ToString("yyyy-MM-dd HH:mm:ss zzz", CultureInfo.InvariantCulture));
         WriteLine(stream, $"ADQUIRENTE: {receipt.CustomerIdentification}");
@@ -48,10 +48,28 @@ public sealed class EscPosReceiptRenderer
         }
         WriteLine(stream, new string('-', columns));
         WriteLine(stream, Pair("SUBTOTAL", Money(receipt.UntaxedAmount), columns));
-        WriteLine(stream, Pair("IMPUESTOS", Money(receipt.TaxAmount), columns));
+        WriteLine(stream, "IMPUESTOS POR TARIFA");
+        foreach (var tax in receipt.Lines
+                     .GroupBy(line => new { line.TaxCode, line.TaxRate })
+                     .Select(group => new
+                     {
+                         group.Key.TaxCode,
+                         group.Key.TaxRate,
+                         Base = group.Sum(line => line.Total - line.Tax),
+                         Amount = group.Sum(line => line.Tax)
+                     })
+                     .OrderBy(value => value.TaxCode, StringComparer.Ordinal)
+                     .ThenBy(value => value.TaxRate))
+        {
+            WriteWrapped(stream, $"  {TaxName(tax.TaxCode)} {Rate(tax.TaxRate)}%", columns);
+            WriteLine(stream, Pair("    BASE", Money(tax.Base), columns));
+            WriteLine(stream, Pair("    IMPUESTO", Money(tax.Amount), columns));
+        }
+        WriteLine(stream, Pair("TOTAL IMPUESTOS", Money(receipt.TaxAmount), columns));
         WriteLine(stream, Pair("TOTAL", Money(receipt.PayableAmount), columns));
+        WriteLine(stream, "MEDIOS DE PAGO");
         foreach (var payment in receipt.Payments)
-            WriteLine(stream, Pair(payment.MethodCode.ToUpperInvariant(), Money(payment.Amount), columns));
+            WriteLine(stream, Pair(PaymentName(payment.MethodCode).ToUpperInvariant(), Money(payment.Amount), columns));
         WriteLine(stream, new string('-', columns));
         if (isFiscal)
         {
@@ -82,6 +100,33 @@ public sealed class EscPosReceiptRenderer
 
     private static string Quantity(decimal value) =>
         value.ToString("0.###", CultureInfo.InvariantCulture);
+
+    private static string Rate(decimal value) =>
+        value.ToString("0.##", CultureInfo.InvariantCulture);
+
+    private static string TaxName(string code) => code switch
+    {
+        "01" => "IVA",
+        "02" => "IC",
+        "03" => "ICA",
+        "04" => "INC",
+        _ => code
+    };
+
+    private static string PaymentName(string code) => code switch
+    {
+        "Cash" => "Efectivo",
+        "Card" => "Tarjeta",
+        "DebitCard" => "Tarjeta debito",
+        "CreditCard" => "Tarjeta credito",
+        "Transfer" => "Transferencia",
+        "Deposit" => "Consignacion",
+        "Credit" => "Credito / cartera",
+        "Voucher" => "Bono / vale",
+        "Check" => "Cheque",
+        "Withholding" => "Retencion",
+        _ => code
+    };
 
     private static void WriteWrapped(Stream stream, string value, int columns)
     {

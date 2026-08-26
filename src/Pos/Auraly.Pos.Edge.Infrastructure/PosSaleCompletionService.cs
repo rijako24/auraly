@@ -18,7 +18,9 @@ public sealed record PosReceiptLine(
     decimal UnitPrice,
     decimal Discount,
     decimal Tax,
-    decimal Total);
+    decimal Total,
+    string TaxCode = "01",
+    decimal TaxRate = 0);
 
 public sealed record PosReceipt(
     Guid PrintJobId,
@@ -35,7 +37,9 @@ public sealed record PosReceipt(
     string? Cufe,
     string? QrPayload,
     int PaperWidthMillimeters,
-    string DocumentType = PosSaleDocumentTypes.Invoice);
+    string DocumentType = PosSaleDocumentTypes.Invoice,
+    string? CompanyName = null,
+    string? CompanyLogoSource = null);
 
 public interface IPosReceiptPrinter
 {
@@ -261,7 +265,9 @@ public sealed class PosSaleCompletionService(
                 line.UnitPrice,
                 line.DiscountAmount,
                 line.TaxAmount,
-                line.LineTotal)).ToArray(),
+                line.LineTotal,
+                line.TaxCode,
+                line.TaxRate)).ToArray(),
             immutable.Payments.Select(payment => new OfflineSalePayment(
                 payment.MethodCode,
                 payment.Amount,
@@ -328,7 +334,9 @@ public sealed class PosSaleCompletionService(
                 line.UnitPrice,
                 line.DiscountAmount,
                 line.TaxAmount,
-                line.LineTotal)).ToArray(),
+                line.LineTotal,
+                line.TaxCode,
+                line.TaxRate)).ToArray(),
             immutable.Payments.Select(payment => new OfflineSalePayment(
                 payment.MethodCode,
                 payment.Amount,

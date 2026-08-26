@@ -459,9 +459,7 @@ public sealed partial class SqlWorkSessionStore(
         await using var command = new SqlCommand("""
             WITH PaymentMovements AS
             (
-                SELECT CASE WHEN PaymentMethodCode IN (N'Card',N'DebitCard',N'CreditCard')
-                            THEN N'Card' ELSE PaymentMethodCode END PaymentMethodCode,
-                  MovementType,Amount
+                SELECT PaymentMethodCode,MovementType,Amount
                 FROM dbo.WorkSessionMovements
                 WHERE WorkSessionId=@WorkSessionId
             ),
@@ -474,14 +472,25 @@ public sealed partial class SqlWorkSessionStore(
                   COALESCE(SUM(Amount),0) NetAmount
                 FROM PaymentMovements
                 GROUP BY PaymentMethodCode
+            ),
+            AllTotals AS
+            (
+                SELECT PaymentMethodCode,SalesAmount,RefundAmount,OtherAmount,NetAmount
+                FROM Totals
+                UNION ALL SELECT N'Cash',0,0,0,0
+                  WHERE NOT EXISTS (SELECT 1 FROM Totals WHERE PaymentMethodCode=N'Cash')
             )
             SELECT PaymentMethodCode,SalesAmount,RefundAmount,OtherAmount,NetAmount
-            FROM Totals
-            UNION ALL SELECT N'Cash',0,0,0,0
-              WHERE NOT EXISTS (SELECT 1 FROM Totals WHERE PaymentMethodCode=N'Cash')
-            UNION ALL SELECT N'Card',0,0,0,0
-              WHERE NOT EXISTS (SELECT 1 FROM Totals WHERE PaymentMethodCode=N'Card')
-            ORDER BY PaymentMethodCode;
+            FROM AllTotals
+            ORDER BY CASE PaymentMethodCode
+                WHEN N'Cash' THEN 0
+                WHEN N'DebitCard' THEN 1
+                WHEN N'CreditCard' THEN 2
+                WHEN N'Card' THEN 3
+                WHEN N'Transfer' THEN 4
+                WHEN N'Deposit' THEN 5
+                ELSE 10 END,
+              PaymentMethodCode;
             """, connection, transaction);
         command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);

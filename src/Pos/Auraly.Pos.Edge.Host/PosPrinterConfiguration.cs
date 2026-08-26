@@ -330,7 +330,8 @@ public sealed class ConfigurableOrderDocumentPrinter(
                 receipt.Lines.Select(line =>
                     new Auraly.Contracts.Sales.OnlineSalesReceiptLine(
                         line.ProductCode, line.Description, line.Quantity,
-                        line.UnitPrice, line.Discount, line.Tax, line.Total)).ToArray(),
+                        line.UnitPrice, line.Discount, line.Tax, line.Total,
+                        line.TaxCode, line.TaxRate)).ToArray(),
                 receipt.Payments.Select(payment =>
                     new Auraly.Contracts.Sales.OnlineSalesPayment(
                         payment.MethodCode, payment.Amount, payment.Reference)).ToArray(),
@@ -340,7 +341,9 @@ public sealed class ConfigurableOrderDocumentPrinter(
                 receipt.Cufe,
                 receipt.QrPayload,
                 null,
-                receipt.CustomerIdentification)
+                receipt.CustomerIdentification,
+                receipt.CompanyName,
+                receipt.CompanyLogoSource)
         ], workflowPrinterName, cancellationToken);
 }
 
@@ -351,7 +354,8 @@ public sealed class ConfigurablePosReceiptPrinter(
     IReceiptPreviewLauncher preview,
     ConfigurableOrderDocumentPrinter halfLetter,
     IWindowsRawPrintJob rawPrintJob,
-    IWindowsRenderedPrintJob renderedPrintJob) : IPosReceiptPrinter
+    IWindowsRenderedPrintJob renderedPrintJob,
+    PosWorkstationIdentity? workstation = null) : IPosReceiptPrinter
 {
     public Task PrintAsync(
         PosReceipt receipt,
@@ -375,6 +379,15 @@ public sealed class ConfigurablePosReceiptPrinter(
         int paperWidthMillimeters,
         CancellationToken cancellationToken)
     {
+        receipt = receipt with
+        {
+            CompanyName = string.IsNullOrWhiteSpace(receipt.CompanyName)
+                ? workstation?.CompanyName
+                : receipt.CompanyName,
+            CompanyLogoSource = string.IsNullOrWhiteSpace(receipt.CompanyLogoSource)
+                ? workstation?.CompanyLogoSource
+                : receipt.CompanyLogoSource
+        };
         var configuration = settings.Load();
         var printer = configuration.ReceiptMode switch
         {
@@ -387,7 +400,8 @@ public sealed class ConfigurablePosReceiptPrinter(
                 workflowPrinterName ?? configuration.PrinterFor(
                     receipt.DocumentType, PrintTemplateFormats.Receipt)
                     ?? throw new InvalidOperationException(
-                        "La impresora de tirilla no esta configurada.")),
+                        "La impresora de tirilla no esta configurada."),
+                receipt.CompanyLogoSource),
             _ => throw new InvalidOperationException(
                 "La configuracion de impresora no es valida.")
         };
@@ -400,8 +414,11 @@ public sealed class ConfigurablePosReceiptPrinter(
             cancellationToken);
     }
 
-    private IPosReceiptPrinter ReceiptPrinterForWindows(string printerName) =>
-        WindowsPrinterOutput.RequiresRenderedDocument(printerName)
+    private IPosReceiptPrinter ReceiptPrinterForWindows(
+        string printerName,
+        string? companyLogoSource) =>
+        WindowsPrinterOutput.RequiresRenderedDocument(printerName) ||
+        !string.IsNullOrWhiteSpace(companyLogoSource)
             ? new RenderedWindowsReceiptPrinter(
                 printerName, settings.ReceiptOutputDirectory, html, renderedPrintJob)
             : new WindowsRawReceiptPrinter(printerName, escPos, rawPrintJob);
@@ -433,7 +450,8 @@ public sealed class ConfigurablePosReceiptPrinter(
                 receipt.CustomerIdentification,
                 receipt.Lines.Select(line => new PosReceiptLine(
                     line.ProductCode, line.Description, line.Quantity,
-                    line.UnitPrice, line.Discount, line.Tax, line.Total)).ToArray(),
+                    line.UnitPrice, line.Discount, line.Tax, line.Total,
+                    line.TaxCode, line.TaxRate)).ToArray(),
                 receipt.Payments.Select(payment => new OfflineSalePayment(
                     payment.MethodCode, payment.Amount, payment.Reference)).ToArray(),
                 receipt.UntaxedAmount,
@@ -444,7 +462,9 @@ public sealed class ConfigurablePosReceiptPrinter(
                 ordersWorkflow
                     ? configuration.OrdersReceiptPaperWidthMillimeters
                     : configuration.ReceiptPaperWidthMillimeters,
-                receipt.DocumentType),
+                receipt.DocumentType,
+                receipt.CompanyName,
+                receipt.CompanyLogoSource),
             ordersWorkflow ? configuration.OrdersPrinterName : configuration.PosPrinterName,
             ordersWorkflow
                 ? configuration.OrdersReceiptPaperWidthMillimeters

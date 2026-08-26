@@ -69,14 +69,34 @@ public sealed class HtmlReceiptPreviewRenderer
             Environment.NewLine,
             receipt.Payments.Select(payment =>
                 Pair(PaymentName(payment.MethodCode), Money(payment.Amount))));
+        var taxes = string.Join(
+            Environment.NewLine,
+            receipt.Lines
+                .GroupBy(line => new { line.TaxCode, line.TaxRate })
+                .Select(group => new
+                {
+                    group.Key.TaxCode,
+                    group.Key.TaxRate,
+                    Base = group.Sum(line => line.Total - line.Tax),
+                    Amount = group.Sum(line => line.Tax)
+                })
+                .OrderBy(value => value.TaxCode, StringComparer.Ordinal)
+                .ThenBy(value => value.TaxRate)
+                .Select(tax => Pair(
+                    $"{TaxName(tax.TaxCode)} {Rate(tax.TaxRate)}% · base {Money(tax.Base)}",
+                    Money(tax.Amount))));
 
+        var companyName = Encode(receipt.CompanyName ?? string.Empty);
+        var companyLogo = string.IsNullOrWhiteSpace(receipt.CompanyLogoSource)
+            ? string.Empty
+            : $"<img class=\"brand-logo\" src=\"{Encode(receipt.CompanyLogoSource)}\" alt=\"Logo de {companyName}\">";
         return $$"""
             <!doctype html>
             <html lang="es">
             <head>
               <meta charset="utf-8">
               <meta name="viewport" content="width=device-width, initial-scale=1">
-              <title>Auraly {{Encode(receipt.DocumentNumber)}}</title>
+              <title>{{companyName}} {{Encode(receipt.DocumentNumber)}}</title>
               <style>
                 @page { size: {{receipt.PaperWidthMillimeters}}mm auto; margin: 3mm; }
                 * { box-sizing: border-box; }
@@ -92,6 +112,7 @@ public sealed class HtmlReceiptPreviewRenderer
                 .receipt { padding: 5mm 4mm 7mm; }
                 .center { text-align: center; }
                 .brand { font: 800 23px/1 system-ui, sans-serif; letter-spacing: -.04em; }
+                .brand-logo { display: block; max-width: 48mm; max-height: 18mm; object-fit: contain; margin: 0 auto 3mm; }
                 .title { margin-top: 5px; font-weight: 800; text-transform: uppercase; }
                 .muted { color: #49666a; }
                 .rule { border: 0; border-top: 1px dashed #789093; margin: 10px 0; }
@@ -100,6 +121,7 @@ public sealed class HtmlReceiptPreviewRenderer
                 .pair { display: flex; justify-content: space-between; gap: 10px; }
                 .pair strong, .amount { white-space: nowrap; font-variant-numeric: tabular-nums; }
                 .discount { color: #9a4b08; font-size: 11px; }
+                .section-title { margin: 7px 0 3px; font-weight: 900; text-transform: uppercase; }
                 .total { margin-top: 5px; font-size: 16px; font-weight: 900; }
                 .cufe { overflow-wrap: anywhere; font-size: 9px; }
                 .qr { width: 38mm; max-width: 100%; margin: 10px auto 5px; }
@@ -132,21 +154,25 @@ public sealed class HtmlReceiptPreviewRenderer
               <div class="actions"><button type="button" onclick="window.print()">Imprimir tirilla</button></div>
               <main class="receipt">
                 <header class="center">
-                  <div class="brand">Auraly</div>
+                  {{companyLogo}}
+                  <div class="brand">{{companyName}}</div>
                   <div class="title">{{(isFiscal ? "Factura electrónica de venta" : "Comprobante de venta")}}</div>
                   <div class="muted">{{Encode(receipt.IssuedAt.ToString("yyyy-MM-dd HH:mm:ss zzz", CultureInfo.InvariantCulture))}}</div>
                 </header>
                 <hr class="rule">
-                {{Pair("Documento Auraly", Encode(receipt.DocumentNumber))}}
+                {{Pair("Documento", Encode(receipt.DocumentNumber))}}
                 {{fiscalNumber}}
                 <div class="pair"><span>Adquirente</span><strong>{{Encode(receipt.CustomerIdentification)}}</strong></div>
                 <hr class="rule">
                 {{lines}}
                 <hr class="rule">
                 {{Pair("Subtotal", Money(receipt.UntaxedAmount))}}
-                {{Pair("Impuestos", Money(receipt.TaxAmount))}}
+                <div class="section-title">Impuestos por tarifa</div>
+                {{taxes}}
+                {{Pair("Total impuestos", Money(receipt.TaxAmount))}}
                 <div class="pair total"><span>Total</span><strong>{{Money(receipt.PayableAmount)}}</strong></div>
                 <hr class="rule">
+                <div class="section-title">Medios de pago</div>
                 {{payments}}
                 <hr class="rule">
                 {{fiscalFooter}}
@@ -186,6 +212,11 @@ public sealed class HtmlReceiptPreviewRenderer
         "DebitCard" => "Tarjeta débito",
         "CreditCard" => "Tarjeta crédito",
         "Transfer" => "Transferencia",
+        "Deposit" => "Consignación",
+        "Credit" => "Crédito / cartera",
+        "Voucher" => "Bono / vale",
+        "Check" => "Cheque",
+        "Withholding" => "Retención",
         _ => code
     };
 
@@ -194,6 +225,18 @@ public sealed class HtmlReceiptPreviewRenderer
 
     private static string Quantity(decimal value) =>
         value.ToString("0.###", ColombianCulture);
+
+    private static string Rate(decimal value) =>
+        value.ToString("0.##", ColombianCulture);
+
+    private static string TaxName(string code) => code switch
+    {
+        "01" => "IVA",
+        "02" => "IC",
+        "03" => "ICA",
+        "04" => "INC",
+        _ => code
+    };
 
     private static string Encode(string value) => WebUtility.HtmlEncode(value);
 }

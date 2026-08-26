@@ -93,7 +93,9 @@ internal static class PosPeripheralModule
                     request.Cufe,
                     request.QrPayload,
                     settings.ReceiptPaperWidthMillimeters,
-                    request.DocumentType), ct);
+                    request.DocumentType,
+                    request.CompanyName,
+                    request.CompanyLogoSource), ct);
                 return Results.NoContent();
             }
             catch (Exception exception) when (

@@ -13,11 +13,18 @@ test("online closure uses the authenticated server work-session endpoints", () =
   assert.deepEqual(JSON.parse(String(request.init.body)), { countedCash: 120000, paymentCounts: [{ paymentMethodCode: "Cash", countedAmount: 120000 }], note: "Conteo" });
 });
 
-test("closure print view contains the tenant business and escapes external text", () => {
-  const html = workSessionClosureHtml({ logoUrl: "https://media.test/logo.png", businessName: "Empresa <Uno>", warehouseName: "Principal", userName: "Ana", openedAt: "2026-08-23T10:00:00Z", closedAt: "2026-08-23T12:00:00Z", totalSales: 140, totalRefunds: 0, totalOther: 0, netAmount: 140, expectedCash: 100, countedCash: 100, cashDifference: 0, note: "<script>alert(1)</script>", paymentTotals: [{ paymentMethodCode: "Cash", netAmount: 100, countedAmount: 100, difference: 0 }, { paymentMethodCode: "Transfer", netAmount: 40 }] });
-  assert.match(html, /Empresa &lt;Uno&gt;/);
+test("closure print view is a receipt with user and every payment breakdown", () => {
+  const html = workSessionClosureHtml({ workSessionClosureId: "close-1", companyName: "Comercializadora & Uno", logoUrl: "https://media.test/logo.png", businessName: "Sede <Uno>", warehouseName: "Principal", userName: "Ana", openedAt: "2026-08-23T10:00:00Z", closedAt: "2026-08-23T12:00:00Z", totalSales: 140, totalRefunds: 0, totalOther: 0, netAmount: 140, expectedCash: 100, countedCash: 100, cashDifference: 0, note: "<script>alert(1)</script>", paymentTotals: [{ paymentMethodCode: "Cash", salesAmount: 110, refundAmount: 10, otherAmount: 0, netAmount: 100, countedAmount: 100, difference: 0 }, { paymentMethodCode: "Transfer", salesAmount: 40, refundAmount: 0, otherAmount: 0, netAmount: 40 }] });
+  assert.match(html, /Comercializadora &amp; Uno/);
+  assert.match(html, /Sede: Sede &lt;Uno&gt; · Principal/);
   assert.match(html, /https:\/\/media\.test\/logo\.png/);
-  assert.match(html, /Transferencia conciliación/);
+  assert.match(html, /ARQUEO DE CAJA · CIERRE CONFIRMADO/);
+  assert.match(html, /Usuario que trabajó: <strong>Ana<\/strong>/);
+  assert.match(html, /Todos los medios de pago/);
+  assert.match(html, /Transferencia/);
+  assert.match(html, /Devoluciones/);
+  assert.match(html, /close-1/);
+  assert.match(html, /size:80mm auto/);
   assert.match(html, /Automática/);
   assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/);
@@ -26,6 +33,8 @@ test("closure print view contains the tenant business and escapes external text"
 
 test("closure count rules keep transfer automatic", () => {
   assert.equal(workSessionPaymentMethodName("Transfer"), "Transferencia");
+  assert.equal(workSessionPaymentMethodName("Deposit"), "Consignación");
+  assert.equal(workSessionPaymentMethodName("Withholding"), "Retención");
   assert.equal(workSessionPaymentMethodRequiresCount("Transfer"), false);
   assert.equal(workSessionPaymentMethodRequiresCount("Cash"), true);
 });

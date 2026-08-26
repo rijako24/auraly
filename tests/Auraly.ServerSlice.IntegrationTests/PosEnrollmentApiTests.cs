@@ -44,6 +44,7 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         Assert.NotNull(package);
         Assert.NotEqual(Guid.Empty, package.DeviceId);
         Assert.Equal(fixture.BusinessId, package.BusinessId);
+        Assert.False(string.IsNullOrWhiteSpace(package.CompanyName));
         Assert.Equal(fixture.WarehouseId, package.WarehouseId);
         Assert.Matches("^(?!00)\\d{2}$", package.DocumentSeries.SeriesCode);
         Assert.NotEmpty(package.DeviceSecret);

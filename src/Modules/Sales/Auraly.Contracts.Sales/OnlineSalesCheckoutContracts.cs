@@ -23,7 +23,9 @@ public sealed record OnlineSalesReceiptLine(
     decimal UnitPrice,
     decimal Discount,
     decimal Tax,
-    decimal Total);
+    decimal Total,
+    string TaxCode = "01",
+    decimal TaxRate = 0);
 
 public sealed record OnlineSalesReceipt(
     Guid DocumentId,
@@ -40,7 +42,9 @@ public sealed record OnlineSalesReceipt(
     string? Cufe,
     string? QrPayload,
     string? FiscalStatus,
-    string CustomerName);
+    string CustomerName,
+    string? CompanyName = null,
+    string? CompanyLogoSource = null);
 
 public sealed record CompleteOnlineSalesDraftResponse(
     OnlineSalesReceipt Receipt,

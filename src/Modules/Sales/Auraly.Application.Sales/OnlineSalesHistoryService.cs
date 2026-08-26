@@ -117,7 +117,9 @@ public static class OnlineSalesReceiptMapper
                 line.UnitPrice,
                 line.DiscountAmount,
                 line.TaxAmount,
-                line.LineTotal)).ToArray(),
+                line.LineTotal,
+                line.TaxCode,
+                line.TaxRate)).ToArray(),
             request.Payments.Select(payment => new OnlineSalesPayment(
                     payment.MethodCode,
                     payment.Amount,
