@@ -673,7 +673,8 @@ public sealed class SqlSalesReportingStore(
         SalesReportingUserIdentity user,CancellationToken token)
     {
         await using var command=new SqlCommand("""
-          SELECT seller.SellerId,supplier.SupplierId
+          SELECT CASE WHEN @ReadAll=1 THEN NULL ELSE seller.SellerId END,
+            CASE WHEN @ReadAll=1 THEN NULL ELSE supplier.SupplierId END
           FROM dbo.AppUsers app
           LEFT JOIN dbo.CommerceSellers seller ON seller.PartyId=app.PartyId AND seller.BusinessId=@BusinessId AND seller.IsActive=1
           LEFT JOIN dbo.Suppliers supplier ON supplier.PartyId=app.PartyId AND supplier.BusinessId=@BusinessId AND supplier.IsActive=1
@@ -681,6 +682,7 @@ public sealed class SqlSalesReportingStore(
           """,connection);
         command.Parameters.AddWithValue("@UserId",user.UserId);command.Parameters.AddWithValue("@TenantId",user.TenantId);
         command.Parameters.AddWithValue("@BusinessId",user.BusinessId);
+        command.Parameters.AddWithValue("@ReadAll",user.Permissions.Contains(SalesReportingPermissionCodes.ReadAll));
         await using var reader=await command.ExecuteReaderAsync(token);
         if(!await reader.ReadAsync(token))throw new SalesReportingForbiddenException("The reporting identity is not active in this tenant.");
         Guid? seller=reader.IsDBNull(0)?null:reader.GetGuid(0);Guid? supplier=reader.IsDBNull(1)?null:reader.GetGuid(1);

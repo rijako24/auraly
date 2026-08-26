@@ -56,7 +56,8 @@ public sealed class SqlCommercialPartyRoleStore(SqlServerConnectionFactory conne
             }
 
             await ValidateScopeAsync(connection, transaction, actor, businessId, site, ct);
-            var resolvedPartyId = await FindPartyAsync(connection, transaction, actor.TenantId, party, normalized, ct) ?? partyId;
+            var resolution = await FindPartyAsync(connection, transaction, actor.TenantId, party, normalized, ct);
+            var resolvedPartyId = resolution?.PartyId ?? partyId;
             if (resolvedPartyId == partyId)
             {
                 await ExecuteAsync(connection, transaction, """
@@ -72,6 +73,11 @@ public sealed class SqlCommercialPartyRoleStore(SqlServerConnectionFactory conne
                     P("@LastName",Empty(party.LastName)),P("@Actor",actor.ActorId),P("@Now",now)], ct);
                 await AddContactAsync(connection, transaction, partyId, "Email", party.Email, now, ct);
                 await AddContactAsync(connection, transaction, partyId, "Phone", party.Phone, now, ct);
+            }
+            else if (resolution!.CompleteIdentity)
+            {
+                await CompletePartyIdentityAsync(connection, transaction, actor, resolvedPartyId,
+                    party, normalized, now, ct);
             }
 
             if (await RoleExistsAsync(connection, transaction, businessId, resolvedPartyId, role, ct))
@@ -141,18 +147,56 @@ public sealed class SqlCommercialPartyRoleStore(SqlServerConnectionFactory conne
         try{await x.ExecuteNonQueryAsync(ct);}catch(SqlException ex) when(ex.Number==51060){throw new PartyForbiddenException(ex.Message);}catch(SqlException ex) when(ex.Number==51061){throw new PartyValidationException(ex.Message);}
     }
 
-    private static async Task<Guid?> FindPartyAsync(SqlConnection c,SqlTransaction t,Guid tenant,PartyInput party,string normalized,CancellationToken ct)
-    {await using var x=c.CreateCommand();x.Transaction=t;x.CommandText="""
-        SELECT TOP (1) p.PartyId
-        FROM dbo.Parties p WITH(UPDLOCK,HOLDLOCK)
-        JOIN dbo.Countries requested ON requested.CountryId=@Country
-        JOIN dbo.Countries existing ON existing.CountryId=p.IdentificationCountryId
-        WHERE p.TenantId=@Tenant
-          AND UPPER(LTRIM(RTRIM(existing.Name)))=UPPER(LTRIM(RTRIM(requested.Name)))
-          AND p.IdentificationTypeCode=@Type
-          AND p.NormalizedIdentification=@Normalized
-        ORDER BY p.CreatedAt,p.PartyId;
-        """;x.Parameters.AddRange([P("@Tenant",tenant),P("@Country",party.IdentificationCountryId),P("@Type",party.IdentificationTypeCode.Trim().ToUpperInvariant()),P("@Normalized",normalized)]);var result=await x.ExecuteScalarAsync(ct);return result is Guid id?id:null;}
+    private static async Task<PartyResolution?> FindPartyAsync(SqlConnection c,SqlTransaction t,Guid tenant,PartyInput party,string normalized,CancellationToken ct)
+    {
+        await using var x=c.CreateCommand();x.Transaction=t;x.CommandText="""
+            SELECT
+              (SELECT TOP (1) p.PartyId
+               FROM dbo.Parties p WITH(UPDLOCK,HOLDLOCK)
+               JOIN dbo.Countries requested ON requested.CountryId=@Country
+               JOIN dbo.Countries existing ON existing.CountryId=p.IdentificationCountryId
+               WHERE p.TenantId=@Tenant
+                 AND UPPER(LTRIM(RTRIM(existing.Name)))=UPPER(LTRIM(RTRIM(requested.Name)))
+                 AND p.IdentificationTypeCode=@Type
+                 AND p.NormalizedIdentification=@Normalized
+               ORDER BY p.CreatedAt,p.PartyId),
+              (SELECT TOP (1) p.PartyId
+               FROM dbo.AppUsers app WITH(UPDLOCK,HOLDLOCK)
+               JOIN dbo.Parties p ON p.PartyId=app.PartyId AND p.TenantId=app.TenantId
+               WHERE app.TenantId=@Tenant AND app.NormalizedEmail=@Email
+                 AND app.PartyId IS NOT NULL AND p.IsActive=1
+                 AND NULLIF(LTRIM(RTRIM(p.NormalizedIdentification)),N'') IS NULL
+               ORDER BY app.CreatedAt,app.UserId);
+            """;
+        x.Parameters.AddRange([P("@Tenant",tenant),P("@Country",party.IdentificationCountryId),
+            P("@Type",party.IdentificationTypeCode.Trim().ToUpperInvariant()),P("@Normalized",normalized),
+            P("@Email",party.Email?.Trim().ToUpperInvariant())]);
+        await using var reader=await x.ExecuteReaderAsync(ct);await reader.ReadAsync(ct);
+        var byIdentification=reader.IsDBNull(0)?(Guid?)null:reader.GetGuid(0);
+        var byLinkedEmail=reader.IsDBNull(1)?(Guid?)null:reader.GetGuid(1);
+        if(byIdentification is not null&&byLinkedEmail is not null&&byIdentification!=byLinkedEmail)
+            throw new PartyConflictException("The identification and linked access email belong to different Parties.");
+        return byIdentification is not null?new(byIdentification.Value,false):
+            byLinkedEmail is not null?new(byLinkedEmail.Value,true):null;
+    }
+
+    private static Task CompletePartyIdentityAsync(SqlConnection c,SqlTransaction t,PartyActorIdentity actor,Guid partyId,
+        PartyInput party,string normalized,DateTimeOffset now,CancellationToken ct)=>ExecuteAsync(c,t,"""
+        UPDATE dbo.Parties
+        SET PartyType=@PartyType,IdentificationCountryId=@Country,IdentificationTypeCode=@IdentificationType,
+            Identification=@Identification,NormalizedIdentification=@Normalized,VerificationDigit=@Digit,
+            DisplayName=@DisplayName,LegalName=@LegalName,FirstName=@FirstName,LastName=@LastName,
+            CompletionStatus=N'Complete',UpdatedBy=@Actor,UpdatedAt=@Now
+        WHERE PartyId=@PartyId AND TenantId=@TenantId
+          AND NULLIF(LTRIM(RTRIM(NormalizedIdentification)),N'') IS NULL;
+        IF @@ROWCOUNT<>1 THROW 51063,'The linked Party identity could not be completed safely.',1;
+        """,[P("@PartyId",partyId),P("@TenantId",actor.TenantId),P("@PartyType",party.PartyType),
+        P("@Country",party.IdentificationCountryId),P("@IdentificationType",party.IdentificationTypeCode.Trim().ToUpperInvariant()),
+        P("@Identification",party.Identification.Trim()),P("@Normalized",normalized),P("@Digit",Empty(party.VerificationDigit)),
+        P("@DisplayName",party.DisplayName.Trim()),P("@LegalName",Empty(party.LegalName)),P("@FirstName",Empty(party.FirstName)),
+        P("@LastName",Empty(party.LastName)),P("@Actor",actor.ActorId),P("@Now",now)],ct);
+
+    private sealed record PartyResolution(Guid PartyId,bool CompleteIdentity);
     private static async Task<bool> RoleExistsAsync(SqlConnection c,SqlTransaction t,Guid business,Guid party,string role,CancellationToken ct)
     {await using var x=c.CreateCommand();x.Transaction=t;x.CommandText=role=="Seller"?"SELECT COUNT(1) FROM dbo.CommerceSellers WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@Business AND PartyId=@Party":"SELECT COUNT(1) FROM dbo.Carriers WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@Business AND PartyId=@Party";x.Parameters.AddRange([P("@Business",business),P("@Party",party)]);return Convert.ToInt32(await x.ExecuteScalarAsync(ct))>0;}
     private static async Task AddContactAsync(SqlConnection c,SqlTransaction t,Guid party,string type,string? value,DateTimeOffset now,CancellationToken ct)

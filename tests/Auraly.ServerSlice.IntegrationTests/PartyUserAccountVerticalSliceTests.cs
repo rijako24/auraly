@@ -241,6 +241,48 @@ public sealed class PartyUserAccountVerticalSliceTests(ServerSliceFixture fixtur
             assignment.RoleName == "Vendedor");
     }
 
+    [Fact]
+    public async Task Creating_a_seller_reuses_and_completes_the_incomplete_party_linked_to_the_same_email()
+    {
+        var countryId=await ScalarAsync<Guid>("SELECT TOP(1) CountryId FROM dbo.Countries WHERE IsActive=1 ORDER BY Code;");
+        var divisionId=await ScalarAsync<Guid>("SELECT TOP(1) AdministrativeDivisionId FROM dbo.AdministrativeDivisions WHERE CountryId=@CountryId AND IsActive=1 ORDER BY Code;",new SqlParameter("@CountryId",countryId));
+        var cityId=await ScalarAsync<Guid>("SELECT TOP(1) CityId FROM dbo.Cities WHERE AdministrativeDivisionId=@DivisionId AND IsActive=1 ORDER BY Code;",new SqlParameter("@DivisionId",divisionId));
+        var partyId=Guid.NewGuid();var userId=Guid.NewGuid();var suffix=Guid.NewGuid().ToString("N");
+        var email=$"incomplete-{suffix}@auraly.test";var identification=$"8{suffix[..14]}";
+        await ExecuteAsync(
+            """
+            INSERT dbo.Parties(PartyId,TenantId,PartyType,DisplayName,FirstName,LastName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
+            VALUES(@PartyId,@TenantId,N'NaturalPerson',N'Administrador incompleto',N'Administrador',N'Incompleto',N'Incomplete',1,@ActorId,SYSDATETIMEOFFSET());
+            INSERT dbo.AppUsers(UserId,TenantId,PartyId,Username,NormalizedUsername,Email,NormalizedEmail,FirstName,LastName,AccessFailedCount,EmailConfirmed,IsActive,CreatedAt)
+            VALUES(@UserId,@TenantId,@PartyId,@Username,UPPER(@Username),@Email,UPPER(@Email),N'Administrador',N'Incompleto',0,1,1,SYSUTCDATETIME());
+            IF NOT EXISTS(SELECT 1 FROM dbo.AppRoles WHERE TenantId=@TenantId AND NormalizedName=N'SELLER')
+              INSERT dbo.AppRoles(RoleId,TenantId,Name,NormalizedName,Description,IsActive,IsSystemRole,CreatedAt)
+              VALUES(NEWID(),@TenantId,N'Vendedor',N'SELLER',N'Integration seller role',1,0,SYSDATETIMEOFFSET());
+            """,new SqlParameter("@PartyId",partyId),new SqlParameter("@UserId",userId),
+            new SqlParameter("@TenantId",fixture.TenantId),new SqlParameter("@ActorId",fixture.UserId),
+            new SqlParameter("@Username",$"incomplete-{suffix}"),new SqlParameter("@Email",email));
+        var request=new CreateSellerRequest(Guid.NewGuid(),fixture.BusinessId,
+            new PartyInput(PartyTypes.NaturalPerson,countryId,"CC",identification,null,"Administrador completo",null,"Administrador","Completo",email,"3001234567"),
+            new PartySiteInput("PRINCIPAL","Principal",countryId,divisionId,cityId,"Calle 1",null,null,email,"3001234567",true),
+            $"UI-{suffix[..10]}",null,"SaleAfterTax","Sale");
+        using var admin=fixture.CreateAdminClient(PartyWorkspacePermissionCodes.SellerCreate,PartyWorkspacePermissionCodes.Read);
+        using var response=await admin.PostAsJsonAsync("/api/commerce/v1/sellers",request);
+        Assert.Equal(HttpStatusCode.Created,response.StatusCode);
+        Assert.Equal(1,await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.CommerceSellers WHERE BusinessId=@BusinessId AND PartyId=@PartyId;",
+            new SqlParameter("@BusinessId",fixture.BusinessId),new SqlParameter("@PartyId",partyId)));
+        Assert.Equal(1,await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.Parties WHERE TenantId=@TenantId AND NormalizedIdentification=@Identification;",
+            new SqlParameter("@TenantId",fixture.TenantId),new SqlParameter("@Identification",identification)));
+        Assert.Equal(partyId,await ScalarAsync<Guid>("SELECT PartyId FROM dbo.AppUsers WHERE UserId=@UserId;",new SqlParameter("@UserId",userId)));
+        Assert.Equal(1,await ScalarAsync<int>(
+            """
+            SELECT COUNT(*) FROM dbo.UserRoles assignment
+            JOIN dbo.AppRoles role ON role.RoleId=assignment.RoleId AND role.NormalizedName=N'SELLER'
+            WHERE assignment.UserId=@UserId AND assignment.BusinessId=@BusinessId;
+            """,new SqlParameter("@UserId",userId),new SqlParameter("@BusinessId",fixture.BusinessId)));
+    }
+
     private async Task ExecuteAsync(string sql, params SqlParameter[] parameters)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);

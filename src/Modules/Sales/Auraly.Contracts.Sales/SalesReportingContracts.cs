@@ -3,6 +3,7 @@ namespace Auraly.Contracts.Sales;
 public static class SalesReportingPermissionCodes
 {
     public const string Read = "sales.reports.read";
+    public const string ReadAll = "sales.reports.read-all";
 }
 
 public static class SalesReportingDimensions
