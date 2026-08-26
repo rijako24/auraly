@@ -290,13 +290,22 @@ function Publish-Function {
                 --settings "WhatsApp__Webhook__VerifyToken=$($env:CJ_WHATSAPP_VERIFY_TOKEN)" `
                 --output none
             Assert-LastExitCode 'No se pudo configurar el verify token de Meta para CJ'
-            & az deployment group create `
-                --name "auraly-$Environment-whatsapp-$ReleaseVersion" `
-                --resource-group $configuration.ResourceGroup `
-                --template-file (Join-Path $PSScriptRoot 'whatsapp-config.bicep') `
-                --parameters `
-                    "appConfigurationName=$($configuration.AppConfiguration)" `
-                    "verifyToken=$($env:CJ_WHATSAPP_VERIFY_TOKEN)" `
+            & az appconfig kv set `
+                --name $configuration.AppConfiguration `
+                --key 'WhatsApp:Webhook:ApiBaseUrl' `
+                --value 'https://graph.facebook.com/v25.0/' `
+                --content-type 'text/plain' `
+                --auth-mode login `
+                --yes `
+                --output none
+            Assert-LastExitCode 'No se pudo sincronizar la URL de Meta en Azure App Configuration'
+            & az appconfig kv set `
+                --name $configuration.AppConfiguration `
+                --key 'WhatsApp:Webhook:VerifyToken' `
+                --value $env:CJ_WHATSAPP_VERIFY_TOKEN `
+                --content-type 'text/plain' `
+                --auth-mode login `
+                --yes `
                 --output none
             Assert-LastExitCode 'No se pudo sincronizar el verify token en Azure App Configuration'
         }

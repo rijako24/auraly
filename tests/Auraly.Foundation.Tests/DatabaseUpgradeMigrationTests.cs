@@ -147,6 +147,22 @@ public sealed class DatabaseUpgradeMigrationTests
     }
 
     [Fact]
+    public void WhatsApp_configuration_uses_the_app_configuration_data_plane()
+    {
+        var root = FindRepositoryRoot();
+        var pipeline = File.ReadAllText(Path.Combine(
+            root, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
+        var syncWorkflow = File.ReadAllText(Path.Combine(
+            root, ".github", "workflows", "sync-cj-whatsapp-dev.yml"));
+
+        Assert.Contains("az appconfig kv set", pipeline, StringComparison.Ordinal);
+        Assert.Contains("--auth-mode login", pipeline, StringComparison.Ordinal);
+        Assert.Contains("az appconfig kv set", syncWorkflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("whatsapp-config.bicep", pipeline, StringComparison.Ordinal);
+        Assert.DoesNotContain("whatsapp-config.bicep", syncWorkflow, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Authentication_session_schema_leaves_index_replacement_to_the_dacpac_plan()
     {
         var root = FindRepositoryRoot();

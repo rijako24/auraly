@@ -48,13 +48,23 @@ jobs:
             --output none
           if ($LASTEXITCODE -ne 0) { throw 'No se pudo sincronizar el app setting.' }
 
-          az deployment group create `
-            --name auraly-dev-whatsapp-cj-sync `
-            --resource-group RG-AURALY-DEV `
-            --template-file infrastructure/azure/whatsapp-config.bicep `
-            --parameters `
-              appConfigurationName=cfg-auraly-dev-w5usmo6w `
-              "verifyToken=$($env:VERIFY_TOKEN)" `
+          az appconfig kv set `
+            --name cfg-auraly-dev-w5usmo6w `
+            --key 'WhatsApp:Webhook:ApiBaseUrl' `
+            --value 'https://graph.facebook.com/v25.0/' `
+            --content-type 'text/plain' `
+            --auth-mode login `
+            --yes `
+            --output none
+          if ($LASTEXITCODE -ne 0) { throw 'No se pudo sincronizar la URL de Meta.' }
+
+          az appconfig kv set `
+            --name cfg-auraly-dev-w5usmo6w `
+            --key 'WhatsApp:Webhook:VerifyToken' `
+            --value $env:VERIFY_TOKEN `
+            --content-type 'text/plain' `
+            --auth-mode login `
+            --yes `
             --output none
           if ($LASTEXITCODE -ne 0) { throw 'No se pudo sincronizar Azure App Configuration.' }
 
