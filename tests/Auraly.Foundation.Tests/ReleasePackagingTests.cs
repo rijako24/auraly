@@ -35,6 +35,36 @@ public sealed class ReleasePackagingTests
     }
 
     [Fact]
+    public void Pos_installer_supports_graphical_installation_and_silent_updates()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var installer = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "scripts",
+            "Build-AuralyPosInstaller.ps1"));
+        var release = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "infrastructure",
+            "azure",
+            "New-AuralyRelease.ps1"));
+        var updater = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "src",
+            "Desktop",
+            "Auraly.Desktop",
+            "AuralyDesktopUpdater.cs"));
+
+        Assert.Contains("[Windows.Forms.ProgressBar]::new()", installer,
+            StringComparison.Ordinal);
+        Assert.Contains("-WindowStyle Hidden", installer, StringComparison.Ordinal);
+        Assert.Contains("UserQuietInstCmd=", installer, StringComparison.Ordinal);
+        Assert.Contains("-Version $Version", release, StringComparison.Ordinal);
+        Assert.Contains("SHA256.HashDataAsync", updater, StringComparison.Ordinal);
+        Assert.Contains("ProcessStartInfo(installerPath, \"/Q\")", updater,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Environment_verification_retries_during_post_deploy_warmup()
     {
         var workflow = File.ReadAllText(Path.Combine(

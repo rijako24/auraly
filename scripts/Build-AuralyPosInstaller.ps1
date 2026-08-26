@@ -1,5 +1,6 @@
 param(
     [string]$ApiUrl = "http://127.0.0.1:5097",
+    [string]$Version = "0.0.0-dev",
     [string]$Configuration = "Release",
     [string]$ArtifactPath = ""
 )
@@ -74,6 +75,7 @@ Copy-Item -LiteralPath (Join-Path $root "admin\public") `
 
 $desktopSettings = @{
     apiUrl = $ApiUrl
+    version = $Version
     webPort = 47830
     edgePort = 47831
 } | ConvertTo-Json
@@ -88,8 +90,56 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $install = @'
+param([switch]$Quiet)
+
 $ErrorActionPreference = "Stop"
 $install = Join-Path $env:LOCALAPPDATA "Programs\Auraly POS"
+
+if (-not $Quiet) {
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    [Windows.Forms.Application]::EnableVisualStyles()
+    $form = [Windows.Forms.Form]::new()
+    $form.Text = "Instalando Auraly POS"
+    $form.ClientSize = [Drawing.Size]::new(520, 210)
+    $form.StartPosition = "CenterScreen"
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+    $form.BackColor = [Drawing.Color]::FromArgb(7, 26, 29)
+    $title = [Windows.Forms.Label]::new()
+    $title.Text = "Auraly POS"
+    $title.ForeColor = [Drawing.Color]::White
+    $title.Font = [Drawing.Font]::new("Segoe UI", 20, [Drawing.FontStyle]::Bold)
+    $title.AutoSize = $true
+    $title.Location = [Drawing.Point]::new(28, 24)
+    $status = [Windows.Forms.Label]::new()
+    $status.Text = "Preparando la instalación..."
+    $status.ForeColor = [Drawing.Color]::FromArgb(205, 228, 230)
+    $status.Font = [Drawing.Font]::new("Segoe UI", 10)
+    $status.AutoSize = $true
+    $status.Location = [Drawing.Point]::new(31, 82)
+    $progress = [Windows.Forms.ProgressBar]::new()
+    $progress.Style = "Continuous"
+    $progress.Minimum = 0
+    $progress.Maximum = 100
+    $progress.Value = 5
+    $progress.Size = [Drawing.Size]::new(456, 25)
+    $progress.Location = [Drawing.Point]::new(31, 119)
+    $form.Controls.AddRange(@($title, $status, $progress))
+    $form.Show()
+    [Windows.Forms.Application]::DoEvents()
+}
+
+function Set-InstallProgress([string]$message, [int]$percent) {
+    if ($Quiet) { return }
+    $status.Text = $message
+    $progress.Value = [Math]::Max(0, [Math]::Min(100, $percent))
+    [Windows.Forms.Application]::DoEvents()
+}
+
+try {
+Set-InstallProgress "Cerrando la versión anterior..." 12
 
 Get-Process -Name "Auraly.Desktop" -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction SilentlyContinue
@@ -116,12 +166,14 @@ for ($attempt = 0; $attempt -lt 20; $attempt++) {
     Start-Sleep -Milliseconds 250
 }
 
+Set-InstallProgress "Preparando los archivos..." 28
 if (Test-Path -LiteralPath $install) {
     Remove-Item -LiteralPath $install -Recurse -Force
 }
 New-Item -ItemType Directory -Force -Path $install | Out-Null
 Expand-Archive -LiteralPath (Join-Path $PSScriptRoot "payload.zip") `
     -DestinationPath $install -Force
+Set-InstallProgress "Configurando el almacenamiento local..." 70
 $databaseDirectory = Join-Path $env:LOCALAPPDATA "Auraly\PosEdge"
 New-Item -ItemType Directory -Force -Path $databaseDirectory | Out-Null
 $databasePath = Join-Path $databaseDirectory "auraly-pos.db"
@@ -137,6 +189,7 @@ if ($storageProcess.ExitCode -ne 0) {
     throw "Auraly POS could not initialize its local SQLite store."
 }
 
+Set-InstallProgress "Creando el acceso directo..." 84
 $desktop = [Environment]::GetFolderPath("DesktopDirectory")
 $shortcut = Join-Path $desktop "Auraly POS.lnk"
 $shell = New-Object -ComObject WScript.Shell
@@ -146,8 +199,24 @@ $link.WorkingDirectory = $install
 $link.Description = "Auraly POS"
 $link.Save()
 
+Set-InstallProgress "Instalación completada. Abriendo Auraly POS..." 100
 $installedApp = Join-Path $install "Auraly.Desktop.exe"
 Start-Process -FilePath explorer.exe -ArgumentList @("`"$installedApp`"")
+if (-not $Quiet) { Start-Sleep -Milliseconds 650 }
+}
+catch {
+    if (-not $Quiet) {
+        [void][Windows.Forms.MessageBox]::Show(
+            "No fue posible instalar Auraly POS. $($_.Exception.Message)",
+            "Auraly POS",
+            [Windows.Forms.MessageBoxButtons]::OK,
+            [Windows.Forms.MessageBoxIcon]::Error)
+    }
+    throw
+}
+finally {
+    if (-not $Quiet -and $null -ne $form) { $form.Close(); $form.Dispose() }
+}
 '@
 [IO.File]::WriteAllText($installScript, $install, $utf8)
 
@@ -158,7 +227,7 @@ SEDVersion=3
 [Options]
 PackagePurpose=InstallApp
 ShowInstallProgramWindow=0
-HideExtractAnimation=1
+HideExtractAnimation=0
 UseLongFileName=1
 InsideCompressed=0
 CAB_FixedSize=0
@@ -169,10 +238,10 @@ DisplayLicense=
 FinishMessage=
 TargetName=$setup
 FriendlyName=Auraly POS
-AppLaunched=powershell.exe -NoProfile -ExecutionPolicy Bypass -File install.ps1
+AppLaunched=powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File install.ps1
 PostInstallCmd=<None>
 AdminQuietInstCmd=
-UserQuietInstCmd=
+UserQuietInstCmd=powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File install.ps1 -Quiet
 SourceFiles=SourceFiles
 [Strings]
 FILE0="payload.zip"

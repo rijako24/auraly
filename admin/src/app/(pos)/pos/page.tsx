@@ -77,6 +77,7 @@ import { PosCashMovementDialog } from "./pos-cash-movement-dialog";
 import { PosCashClosureDialog } from "./pos-cash-closure-dialog";
 import { PosCustomerSearchDialog } from "./pos-customer-search-dialog";
 import { PosDocumentTypeDialog } from "./pos-document-type-dialog";
+import { PosDesktopUpdater } from "./pos-desktop-updater";
 import { PosLineEditorDialog } from "./pos-line-editor-dialog";
 import { PosExitMenuButton } from "./pos-exit-menu-button";
 import { PosInvoiceSearchDialog } from "./pos-invoice-search-dialog";
@@ -2173,6 +2174,7 @@ edgeCapable={edgeEnrollmentRequired}
 
   return (
     <main className="min-h-screen bg-[#eef3f3] text-slate-950 xl:h-screen xl:overflow-hidden">
+      <PosDesktopUpdater />
       <header className="flex min-h-14 items-center justify-between gap-4 bg-auraly-background px-5 py-2.5 text-auraly-text shadow-lg">
         <div className="flex items-center gap-2">
           <PosExitMenuButton />

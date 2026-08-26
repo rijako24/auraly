@@ -48,6 +48,14 @@ Después del login y de conocer el contexto operativo, Auraly comprueba si POS E
 - al abrir Auraly POS, el login determina el tenant y el enrolamiento autorizado asocia el dispositivo con sede, bodega y caja;
 - una actualización preserva la base SQLite y la identidad protegida del dispositivo.
 
+El instalador inicial muestra una interfaz gráfica de progreso y no una consola.
+La aplicación instalada consulta la misma metadata autenticada al iniciar, compara
+versiones y descarga una versión superior por el proxy local. El launcher valida
+el SHA-256 antes de aceptar el ejecutable. Cuando la descarga termina, el usuario
+elige si reinicia en ese momento o continúa trabajando; si continúa, la
+actualización se aplica automáticamente al cerrar el POS. La comprobación nunca
+interrumpe una venta ni acepta una URL de descarga distinta al endpoint canónico.
+
 El resumen de aprovisionamiento de una empresa usa exactamente la misma fuente del instalador. No existe un segundo endpoint ni una descarga binaria a través del proxy JSON del frontend.
 
 ## 3. Responsabilidades

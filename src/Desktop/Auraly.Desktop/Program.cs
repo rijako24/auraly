@@ -8,6 +8,7 @@ namespace Auraly.Desktop;
 
 internal sealed record DesktopConfiguration(
     string ApiUrl,
+    string Version = "0.0.0-dev",
     int WebPort = 47830,
     int EdgePort = 47831);
 
@@ -60,10 +61,11 @@ internal static class Program
             File.ReadAllText(path),
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
         if (value is null ||
-            !Uri.TryCreate(value.ApiUrl, UriKind.Absolute, out _))
+            !Uri.TryCreate(value.ApiUrl, UriKind.Absolute, out _) ||
+            !AuralyReleaseVersion.TryParse(value.Version, out _))
         {
             throw new InvalidOperationException(
-                "desktopsettings.json must contain a valid ApiUrl.");
+                "desktopsettings.json must contain a valid ApiUrl and Version.");
         }
 
         return value;

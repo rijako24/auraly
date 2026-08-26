@@ -179,6 +179,7 @@ try {
         $posArtifactPath = Join-Path $temporaryPath 'pos-installer'
         & (Join-Path $repoRoot 'scripts\Build-AuralyPosInstaller.ps1') `
             -ApiUrl $PosApiUrl `
+            -Version $Version `
             -Configuration Release `
             -ArtifactPath $posArtifactPath
         if ($LASTEXITCODE) { throw 'La construcción del instalador POS falló.' }

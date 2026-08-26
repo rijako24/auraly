@@ -63,7 +63,7 @@ internal sealed class AuralyDesktopApplicationContext : ApplicationContext
 
             splash.SetStage("Abriendo Auraly POS", 2);
             var target = $"{webOrigin}/pos-launch#edgeToken={Uri.EscapeDataString(sessionToken)}";
-            var window = new AuralyPosForm(root, data);
+            var window = new AuralyPosForm(root, data, webOrigin, configuration, shutdown);
             window.FormClosed += (_, _) =>
             {
                 shutdown.Cancel();
@@ -137,10 +137,23 @@ internal sealed class AuralyPosForm : Form
 {
     private readonly string data;
     private readonly WebView2 browser = new() { Dock = DockStyle.Fill };
+    private readonly AuralyDesktopUpdater updater;
 
-    public AuralyPosForm(string root, string data)
+    public AuralyPosForm(
+        string root,
+        string data,
+        string webOrigin,
+        DesktopConfiguration configuration,
+        CancellationTokenSource shutdown)
     {
         this.data = data;
+        updater = new AuralyDesktopUpdater(
+            browser,
+            webOrigin,
+            configuration.Version,
+            data,
+            shutdown);
+        FormClosing += (_, _) => updater.InstallPendingWhenClosing();
         Text = "Auraly Commerce - Auraly POS";
         Icon = AuralyDesktopVisuals.LoadIcon(root);
         StartPosition = FormStartPosition.CenterScreen;
@@ -170,6 +183,7 @@ internal sealed class AuralyPosForm : Form
         browser.CoreWebView2.Settings.AreDevToolsEnabled = false;
         browser.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = false;
         browser.CoreWebView2.Settings.IsStatusBarEnabled = false;
+        updater.Start();
         browser.CoreWebView2.Navigate(target);
     }
 
@@ -177,6 +191,7 @@ internal sealed class AuralyPosForm : Form
     {
         if (disposing)
         {
+            updater.Stop();
             browser.Dispose();
             Icon?.Dispose();
         }
