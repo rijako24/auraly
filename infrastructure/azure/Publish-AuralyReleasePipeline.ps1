@@ -33,6 +33,7 @@ $configuration = if ($Environment -eq 'dev') {
         Function = 'func-auraly-dev-w5usmo6w'
         Api = 'api-auraly-dev-w5usmo6w'
         Admin = 'admin-auraly-dev-w5usmo6w'
+        AppConfiguration = 'cfg-auraly-dev-w5usmo6w'
     }
 }
 else {
@@ -44,6 +45,7 @@ else {
         Function = 'func-auraly-prod-7sov4nxc'
         Api = 'api-auraly-prod-7sov4nxc'
         Admin = 'admin-auraly-prod-7sov4nxc'
+        AppConfiguration = 'cfg-auraly-prod-7sov4nxc'
     }
 }
 
@@ -288,6 +290,15 @@ function Publish-Function {
                 --settings "WhatsApp__Webhook__VerifyToken=$($env:CJ_WHATSAPP_VERIFY_TOKEN)" `
                 --output none
             Assert-LastExitCode 'No se pudo configurar el verify token de Meta para CJ'
+            & az deployment group create `
+                --name "auraly-$Environment-whatsapp-$ReleaseVersion" `
+                --resource-group $configuration.ResourceGroup `
+                --template-file (Join-Path $PSScriptRoot 'whatsapp-config.bicep') `
+                --parameters `
+                    "appConfigurationName=$($configuration.AppConfiguration)" `
+                    "verifyToken=$($env:CJ_WHATSAPP_VERIFY_TOKEN)" `
+                --output none
+            Assert-LastExitCode 'No se pudo sincronizar el verify token en Azure App Configuration'
         }
     }
     finally {
