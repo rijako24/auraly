@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Auraly.Application.Sales;
 using Auraly.Contracts.Sales;
 using Auraly.Infrastructure.Persistence;
 using Microsoft.Extensions.DependencyInjection;
@@ -94,6 +95,45 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
         var product = Assert.Single(products ?? []);
         Assert.Equal(fixture.ProductId, Guid.Parse(product.Key));
         Assert.Equal(11_900m, product.NetSales);
+
+        using (var scope = fixture.CreateScope())
+        {
+            var store = scope.ServiceProvider.GetRequiredService<ISalesReportingStore>();
+            var directPayments = await store.GetBreakdownAsync(
+                new SalesReportingUserIdentity(
+                    fixture.UserId, fixture.TenantId, fixture.BusinessId,
+                    new HashSet<string> { SalesReportingPermissionCodes.Read }),
+                new SalesReportFilter(
+                    new DateOnly(2026, 7, 27), new DateOnly(2026, 7, 27),
+                    ProductId: fixture.ProductId),
+                SalesReportingDimensions.PaymentMethod,
+                100,
+                CancellationToken.None);
+            Assert.Single(directPayments);
+        }
+
+        using var paymentsResponse = await reporting.GetAsync(
+            $"/api/commerce/v1/sales-reports/breakdown?from=2026-07-27&to=2026-07-27&dimension=payment-method&productId={fixture.ProductId:D}");
+        Assert.True(paymentsResponse.StatusCode == HttpStatusCode.OK,
+            await paymentsResponse.Content.ReadAsStringAsync());
+        var payments = await paymentsResponse.Content.ReadFromJsonAsync<SalesReportBreakdownRow[]>();
+        var cash = Assert.Single(payments ?? []);
+        Assert.Equal("Cash", cash.Key);
+        Assert.Equal(11_900m, cash.NetSales);
+
+        using var taxesResponse = await reporting.GetAsync(
+            $"/api/commerce/v1/sales-reports/breakdown?from=2026-07-27&to=2026-07-27&dimension=tax&supplierId={fixture.SupplierId:D}");
+        Assert.Equal(HttpStatusCode.OK, taxesResponse.StatusCode);
+        var taxes = await taxesResponse.Content.ReadFromJsonAsync<SalesReportBreakdownRow[]>();
+        var tax = Assert.Single(taxes ?? []);
+        Assert.Equal(10_000m, tax.NetUntaxedSales);
+        Assert.Equal(1_900m, tax.Tax);
+        Assert.Equal(11_900m, tax.NetSales);
+
+        using var excludedResponse = await reporting.GetAsync(
+            $"/api/commerce/v1/sales-reports/breakdown?from=2026-07-27&to=2026-07-27&dimension=payment-method&productId={Guid.NewGuid():D}");
+        Assert.Equal(HttpStatusCode.OK, excludedResponse.StatusCode);
+        Assert.Empty(await excludedResponse.Content.ReadFromJsonAsync<SalesReportBreakdownRow[]>() ?? []);
 
         using var documentsResponse = await reporting.GetAsync(
             $"/api/commerce/v1/sales-reports/documents?from=2026-07-27&to=2026-07-27&page=1&pageSize=25&supplierId={fixture.SupplierId:D}");

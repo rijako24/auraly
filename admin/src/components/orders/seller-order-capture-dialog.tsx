@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { loadSellerCatalog, loadSellerDraft, queueSellerOrder, removeSellerDraft, saveSellerCatalog, saveSellerDraft } from "@/lib/seller-order-offline-store";
+import { loadSellerCatalog, loadSellerDraft, queueSellerOrder, removeSellerDraft, saveSellerCatalog, saveSellerDraft, saveSellerOrderSnapshot } from "@/lib/seller-order-offline-store";
 import type { SalesRouteDetail, SalesRouteStop } from "@/services/api/routes";
 import { sellerOrdersApi, type SellerCatalogItem, type SellerOrderRequest } from "@/services/api/seller-orders";
 import type { CommerceOrderDetail } from "@/services/orders/commerce-orders-client";
@@ -101,6 +101,7 @@ export function SellerOrderCaptureDialog({ businessId, warehouseId, route, stop,
     try {
       const request: SellerOrderRequest = { businessId, warehouseId, customerId: stop.customerId, partySiteId: stop.partySiteId, routeId: route?.routeId ?? null, routeStopId: route ? stop.routeStopId : null, capturedOffline: !online, notes: notes || null, idempotencyKey: crypto.randomUUID(), lines: selected.map(({ item, quantity }) => ({ productId: item.productId, quantity })) };
       const result = editing ? await sellerOrdersApi.update(editing.orderId,{customerId:stop.customerId,notes:request.notes,idempotencyKey:crypto.randomUUID(),lines:request.lines}) : online ? await sellerOrdersApi.create(request) : await queueSellerOrder(request, route, localDateKey());
+      if (!editing) await saveSellerOrderSnapshot({idempotencyKey:request.idempotencyKey,orderId:result.orderId,orderNumber:result.orderNumber,businessId,warehouseId,routeId:request.routeId,customerName:stop.customerName,total:online?result.total:total,lineCount:selected.length,operationalDate:localDateKey(),createdAt:new Date().toISOString(),status:result.status,synchronized:online});
       await removeSellerDraft(key);
       toast.success(result.requiresReview ? `${result.orderNumber} quedó en revisión` : editing?`${result.orderNumber} actualizado`:`${result.orderNumber} guardado`);
       await onCreated(result.orderId);

@@ -43,7 +43,7 @@ if (!layout.includes("#auraly-standalone-boot") ||
   throw new Error("The first standalone DOM frame must force the light launch screen.");
 
 const worker = await readFile(path.join(root, "public", "app-sw.js"), "utf8");
-if (!worker.includes('VERSION = "auraly-pwa-v13"') ||
+if (!worker.includes('VERSION = "auraly-pwa-v14"') ||
     /APP_SHELL\s*=\s*\[[^\]]*"\/dashboard"/.test(worker))
   throw new Error("The current worker must not pre-cache an unauthenticated dashboard response.");
 if (worker.includes("self.skipWaiting()") || worker.includes("self.clients.claim()"))
@@ -51,13 +51,29 @@ if (worker.includes("self.skipWaiting()") || worker.includes("self.clients.claim
 if (!worker.includes("!response.redirected") ||
     !worker.includes("responseUrl.pathname === url.pathname"))
   throw new Error("Authenticated navigation caches must reject redirected login responses.");
+if (!worker.includes('cacheDocumentAndAssets("/login"') ||
+    !worker.includes('url.pathname.startsWith("/_next/static/")'))
+  throw new Error("The offline login shell must include its versioned Next.js design assets.");
 const offlineShell = await readFile(path.join(root, "src", "lib", "offline-app-shell.ts"), "utf8");
-if (!offlineShell.includes('RUNTIME_CACHE = "auraly-pwa-v13-runtime"'))
+if (!offlineShell.includes('RUNTIME_CACHE = "auraly-pwa-v14-runtime"'))
   throw new Error("The offline shell writer must use the active service-worker runtime cache.");
+if (!offlineShell.includes("linkedStaticAssets(html)") ||
+    !offlineShell.includes("await cache.put(assetRequest, assetResponse)") ||
+    !offlineShell.includes("prepareCurrentAppShell"))
+  throw new Error("Preparing a seller shell must persist the CSS and chunks required to render it.");
 const nextStaticStrategy = worker.match(/if \(url\.pathname\.startsWith\("\/_next\/static\/"\)\) \{([\s\S]*?)\n  \}/)?.[1] ?? "";
 if (!nextStaticStrategy.includes("fetch(request).then") ||
     !nextStaticStrategy.includes("caches.match(request)") ||
     nextStaticStrategy.indexOf("fetch(request).then") > nextStaticStrategy.indexOf("caches.match(request)"))
   throw new Error("Next.js chunks must use network-first caching so a deployment cannot reuse stale POS code.");
+
+const offlineDatabase = await readFile(path.join(root, "src", "lib", "sales-offline-database.ts"), "utf8");
+const sellerOfflineStore = await readFile(path.join(root, "src", "lib", "seller-order-offline-store.ts"), "utf8");
+const sellerOrdersPanel = await readFile(path.join(root, "src", "components", "orders", "seller-route-orders-panel.tsx"), "utf8");
+if (!offlineDatabase.includes('"seller-order-snapshots"') ||
+    !sellerOfflineStore.includes("saveSellerOrderSnapshot") ||
+    !sellerOfflineStore.includes("loadSellerOrderSnapshots") ||
+    !sellerOrdersPanel.includes("Por sincronizar"))
+  throw new Error("Seller orders must be rendered from local snapshots before server reconciliation.");
 
 console.log(`Verified ${expectedScreens.length} opaque iOS launch screens and ${manifest.icons.length} Android PWA icons.`);

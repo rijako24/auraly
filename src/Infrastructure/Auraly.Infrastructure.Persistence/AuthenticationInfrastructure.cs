@@ -235,15 +235,16 @@ public sealed class SqlAuthenticationSessionStore(
         await ExpireStaleOfflineLeaseAsync(
             connection, transaction, command.User.TenantId, command.User.UserId,
             command.Now, cancellationToken);
-        // A new successful login takes over the user's previous session. This is
-        // intentional for POS and browser recovery: the previous token and lease
-        // are revoked immediately and remain auditable.
+        // An online login takes over only the previous session of this durable
+        // client. Other browsers/devices keep their own independently revocable
+        // session. The offline lease remains exclusive and is still revoked by
+        // an authenticated online takeover.
         await RevokeActiveOfflineLeaseAsync(
             connection, transaction, command.User.TenantId,
             command.User.UserId, command.Now, cancellationToken);
         await RevokeActiveSessionsAsync(
             connection, transaction, command.User.TenantId,
-            command.User.UserId, command.Now, cancellationToken);
+            command.User.UserId, command.ClientId, command.Now, cancellationToken);
         await RecordSuccessfulLoginAsync(connection, transaction, command, cancellationToken);
         var identity = new AuthenticationSessionIdentity(
             ids.NewId(), command.User.UserId, command.User.TenantId, command.ClientId);
@@ -306,16 +307,21 @@ public sealed class SqlAuthenticationSessionStore(
             throw new AuthenticationDeniedException(
                 "The authentication session is inactive or expired.");
         }
-        if (state.ClientId != command.Identity.ClientId ||
-            !CryptographicOperations.FixedTimeEquals(
-                state.RefreshTokenHash, command.CurrentRefreshTokenHash))
+        if (state.ClientId != command.Identity.ClientId)
         {
             await RevokeByIdAsync(
                 connection, transaction, command.Identity.AuthenticationSessionId,
-                "RefreshTokenMismatch", command.Now, cancellationToken);
+                "RefreshClientMismatch", command.Now, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             throw new AuthenticationDeniedException(
-                "Refresh token reuse or client mismatch was detected.");
+                "The refresh token client does not match the active session.");
+        }
+        if (!CryptographicOperations.FixedTimeEquals(
+                state.RefreshTokenHash, command.CurrentRefreshTokenHash))
+        {
+            await transaction.CommitAsync(cancellationToken);
+            throw new AuthenticationSessionConflictException(
+                "The refresh token was already rotated by another request.");
         }
 
         await using var update = new SqlCommand("""
@@ -582,6 +588,7 @@ public sealed class SqlAuthenticationSessionStore(
         SqlTransaction transaction,
         Guid tenantId,
         Guid userId,
+        Guid clientId,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
@@ -590,10 +597,12 @@ public sealed class SqlAuthenticationSessionStore(
             SET Status=N'Revoked',RevokedAt=@Now,
                 RevocationReason=N'ReplacedByNewLogin',
                 LastSeenAt=@Now,UpdatedAt=@Now
-            WHERE TenantId=@TenantId AND UserId=@UserId AND Status=N'Active';
+            WHERE TenantId=@TenantId AND UserId=@UserId
+              AND ClientId=@ClientId AND Status=N'Active';
             """, connection, transaction);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@UserId", userId);
+        command.Parameters.AddWithValue("@ClientId", clientId);
         command.Parameters.AddWithValue("@Now", now);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

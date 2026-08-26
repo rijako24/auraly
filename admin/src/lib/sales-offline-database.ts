@@ -1,10 +1,11 @@
 export const SALES_OFFLINE_DATABASE = "auraly-sales-pwa";
-export const SALES_OFFLINE_DATABASE_VERSION = 4;
+export const SALES_OFFLINE_DATABASE_VERSION = 5;
 
 const stores: Array<[string, IDBObjectStoreParameters]> = [
   ["seller-catalog", { keyPath: "key" }],
   ["seller-order-drafts", { keyPath: "key" }],
   ["seller-order-outbox", { keyPath: "id" }],
+  ["seller-order-snapshots", { keyPath: "idempotencyKey" }],
   ["daily-route-snapshots", { keyPath: "key" }],
   ["route-visit-outbox", { keyPath: "idempotencyKey" }],
   ["seller-offline-preparations", { keyPath: "key" }],

@@ -128,7 +128,8 @@ function Test-Release {
     foreach ($requiredName in @(
         "auraly-database-$ReleaseVersion.dacpac",
         "auraly-function-$ReleaseVersion.zip",
-        "auraly-api-$ReleaseVersion.zip")) {
+        "auraly-api-$ReleaseVersion.zip",
+        "auraly-pos-$ReleaseVersion.exe")) {
         if (-not ($manifest.artifacts.name -contains $requiredName)) {
             throw "El release no contiene $requiredName."
         }
@@ -316,8 +317,13 @@ function Publish-PosInstallerIfPresent {
     $installerName = "auraly-pos-$ReleaseVersion.exe"
     $installerPath = Join-Path $releasePath $installerName
     if (-not (Test-Path -LiteralPath $installerPath)) {
-        Write-Information 'El release no contiene instalador POS; se omite su publicacion.' -InformationAction Continue
-        return
+        throw "El release no contiene el instalador POS $installerName."
+    }
+    $installerArtifact = $manifest.artifacts |
+        Where-Object name -EQ $installerName |
+        Select-Object -First 1
+    if (-not $installerArtifact -or "$($installerArtifact.sha256)" -notmatch '^[0-9A-Fa-f]{64}$') {
+        throw "El manifiesto no contiene un SHA-256 valido para $installerName."
     }
     & az storage blob upload `
         --account-name $configuration.Storage `
@@ -328,6 +334,15 @@ function Publish-PosInstallerIfPresent {
         --overwrite true `
         --output none
     Assert-LastExitCode 'No se pudo publicar el instalador POS'
+    & az webapp config appsettings set `
+        --resource-group $configuration.ResourceGroup `
+        --name $configuration.Api `
+        --settings `
+            "PosInstaller__Version=$ReleaseVersion" `
+            "PosInstaller__Sha256=$($installerArtifact.sha256)" `
+        --output none
+    Assert-LastExitCode 'No se pudo registrar la version e integridad del instalador POS en API'
+    return $installerArtifact
 }
 
 $manifest = Test-Release
@@ -335,7 +350,7 @@ Write-Information "Release $ReleaseVersion verificado; commit $($manifest.commit
 Publish-Database
 Publish-Function
 Publish-Api
-Publish-PosInstallerIfPresent
+$installerMetadata = Publish-PosInstallerIfPresent
 
 $apiStatus = Wait-HttpHealthy "https://$($configuration.Api).azurewebsites.net/health"
 $functionStatus = Wait-HttpHealthy "https://$($configuration.Function).azurewebsites.net/api/health"
@@ -351,7 +366,21 @@ $functionVersion = (& az functionapp config appsettings list `
     --query "[?name=='Release__Version'].value | [0]" `
     --output tsv).Trim()
 Assert-LastExitCode 'No se pudo validar la version de Function'
-if ($apiVersion -ne $ReleaseVersion -or $functionVersion -ne $ReleaseVersion) {
+$installerVersion = (& az webapp config appsettings list `
+    --resource-group $configuration.ResourceGroup `
+    --name $configuration.Api `
+    --query "[?name=='PosInstaller__Version'].value | [0]" `
+    --output tsv).Trim()
+Assert-LastExitCode 'No se pudo validar la version remota del instalador POS'
+$installerSha256 = (& az webapp config appsettings list `
+    --resource-group $configuration.ResourceGroup `
+    --name $configuration.Api `
+    --query "[?name=='PosInstaller__Sha256'].value | [0]" `
+    --output tsv).Trim()
+Assert-LastExitCode 'No se pudo validar la integridad remota del instalador POS'
+if ($apiVersion -ne $ReleaseVersion -or $functionVersion -ne $ReleaseVersion -or
+    $installerVersion -ne $ReleaseVersion -or
+    $installerSha256 -ne "$($installerMetadata.sha256)") {
     throw "Version remota inconsistente. API=$apiVersion Function=$functionVersion."
 }
 

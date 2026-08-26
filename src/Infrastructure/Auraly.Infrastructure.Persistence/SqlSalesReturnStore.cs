@@ -239,21 +239,23 @@ public sealed class SqlSalesReturnStore(
         const string sql = """
             SELECT l.ProductId,l.Description,l.Quantity,l.UnitPrice,l.DiscountAmount,
                    l.TaxCode,l.TaxRate,l.UntaxedAmount,l.TaxAmount,l.LineTotal,
-                   COALESCE(SUM(r.Quantity),0),COALESCE(SUM(r.DiscountAmount),0),
-                   COALESCE(SUM(r.UntaxedAmount),0),COALESCE(SUM(r.TaxAmount),0),
-                   COALESCE(SUM(r.LineTotal),0),
+                   COALESCE(returned.Quantity,0),COALESCE(returned.DiscountAmount,0),
+                   COALESCE(returned.UntaxedAmount,0),COALESCE(returned.TaxAmount,0),
+                   COALESCE(returned.LineTotal,0),
                    COALESCE(l.UnitCostSnapshot,(SELECT TOP(1) m.RecognizedUnitCost
                      FROM dbo.InventoryMovements m
                      WHERE m.DocumentId=l.DocumentId AND m.LineNumber=l.LineNumber
                        AND m.DocumentType IN(N'SalesInvoice',N'SalesReceipt')
                        AND m.MovementType=N'Sale'),0)
             FROM dbo.SalesDocumentLines l WITH (UPDLOCK,HOLDLOCK)
-            LEFT JOIN dbo.SalesReturnLines r WITH (UPDLOCK,HOLDLOCK)
-              ON r.OriginalDocumentId=l.DocumentId AND r.OriginalLineNumber=l.LineNumber
+            OUTER APPLY (SELECT SUM(r.Quantity) Quantity,
+              SUM(r.DiscountAmount) DiscountAmount,SUM(r.UntaxedAmount) UntaxedAmount,
+              SUM(r.TaxAmount) TaxAmount,SUM(r.LineTotal) LineTotal
+              FROM dbo.SalesReturnLines r WITH (UPDLOCK,HOLDLOCK)
+              WHERE r.OriginalDocumentId=l.DocumentId
+                AND r.OriginalLineNumber=l.LineNumber) returned
             WHERE l.DocumentId=@DocumentId AND l.LineNumber=@LineNumber
-            GROUP BY l.DocumentId,l.LineNumber,l.ProductId,l.Description,l.Quantity,
-                     l.UnitPrice,l.DiscountAmount,l.TaxCode,l.TaxRate,l.UntaxedAmount,
-                     l.TaxAmount,l.LineTotal,l.UnitCostSnapshot;
+            ;
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@DocumentId", originalDocumentId);

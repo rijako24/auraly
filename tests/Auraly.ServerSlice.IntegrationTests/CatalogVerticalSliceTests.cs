@@ -646,8 +646,9 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             barcodes,
             [new ProductIdentifierInput("Alternate", $"ALT-{Guid.NewGuid():N}")],
             prices.Select(price => price with { CostBasisAmount = price.CostBasisAmount ?? 8_000m, TargetMarginPercent = price.TargetMarginPercent ?? 20m }).ToArray(),
-            [new SupplierCostInput(Guid.Empty, $"SUP-{Guid.NewGuid():N}", "Supplier", null, 8_000m)],
-            null);
+            [new SupplierCostInput(fixture.SupplierId, "900999001", "Proveedor E2E", null, 8_000m)],
+            null,
+            taxProfileId);
 
     private async Task ExecuteAsync(string sql, params SqlParameter[] parameters)
     {

@@ -17,7 +17,7 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
     private const string Password = "Auraly-Test-Password-2026!";
 
     [Fact]
-    public async Task Login_creates_one_hashed_session_shared_by_browser_tabs()
+    public async Task Login_creates_hashed_session_shared_by_tabs_and_does_not_revoke_another_client()
     {
         var user = await CreatePasswordUserAsync("auth-login");
         var clientId = Guid.NewGuid();
@@ -56,19 +56,23 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
             option.BusinessId == fixture.BusinessId &&
             option.WarehouseId == fixture.WarehouseId);
 
+        var secondClientId = Guid.NewGuid();
         using var replacementClient = CreateLoginRequest(
-            user.Username, Password, Guid.NewGuid());
+            user.Username, Password, secondClientId);
         using var replacement = await fixture.CreateClient().SendAsync(replacementClient);
         Assert.Equal(HttpStatusCode.OK, replacement.StatusCode);
         var replacementLogin = await ReadAuthenticationResponseAsync(replacement);
-        using var revokedOldToken = AuthenticatedClient(login, clientId);
-        using var oldTokenResponse = await revokedOldToken.GetAsync("/api/v1/auth/me");
-        Assert.Equal(HttpStatusCode.Unauthorized, oldTokenResponse.StatusCode);
-        Assert.Equal(1, await CountActiveSessionsAsync(user.UserId));
+        using var originalClient = AuthenticatedClient(login, clientId);
+        using var originalResponse = await originalClient.GetAsync("/api/v1/auth/me");
+        Assert.Equal(HttpStatusCode.OK, originalResponse.StatusCode);
+        using var secondAuthenticated = AuthenticatedClient(replacementLogin, secondClientId);
+        using var secondResponse = await secondAuthenticated.GetAsync("/api/v1/auth/me");
+        Assert.Equal(HttpStatusCode.OK, secondResponse.StatusCode);
+        Assert.Equal(2, await CountActiveSessionsAsync(user.UserId));
     }
 
     [Fact]
-    public async Task Refresh_rotates_the_secret_and_reuse_revokes_the_session()
+    public async Task Refresh_rotates_the_secret_and_stale_parallel_refresh_does_not_revoke_the_current_session()
     {
         var user = await CreatePasswordUserAsync("auth-refresh");
         var clientId = Guid.NewGuid();
@@ -83,12 +87,12 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
 
         using var replayRequest = CreateRefreshRequest(first, clientId);
         using var replay = await fixture.CreateClient().SendAsync(replayRequest);
-        Assert.Equal(HttpStatusCode.Unauthorized, replay.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, replay.StatusCode);
 
         using var authenticated = AuthenticatedClient(second, clientId);
         using var rejected = await authenticated.GetAsync("/api/v1/auth/me");
-        Assert.Equal(HttpStatusCode.Unauthorized, rejected.StatusCode);
-        Assert.Equal("Revoked", (await ReadSessionAsync(
+        Assert.Equal(HttpStatusCode.OK, rejected.StatusCode);
+        Assert.Equal("Active", (await ReadSessionAsync(
             SessionId(second.AccessToken))).Status);
     }
 
@@ -130,7 +134,7 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task New_login_closes_the_previous_open_work_session()
+    public async Task New_login_from_another_client_keeps_the_open_work_session()
     {
         var user = await CreatePasswordUserAsync("auth-login-replacement");
         var firstClientId = Guid.NewGuid();
@@ -146,13 +150,31 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
         var replacement = await LoginAsync(user.Username, Guid.NewGuid());
 
         Assert.NotEqual(SessionId(first.AccessToken), SessionId(replacement.AccessToken));
-        Assert.Equal(0, await CountOpenWorkSessionsAsync(user.UserId));
-        Assert.Equal(1, await CountWorkSessionClosuresAsync(user.UserId));
+        Assert.Equal(1, await CountOpenWorkSessionsAsync(user.UserId));
+        Assert.Equal(0, await CountWorkSessionClosuresAsync(user.UserId));
+        Assert.Equal(2, await CountActiveSessionsAsync(user.UserId));
+    }
+
+    [Fact]
+    public async Task Login_from_the_same_client_replaces_only_that_client_session()
+    {
+        var user = await CreatePasswordUserAsync("auth-same-client");
+        var clientId = Guid.NewGuid();
+        var first = await LoginAsync(user.Username, clientId);
+        var second = await LoginAsync(user.Username, clientId);
+
+        using var oldClient = AuthenticatedClient(first, clientId);
+        using var oldResponse = await oldClient.GetAsync("/api/v1/auth/me");
+        Assert.Equal(HttpStatusCode.Unauthorized, oldResponse.StatusCode);
+
+        using var currentClient = AuthenticatedClient(second, clientId);
+        using var currentResponse = await currentClient.GetAsync("/api/v1/auth/me");
+        Assert.Equal(HttpStatusCode.OK, currentResponse.StatusCode);
         Assert.Equal(1, await CountActiveSessionsAsync(user.UserId));
     }
 
     [Fact]
-    public async Task Concurrent_logins_have_exactly_one_winner()
+    public async Task Concurrent_logins_from_distinct_clients_both_remain_active()
     {
         var user = await CreatePasswordUserAsync("auth-concurrent");
         using var first = CreateLoginRequest(user.Username, Password, Guid.NewGuid());
@@ -166,7 +188,7 @@ public sealed class AuthenticationSessionApiTests(ServerSliceFixture fixture)
         try
         {
             Assert.All(responses, response => Assert.Equal(HttpStatusCode.OK, response.StatusCode));
-            Assert.Equal(1, await CountActiveSessionsAsync(user.UserId));
+            Assert.Equal(2, await CountActiveSessionsAsync(user.UserId));
         }
         finally
         {

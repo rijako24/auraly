@@ -43,8 +43,6 @@ public static class AuthenticationApi
             HttpContext context,
             AuthenticationLoginRequest request,
             AuthenticationService service,
-            IAuthenticationTokenIssuer tokenIssuer,
-            WorkSessionService workSessions,
             CancellationToken cancellationToken) =>
             await Handle(async () =>
             {
@@ -54,12 +52,6 @@ public static class AuthenticationApi
                     context.Request.Headers.UserAgent.ToString(),
                     context.Connection.RemoteIpAddress?.ToString(),
                     context.TraceIdentifier,
-                    cancellationToken);
-                var token = tokenIssuer.ParseExpiredAccessToken(response.AccessToken);
-                await workSessions.CloseForLoginAsync(
-                    token.UserId,
-                    token.TenantId,
-                    token.AuthenticationSessionId,
                     cancellationToken);
                 return Results.Ok(response);
             }));

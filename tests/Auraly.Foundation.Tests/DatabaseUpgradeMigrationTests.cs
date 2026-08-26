@@ -127,6 +127,42 @@ public sealed class DatabaseUpgradeMigrationTests
             "La migración de soportes debe ejecutarse antes del DeployReport.");
     }
 
+    [Fact]
+    public void Release_pipeline_publishes_installer_version_and_manifest_hash_atomically()
+    {
+        var pipeline = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "infrastructure", "azure",
+            "Publish-AuralyReleasePipeline.ps1"));
+
+        Assert.Contains("auraly-pos-$ReleaseVersion.exe", pipeline,
+            StringComparison.Ordinal);
+        Assert.Contains("PosInstaller__Version=$ReleaseVersion", pipeline,
+            StringComparison.Ordinal);
+        Assert.Contains("PosInstaller__Sha256=$($installerArtifact.sha256)", pipeline,
+            StringComparison.Ordinal);
+        Assert.Contains("$installerVersion -ne $ReleaseVersion", pipeline,
+            StringComparison.Ordinal);
+        Assert.Contains("$installerSha256 -ne \"$($installerMetadata.sha256)\"", pipeline,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Authentication_session_upgrade_removes_the_legacy_global_unique_index()
+    {
+        var root = FindRepositoryRoot();
+        var migration = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "Migrations",
+            "20260826_AllowAuthenticationSessionsPerClient.sql"));
+        var preDeployment = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "PreDeployment.sql"));
+
+        Assert.Contains("UX_AuthenticationSessions_User_Active", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("DROP INDEX", migration, StringComparison.Ordinal);
+        Assert.Contains("20260826_AllowAuthenticationSessionsPerClient.sql", preDeployment,
+            StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

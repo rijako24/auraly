@@ -1,10 +1,33 @@
-const VERSION = "auraly-pwa-v13";
+const VERSION = "auraly-pwa-v14";
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
-const APP_SHELL = ["/login", "/app.webmanifest", "/brand/auraly-app-icon-192-v4.png", "/brand/auraly-app-icon-512-v4.png", "/brand/auraly-ios-icon-512-v4.png", "/brand/auraly-maskable-512-v4.png"];
+const APP_SHELL = ["/app.webmanifest", "/brand/auraly-app-icon-192-v4.png", "/brand/auraly-app-icon-512-v4.png", "/brand/auraly-ios-icon-512-v4.png", "/brand/auraly-maskable-512-v4.png"];
+
+function linkedStaticAssets(html) {
+  const paths = new Set();
+  for (const match of html.matchAll(/(?:src|href)=["']([^"']+)["']/g)) {
+    const url = new URL(match[1], self.location.origin);
+    if (url.origin === self.location.origin &&
+        (url.pathname.startsWith("/_next/static/") || url.pathname.startsWith("/brand/")))
+      paths.add(url.pathname + url.search);
+  }
+  return [...paths];
+}
+
+async function cacheDocumentAndAssets(path, cache) {
+  const request = new Request(path, { credentials: "same-origin" });
+  const response = await fetch(request, { cache: "reload" });
+  if (!response.ok || response.redirected) throw new Error(`Cannot prepare ${path} for offline use.`);
+  const html = await response.clone().text();
+  await cache.put(request, response.clone());
+  await cache.addAll(linkedStaticAssets(html));
+}
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.addAll(APP_SHELL)));
+  event.waitUntil(caches.open(SHELL_CACHE).then(async (cache) => {
+    await cache.addAll(APP_SHELL);
+    await cacheDocumentAndAssets("/login", cache);
+  }));
 });
 
 self.addEventListener("activate", (event) => {

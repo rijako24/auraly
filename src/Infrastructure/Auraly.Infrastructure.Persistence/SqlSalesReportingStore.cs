@@ -314,9 +314,6 @@ public sealed class SqlSalesReportingStore(
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         filter=await ConstrainAsync(connection,user,filter,cancellationToken);
-        if((dimension is SalesReportingDimensions.PaymentMethod or SalesReportingDimensions.Tax) &&
-            (filter.SellerId is not null||filter.SupplierId is not null))
-            throw new SalesReportingForbiddenException("This breakdown is unavailable for a self-scoped reporting identity.");
         if ((dimension is SalesReportingDimensions.Customer or SalesReportingDimensions.Seller or
             SalesReportingDimensions.Supplier or SalesReportingDimensions.Product or
             SalesReportingDimensions.Category or SalesReportingDimensions.Warehouse) &&
@@ -611,10 +608,19 @@ public sealed class SqlSalesReportingStore(
           WITH grouped AS(SELECT p.MethodCode [Key],p.MethodCode Label,CONVERT(bigint,COUNT(DISTINCT p.SourceDocumentId)) Documents,
             SUM(p.Amount) Net FROM reporting.SalesReportPaymentFacts p
             WHERE p.TenantId=@TenantId AND p.BusinessId=@BusinessId AND p.BusinessLocalDate BETWEEN @From AND @To
+              AND EXISTS(SELECT 1 FROM reporting.SalesReportLineFacts f
+                INNER JOIN reporting.SalesReportDocuments d ON d.DocumentId=f.OriginalSaleDocumentId
+                WHERE f.TenantId=p.TenantId AND f.BusinessId=p.BusinessId AND f.SourceDocumentId=p.SourceDocumentId
+                  AND (@CustomerId IS NULL OR f.CustomerId=@CustomerId) AND (@SellerId IS NULL OR f.SellerId=@SellerId)
+                  AND (@SupplierId IS NULL OR f.SupplierId=@SupplierId) AND (@ProductId IS NULL OR f.ProductId=@ProductId)
+                  AND (@CategoryId IS NULL OR f.CategoryId=@CategoryId) AND (@WarehouseId IS NULL OR f.WarehouseId=@WarehouseId)
+                  AND (@DocumentType IS NULL OR d.DocumentType=@DocumentType))
             GROUP BY p.MethodCode)
-          SELECT TOP(@Limit) [Key],Label,Documents,CAST(0 AS decimal(19,4)),Net,0,0,Net,0,Net,0,Net,100,
-            CASE WHEN SUM(Net) OVER()=0 THEN 0 ELSE Net/SUM(Net) OVER()*100 END
-          FROM grouped ORDER BY Net DESC;
+          SELECT TOP(@Limit) g.[Key],g.Label,g.Documents,CAST(0 AS decimal(19,6)),g.Net,
+            CAST(0 AS decimal(19,4)),CAST(0 AS decimal(19,4)),g.Net,CAST(0 AS decimal(19,4)),g.Net,
+            CAST(0 AS decimal(19,4)),g.Net,CAST(100 AS decimal(19,4)),
+            CASE WHEN SUM(g.Net) OVER()=0 THEN 0 ELSE g.Net/SUM(g.Net) OVER()*100 END
+          FROM grouped g ORDER BY g.Net DESC;
           """,connection);AddFilter(command,user,filter);command.Parameters.AddWithValue("@Limit",limit);
         return await ReadBreakdownRowsAsync(command,token);
     }
@@ -627,10 +633,20 @@ public sealed class SqlSalesReportingStore(
             CONCAT(t.TaxCode,N' · ',FORMAT(t.TaxRate*100,N'0.##'),N'%') Label,
             CONVERT(bigint,COUNT(DISTINCT t.SourceDocumentId)) Documents,SUM(t.TaxableAmount) Base,SUM(t.TaxAmount) Tax,SUM(t.TotalAmount) Net
             FROM reporting.SalesReportTaxFacts t WHERE t.TenantId=@TenantId AND t.BusinessId=@BusinessId
-              AND t.BusinessLocalDate BETWEEN @From AND @To GROUP BY t.TaxCode,t.TaxRate)
-          SELECT TOP(@Limit) [Key],Label,Documents,CAST(0 AS decimal(19,4)),Base,0,0,Base,Tax,Net,0,Base,100,
-            CASE WHEN SUM(Net) OVER()=0 THEN 0 ELSE Net/SUM(Net) OVER()*100 END
-          FROM grouped ORDER BY Net DESC;
+              AND t.BusinessLocalDate BETWEEN @From AND @To
+              AND EXISTS(SELECT 1 FROM reporting.SalesReportLineFacts f
+                INNER JOIN reporting.SalesReportDocuments d ON d.DocumentId=f.OriginalSaleDocumentId
+                WHERE f.TenantId=t.TenantId AND f.BusinessId=t.BusinessId AND f.SourceDocumentId=t.SourceDocumentId
+                  AND (@CustomerId IS NULL OR f.CustomerId=@CustomerId) AND (@SellerId IS NULL OR f.SellerId=@SellerId)
+                  AND (@SupplierId IS NULL OR f.SupplierId=@SupplierId) AND (@ProductId IS NULL OR f.ProductId=@ProductId)
+                  AND (@CategoryId IS NULL OR f.CategoryId=@CategoryId) AND (@WarehouseId IS NULL OR f.WarehouseId=@WarehouseId)
+                  AND (@DocumentType IS NULL OR d.DocumentType=@DocumentType))
+              GROUP BY t.TaxCode,t.TaxRate)
+          SELECT TOP(@Limit) g.[Key],g.Label,g.Documents,CAST(0 AS decimal(19,6)),g.Base,
+            CAST(0 AS decimal(19,4)),CAST(0 AS decimal(19,4)),g.Base,g.Tax,g.Net,
+            CAST(0 AS decimal(19,4)),g.Base,CAST(100 AS decimal(19,4)),
+            CASE WHEN SUM(g.Net) OVER()=0 THEN 0 ELSE g.Net/SUM(g.Net) OVER()*100 END
+          FROM grouped g ORDER BY g.Net DESC;
           """,connection);AddFilter(command,user,filter);command.Parameters.AddWithValue("@Limit",limit);
         return await ReadBreakdownRowsAsync(command,token);
     }

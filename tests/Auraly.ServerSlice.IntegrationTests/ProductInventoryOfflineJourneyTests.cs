@@ -42,8 +42,9 @@ public sealed class ProductInventoryOfflineJourneyTests(ServerSliceFixture fixtu
             [new ProductBarcodeInput(barcode, true)],
             [],
             [new ProductPriceInput(12_500m, "COP", 10_000m, 20m)],
-            [new SupplierCostInput(Guid.Empty, $"SUP-{Guid.NewGuid():N}", "Proveedor flujo", null, 10_000m)],
-            null);
+            [new SupplierCostInput(fixture.SupplierId, "900999001", "Proveedor E2E", null, 10_000m)],
+            null,
+            fixture.TaxProfileId);
         using var createdResponse = await catalog.PostAsJsonAsync(
             "/api/commerce/v1/products", createRequest);
         var createBody = await createdResponse.Content.ReadAsStringAsync();

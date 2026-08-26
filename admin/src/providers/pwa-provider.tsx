@@ -14,6 +14,7 @@ import { shouldOfferPwaInstall } from "@/lib/pwa-install-visibility";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { ensurePosApprovalPushSubscription } from "@/lib/pos-approval-push";
+import { prepareCurrentAppShell } from "@/lib/offline-app-shell";
 
 export function PwaProvider({ children }: { children: ReactNode }) {
   const [online,setOnline]=useState(true),[syncing,setSyncing]=useState(false);
@@ -35,5 +36,9 @@ export function PwaProvider({ children }: { children: ReactNode }) {
     if(!isAuthenticated||!businessId||!permissions.includes("pos.approvals.receive_notifications")||typeof Notification==="undefined"||Notification.permission!=="granted")return;
     void ensurePosApprovalPushSubscription().catch(()=>undefined);
   },[isAuthenticated,businessId,permissions]);
+  useEffect(()=>{
+    if(!isAuthenticated||!online)return;
+    void prepareCurrentAppShell(pathname).catch(()=>undefined);
+  },[isAuthenticated,online,pathname]);
   return <>{children}{shouldOfferPwaInstall(isAuthenticated,pathname)&&<PwaInstallPrompt />}{!online&&<div role="status" className="fixed inset-x-3 bottom-3 z-[100] mx-auto flex max-w-md items-center justify-center gap-2 rounded-2xl bg-amber-950 px-4 py-3 text-sm font-medium text-white shadow-2xl"><CloudOff className="h-4 w-4"/>Sin conexión. Los cambios se guardarán y subirán automáticamente.</div>}{online&&syncing&&<div role="status" className="fixed bottom-3 right-3 z-[100] rounded-full bg-slate-950 px-3 py-2 text-xs text-white shadow-xl">Sincronizando…</div>}</>;
 }
