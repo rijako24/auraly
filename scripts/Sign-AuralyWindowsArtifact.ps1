@@ -75,6 +75,7 @@ try {
     if ($enhancedKeyUsages -notcontains $codeSigningOid) {
         throw "El certificado $normalizedThumbprint no permite firma de código."
     }
+    $isSelfSigned = $certificate.Subject -eq $certificate.Issuer
 }
 finally {
     $store.Dispose()
@@ -84,7 +85,7 @@ $signTool = Resolve-SignTool
 foreach ($item in $Path) {
     $resolvedPath = (Resolve-Path -LiteralPath $item -ErrorAction Stop).Path
     if ($null -eq $signTool) {
-        if ($certificate.Subject -eq $certificate.Issuer) {
+        if ($isSelfSigned) {
             # Los servicios públicos de timestamp pueden rechazar certificados
             # autofirmados. Esta ruta existe solo para artefactos locales de prueba.
             $signed = Set-AuthenticodeSignature `
@@ -108,10 +109,11 @@ foreach ($item in $Path) {
         'sign',
         '/sha1', $normalizedThumbprint,
         '/s', 'My',
-        '/fd', 'SHA256',
-        '/tr', $TimestampUrl,
-        '/td', 'SHA256'
+        '/fd', 'SHA256'
     )
+    if (-not $isSelfSigned) {
+        $arguments += @('/tr', $TimestampUrl, '/td', 'SHA256')
+    }
     if ($CertificateStoreLocation -eq 'LocalMachine') {
         $arguments += '/sm'
     }

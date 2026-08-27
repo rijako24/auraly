@@ -30,8 +30,16 @@ public sealed class ReleasePackagingTests
         Assert.Contains("SigningCertificateThumbprint es obligatorio", script,
             StringComparison.Ordinal);
         Assert.Contains("Sign-AuralyWindowsArtifact.ps1", script, StringComparison.Ordinal);
+        Assert.Contains("if (-not $isSelfSigned)", File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "scripts", "Sign-AuralyWindowsArtifact.ps1")),
+            StringComparison.Ordinal);
         Assert.Contains("Get-AuthenticodeSignature", File.ReadAllText(Path.Combine(
             FindRepositoryRoot(), "scripts", "Sign-AuralyWindowsArtifact.ps1")),
+            StringComparison.Ordinal);
+
+        var workflow = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), ".github", "workflows", "deploy-auraly-release.yml"));
+        Assert.Contains("Cert:\\CurrentUser\\TrustedPublisher", workflow,
             StringComparison.Ordinal);
     }
 

@@ -81,6 +81,7 @@ jobs:
             throw 'Falta configurar el certificado Authenticode de Auraly.'
           }
           $pfxPath = Join-Path $env:RUNNER_TEMP 'auraly-code-signing.pfx'
+          $cerPath = Join-Path $env:RUNNER_TEMP 'auraly-code-signing.cer'
           try {
             [IO.File]::WriteAllBytes(
               $pfxPath,
@@ -94,10 +95,18 @@ jobs:
             if ($certificate.Thumbprint -ne $expected -or -not $certificate.HasPrivateKey) {
               throw 'El PFX de publicación no coincide con la huella configurada o no contiene clave privada.'
             }
+            if ($certificate.Subject -eq $certificate.Issuer) {
+              Export-Certificate -Cert $certificate -FilePath $cerPath | Out-Null
+              Import-Certificate -FilePath $cerPath `
+                -CertStoreLocation 'Cert:\CurrentUser\Root' | Out-Null
+              Import-Certificate -FilePath $cerPath `
+                -CertStoreLocation 'Cert:\CurrentUser\TrustedPublisher' | Out-Null
+            }
             "thumbprint=$($certificate.Thumbprint)" >> $env:GITHUB_OUTPUT
           }
           finally {
             Remove-Item -LiteralPath $pfxPath -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $cerPath -Force -ErrorAction SilentlyContinue
           }
 
       - name: Build and test release once in DEV
