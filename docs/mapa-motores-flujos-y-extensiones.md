@@ -16,6 +16,7 @@ Este documento responde qué componente es dueño de cada efecto y dónde se agr
 | Nuevo endpoint | contrato/caso de uso de aplicación; adapter de persistencia en infraestructura | SQL o reglas de dominio en Minimal API |
 | Regla dependiente de fecha/hora | `IBusinessClock` y `TimeProvider` | `DateTime.Now/UtcNow` dentro de la regla |
 | Nuevo comportamiento conversacional | configuración, fact/signal/action/outcome y operación existentes según el manual | condición de tenant o vocabulario comercial en el engine |
+| Nueva regla o concepto de nómina | módulo `Payroll`, rule sets versionados y calculador determinístico | salarios en `Employees`, listas locales o segundo motor contable/fiscal |
 
 ## Documento e inventario
 
@@ -48,6 +49,25 @@ Documento contabilizable → trabajo durable único → `AccountingProcessingCoo
 - El motor documental no escribe saldos financieros ni aplicaciones. No existe un worker financiero distinto del motor contable.
 - Un documento financiero puro guarda `AccountingSourceDocuments` y `AccountingPostingJobs` en su transacción de aceptación; no crea job, payload ni secuencia operacional.
 
+## Nómina
+
+Contrato y novedades → cálculo determinístico en borrador → aprobación inmutable
+→ fuente/trabajo contable durable → coordinador contable existente. Al cierre
+mensual, las liquidaciones aprobadas se consolidan por trabajador y período →
+outbox `ElectronicPayrollPrepared` → extensión fiscal certificada → XML, CUNE,
+firma, transmisión e intentos DIAN. Habilitación usa `SendTestSetAsync` y
+`GetStatusZip`; producción usa `SendNominaSync`. Payroll activa el coordinador y
+consulta el resultado, pero no duplica ni suplanta ese pipeline.
+
+- `Payroll` es el único propietario de relaciones laborales, reglas, conceptos,
+  acuerdos de deducción, liquidaciones, comprobantes y períodos electrónicos.
+- El cálculo es síncrono y determinístico; no crea cola ni tabla de jobs.
+- Una aprobación no mueve inventario y no entra al motor documental.
+- Agenda/disponibilidad de empleados no representa asistencia laboral.
+- Contabilidad y fiscal se extienden por sus puntos canónicos; no se escriben
+  asientos ni estados DIAN desde Payroll.
+- Diseño propietario: `decision-nomina-electronica-integrada.md`.
+
 ## Reporting
 
 Documento comercial completado → `SalesReportingProcessingCoordinator` → cola
@@ -55,6 +75,11 @@ Documento comercial completado → `SalesReportingProcessingCoordinator` → col
 
 - Reporting no bloquea ni decide operación, fiscal o contabilidad.
 - `reporting.SalesReportingJobs` es su única tabla durable de procesamiento por documento; checkpoints, hechos y consolidados no son colas de trabajo.
+- Nómina aprobada/pagada/emitida → `PayrollReportingService` → definición en
+  `reporting.PayrollReportDefinitions` → consulta autorizada de snapshots por
+  `SqlPayrollReportingStore` → `ReportViewer`. Es un reporte operativo nativo de
+  Reporting cercano al módulo propietario; no consulta desde la página, no
+  recalcula nómina y no crea una cola o proyección paralela sin benchmark.
 - Ventas usa proyección física por su volumen, costo y agregaciones.
 - Reportes pequeños consultan tablas propietarias indexadas.
 - Una nueva proyección exige métrica versionada, benchmark, idempotencia,

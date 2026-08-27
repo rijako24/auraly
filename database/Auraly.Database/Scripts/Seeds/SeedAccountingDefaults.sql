@@ -34,7 +34,22 @@ USING (VALUES
   (N'PurchasesExpense',N'Compras no inventariables',N'519595',N'Compras no inventariables',N'Expense',0,25),
   (N'OtherExpense',N'Otras salidas de caja',N'539595',N'Otras salidas de caja',N'Expense',0,26),
   (N'CashShortageExpense',N'Faltantes de caja',N'539596',N'Faltantes de caja',N'Expense',0,27),
-  (N'CostOfGoodsSold',N'Costo de ventas',N'613595',N'Costo de mercancía vendida',N'Expense',0,28)
+  (N'CostOfGoodsSold',N'Costo de ventas',N'613595',N'Costo de mercancía vendida',N'Expense',0,28),
+  (N'SalaryExpense',N'Sueldos y salarios',N'510506',N'Sueldos y salarios',N'Expense',1,29),
+  (N'VariableEarningsExpense',N'Devengos variables',N'510515',N'Horas extras y recargos',N'Expense',1,30),
+  (N'TransportAllowanceExpense',N'Auxilio de transporte',N'510527',N'Auxilio de transporte',N'Expense',1,31),
+  (N'EmployerContributionsExpense',N'Aportes patronales',N'510568',N'Aportes patronales',N'Expense',1,32),
+  (N'BenefitsExpense',N'Prestaciones sociales',N'510530',N'Prestaciones sociales',N'Expense',1,33),
+  (N'EmployeeContributionsPayable',N'Aportes del trabajador por pagar',N'237005',N'Aportes del trabajador por pagar',N'Liability',1,34),
+  (N'PayrollWithholdingPayable',N'Retención laboral por pagar',N'236505',N'Retención laboral por pagar',N'Liability',1,35),
+  (N'ThirdPartyDeductionsPayable',N'Deducciones a terceros por pagar',N'238030',N'Deducciones de nómina por pagar',N'Liability',1,36),
+  (N'NetPayrollPayable',N'Nómina por pagar',N'250505',N'Salarios por pagar',N'Liability',1,37),
+  (N'BenefitsProvisionPayable',N'Provisiones laborales por pagar',N'261005',N'Provisiones laborales',N'Liability',1,38),
+  (N'EmployeeLoansReceivable',N'Préstamos a empleados',N'136595',N'Préstamos a trabajadores',N'Asset',1,39),
+  (N'EmployerHealthPayable',N'Salud del empleador por pagar',N'237010',N'Salud del empleador por pagar',N'Liability',1,40),
+  (N'EmployerPensionPayable',N'Pensión del empleador por pagar',N'237015',N'Pensión del empleador por pagar',N'Liability',1,41),
+  (N'OccupationalRiskPayable',N'Riesgos laborales por pagar',N'237020',N'Riesgos laborales por pagar',N'Liability',1,42),
+  (N'ParafiscalContributionsPayable',N'Parafiscales por pagar',N'237025',N'Aportes parafiscales por pagar',N'Liability',1,43)
 ) AS source(Category,DisplayName,AccountCode,AccountName,AccountType,RequiresParty,DisplayOrder)
 ON target.ProfileCode=N'AURALY_CO' AND target.Category=source.Category
 WHEN MATCHED THEN UPDATE SET DisplayName=source.DisplayName,AccountCode=source.AccountCode,

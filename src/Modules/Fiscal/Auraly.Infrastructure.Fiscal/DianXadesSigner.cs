@@ -175,8 +175,15 @@ public sealed class DianXadesSigner(IFiscalSigningCertificateProvider certificat
     {
         var manager = new XmlNamespaceManager(document.NameTable);
         manager.AddNamespace("ext", DianUblNamespaces.Ext.NamespaceName);
-        var extensions = document.SelectSingleNode("/*/ext:UBLExtensions", manager) as XmlElement
-            ?? throw new XmlException("The UBL extensions container is missing.");
+        var extensions = document.SelectSingleNode("/*/ext:UBLExtensions", manager) as XmlElement;
+        if (extensions is null)
+        {
+            var root = document.DocumentElement
+                ?? throw new XmlException("The fiscal XML root is missing.");
+            extensions = document.CreateElement(
+                "ext", "UBLExtensions", DianUblNamespaces.Ext.NamespaceName);
+            root.InsertBefore(extensions, root.FirstChild);
+        }
         var extension = document.CreateElement("ext", "UBLExtension", DianUblNamespaces.Ext.NamespaceName);
         var content = document.CreateElement("ext", "ExtensionContent", DianUblNamespaces.Ext.NamespaceName);
         extension.AppendChild(content);

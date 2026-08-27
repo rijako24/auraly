@@ -44,11 +44,13 @@ public sealed class SqlFiscalSubmissionWorkStore(
             FROM dbo.FiscalDocumentProcesses p
             INNER JOIN candidate c ON c.DocumentId=p.DocumentId;
 
-            SELECT p.DocumentId,p.BusinessId,d.FiscalNumber,c.TestSetId,a.Content,p.TrackId,
+            SELECT p.DocumentId,p.BusinessId,d.FiscalNumber,d.FiscalDocumentType,
+                   CASE WHEN d.FiscalDocumentType=N'ElectronicPayroll'
+                     THEN payrollDocument.TestSetId ELSE c.TestSetId END,a.Content,p.TrackId,
                    CONVERT(bit,CASE WHEN EXISTS(
                      SELECT 1 FROM dbo.FiscalTransmissionAttempts x
                      WHERE x.DocumentId=p.DocumentId
-                       AND x.Operation IN (@SendTestOperation,@SendProductionOperation)
+                       AND x.Operation IN (@SendTestOperation,@SendProductionOperation,@SendPayrollOperation)
                        AND x.CompletedAt IS NULL
                    ) THEN 1 ELSE 0 END)
             FROM @Document selected
@@ -56,6 +58,8 @@ public sealed class SqlFiscalSubmissionWorkStore(
             INNER JOIN dbo.FiscalDocuments d ON d.DocumentId=p.DocumentId
             INNER JOIN dbo.FiscalIssuerConfigurations c
               ON c.FiscalIssuerConfigurationId=p.FiscalIssuerConfigurationId
+            LEFT JOIN payroll.ElectronicDocuments payrollDocument
+              ON payrollDocument.FiscalDocumentId=p.DocumentId
             INNER JOIN dbo.FiscalArtifacts a
               ON a.DocumentId=p.DocumentId AND a.ArtifactType=@SignedXml
             WHERE p.LockedBy=@WorkerId;
@@ -75,6 +79,7 @@ public sealed class SqlFiscalSubmissionWorkStore(
         command.Parameters.AddWithValue("@WorkerId", workerId);
         command.Parameters.AddWithValue("@SendTestOperation", DianOperationCodes.SendTestSet);
         command.Parameters.AddWithValue("@SendProductionOperation", DianOperationCodes.SendBillSync);
+        command.Parameters.AddWithValue("@SendPayrollOperation", DianOperationCodes.SendPayrollSync);
         command.Parameters.AddWithValue("@SignedXml", FiscalArtifactTypeCodes.SignedXml);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         FiscalSubmissionWorkItem? work = null;
@@ -85,10 +90,11 @@ public sealed class SqlFiscalSubmissionWorkStore(
                 reader.GetGuid(1),
                 workerId,
                 reader.GetString(2),
-                reader.IsDBNull(3) ? null : reader.GetGuid(3),
-                (byte[])reader[4],
-                reader.IsDBNull(5) ? null : reader.GetString(5),
-                reader.GetBoolean(6));
+                reader.GetString(3),
+                reader.IsDBNull(4) ? null : reader.GetGuid(4),
+                (byte[])reader[5],
+                reader.IsDBNull(6) ? null : reader.GetString(6),
+                reader.GetBoolean(7));
         }
         await reader.DisposeAsync();
         await transaction.CommitAsync(cancellationToken);
@@ -146,7 +152,8 @@ public sealed class SqlFiscalSubmissionWorkStore(
         CancellationToken cancellationToken)
     {
         if (operation is not (DianOperationCodes.SendTestSet or
-            DianOperationCodes.GetStatusZip or DianOperationCodes.SendBillSync))
+            DianOperationCodes.GetStatusZip or DianOperationCodes.SendBillSync or
+            DianOperationCodes.SendPayrollSync))
             throw new ArgumentOutOfRangeException(nameof(operation));
         if (sanitizedRequest.Length == 0)
             throw new ArgumentException("A sanitized request record is required.", nameof(sanitizedRequest));
@@ -217,7 +224,7 @@ public sealed class SqlFiscalSubmissionWorkStore(
             work.DocumentId,
             $"{work.FiscalNumber}.zip",
             zip,
-            work.TestSetId!.Value.ToString("D"),
+            work.TestSetId?.ToString("D"),
             work.TrackId,
             correlationId);
         return new FiscalSubmissionAttempt(
@@ -311,6 +318,31 @@ public sealed class SqlFiscalSubmissionWorkStore(
 
             UPDATE dbo.SalesDebitNotes SET FiscalStatus=@Status
             WHERE DebitNoteId=@DocumentId AND BusinessId=@BusinessId;
+
+            UPDATE payroll.ElectronicDocuments
+            SET Status=CASE @Status
+              WHEN N'DianAccepted' THEN N'Accepted'
+              WHEN N'DianRejected' THEN N'Rejected'
+              WHEN N'PermanentFailure' THEN N'Failed'
+              ELSE N'Queued' END
+            WHERE FiscalDocumentId=@DocumentId AND BusinessId=@BusinessId
+              AND @FiscalDocumentType=N'ElectronicPayroll';
+
+            UPDATE period
+            SET Status=CASE WHEN NOT EXISTS(
+                  SELECT 1 FROM payroll.ElectronicDocuments pending
+                  WHERE pending.ElectronicPeriodId=period.ElectronicPeriodId
+                    AND pending.Status<>N'Accepted') THEN N'Closed' ELSE N'Submitted' END,
+                ClosedAt=CASE WHEN NOT EXISTS(
+                  SELECT 1 FROM payroll.ElectronicDocuments pending
+                  WHERE pending.ElectronicPeriodId=period.ElectronicPeriodId
+                    AND pending.Status<>N'Accepted') THEN @CompletedAt ELSE NULL END
+            FROM payroll.ElectronicPeriods period
+            JOIN payroll.ElectronicDocuments document
+              ON document.ElectronicPeriodId=period.ElectronicPeriodId
+            WHERE document.FiscalDocumentId=@DocumentId
+              AND document.BusinessId=@BusinessId
+              AND @FiscalDocumentType=N'ElectronicPayroll';
             """;
         await using (var command = new SqlCommand(sql, connection, transaction))
         {
@@ -326,14 +358,22 @@ public sealed class SqlFiscalSubmissionWorkStore(
             command.Parameters.AddWithValue("@MayHaveReachedDian", result.MayHaveReachedDian);
             command.Parameters.AddWithValue("@ResponseArtifactId", responseArtifactId);
             command.Parameters.AddWithValue("@Status", status);
+            command.Parameters.AddWithValue("@FiscalDocumentType", work.FiscalDocumentType);
             command.Parameters.AddWithValue("@NextAttemptAt", (object?)nextAttemptAt ?? DBNull.Value);
             command.Parameters.AddWithValue("@IsFailure", result.Disposition is
                 DianSubmissionDisposition.TransientFailure or DianSubmissionDisposition.PermanentFailure);
             command.Parameters.AddWithValue("@WasSubmitted",
-                (attempt.Operation is DianOperationCodes.SendTestSet or DianOperationCodes.SendBillSync) &&
+                (attempt.Operation is DianOperationCodes.SendTestSet or DianOperationCodes.SendBillSync
+                    or DianOperationCodes.SendPayrollSync) &&
                 result.MayHaveReachedDian);
             command.Parameters.AddWithValue("@IsTerminal", terminal);
-            if (await command.ExecuteNonQueryAsync(cancellationToken) != 4)
+            var expectedRows = work.FiscalDocumentType switch
+            {
+                FiscalDocumentTypeCodes.SupportDocument => 3,
+                FiscalDocumentTypeCodes.ElectronicPayroll => 5,
+                _ => 4
+            };
+            if (await command.ExecuteNonQueryAsync(cancellationToken) != expectedRows)
                 throw new InvalidOperationException("The fiscal transmission result could not be committed.");
         }
 
@@ -394,6 +434,10 @@ public sealed class SqlFiscalSubmissionWorkStore(
             WHERE ReturnId=@DocumentId AND BusinessId=@BusinessId;
             UPDATE dbo.SalesDebitNotes SET FiscalStatus=@Status
             WHERE DebitNoteId=@DocumentId AND BusinessId=@BusinessId;
+            UPDATE payroll.ElectronicDocuments
+            SET Status=CASE WHEN @Status=@PermanentFailure THEN N'Failed' ELSE N'Queued' END
+            WHERE FiscalDocumentId=@DocumentId AND BusinessId=@BusinessId
+              AND @FiscalDocumentType=N'ElectronicPayroll';
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
@@ -408,7 +452,9 @@ public sealed class SqlFiscalSubmissionWorkStore(
         command.Parameters.AddWithValue("@BusinessId", work.BusinessId);
         command.Parameters.AddWithValue("@WorkerId", work.WorkerId);
         command.Parameters.AddWithValue("@PermanentFailure", FiscalDocumentStatusCodes.PermanentFailure);
-        if (await command.ExecuteNonQueryAsync(cancellationToken) != 3)
+        command.Parameters.AddWithValue("@FiscalDocumentType", work.FiscalDocumentType);
+        var expectedRows = work.FiscalDocumentType == FiscalDocumentTypeCodes.SupportDocument ? 2 : 3;
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != expectedRows)
             throw new InvalidOperationException("The fiscal submission lease could not be released.");
         if (status == FiscalDocumentStatusCodes.PermanentFailure)
             await SqlFiscalStatusSynchronizationOutbox.InsertAsync(

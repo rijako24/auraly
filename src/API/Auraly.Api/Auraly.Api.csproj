@@ -36,6 +36,10 @@
     <ProjectReference Include="..\..\Modules\Accounting\Auraly.Commerce.Accounting.Contracts\Auraly.Commerce.Accounting.Contracts.csproj" />
     <ProjectReference Include="..\..\Modules\Accounting\Auraly.Commerce.Accounting.Application\Auraly.Commerce.Accounting.Application.csproj" />
     <ProjectReference Include="..\..\Modules\Accounting\Auraly.Commerce.Accounting.Infrastructure\Auraly.Commerce.Accounting.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Modules\Payroll\Auraly.Commerce.Payroll.Contracts\Auraly.Commerce.Payroll.Contracts.csproj" />
+    <ProjectReference Include="..\..\Modules\Payroll\Auraly.Commerce.Payroll.Domain\Auraly.Commerce.Payroll.Domain.csproj" />
+    <ProjectReference Include="..\..\Modules\Payroll\Auraly.Commerce.Payroll.Application\Auraly.Commerce.Payroll.Application.csproj" />
+    <ProjectReference Include="..\..\Modules\Payroll\Auraly.Commerce.Payroll.Infrastructure\Auraly.Commerce.Payroll.Infrastructure.csproj" />
     <ProjectReference Include="..\..\Modules\Fiscal\Auraly.Application.Fiscal\Auraly.Application.Fiscal.csproj" />
     <ProjectReference Include="..\..\Modules\Fiscal\Auraly.Contracts.Fiscal\Auraly.Contracts.Fiscal.csproj" />
     <ProjectReference Include="..\..\Modules\Fiscal\Auraly.Infrastructure.Fiscal\Auraly.Infrastructure.Fiscal.csproj" />

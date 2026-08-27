@@ -4,6 +4,7 @@ using Auraly.Application.Fiscal;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
+using Auraly.Commerce.Payroll.Contracts;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
@@ -139,6 +140,10 @@ public sealed class SqlFiscalGenerationWorkStore(
             UPDATE fiscal.PurchaseSupportFiscalSnapshots
             SET UniqueCode=@UniqueCode,QrPayload=@QrPayload
             WHERE DocumentId=@DocumentId AND @FiscalDocumentType=N'SupportDocument';
+            UPDATE payroll.ElectronicDocuments
+            SET Status=N'Queued'
+            WHERE FiscalDocumentId=@DocumentId AND BusinessId=@BusinessId
+              AND @FiscalDocumentType=N'ElectronicPayroll';
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@Status", FiscalDocumentStatusCodes.PendingSubmission);
@@ -153,7 +158,7 @@ public sealed class SqlFiscalGenerationWorkStore(
         command.Parameters.AddWithValue("@FiscalDocumentType", work.FiscalDocumentType);
         var expectedRows = work.FiscalDocumentType is
             FiscalDocumentTypeCodes.CreditNote or FiscalDocumentTypeCodes.DebitNote or
-            FiscalDocumentTypeCodes.SupportDocument ? 3 : 2;
+            FiscalDocumentTypeCodes.SupportDocument or FiscalDocumentTypeCodes.ElectronicPayroll ? 3 : 2;
         if (await command.ExecuteNonQueryAsync(cancellationToken) != expectedRows)
             throw new InvalidOperationException(
                 "The fiscal generation lease is no longer owned by this worker.");
@@ -184,6 +189,10 @@ public sealed class SqlFiscalGenerationWorkStore(
             SET FiscalStatus=@Status
             WHERE DebitNoteId=@DocumentId AND BusinessId=@BusinessId
               AND @FiscalDocumentType=N'DebitNote';
+            UPDATE payroll.ElectronicDocuments
+            SET Status=N'Failed'
+            WHERE FiscalDocumentId=@DocumentId AND BusinessId=@BusinessId
+              AND @FiscalDocumentType=N'ElectronicPayroll';
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
@@ -222,13 +231,16 @@ public sealed class SqlFiscalGenerationWorkStore(
                    c.Environment, c.CertificateProvider, c.CertificateKeyReference,
                    c.CertificateThumbprint, c.TechnicalAnnexVersion, c.GeneratorVersion,
                    a.AuthorizationNumber, a.ValidFrom, a.ValidUntil,
-                   fs.Prefix, fs.RangeStart, fs.RangeEnd,debit.SnapshotJson,support.SnapshotJson
+                   fs.Prefix, fs.RangeStart, fs.RangeEnd,debit.SnapshotJson,support.SnapshotJson,
+                   payrollDocument.SourceSnapshotJson
             FROM dbo.FiscalDocumentProcesses p
             INNER JOIN dbo.FiscalDocuments fd ON fd.DocumentId=p.DocumentId
             LEFT JOIN dbo.FiscalSnapshots s ON s.DocumentId=p.DocumentId
             LEFT JOIN dbo.SalesReturnFiscalSnapshots credit ON credit.DocumentId=p.DocumentId
             LEFT JOIN dbo.SalesDebitNoteFiscalSnapshots debit ON debit.DocumentId=p.DocumentId
             LEFT JOIN fiscal.PurchaseSupportFiscalSnapshots support ON support.DocumentId=p.DocumentId
+            LEFT JOIN payroll.ElectronicDocuments payrollDocument
+              ON payrollDocument.FiscalDocumentId=p.DocumentId
             LEFT JOIN dbo.SalesDocuments d ON d.DocumentId=p.DocumentId
             INNER JOIN dbo.FiscalIssuerConfigurations c
                 ON c.FiscalIssuerConfigurationId=p.FiscalIssuerConfigurationId
@@ -262,6 +274,9 @@ public sealed class SqlFiscalGenerationWorkStore(
         var supportDocument = reader.IsDBNull(36)
             ? null
             : PurchaseSupportFiscalSnapshotSerializer.Deserialize(reader.GetString(36));
+        var electronicPayroll = reader.IsDBNull(37)
+            ? null
+            : PayrollContractSerializer.DeserializeElectronic(reader.GetString(37));
         var issuer = new FiscalIssuerWorkConfiguration(
             reader.GetGuid(5), businessId, reader.GetString(6), reader.GetString(7),
             reader.GetString(8), reader.GetString(9), reader.GetString(10),
@@ -285,7 +300,7 @@ public sealed class SqlFiscalGenerationWorkStore(
                 supportDocument.Authorization.Number, supportDocument.Authorization.ValidFrom,
                 supportDocument.Authorization.ValidUntil, supportDocument.Authorization.Prefix,
                 supportDocument.Authorization.RangeStart, supportDocument.Authorization.RangeEnd)),
-            supportDocument);
+            supportDocument, electronicPayroll);
     }
 
     private async Task InsertArtifactAsync(SqlConnection connection, SqlTransaction transaction,

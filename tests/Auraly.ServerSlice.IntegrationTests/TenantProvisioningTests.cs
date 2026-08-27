@@ -40,8 +40,8 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.True(state.InventoryReasons >= 12);
         Assert.Equal(4, state.ProductUnits);
         Assert.Equal(1, state.DefaultCustomers);
-        Assert.Equal(28, state.AccountingAccounts);
-        Assert.Equal(28, state.AccountingMappings);
+        Assert.Equal(43, state.AccountingAccounts);
+        Assert.Equal(43, state.AccountingMappings);
         Assert.Equal(1, state.OpenAccountingPeriods);
         Assert.Equal(1, state.DefaultCostCenters);
         Assert.Equal(1, state.AccountingVoucherCursors);

@@ -299,7 +299,9 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
 
     private FiscalGenerationWorker CreateWorker(IFiscalGenerationWorkStore store, TimeProvider clock) =>
         new(store, new TestPin(), new DianInvoiceUblBuilder(), new DianCreditNoteUblBuilder(),
-            new DianDebitNoteUblBuilder(), new DianSchemaValidator(), new TestSigner(), clock);
+            new DianDebitNoteUblBuilder(), new DianSchemaValidator(),
+            new DianPayrollXmlBuilder(), new DianPayrollSchemaValidator(),
+            new TestSigner(), clock);
 
     private PosSaleUploadRequest WithUblSnapshot(PosSaleUploadRequest request)
     {
@@ -431,6 +433,15 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         }
 
         public Task<DianSubmissionResult> SubmitBillSyncAsync(
+            DianSubmissionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            SendCalls++;
+            ProductionCalls++;
+            return Next();
+        }
+
+        public Task<DianSubmissionResult> SubmitPayrollSyncAsync(
             DianSubmissionRequest request,
             CancellationToken cancellationToken = default)
         {

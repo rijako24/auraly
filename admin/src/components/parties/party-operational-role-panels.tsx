@@ -20,6 +20,7 @@ import type { PartySiteDetail, UserRoleDetail } from "@/services/api/parties";
 import { configuredPasswordMask, effectiveUserRoleAssignments } from "@/lib/party-user-role-selection";
 import { taxationApi } from "@/services/api/taxation";
 import { receivablesApi } from "@/services/api/receivables";
+import { payrollApi } from "@/services/api/payroll";
 import { posApprovalClient } from "@/services/pos/pos-approval-client";
 import { formatDecimalInput, parseDecimalInput } from "@/lib/formatted-decimal-input";
 import { useAuthStore } from "@/stores/auth-store";
@@ -121,10 +122,13 @@ export function PartySupplierTaxRolePanel({ supplierId, editing, primarySite, re
   </div>;
 }
 
-export function PartyEmployeeRolePanel({ employeeId, editing, registerSave }: { employeeId: string; editing: boolean; registerSave: RegisterSave }) {
+export function PartyEmployeeRolePanel({ partyId, employeeId, editing, registerSave }: { partyId: string; employeeId: string; editing: boolean; registerSave: RegisterSave }) {
+  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
+  const canReadPayroll = useAuthStore((state) => state.user?.permissions.includes("payroll.read") ?? false);
   const employeeQuery = useQuery({ queryKey: ["employees", employeeId], queryFn: () => employeesApi.getById(employeeId) });
   const hoursQuery = useQuery({ queryKey: ["employees", employeeId, "working-hours"], queryFn: () => employeesApi.getWorkingHours(employeeId) });
   const services = useServices({ page: 1, pageSize: 500 });
+  const payroll = useQuery({ queryKey: ["payroll-options", businessId, partyId], queryFn: payrollApi.options, enabled: Boolean(businessId && partyId && canReadPayroll), retry: false });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [serviceToAdd, setServiceToAdd] = useState("");
   const [active, setActive] = useState(true);
@@ -154,6 +158,7 @@ export function PartyEmployeeRolePanel({ employeeId, editing, registerSave }: { 
   if (employeeQuery.isLoading || hoursQuery.isLoading) return <PanelLoading />;
   if (!employeeQuery.data) return <PanelError text="No fue posible cargar la configuración del empleado." />;
   const available = (services.data?.items ?? []).filter((item) => item.isActive && !selectedIds.has(item.serviceId));
+  const employment = payroll.data?.employments.find((item) => item.partyId === partyId);
 
   return <div className="space-y-5">
     <PanelHeader icon={Scissors} title="Configuración del empleado" description="Servicios, disponibilidad y estado en el mismo tercero.">
@@ -172,6 +177,7 @@ export function PartyEmployeeRolePanel({ employeeId, editing, registerSave }: { 
       {customSchedule ? editing?<WorkingHoursEditor value={workingHours} onChange={setWorkingHours}/>:<div className="rounded-xl border bg-muted/20 p-4 text-sm text-muted-foreground">Horario personalizado configurado.</div> : <div className="flex items-center gap-3 rounded-xl bg-muted/40 p-4 text-sm text-muted-foreground"><CalendarDays className="h-5 w-5 text-primary" />Usará el calendario activo configurado para el negocio.</div>}
     </section>
     {editing&&<section className="rounded-2xl border p-5"><h3 className="font-semibold">Excepciones del calendario</h3><p className="mb-4 text-sm text-muted-foreground">Cierres o cambios puntuales para fechas específicas.</p><ScheduleExceptionsEditor employeeId={employeeId}/></section>}
+    <section className="rounded-2xl border p-5"><div className="flex flex-wrap items-start justify-between gap-4"><div><h3 className="font-semibold">Relación laboral y nómina</h3><p className="text-sm text-muted-foreground">Contrato, salario, descuentos y pagos se administran en Nómina sin duplicarlos en el empleado operativo.</p></div>{canReadPayroll&&<Button asChild variant="outline"><Link href={`/dashboard/payroll?section=employments&partyId=${partyId}`}>{employment?"Abrir contrato laboral":"Crear contrato laboral"}</Link></Button>}</div>{canReadPayroll?(payroll.isLoading?<p className="mt-4 text-sm text-muted-foreground">Consultando relación laboral…</p>:employment?<div className="mt-4 grid gap-3 sm:grid-cols-3"><CreditReadValue label="Contrato" value={employment.contractNumber} help={`${employment.startDate} — ${employment.endDate??"vigente"}`}/><CreditReadValue label="Salario mensual" value={creditMoney.format(employment.monthlySalary)} help="Fuente canónica: Nómina"/><CreditReadValue label="Estado laboral" value={employment.isActive?"Activo":"Inactivo"} help="Independiente del horario de agenda"/></div>:<p className="mt-4 rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Esta persona aún no tiene una relación laboral configurada para la empresa seleccionada.</p>):<p className="mt-4 text-sm text-muted-foreground">No tienes permiso para consultar la información de nómina.</p>}</section>
   </div>;
 }
 

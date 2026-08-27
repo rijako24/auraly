@@ -27,6 +27,7 @@ Antes de crear un processor, engine, worker, job table, queue o background servi
 | Contabilidad | `AccountingProcessingCoordinator` + `SqlAccountingPostingProcessor` | `AccountingSourceDocuments`, `AccountingPostingJobs`, `AccountingEntries` y lineas | `implementation/accounting-operational-design.md` |
 | Reporting de ventas | `SalesReportingProcessingCoordinator` + `SqlSalesReportingProcessor` | `reporting.SalesReportingJobs`, hechos y consolidados | `decision-cuatro-motores-operacion-contabilidad-fiscal-reporting.md` |
 | Conversacional | Pipeline determinista descrito en el manual del agente | Conversacion, estado, facts, recibos y configuracion del agente | `agent-engine-manual.md` |
+| Nómina | Calculador determinístico del módulo `Payroll`; las salidas extienden los motores contable y fiscal existentes | `payroll.Employments`, conceptos, reglas, novedades, liquidaciones, pagos y períodos electrónicos | `decision-nomina-electronica-integrada.md` |
 
 Si aparece una nueva capacidad con semantica realmente distinta, primero se registra su limite, fuente de verdad, orden, idempotencia, transaccion, transportes y relacion con los motores existentes mediante una decision arquitectonica. No se crea implicitamente desde una pantalla o endpoint.
 
@@ -69,6 +70,21 @@ Se permiten varias colas cuando representan responsabilidades o stages diferente
 - Retry, backoff y dead-letter pertenecen a la politica del proceso. No se agrega otra cola para esconder un error permanente o saltar un trabajo bloqueante.
 - Service Bus, RabbitMQ e in-process son perfiles del mismo contrato. Las diferencias de infraestructura se resuelven en adapters.
 - Una cola nueva requiere propietario, contrato, clave de idempotencia, orden, retencion, retry, dead-letter, metricas y runbook.
+
+### 6.1 Nómina
+
+- `Payroll` no crea un motor documental, contable o fiscal alterno.
+- La liquidación se calcula sin worker y queda reproducible mediante snapshots y
+  reglas versionadas.
+- La aprobación crea fuentes/trabajos contables durables; solamente
+  `SqlAccountingPostingProcessor` escribe asientos.
+- La emisión de nómina electrónica usa coordinador, procesos, artefactos, firma,
+  intentos y transportes fiscales canónicos. Solo una respuesta DIAN aceptada
+  equivale a presentación; generar o firmar el snapshot mensual no basta.
+- Certificado, endpoint y ambiente se reutilizan del emisor fiscal versionado;
+  `SoftwareID`, PIN seguro y `TestSetId` se configuran y congelan por la familia
+  de nómina.
+- Horarios de agenda no son registros laborales y no alimentan el cálculo.
 
 ## 7. Catalogos, tablas y dropdowns
 

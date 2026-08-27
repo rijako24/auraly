@@ -143,8 +143,8 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                 ?? throw new InvalidOperationException(
                     "The accounting defaults response is empty.");
             Assert.True(defaults.IsReady);
-            Assert.True(defaults.AccountCount >= 28);
-            Assert.Equal(28, defaults.MappingCount);
+            Assert.True(defaults.AccountCount >= 43);
+            Assert.Equal(43, defaults.MappingCount);
             Assert.True(defaults.HasDefaultCostCenter);
             Assert.True(defaults.HasOpenPeriod);
         }

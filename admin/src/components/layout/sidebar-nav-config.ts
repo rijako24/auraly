@@ -92,6 +92,7 @@ export const navigation: NavEntry[] = [
   { name: "Cuentas por pagar", href: "/dashboard/payables", icon: Landmark, permission: "payables.read" },
   { name: "Cuentas por cobrar", href: "/dashboard/receivables", icon: CircleDollarSign, permission: "receivables.read" },
   { name: "Gastos", href: "/dashboard/expenses", icon: ReceiptText, permission: "expenses.read" },
+  { name: "Nómina", href: "/dashboard/payroll", icon: Users, permission: "payroll.read" },
   { type: "separator", label: "Administracion" },
   { name: "Tenants", href: "/dashboard/tenants", icon: Building2, permission: "tenants.read" },
   { name: "Negocios", href: "/dashboard/businesses", icon: Store, permission: "businesses.read" },

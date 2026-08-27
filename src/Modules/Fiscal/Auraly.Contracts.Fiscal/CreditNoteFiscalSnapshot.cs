@@ -11,6 +11,7 @@ public static class FiscalDocumentTypeCodes
     public const string CreditNote = "CreditNote";
     public const string DebitNote = "DebitNote";
     public const string SupportDocument = "SupportDocument";
+    public const string ElectronicPayroll = "ElectronicPayroll";
 }
 
 public sealed record PurchaseSupportLineMetadata(

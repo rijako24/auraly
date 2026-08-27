@@ -1,5 +1,6 @@
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Commerce.Accounting.Contracts;
+using Auraly.Commerce.Payroll.Contracts;
 
 namespace Auraly.Commerce.Accounting.Application;
 
@@ -89,7 +90,10 @@ public static class AccountingProcessingPolicy
         AccountingManualDocumentTypes.AccountAdjustment,
         AccountingManualDocumentTypes.ManualVoucher,
         AccountingManualDocumentTypes.OpeningBalance,
-        Auraly.Contracts.WorkSessions.WorkSessionAccountingDocumentTypes.CashDifference
+        Auraly.Contracts.WorkSessions.WorkSessionAccountingDocumentTypes.CashDifference,
+        PayrollAccountingDocumentTypes.Accrual,
+        PayrollAccountingDocumentTypes.Payment,
+        PayrollAccountingDocumentTypes.Adjustment
     ];
 
 

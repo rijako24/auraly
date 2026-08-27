@@ -19,11 +19,12 @@ CREATE TABLE [dbo].[FiscalDocuments]
     CONSTRAINT [UQ_FiscalDocuments_Business_Number]
       UNIQUE ([BusinessId],[FiscalDocumentType],[FiscalNumber]),
     CONSTRAINT [CK_FiscalDocuments_Type]
-      CHECK ([FiscalDocumentType] IN (N'Invoice',N'CreditNote',N'DebitNote',N'SupportDocument')),
+      CHECK ([FiscalDocumentType] IN (N'Invoice',N'CreditNote',N'DebitNote',N'SupportDocument',N'ElectronicPayroll')),
     CONSTRAINT [CK_FiscalDocuments_UniqueCodeType]
       CHECK (([FiscalDocumentType]=N'Invoice' AND [UniqueCodeType]=N'CUFE') OR
              ([FiscalDocumentType] IN (N'CreditNote',N'DebitNote') AND [UniqueCodeType]=N'CUDE') OR
-             ([FiscalDocumentType]=N'SupportDocument' AND [UniqueCodeType]=N'CUDS'))
+             ([FiscalDocumentType]=N'SupportDocument' AND [UniqueCodeType]=N'CUDS') OR
+             ([FiscalDocumentType]=N'ElectronicPayroll' AND [UniqueCodeType]=N'CUNE'))
 );
 GO
 CREATE INDEX [IX_FiscalDocuments_Business_Status_Issued]

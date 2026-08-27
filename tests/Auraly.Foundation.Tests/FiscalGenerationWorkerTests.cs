@@ -66,6 +66,7 @@ public sealed class FiscalGenerationWorkerTests
     private static FiscalGenerationWorker CreateWorker(TestStore store) => new(
         store, new TestPinProvider(), new DianInvoiceUblBuilder(), new DianCreditNoteUblBuilder(),
         new DianDebitNoteUblBuilder(), new DianSchemaValidator(),
+        new DianPayrollXmlBuilder(), new DianPayrollSchemaValidator(),
         new PassthroughSigner(), new FixedTimeProvider(new DateTimeOffset(2026, 7, 29, 10, 0, 0, TimeSpan.Zero)));
 
     private static FiscalGenerationWorkItem CreateWork()

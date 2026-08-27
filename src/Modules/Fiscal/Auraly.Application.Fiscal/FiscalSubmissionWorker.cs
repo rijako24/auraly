@@ -10,6 +10,7 @@ public sealed record FiscalSubmissionWorkItem(
     Guid BusinessId,
     string WorkerId,
     string FiscalNumber,
+    string FiscalDocumentType,
     Guid? TestSetId,
     byte[] SignedXml,
     string? TrackId,
@@ -158,9 +159,11 @@ public sealed class FiscalSubmissionWorker(
         var zip = packages.Build(work.FiscalNumber, work.SignedXml);
         var production = work.TestSetId is null;
         if (production && !string.IsNullOrWhiteSpace(work.TrackId))
-            throw new InvalidOperationException("A production SendBillSync attempt cannot be polled with GetStatusZip.");
+            throw new InvalidOperationException("A synchronous production attempt cannot be polled with GetStatusZip.");
         var operation = production
-            ? DianOperationCodes.SendBillSync
+            ? work.FiscalDocumentType == FiscalDocumentTypeCodes.ElectronicPayroll
+                ? DianOperationCodes.SendPayrollSync
+                : DianOperationCodes.SendBillSync
             : string.IsNullOrWhiteSpace(work.TrackId)
                 ? DianOperationCodes.SendTestSet
                 : DianOperationCodes.GetStatusZip;
@@ -183,7 +186,8 @@ public sealed class FiscalSubmissionWorker(
         var attempt = await store.StartAttemptAsync(
             work,
             operation,
-            operation is DianOperationCodes.SendTestSet or DianOperationCodes.SendBillSync ? zip : null,
+            operation is DianOperationCodes.SendTestSet or DianOperationCodes.SendBillSync
+                or DianOperationCodes.SendPayrollSync ? zip : null,
             sanitizedRequest,
             timeProvider.GetUtcNow(),
             cancellationToken);
@@ -194,6 +198,8 @@ public sealed class FiscalSubmissionWorker(
                 await transport.SubmitTestSetAsync(attempt.Request, cancellationToken),
             DianOperationCodes.GetStatusZip =>
                 await transport.GetStatusZipAsync(attempt.Request, cancellationToken),
+            DianOperationCodes.SendPayrollSync =>
+                await productionTransport.SubmitPayrollSyncAsync(attempt.Request, cancellationToken),
             _ => await productionTransport.SubmitBillSyncAsync(attempt.Request, cancellationToken)
         };
         var completedAt = timeProvider.GetUtcNow();

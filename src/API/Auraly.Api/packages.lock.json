@@ -910,6 +910,7 @@
         "type": "Project",
         "dependencies": {
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Commerce.Payroll.Contracts": "[1.0.0, )",
           "Auraly.Contracts.Fiscal": "[1.0.0, )",
           "Auraly.Contracts.Purchasing": "[1.0.0, )",
           "Auraly.Contracts.Returns": "[1.0.0, )",
@@ -1053,6 +1054,7 @@
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Contracts": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Domain": "[1.0.0, )",
+          "Auraly.Commerce.Payroll.Contracts": "[1.0.0, )",
           "Auraly.Contracts.WorkSessions": "[1.0.0, )"
         }
       },
@@ -1070,6 +1072,7 @@
           "Auraly.Commerce.Accounting.Application": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Contracts": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Domain": "[1.0.0, )",
+          "Auraly.Commerce.Payroll.Contracts": "[1.0.0, )",
           "Auraly.Contracts.Expenses": "[1.0.0, )",
           "Auraly.Contracts.Payables": "[1.0.0, )",
           "Auraly.Contracts.Purchasing": "[1.0.0, )",
@@ -1077,6 +1080,32 @@
           "Auraly.Contracts.Returns": "[1.0.0, )",
           "Auraly.Contracts.Sales": "[1.0.0, )",
           "Auraly.Contracts.WorkSessions": "[1.0.0, )",
+          "Microsoft.Data.SqlClient": "[5.2.2, )"
+        }
+      },
+      "auraly.commerce.payroll.application": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.Application.Fiscal": "[1.0.0, )",
+          "Auraly.Commerce.Accounting.Application": "[1.0.0, )",
+          "Auraly.Commerce.Payroll.Contracts": "[1.0.0, )",
+          "Auraly.Commerce.Payroll.Domain": "[1.0.0, )"
+        }
+      },
+      "auraly.commerce.payroll.contracts": {
+        "type": "Project"
+      },
+      "auraly.commerce.payroll.domain": {
+        "type": "Project"
+      },
+      "auraly.commerce.payroll.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Commerce.Payroll.Application": "[1.0.0, )",
+          "Auraly.Commerce.Payroll.Contracts": "[1.0.0, )",
+          "Auraly.Commerce.Payroll.Domain": "[1.0.0, )",
+          "Auraly.Contracts.Fiscal": "[1.0.0, )",
           "Microsoft.Data.SqlClient": "[5.2.2, )"
         }
       },
@@ -1309,6 +1338,7 @@
           "Auraly.Application.WorkSessions": "[1.0.0, )",
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
           "Auraly.BuildingBlocks.Infrastructure": "[1.0.0, )",
+          "Auraly.Commerce.Payroll.Contracts": "[1.0.0, )",
           "Auraly.Commerce.Taxation.Application": "[1.0.0, )",
           "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )",
           "Auraly.Commerce.Taxation.Domain": "[1.0.0, )",

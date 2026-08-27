@@ -54,6 +54,7 @@
     <Build Include="Schemas\Fiscal.sql" />
     <Build Include="Schemas\Compliance.sql" />
     <Build Include="Schemas\Reporting.sql" />
+    <Build Include="Schemas\Payroll.sql" />
     <Build Include="Types\GuidIdList.sql" />
     <Build Include="Tables\ReferenceOptions.sql" />
     <Build Include="Tables\Tenants.sql" />
@@ -208,6 +209,8 @@
     <Build Include="Tables\Expenses.sql" />
     <Build Include="Tables\PosSynchronizationOutboxMessages.sql" />
     <Build Include="Tables\ServerOutboxMessages.sql" />
+    <Build Include="Tables\Payroll.sql" />
+    <Build Include="Tables\PayrollReporting.sql" />
   </ItemGroup>
   <ItemGroup>
     <PostDeploy Include="Scripts\PostDeployment.sql" />

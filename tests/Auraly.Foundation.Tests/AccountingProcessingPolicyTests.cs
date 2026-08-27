@@ -15,6 +15,9 @@ public sealed class AccountingProcessingPolicyTests
     [InlineData("ReceivablePayment")]
     [InlineData("CashReceipt")]
     [InlineData("CashDisbursement")]
+    [InlineData("PayrollAccrual")]
+    [InlineData("PayrollPayment")]
+    [InlineData("PayrollAdjustment")]
     public void Supports_returns_true_for_every_canonical_document_type(string documentType)
     {
         Assert.True(AccountingProcessingPolicy.Supports(documentType));

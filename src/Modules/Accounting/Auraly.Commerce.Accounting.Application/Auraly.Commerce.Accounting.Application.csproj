@@ -9,5 +9,6 @@
     <ProjectReference Include="..\Auraly.Commerce.Accounting.Domain\Auraly.Commerce.Accounting.Domain.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
     <ProjectReference Include="..\..\WorkSessions\Auraly.Contracts.WorkSessions\Auraly.Contracts.WorkSessions.csproj" />
+    <ProjectReference Include="..\..\Payroll\Auraly.Commerce.Payroll.Contracts\Auraly.Commerce.Payroll.Contracts.csproj" />
   </ItemGroup>
 </Project>

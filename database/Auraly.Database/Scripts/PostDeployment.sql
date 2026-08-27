@@ -72,6 +72,9 @@ GO
 :r .\Seeds\SeedPurchasingPermissions.sql
 :r .\Seeds\SeedFiscalConfigurationPermissions.sql
 :r .\Seeds\SeedExpensePermissions.sql
+:r .\Seeds\SeedPayrollCatalogs.sql
+:r .\Seeds\SeedPayrollPermissions.sql
+:r .\Seeds\SeedPayrollReports.sql
 :r .\Seeds\SeedPartyWorkspacePermissions.sql
 :r .\Seeds\SeedBillingPlans.sql
 :r .\Seeds\SeedRadaConcept.sql

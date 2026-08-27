@@ -50,5 +50,8 @@
     <ProjectReference Include="..\..\src\Modules\Routes\Auraly.Domain.Routes\Auraly.Domain.Routes.csproj" />
     <ProjectReference Include="../../src/Modules/Taxation/Auraly.Commerce.Taxation.Domain/Auraly.Commerce.Taxation.Domain.csproj" />
     <ProjectReference Include="../../src/Modules/WorkSessions/Auraly.Domain.WorkSessions/Auraly.Domain.WorkSessions.csproj" />
+    <ProjectReference Include="../../src/Modules/Payroll/Auraly.Commerce.Payroll.Domain/Auraly.Commerce.Payroll.Domain.csproj" />
+    <ProjectReference Include="../../src/Modules/Payroll/Auraly.Commerce.Payroll.Contracts/Auraly.Commerce.Payroll.Contracts.csproj" />
+    <ProjectReference Include="../../src/Modules/Payroll/Auraly.Commerce.Payroll.Application/Auraly.Commerce.Payroll.Application.csproj" />
   </ItemGroup>
 </Project>

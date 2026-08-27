@@ -1,6 +1,7 @@
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
+using Auraly.Commerce.Payroll.Contracts;
 using Auraly.Fiscal.Core;
 using Auraly.Fiscal.Ubl;
 
@@ -24,7 +25,8 @@ public sealed record FiscalGenerationWorkItem(
     SalesReturnCreditNoteSnapshot? CreditNote,
     SalesDebitNoteFiscalSnapshot? DebitNote,
     FiscalIssuerWorkConfiguration Issuer, FiscalAuthorizationWorkConfiguration? Authorization,
-    PurchaseSupportFiscalSnapshot? SupportDocument = null);
+    PurchaseSupportFiscalSnapshot? SupportDocument = null,
+    ElectronicPayrollSnapshot? ElectronicPayroll = null);
 
 public sealed record FiscalGeneratedArtifacts(
     byte[] UnsignedXml, string UnsignedSha256Hex, byte[] SignedXml, string SignedSha256Hex,
@@ -59,6 +61,8 @@ public sealed class FiscalGenerationWorker(
     DianCreditNoteUblBuilder creditNoteBuilder,
     DianDebitNoteUblBuilder debitNoteBuilder,
     DianSchemaValidator validator,
+    DianPayrollXmlBuilder payrollBuilder,
+    DianPayrollSchemaValidator payrollValidator,
     IFiscalXmlSigner signer,
     TimeProvider timeProvider)
 {
@@ -80,7 +84,9 @@ public sealed class FiscalGenerationWorker(
         {
             var generated = await BuildAsync(work, cancellationToken);
             var unsigned = generated.Document;
-            var validation = validator.Validate(unsigned.Xml);
+            var validation = work.FiscalDocumentType == FiscalDocumentTypeCodes.ElectronicPayroll
+                ? payrollValidator.Validate(unsigned.Xml)
+                : validator.Validate(unsigned.Xml);
             if (!validation.IsValid)
             {
                 await FailAsync(work, FiscalDocumentStatusCodes.SchemaValidationFailed,
@@ -99,7 +105,10 @@ public sealed class FiscalGenerationWorker(
                 unsigned.Xml, unsigned.Sha256Hex, signed.SignedXml, signed.Sha256Hex,
                 generated.UniqueCode, generated.QrPayload,
                 signed.CertificateThumbprint, generatedAt, signed.SignedAt,
-                work.Issuer.TechnicalAnnexVersion, work.Issuer.GeneratorVersion), cancellationToken);
+                work.FiscalDocumentType == FiscalDocumentTypeCodes.ElectronicPayroll
+                    ? DianPayrollCodes.XsdVersion
+                    : work.Issuer.TechnicalAnnexVersion,
+                work.Issuer.GeneratorVersion), cancellationToken);
             return true;
         }
         catch (FiscalSnapshotDataException exception)
@@ -213,6 +222,8 @@ public sealed class FiscalGenerationWorker(
         }
         if (work.FiscalDocumentType == FiscalDocumentTypeCodes.SupportDocument)
             return await BuildSupportDocumentAsync(work, cancellationToken);
+        if (work.FiscalDocumentType == FiscalDocumentTypeCodes.ElectronicPayroll)
+            return await BuildElectronicPayrollAsync(work, cancellationToken);
         if (work.FiscalDocumentType == FiscalDocumentTypeCodes.DebitNote)
             return await BuildDebitNoteAsync(work, cancellationToken);
         if (work.FiscalDocumentType != FiscalDocumentTypeCodes.CreditNote)
@@ -284,6 +295,62 @@ public sealed class FiscalGenerationWorker(
             snapshot.Return.TotalAmount, cude.QrPayload);
         return new FiscalUblBuildResult(
             creditNoteBuilder.Build(note), cude.Cude, cude.QrPayload);
+    }
+
+    private async Task<FiscalUblBuildResult> BuildElectronicPayrollAsync(
+        FiscalGenerationWorkItem work, CancellationToken cancellationToken)
+    {
+        var snapshot = work.ElectronicPayroll
+            ?? throw new FiscalSnapshotDataException("The electronic-payroll fiscal snapshot is missing.");
+        if (snapshot.BusinessId != work.BusinessId || work.DocumentId == Guid.Empty ||
+            work.FiscalNumber != snapshot.FiscalPrefix + snapshot.FiscalConsecutive)
+            throw new FiscalSnapshotDataException(
+                "The electronic-payroll snapshot differs from its durable fiscal root.");
+        var pin = await pins.ResolveAsync(work.BusinessId,
+            snapshot.SoftwarePinSecretReference, cancellationToken);
+        if (string.IsNullOrWhiteSpace(pin))
+            throw new FiscalSnapshotDataException("The software PIN secret could not be resolved.");
+        if (snapshot.WorkedDays != decimal.Truncate(snapshot.WorkedDays))
+            throw new FiscalSnapshotDataException(
+                "DIAN payroll worked days must be an integer after monthly consolidation.");
+        var concepts = snapshot.Lines.Where(line => !line.IsEmployerCost &&
+                line.NatureCode is "Earning" or "Deduction")
+            .Select(line => new DianPayrollConcept(line.ConceptName, line.NatureCode,
+                line.DianConceptCode, line.Amount, line.IsSalaryBase,
+                line.Rate, line.BaseAmount)).ToArray();
+        var payroll = new DianPayroll(
+            snapshot.FiscalPrefix, snapshot.FiscalConsecutive, snapshot.GeneratedAt,
+            work.Issuer.Environment, snapshot.PayrollPeriodCode,
+            snapshot.EmploymentStart, snapshot.EmploymentEnd,
+            snapshot.PeriodStart, snapshot.PeriodEnd,
+            WorkedTime(snapshot.EmploymentStart, snapshot.PeriodEnd),
+            decimal.ToInt32(snapshot.WorkedDays), snapshot.PaymentDates,
+            work.Issuer.SupplierTaxId, work.Issuer.SupplierCheckDigit,
+            work.Issuer.LegalName, work.Issuer.Address.CountryCode,
+            work.Issuer.Address.DepartmentCode, work.Issuer.Address.MunicipalityCode,
+            work.Issuer.Address.AddressLine, snapshot.SoftwareIdentificationCode, pin,
+            snapshot.EmployeeCode, snapshot.EmployeeIdentificationTypeCode,
+            snapshot.EmployeeIdentification, snapshot.EmployeeFirstName,
+            snapshot.EmployeeOtherNames, snapshot.EmployeeFirstSurname,
+            snapshot.EmployeeSecondSurname, snapshot.WorkerTypeCode,
+            snapshot.WorkerSubtypeCode, snapshot.HighRiskPension,
+            snapshot.IntegralSalary, snapshot.ContractTypeCode, snapshot.MonthlySalary,
+            snapshot.PaymentMethodCode, snapshot.Bank, snapshot.BankAccountType,
+            snapshot.BankAccountNumber, snapshot.Earnings, snapshot.Deductions,
+            snapshot.NetPayable, concepts, snapshot.QrValidationUrl);
+        var result = payrollBuilder.Build(payroll);
+        return new FiscalUblBuildResult(result.Document, result.Cune, result.QrPayload);
+    }
+
+    private static int WorkedTime(DateOnly start, DateOnly end)
+    {
+        if (end < start) throw new FiscalSnapshotDataException("Employment starts after the payroll period.");
+        var years = end.Year - start.Year;
+        var months = end.Month - start.Month;
+        var days = end.Day - start.Day;
+        if (days < 0) { days += 30; months--; }
+        if (months < 0) { months += 12; years--; }
+        return Math.Max(0, years * 360 + months * 30 + days + 1);
     }
 
     private async Task<FiscalUblBuildResult> BuildDebitNoteAsync(

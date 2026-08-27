@@ -6,6 +6,9 @@ using System.Text;
 using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Accounting.Infrastructure;
 using Auraly.Commerce.Accounting.Contracts;
+using Auraly.Commerce.Payroll.Application;
+using Auraly.Commerce.Payroll.Domain;
+using Auraly.Commerce.Payroll.Infrastructure;
 using Auraly.Commerce.Taxation.Application;
 using Auraly.Commerce.Taxation.Domain;
 
@@ -89,6 +92,7 @@ builder.Services.AddScoped<IExecutionAccessResolver>(services =>
     services.GetRequiredService<SqlExecutionContextDirectory>());
 builder.Services.AddScoped<IAuralyExecutionContextAccessor, AuralyExecutionContextAccessorAdapter>();
 builder.Services.AddSingleton(new AccountingSqlConnectionFactory(connectionString));
+builder.Services.AddSingleton(new PayrollSqlConnectionFactory(connectionString));
 builder.Services.AddSingleton(new PricingSqlConnectionFactory(connectionString));
 builder.Services.AddSingleton(new RoutesSqlConnectionFactory(connectionString));
 builder.Services.AddSingleton(new DispatchingSqlConnectionFactory(connectionString));
@@ -150,6 +154,8 @@ builder.Services.AddSingleton<DianInvoiceUblBuilder>();
 builder.Services.AddSingleton<DianCreditNoteUblBuilder>();
 builder.Services.AddSingleton<DianDebitNoteUblBuilder>();
 builder.Services.AddSingleton<DianSchemaValidator>();
+builder.Services.AddSingleton<DianPayrollXmlBuilder>();
+builder.Services.AddSingleton<DianPayrollSchemaValidator>();
 builder.Services.AddSingleton<FiscalSubmissionPackageBuilder>();
 builder.Services.AddScoped<FiscalGenerationWorker>();
 builder.Services.AddScoped<FiscalSubmissionWorker>();
@@ -424,6 +430,11 @@ builder.Services.AddScoped<IPayablesStore, SqlPayablesStore>();
 builder.Services.AddScoped<PayablesService>();
 builder.Services.AddScoped<IExpenseStore, SqlExpenseStore>();
 builder.Services.AddScoped<ExpenseService>();
+builder.Services.AddScoped<IPayrollStore, SqlPayrollStore>();
+builder.Services.AddSingleton<PayrollCalculator>();
+builder.Services.AddScoped<PayrollService>();
+builder.Services.AddScoped<IPayrollReportingStore, SqlPayrollReportingStore>();
+builder.Services.AddScoped<PayrollReportingService>();
 builder.Services.AddScoped<IReceivablesStore, SqlReceivablesStore>();
 builder.Services.AddScoped<ReceivablesService>();
 builder.Services.AddScoped<IPricingStore, SqlPricingStore>();
@@ -549,6 +560,11 @@ builder.Services.AddAuthorization(options =>
         policy.RequireAuthenticatedUser();
     });
     options.AddPolicy("expenses.user", policy =>
+    {
+        policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
+        policy.RequireAuthenticatedUser();
+    });
+    options.AddPolicy("payroll.user", policy =>
     {
         policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
         policy.RequireAuthenticatedUser();
@@ -714,6 +730,7 @@ app.MapPurchasingApi();
 app.MapReceivablesApi();
 app.MapPayablesApi();
 app.MapExpensesApi();
+app.MapPayrollApi();
 app.MapReturnsApi();
 app.MapSalesReturnQueryApi();
 app.MapInventoryApi();

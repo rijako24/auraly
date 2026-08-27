@@ -125,6 +125,23 @@ public sealed class FiscalSubmissionWorkerTests
         Assert.Equal(0, transport.QueryCalls);
     }
 
+    [Fact]
+    public async Task Production_electronic_payroll_selects_SendNominaSync()
+    {
+        var store = new TestStore(Work() with
+        {
+            TestSetId = null,
+            FiscalDocumentType = FiscalDocumentTypeCodes.ElectronicPayroll
+        });
+        var transport = new TestTransport(new DianSubmissionResult(
+            DianSubmissionDisposition.Accepted, null, "00", "Accepted", null, [], true));
+
+        Assert.True((await Worker(store, transport).ProcessAsync(
+            store.BusinessId, store.DocumentId, "worker-a")).WorkFound);
+
+        Assert.Equal(DianOperationCodes.SendPayrollSync, store.Started!.Operation);
+    }
+
     private static FiscalSubmissionWorker Worker(TestStore store, TestTransport transport)
     {
         transport.Store = store;
@@ -141,6 +158,7 @@ public sealed class FiscalSubmissionWorkerTests
         Guid.NewGuid(),
         "worker-a",
         "SETP42",
+        FiscalDocumentTypeCodes.Invoice,
         Guid.NewGuid(),
         Encoding.UTF8.GetBytes("<Invoice>signed</Invoice>"),
         null,
@@ -257,6 +275,11 @@ public sealed class FiscalSubmissionWorkerTests
     private sealed class TestProductionTransport(TestTransport transport) : IDianProductionTransport
     {
         public Task<DianSubmissionResult> SubmitBillSyncAsync(
+            DianSubmissionRequest request,
+            CancellationToken cancellationToken = default) =>
+            transport.SubmitTestSetAsync(request, cancellationToken);
+
+        public Task<DianSubmissionResult> SubmitPayrollSyncAsync(
             DianSubmissionRequest request,
             CancellationToken cancellationToken = default) =>
             transport.SubmitTestSetAsync(request, cancellationToken);

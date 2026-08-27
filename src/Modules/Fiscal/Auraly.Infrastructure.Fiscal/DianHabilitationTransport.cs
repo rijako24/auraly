@@ -31,6 +31,10 @@ public interface IDianWcfClient : IAsyncDisposable
         string fileName,
         byte[] contentFile,
         CancellationToken cancellationToken);
+
+    Task<DianDocumentResponse> SendPayrollSyncAsync(
+        byte[] contentFile,
+        CancellationToken cancellationToken);
 }
 
 public interface IDianWcfClientFactory
@@ -217,6 +221,12 @@ public interface IDianCustomerServices
         Action = "http://wcf.dian.colombia/IWcfDianCustomerServices/SendBillSync",
         ReplyAction = "http://wcf.dian.colombia/IWcfDianCustomerServices/SendBillSyncResponse")]
     Task<DianDocumentResponse> SendBillSyncAsync(string fileName, byte[] contentFile);
+
+    [OperationContract(
+        Name = "SendNominaSync",
+        Action = "http://wcf.dian.colombia/IWcfDianCustomerServices/SendNominaSync",
+        ReplyAction = "http://wcf.dian.colombia/IWcfDianCustomerServices/SendNominaSyncResponse")]
+    Task<DianDocumentResponse> SendPayrollSyncAsync(byte[] contentFile);
 }
 
 internal sealed class DianWcfClient(
@@ -260,6 +270,14 @@ internal sealed class DianWcfClient(
     {
         cancellationToken.ThrowIfCancellationRequested();
         return await channel.SendBillSyncAsync(fileName, contentFile).WaitAsync(cancellationToken);
+    }
+
+    public async Task<DianDocumentResponse> SendPayrollSyncAsync(
+        byte[] contentFile,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return await channel.SendPayrollSyncAsync(contentFile).WaitAsync(cancellationToken);
     }
 
     public ValueTask DisposeAsync()

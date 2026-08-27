@@ -5,6 +5,7 @@ using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Commerce.Accounting.Domain;
+using Auraly.Commerce.Payroll.Contracts;
 using Auraly.Contracts.WorkSessions;
 using Microsoft.Data.SqlClient;
 
@@ -98,6 +99,10 @@ public sealed partial class SqlAccountingPostingProcessor(
                     FinancialFactsResult.Ready(LoadManualVoucherFacts(source)),
                 WorkSessionAccountingDocumentTypes.CashDifference =>
                     FinancialFactsResult.Ready(LoadWorkSessionCashDifferenceFacts(source)),
+                PayrollAccountingDocumentTypes.Accrual or
+                PayrollAccountingDocumentTypes.Payment or
+                PayrollAccountingDocumentTypes.Adjustment =>
+                    FinancialFactsResult.Ready(LoadPayrollFacts(source)),
                 _ => throw new InvalidOperationException(
                     $"Document type '{source.DocumentType}' is not supported for accounting.")
             };
@@ -205,6 +210,25 @@ public sealed partial class SqlAccountingPostingProcessor(
             payload.UserName,
             surplus,
             Math.Abs(payload.Difference));
+    }
+
+    private static FinancialFacts LoadPayrollFacts(SourceEnvelope source)
+    {
+        var payload = PayrollContractSerializer.DeserializeAccounting(source.PayloadJson);
+        if (payload.PayrollRunId != source.DocumentId ||
+            payload.BusinessId != source.BusinessId || payload.TenantId != source.TenantId ||
+            payload.Lines.Count == 0 || payload.Lines.Any(line =>
+                string.IsNullOrWhiteSpace(line.Category) || line.Category.Length > 64 ||
+                line.Debit < 0 || line.Credit < 0 ||
+                (line.Debit == 0) == (line.Credit == 0)) ||
+            decimal.Round(payload.Lines.Sum(line => line.Debit), 4) !=
+            decimal.Round(payload.Lines.Sum(line => line.Credit), 4))
+            throw new InvalidOperationException("The payroll accounting payload is inconsistent.");
+
+        return FinancialFacts.Payroll(payload.Description,
+            payload.Lines.Select(line => new CategoryLineSpec(
+                line.Category, line.Debit, line.Credit, line.PartyId,
+                line.Description)).ToArray());
     }
 
     private static async Task<string> LockPostingStatusAsync(
@@ -945,7 +969,8 @@ public sealed partial class SqlAccountingPostingProcessor(
         bool IsReturn, bool IsPurchase, bool IsPayablePayment, bool IsReceivablePayment,
         bool IsCashMovement = false, bool CashIsIn = false, Guid? PreferredCostCenterId = null,
         Guid? DirectExpenseAccountId = null,
-        IReadOnlyList<ManualLineSpec>? DirectLines = null)
+        IReadOnlyList<ManualLineSpec>? DirectLines = null,
+        IReadOnlyList<CategoryLineSpec>? DirectCategoryLines = null)
     {
         public IReadOnlySet<string> RequiredCategories
         {
@@ -953,6 +978,9 @@ public sealed partial class SqlAccountingPostingProcessor(
             {
                 if (DirectLines is not null)
                     return new HashSet<string>(StringComparer.Ordinal);
+                if (DirectCategoryLines is not null)
+                    return DirectCategoryLines.Select(line => line.Category)
+                        .ToHashSet(StringComparer.Ordinal);
                 var values = new HashSet<string>(Settlements.Select(item => item.Category), StringComparer.Ordinal);
                 if (IsCashMovement)
                 {
@@ -990,6 +1018,13 @@ public sealed partial class SqlAccountingPostingProcessor(
                 foreach (var line in DirectLines)
                     yield return new JournalLine(line.AccountId, line.Debit, line.Credit,
                         line.PartyId, line.CostCenterId ?? costCenter, line.Description);
+                yield break;
+            }
+            if (DirectCategoryLines is not null)
+            {
+                foreach (var line in DirectCategoryLines)
+                    yield return new JournalLine(accounts[line.Category], line.Debit,
+                        line.Credit, line.PartyId, costCenter, line.Description);
                 yield break;
             }
             if (IsCashMovement)
@@ -1091,9 +1126,16 @@ public sealed partial class SqlAccountingPostingProcessor(
         public static FinancialFacts Manual(string description, IReadOnlyList<ManualLineSpec> lines) =>
             new(description, null, 0, 0, 0, 0, [], false, false, false, false,
                 DirectLines: lines);
+        public static FinancialFacts Payroll(string description, IReadOnlyList<CategoryLineSpec> lines) =>
+            new(description, null, 0, 0, 0, 0, [], false, false, false, false,
+                DirectCategoryLines: lines);
     }
 
     private sealed record ManualLineSpec(
         Guid AccountId, decimal Debit, decimal Credit, Guid? PartyId,
         Guid? CostCenterId, string Description);
+
+    private sealed record CategoryLineSpec(
+        string Category, decimal Debit, decimal Credit, Guid? PartyId,
+        string Description);
 }

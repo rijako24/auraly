@@ -247,6 +247,16 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Domain.Expenses", "s
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Application.Expenses", "src\Modules\Expenses\Auraly.Application.Expenses\Auraly.Application.Expenses.csproj", "{D615ACBF-A0E3-4E65-9CD1-2145FC573D78}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Payroll", "Payroll", "{50A00000-0000-4000-8000-000000000001}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Commerce.Payroll.Contracts", "src\Modules\Payroll\Auraly.Commerce.Payroll.Contracts\Auraly.Commerce.Payroll.Contracts.csproj", "{50B00000-0000-4000-8000-000000000002}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Commerce.Payroll.Domain", "src\Modules\Payroll\Auraly.Commerce.Payroll.Domain\Auraly.Commerce.Payroll.Domain.csproj", "{50C00000-0000-4000-8000-000000000003}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Commerce.Payroll.Application", "src\Modules\Payroll\Auraly.Commerce.Payroll.Application\Auraly.Commerce.Payroll.Application.csproj", "{50D00000-0000-4000-8000-000000000004}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auraly.Commerce.Payroll.Infrastructure", "src\Modules\Payroll\Auraly.Commerce.Payroll.Infrastructure\Auraly.Commerce.Payroll.Infrastructure.csproj", "{50E00000-0000-4000-8000-000000000005}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -256,6 +266,22 @@ Global
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{50B00000-0000-4000-8000-000000000002}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{50B00000-0000-4000-8000-000000000002}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{50B00000-0000-4000-8000-000000000002}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{50B00000-0000-4000-8000-000000000002}.Release|Any CPU.Build.0 = Release|Any CPU
+		{50C00000-0000-4000-8000-000000000003}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{50C00000-0000-4000-8000-000000000003}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{50C00000-0000-4000-8000-000000000003}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{50C00000-0000-4000-8000-000000000003}.Release|Any CPU.Build.0 = Release|Any CPU
+		{50D00000-0000-4000-8000-000000000004}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{50D00000-0000-4000-8000-000000000004}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{50D00000-0000-4000-8000-000000000004}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{50D00000-0000-4000-8000-000000000004}.Release|Any CPU.Build.0 = Release|Any CPU
+		{50E00000-0000-4000-8000-000000000005}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{50E00000-0000-4000-8000-000000000005}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{50E00000-0000-4000-8000-000000000005}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{50E00000-0000-4000-8000-000000000005}.Release|Any CPU.Build.0 = Release|Any CPU
 		{74E2C9FF-E77D-46F3-BCE3-192FD108D0F7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{74E2C9FF-E77D-46F3-BCE3-192FD108D0F7}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{74E2C9FF-E77D-46F3-BCE3-192FD108D0F7}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -598,6 +624,11 @@ Global
 		{D615ACBF-A0E3-4E65-9CD1-2145FC573D78}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
+		{50A00000-0000-4000-8000-000000000001} = {E7472DB3-AEC2-4AA3-8902-7533EE31C2B3}
+		{50B00000-0000-4000-8000-000000000002} = {50A00000-0000-4000-8000-000000000001}
+		{50C00000-0000-4000-8000-000000000003} = {50A00000-0000-4000-8000-000000000001}
+		{50D00000-0000-4000-8000-000000000004} = {50A00000-0000-4000-8000-000000000001}
+		{50E00000-0000-4000-8000-000000000005} = {50A00000-0000-4000-8000-000000000001}
 		{E3ECCBF0-6B36-4460-A25E-4FFBE9837688} = {AA52BDD3-C36B-499D-9049-BB721311A642}
 		{74E2C9FF-E77D-46F3-BCE3-192FD108D0F7} = {E3ECCBF0-6B36-4460-A25E-4FFBE9837688}
 		{A17D3A29-D0D7-4399-9877-89F3910CFD76} = {E3ECCBF0-6B36-4460-A25E-4FFBE9837688}

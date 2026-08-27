@@ -249,6 +249,30 @@ public sealed class DianHabilitationTransportTests
         Assert.Equal(1, client.BillCalls);
     }
 
+    [Fact]
+    public async Task Production_payroll_transport_uses_SendNominaSync_and_maps_acceptance()
+    {
+        var client = new DeterministicClient
+        {
+            Bill = new DianDocumentResponse
+            {
+                IsValid = true,
+                StatusCode = "00",
+                StatusDescription = "Procesado correctamente",
+                XmlDocumentKey = "cune-001"
+            }
+        };
+        var transport = new DianProductionTransport(
+            new FixedProductionConfigurationProvider(), new FixedClientFactory(client));
+
+        var result = await transport.SubmitPayrollSyncAsync(Request() with { TestSetId = null });
+
+        Assert.Equal(DianSubmissionDisposition.Accepted, result.Disposition);
+        Assert.Equal("cune-001", result.TrackId);
+        Assert.Equal(1, client.PayrollCalls);
+        Assert.Equal(0, client.BillCalls);
+    }
+
     private static DianHabilitationTransport CreateTransport(DeterministicClient client) =>
         new(new FixedConfigurationProvider(), new FixedClientFactory(client));
 
@@ -295,6 +319,7 @@ public sealed class DianHabilitationTransportTests
         public DianDocumentResponse Bill { get; init; } = new();
         public int UploadCalls { get; private set; }
         public int BillCalls { get; private set; }
+        public int PayrollCalls { get; private set; }
 
         public Task<DianUploadDocumentResponse> SendTestSetAsync(
             string fileName,
@@ -325,6 +350,14 @@ public sealed class DianHabilitationTransportTests
             CancellationToken cancellationToken)
         {
             BillCalls++;
+            return Task.FromResult(Bill);
+        }
+
+        public Task<DianDocumentResponse> SendPayrollSyncAsync(
+            byte[] contentFile,
+            CancellationToken cancellationToken)
+        {
+            PayrollCalls++;
             return Task.FromResult(Bill);
         }
 

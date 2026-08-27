@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Download, Printer, Search } from "lucide-react";
+import { ArrowLeft, Download, Printer, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TenantBrand } from "@/components/brand/tenant-brand";
@@ -44,7 +44,7 @@ export function ReportViewer({ onClose, title, description, rows, columns, fileN
   }
 
   return <div className="flex min-h-[calc(100dvh-9rem)] flex-col overflow-hidden rounded-2xl border bg-background">
-        <header className="flex flex-wrap items-center gap-4 border-b px-5 py-4"><TenantBrand displayName={brandName} logoUrl={branding.data?.logoUrl}/><div><h1 className="text-lg font-semibold">{title}</h1><p className="text-sm text-muted-foreground">{description ?? `${recordCount.toLocaleString("es-CO")} registros`}</p></div></header>
+        <header className="flex flex-wrap items-center gap-4 border-b px-5 py-4"><Button type="button" size="sm" variant="ghost" onClick={onClose}><ArrowLeft className="mr-2 h-4 w-4"/>Volver</Button><TenantBrand displayName={brandName} logoUrl={branding.data?.logoUrl}/><div><h1 className="text-lg font-semibold">{title}</h1><p className="text-sm text-muted-foreground">{description ?? `${recordCount.toLocaleString("es-CO")} registros`}</p></div></header>
         <div className="flex flex-col gap-3 border-b bg-muted/30 p-4 sm:flex-row sm:items-center">
           <label className="relative min-w-0 flex-1">
             <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
