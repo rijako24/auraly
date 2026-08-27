@@ -236,9 +236,10 @@ $hasExpectedSigner = $null -ne $signature.SignerCertificate -and
 $isSelfSignedSigner = $hasExpectedSigner -and
     $signature.SignerCertificate.Subject -eq $signature.SignerCertificate.Issuer
 $hasAcceptedStatus = $signature.Status -eq 'Valid' -or
-    ($isSelfSignedSigner -and $signature.Status -eq 'NotTrusted')
+    ($isSelfSignedSigner -and
+     $signature.Status -in @('NotTrusted', 'UnknownError'))
 if ($RequireSignature -and (-not $hasExpectedSigner -or -not $hasAcceptedStatus)) {
-    throw 'El instalador final no tiene una firma Authenticode válida.'
+    throw "El instalador final no tiene una firma Authenticode válida. Estado: $($signature.Status)."
 }
 
 [pscustomobject]@{

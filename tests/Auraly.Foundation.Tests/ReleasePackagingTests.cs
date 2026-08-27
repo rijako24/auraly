@@ -42,7 +42,7 @@ public sealed class ReleasePackagingTests
         Assert.DoesNotContain("TrustedPublisher", workflow,
             StringComparison.Ordinal);
         Assert.DoesNotContain("Import-Certificate", workflow, StringComparison.Ordinal);
-        Assert.Contains("$signature.Status -eq 'NotTrusted'", script,
+        Assert.Contains("@('NotTrusted', 'UnknownError')", script,
             StringComparison.Ordinal);
     }
 

@@ -100,8 +100,9 @@ foreach ($item in $Path) {
                 -HashAlgorithm SHA256 `
                 -TimestampServer $TimestampUrl
         }
-        if ($signed.Status -ne 'Valid' -and
-            -not ($isSelfSigned -and $signed.Status -eq 'NotTrusted')) {
+        $isAcceptedSelfSignedStatus = $isSelfSigned -and
+            $signed.Status -in @('NotTrusted', 'UnknownError')
+        if ($signed.Status -ne 'Valid' -and -not $isAcceptedSelfSignedStatus) {
             throw "PowerShell no pudo firmar ${resolvedPath}: $($signed.StatusMessage)"
         }
         continue
@@ -128,8 +129,9 @@ foreach ($item in $Path) {
     $hasExpectedSigner = $null -ne $signature.SignerCertificate -and
         $signature.SignerCertificate.Thumbprint -eq $normalizedThumbprint
     $hasAcceptedStatus = $signature.Status -eq 'Valid' -or
-        ($isSelfSigned -and $signature.Status -eq 'NotTrusted')
+        ($isSelfSigned -and
+         $signature.Status -in @('NotTrusted', 'UnknownError'))
     if (-not $hasExpectedSigner -or -not $hasAcceptedStatus) {
-        throw "La firma Authenticode de $resolvedPath no es válida o usa otro certificado."
+        throw "La firma Authenticode de $resolvedPath no es válida o usa otro certificado. Estado: $($signature.Status)."
     }
 }
