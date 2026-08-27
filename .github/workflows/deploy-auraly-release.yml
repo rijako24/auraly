@@ -97,10 +97,23 @@ jobs:
             }
             if ($certificate.Subject -eq $certificate.Issuer) {
               Export-Certificate -Cert $certificate -FilePath $cerPath | Out-Null
-              Import-Certificate -FilePath $cerPath `
-                -CertStoreLocation 'Cert:\CurrentUser\Root' | Out-Null
-              Import-Certificate -FilePath $cerPath `
-                -CertStoreLocation 'Cert:\CurrentUser\TrustedPublisher' | Out-Null
+              $publicCertificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new(
+                $cerPath)
+              foreach ($storeName in @(
+                [Security.Cryptography.X509Certificates.StoreName]::Root,
+                [Security.Cryptography.X509Certificates.StoreName]::TrustedPublisher)) {
+                $trustStore = [Security.Cryptography.X509Certificates.X509Store]::new(
+                  $storeName,
+                  [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
+                try {
+                  $trustStore.Open(
+                    [Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+                  $trustStore.Add($publicCertificate)
+                }
+                finally {
+                  $trustStore.Dispose()
+                }
+              }
             }
             "thumbprint=$($certificate.Thumbprint)" >> $env:GITHUB_OUTPUT
           }
