@@ -74,6 +74,25 @@ public sealed class ReleasePackagingTests
     }
 
     [Fact]
+    public void Installer_projects_are_visible_but_only_built_by_the_packaging_pipeline()
+    {
+        var solution = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "Auraly.Commerce.sln"));
+
+        Assert.Contains("Auraly.Pos.Setup.wixproj", solution, StringComparison.Ordinal);
+        Assert.Contains("Auraly.Pos.Bundle.wixproj", solution, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "{8FC786E1-BBF9-4C18-9655-00A80624A4B8}.Release|Any CPU.Build.0",
+            solution,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "{00981DD1-1677-4718-82B5-7C34541FADF2}.Release|Any CPU.Build.0",
+            solution,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Pos_installer_uses_the_single_Auraly_name_and_official_icon()
     {
         var repositoryRoot = FindRepositoryRoot();
