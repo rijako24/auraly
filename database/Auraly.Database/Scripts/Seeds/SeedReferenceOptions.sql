@@ -20,6 +20,17 @@ VALUES
 ('10000000-0000-0000-0000-000000000005',N'payment-method',N'Credit',N'Crédito cliente',NULL,50),
 ('10000000-0000-0000-0000-000000000006',N'payment-method',N'BankTransfer',N'Transferencia bancaria',NULL,60),
 ('10000000-0000-0000-0000-000000000007',N'payment-method',N'Deposit',N'Consignación o depósito',NULL,70),
+('11000000-0000-0000-0000-000000000001',N'card-franchise',N'Visa',N'Visa',NULL,10),
+('11000000-0000-0000-0000-000000000002',N'card-franchise',N'Mastercard',N'Mastercard',NULL,20),
+('11000000-0000-0000-0000-000000000003',N'card-franchise',N'AmericanExpress',N'American Express',NULL,30),
+('11000000-0000-0000-0000-000000000004',N'card-franchise',N'DinersClub',N'Diners Club',NULL,40),
+('12000000-0000-0000-0000-000000000001',N'sales-return-resolution-method',N'Cash',N'Efectivo',N'Reintegra dinero desde la sesión de caja y abre el cajón.',10),
+('12000000-0000-0000-0000-000000000002',N'sales-return-resolution-method',N'CustomerCredit',N'Abono a cartera',N'Resta el saldo de la cuenta por cobrar de la venta.',20),
+('12000000-0000-0000-0000-000000000003',N'sales-return-resolution-method',N'Transfer',N'Transferencia',N'Reintegro por transferencia bancaria.',30),
+('12000000-0000-0000-0000-000000000004',N'sales-return-resolution-method',N'DebitCard',N'Tarjeta débito',N'Reversión al pago original con tarjeta débito.',40),
+('12000000-0000-0000-0000-000000000005',N'sales-return-resolution-method',N'CreditCard',N'Tarjeta crédito',N'Reversión al pago original con tarjeta crédito.',50),
+('12100000-0000-0000-0000-000000000001',N'sales-return-scope',N'FullCancellation',N'Anulación / devolución total',N'Devuelve automáticamente todas las cantidades aún disponibles de la venta.',10),
+('12100000-0000-0000-0000-000000000002',N'sales-return-scope',N'Partial',N'Devolución parcial',N'Permite seleccionar productos y cantidades específicas.',20),
 ('20000000-0000-0000-0000-000000000001',N'sales-document-type',N'SalesInvoice',N'Factura electrónica',N'Usa numeración DIAN, CUFE y código QR.',10),
 ('20000000-0000-0000-0000-000000000002',N'sales-document-type',N'SalesReceipt',N'Comprobante de venta',N'Usa la numeración operativa CVI.',20),
 ('30000000-0000-0000-0000-000000000001',N'purchase-presentation',N'Unidad',N'Unidad',NULL,10),
@@ -80,7 +91,7 @@ WHEN NOT MATCHED THEN
            source.Description,1,source.SortOrder,@Now,@Now)
 WHEN NOT MATCHED BY SOURCE
      AND target.CatalogCode IN
-       (N'payment-method',N'sales-document-type',N'purchase-presentation',
+       (N'payment-method',N'card-franchise',N'sales-return-resolution-method',N'sales-return-scope',N'sales-document-type',N'purchase-presentation',
         N'inventory-operation-type',N'agent-bot-type',N'accounting-account-type',
         N'accounting-subledger-kind',N'accounting-adjustment-direction',
         N'accounting-manual-concept',N'accounting-report-type',

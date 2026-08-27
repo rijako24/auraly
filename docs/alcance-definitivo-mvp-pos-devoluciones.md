@@ -1,8 +1,15 @@
 # Alcance definitivo del MVP: POS, balanza y devoluciones
 
-**Estado:** decisión vigente y consolidada  
+**Estado:** consolidación histórica; vigente solo donde no fue reemplazada por decisiones posteriores
 **Fecha:** 23 de julio de 2026  
 **Prioridad:** este documento reemplaza las decisiones contradictorias de documentos anteriores sobre negativos, balanza, módulos comerciales opcionales y devoluciones.
+
+> **Prevalencia posterior:** la política de negativos y la ausencia de inventario
+> local se rigen por `decision-definitiva-negativos-por-bodega-y-sin-inventario-local.md`;
+> el contexto operativo por `decision-sesiones-trabajo-equipos-enrolados-sin-caja.md`;
+> y la captura de productos por `diseno-ux-facturacion-pos-web.md`. Las secciones
+> reemplazadas se conservan solo como contexto histórico y no son requisitos de
+> implementación.
 
 ---
 
@@ -10,7 +17,7 @@
 
 ### Incluido desde el primer MVP
 
-- política de venta con inventario negativo por caja;
+- política de venta con inventario negativo por bodega;
 - balanza;
 - facturación POS con paridad funcional operativa;
 - ventas guardadas/temporales;
@@ -65,23 +72,25 @@ Cuando una devolución produzca valor a favor del cliente, se resuelve mediante 
 
 ---
 
-## 2. Política de negativos por caja
+## 2. Política de negativos por bodega
 
-La última decisión de producto es:
-
-```text
-CashRegisterSettings.AllowNegativeStockSales
-```
-
-La propiedad pertenece directamente a la caja.
-
-La caja sigue asociada a una bodega:
+La decisión vigente es:
 
 ```text
-CashRegister.DefaultWarehouseId -> Warehouse.Id
+Warehouse.AllowNegativeStockSales
 ```
 
-Pero dos cajas de la misma bodega pueden tener políticas diferentes.
+La propiedad pertenece a la bodega y toda sesión de trabajo que opera sobre ella
+hereda la misma política sin poder sobrescribirla.
+
+La sesión de trabajo opera sobre una bodega:
+
+```text
+WorkSession.WarehouseId -> Warehouse.Id
+```
+
+Dos sesiones o dispositivos sobre la misma bodega no pueden tener políticas
+diferentes.
 
 ### Comportamiento habilitado
 
@@ -94,18 +103,18 @@ Pero dos cajas de la misma bodega pueden tener políticas diferentes.
 
 ### Comportamiento deshabilitado
 
-- la caja valida al confirmar;
+- el POS valida en línea al capturar y el motor revalida en la transacción final;
 - presenta faltantes;
 - permite eliminar las líneas o pedir autorización;
 - una autorización de supervisor queda auditada;
-- offline usa la existencia local conocida.
+- sin red no inventa existencia ni captura una línea que requiera validación.
 
 ### Precedencia
 
 Para POS:
 
 ```text
-configuración de caja
+configuración de bodega
     -> autorización excepcional
     -> movimiento de inventario
 ```
@@ -114,11 +123,11 @@ Para traslados, inventarios, entradas, averías y devoluciones se usan las regla
 
 ### Criterios
 
-- cambiar de bodega no cambia la política de negativos;
-- clonar una caja permite copiar o modificar la política;
-- cada venta guarda caja, bodega y versión de configuración;
-- el administrador puede ver cajas de una misma bodega con políticas diferentes;
-- los reportes muestran qué caja originó el negativo.
+- cambiar de bodega cambia la política efectiva heredada y exige resincronizar configuración;
+- una sesión o dispositivo no copia ni modifica la política;
+- cada venta guarda sesión, dispositivo opcional, bodega y versión de configuración;
+- el administrador muestra la política en la bodega y solo la presenta como heredada en el POS;
+- los reportes muestran qué sesión, dispositivo y bodega originaron el negativo.
 
 ---
 

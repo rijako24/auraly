@@ -1,8 +1,17 @@
+[CmdletBinding()]
 param(
     [string]$ApiUrl = "http://127.0.0.1:5097",
     [string]$Version = "0.0.0-dev",
     [string]$Configuration = "Release",
-    [string]$ArtifactPath = ""
+    [string]$ArtifactPath = "",
+    [ValidatePattern('^[0-9A-Fa-f]{40}$')]
+    [string]$SigningCertificateThumbprint,
+    [ValidatePattern('^https://')]
+    [string]$SigningTimestampUrl,
+    [ValidateSet('CurrentUser', 'LocalMachine')]
+    [string]$SigningCertificateStoreLocation = 'CurrentUser',
+    [string]$SignToolPath,
+    [switch]$RequireSignature
 )
 
 $ErrorActionPreference = "Stop"
@@ -21,17 +30,97 @@ $edge = Join-Path $payload "edge"
 $web = Join-Path $payload "web"
 $runtime = Join-Path $payload "runtime"
 $desktopPublish = Join-Path $artifacts "desktop"
-$zip = Join-Path $artifacts "payload.zip"
-$installScript = Join-Path $artifacts "install.ps1"
-$sed = Join-Path $artifacts "AuralyPosSetup.sed"
-$setup = Join-Path $artifacts "Auraly POS Setup.exe"
+$msiBuild = Join-Path $artifacts "msi-build"
+$bundleBuild = Join-Path $artifacts "bundle-build"
+$bundleSigning = Join-Path $artifacts "bundle-signing"
+$msi = Join-Path $artifacts "Auraly.Pos.Setup.msi"
+$setup = Join-Path $artifacts "Auraly Setup.exe"
 $utf8 = [Text.UTF8Encoding]::new($false)
+$normalizedThumbprint = if ([string]::IsNullOrWhiteSpace($SigningCertificateThumbprint)) {
+    ""
+}
+else {
+    $SigningCertificateThumbprint.ToUpperInvariant()
+}
+
+function ConvertTo-MsiProductVersion([string]$value) {
+    $match = [regex]::Match(
+        $value,
+        '^(?<major>0|[1-9]\d*)\.(?<minor>0|[1-9]\d*)\.(?<patch>0|[1-9]\d*)(?:-(?<pre>[0-9A-Za-z.-]+))?$')
+    if (-not $match.Success) {
+        throw "La versión '$value' no es SemVer válida."
+    }
+
+    $major = [int]$match.Groups['major'].Value
+    $minor = [int]$match.Groups['minor'].Value
+    $patch = [int]$match.Groups['patch'].Value
+    if ($major -gt 255 -or $minor -gt 255 -or $patch -gt 65) {
+        throw "La versión '$value' excede los límites de Windows Installer."
+    }
+
+    $rank = 999
+    if ($match.Groups['pre'].Success) {
+        $pre = $match.Groups['pre'].Value
+        $preMatch = [regex]::Match(
+            $pre,
+            '^(?<name>alpha|beta|rc)[.-]?(?<number>\d+)(?:[.-].*)?$',
+            'IgnoreCase')
+        if (-not $preMatch.Success) {
+            throw "La versión preliminar '$pre' debe usar alphaN, betaN o rcN para conservar el orden de actualización MSI."
+        }
+        $number = [int]$preMatch.Groups['number'].Value
+        if ($number -gt 299) {
+            throw "La secuencia preliminar '$pre' supera el máximo 299."
+        }
+        $rank = switch ($preMatch.Groups['name'].Value.ToLowerInvariant()) {
+            'alpha' { $number }
+            'beta' { 300 + $number }
+            'rc' { 600 + $number }
+        }
+    }
+
+    $build = ($patch * 1000) + $rank
+    return "$major.$minor.$build"
+}
+
+function Invoke-AuralySigning([string[]]$path) {
+    if ([string]::IsNullOrWhiteSpace($normalizedThumbprint)) {
+        if ($RequireSignature) {
+            throw 'SigningCertificateThumbprint es obligatorio para un instalador firmado.'
+        }
+        return
+    }
+    if ([string]::IsNullOrWhiteSpace($SigningTimestampUrl)) {
+        throw 'SigningTimestampUrl es obligatorio al firmar.'
+    }
+
+    $arguments = @{
+        Path = $path
+        CertificateThumbprint = $normalizedThumbprint
+        TimestampUrl = $SigningTimestampUrl
+        CertificateStoreLocation = $SigningCertificateStoreLocation
+    }
+    if (-not [string]::IsNullOrWhiteSpace($SignToolPath)) {
+        $arguments.SignToolPath = $SignToolPath
+    }
+    & (Join-Path $PSScriptRoot 'Sign-AuralyWindowsArtifact.ps1') @arguments
+}
+
+if ($RequireSignature -and [string]::IsNullOrWhiteSpace($normalizedThumbprint)) {
+    throw 'SigningCertificateThumbprint es obligatorio para un instalador de release.'
+}
+if (-not [string]::IsNullOrWhiteSpace($normalizedThumbprint) -and
+    [string]::IsNullOrWhiteSpace($SigningTimestampUrl)) {
+    throw 'SigningTimestampUrl es obligatorio al firmar.'
+}
+
+$msiProductVersion = ConvertTo-MsiProductVersion $Version
 
 if (Test-Path -LiteralPath $artifacts) {
     Remove-Item -LiteralPath $artifacts -Recurse -Force
 }
 New-Item -ItemType Directory -Force -Path `
-    $edge,$web,$runtime,$desktopPublish | Out-Null
+    $edge,$web,$runtime,$desktopPublish,$msiBuild,$bundleBuild,$bundleSigning | Out-Null
 
 Push-Location (Join-Path $root "admin")
 try {
@@ -53,6 +142,7 @@ dotnet publish `
     --output $edge `
     -p:PublishSingleFile=true `
     -p:IncludeNativeLibrariesForSelfExtract=true
+if ($LASTEXITCODE -ne 0) { throw 'La publicación de POS Edge falló.' }
 
 dotnet publish `
     (Join-Path $root "src\Desktop\Auraly.Desktop\Auraly.Desktop.csproj") `
@@ -61,6 +151,7 @@ dotnet publish `
     --self-contained true `
     --output $desktopPublish `
     -p:PublishSingleFile=false
+if ($LASTEXITCODE -ne 0) { throw 'La publicación de Auraly Desktop falló.' }
 
 Copy-Item -Path (Join-Path $desktopPublish "*") -Destination $payload -Recurse -Force
 $node = (Get-Command node.exe -ErrorAction Stop).Source
@@ -78,224 +169,77 @@ $desktopSettings = @{
     version = $Version
     webPort = 47830
     edgePort = 47831
+    publisherCertificateThumbprint = $normalizedThumbprint
 } | ConvertTo-Json
 [IO.File]::WriteAllText(
     (Join-Path $payload "desktopsettings.json"),
     $desktopSettings,
     $utf8)
 
-& tar.exe -a -c -f $zip -C $payload .
-if ($LASTEXITCODE -ne 0) {
-    throw "The POS payload could not be compressed."
+$auralyBinaries = @(
+    Get-ChildItem -LiteralPath $payload -Recurse -File |
+        Where-Object {
+            $_.Name -like 'Auraly*.exe' -or $_.Name -like 'Auraly*.dll'
+        } |
+        Select-Object -ExpandProperty FullName
+)
+if ($auralyBinaries.Count -eq 0) {
+    throw 'La publicación del POS no produjo binarios Auraly para firmar.'
 }
+Invoke-AuralySigning $auralyBinaries
 
-$install = @'
-param([switch]$Quiet)
+dotnet tool restore
+if ($LASTEXITCODE -ne 0) { throw 'No fue posible restaurar WiX Toolset.' }
 
-$ErrorActionPreference = "Stop"
-$install = Join-Path $env:LOCALAPPDATA "Programs\Auraly POS"
+$msiProject = Join-Path $root 'src\Installer\Auraly.Pos.Setup\Auraly.Pos.Setup.wixproj'
+dotnet build $msiProject `
+    --configuration $Configuration `
+    "-p:PayloadDir=$payload" `
+    "-p:ProductVersion=$msiProductVersion" `
+    "-p:OutputPath=$msiBuild\"
+if ($LASTEXITCODE -ne 0) { throw 'La construcción del MSI de Auraly falló.' }
+$builtMsi = Get-ChildItem -LiteralPath $msiBuild -Recurse -Filter 'Auraly.Pos.Setup.msi' -File |
+    Select-Object -Single
+if ($null -eq $builtMsi) { throw 'WiX no produjo Auraly.Pos.Setup.msi.' }
+Copy-Item -LiteralPath $builtMsi.FullName -Destination $msi
+Invoke-AuralySigning @($msi)
 
-if (-not $Quiet) {
-    Add-Type -AssemblyName System.Windows.Forms
-    Add-Type -AssemblyName System.Drawing
-    [Windows.Forms.Application]::EnableVisualStyles()
-    $form = [Windows.Forms.Form]::new()
-    $form.Text = "Instalando Auraly POS"
-    $form.ClientSize = [Drawing.Size]::new(520, 210)
-    $form.StartPosition = "CenterScreen"
-    $form.FormBorderStyle = "FixedDialog"
-    $form.MaximizeBox = $false
-    $form.MinimizeBox = $false
-    $form.BackColor = [Drawing.Color]::FromArgb(7, 26, 29)
-    $title = [Windows.Forms.Label]::new()
-    $title.Text = "Auraly POS"
-    $title.ForeColor = [Drawing.Color]::White
-    $title.Font = [Drawing.Font]::new("Segoe UI", 20, [Drawing.FontStyle]::Bold)
-    $title.AutoSize = $true
-    $title.Location = [Drawing.Point]::new(28, 24)
-    $status = [Windows.Forms.Label]::new()
-    $status.Text = "Preparando la instalación..."
-    $status.ForeColor = [Drawing.Color]::FromArgb(205, 228, 230)
-    $status.Font = [Drawing.Font]::new("Segoe UI", 10)
-    $status.AutoSize = $true
-    $status.Location = [Drawing.Point]::new(31, 82)
-    $progress = [Windows.Forms.ProgressBar]::new()
-    $progress.Style = "Continuous"
-    $progress.Minimum = 0
-    $progress.Maximum = 100
-    $progress.Value = 5
-    $progress.Size = [Drawing.Size]::new(456, 25)
-    $progress.Location = [Drawing.Point]::new(31, 119)
-    $form.Controls.AddRange(@($title, $status, $progress))
-    $form.Show()
-    [Windows.Forms.Application]::DoEvents()
+$bundleProject = Join-Path $root 'src\Installer\Auraly.Pos.Bundle\Auraly.Pos.Bundle.wixproj'
+dotnet build $bundleProject `
+    --configuration $Configuration `
+    "-p:MsiPath=$msi" `
+    "-p:BundleVersion=$msiProductVersion" `
+    "-p:OutputPath=$bundleBuild\"
+if ($LASTEXITCODE -ne 0) { throw 'La construcción del bundle de Auraly falló.' }
+$unsignedBundle = Get-ChildItem -LiteralPath $bundleBuild -Recurse -Filter 'Auraly.Pos.Bundle.exe' -File |
+    Select-Object -Single
+if ($null -eq $unsignedBundle) { throw 'WiX no produjo Auraly.Pos.Bundle.exe.' }
+
+if ([string]::IsNullOrWhiteSpace($normalizedThumbprint)) {
+    Copy-Item -LiteralPath $unsignedBundle.FullName -Destination $setup
 }
-
-function Set-InstallProgress([string]$message, [int]$percent) {
-    if ($Quiet) { return }
-    $status.Text = $message
-    $progress.Value = [Math]::Max(0, [Math]::Min(100, $percent))
-    [Windows.Forms.Application]::DoEvents()
-}
-
-try {
-Set-InstallProgress "Cerrando la versión anterior..." 12
-
-Get-Process -Name "Auraly.Desktop" -ErrorAction SilentlyContinue |
-    Stop-Process -Force -ErrorAction SilentlyContinue
-
-$webViewProfile = Join-Path $env:LOCALAPPDATA "Auraly\PosEdge\webview2"
-for ($attempt = 0; $attempt -lt 20; $attempt++) {
-    $children = @(
-        Get-CimInstance Win32_Process |
-            Where-Object {
-                ($_.Name -eq "node.exe" -and $_.CommandLine -like "*$install*") -or
-                ($_.Name -eq "Auraly.Pos.Edge.Host.exe" -and
-                    $_.ExecutablePath -like "$install*") -or
-                ($_.Name -eq "msedge.exe" -and
-                    $_.CommandLine -like "*$webViewProfile*")
-            }
-    )
-    foreach ($process in $children) {
-        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
-    }
-    if (-not (Get-Process -Name "Auraly.Desktop" -ErrorAction SilentlyContinue) -and
-        $children.Count -eq 0) {
-        break
-    }
-    Start-Sleep -Milliseconds 250
-}
-
-Set-InstallProgress "Preparando los archivos..." 28
-if (Test-Path -LiteralPath $install) {
-    Remove-Item -LiteralPath $install -Recurse -Force
-}
-New-Item -ItemType Directory -Force -Path $install | Out-Null
-Expand-Archive -LiteralPath (Join-Path $PSScriptRoot "payload.zip") `
-    -DestinationPath $install -Force
-Set-InstallProgress "Configurando el almacenamiento local..." 70
-$databaseDirectory = Join-Path $env:LOCALAPPDATA "Auraly\PosEdge"
-New-Item -ItemType Directory -Force -Path $databaseDirectory | Out-Null
-$databasePath = Join-Path $databaseDirectory "auraly-pos.db"
-$startupModePath = Join-Path $databaseDirectory "startup-mode"
-if (-not (Test-Path -LiteralPath $startupModePath)) {
-    $existingEnrollmentPath = Join-Path $databaseDirectory "enrollment.protected"
-    $initialStartupMode = if (Test-Path -LiteralPath $existingEnrollmentPath) { "enrolled" } else { "online" }
-    [IO.File]::WriteAllText($startupModePath, $initialStartupMode, [Text.Encoding]::ASCII)
-}
-$edgeHost = Join-Path $install "edge\Auraly.Pos.Edge.Host.exe"
-$storageProcess = Start-Process -FilePath $edgeHost -ArgumentList @("--initialize-storage", "--database-path", $databasePath) -Wait -PassThru -NoNewWindow
-if ($storageProcess.ExitCode -ne 0) {
-    throw "Auraly POS could not initialize its local SQLite store."
-}
-
-Set-InstallProgress "Creando el acceso directo..." 84
-$desktop = [Environment]::GetFolderPath("DesktopDirectory")
-$shortcut = Join-Path $desktop "Auraly POS.lnk"
-$shell = New-Object -ComObject WScript.Shell
-$link = $shell.CreateShortcut($shortcut)
-$link.TargetPath = Join-Path $install "Auraly.Desktop.exe"
-$link.WorkingDirectory = $install
-$link.Description = "Auraly POS"
-$link.Save()
-
-Set-InstallProgress "Instalación completada. Abriendo Auraly POS..." 100
-$installedApp = Join-Path $install "Auraly.Desktop.exe"
-Start-Process -FilePath explorer.exe -ArgumentList @("`"$installedApp`"")
-if (-not $Quiet) { Start-Sleep -Milliseconds 650 }
-}
-catch {
-    if (-not $Quiet) {
-        [void][Windows.Forms.MessageBox]::Show(
-            "No fue posible instalar Auraly POS. $($_.Exception.Message)",
-            "Auraly POS",
-            [Windows.Forms.MessageBoxButtons]::OK,
-            [Windows.Forms.MessageBoxIcon]::Error)
-    }
-    throw
-}
-finally {
-    if (-not $Quiet -and $null -ne $form) { $form.Close(); $form.Dispose() }
-}
-'@
-[IO.File]::WriteAllText($installScript, $install, $utf8)
-
-$sedText = @"
-[Version]
-Class=IEXPRESS
-SEDVersion=3
-[Options]
-PackagePurpose=InstallApp
-ShowInstallProgramWindow=0
-HideExtractAnimation=0
-UseLongFileName=1
-InsideCompressed=0
-CAB_FixedSize=0
-CAB_ResvCodeSigning=0
-RebootMode=N
-InstallPrompt=
-DisplayLicense=
-FinishMessage=
-TargetName=$setup
-FriendlyName=Auraly POS
-AppLaunched=powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File install.ps1
-PostInstallCmd=<None>
-AdminQuietInstCmd=
-UserQuietInstCmd=powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File install.ps1 -Quiet
-SourceFiles=SourceFiles
-[Strings]
-FILE0="payload.zip"
-FILE1="install.ps1"
-[SourceFiles]
-SourceFiles0=$artifacts\
-[SourceFiles0]
-%FILE0%=
-%FILE1%=
-"@
-[IO.File]::WriteAllText($sed, $sedText, [Text.Encoding]::ASCII)
-
-$iexpress = Join-Path $env:WINDIR "System32\iexpress.exe"
-Start-Process -FilePath $iexpress -ArgumentList @("/N", $sed) -WindowStyle Hidden |
-    Out-Null
-
-$deadline = [DateTimeOffset]::Now.AddMinutes(15)
-$stableChecks = 0
-$lastLength = -1L
-while ([DateTimeOffset]::Now -lt $deadline) {
-    if (Test-Path -LiteralPath $setup) {
-        $length = (Get-Item -LiteralPath $setup).Length
-        if ($length -gt 0 -and $length -eq $lastLength) {
-            $stableChecks++
-        }
-        else {
-            $stableChecks = 0
-            $lastLength = $length
-        }
-        if ($stableChecks -ge 5) {
-            break
-        }
-    }
-    Start-Sleep -Seconds 1
-}
-
-if (-not (Test-Path -LiteralPath $setup)) {
-    throw "IExpress did not produce the installer."
+else {
+    $engine = Join-Path $bundleSigning 'Auraly.Pos.Bundle.Engine.exe'
+    dotnet tool run wix -- burn detach $unsignedBundle.FullName -engine $engine
+    if ($LASTEXITCODE -ne 0) { throw 'WiX no pudo separar el motor del bundle para firmarlo.' }
+    Invoke-AuralySigning @($engine)
+    dotnet tool run wix -- burn reattach $unsignedBundle.FullName -engine $engine -o $setup
+    if ($LASTEXITCODE -ne 0) { throw 'WiX no pudo reensamblar el bundle firmado.' }
+    Invoke-AuralySigning @($setup)
 }
 
 $file = Get-Item -LiteralPath $setup
-$hash = $null
-for ($attempt = 1; $attempt -le 60; $attempt++) {
-    try {
-        $hash = Get-FileHash -LiteralPath $setup -Algorithm SHA256 -ErrorAction Stop
-        break
-    }
-    catch [IO.IOException] {
-        if ($attempt -eq 60) { throw }
-        Start-Sleep -Seconds 1
-    }
+$hash = Get-FileHash -LiteralPath $setup -Algorithm SHA256
+$signature = Get-AuthenticodeSignature -LiteralPath $setup
+if ($RequireSignature -and $signature.Status -ne 'Valid') {
+    throw 'El instalador final no tiene una firma Authenticode válida.'
 }
+
 [pscustomobject]@{
     Path = $file.FullName
     Bytes = $file.Length
     Sha256 = $hash.Hash
+    Signature = $signature.Status
+    SignerThumbprint = $signature.SignerCertificate.Thumbprint
+    MsiPath = $msi
 }

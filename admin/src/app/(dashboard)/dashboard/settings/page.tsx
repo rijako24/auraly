@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 
 const SETTINGS_CARDS = [
   {
-    title: "Facturación electrónica",
+    title: "DIAN",
     description: "Resoluciones DIAN, vigencia, numeración y asignación central a cajas enroladas",
     href: "/dashboard/settings/fiscal",
     icon: FileKey2,

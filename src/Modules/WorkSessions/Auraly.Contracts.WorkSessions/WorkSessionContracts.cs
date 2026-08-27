@@ -90,7 +90,11 @@ public sealed record WorkSessionClosureView(
     decimal? CountedCash,
     decimal? CashDifference,
     string? Note,
-    IReadOnlyList<WorkSessionPaymentTotal> PaymentTotals);
+    IReadOnlyList<WorkSessionPaymentTotal> PaymentTotals,
+    long SalesCount = 0,
+    int CreditSalesCount = 0,
+    decimal CreditSalesAmount = 0,
+    long ReturnCount = 0);
 
 public sealed record WorkSessionClosurePreviewView(
     Guid WorkSessionId,
@@ -107,7 +111,11 @@ public sealed record WorkSessionClosurePreviewView(
     decimal TotalOther,
     decimal NetAmount,
     decimal ExpectedCash,
-    IReadOnlyList<WorkSessionPaymentTotal> PaymentTotals);
+    IReadOnlyList<WorkSessionPaymentTotal> PaymentTotals,
+    long SalesCount = 0,
+    int CreditSalesCount = 0,
+    decimal CreditSalesAmount = 0,
+    long ReturnCount = 0);
 
 public sealed record WorkSessionCashDifferencePayload(
     Guid WorkSessionClosureId,

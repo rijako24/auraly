@@ -20,18 +20,19 @@ public sealed class ReleasePackagingTests
     }
 
     [Fact]
-    public void Pos_installer_hash_tolerates_the_transient_iexpress_file_lock()
+    public void Pos_release_requires_an_authenticode_certificate()
     {
         var script = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(),
             "scripts",
             "Build-AuralyPosInstaller.ps1"));
 
-        Assert.Contains("for ($attempt = 1; $attempt -le 60; $attempt++)", script,
+        Assert.Contains("SigningCertificateThumbprint es obligatorio", script,
             StringComparison.Ordinal);
-        Assert.Contains("catch [IO.IOException]", script, StringComparison.Ordinal);
-        Assert.Contains("Get-FileHash -LiteralPath $setup -Algorithm SHA256 -ErrorAction Stop",
-            script, StringComparison.Ordinal);
+        Assert.Contains("Sign-AuralyWindowsArtifact.ps1", script, StringComparison.Ordinal);
+        Assert.Contains("Get-AuthenticodeSignature", File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "scripts", "Sign-AuralyWindowsArtifact.ps1")),
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -54,14 +55,54 @@ public sealed class ReleasePackagingTests
             "Auraly.Desktop",
             "AuralyDesktopUpdater.cs"));
 
-        Assert.Contains("[Windows.Forms.ProgressBar]::new()", installer,
-            StringComparison.Ordinal);
-        Assert.Contains("-WindowStyle Hidden", installer, StringComparison.Ordinal);
-        Assert.Contains("UserQuietInstCmd=", installer, StringComparison.Ordinal);
+        Assert.Contains("Auraly.Pos.Bundle.wixproj", installer, StringComparison.Ordinal);
+        Assert.DoesNotContain("IExpress", installer, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("-WindowStyle Hidden", installer, StringComparison.Ordinal);
         Assert.Contains("-Version $Version", release, StringComparison.Ordinal);
+        Assert.Contains("-RequireSignature", release, StringComparison.Ordinal);
         Assert.Contains("SHA256.HashDataAsync", updater, StringComparison.Ordinal);
-        Assert.Contains("ProcessStartInfo(installerPath, \"/Q\")", updater,
+        Assert.Contains("auraly-pos-update-download", updater,
             StringComparison.Ordinal);
+        Assert.Contains("/passive /norestart AuralyRelaunch=1",
+            File.ReadAllText(Path.Combine(
+                repositoryRoot,
+                "src",
+                "Desktop",
+                "Auraly.Desktop",
+                "AuralyPendingUpdateStore.cs")),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Pos_installer_uses_the_single_Auraly_name_and_official_icon()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var package = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "Installer", "Auraly.Pos.Setup", "Package.wxs"));
+        var bundle = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "Installer", "Auraly.Pos.Bundle", "Bundle.wxs"));
+        var desktopProject = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "Desktop", "Auraly.Desktop", "Auraly.Desktop.csproj"));
+
+        Assert.Contains("Package Name=\"Auraly\"", package, StringComparison.Ordinal);
+        Assert.Contains("Shortcut Id=\"AuralyPosDesktopShortcut\"", package,
+            StringComparison.Ordinal);
+        Assert.Equal(
+            2,
+            package.Split("Icon=\"AuralyIcon.ico\"", StringSplitOptions.None).Length - 1);
+        Assert.Contains("Bundle Name=\"Auraly\"", bundle, StringComparison.Ordinal);
+        Assert.Contains("Theme=\"hyperlinkSidebarLicense\"", bundle,
+            StringComparison.Ordinal);
+        Assert.Contains("ThemeFile=\"AuralyTheme.xml\"", bundle,
+            StringComparison.Ordinal);
+        Assert.Contains("LocalizationFile=\"AuralyTheme.wxl\"", bundle,
+            StringComparison.Ordinal);
+        Assert.Contains("LogoSideFile=", bundle, StringComparison.Ordinal);
+        Assert.Contains("Auraly.ico", bundle, StringComparison.Ordinal);
+        Assert.Contains("<ApplicationIcon>Assets\\Auraly.ico</ApplicationIcon>",
+            desktopProject, StringComparison.Ordinal);
+        Assert.DoesNotContain("Name=\"Auraly POS\"", package, StringComparison.Ordinal);
+        Assert.DoesNotContain("Name=\"Auraly Commerce\"", bundle, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -265,11 +265,28 @@ Antes de entregar, verificar:
 - [ ] No se suprimieron gates ni se alteraron dependencias/lock files sin formar parte del alcance.
 - [ ] No se mezclaron cambios ajenos ni se sobrescribio trabajo existente.
 - [ ] Documentacion y decisiones canonicas quedaron sincronizadas.
+- [ ] Se realizo la auditoria posterior del diff y se corrigieron sus hallazgos antes de entregar.
+
+### Auditoria posterior a cada implementacion
+
+La implementacion termina con una segunda revision, hecha sobre el resultado real y no solamente sobre el plan inicial. Se debe leer el diff completo y contrastarlo con `AGENTS.md`, este documento, `docs/invariantes-arquitectonicas-auraly.md` y las decisiones propietarias del modulo.
+
+La auditoria posterior debe verificar:
+
+1. que el flujo de extremo a extremo conserva el propietario canonico de cada regla y escritura;
+2. que no aparecieron motores, processors, workers, colas, job tables, writers, endpoints, catalogos o componentes paralelos;
+3. que no hay duplicacion de reglas entre capas, UI, prompt, configuracion, seed y tests;
+4. que multi-tenancy, autorizacion, idempotencia, concurrencia, tiempo, observabilidad, compatibilidad y rollback se resolvieron de acuerdo con el riesgo;
+5. que no quedaron hardcoding, fallbacks silenciosos, codigo muerto, configuracion huerfana, secretos ni abstracciones sin necesidad demostrada;
+6. que las pruebas ejercen el contrato publico y cubren la regresion, fallos y efectos relevantes;
+7. que documentacion, contratos, DI, persistencia, seeds y superficies afectadas describen el mismo comportamiento.
+
+La entrega debe resumir el resultado de esta auditoria y la evidencia ejecutada. Un hallazgo sin corregir bloquea la terminacion, salvo que sea un riesgo externo real que se reporte con propietario y condicion de resolucion.
 
 ## Motor de documentos: atomicidad y rendimiento
 
 - La validación de disponibilidad se realiza antes de confirmar el documento. El motor procesa el hecho confirmado aunque el saldo de inventario resulte negativo.
-- El documento, sus líneas, kardex, saldos, efectos de cartera, outbox y avance del cursor se escriben en una única transacción SQL.
+- El documento, sus líneas, kardex, saldos operativos, outbox y avance del cursor se escriben en una única transacción SQL operacional. Cartera, pagos, aplicaciones, contabilidad y reporting pertenecen a sus motores canónicos y consumen señales durables sin reabrir ni duplicar el efecto operacional.
 - El estado `Completed` y el cursor se confirman en el mismo `commit`. Cualquier excepción revierte todos los efectos del intento.
 - Un fallo deja el trabajo en `RetryScheduled`; el mismo mensaje se reintenta de forma idempotente y los documentos posteriores esperan su secuencia.
 - Las pruebas de integración deben forzar una excepción después de una escritura intermedia y demostrar ausencia de efectos parciales antes del reintento.

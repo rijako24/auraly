@@ -500,12 +500,12 @@ resource database 'Microsoft.Sql/servers/databases@2023-08-01-preview' = {
   location: sqlLocation
   tags: tags
   sku: {
-    name: 'Basic'
-    tier: 'Basic'
-    capacity: 5
+    name: environment == 'dev' ? 'Basic' : 'S1'
+    tier: environment == 'dev' ? 'Basic' : 'Standard'
+    capacity: environment == 'dev' ? 5 : 20
   }
   properties: {
-    maxSizeBytes: 2147483648
+    maxSizeBytes: environment == 'dev' ? 2147483648 : 268435456000
     readScale: 'Disabled'
     requestedBackupStorageRedundancy: 'Local'
     zoneRedundant: false

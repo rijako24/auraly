@@ -2,6 +2,7 @@ using System.Text;
 using Auraly.Application.Authentication;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.BuildingBlocks.Infrastructure.Identifiers;
+using Auraly.BuildingBlocks.Infrastructure.Persistence;
 using Auraly.Infrastructure.Persistence;
 
 
@@ -140,9 +141,10 @@ public static class PlatformApiComposition
                 "ConnectionStrings:Auraly or ConnectionStrings:DefaultConnection is required.");
         }
 
-        builder.Services.AddDbContext<ApplicationDbContext>(options =>
-
-            options.UseSqlServer(connectionString));
+        builder.Services.AddSingleton(new AuralySqlConnectionSource(connectionString));
+        builder.Services.AddDbContext<ApplicationDbContext>((services, options) =>
+            options.UseSqlServer(
+                services.GetRequiredService<AuralySqlConnectionSource>().ConnectionString));
 
         builder.Services.AddMemoryCache();
         builder.Services.AddScoped<ICorrelationIdProvider, CorrelationIdProvider>();
@@ -161,7 +163,7 @@ public static class PlatformApiComposition
         }
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
-        builder.Services.AddSingleton(new SqlServerConnectionFactory(connectionString));
+        builder.Services.AddSingleton<SqlServerConnectionFactory>();
         builder.Services.AddScoped<IAuthenticationSessionStore, SqlAuthenticationSessionStore>();
         builder.Services.AddScoped<IAuthenticationSessionValidator, AuthenticationSessionValidator>();
         builder.Services.AddScoped<AuthenticationSessionJwtBearerEvents>();

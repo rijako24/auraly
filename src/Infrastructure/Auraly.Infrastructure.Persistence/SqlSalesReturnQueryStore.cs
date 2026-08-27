@@ -270,7 +270,10 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
         await using var command=new SqlCommand("""
             SELECT l.LineNumber,l.ProductId,COALESCE(p.ProductCode,N''),p.Reference,l.Description,
                    l.Quantity,COALESCE(SUM(r.Quantity),0),l.UnitPrice,l.DiscountAmount,l.TaxCode,
-                   l.TaxRate,l.UntaxedAmount,l.TaxAmount,l.LineTotal
+                   l.TaxRate,l.UntaxedAmount,l.TaxAmount,l.LineTotal,
+                   COALESCE((SELECT STRING_AGG(pb.Barcode,N' ')
+                             FROM dbo.ProductBarcodes pb
+                             WHERE pb.ProductId=l.ProductId AND pb.IsActive=1),N'')
             FROM dbo.SalesDocumentLines l
             INNER JOIN dbo.Products p ON p.ProductId=l.ProductId
             LEFT JOIN dbo.SalesReturnLines r ON r.OriginalDocumentId=l.DocumentId
@@ -283,7 +286,7 @@ public sealed class SqlSalesReturnQueryStore(SqlServerConnectionFactory connecti
         command.Parameters.AddWithValue("@Id",documentId);var values=new List<ReturnableSaleLine>();
         await using var reader=await command.ExecuteReaderAsync(cancellationToken);
         while(await reader.ReadAsync(cancellationToken))
-        {var sold=reader.GetDecimal(5);var returned=reader.GetDecimal(6);values.Add(new(reader.GetInt32(0),reader.GetGuid(1),reader.GetString(2),reader.IsDBNull(3)?null:reader.GetString(3),reader.GetString(4),sold,returned,decimal.Max(0,sold-returned),reader.GetDecimal(7),reader.GetDecimal(8),reader.GetString(9),reader.GetDecimal(10),reader.GetDecimal(11),reader.GetDecimal(12),reader.GetDecimal(13)));}
+        {var sold=reader.GetDecimal(5);var returned=reader.GetDecimal(6);values.Add(new(reader.GetInt32(0),reader.GetGuid(1),reader.GetString(2),reader.IsDBNull(3)?null:reader.GetString(3),reader.GetString(4),sold,returned,decimal.Max(0,sold-returned),reader.GetDecimal(7),reader.GetDecimal(8),reader.GetString(9),reader.GetDecimal(10),reader.GetDecimal(11),reader.GetDecimal(12),reader.GetDecimal(13),reader.GetString(14)));}
         return values;
     }
 

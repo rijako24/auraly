@@ -1,6 +1,6 @@
 "use client";
 
-import { CreditCard, FileText, Loader2, Receipt, Trash2 } from "lucide-react";
+import { CreditCard, FileText, Loader2, Receipt, Trash2, X } from "lucide-react";
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -56,6 +56,7 @@ export function PosPaymentDialog({
   ) => Promise<void>;
 }) {
   const paymentMethods = useReferenceOptions("payment-method");
+  const cardFranchises = useReferenceOptions("card-franchise");
   const methods = useMemo(
     () => (paymentMethods.data ?? []).slice(0, 5).map((option, index) => ({
       code: option.code,
@@ -69,6 +70,8 @@ export function PosPaymentDialog({
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
   const [activePaymentId, setActivePaymentId] = useState<string | null>(null);
   const [creditError, setCreditError] = useState<string | null>(null);
+  const [cardCapture, setCardCapture] = useState<{ paymentId: string; franchiseCode: string; approvalNumber: string } | null>(null);
+  const cardApprovalRef = useRef<HTMLInputElement>(null);
   const amountRefs = useRef(new Map<string, HTMLInputElement>());
   const settlement = useMemo(
     () => calculatePaymentSettlement(total, payments),
@@ -76,7 +79,7 @@ export function PosPaymentDialog({
   );
 
   useEffect(() => {
-    const defaultMethod = methods[0];
+    const defaultMethod = methods.find((method) => method.code === "Cash");
     if (!defaultMethod || payments.length > 0) return;
     setPayments([{ id: crypto.randomUUID(), methodCode: defaultMethod.code, amount: total, reference: null }]);
   }, [methods, payments.length, total]);
@@ -109,6 +112,14 @@ export function PosPaymentDialog({
     });
   }, []);
 
+  const requiresCardCapture = useCallback((methodCode: string) =>
+    methodCode === "Card" || methodCode === "DebitCard" || methodCode === "CreditCard", []);
+
+  const openCardCapture = useCallback((paymentId: string) => {
+    const firstFranchise = cardFranchises.data?.[0]?.code ?? "";
+    setCardCapture({ paymentId, franchiseCode: firstFranchise, approvalNumber: "" });
+  }, [cardFranchises.data]);
+
   const addPayment = useCallback((requestedMethod?: string) => {
     if (busy) return;
     if (requestedMethod === "Credit" && !customer?.isCreditEnabled) {
@@ -121,36 +132,28 @@ export function PosPaymentDialog({
     const active = activePaymentId
       ? payments.find((payment) => payment.id === activePaymentId)
       : null;
-    const requestedIsAvailable = requestedMethod && !payments.some(
-      (payment) => payment.id !== active?.id && payment.methodCode === requestedMethod,
-    );
-    if (active && requestedMethod && requestedIsAvailable) {
-      update(active.id, { methodCode: requestedMethod });
-      focusAmount(active.id);
-      return;
-    }
-    const existing = requestedMethod
-      ? payments.find((payment) => payment.methodCode === requestedMethod)
-      : null;
-    if (existing) {
-      focusAmount(existing.id);
-      return;
-    }
-    if (requestedMethod && payments.length === 1 && settlement.isValid && settlement.change === 0) {
-      const current = payments[0];
-      setPayments([{ ...current, methodCode: requestedMethod }]);
-      focusAmount(current.id);
+    if (requestedMethod && settlement.missing <= 0) {
+      const current = active ?? payments[0];
+      if (!current) return;
+      update(current.id, { methodCode: requestedMethod, reference: null });
+      if (requiresCardCapture(requestedMethod)) openCardCapture(current.id);
+      else focusAmount(current.id);
       return;
     }
     if (settlement.missing <= 0) return;
     const used = new Set(payments.map((payment) => payment.methodCode));
-    const nextMethodCode = requestedMethod ?? chooseAdditionalPaymentMethod(
-      methods.map((method) => method.code),
-      used,
-    );
-    const nextMethod = methods.find(
-      (method) => method.code === nextMethodCode && !used.has(method.code),
-    );
+    const nextMethodCode = requestedMethod ?? "Cash";
+    const existingCash = nextMethodCode === "Cash"
+      ? payments.find((payment) => payment.methodCode === "Cash")
+      : null;
+    if (existingCash) {
+      update(existingCash.id, { amount: existingCash.amount + settlement.missing });
+      setActivePaymentId(existingCash.id);
+      setPendingFocusId(existingCash.id);
+      return;
+    }
+    const nextMethod = methods.find((method) => method.code === nextMethodCode) ??
+      methods.find((method) => method.code === chooseAdditionalPaymentMethod(methods.map((method) => method.code), used));
     if (!nextMethod) return;
     const id = crypto.randomUUID();
     setPayments((current) => [
@@ -163,8 +166,9 @@ export function PosPaymentDialog({
       },
     ]);
     setActivePaymentId(id);
-    setPendingFocusId(id);
-  }, [activePaymentId, busy, customer, focusAmount, methods, payments, settlement.change, settlement.isValid, settlement.missing]);
+    if (requiresCardCapture(nextMethod.code)) openCardCapture(id);
+    else setPendingFocusId(id);
+  }, [activePaymentId, busy, customer, focusAmount, methods, openCardCapture, payments, requiresCardCapture, settlement.missing]);
 
   useEffect(() => {
     if (!pendingFocusId) return;
@@ -174,6 +178,13 @@ export function PosPaymentDialog({
 
   useEffect(() => {
     const shortcut = (event: globalThis.KeyboardEvent) => {
+      if (cardCapture) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          setCardCapture(null);
+        }
+        return;
+      }
       const method = methods.find((value) => value.shortcut === event.key);
       if (method) {
         event.preventDefault();
@@ -189,26 +200,39 @@ export function PosPaymentDialog({
     };
     window.addEventListener("keydown", shortcut);
     return () => window.removeEventListener("keydown", shortcut);
-  }, [activePaymentId, addPayment, busy, methods, onCancel, payments.length, removePayment]);
+  }, [activePaymentId, addPayment, busy, cardCapture, methods, onCancel, payments.length, removePayment]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!settlement.isValid || busy || !documentTypeReady ||
+        payments.some(payment => requiresCardCapture(payment.methodCode) && (!payment.cardFranchiseCode || !payment.approvalNumber?.trim())) ||
         paymentMethods.isLoading || paymentMethods.isError) return;
     await onConfirm(
-      settlement.appliedPayments.map(({ methodCode, amount, reference }) => ({
+      settlement.appliedPayments.map(({ methodCode, amount, reference, cardFranchiseCode, approvalNumber }) => ({
         methodCode,
         amount,
         reference: reference?.trim() || null,
+        cardFranchiseCode: cardFranchiseCode?.trim() || null,
+        approvalNumber: approvalNumber?.trim() || null,
       })),
       settlement,
     );
   }
 
   function handleAmountEnter(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key !== "Enter" || settlement.missing <= 0) return;
-    event.preventDefault();
-    addPayment();
+    if (event.key !== "Enter") return;
+    if (settlement.missing > 0) {
+      event.preventDefault();
+      addPayment("Cash");
+    }
+  }
+
+  function saveCardCapture() {
+    if (!cardCapture?.franchiseCode || !cardCapture.approvalNumber.trim()) return;
+    update(cardCapture.paymentId, { reference: null, cardFranchiseCode: cardCapture.franchiseCode, approvalNumber: cardCapture.approvalNumber.trim() });
+    const paymentId = cardCapture.paymentId;
+    setCardCapture(null);
+    setPendingFocusId(paymentId);
   }
 
   return (
@@ -284,7 +308,10 @@ export function PosPaymentDialog({
                 <span>Medio</span>
                 <Select
                   value={payment.methodCode}
-                  onValueChange={(methodCode) => update(payment.id, { methodCode })}
+                  onValueChange={(methodCode) => {
+                    update(payment.id, { methodCode, reference: null, cardFranchiseCode: null, approvalNumber: null });
+                    if (requiresCardCapture(methodCode)) openCardCapture(payment.id);
+                  }}
                   disabled={busy}
                 >
                   <SelectTrigger aria-label="Medio de pago" className="mt-1 h-11 rounded-lg border-slate-300 bg-white shadow-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15">
@@ -331,16 +358,15 @@ export function PosPaymentDialog({
                 />
                 <span className="pointer-events-none absolute bottom-3 left-3 text-sm font-semibold text-slate-400">$</span>
               </label>
-              <label className="text-xs font-medium text-slate-600">
-                Referencia
-                <input
-                  value={payment.reference ?? ""}
-                  data-payment-reference="true"
-                  onChange={(event) => update(payment.id, { reference: event.target.value })}
-                  className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15"
-                  placeholder="Opcional"
-                />
-              </label>
+              {requiresCardCapture(payment.methodCode) ? (
+                <div className="text-xs font-medium text-slate-600"><span>Tarjeta</span><button type="button" onClick={() => openCardCapture(payment.id)} className={`mt-1 flex h-11 w-full items-center gap-2 rounded-lg border px-3 text-left text-sm font-semibold ${payment.cardFranchiseCode && payment.approvalNumber ? "border-emerald-300 bg-emerald-50 text-emerald-900" : "border-amber-300 bg-amber-50 text-amber-900"}`}><CreditCard className="h-4 w-4 shrink-0"/><span className="truncate">{payment.cardFranchiseCode && payment.approvalNumber ? `${cardFranchises.data?.find(item => item.code === payment.cardFranchiseCode)?.label ?? payment.cardFranchiseCode} · ${payment.approvalNumber}` : "Capturar franquicia y aprobación"}</span></button></div>
+              ) : payment.methodCode === "Cash" ? (
+                <div className="text-xs font-medium text-slate-600"><span>Efectivo</span><div className="mt-1 flex h-11 items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-emerald-900"><span className="grid h-7 w-7 place-items-center rounded-full bg-emerald-700 text-white">$</span><span>Cambio automático</span></div></div>
+              ) : payment.methodCode === "Credit" ? (
+                <div className="text-xs font-medium text-slate-600"><span>Crédito del cliente</span><div className="mt-1 flex h-11 items-center rounded-lg border border-violet-200 bg-violet-50 px-3 text-sm font-semibold text-violet-900">{customer ? `Plazo ${customer.defaultCreditDueDays ?? 0} días` : "Selecciona un cliente"}</div></div>
+              ) : (
+                <label className="text-xs font-medium text-slate-600">Referencia<input value={payment.reference ?? ""} data-payment-reference="true" onChange={(event) => update(payment.id, { reference: event.target.value })} className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15" placeholder="Comprobante o referencia"/></label>
+              )}
               <button
                 type="button"
                 onClick={() => removePayment(payment.id)}
@@ -371,6 +397,17 @@ export function PosPaymentDialog({
           </p>
           <PaymentStatus settlement={settlement} />
         </div>
+
+        {cardCapture && (
+          <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/65 p-4" data-pos-focus-surface="modal">
+            <div onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); saveCardCapture(); } }} className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="card-capture-title">
+              <div className="flex items-start justify-between gap-3"><div><h3 id="card-capture-title" className="text-lg font-bold text-slate-950">Datos de la tarjeta</h3><p className="mt-1 text-sm text-slate-500">Selecciona la franquicia y registra la aprobación del datáfono.</p></div><button type="button" onClick={() => setCardCapture(null)} aria-label="Cerrar datos de tarjeta" className="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-100"><X className="h-5 w-5"/></button></div>
+              <label className="mt-5 block text-sm font-medium text-slate-700">Franquicia<Select value={cardCapture.franchiseCode} onValueChange={franchiseCode => setCardCapture(current => current ? { ...current, franchiseCode } : null)}><SelectTrigger className="mt-1 h-11"><SelectValue placeholder="Selecciona"/></SelectTrigger><SelectContent>{(cardFranchises.data ?? []).map(item => <SelectItem key={item.id} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></label>
+              <label className="mt-4 block text-sm font-medium text-slate-700">Número de aprobación<input ref={cardApprovalRef} autoFocus required value={cardCapture.approvalNumber} onChange={event => setCardCapture(current => current ? { ...current, approvalNumber: event.target.value } : null)} className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-lg font-semibold tracking-wide outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-600/15" placeholder="Aprobación del datáfono"/></label>
+              <p className="mt-4 rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-600">Enter guarda y vuelve al valor recibido.</p><button type="button" onClick={saveCardCapture} disabled={!cardCapture.franchiseCode || !cardCapture.approvalNumber.trim()} className="mt-4 h-11 w-full rounded-xl bg-teal-700 font-bold text-white disabled:opacity-45">Guardar datos · Enter</button>
+            </div>
+          </div>
+        )}
         </div>
 
         <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)] gap-2 border-t border-slate-200 bg-white px-4 pt-3 [padding-bottom:max(0.75rem,env(safe-area-inset-bottom))] sm:flex sm:justify-end sm:px-5 sm:pb-4 sm:pt-4">
@@ -385,6 +422,7 @@ export function PosPaymentDialog({
           <button
             type="submit"
             disabled={!settlement.isValid || busy || !documentTypeReady ||
+              payments.some(payment => requiresCardCapture(payment.methodCode) && (!payment.cardFranchiseCode || !payment.approvalNumber?.trim())) ||
               paymentMethods.isLoading || paymentMethods.isError}
             className="flex h-11 min-w-0 items-center justify-center gap-2 rounded-lg bg-teal-700 px-3 font-semibold text-white focus:outline-none focus:ring-4 focus:ring-teal-600/20 disabled:opacity-45 sm:min-w-48 sm:px-5"
           >

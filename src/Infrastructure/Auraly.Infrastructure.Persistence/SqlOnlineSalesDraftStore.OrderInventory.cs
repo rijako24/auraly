@@ -6,6 +6,32 @@ namespace Auraly.Infrastructure.Persistence;
 
 public sealed partial class SqlOnlineSalesDraftStore
 {
+    public async Task PrepareSourceOrderInventoryAsync(
+        OnlineSalesUserIdentity user,
+        Guid businessId,
+        Guid orderId,
+        Guid destinationWarehouseId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            System.Data.IsolationLevel.Serializable, cancellationToken);
+        try
+        {
+            await ReleaseOrderInventoryCoreAsync(
+                connection, transaction, user, orderId, businessId,
+                destinationWarehouseId, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            if (transaction.Connection is not null)
+                await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+    }
+
     private async Task ReleaseOrderInventoryAsync(
         SqlConnection connection,
         SqlTransaction transaction,
@@ -14,17 +40,33 @@ public sealed partial class SqlOnlineSalesDraftStore
         CancellationToken cancellationToken)
     {
         if (state.SourceOrderId is null) return;
+        await ReleaseOrderInventoryCoreAsync(
+            connection, transaction, user, state.SourceOrderId.Value,
+            state.BusinessId, state.WarehouseId, cancellationToken);
+    }
+
+    private async Task ReleaseOrderInventoryCoreAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        OnlineSalesUserIdentity user,
+        Guid orderId,
+        Guid businessId,
+        Guid destinationWarehouseId,
+        CancellationToken cancellationToken)
+    {
 
         const string orderSql = """
-            SELECT OrdersWarehouseId,ReleaseTransferId,ExternalStatus,OrderNumber
+            SELECT OrdersWarehouseId,ReleaseTransferId,ExternalStatus,
+                   COALESCE(NULLIF(ExternalDocumentNumber,N''),
+                            CONCAT(N'PED-',LEFT(CONVERT(nvarchar(36),OrderId),8)))
             FROM dbo.Orders WITH(UPDLOCK,HOLDLOCK)
             WHERE OrderId=@OrderId AND BusinessId=@BusinessId;
             """;
         Guid ordersWarehouseId; Guid? existingTransferId; string? externalStatus; string orderNumber;
         await using (var command = new SqlCommand(orderSql, connection, transaction))
         {
-            command.Parameters.AddWithValue("@OrderId", state.SourceOrderId.Value);
-            command.Parameters.AddWithValue("@BusinessId", state.BusinessId);
+            command.Parameters.AddWithValue("@OrderId", orderId);
+            command.Parameters.AddWithValue("@BusinessId", businessId);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken))
                 throw new OnlineSalesDraftValidationException("El pedido de origen no existe en este negocio.");
@@ -51,8 +93,8 @@ public sealed partial class SqlOnlineSalesDraftStore
         var inventoryLines = new List<(Guid ProductId, decimal Quantity)>();
         await using (var command = new SqlCommand(productsSql, connection, transaction))
         {
-            command.Parameters.AddWithValue("@BusinessId", state.BusinessId);
-            command.Parameters.AddWithValue("@OrderId", state.SourceOrderId.Value);
+            command.Parameters.AddWithValue("@BusinessId", businessId);
+            command.Parameters.AddWithValue("@OrderId", orderId);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
                 inventoryLines.Add((reader.GetGuid(0), reader.GetDecimal(1)));
@@ -62,25 +104,25 @@ public sealed partial class SqlOnlineSalesDraftStore
             .ToArray();
         if (lines.Length == 0)
         {
-            await MarkOrderInventoryReleasedAsync(connection, transaction, state.SourceOrderId.Value, state.BusinessId,
+            await MarkOrderInventoryReleasedAsync(connection, transaction, orderId, businessId,
                 null, cancellationToken);
             return;
         }
 
         var transferId = ids.NewId();
-        var identity = new InventoryUserIdentity(user.UserId, user.TenantId, state.BusinessId,
+        var identity = new InventoryUserIdentity(user.UserId, user.TenantId, businessId,
             new HashSet<string>(StringComparer.Ordinal)
             {
                 InventoryPermissionCodes.DispatchTransfer,
                 "inventory.system-warehouses.use"
             });
         await inventoryOperations.ConfirmSystemTransferAtomicallyAsync(identity,
-            $"seller-order-release:{state.SourceOrderId.Value:N}",
-            new DispatchWarehouseTransferRequest(transferId, state.BusinessId, ordersWarehouseId,
-                state.WarehouseId, time.GetUtcNow(), "WAREHOUSE_TRANSFER",
+            $"seller-order-release:{orderId:N}",
+            new DispatchWarehouseTransferRequest(transferId, businessId, ordersWarehouseId,
+                destinationWarehouseId, time.GetUtcNow(), "WAREHOUSE_TRANSFER",
                 $"Salida completa del pedido {orderNumber} para facturación", lines),
             connection, transaction, cancellationToken);
-        await MarkOrderInventoryReleasedAsync(connection, transaction, state.SourceOrderId.Value, state.BusinessId,
+        await MarkOrderInventoryReleasedAsync(connection, transaction, orderId, businessId,
             transferId, cancellationToken);
     }
 

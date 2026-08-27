@@ -7,6 +7,12 @@ balanza, impresora y cajón monedero
 interrupciones, conservando todas las capacidades de Facturación de Xion que
 entran al MVP.
 
+> **Actualización canónica (2026-08-27):** cada captura exitosa agrega una línea
+> nueva al final de la venta, aunque el mismo producto ya esté presente. La grilla
+> desplaza su viewport hasta esa línea sin mover el foco DOM del receptor del
+> lector. Esta regla reemplaza cualquier texto de este u otro documento que
+> proponga incrementar, agrupar o consolidar automáticamente líneas repetidas.
+
 ---
 
 ## 1. Investigación usada como referencia
@@ -90,7 +96,7 @@ No se adopta:
 ### Flujo dominante
 
 ```text
-leer -> agregar/incrementar -> leer siguiente -> cobrar -> nueva venta
+leer -> agregar línea nueva al final -> mostrarla -> leer siguiente -> cobrar -> nueva venta
 ```
 
 El sistema se optimiza primero para ese ciclo.
@@ -103,7 +109,8 @@ captura:
 - siempre está listo al abrir la venta;
 - no pierde foco por notificaciones;
 - limpia el valor al resolver;
-- agrega o incrementa la línea;
+- agrega una línea nueva al final, aun si el producto ya existe en otra línea;
+- mantiene el foco DOM mientras la grilla desplaza el viewport hasta la línea nueva;
 - queda listo para la siguiente lectura;
 - no exige mouse;
 - distingue lectura de escritura humana por configuración y timing solo como
@@ -113,7 +120,7 @@ captura:
 
 Cada lectura produce inmediatamente:
 
-- línea agregada o cantidad incrementada;
+- línea nueva agregada al final y completamente visible;
 - nombre y cantidad visibles;
 - total recalculado;
 - señal sonora/visual configurable;
@@ -329,15 +336,28 @@ La edición no requiere guardar manualmente toda la factura.
 
 ### Lecturas repetidas
 
-Por defecto, escanear el mismo producto:
+Cada lectura exitosa crea una línea independiente al final, incluso cuando
+`ProductId`, unidad, precio, impuesto, promoción y vendedor coinciden con una
+línea previa. El POS no busca una línea compatible para incrementarla ni agrupa
+automáticamente productos repetidos. La cantidad de una línea solo cambia por
+una edición explícita del cajero o por la cantidad/factor contenido en la captura
+actual.
 
-- incrementa la línea compatible existente;
-- resalta la línea durante un instante;
-- muestra la nueva cantidad;
-- recalcula.
+Después de insertar:
 
-Se crea otra línea si cambian unidad, precio, impuesto, promoción, vendedor o una
-condición que impida consolidar.
+1. la nueva línea queda seleccionada visualmente y se anuncia de forma breve;
+2. el contenedor de la grilla hace scroll hasta que la línea completa sea visible;
+3. el foco DOM permanece o vuelve inmediatamente a `ProductCapture`, sin enviarse
+   a la fila;
+4. el valor del receptor queda limpio y listo para la siguiente lectura;
+5. totales y validaciones se recalculan para la nueva línea.
+
+La misma invariante aplica a escáner, búsqueda, balanza, código de empaque y toda
+otra ruta que agregue productos. En una carga por lote se preserva una línea por
+adición/origen y, al terminar, se muestra la última línea añadida sin perder el
+foco del lector. Un modal obligatorio puede capturar foco temporalmente; al
+resolverlo o cancelarlo, el foco vuelve al receptor. Una captura rechazada no
+crea línea y también deja el receptor listo.
 
 ### Deshacer
 
@@ -839,7 +859,7 @@ componentes ejecutan casos de uso y renderizan resultados.
 
 - foco inicial y retorno a captura;
 - lectura + `Enter`;
-- lectura repetida;
+- lectura repetida crea otra línea, desplaza hasta la última y conserva foco en captura;
 - navegación y edición de grilla;
 - recálculo;
 - permisos;
@@ -857,6 +877,11 @@ componentes ejecutan casos de uso y renderizan resultados.
 - asignación de número;
 - impresión;
 - recuperación de borrador/pedido.
+
+Las pruebas de captura deben verificar el elemento activo real y el scroll de la
+grilla, no solo que la línea exista. Deben cubrir al menos producto nuevo,
+producto repetido, búsqueda, balanza/empaque, captura rechazada, modal de
+autorización y lote recuperado.
 
 ### E2E
 

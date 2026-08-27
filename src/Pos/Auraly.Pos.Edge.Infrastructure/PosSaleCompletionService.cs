@@ -271,7 +271,9 @@ public sealed class PosSaleCompletionService(
             immutable.Payments.Select(payment => new OfflineSalePayment(
                 payment.MethodCode,
                 payment.Amount,
-                payment.Reference)).ToArray(),
+                payment.Reference,
+                payment.CardFranchiseCode,
+                payment.ApprovalNumber)).ToArray(),
             immutable.CommercialSnapshot.UntaxedAmount,
             immutable.CommercialSnapshot.TaxAmount,
             immutable.CommercialSnapshot.PayableAmount,
@@ -340,7 +342,9 @@ public sealed class PosSaleCompletionService(
             immutable.Payments.Select(payment => new OfflineSalePayment(
                 payment.MethodCode,
                 payment.Amount,
-                payment.Reference)).ToArray(),
+                payment.Reference,
+                payment.CardFranchiseCode,
+                payment.ApprovalNumber)).ToArray(),
             immutable.CommercialSnapshot.UntaxedAmount,
             immutable.CommercialSnapshot.TaxAmount,
             immutable.CommercialSnapshot.PayableAmount,

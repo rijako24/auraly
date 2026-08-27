@@ -1,6 +1,7 @@
 using System.Data;
 using Auraly.Application.Fiscal;
 using Auraly.BuildingBlocks.Infrastructure.Identifiers;
+using Auraly.BuildingBlocks.Infrastructure.Persistence;
 using Auraly.Commerce.Payroll.Application;
 using Auraly.Commerce.Payroll.Contracts;
 using Auraly.Commerce.Payroll.Infrastructure;
@@ -29,7 +30,8 @@ public sealed class DianPayrollLiveE2ETests(ITestOutputHelper output)
             Guid.Parse(RequiredEnvironment("AURALY_DIAN_PAYROLL_E2E_BUSINESS_ID")),
             new HashSet<string> { PayrollPermissionCodes.Read });
         var engine = new PayrollReportingService(
-            new SqlPayrollReportingStore(new PayrollSqlConnectionFactory(connectionString)));
+            new SqlPayrollReportingStore(new PayrollSqlConnectionFactory(
+                new AuralySqlConnectionSource(connectionString))));
 
         var definitions = await engine.ListDefinitionsAsync(identity);
         Assert.Equal(10, definitions.Count);
@@ -58,7 +60,7 @@ public sealed class DianPayrollLiveE2ETests(ITestOutputHelper output)
         var identity = new PayrollUserIdentity(userId, tenantId, businessId,
             new HashSet<string> { PayrollPermissionCodes.Read, PayrollPermissionCodes.Fiscal });
         var payrollStore = new SqlPayrollStore(
-            new PayrollSqlConnectionFactory(connectionString),
+            new PayrollSqlConnectionFactory(new AuralySqlConnectionSource(connectionString)),
             new Uuid7AuralyIdGenerator(TimeProvider.System), TimeProvider.System);
         var period = await payrollStore.GenerateElectronicPeriodAsync(identity,
             new GenerateElectronicPayrollPeriodRequest(periodId, businessId, 2026, 8),
@@ -66,7 +68,8 @@ public sealed class DianPayrollLiveE2ETests(ITestOutputHelper output)
         var document = Assert.Single(period.Documents);
         Assert.NotNull(document.FiscalDocumentId);
 
-        var connections = new SqlServerConnectionFactory(connectionString);
+        var connections = new SqlServerConnectionFactory(
+            new AuralySqlConnectionSource(connectionString));
         var ids = new Uuid7AuralyIdGenerator(TimeProvider.System);
         var certificateProvider = new WindowsFiscalSigningCertificateProvider();
         var generation = new FiscalGenerationWorker(

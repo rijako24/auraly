@@ -1,10 +1,15 @@
 # Parámetros de caja para Auraly Commerce
 
-**Estado:** complemento normativo del diseño de Auraly Commerce  
+**Estado:** auditoría histórica de parámetros; las decisiones posteriores indicadas abajo prevalecen
 **Fecha:** 23 de julio de 2026  
 **Documento base:** `docs/diseno-auraly-commerce-mvp.md`
 
-Este documento revisa el módulo **Parametrizar cajas** de Xion y define qué se conserva, qué se rediseña y qué queda fuera del MVP. En caso de diferencia con el documento base, las decisiones de este complemento tienen prioridad.
+Este documento revisa el módulo **Parametrizar cajas** de Xion y conserva el
+inventario histórico de capacidades. La decisión vigente de sesiones/equipos está
+en `decision-sesiones-trabajo-equipos-enrolados-sin-caja.md`, la política de
+negativos en `decision-definitiva-negativos-por-bodega-y-sin-inventario-local.md`
+y la captura POS en `diseno-ux-facturacion-pos-web.md`. Esos documentos prevalecen
+ante cualquier texto residual de esta auditoría.
 
 ---
 
@@ -29,31 +34,33 @@ Esto significa que Xion presenta el comportamiento desde el contexto de la caja,
 
 ## 2. Decisión para Auraly
 
-La propiedad que decide si una venta POS puede dejar saldo negativo pertenecerá a la caja:
+La propiedad que decide si una venta POS puede dejar saldo negativo pertenece a
+la bodega:
 
 ```text
-CashRegisterSettings.AllowNegativeStockSales
+Warehouse.AllowNegativeStockSales
 ```
 
 Reglas:
 
-- `true`: la caja no bloquea la venta por existencia insuficiente. Registra la salida, permite saldo negativo y crea una alerta de conciliación.
-- `false`: la caja valida antes de confirmar. Si falta existencia, bloquea o solicita una autorización de supervisor, según el permiso configurado.
-- el escaneo nunca se frena para consultar el servidor; la comprobación, cuando está activa, ocurre al confirmar o de forma local no bloqueante durante la captura;
+- `true`: el POS no bloquea la venta por existencia insuficiente. Registra la salida, permite saldo negativo y crea una alerta de conciliación.
+- `false`: el POS valida en línea al capturar y el motor revalida en la transacción final. Si falta existencia, bloquea o solicita una autorización de supervisor según el permiso configurado.
+- el POS Edge no almacena ni inventa existencia local;
 - la existencia mostrada al cajero es informativa;
 - `Products.TrackInventory` solo indica si el producto mueve inventario;
-- la bodega conserva reglas para traslados, reservas, ajustes y otros movimientos, pero no decide el comportamiento de una caja;
+- todas las sesiones/dispositivos que operan sobre una bodega heredan la misma política;
 - una venta confirmada no se borra posteriormente porque la sincronización encuentre un saldo negativo.
 
-La configuración recomendada por defecto para comercio presencial es `true`: si el cliente tiene el artículo físicamente en la mano, la caja debe poder venderlo. Sin embargo, se conserva la opción por caja porque una empresa puede tener cajas de despacho, bodegas controladas u operaciones con políticas distintas.
+El valor inicial pertenece al perfil/configuración de bodega. Una sesión o
+dispositivo no puede sobrescribirlo.
 
 ### 2.1 Precedencia
 
 Para ventas POS:
 
-1. configuración de la caja;
-2. permiso excepcional del supervisor cuando la caja bloquea;
-3. nunca una propiedad contradictoria del producto o de la bodega.
+1. configuración de la bodega;
+2. permiso excepcional del supervisor cuando la política bloquea;
+3. ninguna sobreescritura por sesión, dispositivo o UI.
 
 Para pedidos remotos, reservas y comercio electrónico se usa la política del canal, no la de la caja.
 
@@ -124,7 +131,7 @@ Una caja puede cambiar de dispositivo sin perder su identidad, historial o numer
 
 | Nueva configuración | MVP | Comportamiento |
 |---|---:|---|
-| `AllowNegativeStockSales` | Sí | Regla principal por caja |
+| `AllowNegativeStockSales` | No en caja | Regla canónica de `Warehouse` |
 | `NegativeStockOverridePermission` | Sí | Autorización de supervisor cuando está desactivada |
 | `ShowStockOnLine` | Sí | Existencia informativa en grilla |
 | `CreateNegativeStockAlert` | Sí | Genera excepción para conciliación |
@@ -140,7 +147,7 @@ La alerta debe indicar caja, bodega, producto, saldo previo conocido, cantidad v
 | `VenderxEmbalaje` | Adoptar | Un código puede representar empaque y factor |
 | `VenderConLista` | Adoptar | Lista predeterminada y permiso para cambiar |
 | `VenderConCanal` | Simplificar | Canal de venta predeterminado |
-| `AgruparFactura` | Adoptar con nombre claro | Escaneo repetido incrementa línea o crea línea nueva |
+| `AgruparFactura` | No adoptar | Cada captura crea línea nueva; no es configurable |
 | `ExigeVendedor` | Adoptar | Requerir vendedor antes de confirmar |
 | `TieneVendedor` | Reemplazar | Se deriva de que la caja use vendedor |
 | `VendedorDetalle` | Diferir | Solo si se paga comisión por línea |
@@ -151,13 +158,9 @@ La alerta debe indicar caja, bodega, producto, saldo previo conocido, cantidad v
 | `ProductoNoCodificadosAlFinal` | Adoptar como flujo | Líneas manuales se revisan antes de confirmar |
 | `CodigoInteligente` | No copiar aún | Primero se debe definir la regla que representaba |
 
-`AgruparFactura` se convierte en:
-
-```text
-RepeatedScanBehavior = IncrementQuantity | AddNewLine
-```
-
-El valor normal para supermercado o comercio minorista es `IncrementQuantity`. Para productos con serial, lote específico, precio manual o modificadores puede forzarse una línea nueva.
+`AgruparFactura` no se traslada a Auraly. No existe
+`RepeatedScanBehavior`: toda captura exitosa crea una línea nueva, desplaza la
+grilla hasta esa línea y conserva el foco del lector.
 
 ### 4.4 Clientes, crédito y devoluciones
 
@@ -414,15 +417,18 @@ Las opciones peligrosas requieren confirmación y quedan auditadas.
 
 ---
 
-## 9. Configuración inicial recomendada
+## 9. Ejemplos históricos reemplazados
+
+Estos bloques no son configuración vigente ni deben convertirse en flags de caja.
+Los valores se resuelven desde bodega, sesión de trabajo y contratos canónicos.
 
 Para una caja minorista:
 
 ```text
-AllowNegativeStockSales = true
+Warehouse.AllowNegativeStockSales = true
 ShowStockOnLine = true
 CreateNegativeStockAlert = true
-RepeatedScanBehavior = IncrementQuantity
+ProductCapture = AlwaysAddNewLine
 AllowOfflineSales = true
 OfflineInsufficientStockPolicy = AllowAndAlert
 RequireOpenCashSession = true
@@ -432,10 +438,10 @@ RequireReturnReason = true
 AutoPrintReceipt = true
 ```
 
-Para una caja de despacho controlado:
+Para una bodega de despacho controlado:
 
 ```text
-AllowNegativeStockSales = false
+Warehouse.AllowNegativeStockSales = false
 NegativeStockOverridePermission = Supervisor
 OfflineInsufficientStockPolicy = RequireSupervisor
 ```
@@ -444,11 +450,11 @@ OfflineInsufficientStockPolicy = RequireSupervisor
 
 ## 10. Criterios de aceptación
 
-- dos cajas de la misma bodega pueden tener políticas de negativos diferentes;
-- cambiar la bodega no cambia silenciosamente la política de la caja;
-- una caja con negativos habilitados no consulta ni bloquea por existencia al confirmar;
+- dos sesiones/dispositivos de la misma bodega heredan la misma política de negativos;
+- cambiar la bodega cambia la política efectiva y exige resincronización visible;
+- una bodega con negativos habilitados no exige validación de disponibilidad al capturar;
 - la salida puede llevar el saldo bajo cero y genera alerta;
-- una caja con negativos deshabilitados muestra el faltante y aplica autorización;
+- una bodega con negativos deshabilitados valida al capturar, muestra el faltante y aplica autorización;
 - offline usa la política descargada y conserva su versión;
 - sincronizar nunca elimina una venta ya cobrada;
 - toda excepción identifica al supervisor;
@@ -467,8 +473,8 @@ La parametrización de Xion contiene mucho conocimiento útil, pero mezcla ident
 Auraly debe conservar las capacidades, no esa forma de almacenarlas. Para el MVP son esenciales:
 
 - asignación de sede y bodega;
-- política de negativos por caja;
-- escaneo y agrupación;
+- política de negativos por bodega;
+- escaneo continuo con una línea nueva por captura, sin agrupación;
 - listas y empaques;
 - cliente, vendedor y cartera;
 - pagos;
@@ -478,4 +484,7 @@ Auraly debe conservar las capacidades, no esa forma de almacenarlas. Para el MVP
 - offline y sincronización;
 - permisos y auditoría.
 
-La decisión principal queda cerrada: **vender con inventario negativo es una configuración de la caja**. La opción debe venir habilitada por defecto para la caja presencial típica, porque la realidad física de la fila tiene prioridad, pero cada negocio puede endurecer cajas específicas y exigir autorización.
+La decisión vigente queda cerrada: **vender con inventario negativo es una
+configuración de la bodega**. Todas las sesiones y dispositivos que operan sobre
+ella heredan el mismo valor; una caja no puede endurecerlo ni relajarlo por su
+cuenta.

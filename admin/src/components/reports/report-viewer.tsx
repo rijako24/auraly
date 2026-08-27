@@ -56,7 +56,7 @@ export function ReportViewer({ onClose, title, description, rows, columns, fileN
         </div>
         <section id="auraly-report-print-area" className="min-h-0 flex-1 overflow-auto bg-white p-5 text-slate-950">
           <header className="mb-6 border-b-2 border-teal-700 pb-4">
-            <div className="flex flex-wrap items-start justify-between gap-4"><div><TenantBrand className="mb-4" displayName={brandName} logoUrl={branding.data?.logoUrl}/><p className="text-[10px] font-bold uppercase tracking-[.24em] text-teal-700">Reporte corporativo</p><h1 className="mt-1 text-2xl font-bold tracking-tight">{title}</h1>{description && <p className="mt-1 text-sm text-slate-600">{description}</p>}</div><dl className="grid min-w-56 gap-1 rounded-lg border bg-slate-50 p-3 text-xs"><div className="flex justify-between gap-4"><dt className="text-slate-500">Generado</dt><dd className="font-medium">{generatedAt.toLocaleString("es-CO")}</dd></div><div className="flex justify-between gap-4"><dt className="text-slate-500">Registros</dt><dd className="font-medium">{recordCount.toLocaleString("es-CO")}</dd></div><div className="flex justify-between gap-4"><dt className="text-slate-500">Sistema</dt><dd className="font-medium">Auraly Commerce</dd></div></dl></div>
+            <div className="flex flex-wrap items-start justify-between gap-4"><div><TenantBrand className="mb-4" displayName={brandName} logoUrl={branding.data?.logoUrl}/><p className="text-[10px] font-bold uppercase tracking-[.24em] text-teal-700">Reporte corporativo</p><h1 className="mt-1 text-2xl font-bold tracking-tight">{title}</h1>{description && <p className="mt-1 text-sm text-slate-600">{description}</p>}</div><dl className="grid min-w-56 gap-1 rounded-lg border bg-slate-50 p-3 text-xs"><div className="flex justify-between gap-4"><dt className="text-slate-500">Generado</dt><dd className="font-medium">{generatedAt.toLocaleString("es-CO")}</dd></div><div className="flex justify-between gap-4"><dt className="text-slate-500">Registros</dt><dd className="font-medium">{recordCount.toLocaleString("es-CO")}</dd></div><div className="flex justify-between gap-4"><dt className="text-slate-500">Sistema</dt><dd className="font-medium">Auraly</dd></div></dl></div>
           </header>
           <table className="w-full min-w-max border-collapse text-xs sm:text-sm">
             <thead className="sticky top-0 bg-slate-100 print:static">
@@ -67,7 +67,7 @@ export function ReportViewer({ onClose, title, description, rows, columns, fileN
             </tr>)}</tbody>
           </table>
           {!filtered.length && <p className="py-16 text-center text-sm text-slate-500">No hay filas que coincidan con el filtro.</p>}
-          <footer className="mt-6 flex items-center justify-between gap-4 border-t pt-3 text-[10px] text-slate-500"><span>{brandName} · Información generada desde Auraly Commerce</span><span>{title} · {recordCount.toLocaleString("es-CO")} registros</span></footer>
+          <footer className="mt-6 flex items-center justify-between gap-4 border-t pt-3 text-[10px] text-slate-500"><span>{brandName} · Información generada desde Auraly</span><span>{title} · {recordCount.toLocaleString("es-CO")} registros</span></footer>
         </section>
         <footer className="flex justify-end border-t px-5 py-3"><Button variant="outline" onClick={onClose}>Cerrar</Button></footer>
         <style jsx global>{`

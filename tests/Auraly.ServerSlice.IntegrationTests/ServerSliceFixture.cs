@@ -170,12 +170,15 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                 services.AddSingleton<TestExecutionAccessRegistry>();
                 services.RemoveAll<IExecutionAccessResolver>();
                 services.AddScoped<IExecutionAccessResolver, TestExecutionAccessResolver>();
+                services.RemoveAll<IDocumentProcessingSignalPublisher>();
                 services.AddSingleton<TestDocumentProcessingSignalPublisher>();
                 services.AddSingleton<IDocumentProcessingSignalPublisher>(provider =>
                     provider.GetRequiredService<TestDocumentProcessingSignalPublisher>());
+                services.RemoveAll<IAccountingProcessingSignalPublisher>();
                 services.AddSingleton<TestAccountingProcessingSignalPublisher>();
                 services.AddSingleton<IAccountingProcessingSignalPublisher>(provider =>
                     provider.GetRequiredService<TestAccountingProcessingSignalPublisher>());
+                services.RemoveAll<IFiscalProcessingSignalPublisher>();
                 services.AddSingleton<TestFiscalProcessingSignalPublisher>();
                 services.AddSingleton<IFiscalProcessingSignalPublisher>(provider => provider.GetRequiredService<TestFiscalProcessingSignalPublisher>());
                 services.AddSingleton<TestPosSynchronizationPushGateway>();

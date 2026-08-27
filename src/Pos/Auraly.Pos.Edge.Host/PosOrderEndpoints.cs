@@ -145,9 +145,14 @@ public static class PosOrderEndpoints
                              result => result.DocumentId.HasValue && result.Error is null))
                     receipts.Add(await server.ReceiptAsync(
                         session, result.DocumentId!.Value, ct));
-                if (printerSettings.Load().OrdersOutputFormat ==
-                    PrintTemplateFormats.HalfLetter)
-                    await printer.PrintAsync(receipts, printerSettings.Load().OrdersPrinterName, ct);
+                var printConfiguration = printerSettings.Load();
+                if (printConfiguration.OrdersOutputFormat !=
+                    PrintTemplateFormats.Receipt)
+                    await printer.PrintAsync(
+                        receipts,
+                        printConfiguration.OrdersPrinterName,
+                        printConfiguration.OrdersOutputFormat,
+                        ct);
                 else
                     foreach (var receipt in receipts)
                         await receiptPrinter.PrintOrdersReceiptAsync(receipt, ct);

@@ -614,17 +614,17 @@ El lector USB común opera como teclado:
 1. la grilla mantiene un receptor de escaneo enfocado;
 2. el lector escribe el código y envía Enter;
 3. se resuelve localmente el código;
-4. el producto se agrega o incrementa;
+4. el producto se agrega como una línea nueva al final, aunque ya exista;
 5. se recalcula;
 6. se muestra confirmación visual y sonora;
-7. el foco vuelve al receptor sin hacer clic;
+7. la grilla desplaza su viewport hasta la línea nueva sin mover el foco DOM del receptor;
 8. queda preparado para el siguiente producto.
 
 Objetivo: confirmación visual en menos de 100 ms cuando el producto está en el catálogo local.
 
 Reglas:
 
-- un escaneo repetido incrementa cantidad por defecto;
+- un escaneo repetido crea otra línea; nunca incrementa, agrupa ni consolida automáticamente la anterior;
 - productos serializados abren captura de serial y no se agregan silenciosamente;
 - códigos de empaque aplican su factor de conversión;
 - códigos de balanza se interpretan según configuración;

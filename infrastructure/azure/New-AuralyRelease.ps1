@@ -13,6 +13,12 @@ param(
     [ValidatePattern('^https://')]
     [string]$PosApiUrl,
 
+    [ValidatePattern('^[0-9A-Fa-f]{40}$')]
+    [string]$SigningCertificateThumbprint,
+
+    [ValidatePattern('^https://')]
+    [string]$SigningTimestampUrl = 'https://timestamp.digicert.com',
+
     [switch]$SkipAdmin
 )
 
@@ -181,11 +187,14 @@ try {
             -ApiUrl $PosApiUrl `
             -Version $Version `
             -Configuration Release `
-            -ArtifactPath $posArtifactPath
+            -ArtifactPath $posArtifactPath `
+            -SigningCertificateThumbprint $SigningCertificateThumbprint `
+            -SigningTimestampUrl $SigningTimestampUrl `
+            -RequireSignature
         if ($LASTEXITCODE) { throw 'La construcción del instalador POS falló.' }
-        $posSetup = Join-Path $posArtifactPath 'Auraly POS Setup.exe'
+        $posSetup = Join-Path $posArtifactPath 'Auraly Setup.exe'
         if (-not (Test-Path -LiteralPath $posSetup)) {
-            throw 'La construcción no produjo Auraly POS Setup.exe.'
+            throw 'La construcción no produjo Auraly Setup.exe.'
         }
         Copy-Item -LiteralPath $posSetup `
             -Destination (Join-Path $releasePath "auraly-pos-$Version.exe")

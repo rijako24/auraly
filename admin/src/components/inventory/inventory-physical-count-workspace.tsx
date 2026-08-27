@@ -34,6 +34,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -455,8 +457,8 @@ export function InventoryReconciliationDialog({
                   <Field label="Nombre del borrador">
                     <div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input className="pl-9" value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Buscar por nombre o producto" /></div>
                   </Field>
-                  <Field label="Actualizado desde"><Input type="date" value={fromDate} max={toDate || undefined} onChange={event => { setFromDate(event.target.value); setPage(1); }} /></Field>
-                  <Field label="Actualizado hasta"><Input type="date" value={toDate} min={fromDate || undefined} onChange={event => { setToDate(event.target.value); setPage(1); }} /></Field>
+                  <Field label="Actualizado desde"><DatePicker value={fromDate} max={toDate || undefined} onChange={value => { setFromDate(value); setPage(1); }} /></Field>
+                  <Field label="Actualizado hasta"><DatePicker value={toDate} min={fromDate || undefined} onChange={value => { setToDate(value); setPage(1); }} /></Field>
                 </div>
                 <div className="overflow-x-auto rounded-2xl border">
                   <table className="w-full min-w-[920px] text-sm">
@@ -471,7 +473,7 @@ export function InventoryReconciliationDialog({
                           : candidates.map(draft => {
                             const unavailable = draft.status !== "Ready" || Boolean(countId && countId !== draft.inventoryPhysicalCountId);
                             return <tr key={draft.draftId} className={`border-t transition-colors ${unavailable ? "opacity-55" : "hover:bg-emerald-50/40"}`}>
-                              <td className="px-4 py-3 text-center"><input aria-label={`Seleccionar ${draft.name}`} type="checkbox" disabled={unavailable} checked={selectedDrafts.has(draft.draftId)} onChange={event => selectDraft(draft, event.target.checked)} /></td>
+                              <td className="px-4 py-3 text-center"><Checkbox aria-label={`Seleccionar ${draft.name}`} disabled={unavailable} checked={selectedDrafts.has(draft.draftId)} onCheckedChange={checked => selectDraft(draft, checked === true)} /></td>
                               <td className="px-4 py-3"><strong>{draft.name}</strong><span className="block text-xs text-muted-foreground">Propietario {draft.ownerUserId.slice(0, 8)}</span></td>
                               <td className="px-4 py-3">{draft.warehouseName}</td>
                               <td className="px-4 py-3"><span className="font-medium">{draft.countedProductCount}/{draft.productCount}</span><span className="block text-xs text-muted-foreground">productos contados</span></td>
@@ -531,7 +533,7 @@ export function InventoryReconciliationDialog({
                   {sectionApplied && <Badge variant="secondary">Aplicación: {sectionApplied}</Badge>}
                 </div>
                 {section === "Uncounted" && <label className="flex items-start gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
-                  <input className="mt-1" type="checkbox" checked={confirmZero} onChange={event => setConfirmZero(event.target.checked)} />
+                  <Checkbox className="mt-1" checked={confirmZero} onCheckedChange={checked => setConfirmZero(checked === true)} />
                   <span><strong>Confirmo que deseo ajustar a cero todos los productos no contados.</strong><span className="mt-1 block">La acción genera un documento normal de inventario y conserva su trazabilidad.</span></span>
                 </label>}
                 {draftDialogOpen && <div className="grid gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4 md:grid-cols-[1fr_auto] md:items-end">
@@ -602,10 +604,6 @@ export function PhysicalCountDraftEditForm({
   }, [draft]);
 
   function addProduct(product: InventoryProductItem) {
-    if (!draft?.lines.some(line => line.productId === product.productId)) {
-      toast.error("Este producto no pertenece al alcance original del borrador.");
-      return;
-    }
     setLines(current => current.some(line => line.productId === product.productId) ? current : [...current, fromProduct(product)]);
     window.requestAnimationFrame(() => {
       const input = countRefs.current.get(product.productId);
@@ -664,7 +662,7 @@ export function PhysicalCountDraftEditForm({
     <Card className="overflow-visible">
       <CardHeader className="border-b bg-muted/20">
         <CardTitle className="text-base">Productos contados</CardTitle>
-        <p className="text-sm text-muted-foreground">Agrega productos del alcance o ajusta los valores existentes. Enter vuelve al buscador.</p>
+        <p className="text-sm text-muted-foreground">Mientras estás contando puedes agregar productos. Al iniciar el reconteo, el alcance queda bloqueado para conservar la trazabilidad.</p>
       </CardHeader>
       <CardContent className="space-y-4 pt-5">
         <ProductPicker businessId={businessId} warehouseId={value.count.warehouseId} selectedProductIds={selectedIds} disabled={!canCapture || captureStage === "Recount" || save.isPending || apply.isPending} onSelect={addProduct} label="Buscar producto" inputId={pickerId} />
@@ -792,7 +790,7 @@ function SaveDraftNameDialog({
 
 function mergeDraftLines(draft: InventoryPhysicalCountDraft, captures: CountCaptureLine[]) {
   const values = new Map(captures.map(line => [line.productId, line]));
-  return draft.lines.map(line => {
+  const persisted = draft.lines.map(line => {
     const captured = values.get(line.productId);
     return {
       productId: line.productId,
@@ -801,6 +799,14 @@ function mergeDraftLines(draft: InventoryPhysicalCountDraft, captures: CountCapt
       pendingReason: null,
     };
   });
+  const persistedIds = new Set(draft.lines.map(line => line.productId));
+  const added = captures.filter(line => !persistedIds.has(line.productId)).map(line => ({
+    productId: line.productId,
+    initialQuantity: numeric(line.count),
+    verificationQuantity: line.recount.trim() ? numeric(line.recount) : null,
+    pendingReason: null,
+  }));
+  return [...persisted, ...added];
 }
 
 function fromProduct(product: InventoryProductItem): CountCaptureLine {

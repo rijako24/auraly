@@ -33,6 +33,14 @@ public static class ReturnEconomicResolutions
         [Refund, CustomerCredit], StringComparer.Ordinal);
 }
 
+public static class SalesReturnScopes
+{
+    public const string FullCancellation = "FullCancellation";
+    public const string Partial = "Partial";
+    public static readonly IReadOnlySet<string> All = new HashSet<string>(
+        [FullCancellation, Partial], StringComparer.Ordinal);
+}
+
 public sealed record ConfirmSalesReturnLineRequest(
     int OriginalLineNumber,
     decimal Quantity,
@@ -51,7 +59,8 @@ public sealed record ConfirmSalesReturnRequest(
     Guid? WorkSessionId = null,
     int? OriginalPaymentNumber = null,
     string ReasonCode = "",
-    string? Notes = null);
+    string? Notes = null,
+    string ReturnScopeCode = SalesReturnScopes.Partial);
 
 public sealed record SalesReturnLineSnapshot(
     int LineNumber,
@@ -95,7 +104,8 @@ public sealed record SalesReturnDocumentPayload(
     Guid? WorkSessionId = null,
     int? OriginalPaymentNumber = null,
     string ReasonCode = "",
-    string? Notes = null);
+    string? Notes = null,
+    string ReturnScopeCode = SalesReturnScopes.Partial);
 
 public sealed record SalesReturnAcceptance(
     Guid ReturnId,

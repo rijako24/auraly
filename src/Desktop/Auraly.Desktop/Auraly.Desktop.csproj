@@ -8,6 +8,10 @@
     <Nullable>enable</Nullable>
     <AssemblyName>Auraly.Desktop</AssemblyName>
     <RootNamespace>Auraly.Desktop</RootNamespace>
+    <AssemblyTitle>Auraly</AssemblyTitle>
+    <Product>Auraly</Product>
+    <Description>Auraly</Description>
+    <ApplicationIcon>Assets\Auraly.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2"
@@ -24,6 +28,9 @@
              CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
+    <Content Include="Assets\Auraly.ico"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\..\..\admin\public\brand\auraly-app-icon-512-v4.png"
              Link="auraly-pos-icon.png"
              CopyToOutputDirectory="PreserveNewest"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ComponentProps } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FilePlus2, Loader2, Printer, Search } from "lucide-react";
 import { toast } from "sonner";
@@ -8,7 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { Input as BaseInput } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -24,6 +25,14 @@ const concepts = {
   "3": "Cambio del valor",
   "4": "Otros",
 } as const;
+
+function Input(props: ComponentProps<typeof BaseInput>) {
+  if (props.type !== "date") return <BaseInput {...props} />;
+  const { value, onChange, disabled, className, min, max, id } = props;
+  return <DatePicker id={id} value={String(value ?? "")} disabled={disabled} className={className}
+    min={typeof min === "string" ? min : undefined} max={typeof max === "string" ? max : undefined}
+    onChange={next => onChange?.({ target: { value: next }, currentTarget: { value: next } } as never)} />;
+}
 
 export default function SalesDebitNotesPage() {
   const [search, setSearch] = useState("");

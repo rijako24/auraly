@@ -56,12 +56,6 @@ using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.AddAuralyPlatformConfiguration();
-var connectionString = builder.Configuration.GetConnectionString("Auraly");
-if (string.IsNullOrWhiteSpace(connectionString))
-{
-    throw new InvalidOperationException(
-        "ConnectionStrings:Auraly must point to the SQL Server database owned by Auraly.Database.");
-}
 
 if (!builder.Environment.IsEnvironment("Testing"))
 {
@@ -85,17 +79,16 @@ builder.AddAuralyPlatformApi(
 
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
-builder.Services.AddSingleton(new SqlServerConnectionFactory(connectionString));
 builder.Services.AddScoped<SellerUserAccessService>();
 builder.Services.AddScoped<SqlExecutionContextDirectory>();
 builder.Services.AddScoped<IExecutionAccessResolver>(services =>
     services.GetRequiredService<SqlExecutionContextDirectory>());
 builder.Services.AddScoped<IAuralyExecutionContextAccessor, AuralyExecutionContextAccessorAdapter>();
-builder.Services.AddSingleton(new AccountingSqlConnectionFactory(connectionString));
-builder.Services.AddSingleton(new PayrollSqlConnectionFactory(connectionString));
-builder.Services.AddSingleton(new PricingSqlConnectionFactory(connectionString));
-builder.Services.AddSingleton(new RoutesSqlConnectionFactory(connectionString));
-builder.Services.AddSingleton(new DispatchingSqlConnectionFactory(connectionString));
+builder.Services.AddSingleton<AccountingSqlConnectionFactory>();
+builder.Services.AddSingleton<PayrollSqlConnectionFactory>();
+builder.Services.AddSingleton<PricingSqlConnectionFactory>();
+builder.Services.AddSingleton<RoutesSqlConnectionFactory>();
+builder.Services.AddSingleton<DispatchingSqlConnectionFactory>();
 builder.Services.AddSingleton<ConfigurationFiscalTechnicalKeyProvider>();
 builder.Services.AddSingleton<SqlProtectedFiscalTechnicalKeyStore>();
 builder.Services.AddSingleton<IFiscalTechnicalKeySecretWriter>(sp =>

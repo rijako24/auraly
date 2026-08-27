@@ -115,6 +115,74 @@ public sealed class ExecutionContextTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Rejects_a_business_that_belongs_to_a_different_selected_tenant()
+    {
+        var otherTenantId = Guid.NewGuid();
+        var otherBusinessId = Guid.NewGuid();
+        var roleId = Guid.NewGuid();
+        await SeedAdditionalMembership(otherTenantId, otherBusinessId, roleId);
+        try
+        {
+            using var client = fixture.CreateAdminClientWithBusinessHeader(otherBusinessId);
+            client.DefaultRequestHeaders.Add(
+                "X-Tenant-Id", fixture.TenantId.ToString("D"));
+
+            using var response = await client.GetAsync(
+                "/api/v1/execution-context/businesses");
+
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+        finally
+        {
+            await DeleteAdditionalMembership(otherTenantId, otherBusinessId, roleId);
+        }
+    }
+
+    [Fact]
+    public async Task Business_owned_domain_roots_have_a_database_foreign_key_to_businesses()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(
+            """
+            DECLARE @Expected TABLE(SchemaName SYSNAME NOT NULL,TableName SYSNAME NOT NULL);
+            INSERT @Expected(SchemaName,TableName) VALUES
+              (N'dbo',N'Warehouses'),
+              (N'dbo',N'Orders'),
+              (N'dbo',N'SalesDocuments'),
+              (N'dbo',N'AccountingEntries'),
+              (N'payroll',N'Runs');
+
+            SELECT CONCAT(expected.SchemaName,N'.',expected.TableName)
+            FROM @Expected expected
+            WHERE NOT EXISTS
+            (
+                SELECT 1
+                FROM sys.foreign_keys fk
+                INNER JOIN sys.tables parentTable
+                    ON parentTable.object_id=fk.parent_object_id
+                INNER JOIN sys.schemas parentSchema
+                    ON parentSchema.schema_id=parentTable.schema_id
+                INNER JOIN sys.tables referencedTable
+                    ON referencedTable.object_id=fk.referenced_object_id
+                INNER JOIN sys.schemas referencedSchema
+                    ON referencedSchema.schema_id=referencedTable.schema_id
+                WHERE parentSchema.name=expected.SchemaName
+                  AND parentTable.name=expected.TableName
+                  AND referencedSchema.name=N'dbo'
+                  AND referencedTable.name=N'Businesses'
+            );
+            """, connection);
+
+        var missing = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            missing.Add(reader.GetString(0));
+
+        Assert.Empty(missing);
+    }
+
+    [Fact]
     public async Task Production_context_resolves_permissions_from_persisted_roles_only()
     {
         var directory = fixture.Services.GetRequiredService<SqlExecutionContextDirectory>();

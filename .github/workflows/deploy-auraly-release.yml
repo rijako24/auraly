@@ -66,6 +66,40 @@ jobs:
           cache: npm
           cache-dependency-path: admin/package-lock.json
 
+      - name: Import Auraly code-signing certificate
+        if: inputs.environment == 'dev'
+        id: signing_certificate
+        shell: pwsh
+        env:
+          AURALY_SIGNING_PFX_BASE64: ${{ secrets.AURALY_SIGNING_PFX_BASE64 }}
+          AURALY_SIGNING_PFX_PASSWORD: ${{ secrets.AURALY_SIGNING_PFX_PASSWORD }}
+          AURALY_SIGNING_THUMBPRINT: ${{ secrets.AURALY_SIGNING_THUMBPRINT }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:AURALY_SIGNING_PFX_BASE64) -or
+              [string]::IsNullOrWhiteSpace($env:AURALY_SIGNING_PFX_PASSWORD) -or
+              [string]::IsNullOrWhiteSpace($env:AURALY_SIGNING_THUMBPRINT)) {
+            throw 'Falta configurar el certificado Authenticode de Auraly.'
+          }
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'auraly-code-signing.pfx'
+          try {
+            [IO.File]::WriteAllBytes(
+              $pfxPath,
+              [Convert]::FromBase64String($env:AURALY_SIGNING_PFX_BASE64))
+            $password = ConvertTo-SecureString $env:AURALY_SIGNING_PFX_PASSWORD -AsPlainText -Force
+            $certificate = Import-PfxCertificate `
+              -FilePath $pfxPath `
+              -CertStoreLocation 'Cert:\CurrentUser\My' `
+              -Password $password
+            $expected = $env:AURALY_SIGNING_THUMBPRINT.Replace(' ', '').ToUpperInvariant()
+            if ($certificate.Thumbprint -ne $expected -or -not $certificate.HasPrivateKey) {
+              throw 'El PFX de publicación no coincide con la huella configurada o no contiene clave privada.'
+            }
+            "thumbprint=$($certificate.Thumbprint)" >> $env:GITHUB_OUTPUT
+          }
+          finally {
+            Remove-Item -LiteralPath $pfxPath -Force -ErrorAction SilentlyContinue
+          }
+
       - name: Build and test release once in DEV
         if: inputs.environment == 'dev'
         shell: pwsh
@@ -73,6 +107,8 @@ jobs:
           ./infrastructure/azure/New-AuralyRelease.ps1
           -Version '${{ inputs.version }}'
           -PosApiUrl 'https://api-auraly-dev-w5usmo6w.azurewebsites.net'
+          -SigningCertificateThumbprint '${{ steps.signing_certificate.outputs.thumbprint }}'
+          -SigningTimestampUrl 'https://timestamp.digicert.com'
           -SkipAdmin
 
       - name: Login to Azure release archive with OIDC

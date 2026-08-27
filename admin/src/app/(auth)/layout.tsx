@@ -74,7 +74,7 @@ export default function AuthLayout({
         </div>
 
         <div className="flex items-center justify-between border-t border-white/[0.08] pt-6 text-xs text-[#789b99]">
-          <span>Auraly Commerce Cloud</span>
+          <span>Auraly</span>
           <span className="flex items-center gap-2">
             <span className="h-1.5 w-1.5 rounded-full bg-[#4ec7a6] shadow-[0_0_12px_rgba(78,199,166,.8)]" />
             Sistemas operativos

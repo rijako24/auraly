@@ -1,6 +1,7 @@
+using Auraly.BuildingBlocks.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
 namespace Auraly.Infrastructure.Dispatching;
-public sealed class DispatchingSqlConnectionFactory(string connectionString)
+public sealed class DispatchingSqlConnectionFactory(AuralySqlConnectionSource source)
 {
-    public SqlConnection Create() => new(connectionString);
+    public SqlConnection Create() => new(source.ConnectionString);
 }

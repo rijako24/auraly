@@ -53,6 +53,10 @@ public static class PayrollApi
             PayrollVersionRequest request, PayrollService service, CancellationToken ct) =>
             Execute(() => service.ApproveRuleSetAsync(context.User.Identity(), id, request.RowVersion, ct)));
 
+        group.MapPost("/rule-sets/{id:guid}/retire", (HttpContext context, Guid id,
+            PayrollVersionRequest request, PayrollService service, CancellationToken ct) =>
+            Execute(() => service.RetireRuleSetAsync(context.User.Identity(), id, request.RowVersion, ct)));
+
         group.MapPut("/deduction-agreements/{id:guid}", (HttpContext context, Guid id,
             SavePayrollDeductionAgreementRequest request, PayrollService service, CancellationToken ct) =>
             id != request.DeductionAgreementId ? Task.FromResult<IResult>(Results.BadRequest()) :

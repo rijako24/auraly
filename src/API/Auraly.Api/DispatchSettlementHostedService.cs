@@ -66,21 +66,8 @@ public sealed class DispatchSettlementHostedService(
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, token);
         try
         {
-            const string selectSql = """
-                SELECT TOP(1) operation.DispatchSettlementOperationId,operation.BusinessId,
-                       operation.DispatchId,operation.RequestedBy,operation.RequestedAt,
-                       operation.Attempts,business.TenantId,dispatch.WarehouseId,dispatch.DispatchNumber,
-                       settlement.DispatchSettlementId,dispatch.DriverName
-                FROM dbo.DispatchSettlementOperations operation WITH(UPDLOCK,READPAST,READCOMMITTEDLOCK)
-                INNER JOIN dbo.Businesses business ON business.BusinessId=operation.BusinessId
-                INNER JOIN dbo.Dispatches dispatch ON dispatch.DispatchId=operation.DispatchId
-                INNER JOIN dbo.DispatchSettlements settlement ON settlement.DispatchId=operation.DispatchId
-                WHERE operation.Status IN(N'Pending',N'Processing')
-                  AND operation.NextAttemptAt<=SYSUTCDATETIME()
-                ORDER BY operation.NextAttemptAt,operation.RequestedAt;
-                """;
             Operation? value = null;
-            await using (var select = new SqlCommand(selectSql, connection, transaction))
+            await using (var select = Procedure("dbo.DispatchSettlementOperationClaimGet", connection, transaction))
             await using (var reader = await select.ExecuteReaderAsync(token))
                 if (await reader.ReadAsync(token))
                     value = new(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
@@ -92,13 +79,7 @@ public sealed class DispatchSettlementHostedService(
                 await transaction.CommitAsync(token);
                 return null;
             }
-            await using var update = new SqlCommand("""
-                UPDATE dbo.DispatchSettlementOperations
-                SET Status=N'Processing',Attempts=Attempts+1,NextAttemptAt=DATEADD(MINUTE,5,SYSUTCDATETIME()),LastError=NULL
-                WHERE DispatchSettlementOperationId=@Id;
-                UPDATE dbo.Dispatches SET Status=N'SettlementProcessing',UpdatedAt=SYSUTCDATETIME()
-                WHERE DispatchId=@DispatchId AND Status=N'SettlementAttention';
-                """, connection, transaction);
+            await using var update = Procedure("dbo.DispatchSettlementOperationClaimMark", connection, transaction);
             update.Parameters.AddWithValue("@Id", value.Id);
             update.Parameters.AddWithValue("@DispatchId", value.DispatchId);
             await update.ExecuteNonQueryAsync(token);
@@ -186,26 +167,9 @@ public sealed class DispatchSettlementHostedService(
 
     private async Task<IReadOnlyList<ReturnWork>> LoadReturnsAsync(Operation operation, CancellationToken token)
     {
-        const string sql = """
-            SELECT source.SourceDocumentId,delivery.DeliveryStatus,line.LineNumber,
-                   CASE WHEN delivery.DeliveryStatus=N'NotDelivered' THEN line.Quantity ELSE returned.Quantity END,
-                   CASE WHEN delivery.DeliveryStatus=N'NotDelivered' THEN N'Sellable' ELSE returned.InventoryDisposition END,
-                   reason.Code
-            FROM dbo.DispatchSourceDocuments source
-            INNER JOIN dbo.DispatchDeliveryEvents delivery ON delivery.DispatchSourceDocumentId=source.DispatchSourceDocumentId
-            INNER JOIN dbo.SalesDocumentLines line ON line.DocumentId=source.SourceDocumentId
-            LEFT JOIN dbo.DispatchDeliveryReturns returned ON returned.DispatchSourceDocumentId=source.DispatchSourceDocumentId
-                AND returned.OriginalLineNumber=line.LineNumber
-            OUTER APPLY(SELECT TOP(1) r.Code FROM dbo.BusinessReasons r
-              WHERE r.BusinessId=@BusinessId AND r.ReasonType=N'SalesReturn' AND r.IsActive=1
-              ORDER BY r.DisplayOrder,r.Name,r.Code) reason
-            WHERE source.DispatchId=@DispatchId
-              AND (delivery.DeliveryStatus=N'NotDelivered' OR returned.DispatchDeliveryReturnId IS NOT NULL)
-            ORDER BY source.SourceDocumentId,line.LineNumber;
-            """;
         await using var connection = connections.Create();
         await connection.OpenAsync(token);
-        await using var command = new SqlCommand(sql, connection);
+        await using var command = Procedure("dbo.DispatchSettlementReturnsGet", connection);
         command.Parameters.AddWithValue("@DispatchId", operation.DispatchId);
         command.Parameters.AddWithValue("@BusinessId", operation.BusinessId);
         var rows = new List<(Guid Source, bool NotDelivered, string ReasonCode, ReturnLine Line)>();
@@ -223,21 +187,9 @@ public sealed class DispatchSettlementHostedService(
 
     private async Task<IReadOnlyList<PaymentWork>> LoadPaymentsAsync(Operation operation, CancellationToken token)
     {
-        const string sql = """
-            SELECT source.SourceDocumentId,sale.CustomerId,receivable.ReceivableId,payment.PaymentMethod,
-                   SUM(payment.Amount),MAX(payment.Reference)
-            FROM dbo.DispatchDeliveryPayments payment
-            INNER JOIN dbo.DispatchSourceDocuments source ON source.DispatchSourceDocumentId=payment.DispatchSourceDocumentId
-            INNER JOIN dbo.SalesDocuments sale ON sale.DocumentId=source.SourceDocumentId
-            INNER JOIN dbo.Receivables receivable ON receivable.SourceDocumentId=source.SourceDocumentId
-                AND receivable.BusinessId=@BusinessId AND receivable.Status IN(N'Open',N'PartiallyPaid')
-            WHERE payment.DispatchId=@DispatchId AND payment.ApplicationType IN(N'InvoicePayment',N'CreditAdvance')
-              AND payment.PaymentMethod IN(N'Cash',N'Deposit') AND sale.CustomerId IS NOT NULL
-            GROUP BY source.SourceDocumentId,sale.CustomerId,receivable.ReceivableId,payment.PaymentMethod;
-            """;
         await using var connection = connections.Create();
         await connection.OpenAsync(token);
-        await using var command = new SqlCommand(sql, connection);
+        await using var command = Procedure("dbo.DispatchSettlementPaymentsGet", connection);
         command.Parameters.AddWithValue("@BusinessId", operation.BusinessId);
         command.Parameters.AddWithValue("@DispatchId", operation.DispatchId);
         var values = new List<PaymentWork>();
@@ -256,22 +208,24 @@ public sealed class DispatchSettlementHostedService(
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(token);
-        await using var command = new SqlCommand("""
-            SET XACT_ABORT ON; BEGIN TRAN;
-            UPDATE dbo.DispatchSettlementOperations
-            SET Status=@OperationStatus,NextAttemptAt=SYSUTCDATETIME(),LastError=@Error
-            WHERE DispatchSettlementOperationId=@Id AND Status=N'Processing';
-            UPDATE dbo.Dispatches SET Status=@DispatchStatus,UpdatedAt=SYSUTCDATETIME() WHERE DispatchId=@DispatchId;
-            UPDATE dbo.DispatchSettlements SET Status=@SettlementStatus WHERE DispatchId=@DispatchId;
-            COMMIT;
-            """, connection);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(token);
+        await using var command = Procedure("dbo.DispatchSettlementOperationReschedule", connection, transaction);
         command.Parameters.AddWithValue("@OperationStatus", attention ? "NeedsAttention" : "Pending");
         command.Parameters.AddWithValue("@DispatchStatus", attention ? "SettlementAttention" : "SettlementProcessing");
         command.Parameters.AddWithValue("@SettlementStatus", attention ? "Attention" : "Processing");
         command.Parameters.AddWithValue("@Error", (object?)error?[..Math.Min(error.Length, 2000)] ?? DBNull.Value);
         command.Parameters.AddWithValue("@Id", operation.Id);
         command.Parameters.AddWithValue("@DispatchId", operation.DispatchId);
-        await command.ExecuteNonQueryAsync(token);
+        try
+        {
+            await command.ExecuteNonQueryAsync(token);
+            await transaction.CommitAsync(token);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
     }
 
     private static async Task ActivateDownstreamAsync(
@@ -306,12 +260,7 @@ public sealed class DispatchSettlementHostedService(
             decimal received;
             DateTimeOffset occurredAt;
             string? notes;
-            await using (var select = new SqlCommand("""
-                SELECT ExpectedCash,CashReceived,ReceivedAt,Notes
-                FROM dbo.DispatchSettlements WITH(UPDLOCK,HOLDLOCK)
-                WHERE DispatchSettlementId=@SettlementId AND BusinessId=@BusinessId
-                  AND DispatchId=@DispatchId AND Status=N'Processing';
-                """, connection, transaction))
+            await using (var select = Procedure("dbo.DispatchSettlementCashDifferenceGet", connection, transaction))
             {
                 select.Parameters.AddWithValue("@SettlementId", operation.SettlementId);
                 select.Parameters.AddWithValue("@BusinessId", operation.BusinessId);
@@ -335,10 +284,7 @@ public sealed class DispatchSettlementHostedService(
 
             var movementId = DeterministicGuid(
                 $"dispatch:{operation.DispatchId:N}:cash-difference:movement");
-            await using (var replay = new SqlCommand("""
-                SELECT JobId FROM dbo.DocumentProcessingJobs WITH(UPDLOCK,HOLDLOCK)
-                WHERE DocumentId=@DocumentId AND DocumentType=@DocumentType;
-                """, connection, transaction))
+            await using (var replay = Procedure("dbo.DocumentProcessingJobByDocumentGet", connection, transaction))
             {
                 replay.Parameters.AddWithValue("@DocumentId", operation.SettlementId);
                 replay.Parameters.AddWithValue("@DocumentType", DispatchAccountingDocumentTypes.CashDifference);
@@ -361,16 +307,7 @@ public sealed class DispatchSettlementHostedService(
             var now = timeProvider.GetUtcNow();
             var sequence = await SqlOperationalDocumentAllocator.AllocateSequenceAsync(
                 connection, transaction, operation.BusinessId, now, token);
-            await using (var insert = new SqlCommand("""
-                INSERT dbo.DocumentProcessingJobs
-                  (JobId,BusinessId,ProcessingSequence,DocumentId,DocumentType,Status,AvailableAt,CreatedAt)
-                VALUES
-                  (@JobId,@BusinessId,@Sequence,@DocumentId,@DocumentType,N'Pending',@Now,@Now);
-                INSERT dbo.DocumentProcessingPayloads
-                  (DocumentId,DocumentType,BusinessId,ContractVersion,PayloadJson,PayloadHash,AcceptedAt)
-                VALUES
-                  (@DocumentId,@DocumentType,@BusinessId,1,@Payload,@PayloadHash,@Now);
-                """, connection, transaction))
+            await using (var insert = Procedure("dbo.DispatchCashDifferenceDocumentCreate", connection, transaction))
             {
                 insert.Parameters.AddWithValue("@JobId", movementId);
                 insert.Parameters.AddWithValue("@BusinessId", operation.BusinessId);
@@ -397,45 +334,29 @@ public sealed class DispatchSettlementHostedService(
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(token);
-        await using var command = new SqlCommand("""
-            SET XACT_ABORT ON; BEGIN TRAN;
-            IF EXISTS(SELECT 1 FROM dbo.DispatchSettlementOperations WHERE DispatchSettlementOperationId=@Id AND Status=N'Completed') BEGIN COMMIT; RETURN; END;
-            IF EXISTS(
-                SELECT 1
-                FROM dbo.DocumentProcessingJobs job
-                INNER JOIN (
-                    SELECT [ReturnId] AS [DocumentId], N'SalesReturn' AS [DocumentType]
-                    FROM dbo.SalesReturns
-                    WHERE IdempotencyKey LIKE @SettlementKey
-                    UNION ALL
-                    SELECT [PaymentId], N'ReceivablePayment'
-                    FROM dbo.CustomerPayments
-                    WHERE IdempotencyKey LIKE @SettlementKey
-                ) settlementDocument
-                  ON settlementDocument.DocumentId=job.DocumentId
-                 AND settlementDocument.DocumentType=job.DocumentType
-                WHERE job.Status<>N'Completed'
-            ) THROW 51000,'Settlement documents are not fully processed.',1;
-            IF EXISTS(
-                SELECT 1 FROM dbo.DispatchSettlements settlement
-                WHERE settlement.DispatchId=@DispatchId AND settlement.CashDifference<>0
-                  AND NOT EXISTS(
-                    SELECT 1 FROM dbo.DocumentProcessingJobs job
-                    WHERE job.DocumentId=settlement.DispatchSettlementId
-                      AND job.DocumentType=N'DispatchCashDifference'
-                      AND job.Status=N'Completed')
-            ) THROW 51000,'The dispatch cash difference is not fully processed.',1;
-            UPDATE dbo.DispatchSettlementOperations SET Status=N'Completed',CompletedAt=SYSUTCDATETIME(),LastError=NULL WHERE DispatchSettlementOperationId=@Id;
-            UPDATE dbo.DispatchSettlements SET Status=N'Completed' WHERE DispatchId=@DispatchId;
-            UPDATE dbo.Dispatches SET Status=N'Closed',UpdatedBy=@UserId,UpdatedAt=SYSUTCDATETIME() WHERE DispatchId=@DispatchId;
-            COMMIT;
-            """, connection);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(token);
+        await using var command = Procedure("dbo.DispatchSettlementOperationComplete", connection, transaction);
         command.Parameters.AddWithValue("@Id", operation.Id);
         command.Parameters.AddWithValue("@DispatchId", operation.DispatchId);
         command.Parameters.AddWithValue("@UserId", operation.RequestedBy);
         command.Parameters.AddWithValue("@SettlementKey", $"dispatch-settlement:{operation.DispatchId:N}:%");
-        await command.ExecuteNonQueryAsync(token);
+        try
+        {
+            await command.ExecuteNonQueryAsync(token);
+            await transaction.CommitAsync(token);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
     }
+
+    private static SqlCommand Procedure(
+        string name,
+        SqlConnection connection,
+        SqlTransaction? transaction = null) =>
+        new(name, connection, transaction) { CommandType = CommandType.StoredProcedure };
 
     private static Guid DeterministicGuid(string value)
     {

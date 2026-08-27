@@ -218,20 +218,17 @@ No se borra físicamente.
 Después de cada lectura:
 
 1. se resuelve el código;
-2. se agrega o incrementa la línea;
+2. se agrega una línea nueva al final, incluso si el producto ya existe;
 3. se recalculan línea y factura;
 4. se confirma con sonido/color;
-5. el foco queda listo para el siguiente producto.
+5. la grilla baja hasta la línea nueva sin sacar el foco del lector, que queda
+   listo para el siguiente producto.
 
 No se abre una ventana por cada producto.
 
-El comportamiento repetido depende de la caja:
-
-```text
-IncrementQuantity | AddNewLine
-```
-
-Productos con serial, lote, modificadores o precio especial pueden forzar línea independiente.
+El comportamiento no varía por caja: una lectura repetida también crea una línea
+independiente. La cantidad solo se modifica mediante edición explícita o por el
+factor/cantidad de la captura actual.
 
 ### 5.2 Edición en grilla
 
@@ -338,6 +335,28 @@ Si no hay coincidencia:
 - se permite buscar;
 - se permite línea manual solo con autorización;
 - el foco queda listo para continuar.
+
+### 6.2 Invariante de línea, desplazamiento y foco
+
+Toda adición exitosa de producto crea una línea nueva al final de la pantalla de
+venta. La existencia previa del mismo producto en el borrador no autoriza
+incrementar, reutilizar, agrupar ni consolidar esa línea. Cada lectura o selección
+conserva su propia identidad de línea, cantidad, precio, impuesto, promoción,
+vendedor, origen y trazabilidad.
+
+Después de cada adición, la grilla debe desplazar su contenedor hasta que la línea
+nueva quede completamente visible y debe conservar el foco DOM en el receptor del
+lector, limpio y listo para la siguiente captura. La fila puede quedar resaltada
+o seleccionada visualmente, pero no recibe el foco de teclado. Esta secuencia es
+atómica desde la perspectiva del cajero: agregar, recalcular, mostrar la última
+línea y continuar escaneando sin clic.
+
+La regla aplica por igual a código exacto, búsqueda, código alterno, balanza,
+empaque, línea manual autorizada y cargas que agreguen varias líneas. En un lote,
+cada producto agregado mantiene su línea y al finalizar se hace visible la última.
+Si una validación o autorización abre una interacción bloqueante, esta gestiona el
+foco accesiblemente y lo devuelve al receptor al terminar. Si la captura falla o
+se cancela, no se crea línea y el receptor también queda listo.
 
 ---
 
@@ -798,9 +817,11 @@ Autorizaciones de supervisor guardan usuario autorizador; nunca solo un booleano
 ### Productos
 
 - un código exacto agrega sin modal;
+- cada adición crea una línea nueva aunque el producto ya exista en la venta;
 - se busca por código, referencia y descripción como mínimo;
 - también se indexan códigos alternos y alias;
-- la selección vuelve el foco al escáner;
+- la grilla hace scroll hasta la última línea sin sacar el foco del escáner;
+- una lectura repetida no incrementa ni agrupa automáticamente otra línea;
 - cambiar cantidad recalcula todo;
 - empaque aplica conversión correcta.
 

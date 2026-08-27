@@ -107,7 +107,7 @@ Catálogos iniciales: medios de pago, tipos de documento de venta, presentacione
 - Infrastructure: consultas, transacciones, brokers y proveedores externos.
 - Database: schemas, constraints, índices y seeds desplegables.
 
-La deuda heredada de SQL directo en `Auraly.Api` y tablas en `dbo` está protegida por pruebas ratchet: no puede crecer. Cada cambio que toque esas rutas debe extraerla o migrarla al schema propietario y reducir el baseline. No se hace un renombrado masivo sin compatibilidad, cutover, rollback y medición.
+`Auraly.Api` no admite SQL directo ni sentencias DML embebidas. La persistencia se implementa con EF Core/LINQ o mediante procedimientos almacenados versionados en el proyecto DACPAC; una prueba arquitectónica exige un baseline de cero. Las migraciones de tablas heredadas en `dbo` al schema propietario conservan compatibilidad, cutover, rollback y medición.
 
 ## Colas, retries y observabilidad
 
@@ -119,10 +119,11 @@ Registrar correlation/job/document/business ID, intento, transición, duración 
 
 1. Buscar contrato, engine/coordinator, handler, writer, tabla, endpoint, DI y tests existentes.
 2. Nombrar el propietario de la decisión y de cada escritura.
-3. Seguir la tabla de navegación; si la capacidad no existe, escribir una decisión antes de crear motor/cola.
+3. Seguir la tabla de navegación; si ninguna capacidad parece propietaria, detener la implementación y elevar la decisión. Una funcionalidad no crea otro motor/cola como atajo.
 4. Confirmar tenant/business scope, autorización, idempotencia, orden, tiempo y compatibilidad.
 5. Implementar el slice completo y actualizar este mapa solo si cambió la topología.
 6. Pasar build, pruebas, lint y compuertas de arquitectura.
+7. Auditar el diff final contra `AGENTS.md`, estándares, invariantes y decisiones propietarias; corregir incumplimientos y repetir los checks afectados.
 
 ## Referencias
 

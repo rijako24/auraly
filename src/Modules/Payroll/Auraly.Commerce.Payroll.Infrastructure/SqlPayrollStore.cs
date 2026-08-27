@@ -42,7 +42,8 @@ public sealed class SqlPayrollStore(
                    e.MonthlySalary,e.IsActive,e.EmployeeId,e.ContractTypeOptionId,
                    e.SalaryTypeOptionId,e.PayFrequencyOptionId,e.RiskClassOptionId,
                    e.WorkerTypeOptionId,e.WorkerSubtypeOptionId,e.PaymentMethodOptionId,
-                   e.StartDate,e.EndDate,e.IntegralSalaryPercentage,e.BankAccountReference,e.RowVersion
+                   e.StartDate,e.EndDate,e.IntegralSalaryPercentage,e.BankAccountReference,
+                   e.BankOptionId,e.BankAccountTypeOptionId,e.BankAccountNumber,e.RowVersion
             FROM payroll.Employments e JOIN dbo.Parties p ON p.PartyId=e.PartyId AND p.TenantId=e.TenantId
             WHERE e.TenantId=@TenantId AND e.BusinessId=@BusinessId ORDER BY e.IsActive DESC,5;
 
@@ -76,14 +77,14 @@ public sealed class SqlPayrollStore(
             WHERE TenantId=@TenantId AND BusinessId=@BusinessId;
 
             SELECT FiscalIssuerConfigurationId,Version,LegalName,SoftwareIdentificationCode,
-                   Environment,TestSetId,IsActive
+                   SoftwarePinSecretReference,Environment,TestSetId,IsActive
             FROM dbo.FiscalIssuerConfigurations
             WHERE BusinessId=@BusinessId
             ORDER BY IsActive DESC,Version DESC;
 
             SELECT a.DeductionAgreementId,a.EmploymentId,
                    COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName),e.ContractNumber),
-                   a.ConceptId,c.Name,a.AuthorityOptionId,o.Label,a.ReferenceNumber,a.EvidenceUrl,
+                   a.ConceptId,c.Name,a.AuthorityOptionId,a.BeneficiaryPartyId,o.Label,a.ReferenceNumber,a.EvidenceUrl,
                    a.EffectiveFrom,a.EffectiveTo,a.AuthorizedTotal,a.InstallmentAmount,a.DeductedToDate,
                    a.Priority,a.MustProtectMinimumNetPay,a.IsActive,a.RowVersion
             FROM payroll.DeductionAgreements a
@@ -165,7 +166,9 @@ public sealed class SqlPayrollStore(
                 DateOnly.FromDateTime(reader.GetDateTime(15)),
                 reader.IsDBNull(16) ? null : DateOnly.FromDateTime(reader.GetDateTime(16)),
                 reader.IsDBNull(17) ? null : reader.GetDecimal(17), NullableString(reader, 18),
-                (byte[])reader[19]));
+                reader.IsDBNull(19) ? null : reader.GetGuid(19),
+                reader.IsDBNull(20) ? null : reader.GetGuid(20), NullableString(reader, 21),
+                (byte[])reader[22]));
 
         await reader.NextResultAsync(ct);
         var parties = new List<PayrollPartyOption>();
@@ -216,19 +219,20 @@ public sealed class SqlPayrollStore(
         var fiscalIssuers = new List<FiscalIssuerOption>();
         while (await reader.ReadAsync(ct))
             fiscalIssuers.Add(new(reader.GetGuid(0), reader.GetInt32(1), reader.GetString(2),
-                reader.GetString(3), reader.GetByte(4),
-                reader.IsDBNull(5) ? null : reader.GetGuid(5), reader.GetBoolean(6)));
+                reader.GetString(3), reader.GetString(4), reader.GetByte(5),
+                reader.IsDBNull(6) ? null : reader.GetGuid(6), reader.GetBoolean(7)));
 
         await reader.NextResultAsync(ct);
         var agreements = new List<PayrollDeductionAgreementSummary>();
         while (await reader.ReadAsync(ct))
             agreements.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2).Trim(),
-                reader.GetGuid(3), reader.GetString(4), reader.GetGuid(5), reader.GetString(6),
-                reader.GetString(7), reader.GetString(8), DateOnly.FromDateTime(reader.GetDateTime(9)),
-                reader.IsDBNull(10) ? null : DateOnly.FromDateTime(reader.GetDateTime(10)),
-                reader.IsDBNull(11) ? null : reader.GetDecimal(11),
-                reader.IsDBNull(12) ? null : reader.GetDecimal(12), reader.GetDecimal(13),
-                reader.GetInt16(14), reader.GetBoolean(15), reader.GetBoolean(16), (byte[])reader[17]));
+                reader.GetGuid(3), reader.GetString(4), reader.GetGuid(5),
+                reader.IsDBNull(6) ? null : reader.GetGuid(6), reader.GetString(7),
+                reader.GetString(8), reader.GetString(9), DateOnly.FromDateTime(reader.GetDateTime(10)),
+                reader.IsDBNull(11) ? null : DateOnly.FromDateTime(reader.GetDateTime(11)),
+                reader.IsDBNull(12) ? null : reader.GetDecimal(12),
+                reader.IsDBNull(13) ? null : reader.GetDecimal(13), reader.GetDecimal(14),
+                reader.GetInt16(15), reader.GetBoolean(16), reader.GetBoolean(17), (byte[])reader[18]));
 
         await reader.NextResultAsync(ct);
         var novelties = new List<PayrollNoveltyView>();
@@ -387,6 +391,13 @@ public sealed class SqlPayrollStore(
                     THROW 51703,N'Una opción del contrato no pertenece al catálogo esperado.',1;
                 IF @WorkerSubtype IS NOT NULL AND NOT EXISTS(SELECT 1 FROM payroll.CatalogOptions WHERE OptionId=@WorkerSubtype AND CatalogCode=N'payroll-worker-subtype' AND IsActive=1)
                     THROW 51704,N'El subtipo de trabajador no es válido.',1;
+                IF @Bank IS NOT NULL AND NOT EXISTS(SELECT 1 FROM payroll.CatalogOptions WHERE OptionId=@Bank AND CatalogCode=N'payroll-bank' AND IsActive=1)
+                    THROW 51704,N'El banco no pertenece al catálogo de nómina.',1;
+                IF @BankAccountType IS NOT NULL AND NOT EXISTS(SELECT 1 FROM payroll.CatalogOptions WHERE OptionId=@BankAccountType AND CatalogCode=N'payroll-bank-account-type' AND IsActive=1)
+                    THROW 51704,N'El tipo de cuenta no pertenece al catálogo de nómina.',1;
+                IF EXISTS(SELECT 1 FROM payroll.CatalogOptions WHERE OptionId=@PaymentMethod AND Code=N'BankTransfer')
+                   AND (@Bank IS NULL OR @BankAccountType IS NULL OR NULLIF(LTRIM(RTRIM(@BankAccountNumber)),N'') IS NULL)
+                    THROW 51704,N'Banco, tipo y número de cuenta son obligatorios para transferencia.',1;
 
                 IF EXISTS(SELECT 1 FROM payroll.Employments WHERE EmploymentId=@Id AND TenantId=@TenantId)
                 BEGIN
@@ -395,7 +406,9 @@ public sealed class SqlPayrollStore(
                       RiskClassOptionId=@RiskClass,WorkerTypeOptionId=@WorkerType,WorkerSubtypeOptionId=@WorkerSubtype,
                       PaymentMethodOptionId=@PaymentMethod,ContractNumber=@ContractNumber,StartDate=@StartDate,
                       EndDate=@EndDate,MonthlySalary=@Salary,IntegralSalaryPercentage=@IntegralPercentage,
-                      BankAccountReference=@BankReference,IsActive=@Active,UpdatedBy=@UserId,UpdatedAt=@Now
+                      BankAccountReference=@BankReference,BankOptionId=@Bank,
+                      BankAccountTypeOptionId=@BankAccountType,BankAccountNumber=@BankAccountNumber,
+                      IsActive=@Active,UpdatedBy=@UserId,UpdatedAt=@Now
                     WHERE EmploymentId=@Id AND TenantId=@TenantId AND RowVersion=@RowVersion;
                     IF @@ROWCOUNT<>1 THROW 51705,N'La relación laboral cambió; recargue antes de guardar.',1;
                 END
@@ -404,10 +417,12 @@ public sealed class SqlPayrollStore(
                       ContractTypeOptionId,SalaryTypeOptionId,PayFrequencyOptionId,RiskClassOptionId,
                       WorkerTypeOptionId,WorkerSubtypeOptionId,PaymentMethodOptionId,ContractNumber,
                       StartDate,EndDate,MonthlySalary,IntegralSalaryPercentage,BankAccountReference,
+                      BankOptionId,BankAccountTypeOptionId,BankAccountNumber,
                       IsActive,CreatedBy,CreatedAt)
                     VALUES(@Id,@TenantId,@PartyId,@BusinessId,@ResolvedEmployeeId,@ContractType,@SalaryType,@Frequency,
                       @RiskClass,@WorkerType,@WorkerSubtype,@PaymentMethod,@ContractNumber,@StartDate,@EndDate,
-                      @Salary,@IntegralPercentage,@BankReference,@Active,@UserId,@Now);
+                      @Salary,@IntegralPercentage,@BankReference,@Bank,@BankAccountType,
+                      @BankAccountNumber,@Active,@UserId,@Now);
                 END
                 """, connection, tx);
             AddEmploymentParameters(command, user, request);
@@ -564,6 +579,25 @@ public sealed class SqlPayrollStore(
         catch (SqlException error) when (error.Number == 51721)
         { await tx.RollbackAsync(CancellationToken.None); throw new PayrollConflictException(error.Message); }
         catch { await tx.RollbackAsync(CancellationToken.None); throw; }
+        return (await GetOptionsAsync(user, ct)).RuleSets.Single(x => x.RuleSetId == ruleSetId);
+    }
+
+    public async Task<PayrollRuleSetView> RetireRuleSetAsync(PayrollUserIdentity user,
+        Guid ruleSetId, byte[] rowVersion, CancellationToken ct)
+    {
+        await using var connection = connections.Create(); await connection.OpenAsync(ct);
+        await using var command = new SqlCommand("""
+            UPDATE payroll.RuleSets SET Status=N'Retired'
+            WHERE RuleSetId=@Id AND TenantId=@TenantId AND Status<>N'Retired'
+              AND RowVersion=@Version;
+            IF @@ROWCOUNT<>1 THROW 51721,N'La regla cambió o ya estaba retirada.',1;
+            """, connection);
+        command.Parameters.AddWithValue("@Id", ruleSetId);
+        command.Parameters.AddWithValue("@TenantId", user.TenantId);
+        command.Parameters.Add("@Version", SqlDbType.Timestamp).Value = rowVersion;
+        try { await command.ExecuteNonQueryAsync(ct); }
+        catch (SqlException error) when (error.Number == 51721)
+        { throw new PayrollConflictException(error.Message); }
         return (await GetOptionsAsync(user, ct)).RuleSets.Single(x => x.RuleSetId == ruleSetId);
     }
 
@@ -1258,7 +1292,8 @@ public sealed class SqlPayrollStore(
                        CONVERT(bit,CASE WHEN salary.Code=N'Integral' THEN 1 ELSE 0 END),
                        COALESCE(contract.DianCode,N''),COALESCE(worker.DianCode,N''),
                        COALESCE(subtype.DianCode,N'00'),COALESCE(payment.DianCode,N''),
-                       COALESCE(frequency.DianCode,N''),e.BankAccountReference
+                       COALESCE(frequency.DianCode,N''),bank.Label,accountType.MetadataCode,
+                       e.BankAccountNumber
                 FROM payroll.Runs r
                 JOIN payroll.RunEmployees re ON re.PayrollRunId=r.PayrollRunId
                 JOIN dbo.Parties p ON p.PartyId=re.PartyId AND p.TenantId=re.TenantId
@@ -1269,6 +1304,10 @@ public sealed class SqlPayrollStore(
                 LEFT JOIN payroll.CatalogOptions subtype ON subtype.OptionId=e.WorkerSubtypeOptionId
                 JOIN payroll.CatalogOptions payment ON payment.OptionId=e.PaymentMethodOptionId
                 JOIN payroll.CatalogOptions frequency ON frequency.OptionId=e.PayFrequencyOptionId
+                LEFT JOIN payroll.CatalogOptions bank ON bank.OptionId=e.BankOptionId
+                  AND bank.CatalogCode=N'payroll-bank'
+                LEFT JOIN payroll.CatalogOptions accountType ON accountType.OptionId=e.BankAccountTypeOptionId
+                  AND accountType.CatalogCode=N'payroll-bank-account-type'
                 LEFT JOIN payroll.CatalogOptions idtype
                   ON idtype.CatalogCode=N'payroll-identification-type'
                  AND idtype.Code=p.IdentificationTypeCode AND idtype.IsActive=1
@@ -1305,7 +1344,8 @@ public sealed class SqlPayrollStore(
                             reader.IsDBNull(17) ? null : DateOnly.FromDateTime(reader.GetDateTime(17)),
                             reader.GetDecimal(18), reader.GetBoolean(19), reader.GetString(20),
                             reader.GetString(21), reader.GetString(22), reader.GetString(23),
-                            reader.GetString(24), reader.IsDBNull(25) ? null : reader.GetString(25),
+                            reader.GetString(24), NullableString(reader, 25),
+                            NullableString(reader, 26), NullableString(reader, 27),
                             [], [], 0, 0, 0, 0, 0, 0);
                         employees.Add(partyId, employee);
                         lines.Add(partyId, []);
@@ -1419,7 +1459,8 @@ public sealed class SqlPayrollStore(
                     employee.EmploymentId, employee.EmployeeCode, employee.EmploymentStart,
                     employee.EmploymentEnd, employee.MonthlySalary, employee.IntegralSalary,
                     employee.ContractTypeCode, employee.WorkerTypeCode, employee.WorkerSubtypeCode,
-                    false, employee.PaymentMethodCode, null, null, null,
+                    false, employee.PaymentMethodCode, employee.Bank,
+                    employee.BankAccountType, employee.BankAccountNumber,
                     employee.PayrollPeriodCode, softwareIdentificationCode,
                     softwarePinSecretReference, testSetId,
                     fiscalPrefix, consecutive, now.ToOffset(TimeSpan.FromHours(-5)), qrValidationUrl,
@@ -1658,7 +1699,8 @@ public sealed class SqlPayrollStore(
               COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName),e.ContractNumber),
               e.ContractTypeOptionId,e.SalaryTypeOptionId,e.PayFrequencyOptionId,e.RiskClassOptionId,
               e.WorkerTypeOptionId,e.WorkerSubtypeOptionId,e.PaymentMethodOptionId,e.ContractNumber,
-              e.StartDate,e.EndDate,e.MonthlySalary,e.IntegralSalaryPercentage,e.BankAccountReference,e.IsActive,e.RowVersion
+              e.StartDate,e.EndDate,e.MonthlySalary,e.IntegralSalaryPercentage,e.BankAccountReference,
+              e.BankOptionId,e.BankAccountTypeOptionId,e.BankAccountNumber,e.IsActive,e.RowVersion
             FROM payroll.Employments e JOIN dbo.Parties p ON p.PartyId=e.PartyId AND p.TenantId=e.TenantId
             WHERE e.EmploymentId=@Id AND e.TenantId=@TenantId AND e.BusinessId=@BusinessId;
             """, connection);
@@ -1668,7 +1710,9 @@ public sealed class SqlPayrollStore(
         return new(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2), reader.IsDBNull(3) ? null : reader.GetGuid(3), reader.GetString(4).Trim(),
             reader.GetGuid(5), reader.GetGuid(6), reader.GetGuid(7), reader.GetGuid(8), reader.GetGuid(9), reader.IsDBNull(10) ? null : reader.GetGuid(10), reader.GetGuid(11), reader.GetString(12),
             DateOnly.FromDateTime(reader.GetDateTime(13)), reader.IsDBNull(14) ? null : DateOnly.FromDateTime(reader.GetDateTime(14)), reader.GetDecimal(15), reader.IsDBNull(16) ? null : reader.GetDecimal(16),
-            NullableString(reader, 17), reader.GetBoolean(18), (byte[])reader[19]);
+            NullableString(reader, 17), reader.IsDBNull(18) ? null : reader.GetGuid(18),
+            reader.IsDBNull(19) ? null : reader.GetGuid(19), NullableString(reader, 20),
+            reader.GetBoolean(21), (byte[])reader[22]);
     }
 
     private async Task<PayrollDeductionAgreementView> ReadAgreementAsync(PayrollUserIdentity user, Guid id, CancellationToken ct)
@@ -1754,6 +1798,9 @@ public sealed class SqlPayrollStore(
         command.Parameters.AddWithValue("@PaymentMethod", request.PaymentMethodOptionId); command.Parameters.AddWithValue("@ContractNumber", request.ContractNumber);
         command.Parameters.AddWithValue("@StartDate", request.StartDate.ToDateTime(TimeOnly.MinValue)); command.Parameters.AddWithValue("@EndDate", DbDate(request.EndDate)); Decimal(command, "@Salary", request.MonthlySalary, 4);
         DecimalNullable(command, "@IntegralPercentage", request.IntegralSalaryPercentage, 6); command.Parameters.AddWithValue("@BankReference", (object?)request.BankAccountReference ?? DBNull.Value); command.Parameters.AddWithValue("@Active", request.IsActive);
+        command.Parameters.AddWithValue("@Bank", (object?)request.BankOptionId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@BankAccountType", (object?)request.BankAccountTypeOptionId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@BankAccountNumber", (object?)request.BankAccountNumber ?? DBNull.Value);
         command.Parameters.AddWithValue("@UserId", user.UserId); command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow()); command.Parameters.Add("@RowVersion", SqlDbType.Timestamp).Value = (object?)request.RowVersion ?? DBNull.Value;
     }
 
@@ -1799,7 +1846,9 @@ public sealed class SqlPayrollStore(
         string workerSubtypeCode,
         string paymentMethodCode,
         string payrollPeriodCode,
-        string? bankAccountReference,
+        string? bank,
+        string? bankAccountType,
+        string? bankAccountNumber,
         List<Guid> runIds,
         List<DateOnly> paymentDates,
         decimal workedDays,
@@ -1827,7 +1876,9 @@ public sealed class SqlPayrollStore(
         public string PaymentMethodCode { get; } = paymentMethodCode;
         public int PayrollPeriodCode { get; } = int.TryParse(payrollPeriodCode,
             NumberStyles.None, CultureInfo.InvariantCulture, out var value) ? value : 0;
-        public string? BankAccountReference { get; } = bankAccountReference;
+        public string? Bank { get; } = bank;
+        public string? BankAccountType { get; } = bankAccountType;
+        public string? BankAccountNumber { get; } = bankAccountNumber;
         public List<Guid> RunIds { get; } = runIds;
         public List<DateOnly> PaymentDates { get; } = paymentDates;
         public decimal WorkedDays { get; set; } = workedDays;

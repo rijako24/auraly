@@ -75,6 +75,7 @@ public sealed class SqlSalesReturnStore(
                 connection, transaction, user, request, cancellationToken);
             var lines = new List<SalesReturnLineSnapshot>(request.Lines.Count);
             var lineNumber = 0;
+            var coversEveryRequestedBalance = true;
             foreach (var requested in request.Lines.OrderBy(line => line.OriginalLineNumber))
             {
                 var source = await LoadOriginalLineAsync(connection, transaction,
@@ -92,12 +93,21 @@ public sealed class SqlSalesReturnStore(
                 {
                     throw new SalesReturnConflictException(exception.Message);
                 }
+                coversEveryRequestedBalance &= requested.Quantity == source.Quantity - source.ReturnedQuantity;
                 lines.Add(new SalesReturnLineSnapshot(
                     ++lineNumber, requested.OriginalLineNumber, source.ProductId,
                     source.Description, requested.Quantity, source.UnitPrice,
                     amounts.DiscountAmount, source.TaxCode, source.TaxRate,
                     amounts.UntaxedAmount, amounts.TaxAmount, amounts.LineTotal, source.RecognizedUnitCost,
                     requested.InventoryDisposition));
+            }
+            if (request.ReturnScopeCode == SalesReturnScopes.FullCancellation)
+            {
+                var availableLineCount = await CountAvailableLinesAsync(
+                    connection, transaction, request.OriginalDocumentId, cancellationToken);
+                if (!coversEveryRequestedBalance || lines.Count != availableLineCount)
+                    throw new SalesReturnConflictException(
+                        "La anulación total debe devolver el saldo completo de todas las líneas disponibles.");
             }
             var untaxed = lines.Sum(line => line.UntaxedAmount);
             var tax = lines.Sum(line => line.TaxAmount);
@@ -108,9 +118,13 @@ public sealed class SqlSalesReturnStore(
                 original.CustomerId is null)
                 throw new SalesReturnValidationException(
                     "Customer credit requires an identified customer on the original sale.");
+            if (request.EconomicResolution == ReturnEconomicResolutions.CustomerCredit &&
+                (original.ReceivableOutstanding <= 0 || total > original.ReceivableOutstanding))
+                throw new SalesReturnValidationException(
+                    "El abono a cartera requiere saldo pendiente suficiente en la cuenta por cobrar de la venta.");
 
             if (request.EconomicResolution == ReturnEconomicResolutions.Refund)
-                await ValidateCashRefundAsync(
+                await ValidateRefundAsync(
                     connection, transaction, user, request, total, cancellationToken);
             var number = await AllocateNumberAsync(
                 connection, transaction, user.BusinessId, cancellationToken);
@@ -124,7 +138,8 @@ public sealed class SqlSalesReturnStore(
                 request.EconomicResolution, request.RefundMethodCode, "1",
                 request.ReasonDescription, original.CustomerId, original.CustomerIdentification,
                 untaxed, tax, total, lines, request.WorkSessionId,
-                request.OriginalPaymentNumber, request.ReasonCode, request.Notes);
+                request.OriginalPaymentNumber, request.ReasonCode, request.Notes,
+                request.ReturnScopeCode);
             var payloadJson = SalesReturnContractSerializer.Serialize(payload);
             var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(payloadJson));
             var movementId = ids.NewId();
@@ -205,7 +220,10 @@ public sealed class SqlSalesReturnStore(
             IF NOT EXISTS (SELECT 1 FROM dbo.Warehouses WITH (HOLDLOCK)
                            WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId AND IsActive=1 AND UseForSales=1)
               THROW 51201,'Selecciona una bodega de venta válida para la devolución.',1;
-            SELECT d.CustomerId,d.CustomerIdentification
+            SELECT d.CustomerId,d.CustomerIdentification,
+                   COALESCE((SELECT SUM(r.OutstandingAmount) FROM dbo.Receivables r
+                     WHERE r.BusinessId=d.BusinessId AND r.SourceDocumentId=d.DocumentId
+                       AND r.SourceDocumentType=N'SalesInvoice' AND r.Status IN(N'Open',N'PartiallyPaid')),0)
             FROM dbo.SalesDocuments d WITH (UPDLOCK,HOLDLOCK)
             WHERE d.DocumentId=@OriginalDocumentId AND d.BusinessId=@BusinessId
               AND d.DocumentType IN(N'SalesInvoice',N'SalesReceipt')
@@ -223,7 +241,7 @@ public sealed class SqlSalesReturnStore(
                 throw new SalesReturnValidationException(
                     "The original completed invoice was not found in this business.");
             return new OriginalSale(
-                reader.IsDBNull(0) ? null : reader.GetGuid(0), reader.GetString(1));
+                reader.IsDBNull(0) ? null : reader.GetGuid(0), reader.GetString(1), reader.GetDecimal(2));
         }
         catch (SqlException exception) when (exception.Number is 51200 or 51201)
         {
@@ -271,7 +289,7 @@ public sealed class SqlSalesReturnStore(
             reader.GetDecimal(13), reader.GetDecimal(14), reader.GetDecimal(15));
     }
 
-    private static async Task ValidateCashRefundAsync(
+    private static async Task ValidateRefundAsync(
         SqlConnection connection, SqlTransaction transaction, SalesReturnUserIdentity user,
         ConfirmSalesReturnRequest request, decimal requestedAmount,
         CancellationToken cancellationToken)
@@ -286,17 +304,12 @@ public sealed class SqlSalesReturnStore(
             FROM dbo.SalesPayments p WITH(UPDLOCK,HOLDLOCK)
             INNER JOIN dbo.SalesDocuments d WITH(UPDLOCK,HOLDLOCK)
               ON d.DocumentId=p.DocumentId AND d.BusinessId=@BusinessId
-            INNER JOIN dbo.WorkSessions ws WITH(UPDLOCK,HOLDLOCK)
-              ON ws.WorkSessionId=@WorkSessionId AND ws.BusinessId=@BusinessId
-             AND ws.WarehouseId=@WarehouseId AND ws.UserId=@UserId AND ws.Status=N'Open'
             WHERE p.DocumentId=@DocumentId AND p.PaymentNumber=@PaymentNumber
-              AND p.MethodCode=N'Cash';
+              AND p.MethodCode=@Method;
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
-        command.Parameters.AddWithValue("@UserId", user.UserId);
-        command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
-        command.Parameters.AddWithValue("@WorkSessionId", request.WorkSessionId!.Value);
+        command.Parameters.AddWithValue("@Method", request.RefundMethodCode!);
         command.Parameters.AddWithValue("@DocumentId", request.OriginalDocumentId);
         command.Parameters.AddWithValue("@PaymentNumber", request.OriginalPaymentNumber!.Value);
         decimal originalAmount;
@@ -305,13 +318,27 @@ public sealed class SqlSalesReturnStore(
         {
             if (!await reader.ReadAsync(cancellationToken))
                 throw new SalesReturnValidationException(
-                    "The original cash payment or active work session was not found.");
+                    "No se encontró un pago original del mismo medio con saldo para devolver.");
             originalAmount = reader.GetDecimal(0);
             reservedAmount = reader.GetDecimal(1);
         }
         if (requestedAmount > originalAmount - reservedAmount)
             throw new SalesReturnConflictException(
-                "The return exceeds the cash amount still available for refund.");
+                "La devolución supera el valor disponible del pago original.");
+        if (request.RefundMethodCode == SalesReturnRefundMethods.Cash)
+        {
+            await using var session = new SqlCommand("""
+                SELECT COUNT_BIG(*) FROM dbo.WorkSessions WITH(UPDLOCK,HOLDLOCK)
+                WHERE WorkSessionId=@Id AND BusinessId=@BusinessId AND WarehouseId=@WarehouseId
+                  AND UserId=@UserId AND Status=N'Open';
+                """, connection, transaction);
+            session.Parameters.AddWithValue("@Id", request.WorkSessionId!.Value);
+            session.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+            session.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
+            session.Parameters.AddWithValue("@UserId", user.UserId);
+            if (Convert.ToInt64(await session.ExecuteScalarAsync(cancellationToken)) != 1)
+                throw new SalesReturnValidationException("La devolución en efectivo requiere la sesión de caja abierta del usuario.");
+        }
     }
 
     private static async Task<AuralyDocumentNumberAssignment> AllocateNumberAsync(
@@ -382,12 +409,12 @@ public sealed class SqlSalesReturnStore(
             INSERT dbo.SalesReturns
               (ReturnId,BusinessId,WarehouseId,WorkSessionId,OriginalDocumentId,DocumentSeriesId,DocumentNumber,
                DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,IdempotencyKey,PayloadHash,
-               ReturnedAt,EconomicResolution,RefundMethodCode,OriginalPaymentNumber,CorrectionCode,
+               ReturnedAt,ReturnScopeCode,EconomicResolution,RefundMethodCode,OriginalPaymentNumber,CorrectionCode,
                ReasonCode,ReasonDescription,Notes,
                CustomerId,CustomerIdentification,UntaxedAmount,TaxAmount,TotalAmount,Status,
                CreatedByUserId,AcceptedAt)
             VALUES(@Id,@BusinessId,@WarehouseId,@WorkSessionId,@OriginalId,@SeriesId,@Number,@Prefix,@SeriesCode,
-               @Consecutive,@Key,@Hash,@ReturnedAt,@Resolution,@Method,@PaymentNumber,N'1',@ReasonCode,@Reason,@Notes,@CustomerId,
+               @Consecutive,@Key,@Hash,@ReturnedAt,@ReturnScopeCode,@Resolution,@Method,@PaymentNumber,N'1',@ReasonCode,@Reason,@Notes,@CustomerId,
                @CustomerIdentification,@Untaxed,@Tax,@Total,N'Accepted',@UserId,@Now);
             """, connection, transaction);
         command.Parameters.AddWithValue("@Id", request.ReturnId);
@@ -403,6 +430,7 @@ public sealed class SqlSalesReturnStore(
         command.Parameters.AddWithValue("@Key", idempotencyKey);
         command.Parameters.Add("@Hash", SqlDbType.Binary, 32).Value=requestHash;
         command.Parameters.AddWithValue("@ReturnedAt", request.ReturnedAt);
+        command.Parameters.AddWithValue("@ReturnScopeCode", request.ReturnScopeCode);
         command.Parameters.AddWithValue("@Resolution", request.EconomicResolution);
         command.Parameters.AddWithValue("@Method", (object?)request.RefundMethodCode ?? DBNull.Value);
         command.Parameters.AddWithValue("@PaymentNumber", (object?)request.OriginalPaymentNumber ?? DBNull.Value);
@@ -416,6 +444,29 @@ public sealed class SqlSalesReturnStore(
         command.Parameters.AddWithValue("@UserId", user.UserId);
         command.Parameters.AddWithValue("@Now", now);
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task<int> CountAvailableLinesAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid originalDocumentId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            SELECT COUNT(*)
+            FROM dbo.SalesDocumentLines l WITH(UPDLOCK,HOLDLOCK)
+            OUTER APPLY
+            (
+                SELECT COALESCE(SUM(rl.Quantity),0) AS ReturnedQuantity
+                FROM dbo.SalesReturnLines rl WITH(UPDLOCK,HOLDLOCK)
+                JOIN dbo.SalesReturns r WITH(UPDLOCK,HOLDLOCK) ON r.ReturnId=rl.ReturnId
+                WHERE rl.OriginalDocumentId=l.DocumentId
+                  AND rl.OriginalLineNumber=l.LineNumber
+                  AND r.Status IN(N'Accepted',N'Processed')
+            ) returned
+            WHERE l.DocumentId=@DocumentId
+              AND l.Quantity-returned.ReturnedQuantity>0;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@DocumentId", originalDocumentId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
     }
 
     private static async Task InsertLinesAsync(
@@ -482,7 +533,7 @@ public sealed class SqlSalesReturnStore(
         parameter.Precision=precision; parameter.Scale=scale; parameter.Value=value;
     }
 
-    private sealed record OriginalSale(Guid? CustomerId,string CustomerIdentification);
+    private sealed record OriginalSale(Guid? CustomerId,string CustomerIdentification,decimal ReceivableOutstanding);
     private sealed record OriginalLine(Guid ProductId,string Description,decimal Quantity,
         decimal UnitPrice,decimal DiscountAmount,string TaxCode,decimal TaxRate,
         decimal UntaxedAmount,decimal TaxAmount,decimal LineTotal,decimal ReturnedQuantity,

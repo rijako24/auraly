@@ -114,23 +114,7 @@ public sealed class AuthenticationEmailHostedService(
         var leaseId = Guid.NewGuid();
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        const string sql = """
-            DECLARE @Now datetimeoffset(7)=SYSDATETIMEOFFSET();
-            ;WITH Candidate AS (
-              SELECT TOP(1) *
-              FROM dbo.TenantProvisioningOutboxMessages WITH(UPDLOCK,READPAST,ROWLOCK)
-              WHERE ProcessedAt IS NULL AND Type IN(N'TenantAdministratorInvitation',N'PasswordRecoveryEmail')
-                AND AttemptCount<10 AND AvailableAt<=@Now
-                AND (LeaseExpiresAt IS NULL OR LeaseExpiresAt<=@Now)
-              ORDER BY OccurredAt,MessageId
-            )
-            UPDATE Candidate
-            SET LeaseId=@LeaseId,LeaseExpiresAt=DATEADD(minute,2,@Now),
-                AttemptCount=AttemptCount+1,LastError=NULL
-            OUTPUT inserted.MessageId,inserted.TenantId,inserted.Type,inserted.Payload,
-                   inserted.AttemptCount,inserted.LeaseId;
-            """;
-        await using var command = new SqlCommand(sql, connection);
+        await using var command = Procedure("dbo.AuthenticationEmailOutboxClaim", connection);
         command.Parameters.AddWithValue("@LeaseId", leaseId);
         await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
         return await reader.ReadAsync(cancellationToken)
@@ -142,12 +126,7 @@ public sealed class AuthenticationEmailHostedService(
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        const string sql = """
-            SELECT t.Name
-            FROM dbo.Tenants t
-            WHERE t.TenantId=@TenantId;
-            """;
-        await using var command = new SqlCommand(sql, connection);
+        await using var command = Procedure("dbo.AuthenticationInvitationRecipientGet", connection);
         command.Parameters.AddWithValue("@TenantId", payload.TenantId);
         await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
@@ -159,14 +138,7 @@ public sealed class AuthenticationEmailHostedService(
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        const string sql = """
-            SELECT u.Email,u.FirstName,t.Name
-            FROM dbo.PasswordResetRequests resetRequest
-            JOIN dbo.AppUsers u ON u.UserId=resetRequest.UserId AND u.TenantId=resetRequest.TenantId
-            JOIN dbo.Tenants t ON t.TenantId=resetRequest.TenantId
-            WHERE resetRequest.PasswordResetRequestId=@RequestId AND resetRequest.Status=N'Pending' AND resetRequest.ExpiresAt>SYSDATETIMEOFFSET();
-            """;
-        await using var command = new SqlCommand(sql, connection);
+        await using var command = Procedure("dbo.AuthenticationPasswordRecoveryRecipientGet", connection);
         command.Parameters.AddWithValue("@RequestId", requestId);
         await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) throw new InvalidOperationException("The password recovery request is no longer available.");
@@ -176,12 +148,7 @@ public sealed class AuthenticationEmailHostedService(
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        const string sql = """
-            UPDATE dbo.TenantProvisioningOutboxMessages
-            SET ProcessedAt=SYSDATETIMEOFFSET(),LeaseId=NULL,LeaseExpiresAt=NULL,LastError=NULL
-            WHERE MessageId=@MessageId AND LeaseId=@LeaseId AND ProcessedAt IS NULL;
-            """;
-        await using var command = new SqlCommand(sql, connection);
+        await using var command = Procedure("dbo.AuthenticationEmailOutboxComplete", connection);
         command.Parameters.AddWithValue("@MessageId", message.MessageId);
         command.Parameters.AddWithValue("@LeaseId", message.LeaseId);
         await command.ExecuteNonQueryAsync(cancellationToken);
@@ -192,19 +159,16 @@ public sealed class AuthenticationEmailHostedService(
         var delay = RetrySeconds[Math.Min(message.AttemptCount - 1, RetrySeconds.Length - 1)];
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        const string sql = """
-            UPDATE dbo.TenantProvisioningOutboxMessages
-            SET AvailableAt=DATEADD(second,@Delay,SYSDATETIMEOFFSET()),
-                LeaseId=NULL,LeaseExpiresAt=NULL,LastError=@Error
-            WHERE MessageId=@MessageId AND LeaseId=@LeaseId AND ProcessedAt IS NULL;
-            """;
-        await using var command = new SqlCommand(sql, connection);
+        await using var command = Procedure("dbo.AuthenticationEmailOutboxRetry", connection);
         command.Parameters.AddWithValue("@Delay", delay);
         command.Parameters.AddWithValue("@Error", exception.Message.Length > 1900 ? exception.Message[..1900] : exception.Message);
         command.Parameters.AddWithValue("@MessageId", message.MessageId);
         command.Parameters.AddWithValue("@LeaseId", message.LeaseId);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
+
+    private static SqlCommand Procedure(string name, SqlConnection connection) =>
+        new(name, connection) { CommandType = CommandType.StoredProcedure };
 
     private string BuildHtml(RecipientContext recipient, string activationUrl)
     {

@@ -7,6 +7,7 @@ using Auraly.Contracts.Organization;
 using Auraly.Contracts.Parties;
 
 using Auraly.Contracts.WorkSessions;
+using Auraly.Application.Authentication;
 namespace Auraly.Application.Organization;
 
 public sealed record PosEnrollmentUserIdentity(
@@ -48,6 +49,7 @@ public sealed class PosEnrollmentConflictException(string message) : Exception(m
 
 public sealed class PosEnrollmentService(
     IPosEnrollmentStore store,
+    OfflineAuthenticationLeaseService offlineAccess,
     TimeProvider timeProvider,
     IAuralyIdGenerator idGenerator)
 {
@@ -104,7 +106,7 @@ public sealed class PosEnrollmentService(
             command.EnrollmentSessionId, code, command.ExpiresAt, workspace);
     }
 
-    public Task<PosEnrollmentPackage> RedeemAsync(
+    public async Task<PosEnrollmentPackage> RedeemAsync(
         RedeemPosEnrollmentRequest request,
         CancellationToken cancellationToken = default)
     {
@@ -118,10 +120,24 @@ public sealed class PosEnrollmentService(
                 "La identificación de instalación no puede superar 160 caracteres.");
         var hash = SHA256.HashData(
             System.Text.Encoding.UTF8.GetBytes(request.RedemptionCode.Trim()));
-        return store.RedeemAsync(
+        var package = await store.RedeemAsync(
             request with { InstallationId = request.InstallationId.Trim() },
             hash,
             DevicePermissions,
             cancellationToken);
+        try
+        {
+            var initialAccess = await offlineAccess.AcquireForEnrollmentAsync(
+                new OfflineAuthenticationLeaseDevice(package.TenantId, package.DeviceId),
+                package.InitialUserId,
+                cancellationToken);
+            return package with { InitialOfflineAccess = initialAccess };
+        }
+        catch (AuthenticationDeniedException)
+        {
+            // Device administrators may enroll a workstation without being cashiers.
+            // Only a user with sales.create receives the automatic local handoff.
+            return package;
+        }
     }
 }

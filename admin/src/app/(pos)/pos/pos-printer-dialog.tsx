@@ -6,6 +6,7 @@ import {
   PosEdgeClient,
   loadBrowserPrinterConfiguration,
   saveBrowserPrinterConfiguration,
+  type PosPrintTemplateFormat,
   type PosPrinterConfiguration,
 } from "@/services/pos/pos-edge-client";
 import { Button } from "@/components/ui/button";
@@ -108,7 +109,7 @@ export function PosPrinterDialog({
             <p className="mt-1 text-sm text-slate-600">
               {client
                 ? "La impresora y la balanza se configuran para este computador."
-                : "Puedes imprimir desde el navegador o instalar Auraly POS para usar los periféricos directamente."}
+                : "Puedes imprimir desde el navegador o instalar Auraly para usar los periféricos directamente."}
             </p>
           </div>
           <button type="button" onClick={onClose} disabled={busy}
@@ -122,7 +123,7 @@ export function PosPrinterDialog({
             </div>
           ) : value ? (
             <>
-              <div className="rounded-2xl border border-teal-200 bg-teal-50/60 p-4"><p className="font-semibold text-slate-950">{client?"Impresión directa por flujo":"Impresión desde el navegador"}</p><p className="mt-1 text-xs text-slate-600">{client?"Cada flujo usa su formato, impresora de Windows y, si corresponde, su ancho de tirilla. No se abre la impresión del navegador.":"Sin Auraly POS, al emitir se abrirá el diálogo del navegador para escoger la impresora y confirmar el trabajo."}</p></div>
+              <div className="rounded-2xl border border-teal-200 bg-teal-50/60 p-4"><p className="font-semibold text-slate-950">{client?"Impresión directa por flujo":"Impresión desde el navegador"}</p><p className="mt-1 text-xs text-slate-600">{client?"Cada flujo usa su formato, impresora de Windows y, si corresponde, su ancho de tirilla. No se abre la impresión del navegador.":"Sin Auraly, al emitir se abrirá el diálogo del navegador para escoger la impresora y confirmar el trabajo."}</p></div>
               <WorkflowPrinterCard title="Punto de venta" description="Facturas y comprobantes emitidos desde la caja." format={value.posOutputFormat??"Receipt"} printerName={value.posPrinterName??printerFor(value,value.posOutputFormat??"Receipt")} paperWidth={value.receiptPaperWidthMillimeters} printers={printers} onChange={(format,printerName,paperWidth)=>setValue(configureWorkflow(value,"pos",format,printerName,paperWidth))}/>
               <WorkflowPrinterCard title="Pedidos" description="Documentos facturados desde la pantalla de pedidos." format={value.ordersOutputFormat??"HalfLetter"} printerName={value.ordersPrinterName??printerFor(value,value.ordersOutputFormat??"HalfLetter")} paperWidth={value.ordersReceiptPaperWidthMillimeters??80} printers={printers} onChange={(format,printerName,paperWidth)=>setValue(configureWorkflow(value,"orders",format,printerName,paperWidth))}/>
               {client&&!printers.length && (
@@ -132,8 +133,8 @@ export function PosPrinterDialog({
               )}
               {!client && <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <h3 className="font-semibold text-slate-950">Impresión directa</h3>
-                <p className="mt-1 text-sm text-slate-600">Para imprimir sin abrir el diálogo del navegador, seleccionar las impresoras de este equipo y controlar corte o cajón compatibles, instala la aplicación Auraly POS.</p>
-                {installer ? <a href={installer.downloadUrl} className="mt-3 inline-flex h-10 items-center gap-2 rounded-xl bg-teal-700 px-4 text-sm font-bold text-white"><Download className="h-4 w-4" />Instalar Auraly POS {installer.version}</a> : installerError ? <p className="mt-3 text-sm text-amber-700">{installerError}</p> : <p className="mt-3 flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Consultando instalador…</p>}
+                <p className="mt-1 text-sm text-slate-600">Para imprimir sin abrir el diálogo del navegador, seleccionar las impresoras de este equipo y controlar corte o cajón compatibles, instala Auraly.</p>
+                {installer ? <a href={installer.downloadUrl} className="mt-3 inline-flex h-10 items-center gap-2 rounded-xl bg-teal-700 px-4 text-sm font-bold text-white"><Download className="h-4 w-4" />Instalar Auraly {installer.version}</a> : installerError ? <p className="mt-3 text-sm text-amber-700">{installerError}</p> : <p className="mt-3 flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" />Consultando instalador…</p>}
               </section>}
               {client&&<ScaleConfiguration
                   value={value.scale ?? defaultScale()}
@@ -152,7 +153,7 @@ export function PosPrinterDialog({
                 />}
               {!client && <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <h3 className="flex items-center gap-2 font-semibold text-slate-950"><Scale className="h-4 w-4" />Balanza</h3>
-                <p className="mt-1 text-sm text-slate-600">Para conectar y leer automáticamente una balanza debes instalar Auraly POS. Sin la aplicación, el peso se ingresa manualmente.</p>
+                <p className="mt-1 text-sm text-slate-600">Para conectar y leer automáticamente una balanza debes instalar Auraly. Sin la aplicación, el peso se ingresa manualmente.</p>
               </section>}
             </>
           ) : null}
@@ -173,20 +174,20 @@ export function PosPrinterDialog({
   );
 }
 
-function WorkflowPrinterCard({title,description,format,printerName,paperWidth,printers,onChange}:{title:string;description:string;format:"Receipt"|"HalfLetter";printerName:string|null;paperWidth:58|80;printers:string[];onChange:(format:"Receipt"|"HalfLetter",printerName:string|null,paperWidth:58|80)=>void}){
-  return <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4"><div><h3 className="font-semibold text-slate-950">{title}</h3><p className="text-xs text-slate-600">{description}</p></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Formato"><Select value={format} onValueChange={next=>onChange(next as "Receipt"|"HalfLetter",printerName,paperWidth)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="Receipt">Tirilla</SelectItem><SelectItem value="HalfLetter">Media carta</SelectItem></SelectContent></Select></Field>{printers.length>0&&<Field label="Impresora del sistema"><Select value={printerName??undefined} onValueChange={next=>onChange(format,next,paperWidth)}><SelectTrigger><SelectValue placeholder="Selecciona una impresora"/></SelectTrigger><SelectContent>{printers.map(printer=><SelectItem key={printer} value={printer}>{printer}</SelectItem>)}</SelectContent></Select></Field>}{format==="Receipt"&&<Field label="Ancho de tirilla"><Select value={String(paperWidth)} onValueChange={next=>onChange(format,printerName,Number(next) as 58|80)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="80">80 mm</SelectItem><SelectItem value="58">58 mm</SelectItem></SelectContent></Select></Field>}</div></section>;
+function WorkflowPrinterCard({title,description,format,printerName,paperWidth,printers,onChange}:{title:string;description:string;format:PosPrintTemplateFormat;printerName:string|null;paperWidth:58|80;printers:string[];onChange:(format:PosPrintTemplateFormat,printerName:string|null,paperWidth:58|80)=>void}){
+  return <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4"><div><h3 className="font-semibold text-slate-950">{title}</h3><p className="text-xs text-slate-600">{description}</p></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Formato"><Select value={format} onValueChange={next=>onChange(next as PosPrintTemplateFormat,printerName,paperWidth)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="Receipt">Tirilla</SelectItem><SelectItem value="HalfLetter">Media carta</SelectItem><SelectItem value="HalfLegal">Media oficio</SelectItem><SelectItem value="Letter">Carta</SelectItem></SelectContent></Select></Field>{printers.length>0&&<Field label="Impresora del sistema"><Select value={printerName??undefined} onValueChange={next=>onChange(format,next,paperWidth)}><SelectTrigger><SelectValue placeholder="Selecciona una impresora"/></SelectTrigger><SelectContent>{printers.map(printer=><SelectItem key={printer} value={printer}>{printer}</SelectItem>)}</SelectContent></Select></Field>}{format==="Receipt"&&<Field label="Ancho de tirilla"><Select value={String(paperWidth)} onValueChange={next=>onChange(format,printerName,Number(next) as 58|80)}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="80">80 mm</SelectItem><SelectItem value="58">58 mm</SelectItem></SelectContent></Select></Field>}</div></section>;
 }
 
-function printerFor(value:PosPrinterConfiguration,format:"Receipt"|"HalfLetter"){
+function printerFor(value:PosPrinterConfiguration,format:PosPrintTemplateFormat){
   return value.templateRoutes?.find(route=>route.format===format)?.printerName??(format==="Receipt"?value.receiptPrinterName:value.letterPrinterName);
 }
 
-function configureWorkflow(value:PosPrinterConfiguration,workflow:"pos"|"orders",format:"Receipt"|"HalfLetter",printerName:string|null,paperWidth:58|80):PosPrinterConfiguration{
+function configureWorkflow(value:PosPrinterConfiguration,workflow:"pos"|"orders",format:PosPrintTemplateFormat,printerName:string|null,paperWidth:58|80):PosPrinterConfiguration{
   const routes=(value.templateRoutes??[]).filter(route=>route.format!==format);
   const templateRoutes=[...routes,...(["SalesInvoice","SalesReceipt"] as const).map(documentType=>({documentType,format,printerName}))];
   return {...value,receiptMode:"WindowsRaw",orderMode:"WindowsPrint",templateRoutes,
     ...(workflow==="pos"?{posOutputFormat:format,posPrinterName:printerName,receiptPaperWidthMillimeters:paperWidth,receiptPrinterName:printerName}:{ordersOutputFormat:format,ordersPrinterName:printerName,ordersReceiptPaperWidthMillimeters:paperWidth}),
-    ...(format==="HalfLetter"?{letterPrinterName:printerName}:{})};
+    ...(format!=="Receipt"?{letterPrinterName:printerName}:{})};
 }
 
 function ScaleConfiguration({ value, serialPorts, busy, onChange, onTest }: {

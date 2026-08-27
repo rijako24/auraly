@@ -27,5 +27,5 @@ export default function PosLaunchPage() {
     return () => { active = false; };
   }, []);
 
-  return <AuralyLoadingState title="Preparando Auraly POS" overlay />;
+  return <AuralyLoadingState title="Preparando Auraly" overlay />;
 }

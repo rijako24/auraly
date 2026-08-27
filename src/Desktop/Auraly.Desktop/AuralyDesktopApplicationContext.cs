@@ -61,7 +61,7 @@ internal sealed class AuralyDesktopApplicationContext : ApplicationContext
             await Program.WaitUntilReadyAsync(
                 $"{edgeOrigin}/edge/v1/health", TimeSpan.FromSeconds(45), shutdown.Token);
 
-            splash.SetStage("Abriendo Auraly POS", 2);
+            splash.SetStage("Abriendo Auraly", 2);
             var target = $"{webOrigin}/pos-launch#edgeToken={Uri.EscapeDataString(sessionToken)}";
             var window = new AuralyPosForm(root, data, webOrigin, configuration, shutdown);
             window.FormClosed += (_, _) =>
@@ -92,7 +92,7 @@ internal sealed class AuralyDesktopApplicationContext : ApplicationContext
                 log,
                 $"{DateTimeOffset.Now:O} {exception}{Environment.NewLine}");
             splash.ShowFailure(
-                "Auraly POS no pudo iniciar",
+                "Auraly no pudo iniciar",
                 $"Revisa la conexión o informa al supervisor. Detalle técnico: {log}");
         }
     }
@@ -150,11 +150,10 @@ internal sealed class AuralyPosForm : Form
         updater = new AuralyDesktopUpdater(
             browser,
             webOrigin,
-            configuration.Version,
+            configuration,
             data,
             shutdown);
-        FormClosing += (_, _) => updater.InstallPendingWhenClosing();
-        Text = "Auraly Commerce - Auraly POS";
+        Text = "Auraly";
         Icon = AuralyDesktopVisuals.LoadIcon(root);
         StartPosition = FormStartPosition.CenterScreen;
         WindowState = FormWindowState.Maximized;
@@ -203,7 +202,7 @@ internal sealed class AuralySplashForm : Form
 {
     private readonly Image? logo;
     private readonly System.Windows.Forms.Timer animation = new() { Interval = 16 };
-    private string status = "Iniciando Auraly POS";
+    private string status = "Iniciando Auraly";
     private string? detail;
     private int stage;
     private float phase;
@@ -296,7 +295,7 @@ internal sealed class AuralySplashForm : Form
         using var brandFont = new Font("Segoe UI Variable Display", 25, FontStyle.Bold);
         using var subtitleFont = new Font("Segoe UI Variable Text", 10, FontStyle.Regular);
         using var statusFont = new Font("Segoe UI Variable Text", 10, FontStyle.Bold);
-        DrawCentered(graphics, "Auraly POS", brandFont, Color.White, 190);
+        DrawCentered(graphics, "Auraly", brandFont, Color.White, 190);
         DrawCentered(graphics, "Comercio conectado. Caja resistente.", subtitleFont,
             Color.FromArgb(185, 214, 218), 235);
 

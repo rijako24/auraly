@@ -41,7 +41,7 @@ test("a desktop launch removes a prior cashier lease", () => {
   clearInstalledPosUserSession({ removeItem: (key) => removed.push(key) });
   assert.deepEqual(removed, ["auraly.pos.user-session"]);
 });
-test("connected Auraly POS orders use the installed orders printer", () => {
+test("connected Auraly orders use the installed orders printer", () => {
   assert.equal(resolvePosOrderPrintRoute("edge-session"), "installed-pos");
   assert.equal(resolvePosOrderPrintRoute(null), "browser");
 });

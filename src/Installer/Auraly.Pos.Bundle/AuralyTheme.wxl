@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WixLocalization Culture="es-ES"
+                 Language="3082"
+                 xmlns="http://wixtoolset.org/schemas/v4/wxl">
+  <String Id="Caption" Value="Auraly" />
+  <String Id="Title" Value="Auraly" />
+  <String Id="CheckingForUpdatesLabel" Value="Preparando Auraly…" />
+  <String Id="UpdateButton" Value="Actualizar a [WixStdBAUpdateAvailable]" />
+  <String Id="InstallHeader" Value="Tu operación, siempre en movimiento" />
+  <String Id="InstallMessage" Value="Instala Auraly para vender online o sin conexión, usar tus impresoras y mantener tu operación sincronizada." />
+  <String Id="InstallMessageOptions" Value="Instala Auraly y elige las opciones del equipo antes de comenzar." />
+  <String Id="InstallVersion" Value="Versión [WixBundleVersion]" />
+  <String Id="ConfirmCancelMessage" Value="¿Deseas cancelar la instalación de Auraly?" />
+  <String Id="ExecuteUpgradeRelatedBundleMessage" Value="Versión anterior" />
+  <String Id="HelpHeader" Value="Ayuda de instalación" />
+  <String Id="HelpText" Value="Usa /install, /repair o /uninstall para instalar, reparar o desinstalar Auraly. Usa /passive o /quiet para una ejecución automatizada." />
+  <String Id="HelpCloseButton" Value="Cerrar" />
+  <String Id="InstallLicenseLinkText" Value="" />
+  <String Id="InstallAcceptCheckbox" Value="Acepto los términos y condiciones" />
+  <String Id="InstallOptionsButton" Value="Opciones" />
+  <String Id="InstallInstallButton" Value="Instalar Auraly" />
+  <String Id="InstallCancelButton" Value="Cancelar" />
+  <String Id="OptionsHeader" Value="Opciones de instalación" />
+  <String Id="OptionsLocationLabel" Value="Carpeta de instalación:" />
+  <String Id="OptionsPerUserScopeText" Value="Instalar Auraly solo para mí" />
+  <String Id="OptionsPerMachineScopeText" Value="Instalar Auraly para todos los usuarios" />
+  <String Id="OptionsBrowseButton" Value="Examinar" />
+  <String Id="OptionsOkButton" Value="Aceptar" />
+  <String Id="OptionsCancelButton" Value="Cancelar" />
+  <String Id="ProgressHeader" Value="Instalando Auraly" />
+  <String Id="ProgressLabel" Value="Progreso:" />
+  <String Id="OverallProgressPackageText" Value="Preparando los componentes…" />
+  <String Id="ProgressCancelButton" Value="Cancelar" />
+  <String Id="ModifyHeader" Value="Auraly ya está instalado" />
+  <String Id="ModifyRepairButton" Value="Reparar" />
+  <String Id="ModifyUninstallButton" Value="Desinstalar" />
+  <String Id="ModifyCancelButton" Value="Cerrar" />
+  <String Id="SuccessHeader" Value="Proceso completado" />
+  <String Id="SuccessCacheHeader" Value="Archivos preparados correctamente" />
+  <String Id="SuccessInstallHeader" Value="Auraly está listo para usar" />
+  <String Id="SuccessLayoutHeader" Value="Copia local creada correctamente" />
+  <String Id="SuccessModifyHeader" Value="Auraly se modificó correctamente" />
+  <String Id="SuccessRepairHeader" Value="Auraly se reparó correctamente" />
+  <String Id="SuccessUninstallHeader" Value="Auraly se desinstaló correctamente" />
+  <String Id="SuccessUnsafeUninstallHeader" Value="Auraly se desinstaló correctamente" />
+  <String Id="SuccessLaunchButton" Value="Abrir Auraly" />
+  <String Id="SuccessRestartText" Value="Reinicia Windows antes de abrir Auraly." />
+  <String Id="SuccessUninstallRestartText" Value="Reinicia Windows para completar la desinstalación." />
+  <String Id="SuccessRestartButton" Value="Reiniciar" />
+  <String Id="SuccessCloseButton" Value="Cerrar" />
+  <String Id="FailureHeader" Value="No fue posible completar el proceso" />
+  <String Id="FailureCacheHeader" Value="No fue posible preparar los archivos" />
+  <String Id="FailureInstallHeader" Value="No fue posible instalar Auraly" />
+  <String Id="FailureLayoutHeader" Value="No fue posible crear la copia local" />
+  <String Id="FailureModifyHeader" Value="No fue posible modificar Auraly" />
+  <String Id="FailureRepairHeader" Value="No fue posible reparar Auraly" />
+  <String Id="FailureUninstallHeader" Value="No fue posible desinstalar Auraly" />
+  <String Id="FailureUnsafeUninstallHeader" Value="No fue posible desinstalar Auraly" />
+  <String Id="FailureHyperlinkLogText" Value="Revisa el detalle y vuelve a intentarlo. Para información técnica, abre el &lt;a href=&quot;#&quot;&gt;registro de instalación&lt;/a&gt;." />
+  <String Id="FailureRestartText" Value="Reinicia Windows para completar la recuperación." />
+  <String Id="FailureRestartButton" Value="Reiniciar" />
+  <String Id="FailureCloseButton" Value="Cerrar" />
+  <String Id="FilesInUseTitle" Value="Auraly está en uso" />
+  <String Id="FilesInUseLabel" Value="Estas aplicaciones deben cerrarse para continuar:" />
+  <String Id="FilesInUseNetfxCloseRadioButton" Value="Cerrar las aplicaciones." />
+  <String Id="FilesInUseCloseRadioButton" Value="Cerrar las aplicaciones e intentar abrirlas nuevamente." />
+  <String Id="FilesInUseDontCloseRadioButton" Value="No cerrar las aplicaciones; será necesario reiniciar." />
+  <String Id="FilesInUseRetryButton" Value="Reintentar" />
+  <String Id="FilesInUseIgnoreButton" Value="Ignorar" />
+  <String Id="FilesInUseExitButton" Value="Salir" />
+</WixLocalization>

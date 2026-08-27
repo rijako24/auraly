@@ -23,5 +23,6 @@
     <ProjectReference Include="..\..\Inventory\Auraly.Contracts.Inventory\Auraly.Contracts.Inventory.csproj" />
     <ProjectReference Include="..\..\Dispatching\Auraly.Contracts.Dispatching\Auraly.Contracts.Dispatching.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\Auraly.BuildingBlocks.Infrastructure\Auraly.BuildingBlocks.Infrastructure.csproj" />
   </ItemGroup>
 </Project>

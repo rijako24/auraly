@@ -240,6 +240,10 @@ public sealed class ReceivePosSaleService(
         var credit = request.Credit?.Amount ?? 0m;
         if (request.Payments.Any(payment => payment.Amount <= 0) ||
             request.Payments.Select(payment => payment.PaymentNumber).Distinct().Count() != request.Payments.Count ||
+            request.Payments.Any(payment =>
+                payment.CardFranchiseCode?.Length > 64 || payment.ApprovalNumber?.Length > 100 ||
+                (payment.MethodCode is "Card" or "DebitCard" or "CreditCard") !=
+                (!string.IsNullOrWhiteSpace(payment.CardFranchiseCode) && !string.IsNullOrWhiteSpace(payment.ApprovalNumber))) ||
             paid + credit != request.Lines.Sum(line => line.LineTotal))
             throw new PosSaleInvalidException(
                 "Actual payments plus financed balance must equal the invoice total.");

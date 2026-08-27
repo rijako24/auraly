@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -16,13 +16,20 @@ interface DatePickerProps {
   placeholder?: string;
   disabled?: boolean;
   className?: string;
+  min?: string;
+  max?: string;
+  id?: string;
 }
 
-export function DatePicker({ value, onChange, placeholder = "Selecciona una fecha", disabled, className }: DatePickerProps) {
+export function DatePicker({ value, onChange, placeholder = "Selecciona una fecha", disabled, className, min, max, id }: DatePickerProps) {
   const selected = value ? parseDate(value) : undefined;
   const [open, setOpen] = useState(false);
   const [month, setMonth] = useState(() => startOfMonth(selected ?? new Date()));
   const days = useMemo(() => calendarDays(month), [month]);
+
+  useEffect(() => {
+    if (value) setMonth(startOfMonth(parseDate(value)));
+  }, [value]);
 
   const choose = (date: Date) => {
     onChange(toInputValue(date));
@@ -32,7 +39,7 @@ export function DatePicker({ value, onChange, placeholder = "Selecciona una fech
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button type="button" variant="outline" disabled={disabled} className={cn("w-full justify-start gap-2 px-3 font-normal", !value && "text-muted-foreground", className)}>
+        <Button id={id} type="button" variant="outline" disabled={disabled} className={cn("w-full justify-start gap-2 px-3 font-normal", !value && "text-muted-foreground", className)}>
           <CalendarDays className="h-4 w-4 text-primary" />
           {selected ? formatLongDate(selected) : placeholder}
         </Button>
@@ -53,12 +60,14 @@ export function DatePicker({ value, onChange, placeholder = "Selecciona una fech
             const selectedDay = selected && sameDay(date, selected);
             const isCurrentMonth = date.getMonth() === month.getMonth();
             const isToday = sameDay(date, new Date());
+            const unavailable = Boolean((min && toInputValue(date) < min) || (max && toInputValue(date) > max));
             return (
-              <button key={`${date.toISOString()}-${index}`} type="button" onClick={() => choose(date)} className={cn(
+              <button key={`${date.toISOString()}-${index}`} type="button" disabled={unavailable} onClick={() => choose(date)} className={cn(
                 "mx-auto flex h-9 w-9 items-center justify-center rounded-lg text-sm transition-colors hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 !isCurrentMonth && "text-muted-foreground/45",
                 isToday && !selectedDay && "font-semibold text-primary ring-1 ring-primary/30",
-                selectedDay && "bg-primary font-semibold text-primary-foreground shadow-sm hover:bg-primary hover:text-primary-foreground"
+                selectedDay && "bg-primary font-semibold text-primary-foreground shadow-sm hover:bg-primary hover:text-primary-foreground",
+                unavailable && "cursor-not-allowed opacity-30 hover:bg-transparent hover:text-current"
               )}>{date.getDate()}</button>
             );
           })}

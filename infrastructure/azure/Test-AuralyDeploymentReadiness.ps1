@@ -29,6 +29,10 @@ $functionName = "func-auraly-$compactEnvironment-$suffix"
 $serviceBusName = "sb-auraly-$compactEnvironment-$suffix"
 $webPubSubName = "wps-auraly-$compactEnvironment-$suffix"
 $staticAdminName = "admin-auraly-$compactEnvironment-$suffix"
+$emailServiceName = "email-auraly-$compactEnvironment-$suffix"
+$communicationServiceName = "acs-auraly-$compactEnvironment-$suffix"
+$sqlServerName = "sql-auraly-$compactEnvironment-$suffix"
+$databaseName = "auraly-$compactEnvironment"
 $requiredQueues = @(
     'auraly-document-processing',
     'auraly-accounting-processing',
@@ -134,6 +138,11 @@ function Test-RemoteEnvironment {
         'Notifications__WebPush__PublicKey',
         'Notifications__WebPush__PrivateKey',
         'Notifications__WebPush__Subject',
+        'Auraly__Email__ConnectionString',
+        'Auraly__Email__SenderAddress',
+        'Auraly__Email__PublicAppUrl',
+        'Auraly__Email__LogoUrl',
+        'Auraly__Email__SupportEmail',
         'Auraly__PosSynchronization__WebPubSub__Endpoint',
         'Auraly__PosSynchronization__WebPubSub__ManagedIdentityClientId',
         'Auraly__PosSynchronization__WebPubSub__Hub',
@@ -173,6 +182,8 @@ function Test-RemoteEnvironment {
         'Notifications__WebPush__PrivateKey no contiene una clave VAPID privada válida.'
     Assert-Condition ($settings['Notifications__WebPush__Subject'] -match '^(mailto:|https://)') `
         'Notifications__WebPush__Subject debe ser mailto: o https://.'
+    Assert-Condition ($settings['Auraly__Email__SenderAddress'] -match '^DoNotReply@') `
+        'Auraly__Email__SenderAddress no usa el remitente administrado esperado.'
     Assert-Condition ($settings['Release__Version'] -eq $ReleaseVersion) `
         'La version configurada en la API no coincide con el release solicitado.'
     Assert-Condition ($settings['PosInstaller__Version'] -eq $ReleaseVersion) `
@@ -203,6 +214,49 @@ function Test-RemoteEnvironment {
         "Web PubSub $webPubSubName no termino de aprovisionarse."
     Assert-Condition ([bool]$webPubSub.Properties.disableLocalAuth) `
         "Web PubSub $webPubSubName debe bloquear autenticacion local."
+
+    $emailService = Get-AzResource `
+        -ResourceGroupName $resourceGroup `
+        -ResourceType 'Microsoft.Communication/emailServices' `
+        -Name $emailServiceName `
+        -ExpandProperties `
+        -ErrorAction SilentlyContinue
+    Assert-Condition ($null -ne $emailService) "Falta Email Service $emailServiceName."
+    Assert-Condition ($emailService.Properties.provisioningState -eq 'Succeeded') `
+        "Email Service $emailServiceName no termino de aprovisionarse."
+
+    $emailDomain = Get-AzResource `
+        -ResourceGroupName $resourceGroup `
+        -ResourceType 'Microsoft.Communication/emailServices/domains' `
+        -Name "$emailServiceName/AzureManagedDomain" `
+        -ExpandProperties `
+        -ErrorAction SilentlyContinue
+    Assert-Condition ($null -ne $emailDomain) `
+        "Falta el dominio administrado de $emailServiceName."
+
+    $communicationService = Get-AzResource `
+        -ResourceGroupName $resourceGroup `
+        -ResourceType 'Microsoft.Communication/communicationServices' `
+        -Name $communicationServiceName `
+        -ExpandProperties `
+        -ErrorAction SilentlyContinue
+    Assert-Condition ($null -ne $communicationService) `
+        "Falta Communication Service $communicationServiceName."
+    Assert-Condition ($communicationService.Properties.provisioningState -eq 'Succeeded') `
+        "Communication Service $communicationServiceName no termino de aprovisionarse."
+    Assert-Condition (@($communicationService.Properties.linkedDomains) -contains $emailDomain.ResourceId) `
+        "Communication Service $communicationServiceName no esta vinculado al dominio de correo."
+
+    $database = Get-AzResource `
+        -ResourceGroupName $resourceGroup `
+        -ResourceType 'Microsoft.Sql/servers/databases' `
+        -Name "$sqlServerName/$databaseName" `
+        -ExpandProperties `
+        -ErrorAction SilentlyContinue
+    Assert-Condition ($null -ne $database) "Falta la base SQL $databaseName."
+    $expectedDatabaseSku = if ($Environment -eq 'Dev') { 'Basic' } else { 'S1' }
+    Assert-Condition ($database.Sku.Name -eq $expectedDatabaseSku) `
+        "La base $databaseName usa $($database.Sku.Name); se esperaba $expectedDatabaseSku."
 
     $staticAdmin = Get-AzResource `
         -ResourceGroupName $resourceGroup `
@@ -250,6 +304,8 @@ function Test-RemoteEnvironment {
         RuntimeSettings = 'Complete (values hidden)'
         Queues = $requiredQueues.Count
         WebPubSub = "$($webPubSub.Name) ($($webPubSub.Sku.Name))"
+        Email = "$communicationServiceName -> $emailServiceName/AzureManagedDomain"
+        Database = "$databaseName ($($database.Sku.Name))"
         Frontend = $staticAdmin.Properties.defaultHostname
         Health = if ($SkipHealth) { 'Skipped' } else { 'Healthy' }
     }

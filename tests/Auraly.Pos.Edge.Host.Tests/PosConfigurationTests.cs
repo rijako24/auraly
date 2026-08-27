@@ -154,7 +154,7 @@ public sealed class PosConfigurationTests
             Assert.True(reloaded.Scale?.DivideBy1000);
             Assert.Equal(PrintTemplateFormats.Receipt, reloaded.PosOutputFormat);
             Assert.Equal(PrintTemplateFormats.HalfLetter, reloaded.OrdersOutputFormat);
-            Assert.Equal(4, reloaded.TemplateRoutes?.Count);
+            Assert.Equal(8, reloaded.TemplateRoutes?.Count);
             Assert.All(
                 reloaded.TemplateRoutes!.Where(route =>
                     route.Format == PrintTemplateFormats.Receipt),
@@ -162,6 +162,11 @@ public sealed class PosConfigurationTests
             Assert.All(
                 reloaded.TemplateRoutes!.Where(route =>
                     route.Format == PrintTemplateFormats.HalfLetter),
+                route => Assert.Equal("Carta", route.PrinterName));
+            Assert.All(
+                reloaded.TemplateRoutes!.Where(route =>
+                    route.Format is PrintTemplateFormats.HalfLegal or
+                        PrintTemplateFormats.Letter),
                 route => Assert.Equal("Carta", route.PrinterName));
             Assert.Equal(
                 saved with { TemplateRoutes = null },
@@ -173,6 +178,41 @@ public sealed class PosConfigurationTests
         {
             if (Directory.Exists(directory))
                 Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(PrintTemplateFormats.HalfLetter)]
+    [InlineData(PrintTemplateFormats.HalfLegal)]
+    [InlineData(PrintTemplateFormats.Letter)]
+    public void Sheet_output_formats_are_valid_and_keep_the_document_printer(
+        string format)
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(), "auraly-sheet-format-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new PosPrinterConfigurationStore(
+                Path.Combine(directory, "settings.json"),
+                Path.Combine(directory, "receipts"));
+
+            var saved = store.Save(PosPrinterConfiguration.Default with
+            {
+                ReceiptPrinterName = "Tirilla",
+                LetterPrinterName = "Documentos",
+                PosPrinterName = "Documentos",
+                OrdersPrinterName = "Documentos",
+                PosOutputFormat = format,
+                OrdersOutputFormat = format
+            });
+
+            Assert.Equal(format, saved.PosOutputFormat);
+            Assert.Equal(format, saved.OrdersOutputFormat);
+            Assert.Equal("Documentos", saved.PrinterFor("SalesInvoice", format));
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
         }
     }
 
@@ -337,6 +377,22 @@ public sealed class PosConfigurationTests
             Assert.True(replay.IdempotentReplay);
             Assert.NotNull(pending);
             Assert.Equal(documentId, pending.Value.DocumentId);
+            await using var database = new SqliteConnection(connectionString);
+            await database.OpenAsync();
+            await using var schema = database.CreateCommand();
+            schema.CommandText = """
+                SELECT COUNT(*) FROM sqlite_master
+                WHERE type='table' AND name IN(
+                  'PosCashMovementOutbox','PosWorkSessionClosureOutbox');
+                """;
+            Assert.Equal(0L, (long)(await schema.ExecuteScalarAsync())!);
+            await using var unified = database.CreateCommand();
+            unified.CommandText = """
+                SELECT COUNT(*) FROM Outbox
+                WHERE Type='cash.movement.confirmed' AND DocumentId=$document;
+                """;
+            unified.Parameters.AddWithValue("$document", documentId.ToString("D"));
+            Assert.Equal(1L, (long)(await unified.ExecuteScalarAsync())!);
         }
         finally
         {

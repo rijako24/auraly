@@ -28,6 +28,23 @@ WHERE r.NormalizedName=N'ADMINISTRATOR'
       WHERE rp.RoleId=r.RoleId
         AND rp.PermissionId=@PosIdentitySyncPermissionId);
 
+DECLARE @PosSynchronizationEventsPermissionId UNIQUEIDENTIFIER =
+    CAST('019C0031-7B93-7B4A-873B-C07C4AB9D99F' AS UNIQUEIDENTIFIER);
+IF NOT EXISTS (SELECT 1 FROM dbo.Permissions WHERE Resource=N'pos.synchronization.events.read')
+    INSERT dbo.Permissions(PermissionId,Module,Action,Resource,Description)
+    VALUES(@PosSynchronizationEventsPermissionId,N'POS',N'ReadSynchronizationEvents',
+           N'pos.synchronization.events.read',N'Consultar eventos técnicos de sincronización de la caja');
+ELSE
+    SELECT @PosSynchronizationEventsPermissionId=PermissionId
+    FROM dbo.Permissions WHERE Resource=N'pos.synchronization.events.read';
+
+INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId)
+SELECT NEWID(),r.RoleId,@PosSynchronizationEventsPermissionId
+FROM dbo.AppRoles r
+WHERE r.NormalizedName=N'ADMINISTRATOR'
+  AND NOT EXISTS (SELECT 1 FROM dbo.RolePermissions rp
+                  WHERE rp.RoleId=r.RoleId AND rp.PermissionId=@PosSynchronizationEventsPermissionId);
+
 DECLARE @PosCashierPermissions TABLE(
     Module NVARCHAR(50) NOT NULL,
     Action NVARCHAR(50) NOT NULL,

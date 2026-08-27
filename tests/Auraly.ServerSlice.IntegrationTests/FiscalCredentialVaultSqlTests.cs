@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using Auraly.BuildingBlocks.Infrastructure.Persistence;
 using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
@@ -21,7 +22,8 @@ public sealed class FiscalCredentialVaultSqlTests(ServerSliceFixture fixture)
             })
             .Build();
         var vault = new SqlProtectedFiscalCredentialVault(
-            new SqlServerConnectionFactory(fixture.ConnectionString), configuration);
+            new SqlServerConnectionFactory(
+                new AuralySqlConnectionSource(fixture.ConnectionString)), configuration);
         using var rsa = RSA.Create(2048);
         var request = new CertificateRequest(
             "CN=9001234567", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);

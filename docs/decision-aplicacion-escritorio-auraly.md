@@ -45,16 +45,21 @@ Después del login y de conocer el contexto operativo, Auraly comprueba si POS E
 - si no está disponible, muestra una tarjeta de instalación y permite seguir vendiendo online;
 - la descarga obtiene de una única API autenticada la versión, URL HTTPS y SHA-256 del instalador publicado;
 - el instalador es genérico: no contiene tenant, usuario, contraseña, token, sede ni caja;
-- al abrir Auraly POS, el login determina el tenant y el enrolamiento autorizado asocia el dispositivo con sede, bodega y caja;
+- al abrir Auraly, el login determina el tenant y el enrolamiento autorizado asocia el dispositivo con sede, bodega y caja;
 - una actualización preserva la base SQLite y la identidad protegida del dispositivo.
 
-El instalador inicial muestra una interfaz gráfica de progreso y no una consola.
-La aplicación instalada consulta la misma metadata autenticada al iniciar, compara
-versiones y descarga una versión superior por el proxy local. El launcher valida
-el SHA-256 antes de aceptar el ejecutable. Cuando la descarga termina, el usuario
-elige si reinicia en ese momento o continúa trabajando; si continúa, la
-actualización se aplica automáticamente al cerrar el POS. La comprobación nunca
-interrumpe una venta ni acepta una URL de descarga distinta al endpoint canónico.
+El instalador inicial es un bundle WiX convencional, muestra una interfaz gráfica
+de progreso y no inicia PowerShell oculto. El bundle, el MSI y los ejecutables se
+firman con el certificado de publicación; el launcher vuelve a validar el SHA-256
+y, cuando hay una huella configurada, la firma Authenticode antes de aceptar una
+actualización.
+
+La aplicación instalada consulta la misma metadata autenticada al iniciar y, si
+existe una versión superior, presenta un aviso compacto sin descargarla. El usuario
+inicia la descarga de forma explícita y ve su progreso. Al terminar puede reiniciar
+en ese momento o continuar trabajando; si continúa, la actualización se aplica al
+abrir Auraly la próxima vez. La comprobación nunca interrumpe una venta ni acepta
+una URL de descarga distinta al endpoint canónico.
 
 El resumen de aprovisionamiento de una empresa usa exactamente la misma fuente del instalador. No existe un segundo endpoint ni una descarga binaria a través del proxy JSON del frontend.
 
@@ -90,6 +95,9 @@ El navegador no intenta emular capacidades locales. POS Edge no implementa otro 
 ### POS instalado
 
 - el catálogo, identidad autorizada, consecutivos y documentos necesarios se guardan localmente;
+- el primer usuario con permiso `sales.create` que elige trabajar sin conexión entra a ventas automáticamente cuando termina la descarga inicial, sin un segundo login;
+- la identidad local incluye a todos los usuarios activos con permiso `sales.create` para ese negocio, de modo que cualquiera de ellos puede iniciar una sesión local posteriormente;
+- el modo puede volver a online de forma explícita; esa transición cierra la sesión local y vuelve a la autenticación autoritativa del servidor;
 - confirmar una venta escribe documento, numeración y outbox en una sola transacción SQLite;
 - la sincronización es idempotente y llega al mismo motor del servidor;
 - Web PubSub notifica cambios; no reemplaza la outbox ni la reconciliación por cursor;

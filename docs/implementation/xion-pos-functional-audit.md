@@ -19,6 +19,8 @@ La decisión de Auraly prevalece cuando existe contradicción. En particular:
 - dinero y cantidades usan `decimal`;
 - un borrador no contiene una fila vacía artificial;
 - persistencia fiscal y CUFE anteceden a la impresión.
+- la captura vigente de Auraly siempre crea una línea nueva y mantiene el foco
+  del lector; la agrupación observada en Xion es solamente evidencia histórica.
 
 ## Matriz de `FrmFacturacion`
 
@@ -63,7 +65,7 @@ La decisión de Auraly prevalece cuando existe contradicción. En particular:
 | Edición de cantidad | `dtg_CellValidated` | Permiso, cantidad válida, inventario y recálculo inmediato | Permisos e inventario | Endpoint de disponibilidad | Conservar con debounce/cancelación | Última respuesta gana |
 | Persistencia por cambio | `BindingOnListChanged`, `InsertarDetalle`, `UpdateDetalle` | Cada cambio de la grilla persiste localmente | BD local | No hay borrador | Mejorar con transacción/journal | Terminación abrupta |
 | Fila vacía | `FactoryDetalleVacio` | Usa una línea producto cero para sostener la UI | DataGridView/BD | No existe | Excluir | No hay línea artificial |
-| Agrupar producto | `CodigoAgregado`, parámetro `AgruparFactura` | Puede consolidar repeticiones | Parámetro y detalle | No implementado | Agrupar solo por identidad completa de precio/fiscal | Compatible/no compatible |
+| Agrupar producto | `CodigoAgregado`, parámetro `AgruparFactura` | Puede consolidar repeticiones | Parámetro y detalle | No implementado | No conservar: cada captura crea línea nueva, hace visible la última y mantiene el foco del lector | Repetido crea otra línea |
 | Validación de inventario | `ValidarExistencia` | Si hay red consulta servidor; combina reglas legacy y pedidos | Réplica local + servidor | Endpoint online | Conservar solo consulta online y política de bodega | Permite/bloquea negativos |
 | Navegación de grilla | `PreviewKeyDown`, `FocoNuevaFila`, `FocoCodigoActual`, `Inicio/Anterior/Siguiente/Fin` | Enter/flechas mantienen captura continua | DataGridView | No UI | Conservar accesiblemente | Solo teclado |
 
@@ -98,7 +100,7 @@ Se conservan, con nombres canónicos y dueño explícito:
 - vendedor opcional/requerido y eventual vendedor por línea;
 - crédito habilitado y política offline;
 - cantidad, descuento y cambio manual de precio según permisos;
-- agrupación de productos compatibles;
+- captura repetida como líneas independientes, sin trasladar `AgruparFactura`;
 - balanza;
 - impresora, ancho, copias, corte y cajón;
 - máximo de efectivo e intentos de autorización;

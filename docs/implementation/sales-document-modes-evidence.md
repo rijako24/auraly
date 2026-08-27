@@ -6,7 +6,9 @@ Fecha: 2026-08-10
 
 - `SalesInvoice`: serie operativa `VTA`, serie DIAN, snapshot fiscal, CUFE, QR y etapa fiscal.
 - `SalesReceipt`: serie operativa independiente `CVI`; no genera número DIAN, snapshot fiscal, CUFE, QR, UBL, cartera ni trabajo contable.
-- Ambos recorren el mismo motor documental para líneas, inventario, pagos y evento operativo.
+- Ambos recorren el mismo motor documental para líneas, inventario y evento
+  operativo. Los pagos y demás efectos financieros pertenecen al motor contable
+  canónico cuando el tipo los admite.
 - El enrolamiento de POS Edge provisiona y persiste ambas series.
 - La pantalla POS permite seleccionar el tipo antes de capturar líneas y consulta el siguiente número de la serie seleccionada.
 - La impresión ESC/POS y HTML construye directamente la tirilla correspondiente, sin generar campos fiscales ocultos para retirarlos después.

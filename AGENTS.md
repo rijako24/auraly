@@ -24,6 +24,7 @@ Antes de crear una clase, servicio, flujo, handler, endpoint, tabla, configuraci
 - Buscar con `rg` capacidades, contratos, registros DI, call sites, tests, seeds, tablas y configuraciones equivalentes.
 - Trazar el flujo de extremo a extremo y nombrar el propietario canonico de la regla.
 - Determinar si se debe extender, reutilizar, consolidar o eliminar algo existente. Copiar una implementacion para avanzar mas rapido no es una opcion valida.
+- Toda funcionalidad nueva debe entrar por un motor y punto de extension canonicos. Una tarea funcional no puede crear otro motor, processor, worker propietario, job table, writer o cola que replique una capacidad existente; si ningun propietario actual parece aplicable, se detiene la implementacion y se eleva la decision arquitectonica.
 - Identificar efectos sobre multi-tenancy, autorizacion, datos, concurrencia, idempotencia, compatibilidad, observabilidad y rollback.
 - Definir evidencia de aceptacion antes de implementar: test, build, lint, consulta o escenario reproducible.
 
@@ -53,3 +54,18 @@ Un cambio de implementacion no esta terminado hasta que:
 - No deja rutas duplicadas, codigo muerto, configuracion huerfana ni secretos/datos sensibles.
 - Conserva aislamiento por tenant, idempotencia, autorizacion y observabilidad donde aplican.
 - La entrega resume archivos cambiados, decisiones, evidencia ejecutada y riesgos pendientes reales.
+
+## Auditoria posterior obligatoria
+
+Despues de cada implementacion y antes de entregarla, el agente debe auditar el diff completo contra este archivo, `docs/estandares-de-ingenieria.md`, las invariantes y los documentos propietarios del modulo. Esta revision posterior no se sustituye por haber hecho preflight ni por ejecutar tests.
+
+La auditoria debe comprobar y dejar en la entrega evidencia explicita de que:
+
+- la funcionalidad reutilizo el motor, flujo, writer, tabla, catalogo y punto de extension canonicos, sin crear una ruta paralela;
+- cada regla y escritura conserva un unico propietario y no quedo duplicada entre capas, prompts, seeds, UI o pruebas;
+- se cumplieron multi-tenancy, autorizacion, idempotencia, concurrencia, observabilidad, compatibilidad y rollback donde aplican;
+- el codigo cumple las buenas practicas de diseno y seguridad proporcionales al cambio, sin hardcoding, fallbacks silenciosos, codigo muerto ni abstracciones innecesarias;
+- las pruebas y checks ejecutados demuestran el criterio de aceptacion, incluida la regresion del comportamiento modificado;
+- la documentacion canonica quedo alineada y cualquier contradiccion encontrada se corrigio en el mismo cambio o se reporto como bloqueo real.
+
+Si la auditoria posterior encuentra un incumplimiento, la implementacion no esta terminada: se corrige y se repiten los checks afectados antes de entregar.

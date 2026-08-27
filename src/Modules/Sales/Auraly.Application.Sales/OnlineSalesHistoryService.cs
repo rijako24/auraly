@@ -123,7 +123,9 @@ public static class OnlineSalesReceiptMapper
             request.Payments.Select(payment => new OnlineSalesPayment(
                     payment.MethodCode,
                     payment.Amount,
-                    payment.Reference))
+                    payment.Reference,
+                    payment.CardFranchiseCode,
+                    payment.ApprovalNumber))
                 .Concat(request.Credit is null
                     ? []
                     : [new OnlineSalesPayment("Credit", request.Credit.Amount, request.Credit.DueDate.ToString("O"))])

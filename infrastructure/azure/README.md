@@ -11,6 +11,7 @@ Los despliegues Bicep son incrementales. No eliminan recursos que no estén en l
 | Resource group | `RG-AURALY-SHARED` | `RG-AURALY-DEV` | `RG-AURALY-PROD` |
 | Azure AI Foundry | `ai-auraly-shared-uo2w7msy` | Identidad con RBAC sobre el compartido | Identidad con RBAC sobre el compartido |
 | Managed Identity | — | `id-auraly-dev` | `id-auraly-prod` |
+| Communication Services / Email | — | `acs-auraly-dev-*` / `email-auraly-dev-*` | `acs-auraly-prod-*` / `email-auraly-prod-*` |
 | App Configuration | — | `cfg-auraly-dev-w5usmo6w` | `cfg-auraly-prod-7sov4nxc` |
 | Service Bus | — | `sb-auraly-dev-w5usmo6w` | `sb-auraly-prod-7sov4nxc` |
 | Storage | — | `stauralydevw5usmo6w` | `stauralyprod7sov4nxc` |
@@ -24,7 +25,7 @@ Los nombres globales tienen un sufijo determinístico. Si cambia la suscripción
 
 Política de costo:
 
-- Azure SQL: Basic, 5 DTU y 2 GB.
+- Azure SQL: Basic (5 DTU, 2 GB) en DEV y Standard S1 (20 DTU, hasta 250 GB) en PROD. En West US 2, S1 cuesta aproximadamente USD 0,9677/día (USD 29,44 por 30,42 días), antes de impuestos; validar el precio regional antes de promover infraestructura.
 - Function App: Flex Consumption, sin instancias always-ready.
 - Web API: F1 en DEV y B1 en PROD.
 - Admin: Static Web Apps Free.
@@ -32,6 +33,14 @@ Política de costo:
 - Service Bus: Standard porque el motor usa sesiones.
 - Storage: Standard LRS, claves compartidas y acceso público a blobs deshabilitados.
 - Application Insights: límite de ingestión de 0,1 GB por día.
+
+La plantilla crea en ambos ambientes Azure Communication Services, Email
+Services y un dominio administrado por Azure, y entrega a la API
+`Auraly__Email__ConnectionString` y `Auraly__Email__SenderAddress`. La paridad
+declarativa no sustituye la validación posterior al despliegue: PROD debe
+confirmar que los tres recursos existen, que el dominio está vinculado y que
+un correo de prueba llega antes de habilitar invitaciones o recuperación de
+contraseña para clientes.
 
 Azure AI Foundry existe una sola vez en `RG-AURALY-SHARED`. DEV y PROD consumen los despliegues `gpt-4.1-mini` y `whisper` mediante Managed Identity; no se crean cuentas ni llaves de OpenAI por ambiente.
 
@@ -48,7 +57,7 @@ Los despliegues ordinarios ya no se ejecutan desde el equipo del operador. Se us
 3. Para PROD, elegir la misma versión ya validada en DEV. El pipeline descarga los mismos bytes del archivo privado; no recompila ni reemplaza artefactos.
 4. Revisar el resumen final y los health checks. Un job fallido no se corrige con comandos aislados: se reejecuta el job idempotente después de corregir la causa.
 
-Cada environment de GitHub (`dev` y `prod`) debe definir las variables `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` y `AZURE_SUBSCRIPTION_ID`. La identidad usa federación OIDC y no guarda secretos de Azure. Además necesita `Contributor` en su resource group, `Storage Blob Data Contributor` en el storage del ambiente y un usuario contenido con permisos de despliegue en Azure SQL. La identidad PROD solo recibe `Storage Blob Data Reader` sobre el archivo privado de DEV para promover exactamente el release aprobado. `prod` debe tener aprobación obligatoria en GitHub Environments. Los tokens existentes `AZURE_STATIC_WEB_APPS_API_TOKEN_AURALY_DEV` y `AZURE_STATIC_WEB_APPS_API_TOKEN_AURALY_PROD` publican el Admin. Los binarios y el DACPAC no se publican como GitHub Release porque este repositorio es público.
+Cada environment de GitHub (`dev` y `prod`) debe definir las variables `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` y `AZURE_SUBSCRIPTION_ID`. DEV también define los secretos `AURALY_SIGNING_PFX_BASE64`, `AURALY_SIGNING_PFX_PASSWORD` y `AURALY_SIGNING_THUMBPRINT` del certificado Authenticode de publicación; el workflow rechaza el release si falta alguno o si el PFX no coincide con la huella esperada. La identidad usa federación OIDC y no guarda secretos de Azure. Además necesita `Contributor` en su resource group, `Storage Blob Data Contributor` en el storage del ambiente y un usuario contenido con permisos de despliegue en Azure SQL. La identidad PROD solo recibe `Storage Blob Data Reader` sobre el archivo privado de DEV para promover exactamente el release aprobado. `prod` debe tener aprobación obligatoria en GitHub Environments. Los tokens existentes `AZURE_STATIC_WEB_APPS_API_TOKEN_AURALY_DEV` y `AZURE_STATIC_WEB_APPS_API_TOKEN_AURALY_PROD` publican el Admin. Los binarios y el DACPAC no se publican como GitHub Release porque este repositorio es público.
 
 El bootstrap se ejecuta una sola vez por ambiente desde una sesión administradora de Azure y GitHub. Requiere el módulo PowerShell `SqlServer` para crear el usuario contenido sin contraseña:
 
@@ -100,7 +109,8 @@ El mismo release debe desplegarse primero en DEV y después en PROD. La versión
 
 ```powershell
 $version = '0.1.0-rc6'
-.\infrastructure\azure\New-AuralyRelease.ps1 -Version $version -PosApiUrl 'https://api-auraly-dev-w5usmo6w.azurewebsites.net'
+$codeSigningThumbprint = Read-Host 'Huella del certificado Authenticode instalado'
+.\infrastructure\azure\New-AuralyRelease.ps1 -Version $version -PosApiUrl 'https://api-auraly-dev-w5usmo6w.azurewebsites.net' -SigningCertificateThumbprint $codeSigningThumbprint
 Get-Content ".\artifacts\releases\$version\manifest.json"
 ```
 

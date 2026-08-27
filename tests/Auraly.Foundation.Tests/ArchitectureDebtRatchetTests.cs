@@ -89,13 +89,15 @@ public sealed class ArchitectureDebtRatchetTests
     }
 
     [Fact]
-    public void ApiSqlDebt_CannotGrow()
+    public void Api_DoesNotEmbedDirectSql()
     {
-        var count = CSharpFiles(Path.Combine("src", "API", "Auraly.Api"))
-            .Sum(file => Regex.Matches(File.ReadAllText(file), @"(?:new\s+)?SqlCommand\s*\(").Count);
-
-        Assert.True(count <= 15,
-            $"Direct SQL in the API grew to {count}. Use EF Core or a versioned stored procedure; the reduced DT-003 baseline is 15.");
+        foreach (var file in CSharpFiles(Path.Combine("src", "API", "Auraly.Api")))
+        {
+            var source = File.ReadAllText(file);
+            Assert.DoesNotMatch(@"(?:new\s+)?SqlCommand\s*\(", source);
+            Assert.DoesNotMatch(@"\b(?:SELECT|INSERT|UPDATE|DELETE|MERGE)\s+(?:INTO\s+)?dbo\.", source);
+            Assert.DoesNotContain("CommandText =", source, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
@@ -197,6 +199,9 @@ public sealed class ArchitectureDebtRatchetTests
         var checkout = File.ReadAllText(Path.Combine(
             RepositoryRoot, "src", "Infrastructure", "Auraly.Infrastructure.Persistence",
             "SqlOnlineSalesDraftStore.Checkout.cs"));
+        var orderInventory = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "Infrastructure", "Auraly.Infrastructure.Persistence",
+            "SqlOnlineSalesDraftStore.OrderInventory.cs"));
         var handler = File.ReadAllText(Path.Combine(
             RepositoryRoot, "src", "Infrastructure", "Auraly.Infrastructure.Persistence",
             "SqlPosSaleDocumentHandler.cs"));
@@ -207,8 +212,10 @@ public sealed class ArchitectureDebtRatchetTests
             "OrderBatchService.cs"));
 
         Assert.Contains("state.SourceOrderId", checkout, StringComparison.Ordinal);
-        Assert.Contains("ResolveInventoryWarehouseAsync", handler, StringComparison.Ordinal);
-        Assert.Contains("inventoryWarehouseId", handler, StringComparison.Ordinal);
+        Assert.Contains("ReleaseOrderInventoryAsync", orderInventory, StringComparison.Ordinal);
+        Assert.Contains("ConfirmSystemTransferAtomicallyAsync", orderInventory, StringComparison.Ordinal);
+        Assert.Contains("InventoryReleasedForInvoice", orderInventory, StringComparison.Ordinal);
+        Assert.Contains("InventoryConsumedByInvoice", handler, StringComparison.Ordinal);
         Assert.Contains("OnlineSalesCheckoutService checkout", batch, StringComparison.Ordinal);
         Assert.Contains("checkout.CompleteAsync", batch, StringComparison.Ordinal);
         Assert.DoesNotContain("IConfirmedDocumentHandler", batch, StringComparison.Ordinal);
@@ -253,6 +260,39 @@ public sealed class ArchitectureDebtRatchetTests
 
         foreach (var path in paths)
             Assert.Contains("useReferenceOptions", File.ReadAllText(Path.Combine(RepositoryRoot, path)));
+    }
+
+    [Fact]
+    public void SqlFactories_ConsumeTheCanonicalConnectionSource()
+    {
+        var paths = new[]
+        {
+            "src/Infrastructure/Auraly.Infrastructure.Persistence/SqlServerConnectionFactory.cs",
+            "src/Modules/Accounting/Auraly.Commerce.Accounting.Infrastructure/AccountingSqlConnectionFactory.cs",
+            "src/Modules/Payroll/Auraly.Commerce.Payroll.Infrastructure/PayrollSqlConnectionFactory.cs",
+            "src/Modules/Pricing/Auraly.Infrastructure.Pricing/PricingSqlConnectionFactory.cs",
+            "src/Modules/Routes/Auraly.Infrastructure.Routes/RoutesSqlConnectionFactory.cs",
+            "src/Modules/Dispatching/Auraly.Infrastructure.Dispatching/DispatchingSqlConnectionFactory.cs"
+        };
+
+        foreach (var path in paths)
+        {
+            var source = File.ReadAllText(Path.Combine(RepositoryRoot, path));
+            Assert.Contains("AuralySqlConnectionSource", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("string connectionString", source, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void ExecutionContext_EmitsTenantAwareRequestTelemetry()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "API", "Auraly.Api", "ExecutionContextMiddleware.cs"));
+
+        Assert.Contains("auraly.tenant.id", source, StringComparison.Ordinal);
+        Assert.Contains("auraly.business.id", source, StringComparison.Ordinal);
+        Assert.Contains("TenantRequestCompleted", source, StringComparison.Ordinal);
+        Assert.Contains("ElapsedMilliseconds", source, StringComparison.Ordinal);
     }
 
     private static void AssertSingleClass(string className)

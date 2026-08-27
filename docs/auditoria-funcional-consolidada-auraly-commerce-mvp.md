@@ -1,5 +1,8 @@
 # Auditoría funcional consolidada de Auraly Commerce MVP
 
+**Estado:** auditoría histórica de descubrimiento; no define prevalencia sobre
+las decisiones canónicas posteriores.
+
 ## 1. Propósito y prevalencia
 
 Este documento consolida la auditoría realizada sobre:
@@ -13,7 +16,10 @@ Este documento consolida la auditoría realizada sobre:
 
 Su objetivo es identificar comportamientos importantes que todavía no estaban explícitos, evitar copiar complejidad que no aplica y establecer el alcance funcional real del MVP.
 
-En caso de contradicción, las decisiones más recientes y explícitas de este documento prevalecen sobre documentos anteriores.
+En caso de contradicción prevalecen `AGENTS.md`,
+`docs/invariantes-arquitectonicas-auraly.md`,
+`docs/mapa-motores-flujos-y-extensiones.md` y la decisión propietaria vigente del
+módulo. La fecha por sí sola no convierte esta auditoría en fuente de verdad.
 
 ---
 

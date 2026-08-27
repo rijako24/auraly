@@ -22,6 +22,8 @@ public static class PayrollCatalogCodes
     public const string WorkerType = "payroll-worker-type";
     public const string WorkerSubtype = "payroll-worker-subtype";
     public const string PaymentMethod = "payroll-payment-method";
+    public const string Bank = "payroll-bank";
+    public const string BankAccountType = "payroll-bank-account-type";
     public const string ConceptNature = "payroll-concept-nature";
     public const string CalculationMethod = "payroll-calculation-method";
     public const string ConceptTreatment = "payroll-concept-treatment";
@@ -87,6 +89,7 @@ public sealed record FiscalIssuerOption(
     int Version,
     string LegalName,
     string SoftwareIdentificationCode,
+    string SoftwarePinSecretReference,
     int Environment,
     Guid? TestSetId,
     bool IsActive);
@@ -141,6 +144,9 @@ public sealed record PayrollEmploymentOption(
     DateOnly? EndDate,
     decimal? IntegralSalaryPercentage,
     string? BankAccountReference,
+    Guid? BankOptionId,
+    Guid? BankAccountTypeOptionId,
+    string? BankAccountNumber,
     byte[] RowVersion);
 
 public sealed record SavePayrollEmploymentRequest(
@@ -161,6 +167,9 @@ public sealed record SavePayrollEmploymentRequest(
     decimal MonthlySalary,
     decimal? IntegralSalaryPercentage,
     string? BankAccountReference,
+    Guid? BankOptionId,
+    Guid? BankAccountTypeOptionId,
+    string? BankAccountNumber,
     bool IsActive,
     byte[]? RowVersion);
 
@@ -183,6 +192,9 @@ public sealed record PayrollEmploymentView(
     decimal MonthlySalary,
     decimal? IntegralSalaryPercentage,
     string? BankAccountReference,
+    Guid? BankOptionId,
+    Guid? BankAccountTypeOptionId,
+    string? BankAccountNumber,
     bool IsActive,
     byte[] RowVersion);
 
@@ -293,6 +305,7 @@ public sealed record PayrollDeductionAgreementSummary(
     Guid ConceptId,
     string ConceptName,
     Guid AuthorityOptionId,
+    Guid? BeneficiaryPartyId,
     string AuthorityName,
     string ReferenceNumber,
     string EvidenceUrl,

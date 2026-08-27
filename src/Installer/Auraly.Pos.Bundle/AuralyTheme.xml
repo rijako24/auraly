@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Theme xmlns="http://wixtoolset.org/schemas/v4/thmutil">
+  <Font Id="0" Height="-13" Weight="500" Foreground="windowtext" Background="window">Segoe UI</Font>
+  <Font Id="1" Height="-30" Weight="700" Foreground="windowtext" Background="window">Segoe UI</Font>
+  <Font Id="2" Height="-22" Weight="600" Foreground="windowtext" Background="window">Segoe UI</Font>
+  <Font Id="3" Height="-14" Weight="400" Foreground="graytext" Background="window">Segoe UI</Font>
+  <Font Id="4" Height="-13" Weight="600" Foreground="windowtext" Background="window">Segoe UI</Font>
+  <Window Width="680" Height="420" HexStyle="100a0000" FontId="0" Caption="#(loc.Caption)">
+    <ImageControl X="0" Y="0" Width="210" Height="420" ImageFile="logoside.png" Visible="yes" />
+    <ImageControl X="245" Y="24" Width="52" Height="52" ImageFile="logo.png" Visible="yes" />
+    <Label X="310" Y="25" Width="340" Height="48" FontId="1" Visible="yes" DisablePrefix="yes">#(loc.Title)</Label>
+
+    <Page Name="Loading">
+      <Label X="245" Y="105" Width="390" Height="30" FontId="2" DisablePrefix="yes" Visible="no" Name="CheckingForUpdatesLabel" />
+    </Page>
+
+    <Page Name="Help">
+      <Label X="245" Y="105" Width="390" Height="30" FontId="2" DisablePrefix="yes">#(loc.HelpHeader)</Label>
+      <Label X="245" Y="145" Width="390" Height="180" FontId="3" DisablePrefix="yes">#(loc.HelpText)</Label>
+      <Button Name="HelpCloseButton" X="-146" Y="-31" Width="120" Height="34" TabStop="yes" FontId="4">
+        <Text>#(loc.HelpCloseButton)</Text><CloseWindowAction />
+      </Button>
+    </Page>
+
+    <Page Name="Install">
+      <Label X="245" Y="105" Width="390" Height="34" FontId="2" DisablePrefix="yes">#(loc.InstallHeader)</Label>
+      <Label X="245" Y="153" Width="390" Height="118" FontId="3" DisablePrefix="yes">#(loc.InstallMessage)</Label>
+      <Label Name="InstallVersion" X="245" Y="285" Width="390" Height="22" FontId="3" DisablePrefix="yes" VisibleCondition="WixStdBAShowVersion">#(loc.InstallVersion)</Label>
+      <Button Name="InstallUpdateButton" X="245" Y="-31" Width="180" Height="34" TabStop="yes" FontId="4" EnableCondition="WixStdBAUpdateAvailable" HideWhenDisabled="yes">#(loc.UpdateButton)</Button>
+      <Button Name="InstallButton" X="-286" Y="-31" Width="130" Height="34" TabStop="yes" FontId="4" ElevationShieldCondition='(WixBundleAuthoredScope = 1 AND NOT WixBundleElevated) OR ((WixBundleAuthoredScope = 2 OR WixBundleAuthoredScope = 3) AND WixStdBAScope = "PerMachine")'>#(loc.InstallInstallButton)</Button>
+      <Button Name="InstallCancelButton" X="-146" Y="-31" Width="120" Height="34" TabStop="yes" FontId="0">
+        <Text>#(loc.InstallCancelButton)</Text><CloseWindowAction />
+      </Button>
+    </Page>
+
+    <Page Name="Options">
+      <Label X="245" Y="105" Width="390" Height="34" FontId="2" DisablePrefix="yes">#(loc.OptionsHeader)</Label>
+      <Label X="245" Y="153" Width="390" Height="22" FontId="3" DisablePrefix="yes">#(loc.OptionsLocationLabel)</Label>
+      <Editbox Name="InstallFolder" X="245" Y="181" Width="270" Height="25" TabStop="yes" FontId="0" FileSystemAutoComplete="yes" />
+      <Button Name="BrowseButton" X="525" Y="179" Width="110" Height="29" TabStop="yes" FontId="0"><Text>#(loc.OptionsBrowseButton)</Text><BrowseDirectoryAction VariableName="InstallFolder" /></Button>
+      <RadioButtons Name="WixStdBAScope">
+        <RadioButton X="245" Y="225" Height="22" Width="390" Value="PerUser" EnableCondition="WixBundleAuthoredScope = 2 OR WixBundleAuthoredScope = 3" HideWhenDisabled="yes" FontId="3">#(loc.OptionsPerUserScopeText)</RadioButton>
+        <RadioButton X="245" Y="251" Height="22" Width="390" Value="PerMachine" EnableCondition="WixBundleAuthoredScope = 2 OR WixBundleAuthoredScope = 3" HideWhenDisabled="yes" FontId="3">#(loc.OptionsPerMachineScopeText)</RadioButton>
+      </RadioButtons>
+      <Button Name="OptionsOkButton" X="-286" Y="-31" Width="130" Height="34" TabStop="yes" FontId="4"><Text>#(loc.OptionsOkButton)</Text><ChangePageAction Page="Install" /></Button>
+      <Button Name="OptionsCancelButton" X="-146" Y="-31" Width="120" Height="34" TabStop="yes" FontId="0"><Text>#(loc.OptionsCancelButton)</Text><ChangePageAction Page="Install" Cancel="yes" /></Button>
+    </Page>
+
+    <Page Name="Progress">
+      <Label X="245" Y="105" Width="390" Height="34" FontId="2" DisablePrefix="yes">#(loc.ProgressHeader)</Label>
+      <Label Name="OverallProgressPackageText" X="245" Y="153" Width="390" Height="24" FontId="3" DisablePrefix="yes">#(loc.OverallProgressPackageText)</Label>
+      <Progressbar Name="OverallCalculatedProgressbar" X="245" Y="190" Width="390" Height="18" />
+      <Button Name="ProgressCancelButton" X="-146" Y="-31" Width="120" Height="34" TabStop="yes" FontId="0">#(loc.ProgressCancelButton)</Button>
+    </Page>
+
+    <Page Name="Modify">
+      <Label X="245" Y="105" Width="390" Height="34" FontId="2" DisablePrefix="yes">#(loc.ModifyHeader)</Label>
+      <Label X="245" Y="153" Width="390" Height="90" FontId="3" DisablePrefix="yes">Puedes reparar la instalación actual o retirar Auraly de este equipo.</Label>
+      <Button Name="ModifyUpdateButton" X="245" Y="-31" Width="160" Height="34" TabStop="yes" FontId="4" EnableCondition="WixStdBAUpdateAvailable" HideWhenDisabled="yes">#(loc.UpdateButton)</Button>
+      <Button Name="RepairButton" X="-426" Y="-31" Width="120" Height="34" TabStop="yes" FontId="4" HideWhenDisabled="yes" ElevationShieldCondition='(WixBundleAuthoredScope = 1 AND NOT WixBundleElevated) OR ((WixBundleAuthoredScope = 2 OR WixBundleAuthoredScope = 3) AND WixStdBAScope = "PerMachine")'>#(loc.ModifyRepairButton)</Button>
+      <Button Name="UninstallButton" X="-296" Y="-31" Width="120" Height="34" TabStop="yes" FontId="0" ElevationShieldCondition='(WixBundleAuthoredScope = 1 AND NOT WixBundleElevated) OR ((WixBundleAuthoredScope = 2 OR WixBundleAuthoredScope = 3) AND WixStdBAScope = "PerMachine")'>#(loc.ModifyUninstallButton)</Button>
+      <Button Name="ModifyCancelButton" X="-166" Y="-31" Width="140" Height="34" TabStop="yes" FontId="0"><Text>#(loc.ModifyCancelButton)</Text><CloseWindowAction /></Button>
+    </Page>
+
+    <Page Name="Success">
+      <Label X="245" Y="105" Width="390" Height="70" FontId="2" DisablePrefix="yes">
+        <Text>#(loc.SuccessHeader)</Text><Text Condition="WixBundleAction = 2">#(loc.SuccessLayoutHeader)</Text><Text Condition="WixBundleAction = 3">#(loc.SuccessUninstallHeader)</Text><Text Condition="WixBundleAction = 5">#(loc.SuccessInstallHeader)</Text><Text Condition="WixBundleAction = 7">#(loc.SuccessRepairHeader)</Text>
+      </Label>
+      <Label X="245" Y="180" Width="390" Height="70" FontId="3" DisablePrefix="yes">Auraly quedó preparado en este equipo. Puedes abrirlo ahora y continuar con la configuración del punto de venta.</Label>
+      <Label X="245" Y="270" Width="390" Height="44" FontId="3" DisablePrefix="yes" VisibleCondition="WixStdBARestartRequired"><Text>#(loc.SuccessRestartText)</Text><Text Condition="WixBundleAction = 3">#(loc.SuccessUninstallRestartText)</Text></Label>
+      <Button Name="LaunchButton" X="-296" Y="-31" Width="130" Height="34" TabStop="yes" FontId="4" HideWhenDisabled="yes">#(loc.SuccessLaunchButton)</Button>
+      <Button Name="SuccessRestartButton" X="-296" Y="-31" Width="130" Height="34" TabStop="yes" FontId="4" HideWhenDisabled="yes">#(loc.SuccessRestartButton)</Button>
+      <Button Name="SuccessCloseButton" X="-156" Y="-31" Width="130" Height="34" TabStop="yes" FontId="0"><Text>#(loc.SuccessCloseButton)</Text><CloseWindowAction /></Button>
+    </Page>
+
+    <Page Name="Failure">
+      <Label X="245" Y="105" Width="390" Height="70" FontId="2" DisablePrefix="yes"><Text>#(loc.FailureHeader)</Text><Text Condition="WixBundleAction = 2">#(loc.FailureLayoutHeader)</Text><Text Condition="WixBundleAction = 3">#(loc.FailureUninstallHeader)</Text><Text Condition="WixBundleAction = 5">#(loc.FailureInstallHeader)</Text><Text Condition="WixBundleAction = 7">#(loc.FailureRepairHeader)</Text></Label>
+      <Hypertext Name="FailureLogFileLink" X="245" Y="180" Width="390" Height="52" FontId="3" TabStop="yes" HideWhenDisabled="yes">#(loc.FailureHyperlinkLogText)</Hypertext>
+      <Hypertext Name="FailureMessageText" X="245" Y="238" Width="390" Height="58" FontId="3" TabStop="yes" HideWhenDisabled="yes" />
+      <Label X="245" Y="300" Width="390" Height="35" FontId="3" DisablePrefix="yes" VisibleCondition="WixStdBARestartRequired">#(loc.FailureRestartText)</Label>
+      <Button Name="FailureRestartButton" X="-296" Y="-31" Width="130" Height="34" TabStop="yes" FontId="4" HideWhenDisabled="yes">#(loc.FailureRestartButton)</Button>
+      <Button Name="FailureCloseButton" X="-156" Y="-31" Width="130" Height="34" TabStop="yes" FontId="0"><Text>#(loc.FailureCloseButton)</Text><CloseWindowAction /></Button>
+    </Page>
+  </Window>
+</Theme>

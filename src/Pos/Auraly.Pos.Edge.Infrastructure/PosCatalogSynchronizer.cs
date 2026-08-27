@@ -6,11 +6,18 @@ namespace Auraly.Pos.Edge.Infrastructure;
 public sealed record PosDeviceCredentials(Guid DeviceId, string Secret);
 public sealed record PosOperationalScope(Guid BusinessId, Guid WarehouseId);
 
+public interface IPosSynchronizationEventSink
+{
+    void Record(string level, string category, string title, string? detail = null);
+    void ProductReceived(PosCatalogItem product, PosCatalogItem? previous, bool bootstrap);
+}
+
 public sealed class PosCatalogSynchronizer(
     HttpClient httpClient,
     PosCatalogStore store,
     PosDeviceCredentials credentials,
-    PosOperationalScope scope) : IPosInventoryAvailabilityClient
+    PosOperationalScope scope,
+    IPosSynchronizationEventSink? events = null) : IPosInventoryAvailabilityClient
 {
     public async Task SynchronizeAsync(CancellationToken cancellationToken = default)
     {
@@ -42,6 +49,8 @@ public sealed class PosCatalogSynchronizer(
                     path,
                     content: null,
                     cancellationToken);
+                foreach (var item in page.Items)
+                    events?.ProductReceived(item, null, bootstrap: true);
                 await store.ApplyBootstrapPageAsync(page, cancellationToken);
                 if (!page.HasMore)
                 {
@@ -66,6 +75,11 @@ public sealed class PosCatalogSynchronizer(
                 $"api/pos/v1/catalog/changes?{ScopeQuery}&cursor={status.Cursor}&pageSize=500",
                 content: null,
                 cancellationToken);
+            foreach (var change in page.Changes)
+                events?.ProductReceived(
+                    change.Product,
+                    await store.GetByProductIdAsync(change.Product.ProductId, cancellationToken),
+                    bootstrap: false);
             await store.ApplyChangesAsync(page, cancellationToken);
             if (!page.HasMore) break;
         }

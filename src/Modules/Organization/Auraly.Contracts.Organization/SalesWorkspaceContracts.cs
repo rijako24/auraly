@@ -1,3 +1,5 @@
+using Auraly.Contracts.Authentication;
+
 namespace Auraly.Contracts.Organization;
 
 public sealed record SalesWorkspaceOption(
@@ -89,4 +91,5 @@ public sealed record PosEnrollmentPackage(
     IReadOnlyDictionary<string, string>? OfflineLeaseTrustedPublicKeys,
     DateTimeOffset EnrolledAt,
     string? CompanyName = null,
-    string? CompanyLogoSource = null);
+    string? CompanyLogoSource = null,
+    OfflineAuthenticationLeaseAcquireResponse? InitialOfflineAccess = null);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import Link from "next/link";
 import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery } from "@tanstack/react-query";
@@ -13,7 +13,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { Input as BaseInput } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -26,6 +27,14 @@ import { useRoles } from "@/hooks/use-roles";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { useServices } from "@/hooks/use-services";
 import { employeesApi, usersApi } from "@/services/api";
+
+function Input(props: ComponentProps<typeof BaseInput>) {
+  if (props.type !== "date") return <BaseInput {...props} />;
+  const { value, onChange, disabled, className, min, max, id } = props;
+  return <DatePicker id={id} value={String(value ?? "")} disabled={disabled} className={className}
+    min={typeof min === "string" ? min : undefined} max={typeof max === "string" ? max : undefined}
+    onChange={next => onChange?.({ target: { value: next }, currentTarget: { value: next } } as never)} />;
+}
 import { partiesApi, type CommercialPartyRole, type PartyRole, type PartySiteInput, type PartyWorkspaceDetail, type PartyWorkspaceItem, type PurchaseEvidencePolicy, type SellerUserAccess } from "@/services/api/parties";
 import { taxationApi } from "@/services/api/taxation";
 import { receivablesApi } from "@/services/api/receivables";

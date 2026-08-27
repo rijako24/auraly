@@ -1,9 +1,12 @@
+using System.Diagnostics;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Auraly.Api;
 
-internal sealed class ExecutionContextMiddleware(RequestDelegate next)
+internal sealed class ExecutionContextMiddleware(
+    RequestDelegate next,
+    ILogger<ExecutionContextMiddleware> logger)
 {
     public async Task InvokeAsync(
         HttpContext context,
@@ -81,7 +84,30 @@ internal sealed class ExecutionContextMiddleware(RequestDelegate next)
         if (businessId is { } selected)
             executionContext.SetBusiness(selected);
 
-        await next(context);
+        Activity.Current?.SetTag("auraly.tenant.id", tenantId);
+        Activity.Current?.SetTag("auraly.business.id", businessId);
+        using var scope = logger.BeginScope(new Dictionary<string, object?>
+        {
+            ["TenantId"] = tenantId,
+            ["BusinessId"] = businessId
+        });
+        var startedAt = Stopwatch.GetTimestamp();
+        try
+        {
+            await next(context);
+        }
+        finally
+        {
+            logger.LogInformation(
+                new EventId(1100, "TenantRequestCompleted"),
+                "Tenant request completed {Method} {Route} with {StatusCode} in {ElapsedMilliseconds} ms for tenant {TenantId} and business {BusinessId}",
+                context.Request.Method,
+                context.GetEndpoint()?.DisplayName ?? "unmatched",
+                context.Response.StatusCode,
+                Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds,
+                tenantId,
+                businessId);
+        }
     }
 
     private static void Replace(

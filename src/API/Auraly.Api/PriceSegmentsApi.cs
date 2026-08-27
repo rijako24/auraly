@@ -152,11 +152,7 @@ public static class PriceSegmentsApi
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(ct);
-        await using var command = new SqlCommand("""
-            UPDATE dbo.PriceChannels SET Name=@Name,Strategy=@Strategy,Value=@Value
-            WHERE PriceChannelId=@Id AND BusinessId=@BusinessId;
-            IF @@ROWCOUNT=0 THROW 51004,'Segment not found',1;
-            """, connection, transaction);
+        await using var command = Procedure("dbo.PriceChannelSettingsUpdate", connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
         command.Parameters.AddWithValue("@Id", id);
         command.Parameters.AddWithValue("@Name", name);

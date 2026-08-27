@@ -125,6 +125,7 @@ public sealed class SqlProductMerchandisingStore(
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         try
         {
+            await EnsureBarcodesAvailableAsync(connection, transaction, user.BusinessId, productId, request.Barcodes.Select(value => value.Value), ct);
             await using (var command = new SqlCommand("""
                 IF NOT EXISTS(SELECT 1 FROM dbo.Products p JOIN dbo.Businesses b ON b.BusinessId=p.BusinessId WHERE p.ProductId=@ProductId AND p.BusinessId=@BusinessId AND b.TenantId=@TenantId)
                   THROW 51010,'Product was not found.',1;
@@ -238,6 +239,26 @@ public sealed class SqlProductMerchandisingStore(
         catch { await transaction.RollbackAsync(CancellationToken.None); throw; }
 
         return (await GetAsync(user, productId, ct))!;
+    }
+
+    private static async Task EnsureBarcodesAvailableAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid businessId, Guid productId,
+        IEnumerable<string> values, CancellationToken ct)
+    {
+        foreach (var barcode in values.Select(value => value.Trim()).Where(value => value.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            await using var command = new SqlCommand("""
+                SELECT TOP(1) p.Name FROM dbo.ProductBarcodes b WITH (UPDLOCK,HOLDLOCK)
+                JOIN dbo.Products p ON p.ProductId=b.ProductId AND p.BusinessId=b.BusinessId
+                WHERE b.BusinessId=@BusinessId AND b.Barcode=@Barcode AND b.ProductId<>@ProductId;
+                """, connection, transaction);
+            command.Parameters.AddWithValue("@BusinessId", businessId);
+            command.Parameters.AddWithValue("@ProductId", productId);
+            command.Parameters.AddWithValue("@Barcode", barcode);
+            var owner = await command.ExecuteScalarAsync(ct) as string;
+            if (owner is not null)
+                throw new CatalogConflictException($"El código de barras '{barcode}' ya está asignado al producto '{owner}' y no puede reutilizarse.");
+        }
     }
 
     private const string SelectConfiguration = """

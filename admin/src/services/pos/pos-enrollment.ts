@@ -39,8 +39,8 @@ export async function authorizePosEnrollment(
       businessId: option.businessId,
       warehouseId: option.warehouseId,
       deviceName: window.navigator.userAgentData?.platform
-        ? `Auraly POS · ${window.navigator.userAgentData.platform}`
-        : `Auraly POS · ${window.navigator.platform || "Windows"}`,
+        ? `Auraly · ${window.navigator.userAgentData.platform}`
+        : `Auraly · ${window.navigator.platform || "Windows"}`,
     }),
   });
   if (!response.ok) throw new Error(await problemDetail(response));
@@ -86,7 +86,7 @@ export async function waitForRedeemedPosEdge(
     }
     await new Promise((resolve) => window.setTimeout(resolve, 500));
   }
-  throw new Error("El equipo quedó enrolado, pero el servicio local no volvió a iniciar. Cierra y abre Auraly POS.");
+  throw new Error("El equipo quedó enrolado, pero el servicio local no volvió a iniciar. Cierra y abre Auraly.");
 }
 
 async function problemDetail(response: Response): Promise<string> {

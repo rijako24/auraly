@@ -1,17 +1,14 @@
+using Auraly.BuildingBlocks.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Commerce.Payroll.Infrastructure;
 
 public sealed class PayrollSqlConnectionFactory
 {
-    private readonly string connectionString;
+    private readonly AuralySqlConnectionSource source;
 
-    public PayrollSqlConnectionFactory(string connectionString)
-    {
-        if (string.IsNullOrWhiteSpace(connectionString))
-            throw new ArgumentException("A SQL Server connection string is required.", nameof(connectionString));
-        this.connectionString = connectionString;
-    }
+    public PayrollSqlConnectionFactory(AuralySqlConnectionSource source) =>
+        this.source = source;
 
-    public SqlConnection Create() => new(connectionString);
+    public SqlConnection Create() => new(source.ConnectionString);
 }

@@ -37,6 +37,27 @@ public sealed class PosSynchronizationSignal
             channel.Writer.TryWrite(trigger);
     }
 
+    public void Schedule(
+        PosSynchronizationTrigger trigger,
+        TimeSpan delay,
+        CancellationToken cancellationToken) =>
+        _ = ScheduleCoreAsync(trigger, delay, cancellationToken);
+
+    private async Task ScheduleCoreAsync(
+        PosSynchronizationTrigger trigger,
+        TimeSpan delay,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(delay, cancellationToken);
+            Signal(trigger);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
     internal async ValueTask<PosSynchronizationTrigger> ReadAsync(
         CancellationToken cancellationToken)
     {
@@ -51,18 +72,22 @@ internal sealed class PosSynchronizationWork(
     PosCatalogSynchronizer catalog,
     PosEdgeOutboxUploader uploader,
     PosCashMovementServerClient cashMovements,
-    PosWorkSessionClosureOutboxUploader closures,
+    PosWorkSessionClosureUploader closures,
+    PosUnifiedOutboxDispatcher outbox,
     PosFiscalStatusSynchronizer fiscalStatuses,
     PosFiscalProvisioningSynchronizer fiscalProvisioning,
     PosEdgeAuthenticationService authentication,
     PosUiStateSignal uiState,
-    PosSynchronizationState state)
+    PosSynchronizationState state,
+    PosSynchronizationEventLog events,
+    PosSynchronizationSignal signal)
 {
     public async Task ExecuteAsync(
         PosSynchronizationTrigger trigger,
         CancellationToken cancellationToken)
     {
         state.Begin();
+        events.Record("Info", "Synchronization", "Sincronización iniciada", trigger.ToString());
         uiState.Publish();
         try
         {
@@ -72,15 +97,25 @@ internal sealed class PosSynchronizationWork(
                 await catalog.SynchronizeAsync(cancellationToken);
             if (trigger.HasFlag(PosSynchronizationTrigger.LocalOutbox))
             {
-                while (await uploader.UploadNextAsync(cancellationToken))
+                while (await outbox.NextAsync(cancellationToken) is { } route)
                 {
+                    var dispatched = route switch
+                    {
+                        PosUnifiedOutboxRoute.Sale =>
+                            await uploader.UploadNextAsync(cancellationToken),
+                        PosUnifiedOutboxRoute.CashMovement =>
+                            await cashMovements.UploadNextAsync(cancellationToken),
+                        PosUnifiedOutboxRoute.WorkSessionClosure =>
+                            await closures.UploadNextAsync(cancellationToken),
+                        _ => throw new ArgumentOutOfRangeException(nameof(route))
+                    };
+                    if (!dispatched) break;
                 }
-                while (await cashMovements.UploadNextAsync(cancellationToken))
-                {
-                }
-                while (await closures.UploadNextAsync(cancellationToken))
-                {
-                }
+                if (await outbox.NextRetryDelayAsync(cancellationToken) is { } delay)
+                    signal.Schedule(
+                        PosSynchronizationTrigger.LocalOutbox,
+                        delay,
+                        cancellationToken);
             }
             if (trigger.HasFlag(PosSynchronizationTrigger.Authentication))
             {
@@ -93,10 +128,12 @@ internal sealed class PosSynchronizationWork(
             if (trigger.HasFlag(PosSynchronizationTrigger.FiscalProvisioning))
                 await fiscalProvisioning.SynchronizeAsync(cancellationToken);
             state.Succeeded();
+            events.Record("Success", "Synchronization", "Sincronización completada", trigger.ToString());
         }
-        catch
+        catch (Exception exception)
         {
             state.Failed();
+            events.Record("Error", "Synchronization", "Falló la sincronización", exception.Message);
             throw;
         }
         finally { uiState.Publish(); }
@@ -114,6 +151,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
     private readonly PosSynchronizationSignal signal;
     private readonly PosServerConnectionState connectionState;
     private readonly PosUiStateSignal uiState;
+    private readonly PosSynchronizationEventLog events;
     private readonly Guid tenantId;
     private readonly Guid businessId;
     private readonly WebPubSubClient client;
@@ -124,6 +162,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
         PosSynchronizationSignal signal,
         PosServerConnectionState connectionState,
         PosUiStateSignal uiState,
+        PosSynchronizationEventLog events,
         Guid tenantId,
         Guid businessId)
     {
@@ -132,6 +171,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
         this.signal = signal;
         this.connectionState = connectionState;
         this.uiState = uiState;
+        this.events = events;
         this.tenantId = tenantId;
         this.businessId = businessId;
         var credential = new WebPubSubClientCredential(NegotiateAsync);
@@ -180,6 +220,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
     private Task OnConnectedAsync(WebPubSubConnectedEventArgs _)
     {
         connectionState.MarkConnected();
+        events.Record("Success", "Connection", "Caja conectada con Auraly Server");
         uiState.Publish();
         signal.Signal(PosSynchronizationTrigger.All);
         return Task.CompletedTask;
@@ -188,6 +229,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
     private Task OnDisconnectedAsync(WebPubSubDisconnectedEventArgs _)
     {
         connectionState.MarkDisconnected();
+        events.Record("Warning", "Connection", "Caja sin conexión con Auraly Server");
         uiState.Publish();
         return Task.CompletedTask;
     }
@@ -204,6 +246,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
                 invalidation.BusinessId != businessId)
                 return Task.CompletedTask;
             signal.Signal(ToTrigger(invalidation.Stream));
+            events.Record("Info", "Push", "Evento recibido del servidor", invalidation.Stream);
         }
         catch (System.Text.Json.JsonException)
         {

@@ -215,6 +215,8 @@ export type PosPaymentInput = {
   methodCode: string;
   amount: number;
   reference: string | null;
+  cardFranchiseCode?: string | null;
+  approvalNumber?: string | null;
 };
 
 export type PosReceiptLine = {
@@ -331,6 +333,18 @@ export type PosWorkSessionPaymentCount = {
   countedAmount: number;
 };
 
+export type PosSynchronizationEvent = {
+  sequence: number;
+  occurredAt: string;
+  level: "Info" | "Success" | "Warning" | "Error";
+  category: string;
+  title: string;
+  detail: string | null;
+  productId: string | null;
+  previousPrice: number | null;
+  newPrice: number | null;
+};
+
 export type PosWorkSessionClosure = {
   workSessionClosureId: string;
   workSessionId: string;
@@ -350,6 +364,10 @@ export type PosWorkSessionClosure = {
   expectedCash: number;
   countedCash: number | null;
   cashDifference: number | null;
+  salesCount: number;
+  creditSalesCount: number;
+  creditSalesAmount: number;
+  returnCount: number;
   note: string | null;
   paymentTotals: PosWorkSessionPaymentTotal[];
 };
@@ -400,6 +418,7 @@ export interface PosClient {
     permissions?: string[];
   }>;
   synchronizeNow(): Promise<void>;
+  synchronizationEvents(take?: number): Promise<PosSynchronizationEvent[]>;
   openCashDrawer(): Promise<void>;
   readScaleWeight(): Promise<{ weight: number; unit: string; portName: string }>;
   searchProducts(search?: string, skip?: number, take?: number, customerId?: string | null): Promise<PosCatalogSearchPage>;
@@ -487,11 +506,11 @@ export type PosPrinterConfiguration = {
   receiptPaperWidthMillimeters: 58 | 80;
   letterPrinterName: string | null;
   orderMode: "BrowserPreview" | "WindowsPrint";
-  posOutputFormat: "Receipt" | "HalfLetter";
-  ordersOutputFormat: "Receipt" | "HalfLetter";
+  posOutputFormat: PosPrintTemplateFormat;
+  ordersOutputFormat: PosPrintTemplateFormat;
   templateRoutes: Array<{
     documentType: "SalesInvoice" | "SalesReceipt";
-    format: "Receipt" | "HalfLetter";
+    format: PosPrintTemplateFormat;
     printerName: string | null;
   }> | null;
   scale: PosScaleConfiguration | null;
@@ -499,6 +518,12 @@ export type PosPrinterConfiguration = {
   ordersPrinterName?: string | null;
   ordersReceiptPaperWidthMillimeters?: 58 | 80;
 };
+
+export type PosPrintTemplateFormat =
+  | "Receipt"
+  | "HalfLetter"
+  | "HalfLegal"
+  | "Letter";
 
 export type PosScaleConfiguration = {
   enabled: boolean;
@@ -633,6 +658,11 @@ export class PosEdgeClient implements PosClient {
       }),
     });
   }
+  synchronizationEvents(take = 100) {
+    return this.request<PosSynchronizationEvent[]>(
+      `/edge/v1/synchronization/events?take=${take}`,
+    );
+  }
 
   readScaleWeight() {
     return this.request<{ weight: number; unit: string; portName: string }>(
@@ -715,6 +745,17 @@ export class PosEdgeClient implements PosClient {
       body: JSON.stringify({ username, password }),
     });
     if (!session.token) throw new PosEdgeError("El servicio local no devolvió una sesión de usuario.", 500);
+    this.userSessionToken = session.token;
+    window.sessionStorage.setItem("auraly.pos.user-session", session.token);
+    return session;
+  }
+
+  async completeEnrollment() {
+    const session = await this.request<PosLocalUserSession>(
+      "/edge/v1/auth/complete-enrollment",
+      { method: "POST" },
+    );
+    if (!session.token) throw new PosEdgeError("El servicio local no devolvió la sesión inicial.", 500);
     this.userSessionToken = session.token;
     window.sessionStorage.setItem("auraly.pos.user-session", session.token);
     return session;

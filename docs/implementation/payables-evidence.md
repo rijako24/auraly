@@ -14,7 +14,7 @@ La prueba vertical verificó:
 2. la consulta está autenticada, paginada y aislada por Business;
 3. el detalle conserva origen y movimientos;
 4. un abono por transferencia se acepta con numeración `PGP`;
-5. el motor aplica el pago una sola vez;
+5. el motor contable canónico aplica el pago una sola vez;
 6. el saldo queda parcial;
 7. existe una sola aplicación y una sola transacción de cartera;
 8. existe un solo evento de outbox;

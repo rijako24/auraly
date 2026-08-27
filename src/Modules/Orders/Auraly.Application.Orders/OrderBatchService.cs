@@ -68,6 +68,23 @@ public sealed class OrderBatchService(
             actor.UserId,
             actor.TenantId,
             actor.Permissions);
+        var pendingOrders = new List<OrderDetail>(normalizedOrders.Length);
+        foreach (var orderId in normalizedOrders)
+        {
+            var order = await orders.GetAsync(actor, orderId, cancellationToken);
+            if (order.WarehouseId is null)
+                throw new OrderConflictException(
+                    "El pedido no tiene una bodega de venta asignada y no puede emitirse.");
+            if (order.WarehouseId != request.WarehouseId)
+                throw new OrderConflictException(
+                    "El pedido pertenece a otra bodega de venta. Ábrelo desde la bodega asignada.");
+            if (order.InvoiceDocumentId is null)
+                pendingOrders.Add(order);
+        }
+        foreach (var order in pendingOrders)
+            await checkout.PrepareSourceOrderInventoryAsync(
+                identity, actor.BusinessId, order.OrderId, request.WarehouseId, cancellationToken);
+
         var results = new List<InvoiceOrderResult>(normalizedOrders.Length);
         var completed = 0;
         var failed = 0;

@@ -20,6 +20,8 @@ public interface IPayrollStore
         SavePayrollRuleSetRequest request, CancellationToken ct);
     Task<PayrollRuleSetView> ApproveRuleSetAsync(PayrollUserIdentity user,
         Guid ruleSetId, byte[] rowVersion, CancellationToken ct);
+    Task<PayrollRuleSetView> RetireRuleSetAsync(PayrollUserIdentity user,
+        Guid ruleSetId, byte[] rowVersion, CancellationToken ct);
     Task<PayrollDeductionAgreementView> SaveDeductionAgreementAsync(PayrollUserIdentity user,
         SavePayrollDeductionAgreementRequest request, CancellationToken ct);
     Task<PayrollSettingsView> SaveSettingsAsync(PayrollUserIdentity user,
@@ -74,7 +76,8 @@ public sealed class PayrollService(
         return store.SaveEmploymentAsync(user, request with
         {
             ContractNumber = Text(request.ContractNumber, 64, "Número de contrato"),
-            BankAccountReference = Optional(request.BankAccountReference, 200)
+            BankAccountReference = Optional(request.BankAccountReference, 200),
+            BankAccountNumber = Optional(request.BankAccountNumber, 64)
         }, ct);
     }
 
@@ -121,6 +124,15 @@ public sealed class PayrollService(
         if (ruleSetId == Guid.Empty || rowVersion.Length != 8)
             throw new PayrollValidationException("La versión del conjunto de reglas no es válida.");
         return store.ApproveRuleSetAsync(user, ruleSetId, rowVersion, ct);
+    }
+
+    public Task<PayrollRuleSetView> RetireRuleSetAsync(PayrollUserIdentity user,
+        Guid ruleSetId, byte[] rowVersion, CancellationToken ct = default)
+    {
+        Demand(user, PayrollPermissionCodes.Configure);
+        if (ruleSetId == Guid.Empty || rowVersion.Length == 0)
+            throw new PayrollValidationException("La versión de reglas no es válida.");
+        return store.RetireRuleSetAsync(user, ruleSetId, rowVersion, ct);
     }
 
     public Task<PayrollDeductionAgreementView> SaveDeductionAgreementAsync(

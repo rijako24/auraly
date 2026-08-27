@@ -100,6 +100,15 @@ public sealed class SqlPosEnrollmentStore(
         if (request.ExistingDeviceId.HasValue && existing is null)
             throw new PosEnrollmentValidationException(
                 "El equipo indicado no está enrolado o su serie operativa ya no está activa.");
+        if (existing is null)
+        {
+            existing = await ReadExistingDeviceByInstallationAsync(
+                connection,
+                transaction,
+                request.EnrollmentSessionId,
+                request.InstallationId,
+                cancellationToken);
+        }
         var data = await ReadProvisioningAsync(
             connection, transaction, request.EnrollmentSessionId,
             existing?.DeviceId, cancellationToken);
@@ -217,7 +226,9 @@ public sealed class SqlPosEnrollmentStore(
             throw new PosEnrollmentConflictException(
                 $"La organización alcanzó el máximo de {maximumDevices} cajas enroladas permitido. Desactiva una caja o solicita a Auraly una ampliación de capacidad.");
         }
-    }    private static async Task<ExistingDevice?> ReadExistingDeviceAsync(
+    }
+
+    private static async Task<ExistingDevice?> ReadExistingDeviceAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         Guid deviceId,
@@ -235,6 +246,40 @@ public sealed class SqlPosEnrollmentStore(
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         Add(command, "@DeviceId", deviceId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        return new ExistingDevice(
+            reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
+            reader.GetGuid(3), reader.GetString(4), reader.GetString(5),
+            reader.GetString(6), reader.GetByte(7), reader.GetInt64(8),
+            reader.GetInt64(9));
+    }
+
+    private static async Task<ExistingDevice?> ReadExistingDeviceByInstallationAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid enrollmentSessionId,
+        string installationId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT TOP(1)
+                   d.DeviceId,d.TenantId,ds.BusinessId,ds.DocumentSeriesId,
+                   ds.DocumentType,ds.Prefix,ds.SeriesCode,ds.Padding,
+                   ds.RangeStart,ds.RangeEnd
+            FROM dbo.PosEnrollmentSessions enrollment WITH (UPDLOCK,HOLDLOCK)
+            JOIN dbo.EnrolledDevices d WITH (UPDLOCK,HOLDLOCK)
+              ON d.TenantId=enrollment.TenantId AND d.Name=@InstallationId
+             AND d.IsActive=1
+            JOIN dbo.DocumentSeries ds WITH (UPDLOCK,HOLDLOCK)
+              ON ds.DeviceId=d.DeviceId AND ds.BusinessId=enrollment.BusinessId
+             AND ds.DocumentType=N'SalesInvoice' AND ds.IsActive=1
+            WHERE enrollment.EnrollmentSessionId=@EnrollmentSessionId
+            ORDER BY d.CreatedAt DESC,d.DeviceId;
+            """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        Add(command, "@EnrollmentSessionId", enrollmentSessionId);
+        Add(command, "@InstallationId", installationId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) return null;
         return new ExistingDevice(

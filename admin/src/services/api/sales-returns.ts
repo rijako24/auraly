@@ -1,7 +1,8 @@
 import { apiClient, withPagedDefaults } from "./client";
 
 export type SalesReturnResolution = "Refund" | "CustomerCredit";
-export type SalesReturnDisposition = "Sellable" | "NotReturned";
+export type SalesReturnRefundMethod = "Cash" | "Transfer" | "DebitCard" | "CreditCard";
+export type SalesReturnScope = "FullCancellation" | "Partial";
 
 export interface ReturnableSaleListItem {
   documentId: string;
@@ -66,6 +67,7 @@ export interface ReturnableSale {
     untaxedAmount: number;
     taxAmount: number;
     lineTotal: number;
+    barcodes: string;
   }>;
 }
 
@@ -75,13 +77,14 @@ export interface ConfirmSalesReturnRequest {
   warehouseId: string;
   originalDocumentId: string;
   returnedAt: string;
+  returnScopeCode: SalesReturnScope;
   economicResolution: SalesReturnResolution;
-  refundMethodCode: "Cash" | null;
+  refundMethodCode: SalesReturnRefundMethod | null;
   reasonDescription: string;
   lines: Array<{
     originalLineNumber: number;
     quantity: number;
-    inventoryDisposition: SalesReturnDisposition;
+    inventoryDisposition: "Sellable";
   }>;
   workSessionId: string | null;
   originalPaymentNumber: number | null;

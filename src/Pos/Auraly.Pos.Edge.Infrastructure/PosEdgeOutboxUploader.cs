@@ -127,7 +127,8 @@ public sealed class HttpPosSaleUploadClient(
 public sealed class PosEdgeOutboxUploader(
     PosEdgeSaleStore store,
     IPosSaleUploadClient client,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    IPosSynchronizationEventSink? events = null)
 {
     private static readonly TimeSpan LeaseTimeout = TimeSpan.FromMinutes(2);
 
@@ -151,6 +152,8 @@ public sealed class PosEdgeOutboxUploader(
                 item.MessageId,
                 $"The durable payload cannot be read: {exception.Message}",
                 cancellationToken);
+            events?.Record("Error", "Sale", "Venta local rechazada antes de subir",
+                $"{item.DocumentId.Value:D} · {exception.Message}");
             return true;
         }
 
@@ -192,6 +195,18 @@ public sealed class PosEdgeOutboxUploader(
             default:
                 throw new ArgumentOutOfRangeException();
         }
+
+        events?.Record(
+            attempt.Disposition is PosSaleUploadDisposition.Uploaded
+                ? "Success"
+                : attempt.Disposition is PosSaleUploadDisposition.RetryableFailure
+                    ? "Warning"
+                    : "Error",
+            "Sale",
+            attempt.Disposition is PosSaleUploadDisposition.Uploaded
+                ? "Venta local subida"
+                : "Venta local pendiente de sincronización",
+            $"{request.DocumentNumber} · {request.DocumentId:D} · {attempt.Disposition}");
 
         return true;
     }

@@ -273,10 +273,59 @@ public sealed partial class PosLocalIdentityStore(
                 "InvalidCredentials", "Usuario o contraseña incorrectos.");
         }
 
+        return await CreateSessionAsync(
+            connection,
+            (SqliteTransaction)transaction,
+            user,
+            now,
+            leaseExpiresAt,
+            cancellationToken);
+    }
+
+    public async Task<PosLocalUserSession> LoginFromEnrollmentAsync(
+        Guid userId,
+        DateTimeOffset leaseExpiresAt,
+        CancellationToken cancellationToken = default)
+    {
+        if (!await HasValidSnapshotAsync(cancellationToken))
+            throw new PosLocalLoginException(
+                "IdentityUnavailable",
+                "La información de acceso local aún no está lista. Espera a que termine la descarga inicial.");
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var user = await ReadUserByIdAsync(
+            connection, (SqliteTransaction)transaction, userId, cancellationToken)
+            ?? throw new PosLocalLoginException(
+                "IdentityUnavailable",
+                "El usuario que preparó la caja no está disponible para trabajar localmente.");
+        var permissions = await ReadPermissionsAsync(
+            connection, (SqliteTransaction)transaction, user.UserId, cancellationToken);
+        if (!permissions.Contains(CommercePermissionCodes.SalesCreate, StringComparer.Ordinal))
+            throw new PosLocalLoginException(
+                "PermissionDenied",
+                "El usuario que preparó la caja no tiene permiso para crear ventas.");
+        return await CreateSessionAsync(
+            connection,
+            (SqliteTransaction)transaction,
+            user,
+            timeProvider.GetUtcNow(),
+            leaseExpiresAt,
+            cancellationToken);
+    }
+
+    private async Task<PosLocalUserSession> CreateSessionAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        LocalUser user,
+        DateTimeOffset now,
+        DateTimeOffset leaseExpiresAt,
+        CancellationToken cancellationToken)
+    {
         var workSessionId = ids.NewId();
         await using (var previousSession = connection.CreateCommand())
         {
-            previousSession.Transaction = (SqliteTransaction)transaction;
+            previousSession.Transaction = transaction;
             previousSession.CommandText = """
                 SELECT WorkSessionId
                 FROM PosLocalUserSessions
@@ -294,7 +343,7 @@ public sealed partial class PosLocalIdentityStore(
 
         await using (var close = connection.CreateCommand())
         {
-            close.Transaction = (SqliteTransaction)transaction;
+            close.Transaction = transaction;
             close.CommandText = """
                 UPDATE PosLocalUserSessions
                 SET EndedAt=$now,EndReason='UserChanged'
@@ -314,7 +363,7 @@ public sealed partial class PosLocalIdentityStore(
         var expiresAt = new[] { now.Add(SessionDuration), leaseExpiresAt }.Min();
         await using (var insert = connection.CreateCommand())
         {
-            insert.Transaction = (SqliteTransaction)transaction;
+            insert.Transaction = transaction;
             insert.CommandText = """
                 INSERT INTO PosLocalUserSessions(
                     SessionId,WorkSessionId,UserId,TokenHash,StartedAt,ExpiresAt)
@@ -329,7 +378,7 @@ public sealed partial class PosLocalIdentityStore(
             await insert.ExecuteNonQueryAsync(cancellationToken);
         }
         var permissions = await ReadPermissionsAsync(
-            connection, (SqliteTransaction)transaction, user.UserId,
+            connection, transaction, user.UserId,
             cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new PosLocalUserSession(
@@ -488,6 +537,32 @@ public sealed partial class PosLocalIdentityStore(
             WHERE NormalizedUsername=$username;
             """;
         command.Parameters.AddWithValue("$username", Normalize(username));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        return new LocalUser(
+            Guid.Parse(reader.GetString(0)),
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.GetString(3),
+            reader.GetInt32(4),
+            reader.IsDBNull(5) ? null : DateTimeOffset.Parse(reader.GetString(5)));
+    }
+
+    private static async Task<LocalUser?> ReadUserByIdAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT UserId,Username,DisplayName,ProtectedPasswordVerifier,
+                   FailedCount,LockedUntil
+            FROM PosOfflineUsers
+            WHERE UserId=$userId;
+            """;
+        command.Parameters.AddWithValue("$userId", userId.ToString("D"));
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) return null;
         return new LocalUser(

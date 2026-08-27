@@ -41,6 +41,11 @@ public interface IOfflineAuthenticationLeaseStore
         OfflineAuthenticationLeaseCandidate candidate,
         CancellationToken cancellationToken);
 
+    Task<OfflineAuthenticationLeaseAcquireResponse> AcquireForEnrollmentAsync(
+        OfflineAuthenticationLeasePayload payload,
+        SignedOfflineAuthenticationLease signedLease,
+        CancellationToken cancellationToken);
+
     Task ReleaseAsync(
         Guid tenantId,
         Guid deviceId,
@@ -115,6 +120,33 @@ public sealed class OfflineAuthenticationLeaseService(
                 verifier.Hash,
                 verifier.Iterations,
                 verifier.ChangedAt));
+    }
+
+    public async Task<OfflineAuthenticationLeaseAcquireResponse> AcquireForEnrollmentAsync(
+        OfflineAuthenticationLeaseDevice device,
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        policy.EnsureValid();
+        EnsureDevice(device);
+        if (userId == Guid.Empty)
+            throw new AuthenticationValidationException("UserId is required.");
+
+        var now = timeProvider.GetUtcNow();
+        var payload = new OfflineAuthenticationLeasePayload(
+            1,
+            ids.NewId(),
+            device.TenantId,
+            userId,
+            device.DeviceId,
+            now,
+            now,
+            now.Add(policy.Duration),
+            ids.NewId());
+        return await leases.AcquireForEnrollmentAsync(
+            payload,
+            signer.Sign(payload),
+            cancellationToken);
     }
 
     public Task ReleaseAsync(

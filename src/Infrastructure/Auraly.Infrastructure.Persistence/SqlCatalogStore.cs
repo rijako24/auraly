@@ -30,6 +30,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         try
         {
+            await EnsureBarcodesAvailableAsync(connection, transaction, user.BusinessId, productId, request.Barcodes.Select(value => value.Value), ct);
             if (create)
                 request = request with { ProductCode = await NextProductCodeAsync(connection, transaction, user.BusinessId, ct) };
             if (!create)
@@ -364,6 +365,27 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         return (await GetAsync(user.TenantId, user.BusinessId, productId, true, ct))!;
     }
 
+    private static async Task EnsureBarcodesAvailableAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid businessId, Guid productId,
+        IEnumerable<string> values, CancellationToken ct)
+    {
+        foreach (var barcode in values.Select(value => value.Trim()).Where(value => value.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            await using var command = new SqlCommand("""
+                SELECT TOP(1) p.Name
+                FROM dbo.ProductBarcodes b WITH (UPDLOCK,HOLDLOCK)
+                JOIN dbo.Products p ON p.ProductId=b.ProductId AND p.BusinessId=b.BusinessId
+                WHERE b.BusinessId=@BusinessId AND b.Barcode=@Barcode AND b.ProductId<>@ProductId;
+                """, connection, transaction);
+            command.Parameters.AddWithValue("@BusinessId", businessId);
+            command.Parameters.AddWithValue("@ProductId", productId);
+            command.Parameters.AddWithValue("@Barcode", barcode);
+            var owner = await command.ExecuteScalarAsync(ct) as string;
+            if (owner is not null)
+                throw new CatalogConflictException($"El código de barras '{barcode}' ya está asignado al producto '{owner}' y no puede reutilizarse.");
+        }
+    }
+
     public async Task<ProductDetail?> GetAsync(Guid tenantId, Guid businessId, Guid productId, bool includeCosts, CancellationToken ct)
     {
         await using var connection = connections.Create();
@@ -506,6 +528,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         command.CommandText = """
             SELECT TOP (@Take) c.CatalogChangeId,c.ChangeKind,p.ProductId,p.ProductCode,p.Reference,p.Name,p.BaseUnitCode,
               t.DianTaxCode,t.Rate,pr.Amount,pr.CurrencyCode,p.IsActive,p.IsWeighable,p.AllowsFractionalSale,
+              COALESCE(pr.CostBasisAmount,0),p.ManageStock,
               COALESCE((SELECT Barcode AS [Value] FROM dbo.ProductBarcodes b WHERE b.ProductId=p.ProductId AND b.IsActive=1 FOR JSON PATH),N'[]'),
               COALESCE((SELECT IdentifierType AS [Type],Value FROM dbo.ProductIdentifiers i WHERE i.ProductId=p.ProductId AND i.IsActive=1 FOR JSON PATH),N'[]'),
               s.ScaleCode,s.BarcodePrefix,s.EmbeddedValueType,s.ValueStart,s.ValueLength,s.DecimalPlaces

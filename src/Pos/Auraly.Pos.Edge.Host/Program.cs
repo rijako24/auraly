@@ -100,6 +100,7 @@ public static class PosEdgeHostApplication
                 "startup-mode");
         var startupModeStore = new PosStartupModeStore(startupModePath);
         var enrollmentStore = new PosEdgeEnrollmentStore(packagePath, keyDirectory);
+        var identityRecovery = new PosLocalDeviceIdentityRecovery(databasePath);
         var enrollment = enrollmentStore.Load();
         if (enrollment is null &&
             string.IsNullOrWhiteSpace(builder.Configuration["PosEdge:DeviceId"]))
@@ -110,6 +111,7 @@ public static class PosEdgeHostApplication
                 serverUrl,
                 enrollmentStore,
                 startupModeStore,
+                identityRecovery,
                 databasePath);
         if (enrollment is not null)
             builder.Configuration.AddInMemoryCollection(
@@ -136,6 +138,7 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton<PosLocalSessionAccessor>();
         builder.Services.AddSingleton(enrollmentStore);
         builder.Services.AddSingleton(startupModeStore);
+        builder.Services.AddSingleton(identityRecovery);
         builder.Services.AddSingleton<PosEdgeEnrollmentClient>();
         builder.Services.AddSingleton(sp => new PosLocalIdentityStore(
             connectionString,
@@ -153,6 +156,7 @@ public static class PosEdgeHostApplication
             sp.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton<PosOfflineLeaseClient>();
         builder.Services.AddSingleton<PosEdgeAuthenticationService>();
+        builder.Services.AddSingleton<PosEnrollmentSessionCompleter>();
         builder.Services.AddSingleton(new PosWorkstationIdentity(
             Required(builder.Configuration, "PosEdge:Documents:SalesInvoice:SeriesCode"),
             OptionalLabel(builder.Configuration, "PosEdge:BusinessName", "Negocio sin nombre"),
@@ -175,6 +179,9 @@ public static class PosEdgeHostApplication
             BaseAddress = new Uri(serverUrl)
         });
         builder.Services.AddSingleton(credentials);
+        builder.Services.AddSingleton<PosSynchronizationEventLog>();
+        builder.Services.AddSingleton<IPosSynchronizationEventSink>(sp =>
+            sp.GetRequiredService<PosSynchronizationEventLog>());
         builder.Services.AddSingleton<PosCatalogSynchronizer>();
         builder.Services.AddSingleton<PosIdentitySynchronizer>();
         builder.Services.AddSingleton<PosCustomerServerClient>();
@@ -192,6 +199,9 @@ public static class PosEdgeHostApplication
             databasePath,
             runtime,
             credentials);
+        // The unified Outbox schema must exist before document-specific local
+        // stores begin accepting cash movements or work-session closures.
+        builder.Services.AddHostedService<PosEdgeStorageInitializer>();
         builder.Services.AddSingleton(sp => new PosCashMovementStore(
             connectionString,
             sp.GetRequiredService<TimeProvider>()));
@@ -204,7 +214,10 @@ public static class PosEdgeHostApplication
             connectionString,
             sp.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton<PosOfflineWorkSessionClosureService>();
-        builder.Services.AddSingleton<PosWorkSessionClosureOutboxUploader>();
+        builder.Services.AddSingleton<PosWorkSessionClosureUploader>();
+        builder.Services.AddSingleton(sp => new PosUnifiedOutboxDispatcher(
+            connectionString,
+            sp.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton<PosPendingClosureAuthorizationStore>();
         builder.Services.AddHostedService<PosCashMovementStorageInitializer>();
         builder.Services.AddHostedService<PosWorkSessionClosureStorageInitializer>();
@@ -216,7 +229,6 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton<IPosFiscalStatusClient, HttpPosFiscalStatusClient>();
         builder.Services.AddSingleton<PosFiscalStatusSynchronizer>();
         builder.Services.AddSingleton<PosFiscalProvisioningSynchronizer>();
-        builder.Services.AddHostedService<PosEdgeStorageInitializer>();
         builder.Services.AddSingleton<PosSynchronizationSignal>();
         builder.Services.AddSingleton<PosUiStateSignal>();
         builder.Services.AddSingleton<PosSynchronizationState>();
@@ -227,6 +239,7 @@ public static class PosEdgeHostApplication
             sp.GetRequiredService<PosSynchronizationSignal>(),
             sp.GetRequiredService<PosServerConnectionState>(),
             sp.GetRequiredService<PosUiStateSignal>(),
+            sp.GetRequiredService<PosSynchronizationEventLog>(),
             tenantId,
             runtime.BusinessId.Value));
         builder.Services.AddHostedService<PosEventDrivenSynchronizationHostedService>();
@@ -420,6 +433,13 @@ public static class PosEdgeHostApplication
                 });
                 return Results.Ok(result);
             }
+            catch (PosEnrollmentServerException exception)
+            {
+                return Results.Problem(
+                    exception.Message,
+                    statusCode: exception.StatusCode,
+                    title: exception.Title);
+            }
             catch (HttpRequestException exception)
             {
                 return Results.Problem(
@@ -567,6 +587,37 @@ public static class PosEdgeHostApplication
             return Results.NoContent();
         });
         edge.MapPost("/synchronization/refresh", (PosSynchronizationSignal synchronization) => { synchronization.Signal(PosSynchronizationTrigger.All); return Results.Accepted(); });
+        edge.MapGet("/synchronization/events", async (
+            int? take,
+            PosSynchronizationEventLog events,
+            PosLocalIdentityStore identities,
+            HttpContext http,
+            CancellationToken ct) =>
+        {
+            var user = await identities.ResolveAsync(
+                http.Request.Headers["X-Auraly-User-Session"].ToString(), ct);
+            if (user is null || !user.Permissions.Contains(PosSynchronizationPermissions.ReadEvents))
+                return Results.Forbid();
+            return Results.Ok(events.Read(take ?? 100));
+        });
+        edge.MapPost("/auth/complete-enrollment", async (
+            PosEnrollmentSessionCompleter completer,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                return Results.Ok(await completer.CompleteAsync(ct));
+            }
+            catch (PosLocalLoginException error)
+            {
+                var status = error.Code == "IdentityUnavailable"
+                    ? StatusCodes.Status409Conflict
+                    : StatusCodes.Status401Unauthorized;
+                return Results.Json(
+                    new { code = error.Code, detail = error.Message },
+                    statusCode: status);
+            }
+        });
         edge.MapGet("/health", async (
             HttpContext http,
             PosServerConnectionState server,
@@ -714,7 +765,15 @@ public static class PosEdgeHostApplication
         edge.MapPost("/customers", async (
             PosCreateCustomerInput request,
             PosCustomerServerClient server,
-            CancellationToken ct) => Results.Ok(await server.CreateAsync(request, ct)));
+            PosSynchronizationEventLog events,
+            CancellationToken ct) =>
+        {
+            events.Record("Info", "Customer", "Creando cliente", request.DisplayName);
+            var customer = await server.CreateAsync(request, ct);
+            events.Record("Success", "Customer", $"Cliente creado: {customer.Name}",
+                customer.Identification);
+            return Results.Ok(customer);
+        });
         edge.MapGet("/customers/{customerId:guid}", async (
             Guid customerId,
             PosCatalogStore catalog,
@@ -968,6 +1027,7 @@ public static class PosEdgeHostApplication
         string serverUrl,
         PosEdgeEnrollmentStore store,
         PosStartupModeStore startupModeStore,
+        PosLocalDeviceIdentityRecovery identityRecovery,
         string databasePath)
     {
         if (!Uri.TryCreate(serverUrl, UriKind.Absolute, out var serverUri) ||
@@ -976,6 +1036,7 @@ public static class PosEdgeHostApplication
                 "PosEdge:ServerUrl must use HTTPS except for a loopback development server.");
         builder.Services.AddSingleton(store);
         builder.Services.AddSingleton(startupModeStore);
+        builder.Services.AddSingleton(identityRecovery);
         builder.Services.AddSingleton(new HttpClient { BaseAddress = serverUri });
         builder.Services.AddSingleton<PosEdgeEnrollmentClient>();
         builder.Services.AddSingleton<PosUiStateSignal>();
@@ -1107,6 +1168,13 @@ public static class PosEdgeHostApplication
                     lifetime.StopApplication();
                 });
                 return Results.Ok(result);
+            }
+            catch (PosEnrollmentServerException exception)
+            {
+                return Results.Problem(
+                    exception.Message,
+                    statusCode: exception.StatusCode,
+                    title: exception.Title);
             }
             catch (HttpRequestException exception)
             {

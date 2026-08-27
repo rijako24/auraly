@@ -4,7 +4,11 @@ Fecha: 2026-08-03
 
 ## Diagnóstico
 
-Auraly ya confirma una devolución como documento durable y el motor procesa exactamente una vez sus líneas, el inventario vendible, el resumen tributario, el asiento contable, la nota crédito fiscal y el evento de salida. No se crea un segundo motor ni una venta negativa.
+Auraly ya confirma una devolución como documento durable. El motor operacional
+procesa exactamente una vez sus líneas e inventario vendible y publica señales
+durables; los motores contable y fiscal canónicos procesan respectivamente el
+resumen económico/asiento y la nota crédito. No se crea un segundo motor ni una
+venta negativa.
 
 La rebanada pendiente debe conectar esa base con consultas y experiencia operativa, y cerrar dos efectos económicos que hoy están incompletos: la aplicación a una cuenta por cobrar y el registro de un reembolso de efectivo dentro de la sesión de trabajo.
 
@@ -19,12 +23,13 @@ La rebanada pendiente debe conectar esa base con consultas y experiencia operati
 - acceso desde facturación online reutilizando el mismo editor;
 - reembolso de efectivo limitado al valor originalmente pagado en efectivo y asociado a una sesión de trabajo;
 - aplicación primero a la cuenta por cobrar originada por la factura y creación de saldo a favor solamente por el excedente;
-- inventario, contabilidad y nota crédito mediante el motor existente;
+- inventario, contabilidad y nota crédito mediante los motores canónicos existentes y sus señales de outbox;
 - permisos, aislamiento por negocio, idempotencia y concurrencia con SQL Server real.
 
 ## Reglas económicas
 
-`CustomerCredit` no significa crear siempre un saldo a favor. El motor aplica el valor en este orden:
+`CustomerCredit` no significa crear siempre un saldo a favor. El motor contable
+aplica el valor en este orden:
 
 1. reduce el saldo abierto de la cuenta por cobrar de la factura original;
 2. registra un movimiento compensatorio inmutable en el libro CxC;

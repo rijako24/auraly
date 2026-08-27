@@ -126,6 +126,8 @@ public sealed class HtmlReceiptPreviewRenderer
                 .cufe { overflow-wrap: anywhere; font-size: 9px; }
                 .qr { width: 38mm; max-width: 100%; margin: 10px auto 5px; }
                 .qr svg { display: block; width: 100%; height: auto; }
+                .platform-footer { margin-top: 10px; text-align: center; font: 10px/1.4 system-ui, sans-serif; color: #49666a; }
+                .platform-footer strong { color: #065f5b; }
                 .actions {
                   position: sticky;
                   top: 0;
@@ -176,6 +178,7 @@ public sealed class HtmlReceiptPreviewRenderer
                 {{payments}}
                 <hr class="rule">
                 {{fiscalFooter}}
+                <footer class="platform-footer">Factura emitida por Auraly<br><strong>www.auralyapp.co</strong></footer>
               </main>
               <script>
                 window.addEventListener("load", () => window.setTimeout(() => window.print(), 250));

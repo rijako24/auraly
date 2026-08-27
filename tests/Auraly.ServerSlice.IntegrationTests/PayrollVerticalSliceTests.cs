@@ -51,8 +51,8 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
                 Option(PayrollCatalogCodes.WorkerSubtype, "00"),
                 Option(PayrollCatalogCodes.PaymentMethod, "BankTransfer"),
                 "LEGACY-INCOMPLETE", new DateOnly(2026, 1, 1),
-                new DateOnly(2026, 7, 31), 1_000_000m, null, null, false,
-                legacy.RowVersion));
+                new DateOnly(2026, 7, 31), 1_000_000m, null, null,
+                null, null, null, false, legacy.RowVersion));
         Assert.False(deactivatedLegacy.IsActive);
         Assert.Null(deactivatedLegacy.EmployeeId);
 
@@ -112,7 +112,9 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
                 Option(PayrollCatalogCodes.WorkerSubtype, "00"),
                 Option(PayrollCatalogCodes.PaymentMethod, "BankTransfer"),
                 "CERT-EMP-001", new DateOnly(2026, 8, 1), null, 3_000_000m,
-                  null, "Cuenta certificación", true, null));
+                  null, null, Option(PayrollCatalogCodes.Bank, "Bancolombia"),
+                  Option(PayrollCatalogCodes.BankAccountType, "Savings"),
+                  "12345678901", true, null));
         Assert.Equal(employeeOption.EmployeeId, employment.EmployeeId);
 
         var agreementId = Guid.NewGuid();

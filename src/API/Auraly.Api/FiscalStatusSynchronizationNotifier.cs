@@ -1,11 +1,11 @@
 using Auraly.BuildingBlocks.Application.Synchronization;
-using Auraly.Infrastructure.Persistence;
-using Microsoft.Data.SqlClient;
+using Auraly.Platform.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace Auraly.Api;
 
 public sealed class FiscalStatusSynchronizationNotifier(
-    SqlServerConnectionFactory connections,
+    IServiceScopeFactory scopes,
     IPosSynchronizationOutboxDispatcher dispatcher,
     ILogger<FiscalStatusSynchronizationNotifier> logger)
 {
@@ -13,15 +13,15 @@ public sealed class FiscalStatusSynchronizationNotifier(
     {
         try
         {
-            await using var connection = connections.Create();
-            await connection.OpenAsync(cancellationToken);
-            await using var command = new SqlCommand(
-                "SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId AND IsActive=1;",
-                connection);
-            command.Parameters.AddWithValue("@BusinessId", businessId);
-            var value = await command.ExecuteScalarAsync(cancellationToken);
-            if (value is Guid tenantId)
-                await dispatcher.DispatchPendingAsync(tenantId, businessId, cancellationToken);
+            await using var scope = scopes.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var tenantId = await db.Businesses
+                .AsNoTracking()
+                .Where(business => business.BusinessId == businessId && business.IsActive)
+                .Select(business => (Guid?)business.TenantId)
+                .SingleOrDefaultAsync(cancellationToken);
+            if (tenantId is { } activeTenantId)
+                await dispatcher.DispatchPendingAsync(activeTenantId, businessId, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

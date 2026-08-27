@@ -39,8 +39,33 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
                 client,
                 command,
                 $"closed-session-{Guid.NewGuid():N}");
-            var signal = Assert.Single(fixture.DrainDocumentSignals());
-            var documentId = Assert.Single(invoice.Results).DocumentId!.Value;
+            var invoiceResult = Assert.Single(invoice.Results);
+            Assert.True(
+                invoiceResult.DocumentId.HasValue,
+                $"Order invoicing failed before document reception: {invoiceResult.Error ?? "no detail"}.");
+            var documentId = invoiceResult.DocumentId.Value;
+            var queuedSignals = fixture.DrainDocumentSignals();
+            if (queuedSignals.Count != 1)
+            {
+                await using var diagnosticConnection = new SqlConnection(fixture.ConnectionString);
+                await diagnosticConnection.OpenAsync();
+                await using var diagnostic = diagnosticConnection.CreateCommand();
+                diagnostic.CommandText = """
+                    SELECT d.ProcessingStatus,d.FiscalStatus,s.ConflictReason
+                    FROM dbo.SalesDocuments d
+                    LEFT JOIN dbo.FiscalSnapshots s ON s.DocumentId=d.DocumentId
+                    WHERE d.DocumentId=@DocumentId;
+                    """;
+                diagnostic.Parameters.AddWithValue("@DocumentId", documentId);
+                await using var diagnosticReader = await diagnostic.ExecuteReaderAsync();
+                Assert.True(await diagnosticReader.ReadAsync());
+                Assert.Fail(
+                    $"Expected one processing signal but found {queuedSignals.Count}. " +
+                    $"Document status: {diagnosticReader.GetString(0)}; " +
+                    $"fiscal status: {(diagnosticReader.IsDBNull(1) ? "none" : diagnosticReader.GetString(1))}; " +
+                    $"conflict: {(diagnosticReader.IsDBNull(2) ? "none" : diagnosticReader.GetString(2))}.");
+            }
+            var signal = Assert.Single(queuedSignals);
 
             await using (var connection = new SqlConnection(fixture.ConnectionString))
             {
@@ -347,7 +372,12 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
         };
         request.Headers.Add("Idempotency-Key", idempotencyKey);
         using var response = await client.SendAsync(request);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync();
+            throw new InvalidOperationException(
+                $"Order invoicing returned {(int)response.StatusCode}: {body}");
+        }
         return await response.Content.ReadFromJsonAsync<InvoiceOrdersResponse>()
             ?? throw new InvalidOperationException("Empty batch response.");
     }
@@ -358,6 +388,7 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
         Guid firstOrderId,
         Guid secondOrderId)
     {
+        var ordersWarehouseId = Guid.NewGuid();
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
@@ -377,17 +408,29 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
               @WorkSessionId,@BusinessId,@WarehouseId,@UserId,NULL,
               SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET(),N'Open');
 
+            INSERT dbo.Warehouses(
+              WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,
+              IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,IsActive,CreatedAt)
+            VALUES(
+              @OrdersWarehouseId,@BusinessId,@OrdersWarehouseCode,N'Pedidos lote',0,
+              1,0,0,0,1,SYSDATETIMEOFFSET());
+
+            INSERT dbo.InventoryBalances(
+              BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,
+              InventoryValue,LastProcessingSequence,UpdatedAt)
+            VALUES(@BusinessId,@OrdersWarehouseId,@ProductId,3,5000,15000,1,SYSDATETIMEOFFSET());
+
             INSERT dbo.Orders(
               OrderId,BusinessId,Source,FulfillmentMode,Status,
               CustomerNameSnapshot,CustomerDocumentSnapshot,Currency,
               Subtotal,DiscountTotal,Total,CustomerConfirmed,
-              ExternalDocumentNumber,CreatedAt,CustomAttributesJson)
+              ExternalDocumentNumber,OrdersWarehouseId,CreatedAt,CustomAttributesJson)
             VALUES
               (@FirstOrderId,@BusinessId,0,0,2,N'Cliente uno',N'1001',N'COP',
-               10000,0,10000,1,N'PED-LOTE-01',DATEADD(day,-2,SYSUTCDATETIME()),
+               10000,0,10000,1,N'PED-LOTE-01',@OrdersWarehouseId,DATEADD(day,-2,SYSUTCDATETIME()),
                CONCAT(N'{"WarehouseId":"',CONVERT(nvarchar(36),@WarehouseId),N'"}')),
               (@SecondOrderId,@BusinessId,0,0,2,N'Cliente dos',N'1002',N'COP',
-               20000,0,20000,1,N'PED-LOTE-02',DATEADD(day,-1,SYSUTCDATETIME()),
+               20000,0,20000,1,N'PED-LOTE-02',@OrdersWarehouseId,DATEADD(day,-1,SYSUTCDATETIME()),
                CONCAT(N'{"WarehouseId":"',CONVERT(nvarchar(36),@WarehouseId),N'"}'));
 
             INSERT dbo.OrderItems(
@@ -403,6 +446,8 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@UserId", userId);
         command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
         command.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+        command.Parameters.AddWithValue("@OrdersWarehouseId", ordersWarehouseId);
+        command.Parameters.AddWithValue("@OrdersWarehouseCode", $"PED-{ordersWarehouseId:N}"[..32]);
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
         command.Parameters.AddWithValue("@Username", $"batch-{userId:N}");
         command.Parameters.AddWithValue("@FirstOrderId", firstOrderId);

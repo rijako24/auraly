@@ -22,6 +22,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { DateTimePicker } from "@/components/ui/date-time-picker";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -632,11 +633,9 @@ export default function CampaignsPage() {
             </div>
             <div className="space-y-2 sm:col-span-2">
               <Label htmlFor="scheduled-at">Programación</Label>
-              <Input
-                id="scheduled-at"
-                type="datetime-local"
+              <DateTimePicker
                 value={scheduledAt}
-                onChange={(e) => setScheduledAt(e.target.value)}
+                onChange={setScheduledAt}
               />
             </div>
           </div>

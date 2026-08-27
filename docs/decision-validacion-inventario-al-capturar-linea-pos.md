@@ -21,9 +21,9 @@ No se espera hasta confirmar la venta.
 
 ---
 
-## 2. Comportamiento según la caja
+## 2. Comportamiento según la bodega
 
-### `AllowNegativeStockSales = true`
+### `Warehouse.AllowNegativeStockSales = true`
 
 - resuelve producto localmente;
 - agrega la línea;
@@ -31,7 +31,7 @@ No se espera hasta confirmar la venta.
 - permite continuar;
 - la existencia puede consultarse manualmente si el usuario lo desea.
 
-### `AllowNegativeStockSales = false`
+### `Warehouse.AllowNegativeStockSales = false`
 
 - resuelve producto localmente;
 - determina cantidad base;
@@ -109,7 +109,7 @@ Solicitud:
 
 ```json
 {
-  "cashRegisterId": "uuid",
+  "workSessionId": "uuid",
   "warehouseId": "uuid",
   "productId": "uuid",
   "unitId": "uuid",
@@ -195,20 +195,25 @@ Enter fuerza validación inmediata.
 
 ## 8. Escaneos consecutivos
 
-Si cada lectura incrementa la misma línea:
+Cada lectura exitosa crea una línea nueva, incluso si resuelve el mismo producto:
 
 ```text
-1 -> 2 -> 3
+línea 1 (cantidad 1) -> línea 2 (cantidad 1) -> línea 3 (cantidad 1)
 ```
 
-La validación se hace con la cantidad acumulada.
+La disponibilidad se valida para la nueva línea teniendo en cuenta las demás
+cantidades del borrador que comprometen el mismo producto y bodega. La respuesta
+se asocia al `lineId` de esa captura; nunca se usa para incrementar o reemplazar
+una línea previa.
 
 Para evitar una petición descontrolada por cada carácter o evento:
 
-- se agrupan lecturas muy cercanas;
+- se puede agrupar únicamente la consulta técnica de disponibilidad de lecturas
+  muy cercanas, nunca sus líneas de venta;
 - se valida inmediatamente después de una ráfaga corta;
-- la línea muestra `Pending`;
-- el escáner permanece operativo.
+- cada línea nueva muestra su estado `Pending`;
+- después de cada inserción la grilla baja hasta la última línea y el foco DOM
+  permanece en el receptor del escáner.
 
 Si el negocio exige validación estricta antes del siguiente producto, puede configurarse, aunque ralentiza la fila.
 

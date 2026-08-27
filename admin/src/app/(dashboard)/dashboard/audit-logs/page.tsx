@@ -4,7 +4,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { MoreHorizontal } from "lucide-react";
 import { DataTable } from "@/components/tables/data-table";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -55,8 +55,8 @@ export default function AuditLogsPage() {
     <div className="space-y-6">
       <div><h1 className="text-2xl font-semibold tracking-tight">Registro de Auditoría</h1><p className="text-muted-foreground">Historial de acciones en el sistema</p></div>
       <div className="flex flex-wrap gap-4 rounded-lg border p-4">
-        <div className="space-y-2"><Label>Desde</Label><Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-[160px]" /></div>
-        <div className="space-y-2"><Label>Hasta</Label><Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-[160px]" /></div>
+        <div className="space-y-2"><Label>Desde</Label><DatePicker value={dateFrom} max={dateTo || undefined} onChange={setDateFrom} className="w-[190px]" /></div>
+        <div className="space-y-2"><Label>Hasta</Label><DatePicker value={dateTo} min={dateFrom || undefined} onChange={setDateTo} className="w-[190px]" /></div>
         <div className="space-y-2"><Label>Tipo de acción</Label><Select value={actionFilter} onValueChange={setActionFilter}><SelectTrigger className="w-[160px]"><SelectValue placeholder="Todos" /></SelectTrigger><SelectContent><SelectItem value="all">Todos</SelectItem><SelectItem value="Create">Crear</SelectItem><SelectItem value="Update">Actualizar</SelectItem><SelectItem value="Delete">Eliminar</SelectItem><SelectItem value="Login">Login</SelectItem></SelectContent></Select></div>
         <div className="space-y-2"><Label>Tipo de entidad</Label><Select value={entityFilter} onValueChange={setEntityFilter}><SelectTrigger className="w-[180px]"><SelectValue placeholder="Todos" /></SelectTrigger><SelectContent><SelectItem value="all">Todos</SelectItem><SelectItem value="User">Usuario</SelectItem><SelectItem value="Reservation">Reservación</SelectItem><SelectItem value="Lead">Lead</SelectItem><SelectItem value="PaymentTransaction">Pago</SelectItem><SelectItem value="AppRole">Rol</SelectItem><SelectItem value="Service">Servicio</SelectItem><SelectItem value="Conversation">Conversación</SelectItem><SelectItem value="SystemConfiguration">Config. Sistema</SelectItem></SelectContent></Select></div>
       </div>

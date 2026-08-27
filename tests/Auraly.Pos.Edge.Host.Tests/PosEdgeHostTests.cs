@@ -38,6 +38,63 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         _client ?? throw new InvalidOperationException("The test host has not started.");
 
     [Fact]
+    public async Task Lost_enrollment_package_recovers_the_single_durable_device_identity()
+    {
+        var path = Path.Combine(
+            Path.GetTempPath(), $"auraly-recovery-{Guid.NewGuid():N}.db");
+        var deviceId = Guid.NewGuid();
+        try
+        {
+            await using var connection = new Microsoft.Data.Sqlite.SqliteConnection(
+                $"Data Source={path}");
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE DocumentSeriesCursors(
+                    SeriesId TEXT PRIMARY KEY,
+                    DeviceId TEXT NOT NULL,
+                    IsActive INTEGER NOT NULL);
+                INSERT INTO DocumentSeriesCursors(SeriesId,DeviceId,IsActive)
+                VALUES($series,$device,1);
+                """;
+            command.Parameters.AddWithValue("$series", Guid.NewGuid().ToString("D"));
+            command.Parameters.AddWithValue("$device", deviceId.ToString("D"));
+            await command.ExecuteNonQueryAsync();
+            await connection.CloseAsync();
+
+            Assert.Equal(
+                deviceId,
+                new PosLocalDeviceIdentityRecovery(path).ReadSingleDeviceId());
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task Enrollment_client_preserves_server_conflict_detail()
+    {
+        using var http = new HttpClient(new EnrollmentConflictHandler())
+        {
+            BaseAddress = new Uri("https://api.example.test/")
+        };
+        var client = new PosEdgeEnrollmentClient(
+            http,
+            new PosEdgeEnrollmentStore(_path + ".enrollment", _secretPath),
+            new PosStartupModeStore(_path + ".startup-mode"),
+            new PosLocalDeviceIdentityRecovery(_path));
+
+        var exception = await Assert.ThrowsAsync<PosEnrollmentServerException>(() =>
+            client.RedeemAsync(new LocalPosEnrollmentRequest(Guid.NewGuid(), "code")));
+
+        Assert.Equal(409, exception.StatusCode);
+        Assert.Equal("PosEnrollmentConflict", exception.Title);
+        Assert.Equal("La organización alcanzó el máximo de cajas enroladas.", exception.Message);
+    }
+
+    [Fact]
     public void Enrollment_package_created_before_offline_leases_still_loads()
     {
         var deviceId = Guid.NewGuid();
@@ -634,8 +691,8 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         await database.OpenAsync();
         await using var command = database.CreateCommand();
         command.CommandText = """
-            SELECT Status FROM PosWorkSessionClosureOutbox
-            WHERE OperationId=$operation;
+            SELECT Status FROM Outbox
+            WHERE DocumentId=$operation AND Type='work-session.closed';
             """;
         command.Parameters.AddWithValue("$operation", operationId.ToString("D"));
         Assert.Contains(
@@ -982,5 +1039,21 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             CancellationToken cancellationToken) =>
             Task.FromException<HttpResponseMessage>(
                 new HttpRequestException("Auraly Server is offline."));
+    }
+
+    private sealed class EnrollmentConflictHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.Conflict)
+            {
+                Content = new StringContent(
+                    """
+                    {"title":"PosEnrollmentConflict","detail":"La organización alcanzó el máximo de cajas enroladas."}
+                    """,
+                    Encoding.UTF8,
+                    "application/problem+json")
+            });
     }
 }

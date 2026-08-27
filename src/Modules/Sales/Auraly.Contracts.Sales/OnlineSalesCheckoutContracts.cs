@@ -3,7 +3,9 @@ namespace Auraly.Contracts.Sales;
 public sealed record OnlineSalesPayment(
     string MethodCode,
     decimal Amount,
-    string? Reference);
+    string? Reference,
+    string? CardFranchiseCode = null,
+    string? ApprovalNumber = null);
 
 public sealed record OnlineSalesCreditTerms(
     decimal Amount,

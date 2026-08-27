@@ -1,0 +1,13 @@
+<Project Sdk="WixToolset.Sdk/6.0.2">
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <Cultures>es-ES</Cultures>
+    <OutputName>Auraly.Pos.Setup</OutputName>
+    <DefineConstants>PayloadDir=$(PayloadDir);ProductVersion=$(ProductVersion)</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="6.0.2" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="6.0.2" />
+  </ItemGroup>
+</Project>

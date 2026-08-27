@@ -3,6 +3,11 @@ namespace Auraly.Contracts.Returns;
 public static class SalesReturnRefundMethods
 {
     public const string Cash = "Cash";
+    public const string Transfer = "Transfer";
+    public const string DebitCard = "DebitCard";
+    public const string CreditCard = "CreditCard";
+    public static readonly IReadOnlySet<string> All = new HashSet<string>(
+        [Cash, Transfer, DebitCard, CreditCard], StringComparer.Ordinal);
 }
 
 public sealed record ReturnableSalesQuery(
@@ -61,7 +66,8 @@ public sealed record ReturnableSaleLine(
     decimal TaxRate,
     decimal UntaxedAmount,
     decimal TaxAmount,
-    decimal LineTotal);
+    decimal LineTotal,
+    string Barcodes);
 
 public sealed record ReturnableSale(
     Guid DocumentId,

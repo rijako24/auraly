@@ -22,7 +22,7 @@ public sealed record LocalCashMovementAcceptance(
     string Status,
     bool IdempotentReplay);
 
-public sealed record PosCashMovementOutboxStatus(
+public sealed record PosCashMovementSynchronizationStatus(
     int PendingCount,
     DateTimeOffset? OldestPendingAt,
     string? LastError);
@@ -36,6 +36,8 @@ public sealed class PosCashMovementStore(
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
+        await PosUnifiedOutboxSchema.EnsureCreatedAsync(
+            connectionString, cancellationToken);
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
@@ -49,18 +51,10 @@ public sealed class PosCashMovementStore(
               UpdatedAt TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS IX_PosCashMovementReasons_Business_Direction
               ON PosCashMovementReasons(BusinessId,Direction,IsActive);
-            CREATE TABLE IF NOT EXISTS PosCashMovementOutbox(
+            CREATE TABLE IF NOT EXISTS PosCashMovements(
               DocumentId TEXT PRIMARY KEY,
               Payload TEXT NOT NULL,
-              Status TEXT NOT NULL,
-              AttemptCount INTEGER NOT NULL DEFAULT 0,
-              CreatedAt TEXT NOT NULL,
-              NextAttemptAt TEXT NULL,
-              LastAttemptAt TEXT NULL,
-              UploadedAt TEXT NULL,
-              LastError TEXT NULL);
-            CREATE INDEX IF NOT EXISTS IX_PosCashMovementOutbox_Pending
-              ON PosCashMovementOutbox(Status,NextAttemptAt,CreatedAt);
+              CreatedAt TEXT NOT NULL);
             """;
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -135,7 +129,7 @@ public sealed class PosCashMovementStore(
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT o.Payload,r.Direction
-            FROM PosCashMovementOutbox o
+            FROM PosCashMovements o
             JOIN PosCashMovementReasons r
               ON r.ReasonId=json_extract(o.Payload,'$.movement.reasonId');
             """;
@@ -154,16 +148,17 @@ public sealed class PosCashMovementStore(
         return total;
     }
 
-    public async Task<PosCashMovementOutboxStatus> ReadOutboxStatusAsync(
+    public async Task<PosCashMovementSynchronizationStatus> ReadOutboxStatusAsync(
         CancellationToken cancellationToken = default)
     {
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT CreatedAt,LastError FROM PosCashMovementOutbox
-            WHERE Status<>'Uploaded' ORDER BY CreatedAt;
+            SELECT CreatedAt,LastError FROM Outbox
+            WHERE Type=$type AND Status<>'Uploaded' ORDER BY CreatedAt;
             """;
+        command.Parameters.AddWithValue("$type", PosOutboxMessageTypes.CashMovement);
         var count = 0;
         DateTimeOffset? oldest = null;
         string? error = null;
@@ -174,7 +169,7 @@ public sealed class PosCashMovementStore(
             oldest ??= DateTimeOffset.Parse(reader.GetString(0));
             if (!reader.IsDBNull(1)) error = reader.GetString(1);
         }
-        return new PosCashMovementOutboxStatus(count, oldest, error);
+        return new PosCashMovementSynchronizationStatus(count, oldest, error);
     }
 
     public async Task<bool> HasPendingForWorkSessionAsync(
@@ -185,8 +180,11 @@ public sealed class PosCashMovementStore(
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Payload FROM PosCashMovementOutbox WHERE Status<>'Uploaded';
+            SELECT Payload FROM Outbox
+            WHERE Type=$type AND Status<>'Uploaded' AND WorkSessionId=$session;
             """;
+        command.Parameters.AddWithValue("$type", PosOutboxMessageTypes.CashMovement);
+        command.Parameters.AddWithValue("$session", workSessionId.ToString("D"));
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
@@ -247,9 +245,8 @@ public sealed class PosCashMovementStore(
         await using var insert = connection.CreateCommand();
         insert.Transaction = transaction;
         insert.CommandText = """
-            INSERT INTO PosCashMovementOutbox(
-              DocumentId,Payload,Status,AttemptCount,CreatedAt)
-            VALUES($id,$payload,'Pending',0,$now)
+            INSERT INTO PosCashMovements(DocumentId,Payload,CreatedAt)
+            VALUES($id,$payload,$now)
             ON CONFLICT(DocumentId) DO NOTHING;
             """;
         insert.Parameters.AddWithValue("$id", request.DocumentId.ToString("D"));
@@ -261,7 +258,7 @@ public sealed class PosCashMovementStore(
             await using var existing = connection.CreateCommand();
             existing.Transaction = transaction;
             existing.CommandText =
-                "SELECT Payload FROM PosCashMovementOutbox WHERE DocumentId=$id;";
+                "SELECT Payload FROM PosCashMovements WHERE DocumentId=$id;";
             existing.Parameters.AddWithValue("$id", request.DocumentId.ToString("D"));
             if (!string.Equals(
                     await existing.ExecuteScalarAsync(cancellationToken) as string,
@@ -269,6 +266,23 @@ public sealed class PosCashMovementStore(
                     StringComparison.Ordinal))
                 throw new InvalidOperationException(
                     "El identificador ya fue usado para otro movimiento.");
+        }
+        await using (var enqueue = connection.CreateCommand())
+        {
+            enqueue.Transaction = transaction;
+            enqueue.CommandText = """
+                INSERT INTO Outbox(
+                  MessageId,DocumentId,WorkSessionId,Type,Payload,Status,
+                  AttemptCount,CreatedAt)
+                VALUES($id,$id,$session,$type,$payload,'Pending',0,$now)
+                ON CONFLICT(DocumentId) DO NOTHING;
+                """;
+            enqueue.Parameters.AddWithValue("$id", request.DocumentId.ToString("D"));
+            enqueue.Parameters.AddWithValue("$session", workSessionId.ToString("D"));
+            enqueue.Parameters.AddWithValue("$type", PosOutboxMessageTypes.CashMovement);
+            enqueue.Parameters.AddWithValue("$payload", payloadJson);
+            enqueue.Parameters.AddWithValue("$now", timeProvider.GetUtcNow().ToString("O"));
+            await enqueue.ExecuteNonQueryAsync(cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
         return new LocalCashMovementAcceptance(
@@ -286,12 +300,22 @@ public sealed class PosCashMovementStore(
         read.Transaction = transaction;
         read.CommandText = """
             SELECT DocumentId,Payload,AttemptCount
-            FROM PosCashMovementOutbox
-            WHERE (Status IN ('Pending','RetryScheduled')
+            FROM Outbox
+            WHERE Type=$type AND ((Status IN ('Pending','RetryScheduled')
                    AND (NextAttemptAt IS NULL OR NextAttemptAt<=$now))
-               OR (Status='Uploading' AND LastAttemptAt<$stale)
+               OR (Status='Uploading' AND LastAttemptAt<$stale))
+              AND NOT EXISTS
+              (
+                SELECT 1 FROM Outbox prior
+                WHERE Outbox.WorkSessionId IS NOT NULL
+                  AND prior.WorkSessionId=Outbox.WorkSessionId
+                  AND prior.Status<>'Uploaded'
+                  AND (prior.CreatedAt<Outbox.CreatedAt OR
+                       (prior.CreatedAt=Outbox.CreatedAt AND prior.MessageId<Outbox.MessageId))
+              )
             ORDER BY CreatedAt LIMIT 1;
             """;
+        read.Parameters.AddWithValue("$type", PosOutboxMessageTypes.CashMovement);
         read.Parameters.AddWithValue("$now", now.ToString("O"));
         read.Parameters.AddWithValue("$stale", now.AddMinutes(-2).ToString("O"));
         await using var reader = await read.ExecuteReaderAsync(cancellationToken);
@@ -305,12 +329,13 @@ public sealed class PosCashMovementStore(
         await using var update = connection.CreateCommand();
         update.Transaction = transaction;
         update.CommandText = """
-            UPDATE PosCashMovementOutbox SET Status='Uploading',
+            UPDATE Outbox SET Status='Uploading',
               AttemptCount=AttemptCount+1,LastAttemptAt=$now
-            WHERE DocumentId=$id;
+            WHERE DocumentId=$id AND Type=$type;
             """;
         update.Parameters.AddWithValue("$now", now.ToString("O"));
         update.Parameters.AddWithValue("$id", item.Item1.ToString("D"));
+        update.Parameters.AddWithValue("$type", PosOutboxMessageTypes.CashMovement);
         await update.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return item;
@@ -337,16 +362,17 @@ public sealed class PosCashMovementStore(
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            UPDATE PosCashMovementOutbox
+            UPDATE Outbox
             SET Status=$status,NextAttemptAt=$next,LastError=$error,
                 UploadedAt=CASE WHEN $status='Uploaded' THEN $now ELSE UploadedAt END
-            WHERE DocumentId=$id;
+            WHERE DocumentId=$id AND Type=$type;
             """;
         command.Parameters.AddWithValue("$status", status);
         command.Parameters.AddWithValue("$next", (object?)next?.ToString("O") ?? DBNull.Value);
         command.Parameters.AddWithValue("$error", (object?)error ?? DBNull.Value);
         command.Parameters.AddWithValue("$now", timeProvider.GetUtcNow().ToString("O"));
         command.Parameters.AddWithValue("$id", documentId.ToString("D"));
+        command.Parameters.AddWithValue("$type", PosOutboxMessageTypes.CashMovement);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 }
@@ -354,7 +380,8 @@ public sealed class PosCashMovementStore(
 public sealed class PosCashMovementServerClient(
     HttpClient http,
     PosDeviceCredentials credentials,
-    PosCashMovementStore store)
+    PosCashMovementStore store,
+    PosSynchronizationEventLog events)
 {
     private static readonly JsonSerializerOptions Json =
         new(JsonSerializerDefaults.Web);
@@ -388,18 +415,28 @@ public sealed class PosCashMovementServerClient(
         {
             using var response = await http.SendAsync(request, cancellationToken);
             if (response.IsSuccessStatusCode)
+            {
                 await store.MarkUploadedAsync(item.Value.DocumentId, cancellationToken);
+                events.Record("Success", "CashMovement", "Movimiento de caja subido",
+                    item.Value.DocumentId.ToString("D"));
+            }
             else
+            {
                 await store.ScheduleRetryAsync(
                     item.Value.DocumentId, item.Value.AttemptCount,
                     "Auraly Server respondio HTTP " + (int)response.StatusCode,
                     cancellationToken);
+                events.Record("Warning", "CashMovement", "Movimiento de caja pendiente",
+                    $"{item.Value.DocumentId:D} · HTTP {(int)response.StatusCode}");
+            }
         }
         catch (HttpRequestException exception)
         {
             await store.ScheduleRetryAsync(
                 item.Value.DocumentId, item.Value.AttemptCount,
                 exception.Message, cancellationToken);
+            events.Record("Warning", "CashMovement", "Movimiento de caja pendiente",
+                $"{item.Value.DocumentId:D} · {exception.Message}");
         }
         return true;
     }

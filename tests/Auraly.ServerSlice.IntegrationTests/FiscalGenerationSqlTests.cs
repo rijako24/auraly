@@ -5,6 +5,7 @@ using System.Text;
 using System.Xml.Linq;
 using Auraly.Application.Fiscal;
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.BuildingBlocks.Infrastructure.Persistence;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
@@ -27,7 +28,8 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         await ChangeMasterNamesAsync();
 
-        var connections = new SqlServerConnectionFactory(fixture.ConnectionString);
+        var connections = new SqlServerConnectionFactory(
+            new AuralySqlConnectionSource(fixture.ConnectionString));
         var store = new SqlFiscalGenerationWorkStore(connections, new TestIds());
         var clock = new FixedTimeProvider(new DateTimeOffset(2026, 7, 29, 15, 0, 0, TimeSpan.Zero));
         var first = CreateWorker(store, clock);
@@ -58,7 +60,8 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         using var response = await client.SendAsync(fixture.CreateUploadMessage(request));
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        var connections = new SqlServerConnectionFactory(fixture.ConnectionString);
+        var connections = new SqlServerConnectionFactory(
+            new AuralySqlConnectionSource(fixture.ConnectionString));
         var ids = new TestIds();
         var generatedAt = new DateTimeOffset(2026, 7, 29, 16, 0, 0, TimeSpan.Zero);
         Assert.True(await CreateWorker(
@@ -201,7 +204,8 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
             await ScalarStringAsync(
                 "SELECT FiscalDocumentType FROM dbo.FiscalDocuments WHERE DocumentId=@DocumentId", returnId));
 
-        var connections = new SqlServerConnectionFactory(fixture.ConnectionString);
+        var connections = new SqlServerConnectionFactory(
+            new AuralySqlConnectionSource(fixture.ConnectionString));
         var ids = new TestIds();
         var generatedAt = new DateTimeOffset(2026, 8, 1, 16, 5, 0, TimeSpan.Zero);
         var generator = CreateWorker(

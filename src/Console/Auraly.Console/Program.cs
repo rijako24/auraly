@@ -28,6 +28,7 @@ using Auraly.Platform.Infrastructure.Configuration;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 
 using Auraly.BuildingBlocks.Infrastructure.Identifiers;
+using Auraly.BuildingBlocks.Infrastructure.Persistence;
 
 using Auraly.Console.Services;
 
@@ -101,6 +102,11 @@ var configuration = new ConfigurationBuilder()
 
     .Build();
 
+var sqlConnectionSource = new AuralySqlConnectionSource(
+    configuration.GetConnectionString("DefaultConnection")
+    ?? throw new InvalidOperationException(
+        "ConnectionStrings:DefaultConnection is required."));
+
 if (args.Length >= 2 && args[0].Equals("rebuild-product-index", StringComparison.OrdinalIgnoreCase))
 {
     var dryRun = args.Any(arg => arg.Equals("--dry-run", StringComparison.OrdinalIgnoreCase));
@@ -113,7 +119,7 @@ if (args.Length >= 2 && args[0].Equals("rebuild-product-index", StringComparison
 
     var maintenanceServices = new ServiceCollection();
     maintenanceServices.AddDbContext<ApplicationDbContext>(options =>
-        options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
+        options.UseSqlServer(sqlConnectionSource.ConnectionString));
     maintenanceServices.AddScoped<IUnitOfWork, UnitOfWork>();
     maintenanceServices.AddScoped<IProductSearchIndexMaintenanceService, ProductSearchIndexMaintenanceService>();
 
@@ -189,7 +195,7 @@ if (args is ["backfill-customer-memory"])
 
     backfillServices.AddDbContext<ApplicationDbContext>(options =>
 
-        options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
+        options.UseSqlServer(sqlConnectionSource.ConnectionString));
 
     backfillServices.AddMemoryCache();
 
@@ -245,7 +251,7 @@ services.AddLogging(builder =>
 
 services.AddDbContext<ApplicationDbContext>(options =>
 
-    options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
+    options.UseSqlServer(sqlConnectionSource.ConnectionString));
 
 // Core Repositories
 

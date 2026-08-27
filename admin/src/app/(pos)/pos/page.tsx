@@ -94,6 +94,7 @@ import {
 } from "./pos-payment-settlement";
 import { PosProductSearchDialog } from "./pos-product-search-dialog";
 import { PosSupervisorApprovalDialog } from "./pos-supervisor-approval-dialog";
+import { PosSynchronizationEventsDialog } from "./pos-synchronization-events-dialog";
 import {
   posApprovalClient,
   type PosApprovalRequest,
@@ -103,6 +104,7 @@ import { calculateRetailUnitPrice } from "./pos-retail-price";
 import { canRequestOrderSave } from "./pos-order-save-availability";
 import { capturedLineAfterAddition } from "./pos-capture-presentation";
 import { capturePosFunctionShortcut } from "./pos-function-shortcut";
+import { parsePosBarcodeCapture } from "./pos-barcode-capture";
 import { useAuthStore } from "@/stores/auth-store";
 
 
@@ -196,6 +198,8 @@ export default function PosPage() {
   const [draft, setDraft] = useState<PosDraft | null>(null);
   const [temporaries, setTemporaries] = useState<PosDraft[]>([]);
   const [scan, setScan] = useState("");
+  const [scanRejected, setScanRejected] = useState(false);
+  const [inventoryNotice, setInventoryNotice] = useState<string | null>(null);
   const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [edgeReady, setEdgeReady] = useState(false);
@@ -220,6 +224,7 @@ export default function PosPage() {
     fiscalReady: false,
   });
   const [returnsOpen, setReturnsOpen] = useState(false);
+  const [synchronizationEventsOpen, setSynchronizationEventsOpen] = useState(false);
   const [message, setMessage] = useState("Esperando producto");
   const [error, setError] = useState<string | null>(null);
   const [temporaryOpen, setTemporaryOpen] = useState(false);
@@ -403,10 +408,10 @@ export default function PosPage() {
               });
             }
 
-            if (!requiresEnrollment && health.identityReady) {
+            if (!requiresEnrollment) {
               if (active) {
                 setEdgeLoginState(
-                  health.status === "IdentitySynchronizing" || health.status === "Synchronizing"
+                  !health.identityReady || health.status === "IdentitySynchronizing" || health.status === "Synchronizing"
                     ? "preparing"
                     : health.status === "LoginRequired"
                       ? "required"
@@ -510,6 +515,33 @@ export default function PosPage() {
             deviceId: health.deviceId ?? null,
             fiscalReady: health.fiscalReady,
           });
+        }
+        if (
+          client instanceof PosEdgeClient &&
+          health.status === "LoginRequired" &&
+          window.sessionStorage.getItem("auraly.pos.complete-enrollment") === "1"
+        ) {
+          try {
+            const session = await client.completeEnrollment();
+            window.sessionStorage.removeItem("auraly.pos.complete-enrollment");
+            if (active) {
+              setWorkstation((current) => ({
+                ...current,
+                userDisplayName: session.displayName,
+                userId: session.userId,
+              }));
+              setEdgePermissions(session.permissions);
+              setEdgeLoginState(null);
+              setEdgeReady(true);
+            }
+            return;
+          } catch (caught) {
+            if (caught instanceof PosEdgeError && caught.status === 409) return;
+            window.sessionStorage.removeItem("auraly.pos.complete-enrollment");
+            if (active) setEdgeLoginError(caught instanceof Error
+              ? caught.message
+              : "No fue posible abrir la sesión local inicial.");
+          }
         }
         if (
           client.mode === "edge" &&
@@ -758,6 +790,8 @@ export default function PosPage() {
 
   const canOpenCashDrawer = (client?.mode === "edge" ? edgePermissions : permissions)
     .includes("work-sessions.cash.drawer.open");
+  const canReadSynchronizationEvents = (client?.mode === "edge" ? edgePermissions : permissions)
+    .includes("pos.synchronization.events.read");
 
   const openCashDrawer = useCallback(async () => {
     if (!client || busy || !workstation.workSessionId) return;
@@ -928,14 +962,35 @@ export default function PosPage() {
     return () => window.removeEventListener("keydown", handleShortcut, true);
   }, []);
 
+  useEffect(() => {
+    const openSynchronizationEvents = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || event.altKey || event.shiftKey || event.key.toLowerCase() !== "l") return;
+      if (!canReadSynchronizationEvents || !client) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setSynchronizationEventsOpen(true);
+    };
+    window.addEventListener("keydown", openSynchronizationEvents, true);
+    return () => window.removeEventListener("keydown", openSynchronizationEvents, true);
+  }, [canReadSynchronizationEvents, client]);
+
   async function capture(event: FormEvent) {
     event.preventDefault();
     const value = scan.trim();
     if (value) setScan("");
-    await captureValue(value);
+    const parsed = parsePosBarcodeCapture(value);
+    if (!parsed.valid) {
+      setError(parsed.message);
+      setMessage("Revisa la captura");
+      setScanRejected(true);
+      window.setTimeout(() => setScanRejected(false), 1200);
+      focusScanner();
+      return;
+    }
+    await captureValue(parsed.code, parsed.quantity);
   }
 
-  async function captureValue(value: string): Promise<boolean> {
+  async function captureValue(value: string, requestedQuantity = 1): Promise<boolean> {
     if (!client || !value || busy) return false;
     if (!salesReady) {
       setError(
@@ -953,7 +1008,7 @@ export default function PosPage() {
         product.productCode.localeCompare(value, undefined, { sensitivity: "accent" }) === 0 ||
         product.reference?.localeCompare(value, undefined, { sensitivity: "accent" }) === 0);
       if (exact?.isWeighable) {
-        const added = await captureSelectedProduct(exact);
+        const added = await captureSelectedProduct(exact, requestedQuantity);
         if (added) setScan("");
         return added;
       }
@@ -969,16 +1024,45 @@ export default function PosPage() {
       const result = await client.capture(value, draft?.customerId ?? null);
       if (result.status === "Added" && result.draft) {
         const capturedLine = capturedLineAfterAddition(draft?.lines ?? [], result.draft.lines);
-        setDraft(result.draft);
+        let confirmedDraft = result.draft;
+        if (capturedLine && requestedQuantity !== 1) {
+          const changed = await client.changeQuantity(result.draft.draftId.value, capturedLine.lineId, requestedQuantity);
+          if (changed.status !== "Added" || !changed.draft) {
+            const failure = describeCaptureFailure(changed);
+            try {
+              const rolledBack = await client.removeLine(
+                result.draft.draftId.value,
+                capturedLine.lineId,
+              );
+              setDraft(rolledBack);
+            } catch {
+              setDraft(result.draft);
+              setError("No fue posible revertir la línea después de rechazar la cantidad. Revisa la venta antes de cobrar.");
+              setMessage("Revisión manual requerida");
+              return false;
+            }
+            if (failure) {
+              setError(failure.error);
+              setMessage(failure.message);
+              if (changed.status === "InsufficientInventory") setInventoryNotice(failure.error);
+            }
+            return false;
+          }
+          confirmedDraft = changed.draft;
+        }
+        setDraft(confirmedDraft);
         quantityToFocus = capturedLine?.lineId ?? null;
         setSelectedLineId(quantityToFocus);
         revealLine(quantityToFocus);
-        setMessage(`${capturedLine?.description ?? "Producto"} agregado`);
+        setMessage(`${capturedLine?.description ?? "Producto"} agregado · cantidad ${requestedQuantity.toLocaleString("es-CO")}`);
         if (startsNewSale) setLastSettlement(null);
         setScan("");
         return true;
       }
       if (result.status === "NotFound") {
+        setScan("");
+        setScanRejected(true);
+        window.setTimeout(() => setScanRejected(false), 1200);
         setError(`No se encontró el producto “${value}”.`);
         setMessage("Producto no encontrado");
       } else {
@@ -986,6 +1070,7 @@ export default function PosPage() {
         if (failure) {
           setError(failure.error);
           setMessage(failure.message);
+          if (result.status === "InsufficientInventory") setInventoryNotice(failure.error);
         }
       }
       return false;
@@ -1023,6 +1108,7 @@ export default function PosPage() {
         if (failure) {
           setError(failure.error);
           setMessage(failure.message);
+          if (result.status === "InsufficientInventory") setInventoryNotice(failure.error);
         }
       }
     } catch (caught) {
@@ -1779,6 +1865,7 @@ export default function PosPage() {
 
   async function captureSelectedProduct(
     product: PosCatalogProduct,
+    requestedQuantity?: number,
   ): Promise<boolean> {
     if (!client || busy) return false;
     setBusy(true);
@@ -1787,7 +1874,7 @@ export default function PosPage() {
     try {
       let scaleWeight: number | null = null;
       let manualWeight = false;
-      if (product.isWeighable) {
+      if (product.isWeighable && requestedQuantity === undefined) {
         try {
           scaleWeight = (await client.readScaleWeight()).weight;
         } catch (caught) {
@@ -1813,16 +1900,28 @@ export default function PosPage() {
       }
       let confirmedDraft = result.draft;
       const addedLine = capturedLineAfterAddition(linesBeforeCapture, confirmedDraft.lines);
-      if (addedLine && scaleWeight !== null) {
-        const targetQuantity = Math.max(0.001, addedLine.quantity - 1 + scaleWeight);
+      const explicitQuantity = requestedQuantity ?? scaleWeight;
+      if (addedLine && explicitQuantity !== null && explicitQuantity !== undefined) {
+        const targetQuantity = Math.max(0.001, explicitQuantity);
         const changed = await client.changeQuantity(confirmedDraft.draftId.value, addedLine.lineId, targetQuantity);
-        if (changed.draft) confirmedDraft = changed.draft;
+        if (changed.status !== "Added" || !changed.draft) {
+          const failure = describeCaptureFailure(changed);
+          if (failure) {
+            setError(failure.error);
+            setMessage(failure.message);
+            if (changed.status === "InsufficientInventory") setInventoryNotice(failure.error);
+          }
+          return false;
+        }
+        confirmedDraft = changed.draft;
       }
       setDraft(confirmedDraft);
       quantityToFocus = addedLine?.lineId ?? null;
       setSelectedLineId(quantityToFocus);
       revealLine(quantityToFocus);
-      setMessage(scaleWeight !== null
+      setMessage(requestedQuantity !== undefined
+        ? `${product.name} agregado · cantidad ${requestedQuantity.toLocaleString("es-CO")}`
+        : scaleWeight !== null
         ? `${product.name}: ${scaleWeight.toLocaleString("es-CO",{maximumFractionDigits:3})} kg leídos de la balanza`
         : `${product.name} agregado${manualWeight ? "; escribe el peso" : ""}`);
       if (startsNewSale) setLastSettlement(null);
@@ -1956,11 +2055,13 @@ export default function PosPage() {
         authorization,
       );
       setSetupNotice("Guardando la identidad segura de la caja…");
+      window.sessionStorage.setItem("auraly.pos.complete-enrollment", "1");
       await redeemPosEnrollment(edgeEnrollmentToken, enrollment);
       setSetupNotice("Reiniciando el servicio local y preparando usuarios, permisos y catálogo…");
       await waitForRedeemedPosEdge(edgeEnrollmentToken);
       window.location.reload();
     } catch (caught) {
+      window.sessionStorage.removeItem("auraly.pos.complete-enrollment");
       const message = caught instanceof Error
         ? caught.message
         : "No fue posible enrolar esta estación.";
@@ -2007,7 +2108,7 @@ export default function PosPage() {
     const launchToken = edgeEnrollmentToken ?? readEdgeTokenFromLaunch();
     if (!launchToken) {
       const message =
-        "Auraly POS perdió la conexión segura con el servicio local. Cierra y vuelve a abrir la aplicación.";
+        "Auraly perdió la conexión segura con el servicio local. Cierra y vuelve a abrir la aplicación.";
       setEdgeLoginError(message);
       throw new Error(message);
     }
@@ -2144,7 +2245,7 @@ function changeOnlineWorkspace() {
         catalogReady={initialDownload.catalogReady}
         error={edgeLoginError ?? (
           edgeLoginState === "preparing" && synchronization.failed
-            ? "No pudimos descargar los datos iniciales. Verifica internet e informa al supervisor si continúa. Auraly POS reintentará automáticamente."
+            ? "No pudimos descargar los datos iniciales. Verifica internet e informa al supervisor si continúa. Auraly reintentará automáticamente."
             : null
         )}
         onLogin={loginLocal}
@@ -2263,24 +2364,12 @@ edgeCapable={edgeEnrollmentRequired}
               type="button"
               onClick={changeOnlineWorkspace}
               disabled={busy}
-              title="Cambiar sede de venta"
+              title="Configuración del punto de venta"
               className="flex h-8 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-xs font-semibold text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
-              aria-label="Cambiar sede de venta"
+              aria-label="Configuración del punto de venta"
             >
               <Settings2 className="h-4 w-4" />
-              <span className="hidden lg:inline">Cambiar sede de venta</span>
-            </button>
-          )}
-          {client.mode === "online" && edgeEnrollmentToken && (
-            <button
-              type="button"
-              onClick={() => void prepareOfflineMode()}
-              disabled={busy}
-              title={localEnrollmentRequired?"Preparar este equipo para trabajar sin conexión":"Cambiar al modo de trabajo sin conexión"}
-              className="flex h-8 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-xs font-semibold text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
-            >
-              <WifiOff className="h-4 w-4" />
-              <span className="hidden lg:inline">{localEnrollmentRequired?"Activar modo sin conexión":"Trabajar desconectado"}</span>
+              <span className="hidden lg:inline">Configuración</span>
             </button>
           )}
           {client.mode === "edge" && (
@@ -2375,7 +2464,7 @@ edgeCapable={edgeEnrollmentRequired}
         <div className="flex min-w-0 flex-col gap-3 xl:min-h-0">
           <form
             onSubmit={capture}
-            className="rounded-2xl border border-teal-900/10 bg-white p-3 shadow-sm"
+            className={`rounded-2xl border bg-white p-3 shadow-sm transition-all duration-200 ${scanRejected ? "border-red-500 bg-red-50 shadow-lg shadow-red-200 ring-4 ring-red-300/60" : "border-teal-900/10"}`}
           >
             <label
               htmlFor="pos-scanner"
@@ -2408,7 +2497,7 @@ edgeCapable={edgeEnrollmentRequired}
                 disabled={busy || !salesReady}
                 autoComplete="off"
                 inputMode="text"
-                className="h-14 min-w-0 flex-1 rounded-xl border-2 border-teal-700/25 bg-slate-50 px-4 text-xl font-semibold tracking-wide outline-none transition focus:border-teal-600 focus:bg-white focus:ring-4 focus:ring-teal-600/10 disabled:opacity-50"
+                className={`h-14 min-w-0 flex-1 rounded-xl border-2 px-4 text-xl font-semibold tracking-wide outline-none transition focus:bg-white focus:ring-4 disabled:opacity-50 ${scanRejected ? "animate-pulse border-red-600 bg-red-100 text-red-900 focus:border-red-600 focus:ring-red-500/20" : "border-teal-700/25 bg-slate-50 focus:border-teal-600 focus:ring-teal-600/10"}`}
                 placeholder="Código de barras, interno o referencia"
                 aria-describedby="capture-state"
               />
@@ -2766,6 +2855,7 @@ edgeCapable={edgeEnrollmentRequired}
               role="status"
               aria-live="assertive"
             >
+              <button type="button" onClick={() => { setLastSettlement(null); focusScanner(); }} aria-label="Cerrar aviso de cambio" className="absolute right-3 top-3 z-10 grid h-9 w-9 place-items-center rounded-full border border-emerald-700/20 bg-white/80 text-emerald-900 shadow-sm hover:bg-white"><X className="h-5 w-5"/></button>
               <div className="absolute -right-12 -top-12 h-40 w-40 rounded-full bg-emerald-200/45" />
               <div className="relative flex h-full w-full flex-col justify-between">
                 <div className="flex items-center gap-3">
@@ -2921,7 +3011,7 @@ edgeCapable={edgeEnrollmentRequired}
           <header className="flex h-16 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-700">
-                Auraly Commerce
+                Auraly
               </p>
               <h2 className="text-xl font-bold text-slate-950">Pedidos por facturar</h2>
             </div>
@@ -2962,13 +3052,13 @@ edgeCapable={edgeEnrollmentRequired}
       {returnsOpen && client?.mode === "online" && serverConnected && (
         <div className="fixed inset-0 z-50 flex flex-col bg-slate-50">
           <header className="flex h-16 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6">
-            <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-700">Auraly Commerce</p><h2 className="text-xl font-bold text-slate-950">Devoluciones de venta</h2></div>
+            <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-700">Auraly</p><h2 className="text-xl font-bold text-slate-950">Devoluciones de venta</h2></div>
             <button type="button" onClick={() => { setReturnsOpen(false); focusScanner(); }}
               className="grid h-11 w-11 place-items-center rounded-xl border border-slate-200 text-slate-600 transition hover:bg-slate-100"
               aria-label="Cerrar devoluciones"><X className="h-5 w-5" /></button>
           </header>
           <main className="min-h-0 flex-1 overflow-auto p-5">
-            <SalesReturnWorkspace embedded />
+            <SalesReturnWorkspace embedded onCashRefundConfirmed={openCashDrawer} />
           </main>
         </div>
       )}
@@ -3161,6 +3251,19 @@ edgeCapable={edgeEnrollmentRequired}
             setConfirmation(null);
             focusScanner();
           }}
+        />
+      )}
+      {synchronizationEventsOpen && client && canReadSynchronizationEvents && <PosSynchronizationEventsDialog open client={client} connected={serverConnected} pendingCount={synchronization.pendingCount} inProgress={synchronization.inProgress} lastAt={synchronization.lastAt} onClose={() => { setSynchronizationEventsOpen(false); focusScanner(); }} />}
+
+      {inventoryNotice && (
+        <PosConfirmDialog
+          title="Producto sin existencias"
+          description={`${inventoryNotice} El producto no fue agregado a la venta; confirma antes de continuar para evitar entregarlo por error.`}
+          confirmLabel="Entendido"
+          tone="primary"
+          busy={false}
+          onConfirm={async () => { setInventoryNotice(null); focusScanner(); }}
+          onCancel={() => { setInventoryNotice(null); focusScanner(); }}
         />
       )}
 

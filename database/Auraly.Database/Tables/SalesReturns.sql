@@ -13,6 +13,7 @@ CREATE TABLE [dbo].[SalesReturns]
     [IdempotencyKey] NVARCHAR(160) NOT NULL,
     [PayloadHash] BINARY(32) NOT NULL,
     [ReturnedAt] DATETIMEOFFSET(7) NOT NULL,
+    [ReturnScopeCode] NVARCHAR(24) NOT NULL CONSTRAINT [DF_SalesReturns_ReturnScopeCode] DEFAULT(N'Partial'),
     [EconomicResolution] NVARCHAR(24) NOT NULL,
     [RefundMethodCode] NVARCHAR(32) NULL,
     [OriginalPaymentNumber] INT NULL,
@@ -44,10 +45,12 @@ CREATE TABLE [dbo].[SalesReturns]
     CONSTRAINT [UQ_SalesReturns_Business_Idempotency] UNIQUE ([BusinessId],[IdempotencyKey]),
     CONSTRAINT [UQ_SalesReturns_Number] UNIQUE ([BusinessId],[DocumentPrefix],[DocumentSeriesCode],[DocumentConsecutive]),
     CONSTRAINT [CK_SalesReturns_Resolution] CHECK
-      (([EconomicResolution]=N'Refund' AND [RefundMethodCode]=N'Cash'
-          AND [OriginalPaymentNumber] IS NOT NULL AND [WorkSessionId] IS NOT NULL) OR
+      (([EconomicResolution]=N'Refund' AND [RefundMethodCode] IN(N'Cash',N'Transfer',N'DebitCard',N'CreditCard')
+          AND [OriginalPaymentNumber] IS NOT NULL
+          AND (([RefundMethodCode]=N'Cash' AND [WorkSessionId] IS NOT NULL) OR ([RefundMethodCode]<>N'Cash' AND [WorkSessionId] IS NULL))) OR
        ([EconomicResolution]=N'CustomerCredit' AND [RefundMethodCode] IS NULL
           AND [OriginalPaymentNumber] IS NULL)),
+    CONSTRAINT [CK_SalesReturns_ReturnScope] CHECK ([ReturnScopeCode] IN(N'FullCancellation',N'Partial')),
     CONSTRAINT [CK_SalesReturns_Correction] CHECK ([CorrectionCode]=N'1'),
     CONSTRAINT [CK_SalesReturns_Amounts] CHECK
       ([UntaxedAmount]>=0 AND [TaxAmount]>=0 AND [TotalAmount]>0),
@@ -117,7 +120,7 @@ CREATE TABLE [dbo].[SalesReturnSettlements]
     CONSTRAINT [FK_SalesReturnSettlements_OriginalPayment] FOREIGN KEY ([OriginalDocumentId],[OriginalPaymentNumber])
       REFERENCES [dbo].[SalesPayments] ([DocumentId],[PaymentNumber]),
     CONSTRAINT [CK_SalesReturnSettlements_Type] CHECK
-      (([SettlementType]=N'Refund' AND [MethodCode]=N'Cash' AND [OriginalPaymentNumber] IS NOT NULL) OR
+      (([SettlementType]=N'Refund' AND [MethodCode] IN(N'Cash',N'Transfer',N'DebitCard',N'CreditCard') AND [OriginalPaymentNumber] IS NOT NULL) OR
        ([SettlementType]=N'CustomerCredit' AND [MethodCode] IS NULL AND [OriginalPaymentNumber] IS NULL)),
     CONSTRAINT [CK_SalesReturnSettlements_Amount] CHECK ([Amount]>0)
 );

@@ -1,12 +1,21 @@
 # Rebanada vertical de cuentas por cobrar
 
 Fecha: 2026-08-03
+Prevalencia: la distribución vigente de efectos se rige por
+`../decision-cuatro-motores-operacion-contabilidad-fiscal-reporting.md`.
 
 ## Decisión
 
-La cuenta por cobrar nace únicamente cuando el motor procesa una venta a crédito verificada. El crédito no se representa como un medio de pago ficticio: la suma de pagos reales más el valor financiado debe ser igual al total de la venta.
+La cuenta por cobrar nace únicamente cuando el motor contable procesa la fuente
+durable de una venta a crédito verificada. El crédito no se representa como un
+medio de pago ficticio: la suma de pagos reales más el valor financiado debe ser
+igual al total de la venta.
 
-El recaudo es otro documento durable (`ReceivablePayment`). Se acepta con idempotencia, se ordena en `DocumentProcessingJobs` y el motor aplica, en una sola transacción, el pago, sus asignaciones, el saldo de la obligación, el movimiento de la sesión de trabajo cuando exista, el asiento contable y el evento de salida.
+El recaudo es un documento financiero durable (`ReceivablePayment`). Su aceptación
+crea `AccountingSourceDocuments` y `AccountingPostingJobs`; no entra en
+`DocumentProcessingJobs`. El único `SqlAccountingPostingProcessor` aplica en una
+transacción el pago, asignaciones, saldo de la obligación, movimiento financiero
+de la sesión, asiento y evento de salida.
 
 ## Modelo
 
@@ -22,11 +31,11 @@ Las tablas pertenecen al `BusinessId`; el `TenantId` se valida mediante la relac
 
 1. La venta online recibe pagos reales y, opcionalmente, términos de crédito.
 2. La captura valida cliente, vencimiento, perfil y cupo.
-3. El motor procesa la venta exactamente una vez.
-4. En la misma transacción crea la obligación, el movimiento inicial y el asiento de cartera.
+3. El motor operacional procesa inventario/costo y publica una señal contable exactamente una vez.
+4. El motor contable crea en su transacción la obligación, el movimiento inicial y el asiento de cartera.
 5. La API permite consultar cartera paginada y registrar un recaudo con llave de idempotencia.
-6. El recaudo se serializa como documento y entra al mismo motor ordenado por negocio.
-7. El procesador aplica abonos sin permitir sobrepago, actualiza estado y contabiliza caja/banco contra cartera.
+6. El recaudo crea directamente su fuente y trabajo contables durables.
+7. El procesador contable canónico aplica abonos sin permitir sobrepago, actualiza estado y contabiliza caja/banco contra cartera.
 8. La vista administrativa consulta el libro real y registra abonos; no calcula saldos en el navegador.
 
 ## Concurrencia e idempotencia

@@ -49,7 +49,9 @@ public sealed record PosSalePaymentContract(
     int PaymentNumber,
     string MethodCode,
     decimal Amount,
-    string? Reference);
+    string? Reference,
+    string? CardFranchiseCode = null,
+    string? ApprovalNumber = null);
 
 public sealed record PosSaleDocumentNumberContract(
     Guid SeriesId,

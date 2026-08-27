@@ -10,7 +10,8 @@ internal sealed record DesktopConfiguration(
     string ApiUrl,
     string Version = "0.0.0-dev",
     int WebPort = 47830,
-    int EdgePort = 47831);
+    int EdgePort = 47831,
+    string PublisherCertificateThumbprint = "");
 
 internal static class Program
 {
@@ -33,9 +34,16 @@ internal static class Program
         try
         {
             ApplicationConfiguration.Initialize();
+            var configuration = LoadConfiguration(AppContext.BaseDirectory);
+            var dataDirectory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Auraly",
+                "PosEdge");
+            if (AuralyPendingUpdateStore.TryStartAtStartup(dataDirectory, configuration))
+                return;
             using var context = new AuralyDesktopApplicationContext(
                 AppContext.BaseDirectory,
-                LoadConfiguration(AppContext.BaseDirectory),
+                configuration,
                 Shutdown);
             Application.Run(context);
         }
@@ -62,7 +70,10 @@ internal static class Program
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
         if (value is null ||
             !Uri.TryCreate(value.ApiUrl, UriKind.Absolute, out _) ||
-            !AuralyReleaseVersion.TryParse(value.Version, out _))
+            !AuralyReleaseVersion.TryParse(value.Version, out _) ||
+            (!string.IsNullOrWhiteSpace(value.PublisherCertificateThumbprint) &&
+             (value.PublisherCertificateThumbprint.Length != 40 ||
+              !value.PublisherCertificateThumbprint.All(Uri.IsHexDigit))))
         {
             throw new InvalidOperationException(
                 "desktopsettings.json must contain a valid ApiUrl and Version.");
@@ -255,14 +266,4 @@ internal static class Program
         Children.Clear();
     }
 
-    private static void ShowError(string message)
-    {
-        _ = Process.Start(new ProcessStartInfo(
-            "powershell.exe",
-            $"-NoProfile -WindowStyle Hidden -Command \"Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('{message.Replace("'", "''")}', 'Auraly')\"")
-        {
-            CreateNoWindow = true,
-            UseShellExecute = false
-        });
-    }
 }

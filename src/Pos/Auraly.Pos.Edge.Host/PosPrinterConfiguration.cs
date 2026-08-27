@@ -28,6 +28,8 @@ public static class PrintTemplateFormats
 {
     public const string Receipt = "Receipt";
     public const string HalfLetter = "HalfLetter";
+    public const string HalfLegal = "HalfLegal";
+    public const string Letter = "Letter";
 }
 
 public static class WindowsPrinterOutput
@@ -172,7 +174,8 @@ public sealed class PosPrinterConfigurationStore(
             throw new ArgumentException("La caja debe imprimir los pedidos directamente.");
         if (!IsWorkflowFormat(requested.PosOutputFormat) ||
             !IsWorkflowFormat(requested.OrdersOutputFormat))
-            throw new ArgumentException("El formato debe ser tirilla o media carta.");
+            throw new ArgumentException(
+                "El formato debe ser tirilla, media carta, media oficio o carta.");
         var routes = NormalizeRoutes(requested.TemplateRoutes, receipt, letter);
         var scale = ValidateScale(requested.Scale);
         var posPrinter = Clean(requested.PosPrinterName) ?? PrinterForFormat(routes, requested.PosOutputFormat);
@@ -225,7 +228,10 @@ public sealed class PosPrinterConfigurationStore(
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private static bool IsWorkflowFormat(string? value) =>
-        value is PrintTemplateFormats.Receipt or PrintTemplateFormats.HalfLetter;
+        value is PrintTemplateFormats.Receipt or
+            PrintTemplateFormats.HalfLetter or
+            PrintTemplateFormats.HalfLegal or
+            PrintTemplateFormats.Letter;
 
     private static string? PrinterForFormat(
         IReadOnlyList<PrintTemplateRoute> routes, string format) =>
@@ -253,7 +259,11 @@ public sealed class PosPrinterConfigurationStore(
         ("SalesInvoice", PrintTemplateFormats.Receipt),
         ("SalesReceipt", PrintTemplateFormats.Receipt),
         ("SalesInvoice", PrintTemplateFormats.HalfLetter),
-        ("SalesReceipt", PrintTemplateFormats.HalfLetter)
+        ("SalesReceipt", PrintTemplateFormats.HalfLetter),
+        ("SalesInvoice", PrintTemplateFormats.HalfLegal),
+        ("SalesReceipt", PrintTemplateFormats.HalfLegal),
+        ("SalesInvoice", PrintTemplateFormats.Letter),
+        ("SalesReceipt", PrintTemplateFormats.Letter)
     ];
 }
 
@@ -280,21 +290,36 @@ public sealed class ConfigurableOrderDocumentPrinter(
     public async Task PrintAsync(
         IReadOnlyCollection<Auraly.Contracts.Sales.OnlineSalesReceipt> receipts,
         string? workflowPrinterName = null,
+        string? outputFormat = null,
         CancellationToken cancellationToken = default)
     {
         if (receipts.Count == 0) return;
         var configuration = settings.Load();
-        var directory = Path.Combine(settings.ReceiptOutputDirectory, "media-carta");
+        var format = outputFormat ?? configuration.OrdersOutputFormat;
+        if (format == PrintTemplateFormats.Receipt)
+            throw new ArgumentException(
+                "La impresora de documentos requiere un formato de hoja.",
+                nameof(outputFormat));
+        var directory = Path.Combine(
+            settings.ReceiptOutputDirectory,
+            format switch
+            {
+                PrintTemplateFormats.HalfLetter => "media-carta",
+                PrintTemplateFormats.HalfLegal => "media-oficio",
+                PrintTemplateFormats.Letter => "carta",
+                _ => throw new ArgumentOutOfRangeException(
+                    nameof(outputFormat), "El formato de hoja no es válido.")
+            });
         Directory.CreateDirectory(directory);
         var batches = configuration.OrderMode == OrderPrinterModes.WindowsPrint
             ? receipts.GroupBy(receipt => workflowPrinterName ?? configuration.PrinterFor(
-                receipt.DocumentType, PrintTemplateFormats.HalfLetter))
+                receipt.DocumentType, format))
             : receipts.GroupBy(_ => (string?)null);
         foreach (var batch in batches)
         {
-            var target = Path.Combine(directory, $"media-carta-{Guid.NewGuid():N}.html");
+            var target = Path.Combine(directory, $"{format}-{Guid.NewGuid():N}.html");
             await File.WriteAllTextAsync(
-                target, renderer.Render(batch.ToArray()),
+                target, renderer.Render(batch.ToArray(), format),
                 new System.Text.UTF8Encoding(false), cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (!OperatingSystem.IsWindows())
@@ -317,6 +342,7 @@ public sealed class ConfigurableOrderDocumentPrinter(
     public Task PrintAsync(
         PosReceipt receipt,
         string? workflowPrinterName = null,
+        string outputFormat = PrintTemplateFormats.HalfLetter,
         CancellationToken cancellationToken = default) =>
         PrintAsync(
         [
@@ -334,7 +360,8 @@ public sealed class ConfigurableOrderDocumentPrinter(
                         line.TaxCode, line.TaxRate)).ToArray(),
                 receipt.Payments.Select(payment =>
                     new Auraly.Contracts.Sales.OnlineSalesPayment(
-                        payment.MethodCode, payment.Amount, payment.Reference)).ToArray(),
+                        payment.MethodCode, payment.Amount, payment.Reference,
+                        payment.CardFranchiseCode, payment.ApprovalNumber)).ToArray(),
                 receipt.UntaxedAmount,
                 receipt.TaxAmount,
                 receipt.PayableAmount,
@@ -344,7 +371,7 @@ public sealed class ConfigurableOrderDocumentPrinter(
                 receipt.CustomerIdentification,
                 receipt.CompanyName,
                 receipt.CompanyLogoSource)
-        ], workflowPrinterName, cancellationToken);
+        ], workflowPrinterName, outputFormat, cancellationToken);
 }
 
 public sealed class ConfigurablePosReceiptPrinter(
@@ -362,8 +389,12 @@ public sealed class ConfigurablePosReceiptPrinter(
         CancellationToken cancellationToken = default)
     {
         var configuration = settings.Load();
-        if (configuration.PosOutputFormat == PrintTemplateFormats.HalfLetter)
-            return halfLetter.PrintAsync(receipt, configuration.PosPrinterName, cancellationToken);
+        if (configuration.PosOutputFormat != PrintTemplateFormats.Receipt)
+            return halfLetter.PrintAsync(
+                receipt,
+                configuration.PosPrinterName,
+                configuration.PosOutputFormat,
+                cancellationToken);
         return PrintReceiptAsync(receipt, cancellationToken);
     }
 
@@ -453,7 +484,8 @@ public sealed class ConfigurablePosReceiptPrinter(
                     line.UnitPrice, line.Discount, line.Tax, line.Total,
                     line.TaxCode, line.TaxRate)).ToArray(),
                 receipt.Payments.Select(payment => new OfflineSalePayment(
-                    payment.MethodCode, payment.Amount, payment.Reference)).ToArray(),
+                    payment.MethodCode, payment.Amount, payment.Reference,
+                    payment.CardFranchiseCode, payment.ApprovalNumber)).ToArray(),
                 receipt.UntaxedAmount,
                 receipt.TaxAmount,
                 receipt.PayableAmount,

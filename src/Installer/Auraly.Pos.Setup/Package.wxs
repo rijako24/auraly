@@ -1,0 +1,84 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package Name="Auraly"
+           Manufacturer="Auraly"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="0D28C064-E82F-4A6B-90C1-F0B561B29818"
+           Scope="perMachine"
+           Language="3082"
+           Codepage="65001"
+           Compressed="yes">
+    <SummaryInformation Description="Instalador de Auraly" />
+    <MajorUpgrade DowngradeErrorMessage="Ya hay una versión más reciente de Auraly instalada." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="AuralyIcon.ico" SourceFile="..\..\Desktop\Auraly.Desktop\Assets\Auraly.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AuralyIcon.ico" />
+    <Property Id="AURALY_RELAUNCH" Secure="yes" />
+
+    <util:CloseApplication Target="Auraly.Desktop.exe"
+                           Description="Auraly debe cerrarse para completar la actualización."
+                           CloseMessage="yes"
+                           EndSessionMessage="yes"
+                           Timeout="15"
+                           TerminateProcess="0"
+                           RebootPrompt="no" />
+    <util:RestartResource ProcessName="Auraly.Desktop" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Auraly">
+        <Component Id="AuralyDesktopComponent" Guid="93F46322-A42D-43CD-899B-A16DA1C6140A">
+          <File Id="AuralyDesktopExe"
+                Source="$(var.PayloadDir)\Auraly.Desktop.exe"
+                KeyPath="yes">
+            <Shortcut Id="AuralyPosDesktopShortcut"
+                      Directory="DesktopFolder"
+                      Name="Auraly"
+                      Description="Auraly"
+                      Advertise="yes"
+                      Icon="AuralyIcon.ico"
+                      IconIndex="0"
+                      WorkingDirectory="INSTALLFOLDER" />
+            <Shortcut Id="AuralyPosStartMenuShortcut"
+                      Directory="AuralyStartMenuFolder"
+                      Name="Auraly"
+                      Description="Auraly"
+                      Advertise="yes"
+                      Icon="AuralyIcon.ico"
+                      IconIndex="0"
+                      WorkingDirectory="INSTALLFOLDER" />
+          </File>
+          <RemoveFolder Id="RemoveAuralyStartMenuFolder"
+                        Directory="AuralyStartMenuFolder"
+                        On="uninstall" />
+        </Component>
+        <Files Include="$(var.PayloadDir)\**" Directory="INSTALLFOLDER">
+          <Exclude Files="$(var.PayloadDir)\Auraly.Desktop.exe" />
+        </Files>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder" />
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AuralyStartMenuFolder" Name="Auraly" />
+    </StandardDirectory>
+    <CustomAction Id="LaunchAuralyPos"
+                  BinaryRef="Wix4UtilCA_X64"
+                  DllEntry="WixShellExec"
+                  Execute="immediate"
+                  Return="ignore" />
+    <SetProperty Id="WixShellExecTarget"
+                 Value="[#AuralyDesktopExe]"
+                 Before="LaunchAuralyPos"
+                 Sequence="execute" />
+    <InstallExecuteSequence>
+      <Custom Action="LaunchAuralyPos"
+              After="InstallFinalize"
+              Condition="AURALY_RELAUNCH = 1 AND NOT REMOVE" />
+    </InstallExecuteSequence>
+
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <UIRef Id="WixUI_ErrorProgressText" />
+  </Package>
+</Wix>

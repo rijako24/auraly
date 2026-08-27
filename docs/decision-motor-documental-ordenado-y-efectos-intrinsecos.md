@@ -74,17 +74,18 @@ Cada manejador ejecuta atómicamente lo que corresponda:
 
 - kardex y saldo de inventario;
 - valoración y costo;
-- cuentas por cobrar o pagar;
-- pagos y efectivo;
-- asientos de contabilidad y centro de costo;
-- impuestos totalizados;
-- estadísticas operativas;
-- datos consolidados necesarios para reportes;
-- eventos de outbox;
+- estado operacional propio del documento;
+- eventos de outbox únicos hacia los motores contable, fiscal y de reporting que
+  correspondan;
 - estado final del documento y del mismo movimiento idempotente en
   `DocumentProcessingJobs`; no existe una tabla paralela de recibos.
 
-Contabilidad, estadísticas y reportes no son procesos opcionales desconectados. Son efectos del mismo movimiento o proyecciones idempotentes creadas desde su evento confirmado. Un fallo crítico impide completar el movimiento.
+El motor documental no escribe cartera, pagos, aplicaciones, caja financiera,
+asientos ni consolidados de reporting. Esos efectos pertenecen a los motores
+canónicos definidos en
+`decision-cuatro-motores-operacion-contabilidad-fiscal-reporting.md`. El commit
+operacional guarda sus señales durables; cada consumidor derivado es idempotente
+y un fallo posterior no reaplica inventario.
 
 ## Lista de control para cada nuevo documento
 
@@ -95,11 +96,11 @@ Antes de declarar listo un tipo documental debe existir:
 3. publicador real al broker;
 4. manejador registrado y consumido;
 5. reglas de inventario y costo;
-6. reglas de cartera/pagos;
-7. reglas contables y centro de costo;
-8. impuestos y totales aplicables;
-9. estadísticas y datos de reportes;
-10. evento de outbox;
+6. señales de outbox para cada motor derivado aplicable;
+7. contrato contable extendido en el único `SqlAccountingPostingProcessor`, si aplica;
+8. snapshot/proceso del único motor fiscal, si aplica;
+9. contrato del único motor de reporting, si aplica;
+10. prueba de que el handler operacional no escribe efectos de esos motores;
 11. idempotencia;
 12. orden por negocio;
 13. reintento y estado de intervención;

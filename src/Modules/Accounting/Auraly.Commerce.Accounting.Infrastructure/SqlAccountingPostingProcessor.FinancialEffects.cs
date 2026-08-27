@@ -219,9 +219,9 @@ public sealed partial class SqlAccountingPostingProcessor
 
         if (value.EconomicResolution == ReturnEconomicResolutions.Refund)
         {
+            if (value.RefundMethodCode != SalesReturnRefundMethods.Cash) return;
             if (value.WorkSessionId is null || value.OriginalPaymentNumber is null)
-                throw new InvalidOperationException(
-                    "A cash refund requires its work session and original payment.");
+                throw new InvalidOperationException("A cash refund requires its work session and original payment.");
             await using var refund = new SqlCommand("""
                 INSERT dbo.WorkSessionMovements
                   (WorkSessionMovementId,WorkSessionId,DocumentId,PaymentNumber,BusinessDate,

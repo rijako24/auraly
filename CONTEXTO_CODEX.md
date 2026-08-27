@@ -37,12 +37,14 @@ Auraly es una plataforma comercial multi-tenant: catálogo, ventas/POS, compras,
 ## Reglas rápidas
 
 1. Buscar el propietario existente antes de crear servicio, processor, engine, worker, cola, writer, tabla o lista.
+   Toda funcionalidad nueva extiende un motor canonico; no se crea otro motor como parte de una implementacion funcional.
 2. Inventario se escribe únicamente mediante `SqlInventoryLedgerWriter`, invocado desde handlers del motor documental.
 3. Fiscal/DIAN converge en `FiscalProcessingCoordinator`; contabilidad en `AccountingProcessingCoordinator` y `SqlAccountingPostingProcessor`.
 4. Un transporte activa el mismo proceso: no contiene reglas ni crea otro motor.
 5. API autentica, autoriza, valida el contrato y llama casos de uso; SQL pertenece a persistencia.
 6. Usar `IBusinessClock`/`TimeProvider` en reglas dependientes del tiempo.
 7. Todo dropdown de negocio consume catálogo persistido. Mapas de iconos/colores son presentación, no catálogo.
+8. Despues de implementar, auditar el diff completo contra `AGENTS.md`, estandares, invariantes y decisiones propietarias antes de declarar terminado.
 
 ## Motor conversacional
 

@@ -188,7 +188,7 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Customer_credit_return_reduces_receivable_and_creates_only_the_excess_credit()
+    public async Task Customer_credit_return_is_capped_at_outstanding_and_creates_no_excess_credit()
     {
         var (customerId, userId) = await ConfigureAsync();
         using var client = fixture.CreateUserClient(userId,
@@ -233,9 +233,9 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId,
             checkout.Receipt.DocumentId, DateTimeOffset.UtcNow,
             ReturnEconomicResolutions.CustomerCredit, null,
-            "Devolucion total aplicada a cartera",
+            "Devolucion parcial aplicada a cartera",
             [new ConfirmSalesReturnLineRequest(
-                1, 1m, ReturnInventoryDispositions.Sellable)],
+                1, .75m, ReturnInventoryDispositions.Sellable)],
             null, null, "CustomerChangedMind");
         using (var response = await SendAsync(client,
                    "/api/commerce/v1/sales-returns/confirm", request,
@@ -254,9 +254,20 @@ public sealed class ReceivablesVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.ReceivableTransactions WHERE TransactionType=N'Reversal' AND SourceDocumentId=@Id",
             request.ReturnId));
-        Assert.Equal(paidBeforeReturn, await ScalarAsync<decimal>(
-            "SELECT OriginalAmount FROM dbo.CustomerCredits WHERE SourceReturnId=@Id",
+        Assert.Equal(0, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.CustomerCredits WHERE SourceReturnId=@Id",
             request.ReturnId));
+
+        var fullyPaidRequest = request with
+        {
+            ReturnId = Guid.NewGuid(),
+            Lines = [new ConfirmSalesReturnLineRequest(
+                1, .25m, ReturnInventoryDispositions.Sellable)]
+        };
+        using var fullyPaidResponse = await SendAsync(client,
+            "/api/commerce/v1/sales-returns/confirm", fullyPaidRequest,
+            $"receivable-return-paid-{fullyPaidRequest.ReturnId:N}");
+        Assert.Equal(HttpStatusCode.BadRequest, fullyPaidResponse.StatusCode);
     }
 
 

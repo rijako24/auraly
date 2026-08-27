@@ -1,8 +1,8 @@
 import type { Metadata, Viewport } from "next";
 
 export const metadata: Metadata = {
-  title: "Auraly POS",
-  description: "Punto de venta local de Auraly Commerce",
+  title: "Auraly",
+  description: "Punto de venta de Auraly",
   manifest: "/pos.webmanifest",
   icons: {
     icon: "/brand/auraly-app-icon-192-v4.png?v=5",

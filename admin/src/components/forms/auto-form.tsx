@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { DatePicker } from "@/components/ui/date-picker";
 import {
   Select,
   SelectContent,
@@ -205,19 +206,16 @@ export function AutoForm<TSchema extends z.ZodObject<z.ZodRawShape>>({
               <span className="ml-1 text-muted-foreground">(opcional)</span>
             )}
           </Label>
-          <Input
+          <DatePicker
             id={key}
-            type="date"
             placeholder={placeholder}
             disabled={disabled}
-            {...fieldProps}
             value={
               form.watch(key)
                 ? (form.watch(key) as Date).toISOString().slice(0, 10)
                 : ""
             }
-            onChange={(e) => {
-              const val = e.target.value;
+            onChange={(val) => {
               form.setValue(key, val ? new Date(val) : undefined);
             }}
           />

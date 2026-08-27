@@ -14,8 +14,10 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
     {
         var fiscalSeriesId = Guid.NewGuid();
         await SeedAvailableDeviceFiscalSeriesAsync(fiscalSeriesId);
+        await PrepareInitialCashierAsync();
         using var client = fixture.CreateAdminClient(
-            CommercePermissionCodes.EnrolledDevicesEnroll);
+            CommercePermissionCodes.EnrolledDevicesEnroll,
+            CommercePermissionCodes.SalesCreate);
 
         using var authorizationResponse = await client.PostAsJsonAsync(
             "/api/commerce/v1/pos/enrollments",
@@ -57,6 +59,11 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         Assert.NotEqual(Guid.Empty, package.DocumentSeries.SeriesId);
         Assert.Contains("catalog.sync", package.Permissions);
         Assert.Contains(CommercePermissionCodes.SalesCreate, package.Permissions);
+        Assert.NotNull(package.InitialOfflineAccess);
+        Assert.Equal(package.InitialUserId, package.InitialOfflineAccess!.User.UserId);
+        Assert.Contains(
+            CommercePermissionCodes.SalesCreate,
+            package.InitialOfflineAccess.User.Permissions);
 
         using var repeated = await client.PostAsJsonAsync(
             "/api/pos/v1/enrollments/redeem",
@@ -79,7 +86,7 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Reenrollment_preserves_device_series_and_local_numbering_identity()
+    public async Task Reenrollment_recovers_device_identity_when_local_package_was_lost()
     {
         var fiscalSeriesId = Guid.NewGuid();
         await SeedAvailableDeviceFiscalSeriesAsync(fiscalSeriesId);
@@ -118,8 +125,7 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
             new RedeemPosEnrollmentRequest(
                 secondAuthorization.EnrollmentSessionId,
                 secondAuthorization.RedemptionCode,
-                "WORKSTATION-REENROLL",
-                firstPackage.DeviceId));
+                "WORKSTATION-REENROLL"));
         secondRedeemResponse.EnsureSuccessStatusCode();
         var secondPackage = await secondRedeemResponse.Content
             .ReadFromJsonAsync<PosEnrollmentPackage>();
@@ -252,6 +258,41 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue(
             "@Prefix",
             ("T" + fiscalSeriesId.ToString("N")[..3]).ToUpperInvariant());
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task PrepareInitialCashierAsync()
+    {
+        var verifier = PosOfflinePasswordHasher.Hash(
+            "Integration-Cashier-Password-1",
+            DateTimeOffset.UtcNow);
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            IF NOT EXISTS(
+                SELECT 1
+                FROM dbo.RolePermissions rolePermission
+                JOIN dbo.Permissions permission
+                  ON permission.PermissionId=rolePermission.PermissionId
+                WHERE rolePermission.RoleId=@RoleId AND permission.Resource=@SalesCreate)
+              INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
+              SELECT NEWID(),@RoleId,PermissionId,SYSDATETIMEOFFSET()
+              FROM dbo.Permissions WHERE Resource=@SalesCreate;
+            UPDATE dbo.AppUsers
+            SET PosOfflinePasswordSalt=@Salt,
+                PosOfflinePasswordHash=@Hash,
+                PosOfflinePasswordIterations=@Iterations,
+                PosOfflinePasswordChangedAt=@ChangedAt
+            WHERE UserId=@UserId AND TenantId=@TenantId;
+            """, connection);
+        command.Parameters.AddWithValue("@RoleId", fixture.RoleId);
+        command.Parameters.AddWithValue("@SalesCreate", CommercePermissionCodes.SalesCreate);
+        command.Parameters.AddWithValue("@UserId", fixture.UserId);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        command.Parameters.Add("@Salt", System.Data.SqlDbType.VarBinary, 16).Value = verifier.Salt;
+        command.Parameters.Add("@Hash", System.Data.SqlDbType.VarBinary, 32).Value = verifier.Hash;
+        command.Parameters.AddWithValue("@Iterations", verifier.Iterations);
+        command.Parameters.AddWithValue("@ChangedAt", verifier.ChangedAt);
         await command.ExecuteNonQueryAsync();
     }
     private sealed record DeviceCapacityState(int MaximumDevices, int ActiveDevices);

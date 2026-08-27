@@ -14,7 +14,9 @@ namespace Auraly.Pos.Edge.Host;
 public sealed record CompletePaymentRequest(
     string MethodCode,
     decimal Amount,
-    string? Reference);
+    string? Reference,
+    string? CardFranchiseCode = null,
+    string? ApprovalNumber = null);
 
 public sealed record CompleteDraftRequest(
     string? CustomerIdentification,
@@ -156,7 +158,9 @@ internal static class PosSaleHostModule
                     .Select(payment => new OfflineSalePayment(
                         payment.MethodCode,
                         payment.Amount,
-                        payment.Reference))
+                        payment.Reference,
+                        payment.CardFranchiseCode,
+                        payment.ApprovalNumber))
                     .ToArray();
                 var session = sessions.Required();
                 var result = await completion.CompleteAsync(
@@ -178,8 +182,9 @@ internal static class PosSaleHostModule
                         request.DocumentType),
                     ct);
                 synchronization.Signal(PosSynchronizationTrigger.LocalOutbox);
-                // The sale is already durably issued at this point. A missing or
-                // disconnected drawer must not turn a successful sale into a 409.
+                // The sale is already durably issued at this point. Every completed
+                // sale opens the local drawer, including offline sales. A disconnected
+                // drawer must not turn a successful sale into a 409.
                 cashDrawer.TryOpen();
                 return Results.Ok(result);
             }

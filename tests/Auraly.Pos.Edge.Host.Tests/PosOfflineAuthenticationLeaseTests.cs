@@ -111,6 +111,46 @@ public sealed class PosOfflineAuthenticationLeaseTests : IAsyncLifetime
         Assert.Equal("OfflineLeaseExpired", error.Code);
     }
 
+    [Fact]
+    public async Task Enrollment_handoff_opens_the_initial_cashier_without_asking_for_password_again()
+    {
+        var connectionString = $"Data Source={_databasePath}";
+        var identities = new PosLocalIdentityStore(
+            connectionString,
+            _keyDirectory,
+            new Uuid7AuralyIdGenerator(_clock),
+            _clock);
+        var leases = new PosOfflineLeaseStore(
+            connectionString, _tenantId, _deviceId, CreateVerifier(), _clock);
+        await identities.InitializeAsync();
+        await leases.InitializeAsync();
+        var response = CreateResponse(_clock.GetUtcNow().AddHours(8));
+        var verifier = new PosOfflinePasswordVerifier(
+            response.User.PasswordSalt,
+            response.User.PasswordHash,
+            response.User.PasswordIterations,
+            response.User.PasswordChangedAt);
+        await identities.ApplySnapshotAsync(new PosOfflineIdentitySnapshot(
+            "initial",
+            _clock.GetUtcNow(),
+            _clock.GetUtcNow().AddDays(7),
+            [new PosOfflineUserProjection(
+                _userId,
+                response.User.Username,
+                response.User.DisplayName,
+                response.User.Permissions,
+                verifier,
+                null)]));
+        var lease = await leases.SaveAsync(response);
+
+        var session = await identities.LoginFromEnrollmentAsync(
+            _userId, lease.Payload.ExpiresAt);
+
+        Assert.False(string.IsNullOrWhiteSpace(session.Token));
+        Assert.Equal(_userId, session.UserId);
+        Assert.Contains(CommercePermissionCodes.SalesCreate, session.Permissions);
+    }
+
     public Task InitializeAsync() => Task.CompletedTask;
 
     public Task DisposeAsync()

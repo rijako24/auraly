@@ -2,6 +2,7 @@ using System.Data;
 using System.Security.Cryptography;
 using Auraly.Application.Authentication;
 using Auraly.Contracts.Authentication;
+using Auraly.Contracts.Authorization;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Options;
 
@@ -146,6 +147,54 @@ public sealed class SqlOfflineAuthenticationLeaseStore(
         return candidate.SignedLease;
     }
 
+    public async Task<OfflineAuthenticationLeaseAcquireResponse> AcquireForEnrollmentAsync(
+        OfflineAuthenticationLeasePayload payload,
+        SignedOfflineAuthenticationLease signedLease,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+
+        var user = await ReadEnrollmentUserAsync(
+            connection, transaction, payload, cancellationToken)
+            ?? throw new AuthenticationDeniedException(
+                "El usuario que preparó el equipo no está habilitado para vender desde este punto de venta.");
+        await EnsureDeviceAsync(connection, transaction, payload, cancellationToken);
+        await ExpireStaleAsync(connection, transaction, payload, cancellationToken);
+
+        var existing = await ReadActiveAsync(
+            connection, transaction, payload.TenantId, payload.UserId,
+            payload.DeviceId, cancellationToken);
+        if (existing is not null)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return new OfflineAuthenticationLeaseAcquireResponse(existing, user);
+        }
+        if (await HasConflictingLeaseAsync(
+                connection, transaction, payload, cancellationToken))
+            throw new OfflineAuthenticationLeaseConflictException(
+                "El usuario o el equipo ya tiene otra sesión local activa.");
+
+        await RevokeOnlineSessionsForHandoffAsync(
+            connection, transaction, payload, cancellationToken);
+        await InsertAsync(
+            connection,
+            transaction,
+            new OfflineAuthenticationLeaseCandidate(
+                payload,
+                signedLease,
+                new PosOfflinePasswordVerifier(
+                    user.PasswordSalt,
+                    user.PasswordHash,
+                    user.PasswordIterations,
+                    user.PasswordChangedAt)),
+            cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new OfflineAuthenticationLeaseAcquireResponse(signedLease, user);
+    }
+
     public async Task ReleaseAsync(
         Guid tenantId,
         Guid deviceId,
@@ -192,6 +241,77 @@ public sealed class SqlOfflineAuthenticationLeaseStore(
         command.Parameters.AddWithValue("@UserId", payload.UserId);
         if (await command.ExecuteScalarAsync(cancellationToken) is not Guid)
             throw new AuthenticationDeniedException("The user is inactive or missing.");
+    }
+
+    private static async Task<OfflineAuthenticationLeaseUser?> ReadEnrollmentUserAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        OfflineAuthenticationLeasePayload payload,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT u.Username,
+                   LTRIM(RTRIM(CONCAT(u.FirstName,N' ',u.LastName))),
+                   u.PosOfflinePasswordSalt,u.PosOfflinePasswordHash,
+                   u.PosOfflinePasswordIterations,u.PosOfflinePasswordChangedAt
+            FROM dbo.AppUsers u WITH (UPDLOCK,HOLDLOCK)
+            WHERE u.TenantId=@TenantId AND u.UserId=@UserId AND u.IsActive=1
+              AND u.PosOfflinePasswordSalt IS NOT NULL
+              AND u.PosOfflinePasswordHash IS NOT NULL
+              AND u.PosOfflinePasswordIterations IS NOT NULL
+              AND u.PosOfflinePasswordChangedAt IS NOT NULL
+              AND EXISTS (
+                  SELECT 1
+                  FROM dbo.EnrolledDevices device
+                  JOIN dbo.DocumentSeries series
+                    ON series.DeviceId=device.DeviceId AND series.IsActive=1
+                  JOIN dbo.UserRoles userRole
+                    ON userRole.UserId=u.UserId
+                   AND (userRole.BusinessId IS NULL OR userRole.BusinessId=series.BusinessId)
+                  JOIN dbo.AppRoles role
+                    ON role.RoleId=userRole.RoleId AND role.IsActive=1
+                   AND (role.TenantId IS NULL OR role.TenantId=@TenantId)
+                  JOIN dbo.RolePermissions rolePermission ON rolePermission.RoleId=role.RoleId
+                  JOIN dbo.Permissions permission ON permission.PermissionId=rolePermission.PermissionId
+                  WHERE device.DeviceId=@DeviceId AND device.TenantId=@TenantId
+                    AND device.IsActive=1 AND permission.Resource=@SalesCreate);
+            """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@TenantId", payload.TenantId);
+        command.Parameters.AddWithValue("@UserId", payload.UserId);
+        command.Parameters.AddWithValue("@DeviceId", payload.DeviceId);
+        command.Parameters.AddWithValue("@SalesCreate", CommercePermissionCodes.SalesCreate);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        var username = reader.GetString(0);
+        var displayName = reader.GetString(1);
+        return new OfflineAuthenticationLeaseUser(
+            payload.UserId,
+            username,
+            string.IsNullOrWhiteSpace(displayName) ? username : displayName,
+            [CommercePermissionCodes.SalesCreate],
+            (byte[])reader[2],
+            (byte[])reader[3],
+            reader.GetInt32(4),
+            reader.GetFieldValue<DateTimeOffset>(5));
+    }
+
+    private static async Task RevokeOnlineSessionsForHandoffAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        OfflineAuthenticationLeasePayload payload,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            UPDATE dbo.AuthenticationSessions WITH (UPDLOCK,HOLDLOCK)
+            SET Status=N'Revoked',RevokedAt=@Now,
+                RevocationReason=N'PosOfflineHandoff',UpdatedAt=@Now
+            WHERE TenantId=@TenantId AND UserId=@UserId AND Status=N'Active';
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@Now", payload.IssuedAt);
+        command.Parameters.AddWithValue("@TenantId", payload.TenantId);
+        command.Parameters.AddWithValue("@UserId", payload.UserId);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task EnsureDeviceAsync(

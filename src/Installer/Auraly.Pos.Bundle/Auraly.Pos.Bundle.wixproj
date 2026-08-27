@@ -1,0 +1,12 @@
+<Project Sdk="WixToolset.Sdk/6.0.2">
+  <PropertyGroup>
+    <OutputType>Bundle</OutputType>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <Cultures>es-ES</Cultures>
+    <OutputName>Auraly.Pos.Bundle</OutputName>
+    <DefineConstants>MsiPath=$(MsiPath);BundleVersion=$(BundleVersion)</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="WixToolset.BootstrapperApplications.wixext" Version="6.0.2" />
+  </ItemGroup>
+</Project>

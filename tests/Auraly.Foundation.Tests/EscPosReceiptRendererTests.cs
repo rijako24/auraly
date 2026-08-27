@@ -49,6 +49,8 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("MEDIOS DE PAGO", printable);
         Assert.Contains("EFECTIVO", printable);
         Assert.Contains("TRANSFERENCIA", printable);
+        Assert.Contains("Factura emitida por Auraly", printable);
+        Assert.Contains("www.auralyapp.co", printable);
         Assert.Equal(new byte[] { 0x1D, 0x56, 0x41, 0x03 }, bytes.TakeLast(4).ToArray());
     }
 
@@ -135,6 +137,8 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("Impuestos por tarifa", html);
         Assert.Contains("IVA 19%", html);
         Assert.Contains("Medios de pago", html);
+        Assert.Contains("Factura emitida por Auraly", html);
+        Assert.Contains("www.auralyapp.co", html);
     }
 
     [Fact]
@@ -204,7 +208,7 @@ public sealed class EscPosReceiptRendererTests
     }
 
     [Fact]
-    public void Half_letter_renders_two_identical_copies_on_each_letter_sheet()
+    public void Half_letter_renders_two_rotated_identical_copies_without_cut_marks()
     {
         var receipt = new OnlineSalesReceipt(
             Guid.NewGuid(),
@@ -229,7 +233,9 @@ public sealed class EscPosReceiptRendererTests
         var html = new HalfLetterDocumentRenderer().Render([receipt]);
 
         Assert.Contains("@page { size: Letter portrait;", html);
-        Assert.Contains("CORTE MEDIA CARTA", html);
+        Assert.Contains("rotate(90deg)", html);
+        Assert.DoesNotContain("CORTE MEDIA", html);
+        Assert.DoesNotContain("dashed", html);
         Assert.Equal(2, html.Split("VTA01-00000999").Length - 1);
         Assert.Equal(2, html.Split("Cliente prueba").Length - 1);
         Assert.Contains("data:image/svg+xml;base64", html);
@@ -239,7 +245,97 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("Transferencia", html);
         Assert.Equal(2, html.Split("<h1>Comercializadora Uno</h1>").Length - 1);
         Assert.Equal(2, html.Split("data:image/png;base64,AA==").Length - 1);
+        Assert.Equal(2, html.Split("Factura emitida por Auraly").Length - 1);
+        Assert.Equal(2, html.Split("www.auralyapp.co").Length - 1);
+        Assert.Equal(2, html.Split("Página 1 de 1").Length - 1);
     }
+
+    [Fact]
+    public void Half_legal_uses_legal_paper_and_rotates_every_complete_copy()
+    {
+        var receipt = OnlineReceipt();
+
+        var html = new HalfLetterDocumentRenderer().Render(
+            [receipt], HalfLetterDocumentRenderer.HalfLegal);
+
+        Assert.Contains("@page { size: Legal portrait;", html);
+        Assert.Contains("class=\"sheet half half-legal\"", html);
+        Assert.Contains("rotate(90deg)", html);
+        Assert.DoesNotContain("CORTE", html);
+        Assert.Equal(2, html.Split(receipt.DocumentNumber).Length - 1);
+        Assert.Equal(2, html.Split("Impuestos por tarifa").Length - 1);
+        Assert.Equal(2, html.Split("Medios de pago").Length - 1);
+    }
+
+    [Fact]
+    public void Letter_uses_one_full_page_copy_without_rotation()
+    {
+        var receipt = OnlineReceipt();
+
+        var html = new HalfLetterDocumentRenderer().Render(
+            [receipt], HalfLetterDocumentRenderer.Letter);
+
+        Assert.Contains("@page { size: Letter portrait;", html);
+        Assert.Contains("class=\"sheet letter\"", html);
+        Assert.Equal(1, html.Split(receipt.DocumentNumber).Length - 1);
+        Assert.Equal(1, html.Split("Factura emitida por Auraly").Length - 1);
+    }
+
+    [Fact]
+    public void Sheet_formats_group_all_tax_rates_and_render_every_payment()
+    {
+        var receipt = OnlineReceipt() with
+        {
+            Lines =
+            [
+                new OnlineSalesReceiptLine(
+                    "P-001", "Sin impuesto", 1m, 10_000m, 0m, 0m, 10_000m, "01", 0m),
+                new OnlineSalesReceiptLine(
+                    "P-002", "Con IVA", 1m, 10_000m, 0m, 1_900m, 11_900m, "01", 19m),
+                new OnlineSalesReceiptLine(
+                    "P-003", "Mismo IVA", 1m, 5_000m, 0m, 950m, 5_950m, "01", 19m)
+            ],
+            Payments =
+            [
+                new OnlineSalesPayment("Cash", 12_000m, null),
+                new OnlineSalesPayment("Transfer", 15_850m, "TRX-1")
+            ],
+            UntaxedAmount = 25_000m,
+            TaxAmount = 2_850m,
+            PayableAmount = 27_850m
+        };
+
+        var html = new HalfLetterDocumentRenderer().Render(
+            [receipt], HalfLetterDocumentRenderer.Letter);
+
+        Assert.Equal(1, html.Split("IVA 0%").Length - 1);
+        Assert.Equal(1, html.Split("IVA 19%").Length - 1);
+        Assert.Contains("base", html);
+        Assert.Contains("15.000", html);
+        Assert.Contains("Efectivo", html);
+        Assert.Contains("Transferencia", html);
+    }
+
+    private static OnlineSalesReceipt OnlineReceipt() =>
+        new(
+            Guid.NewGuid(),
+            PosSaleDocumentTypes.Invoice,
+            "VTA01-00000999",
+            "FE999",
+            new DateTimeOffset(2026, 8, 27, 15, 47, 24, TimeSpan.FromHours(-5)),
+            "222222222",
+            [new OnlineSalesReceiptLine(
+                "P-001", "Producto", 2m, 10_000m, 0m, 3_800m, 23_800m, "01", 19m)],
+            [new OnlineSalesPayment("Cash", 10_000m, null), new OnlineSalesPayment("Transfer", 13_800m, "TRX-1")],
+            20_000m,
+            3_800m,
+            23_800m,
+            "cufe-999",
+            "https://catalogo-vpfe.dian.gov.co/document/searchqr?documentkey=cufe-999",
+            "Accepted",
+            "Cliente prueba",
+            "Comercializadora Uno",
+            "data:image/png;base64,AA==");
 
     private static PosReceipt Receipt() =>
         new(

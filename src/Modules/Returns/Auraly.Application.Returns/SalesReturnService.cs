@@ -37,6 +37,8 @@ public sealed class SalesReturnService(
             throw new SalesReturnValidationException("A valid Idempotency-Key is required.");
         if (!ReturnEconomicResolutions.All.Contains(request.EconomicResolution))
             throw new SalesReturnValidationException("The economic resolution is invalid.");
+        if (!SalesReturnScopes.All.Contains(request.ReturnScopeCode))
+            throw new SalesReturnValidationException("The sales return scope is invalid.");
         if (request.EconomicResolution == ReturnEconomicResolutions.Refund &&
             string.IsNullOrWhiteSpace(request.RefundMethodCode))
             throw new SalesReturnValidationException("A refund method is required for a refund.");
@@ -44,10 +46,16 @@ public sealed class SalesReturnService(
             !string.IsNullOrWhiteSpace(request.RefundMethodCode))
             throw new SalesReturnValidationException("Customer credit cannot include a refund method.");
         if (request.EconomicResolution == ReturnEconomicResolutions.Refund &&
-            (!string.Equals(request.RefundMethodCode, SalesReturnRefundMethods.Cash, StringComparison.OrdinalIgnoreCase) ||
-             request.WorkSessionId is null || request.OriginalPaymentNumber is null))
+            (!SalesReturnRefundMethods.All.Contains(request.RefundMethodCode!) ||
+             request.OriginalPaymentNumber is null))
             throw new SalesReturnValidationException(
-                "A cash refund requires its original payment and an active work session.");
+                "The refund method and its original payment are required.");
+        if (request.EconomicResolution == ReturnEconomicResolutions.Refund &&
+            request.RefundMethodCode == SalesReturnRefundMethods.Cash && request.WorkSessionId is null)
+            throw new SalesReturnValidationException("A cash refund requires an active work session.");
+        if (request.EconomicResolution == ReturnEconomicResolutions.Refund &&
+            request.RefundMethodCode != SalesReturnRefundMethods.Cash && request.WorkSessionId is not null)
+            throw new SalesReturnValidationException("Only a cash refund can affect a work session.");
         if (request.EconomicResolution == ReturnEconomicResolutions.CustomerCredit &&
             request.OriginalPaymentNumber is not null)
             throw new SalesReturnValidationException("Customer credit cannot reference a payment to refund.");
@@ -66,19 +74,19 @@ public sealed class SalesReturnService(
         {
             if (line.OriginalLineNumber <= 0 || line.Quantity <= 0)
                 throw new SalesReturnValidationException("Return line and quantity must be positive.");
-            if (line.InventoryDisposition is not (ReturnInventoryDispositions.Sellable or ReturnInventoryDispositions.NotReturned))
-                throw new SalesReturnValidationException(
-                    "Inspection and damaged returns require a configured inventory destination.");
+            if (line.InventoryDisposition != ReturnInventoryDispositions.Sellable)
+                throw new SalesReturnValidationException("Every sales return must re-enter sellable inventory.");
         }
 
         var normalized = request with
         {
             EconomicResolution = request.EconomicResolution.Trim(),
             RefundMethodCode = request.EconomicResolution == ReturnEconomicResolutions.Refund
-                ? SalesReturnRefundMethods.Cash
+                ? request.RefundMethodCode!.Trim()
                 : null,
             ReasonDescription = request.ReasonDescription.Trim(),
             ReasonCode = request.ReasonCode.Trim(),
+            ReturnScopeCode = request.ReturnScopeCode.Trim(),
             Notes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim()
         };
         var accepted = await store.AcceptAsync(

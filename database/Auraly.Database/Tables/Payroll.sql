@@ -141,6 +141,9 @@ CREATE TABLE [payroll].[Employments]
     [MonthlySalary] DECIMAL(19,4) NOT NULL,
     [IntegralSalaryPercentage] DECIMAL(9,6) NULL,
     [BankAccountReference] NVARCHAR(200) NULL,
+    [BankOptionId] UNIQUEIDENTIFIER NULL,
+    [BankAccountTypeOptionId] UNIQUEIDENTIFIER NULL,
+    [BankAccountNumber] NVARCHAR(64) NULL,
     [IsActive] BIT NOT NULL,
     [CreatedBy] UNIQUEIDENTIFIER NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
@@ -161,9 +164,15 @@ CREATE TABLE [payroll].[Employments]
     CONSTRAINT [FK_PayrollEmployments_WorkerType] FOREIGN KEY ([WorkerTypeOptionId]) REFERENCES [payroll].[CatalogOptions]([OptionId]),
     CONSTRAINT [FK_PayrollEmployments_WorkerSubtype] FOREIGN KEY ([WorkerSubtypeOptionId]) REFERENCES [payroll].[CatalogOptions]([OptionId]),
     CONSTRAINT [FK_PayrollEmployments_PaymentMethod] FOREIGN KEY ([PaymentMethodOptionId]) REFERENCES [payroll].[CatalogOptions]([OptionId]),
+    CONSTRAINT [FK_PayrollEmployments_Bank] FOREIGN KEY ([BankOptionId]) REFERENCES [payroll].[CatalogOptions]([OptionId]),
+    CONSTRAINT [FK_PayrollEmployments_BankAccountType] FOREIGN KEY ([BankAccountTypeOptionId]) REFERENCES [payroll].[CatalogOptions]([OptionId]),
     CONSTRAINT [CK_PayrollEmployments_Dates] CHECK ([EndDate] IS NULL OR [EndDate] >= [StartDate]),
     CONSTRAINT [CK_PayrollEmployments_Salary] CHECK ([MonthlySalary] > 0),
     CONSTRAINT [CK_PayrollEmployments_IntegralPercentage] CHECK ([IntegralSalaryPercentage] IS NULL OR [IntegralSalaryPercentage] BETWEEN 0 AND 1)
+    ,CONSTRAINT [CK_PayrollEmployments_BankAccount] CHECK (
+      ([BankOptionId] IS NULL AND [BankAccountTypeOptionId] IS NULL AND [BankAccountNumber] IS NULL)
+      OR ([BankOptionId] IS NOT NULL AND [BankAccountTypeOptionId] IS NOT NULL
+          AND LEN(LTRIM(RTRIM([BankAccountNumber]))) BETWEEN 4 AND 64))
 );
 GO
 CREATE UNIQUE INDEX [UX_PayrollEmployments_Tenant_Party_Active]

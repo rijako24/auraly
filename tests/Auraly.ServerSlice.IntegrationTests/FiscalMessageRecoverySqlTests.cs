@@ -1,5 +1,6 @@
 using System.Net;
 using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.BuildingBlocks.Infrastructure.Persistence;
 using Auraly.Contracts.Fiscal;
 using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
@@ -22,7 +23,7 @@ public sealed class FiscalMessageRecoverySqlTests(ServerSliceFixture fixture)
         var now = new DateTimeOffset(2026, 8, 1, 14, 0, 0, TimeSpan.Zero);
         var lease = TimeSpan.FromMinutes(2);
         var store = new SqlFiscalGenerationWorkStore(
-            new SqlServerConnectionFactory(fixture.ConnectionString),
+            new SqlServerConnectionFactory(new AuralySqlConnectionSource(fixture.ConnectionString)),
             new TestIds());
 
         var acquired = await store.AcquireAsync(
@@ -59,7 +60,7 @@ public sealed class FiscalMessageRecoverySqlTests(ServerSliceFixture fixture)
             FiscalDocumentStatusCodes.RetryScheduled,
             nextAttemptAt);
         var store = new SqlFiscalSubmissionWorkStore(
-            new SqlServerConnectionFactory(fixture.ConnectionString),
+            new SqlServerConnectionFactory(new AuralySqlConnectionSource(fixture.ConnectionString)),
             new TestIds());
 
         var resumeAt = await store.GetResumeAtAsync(

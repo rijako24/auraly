@@ -1,0 +1,37 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+  <Bundle Name="Auraly"
+          Manufacturer="Auraly"
+          Version="$(var.BundleVersion)"
+          UpgradeCode="9704F2BF-3BC4-4D55-9A13-F2DE686F1BD6"
+          Compressed="yes"
+          IconSourceFile="..\..\Desktop\Auraly.Desktop\Assets\Auraly.ico"
+          bal:CommandLineVariables="caseInsensitive">
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication Theme="hyperlinkSidebarLicense"
+                                               LicenseUrl=""
+                                               ThemeFile="AuralyTheme.xml"
+                                               LocalizationFile="AuralyTheme.wxl"
+                                               LogoFile="..\..\..\admin\public\brand\auraly-app-icon-512-v4.png"
+                                               LogoSideFile="..\..\..\admin\public\brand\launch\auraly-828x1792-v4.png"
+                                               ShowVersion="yes"
+                                               SuppressOptionsUI="yes"
+                                               LaunchTarget="[ProgramFiles64Folder]Auraly\Auraly.Desktop.exe"
+                                               LaunchWorkingFolder="[ProgramFiles64Folder]Auraly" />
+    </BootstrapperApplication>
+
+    <Variable Name="AuralyRelaunch"
+              Type="numeric"
+              Value="0"
+              bal:Overridable="yes" />
+
+    <Chain>
+      <MsiPackage Id="AuralyPosMsi"
+                  SourceFile="$(var.MsiPath)"
+                  Compressed="yes"
+                  Vital="yes">
+        <MsiProperty Name="AURALY_RELAUNCH" Value="[AuralyRelaunch]" />
+      </MsiPackage>
+    </Chain>
+  </Bundle>
+</Wix>

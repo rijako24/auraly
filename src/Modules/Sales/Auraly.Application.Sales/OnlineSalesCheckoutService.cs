@@ -13,6 +13,13 @@ public sealed record PreparedOnlineSalesCheckout(
 
 public interface IOnlineSalesCheckoutStore
 {
+    Task PrepareSourceOrderInventoryAsync(
+        OnlineSalesUserIdentity user,
+        Guid businessId,
+        Guid orderId,
+        Guid destinationWarehouseId,
+        CancellationToken cancellationToken);
+
     Task<OnlineSalesFiscalKeyContext> ResolveFiscalKeyContextAsync(
         OnlineSalesUserIdentity user,
         Guid draftId,
@@ -46,6 +53,21 @@ public sealed class OnlineSalesCheckoutService(
         "CreditCard",
         "Transfer"
     ];
+
+    public Task PrepareSourceOrderInventoryAsync(
+        OnlineSalesUserIdentity user,
+        Guid businessId,
+        Guid orderId,
+        Guid destinationWarehouseId,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        if (businessId == Guid.Empty || orderId == Guid.Empty || destinationWarehouseId == Guid.Empty)
+            throw new OnlineSalesDraftValidationException(
+                "El pedido y la bodega de venta son obligatorios.");
+        return checkouts.PrepareSourceOrderInventoryAsync(
+            user, businessId, orderId, destinationWarehouseId, cancellationToken);
+    }
 
     public async Task<CompleteOnlineSalesDraftResponse> CompleteAsync(
         OnlineSalesUserIdentity user,
@@ -123,7 +145,11 @@ public sealed class OnlineSalesCheckoutService(
         if (request.Payments.Any(payment =>
                 !PaymentMethods.Contains(payment.MethodCode) ||
                 payment.Amount <= 0 ||
-                payment.Reference?.Length > 160))
+                payment.Reference?.Length > 160 ||
+                payment.CardFranchiseCode?.Length > 64 ||
+                payment.ApprovalNumber?.Length > 100 ||
+                (payment.MethodCode is "Card" or "DebitCard" or "CreditCard") !=
+                (!string.IsNullOrWhiteSpace(payment.CardFranchiseCode) && !string.IsNullOrWhiteSpace(payment.ApprovalNumber))))
             throw new OnlineSalesDraftValidationException(
                 "Uno de los medios de pago no es válido.");
         if (request.Payments.Count(payment => payment.MethodCode == "Cash") > 1)

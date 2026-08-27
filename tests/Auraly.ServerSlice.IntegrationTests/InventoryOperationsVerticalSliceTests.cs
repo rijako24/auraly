@@ -177,6 +177,127 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
     }
 
     [Fact]
+    public async Task Physical_count_draft_can_expand_while_counting_and_locks_its_scope_after_recount_starts()
+    {
+        var first = Guid.NewGuid();
+        var added = Guid.NewGuid();
+        var rejectedAfterRecount = Guid.NewGuid();
+        await SeedAsync(first, added, rejectedAfterRecount, Guid.NewGuid());
+        using var client = fixture.CreateAdminClient(
+            InventoryPermissionCodes.Read,
+            InventoryPermissionCodes.Adjust,
+            InventoryPermissionCodes.Count,
+            InventoryPermissionCodes.ManagePhysicalCounts,
+            InventoryPermissionCodes.CapturePhysicalCounts);
+        await ConfirmAdjustmentAsync(client, new(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
+            "INITIAL_BALANCE", null, null, [new(1, first, 5m, 2m), new(2, added, 3m, 2m)]));
+        var countId = Guid.NewGuid();
+        InventoryPhysicalCountDraft draft;
+        using (var response = await client.PostAsJsonAsync(
+                   "/api/commerce/v1/inventory/physical-counts",
+                   new CreateInventoryPhysicalCountRequest(countId, fixture.BusinessId, fixture.WarehouseId,
+                       "Partial", "PHYSICAL_COUNT", null, "Conteo ampliable", [first])))
+        {
+            Assert.True(response.StatusCode == HttpStatusCode.Created,
+                $"Expected Created but received {response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
+            draft = Assert.Single(Assert.IsType<InventoryPhysicalCountDetail>(
+                await response.Content.ReadFromJsonAsync<InventoryPhysicalCountDetail>()).Drafts);
+        }
+
+        InventoryPhysicalCountDetail expanded;
+        using (var response = await client.PutAsJsonAsync(
+                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/drafts/{draft.DraftId:D}",
+                   new SaveInventoryPhysicalCountDraftRequest(fixture.BusinessId, draft.Version, draft.Name,
+                       [new(first, 4m, null, null), new(added, 2m, null, null)], false, "Count")))
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            expanded = Assert.IsType<InventoryPhysicalCountDetail>(
+                await response.Content.ReadFromJsonAsync<InventoryPhysicalCountDetail>());
+        }
+        var expandedDraft = Assert.Single(expanded.Drafts);
+        Assert.Equal(2, expandedDraft.Lines.Count);
+        Assert.Contains(expandedDraft.Lines, line => line.ProductId == added && line.InitialQuantity == 2m);
+
+        InventoryPhysicalCountDetail recounting;
+        using (var response = await client.PutAsJsonAsync(
+                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/drafts/{draft.DraftId:D}",
+                   new SaveInventoryPhysicalCountDraftRequest(fixture.BusinessId, expandedDraft.Version, draft.Name,
+                       [new(first, 4m, 4m, null), new(added, 2m, 2m, null)], true, "Recount")))
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            recounting = Assert.IsType<InventoryPhysicalCountDetail>(
+                await response.Content.ReadFromJsonAsync<InventoryPhysicalCountDetail>());
+        }
+        var recountDraft = Assert.Single(recounting.Drafts);
+        Assert.Equal("Recount", recountDraft.CaptureStage);
+
+        using var rejected = await client.PutAsJsonAsync(
+            $"/api/commerce/v1/inventory/physical-counts/{countId:D}/drafts/{draft.DraftId:D}",
+            new SaveInventoryPhysicalCountDraftRequest(fixture.BusinessId, recountDraft.Version, draft.Name,
+                [new(first, 4m, 4m, null), new(added, 2m, 2m, null), new(rejectedAfterRecount, 1m, null, null)],
+                true, "Count"));
+        Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+        await ClosePhysicalCountForTestAsync(countId);
+    }
+
+    [Fact]
+    public async Task General_reconciliation_includes_inventory_products_created_after_the_count_started_as_uncounted()
+    {
+        var counted = Guid.NewGuid();
+        var originalUncounted = Guid.NewGuid();
+        var third = Guid.NewGuid();
+        var addedAfterStart = Guid.NewGuid();
+        await SeedAsync(counted, originalUncounted, third, Guid.NewGuid());
+        using var client = fixture.CreateAdminClient(
+            InventoryPermissionCodes.Read,
+            InventoryPermissionCodes.Adjust,
+            InventoryPermissionCodes.Count,
+            InventoryPermissionCodes.ManagePhysicalCounts,
+            InventoryPermissionCodes.CapturePhysicalCounts);
+        await ConfirmAdjustmentAsync(client, new(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
+            "INITIAL_BALANCE", null, null,
+            [new(1, counted, 5m, 2m), new(2, originalUncounted, 4m, 2m), new(3, third, 2m, 2m)]));
+        var countId = Guid.NewGuid();
+        InventoryPhysicalCountDraft draft;
+        using (var response = await client.PostAsJsonAsync(
+                   "/api/commerce/v1/inventory/physical-counts",
+                   new CreateInventoryPhysicalCountRequest(countId, fixture.BusinessId, fixture.WarehouseId,
+                       "General", "PHYSICAL_COUNT", null, "Conteo general", [])))
+        {
+            Assert.True(response.StatusCode == HttpStatusCode.Created,
+                $"Expected Created but received {response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
+            draft = Assert.Single(Assert.IsType<InventoryPhysicalCountDetail>(
+                await response.Content.ReadFromJsonAsync<InventoryPhysicalCountDetail>()).Drafts);
+        }
+        using (var response = await client.PutAsJsonAsync(
+                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/drafts/{draft.DraftId:D}",
+                   new SaveInventoryPhysicalCountDraftRequest(fixture.BusinessId, draft.Version, draft.Name,
+                       draft.Lines.Select(line => new InventoryPhysicalCountDraftLineInput(
+                           line.ProductId, line.ProductId == counted ? 3m : null, null,
+                           line.ProductId == counted ? null : "No contado")).ToArray(), true)))
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await SeedAdditionalInventoryProductAsync(addedAfterStart);
+        InventoryReconciliationDetail reconciliation;
+        using (var response = await client.PostAsJsonAsync(
+                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/reconciliations",
+                   new PrepareInventoryReconciliationRequest(fixture.BusinessId, [new(draft.DraftId, 2)])))
+        {
+            Assert.True(response.StatusCode == HttpStatusCode.Created,
+                $"Expected Created but received {response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
+            reconciliation = Assert.IsType<InventoryReconciliationDetail>(
+                await response.Content.ReadFromJsonAsync<InventoryReconciliationDetail>());
+        }
+        Assert.Equal("Uncounted", Assert.Single(reconciliation.Products,
+            product => product.ProductId == originalUncounted).Status);
+        Assert.Equal("Uncounted", Assert.Single(reconciliation.Products,
+            product => product.ProductId == addedAfterStart).Status);
+        await ClosePhysicalCountForTestAsync(countId);
+    }
+
+    [Fact]
     public async Task Physical_count_reconciliation_sums_selected_drafts_and_preserves_movements_after_capture()
     {
         var first = Guid.NewGuid();
@@ -604,6 +725,37 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         command.Parameters.AddWithValue("@Destination",destination); command.Parameters.AddWithValue("@BusinessId",fixture.BusinessId); command.Parameters.AddWithValue("@TaxProfileId",Guid.NewGuid()); command.Parameters.AddWithValue("@TaxCode",$"IVA-{first:N}"[..32]);
         command.Parameters.AddWithValue("@WarehouseCode",$"W-{destination:N}"[..18]); command.Parameters.AddWithValue("@First",first); command.Parameters.AddWithValue("@Second",second); command.Parameters.AddWithValue("@Third",third);
         command.Parameters.AddWithValue("@FirstSku",$"I-{first:N}"); command.Parameters.AddWithValue("@FirstReference",$"REF-{first:N}"); command.Parameters.AddWithValue("@FirstBarcode",$"BAR-{first:N}"); command.Parameters.AddWithValue("@SecondSku",$"O-{second:N}"); command.Parameters.AddWithValue("@ThirdSku",$"O-{third:N}"); command.Parameters.AddWithValue("@Series","00");
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task SeedAdditionalInventoryProductAsync(Guid productId)
+    {
+        const string sql = """
+            INSERT dbo.Products(ProductId,BusinessId,ProductCode,Reference,BaseUnitCode,TaxProfileId,Source,Sku,Name,UnitPrice,Currency,ManageStock,IsActive,CreatedAt)
+            SELECT @ProductId,@BusinessId,@Sku,@Sku,N'EA',MIN(TaxProfileId),0,@Sku,N'Producto agregado después del conteo',0,N'COP',1,1,SYSUTCDATETIME()
+            FROM dbo.TaxProfiles WHERE BusinessId=@BusinessId;
+            """;
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@ProductId", productId);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@Sku", $"LATE-{productId:N}"[..32]);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task ClosePhysicalCountForTestAsync(Guid countId)
+    {
+        const string sql = """
+            UPDATE dbo.InventoryPhysicalCountReconciliations SET Status=N'Superseded'
+            WHERE InventoryPhysicalCountId=@CountId AND Status=N'Active';
+            UPDATE dbo.InventoryPhysicalCounts SET Status=N'Cancelled',ClosedAt=SYSUTCDATETIME()
+            WHERE InventoryPhysicalCountId=@CountId;
+            """;
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@CountId", countId);
         await command.ExecuteNonQueryAsync();
     }
 

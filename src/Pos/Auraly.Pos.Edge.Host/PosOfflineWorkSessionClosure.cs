@@ -25,23 +25,17 @@ public sealed class PosOfflineWorkSessionClosureStore(
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
+        await PosUnifiedOutboxSchema.EnsureCreatedAsync(
+            connectionString, cancellationToken);
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            CREATE TABLE IF NOT EXISTS PosWorkSessionClosureOutbox(
+            CREATE TABLE IF NOT EXISTS PosWorkSessionClosures(
               OperationId TEXT NOT NULL PRIMARY KEY,
               WorkSessionId TEXT NOT NULL UNIQUE,
               Payload TEXT NOT NULL,
-              Status TEXT NOT NULL,
-              AttemptCount INTEGER NOT NULL DEFAULT 0,
-              CreatedAt TEXT NOT NULL,
-              NextAttemptAt TEXT NULL,
-              LastAttemptAt TEXT NULL,
-              UploadedAt TEXT NULL,
-              LastError TEXT NULL);
-            CREATE INDEX IF NOT EXISTS IX_PosWorkSessionClosureOutbox_Pending
-              ON PosWorkSessionClosureOutbox(Status,NextAttemptAt,CreatedAt);
+              CreatedAt TEXT NOT NULL);
             """;
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -57,9 +51,9 @@ public sealed class PosOfflineWorkSessionClosureStore(
         await using var insert = connection.CreateCommand();
         insert.Transaction = transaction;
         insert.CommandText = """
-            INSERT INTO PosWorkSessionClosureOutbox(
-              OperationId,WorkSessionId,Payload,Status,CreatedAt)
-            VALUES($operation,$session,$payload,'Pending',$now)
+            INSERT INTO PosWorkSessionClosures(
+              OperationId,WorkSessionId,Payload,CreatedAt)
+            VALUES($operation,$session,$payload,$now)
             ON CONFLICT(OperationId) DO NOTHING;
             """;
         insert.Parameters.AddWithValue("$operation", value.OperationId.ToString("D"));
@@ -72,7 +66,7 @@ public sealed class PosOfflineWorkSessionClosureStore(
             await using var existing = connection.CreateCommand();
             existing.Transaction = transaction;
             existing.CommandText = """
-                SELECT Payload FROM PosWorkSessionClosureOutbox
+                SELECT Payload FROM PosWorkSessionClosures
                 WHERE OperationId=$operation;
                 """;
             existing.Parameters.AddWithValue("$operation", value.OperationId.ToString("D"));
@@ -88,6 +82,23 @@ public sealed class PosOfflineWorkSessionClosureStore(
                     "El identificador del cierre ya fue usado con otro conteo.");
             value = existingValue;
         }
+        await using (var enqueue = connection.CreateCommand())
+        {
+            enqueue.Transaction = transaction;
+            enqueue.CommandText = """
+                INSERT INTO Outbox(
+                  MessageId,DocumentId,WorkSessionId,Type,Payload,Status,
+                  AttemptCount,CreatedAt)
+                VALUES($operation,$operation,$session,$type,$payload,'Pending',0,$now)
+                ON CONFLICT(DocumentId) DO NOTHING;
+                """;
+            enqueue.Parameters.AddWithValue("$operation", value.OperationId.ToString("D"));
+            enqueue.Parameters.AddWithValue("$session", value.Closure.WorkSessionId.ToString("D"));
+            enqueue.Parameters.AddWithValue("$type", PosOutboxMessageTypes.WorkSessionClosure);
+            enqueue.Parameters.AddWithValue("$payload", payload);
+            enqueue.Parameters.AddWithValue("$now", timeProvider.GetUtcNow().ToString("O"));
+            await enqueue.ExecuteNonQueryAsync(cancellationToken);
+        }
         await transaction.CommitAsync(cancellationToken);
         return value.Closure;
     }
@@ -102,13 +113,23 @@ public sealed class PosOfflineWorkSessionClosureStore(
         await using var read = connection.CreateCommand();
         read.Transaction = transaction;
         read.CommandText = """
-            SELECT OperationId,Payload,AttemptCount
-            FROM PosWorkSessionClosureOutbox
-            WHERE (Status IN ('Pending','RetryScheduled')
+            SELECT DocumentId,Payload,AttemptCount
+            FROM Outbox
+            WHERE Type=$type AND ((Status IN ('Pending','RetryScheduled')
                    AND (NextAttemptAt IS NULL OR NextAttemptAt<=$now))
-               OR (Status='Uploading' AND LastAttemptAt<$stale)
+               OR (Status='Uploading' AND LastAttemptAt<$stale))
+              AND NOT EXISTS
+              (
+                SELECT 1 FROM Outbox prior
+                WHERE Outbox.WorkSessionId IS NOT NULL
+                  AND prior.WorkSessionId=Outbox.WorkSessionId
+                  AND prior.Status<>'Uploaded'
+                  AND (prior.CreatedAt<Outbox.CreatedAt OR
+                       (prior.CreatedAt=Outbox.CreatedAt AND prior.MessageId<Outbox.MessageId))
+              )
             ORDER BY CreatedAt LIMIT 1;
             """;
+        read.Parameters.AddWithValue("$type", PosOutboxMessageTypes.WorkSessionClosure);
         read.Parameters.AddWithValue("$now", now.ToString("O"));
         read.Parameters.AddWithValue("$stale", now.AddMinutes(-2).ToString("O"));
         await using var reader = await read.ExecuteReaderAsync(cancellationToken);
@@ -125,12 +146,13 @@ public sealed class PosOfflineWorkSessionClosureStore(
         await using var update = connection.CreateCommand();
         update.Transaction = transaction;
         update.CommandText = """
-            UPDATE PosWorkSessionClosureOutbox
+            UPDATE Outbox
             SET Status='Uploading',AttemptCount=AttemptCount+1,LastAttemptAt=$now
-            WHERE OperationId=$operation;
+            WHERE DocumentId=$operation AND Type=$type;
             """;
         update.Parameters.AddWithValue("$now", now.ToString("O"));
         update.Parameters.AddWithValue("$operation", operationId.ToString("D"));
+        update.Parameters.AddWithValue("$type", PosOutboxMessageTypes.WorkSessionClosure);
         await update.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return (operationId, value, attempts);
@@ -161,9 +183,10 @@ public sealed class PosOfflineWorkSessionClosureStore(
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT CreatedAt,LastError FROM PosWorkSessionClosureOutbox
-            WHERE Status<>'Uploaded' ORDER BY CreatedAt;
+            SELECT CreatedAt,LastError FROM Outbox
+            WHERE Type=$type AND Status<>'Uploaded' ORDER BY CreatedAt;
             """;
+        command.Parameters.AddWithValue("$type", PosOutboxMessageTypes.WorkSessionClosure);
         var count = 0;
         DateTimeOffset? oldest = null;
         string? error = null;
@@ -188,16 +211,17 @@ public sealed class PosOfflineWorkSessionClosureStore(
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            UPDATE PosWorkSessionClosureOutbox
+            UPDATE Outbox
             SET Status=$status,NextAttemptAt=$next,LastError=$error,
                 UploadedAt=CASE WHEN $status='Uploaded' THEN $now ELSE UploadedAt END
-            WHERE OperationId=$operation;
+            WHERE DocumentId=$operation AND Type=$type;
             """;
         command.Parameters.AddWithValue("$status", status);
         command.Parameters.AddWithValue("$next", (object?)nextAttemptAt?.ToString("O") ?? DBNull.Value);
         command.Parameters.AddWithValue("$error", (object?)error ?? DBNull.Value);
         command.Parameters.AddWithValue("$now", timeProvider.GetUtcNow().ToString("O"));
         command.Parameters.AddWithValue("$operation", operationId.ToString("D"));
+        command.Parameters.AddWithValue("$type", PosOutboxMessageTypes.WorkSessionClosure);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 }
@@ -240,7 +264,11 @@ public sealed class PosOfflineWorkSessionClosureService(
             otherCash,
             localSales.Sum(value => value.Total) + otherCash,
             totals.Single(value => value.PaymentMethodCode == "Cash").NetAmount,
-            totals);
+            totals,
+            localSales.Count,
+            localSales.Count(value => value.CreditAmount > 0),
+            localSales.Sum(value => value.CreditAmount),
+            0);
     }
 
     public async Task<WorkSessionClosureView> CloseAsync(
@@ -277,7 +305,11 @@ public sealed class PosOfflineWorkSessionClosureService(
             countedCash,
             countedCash - preview.ExpectedCash,
             input.Note,
-            totals);
+            totals,
+            preview.SalesCount,
+            preview.CreditSalesCount,
+            preview.CreditSalesAmount,
+            preview.ReturnCount);
         var queued = await store.QueueAsync(
             new PosQueuedWorkSessionClosure(
                 input.OperationId,
@@ -309,6 +341,8 @@ public sealed class PosOfflineWorkSessionClosureService(
             .GroupBy(value => value.MethodCode, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.Sum(value => value.Amount),
                 StringComparer.OrdinalIgnoreCase);
+        var creditAmount = sales.Sum(value => value.CreditAmount);
+        if (creditAmount > 0) amounts["Credit"] = creditAmount;
         amounts.TryAdd("Cash", 0);
         var counted = (counts ?? [])
             .GroupBy(value => value.PaymentMethodCode, StringComparer.OrdinalIgnoreCase)
@@ -351,11 +385,12 @@ public sealed class PosOfflineWorkSessionClosureService(
         code.Equals("CreditCard", StringComparison.OrdinalIgnoreCase);
 }
 
-public sealed class PosWorkSessionClosureOutboxUploader(
+public sealed class PosWorkSessionClosureUploader(
     PosOfflineWorkSessionClosureStore store,
     PosEdgeSaleStore sales,
     PosCashMovementStore cashMovements,
-    PosWorkSessionClosureServerClient server)
+    PosWorkSessionClosureServerClient server,
+    PosSynchronizationEventLog events)
 {
     public async Task<bool> UploadNextAsync(CancellationToken cancellationToken)
     {
@@ -371,6 +406,8 @@ public sealed class PosWorkSessionClosureOutboxUploader(
                 item.Value.Attempts,
                 "Hay ventas de esta sesión pendientes por subir.",
                 cancellationToken);
+            events.Record("Info", "WorkSessionClosure", "Cierre espera documentos anteriores",
+                item.Value.Value.Closure.WorkSessionId.ToString("D"));
             return false;
         }
         try
@@ -380,6 +417,8 @@ public sealed class PosWorkSessionClosureOutboxUploader(
                 item.Value.OperationId,
                 cancellationToken);
             await store.MarkUploadedAsync(item.Value.OperationId, cancellationToken);
+            events.Record("Success", "WorkSessionClosure", "Cierre de caja subido",
+                item.Value.Value.Closure.WorkSessionId.ToString("D"));
         }
         catch (Exception exception) when (
             exception is HttpRequestException or PosWorkSessionClosureException)
@@ -389,6 +428,8 @@ public sealed class PosWorkSessionClosureOutboxUploader(
                 item.Value.Attempts,
                 exception.Message,
                 cancellationToken);
+            events.Record("Warning", "WorkSessionClosure", "Cierre de caja pendiente",
+                $"{item.Value.Value.Closure.WorkSessionId:D} · {exception.Message}");
             return false;
         }
         return true;

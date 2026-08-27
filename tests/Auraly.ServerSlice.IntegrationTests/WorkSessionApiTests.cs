@@ -57,7 +57,44 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Closure_preview_always_requests_blind_cash_and_only_reports_used_payment_methods()
+    public async Task Closure_totals_are_isolated_by_cashier_work_session()
+    {
+        var firstUserId = await CreateUserAsync("work-session-isolation-first");
+        var secondUserId = await CreateUserAsync("work-session-isolation-second");
+        using var firstClient = fixture.CreateUserClient(
+            firstUserId,
+            WorkSessionPermissionCodes.Read,
+            WorkSessionPermissionCodes.Open,
+            WorkSessionPermissionCodes.Close);
+        using var secondClient = fixture.CreateUserClient(
+            secondUserId,
+            WorkSessionPermissionCodes.Read,
+            WorkSessionPermissionCodes.Open,
+            WorkSessionPermissionCodes.Close);
+        var command = new OpenWorkSessionRequest(
+            fixture.BusinessId,
+            fixture.WarehouseId,
+            null);
+        var first = await OpenAsync(firstClient, command);
+        var second = await OpenAsync(secondClient, command);
+        await InsertMovementsAsync(first.WorkSessionId, firstUserId);
+        await InsertMovementsAsync(second.WorkSessionId, secondUserId);
+
+        var firstPreview = await firstClient.GetFromJsonAsync<WorkSessionClosurePreviewView>(
+            $"/api/commerce/v1/work-sessions/{first.WorkSessionId:D}/closure-preview");
+        var secondPreview = await secondClient.GetFromJsonAsync<WorkSessionClosurePreviewView>(
+            $"/api/commerce/v1/work-sessions/{second.WorkSessionId:D}/closure-preview");
+
+        Assert.NotNull(firstPreview);
+        Assert.NotNull(secondPreview);
+        Assert.Equal(160_000m, firstPreview.TotalOther);
+        Assert.Equal(160_000m, secondPreview.TotalOther);
+        Assert.Equal(80_000m, firstPreview.ExpectedCash);
+        Assert.Equal(80_000m, secondPreview.ExpectedCash);
+    }
+
+    [Fact]
+    public async Task Closure_preview_reports_every_configured_payment_method_without_mixing_amounts()
     {
         var userId = await CreateUserAsync("work-session-empty-count");
         using var client = fixture.CreateUserClient(
@@ -76,13 +113,18 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         var preview = await response.Content.ReadFromJsonAsync<WorkSessionClosurePreviewView>();
 
         Assert.NotNull(preview);
-        Assert.Collection(
-            preview.PaymentTotals,
-            cash =>
-            {
-                Assert.Equal("Cash", cash.PaymentMethodCode);
-                Assert.Equal(0m, cash.NetAmount);
-            });
+        var totals = preview.PaymentTotals.ToDictionary(
+            value => value.PaymentMethodCode,
+            StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("Cash", totals.Keys);
+        Assert.Contains("DebitCard", totals.Keys);
+        Assert.Contains("CreditCard", totals.Keys);
+        Assert.Contains("Transfer", totals.Keys);
+        Assert.All(totals.Values, value => Assert.Equal(0m, value.NetAmount));
+        Assert.Equal(0, preview.SalesCount);
+        Assert.Equal(0, preview.CreditSalesCount);
+        Assert.Equal(0m, preview.CreditSalesAmount);
+        Assert.Equal(0, preview.ReturnCount);
     }
 
     [Fact]
@@ -183,36 +225,21 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         Assert.Equal(80_000m, closure.ExpectedCash);
         Assert.Equal(75_000m, closure.CountedCash);
         Assert.Equal(-5_000m, closure.CashDifference);
-        Assert.Collection(
-            closure.PaymentTotals,
-            cash =>
-            {
-                Assert.Equal("Cash", cash.PaymentMethodCode);
-                Assert.Equal(80_000m, cash.NetAmount);
-                Assert.Equal(75_000m, cash.CountedAmount);
-                Assert.Equal(-5_000m, cash.Difference);
-            },
-            debitCard =>
-            {
-                Assert.Equal("DebitCard", debitCard.PaymentMethodCode);
-                Assert.Equal(30_000m, debitCard.NetAmount);
-                Assert.Equal(30_000m, debitCard.CountedAmount);
-                Assert.Equal(0m, debitCard.Difference);
-            },
-            creditCard =>
-            {
-                Assert.Equal("CreditCard", creditCard.PaymentMethodCode);
-                Assert.Equal(20_000m, creditCard.NetAmount);
-                Assert.Equal(20_000m, creditCard.CountedAmount);
-                Assert.Equal(0m, creditCard.Difference);
-            },
-            transfer =>
-            {
-                Assert.Equal("Transfer", transfer.PaymentMethodCode);
-                Assert.Equal(30_000m, transfer.NetAmount);
-                Assert.Null(transfer.CountedAmount);
-                Assert.Null(transfer.Difference);
-            });
+        var totals = closure.PaymentTotals.ToDictionary(
+            value => value.PaymentMethodCode,
+            StringComparer.OrdinalIgnoreCase);
+        Assert.Equal(80_000m, totals["Cash"].NetAmount);
+        Assert.Equal(75_000m, totals["Cash"].CountedAmount);
+        Assert.Equal(-5_000m, totals["Cash"].Difference);
+        Assert.Equal(30_000m, totals["DebitCard"].NetAmount);
+        Assert.Equal(30_000m, totals["DebitCard"].CountedAmount);
+        Assert.Equal(0m, totals["DebitCard"].Difference);
+        Assert.Equal(20_000m, totals["CreditCard"].NetAmount);
+        Assert.Equal(20_000m, totals["CreditCard"].CountedAmount);
+        Assert.Equal(0m, totals["CreditCard"].Difference);
+        Assert.Equal(30_000m, totals["Transfer"].NetAmount);
+        Assert.Null(totals["Transfer"].CountedAmount);
+        Assert.Null(totals["Transfer"].Difference);
 
         var replay = await CloseAsync(
             client,

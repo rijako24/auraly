@@ -1,5 +1,6 @@
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.BuildingBlocks.Infrastructure.Identifiers;
+using Auraly.BuildingBlocks.Infrastructure.Persistence;
 using Microsoft.Azure.Functions.Worker;
 
 using Microsoft.EntityFrameworkCore;
@@ -103,14 +104,15 @@ var host = new HostBuilder()
         var databaseConnection = configuration.GetConnectionString("DefaultConnection")
             ?? throw new InvalidOperationException(
                 "ConnectionStrings:DefaultConnection is required.");
-        services.AddDbContext<ApplicationDbContext>(options =>
-
-            options.UseSqlServer(databaseConnection));
+        services.AddSingleton(new AuralySqlConnectionSource(databaseConnection));
+        services.AddDbContext<ApplicationDbContext>((provider, options) =>
+            options.UseSqlServer(
+                provider.GetRequiredService<AuralySqlConnectionSource>().ConnectionString));
 
         services.AddMemoryCache();
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
-        services.AddSingleton(new SqlServerConnectionFactory(databaseConnection));
+        services.AddSingleton<SqlServerConnectionFactory>();
 
         // Repositories
 

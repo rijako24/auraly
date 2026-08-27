@@ -318,7 +318,7 @@ public static class PosWorkSessionClosureEndpoints
         CancellationToken cancellationToken)
     {
         try { return await server.PreviewAsync(session, cancellationToken); }
-        catch (HttpRequestException)
+        catch (Exception exception) when (CanUseOfflineFallback(exception, cancellationToken))
         {
             return await offline.PreviewAsync(session, cancellationToken);
         }
@@ -337,12 +337,19 @@ public static class PosWorkSessionClosureEndpoints
             return await server.CloseAsync(
                 session, request, authorizedByUserId, cancellationToken);
         }
-        catch (HttpRequestException)
+        catch (Exception exception) when (CanUseOfflineFallback(exception, cancellationToken))
         {
             return await offline.CloseAsync(
                 session, request, authorizedByUserId, cancellationToken);
         }
     }
+
+    private static bool CanUseOfflineFallback(
+        Exception exception,
+        CancellationToken cancellationToken) =>
+        exception is HttpRequestException ||
+        exception is PosWorkSessionClosureException { StatusCode: >= 500 or 408 } ||
+        exception is OperationCanceledException && !cancellationToken.IsCancellationRequested;
 }
 
 public sealed class PosWorkSessionClosureException(int statusCode, string message)
@@ -384,9 +391,13 @@ internal static class WorkSessionClosureReceiptRenderer
         Line(stream, $"CIERRE:   {Date(value.ClosedAt)}");
         Line(stream, $"DURACION: {Duration(value.OpenedAt, value.ClosedAt)}");
         Line(stream, new string('-', columns));
+        Line(stream, Pair("NUMERO DE VENTAS", value.SalesCount.ToString(CultureInfo.InvariantCulture), columns));
+        Line(stream, Pair("VENTAS A CARTERA", value.CreditSalesCount.ToString(CultureInfo.InvariantCulture), columns));
+        Line(stream, Pair("VALOR A CARTERA", Money(value.CreditSalesAmount), columns));
+        Line(stream, Pair("NUM. DEVOLUCIONES", value.ReturnCount.ToString(CultureInfo.InvariantCulture), columns));
         Line(stream, Pair("VENTAS", Money(value.TotalSales), columns));
         Line(stream, Pair("DEVOLUCIONES", Money(value.TotalRefunds), columns));
-        Line(stream, Pair("OTROS MOVIMIENTOS", Money(value.TotalOther), columns));
+        Line(stream, Pair("ENTRADAS / SALIDAS", Money(value.TotalOther), columns));
         Line(stream, Pair("NETO", Money(value.NetAmount), columns));
         Line(stream, new string('-', columns));
         Line(stream, "CONCILIACION POR MEDIO");
@@ -395,7 +406,7 @@ internal static class WorkSessionClosureReceiptRenderer
             Wrapped(stream, PaymentMethodName(payment.PaymentMethodCode).ToUpperInvariant(), columns);
             Line(stream, Pair("  VENTAS", Money(payment.SalesAmount), columns));
             Line(stream, Pair("  DEVOLUCIONES", Money(payment.RefundAmount), columns));
-            Line(stream, Pair("  OTROS MOV.", Money(payment.OtherAmount), columns));
+            Line(stream, Pair("  ENTR./SAL.", Money(payment.OtherAmount), columns));
             Line(stream, Pair("  ESPERADO", Money(payment.NetAmount), columns));
             if (RequiresManualCount(payment.PaymentMethodCode))
             {
@@ -449,8 +460,8 @@ internal static class WorkSessionClosureReceiptRenderer
 <style>@page{size:80mm auto;margin:4mm}body{width:72mm;font:10px Arial,sans-serif;color:#111;margin:auto}.brand-logo{display:block;max-width:48mm;max-height:18mm;object-fit:contain;margin:0 auto 3mm}h1{text-align:center;font-size:15px;margin:3px 0}h2{text-align:center;font-size:11px;margin:3px 0}table{width:100%;border-collapse:collapse;margin:8px 0}th,td{padding:3px 1px;border-bottom:1px solid #ddd;text-align:right;font-size:8px}th:first-child,td:first-child{text-align:left}.summary{font-weight:bold}.difference{font-size:13px}</style></head><body>
 {{logo}}<h1>{{Encode(companyName ?? value.BusinessName)}}</h1><h2>ARQUEO DE CAJA · CIERRE CONFIRMADO</h2><h2>Sede: {{Encode(value.BusinessName)}} · {{Encode(value.WarehouseName)}}</h2>
 <p><strong>Usuario que trabajó:</strong> {{Encode(value.UserName)}}<br><strong>Apertura:</strong> {{Date(value.OpenedAt)}}<br><strong>Cierre:</strong> {{Date(value.ClosedAt)}}<br><strong>Duración:</strong> {{Duration(value.OpenedAt, value.ClosedAt)}}</p>
-<table><tbody><tr><td>Ventas</td><td>{{Money(value.TotalSales)}}</td></tr><tr><td>Devoluciones</td><td>{{Money(value.TotalRefunds)}}</td></tr><tr><td>Otros movimientos</td><td>{{Money(value.TotalOther)}}</td></tr><tr class="summary"><td>Neto</td><td>{{Money(value.NetAmount)}}</td></tr></tbody></table>
-<h3>Todos los medios de pago</h3><table><thead><tr><th>Medio</th><th>Venta</th><th>Dev.</th><th>Otros</th><th>Esper.</th><th>Cont.</th><th>Dif.</th></tr></thead><tbody>{{payments}}</tbody></table>
+<table><tbody><tr><td>Número de ventas</td><td>{{value.SalesCount}}</td></tr><tr><td>Ventas a cartera</td><td>{{value.CreditSalesCount}}</td></tr><tr><td>Valor a cartera</td><td>{{Money(value.CreditSalesAmount)}}</td></tr><tr><td>Devoluciones</td><td>{{value.ReturnCount}}</td></tr><tr><td>Total ventas</td><td>{{Money(value.TotalSales)}}</td></tr><tr><td>Total devoluciones</td><td>{{Money(value.TotalRefunds)}}</td></tr><tr><td>Entradas / salidas</td><td>{{Money(value.TotalOther)}}</td></tr><tr class="summary"><td>Neto</td><td>{{Money(value.NetAmount)}}</td></tr></tbody></table>
+<h3>Todos los medios de pago</h3><table><thead><tr><th>Medio</th><th>Venta</th><th>Dev.</th><th>Entr./sal.</th><th>Esper.</th><th>Cont.</th><th>Dif.</th></tr></thead><tbody>{{payments}}</tbody></table>
 <p>Efectivo esperado: <strong>{{Money(value.ExpectedCash)}}</strong><br>Efectivo contado: <strong>{{Money(value.CountedCash ?? 0)}}</strong></p>
 <p class="difference"><strong>{{Encode(DifferenceLabel(value.CashDifference ?? 0))}}:</strong> {{SignedMoney(value.CashDifference ?? 0)}}</p>{{note}}
 <p>Cierre: {{value.WorkSessionClosureId:D}}</p></body></html>

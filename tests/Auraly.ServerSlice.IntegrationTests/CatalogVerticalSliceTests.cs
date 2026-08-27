@@ -364,7 +364,11 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             {
                 Name = "Coffee updated",
                 Barcodes = [new ProductBarcodeInput("7701234500098", true)],
-                Prices = [new ProductPriceInput(13_250m)]
+                Prices = [request.Prices.Single() with
+                {
+                    Amount = 13_250m,
+                    PreparedAmount = 13_250m
+                }]
             };
             using (var rejected = await admin.PutAsJsonAsync(
                        $"/api/commerce/v1/products/{created.ProductId:D}",
@@ -373,7 +377,11 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
 
             var updated = attempted with
             {
-                Prices = [new ProductPriceInput(12_500m)]
+                Prices = [request.Prices.Single() with
+                {
+                    Amount = 12_500m,
+                    PreparedAmount = 12_500m
+                }]
             };
             using var update = await admin.PutAsJsonAsync(
                 $"/api/commerce/v1/products/{created.ProductId:D}",
@@ -558,6 +566,7 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
 
         using var admin = fixture.CreateAdminClient(
             CatalogPermissionCodes.Create,
+            CatalogPermissionCodes.Update,
             CatalogPermissionCodes.ManagePrices,
             CatalogPermissionCodes.ManageCosts);
         using var createdResponse = await admin.PostAsJsonAsync("/api/commerce/v1/products", request);
@@ -573,6 +582,29 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             "/api/commerce/v1/products",
             request with { ProductCode = $"DUP-{Guid.NewGuid():N}" });
         Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
+        var duplicateBody = await duplicate.Content.ReadAsStringAsync();
+        Assert.Contains(barcode, duplicateBody, StringComparison.Ordinal);
+        Assert.Contains("asignado", duplicateBody, StringComparison.OrdinalIgnoreCase);
+
+        var secondRequest = request with
+        {
+            ProductCode = $"SECOND-{Guid.NewGuid():N}",
+            Barcodes = [new ProductBarcodeInput($"79{Random.Shared.NextInt64(10_000_000_000, 99_999_999_999)}", true)],
+            Identifiers = [new ProductIdentifierInput("Alternate", $"ALT-{Guid.NewGuid():N}")]
+        };
+        using var secondCreation = await admin.PostAsJsonAsync(
+            "/api/commerce/v1/products", secondRequest);
+        secondCreation.EnsureSuccessStatusCode();
+        var secondProduct = (await secondCreation.Content.ReadFromJsonAsync<ProductDetail>())!;
+        using var duplicateUpdate = await admin.PutAsJsonAsync(
+            $"/api/commerce/v1/products/{secondProduct.ProductId:D}",
+            secondRequest with { Barcodes = [new ProductBarcodeInput(barcode, true)] });
+        Assert.Equal(HttpStatusCode.Conflict, duplicateUpdate.StatusCode);
+        Assert.Contains(barcode, await duplicateUpdate.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+
+        using var ownBarcodeUpdate = await admin.PutAsJsonAsync(
+            $"/api/commerce/v1/products/{created.ProductId:D}", request);
+        ownBarcodeUpdate.EnsureSuccessStatusCode();
 
         var sync = new PosCatalogSynchronizer(
             fixture.CreateClient(),

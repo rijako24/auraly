@@ -15,7 +15,7 @@ Auraly puede tener varios motores y varias colas. La invariante es que cada capa
 - Escalar significa aumentar consumidores/particiones conservando claves de orden, leases, idempotencia y contratos; no bifurcar la logica.
 - Ningun endpoint, modulo o integracion puede escribir directamente una proyeccion que pertenece a un motor para evitar su pipeline.
 
-Antes de crear un processor, engine, worker, job table, queue o background service se debe identificar la capacidad propietaria y demostrar por que sus puntos de extension actuales no resuelven la necesidad. Si la responsabilidad ya existe, se extiende; no se duplica.
+Antes de crear un processor, engine, worker, job table, queue o background service se debe identificar la capacidad propietaria. Toda funcionalidad nueva debe extender uno de los propietarios canonicos y sus puntos de extension; crear otro motor no es un punto de extension permitido para una tarea funcional. Si ninguna capacidad vigente parece ser propietaria, se detiene la implementacion y se eleva una decision arquitectonica explicita en vez de inventar un motor, writer, job o cola desde la pantalla, endpoint o modulo solicitante.
 
 ## 2. Mapa de propietarios actuales
 
@@ -157,6 +157,7 @@ Antes de implementar:
 - [ ] IDs/codigos, scopes, FKs, activacion, orden y seeds del catalogo son consistentes.
 - [ ] Hay pruebas de idempotencia, concurrencia, orden, retry y no duplicacion proporcionales al proceso.
 - [ ] Documentacion, DI, schema, seeds, backend y frontend quedaron alineados.
+- [ ] Se audito el diff final, despues de implementar, contra `AGENTS.md`, estandares, estas invariantes y las decisiones propietarias; todo incumplimiento fue corregido y los checks afectados se repitieron.
 
 ## Referencias canonicas
 

@@ -1,21 +1,15 @@
+using Auraly.BuildingBlocks.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
 public sealed class SqlServerConnectionFactory
 {
-    private readonly string _connectionString;
+    private readonly AuralySqlConnectionSource source;
 
-    public SqlServerConnectionFactory(string connectionString)
-    {
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            throw new ArgumentException("A SQL Server connection string is required.", nameof(connectionString));
-        }
+    public SqlServerConnectionFactory(AuralySqlConnectionSource source) =>
+        this.source = source;
 
-        _connectionString = connectionString;
-    }
-
-    public SqlConnection Create() => new(_connectionString);
+    public SqlConnection Create() => new(source.ConnectionString);
 }
 

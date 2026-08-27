@@ -1,8 +1,8 @@
 {
   "id": "/pos",
-  "name": "Auraly POS",
-  "short_name": "Auraly POS",
-  "description": "Punto de venta local de Auraly Commerce",
+  "name": "Auraly",
+  "short_name": "Auraly",
+  "description": "Punto de venta de Auraly",
   "start_url": "/pos",
   "scope": "/pos",
   "display": "standalone",

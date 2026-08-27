@@ -265,20 +265,38 @@ public sealed class SqlInventoryPhysicalCountStore(
                   INNER JOIN dbo.InventoryPhysicalCountReconciliations reconciliation ON reconciliation.InventoryPhysicalCountReconciliationId=selected.InventoryPhysicalCountReconciliationId
                   WHERE selected.InventoryPhysicalCountListId=@DraftId AND reconciliation.Status=N'Active')
                   THROW 51202,'This draft belongs to an active reconciliation. Prepare a new draft instead.',1;
-                IF (SELECT COUNT(*) FROM dbo.InventoryPhysicalCountLines WHERE InventoryPhysicalCountListId=@DraftId)<>@LineCount
-                  THROW 51201,'Every draft product must be included when saving.',1;
                 DECLARE @Sequence BIGINT=(SELECT LastCompletedSequence FROM dbo.BusinessProcessingCursors WHERE BusinessId=@BusinessId);
-                SELECT @Sequence;
+                SELECT count.WarehouseId,draft.CountSubmittedAt,@Sequence
+                FROM dbo.InventoryPhysicalCountLists draft
+                INNER JOIN dbo.InventoryPhysicalCounts count ON count.InventoryPhysicalCountId=draft.InventoryPhysicalCountId
+                WHERE draft.InventoryPhysicalCountListId=@DraftId;
                 """;
             long sequence;
+            Guid warehouseId;
+            DateTimeOffset? recountStartedAt;
             await using(var command=new SqlCommand(lockSql,connection,transaction))
             {
-                command.Parameters.AddWithValue("@DraftId",draftId);command.Parameters.AddWithValue("@CountId",countId);command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@UserId",user.UserId);command.Parameters.AddWithValue("@Version",request.Version);command.Parameters.AddWithValue("@LineCount",request.Lines.Count);
-                sequence=Convert.ToInt64(await command.ExecuteScalarAsync(token));
+                command.Parameters.AddWithValue("@DraftId",draftId);command.Parameters.AddWithValue("@CountId",countId);command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@UserId",user.UserId);command.Parameters.AddWithValue("@Version",request.Version);
+                await using var reader=await command.ExecuteReaderAsync(token);
+                await reader.ReadAsync(token);
+                warehouseId=reader.GetGuid(0);
+                recountStartedAt=reader.IsDBNull(1)?null:reader.GetDateTimeOffset(1);
+                sequence=reader.GetInt64(2);
             }
+            if(recountStartedAt is not null && request.CaptureStage!="Recount")
+                throw new InventoryConflictException("The product scope is locked because recounting already started.");
             var now=timeProvider.GetUtcNow();
             foreach(var line in request.Lines)
             {
+                if(request.CaptureStage=="Count")
+                {
+                    const string existsSql="SELECT COUNT(*) FROM dbo.InventoryPhysicalCountLines WHERE InventoryPhysicalCountListId=@DraftId AND ProductId=@ProductId;";
+                    await using var existsCommand=new SqlCommand(existsSql,connection,transaction);
+                    existsCommand.Parameters.AddWithValue("@DraftId",draftId);
+                    existsCommand.Parameters.AddWithValue("@ProductId",line.ProductId);
+                    if(Convert.ToInt32(await existsCommand.ExecuteScalarAsync(token))==0)
+                        await InsertDraftLineAsync(connection,transaction,countId,draftId,line.ProductId,user.BusinessId,warehouseId,true,token);
+                }
                 const string update="""
                     UPDATE dbo.InventoryPhysicalCountLines SET
                       PreCountedByUserId=CASE WHEN @Initial IS NULL THEN NULL ELSE @UserId END,
@@ -295,10 +313,15 @@ public sealed class SqlInventoryPhysicalCountStore(
                     """;
                 await ExecuteAsync(connection,transaction,update,token,P("@Initial",line.InitialQuantity),P("@Verification",line.VerificationQuantity),P("@PendingReason",line.PendingReason),P("@UserId",user.UserId),P("@Now",now),P("@Sequence",sequence),P("@DraftId",draftId),P("@ProductId",line.ProductId));
             }
+            const string validateCompleteScope="""
+                IF (SELECT COUNT(*) FROM dbo.InventoryPhysicalCountLines WHERE InventoryPhysicalCountListId=@DraftId)<>@LineCount
+                  THROW 51201,'Every draft product must be included when saving.',1;
+                """;
+            await ExecuteAsync(connection,transaction,validateCompleteScope,token,P("@DraftId",draftId),P("@LineCount",request.Lines.Count));
             const string finish="""
                 UPDATE dbo.InventoryPhysicalCountLists SET Name=@Name,Status=@Status,Version=Version+1,UpdatedAt=@Now,
                   PreCountSubmittedAt=CASE WHEN @Status=N'Ready' THEN @Now ELSE NULL END,
-                  CountSubmittedAt=CASE WHEN @CaptureStage=N'Recount' THEN COALESCE(CountSubmittedAt,@Now) ELSE NULL END
+                  CountSubmittedAt=CASE WHEN @CaptureStage=N'Recount' THEN COALESCE(CountSubmittedAt,@Now) ELSE CountSubmittedAt END
                 WHERE InventoryPhysicalCountListId=@DraftId;
                 """;
             await ExecuteAsync(connection,transaction,finish,token,P("@Name",request.Name),P("@Status",request.ReadyForReconciliation?"Ready":"InProgress"),P("@CaptureStage",request.CaptureStage),P("@Now",now),P("@DraftId",draftId));
@@ -343,7 +366,14 @@ public sealed class SqlInventoryPhysicalCountStore(
             const string totals="""
                 UPDATE reconciliation SET
                   CountedProductCount=(SELECT COUNT(DISTINCT line.ProductId) FROM dbo.InventoryPhysicalCountReconciliationDrafts selected INNER JOIN dbo.InventoryPhysicalCountLines line ON line.InventoryPhysicalCountListId=selected.InventoryPhysicalCountListId WHERE selected.InventoryPhysicalCountReconciliationId=@ReconciliationId AND line.PreCountQuantity IS NOT NULL),
-                  UncountedProductCount=(SELECT COUNT(DISTINCT scope.ProductId) FROM dbo.InventoryPhysicalCountLines scope WHERE scope.InventoryPhysicalCountId=@CountId AND NOT EXISTS(SELECT 1 FROM dbo.InventoryPhysicalCountReconciliationDrafts selected INNER JOIN dbo.InventoryPhysicalCountLines line ON line.InventoryPhysicalCountListId=selected.InventoryPhysicalCountListId WHERE selected.InventoryPhysicalCountReconciliationId=@ReconciliationId AND line.ProductId=scope.ProductId AND line.PreCountQuantity IS NOT NULL))
+                  UncountedProductCount=(SELECT COUNT(*) FROM (
+                    SELECT line.ProductId FROM dbo.InventoryPhysicalCountLines line WHERE line.InventoryPhysicalCountId=@CountId GROUP BY line.ProductId
+                    UNION
+                    SELECT product.ProductId FROM dbo.InventoryPhysicalCounts countHeader
+                    INNER JOIN dbo.Products product ON product.BusinessId=countHeader.BusinessId AND product.IsActive=1 AND product.ManageStock=1
+                    LEFT JOIN dbo.ProductLinks link ON link.BusinessId=product.BusinessId AND link.ChildProductId=product.ProductId AND link.SharesInventory=1 AND link.IsActive=1
+                    WHERE countHeader.InventoryPhysicalCountId=@CountId AND countHeader.ScopeType=N'General' AND link.ProductLinkId IS NULL
+                  ) scope WHERE NOT EXISTS(SELECT 1 FROM dbo.InventoryPhysicalCountReconciliationDrafts selected INNER JOIN dbo.InventoryPhysicalCountLines line ON line.InventoryPhysicalCountListId=selected.InventoryPhysicalCountListId WHERE selected.InventoryPhysicalCountReconciliationId=@ReconciliationId AND line.ProductId=scope.ProductId AND line.PreCountQuantity IS NOT NULL))
                 FROM dbo.InventoryPhysicalCountReconciliations reconciliation WHERE reconciliation.InventoryPhysicalCountReconciliationId=@ReconciliationId;
                 """;
             await ExecuteAsync(connection,transaction,totals,token,P("@ReconciliationId",reconciliationId),P("@CountId",countId));
@@ -380,14 +410,26 @@ public sealed class SqlInventoryPhysicalCountStore(
             LEFT JOIN dbo.InventoryPhysicalCountLines line ON line.InventoryPhysicalCountListId=draft.InventoryPhysicalCountListId
             WHERE selected.InventoryPhysicalCountReconciliationId=@ReconciliationId
             GROUP BY draft.InventoryPhysicalCountListId,draft.Name,draft.AssignedUserId,selected.DraftVersion ORDER BY draft.Name;
+            ;WITH reconciliationScope AS (
+              SELECT scope.ProductId,MAX(scope.ProductCodeSnapshot) ProductCodeSnapshot,MAX(scope.ProductNameSnapshot) ProductNameSnapshot,MAX(scope.SystemQuantityAtBase) SystemQuantityAtBase
+              FROM dbo.InventoryPhysicalCountLines scope WHERE scope.InventoryPhysicalCountId=@CountId GROUP BY scope.ProductId
+              UNION ALL
+              SELECT product.ProductId,COALESCE(product.ProductCode,product.Sku,product.Reference,N''),product.Name,
+                COALESCE((SELECT SUM(movement.QuantityChange) FROM dbo.InventoryMovements movement WHERE movement.BusinessId=@BusinessId AND movement.WarehouseId=@WarehouseId AND movement.ProductId=product.ProductId AND movement.ProcessingSequence<=@BaseSequence),0)
+              FROM dbo.InventoryPhysicalCounts countHeader
+              INNER JOIN dbo.Products product ON product.BusinessId=countHeader.BusinessId AND product.IsActive=1 AND product.ManageStock=1
+              LEFT JOIN dbo.ProductLinks link ON link.BusinessId=product.BusinessId AND link.ChildProductId=product.ProductId AND link.SharesInventory=1 AND link.IsActive=1
+              WHERE countHeader.InventoryPhysicalCountId=@CountId AND countHeader.ScopeType=N'General' AND link.ProductLinkId IS NULL
+                AND NOT EXISTS(SELECT 1 FROM dbo.InventoryPhysicalCountLines existing WHERE existing.InventoryPhysicalCountId=@CountId AND existing.ProductId=product.ProductId)
+            )
             SELECT scope.ProductId,MAX(scope.ProductCodeSnapshot),MAX(scope.ProductNameSnapshot),
               MAX(scope.SystemQuantityAtBase)+COALESCE((SELECT SUM(m.QuantityChange) FROM dbo.InventoryMovements m WHERE m.BusinessId=@BusinessId AND m.WarehouseId=@WarehouseId AND m.ProductId=scope.ProductId AND m.ProcessingSequence>@BaseSequence AND m.ProcessingSequence<=@SnapshotSequence),0),
               CASE WHEN @IncludeCosts=1 THEN price.CostBasisAmount END,
               CASE WHEN @IncludeCosts=1 THEN balance.AverageUnitCost END
-            FROM dbo.InventoryPhysicalCountLines scope
+            FROM reconciliationScope scope
             LEFT JOIN dbo.ProductPrices price ON price.BusinessId=@BusinessId AND price.ProductId=scope.ProductId AND price.IsActive=1
             LEFT JOIN dbo.InventoryBalances balance ON balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId AND balance.ProductId=scope.ProductId
-            WHERE scope.InventoryPhysicalCountId=@CountId GROUP BY scope.ProductId,price.CostBasisAmount,balance.AverageUnitCost;
+            GROUP BY scope.ProductId,price.CostBasisAmount,balance.AverageUnitCost;
             SELECT line.ProductId,draft.InventoryPhysicalCountListId,draft.Name,COALESCE(draft.AssignedUserId,@UserId),line.PreCountQuantity,line.CountedQuantity
             FROM dbo.InventoryPhysicalCountReconciliationDrafts selected INNER JOIN dbo.InventoryPhysicalCountLists draft ON draft.InventoryPhysicalCountListId=selected.InventoryPhysicalCountListId
             INNER JOIN dbo.InventoryPhysicalCountLines line ON line.InventoryPhysicalCountListId=draft.InventoryPhysicalCountListId
@@ -426,9 +468,21 @@ public sealed class SqlInventoryPhysicalCountStore(
                 END
                 ELSE
                 BEGIN
+                  ;WITH reconciliationScope AS (
+                    SELECT scope.ProductId,MAX(scope.ProductCodeSnapshot) ProductCodeSnapshot,MAX(scope.ProductNameSnapshot) ProductNameSnapshot,MAX(scope.SystemQuantityAtBase) SystemQuantityAtBase
+                    FROM dbo.InventoryPhysicalCountLines scope WHERE scope.InventoryPhysicalCountId=@CountId GROUP BY scope.ProductId
+                    UNION ALL
+                    SELECT product.ProductId,COALESCE(product.ProductCode,product.Sku,product.Reference,N''),product.Name,
+                      COALESCE((SELECT SUM(movement.QuantityChange) FROM dbo.InventoryMovements movement WHERE movement.BusinessId=@BusinessId AND movement.WarehouseId=countHeader.WarehouseId AND movement.ProductId=product.ProductId AND movement.ProcessingSequence<=countHeader.BaseInventorySequence),0)
+                    FROM dbo.InventoryPhysicalCounts countHeader
+                    INNER JOIN dbo.Products product ON product.BusinessId=countHeader.BusinessId AND product.IsActive=1 AND product.ManageStock=1
+                    LEFT JOIN dbo.ProductLinks link ON link.BusinessId=product.BusinessId AND link.ChildProductId=product.ProductId AND link.SharesInventory=1 AND link.IsActive=1
+                    WHERE countHeader.InventoryPhysicalCountId=@CountId AND countHeader.ScopeType=N'General' AND link.ProductLinkId IS NULL
+                      AND NOT EXISTS(SELECT 1 FROM dbo.InventoryPhysicalCountLines existing WHERE existing.InventoryPhysicalCountId=@CountId AND existing.ProductId=product.ProductId)
+                  )
                   INSERT dbo.InventoryPhysicalCountLines(InventoryPhysicalCountId,InventoryPhysicalCountListId,ProductId,ProductCodeSnapshot,ProductNameSnapshot,SystemQuantityAtBase)
                   SELECT @CountId,@DraftId,scope.ProductId,MAX(scope.ProductCodeSnapshot),MAX(scope.ProductNameSnapshot),MAX(scope.SystemQuantityAtBase)
-                  FROM dbo.InventoryPhysicalCountLines scope WHERE scope.InventoryPhysicalCountId=@CountId AND NOT EXISTS(
+                  FROM reconciliationScope scope WHERE NOT EXISTS(
                     SELECT 1 FROM dbo.InventoryPhysicalCountReconciliationDrafts selected INNER JOIN dbo.InventoryPhysicalCountLines counted ON counted.InventoryPhysicalCountListId=selected.InventoryPhysicalCountListId
                     WHERE selected.InventoryPhysicalCountReconciliationId=@ReconciliationId AND counted.ProductId=scope.ProductId AND counted.PreCountQuantity IS NOT NULL)
                   GROUP BY scope.ProductId;
@@ -475,8 +529,15 @@ public sealed class SqlInventoryPhysicalCountStore(
                 SELECT candidate.ProductId,candidate.Quantity,candidate.Quantity+COALESCE((SELECT SUM(m.QuantityChange) FROM dbo.InventoryMovements m WHERE m.BusinessId=@BusinessId AND m.WarehouseId=@WarehouseId AND m.ProductId=candidate.ProductId AND m.ProcessingSequence>candidate.LastCaptureSequence AND m.ProcessingSequence<=@CurrentSequence),0)
                 FROM candidates candidate;
                 """:"""
-                SELECT scope.ProductId,CAST(0 AS DECIMAL(19,6)),CAST(0 AS DECIMAL(19,6)) FROM dbo.InventoryPhysicalCountLines scope
-                WHERE scope.InventoryPhysicalCountId=@CountId AND NOT EXISTS(SELECT 1 FROM dbo.InventoryPhysicalCountReconciliationDrafts selected INNER JOIN dbo.InventoryPhysicalCountLines counted ON counted.InventoryPhysicalCountListId=selected.InventoryPhysicalCountListId WHERE selected.InventoryPhysicalCountReconciliationId=@ReconciliationId AND counted.ProductId=scope.ProductId AND counted.PreCountQuantity IS NOT NULL)
+                SELECT scope.ProductId,CAST(0 AS DECIMAL(19,6)),CAST(0 AS DECIMAL(19,6)) FROM (
+                  SELECT line.ProductId FROM dbo.InventoryPhysicalCountLines line WHERE line.InventoryPhysicalCountId=@CountId GROUP BY line.ProductId
+                  UNION
+                  SELECT product.ProductId FROM dbo.InventoryPhysicalCounts countHeader
+                  INNER JOIN dbo.Products product ON product.BusinessId=countHeader.BusinessId AND product.IsActive=1 AND product.ManageStock=1
+                  LEFT JOIN dbo.ProductLinks link ON link.BusinessId=product.BusinessId AND link.ChildProductId=product.ProductId AND link.SharesInventory=1 AND link.IsActive=1
+                  WHERE countHeader.InventoryPhysicalCountId=@CountId AND countHeader.ScopeType=N'General' AND link.ProductLinkId IS NULL
+                ) scope
+                WHERE NOT EXISTS(SELECT 1 FROM dbo.InventoryPhysicalCountReconciliationDrafts selected INNER JOIN dbo.InventoryPhysicalCountLines counted ON counted.InventoryPhysicalCountListId=selected.InventoryPhysicalCountListId WHERE selected.InventoryPhysicalCountReconciliationId=@ReconciliationId AND counted.ProductId=scope.ProductId AND counted.PreCountQuantity IS NOT NULL)
                 GROUP BY scope.ProductId;
                 """;
             await using(var command=new SqlCommand(lineSql,connection,transaction)){command.Parameters.AddWithValue("@ReconciliationId",reconciliationId);command.Parameters.AddWithValue("@CountId",countId);command.Parameters.AddWithValue("@BusinessId",business);command.Parameters.AddWithValue("@WarehouseId",warehouse);command.Parameters.AddWithValue("@CurrentSequence",currentSequence);await using var reader=await command.ExecuteReaderAsync(token);while(await reader.ReadAsync(token))lines.Add(new(reader.GetGuid(0),reader.GetDecimal(1),reader.GetDecimal(2)));}

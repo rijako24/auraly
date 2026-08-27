@@ -12,5 +12,6 @@
     <ProjectReference Include="..\Auraly.Domain.Pricing\Auraly.Domain.Pricing.csproj" />
     <ProjectReference Include="..\Auraly.Application.Pricing\Auraly.Application.Pricing.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\Auraly.BuildingBlocks.Infrastructure\Auraly.BuildingBlocks.Infrastructure.csproj" />
   </ItemGroup>
 </Project>

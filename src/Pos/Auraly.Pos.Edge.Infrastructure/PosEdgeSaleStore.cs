@@ -38,7 +38,9 @@ public sealed record PosEdgeDocumentSeriesProvision(
 public sealed record OfflineSalePayment(
     string MethodCode,
     decimal Amount,
-    string? Reference = null);
+    string? Reference = null,
+    string? CardFranchiseCode = null,
+    string? ApprovalNumber = null);
 
 public sealed record PosEdgeIssueCommand(
     UserId UserId,
@@ -95,7 +97,8 @@ public sealed record PosEdgeOutboxItem(
     DateTimeOffset? LeaseAcquiredAt = null,
     string? LastError = null,
     string? RemoteStatus = null,
-    Guid? ServerReceiptId = null);
+    Guid? ServerReceiptId = null,
+    Guid? WorkSessionId = null);
 
 
 public sealed record PosLocalFiscalStatus(
@@ -121,7 +124,8 @@ public sealed record PosIssuedSaleSummary(
 public sealed record PosLocalWorkSessionSale(
     DateTimeOffset IssuedAt,
     decimal Total,
-    IReadOnlyList<PosSalePaymentContract> Payments);
+    IReadOnlyList<PosSalePaymentContract> Payments,
+    decimal CreditAmount);
 
 public sealed record PosSaleOutboxStatus(
     int PendingCount,
@@ -510,6 +514,7 @@ public sealed class PosEdgeSaleStore
         {
             MessageId = outboxMessageId,
             DocumentId = command.DocumentId.Value,
+            WorkSessionId = command.Context.WorkSessionId.Value,
             Type = outboxType,
             Payload = payload,
             Status = PosOutboxStatus.Pending,
@@ -537,8 +542,10 @@ public sealed class PosEdgeSaleStore
         await using var context = new PosEdgeDbContext(_options);
         return await context.Outbox
             .AsNoTracking()
-            .Where(row => row.Status == PosOutboxStatus.Pending ||
-                          row.Status == PosOutboxStatus.RetryScheduled)
+            .Where(row => row.Type != PosOutboxMessageTypes.CashMovement &&
+                          row.Type != PosOutboxMessageTypes.WorkSessionClosure &&
+                          (row.Status == PosOutboxStatus.Pending ||
+                           row.Status == PosOutboxStatus.RetryScheduled))
             .OrderBy(row => row.MessageId)
             .Select(ToOutboxItem)
             .ToArrayAsync(cancellationToken);
@@ -559,7 +566,8 @@ public sealed class PosEdgeSaleStore
             .Select(value => new PosLocalWorkSessionSale(
                 value.CommercialSnapshot.IssuedAt,
                 value.CommercialSnapshot.PayableAmount,
-                value.Payments))
+                value.Payments,
+                value.Credit?.Amount ?? 0))
             .ToArray();
     }
 
@@ -568,7 +576,9 @@ public sealed class PosEdgeSaleStore
     {
         await using var context = new PosEdgeDbContext(_options);
         var rows = await context.Outbox.AsNoTracking()
-            .Where(row => row.Status != PosOutboxStatus.Uploaded)
+            .Where(row => row.Type != PosOutboxMessageTypes.CashMovement &&
+                          row.Type != PosOutboxMessageTypes.WorkSessionClosure &&
+                          row.Status != PosOutboxStatus.Uploaded)
             .Select(row => new { row.CreatedAt, row.LastError })
             .ToArrayAsync(cancellationToken);
         rows = rows.OrderBy(row => row.CreatedAt).ToArray();
@@ -583,13 +593,12 @@ public sealed class PosEdgeSaleStore
         CancellationToken cancellationToken = default)
     {
         await using var context = new PosEdgeDbContext(_options);
-        var payloads = await context.Outbox.AsNoTracking()
-            .Where(row => row.Status != PosOutboxStatus.Uploaded)
-            .Select(row => row.Payload)
-            .ToArrayAsync(cancellationToken);
-        return payloads
-            .Select(PosSaleContractSerializer.Deserialize)
-            .Any(value => value.WorkSessionId == workSessionId);
+        return await context.Outbox.AsNoTracking()
+            .Where(row => row.Type != PosOutboxMessageTypes.CashMovement &&
+                          row.Type != PosOutboxMessageTypes.WorkSessionClosure &&
+                          row.Status != PosOutboxStatus.Uploaded &&
+                          row.WorkSessionId == workSessionId)
+            .AnyAsync(cancellationToken);
     }
 
     public async Task<PosEdgeOutboxItem?> ClaimNextOutboxAsync(
@@ -602,20 +611,18 @@ public sealed class PosEdgeSaleStore
             IsolationLevel.Serializable,
             cancellationToken);
         var staleBefore = now - leaseTimeout;
-        var candidates = await context.Outbox
-            .Where(item =>
-                item.Status == PosOutboxStatus.Pending ||
-                item.Status == PosOutboxStatus.RetryScheduled ||
-                item.Status == PosOutboxStatus.Uploading)
+        var pending = await context.Outbox
+            .Where(item => item.Status != PosOutboxStatus.Uploaded)
             .ToArrayAsync(cancellationToken);
-        var row = candidates
-            .Where(item =>
-                item.Status == PosOutboxStatus.Pending ||
+        var row = pending
+            .Where(item => PosOutboxMessageTypes.IsLocalSale(item.Type) &&
+                (item.Status == PosOutboxStatus.Pending ||
                 (item.Status == PosOutboxStatus.RetryScheduled &&
                  (item.NextAttemptAt == null || item.NextAttemptAt <= now)) ||
                 (item.Status == PosOutboxStatus.Uploading &&
                  item.LeaseAcquiredAt != null &&
-                 item.LeaseAcquiredAt <= staleBefore))
+                 item.LeaseAcquiredAt <= staleBefore)) &&
+                !pending.Any(prior => IsEarlierInWorkSession(prior, item)))
             .OrderBy(item => item.CreatedAt)
             .ThenBy(item => item.MessageId)
             .FirstOrDefault();
@@ -634,6 +641,12 @@ public sealed class PosEdgeSaleStore
         await transaction.CommitAsync(cancellationToken);
         return ToOutboxItem.Compile().Invoke(row);
     }
+
+    private static bool IsEarlierInWorkSession(PosOutboxRow prior, PosOutboxRow current) =>
+        current.WorkSessionId is Guid sessionId &&
+        prior.WorkSessionId == sessionId &&
+        (prior.CreatedAt < current.CreatedAt ||
+         prior.CreatedAt == current.CreatedAt && prior.MessageId.CompareTo(current.MessageId) < 0);
 
     public async Task<PosEdgeOutboxItem?> GetOutboxAsync(
         DocumentId documentId,
@@ -933,13 +946,19 @@ public sealed class PosEdgeSaleStore
                     index + 1,
                     payment.MethodCode,
                     payment.Amount,
-                    payment.Reference))
+                    payment.Reference,
+                    payment.CardFranchiseCode,
+                    payment.ApprovalNumber))
                 .ToArray()
             : [new PosSalePaymentContract(1, "Cash", invoice.PayableAmount, null)];
         if (payments.Sum(payment => payment.Amount) != invoice.PayableAmount)
         {
             throw new InvalidOperationException("Payments must equal the payable amount.");
         }
+        if (payments.Any(payment =>
+                (payment.MethodCode is "Card" or "DebitCard" or "CreditCard") !=
+                (!string.IsNullOrWhiteSpace(payment.CardFranchiseCode) && !string.IsNullOrWhiteSpace(payment.ApprovalNumber))))
+            throw new InvalidOperationException("Card payments require franchise and approval number.");
 
         var taxes = lines
             .GroupBy(line => line.TaxCode, StringComparer.Ordinal)
@@ -1012,7 +1031,8 @@ public sealed class PosEdgeSaleStore
             row.LeaseAcquiredAt,
             row.LastError,
             row.RemoteStatus,
-            row.ServerReceiptId);
+            row.ServerReceiptId,
+            row.WorkSessionId);
 
     private static string Truncate(string value) =>
         value.Length <= 2000 ? value : value[..2000];

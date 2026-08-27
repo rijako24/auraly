@@ -165,6 +165,8 @@ public sealed partial class SqlWorkSessionStore(
 
             var expectedTotals = await ReadTotalsAsync(
                 connection, transaction, workSessionId, cancellationToken);
+            var metrics = await ReadSalesMetricsAsync(
+                connection, transaction, workSessionId, cancellationToken);
             var totals = ReconcileTotals(expectedTotals, request);
             var totalSales = totals.Sum(value => value.SalesAmount);
             var totalRefunds = totals.Sum(value => value.RefundAmount);
@@ -201,7 +203,11 @@ public sealed partial class SqlWorkSessionStore(
                 countedCash,
                 difference,
                 request.Note,
-                totals);
+                totals,
+                metrics.SalesCount,
+                metrics.CreditSalesCount,
+                metrics.CreditSalesAmount,
+                metrics.ReturnCount);
             var snapshot = JsonSerializer.Serialize(closure, Json);
             var hash = SHA256.HashData(Encoding.UTF8.GetBytes(snapshot));
 
@@ -280,6 +286,8 @@ public sealed partial class SqlWorkSessionStore(
             throw new WorkSessionConflictException("The work session is not open.");
         var totals = await ReadTotalsAsync(
             connection, transaction, workSessionId, cancellationToken);
+        var metrics = await ReadSalesMetricsAsync(
+            connection, transaction, workSessionId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         var totalSales = totals.Sum(value => value.SalesAmount);
         var totalRefunds = totals.Sum(value => value.RefundAmount);
@@ -301,7 +309,11 @@ public sealed partial class SqlWorkSessionStore(
             totals.Where(value => string.Equals(
                     value.PaymentMethodCode, "Cash", StringComparison.OrdinalIgnoreCase))
                 .Sum(value => value.NetAmount),
-            totals);
+            totals,
+            metrics.SalesCount,
+            metrics.CreditSalesCount,
+            metrics.CreditSalesAmount,
+            metrics.ReturnCount);
     }
 
     public async Task<WorkSessionClosureView?> CloseForAuthenticationAsync(
@@ -459,9 +471,27 @@ public sealed partial class SqlWorkSessionStore(
         await using var command = new SqlCommand("""
             WITH PaymentMovements AS
             (
+                SELECT p.MethodCode AS PaymentMethodCode,N'SalePayment' AS MovementType,p.Amount
+                FROM dbo.SalesPayments p
+                INNER JOIN dbo.SalesDocuments d ON d.DocumentId=p.DocumentId
+                WHERE d.WorkSessionId=@WorkSessionId
+                UNION ALL
+                SELECT N'Credit',N'SalePayment',CreditAmount
+                FROM dbo.SalesDocuments
+                WHERE WorkSessionId=@WorkSessionId AND CreditAmount>0
+                UNION ALL
+                SELECT CASE WHEN s.SettlementType=N'CustomerCredit' THEN N'Credit' ELSE s.MethodCode END,
+                       N'Refund',-s.Amount
+                FROM dbo.SalesReturnSettlements s
+                INNER JOIN dbo.SalesReturns r ON r.ReturnId=s.ReturnId
+                INNER JOIN dbo.WorkSessions ws ON ws.WorkSessionId=@WorkSessionId
+                WHERE r.CreatedByUserId=ws.UserId AND r.ReturnedAt>=ws.OpenedAt
+                  AND (ws.ClosedAt IS NULL OR r.ReturnedAt<=ws.ClosedAt)
+                UNION ALL
                 SELECT PaymentMethodCode,MovementType,Amount
                 FROM dbo.WorkSessionMovements
                 WHERE WorkSessionId=@WorkSessionId
+                  AND MovementType NOT IN(N'SalePayment',N'Refund')
             ),
             Totals AS
             (
@@ -475,10 +505,24 @@ public sealed partial class SqlWorkSessionStore(
             ),
             AllTotals AS
             (
-                SELECT PaymentMethodCode,SalesAmount,RefundAmount,OtherAmount,NetAmount
-                FROM Totals
-                UNION ALL SELECT N'Cash',0,0,0,0
-                  WHERE NOT EXISTS (SELECT 1 FROM Totals WHERE PaymentMethodCode=N'Cash')
+                SELECT options.Code AS PaymentMethodCode,
+                       COALESCE(totals.SalesAmount,0) SalesAmount,
+                       COALESCE(totals.RefundAmount,0) RefundAmount,
+                       COALESCE(totals.OtherAmount,0) OtherAmount,
+                       COALESCE(totals.NetAmount,0) NetAmount
+                FROM reference.Options options
+                LEFT JOIN Totals totals ON totals.PaymentMethodCode=options.Code
+                WHERE options.CatalogCode=N'payment-method' AND options.IsActive=1
+                UNION ALL
+                SELECT totals.PaymentMethodCode,totals.SalesAmount,totals.RefundAmount,
+                       totals.OtherAmount,totals.NetAmount
+                FROM Totals totals
+                WHERE NOT EXISTS
+                (
+                    SELECT 1 FROM reference.Options options
+                    WHERE options.CatalogCode=N'payment-method' AND options.IsActive=1
+                      AND options.Code=totals.PaymentMethodCode
+                )
             )
             SELECT PaymentMethodCode,SalesAmount,RefundAmount,OtherAmount,NetAmount
             FROM AllTotals
@@ -489,6 +533,7 @@ public sealed partial class SqlWorkSessionStore(
                 WHEN N'Card' THEN 3
                 WHEN N'Transfer' THEN 4
                 WHEN N'Deposit' THEN 5
+                WHEN N'Credit' THEN 6
                 ELSE 10 END,
               PaymentMethodCode;
             """, connection, transaction);
@@ -499,6 +544,29 @@ public sealed partial class SqlWorkSessionStore(
                 reader.GetString(0), reader.GetDecimal(1), reader.GetDecimal(2),
                 reader.GetDecimal(3), reader.GetDecimal(4)));
         return values;
+    }
+
+    private static async Task<SalesMetrics> ReadSalesMetricsAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid workSessionId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            SELECT COUNT_BIG(*),
+                   COALESCE(SUM(CASE WHEN CreditAmount>0 THEN 1 ELSE 0 END),0),
+                   COALESCE(SUM(CreditAmount),0),
+                   (SELECT COUNT_BIG(*) FROM dbo.SalesReturns r
+                    INNER JOIN dbo.WorkSessions ws ON ws.WorkSessionId=@WorkSessionId
+                    WHERE r.CreatedByUserId=ws.UserId AND r.ReturnedAt>=ws.OpenedAt
+                      AND (ws.ClosedAt IS NULL OR r.ReturnedAt<=ws.ClosedAt)
+                      AND r.Status IN(N'Accepted',N'Processed'))
+            FROM dbo.SalesDocuments
+            WHERE WorkSessionId=@WorkSessionId;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        await reader.ReadAsync(cancellationToken);
+        return new SalesMetrics(
+            reader.GetInt64(0), reader.GetInt32(1), reader.GetDecimal(2), reader.GetInt64(3));
     }
 
     public async Task<IReadOnlyList<WorkSessionCashDifferenceView>> ListCashDifferencesAsync(
@@ -564,11 +632,13 @@ public sealed partial class SqlWorkSessionStore(
             INSERT dbo.WorkSessionClosures
               (WorkSessionClosureId,WorkSessionId,ClosedByUserId,IdempotencyKey,
                TotalSales,TotalRefunds,TotalOther,NetAmount,ExpectedCash,
-               CountedCash,CashDifference,Note,ReceiptSnapshotJson,ReceiptHash,ClosedAt)
+               CountedCash,CashDifference,SalesCount,CreditSalesCount,CreditSalesAmount,ReturnCount,
+               Note,ReceiptSnapshotJson,ReceiptHash,ClosedAt)
             VALUES
               (@ClosureId,@SessionId,@UserId,@IdempotencyKey,
                @TotalSales,@TotalRefunds,@TotalOther,@NetAmount,@ExpectedCash,
-               @CountedCash,@Difference,@Note,@Snapshot,@Hash,@ClosedAt);
+               @CountedCash,@Difference,@SalesCount,@CreditSalesCount,@CreditSalesAmount,@ReturnCount,
+               @Note,@Snapshot,@Hash,@ClosedAt);
             """, connection, transaction);
         command.Parameters.AddWithValue("@ClosureId", closure.WorkSessionClosureId);
         command.Parameters.AddWithValue("@SessionId", closure.WorkSessionId);
@@ -583,6 +653,10 @@ public sealed partial class SqlWorkSessionStore(
         { Precision = 19, Scale = 4, Value = (object?)closure.CountedCash ?? DBNull.Value });
         command.Parameters.Add(new SqlParameter("@Difference", SqlDbType.Decimal)
         { Precision = 19, Scale = 4, Value = (object?)closure.CashDifference ?? DBNull.Value });
+        command.Parameters.AddWithValue("@SalesCount", closure.SalesCount);
+        command.Parameters.AddWithValue("@CreditSalesCount", closure.CreditSalesCount);
+        AddMoney(command, "@CreditSalesAmount", closure.CreditSalesAmount);
+        command.Parameters.AddWithValue("@ReturnCount", closure.ReturnCount);
         command.Parameters.AddWithValue("@Note", (object?)closure.Note ?? DBNull.Value);
         command.Parameters.AddWithValue("@Snapshot", snapshot);
         command.Parameters.Add("@Hash", SqlDbType.VarBinary, 32).Value = hash;
@@ -714,6 +788,9 @@ public sealed partial class SqlWorkSessionStore(
         paymentMethodCode.Equals("Card", StringComparison.OrdinalIgnoreCase) ||
         paymentMethodCode.Equals("DebitCard", StringComparison.OrdinalIgnoreCase) ||
         paymentMethodCode.Equals("CreditCard", StringComparison.OrdinalIgnoreCase);
+
+    private sealed record SalesMetrics(
+        long SalesCount, int CreditSalesCount, decimal CreditSalesAmount, long ReturnCount);
 
     private static async Task<(string IdempotencyKey, WorkSessionClosureView Closure)?> ReadClosureAsync(
         SqlConnection connection,

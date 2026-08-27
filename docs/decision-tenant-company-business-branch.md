@@ -90,3 +90,7 @@ antes que las relaciones de caja, bodega y documento coincidan por
 Las pruebas automáticas deben impedir que `BusinessLocations`, `LocationId` o
 `locationId` reaparezcan en código ejecutable, contratos, SQL o frontend de
 Commerce.
+
+La topología inicial de base compartida, la fuente única de conexión y los
+criterios para una futura base dedicada se definen en
+`decision-base-compartida-y-evolucion-multibase.md`.
