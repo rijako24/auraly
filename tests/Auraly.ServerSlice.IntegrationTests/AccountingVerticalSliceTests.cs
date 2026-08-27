@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using Auraly.Api;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Contracts.Purchasing;
@@ -7,8 +8,10 @@ using Auraly.Contracts.Expenses;
 using Auraly.Contracts.Returns;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
+using Auraly.Contracts.Dispatching;
 using Auraly.Fiscal.Core;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -22,6 +25,140 @@ public sealed class AccountingSliceCollection : ICollectionFixture<ServerSliceFi
 [Trait("EngineCertification", "Accounting")]
 public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Dispatch_cash_shortage_posts_once_to_the_configured_account()
+    {
+        using var accounting = fixture.CreateAdminClient(
+            AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
+            AccountingPermissionCodes.Activate, DispatchPermissionCodes.Settle,
+            DispatchPermissionCodes.ReadAll);
+        using (var defaults = await accounting.PutAsync(
+                   "/api/commerce/v1/accounting/defaults", null))
+            defaults.EnsureSuccessStatusCode();
+        using (var activate = await accounting.PostAsJsonAsync(
+                   "/api/commerce/v1/accounting/activate",
+                   new ActivateAccountingRequest(
+                       new DateOnly(2026, 1, 1), "COP", "ZeroDeclared")))
+            activate.EnsureSuccessStatusCode();
+
+        var invoice = WithUblSnapshot(fixture.CreateValidRequest(9_899));
+        await SetWarehouseNegativeSalesPolicyAsync(false);
+        try
+        {
+            using var upload = fixture.CreateUploadMessage(invoice);
+            using var response = await fixture.CreateClient().SendAsync(upload);
+            Assert.True(response.IsSuccessStatusCode,
+                await response.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            await SetWarehouseNegativeSalesPolicyAsync(true);
+        }
+
+        var dispatchId = Guid.NewGuid();
+        var sourceId = Guid.NewGuid();
+        var settlementId = Guid.NewGuid();
+        var originalShortageAccount = await SeedDispatchSettlementAsync(
+            dispatchId, sourceId, settlementId, invoice.DocumentId,
+            invoice.CommercialSnapshot.PayableAmount);
+        var settlementWorker = ActivatorUtilities.CreateInstance<DispatchSettlementHostedService>(
+            fixture.Services);
+        await settlementWorker.StartAsync(CancellationToken.None);
+        try
+        {
+            var request = new SettleDispatchRequest(
+                invoice.CommercialSnapshot.PayableAmount - 1_000m,
+                "Faltante entregado por el transportador", $"settle-{dispatchId:N}");
+            using var settle = await accounting.PostAsJsonAsync(
+                $"/api/commerce/v1/dispatches/{dispatchId:D}/settle", request);
+            Assert.True(settle.IsSuccessStatusCode,
+                await settle.Content.ReadAsStringAsync());
+
+            await WaitForDispatchAccountingAsync(settlementId, dispatchId);
+
+            await AssertBalancedAsync(settlementId);
+            Assert.Equal(1_000m, await AccountAmountAsync(
+                settlementId, "539595", debit: true));
+            Assert.Equal(1_000m, await AccountAmountAsync(
+                settlementId, "110505", debit: false));
+            Assert.Equal("Closed", await ScalarAsync<string>(
+                "SELECT Status FROM dbo.Dispatches WHERE DispatchId=@Id", dispatchId));
+
+            using var replay = await accounting.PostAsJsonAsync(
+                $"/api/commerce/v1/dispatches/{dispatchId:D}/settle", request);
+            Assert.True(replay.IsSuccessStatusCode,
+                await replay.Content.ReadAsStringAsync());
+            Assert.Equal(1, await CountAsync(
+                "AccountingEntries", "SourceDocumentId", settlementId));
+        }
+        finally
+        {
+            await settlementWorker.StopAsync(CancellationToken.None);
+            settlementWorker.Dispose();
+            await RestoreShortageAccountAsync(originalShortageAccount);
+        }
+    }
+
+    [Fact]
+    public async Task Pos_mixed_payment_methods_are_all_posted_to_their_configured_accounts()
+    {
+        using var accounting = fixture.CreateAdminClient(
+            AccountingPermissionCodes.Read, AccountingPermissionCodes.Configure,
+            AccountingPermissionCodes.Activate);
+        using (var defaults = await accounting.PutAsync(
+                   "/api/commerce/v1/accounting/defaults", null))
+            defaults.EnsureSuccessStatusCode();
+        using (var activate = await accounting.PostAsJsonAsync(
+                   "/api/commerce/v1/accounting/activate",
+                   new ActivateAccountingRequest(
+                       new DateOnly(2026, 1, 1), "COP", "ZeroDeclared")))
+            activate.EnsureSuccessStatusCode();
+
+        var customerId = await CreateCustomerAsync();
+        var request = WithUblSnapshot(fixture.CreateValidRequest(9_900)) with
+        {
+            CustomerId = customerId,
+            Credit = new PosSaleCreditContract(
+                customerId, 4_000m,
+                new DateTimeOffset(2026, 8, 31, 0, 0, 0,
+                    TimeSpan.FromHours(-5))),
+            Payments =
+            [
+                new(1, "Cash", 1_900m, null),
+                new(2, "DebitCard", 2_000m, "DB-2000", "Visa", "APP-DB"),
+                new(3, "CreditCard", 2_000m, "CR-2000", "Mastercard", "APP-CR"),
+                new(4, "Transfer", 2_000m, "TR-2000")
+            ]
+        };
+        request = request with
+        {
+            UblSnapshot = request.UblSnapshot! with
+            {
+                PaymentFormCode = "2",
+                DueDate = new DateOnly(2026, 8, 31)
+            }
+        };
+        await SetWarehouseNegativeSalesPolicyAsync(false);
+        try
+        {
+            using var upload = fixture.CreateUploadMessage(request);
+            using var response = await fixture.CreateClient().SendAsync(upload);
+            Assert.True(response.IsSuccessStatusCode,
+                await response.Content.ReadAsStringAsync());
+        }
+        finally
+        {
+            await SetWarehouseNegativeSalesPolicyAsync(true);
+        }
+
+        await AssertBalancedAsync(request.DocumentId);
+        Assert.Equal(1_900m, await AccountAmountAsync(request.DocumentId, "110505", true));
+        Assert.Equal(2_000m, await AccountAmountAsync(request.DocumentId, "130510", true));
+        Assert.Equal(2_000m, await AccountAmountAsync(request.DocumentId, "130515", true));
+        Assert.Equal(2_000m, await AccountAmountAsync(request.DocumentId, "130520", true));
+        Assert.Equal(4_000m, await AccountAmountAsync(request.DocumentId, "130505", true));
+    }
+
     [Fact]
     public async Task Approved_opening_balances_are_posted_before_accounting_becomes_ready()
     {
@@ -144,7 +281,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                     "The accounting defaults response is empty.");
             Assert.True(defaults.IsReady);
             Assert.True(defaults.AccountCount >= 43);
-            Assert.Equal(43, defaults.MappingCount);
+            Assert.Equal(49, defaults.MappingCount);
             Assert.True(defaults.HasDefaultCostCenter);
             Assert.True(defaults.HasOpenPeriod);
         }
@@ -1695,7 +1832,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             accountCode,
             new[] { "143505", "240810", "519595", "220505",
                 "236540", "236701", "236805", "110505", "111005", "130505",
-                "429595", "429596", "539596" });
+                "130510", "130515", "130520", "429595", "429596", "539595", "539596" });
         var column = debit ? "Debit" : "Credit";
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -1709,6 +1846,161 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@Id", documentId);
         command.Parameters.AddWithValue("@Code", accountCode);
         return Convert.ToDecimal(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<Guid> SeedDispatchSettlementAsync(
+        Guid dispatchId,
+        Guid sourceId,
+        Guid settlementId,
+        Guid salesDocumentId,
+        decimal expectedCash)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        Guid previousAccount;
+        await using (var account = new SqlCommand("""
+            SELECT TOP(1) mapping.AccountId
+            FROM dbo.AccountingAccountMappings mapping
+            WHERE mapping.TenantId=@TenantId
+              AND mapping.Category=N'DispatchCashShortageExpense'
+              AND mapping.EffectiveTo IS NULL
+            ORDER BY CASE WHEN mapping.BusinessId=@BusinessId THEN 0 ELSE 1 END;
+            """, connection))
+        {
+            account.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            account.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            previousAccount = (Guid)(await account.ExecuteScalarAsync()
+                ?? throw new InvalidOperationException(
+                    "The cash-shortage mapping was not provisioned."));
+        }
+        await using var command = new SqlCommand("""
+            SET XACT_ABORT ON; BEGIN TRAN;
+            INSERT dbo.Dispatches(
+              DispatchId,TenantId,BusinessId,WarehouseId,DispatchNumber,ScheduledDate,
+              DriverUserId,DriverName,Status,CreatedBy,CreatedAt,UpdatedAt)
+            VALUES(
+              @DispatchId,@TenantId,@BusinessId,@WarehouseId,@DispatchNumber,
+              CONVERT(date,SYSUTCDATETIME()),@UserId,N'Transportador prueba',
+              N'PendingSettlement',@UserId,SYSUTCDATETIME(),SYSUTCDATETIME());
+            INSERT dbo.DispatchSourceDocuments(
+              DispatchSourceDocumentId,DispatchId,SourceDocumentId,SourceDocumentType,
+              DocumentNumberSnapshot,CustomerNameSnapshot,SellerNameSnapshot,
+              DocumentTotalSnapshot,Status,CreatedAt)
+            VALUES(
+              @SourceId,@DispatchId,@SalesDocumentId,N'SalesInvoice',N'FACTURA-PRUEBA',
+              N'Cliente prueba',N'Vendedor prueba',@Expected,N'Delivered',SYSUTCDATETIME());
+            INSERT dbo.DispatchDeliveryPayments(
+              DispatchDeliveryPaymentId,BusinessId,DispatchId,DispatchSourceDocumentId,
+              ApplicationType,PaymentMethod,Amount,RecordedBy,OccurredAt,CreatedAt)
+            VALUES(
+              NEWID(),@BusinessId,@DispatchId,@SourceId,N'InvoicePayment',N'Cash',
+              @Expected,@UserId,SYSUTCDATETIME(),SYSUTCDATETIME());
+            INSERT dbo.DispatchSettlements(
+              DispatchSettlementId,BusinessId,DispatchId,ExpectedCash,DeclaredCash,
+              DepositTotal,CreditDocumentTotal,CreditAdvanceTotal,ReturnTotal,
+              TransporterClosedBy,TransporterClosedAt,Status,IdempotencyKey)
+            VALUES(
+              @SettlementId,@BusinessId,@DispatchId,@Expected,@Expected,0,0,0,0,
+              @UserId,SYSUTCDATETIME(),N'PendingReview',@CloseKey);
+            UPDATE mapping
+            SET AccountId=custom.AccountId
+            FROM dbo.AccountingAccountMappings mapping
+            CROSS APPLY(
+              SELECT TOP(1) AccountId FROM dbo.AccountingAccounts
+              WHERE TenantId=@TenantId AND Code=N'539595' AND IsActive=1
+            ) custom
+            WHERE mapping.TenantId=@TenantId
+              AND mapping.Category=N'DispatchCashShortageExpense'
+              AND mapping.EffectiveTo IS NULL
+              AND (mapping.BusinessId=@BusinessId OR mapping.BusinessId IS NULL);
+            COMMIT;
+            """, connection);
+        command.Parameters.AddWithValue("@DispatchId", dispatchId);
+        command.Parameters.AddWithValue("@SourceId", sourceId);
+        command.Parameters.AddWithValue("@SettlementId", settlementId);
+        command.Parameters.AddWithValue("@SalesDocumentId", salesDocumentId);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+        command.Parameters.AddWithValue("@UserId", fixture.UserId);
+        command.Parameters.AddWithValue("@DispatchNumber", $"DSP-{dispatchId:N}"[..20]);
+        command.Parameters.AddWithValue("@CloseKey", $"close-{dispatchId:N}");
+        var money = command.Parameters.Add("@Expected", System.Data.SqlDbType.Decimal);
+        money.Precision = 19;
+        money.Scale = 4;
+        money.Value = expectedCash;
+        await command.ExecuteNonQueryAsync();
+        return previousAccount;
+    }
+
+    private async Task RestoreShortageAccountAsync(Guid accountId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            UPDATE dbo.AccountingAccountMappings SET AccountId=@AccountId
+            WHERE TenantId=@TenantId AND Category=N'DispatchCashShortageExpense'
+              AND EffectiveTo IS NULL
+              AND (BusinessId=@BusinessId OR BusinessId IS NULL);
+            """, connection);
+        command.Parameters.AddWithValue("@AccountId", accountId);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task<string?> PostingStatusAsync(Guid documentId, string documentType)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT Status FROM dbo.AccountingPostingJobs
+            WHERE SourceDocumentId=@Id AND SourceDocumentType=@Type;
+            """, connection);
+        command.Parameters.AddWithValue("@Id", documentId);
+        command.Parameters.AddWithValue("@Type", documentType);
+        return await command.ExecuteScalarAsync() as string;
+    }
+
+    private async Task WaitForDispatchAccountingAsync(Guid settlementId, Guid dispatchId)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (await PostingStatusAsync(settlementId,
+                    DispatchAccountingDocumentTypes.CashDifference) ==
+                AccountingPostingStatuses.Posted &&
+                await ScalarAsync<string>(
+                    "SELECT Status FROM dbo.Dispatches WHERE DispatchId=@Id",
+                    dispatchId) == "Closed") return;
+            await Task.Delay(50);
+        }
+
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT operation.Status,operation.Attempts,operation.LastError,
+                   settlement.Status,dispatch.Status,
+                   processing.Status,processing.LastError,
+                   posting.Status,posting.LastErrorCode,posting.LastErrorMessage
+            FROM dbo.DispatchSettlementOperations operation
+            INNER JOIN dbo.DispatchSettlements settlement ON settlement.DispatchId=operation.DispatchId
+            INNER JOIN dbo.Dispatches dispatch ON dispatch.DispatchId=operation.DispatchId
+            LEFT JOIN dbo.DocumentProcessingJobs processing
+              ON processing.DocumentId=settlement.DispatchSettlementId
+             AND processing.DocumentType=N'DispatchCashDifference'
+            LEFT JOIN dbo.AccountingPostingJobs posting
+              ON posting.SourceDocumentId=settlement.DispatchSettlementId
+             AND posting.SourceDocumentType=N'DispatchCashDifference'
+            WHERE operation.DispatchId=@DispatchId;
+            """, connection);
+        command.Parameters.AddWithValue("@DispatchId", dispatchId);
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync(), "The dispatch settlement operation is missing.");
+        var values = Enumerable.Range(0, reader.FieldCount)
+            .Select(index => reader.IsDBNull(index) ? "<null>" : Convert.ToString(reader.GetValue(index)))
+            .ToArray();
+        Assert.Fail($"Dispatch accounting did not complete: {string.Join(" | ", values)}");
     }
 
     private async Task<T> ScalarAsync<T>(string sql, Guid id)

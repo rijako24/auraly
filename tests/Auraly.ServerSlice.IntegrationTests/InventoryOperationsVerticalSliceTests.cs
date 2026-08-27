@@ -87,21 +87,18 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         var receiptId = Guid.NewGuid();
         await SendAsync(client, $"/api/commerce/v1/warehouse-transfers/{transferId:D}/receipts",
             new ReceiveWarehouseTransferRequest(receiptId, fixture.BusinessId, occurred.AddMinutes(4),
-                "WAREHOUSE_TRANSFER", "Llegaron dos unidades", transferDetail.RowVersion,
+                "TRANSFER_SHORTAGE", "Se verificó la pérdida de una unidad en tránsito", transferDetail.RowVersion,
                 [new(1, source, 2m)]), $"receipt-{receiptId:N}");
         Assert.Equal((2m, 5m, 10m), await BalanceAsync(destination, source));
-        Assert.Equal((1m, 5m, 5m), await BalanceAsync(transit, source));
-        Assert.Equal((3m, 2m), await TransferQuantitiesAsync(transferId, 1));
-
-        transferDetail = await client.GetFromJsonAsync<WarehouseTransferDetail>($"/api/commerce/v1/warehouse-transfers/{transferId:D}");
-        var finalReceiptId = Guid.NewGuid();
-        await SendAsync(client, $"/api/commerce/v1/warehouse-transfers/{transferId:D}/receipts",
-            new ReceiveWarehouseTransferRequest(finalReceiptId, fixture.BusinessId, occurred.AddMinutes(5),
-                null, null, transferDetail!.RowVersion, [new(1, source, 1m)]), $"receipt-{finalReceiptId:N}");
-        Assert.Equal((3m, 5m, 15m), await BalanceAsync(destination, source));
         Assert.Equal((0m, 0m, 0m), await BalanceAsync(transit, source));
-        Assert.Equal((3m, 3m), await TransferQuantitiesAsync(transferId, 1));
+        Assert.Equal((3m, 2m), await TransferQuantitiesAsync(transferId, 1));
         Assert.Equal("Received", await ScalarAsync<string>("SELECT Status FROM dbo.InventoryOperations WHERE InventoryOperationId=@Id", transferId));
+        Assert.Equal(1m, await ScalarAsync<decimal>(
+            "SELECT LostQuantity FROM dbo.InventoryOperationLines WHERE InventoryOperationId=@Id AND LineNumber=1", transferId));
+        Assert.Equal("Posted", await ScalarAsync<string>(
+            "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'WarehouseTransferReceipt'", receiptId));
+        Assert.Equal(5m, await ScalarAsync<decimal>(
+            "SELECT SUM(line.Debit) FROM dbo.AccountingEntries entry INNER JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId INNER JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId WHERE entry.SourceDocumentId=@Id AND account.Code=N'529598'", receiptId));
 
         var conversionId = Guid.NewGuid();
         await SendAsync<ConfirmProductConversionRequest>(client,
@@ -450,6 +447,14 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.Equal((7m,5m,35m), await BalanceAsync(fixture.WarehouseId, product));
         Assert.Equal(-3m, await ScalarAsync<decimal>("SELECT QuantityChange FROM dbo.InventoryMovements WHERE DocumentId=@Id AND MovementType=N'InventoryDamage'", damageId));
         Assert.Equal(1, await CountAsync("InventoryMovements", damageId)); Assert.Equal(1, await CountAsync("ServerOutboxMessages", damageId));
+        Assert.Equal("Posted", await ScalarAsync<string>(
+            "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'Damage'", damageId));
+        Assert.Equal("DamagedInventoryExpense", await ScalarAsync<string>(
+            "SELECT JSON_VALUE(PayloadJson,'$.counterpartAccountingCategory') FROM dbo.AccountingSourceDocuments WHERE SourceDocumentId=@Id AND SourceDocumentType=N'Damage'", damageId));
+        Assert.Equal(15m, await ScalarAsync<decimal>(
+            "SELECT SUM(line.Debit) FROM dbo.AccountingEntries entry INNER JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId INNER JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId WHERE entry.SourceDocumentId=@Id AND entry.SourceDocumentType=N'Damage' AND account.Code=N'529596'", damageId));
+        Assert.Equal(15m, await ScalarAsync<decimal>(
+            "SELECT SUM(line.Credit) FROM dbo.AccountingEntries entry INNER JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId INNER JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId WHERE entry.SourceDocumentId=@Id AND entry.SourceDocumentType=N'Damage' AND account.Code=N'143505'", damageId));
         var balances = await client.GetFromJsonAsync<InventoryBalancePage>($"/api/commerce/v1/inventory/balances?warehouseId={fixture.WarehouseId:D}&search=Insumo&page=1&pageSize=20");
         var row = Assert.Single(balances!.Items.Where(x => x.ProductId == product)); Assert.Equal(5m,row.AverageUnitCost); Assert.Equal(35m,row.InventoryValue);
         foreach (var search in new[] { $"REF-{product:N}", $"BAR-{product:N}" })
@@ -480,6 +485,51 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         var hiddenProducts = await restricted.GetFromJsonAsync<InventoryProductPage>($"/api/commerce/v1/inventory/products?warehouseId={fixture.WarehouseId:D}&search=Insumo&page=1&pageSize=20");
         Assert.Null(Assert.Single(hiddenProducts!.Items.Where(x => x.ProductId == product)).AverageUnitCost);
     }
+    [Fact]
+    public async Task Conversion_loss_reduces_inventory_value_and_posts_to_the_configured_account()
+    {
+        var source = Guid.NewGuid();
+        var output = Guid.NewGuid();
+        await SeedAsync(source, output, Guid.NewGuid(), Guid.NewGuid());
+        await ExecuteAsync(
+            "UPDATE dbo.Products SET ConversionMaximumLossPercent=5 WHERE ProductId=@Id",
+            source);
+        using var client = fixture.CreateAdminClient(
+            InventoryPermissionCodes.Adjust, InventoryPermissionCodes.Convert,
+            InventoryPermissionCodes.Read, InventoryPermissionCodes.ReadCosts,
+            InventoryPermissionCodes.ManageReasons);
+        using var reasonResponse = await client.PostAsJsonAsync(
+            "/api/commerce/v1/inventory/reasons",
+            new SaveInventoryReasonRequest(
+                InventoryDocumentTypes.Conversion, "Merma configurable de prueba", true, 900,
+                "OtherExpense", null, true));
+        reasonResponse.EnsureSuccessStatusCode();
+        var configurableReason = await reasonResponse.Content.ReadFromJsonAsync<InventoryReasonItem>()
+            ?? throw new InvalidOperationException("The configurable conversion reason is missing.");
+        await ConfirmAdjustmentAsync(client, new(Guid.NewGuid(), fixture.BusinessId,
+            fixture.WarehouseId, DateTimeOffset.UtcNow, "INITIAL_BALANCE", null,
+            "Base para probar merma", [new(1, source, 10m, 5m)]));
+
+        var conversionId = Guid.NewGuid();
+        await SendAsync<ConfirmProductConversionRequest>(client,
+            "/api/commerce/v1/product-conversions/confirm",
+            new(conversionId, fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
+                "SPLIT", configurableReason.Code, null, "Merma física verificada",
+                [new(1, "INPUT", source, 10m, null), new(2, "OUTPUT", output, 9.5m, null)]),
+            $"conversion-loss-{conversionId:N}");
+
+        Assert.Equal((0m, 0m, 0m), await BalanceAsync(fixture.WarehouseId, source));
+        Assert.Equal((9.5m, 5m, 47.5m), await BalanceAsync(fixture.WarehouseId, output));
+        Assert.Equal(-2.5m, await ScalarAsync<decimal>(
+            "SELECT TotalValueChange FROM dbo.InventoryOperations WHERE InventoryOperationId=@Id", conversionId));
+        Assert.Equal("Posted", await ScalarAsync<string>(
+            "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'ProductConversion'", conversionId));
+        Assert.Equal(2.5m, await ScalarAsync<decimal>(
+            "SELECT SUM(line.Debit-line.Credit) FROM dbo.AccountingEntries entry INNER JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId INNER JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId WHERE entry.SourceDocumentId=@Id AND account.Code=N'539595'", conversionId));
+        Assert.Equal(-2.5m, await ScalarAsync<decimal>(
+            "SELECT SUM(line.Debit-line.Credit) FROM dbo.AccountingEntries entry INNER JOIN dbo.AccountingEntryLines line ON line.EntryId=entry.EntryId INNER JOIN dbo.AccountingAccounts account ON account.AccountId=line.AccountId WHERE entry.SourceDocumentId=@Id AND account.Code=N'143505'", conversionId));
+    }
+
     [Fact]
     public async Task Inventory_endpoints_enforce_permission_and_conversion_rejects_insufficient_stock()
     {
@@ -572,6 +622,7 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
     private async Task<(decimal Quantity,decimal Average,decimal Value)> BalanceAsync(Guid warehouse,Guid product)
     {await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();await using var command=new SqlCommand("SELECT QuantityOnHand,AverageUnitCost,InventoryValue FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId",connection);command.Parameters.AddWithValue("@BusinessId",fixture.BusinessId);command.Parameters.AddWithValue("@WarehouseId",warehouse);command.Parameters.AddWithValue("@ProductId",product);await using var reader=await command.ExecuteReaderAsync();if(!await reader.ReadAsync())return(0,0,0);return(reader.GetDecimal(0),reader.GetDecimal(1),reader.GetDecimal(2));}
     private async Task<T> ScalarAsync<T>(string sql,Guid id){await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();await using var command=new SqlCommand(sql,connection);command.Parameters.AddWithValue("@Id",id);return (T)Convert.ChangeType((await command.ExecuteScalarAsync())!,typeof(T));}
+    private async Task ExecuteAsync(string sql,Guid id){await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();await using var command=new SqlCommand(sql,connection);command.Parameters.AddWithValue("@Id",id);await command.ExecuteNonQueryAsync();}
     private async Task<int> CountAsync(string table,Guid id){Assert.Contains(table,new[]{"InventoryMovements","ServerOutboxMessages"});return await ScalarAsync<int>($"SELECT COUNT(*) FROM dbo.[{table}] WHERE DocumentId=@Id",id);}
     private async Task<(decimal Dispatched,decimal Received)> TransferQuantitiesAsync(Guid id,int line)
     {await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();await using var command=new SqlCommand("SELECT DispatchedQuantity,ReceivedQuantity FROM dbo.InventoryOperationLines WHERE InventoryOperationId=@Id AND LineNumber=@Line",connection);command.Parameters.AddWithValue("@Id",id);command.Parameters.AddWithValue("@Line",line);await using var reader=await command.ExecuteReaderAsync();Assert.True(await reader.ReadAsync());return(reader.GetDecimal(0),reader.GetDecimal(1));}

@@ -40,7 +40,6 @@ export function useConfirmCustomerPayment() {
     mutationFn: (request: ConfirmCustomerPaymentRequest) =>
       receivablesApi.confirmPayment(request, `receivable-payment-${request.paymentId}`),
     onSuccess: (_, request) => {
-      client.invalidateQueries({ queryKey: ["receivables", businessId] });
       request.allocations.forEach(({ receivableId }) =>
         client.invalidateQueries({ queryKey: ["receivable", businessId, receivableId] }),
       );

@@ -131,7 +131,8 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
     public async Task<IReadOnlyList<InventoryReasonItem>> GetReasonsAsync(InventoryUserIdentity user, string? operationType, bool includeInactive, string? search, CancellationToken token)
     {
         const string sql = """
-            SELECT ReasonId,ReasonType,Code,Name,IsSystem,IsActive,DisplayOrder
+            SELECT ReasonId,ReasonType,Code,Name,IsSystem,IsActive,DisplayOrder,
+                   CounterpartAccountingCategory,DefaultCostCenterId,RequiresReference
             FROM dbo.BusinessReasons
             WHERE BusinessId=@BusinessId AND (@OperationType IS NULL OR ReasonType=@OperationType)
               AND (@IncludeInactive=1 OR IsActive=1)
@@ -141,7 +142,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
         await using var connection=connections.Create(); await connection.OpenAsync(token); await using var command=new SqlCommand(sql,connection);
         command.Parameters.AddWithValue("@BusinessId",user.BusinessId); command.Parameters.AddWithValue("@OperationType",(object?)operationType??DBNull.Value); command.Parameters.AddWithValue("@IncludeInactive",includeInactive); command.Parameters.AddWithValue("@Search",(object?)search??DBNull.Value); command.Parameters.AddWithValue("@Pattern",search is null?DBNull.Value:$"%{search}%");
         await using var reader=await command.ExecuteReaderAsync(token); var items=new List<InventoryReasonItem>();
-        while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetString(3),reader.GetBoolean(4),reader.GetBoolean(5),reader.GetInt32(6)));
+        while(await reader.ReadAsync(token)) items.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetString(3),reader.GetBoolean(4),reader.GetBoolean(5),reader.GetInt32(6),reader.IsDBNull(7)?null:reader.GetString(7),reader.IsDBNull(8)?null:reader.GetGuid(8),reader.GetBoolean(9)));
         return items;
     }
 
@@ -151,20 +152,37 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
         const string sql="""
             IF NOT EXISTS(SELECT 1 FROM dbo.ReasonTemplates WHERE ReasonType=@OperationType AND IsActive=1)
               THROW 51220,'Reason type is not configured in the active catalog.',1;
+            IF @CounterpartCategory IS NOT NULL AND NOT EXISTS
+            (
+              SELECT 1 FROM dbo.AccountingConfigurationProfileAccounts accountCategory
+              INNER JOIN dbo.AccountingConfigurationProfiles profile ON profile.ProfileCode=accountCategory.ProfileCode
+              WHERE accountCategory.Category=@CounterpartCategory AND profile.IsDefault=1 AND profile.IsActive=1
+            )
+              THROW 51220,'Accounting counterpart category is not configured in the active profile.',1;
+            IF @DefaultCostCenterId IS NOT NULL AND NOT EXISTS
+            (
+              SELECT 1 FROM dbo.AccountingCostCenters
+              WHERE CostCenterId=@DefaultCostCenterId AND BusinessId=@BusinessId AND IsActive=1
+            )
+              THROW 51220,'Accounting cost center is not active in the authenticated business.',1;
             IF @IsNew=1
               INSERT dbo.BusinessReasons(ReasonId,BusinessId,ReasonType,Code,Name,Direction,CounterpartAccountingCategory,DefaultCostCenterId,RequiresReference,IsSystem,IsActive,DisplayOrder,CreatedAt,UpdatedAt)
-              VALUES(@Id,@BusinessId,@OperationType,@Code,@Name,NULL,NULL,NULL,0,0,@IsActive,@DisplayOrder,SYSUTCDATETIME(),SYSUTCDATETIME());
+              VALUES(@Id,@BusinessId,@OperationType,@Code,@Name,NULL,@CounterpartCategory,@DefaultCostCenterId,@RequiresReference,0,@IsActive,@DisplayOrder,SYSUTCDATETIME(),SYSUTCDATETIME());
             ELSE
             BEGIN
-              UPDATE dbo.BusinessReasons SET ReasonType=@OperationType,Name=@Name,IsActive=@IsActive,DisplayOrder=@DisplayOrder,UpdatedAt=SYSUTCDATETIME()
+              UPDATE dbo.BusinessReasons SET ReasonType=@OperationType,Name=@Name,
+                CounterpartAccountingCategory=@CounterpartCategory,DefaultCostCenterId=@DefaultCostCenterId,
+                RequiresReference=@RequiresReference,IsActive=@IsActive,DisplayOrder=@DisplayOrder,UpdatedAt=SYSUTCDATETIME()
               WHERE ReasonId=@Id AND BusinessId=@BusinessId;
               IF @@ROWCOUNT=0 THROW 51220,'Inventory reason was not found in the authenticated business.',1;
             END;
-            SELECT ReasonId,ReasonType,Code,Name,IsSystem,IsActive,DisplayOrder FROM dbo.BusinessReasons WHERE ReasonId=@Id;
+            SELECT ReasonId,ReasonType,Code,Name,IsSystem,IsActive,DisplayOrder,
+                   CounterpartAccountingCategory,DefaultCostCenterId,RequiresReference
+            FROM dbo.BusinessReasons WHERE ReasonId=@Id;
             """;
         await using var connection=connections.Create(); await connection.OpenAsync(token); await using var command=new SqlCommand(sql,connection);
-        command.Parameters.AddWithValue("@Id",id); command.Parameters.AddWithValue("@BusinessId",user.BusinessId); command.Parameters.AddWithValue("@OperationType",request.OperationType); command.Parameters.AddWithValue("@Code",code); command.Parameters.AddWithValue("@Name",request.Name); command.Parameters.AddWithValue("@IsActive",request.IsActive); command.Parameters.AddWithValue("@DisplayOrder",request.DisplayOrder); command.Parameters.AddWithValue("@IsNew",inventoryReasonId is null);
-        try { await using var reader=await command.ExecuteReaderAsync(token); await reader.ReadAsync(token); return new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetString(3),reader.GetBoolean(4),reader.GetBoolean(5),reader.GetInt32(6)); }
+        command.Parameters.AddWithValue("@Id",id); command.Parameters.AddWithValue("@BusinessId",user.BusinessId); command.Parameters.AddWithValue("@OperationType",request.OperationType); command.Parameters.AddWithValue("@Code",code); command.Parameters.AddWithValue("@Name",request.Name); command.Parameters.AddWithValue("@IsActive",request.IsActive); command.Parameters.AddWithValue("@DisplayOrder",request.DisplayOrder); command.Parameters.AddWithValue("@CounterpartCategory",(object?)request.CounterpartAccountingCategory??DBNull.Value); command.Parameters.AddWithValue("@DefaultCostCenterId",(object?)request.DefaultCostCenterId??DBNull.Value); command.Parameters.AddWithValue("@RequiresReference",request.RequiresReference); command.Parameters.AddWithValue("@IsNew",inventoryReasonId is null);
+        try { await using var reader=await command.ExecuteReaderAsync(token); await reader.ReadAsync(token); return new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetString(3),reader.GetBoolean(4),reader.GetBoolean(5),reader.GetInt32(6),reader.IsDBNull(7)?null:reader.GetString(7),reader.IsDBNull(8)?null:reader.GetGuid(8),reader.GetBoolean(9)); }
         catch(SqlException exception) when(exception.Number is 2601 or 2627) { throw new InventoryConflictException("An inventory reason with the same name already exists for this operation."); }
     }
 
@@ -206,7 +224,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
 
             SELECT o.InventoryOperationId,o.DocumentNumber,o.WarehouseId,source.Name,o.DestinationWarehouseId,destination.Name,
                    o.Status,o.DispatchedAt,COUNT(l.LineNumber),SUM(l.DispatchedQuantity),SUM(l.ReceivedQuantity),
-                   SUM(l.DispatchedQuantity-l.ReceivedQuantity),o.RowVersion
+                   SUM(COALESCE(l.LostQuantity,0)),SUM(l.DispatchedQuantity-l.ReceivedQuantity-COALESCE(l.LostQuantity,0)),o.RowVersion
             FROM dbo.InventoryOperations o
             INNER JOIN dbo.Warehouses source ON source.WarehouseId=o.WarehouseId
             INNER JOIN dbo.Warehouses destination ON destination.WarehouseId=o.DestinationWarehouseId
@@ -234,7 +252,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
             items.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetGuid(2), reader.GetString(3),
                 reader.GetGuid(4), reader.GetString(5), reader.GetString(6), reader.GetDateTimeOffset(7),
                 reader.GetInt32(8), reader.GetDecimal(9), reader.GetDecimal(10), reader.GetDecimal(11),
-                Convert.ToBase64String(reader.GetFieldValue<byte[]>(12))));
+                reader.GetDecimal(12), Convert.ToBase64String(reader.GetFieldValue<byte[]>(13))));
         return new(items, query.Page, query.PageSize, total, Pages(total, query.PageSize));
     }
 
@@ -250,7 +268,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
             WHERE o.InventoryOperationId=@Id AND o.BusinessId=@BusinessId AND o.DocumentType=N'WarehouseTransfer'
               AND o.TransferMode=N'DispatchAndReceive';
             SELECT l.LineNumber,l.ProductId,l.ProductCodeSnapshot,l.DescriptionSnapshot,l.DispatchedQuantity,
-                   l.ReceivedQuantity,l.DispatchedQuantity-l.ReceivedQuantity
+                   l.ReceivedQuantity,COALESCE(l.LostQuantity,0),l.DispatchedQuantity-l.ReceivedQuantity-COALESCE(l.LostQuantity,0)
             FROM dbo.InventoryOperationLines l
             INNER JOIN dbo.InventoryOperations o ON o.InventoryOperationId=l.InventoryOperationId
             WHERE l.InventoryOperationId=@Id AND o.BusinessId=@BusinessId
@@ -272,7 +290,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
         var lines = new List<WarehouseTransferDetailLine>();
         while (await reader.ReadAsync(token))
             lines.Add(new(reader.GetInt32(0), reader.GetGuid(1), reader.GetString(2), reader.GetString(3),
-                reader.GetDecimal(4), reader.GetDecimal(5), reader.GetDecimal(6)));
+                reader.GetDecimal(4), reader.GetDecimal(5), reader.GetDecimal(6), reader.GetDecimal(7)));
         return new(transferId, number, sourceId, sourceName, destinationId, destinationName, reason, notes,
             status, dispatchedAt, receivedAt, version, lines);
     }

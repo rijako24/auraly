@@ -47,7 +47,7 @@ public sealed class SqlInventoryOperationProcessor(
         }
         if (operation.DocumentType == InventoryDocumentTypes.TransferReceipt)
         {
-            await ProcessTransferReceiptAsync(session, operation, document.Payload, cancellationToken);
+            await ProcessTransferReceiptAsync(session, operation, document, cancellationToken);
             return;
         }
         if (operation.DocumentType == InventoryDocumentTypes.StockCount &&
@@ -65,6 +65,12 @@ public sealed class SqlInventoryOperationProcessor(
         };
         await InsertOutboxAsync(session, operation, document.Payload, cancellationToken);
         await MarkProcessedAsync(session, operation, totalValueChange, cancellationToken);
+        if ((operation.DocumentType is InventoryDocumentTypes.StockCount or
+                InventoryDocumentTypes.Adjustment or InventoryDocumentTypes.Damage or
+                InventoryDocumentTypes.Conversion) &&
+            await HasRecognizedAccountingValueAsync(session, operation.DocumentId, cancellationToken))
+            await SqlAccountingPostingJobWriter.InsertAsync(
+                session, document, operation.OccurredAt, ids, timeProvider, cancellationToken);
         if (operation.DocumentType == InventoryDocumentTypes.StockCount)
             await CompleteCoordinatedPhysicalCountAsync(session, operation, cancellationToken);
     }
@@ -199,7 +205,7 @@ public sealed class SqlInventoryOperationProcessor(
     private async Task ProcessTransferReceiptAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
         InventoryOperationDocumentPayload stage,
-        string payload,
+        ConfirmedDocument document,
         CancellationToken cancellationToken)
     {
         var transferId = stage.Lines.Select(line => line.TransferId).Distinct().SingleOrDefault()
@@ -210,18 +216,25 @@ public sealed class SqlInventoryOperationProcessor(
         foreach (var line in posting.Lines.OrderBy(line => line.LineNumber))
         {
             var cost = line.DispatchUnitCost ?? throw new InvalidOperationException("The dispatch cost snapshot is missing.");
-            await ApplyTransferReceiptOutboundAsync(session, posting, line, posting.WarehouseId,
-                line.Quantity, cost, balances, cancellationToken);
-            await ApplyAsync(session, posting, line, destination, line.Quantity, cost,
-                "TransferReceiptIn", balances, cancellationToken, false);
+            var lost = line.TransferLossQuantity ?? 0m;
+            if (line.Quantity > 0)
+            {
+                await ApplyTransferReceiptOutboundAsync(session, posting, line, posting.WarehouseId,
+                    line.Quantity, cost, "TransferReceiptOutTransit", balances, cancellationToken);
+                await ApplyAsync(session, posting, line, destination, line.Quantity, cost,
+                    "TransferReceiptIn", balances, cancellationToken, false);
+            }
+            if (lost > 0)
+                await ApplyTransferReceiptOutboundAsync(session, posting, line, posting.WarehouseId,
+                    lost, cost, "TransferLoss", balances, cancellationToken);
             const string updateReceiptLine = """
                 UPDATE dbo.InventoryTransferReceiptLines
-                SET ProcessedUnitCost=@Cost,ProcessedValue=@Value
+                SET ProcessedUnitCost=@Cost,ProcessedValue=@Value,ProcessedLossValue=@LossValue
                 WHERE InventoryTransferReceiptId=@ReceiptId AND LineNumber=@Line;
                 UPDATE dbo.InventoryOperationLines
-                SET ReceivedQuantity=ReceivedQuantity+@Quantity
+                SET ReceivedQuantity=ReceivedQuantity+@Quantity,LostQuantity=COALESCE(LostQuantity,0)+@LostQuantity
                 WHERE InventoryOperationId=@TransferId AND LineNumber=@Line
-                  AND ReceivedQuantity+@Quantity<=DispatchedQuantity;
+                  AND ReceivedQuantity+COALESCE(LostQuantity,0)+@Quantity+@LostQuantity<=DispatchedQuantity;
                 IF @@ROWCOUNT<>1 THROW 51230,'The received quantity exceeds the dispatched quantity.',1;
                 """;
             await using var command = new SqlCommand(updateReceiptLine, session.Connection, session.Transaction);
@@ -229,8 +242,10 @@ public sealed class SqlInventoryOperationProcessor(
             command.Parameters.AddWithValue("@TransferId", transferId);
             command.Parameters.AddWithValue("@Line", line.LineNumber);
             AddDecimal(command, "@Quantity", line.Quantity, 19, 6);
+            AddDecimal(command, "@LostQuantity", lost, 19, 6);
             AddDecimal(command, "@Cost", cost, 19, 6);
             AddDecimal(command, "@Value", InventoryOperationRules.Money(line.Quantity * cost), 19, 4);
+            AddDecimal(command, "@LossValue", InventoryOperationRules.Money(lost * cost), 19, 4);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
         var now = timeProvider.GetUtcNow();
@@ -241,15 +256,15 @@ public sealed class SqlInventoryOperationProcessor(
             UPDATE o SET
               Status=CASE WHEN EXISTS(
                 SELECT 1 FROM dbo.InventoryOperationLines l
-                WHERE l.InventoryOperationId=o.InventoryOperationId AND l.ReceivedQuantity<l.DispatchedQuantity)
+                WHERE l.InventoryOperationId=o.InventoryOperationId AND l.ReceivedQuantity+COALESCE(l.LostQuantity,0)<l.DispatchedQuantity)
                 THEN N'PartiallyReceived' ELSE N'Received' END,
               ReceivedAt=CASE WHEN EXISTS(
                 SELECT 1 FROM dbo.InventoryOperationLines l
-                WHERE l.InventoryOperationId=o.InventoryOperationId AND l.ReceivedQuantity<l.DispatchedQuantity)
+                WHERE l.InventoryOperationId=o.InventoryOperationId AND l.ReceivedQuantity+COALESCE(l.LostQuantity,0)<l.DispatchedQuantity)
                 THEN NULL ELSE @Now END,
               ReceivedByUserId=CASE WHEN EXISTS(
                 SELECT 1 FROM dbo.InventoryOperationLines l
-                WHERE l.InventoryOperationId=o.InventoryOperationId AND l.ReceivedQuantity<l.DispatchedQuantity)
+                WHERE l.InventoryOperationId=o.InventoryOperationId AND l.ReceivedQuantity+COALESCE(l.LostQuantity,0)<l.DispatchedQuantity)
                 THEN NULL ELSE @UserId END
             FROM dbo.InventoryOperations o
             WHERE o.InventoryOperationId=@TransferId AND o.BusinessId=@BusinessId AND o.Status=N'ReceiptPending';
@@ -264,7 +279,10 @@ public sealed class SqlInventoryOperationProcessor(
             command.Parameters.AddWithValue("@BusinessId", stage.BusinessId);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
-        await InsertOutboxAsync(session, stage, payload, cancellationToken);
+        await InsertOutboxAsync(session, stage, document.Payload, cancellationToken);
+        if (stage.Lines.Any(line => line.TransferLossQuantity > 0))
+            await SqlAccountingPostingJobWriter.InsertAsync(
+                session, document, stage.OccurredAt, ids, timeProvider, cancellationToken);
     }
 
     private async Task ApplyTransferReceiptOutboundAsync(
@@ -274,6 +292,7 @@ public sealed class SqlInventoryOperationProcessor(
         Guid warehouseId,
         decimal quantity,
         decimal frozenUnitCost,
+        string movementType,
         Dictionary<(Guid, Guid), BalanceState> balances,
         CancellationToken cancellationToken)
     {
@@ -290,7 +309,7 @@ public sealed class SqlInventoryOperationProcessor(
         var afterAverage = afterQuantity == 0 ? 0m : InventoryOperationRules.Quantity(afterValue / afterQuantity);
         await inventoryWriter.WriteCalculatedAsync(session, new CalculatedInventoryLedgerPosting(
             operation.BusinessId, warehouseId, line.ProductId, operation.DocumentId, operation.DocumentType,
-            line.LineNumber, "TransferReceiptOutTransit", state.Exists, -quantity, beforeQuantity, afterQuantity,
+            line.LineNumber, movementType, state.Exists, -quantity, beforeQuantity, afterQuantity,
             beforeAverage, afterAverage, frozenUnitCost, valueChange, afterValue, operation.OccurredAt), cancellationToken);
         state.Quantity = afterQuantity;
         state.AverageCost = afterAverage;
@@ -309,7 +328,13 @@ public sealed class SqlInventoryOperationProcessor(
         var inputCost = 0m;
         foreach (var line in inputs)
             inputCost -= await ApplyAsync(session, operation, line, operation.WarehouseId, -line.Quantity, null, "ConversionInput", balances, cancellationToken);
-        var allocations = InventoryOperationRules.AllocateConversionCost(inputCost, outputs.Select(line => (line.Quantity, line.AllocationWeight)).ToArray());
+        var lossCost = operation.ConversionLossQuantity > 0
+            ? InventoryOperationRules.Money(inputCost * operation.ConversionLossQuantity.Value /
+                operation.ConversionInputEquivalent!.Value)
+            : 0m;
+        var allocations = InventoryOperationRules.AllocateConversionCost(
+            inputCost - lossCost,
+            outputs.Select(line => (line.Quantity, line.AllocationWeight)).ToArray());
         var total = -inputCost;
         for (var index = 0; index < outputs.Length; index++)
         {
@@ -421,6 +446,23 @@ public sealed class SqlInventoryOperationProcessor(
     {
         const string sql="UPDATE dbo.InventoryOperations SET Status=N'Processed',ProcessedAt=@Now,TotalValueChange=@Total WHERE InventoryOperationId=@Id AND BusinessId=@BusinessId AND Status=N'Accepted';";
         await using var command=new SqlCommand(sql,session.Connection,session.Transaction);command.Parameters.AddWithValue("@Id",operation.DocumentId);command.Parameters.AddWithValue("@BusinessId",operation.BusinessId);command.Parameters.AddWithValue("@Now",timeProvider.GetUtcNow());AddDecimal(command,"@Total",total,19,4);if(await command.ExecuteNonQueryAsync(cancellationToken)!=1)throw new DBConcurrencyException("The inventory operation could not be marked as processed.");
+    }
+
+    private static async Task<bool> HasRecognizedAccountingValueAsync(
+        SqlDocumentProcessingSessionAccessor.Session session,
+        Guid documentId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT CAST(CASE WHEN EXISTS
+            (
+              SELECT 1 FROM dbo.InventoryOperationLines
+              WHERE InventoryOperationId=@DocumentId AND ProcessedValue<>0
+            ) THEN 1 ELSE 0 END AS bit);
+            """;
+        await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        return Convert.ToBoolean(await command.ExecuteScalarAsync(cancellationToken));
     }
 
     private async Task CompleteCoordinatedPhysicalCountAsync(

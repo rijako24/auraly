@@ -40,17 +40,35 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.True(state.InventoryReasons >= 12);
         Assert.Equal(4, state.ProductUnits);
         Assert.Equal(1, state.DefaultCustomers);
-        Assert.Equal(43, state.AccountingAccounts);
-        Assert.Equal(43, state.AccountingMappings);
+        Assert.Equal(49, state.AccountingAccounts);
+        Assert.Equal(49, state.AccountingMappings);
+        Assert.Equal(0, state.UnmappedPosPaymentMethods);
         Assert.Equal(1, state.OpenAccountingPeriods);
         Assert.Equal(1, state.DefaultCostCenters);
         Assert.Equal(1, state.AccountingVoucherCursors);
-        Assert.Equal(4, state.Roles);
+        Assert.Equal(5, state.Roles);
         Assert.Equal(3, state.OnlineSalesDocumentSeries);
         Assert.True(await RoleHasPermissionAsync(
             result.TenantId, "SUPERVISOR", "pos.approvals.receive_notifications"));
         Assert.False(await RoleHasPermissionAsync(
             result.TenantId, "CASHIER", "pos.approvals.receive_notifications"));
+        foreach (var permission in new[]
+                 {
+                     "accounting.configure", "accounting.manual.create",
+                     "payroll.approve", "payroll.pay", "payables.payments.create",
+                     "receivables.payments.create", "expenses.create",
+                     "commerce.taxation.withholdings.manage",
+                     "inventory.reasons.manage", "work-sessions.differences.read"
+                 })
+            Assert.True(await RoleHasPermissionAsync(
+                result.TenantId, "ACCOUNTANT", permission),
+                $"The provisioned accountant role is missing '{permission}'.");
+        Assert.False(await RoleHasPermissionAsync(
+            result.TenantId, "ACCOUNTANT", "users.assign_role"));
+        Assert.False(await RoleHasPermissionAsync(
+            result.TenantId, "ACCOUNTANT", "inventory.adjustments.confirm"));
+        Assert.Equal(0, await MissingAdministratorPermissionsAsync(result.TenantId));
+        Assert.Equal(0, await AccountantPermissionMismatchAsync(result.TenantId));
         Assert.Equal(0, state.UserRoles);
         Assert.Null(state.UserActive);
         Assert.Null(state.PasswordHash);
@@ -255,7 +273,21 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
               (SELECT COUNT(*) FROM dbo.AccountingPeriods WHERE TenantId=@TenantId AND Status=N'Open'),
               (SELECT COUNT(*) FROM dbo.AccountingCostCenters c INNER JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId WHERE b.TenantId=@TenantId AND c.IsDefault=1 AND c.IsActive=1),
               (SELECT COUNT(*) FROM dbo.AccountingVoucherCursors WHERE TenantId=@TenantId),
-              (SELECT COUNT(*) FROM dbo.AppRoles WHERE TenantId=@TenantId AND NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'ADMINISTRATOR')),
+              (SELECT COUNT(*) FROM reference.Options optionValue
+               WHERE optionValue.CatalogCode=N'payment-method' AND optionValue.IsActive=1
+                 AND NOT EXISTS(
+                   SELECT 1
+                   FROM dbo.AccountingConfigurationProfiles profile
+                   INNER JOIN dbo.AccountingSourceCategoryMappings sourceMapping
+                     ON sourceMapping.ProfileCode=profile.ProfileCode
+                    AND sourceMapping.SourceType=N'PosPaymentMethod'
+                    AND sourceMapping.SourceCode=optionValue.Code
+                   INNER JOIN dbo.AccountingAccountMappings accountMapping
+                     ON accountMapping.TenantId=@TenantId
+                    AND accountMapping.Category=sourceMapping.Category
+                    AND accountMapping.EffectiveTo IS NULL
+                   WHERE profile.IsDefault=1 AND profile.IsActive=1)),
+              (SELECT COUNT(*) FROM dbo.AppRoles WHERE TenantId=@TenantId AND NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'ACCOUNTANT',N'ADMINISTRATOR')),
               (SELECT COUNT(*) FROM dbo.DocumentSeries ds INNER JOIN dbo.Businesses b ON b.BusinessId=ds.BusinessId WHERE b.TenantId=@TenantId AND ds.DocumentType IN(N'SalesInvoice',N'SalesReceipt',N'SalesDebitNote') AND ds.DeviceId IS NULL AND ds.SeriesCode=N'00' AND ds.IsActive=1),
               (SELECT COUNT(*) FROM dbo.UserRoles WHERE UserId=@UserId),
               (SELECT IsActive FROM dbo.AppUsers WHERE TenantId=@TenantId AND UserId=@UserId),
@@ -270,8 +302,8 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2), reader.GetInt32(3),
             reader.GetInt32(4), reader.GetInt32(5), reader.GetInt32(6), reader.GetInt32(7),
             reader.GetInt32(8), reader.GetInt32(9), reader.GetInt32(10), reader.GetInt32(11),
-            reader.GetInt32(12), reader.IsDBNull(13) ? null : reader.GetBoolean(13),
-            reader.IsDBNull(14) ? null : reader.GetString(14), reader.GetString(15));
+            reader.GetInt32(12), reader.GetInt32(13), reader.IsDBNull(14) ? null : reader.GetBoolean(14),
+            reader.IsDBNull(15) ? null : reader.GetString(15), reader.GetString(16));
     }
 
     private async Task<string> ReadInvitationTokenAsync(Guid tenantId)
@@ -362,6 +394,72 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         return Convert.ToInt32(await command.ExecuteScalarAsync()) == 1;
     }
 
+    private async Task<int> MissingAdministratorPermissionsAsync(Guid tenantId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT COUNT(*)
+            FROM dbo.Permissions permissionValue
+            WHERE permissionValue.Resource NOT LIKE N'tenants.%'
+              AND permissionValue.Resource NOT LIKE N'platform.%'
+              AND NOT EXISTS(
+                SELECT 1
+                FROM dbo.AppRoles roleValue
+                INNER JOIN dbo.RolePermissions assignment
+                  ON assignment.RoleId=roleValue.RoleId
+                 AND assignment.PermissionId=permissionValue.PermissionId
+                WHERE roleValue.TenantId=@TenantId
+                  AND roleValue.NormalizedName=N'ADMINISTRATOR');
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<int> AccountantPermissionMismatchAsync(Guid tenantId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            WITH Expected AS
+            (
+              SELECT PermissionId
+              FROM dbo.Permissions
+              WHERE Resource LIKE N'accounting.%'
+                 OR Resource LIKE N'payroll.%'
+                 OR Resource LIKE N'payables.%'
+                 OR Resource LIKE N'receivables.%'
+                 OR Resource LIKE N'expenses.%'
+                 OR Resource LIKE N'commerce.taxation.%'
+                 OR Resource LIKE N'fiscal.configuration.%'
+                 OR Resource IN(
+                   N'businesses.read',N'dashboard.read',N'audit_logs.read',N'payments.read',N'payments.confirm_manual',
+                   N'parties.read',N'customers.read',N'suppliers.read',N'catalog.read',N'catalog.costs.read',N'products.read',
+                   N'inventory.read',N'inventory.costs.read',N'inventory.reasons.manage',
+                   N'work-sessions.read',N'work-sessions.differences.read',N'work-sessions.cash-reasons.configure',
+                   N'dispatches.read-all',N'dispatches.reports.view',N'dispatches.reports.export',
+                   N'sales.reports.read',N'sales.reports.read-all',N'sales.returns.read',N'sales.debit-notes.read',
+                   N'purchasing.goods-receipts.read',N'purchasing.purchase-returns.read')
+            ), Actual AS
+            (
+              SELECT assignment.PermissionId
+              FROM dbo.AppRoles roleValue
+              INNER JOIN dbo.RolePermissions assignment ON assignment.RoleId=roleValue.RoleId
+              WHERE roleValue.TenantId=@TenantId AND roleValue.NormalizedName=N'ACCOUNTANT'
+            )
+            SELECT
+              (SELECT COUNT(*) FROM Expected expectedValue
+               WHERE NOT EXISTS(SELECT 1 FROM Actual actualValue
+                                WHERE actualValue.PermissionId=expectedValue.PermissionId))
+              +
+              (SELECT COUNT(*) FROM Actual actualValue
+               WHERE NOT EXISTS(SELECT 1 FROM Expected expectedValue
+                                WHERE expectedValue.PermissionId=actualValue.PermissionId));
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
     private async Task<int> TenantAdministratorPermissionCountAsync()
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
@@ -381,6 +479,6 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         int Businesses, int Warehouses, int InventoryReasons, int ProductUnits,
         int DefaultCustomers, int AccountingAccounts, int AccountingMappings,
         int OpenAccountingPeriods, int DefaultCostCenters, int AccountingVoucherCursors,
-        int Roles, int OnlineSalesDocumentSeries, int UserRoles,
+        int UnmappedPosPaymentMethods, int Roles, int OnlineSalesDocumentSeries, int UserRoles,
         bool? UserActive, string? PasswordHash, string InvitationStatus);
 }

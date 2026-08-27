@@ -132,7 +132,8 @@ public sealed class SqlInventoryOperationStore(
             var lines = request.Lines.Select(line => new InventoryOperationLineSnapshot(
                 line.LineNumber, "TRANSFER", line.ProductId, products[line.ProductId].Code,
                 products[line.ProductId].Name, line.DispatchedQuantity, null, null, null, null,
-                DispatchedQuantity: line.DispatchedQuantity, ReceivedQuantity: 0m, TransferId: request.DocumentId)).ToArray();
+                DispatchedQuantity: line.DispatchedQuantity, ReceivedQuantity: 0m, TransferId: request.DocumentId,
+                TransferLossQuantity: 0m)).ToArray();
             var now = timeProvider.GetUtcNow();
             const string insert = """
                 INSERT dbo.InventoryOperations
@@ -194,14 +195,14 @@ public sealed class SqlInventoryOperationStore(
                 throw new InventoryValidationException("The receipt must contain exactly the products and lines dispatched by the source warehouse.");
             if (transfer.Lines.Any(line => requested[line.LineNumber].ReceivedQuantity > line.PendingQuantity))
                 throw new InventoryValidationException("A receipt cannot exceed the quantity still in transit.");
-            var hasDifference = transfer.Lines.Any(line => requested[line.LineNumber].ReceivedQuantity != line.PendingQuantity);
-            if (hasDifference && string.IsNullOrWhiteSpace(request.DifferenceReasonCode))
-                throw new InventoryValidationException("DifferenceReasonCode is required when the received quantity differs from the pending quantity.");
-            if (hasDifference && !user.Permissions.Contains(InventoryPermissionCodes.ResolveTransferDifference))
+            var resolvesDifference = !string.IsNullOrWhiteSpace(request.DifferenceReasonCode);
+            if (resolvesDifference && !user.Permissions.Contains(InventoryPermissionCodes.ResolveTransferDifference))
                 throw new InventoryForbiddenException($"Permission '{InventoryPermissionCodes.ResolveTransferDifference}' is required to confirm a transfer difference.");
-            if (hasDifference)
-                _ = await LoadActiveReasonAsync(connection, transaction, user.BusinessId,
-                    InventoryDocumentTypes.Transfer, request.DifferenceReasonCode!, cancellationToken);
+            AccountingReasonSnapshot? accountingReason = null;
+            if (resolvesDifference)
+                accountingReason = await LoadAccountingReasonAsync(
+                    connection, transaction, user.BusinessId, InventoryDocumentTypes.Transfer,
+                    request.DifferenceReasonCode!, null, request.Notes, true, cancellationToken);
 
             var now = timeProvider.GetUtcNow();
             const string insert = """
@@ -229,25 +230,28 @@ public sealed class SqlInventoryOperationStore(
             foreach (var line in transfer.Lines.OrderBy(line => line.LineNumber))
             {
                 var received = requested[line.LineNumber].ReceivedQuantity;
+                var lost = resolvesDifference ? line.PendingQuantity - received : 0m;
+                if (received == 0 && lost == 0) continue;
                 const string insertLine = """
                     INSERT dbo.InventoryTransferReceiptLines
-                      (InventoryTransferReceiptId,LineNumber,ProductId,ReceivedQuantity)
-                    VALUES(@ReceiptId,@Line,@ProductId,@Quantity);
+                      (InventoryTransferReceiptId,LineNumber,ProductId,ReceivedQuantity,LostQuantity)
+                    VALUES(@ReceiptId,@Line,@ProductId,@Quantity,@LostQuantity);
                     """;
                 await using var command = new SqlCommand(insertLine, connection, transaction);
                 command.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
                 command.Parameters.AddWithValue("@Line", line.LineNumber);
                 command.Parameters.AddWithValue("@ProductId", line.ProductId);
                 AddDecimal(command, "@Quantity", received, 19, 6);
+                AddDecimal(command, "@LostQuantity", lost, 19, 6);
                 await command.ExecuteNonQueryAsync(cancellationToken);
-                if (received > 0)
-                    payloadLines.Add(new InventoryOperationLineSnapshot(line.LineNumber, "TRANSFER", line.ProductId,
-                        line.ProductCode, line.ProductName, received, null, null, null, null,
-                        DispatchedQuantity: line.DispatchedQuantity, ReceivedQuantity: received,
-                        DispatchUnitCost: line.DispatchUnitCost, TransferId: transferId));
+                payloadLines.Add(new InventoryOperationLineSnapshot(line.LineNumber, "TRANSFER", line.ProductId,
+                    line.ProductCode, line.ProductName, received, null, null, null, null,
+                    DispatchedQuantity: line.DispatchedQuantity, ReceivedQuantity: received,
+                    DispatchUnitCost: line.DispatchUnitCost, TransferId: transferId,
+                    TransferLossQuantity: lost));
             }
             var acceptance = await AcceptTransferReceiptAsync(connection, transaction, user, request, transfer,
-                payloadLines, cancellationToken);
+                payloadLines, accountingReason, cancellationToken);
             const string pending = "UPDATE dbo.InventoryOperations SET Status=N'ReceiptPending' WHERE InventoryOperationId=@Id AND BusinessId=@BusinessId AND Status IN(N'Dispatched',N'PartiallyReceived');";
             await using (var command = new SqlCommand(pending, connection, transaction))
             {
@@ -298,7 +302,8 @@ public sealed class SqlInventoryOperationStore(
         var lines = inputLines.Select(line => new InventoryOperationLineSnapshot(
             line.LineNumber, line.Direction, line.ProductId, products[line.ProductId].Code,
             products[line.ProductId].Name, line.Quantity, null, null, null, null,
-            DispatchedQuantity: line.Quantity, ReceivedQuantity: line.Quantity, TransferId: request.DocumentId)).ToArray();
+            DispatchedQuantity: line.Quantity, ReceivedQuantity: line.Quantity, TransferId: request.DocumentId,
+            TransferLossQuantity: 0m)).ToArray();
         var now = timeProvider.GetUtcNow();
         const string insert = """
             INSERT dbo.InventoryOperations
@@ -434,10 +439,18 @@ public sealed class SqlInventoryOperationStore(
         var number = await AllocateNumberAsync(connection, transaction, user.BusinessId, documentType, cancellationToken);
         var now = timeProvider.GetUtcNow();
         var sequence = await AllocateSequenceAsync(connection, transaction, user.BusinessId, now, cancellationToken);
+        var accountingReason = await LoadAccountingReasonAsync(
+            connection, transaction, user.BusinessId, documentType, reasonCode,
+            costCenterId, notes,
+            documentType is InventoryDocumentTypes.StockCount or InventoryDocumentTypes.Adjustment or
+                InventoryDocumentTypes.Damage || conversion?.Equivalence.LossQuantity > 0,
+            cancellationToken);
         var payload = new InventoryOperationDocumentPayload(user.TenantId, user.BusinessId, documentId,
             documentType, warehouseId, destinationWarehouseId, user.UserId, number.FullNumber,
             number.SeriesId, number.Prefix, number.SeriesCode, number.Consecutive, occurredAt,
-            reasonCode, conversionType, costCenterId, baseSequence, notes, lines);
+            reasonCode, conversionType, costCenterId, baseSequence, notes, lines,
+            CounterpartAccountingCategory: accountingReason?.CounterpartCategory,
+            AccountingCostCenterId: accountingReason?.CostCenterId);
         if (conversion is not null)
             payload = payload with
             {
@@ -540,7 +553,9 @@ public sealed class SqlInventoryOperationStore(
     private async Task<InventoryOperationAcceptance> AcceptTransferReceiptAsync(
         SqlConnection connection, SqlTransaction transaction, InventoryUserIdentity user,
         ReceiveWarehouseTransferRequest request, ReceivableTransfer transfer,
-        IReadOnlyList<InventoryOperationLineSnapshot> lines, CancellationToken cancellationToken)
+        IReadOnlyList<InventoryOperationLineSnapshot> lines,
+        AccountingReasonSnapshot? accountingReason,
+        CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
         var sequence = await AllocateSequenceAsync(connection, transaction, user.BusinessId, now, cancellationToken);
@@ -548,7 +563,9 @@ public sealed class SqlInventoryOperationStore(
             InventoryDocumentTypes.TransferReceipt, transfer.TransitWarehouseId, transfer.DestinationWarehouseId,
             user.UserId, transfer.DocumentNumber, transfer.DocumentSeriesId, transfer.DocumentPrefix,
             transfer.DocumentSeriesCode, transfer.DocumentConsecutive, request.OccurredAt,
-            request.DifferenceReasonCode ?? transfer.ReasonCode, null, null, null, request.Notes, lines);
+            request.DifferenceReasonCode ?? transfer.ReasonCode, null, null, null, request.Notes, lines,
+            CounterpartAccountingCategory: accountingReason?.CounterpartCategory,
+            AccountingCostCenterId: accountingReason?.CostCenterId);
         var payloadJson = InventoryOperationContractSerializer.Serialize(payload);
         var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(payloadJson));
         var movementId = ids.NewId();
@@ -658,7 +675,8 @@ public sealed class SqlInventoryOperationStore(
             consecutive = reader.GetInt64(6); reason = reader.GetString(7);
         }
         const string linesSql = """
-            SELECT LineNumber,ProductId,ProductCodeSnapshot,DescriptionSnapshot,DispatchedQuantity,ReceivedQuantity,DispatchUnitCost
+            SELECT LineNumber,ProductId,ProductCodeSnapshot,DescriptionSnapshot,
+                   DispatchedQuantity,ReceivedQuantity,COALESCE(LostQuantity,0),DispatchUnitCost
             FROM dbo.InventoryOperationLines WITH(UPDLOCK,HOLDLOCK)
             WHERE InventoryOperationId=@Id ORDER BY LineNumber;
             """;
@@ -671,8 +689,9 @@ public sealed class SqlInventoryOperationStore(
             {
                 var dispatched = reader.GetDecimal(4);
                 var received = reader.GetDecimal(5);
+                var lost = reader.GetDecimal(6);
                 lines.Add(new ReceivableTransferLine(reader.GetInt32(0), reader.GetGuid(1), reader.GetString(2),
-                    reader.GetString(3), dispatched, received, dispatched - received, reader.GetDecimal(6)));
+                    reader.GetString(3), dispatched, received, lost, dispatched - received - lost, reader.GetDecimal(7)));
             }
         }
         return new ReceivableTransfer(destination, transit, number, series, prefix, seriesCode, consecutive, reason, lines);
@@ -706,10 +725,10 @@ public sealed class SqlInventoryOperationStore(
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
               THROW 51200,'The business is outside the authenticated tenant.',1;
             IF NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId
-              AND IsActive=1 AND (UseForSales=1 OR (@AllowSystemWarehouse=1 AND Code IN(N'PED',N'AVE'))))
+              AND IsActive=1 AND (UseForSales=1 OR (@AllowSystemWarehouse=1 AND IsSystem=1)))
               THROW 51201,'La bodega no está habilitada como bodega de venta.',1;
             IF @Destination IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@Destination AND BusinessId=@BusinessId
-              AND IsActive=1 AND (UseForSales=1 OR (@AllowSystemWarehouse=1 AND Code IN(N'PED',N'AVE'))))
+              AND IsActive=1 AND (UseForSales=1 OR (@AllowSystemWarehouse=1 AND IsSystem=1)))
               THROW 51202,'La bodega de destino no está habilitada como bodega de venta.',1;
             IF EXISTS(SELECT x.ProductId FROM OPENJSON(@Products) WITH(ProductId UNIQUEIDENTIFIER '$') x
               LEFT JOIN dbo.Products p ON p.ProductId=x.ProductId AND p.BusinessId=@BusinessId AND p.IsActive=1 AND p.ManageStock=1
@@ -736,6 +755,60 @@ public sealed class SqlInventoryOperationStore(
         command.Parameters.AddWithValue("@Code", reasonCode);
         var value = await command.ExecuteScalarAsync(cancellationToken);
         return value as string ?? throw new InventoryValidationException("Select an active reason compatible with the inventory operation.");
+    }
+
+    private static async Task<AccountingReasonSnapshot?> LoadAccountingReasonAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid businessId,
+        string operationType,
+        string reasonCode,
+        Guid? requestedCostCenterId,
+        string? reference,
+        bool accountingRequired,
+        CancellationToken cancellationToken)
+    {
+        if (!accountingRequired)
+            return null;
+
+        const string sql = """
+            SELECT r.CounterpartAccountingCategory,
+                   COALESCE(@RequestedCostCenterId,r.DefaultCostCenterId),
+                   r.RequiresReference,
+                   CAST(CASE WHEN COALESCE(@RequestedCostCenterId,r.DefaultCostCenterId) IS NULL
+                                  OR EXISTS
+                                  (
+                                    SELECT 1 FROM dbo.AccountingCostCenters c
+                                    WHERE c.CostCenterId=COALESCE(@RequestedCostCenterId,r.DefaultCostCenterId)
+                                      AND c.BusinessId=r.BusinessId AND c.IsActive=1
+                                  )
+                             THEN 1 ELSE 0 END AS bit)
+            FROM dbo.BusinessReasons r WITH(UPDLOCK,HOLDLOCK)
+            WHERE r.BusinessId=@BusinessId AND r.ReasonType=@OperationType
+              AND r.Code=@Code AND r.IsActive=1;
+            """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@OperationType", operationType);
+        command.Parameters.AddWithValue("@Code", reasonCode);
+        command.Parameters.AddWithValue("@RequestedCostCenterId", (object?)requestedCostCenterId ?? DBNull.Value);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            throw new InventoryValidationException("Select an active reason compatible with the inventory operation.");
+        var counterpart = reader.IsDBNull(0) ? null : reader.GetString(0);
+        Guid? costCenterId = reader.IsDBNull(1) ? null : reader.GetGuid(1);
+        var requiresReference = reader.GetBoolean(2);
+        var validCostCenter = reader.GetBoolean(3);
+        if (string.IsNullOrWhiteSpace(counterpart))
+            throw new InventoryValidationException(
+                "The inventory reason does not have an accounting counterpart category configured.");
+        if (!validCostCenter)
+            throw new InventoryValidationException(
+                "The accounting cost center must be active and belong to the business.");
+        if (requiresReference && string.IsNullOrWhiteSpace(reference))
+            throw new InventoryValidationException(
+                "A reference or supporting note is required for the selected inventory reason.");
+        return new AccountingReasonSnapshot(counterpart.Trim(), costCenterId);
     }
 
     private static async Task<IReadOnlyList<ProductState>> LoadProductsAsync(SqlConnection connection, SqlTransaction transaction,
@@ -839,9 +912,9 @@ public sealed class SqlInventoryOperationStore(
             INSERT dbo.InventoryOperationLines
               (InventoryOperationId,LineNumber,Direction,ProductId,ProductCodeSnapshot,DescriptionSnapshot,
                Quantity,PreCountQuantity,SystemQuantityAtBase,ExplicitUnitCost,AllocationWeight,
-               ConversionFactor,ConversionEquivalentQuantity,DispatchedQuantity,ReceivedQuantity,DispatchUnitCost)
+               ConversionFactor,ConversionEquivalentQuantity,DispatchedQuantity,ReceivedQuantity,LostQuantity,DispatchUnitCost)
             VALUES(@Id,@Line,@Direction,@ProductId,@Code,@Description,@Quantity,@PreCount,@SystemAtBase,@UnitCost,@Weight,
-               @ConversionFactor,@ConversionEquivalentQuantity,@DispatchedQuantity,@ReceivedQuantity,@DispatchUnitCost);
+               @ConversionFactor,@ConversionEquivalentQuantity,@DispatchedQuantity,@ReceivedQuantity,@LostQuantity,@DispatchUnitCost);
             """;
         foreach (var line in lines)
         {
@@ -861,6 +934,7 @@ public sealed class SqlInventoryOperationStore(
             AddNullableDecimal(command, "@ConversionEquivalentQuantity", line.ConversionEquivalentQuantity, 19, 6);
             AddNullableDecimal(command, "@DispatchedQuantity", line.DispatchedQuantity, 19, 6);
             AddNullableDecimal(command, "@ReceivedQuantity", line.ReceivedQuantity, 19, 6);
+            AddNullableDecimal(command, "@LostQuantity", line.TransferLossQuantity, 19, 6);
             AddNullableDecimal(command, "@DispatchUnitCost", line.DispatchUnitCost, 19, 6);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -1031,6 +1105,7 @@ public sealed class SqlInventoryOperationStore(
     private static SqlCommand StoredProcedure(string name,SqlConnection connection,SqlTransaction transaction)=>new(name,connection,transaction){CommandType=CommandType.StoredProcedure};
     private sealed record LineInput(int LineNumber,string Direction,Guid ProductId,decimal Quantity,decimal? SystemQuantityAtBase,decimal? ExplicitUnitCost,decimal? AllocationWeight);
     private sealed record ProductState(Guid Id,string Code,string Name,decimal Quantity);
+    private sealed record AccountingReasonSnapshot(string CounterpartCategory, Guid? CostCenterId);
     private sealed record CountDraftState(Guid WarehouseId,DateTimeOffset OccurredAt,string ReasonCode,long BaseSequence,string? Notes,IReadOnlyList<InventoryOperationLineSnapshot> Lines);
     private sealed record ReceivableTransfer(
         Guid DestinationWarehouseId,
@@ -1049,6 +1124,7 @@ public sealed class SqlInventoryOperationStore(
         string ProductName,
         decimal DispatchedQuantity,
         decimal ReceivedQuantity,
+        decimal LostQuantity,
         decimal PendingQuantity,
         decimal DispatchUnitCost);
     private sealed record ConversionMetadata(

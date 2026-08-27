@@ -91,6 +91,53 @@ Connected authenticated endpoints cover:
 - trial balance by date range and authenticated business;
 - period close guarded by pending postings.
 
+## Operational differences and tenant defaults
+
+Inventory and cash differences reuse the ordered document engine and the single
+`SqlAccountingPostingProcessor`; they do not introduce a second ledger writer.
+An inventory payload freezes the reason's configured semantic category and
+optional cost center. Cash differences use their stable shortage/overage
+categories. In both cases the processor resolves the effective tenant/business
+account mapping and open period when it posts:
+
+- stock-count and manual-adjustment increases or decreases use the category on
+  their `BusinessReasons` row against `Inventory`;
+- damage and expired stock remove inventory value against the configured damage
+  category;
+- a product conversion allocates only the surviving input cost to its outputs
+  and posts the recognized loss against the configured conversion-loss category;
+- a transfer receipt may either remain partial or, with an authorized difference
+  reason, close the outstanding quantity as a final loss from inventory in
+  transit against the configured transfer-loss category;
+- work-session shortages/overages use `CashShortageExpense` and
+  `CashOverageIncome`; dispatch settlements use the independently configurable
+  `DispatchCashShortageExpense` and `DispatchCashOverageIncome` categories.
+  Their other side is always `Cash`.
+
+`DispatchSettlementOperations` remains the durable owner of the multi-step
+operational settlement (returns, receivable payments and final closure). Once
+the cash difference is immutable it accepts `DispatchCashDifference` into the
+canonical document stream, whose handler only creates the standard accounting
+job. The dispatcher/coordinator is an activation signal; the durable job tables
+remain the recovery and idempotency authority.
+
+The default Colombian accounting profile provisions every tenant with 49
+required accounts and effective mappings for these categories, an open period,
+a default cost center and accounting-enabled operational reasons. It also maps
+every active POS payment method (`Cash`, debit/credit card, transfer, customer
+credit, bank transfer and deposit) to a category backed by a postable account.
+Tenants may override effective account mappings and reason cost centers without
+changing operational code.
+
+Tenant provisioning also creates the assignable `ACCOUNTANT` role. Its
+deterministic permission matrix covers accounting configuration and posting,
+tax withholdings, payroll, expenses, payables, receivables, fiscal configuration
+and the read/reconciliation permissions needed for cash, inventory, purchasing,
+sales and dispatch evidence. It deliberately excludes user/role administration
+and operational inventory confirmations. `ADMINISTRATOR` continues to receive
+every non-platform tenant permission, while the cashier, supervisor and
+administrative presets keep their existing operational boundaries.
+
 ## Native opening balances and activation
 
 Opening balances are an accounting aggregate, not fields embedded in tenant
@@ -152,7 +199,8 @@ Still pending:
   first delivery does not require direct bank APIs, automatic matching,
   multi-movement suggestions or AI classification;
 - operational and fiscal debit note, then its posting rule;
-- supplier payments, payable settlements and other inventory-operation postings;
+- inventory movements outside the explicitly connected operation types must be
+  added through the same canonical document handler and accounting job path;
 - convergence of the current supplier master into Party before supplier and
   exogenous ledgers are considered complete;
 - manual vouchers, reversals and authorized reopening;

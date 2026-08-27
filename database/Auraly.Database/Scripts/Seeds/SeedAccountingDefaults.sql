@@ -49,7 +49,13 @@ USING (VALUES
   (N'EmployerHealthPayable',N'Salud del empleador por pagar',N'237010',N'Salud del empleador por pagar',N'Liability',1,40),
   (N'EmployerPensionPayable',N'Pensión del empleador por pagar',N'237015',N'Pensión del empleador por pagar',N'Liability',1,41),
   (N'OccupationalRiskPayable',N'Riesgos laborales por pagar',N'237020',N'Riesgos laborales por pagar',N'Liability',1,42),
-  (N'ParafiscalContributionsPayable',N'Parafiscales por pagar',N'237025',N'Aportes parafiscales por pagar',N'Liability',1,43)
+  (N'ParafiscalContributionsPayable',N'Parafiscales por pagar',N'237025',N'Aportes parafiscales por pagar',N'Liability',1,43),
+  (N'InventoryDifferences',N'Diferencias de inventario',N'529595',N'Diferencias de inventario',N'Expense',0,44),
+  (N'DamagedInventoryExpense',N'Pérdidas por averías y vencimientos',N'529596',N'Pérdidas por averías y vencimientos',N'Expense',0,45),
+  (N'ConversionLossExpense',N'Mermas de conversión',N'529597',N'Mermas de conversión',N'Expense',0,46),
+  (N'TransferLossExpense',N'Faltantes en traslado',N'529598',N'Faltantes en traslado',N'Expense',0,47),
+  (N'DispatchCashOverageIncome',N'Sobrantes de transportadores',N'429597',N'Sobrantes de transportadores',N'Revenue',0,48),
+  (N'DispatchCashShortageExpense',N'Faltantes de transportadores',N'539597',N'Faltantes de transportadores',N'Expense',0,49)
 ) AS source(Category,DisplayName,AccountCode,AccountName,AccountType,RequiresParty,DisplayOrder)
 ON target.ProfileCode=N'AURALY_CO' AND target.Category=source.Category
 WHEN MATCHED THEN UPDATE SET DisplayName=source.DisplayName,AccountCode=source.AccountCode,
@@ -79,6 +85,9 @@ USING (VALUES
   (N'PosPaymentMethod',N'DebitCard',N'DebitCardClearing'),
   (N'PosPaymentMethod',N'CreditCard',N'CreditCardClearing'),
   (N'PosPaymentMethod',N'Transfer',N'TransferClearing'),
+  (N'PosPaymentMethod',N'Credit',N'AccountsReceivable'),
+  (N'PosPaymentMethod',N'BankTransfer',N'Bank'),
+  (N'PosPaymentMethod',N'Deposit',N'Bank'),
   (N'SupplierPaymentMethod',N'Cash',N'Cash'),
   (N'SupplierPaymentMethod',N'BankTransfer',N'Bank'),
   (N'CustomerPaymentMethod',N'Cash',N'Cash'),
@@ -101,18 +110,19 @@ USING (VALUES
   (N'CashOut',N'OPERATING_EXPENSE',N'Gasto operativo',N'Out',N'OperatingExpense',1,10),
   (N'CashOut',N'CASH_TO_BANK',N'Consignación a banco',N'Out',N'Bank',1,20),
   (N'CashOut',N'OTHER_OUTFLOW',N'Otra salida de caja',N'Out',N'OtherExpense',1,30),
-  (N'StockCount',N'PHYSICAL_COUNT',N'Conteo físico programado',NULL,NULL,0,10),
-  (N'StockCount',N'INVENTORY_VERIFICATION',N'Verificación de existencias',NULL,NULL,0,20),
-  (N'InventoryAdjustment',N'MANUAL_ADJUSTMENT',N'Corrección de saldo',NULL,NULL,0,10),
-  (N'InventoryAdjustment',N'INITIAL_BALANCE',N'Saldo inicial',NULL,NULL,0,20),
-  (N'InventoryAdjustment',N'FOUND_SURPLUS',N'Sobrante identificado',NULL,NULL,0,30),
-  (N'InventoryAdjustment',N'FOUND_SHORTAGE',N'Faltante identificado',NULL,NULL,0,40),
+  (N'StockCount',N'PHYSICAL_COUNT',N'Conteo físico programado',NULL,N'InventoryDifferences',0,10),
+  (N'StockCount',N'INVENTORY_VERIFICATION',N'Verificación de existencias',NULL,N'InventoryDifferences',0,20),
+  (N'InventoryAdjustment',N'MANUAL_ADJUSTMENT',N'Corrección de saldo',NULL,N'InventoryDifferences',0,10),
+  (N'InventoryAdjustment',N'INITIAL_BALANCE',N'Saldo inicial',NULL,N'InventoryDifferences',0,20),
+  (N'InventoryAdjustment',N'FOUND_SURPLUS',N'Sobrante identificado',NULL,N'InventoryDifferences',0,30),
+  (N'InventoryAdjustment',N'FOUND_SHORTAGE',N'Faltante identificado',NULL,N'InventoryDifferences',0,40),
   (N'WarehouseTransfer',N'WAREHOUSE_TRANSFER',N'Reabastecimiento entre bodegas',NULL,NULL,0,10),
   (N'WarehouseTransfer',N'STOCK_REDISTRIBUTION',N'Redistribución de existencias',NULL,NULL,0,20),
-  (N'ProductConversion',N'PRESENTATION_CHANGE',N'Cambio de presentación',NULL,NULL,0,10),
-  (N'Damage',N'DAMAGE',N'Producto averiado',NULL,NULL,0,10),
-  (N'Damage',N'EXPIRED',N'Producto vencido',NULL,NULL,0,20),
-  (N'Damage',N'NOT_SALEABLE',N'Producto no vendible',NULL,NULL,0,30),
+  (N'WarehouseTransfer',N'TRANSFER_SHORTAGE',N'Faltante definitivo en traslado',NULL,N'TransferLossExpense',1,30),
+  (N'ProductConversion',N'PRESENTATION_CHANGE',N'Cambio de presentación',NULL,N'ConversionLossExpense',0,10),
+  (N'Damage',N'DAMAGE',N'Producto averiado',NULL,N'DamagedInventoryExpense',0,10),
+  (N'Damage',N'EXPIRED',N'Producto vencido',NULL,N'DamagedInventoryExpense',0,20),
+  (N'Damage',N'NOT_SALEABLE',N'Producto no vendible',NULL,N'DamagedInventoryExpense',0,30),
   (N'SalesReturn',N'CustomerChangedMind',N'El cliente cambió de opinión',NULL,NULL,0,10),
   (N'SalesReturn',N'WrongProduct',N'Producto equivocado',NULL,NULL,0,20),
   (N'SalesReturn',N'QualityIssue',N'Problema de calidad',NULL,NULL,0,30),
@@ -188,6 +198,18 @@ LEFT JOIN dbo.CashMovementReasons c ON c.BusinessId=b.BusinessId AND c.Code=t.Co
 WHERE b.IsActive=1 AND p.IsDefault=1 AND p.IsActive=1 AND t.IsActive=1
   AND NOT EXISTS(SELECT 1 FROM dbo.BusinessReasons r
     WHERE r.BusinessId=b.BusinessId AND r.ReasonType=t.ReasonType AND r.Code=t.Code);
+
+UPDATE reason SET CounterpartAccountingCategory=template.CounterpartAccountingCategory,
+                  UpdatedAt=@AccountingNow
+FROM dbo.BusinessReasons reason
+INNER JOIN dbo.Businesses business ON business.BusinessId=reason.BusinessId
+CROSS JOIN dbo.AccountingConfigurationProfiles profile
+INNER JOIN dbo.ReasonTemplates template
+  ON template.ProfileCode=profile.ProfileCode
+ AND template.ReasonType=reason.ReasonType AND template.Code=reason.Code
+WHERE business.IsActive=1 AND profile.IsDefault=1 AND profile.IsActive=1
+  AND template.IsActive=1 AND reason.CounterpartAccountingCategory IS NULL
+  AND template.CounterpartAccountingCategory IS NOT NULL;
 
 INSERT dbo.BusinessReasons(
   ReasonId,BusinessId,ReasonType,Code,Name,Direction,CounterpartAccountingCategory,

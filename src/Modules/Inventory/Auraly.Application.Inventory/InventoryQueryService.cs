@@ -83,7 +83,23 @@ public sealed class InventoryQueryService(IInventoryQueryStore store)
             throw new InventoryValidationException("Reason name is required and cannot exceed 120 characters.");
         if (request.DisplayOrder is < 0 or > 9999)
             throw new InventoryValidationException("Display order must be between 0 and 9999.");
-        return store.SaveReasonAsync(user, inventoryReasonId, request with { OperationType = request.OperationType.Trim(), Name = request.Name.Trim() }, token);
+        var category = Normalize(request.CounterpartAccountingCategory);
+        if (category?.Length > 64)
+            throw new InventoryValidationException("The accounting category cannot exceed 64 characters.");
+        if ((request.OperationType.Trim() is InventoryDocumentTypes.StockCount or
+                InventoryDocumentTypes.Adjustment or InventoryDocumentTypes.Damage) &&
+            string.IsNullOrWhiteSpace(category))
+            throw new InventoryValidationException(
+                "Stock counts, inventory adjustments and damages require an accounting counterpart category.");
+        if (StringComparer.Ordinal.Equals(category, "Inventory"))
+            throw new InventoryValidationException(
+                "The accounting counterpart category must be different from Inventory.");
+        return store.SaveReasonAsync(user, inventoryReasonId, request with
+        {
+            OperationType = request.OperationType.Trim(),
+            Name = request.Name.Trim(),
+            CounterpartAccountingCategory = category
+        }, token);
     }
     public Task<InventoryBalancePage> GetBalancesAsync(InventoryUserIdentity user, InventoryBalanceQuery query, CancellationToken token = default)
     {

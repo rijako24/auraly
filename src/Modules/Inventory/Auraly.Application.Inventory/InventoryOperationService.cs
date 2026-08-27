@@ -103,8 +103,9 @@ public sealed class InventoryOperationService(
         Required(request.OccurredAt, nameof(request.OccurredAt));
         ValidateKey(idempotencyKey);
         ValidateLines(request.Lines.Select(line => (line.LineNumber, line.ProductId)));
-        if (request.Lines.Any(line => line.ReceivedQuantity < 0) || request.Lines.All(line => line.ReceivedQuantity == 0))
-            throw new InventoryValidationException("The receipt requires at least one positive quantity and cannot contain negative quantities.");
+        if (request.Lines.Any(line => line.ReceivedQuantity < 0) ||
+            request.Lines.All(line => line.ReceivedQuantity == 0) && string.IsNullOrWhiteSpace(request.DifferenceReasonCode))
+            throw new InventoryValidationException("The receipt requires a positive quantity or a reason that resolves the full shipment as lost.");
         var version = RowVersion(request.RowVersion);
         var normalizedReason = string.IsNullOrWhiteSpace(request.DifferenceReasonCode) ? null : request.DifferenceReasonCode.Trim().ToUpperInvariant();
         if (normalizedReason?.Length > 40)

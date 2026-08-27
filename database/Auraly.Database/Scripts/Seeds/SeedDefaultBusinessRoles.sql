@@ -18,7 +18,7 @@ WHERE NormalizedName IN(N'ADMINISTRATOR',N'TENANTADMINISTRATOR');
 
 UPDATE dbo.AppRoles
 SET IsSystemRole=0
-WHERE NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE');
+WHERE NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'ACCOUNTANT');
 
 -- El administrador de plataforma recibe el catálogo completo. Los
 -- administradores de tenant reciben todos los permisos operativos y de
@@ -39,6 +39,7 @@ CROSS JOIN (VALUES
   (N'Cajero',N'CASHIER',N'Operación de venta cotidiana sin acciones sensibles.',CAST(0 AS bit)),
   (N'Supervisor',N'SUPERVISOR',N'Supervisión operativa y autorización de acciones sensibles.',CAST(0 AS bit)),
   (N'Administrativo',N'ADMINISTRATIVE',N'Administración comercial y operativa del tenant.',CAST(0 AS bit)),
+  (N'Contador',N'ACCOUNTANT',N'Gestión contable, tributaria, de cartera, proveedores y nómina.',CAST(0 AS bit)),
   (N'Administrador',N'ADMINISTRATOR',N'Administración completa de la empresa y todas sus sedes.',CAST(1 AS bit))
 ) preset(Name,NormalizedName,Description,IsSystemRole)
 WHERE tenant.IsActive=1
@@ -53,7 +54,7 @@ DELETE assignment
 FROM dbo.RolePermissions assignment
 JOIN dbo.AppRoles roleValue ON roleValue.RoleId=assignment.RoleId
 JOIN dbo.Permissions permissionValue ON permissionValue.PermissionId=assignment.PermissionId
-WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE')
+WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE',N'ACCOUNTANT')
   AND NOT (
     roleValue.NormalizedName=N'CASHIER' AND permissionValue.Resource IN(
       N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read',
@@ -73,6 +74,22 @@ WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE')
       AND permissionValue.Resource NOT LIKE N'roles.%'
       AND permissionValue.Resource NOT LIKE N'users.%'
       AND permissionValue.Resource NOT LIKE N'audit[_]logs.%'
+    OR roleValue.NormalizedName=N'ACCOUNTANT' AND (
+      permissionValue.Resource LIKE N'accounting.%'
+      OR permissionValue.Resource LIKE N'payroll.%'
+      OR permissionValue.Resource LIKE N'payables.%'
+      OR permissionValue.Resource LIKE N'receivables.%'
+      OR permissionValue.Resource LIKE N'expenses.%'
+      OR permissionValue.Resource LIKE N'commerce.taxation.%'
+      OR permissionValue.Resource LIKE N'fiscal.configuration.%'
+      OR permissionValue.Resource IN(
+        N'businesses.read',N'dashboard.read',N'audit_logs.read',N'payments.read',N'payments.confirm_manual',
+        N'parties.read',N'customers.read',N'suppliers.read',N'catalog.read',N'catalog.costs.read',N'products.read',
+        N'inventory.read',N'inventory.costs.read',N'inventory.reasons.manage',
+        N'work-sessions.read',N'work-sessions.differences.read',N'work-sessions.cash-reasons.configure',
+        N'dispatches.read-all',N'dispatches.reports.view',N'dispatches.reports.export',
+        N'sales.reports.read',N'sales.reports.read-all',N'sales.returns.read',N'sales.debit-notes.read',
+        N'purchasing.goods-receipts.read',N'purchasing.purchase-returns.read'))
   );
 
 INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
@@ -102,5 +119,21 @@ WHERE roleValue.IsActive=1
       AND permissionValue.Resource NOT LIKE N'roles.%'
       AND permissionValue.Resource NOT LIKE N'users.%'
       AND permissionValue.Resource NOT LIKE N'audit[_]logs.%'
+    OR roleValue.NormalizedName=N'ACCOUNTANT' AND (
+      permissionValue.Resource LIKE N'accounting.%'
+      OR permissionValue.Resource LIKE N'payroll.%'
+      OR permissionValue.Resource LIKE N'payables.%'
+      OR permissionValue.Resource LIKE N'receivables.%'
+      OR permissionValue.Resource LIKE N'expenses.%'
+      OR permissionValue.Resource LIKE N'commerce.taxation.%'
+      OR permissionValue.Resource LIKE N'fiscal.configuration.%'
+      OR permissionValue.Resource IN(
+        N'businesses.read',N'dashboard.read',N'audit_logs.read',N'payments.read',N'payments.confirm_manual',
+        N'parties.read',N'customers.read',N'suppliers.read',N'catalog.read',N'catalog.costs.read',N'products.read',
+        N'inventory.read',N'inventory.costs.read',N'inventory.reasons.manage',
+        N'work-sessions.read',N'work-sessions.differences.read',N'work-sessions.cash-reasons.configure',
+        N'dispatches.read-all',N'dispatches.reports.view',N'dispatches.reports.export',
+        N'sales.reports.read',N'sales.reports.read-all',N'sales.returns.read',N'sales.debit-notes.read',
+        N'purchasing.goods-receipts.read',N'purchasing.purchase-returns.read'))
   )
   AND NOT EXISTS(SELECT 1 FROM dbo.RolePermissions existing WHERE existing.RoleId=roleValue.RoleId AND existing.PermissionId=permissionValue.PermissionId);

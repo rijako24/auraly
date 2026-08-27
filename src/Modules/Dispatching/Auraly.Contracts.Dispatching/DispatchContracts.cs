@@ -1,5 +1,23 @@
 namespace Auraly.Contracts.Dispatching;
 
+public static class DispatchAccountingDocumentTypes
+{
+    public const string CashDifference = "DispatchCashDifference";
+}
+
+public sealed record DispatchCashDifferencePayload(
+    Guid DispatchSettlementId,
+    Guid TenantId,
+    Guid BusinessId,
+    Guid DispatchId,
+    string DispatchNumber,
+    string TransporterName,
+    decimal ExpectedCash,
+    decimal CashReceived,
+    decimal Difference,
+    DateTimeOffset OccurredAt,
+    string? Notes);
+
 public static class DispatchPermissionCodes
 {
     public const string Read = "dispatches.read";

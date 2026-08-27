@@ -40,6 +40,12 @@ public static class AccountingCategories
     public const string OtherExpense = "OtherExpense";
     public const string CashOverageIncome = "CashOverageIncome";
     public const string CashShortageExpense = "CashShortageExpense";
+    public const string DispatchCashOverageIncome = "DispatchCashOverageIncome";
+    public const string DispatchCashShortageExpense = "DispatchCashShortageExpense";
+    public const string InventoryDifferences = "InventoryDifferences";
+    public const string DamagedInventoryExpense = "DamagedInventoryExpense";
+    public const string ConversionLossExpense = "ConversionLossExpense";
+    public const string TransferLossExpense = "TransferLossExpense";
 
 }
 

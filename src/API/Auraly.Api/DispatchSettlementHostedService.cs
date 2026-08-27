@@ -3,11 +3,16 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Channels;
 using Auraly.Application.DocumentProcessing;
+using Auraly.Application.Fiscal;
 using Auraly.Application.Receivables;
 using Auraly.Application.Returns;
+using Auraly.Application.Sales;
+using Auraly.Commerce.Accounting.Application;
 using Auraly.Contracts.Receivables;
 using Auraly.Contracts.Returns;
+using Auraly.Contracts.Dispatching;
 using Auraly.Infrastructure.Dispatching;
+using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Api;
@@ -30,6 +35,7 @@ public sealed class DispatchSettlementHostedService(
     IServiceScopeFactory scopes,
     DispatchingSqlConnectionFactory connections,
     DispatchSettlementCoordinator coordinator,
+    TimeProvider timeProvider,
     ILogger<DispatchSettlementHostedService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -63,10 +69,12 @@ public sealed class DispatchSettlementHostedService(
             const string selectSql = """
                 SELECT TOP(1) operation.DispatchSettlementOperationId,operation.BusinessId,
                        operation.DispatchId,operation.RequestedBy,operation.RequestedAt,
-                       operation.Attempts,business.TenantId,dispatch.WarehouseId,dispatch.DispatchNumber
+                       operation.Attempts,business.TenantId,dispatch.WarehouseId,dispatch.DispatchNumber,
+                       settlement.DispatchSettlementId,dispatch.DriverName
                 FROM dbo.DispatchSettlementOperations operation WITH(UPDLOCK,READPAST,READCOMMITTEDLOCK)
                 INNER JOIN dbo.Businesses business ON business.BusinessId=operation.BusinessId
                 INNER JOIN dbo.Dispatches dispatch ON dispatch.DispatchId=operation.DispatchId
+                INNER JOIN dbo.DispatchSettlements settlement ON settlement.DispatchId=operation.DispatchId
                 WHERE operation.Status IN(N'Pending',N'Processing')
                   AND operation.NextAttemptAt<=SYSUTCDATETIME()
                 ORDER BY operation.NextAttemptAt,operation.RequestedAt;
@@ -77,7 +85,8 @@ public sealed class DispatchSettlementHostedService(
                 if (await reader.ReadAsync(token))
                     value = new(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
                         reader.GetGuid(3), reader.GetDateTimeOffset(4), reader.GetInt32(5) + 1,
-                        reader.GetGuid(6), reader.GetGuid(7), reader.GetString(8));
+                        reader.GetGuid(6), reader.GetGuid(7), reader.GetString(8),
+                        reader.GetGuid(9), reader.GetString(10));
             if (value is null)
             {
                 await transaction.CommitAsync(token);
@@ -129,6 +138,9 @@ public sealed class DispatchSettlementHostedService(
                 await documentWorker.ProcessOneAsync(new DocumentProcessingSignal(
                     accepted.MovementId, operation.BusinessId, accepted.ReturnId,
                     SalesReturnDocumentTypes.SalesReturn), token);
+                await ActivateDownstreamAsync(scope.ServiceProvider,
+                    operation.BusinessId, accepted.ReturnId,
+                    SalesReturnDocumentTypes.SalesReturn, token);
             }
 
             // Each deterministic document is accepted and immediately executed by the canonical
@@ -150,6 +162,16 @@ public sealed class DispatchSettlementHostedService(
                 await documentWorker.ProcessOneAsync(new DocumentProcessingSignal(
                     accepted.MovementId, operation.BusinessId, accepted.PaymentId,
                     ReceivablesDocumentTypes.Payment), token);
+                await ActivateDownstreamAsync(scope.ServiceProvider,
+                    operation.BusinessId, accepted.PaymentId,
+                    ReceivablesDocumentTypes.Payment, token);
+            }
+            if (await EnsureCashDifferenceDocumentAsync(operation, token) is { } differenceSignal)
+            {
+                await documentWorker.ProcessOneAsync(differenceSignal, token);
+                await ActivateDownstreamAsync(scope.ServiceProvider,
+                    operation.BusinessId, operation.SettlementId,
+                    DispatchAccountingDocumentTypes.CashDifference, token);
             }
             await CompleteAsync(operation, token);
         }
@@ -252,6 +274,125 @@ public sealed class DispatchSettlementHostedService(
         await command.ExecuteNonQueryAsync(token);
     }
 
+    private static async Task ActivateDownstreamAsync(
+        IServiceProvider services,
+        Guid businessId,
+        Guid documentId,
+        string documentType,
+        CancellationToken token)
+    {
+        if (documentType == SalesReturnDocumentTypes.SalesReturn)
+            await services.GetRequiredService<FiscalProcessingCoordinator>()
+                .RequestGenerationAsync(businessId, documentId, token);
+        if (AccountingProcessingPolicy.Supports(documentType))
+            await services.GetRequiredService<AccountingProcessingCoordinator>()
+                .RequestPostingAsync(businessId, documentId, documentType, token);
+        if (SalesReportingProcessingPolicy.Supports(documentType))
+            await services.GetRequiredService<SalesReportingProcessingCoordinator>()
+                .RequestProjectionAsync(businessId, documentId, documentType, token);
+    }
+
+    private async Task<DocumentProcessingSignal?> EnsureCashDifferenceDocumentAsync(
+        Operation operation,
+        CancellationToken token)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(token);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, token);
+        try
+        {
+            decimal expected;
+            decimal received;
+            DateTimeOffset occurredAt;
+            string? notes;
+            await using (var select = new SqlCommand("""
+                SELECT ExpectedCash,CashReceived,ReceivedAt,Notes
+                FROM dbo.DispatchSettlements WITH(UPDLOCK,HOLDLOCK)
+                WHERE DispatchSettlementId=@SettlementId AND BusinessId=@BusinessId
+                  AND DispatchId=@DispatchId AND Status=N'Processing';
+                """, connection, transaction))
+            {
+                select.Parameters.AddWithValue("@SettlementId", operation.SettlementId);
+                select.Parameters.AddWithValue("@BusinessId", operation.BusinessId);
+                select.Parameters.AddWithValue("@DispatchId", operation.DispatchId);
+                await using var reader = await select.ExecuteReaderAsync(token);
+                if (!await reader.ReadAsync(token) || reader.IsDBNull(1) || reader.IsDBNull(2))
+                    throw new InvalidOperationException(
+                        "The dispatch settlement is not ready to recognize its cash difference.");
+                expected = reader.GetDecimal(0);
+                received = reader.GetDecimal(1);
+                occurredAt = reader.GetDateTimeOffset(2);
+                notes = reader.IsDBNull(3) ? null : reader.GetString(3);
+            }
+
+            var difference = decimal.Round(received - expected, 4);
+            if (difference == 0)
+            {
+                await transaction.CommitAsync(token);
+                return null;
+            }
+
+            var movementId = DeterministicGuid(
+                $"dispatch:{operation.DispatchId:N}:cash-difference:movement");
+            await using (var replay = new SqlCommand("""
+                SELECT JobId FROM dbo.DocumentProcessingJobs WITH(UPDLOCK,HOLDLOCK)
+                WHERE DocumentId=@DocumentId AND DocumentType=@DocumentType;
+                """, connection, transaction))
+            {
+                replay.Parameters.AddWithValue("@DocumentId", operation.SettlementId);
+                replay.Parameters.AddWithValue("@DocumentType", DispatchAccountingDocumentTypes.CashDifference);
+                if (await replay.ExecuteScalarAsync(token) is Guid existing)
+                {
+                    await transaction.CommitAsync(token);
+                    return new DocumentProcessingSignal(existing, operation.BusinessId,
+                        operation.SettlementId, DispatchAccountingDocumentTypes.CashDifference);
+                }
+            }
+
+            var payload = new DispatchCashDifferencePayload(
+                operation.SettlementId, operation.TenantId, operation.BusinessId,
+                operation.DispatchId, operation.DispatchNumber, operation.TransporterName,
+                expected, received, difference, occurredAt, notes);
+            var json = System.Text.Json.JsonSerializer.Serialize(payload,
+                new System.Text.Json.JsonSerializerOptions(
+                    System.Text.Json.JsonSerializerDefaults.Web));
+            var hash = SHA256.HashData(Encoding.UTF8.GetBytes(json));
+            var now = timeProvider.GetUtcNow();
+            var sequence = await SqlOperationalDocumentAllocator.AllocateSequenceAsync(
+                connection, transaction, operation.BusinessId, now, token);
+            await using (var insert = new SqlCommand("""
+                INSERT dbo.DocumentProcessingJobs
+                  (JobId,BusinessId,ProcessingSequence,DocumentId,DocumentType,Status,AvailableAt,CreatedAt)
+                VALUES
+                  (@JobId,@BusinessId,@Sequence,@DocumentId,@DocumentType,N'Pending',@Now,@Now);
+                INSERT dbo.DocumentProcessingPayloads
+                  (DocumentId,DocumentType,BusinessId,ContractVersion,PayloadJson,PayloadHash,AcceptedAt)
+                VALUES
+                  (@DocumentId,@DocumentType,@BusinessId,1,@Payload,@PayloadHash,@Now);
+                """, connection, transaction))
+            {
+                insert.Parameters.AddWithValue("@JobId", movementId);
+                insert.Parameters.AddWithValue("@BusinessId", operation.BusinessId);
+                insert.Parameters.AddWithValue("@Sequence", sequence);
+                insert.Parameters.AddWithValue("@DocumentId", operation.SettlementId);
+                insert.Parameters.AddWithValue("@DocumentType", DispatchAccountingDocumentTypes.CashDifference);
+                insert.Parameters.AddWithValue("@Now", now);
+                insert.Parameters.AddWithValue("@Payload", json);
+                insert.Parameters.Add("@PayloadHash", SqlDbType.Binary, 32).Value = hash;
+                await insert.ExecuteNonQueryAsync(token);
+            }
+            await transaction.CommitAsync(token);
+            return new DocumentProcessingSignal(movementId, operation.BusinessId,
+                operation.SettlementId, DispatchAccountingDocumentTypes.CashDifference);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+    }
+
     private async Task CompleteAsync(Operation operation, CancellationToken token)
     {
         await using var connection = connections.Create();
@@ -275,6 +416,15 @@ public sealed class DispatchSettlementHostedService(
                  AND settlementDocument.DocumentType=job.DocumentType
                 WHERE job.Status<>N'Completed'
             ) THROW 51000,'Settlement documents are not fully processed.',1;
+            IF EXISTS(
+                SELECT 1 FROM dbo.DispatchSettlements settlement
+                WHERE settlement.DispatchId=@DispatchId AND settlement.CashDifference<>0
+                  AND NOT EXISTS(
+                    SELECT 1 FROM dbo.DocumentProcessingJobs job
+                    WHERE job.DocumentId=settlement.DispatchSettlementId
+                      AND job.DocumentType=N'DispatchCashDifference'
+                      AND job.Status=N'Completed')
+            ) THROW 51000,'The dispatch cash difference is not fully processed.',1;
             UPDATE dbo.DispatchSettlementOperations SET Status=N'Completed',CompletedAt=SYSUTCDATETIME(),LastError=NULL WHERE DispatchSettlementOperationId=@Id;
             UPDATE dbo.DispatchSettlements SET Status=N'Completed' WHERE DispatchId=@DispatchId;
             UPDATE dbo.Dispatches SET Status=N'Closed',UpdatedBy=@UserId,UpdatedAt=SYSUTCDATETIME() WHERE DispatchId=@DispatchId;
@@ -294,7 +444,8 @@ public sealed class DispatchSettlementHostedService(
     }
 
     private sealed record Operation(Guid Id, Guid BusinessId, Guid DispatchId, Guid RequestedBy,
-        DateTimeOffset RequestedAt, int Attempts, Guid TenantId, Guid WarehouseId, string DispatchNumber);
+        DateTimeOffset RequestedAt, int Attempts, Guid TenantId, Guid WarehouseId,
+        string DispatchNumber, Guid SettlementId, string TransporterName);
     private sealed record ReturnLine(int LineNumber, decimal Quantity, string Disposition);
     private sealed record ReturnWork(Guid ReturnId, Guid SourceDocumentId, bool NotDelivered,
         string ReasonCode, IReadOnlyList<ReturnLine> Lines);

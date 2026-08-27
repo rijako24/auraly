@@ -40,7 +40,6 @@ export function useConfirmSupplierPayment() {
     mutationFn: (request: ConfirmSupplierPaymentRequest) =>
       payablesApi.confirmPayment(request, `payable-payment-${request.paymentId}`),
     onSuccess: (_, request) => {
-      queryClient.invalidateQueries({ queryKey: ["payables", businessId] });
       request.allocations.forEach((allocation) =>
         queryClient.invalidateQueries({
           queryKey: ["payable", businessId, allocation.payableId],

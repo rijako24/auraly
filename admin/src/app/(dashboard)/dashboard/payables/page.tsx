@@ -131,6 +131,7 @@ export default function PayablesPage() {
         allocations: [{ payableId: paymentTarget.payableId, amount: parsed }],
       });
       setPaymentOpen(false);setPaymentTarget(undefined);
+      void query.refetch();
       toast.success(`${accepted.documentNumber} fue recibido y quedó en procesamiento.`);
     } catch {
       toast.error("No fue posible registrar el pago. El saldo pudo cambiar; actualiza el detalle.");

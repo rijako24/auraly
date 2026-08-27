@@ -94,6 +94,7 @@ export default function ReceivablesPage() {
         allocations: [{ receivableId: paymentTarget.receivableId, amount: parsed }],
       });
       setPaymentOpen(false);setPaymentTarget(undefined);
+      void query.refetch();
       toast.success(`${accepted.documentNumber} fue recibido para procesamiento.`);
     } catch {
       toast.error("No fue posible registrar el abono. El saldo pudo cambiar; actualiza el detalle.");

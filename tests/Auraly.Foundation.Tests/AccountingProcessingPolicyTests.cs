@@ -18,6 +18,12 @@ public sealed class AccountingProcessingPolicyTests
     [InlineData("PayrollAccrual")]
     [InlineData("PayrollPayment")]
     [InlineData("PayrollAdjustment")]
+    [InlineData("StockCount")]
+    [InlineData("InventoryAdjustment")]
+    [InlineData("Damage")]
+    [InlineData("ProductConversion")]
+    [InlineData("WarehouseTransferReceipt")]
+    [InlineData("DispatchCashDifference")]
     public void Supports_returns_true_for_every_canonical_document_type(string documentType)
     {
         Assert.True(AccountingProcessingPolicy.Supports(documentType));

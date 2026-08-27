@@ -88,6 +88,7 @@ CREATE TABLE [dbo].[InventoryOperationLines]
     [ProcessedValue] DECIMAL(19,4) NULL,
     [DispatchedQuantity] DECIMAL(19,6) NULL,
     [ReceivedQuantity] DECIMAL(19,6) NULL,
+    [LostQuantity] DECIMAL(19,6) NULL,
     [DispatchUnitCost] DECIMAL(19,6) NULL,
     [DispatchValue] DECIMAL(19,4) NULL,
     CONSTRAINT [PK_InventoryOperationLines] PRIMARY KEY CLUSTERED ([InventoryOperationId],[LineNumber]),
@@ -99,7 +100,7 @@ CREATE TABLE [dbo].[InventoryOperationLines]
     CONSTRAINT [CK_InventoryOperationLines_PreCount] CHECK ([PreCountQuantity] IS NULL OR [PreCountQuantity]>=0),
     CONSTRAINT [CK_InventoryOperationLines_Weight] CHECK ([AllocationWeight] IS NULL OR [AllocationWeight]>0),
     CONSTRAINT [CK_InventoryOperationLines_ConversionSnapshot] CHECK (([ConversionFactor] IS NULL AND [ConversionEquivalentQuantity] IS NULL) OR ([Direction] IN (N'INPUT',N'OUTPUT') AND [ConversionFactor]>0 AND [ConversionEquivalentQuantity]>0))
-    ,CONSTRAINT [CK_InventoryOperationLines_TransferQuantities] CHECK (([Direction]=N'TRANSFER' AND (([DispatchedQuantity]>0 AND [ReceivedQuantity]>=0 AND [ReceivedQuantity]<=[DispatchedQuantity]) OR ([DispatchedQuantity] IS NULL AND [ReceivedQuantity] IS NULL AND [DispatchUnitCost] IS NULL AND [DispatchValue] IS NULL))) OR ([Direction]<>N'TRANSFER' AND [DispatchedQuantity] IS NULL AND [ReceivedQuantity] IS NULL AND [DispatchUnitCost] IS NULL AND [DispatchValue] IS NULL))
+    ,CONSTRAINT [CK_InventoryOperationLines_TransferQuantities] CHECK (([Direction]=N'TRANSFER' AND (([DispatchedQuantity]>0 AND [ReceivedQuantity]>=0 AND [LostQuantity]>=0 AND [ReceivedQuantity]+[LostQuantity]<=[DispatchedQuantity]) OR ([DispatchedQuantity] IS NULL AND [ReceivedQuantity] IS NULL AND [LostQuantity] IS NULL AND [DispatchUnitCost] IS NULL AND [DispatchValue] IS NULL))) OR ([Direction]<>N'TRANSFER' AND [DispatchedQuantity] IS NULL AND [ReceivedQuantity] IS NULL AND [LostQuantity] IS NULL AND [DispatchUnitCost] IS NULL AND [DispatchValue] IS NULL))
 );
 GO
 CREATE INDEX [IX_InventoryOperationLines_Product]
@@ -137,12 +138,14 @@ CREATE TABLE [dbo].[InventoryTransferReceiptLines]
     [LineNumber] INT NOT NULL,
     [ProductId] UNIQUEIDENTIFIER NOT NULL,
     [ReceivedQuantity] DECIMAL(19,6) NOT NULL,
+    [LostQuantity] DECIMAL(19,6) NOT NULL,
     [ProcessedUnitCost] DECIMAL(19,6) NULL,
     [ProcessedValue] DECIMAL(19,4) NULL,
+    [ProcessedLossValue] DECIMAL(19,4) NULL,
     CONSTRAINT [PK_InventoryTransferReceiptLines] PRIMARY KEY CLUSTERED ([InventoryTransferReceiptId],[LineNumber]),
     CONSTRAINT [FK_InventoryTransferReceiptLines_Receipt] FOREIGN KEY ([InventoryTransferReceiptId]) REFERENCES [dbo].[InventoryTransferReceipts] ([InventoryTransferReceiptId]),
     CONSTRAINT [FK_InventoryTransferReceiptLines_Product] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
-    CONSTRAINT [CK_InventoryTransferReceiptLines_Quantity] CHECK ([ReceivedQuantity]>=0)
+    CONSTRAINT [CK_InventoryTransferReceiptLines_Quantity] CHECK ([ReceivedQuantity]>=0 AND [LostQuantity]>=0 AND [ReceivedQuantity]+[LostQuantity]>0)
 );
 GO
 CREATE INDEX [IX_InventoryTransferReceipts_Transfer_Status]

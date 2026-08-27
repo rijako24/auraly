@@ -6,6 +6,8 @@ using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Commerce.Accounting.Domain;
 using Auraly.Commerce.Payroll.Contracts;
+using Auraly.Contracts.Inventory;
+using Auraly.Contracts.Dispatching;
 using Auraly.Contracts.WorkSessions;
 using Microsoft.Data.SqlClient;
 
@@ -99,10 +101,21 @@ public sealed partial class SqlAccountingPostingProcessor(
                     FinancialFactsResult.Ready(LoadManualVoucherFacts(source)),
                 WorkSessionAccountingDocumentTypes.CashDifference =>
                     FinancialFactsResult.Ready(LoadWorkSessionCashDifferenceFacts(source)),
+                DispatchAccountingDocumentTypes.CashDifference =>
+                    FinancialFactsResult.Ready(LoadDispatchCashDifferenceFacts(source)),
                 PayrollAccountingDocumentTypes.Accrual or
                 PayrollAccountingDocumentTypes.Payment or
                 PayrollAccountingDocumentTypes.Adjustment =>
                     FinancialFactsResult.Ready(LoadPayrollFacts(source)),
+                InventoryDocumentTypes.StockCount or
+                InventoryDocumentTypes.Adjustment or
+                InventoryDocumentTypes.Damage or
+                InventoryDocumentTypes.Conversion =>
+                    await LoadInventoryOperationFactsAsync(
+                        connection, transaction, source, cancellationToken),
+                InventoryDocumentTypes.TransferReceipt =>
+                    await LoadTransferLossFactsAsync(
+                        connection, transaction, source, cancellationToken),
                 _ => throw new InvalidOperationException(
                     $"Document type '{source.DocumentType}' is not supported for accounting.")
             };
@@ -206,10 +219,32 @@ public sealed partial class SqlAccountingPostingProcessor(
                 "The work-session cash-difference payload is inconsistent.");
         var surplus = payload.Difference > 0;
         return FinancialFacts.CashDifference(
-            payload.WorkSessionClosureId,
-            payload.UserName,
+            $"{(surplus ? "Sobrante" : "Faltante")} de efectivo en cierre {payload.WorkSessionClosureId:D} · {payload.UserName}",
             surplus,
             Math.Abs(payload.Difference));
+    }
+
+    private static FinancialFacts LoadDispatchCashDifferenceFacts(SourceEnvelope source)
+    {
+        var payload = JsonSerializer.Deserialize<DispatchCashDifferencePayload>(
+            source.PayloadJson,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            ?? throw new InvalidOperationException(
+                "The dispatch cash-difference payload is invalid.");
+        if (payload.DispatchSettlementId != source.DocumentId ||
+            payload.BusinessId != source.BusinessId || payload.TenantId != source.TenantId ||
+            payload.DispatchId == Guid.Empty || payload.Difference == 0 ||
+            decimal.Round(payload.CashReceived - payload.ExpectedCash, 4) !=
+            decimal.Round(payload.Difference, 4))
+            throw new InvalidOperationException(
+                "The dispatch cash-difference payload is inconsistent.");
+        var surplus = payload.Difference > 0;
+        return FinancialFacts.CashDifference(
+            $"{(surplus ? "Sobrante" : "Faltante")} de efectivo en despacho {payload.DispatchNumber} · {payload.TransporterName}",
+            surplus,
+            Math.Abs(payload.Difference),
+            AccountingCategories.DispatchCashOverageIncome,
+            AccountingCategories.DispatchCashShortageExpense);
     }
 
     private static FinancialFacts LoadPayrollFacts(SourceEnvelope source)
@@ -229,6 +264,113 @@ public sealed partial class SqlAccountingPostingProcessor(
             payload.Lines.Select(line => new CategoryLineSpec(
                 line.Category, line.Debit, line.Credit, line.PartyId,
                 line.Description)).ToArray());
+    }
+
+    private static async Task<FinancialFactsResult> LoadInventoryOperationFactsAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        SourceEnvelope source,
+        CancellationToken cancellationToken)
+    {
+        var payload = InventoryOperationContractSerializer.Deserialize(source.PayloadJson);
+        if (payload.DocumentId != source.DocumentId ||
+            payload.BusinessId != source.BusinessId || payload.TenantId != source.TenantId ||
+            payload.DocumentType != source.DocumentType)
+            throw new InvalidOperationException(
+                "The inventory accounting payload is inconsistent.");
+        if (string.IsNullOrWhiteSpace(payload.CounterpartAccountingCategory))
+            return FinancialFactsResult.Pending(
+                "InventoryReasonAccountingCategoryMissing",
+                "The inventory reason does not have an accounting counterpart category.");
+        var counterpart = payload.CounterpartAccountingCategory.Trim();
+        if (counterpart.Length > 64 ||
+            StringComparer.Ordinal.Equals(counterpart, AccountingCategories.Inventory))
+            return FinancialFactsResult.Pending(
+                "InventoryReasonAccountingCategoryInvalid",
+                "The inventory counterpart category must be different from Inventory.");
+
+        const string sql = """
+            SELECT o.DocumentNumber,o.Status,
+                   COALESCE(SUM(CASE WHEN l.ProcessedValue>0 THEN l.ProcessedValue ELSE 0 END),0),
+                   COALESCE(SUM(CASE WHEN l.ProcessedValue<0 THEN -l.ProcessedValue ELSE 0 END),0)
+            FROM dbo.InventoryOperations o WITH(UPDLOCK,HOLDLOCK)
+            INNER JOIN dbo.InventoryOperationLines l WITH(UPDLOCK,HOLDLOCK)
+              ON l.InventoryOperationId=o.InventoryOperationId
+            WHERE o.InventoryOperationId=@DocumentId AND o.BusinessId=@BusinessId
+              AND o.DocumentType=@DocumentType
+            GROUP BY o.DocumentNumber,o.Status;
+            """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
+        command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+        command.Parameters.AddWithValue("@DocumentType", source.DocumentType);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken) || reader.GetString(1) != "Processed")
+            throw new InvalidOperationException(
+                "The inventory operation is not available for accounting.");
+        var number = reader.GetString(0);
+        var increase = reader.GetDecimal(2);
+        var decrease = reader.GetDecimal(3);
+        if (increase == 0 && decrease == 0)
+            throw new InvalidOperationException(
+                "The inventory operation has no recognized accounting value.");
+        var description = source.DocumentType switch
+        {
+            InventoryDocumentTypes.StockCount => $"Diferencia de conteo {number}",
+            InventoryDocumentTypes.Damage => $"Baja de inventario {number}",
+            InventoryDocumentTypes.Conversion => $"Merma de conversión {number}",
+            _ => $"Ajuste de inventario {number}"
+        };
+        return FinancialFactsResult.Ready(FinancialFacts.InventoryOperation(
+            description, counterpart, increase, decrease,
+            payload.AccountingCostCenterId));
+    }
+
+    private static async Task<FinancialFactsResult> LoadTransferLossFactsAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        SourceEnvelope source,
+        CancellationToken cancellationToken)
+    {
+        var payload = InventoryOperationContractSerializer.Deserialize(source.PayloadJson);
+        if (payload.DocumentId != source.DocumentId ||
+            payload.BusinessId != source.BusinessId || payload.TenantId != source.TenantId ||
+            payload.DocumentType != source.DocumentType)
+            throw new InvalidOperationException("The transfer-loss accounting payload is inconsistent.");
+        if (string.IsNullOrWhiteSpace(payload.CounterpartAccountingCategory))
+            return FinancialFactsResult.Pending(
+                "TransferLossAccountingCategoryMissing",
+                "The transfer-difference reason does not have an accounting counterpart category.");
+        var counterpart = payload.CounterpartAccountingCategory.Trim();
+        if (counterpart.Length > 64 ||
+            StringComparer.Ordinal.Equals(counterpart, AccountingCategories.Inventory))
+            return FinancialFactsResult.Pending(
+                "TransferLossAccountingCategoryInvalid",
+                "The transfer-loss counterpart category must be different from Inventory.");
+
+        const string sql = """
+            SELECT transfer.DocumentNumber,receipt.Status,COALESCE(SUM(line.ProcessedLossValue),0)
+            FROM dbo.InventoryTransferReceipts receipt WITH(UPDLOCK,HOLDLOCK)
+            INNER JOIN dbo.InventoryTransferReceiptLines line WITH(UPDLOCK,HOLDLOCK)
+              ON line.InventoryTransferReceiptId=receipt.InventoryTransferReceiptId
+            INNER JOIN dbo.InventoryOperations transfer WITH(UPDLOCK,HOLDLOCK)
+              ON transfer.InventoryOperationId=receipt.TransferId
+            WHERE receipt.InventoryTransferReceiptId=@ReceiptId AND receipt.BusinessId=@BusinessId
+            GROUP BY transfer.DocumentNumber,receipt.Status;
+            """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@ReceiptId", source.DocumentId);
+        command.Parameters.AddWithValue("@BusinessId", source.BusinessId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken) || reader.GetString(1) != "Processed")
+            throw new InvalidOperationException("The transfer loss is not available for accounting.");
+        var loss = reader.GetDecimal(2);
+        if (loss <= 0)
+            throw new InvalidOperationException("The transfer receipt has no recognized loss value.");
+        var description = $"Faltante en traslado {reader.GetString(0)}";
+        return FinancialFactsResult.Ready(FinancialFacts.InventoryOperation(
+            description, counterpart, 0, loss,
+            payload.AccountingCostCenterId));
     }
 
     private static async Task<string> LockPostingStatusAsync(
@@ -1022,9 +1164,10 @@ public sealed partial class SqlAccountingPostingProcessor(
             }
             if (DirectCategoryLines is not null)
             {
+                var effectiveCostCenter = PreferredCostCenterId ?? costCenter;
                 foreach (var line in DirectCategoryLines)
                     yield return new JournalLine(accounts[line.Category], line.Debit,
-                        line.Credit, line.PartyId, costCenter, line.Description);
+                        line.Credit, line.PartyId, effectiveCostCenter, line.Description);
                 yield break;
             }
             if (IsCashMovement)
@@ -1117,11 +1260,15 @@ public sealed partial class SqlAccountingPostingProcessor(
             new($"{(isIn ? "Ingreso" : "Egreso")} de caja {number}", null, 0, 0,
                 amount, 0, [(counterpart, amount)], false, false, false, false, true, isIn, costCenter);
         public static FinancialFacts CashDifference(
-            Guid closureId, string userName, bool surplus, decimal amount) =>
+            string description,
+            bool surplus,
+            decimal amount,
+            string overageCategory = AccountingCategories.CashOverageIncome,
+            string shortageCategory = AccountingCategories.CashShortageExpense) =>
             new(
-                $"{(surplus ? "Sobrante" : "Faltante")} de efectivo en cierre {closureId:D} · {userName}",
+                description,
                 null, 0, 0, amount, 0,
-                [(surplus ? AccountingCategories.CashOverageIncome : AccountingCategories.CashShortageExpense, amount)],
+                [(surplus ? overageCategory : shortageCategory, amount)],
                 false, false, false, false, true, surplus);
         public static FinancialFacts Manual(string description, IReadOnlyList<ManualLineSpec> lines) =>
             new(description, null, 0, 0, 0, 0, [], false, false, false, false,
@@ -1129,6 +1276,27 @@ public sealed partial class SqlAccountingPostingProcessor(
         public static FinancialFacts Payroll(string description, IReadOnlyList<CategoryLineSpec> lines) =>
             new(description, null, 0, 0, 0, 0, [], false, false, false, false,
                 DirectCategoryLines: lines);
+        public static FinancialFacts InventoryOperation(
+            string description,
+            string counterpartCategory,
+            decimal increase,
+            decimal decrease,
+            Guid? costCenter)
+        {
+            var lines = new List<CategoryLineSpec>(4);
+            if (increase > 0)
+            {
+                lines.Add(new(AccountingCategories.Inventory, increase, 0, null, description));
+                lines.Add(new(counterpartCategory, 0, increase, null, description));
+            }
+            if (decrease > 0)
+            {
+                lines.Add(new(counterpartCategory, decrease, 0, null, description));
+                lines.Add(new(AccountingCategories.Inventory, 0, decrease, null, description));
+            }
+            return new(description, null, 0, 0, 0, 0, [], false, false, false, false,
+                PreferredCostCenterId: costCenter, DirectCategoryLines: lines);
+        }
     }
 
     private sealed record ManualLineSpec(

@@ -156,7 +156,8 @@ public sealed record InventoryOperationLineSnapshot(
     decimal? DispatchedQuantity = null,
     decimal? ReceivedQuantity = null,
     decimal? DispatchUnitCost = null,
-    Guid? TransferId = null);
+    Guid? TransferId = null,
+    decimal? TransferLossQuantity = null);
 
 public sealed record InventoryOperationDocumentPayload(
     Guid TenantId,
@@ -183,7 +184,9 @@ public sealed record InventoryOperationDocumentPayload(
     decimal? ConversionOutputEquivalent = null,
     decimal? ConversionLossQuantity = null,
     decimal? ConversionLossPercent = null,
-    decimal? ConversionMaximumLossPercent = null);
+    decimal? ConversionMaximumLossPercent = null,
+    string? CounterpartAccountingCategory = null,
+    Guid? AccountingCostCenterId = null);
 
 public sealed record WarehouseTransferPendingQuery(
     Guid BusinessId,
@@ -204,6 +207,7 @@ public sealed record WarehouseTransferPendingItem(
     int LineCount,
     decimal DispatchedQuantity,
     decimal ReceivedQuantity,
+    decimal LostQuantity,
     decimal PendingQuantity,
     string RowVersion);
 
@@ -221,6 +225,7 @@ public sealed record WarehouseTransferDetailLine(
     string ProductName,
     decimal DispatchedQuantity,
     decimal ReceivedQuantity,
+    decimal LostQuantity,
     decimal PendingQuantity);
 
 public sealed record WarehouseTransferDetail(
@@ -274,8 +279,25 @@ public sealed record WarehouseMasterItem(Guid WarehouseId, string Code, string N
     bool IsInventoryVisible, bool IsActive);
 public sealed record SaveWarehouseRequest(string Name, bool AllowNegativeStockSales, string PriceFormationCostBasis,
     bool UseForSales, bool IsActive);
-public sealed record InventoryReasonItem(Guid InventoryReasonId, string OperationType, string Code, string Name, bool IsSystem, bool IsActive, int DisplayOrder);
-public sealed record SaveInventoryReasonRequest(string OperationType, string Name, bool IsActive, int DisplayOrder);
+public sealed record InventoryReasonItem(
+    Guid InventoryReasonId,
+    string OperationType,
+    string Code,
+    string Name,
+    bool IsSystem,
+    bool IsActive,
+    int DisplayOrder,
+    string? CounterpartAccountingCategory,
+    Guid? DefaultCostCenterId,
+    bool RequiresReference);
+public sealed record SaveInventoryReasonRequest(
+    string OperationType,
+    string Name,
+    bool IsActive,
+    int DisplayOrder,
+    string? CounterpartAccountingCategory = null,
+    Guid? DefaultCostCenterId = null,
+    bool RequiresReference = false);
 public sealed record InventoryBalanceQuery(Guid BusinessId, Guid? WarehouseId, string? Search, bool OnlyWithStock, int Page = 1, int PageSize = 50, Guid? ProductId = null);
 public sealed record InventoryBalanceItem(Guid WarehouseId, string WarehouseCode, string WarehouseName, Guid ProductId, string ProductCode, string ProductName, bool ManagesInventory, decimal QuantityOnHand, decimal? UnitCost, decimal? AverageUnitCost, decimal? InventoryValue, DateTimeOffset? UpdatedAt);
 public sealed record InventoryBalancePage(IReadOnlyList<InventoryBalanceItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);

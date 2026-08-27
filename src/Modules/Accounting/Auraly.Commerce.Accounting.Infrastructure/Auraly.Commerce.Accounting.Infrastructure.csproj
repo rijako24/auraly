@@ -20,6 +20,8 @@
     <ProjectReference Include="..\..\Expenses\Auraly.Contracts.Expenses\Auraly.Contracts.Expenses.csproj" />
     <ProjectReference Include="..\..\WorkSessions\Auraly.Contracts.WorkSessions\Auraly.Contracts.WorkSessions.csproj" />
     <ProjectReference Include="..\..\Payroll\Auraly.Commerce.Payroll.Contracts\Auraly.Commerce.Payroll.Contracts.csproj" />
+    <ProjectReference Include="..\..\Inventory\Auraly.Contracts.Inventory\Auraly.Contracts.Inventory.csproj" />
+    <ProjectReference Include="..\..\Dispatching\Auraly.Contracts.Dispatching\Auraly.Contracts.Dispatching.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
   </ItemGroup>
 </Project>

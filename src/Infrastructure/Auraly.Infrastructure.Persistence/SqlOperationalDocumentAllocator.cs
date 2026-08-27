@@ -3,7 +3,7 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
-internal static class SqlOperationalDocumentAllocator
+public static class SqlOperationalDocumentAllocator
 {
     public static async Task<AuralyDocumentNumberAssignment> AllocateNumberAsync(SqlConnection connection,
         SqlTransaction transaction, Guid businessId, string documentType, DateTimeOffset now, CancellationToken ct)

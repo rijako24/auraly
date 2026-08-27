@@ -49,6 +49,7 @@ public sealed class SqlTenantProvisioningStore(
             var supervisorRoleId = ids.NewId();
             var sellerRoleId = ids.NewId();
             var administrativeRoleId = ids.NewId();
+            var accountantRoleId = ids.NewId();
             var adminRoleId = ids.NewId();
             var invitationId = ids.NewId();
             var outboxId = ids.NewId();
@@ -126,6 +127,7 @@ public sealed class SqlTenantProvisioningStore(
                   (@SupervisorRoleId,@TenantId,N'Supervisor',N'SUPERVISOR',N'Supervisión operativa y autorización de acciones sensibles.',1,0,@Now),
                   (@SellerRoleId,@TenantId,N'Vendedor',N'SELLER',N'Toma de pedidos y ejecución de rutas comerciales.',1,0,@Now),
                   (@AdministrativeRoleId,@TenantId,N'Administrativo',N'ADMINISTRATIVE',N'Administración comercial y operativa del tenant.',1,0,@Now),
+                  (@AccountantRoleId,@TenantId,N'Contador',N'ACCOUNTANT',N'Gestión contable, tributaria, de cartera, proveedores y nómina.',1,0,@Now),
                   (@AdminRoleId,@TenantId,N'Administrador',N'ADMINISTRATOR',N'Administración completa de la empresa y todas sus sedes.',1,1,@Now);
                 INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
                 SELECT NEWID(),@AdminRoleId,PermissionId,@Now
@@ -139,6 +141,24 @@ public sealed class SqlTenantProvisioningStore(
                   AND Resource NOT LIKE N'roles.%'
                   AND Resource NOT LIKE N'users.%'
                   AND Resource NOT LIKE N'audit[_]logs.%';
+                INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
+                SELECT NEWID(),@AccountantRoleId,PermissionId,@Now
+                FROM dbo.Permissions
+                WHERE Resource LIKE N'accounting.%'
+                   OR Resource LIKE N'payroll.%'
+                   OR Resource LIKE N'payables.%'
+                   OR Resource LIKE N'receivables.%'
+                   OR Resource LIKE N'expenses.%'
+                   OR Resource LIKE N'commerce.taxation.%'
+                   OR Resource LIKE N'fiscal.configuration.%'
+                   OR Resource IN(
+                     N'businesses.read',N'dashboard.read',N'audit_logs.read',N'payments.read',N'payments.confirm_manual',
+                     N'parties.read',N'customers.read',N'suppliers.read',N'catalog.read',N'catalog.costs.read',N'products.read',
+                     N'inventory.read',N'inventory.costs.read',N'inventory.reasons.manage',
+                     N'work-sessions.read',N'work-sessions.differences.read',N'work-sessions.cash-reasons.configure',
+                     N'dispatches.read-all',N'dispatches.reports.view',N'dispatches.reports.export',
+                     N'sales.reports.read',N'sales.reports.read-all',N'sales.returns.read',N'sales.debit-notes.read',
+                     N'purchasing.goods-receipts.read',N'purchasing.purchase-returns.read');
                 INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
                 SELECT NEWID(),@SupervisorRoleId,PermissionId,@Now
                 FROM dbo.Permissions
@@ -183,7 +203,7 @@ public sealed class SqlTenantProvisioningStore(
             Add("@SalesWarehouseId", salesWarehouseId); Add("@OrdersWarehouseId", ordersWarehouseId); Add("@DamagedWarehouseId", damagedWarehouseId);
             Add("@ConsumerPartyId", consumerPartyId); Add("@CustomerId", customerId);
             Add("@CashierRoleId", cashierRoleId); Add("@SupervisorRoleId", supervisorRoleId); Add("@SellerRoleId", sellerRoleId);
-            Add("@AdministrativeRoleId", administrativeRoleId); Add("@AdminRoleId", adminRoleId);
+            Add("@AdministrativeRoleId", administrativeRoleId); Add("@AccountantRoleId", accountantRoleId); Add("@AdminRoleId", adminRoleId);
             Add("@InvitationId", invitationId); Add("@OutboxId", outboxId); Add("@AuditLogId", ids.NewId());
             Add("@ActorUserId", actorUserId); Add("@Now", now);
             Add("@LegalName", request.LegalName); Add("@TradeName", request.TradeName);

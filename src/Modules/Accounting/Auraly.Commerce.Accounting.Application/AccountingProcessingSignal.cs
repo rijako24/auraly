@@ -1,6 +1,8 @@
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Commerce.Payroll.Contracts;
+using Auraly.Contracts.Inventory;
+using Auraly.Contracts.Dispatching;
 
 namespace Auraly.Commerce.Accounting.Application;
 
@@ -93,7 +95,13 @@ public static class AccountingProcessingPolicy
         Auraly.Contracts.WorkSessions.WorkSessionAccountingDocumentTypes.CashDifference,
         PayrollAccountingDocumentTypes.Accrual,
         PayrollAccountingDocumentTypes.Payment,
-        PayrollAccountingDocumentTypes.Adjustment
+        PayrollAccountingDocumentTypes.Adjustment,
+        InventoryDocumentTypes.StockCount,
+        InventoryDocumentTypes.Adjustment,
+        InventoryDocumentTypes.Damage,
+        InventoryDocumentTypes.Conversion,
+        InventoryDocumentTypes.TransferReceipt,
+        DispatchAccountingDocumentTypes.CashDifference
     ];
 
 
