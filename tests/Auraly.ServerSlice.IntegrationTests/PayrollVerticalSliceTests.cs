@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Text.Json;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Commerce.Payroll.Contracts;
 using Auraly.Commerce.Payroll.Domain;
@@ -157,13 +158,83 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
         var definitions = await GetAsync<PayrollReportDefinitionView[]>(client,
             "/api/commerce/v1/payroll/reports/definitions");
         Assert.Equal(10, definitions.Length);
+        var reports = new Dictionary<string, PayrollReportResult>(StringComparer.Ordinal);
         foreach (var definition in definitions)
         {
             var report = await GetAsync<PayrollReportResult>(client,
                 $"/api/commerce/v1/payroll/reports/{definition.Code}?from=2026-08-01&to=2026-08-31&partyId={partyId:D}");
             Assert.NotEmpty(report.Rows);
+            reports.Add(definition.Code, report);
         }
+
+        var summary = Assert.Single(reports["payroll-summary"].Rows);
+        Assert.Equal(run.TotalEarnings, Amount(summary, "earnings"));
+        Assert.Equal(run.TotalDeductions, Amount(summary, "deductions"));
+        Assert.Equal(run.NetPayable, Amount(summary, "netPayable"));
+
+        var detail = reports["concept-detail"].Rows;
+        Assert.Equal(run.TotalEarnings, Sum(detail, "amount", "nature", "Earning"));
+        Assert.Equal(run.TotalDeductions, Sum(detail, "amount", "nature", "Deduction"));
+        Assert.Equal(run.TotalEmployerContributions,
+            Sum(detail, "amount", "nature", "EmployerContribution"));
+        Assert.Equal(run.TotalProvisions, Sum(detail, "amount", "nature", "Provision"));
+        Assert.Equal(run.TotalDeductions, Sum(reports["deductions"].Rows, "amount"));
+        Assert.Equal(run.TotalEmployerContributions,
+            Sum(reports["employer-contributions"].Rows, "amount"));
+
+        var provisions = reports["provisions"].Rows;
+        Assert.Equal(run.TotalProvisions, Sum(provisions, "amount"));
+        Assert.Equal(263_499.99m, ConceptAmount(provisions, "SEVERANCE"));
+        Assert.Equal(31_620m, ConceptAmount(provisions, "SEVERANCE_INTEREST"));
+        Assert.Equal(263_499.99m, ConceptAmount(provisions, "BONUS"));
+        Assert.Equal(125_000.01m, ConceptAmount(provisions, "VACATION"));
+
+        var laborCost = Assert.Single(reports["labor-cost"].Rows);
+        Assert.Equal(run.TotalEarnings, Amount(laborCost, "earnings"));
+        Assert.Equal(run.TotalEmployerContributions,
+            Amount(laborCost, "employerContributions"));
+        Assert.Equal(run.TotalProvisions, Amount(laborCost, "provisions"));
+        Assert.Equal(run.TotalEarnings + run.TotalEmployerContributions + run.TotalProvisions,
+            Amount(laborCost, "totalLaborCost"));
+        Assert.Equal(run.NetPayable,
+            Amount(Assert.Single(reports["payments"].Rows), "amount"));
+        var withholding = Assert.Single(reports["income-withholding"].Rows);
+        Assert.Equal(run.TotalEarnings, Amount(withholding, "employmentIncome"));
+        Assert.Equal(0m, Amount(withholding, "withholding"));
+        Assert.Equal(run.TotalDeductions, Amount(withholding, "totalDeductions"));
+        var electronicStatus = Assert.Single(reports["electronic-status"].Rows);
+        Assert.Equal(electronic.Documents[0].ElectronicPayrollDocumentId.ToString(),
+            Text(electronicStatus, "id"));
+        Assert.Equal(electronic.Documents[0].Status,
+            Text(electronicStatus, "payrollStatus"));
+        Assert.Equal("PendingGeneration", Text(electronicStatus, "fiscalStatus"));
     }
+
+    private static decimal ConceptAmount(
+        IReadOnlyList<IReadOnlyDictionary<string, object?>> rows, string code) =>
+        Amount(Assert.Single(rows, row => Text(row, "conceptCode") == code), "amount");
+
+    private static decimal Sum(IReadOnlyList<IReadOnlyDictionary<string, object?>> rows,
+        string amountKey, string? filterKey = null, string? filterValue = null) =>
+        rows.Where(row => filterKey is null || Text(row, filterKey) == filterValue)
+            .Sum(row => Amount(row, amountKey));
+
+    private static decimal Amount(IReadOnlyDictionary<string, object?> row, string key) =>
+        row[key] switch
+        {
+            decimal value => value,
+            JsonElement value => value.GetDecimal(),
+            _ => throw new InvalidOperationException($"'{key}' is not a decimal report value.")
+        };
+
+    private static string? Text(IReadOnlyDictionary<string, object?> row, string key) =>
+        row[key] switch
+        {
+            string value => value,
+            JsonElement { ValueKind: JsonValueKind.String } value => value.GetString(),
+            null => null,
+            _ => throw new InvalidOperationException($"'{key}' is not a text report value.")
+        };
 
     private async Task<Guid> CreateEmployeePartyAsync()
     {
