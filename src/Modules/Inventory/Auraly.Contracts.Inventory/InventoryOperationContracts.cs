@@ -7,7 +7,9 @@ public static class InventoryPermissionCodes
 {
     public const string Count = "inventory.counts.confirm";
     public const string Adjust = "inventory.adjustments.confirm";
-    public const string Transfer = "inventory.transfers.confirm";
+    public const string DispatchTransfer = "inventory.transfers.dispatch";
+    public const string ReceiveTransfer = "inventory.transfers.receive";
+    public const string ResolveTransferDifference = "inventory.transfers.resolve-difference";
     public const string Convert = "inventory.conversions.confirm";
     public const string Damage = "inventory.damages.confirm";
     public const string Read = "inventory.read";
@@ -23,6 +25,8 @@ public static class InventoryDocumentTypes
     public const string StockCount = AuralyDocumentTypes.StockCount;
     public const string Adjustment = AuralyDocumentTypes.InventoryAdjustment;
     public const string Transfer = AuralyDocumentTypes.WarehouseTransfer;
+    public const string TransferDispatch = "WarehouseTransferDispatch";
+    public const string TransferReceipt = "WarehouseTransferReceipt";
     public const string Conversion = AuralyDocumentTypes.ProductConversion;
     public const string Damage = AuralyDocumentTypes.Damage;
 }
@@ -80,9 +84,9 @@ public sealed record ConfirmInventoryAdjustmentRequest(
     string? Notes,
     IReadOnlyCollection<InventoryAdjustmentLineRequest> Lines);
 
-public sealed record WarehouseTransferLineRequest(int LineNumber, Guid ProductId, decimal Quantity);
+public sealed record WarehouseTransferLineRequest(int LineNumber, Guid ProductId, decimal DispatchedQuantity);
 
-public sealed record ConfirmWarehouseTransferRequest(
+public sealed record DispatchWarehouseTransferRequest(
     Guid DocumentId,
     Guid BusinessId,
     Guid SourceWarehouseId,
@@ -91,6 +95,20 @@ public sealed record ConfirmWarehouseTransferRequest(
     string ReasonCode,
     string? Notes,
     IReadOnlyCollection<WarehouseTransferLineRequest> Lines);
+
+public sealed record WarehouseTransferReceiptLineRequest(
+    int LineNumber,
+    Guid ProductId,
+    decimal ReceivedQuantity);
+
+public sealed record ReceiveWarehouseTransferRequest(
+    Guid ReceiptId,
+    Guid BusinessId,
+    DateTimeOffset OccurredAt,
+    string? DifferenceReasonCode,
+    string? Notes,
+    string RowVersion,
+    IReadOnlyCollection<WarehouseTransferReceiptLineRequest> Lines);
 
 public sealed record InventoryDamageLineRequest(int LineNumber, Guid ProductId, decimal Quantity);
 
@@ -134,7 +152,11 @@ public sealed record InventoryOperationLineSnapshot(
     decimal? ExplicitUnitCost,
     decimal? AllocationWeight,
     decimal? ConversionFactor = null,
-    decimal? ConversionEquivalentQuantity = null);
+    decimal? ConversionEquivalentQuantity = null,
+    decimal? DispatchedQuantity = null,
+    decimal? ReceivedQuantity = null,
+    decimal? DispatchUnitCost = null,
+    Guid? TransferId = null);
 
 public sealed record InventoryOperationDocumentPayload(
     Guid TenantId,
@@ -162,6 +184,59 @@ public sealed record InventoryOperationDocumentPayload(
     decimal? ConversionLossQuantity = null,
     decimal? ConversionLossPercent = null,
     decimal? ConversionMaximumLossPercent = null);
+
+public sealed record WarehouseTransferPendingQuery(
+    Guid BusinessId,
+    Guid? DestinationWarehouseId,
+    string? Search,
+    int Page = 1,
+    int PageSize = 50);
+
+public sealed record WarehouseTransferPendingItem(
+    Guid TransferId,
+    string DocumentNumber,
+    Guid SourceWarehouseId,
+    string SourceWarehouseName,
+    Guid DestinationWarehouseId,
+    string DestinationWarehouseName,
+    string Status,
+    DateTimeOffset DispatchedAt,
+    int LineCount,
+    decimal DispatchedQuantity,
+    decimal ReceivedQuantity,
+    decimal PendingQuantity,
+    string RowVersion);
+
+public sealed record WarehouseTransferPendingPage(
+    IReadOnlyList<WarehouseTransferPendingItem> Items,
+    int Page,
+    int PageSize,
+    int TotalCount,
+    int TotalPages);
+
+public sealed record WarehouseTransferDetailLine(
+    int LineNumber,
+    Guid ProductId,
+    string ProductCode,
+    string ProductName,
+    decimal DispatchedQuantity,
+    decimal ReceivedQuantity,
+    decimal PendingQuantity);
+
+public sealed record WarehouseTransferDetail(
+    Guid TransferId,
+    string DocumentNumber,
+    Guid SourceWarehouseId,
+    string SourceWarehouseName,
+    Guid DestinationWarehouseId,
+    string DestinationWarehouseName,
+    string ReasonCode,
+    string? Notes,
+    string Status,
+    DateTimeOffset DispatchedAt,
+    DateTimeOffset? ReceivedAt,
+    string RowVersion,
+    IReadOnlyList<WarehouseTransferDetailLine> Lines);
 
 public sealed record StockCountDraft(
     Guid DocumentId,
@@ -227,7 +302,9 @@ public sealed record InventoryOperationDetailLine(
     decimal? ExplicitUnitCost, decimal? AllocationWeight,
     decimal? ProcessedUnitCost, decimal? ProcessedValue,
     decimal? ConversionFactor = null,
-    decimal? ConversionEquivalentQuantity = null);
+    decimal? ConversionEquivalentQuantity = null,
+    decimal? DispatchedQuantity = null,
+    decimal? ReceivedQuantity = null);
 
 public sealed record InventoryOperationDetail(
     Guid DocumentId, string DocumentType, string? DocumentNumber,

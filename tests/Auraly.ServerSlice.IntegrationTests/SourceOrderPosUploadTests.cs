@@ -141,7 +141,7 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Pos_sale_links_source_order_once_and_releases_its_claim()
+    public async Task Pos_sale_links_pre_released_source_order_without_creating_line_level_transfers()
     {
         var orderId = Guid.NewGuid();
         var claimId = Guid.NewGuid();
@@ -167,10 +167,10 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
                   OrderId,BusinessId,Source,FulfillmentMode,Status,
                   CustomerNameSnapshot,CustomerDocumentSnapshot,Currency,
                   Subtotal,DiscountTotal,Total,CustomerConfirmed,
-                  ExternalDocumentNumber,CustomAttributesJson,CreatedAt)
+                  ExternalDocumentNumber,OrdersWarehouseId,ExternalStatus,CustomAttributesJson,CreatedAt)
                 VALUES(
                   @OrderId,@BusinessId,0,0,2,N'Cliente POS',N'900100200',N'COP',
-                  10000,0,10000,1,@OrderNumber,@Attributes,SYSUTCDATETIME());
+                  10000,0,10000,1,@OrderNumber,@OrdersWarehouseId,N'InventoryReleasedForInvoice',@Attributes,SYSUTCDATETIME());
 
                 INSERT dbo.OrderItems(
                   OrderItemId,OrderId,BusinessId,ProductId,Sku,ProductCodeSnapshot,
@@ -233,7 +233,7 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
               (SELECT COUNT(*) FROM dbo.OrderClaims
                WHERE OrderClaimId=@ClaimId AND ReleasedAt IS NOT NULL),
               (SELECT COUNT(*) FROM dbo.InventoryMovements
-               WHERE DocumentId=@DocumentId AND MovementType IN (N'TransferOut',N'TransferIn',N'Sale')),
+               WHERE DocumentId=@DocumentId AND MovementType=N'Sale'),
               (SELECT COUNT(*) FROM dbo.InventoryMovements
                WHERE DocumentId=@DocumentId AND MovementType=N'TransferOut' AND WarehouseId=@OrdersWarehouseId),
               (SELECT COUNT(*) FROM dbo.InventoryMovements
@@ -248,9 +248,9 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
         Assert.True(await reader.ReadAsync());
         Assert.Equal(1, reader.GetInt32(0));
         Assert.Equal(1, reader.GetInt32(1));
-        Assert.Equal(3, reader.GetInt32(2));
-        Assert.Equal(1, reader.GetInt32(3));
-        Assert.Equal(2, reader.GetInt32(4));
+        Assert.Equal(1, reader.GetInt32(2));
+        Assert.Equal(0, reader.GetInt32(3));
+        Assert.Equal(1, reader.GetInt32(4));
     }
 
     private async Task AssertProcessingCompletedAsync(Guid documentId)

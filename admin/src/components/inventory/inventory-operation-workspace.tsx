@@ -58,6 +58,7 @@ import {
   defaultInventoryOperationKind,
   type InventoryOperationKind,
 } from "@/lib/inventory-operation-launch";
+import { WarehouseTransferReceiptPanel } from "@/components/inventory/warehouse-transfer-receipt-panel";
 
 export type WarehouseOption = { id: string; name: string };
 type OperationKind = InventoryOperationKind;
@@ -111,9 +112,9 @@ const operationOptions: Array<{
   {
     id: "transfer",
     label: "Traslado",
-    description: "Mueve existencias entre bodegas.",
+    description: "Confirma la salida; la bodega destino recibe después.",
     icon: ArrowLeftRight,
-    permission: "inventory.transfers.confirm",
+    permission: "inventory.transfers.dispatch",
   },
   {
     id: "conversion",
@@ -360,7 +361,7 @@ export function InventoryOperationWorkspace({
           })),
         });
       } else if (kind === "transfer") {
-        result = await inventoryApi.confirmTransfer({
+        result = await inventoryApi.dispatchTransfer({
           documentId,
           businessId,
           sourceWarehouseId: warehouseId,
@@ -371,7 +372,7 @@ export function InventoryOperationWorkspace({
           lines: lines.map((line, index) => ({
             lineNumber: index + 1,
             productId: line.productId,
-            quantity: Number(line.quantity),
+            dispatchedQuantity: Number(line.quantity),
           })),
         });
       } else if (kind === "conversion") {
@@ -473,7 +474,7 @@ export function InventoryOperationWorkspace({
       <div className="grid gap-3 md:grid-cols-5">
         {operationOptions.map((option) => {
           const Icon = option.icon;
-          const enabled = permissions.has(option.permission);
+          const enabled = permissions.has(option.permission) || (option.id === "transfer" && permissions.has("inventory.transfers.receive"));
           return (
             <button
               key={option.id}
@@ -512,7 +513,9 @@ export function InventoryOperationWorkspace({
               onCancel={onCancel}
               onCompleted={onCompleted}
             />
-      ) : <Card>
+      ) : <>
+      {kind === "transfer" && permissions.has("inventory.transfers.receive") && <WarehouseTransferReceiptPanel businessId={businessId} warehouses={warehouses} />}
+      <Card>
         <CardHeader><CardTitle>{selected.label}</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-3">
@@ -621,13 +624,13 @@ export function InventoryOperationWorkspace({
             <Button disabled={!ready || mutation.isPending} onClick={() => mutation.mutate()}>
               {mutation.isPending
                 ? "Procesando…"
-                : `Confirmar ${selected.label.toLowerCase()}`}
+                : kind === "transfer" ? "Confirmar salida" : `Confirmar ${selected.label.toLowerCase()}`}
             </Button>
             <Button type="button" variant="outline" disabled={mutation.isPending || lines.length === 0} onClick={clear}>Limpiar</Button>
             {!allowed && <span className="text-sm text-amber-700">No tienes permiso para confirmar esta operación.</span>}
           </div>
         </CardContent>
-      </Card>}
+      </Card></>}
     </div>
   );
 }

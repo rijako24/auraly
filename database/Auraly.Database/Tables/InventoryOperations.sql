@@ -5,6 +5,8 @@ CREATE TABLE [dbo].[InventoryOperations]
     [DocumentType] NVARCHAR(64) NOT NULL,
     [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
     [DestinationWarehouseId] UNIQUEIDENTIFIER NULL,
+    [TransitWarehouseId] UNIQUEIDENTIFIER NULL,
+    [TransferMode] NVARCHAR(24) NULL,
     [DocumentSeriesId] UNIQUEIDENTIFIER NULL,
     [DocumentNumber] NVARCHAR(40) NULL,
     [DocumentPrefix] NVARCHAR(8) NULL,
@@ -30,16 +32,22 @@ CREATE TABLE [dbo].[InventoryOperations]
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [AcceptedAt] DATETIMEOFFSET(7) NULL,
     [ProcessedAt] DATETIMEOFFSET(7) NULL,
+    [DispatchedAt] DATETIMEOFFSET(7) NULL,
+    [DispatchedByUserId] UNIQUEIDENTIFIER NULL,
+    [ReceivedAt] DATETIMEOFFSET(7) NULL,
+    [ReceivedByUserId] UNIQUEIDENTIFIER NULL,
     [TotalValueChange] DECIMAL(19,4) NULL,
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [PK_InventoryOperations] PRIMARY KEY CLUSTERED ([InventoryOperationId]),
     CONSTRAINT [FK_InventoryOperations_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_InventoryOperations_Warehouse] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
     CONSTRAINT [FK_InventoryOperations_DestinationWarehouse] FOREIGN KEY ([DestinationWarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
+    CONSTRAINT [FK_InventoryOperations_TransitWarehouse] FOREIGN KEY ([TransitWarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
     CONSTRAINT [FK_InventoryOperations_DocumentSeries] FOREIGN KEY ([DocumentSeriesId]) REFERENCES [dbo].[DocumentSeries] ([DocumentSeriesId]),
     CONSTRAINT [FK_InventoryOperations_ConversionFamilyRoot] FOREIGN KEY ([ConversionFamilyRootProductId]) REFERENCES [dbo].[Products] ([ProductId]),
     CONSTRAINT [CK_InventoryOperations_Type] CHECK ([DocumentType] IN (N'StockCount',N'InventoryAdjustment',N'WarehouseTransfer',N'ProductConversion',N'Damage')),
-    CONSTRAINT [CK_InventoryOperations_Status] CHECK ([Status] IN (N'Draft',N'Accepted',N'Processed')),
+    CONSTRAINT [CK_InventoryOperations_Status] CHECK ([Status] IN (N'Draft',N'Accepted',N'Processed',N'DispatchPending',N'Dispatched',N'ReceiptPending',N'PartiallyReceived',N'Received',N'Reversed')),
+    CONSTRAINT [CK_InventoryOperations_TransferMode] CHECK (([DocumentType]=N'WarehouseTransfer' AND ([TransferMode] IN (N'DispatchAndReceive',N'ImmediateSystem') OR [TransferMode] IS NULL)) OR ([DocumentType]<>N'WarehouseTransfer' AND [TransferMode] IS NULL)),
     CONSTRAINT [CK_InventoryOperations_Transfer] CHECK (([DocumentType]=N'WarehouseTransfer' AND [DestinationWarehouseId] IS NOT NULL AND [DestinationWarehouseId]<>[WarehouseId]) OR ([DocumentType]<>N'WarehouseTransfer' AND [DestinationWarehouseId] IS NULL)),
     CONSTRAINT [CK_InventoryOperations_CountBase] CHECK (([DocumentType]=N'StockCount' AND [BaseInventorySequence] IS NOT NULL) OR ([DocumentType]<>N'StockCount' AND [BaseInventorySequence] IS NULL)),
     CONSTRAINT [CK_InventoryOperations_ConversionSnapshot] CHECK (
@@ -78,6 +86,10 @@ CREATE TABLE [dbo].[InventoryOperationLines]
     [ConversionEquivalentQuantity] DECIMAL(19,6) NULL,
     [ProcessedUnitCost] DECIMAL(19,6) NULL,
     [ProcessedValue] DECIMAL(19,4) NULL,
+    [DispatchedQuantity] DECIMAL(19,6) NULL,
+    [ReceivedQuantity] DECIMAL(19,6) NULL,
+    [DispatchUnitCost] DECIMAL(19,6) NULL,
+    [DispatchValue] DECIMAL(19,4) NULL,
     CONSTRAINT [PK_InventoryOperationLines] PRIMARY KEY CLUSTERED ([InventoryOperationId],[LineNumber]),
     CONSTRAINT [FK_InventoryOperationLines_Operation] FOREIGN KEY ([InventoryOperationId]) REFERENCES [dbo].[InventoryOperations] ([InventoryOperationId]),
     CONSTRAINT [FK_InventoryOperationLines_Product] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
@@ -87,7 +99,51 @@ CREATE TABLE [dbo].[InventoryOperationLines]
     CONSTRAINT [CK_InventoryOperationLines_PreCount] CHECK ([PreCountQuantity] IS NULL OR [PreCountQuantity]>=0),
     CONSTRAINT [CK_InventoryOperationLines_Weight] CHECK ([AllocationWeight] IS NULL OR [AllocationWeight]>0),
     CONSTRAINT [CK_InventoryOperationLines_ConversionSnapshot] CHECK (([ConversionFactor] IS NULL AND [ConversionEquivalentQuantity] IS NULL) OR ([Direction] IN (N'INPUT',N'OUTPUT') AND [ConversionFactor]>0 AND [ConversionEquivalentQuantity]>0))
+    ,CONSTRAINT [CK_InventoryOperationLines_TransferQuantities] CHECK (([Direction]=N'TRANSFER' AND (([DispatchedQuantity]>0 AND [ReceivedQuantity]>=0 AND [ReceivedQuantity]<=[DispatchedQuantity]) OR ([DispatchedQuantity] IS NULL AND [ReceivedQuantity] IS NULL AND [DispatchUnitCost] IS NULL AND [DispatchValue] IS NULL))) OR ([Direction]<>N'TRANSFER' AND [DispatchedQuantity] IS NULL AND [ReceivedQuantity] IS NULL AND [DispatchUnitCost] IS NULL AND [DispatchValue] IS NULL))
 );
 GO
 CREATE INDEX [IX_InventoryOperationLines_Product]
     ON [dbo].[InventoryOperationLines]([ProductId],[InventoryOperationId]);
+GO
+
+CREATE TABLE [dbo].[InventoryTransferReceipts]
+(
+    [InventoryTransferReceiptId] UNIQUEIDENTIFIER NOT NULL,
+    [TransferId] UNIQUEIDENTIFIER NOT NULL,
+    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [DestinationWarehouseId] UNIQUEIDENTIFIER NOT NULL,
+    [IdempotencyKey] NVARCHAR(160) NOT NULL,
+    [RequestHash] BINARY(32) NOT NULL,
+    [DifferenceReasonCode] NVARCHAR(40) NULL,
+    [Notes] NVARCHAR(1000) NULL,
+    [Status] NVARCHAR(24) NOT NULL,
+    [ReceivedByUserId] UNIQUEIDENTIFIER NOT NULL,
+    [OccurredAt] DATETIMEOFFSET(7) NOT NULL,
+    [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
+    [ProcessedAt] DATETIMEOFFSET(7) NULL,
+    [RowVersion] ROWVERSION NOT NULL,
+    CONSTRAINT [PK_InventoryTransferReceipts] PRIMARY KEY CLUSTERED ([InventoryTransferReceiptId]),
+    CONSTRAINT [FK_InventoryTransferReceipts_Transfer] FOREIGN KEY ([TransferId]) REFERENCES [dbo].[InventoryOperations] ([InventoryOperationId]),
+    CONSTRAINT [FK_InventoryTransferReceipts_Business] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
+    CONSTRAINT [FK_InventoryTransferReceipts_Warehouse] FOREIGN KEY ([DestinationWarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
+    CONSTRAINT [CK_InventoryTransferReceipts_Status] CHECK ([Status] IN (N'Accepted',N'Processed')),
+    CONSTRAINT [UQ_InventoryTransferReceipts_Business_Key] UNIQUE ([BusinessId],[IdempotencyKey])
+);
+GO
+
+CREATE TABLE [dbo].[InventoryTransferReceiptLines]
+(
+    [InventoryTransferReceiptId] UNIQUEIDENTIFIER NOT NULL,
+    [LineNumber] INT NOT NULL,
+    [ProductId] UNIQUEIDENTIFIER NOT NULL,
+    [ReceivedQuantity] DECIMAL(19,6) NOT NULL,
+    [ProcessedUnitCost] DECIMAL(19,6) NULL,
+    [ProcessedValue] DECIMAL(19,4) NULL,
+    CONSTRAINT [PK_InventoryTransferReceiptLines] PRIMARY KEY CLUSTERED ([InventoryTransferReceiptId],[LineNumber]),
+    CONSTRAINT [FK_InventoryTransferReceiptLines_Receipt] FOREIGN KEY ([InventoryTransferReceiptId]) REFERENCES [dbo].[InventoryTransferReceipts] ([InventoryTransferReceiptId]),
+    CONSTRAINT [FK_InventoryTransferReceiptLines_Product] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
+    CONSTRAINT [CK_InventoryTransferReceiptLines_Quantity] CHECK ([ReceivedQuantity]>=0)
+);
+GO
+CREATE INDEX [IX_InventoryTransferReceipts_Transfer_Status]
+    ON [dbo].[InventoryTransferReceipts]([TransferId],[Status],[OccurredAt]);

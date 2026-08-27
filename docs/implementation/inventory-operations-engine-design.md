@@ -1,7 +1,7 @@
 # Inventory operations engine slice
 
 **Implemented:** 2026-08-01
-**Branch:** `feature/auraly-commerce-accounting-engine`
+**Transfer flow revised:** 2026-08-27
 
 ## Scope
 
@@ -12,12 +12,14 @@ This slice connects four inventory documents end to end:
 - warehouse transfer (`WarehouseTransfer`, `TRB`);
 - product conversion (`ProductConversion`, `CNV`).
 
-It does not introduce another engine, receipt table, SQL job or polling loop. Every
-confirmed document uses the existing durable path:
+It does not introduce another engine or polling loop. Every confirmed stage uses
+the existing durable path. Transfer receipts are child records of the same `TRB`
+header, not an alternative inventory writer:
 
 ```text
 authenticated API
   -> InventoryOperations + InventoryOperationLines
+     (+ InventoryTransferReceipts for each destination confirmation)
   -> DocumentProcessingJobs + immutable payload
   -> one broker message for that document
   -> registered document handler
@@ -55,10 +57,21 @@ valuation supplies the cost.
 
 ## Transfer semantics
 
-A transfer locks source and destination keys in canonical warehouse/product order.
-The source exit and destination receipt run in the same transaction. The source
-average cost travels with the quantity, so total inventory value is preserved.
-Neither side can commit independently.
+A user transfer has two ordered stages. `Dispatch` removes all lines from the
+source and places their quantity and value in the hidden `TRA` warehouse. It
+freezes `DispatchedQuantity`, `DispatchUnitCost` and `DispatchValue`, and the
+header becomes `Dispatched` (pending entry). `Receipt` is recovered by the
+destination; `ReceivedQuantity` defaults to the pending quantity but can be
+edited between zero and that pending balance. Differences require a reason.
+
+Partial receipts leave the remainder in `TRA` and the header as
+`PartiallyReceived`; the final receipt changes it to `Received`. Each stage is
+atomic and idempotent, and `RowVersion` prevents concurrent over-receipt.
+
+The only immediate mode is the non-public `ImmediateSystem`, used for intrinsic
+order effects: one multi-line document reserves the complete order in `PED`, and
+one multi-line document releases it from `PED` to the sales warehouse before
+invoicing.
 
 ## Conversion semantics
 
@@ -83,7 +96,9 @@ The API revalidates JWT identity, tenant/business scope and operation permission
 
 - `inventory.counts.confirm`;
 - `inventory.adjustments.confirm`;
-- `inventory.transfers.confirm`;
+- `inventory.transfers.dispatch`;
+- `inventory.transfers.receive`;
+- `inventory.transfers.resolve-difference`;
 - `inventory.conversions.confirm`.
 
 Warehouses and active stock-managed products must belong to the authenticated

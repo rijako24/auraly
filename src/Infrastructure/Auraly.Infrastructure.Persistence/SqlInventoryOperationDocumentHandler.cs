@@ -35,10 +35,21 @@ public sealed class SqlInventoryOperationProcessor(
                 ProductId = target.ProductId,
                 Quantity = line.Quantity * target.Factor,
                 SystemQuantityAtBase = line.SystemQuantityAtBase * target.Factor,
-                ExplicitUnitCost = line.ExplicitUnitCost / target.Factor
+                ExplicitUnitCost = line.ExplicitUnitCost / target.Factor,
+                DispatchUnitCost = line.DispatchUnitCost / target.Factor
             });
         }
         operation = operation with { Lines = normalizedLines };
+        if (operation.DocumentType == InventoryDocumentTypes.TransferDispatch)
+        {
+            await ProcessTransferDispatchAsync(session, operation, document.Payload, cancellationToken);
+            return;
+        }
+        if (operation.DocumentType == InventoryDocumentTypes.TransferReceipt)
+        {
+            await ProcessTransferReceiptAsync(session, operation, document.Payload, cancellationToken);
+            return;
+        }
         if (operation.DocumentType == InventoryDocumentTypes.StockCount &&
             operation.Lines.GroupBy(line => line.ProductId).Any(group => group.Count() > 1))
             throw new InvalidOperationException("A stock count cannot contain two presentations of the same inventory product.");
@@ -135,6 +146,156 @@ public sealed class SqlInventoryOperationProcessor(
             total += await ApplyAsync(session, operation, line, destination, line.Quantity, transferCost, "TransferIn", balances, cancellationToken);
         }
         return InventoryOperationRules.Money(total);
+    }
+
+    private async Task ProcessTransferDispatchAsync(
+        SqlDocumentProcessingSessionAccessor.Session session,
+        InventoryOperationDocumentPayload stage,
+        string payload,
+        CancellationToken cancellationToken)
+    {
+        var transit = stage.DestinationWarehouseId ?? throw new InvalidOperationException("The transit warehouse is missing.");
+        var posting = stage;
+        var balances = await LockBalancesAsync(session, posting, cancellationToken);
+        foreach (var line in posting.Lines.OrderBy(line => line.LineNumber))
+        {
+            var source = balances[(posting.WarehouseId, line.ProductId)];
+            if (source.Quantity < line.Quantity)
+                throw new InvalidOperationException($"Insufficient inventory for product '{line.ProductCode}'.");
+            var cost = source.AverageCost;
+            await ApplyAsync(session, posting, line, posting.WarehouseId, -line.Quantity, null,
+                "TransferDispatchOut", balances, cancellationToken, false);
+            await ApplyAsync(session, posting, line, transit, line.Quantity, cost,
+                "TransferDispatchInTransit", balances, cancellationToken, false);
+            const string updateLine = """
+                UPDATE dbo.InventoryOperationLines
+                SET DispatchUnitCost=@Cost,DispatchValue=@Value,ProcessedUnitCost=@Cost,ProcessedValue=@Value
+                WHERE InventoryOperationId=@Id AND LineNumber=@Line;
+                """;
+            await using var command = new SqlCommand(updateLine, session.Connection, session.Transaction);
+            command.Parameters.AddWithValue("@Id", posting.DocumentId);
+            command.Parameters.AddWithValue("@Line", line.LineNumber);
+            AddDecimal(command, "@Cost", cost, 19, 6);
+            AddDecimal(command, "@Value", InventoryOperationRules.Money(line.Quantity * cost), 19, 4);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        const string update = """
+            UPDATE dbo.InventoryOperations
+            SET Status=N'Dispatched',DispatchedAt=@Now,DispatchedByUserId=@UserId,TotalValueChange=0
+            WHERE InventoryOperationId=@Id AND BusinessId=@BusinessId AND Status=N'DispatchPending';
+            """;
+        await using (var command = new SqlCommand(update, session.Connection, session.Transaction))
+        {
+            command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
+            command.Parameters.AddWithValue("@UserId", stage.ConfirmedByUserId);
+            command.Parameters.AddWithValue("@Id", stage.DocumentId);
+            command.Parameters.AddWithValue("@BusinessId", stage.BusinessId);
+            if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+                throw new DBConcurrencyException("The transfer could not be marked as dispatched.");
+        }
+        await InsertOutboxAsync(session, stage, payload, cancellationToken);
+    }
+
+    private async Task ProcessTransferReceiptAsync(
+        SqlDocumentProcessingSessionAccessor.Session session,
+        InventoryOperationDocumentPayload stage,
+        string payload,
+        CancellationToken cancellationToken)
+    {
+        var transferId = stage.Lines.Select(line => line.TransferId).Distinct().SingleOrDefault()
+            ?? throw new InvalidOperationException("The receipt does not identify its transfer.");
+        var destination = stage.DestinationWarehouseId ?? throw new InvalidOperationException("The destination warehouse is missing.");
+        var posting = stage;
+        var balances = await LockBalancesAsync(session, posting, cancellationToken);
+        foreach (var line in posting.Lines.OrderBy(line => line.LineNumber))
+        {
+            var cost = line.DispatchUnitCost ?? throw new InvalidOperationException("The dispatch cost snapshot is missing.");
+            await ApplyTransferReceiptOutboundAsync(session, posting, line, posting.WarehouseId,
+                line.Quantity, cost, balances, cancellationToken);
+            await ApplyAsync(session, posting, line, destination, line.Quantity, cost,
+                "TransferReceiptIn", balances, cancellationToken, false);
+            const string updateReceiptLine = """
+                UPDATE dbo.InventoryTransferReceiptLines
+                SET ProcessedUnitCost=@Cost,ProcessedValue=@Value
+                WHERE InventoryTransferReceiptId=@ReceiptId AND LineNumber=@Line;
+                UPDATE dbo.InventoryOperationLines
+                SET ReceivedQuantity=ReceivedQuantity+@Quantity
+                WHERE InventoryOperationId=@TransferId AND LineNumber=@Line
+                  AND ReceivedQuantity+@Quantity<=DispatchedQuantity;
+                IF @@ROWCOUNT<>1 THROW 51230,'The received quantity exceeds the dispatched quantity.',1;
+                """;
+            await using var command = new SqlCommand(updateReceiptLine, session.Connection, session.Transaction);
+            command.Parameters.AddWithValue("@ReceiptId", stage.DocumentId);
+            command.Parameters.AddWithValue("@TransferId", transferId);
+            command.Parameters.AddWithValue("@Line", line.LineNumber);
+            AddDecimal(command, "@Quantity", line.Quantity, 19, 6);
+            AddDecimal(command, "@Cost", cost, 19, 6);
+            AddDecimal(command, "@Value", InventoryOperationRules.Money(line.Quantity * cost), 19, 4);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        var now = timeProvider.GetUtcNow();
+        const string finish = """
+            UPDATE dbo.InventoryTransferReceipts SET Status=N'Processed',ProcessedAt=@Now
+            WHERE InventoryTransferReceiptId=@ReceiptId AND BusinessId=@BusinessId AND Status=N'Accepted';
+            IF @@ROWCOUNT<>1 THROW 51231,'The transfer receipt could not be completed.',1;
+            UPDATE o SET
+              Status=CASE WHEN EXISTS(
+                SELECT 1 FROM dbo.InventoryOperationLines l
+                WHERE l.InventoryOperationId=o.InventoryOperationId AND l.ReceivedQuantity<l.DispatchedQuantity)
+                THEN N'PartiallyReceived' ELSE N'Received' END,
+              ReceivedAt=CASE WHEN EXISTS(
+                SELECT 1 FROM dbo.InventoryOperationLines l
+                WHERE l.InventoryOperationId=o.InventoryOperationId AND l.ReceivedQuantity<l.DispatchedQuantity)
+                THEN NULL ELSE @Now END,
+              ReceivedByUserId=CASE WHEN EXISTS(
+                SELECT 1 FROM dbo.InventoryOperationLines l
+                WHERE l.InventoryOperationId=o.InventoryOperationId AND l.ReceivedQuantity<l.DispatchedQuantity)
+                THEN NULL ELSE @UserId END
+            FROM dbo.InventoryOperations o
+            WHERE o.InventoryOperationId=@TransferId AND o.BusinessId=@BusinessId AND o.Status=N'ReceiptPending';
+            IF @@ROWCOUNT<>1 THROW 51232,'The transfer state changed while its receipt was processed.',1;
+            """;
+        await using (var command = new SqlCommand(finish, session.Connection, session.Transaction))
+        {
+            command.Parameters.AddWithValue("@Now", now);
+            command.Parameters.AddWithValue("@UserId", stage.ConfirmedByUserId);
+            command.Parameters.AddWithValue("@ReceiptId", stage.DocumentId);
+            command.Parameters.AddWithValue("@TransferId", transferId);
+            command.Parameters.AddWithValue("@BusinessId", stage.BusinessId);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await InsertOutboxAsync(session, stage, payload, cancellationToken);
+    }
+
+    private async Task ApplyTransferReceiptOutboundAsync(
+        SqlDocumentProcessingSessionAccessor.Session session,
+        InventoryOperationDocumentPayload operation,
+        InventoryOperationLineSnapshot line,
+        Guid warehouseId,
+        decimal quantity,
+        decimal frozenUnitCost,
+        Dictionary<(Guid, Guid), BalanceState> balances,
+        CancellationToken cancellationToken)
+    {
+        var state = balances[(warehouseId, line.ProductId)];
+        if (state.Quantity < quantity)
+            throw new InvalidOperationException("The transit inventory is insufficient for this receipt.");
+        var beforeQuantity = state.Quantity;
+        var beforeAverage = state.AverageCost;
+        var afterQuantity = InventoryOperationRules.Quantity(beforeQuantity - quantity);
+        var valueChange = -InventoryOperationRules.Money(quantity * frozenUnitCost);
+        var afterValue = afterQuantity == 0 ? 0m : InventoryOperationRules.Money(state.Value + valueChange);
+        if (afterValue < 0)
+            throw new InvalidOperationException("The frozen transfer cost exceeds the inventory value remaining in transit.");
+        var afterAverage = afterQuantity == 0 ? 0m : InventoryOperationRules.Quantity(afterValue / afterQuantity);
+        await inventoryWriter.WriteCalculatedAsync(session, new CalculatedInventoryLedgerPosting(
+            operation.BusinessId, warehouseId, line.ProductId, operation.DocumentId, operation.DocumentType,
+            line.LineNumber, "TransferReceiptOutTransit", state.Exists, -quantity, beforeQuantity, afterQuantity,
+            beforeAverage, afterAverage, frozenUnitCost, valueChange, afterValue, operation.OccurredAt), cancellationToken);
+        state.Quantity = afterQuantity;
+        state.AverageCost = afterAverage;
+        state.Value = afterValue;
+        state.Exists = true;
     }
 
     private async Task<decimal> ProcessConversionAsync(SqlDocumentProcessingSessionAccessor.Session session,
@@ -308,6 +469,8 @@ public sealed class SqlInventoryOperationProcessor(
 public sealed class SqlStockCountDocumentHandler(SqlInventoryOperationProcessor processor) : IConfirmedDocumentHandler { public string DocumentType=>InventoryDocumentTypes.StockCount; public Task HandleAsync(ConfirmedDocument document,CancellationToken cancellationToken)=>processor.HandleAsync(document,cancellationToken); }
 public sealed class SqlInventoryAdjustmentDocumentHandler(SqlInventoryOperationProcessor processor) : IConfirmedDocumentHandler { public string DocumentType=>InventoryDocumentTypes.Adjustment; public Task HandleAsync(ConfirmedDocument document,CancellationToken cancellationToken)=>processor.HandleAsync(document,cancellationToken); }
 public sealed class SqlWarehouseTransferDocumentHandler(SqlInventoryOperationProcessor processor) : IConfirmedDocumentHandler { public string DocumentType=>InventoryDocumentTypes.Transfer; public Task HandleAsync(ConfirmedDocument document,CancellationToken cancellationToken)=>processor.HandleAsync(document,cancellationToken); }
+public sealed class SqlWarehouseTransferDispatchDocumentHandler(SqlInventoryOperationProcessor processor) : IConfirmedDocumentHandler { public string DocumentType=>InventoryDocumentTypes.TransferDispatch; public Task HandleAsync(ConfirmedDocument document,CancellationToken cancellationToken)=>processor.HandleAsync(document,cancellationToken); }
+public sealed class SqlWarehouseTransferReceiptDocumentHandler(SqlInventoryOperationProcessor processor) : IConfirmedDocumentHandler { public string DocumentType=>InventoryDocumentTypes.TransferReceipt; public Task HandleAsync(ConfirmedDocument document,CancellationToken cancellationToken)=>processor.HandleAsync(document,cancellationToken); }
 public sealed class SqlProductConversionDocumentHandler(SqlInventoryOperationProcessor processor) : IConfirmedDocumentHandler { public string DocumentType=>InventoryDocumentTypes.Conversion; public Task HandleAsync(ConfirmedDocument document,CancellationToken cancellationToken)=>processor.HandleAsync(document,cancellationToken); }
 
 public sealed class SqlInventoryDamageDocumentHandler(SqlInventoryOperationProcessor processor) : IConfirmedDocumentHandler { public string DocumentType=>InventoryDocumentTypes.Damage; public Task HandleAsync(ConfirmedDocument document,CancellationToken cancellationToken)=>processor.HandleAsync(document,cancellationToken); }

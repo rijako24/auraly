@@ -48,13 +48,11 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         }
         await EnsureWorkSessionAsync(
             session, request, cancellationToken);
-        var inventoryWarehouseId = await ResolveInventoryWarehouseAsync(
-            session, request, cancellationToken);
         foreach (var line in request.Lines.OrderBy(line => line.LineNumber))
         {
             await ValidateDocumentCostAsync(session, request.BusinessId, line, cancellationToken);
             await InsertInventoryMovementAsync(
-                session, request, inventoryWarehouseId, line, cancellationToken);
+                session, request, line, cancellationToken);
             await InsertLineAsync(session, request, line, cancellationToken);
         }
 
@@ -145,44 +143,9 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
     private async Task InsertInventoryMovementAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
         PosSaleUploadRequest request,
-        Guid sourceWarehouseId,
         PosSaleLineContract line,
         CancellationToken cancellationToken)
     {
-        if (sourceWarehouseId != request.WarehouseId)
-        {
-            var unitCost = await _inventoryWriter.PostAsync(
-                session,
-                new InventoryLedgerPosting(
-                    request.BusinessId,
-                    sourceWarehouseId,
-                    line.ProductId,
-                    request.DocumentId,
-                    request.CommercialSnapshot.DocumentType,
-                    line.LineNumber,
-                    "TransferOut",
-                    -line.Quantity,
-                    null,
-                    InventoryValuationModes.AverageCost,
-                    request.CommercialSnapshot.IssuedAt),
-                cancellationToken);
-            await _inventoryWriter.PostAsync(
-                session,
-                new InventoryLedgerPosting(
-                    request.BusinessId,
-                    request.WarehouseId,
-                    line.ProductId,
-                    request.DocumentId,
-                    request.CommercialSnapshot.DocumentType,
-                    line.LineNumber,
-                    "TransferIn",
-                    line.Quantity,
-                    unitCost,
-                    InventoryValuationModes.WeightedAverageReceipt,
-                    request.CommercialSnapshot.IssuedAt),
-                cancellationToken);
-        }
-
         await _inventoryWriter.PostAsync(
             session,
             new InventoryLedgerPosting(
@@ -221,30 +184,6 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                 "The cost of an inventory-managed product must come from inventory valuation.");
     }
 
-    private static async Task<Guid> ResolveInventoryWarehouseAsync(
-        SqlDocumentProcessingSessionAccessor.Session session,
-        PosSaleUploadRequest request,
-        CancellationToken cancellationToken)
-    {
-        if (request.SourceOrderId is null) return request.WarehouseId;
-        const string sql = """
-            SELECT ExternalStatus,
-                   COALESCE(OrdersWarehouseId,
-                     TRY_CONVERT(uniqueidentifier,JSON_VALUE(CustomAttributesJson,'$.ordersWarehouseId')))
-            FROM dbo.Orders WITH(UPDLOCK,HOLDLOCK)
-            WHERE OrderId=@OrderId AND BusinessId=@BusinessId;
-            """;
-        await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
-        command.Parameters.AddWithValue("@OrderId", request.SourceOrderId.Value);
-        command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
-            throw new InvalidOperationException("El pedido de origen no existe en este negocio.");
-        var released = !reader.IsDBNull(0) &&
-            string.Equals(reader.GetString(0), "InventoryReleasedForInvoice", StringComparison.Ordinal);
-        return released || reader.IsDBNull(1) ? request.WarehouseId : reader.GetGuid(1);
-    }
-
     private async Task LinkSourceOrderAsync(
         SqlDocumentProcessingSessionAccessor.Session session,
         PosSaleUploadRequest request,
@@ -255,7 +194,8 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             IF NOT EXISTS (
                 SELECT 1 FROM dbo.Orders WITH (UPDLOCK,HOLDLOCK)
                 WHERE OrderId=@OrderId AND BusinessId=@BusinessId
-                  AND CustomerConfirmed=1 AND Status IN (2,4))
+                  AND CustomerConfirmed=1 AND Status IN (2,4)
+                  AND ExternalStatus=N'InventoryReleasedForInvoice')
                 THROW 51000, 'El pedido de origen no esta disponible en este negocio.', 1;
 
             IF EXISTS (
@@ -299,12 +239,12 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             INSERT INTO dbo.SalesPayments
             (
                 DocumentId, PaymentNumber, MethodCode, Amount,
-                Reference, RegisteredAt
+                Reference, CardFranchiseCode, ApprovalNumber, RegisteredAt
             )
             VALUES
             (
                 @DocumentId, @PaymentNumber, @MethodCode, @Amount,
-                @Reference, @RegisteredAt
+                @Reference, @CardFranchiseCode, @ApprovalNumber, @RegisteredAt
             );
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
@@ -313,6 +253,8 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         command.Parameters.AddWithValue("@MethodCode", payment.MethodCode);
         AddDecimal(command, "@Amount", payment.Amount, 19, 4);
         command.Parameters.AddWithValue("@Reference", (object?)payment.Reference ?? DBNull.Value);
+        command.Parameters.AddWithValue("@CardFranchiseCode", (object?)payment.CardFranchiseCode ?? DBNull.Value);
+        command.Parameters.AddWithValue("@ApprovalNumber", (object?)payment.ApprovalNumber ?? DBNull.Value);
         command.Parameters.AddWithValue("@RegisteredAt", request.CommercialSnapshot.IssuedAt);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

@@ -15,6 +15,8 @@ public interface IInventoryQueryStore
     Task<InventoryMovementPage> GetMovementsAsync(InventoryUserIdentity user, InventoryMovementQuery query, bool includeCosts, CancellationToken token);
     Task<InventoryOperationPage> GetOperationsAsync(InventoryUserIdentity user, InventoryOperationQuery query, bool includeCosts, CancellationToken token);
     Task<InventoryOperationDetail?> GetOperationDetailAsync(InventoryUserIdentity user, Guid documentId, bool includeCosts, CancellationToken token);
+    Task<WarehouseTransferPendingPage> GetPendingTransfersAsync(InventoryUserIdentity user, WarehouseTransferPendingQuery query, CancellationToken token);
+    Task<WarehouseTransferDetail?> GetTransferAsync(InventoryUserIdentity user, Guid transferId, CancellationToken token);
 }
 
 public sealed class InventoryQueryService(IInventoryQueryStore store)
@@ -117,6 +119,19 @@ public sealed class InventoryQueryService(IInventoryQueryStore store)
             throw new InventoryValidationException("DocumentId is required.");
         return store.GetOperationDetailAsync(
             user, documentId, user.Permissions.Contains(InventoryPermissionCodes.ReadCosts), token);
+    }
+
+    public Task<WarehouseTransferPendingPage> GetPendingTransfersAsync(InventoryUserIdentity user, WarehouseTransferPendingQuery query, CancellationToken token = default)
+    {
+        Validate(user, query.BusinessId, query.Page, query.PageSize);
+        return store.GetPendingTransfersAsync(user, query with { Search = Normalize(query.Search) }, token);
+    }
+
+    public Task<WarehouseTransferDetail?> GetTransferAsync(InventoryUserIdentity user, Guid transferId, CancellationToken token = default)
+    {
+        Validate(user, user.BusinessId, 1, 1);
+        if (transferId == Guid.Empty) throw new InventoryValidationException("TransferId is required.");
+        return store.GetTransferAsync(user, transferId, token);
     }
 
 

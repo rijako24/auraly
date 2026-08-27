@@ -208,7 +208,9 @@ public sealed partial class SqlOnlineSalesDraftStore
                 payment.Amount,
                 string.IsNullOrWhiteSpace(payment.Reference)
                     ? null
-                    : payment.Reference.Trim())).ToArray();
+                    : payment.Reference.Trim(),
+                string.IsNullOrWhiteSpace(payment.CardFranchiseCode) ? null : payment.CardFranchiseCode.Trim(),
+                string.IsNullOrWhiteSpace(payment.ApprovalNumber) ? null : payment.ApprovalNumber.Trim())).ToArray();
         var upload = new PosSaleUploadRequest(
             user.TenantId,
             state.BusinessId,
@@ -289,6 +291,8 @@ public sealed partial class SqlOnlineSalesDraftStore
             Credit: request.Credit is null || state.CustomerId is null ? null :
                 new PosSaleCreditContract(state.CustomerId.Value, request.Credit.Amount, request.Credit.DueDate),
             FiscalHabilitationOnly: request.FiscalHabilitationOnly);
+
+        await ReleaseOrderInventoryAsync(connection, transaction, user, state, cancellationToken);
 
         var nextDraftId = ids.NewId();
         var acquired = await ExecuteAsync(connection, transaction, """
@@ -815,7 +819,11 @@ public sealed partial class SqlOnlineSalesDraftStore
                 .Append(':')
                 .Append(payment.Amount.ToString(CultureInfo.InvariantCulture))
                 .Append(':')
-                .Append(payment.Reference?.Trim());
+                .Append(payment.Reference?.Trim())
+                .Append(':')
+                .Append(payment.CardFranchiseCode?.Trim())
+                .Append(':')
+                .Append(payment.ApprovalNumber?.Trim());
         }
         if (request.Credit is not null)
             value.Append("|credit:").Append(request.Credit.Amount.ToString(CultureInfo.InvariantCulture))

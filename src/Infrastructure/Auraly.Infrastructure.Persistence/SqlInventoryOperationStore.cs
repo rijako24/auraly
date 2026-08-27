@@ -106,21 +106,177 @@ public sealed class SqlInventoryOperationStore(
             request.WarehouseId, null, request.OccurredAt, request.ReasonCode, null, request.CostCenterId, null, request.Notes,
             request.Lines.Select(line => new LineInput(line.LineNumber, "ADJUSTMENT", line.ProductId, line.QuantityChange, null, line.ExplicitUnitCost, null)).ToArray(), request, cancellationToken);
 
-    public Task<InventoryOperationAcceptance> ConfirmTransferAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmWarehouseTransferRequest request, CancellationToken cancellationToken) =>
-        AcceptNewAsync(user, idempotencyKey, request.DocumentId, InventoryDocumentTypes.Transfer,
-            request.SourceWarehouseId, request.DestinationWarehouseId, request.OccurredAt, request.ReasonCode, null, null, null, request.Notes,
-            request.Lines.Select(line => new LineInput(line.LineNumber, "TRANSFER", line.ProductId, line.Quantity, null, null, null)).ToArray(), request, cancellationToken);
-
-    public async Task<InventoryOperationAcceptance> ConfirmTransferAtomicallyAsync(
+    public async Task<InventoryOperationAcceptance> DispatchTransferAsync(
         InventoryUserIdentity user,
         string idempotencyKey,
-        ConfirmWarehouseTransferRequest request,
+        DispatchWarehouseTransferRequest request,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        try
+        {
+            var requestHash = Hash(request);
+            var replay = await TryTransferStageReplayAsync(connection, transaction, request.BusinessId, request.DocumentId,
+                InventoryDocumentTypes.TransferDispatch, idempotencyKey, requestHash, cancellationToken);
+            if (replay is not null) { await transaction.CommitAsync(cancellationToken); return replay; }
+
+            await ValidateScopeAsync(connection, transaction, user, request.SourceWarehouseId,
+                request.DestinationWarehouseId, request.Lines.Select(line => line.ProductId), cancellationToken);
+            var transitWarehouseId = await LoadTransitWarehouseAsync(connection, transaction, request.BusinessId, cancellationToken);
+            var reasonDescription = await LoadActiveReasonAsync(connection, transaction, user.BusinessId,
+                InventoryDocumentTypes.Transfer, request.ReasonCode, cancellationToken);
+            var products = (await LoadProductsAsync(connection, transaction, request.BusinessId,
+                request.SourceWarehouseId, request.Lines.Select(line => line.ProductId), cancellationToken)).ToDictionary(product => product.Id);
+            var lines = request.Lines.Select(line => new InventoryOperationLineSnapshot(
+                line.LineNumber, "TRANSFER", line.ProductId, products[line.ProductId].Code,
+                products[line.ProductId].Name, line.DispatchedQuantity, null, null, null, null,
+                DispatchedQuantity: line.DispatchedQuantity, ReceivedQuantity: 0m, TransferId: request.DocumentId)).ToArray();
+            var now = timeProvider.GetUtcNow();
+            const string insert = """
+                INSERT dbo.InventoryOperations
+                  (InventoryOperationId,BusinessId,DocumentType,WarehouseId,DestinationWarehouseId,TransitWarehouseId,TransferMode,
+                   OccurredAt,ReasonCode,ReasonDescription,Notes,Status,CreatedAt)
+                VALUES(@Id,@BusinessId,N'WarehouseTransfer',@WarehouseId,@Destination,@Transit,N'DispatchAndReceive',
+                   @OccurredAt,@Reason,@ReasonDescription,@Notes,N'Draft',@Now);
+                """;
+            await using (var command = new SqlCommand(insert, connection, transaction))
+            {
+                command.Parameters.AddWithValue("@Id", request.DocumentId);
+                command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
+                command.Parameters.AddWithValue("@WarehouseId", request.SourceWarehouseId);
+                command.Parameters.AddWithValue("@Destination", request.DestinationWarehouseId);
+                command.Parameters.AddWithValue("@Transit", transitWarehouseId);
+                command.Parameters.AddWithValue("@OccurredAt", request.OccurredAt);
+                command.Parameters.AddWithValue("@Reason", request.ReasonCode);
+                command.Parameters.AddWithValue("@ReasonDescription", reasonDescription);
+                command.Parameters.AddWithValue("@Notes", (object?)request.Notes ?? DBNull.Value);
+                command.Parameters.AddWithValue("@Now", now);
+                await command.ExecuteNonQueryAsync(cancellationToken);
+            }
+            await InsertLinesAsync(connection, transaction, request.DocumentId, lines, cancellationToken);
+            var acceptance = await AcceptTransferDispatchAsync(connection, transaction, user, idempotencyKey,
+                requestHash, request, transitWarehouseId, lines, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return acceptance;
+        }
+        catch (SqlException exception) when (exception.Number is 2601 or 2627)
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw new InventoryConflictException("The transfer document or idempotency key is already in use.");
+        }
+        catch { await transaction.RollbackAsync(CancellationToken.None); throw; }
+    }
+
+    public async Task<InventoryOperationAcceptance> ReceiveTransferAsync(
+        InventoryUserIdentity user,
+        Guid transferId,
+        string idempotencyKey,
+        ReceiveWarehouseTransferRequest request,
+        byte[] rowVersion,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        try
+        {
+            var requestHash = Hash(new { transferId, request });
+            var replay = await TryReceiptReplayAsync(connection, transaction, request.BusinessId, request.ReceiptId,
+                idempotencyKey, requestHash, cancellationToken);
+            if (replay is not null) { await transaction.CommitAsync(cancellationToken); return replay; }
+
+            var transfer = await LoadReceivableTransferAsync(connection, transaction, user, transferId, rowVersion, cancellationToken);
+            var requested = request.Lines.ToDictionary(line => line.LineNumber);
+            if (requested.Count != transfer.Lines.Count || transfer.Lines.Any(line =>
+                    !requested.TryGetValue(line.LineNumber, out var received) || received.ProductId != line.ProductId))
+                throw new InventoryValidationException("The receipt must contain exactly the products and lines dispatched by the source warehouse.");
+            if (transfer.Lines.Any(line => requested[line.LineNumber].ReceivedQuantity > line.PendingQuantity))
+                throw new InventoryValidationException("A receipt cannot exceed the quantity still in transit.");
+            var hasDifference = transfer.Lines.Any(line => requested[line.LineNumber].ReceivedQuantity != line.PendingQuantity);
+            if (hasDifference && string.IsNullOrWhiteSpace(request.DifferenceReasonCode))
+                throw new InventoryValidationException("DifferenceReasonCode is required when the received quantity differs from the pending quantity.");
+            if (hasDifference && !user.Permissions.Contains(InventoryPermissionCodes.ResolveTransferDifference))
+                throw new InventoryForbiddenException($"Permission '{InventoryPermissionCodes.ResolveTransferDifference}' is required to confirm a transfer difference.");
+            if (hasDifference)
+                _ = await LoadActiveReasonAsync(connection, transaction, user.BusinessId,
+                    InventoryDocumentTypes.Transfer, request.DifferenceReasonCode!, cancellationToken);
+
+            var now = timeProvider.GetUtcNow();
+            const string insert = """
+                INSERT dbo.InventoryTransferReceipts
+                  (InventoryTransferReceiptId,TransferId,BusinessId,DestinationWarehouseId,IdempotencyKey,RequestHash,
+                   DifferenceReasonCode,Notes,Status,ReceivedByUserId,OccurredAt,CreatedAt)
+                VALUES(@ReceiptId,@TransferId,@BusinessId,@Destination,@Key,@Hash,@Reason,@Notes,N'Accepted',@UserId,@OccurredAt,@Now);
+                """;
+            await using (var command = new SqlCommand(insert, connection, transaction))
+            {
+                command.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+                command.Parameters.AddWithValue("@TransferId", transferId);
+                command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
+                command.Parameters.AddWithValue("@Destination", transfer.DestinationWarehouseId);
+                command.Parameters.AddWithValue("@Key", idempotencyKey);
+                command.Parameters.Add("@Hash", SqlDbType.Binary, 32).Value = requestHash;
+                command.Parameters.AddWithValue("@Reason", (object?)request.DifferenceReasonCode ?? DBNull.Value);
+                command.Parameters.AddWithValue("@Notes", (object?)request.Notes ?? DBNull.Value);
+                command.Parameters.AddWithValue("@UserId", user.UserId);
+                command.Parameters.AddWithValue("@OccurredAt", request.OccurredAt);
+                command.Parameters.AddWithValue("@Now", now);
+                await command.ExecuteNonQueryAsync(cancellationToken);
+            }
+            var payloadLines = new List<InventoryOperationLineSnapshot>();
+            foreach (var line in transfer.Lines.OrderBy(line => line.LineNumber))
+            {
+                var received = requested[line.LineNumber].ReceivedQuantity;
+                const string insertLine = """
+                    INSERT dbo.InventoryTransferReceiptLines
+                      (InventoryTransferReceiptId,LineNumber,ProductId,ReceivedQuantity)
+                    VALUES(@ReceiptId,@Line,@ProductId,@Quantity);
+                    """;
+                await using var command = new SqlCommand(insertLine, connection, transaction);
+                command.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+                command.Parameters.AddWithValue("@Line", line.LineNumber);
+                command.Parameters.AddWithValue("@ProductId", line.ProductId);
+                AddDecimal(command, "@Quantity", received, 19, 6);
+                await command.ExecuteNonQueryAsync(cancellationToken);
+                if (received > 0)
+                    payloadLines.Add(new InventoryOperationLineSnapshot(line.LineNumber, "TRANSFER", line.ProductId,
+                        line.ProductCode, line.ProductName, received, null, null, null, null,
+                        DispatchedQuantity: line.DispatchedQuantity, ReceivedQuantity: received,
+                        DispatchUnitCost: line.DispatchUnitCost, TransferId: transferId));
+            }
+            var acceptance = await AcceptTransferReceiptAsync(connection, transaction, user, request, transfer,
+                payloadLines, cancellationToken);
+            const string pending = "UPDATE dbo.InventoryOperations SET Status=N'ReceiptPending' WHERE InventoryOperationId=@Id AND BusinessId=@BusinessId AND Status IN(N'Dispatched',N'PartiallyReceived');";
+            await using (var command = new SqlCommand(pending, connection, transaction))
+            {
+                command.Parameters.AddWithValue("@Id", transferId);
+                command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
+                if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+                    throw new DBConcurrencyException("The transfer changed while its receipt was being confirmed.");
+            }
+            await transaction.CommitAsync(cancellationToken);
+            return acceptance;
+        }
+        catch (SqlException exception) when (exception.Number is 2601 or 2627)
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw new InventoryConflictException("The receipt or idempotency key is already in use.");
+        }
+        catch { await transaction.RollbackAsync(CancellationToken.None); throw; }
+    }
+
+    public async Task<InventoryOperationAcceptance> ConfirmSystemTransferAtomicallyAsync(
+        InventoryUserIdentity user,
+        string idempotencyKey,
+        DispatchWarehouseTransferRequest request,
         SqlConnection connection,
         SqlTransaction transaction,
         CancellationToken cancellationToken)
     {
         var inputLines = request.Lines
-            .Select(line => new LineInput(line.LineNumber, "TRANSFER", line.ProductId, line.Quantity, null, null, null))
+            .Select(line => new LineInput(line.LineNumber, "TRANSFER", line.ProductId, line.DispatchedQuantity, null, null, null))
             .ToArray();
         var requestHash = Hash(request);
         var replay = await TryReplayAsync(connection, transaction, request.BusinessId, request.DocumentId,
@@ -141,14 +297,15 @@ public sealed class SqlInventoryOperationStore(
             request.SourceWarehouseId, inputLines.Select(line => line.ProductId), cancellationToken)).ToDictionary(product => product.Id);
         var lines = inputLines.Select(line => new InventoryOperationLineSnapshot(
             line.LineNumber, line.Direction, line.ProductId, products[line.ProductId].Code,
-            products[line.ProductId].Name, line.Quantity, null, null, null, null)).ToArray();
+            products[line.ProductId].Name, line.Quantity, null, null, null, null,
+            DispatchedQuantity: line.Quantity, ReceivedQuantity: line.Quantity, TransferId: request.DocumentId)).ToArray();
         var now = timeProvider.GetUtcNow();
         const string insert = """
             INSERT dbo.InventoryOperations
               (InventoryOperationId,BusinessId,DocumentType,WarehouseId,DestinationWarehouseId,
-               OccurredAt,ReasonCode,ReasonDescription,Notes,Status,CreatedAt)
-            VALUES(@Id,@BusinessId,N'WarehouseTransfer',@WarehouseId,@Destination,@OccurredAt,
-               @Reason,@ReasonDescription,@Notes,N'Draft',@Now);
+               TransferMode,OccurredAt,ReasonCode,ReasonDescription,Notes,Status,CreatedAt)
+            VALUES(@Id,@BusinessId,N'WarehouseTransfer',@WarehouseId,@Destination,
+               N'ImmediateSystem',@OccurredAt,@Reason,@ReasonDescription,@Notes,N'Draft',@Now);
             """;
         await using (var command = new SqlCommand(insert, connection, transaction))
         {
@@ -330,6 +487,197 @@ public sealed class SqlInventoryOperationStore(
         return new InventoryOperationAcceptance(documentId, movementId, documentType, number.FullNumber, "Accepted", sequence, false);
     }
 
+    private async Task<InventoryOperationAcceptance> AcceptTransferDispatchAsync(
+        SqlConnection connection, SqlTransaction transaction, InventoryUserIdentity user, string idempotencyKey,
+        byte[] requestHash, DispatchWarehouseTransferRequest request, Guid transitWarehouseId,
+        IReadOnlyList<InventoryOperationLineSnapshot> lines, CancellationToken cancellationToken)
+    {
+        var number = await AllocateNumberAsync(connection, transaction, user.BusinessId, InventoryDocumentTypes.Transfer, cancellationToken);
+        var now = timeProvider.GetUtcNow();
+        var sequence = await AllocateSequenceAsync(connection, transaction, user.BusinessId, now, cancellationToken);
+        var payload = new InventoryOperationDocumentPayload(user.TenantId, user.BusinessId, request.DocumentId,
+            InventoryDocumentTypes.TransferDispatch, request.SourceWarehouseId, transitWarehouseId, user.UserId,
+            number.FullNumber, number.SeriesId, number.Prefix, number.SeriesCode, number.Consecutive,
+            request.OccurredAt, request.ReasonCode, null, null, null, request.Notes, lines);
+        var payloadJson = InventoryOperationContractSerializer.Serialize(payload);
+        var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(payloadJson));
+        var movementId = ids.NewId();
+        const string sql = """
+            UPDATE dbo.InventoryOperations SET
+              DocumentSeriesId=@SeriesId,DocumentNumber=@Number,DocumentPrefix=@Prefix,DocumentSeriesCode=@SeriesCode,
+              DocumentConsecutive=@Consecutive,IdempotencyKey=@Key,PayloadHash=@RequestHash,Status=N'DispatchPending',
+              ConfirmedByUserId=@UserId,AcceptedAt=@Now
+            WHERE InventoryOperationId=@DocumentId AND BusinessId=@BusinessId AND Status=N'Draft';
+            IF @@ROWCOUNT<>1 THROW 51210,'The warehouse transfer is not an editable draft.',1;
+            INSERT dbo.DocumentProcessingJobs
+              (JobId,BusinessId,ProcessingSequence,DocumentId,DocumentType,Status,AvailableAt,CreatedAt)
+            VALUES(@JobId,@BusinessId,@Sequence,@DocumentId,N'WarehouseTransferDispatch',N'Pending',@Now,@Now);
+            INSERT dbo.DocumentProcessingPayloads
+              (DocumentId,DocumentType,BusinessId,ContractVersion,PayloadJson,PayloadHash,AcceptedAt)
+            VALUES(@DocumentId,N'WarehouseTransferDispatch',@BusinessId,1,@Payload,@PayloadHash,@Now);
+            """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@SeriesId", number.SeriesId);
+        command.Parameters.AddWithValue("@Number", number.FullNumber);
+        command.Parameters.AddWithValue("@Prefix", number.Prefix);
+        command.Parameters.AddWithValue("@SeriesCode", number.SeriesCode);
+        command.Parameters.AddWithValue("@Consecutive", number.Consecutive);
+        command.Parameters.AddWithValue("@Key", idempotencyKey);
+        command.Parameters.Add("@RequestHash", SqlDbType.Binary, 32).Value = requestHash;
+        command.Parameters.AddWithValue("@UserId", user.UserId);
+        command.Parameters.AddWithValue("@Now", now);
+        command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        command.Parameters.AddWithValue("@JobId", movementId);
+        command.Parameters.AddWithValue("@Sequence", sequence);
+        command.Parameters.AddWithValue("@Payload", payloadJson);
+        command.Parameters.Add("@PayloadHash", SqlDbType.Binary, 32).Value = payloadHash;
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        return new InventoryOperationAcceptance(request.DocumentId, movementId, InventoryDocumentTypes.TransferDispatch,
+            number.FullNumber, "DispatchPending", sequence, false);
+    }
+
+    private async Task<InventoryOperationAcceptance> AcceptTransferReceiptAsync(
+        SqlConnection connection, SqlTransaction transaction, InventoryUserIdentity user,
+        ReceiveWarehouseTransferRequest request, ReceivableTransfer transfer,
+        IReadOnlyList<InventoryOperationLineSnapshot> lines, CancellationToken cancellationToken)
+    {
+        var now = timeProvider.GetUtcNow();
+        var sequence = await AllocateSequenceAsync(connection, transaction, user.BusinessId, now, cancellationToken);
+        var payload = new InventoryOperationDocumentPayload(user.TenantId, user.BusinessId, request.ReceiptId,
+            InventoryDocumentTypes.TransferReceipt, transfer.TransitWarehouseId, transfer.DestinationWarehouseId,
+            user.UserId, transfer.DocumentNumber, transfer.DocumentSeriesId, transfer.DocumentPrefix,
+            transfer.DocumentSeriesCode, transfer.DocumentConsecutive, request.OccurredAt,
+            request.DifferenceReasonCode ?? transfer.ReasonCode, null, null, null, request.Notes, lines);
+        var payloadJson = InventoryOperationContractSerializer.Serialize(payload);
+        var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(payloadJson));
+        var movementId = ids.NewId();
+        const string sql = """
+            INSERT dbo.DocumentProcessingJobs
+              (JobId,BusinessId,ProcessingSequence,DocumentId,DocumentType,Status,AvailableAt,CreatedAt)
+            VALUES(@JobId,@BusinessId,@Sequence,@ReceiptId,N'WarehouseTransferReceipt',N'Pending',@Now,@Now);
+            INSERT dbo.DocumentProcessingPayloads
+              (DocumentId,DocumentType,BusinessId,ContractVersion,PayloadJson,PayloadHash,AcceptedAt)
+            VALUES(@ReceiptId,N'WarehouseTransferReceipt',@BusinessId,1,@Payload,@PayloadHash,@Now);
+            """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@JobId", movementId);
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        command.Parameters.AddWithValue("@Sequence", sequence);
+        command.Parameters.AddWithValue("@ReceiptId", request.ReceiptId);
+        command.Parameters.AddWithValue("@Now", now);
+        command.Parameters.AddWithValue("@Payload", payloadJson);
+        command.Parameters.Add("@PayloadHash", SqlDbType.Binary, 32).Value = payloadHash;
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        return new InventoryOperationAcceptance(request.ReceiptId, movementId, InventoryDocumentTypes.TransferReceipt,
+            transfer.DocumentNumber, "ReceiptPending", sequence, false);
+    }
+
+    private static async Task<InventoryOperationAcceptance?> TryTransferStageReplayAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid businessId, Guid documentId, string stageType,
+        string idempotencyKey, byte[] requestHash, CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT o.InventoryOperationId,o.DocumentNumber,o.Status,o.PayloadHash,j.ProcessingSequence,j.JobId
+            FROM dbo.InventoryOperations o WITH(UPDLOCK,HOLDLOCK)
+            INNER JOIN dbo.DocumentProcessingJobs j ON j.DocumentId=o.InventoryOperationId AND j.DocumentType=@StageType
+            WHERE o.BusinessId=@BusinessId AND (o.InventoryOperationId=@DocumentId OR o.IdempotencyKey=@Key) AND o.Status<>N'Draft';
+            """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        command.Parameters.AddWithValue("@Key", idempotencyKey);
+        command.Parameters.AddWithValue("@StageType", stageType);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        if (!reader.GetFieldValue<byte[]>(3).AsSpan().SequenceEqual(requestHash))
+            throw new InventoryConflictException("The idempotency key or DocumentId was reused with another payload.");
+        return new InventoryOperationAcceptance(reader.GetGuid(0), reader.GetGuid(5), stageType, reader.GetString(1),
+            reader.GetString(2), reader.GetInt64(4), true);
+    }
+
+    private static async Task<InventoryOperationAcceptance?> TryReceiptReplayAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid businessId, Guid receiptId,
+        string idempotencyKey, byte[] requestHash, CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT r.InventoryTransferReceiptId,o.DocumentNumber,r.Status,r.RequestHash,j.ProcessingSequence,j.JobId
+            FROM dbo.InventoryTransferReceipts r WITH(UPDLOCK,HOLDLOCK)
+            INNER JOIN dbo.InventoryOperations o ON o.InventoryOperationId=r.TransferId
+            INNER JOIN dbo.DocumentProcessingJobs j ON j.DocumentId=r.InventoryTransferReceiptId AND j.DocumentType=N'WarehouseTransferReceipt'
+            WHERE r.BusinessId=@BusinessId AND (r.InventoryTransferReceiptId=@ReceiptId OR r.IdempotencyKey=@Key);
+            """;
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@ReceiptId", receiptId);
+        command.Parameters.AddWithValue("@Key", idempotencyKey);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        if (!reader.GetFieldValue<byte[]>(3).AsSpan().SequenceEqual(requestHash))
+            throw new InventoryConflictException("The receipt idempotency key or ReceiptId was reused with another payload.");
+        return new InventoryOperationAcceptance(reader.GetGuid(0), reader.GetGuid(5), InventoryDocumentTypes.TransferReceipt,
+            reader.GetString(1), reader.GetString(2), reader.GetInt64(4), true);
+    }
+
+    private static async Task<Guid> LoadTransitWarehouseAsync(SqlConnection connection, SqlTransaction transaction,
+        Guid businessId, CancellationToken cancellationToken)
+    {
+        const string sql = "SELECT WarehouseId FROM dbo.Warehouses WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@BusinessId AND Code=N'TRA' AND IsSystem=1 AND IsActive=1;";
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return result is Guid value ? value : throw new InventoryValidationException("The inventory transit warehouse is not provisioned for this business.");
+    }
+
+    private static async Task<ReceivableTransfer> LoadReceivableTransferAsync(
+        SqlConnection connection, SqlTransaction transaction, InventoryUserIdentity user, Guid transferId,
+        byte[] rowVersion, CancellationToken cancellationToken)
+    {
+        const string headerSql = """
+            SELECT o.DestinationWarehouseId,o.TransitWarehouseId,o.DocumentNumber,o.DocumentSeriesId,o.DocumentPrefix,
+                   o.DocumentSeriesCode,o.DocumentConsecutive,o.ReasonCode,o.RowVersion
+            FROM dbo.InventoryOperations o WITH(UPDLOCK,HOLDLOCK)
+            INNER JOIN dbo.Businesses b ON b.BusinessId=o.BusinessId
+            WHERE o.InventoryOperationId=@Id AND o.BusinessId=@BusinessId AND b.TenantId=@TenantId
+              AND o.DocumentType=N'WarehouseTransfer' AND o.TransferMode=N'DispatchAndReceive'
+              AND o.Status IN(N'Dispatched',N'PartiallyReceived');
+            """;
+        Guid destination; Guid transit; string number; Guid series; string prefix; string seriesCode; long consecutive; string reason;
+        await using (var command = new SqlCommand(headerSql, connection, transaction))
+        {
+            command.Parameters.AddWithValue("@Id", transferId);
+            command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+            command.Parameters.AddWithValue("@TenantId", user.TenantId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken))
+                throw new InventoryValidationException("The transfer is not available for receipt.");
+            if (!reader.GetFieldValue<byte[]>(8).AsSpan().SequenceEqual(rowVersion))
+                throw new InventoryConflictException("The transfer changed after it was loaded. Reload it before confirming receipt.");
+            destination = reader.GetGuid(0); transit = reader.GetGuid(1); number = reader.GetString(2);
+            series = reader.GetGuid(3); prefix = reader.GetString(4); seriesCode = reader.GetString(5);
+            consecutive = reader.GetInt64(6); reason = reader.GetString(7);
+        }
+        const string linesSql = """
+            SELECT LineNumber,ProductId,ProductCodeSnapshot,DescriptionSnapshot,DispatchedQuantity,ReceivedQuantity,DispatchUnitCost
+            FROM dbo.InventoryOperationLines WITH(UPDLOCK,HOLDLOCK)
+            WHERE InventoryOperationId=@Id ORDER BY LineNumber;
+            """;
+        var lines = new List<ReceivableTransferLine>();
+        await using (var command = new SqlCommand(linesSql, connection, transaction))
+        {
+            command.Parameters.AddWithValue("@Id", transferId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var dispatched = reader.GetDecimal(4);
+                var received = reader.GetDecimal(5);
+                lines.Add(new ReceivableTransferLine(reader.GetInt32(0), reader.GetGuid(1), reader.GetString(2),
+                    reader.GetString(3), dispatched, received, dispatched - received, reader.GetDecimal(6)));
+            }
+        }
+        return new ReceivableTransfer(destination, transit, number, series, prefix, seriesCode, consecutive, reason, lines);
+    }
+
     private static async Task<InventoryOperationAcceptance?> TryReplayAsync(SqlConnection connection, SqlTransaction transaction,
         Guid businessId, Guid documentId, string idempotencyKey, byte[] requestHash, CancellationToken cancellationToken)
     {
@@ -491,9 +839,9 @@ public sealed class SqlInventoryOperationStore(
             INSERT dbo.InventoryOperationLines
               (InventoryOperationId,LineNumber,Direction,ProductId,ProductCodeSnapshot,DescriptionSnapshot,
                Quantity,PreCountQuantity,SystemQuantityAtBase,ExplicitUnitCost,AllocationWeight,
-               ConversionFactor,ConversionEquivalentQuantity)
+               ConversionFactor,ConversionEquivalentQuantity,DispatchedQuantity,ReceivedQuantity,DispatchUnitCost)
             VALUES(@Id,@Line,@Direction,@ProductId,@Code,@Description,@Quantity,@PreCount,@SystemAtBase,@UnitCost,@Weight,
-               @ConversionFactor,@ConversionEquivalentQuantity);
+               @ConversionFactor,@ConversionEquivalentQuantity,@DispatchedQuantity,@ReceivedQuantity,@DispatchUnitCost);
             """;
         foreach (var line in lines)
         {
@@ -511,6 +859,9 @@ public sealed class SqlInventoryOperationStore(
             AddNullableDecimal(command, "@Weight", line.AllocationWeight, 9, 6);
             AddNullableDecimal(command, "@ConversionFactor", line.ConversionFactor, 19, 6);
             AddNullableDecimal(command, "@ConversionEquivalentQuantity", line.ConversionEquivalentQuantity, 19, 6);
+            AddNullableDecimal(command, "@DispatchedQuantity", line.DispatchedQuantity, 19, 6);
+            AddNullableDecimal(command, "@ReceivedQuantity", line.ReceivedQuantity, 19, 6);
+            AddNullableDecimal(command, "@DispatchUnitCost", line.DispatchUnitCost, 19, 6);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
     }
@@ -681,6 +1032,25 @@ public sealed class SqlInventoryOperationStore(
     private sealed record LineInput(int LineNumber,string Direction,Guid ProductId,decimal Quantity,decimal? SystemQuantityAtBase,decimal? ExplicitUnitCost,decimal? AllocationWeight);
     private sealed record ProductState(Guid Id,string Code,string Name,decimal Quantity);
     private sealed record CountDraftState(Guid WarehouseId,DateTimeOffset OccurredAt,string ReasonCode,long BaseSequence,string? Notes,IReadOnlyList<InventoryOperationLineSnapshot> Lines);
+    private sealed record ReceivableTransfer(
+        Guid DestinationWarehouseId,
+        Guid TransitWarehouseId,
+        string DocumentNumber,
+        Guid DocumentSeriesId,
+        string DocumentPrefix,
+        string DocumentSeriesCode,
+        long DocumentConsecutive,
+        string ReasonCode,
+        IReadOnlyList<ReceivableTransferLine> Lines);
+    private sealed record ReceivableTransferLine(
+        int LineNumber,
+        Guid ProductId,
+        string ProductCode,
+        string ProductName,
+        decimal DispatchedQuantity,
+        decimal ReceivedQuantity,
+        decimal PendingQuantity,
+        decimal DispatchUnitCost);
     private sealed record ConversionMetadata(
         Guid FamilyRootProductId,
         decimal MaximumLossPercent,

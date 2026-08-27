@@ -142,6 +142,7 @@ GO
 PRINT 'Post-deployment scripts executed successfully.';
 
 :r .\Seeds\SeedInventoryPermissions.sql
+:r .\Seeds\SeedInventoryTransitWarehouses.sql
 :r .\Seeds\SeedInventoryReasons.sql
 :r .\Seeds\SeedInventoryDocumentSeries.sql
 :r .\Seeds\SeedRoutePermissions.sql

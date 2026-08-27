@@ -26,7 +26,7 @@ No cambia las decisiones de identificadores, numeración Auraly, numeración DIA
 
 Auraly procesará cada documento definitivo de forma atómica y en orden estricto dentro de su `BusinessId`. Negocios diferentes podrán procesarse en paralelo.
 
-No habrá una cola global que serialice todos los tenants. Tampoco se permitirá ejecutar en paralelo documentos definitivos del mismo negocio que puedan alterar inventario, costo, caja o cartera.
+No habrá una cola global que serialice todos los tenants. Tampoco se permitirá ejecutar en paralelo documentos definitivos del mismo negocio que puedan alterar inventario o costo operacional. Los motores contable, fiscal y de reporting conservan sus propias claves de orden e idempotencia sin convertirse en rutas alternativas del motor documental.
 
 ```text
 Business A: 000001 -> 000002 -> 000003
@@ -44,11 +44,13 @@ El orden también es esencial para:
 
 - bloquear negativos;
 - aplicar conteos sin borrar movimientos posteriores;
-- trasladar cantidad y valor atómicamente;
+- trasladar cantidad y valor atómicamente por etapa de despacho o recepción;
 - conservar valor en conversiones;
 - limitar devoluciones al saldo no devuelto;
-- vincular pagos a obligaciones existentes;
-- contabilizar documentos y reversiones en secuencia trazable.
+- emitir señales durables hacia pagos, obligaciones y contabilidad sin duplicar
+  sus efectos en el motor documental;
+- contabilizar documentos y reversiones en secuencia trazable dentro del motor
+  contable propietario.
 
 ## 4. Qué define el orden
 
@@ -68,7 +70,11 @@ Documento, líneas, hash, secuencia y trabajo durable se guardan en una sola tra
 
 La unidad de procesamiento es el documento completo, no cada línea.
 
-Una factura de cincuenta productos genera un trabajo. Dentro de una sola transacción, su procesador registra todas las líneas, movimientos de inventario, impuestos, pagos, caja o cartera, vínculos, auditoría, solicitud contable y outbox.
+Una factura de cincuenta productos genera un trabajo operacional. Dentro de una
+sola transacción, su procesador registra todas las líneas, movimientos de
+inventario, costo físico, vínculos operacionales, auditoría y outbox. Cartera,
+pagos, caja financiera, contabilidad, fiscal y reporting se ejecutan en sus
+motores canónicos a partir de señales durables idempotentes.
 
 No puede confirmarse parcialmente.
 
@@ -146,7 +152,7 @@ Los errores de datos y configuración se detectan antes de asignar la secuencia 
 
 ### 8.1 Un trabajo crítico no se salta
 
-`NeedsIntervention` es un estado bloqueante. No avanza `LastCompletedSequence` y no autoriza ejecutar el documento siguiente. Esta regla aplica a inventarios, entradas, ventas, devoluciones, traslados, conversiones, caja y cartera.
+`NeedsIntervention` es un estado bloqueante. No avanza `LastCompletedSequence` y no autoriza ejecutar el documento siguiente. Esta regla aplica al orden operacional de inventarios, entradas, ventas, devoluciones, traslados y conversiones. Caja financiera y cartera no se procesan en este cursor.
 
 Un documento solamente libera su posición cuando ocurre uno de estos resultados:
 
@@ -196,21 +202,30 @@ Entradas, ventas o traslados posteriores al inicio permanecen intactos.
 
 ## 12. Traslados, conversiones y reversiones
 
-- Un traslado descuenta origen y aumenta destino en la misma transacción.
+- Un traslado manual confirma primero origen → tránsito y después tránsito →
+  destino. Cada etapa es atómica; lo despachado y lo recibido quedan preservados
+  por línea y una recepción parcial conserva su remanente en tránsito.
+- Los pedidos usan el modo interno inmediato: un documento multilínea reserva el
+  pedido completo en `PED` y otro documento multilínea lo libera completo hacia
+  la bodega de venta antes de facturar.
 - Una conversión consume y produce cantidad y valor atómicamente; la merma es explícita.
 - Una anulación crea un documento y movimiento inverso; no elimina kardex.
 - Una nota crédito restaura inventario solamente para las líneas cuya disposición física lo determine.
 
 ## 13. Carriles derivados
 
-La secuencia crítica del negocio cubre documento, inventario, costo, caja y cartera. En el mismo commit crea trabajos derivados durables:
+La secuencia crítica operacional cubre documento, inventario y costo. En el mismo
+commit crea señales de outbox durables para los motores derivados aplicables:
 
 - contabilidad;
 - fiscal;
 - outbox y notificaciones;
 - reportes/proyecciones.
 
-La contabilidad se ordena por entidad legal. DIAN se procesa por documento y dependencias. Un error fiscal o contable no reaplica inventario, pagos ni cartera.
+La contabilidad se ordena por entidad legal y es la única propietaria de
+submayores, pagos, aplicaciones y libro mayor. DIAN se procesa por documento y
+dependencias. Un error fiscal o contable no reaplica inventario ni autoriza un
+writer financiero alterno.
 
 Una configuración contable faltante genera `AccountingPendingConfiguration`, impide cerrar el periodo y exige corrección, pero no elimina una factura offline ya emitida.
 
@@ -229,7 +244,7 @@ La implementación debe probar con SQL Server real:
 - fallo y recuperación de lease;
 - duplicado y respuesta HTTP perdida;
 - documento multilínea sin efectos parciales;
-- traslado y conversión atómicos;
+- despacho, recepción parcial/final y conversión atómicos;
 - conteo con movimientos posteriores;
 - venta offline tardía y negativo permitido;
 - entrada posterior a negativo;

@@ -36,6 +36,12 @@ public sealed partial class SqlOnlineSalesDraftStore
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
+            DECLARE @InventoryWarehouseId uniqueidentifier=@WarehouseId;
+            IF @SourceOrderId IS NOT NULL
+              SELECT @InventoryWarehouseId=OrdersWarehouseId
+              FROM dbo.Orders WITH(UPDLOCK,HOLDLOCK)
+              WHERE OrderId=@SourceOrderId AND BusinessId=@BusinessId;
+
             SELECT line.SalesDraftLineId,line.ProductId,line.ProductCode,line.Description,
                    line.Quantity,COALESCE(link.InventoryFactor,1),
                    COALESCE(link.ParentProductId,line.ProductId) InventoryProductId,
@@ -50,7 +56,7 @@ public sealed partial class SqlOnlineSalesDraftStore
               ON inventoryProduct.BusinessId=@BusinessId
              AND inventoryProduct.ProductId=COALESCE(link.ParentProductId,line.ProductId)
             LEFT JOIN dbo.InventoryBalances balance WITH(UPDLOCK,HOLDLOCK)
-              ON balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId
+              ON balance.BusinessId=@BusinessId AND balance.WarehouseId=@InventoryWarehouseId
              AND balance.ProductId=inventoryProduct.ProductId
             WHERE line.SalesDraftId=@DraftId
             ORDER BY line.Position,line.SalesDraftLineId;
@@ -58,6 +64,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         command.Parameters.AddRange([
             P("@BusinessId", state.BusinessId),
             P("@WarehouseId", state.WarehouseId),
+            P("@SourceOrderId", state.SourceOrderId),
             P("@DraftId", draftId)
         ]);
 

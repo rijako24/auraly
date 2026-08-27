@@ -43,7 +43,23 @@ Las consultas son paginadas en servidor y combinan número, cliente, producto, e
 6. Importa todas las líneas de forma atómica; nunca deja media venta visible.
 7. Impide mezclarlo con productos o con otro pedido ya presente.
 
-En POS Edge el borrador queda en SQLite. Al emitir, `SourceOrderId` viaja dentro de la outbox durable. El servidor vincula el pedido en la misma transacción que procesa la venta y libera el claim. Un reintento no duplica factura, pago, inventario ni vínculo.
+En POS Edge el borrador queda en SQLite. Al emitir, `SourceOrderId` viaja dentro
+de la outbox durable. El servidor vincula el pedido en la transacción operacional
+que procesa la venta y libera el claim; el pago se procesa por el motor contable
+canónico. Un reintento no duplica factura, pago, inventario ni vínculo.
+
+### Inventario del pedido
+
+La reserva y la liberación nunca se fragmentan por producto:
+
+- al confirmar el pedido, una sola `WarehouseTransfer` multilínea mueve todos los
+  productos inventariables desde la bodega de venta hacia la bodega sistema `PED`;
+- antes de preparar factura o comprobante, una sola `WarehouseTransfer` multilínea
+  mueve todas las líneas inventariables desde `PED` hacia la bodega de venta y
+  queda referenciada en `Orders.ReleaseTransferId`;
+- el procesador de la venta registra únicamente `Sale` en la bodega de venta. No
+  crea `TransferOut`/`TransferIn` por línea y rechaza un pedido que no haya sido
+  liberado por el flujo anterior.
 
 ### Facturar varios
 

@@ -191,6 +191,92 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
         return new(items,query.Page,query.PageSize,total,Pages(total,query.PageSize));
     }
 
+    public async Task<WarehouseTransferPendingPage> GetPendingTransfersAsync(
+        InventoryUserIdentity user, WarehouseTransferPendingQuery query, CancellationToken token)
+    {
+        const string sql = """
+            SELECT COUNT(*)
+            FROM dbo.InventoryOperations o
+            INNER JOIN dbo.Warehouses source ON source.WarehouseId=o.WarehouseId
+            INNER JOIN dbo.Warehouses destination ON destination.WarehouseId=o.DestinationWarehouseId
+            WHERE o.BusinessId=@BusinessId AND o.DocumentType=N'WarehouseTransfer'
+              AND o.TransferMode=N'DispatchAndReceive' AND o.Status IN(N'Dispatched',N'PartiallyReceived')
+              AND (@Destination IS NULL OR o.DestinationWarehouseId=@Destination)
+              AND (@Search IS NULL OR o.DocumentNumber LIKE @Pattern OR source.Name LIKE @Pattern OR destination.Name LIKE @Pattern);
+
+            SELECT o.InventoryOperationId,o.DocumentNumber,o.WarehouseId,source.Name,o.DestinationWarehouseId,destination.Name,
+                   o.Status,o.DispatchedAt,COUNT(l.LineNumber),SUM(l.DispatchedQuantity),SUM(l.ReceivedQuantity),
+                   SUM(l.DispatchedQuantity-l.ReceivedQuantity),o.RowVersion
+            FROM dbo.InventoryOperations o
+            INNER JOIN dbo.Warehouses source ON source.WarehouseId=o.WarehouseId
+            INNER JOIN dbo.Warehouses destination ON destination.WarehouseId=o.DestinationWarehouseId
+            INNER JOIN dbo.InventoryOperationLines l ON l.InventoryOperationId=o.InventoryOperationId
+            WHERE o.BusinessId=@BusinessId AND o.DocumentType=N'WarehouseTransfer'
+              AND o.TransferMode=N'DispatchAndReceive' AND o.Status IN(N'Dispatched',N'PartiallyReceived')
+              AND (@Destination IS NULL OR o.DestinationWarehouseId=@Destination)
+              AND (@Search IS NULL OR o.DocumentNumber LIKE @Pattern OR source.Name LIKE @Pattern OR destination.Name LIKE @Pattern)
+            GROUP BY o.InventoryOperationId,o.DocumentNumber,o.WarehouseId,source.Name,o.DestinationWarehouseId,destination.Name,
+                     o.Status,o.DispatchedAt,o.RowVersion
+            ORDER BY o.DispatchedAt,o.InventoryOperationId
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            """;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(token);
+        await using var command = new SqlCommand(sql, connection);
+        AddCommon(command, user.BusinessId, query.DestinationWarehouseId, query.Search, query.Page, query.PageSize);
+        command.Parameters.AddWithValue("@Destination", (object?)query.DestinationWarehouseId ?? DBNull.Value);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        await reader.ReadAsync(token);
+        var total = reader.GetInt32(0);
+        await reader.NextResultAsync(token);
+        var items = new List<WarehouseTransferPendingItem>();
+        while (await reader.ReadAsync(token))
+            items.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetGuid(2), reader.GetString(3),
+                reader.GetGuid(4), reader.GetString(5), reader.GetString(6), reader.GetDateTimeOffset(7),
+                reader.GetInt32(8), reader.GetDecimal(9), reader.GetDecimal(10), reader.GetDecimal(11),
+                Convert.ToBase64String(reader.GetFieldValue<byte[]>(12))));
+        return new(items, query.Page, query.PageSize, total, Pages(total, query.PageSize));
+    }
+
+    public async Task<WarehouseTransferDetail?> GetTransferAsync(
+        InventoryUserIdentity user, Guid transferId, CancellationToken token)
+    {
+        const string sql = """
+            SELECT o.DocumentNumber,o.WarehouseId,source.Name,o.DestinationWarehouseId,destination.Name,o.ReasonCode,
+                   o.Notes,o.Status,o.DispatchedAt,o.ReceivedAt,o.RowVersion
+            FROM dbo.InventoryOperations o
+            INNER JOIN dbo.Warehouses source ON source.WarehouseId=o.WarehouseId
+            INNER JOIN dbo.Warehouses destination ON destination.WarehouseId=o.DestinationWarehouseId
+            WHERE o.InventoryOperationId=@Id AND o.BusinessId=@BusinessId AND o.DocumentType=N'WarehouseTransfer'
+              AND o.TransferMode=N'DispatchAndReceive';
+            SELECT l.LineNumber,l.ProductId,l.ProductCodeSnapshot,l.DescriptionSnapshot,l.DispatchedQuantity,
+                   l.ReceivedQuantity,l.DispatchedQuantity-l.ReceivedQuantity
+            FROM dbo.InventoryOperationLines l
+            INNER JOIN dbo.InventoryOperations o ON o.InventoryOperationId=l.InventoryOperationId
+            WHERE l.InventoryOperationId=@Id AND o.BusinessId=@BusinessId
+            ORDER BY l.LineNumber;
+            """;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(token);
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@Id", transferId);
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        if (!await reader.ReadAsync(token)) return null;
+        var number = reader.GetString(0); var sourceId = reader.GetGuid(1); var sourceName = reader.GetString(2);
+        var destinationId = reader.GetGuid(3); var destinationName = reader.GetString(4); var reason = reader.GetString(5);
+        var notes = reader.IsDBNull(6) ? null : reader.GetString(6); var status = reader.GetString(7);
+        var dispatchedAt = reader.GetDateTimeOffset(8); DateTimeOffset? receivedAt = reader.IsDBNull(9) ? null : reader.GetDateTimeOffset(9);
+        var version = Convert.ToBase64String(reader.GetFieldValue<byte[]>(10));
+        await reader.NextResultAsync(token);
+        var lines = new List<WarehouseTransferDetailLine>();
+        while (await reader.ReadAsync(token))
+            lines.Add(new(reader.GetInt32(0), reader.GetGuid(1), reader.GetString(2), reader.GetString(3),
+                reader.GetDecimal(4), reader.GetDecimal(5), reader.GetDecimal(6)));
+        return new(transferId, number, sourceId, sourceName, destinationId, destinationName, reason, notes,
+            status, dispatchedAt, receivedAt, version, lines);
+    }
+
     public async Task<InventoryOperationDetail?> GetOperationDetailAsync(
         InventoryUserIdentity user, Guid documentId, bool includeCosts, CancellationToken token)
     {
@@ -237,17 +323,18 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                    l.AllocationWeight,
                    CASE WHEN @IncludeCosts=1 THEN l.ProcessedUnitCost END,
                    CASE WHEN @IncludeCosts=1 THEN l.ProcessedValue END,
-                   l.ConversionFactor,l.ConversionEquivalentQuantity
+                   l.ConversionFactor,l.ConversionEquivalentQuantity,l.DispatchedQuantity,l.ReceivedQuantity
             FROM (
               SELECT l.InventoryOperationId DocumentId,l.LineNumber,l.Direction,l.ProductId,
                      l.ProductCodeSnapshot ProductCode,l.DescriptionSnapshot ProductName,
                      l.Quantity,l.PreCountQuantity,l.SystemQuantityAtBase,l.ExplicitUnitCost,l.AllocationWeight,
-                     l.ProcessedUnitCost,l.ProcessedValue,l.ConversionFactor,l.ConversionEquivalentQuantity
+                     l.ProcessedUnitCost,l.ProcessedValue,l.ConversionFactor,l.ConversionEquivalentQuantity,
+                     l.DispatchedQuantity,l.ReceivedQuantity
               FROM dbo.InventoryOperationLines l
               UNION ALL
               SELECT l.GoodsReceiptId,l.LineNumber,N'RECEIPT',l.ProductId,
                      COALESCE(p.ProductCode,p.Sku),l.DescriptionSnapshot,l.Quantity,
-                     NULL,NULL,l.UnitCost,NULL,l.UnitCost,l.LineTotal,NULL,NULL
+                     NULL,NULL,l.UnitCost,NULL,l.UnitCost,l.LineTotal,NULL,NULL,NULL,NULL
               FROM dbo.GoodsReceiptLines l
               INNER JOIN dbo.Products p ON p.ProductId=l.ProductId
             ) l
@@ -296,7 +383,9 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                 reader.IsDBNull(10) ? null : reader.GetDecimal(10),
                 reader.IsDBNull(11) ? null : reader.GetDecimal(11),
                 reader.IsDBNull(12) ? null : reader.GetDecimal(12),
-                reader.IsDBNull(13) ? null : reader.GetDecimal(13)));
+                reader.IsDBNull(13) ? null : reader.GetDecimal(13),
+                reader.IsDBNull(14) ? null : reader.GetDecimal(14),
+                reader.IsDBNull(15) ? null : reader.GetDecimal(15)));
         return detail with { Lines = lines };
     }
 

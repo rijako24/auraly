@@ -185,6 +185,8 @@ builder.Services.AddScoped<IConfirmedDocumentHandler, SqlStockCountDocumentHandl
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlInventoryDamageDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlInventoryAdjustmentDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlWarehouseTransferDocumentHandler>();
+builder.Services.AddScoped<IConfirmedDocumentHandler, SqlWarehouseTransferDispatchDocumentHandler>();
+builder.Services.AddScoped<IConfirmedDocumentHandler, SqlWarehouseTransferReceiptDocumentHandler>();
 builder.Services.AddScoped<IConfirmedDocumentHandler, SqlProductConversionDocumentHandler>();
 builder.Services.AddScoped<DocumentProcessingEngine>();
 builder.Services.AddScoped<DocumentProcessingWorker>();

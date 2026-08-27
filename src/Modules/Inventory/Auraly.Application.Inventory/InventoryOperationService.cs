@@ -8,7 +8,8 @@ public interface IInventoryOperationStore
     Task<StockCountDraft> StartCountAsync(InventoryUserIdentity user, StartStockCountRequest request, CancellationToken cancellationToken);
     Task<InventoryOperationAcceptance> ConfirmCountAsync(InventoryUserIdentity user, Guid documentId, string idempotencyKey, ConfirmStockCountRequest request, CancellationToken cancellationToken);
     Task<InventoryOperationAcceptance> ConfirmAdjustmentAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmInventoryAdjustmentRequest request, CancellationToken cancellationToken);
-    Task<InventoryOperationAcceptance> ConfirmTransferAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmWarehouseTransferRequest request, CancellationToken cancellationToken);
+    Task<InventoryOperationAcceptance> DispatchTransferAsync(InventoryUserIdentity user, string idempotencyKey, DispatchWarehouseTransferRequest request, CancellationToken cancellationToken);
+    Task<InventoryOperationAcceptance> ReceiveTransferAsync(InventoryUserIdentity user, Guid transferId, string idempotencyKey, ReceiveWarehouseTransferRequest request, byte[] rowVersion, CancellationToken cancellationToken);
     Task<InventoryOperationAcceptance> ConfirmConversionAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmProductConversionRequest request, CancellationToken cancellationToken);
     Task<InventoryOperationAcceptance> ConfirmDamageAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmInventoryDamageRequest request, CancellationToken cancellationToken);
 }
@@ -76,9 +77,9 @@ public sealed class InventoryOperationService(
         return await PublishAsync(await store.ConfirmAdjustmentAsync(user, idempotencyKey.Trim(), normalized, cancellationToken), request.BusinessId, cancellationToken);
     }
 
-    public async Task<InventoryOperationAcceptance> ConfirmTransferAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmWarehouseTransferRequest request, CancellationToken cancellationToken = default)
+    public async Task<InventoryOperationAcceptance> DispatchTransferAsync(InventoryUserIdentity user, string idempotencyKey, DispatchWarehouseTransferRequest request, CancellationToken cancellationToken = default)
     {
-        ValidateIdentity(user, request.BusinessId, InventoryPermissionCodes.Transfer);
+        ValidateIdentity(user, request.BusinessId, InventoryPermissionCodes.DispatchTransfer);
         Required(request.DocumentId, nameof(request.DocumentId));
         Required(request.SourceWarehouseId, nameof(request.SourceWarehouseId));
         Required(request.DestinationWarehouseId, nameof(request.DestinationWarehouseId));
@@ -88,10 +89,28 @@ public sealed class InventoryOperationService(
         ValidateKey(idempotencyKey);
         ValidateReason(request.ReasonCode);
         ValidateLines(request.Lines.Select(line => (line.LineNumber, line.ProductId)));
-        if (request.Lines.Any(line => line.Quantity <= 0))
+        if (request.Lines.Any(line => line.DispatchedQuantity <= 0))
             throw new InventoryValidationException("Transfer quantities must be positive.");
         var normalized = request with { ReasonCode = request.ReasonCode.Trim().ToUpperInvariant(), Notes = Notes(request.Notes) };
-        return await PublishAsync(await store.ConfirmTransferAsync(user, idempotencyKey.Trim(), normalized, cancellationToken), request.BusinessId, cancellationToken);
+        return await PublishAsync(await store.DispatchTransferAsync(user, idempotencyKey.Trim(), normalized, cancellationToken), request.BusinessId, cancellationToken);
+    }
+
+    public async Task<InventoryOperationAcceptance> ReceiveTransferAsync(InventoryUserIdentity user, Guid transferId, string idempotencyKey, ReceiveWarehouseTransferRequest request, CancellationToken cancellationToken = default)
+    {
+        ValidateIdentity(user, request.BusinessId, InventoryPermissionCodes.ReceiveTransfer);
+        Required(transferId, nameof(transferId));
+        Required(request.ReceiptId, nameof(request.ReceiptId));
+        Required(request.OccurredAt, nameof(request.OccurredAt));
+        ValidateKey(idempotencyKey);
+        ValidateLines(request.Lines.Select(line => (line.LineNumber, line.ProductId)));
+        if (request.Lines.Any(line => line.ReceivedQuantity < 0) || request.Lines.All(line => line.ReceivedQuantity == 0))
+            throw new InventoryValidationException("The receipt requires at least one positive quantity and cannot contain negative quantities.");
+        var version = RowVersion(request.RowVersion);
+        var normalizedReason = string.IsNullOrWhiteSpace(request.DifferenceReasonCode) ? null : request.DifferenceReasonCode.Trim().ToUpperInvariant();
+        if (normalizedReason?.Length > 40)
+            throw new InventoryValidationException("DifferenceReasonCode is limited to 40 characters.");
+        var normalized = request with { DifferenceReasonCode = normalizedReason, Notes = Notes(request.Notes) };
+        return await PublishAsync(await store.ReceiveTransferAsync(user, transferId, idempotencyKey.Trim(), normalized, version, cancellationToken), request.BusinessId, cancellationToken);
     }
 
     public async Task<InventoryOperationAcceptance> ConfirmDamageAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmInventoryDamageRequest request, CancellationToken cancellationToken = default)
@@ -170,6 +189,11 @@ public sealed class InventoryOperationService(
     private static void Required(Guid value, string name) { if (value == Guid.Empty) throw new InventoryValidationException($"{name} is required."); }
     private static void Required(DateTimeOffset value, string name) { if (value == default) throw new InventoryValidationException($"{name} is required."); }
     private static string? Notes(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim().Length <= 1000 ? value.Trim() : throw new InventoryValidationException("Notes are limited to 1000 characters.");
+    private static byte[] RowVersion(string value)
+    {
+        try { var bytes = Convert.FromBase64String(value); return bytes.Length == 8 ? bytes : throw new FormatException(); }
+        catch (FormatException) { throw new InventoryValidationException("RowVersion is invalid."); }
+    }
 }
 
 public sealed class InventoryForbiddenException(string message) : Exception(message);

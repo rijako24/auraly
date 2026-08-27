@@ -89,7 +89,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
             var previous=editable.Status==2?editable.ReservedQuantities:new Dictionary<Guid,decimal>();
             var increases=desired.Select(pair=>new{pair.Key,Quantity=pair.Value-(previous.TryGetValue(pair.Key,out var prior)?prior:0)}).Where(line=>line.Quantity>0).ToArray();
             var releases=previous.Select(pair=>new{pair.Key,Quantity=pair.Value-(desired.TryGetValue(pair.Key,out var next)?next:0)}).Where(line=>line.Quantity>0).ToArray();
-            var identity=new InventoryUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,new HashSet<string>{InventoryPermissionCodes.Transfer,"inventory.system-warehouses.use"});
+            var identity=new InventoryUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,new HashSet<string>{InventoryPermissionCodes.DispatchTransfer,"inventory.system-warehouses.use"});
             var key=request.IdempotencyKey.Trim();
             if(increases.Length>0)await TransferAsync(identity,$"seller-order-edit-increase:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-increase:{orderId:N}:{key}"),warehouseId,ordersWarehouseId,$"Aumento de reserva del pedido {number}",increases.Select(line=>(line.Key,line.Quantity)).ToArray(),connection,transaction,token);
             if(releases.Length>0)await TransferAsync(identity,$"seller-order-edit-release:{orderId:N}:{key}",DeterministicGuid($"seller-order-edit-release:{orderId:N}:{key}"),ordersWarehouseId,warehouseId,$"Liberación de reserva del pedido {number}",releases.Select(line=>(line.Key,line.Quantity)).ToArray(),connection,transaction,token);
@@ -108,7 +108,7 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
     }
 
     private async Task TransferAsync(InventoryUserIdentity identity,string idempotencyKey,Guid transferId,Guid source,Guid destination,string notes,IReadOnlyList<(Guid ProductId,decimal Quantity)> values,SqlConnection connection,SqlTransaction transaction,CancellationToken token)
-    {var transferLines=values.Select((line,index)=>new WarehouseTransferLineRequest(index+1,line.ProductId,line.Quantity)).ToArray();await inventory.ConfirmTransferAtomicallyAsync(identity,idempotencyKey,new ConfirmWarehouseTransferRequest(transferId,identity.BusinessId,source,destination,DateTimeOffset.UtcNow,"WAREHOUSE_TRANSFER",notes,transferLines),connection,transaction,token);}
+    {var transferLines=values.Select((line,index)=>new WarehouseTransferLineRequest(index+1,line.ProductId,line.Quantity)).ToArray();await inventory.ConfirmSystemTransferAtomicallyAsync(identity,idempotencyKey,new DispatchWarehouseTransferRequest(transferId,identity.BusinessId,source,destination,DateTimeOffset.UtcNow,"WAREHOUSE_TRANSFER",notes,transferLines),connection,transaction,token);}
 
     public async Task<SellerOrdersApi.SellerCatalogPage> CatalogAsync(SellerOrderActor actor,
         SellerOrdersApi.SellerCatalogRequest request,CancellationToken token)
@@ -168,8 +168,8 @@ public sealed class SellerOrderWriter(SqlServerConnectionFactory connections,Sql
 
             if(stockLines.Length>0)
             {
-                var identity=new InventoryUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,new HashSet<string>{InventoryPermissionCodes.Transfer,"inventory.system-warehouses.use"});
-                await inventory.ConfirmTransferAtomicallyAsync(identity,$"seller-order-reservation:{orderId:N}",new ConfirmWarehouseTransferRequest(
+                var identity=new InventoryUserIdentity(actor.UserId,actor.TenantId,actor.BusinessId,new HashSet<string>{InventoryPermissionCodes.DispatchTransfer,"inventory.system-warehouses.use"});
+                await inventory.ConfirmSystemTransferAtomicallyAsync(identity,$"seller-order-reservation:{orderId:N}",new DispatchWarehouseTransferRequest(
                     reservationTransferId,request.BusinessId,request.WarehouseId,context.OrdersWarehouseId,
                     DateTimeOffset.UtcNow,"WAREHOUSE_TRANSFER",$"Reserva del pedido {number}",stockLines),connection,transaction,token);
             }

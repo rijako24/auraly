@@ -10,6 +10,7 @@ CREATE TABLE [dbo].[Orders] (
     [WarehouseId] UNIQUEIDENTIFIER NULL,
     [OrdersWarehouseId] UNIQUEIDENTIFIER NULL,
     [ReservationTransferId] UNIQUEIDENTIFIER NULL,
+    [ReleaseTransferId] UNIQUEIDENTIFIER NULL,
     [SellerId] UNIQUEIDENTIFIER NULL,
     [RouteId] UNIQUEIDENTIFIER NULL,
     [RouteStopId] UNIQUEIDENTIFIER NULL,
@@ -61,6 +62,7 @@ CREATE TABLE [dbo].[Orders] (
         ON DELETE NO ACTION,
     CONSTRAINT [FK_Orders_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
     CONSTRAINT [FK_Orders_OrdersWarehouse] FOREIGN KEY ([OrdersWarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
+    CONSTRAINT [FK_Orders_ReleaseTransfer] FOREIGN KEY ([ReleaseTransferId]) REFERENCES [dbo].[InventoryOperations] ([InventoryOperationId]),
     CONSTRAINT [FK_Orders_Seller] FOREIGN KEY ([SellerId]) REFERENCES [dbo].[CommerceSellers] ([SellerId]),
     CONSTRAINT [FK_Orders_Route] FOREIGN KEY ([RouteId]) REFERENCES [dbo].[SalesRoutes] ([RouteId]),
     CONSTRAINT [FK_Orders_RouteStop] FOREIGN KEY ([RouteStopId]) REFERENCES [dbo].[SalesRouteStops] ([RouteStopId]),
@@ -103,5 +105,9 @@ GO
 CREATE UNIQUE INDEX [UX_Orders_BusinessId_IdempotencyKey]
     ON [dbo].[Orders] ([BusinessId], [IdempotencyKey])
     WHERE [IdempotencyKey] IS NOT NULL;
+GO
+CREATE UNIQUE INDEX [UX_Orders_BusinessId_ReleaseTransfer]
+    ON [dbo].[Orders] ([BusinessId], [ReleaseTransferId])
+    WHERE [ReleaseTransferId] IS NOT NULL;
 GO
 

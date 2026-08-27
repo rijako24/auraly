@@ -67,7 +67,7 @@ WHERE roleValue.NormalizedName IN(N'CASHIER',N'SUPERVISOR',N'ADMINISTRATIVE')
       N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
       N'work-sessions.differences.read',
       N'inventory.read',N'inventory.costs.read',
-      N'inventory.counts.confirm',N'inventory.adjustments.confirm',N'inventory.transfers.confirm',
+      N'inventory.counts.confirm',N'inventory.adjustments.confirm',N'inventory.transfers.dispatch',N'inventory.transfers.receive',N'inventory.transfers.resolve-difference',
       N'inventory.conversions.confirm',N'inventory.damages.confirm')
     OR roleValue.NormalizedName=N'ADMINISTRATIVE' AND permissionValue.Resource NOT LIKE N'tenants.%'
       AND permissionValue.Resource NOT LIKE N'roles.%'
@@ -96,7 +96,7 @@ WHERE roleValue.IsActive=1
       N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',
       N'work-sessions.differences.read',
       N'inventory.read',N'inventory.costs.read',
-      N'inventory.counts.confirm',N'inventory.adjustments.confirm',N'inventory.transfers.confirm',
+      N'inventory.counts.confirm',N'inventory.adjustments.confirm',N'inventory.transfers.dispatch',N'inventory.transfers.receive',N'inventory.transfers.resolve-difference',
       N'inventory.conversions.confirm',N'inventory.damages.confirm')
     OR roleValue.NormalizedName=N'ADMINISTRATIVE' AND permissionValue.Resource NOT LIKE N'tenants.%'
       AND permissionValue.Resource NOT LIKE N'roles.%'

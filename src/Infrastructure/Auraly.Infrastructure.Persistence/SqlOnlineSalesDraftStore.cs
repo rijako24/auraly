@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using Auraly.Application.Sales;
+using Auraly.Application.Inventory;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Sales;
 using Microsoft.Data.SqlClient;
@@ -12,7 +13,8 @@ namespace Auraly.Infrastructure.Persistence;
 public sealed partial class SqlOnlineSalesDraftStore(
     SqlServerConnectionFactory connections,
     IAuralyIdGenerator ids,
-    TimeProvider time) : IOnlineSalesDraftStore, IOnlineSalesCheckoutStore,
+    TimeProvider time,
+    SqlInventoryOperationStore inventoryOperations) : IOnlineSalesDraftStore, IOnlineSalesCheckoutStore,
     IOnlineSalesHistoryStore
 {
     public async Task<OnlineSalesDraft> GetOrCreateActiveAsync(

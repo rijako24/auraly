@@ -122,8 +122,21 @@ public sealed class ArchitectureDebtRatchetTests
         var sellerSource = File.ReadAllText(Path.Combine(
             RepositoryRoot, "src", "API", "Auraly.Api", "SellerOrdersApi.cs"));
         Assert.Contains("Procedure(\"dbo.SellerOrderCreate\",connection,transaction)", sellerSource, StringComparison.Ordinal);
-        Assert.Contains("ConfirmTransferAtomicallyAsync", sellerSource, StringComparison.Ordinal);
+        Assert.Contains("ConfirmSystemTransferAtomicallyAsync", sellerSource, StringComparison.Ordinal);
         Assert.Contains("Procedure(\"dbo.SellerOrderConfirm\",connection,transaction)", sellerSource, StringComparison.Ordinal);
+
+        var checkoutReleaseSource = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "Infrastructure", "Auraly.Infrastructure.Persistence",
+            "SqlOnlineSalesDraftStore.OrderInventory.cs"));
+        Assert.Contains("ConfirmSystemTransferAtomicallyAsync", checkoutReleaseSource, StringComparison.Ordinal);
+        Assert.Contains("ReleaseTransferId", checkoutReleaseSource, StringComparison.Ordinal);
+        Assert.Contains("GROUP BY item.ProductId", checkoutReleaseSource, StringComparison.Ordinal);
+
+        var saleHandlerSource = File.ReadAllText(Path.Combine(
+            RepositoryRoot, "src", "Infrastructure", "Auraly.Infrastructure.Persistence",
+            "SqlPosSaleDocumentHandler.cs"));
+        Assert.DoesNotContain("\"TransferOut\"", saleHandlerSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"TransferIn\"", saleHandlerSource, StringComparison.Ordinal);
 
         var procedures = Directory.EnumerateFiles(
             Path.Combine(RepositoryRoot, "database", "Auraly.Database", "StoredProcedures"),

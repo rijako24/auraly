@@ -40,7 +40,8 @@ public sealed class SqlBusinessDefaultsProvisioner(
             VALUES
               (@SalesWarehouseId,@BusinessId,N'VEN',N'Bodega de venta',0,@CostBasis,0,1,1,1,1,@Now),
               (@OrdersWarehouseId,@BusinessId,N'PED',N'Bodega de pedidos',0,@CostBasis,1,0,0,0,1,@Now),
-              (@DamagedWarehouseId,@BusinessId,N'AVE',N'Bodega de averías',0,@CostBasis,1,0,0,0,1,@Now);
+              (@DamagedWarehouseId,@BusinessId,N'AVE',N'Bodega de averías',0,@CostBasis,1,0,0,0,1,@Now),
+              (NEWID(),@BusinessId,N'TRA',N'Mercancía en tránsito',0,@CostBasis,1,0,0,0,1,@Now);
 
             DECLARE @DocumentSeries TABLE(DocumentType nvarchar(64),Prefix nvarchar(8));
             INSERT @DocumentSeries VALUES

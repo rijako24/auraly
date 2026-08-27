@@ -57,6 +57,11 @@ public sealed partial class SqlOnlineSalesDraftStore
         if (draft.Lines.Count == 0)
             throw new OnlineSalesDraftValidationException(
                 "La venta debe tener al menos un producto.");
+        var inventoryValidation = await ValidateInventoryAsync(
+            connection, transaction, state, draftId, ct);
+        if (!inventoryValidation.IsValid)
+            throw new OnlineSalesDraftValidationException(
+                "El inventario cambió y uno o más productos ya no tienen existencias suficientes. Ajusta sus cantidades o elimínalos antes de cobrar.");
         if (request.Payments.Sum(payment => payment.Amount) + (request.Credit?.Amount ?? 0m) != draft.PayableAmount)
             throw new OnlineSalesDraftValidationException(
                 "Los pagos reales y el saldo financiado deben ser iguales al total de la venta.");
@@ -80,7 +85,9 @@ public sealed partial class SqlOnlineSalesDraftStore
             line.AllowsDocumentCostOverride ? line.DocumentUnitCost : null)).ToArray();
         var payments = request.Payments.Select((payment, index) => new PosSalePaymentContract(
             index + 1, payment.MethodCode, payment.Amount,
-            string.IsNullOrWhiteSpace(payment.Reference) ? null : payment.Reference.Trim())).ToArray();
+            string.IsNullOrWhiteSpace(payment.Reference) ? null : payment.Reference.Trim(),
+            string.IsNullOrWhiteSpace(payment.CardFranchiseCode) ? null : payment.CardFranchiseCode.Trim(),
+            string.IsNullOrWhiteSpace(payment.ApprovalNumber) ? null : payment.ApprovalNumber.Trim())).ToArray();
         var taxes = lines.GroupBy(line => line.TaxCode, StringComparer.Ordinal)
             .Select(group => new PosSaleTaxContract(
                 group.Key, group.Sum(line => line.TaxAmount)))
@@ -104,6 +111,8 @@ public sealed partial class SqlOnlineSalesDraftStore
             request.Credit is null || state.CustomerId is null ? null :
                 new PosSaleCreditContract(
                     state.CustomerId.Value, request.Credit.Amount, request.Credit.DueDate));
+
+        await ReleaseOrderInventoryAsync(connection, transaction, user, state, ct);
 
         var nextDraftId = ids.NewId();
         var acquired = await ExecuteAsync(connection, transaction, """
