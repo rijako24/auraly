@@ -81,7 +81,6 @@ jobs:
             throw 'Falta configurar el certificado Authenticode de Auraly.'
           }
           $pfxPath = Join-Path $env:RUNNER_TEMP 'auraly-code-signing.pfx'
-          $cerPath = Join-Path $env:RUNNER_TEMP 'auraly-code-signing.cer'
           try {
             [IO.File]::WriteAllBytes(
               $pfxPath,
@@ -95,31 +94,10 @@ jobs:
             if ($certificate.Thumbprint -ne $expected -or -not $certificate.HasPrivateKey) {
               throw 'El PFX de publicación no coincide con la huella configurada o no contiene clave privada.'
             }
-            if ($certificate.Subject -eq $certificate.Issuer) {
-              Export-Certificate -Cert $certificate -FilePath $cerPath | Out-Null
-              $publicCertificate = [Security.Cryptography.X509Certificates.X509Certificate2]::new(
-                $cerPath)
-              foreach ($storeName in @(
-                [Security.Cryptography.X509Certificates.StoreName]::Root,
-                [Security.Cryptography.X509Certificates.StoreName]::TrustedPublisher)) {
-                $trustStore = [Security.Cryptography.X509Certificates.X509Store]::new(
-                  $storeName,
-                  [Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
-                try {
-                  $trustStore.Open(
-                    [Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-                  $trustStore.Add($publicCertificate)
-                }
-                finally {
-                  $trustStore.Dispose()
-                }
-              }
-            }
             "thumbprint=$($certificate.Thumbprint)" >> $env:GITHUB_OUTPUT
           }
           finally {
             Remove-Item -LiteralPath $pfxPath -Force -ErrorAction SilentlyContinue
-            Remove-Item -LiteralPath $cerPath -Force -ErrorAction SilentlyContinue
           }
 
       - name: Build and test release once in DEV

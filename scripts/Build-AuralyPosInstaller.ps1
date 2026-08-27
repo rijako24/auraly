@@ -231,7 +231,13 @@ else {
 $file = Get-Item -LiteralPath $setup
 $hash = Get-FileHash -LiteralPath $setup -Algorithm SHA256
 $signature = Get-AuthenticodeSignature -LiteralPath $setup
-if ($RequireSignature -and $signature.Status -ne 'Valid') {
+$hasExpectedSigner = $null -ne $signature.SignerCertificate -and
+    $signature.SignerCertificate.Thumbprint -eq $normalizedThumbprint
+$isSelfSignedSigner = $hasExpectedSigner -and
+    $signature.SignerCertificate.Subject -eq $signature.SignerCertificate.Issuer
+$hasAcceptedStatus = $signature.Status -eq 'Valid' -or
+    ($isSelfSignedSigner -and $signature.Status -eq 'NotTrusted')
+if ($RequireSignature -and (-not $hasExpectedSigner -or -not $hasAcceptedStatus)) {
     throw 'El instalador final no tiene una firma Authenticode válida.'
 }
 

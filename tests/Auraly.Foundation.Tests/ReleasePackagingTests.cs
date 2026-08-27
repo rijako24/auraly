@@ -39,9 +39,11 @@ public sealed class ReleasePackagingTests
 
         var workflow = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(), ".github", "workflows", "deploy-auraly-release.yml"));
-        Assert.Contains("StoreName]::TrustedPublisher", workflow,
+        Assert.DoesNotContain("TrustedPublisher", workflow,
             StringComparison.Ordinal);
         Assert.DoesNotContain("Import-Certificate", workflow, StringComparison.Ordinal);
+        Assert.Contains("$signature.Status -eq 'NotTrusted'", script,
+            StringComparison.Ordinal);
     }
 
     [Fact]
