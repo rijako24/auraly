@@ -29,11 +29,12 @@ Antes de crear una clase, servicio, flujo, handler, endpoint, tabla, configuraci
 
 ## Forma de trabajar
 
-- Trabajar siempre sobre el único checkout operativo de la rama `main`. No crear
-  `git worktree`, clones anidados ni copias paralelas del repositorio. Una tarea
-  que requiera aislamiento usa commits pequeños y reversibles en `main`; si
-  `main` contiene cambios ajenos, primero se identifican y consolidan sin abrir
-  otro árbol de trabajo.
+- Trabajar siempre sobre el único checkout operativo, ya sea en la rama `main`
+  o en una rama creada a partir de `main`. No crear `git worktree`, clones
+  anidados ni copias paralelas del repositorio. Una tarea que requiera
+  aislamiento puede usar commits pequeños y reversibles en su rama; si el
+  checkout contiene cambios ajenos, primero se identifican y preservan sin
+  abrir otro árbol de trabajo.
 - Realizar el cambio minimo coherente que resuelva la causa raiz y deje el sistema consistente de punta a punta.
 - No mezclar refactors, renombrados o formateos ajenos a la tarea.
 - No ocultar errores con fallbacks silenciosos, datos inventados, `catch` vacios o defaults inseguros.
