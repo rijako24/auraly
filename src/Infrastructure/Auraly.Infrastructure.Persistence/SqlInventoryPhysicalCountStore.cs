@@ -130,9 +130,23 @@ public sealed class SqlInventoryPhysicalCountStore(
         return new(items, query.Page, query.PageSize, total, total == 0 ? 0 : (int)Math.Ceiling(total / (decimal)query.PageSize));
     }
 
-    public async Task<IReadOnlyList<InventoryPhysicalCountDraftSummary>> ListDraftsAsync(InventoryUserIdentity user,Guid? warehouseId,string? search,CancellationToken token)
+    public async Task<InventoryPhysicalCountDraftPage> ListDraftsAsync(InventoryUserIdentity user, InventoryPhysicalCountDraftQuery query, CancellationToken token)
     {
-        const string sql="""
+        const string sql = """
+            SELECT COUNT(*)
+            FROM dbo.InventoryPhysicalCountLists draft
+            INNER JOIN dbo.InventoryPhysicalCounts count ON count.InventoryPhysicalCountId=draft.InventoryPhysicalCountId
+            INNER JOIN dbo.Warehouses warehouse ON warehouse.WarehouseId=count.WarehouseId
+            WHERE count.BusinessId=@BusinessId
+              AND count.Status IN (N'Open',N'Reconciling',N'Draft',N'PreCounting',N'Counting',N'Review')
+              AND draft.Status<>N'Discarded'
+              AND (@WarehouseId IS NULL OR count.WarehouseId=@WarehouseId)
+              AND (@From IS NULL OR draft.UpdatedAt>=@From)
+              AND (@To IS NULL OR draft.UpdatedAt<@To)
+              AND (@Search IS NULL OR draft.Name LIKE @Pattern OR warehouse.Name LIKE @Pattern OR EXISTS(
+                SELECT 1 FROM dbo.InventoryPhysicalCountLines matched
+                WHERE matched.InventoryPhysicalCountListId=draft.InventoryPhysicalCountListId
+                  AND (matched.ProductNameSnapshot LIKE @Pattern OR matched.ProductCodeSnapshot LIKE @Pattern)));
             SELECT count.InventoryPhysicalCountId,draft.InventoryPhysicalCountListId,draft.Name,count.WarehouseId,warehouse.Name,count.ScopeType,
               COALESCE(draft.AssignedUserId,count.CreatedByUserId),draft.Status,draft.Version,COUNT(line.ProductId),COUNT(line.PreCountQuantity),draft.UpdatedAt
             FROM dbo.InventoryPhysicalCounts count INNER JOIN dbo.Warehouses warehouse ON warehouse.WarehouseId=count.WarehouseId
@@ -140,11 +154,35 @@ public sealed class SqlInventoryPhysicalCountStore(
             LEFT JOIN dbo.InventoryPhysicalCountLines line ON line.InventoryPhysicalCountListId=draft.InventoryPhysicalCountListId
             WHERE count.BusinessId=@BusinessId AND count.Status IN (N'Open',N'Reconciling',N'Draft',N'PreCounting',N'Counting',N'Review') AND draft.Status<>N'Discarded'
               AND (@WarehouseId IS NULL OR count.WarehouseId=@WarehouseId)
-              AND (@Search IS NULL OR draft.Name LIKE @Pattern OR warehouse.Name LIKE @Pattern OR line.ProductNameSnapshot LIKE @Pattern OR line.ProductCodeSnapshot LIKE @Pattern)
+              AND (@From IS NULL OR draft.UpdatedAt>=@From)
+              AND (@To IS NULL OR draft.UpdatedAt<@To)
+              AND (@Search IS NULL OR draft.Name LIKE @Pattern OR warehouse.Name LIKE @Pattern OR EXISTS(
+                SELECT 1 FROM dbo.InventoryPhysicalCountLines matched
+                WHERE matched.InventoryPhysicalCountListId=draft.InventoryPhysicalCountListId
+                  AND (matched.ProductNameSnapshot LIKE @Pattern OR matched.ProductCodeSnapshot LIKE @Pattern)))
             GROUP BY count.InventoryPhysicalCountId,draft.InventoryPhysicalCountListId,draft.Name,count.WarehouseId,warehouse.Name,count.ScopeType,draft.AssignedUserId,count.CreatedByUserId,draft.Status,draft.Version,draft.UpdatedAt
-            ORDER BY draft.UpdatedAt DESC;
+            ORDER BY draft.UpdatedAt DESC,draft.InventoryPhysicalCountListId
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             """;
-        await using var connection=connections.Create();await connection.OpenAsync(token);await using var command=new SqlCommand(sql,connection);command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@WarehouseId",(object?)warehouseId??DBNull.Value);command.Parameters.AddWithValue("@Search",(object?)search??DBNull.Value);command.Parameters.AddWithValue("@Pattern",search is null?DBNull.Value:$"%{search}%");await using var reader=await command.ExecuteReaderAsync(token);var result=new List<InventoryPhysicalCountDraftSummary>();while(await reader.ReadAsync(token))result.Add(new(reader.GetGuid(0),reader.GetGuid(1),reader.GetString(2),reader.GetGuid(3),reader.GetString(4),reader.GetString(5),reader.GetGuid(6),NormalizeDraftStatus(reader.GetString(7)),reader.GetInt64(8),reader.GetInt32(9),reader.GetInt32(10),reader.GetDateTimeOffset(11)));return result;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(token);
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        command.Parameters.AddWithValue("@WarehouseId", (object?)query.WarehouseId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@From", (object?)query.From ?? DBNull.Value);
+        command.Parameters.AddWithValue("@To", (object?)query.To ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Search", (object?)query.Search ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Pattern", query.Search is null ? DBNull.Value : $"%{query.Search}%");
+        command.Parameters.AddWithValue("@Offset", (query.Page - 1) * query.PageSize);
+        command.Parameters.AddWithValue("@PageSize", query.PageSize);
+        await using var reader = await command.ExecuteReaderAsync(token);
+        await reader.ReadAsync(token);
+        var total = reader.GetInt32(0);
+        await reader.NextResultAsync(token);
+        var items = new List<InventoryPhysicalCountDraftSummary>();
+        while (await reader.ReadAsync(token))
+            items.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2), reader.GetGuid(3), reader.GetString(4), reader.GetString(5), reader.GetGuid(6), NormalizeDraftStatus(reader.GetString(7)), reader.GetInt64(8), reader.GetInt32(9), reader.GetInt32(10), reader.GetDateTimeOffset(11)));
+        return new(items, query.Page, query.PageSize, total, total == 0 ? 0 : (int)Math.Ceiling(total / (decimal)query.PageSize));
     }
 
     public async Task<InventoryPhysicalCountDetail?> GetAsync(InventoryUserIdentity user, Guid countId, CancellationToken token)
@@ -153,9 +191,10 @@ public sealed class SqlInventoryPhysicalCountStore(
             SELECT c.InventoryPhysicalCountId,c.WarehouseId,w.Name,c.ScopeType,c.ReasonCode,c.Notes,c.BaseInventorySequence,c.Status,c.CreatedByUserId,c.CreatedAt,c.StartedAt,c.ReviewStartedAt,c.ClosedAt,c.FinalInventoryOperationId,c.FinalDocumentNumber
             FROM dbo.InventoryPhysicalCounts c INNER JOIN dbo.Warehouses w ON w.WarehouseId=c.WarehouseId INNER JOIN dbo.Businesses b ON b.BusinessId=c.BusinessId
             WHERE c.InventoryPhysicalCountId=@CountId AND c.BusinessId=@BusinessId AND b.TenantId=@TenantId;
-            SELECT InventoryPhysicalCountListId,Name,COALESCE(AssignedUserId,@FallbackUserId),Status,Version,CreatedAt,UpdatedAt
+            SELECT InventoryPhysicalCountListId,Name,COALESCE(AssignedUserId,@FallbackUserId),Status,Version,CreatedAt,UpdatedAt,
+                   CASE WHEN CountSubmittedAt IS NULL THEN N'Count' ELSE N'Recount' END
             FROM dbo.InventoryPhysicalCountLists WHERE InventoryPhysicalCountId=@CountId AND Status<>N'Discarded' ORDER BY CreatedAt,Name;
-            SELECT InventoryPhysicalCountListId,ProductId,ProductCodeSnapshot,ProductNameSnapshot,PreCountQuantity,CountedQuantity,PendingReason,PreCountedAt,CountedAt
+            SELECT InventoryPhysicalCountListId,ProductId,ProductCodeSnapshot,ProductNameSnapshot,SystemQuantityAtBase,PreCountQuantity,CountedQuantity,PendingReason,PreCountedAt,CountedAt
             FROM dbo.InventoryPhysicalCountLines WHERE InventoryPhysicalCountId=@CountId ORDER BY ProductNameSnapshot,ProductId;
             """;
         await using var connection = connections.Create();
@@ -171,17 +210,17 @@ public sealed class SqlInventoryPhysicalCountStore(
         await reader.NextResultAsync(token);
         var drafts = new List<DraftState>();
         while (await reader.ReadAsync(token))
-            drafts.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetGuid(2), NormalizeDraftStatus(reader.GetString(3)), reader.GetInt64(4), reader.GetDateTimeOffset(5), reader.GetDateTimeOffset(6)));
+            drafts.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetGuid(2), NormalizeDraftStatus(reader.GetString(3)), reader.GetInt64(4), reader.GetDateTimeOffset(5), reader.GetDateTimeOffset(6), reader.GetString(7)));
         await reader.NextResultAsync(token);
         var lines = new Dictionary<Guid,List<InventoryPhysicalCountDraftLine>>();
         while (await reader.ReadAsync(token))
         {
             var draftId=reader.GetGuid(0);
             if(!lines.TryGetValue(draftId,out var values)){values=[];lines[draftId]=values;}
-            values.Add(new(reader.GetGuid(1),reader.GetString(2),reader.GetString(3),NullableDecimal(reader,4),NullableDecimal(reader,5),reader.IsDBNull(6)?null:reader.GetString(6),NullableDate(reader,7),NullableDate(reader,8)));
+            values.Add(new(reader.GetGuid(1),reader.GetString(2),reader.GetString(3),reader.GetDecimal(4),NullableDecimal(reader,5),NullableDecimal(reader,6),reader.IsDBNull(7)?null:reader.GetString(7),NullableDate(reader,8),NullableDate(reader,9)));
         }
         return new(header.Id,header.WarehouseId,header.WarehouseName,header.Scope,header.Reason,header.Notes,header.BaseSequence,header.Status,header.CreatedBy,header.CreatedAt,header.StartedAt,header.ReviewAt,header.ClosedAt,header.FinalId,header.FinalNumber,
-            drafts.Select(draft=>new InventoryPhysicalCountDraft(draft.Id,draft.Name,draft.UserId,draft.Status,draft.Version,draft.CreatedAt,draft.UpdatedAt,lines.GetValueOrDefault(draft.Id)??[])).ToArray());
+            drafts.Select(draft=>new InventoryPhysicalCountDraft(draft.Id,draft.Name,draft.UserId,draft.Status,draft.Version,draft.CreatedAt,draft.UpdatedAt,draft.CaptureStage,lines.GetValueOrDefault(draft.Id)??[])).ToArray());
     }
 
     public async Task<InventoryPhysicalCountDetail> CreateDraftAsync(InventoryUserIdentity user, Guid countId, CreateInventoryPhysicalCountDraftRequest request, CancellationToken token)
@@ -258,10 +297,11 @@ public sealed class SqlInventoryPhysicalCountStore(
             }
             const string finish="""
                 UPDATE dbo.InventoryPhysicalCountLists SET Name=@Name,Status=@Status,Version=Version+1,UpdatedAt=@Now,
-                  PreCountSubmittedAt=CASE WHEN @Status=N'Ready' THEN @Now ELSE NULL END
+                  PreCountSubmittedAt=CASE WHEN @Status=N'Ready' THEN @Now ELSE NULL END,
+                  CountSubmittedAt=CASE WHEN @CaptureStage=N'Recount' THEN COALESCE(CountSubmittedAt,@Now) ELSE NULL END
                 WHERE InventoryPhysicalCountListId=@DraftId;
                 """;
-            await ExecuteAsync(connection,transaction,finish,token,P("@Name",request.Name),P("@Status",request.ReadyForReconciliation?"Ready":"InProgress"),P("@Now",now),P("@DraftId",draftId));
+            await ExecuteAsync(connection,transaction,finish,token,P("@Name",request.Name),P("@Status",request.ReadyForReconciliation?"Ready":"InProgress"),P("@CaptureStage",request.CaptureStage),P("@Now",now),P("@DraftId",draftId));
             await transaction.CommitAsync(token);
             return (await GetAsync(user,countId,token))!;
         }
@@ -492,7 +532,7 @@ public sealed class SqlInventoryPhysicalCountStore(
     private static string NormalizeCountStatus(string status)=>status switch{"Draft" or "PreCounting" or "Counting"=>"Open","Review"=>"Reconciling",_=>status};
     private static string NormalizeDraftStatus(string status)=>status switch{"Pending" or "PreCounting" or "Counting"=>"InProgress","PreCounted" or "Counted"=>"Ready",_=>status};
     private sealed record Header(Guid Id,Guid WarehouseId,string WarehouseName,string Scope,string Reason,string? Notes,long BaseSequence,string Status,Guid CreatedBy,DateTimeOffset CreatedAt,DateTimeOffset? StartedAt,DateTimeOffset? ReviewAt,DateTimeOffset? ClosedAt,Guid? FinalId,string? FinalNumber);
-    private sealed record DraftState(Guid Id,string Name,Guid UserId,string Status,long Version,DateTimeOffset CreatedAt,DateTimeOffset UpdatedAt);
+    private sealed record DraftState(Guid Id,string Name,Guid UserId,string Status,long Version,DateTimeOffset CreatedAt,DateTimeOffset UpdatedAt,string CaptureStage);
     private sealed record ProductState(Guid Id,string Code,string Name,decimal SystemQuantity,decimal? UnitCost,decimal? AverageUnitCost);
     private sealed record SourceState(Guid DraftId,string DraftName,Guid OwnerId,decimal Initial,decimal? Verification);
     private sealed record ReconciliationHeader(Guid Id,long Snapshot,string Status,DateTimeOffset CreatedAt,Guid CreatedBy,Guid WarehouseId,long BaseSequence,bool Stale,string? CountedStatus,Guid? CountedDocumentId,string? CountedDocumentNumber,string? UncountedStatus,Guid? UncountedDocumentId,string? UncountedDocumentNumber);

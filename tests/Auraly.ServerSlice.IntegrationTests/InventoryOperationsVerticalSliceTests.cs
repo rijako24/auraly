@@ -120,6 +120,37 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
     }
 
     [Fact]
+    public async Task Direct_count_application_is_idempotent_and_uses_the_final_optional_recount()
+    {
+        var product = Guid.NewGuid();
+        await SeedAsync(product, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        using var client = fixture.CreateAdminClient(
+            InventoryPermissionCodes.Count,
+            InventoryPermissionCodes.Adjust,
+            InventoryPermissionCodes.Read);
+        var occurred = new DateTimeOffset(2026, 8, 26, 9, 0, 0, TimeSpan.FromHours(-5));
+        await ConfirmAdjustmentAsync(client, new(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, occurred,
+            "INITIAL_BALANCE", null, null, [new(1, product, 10m, 5m)]));
+
+        var documentId = Guid.NewGuid();
+        var request = new ApplyStockCountRequest(
+            documentId, fixture.BusinessId, fixture.WarehouseId, occurred.AddMinutes(1),
+            "PHYSICAL_COUNT", "Aplicación directa desde la grilla",
+            [new(product, 8m, 7m)]);
+        var key = $"direct-count-{documentId:N}";
+        var accepted = await SendAsync(client, "/api/commerce/v1/stock-counts/apply", request, key);
+        var replay = await SendAsync(client, "/api/commerce/v1/stock-counts/apply", request, key);
+
+        Assert.False(accepted.IdempotentReplay);
+        Assert.True(replay.IdempotentReplay);
+        Assert.Equal(7m, (await BalanceAsync(fixture.WarehouseId, product)).Quantity);
+        Assert.Equal(-3m, await ScalarAsync<decimal>(
+            "SELECT QuantityChange FROM dbo.InventoryMovements WHERE DocumentId=@Id AND MovementType=N'StockCountAdjustment'", documentId));
+        Assert.Equal(1, await CountAsync("InventoryMovements", documentId));
+    }
+
+    [Fact]
     public async Task Physical_count_reconciliation_sums_selected_drafts_and_preserves_movements_after_capture()
     {
         var first = Guid.NewGuid();
@@ -139,12 +170,14 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             [new(1, first, 10m, 5m), new(2, second, 20m, 5m)]));
 
         var countId = Guid.NewGuid();
+        var firstDraftName = $"Equipo A {countId:N}";
+        var secondDraftName = $"Equipo B {countId:N}";
         Guid firstDraft;
         using (var create = await client.PostAsJsonAsync(
                    "/api/commerce/v1/inventory/physical-counts",
                    new CreateInventoryPhysicalCountRequest(
                        countId, fixture.BusinessId, fixture.WarehouseId, "Partial", "PHYSICAL_COUNT", null,
-                       "Equipo A", [first, second])))
+                       firstDraftName, [first, second])))
         {
             Assert.Equal(HttpStatusCode.Created, create.StatusCode);
             var detail = await create.Content.ReadFromJsonAsync<InventoryPhysicalCountDetail>();
@@ -154,14 +187,14 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         var secondDraft = Guid.NewGuid();
         using (var createDraft = await client.PostAsJsonAsync(
                    $"/api/commerce/v1/inventory/physical-counts/{countId:D}/drafts",
-                   new CreateInventoryPhysicalCountDraftRequest(fixture.BusinessId, secondDraft, "Equipo B", [first])))
+                   new CreateInventoryPhysicalCountDraftRequest(fixture.BusinessId, secondDraft, secondDraftName, [first])))
         {
             Assert.Equal(HttpStatusCode.OK, createDraft.StatusCode);
         }
 
         using (var response = await client.PutAsJsonAsync(
                    $"/api/commerce/v1/inventory/physical-counts/{countId:D}/drafts/{firstDraft:D}",
-                   new SaveInventoryPhysicalCountDraftRequest(fixture.BusinessId, 1, "Equipo A",
+                   new SaveInventoryPhysicalCountDraftRequest(fixture.BusinessId, 1, firstDraftName,
                        [new(first, 10m, 9m, null), new(second, 20m, 22m, null)], true)))
         {
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -169,11 +202,20 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
 
         using (var response = await client.PutAsJsonAsync(
                    $"/api/commerce/v1/inventory/physical-counts/{countId:D}/drafts/{secondDraft:D}",
-                   new SaveInventoryPhysicalCountDraftRequest(fixture.BusinessId, 1, "Equipo B",
-                       [new(first, 2m, null, null)], true)))
+                   new SaveInventoryPhysicalCountDraftRequest(fixture.BusinessId, 1, secondDraftName,
+                       [new(first, 2m, 2m, null)], true, "Recount")))
         {
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var updated = Assert.IsType<InventoryPhysicalCountDetail>(
+                await response.Content.ReadFromJsonAsync<InventoryPhysicalCountDetail>());
+            Assert.Equal("Recount", Assert.Single(updated.Drafts, draft => draft.DraftId == secondDraft).CaptureStage);
         }
+
+        var filteredDrafts = await client.GetFromJsonAsync<InventoryPhysicalCountDraftPage>(
+            $"/api/commerce/v1/inventory/physical-count-drafts?search={Uri.EscapeDataString(secondDraftName)}&page=1&pageSize=1&from=2020-01-01T00:00:00Z&to=2030-01-01T00:00:00Z");
+        Assert.NotNull(filteredDrafts);
+        Assert.Equal(1, filteredDrafts.TotalCount);
+        Assert.Equal(secondDraftName, Assert.Single(filteredDrafts.Items).Name);
 
         InventoryReconciliationDetail reconciliation;
         using (var prepare = await client.PostAsJsonAsync(

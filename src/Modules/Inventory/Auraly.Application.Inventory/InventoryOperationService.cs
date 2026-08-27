@@ -40,6 +40,27 @@ public sealed class InventoryOperationService(
         return await PublishAsync(await store.ConfirmCountAsync(user, documentId, idempotencyKey.Trim(), request, cancellationToken), request.BusinessId, cancellationToken);
     }
 
+    public async Task<InventoryOperationAcceptance> ApplyCountAsync(InventoryUserIdentity user, string idempotencyKey, ApplyStockCountRequest request, CancellationToken cancellationToken = default)
+    {
+        if (request.Lines.Count == 0 || request.Lines.Any(line => line.InitialQuantity < 0 || line.CountedQuantity < 0))
+            throw new InventoryValidationException("A stock count requires non-negative initial and final quantities.");
+        var started = new StartStockCountRequest(
+            request.DocumentId, request.BusinessId, request.WarehouseId, request.OccurredAt,
+            request.ReasonCode, request.Notes,
+            request.Lines.Select(line => new StartStockCountLineRequest(line.ProductId, line.InitialQuantity)).ToArray());
+        try
+        {
+            await StartCountAsync(user, started, cancellationToken);
+        }
+        catch (InventoryConflictException)
+        {
+            // A retry after a lost response can find the deterministic document already started.
+        }
+        var confirmation = new ConfirmStockCountRequest(request.BusinessId,
+            request.Lines.Select((line, index) => new StockCountLineRequest(index + 1, line.ProductId, line.CountedQuantity)).ToArray());
+        return await ConfirmCountAsync(user, request.DocumentId, idempotencyKey, confirmation, cancellationToken);
+    }
+
     public async Task<InventoryOperationAcceptance> ConfirmAdjustmentAsync(InventoryUserIdentity user, string idempotencyKey, ConfirmInventoryAdjustmentRequest request, CancellationToken cancellationToken = default)
     {
         ValidateIdentity(user, request.BusinessId, InventoryPermissionCodes.Adjust);

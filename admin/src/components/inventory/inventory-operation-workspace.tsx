@@ -36,7 +36,11 @@ import {
   AdjustmentCaptureGrid,
   adjustmentUnitValue,
 } from "@/components/inventory/adjustment-capture-grid";
-import { PhysicalCountCreationForm } from "@/components/inventory/inventory-physical-count-workspace";
+import {
+  PhysicalCountCreationForm,
+  PhysicalCountDraftEditForm,
+  type PhysicalCountDraftSelection,
+} from "@/components/inventory/inventory-physical-count-workspace";
 import { Textarea } from "@/components/ui/textarea";
 import { ProductPicker } from "@/components/products/product-picker";
 import {
@@ -132,6 +136,7 @@ export function InventoryOperationWorkspace({
   warehouses,
   permissions,
   initialKind = defaultInventoryOperationKind,
+  physicalCountDraft,
   onCancel,
   onCompleted,
 }: {
@@ -139,8 +144,9 @@ export function InventoryOperationWorkspace({
   warehouses: WarehouseOption[];
   permissions: Set<string>;
   initialKind?: InventoryOperationKind;
+  physicalCountDraft?: PhysicalCountDraftSelection;
   onCancel: () => void;
-  onCompleted: () => void;
+  onCompleted: (inventoryDestination?: "documents" | "drafts") => void;
 }) {
   const queryClient = useQueryClient();
   const [kind, setKind] = useState<OperationKind>(initialKind);
@@ -472,7 +478,7 @@ export function InventoryOperationWorkspace({
             <button
               key={option.id}
               type="button"
-              disabled={!enabled || mutation.isPending}
+              disabled={!enabled || mutation.isPending || Boolean(physicalCountDraft && option.id !== "count")}
               onClick={() => setKind(option.id)}
               className={`rounded-xl border p-4 text-left transition ${
                 kind === option.id
@@ -491,12 +497,21 @@ export function InventoryOperationWorkspace({
       </div>
 
       {kind === "count" ? (
-        <PhysicalCountCreationForm
-          businessId={businessId}
-          warehouses={warehouses}
-          onCancel={onCancel}
-          onCreated={() => onCompleted()}
-        />
+        physicalCountDraft
+          ? <PhysicalCountDraftEditForm
+              value={physicalCountDraft}
+              businessId={businessId}
+              permissions={permissions}
+              onCancel={onCancel}
+              onCompleted={onCompleted}
+            />
+          : <PhysicalCountCreationForm
+              businessId={businessId}
+              warehouses={warehouses}
+              permissions={permissions}
+              onCancel={onCancel}
+              onCompleted={onCompleted}
+            />
       ) : <Card>
         <CardHeader><CardTitle>{selected.label}</CardTitle></CardHeader>
         <CardContent className="space-y-4">

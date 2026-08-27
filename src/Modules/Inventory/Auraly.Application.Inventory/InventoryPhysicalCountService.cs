@@ -6,7 +6,7 @@ public interface IInventoryPhysicalCountStore
 {
     Task<InventoryPhysicalCountDetail> CreateAsync(InventoryUserIdentity user, CreateInventoryPhysicalCountRequest request, CancellationToken token);
     Task<InventoryPhysicalCountPage> ListAsync(InventoryUserIdentity user, InventoryPhysicalCountQuery query, CancellationToken token);
-    Task<IReadOnlyList<InventoryPhysicalCountDraftSummary>> ListDraftsAsync(InventoryUserIdentity user, Guid? warehouseId, string? search, CancellationToken token);
+    Task<InventoryPhysicalCountDraftPage> ListDraftsAsync(InventoryUserIdentity user, InventoryPhysicalCountDraftQuery query, CancellationToken token);
     Task<InventoryPhysicalCountDetail?> GetAsync(InventoryUserIdentity user, Guid countId, CancellationToken token);
     Task<InventoryPhysicalCountDetail> CreateDraftAsync(InventoryUserIdentity user, Guid countId, CreateInventoryPhysicalCountDraftRequest request, CancellationToken token);
     Task<InventoryPhysicalCountDetail> SaveDraftAsync(InventoryUserIdentity user, Guid countId, Guid draftId, SaveInventoryPhysicalCountDraftRequest request, CancellationToken token);
@@ -50,10 +50,14 @@ public sealed class InventoryPhysicalCountService(
         return store.ListAsync(user, query with { Search = Normalize(query.Search, 120), Status = Normalize(query.Status, 24) }, token);
     }
 
-    public Task<IReadOnlyList<InventoryPhysicalCountDraftSummary>> ListDraftsAsync(InventoryUserIdentity user, Guid? warehouseId, string? search, CancellationToken token = default)
+    public Task<InventoryPhysicalCountDraftPage> ListDraftsAsync(InventoryUserIdentity user, InventoryPhysicalCountDraftQuery query, CancellationToken token = default)
     {
-        Require(user, user.BusinessId, InventoryPermissionCodes.Read);
-        return store.ListDraftsAsync(user, warehouseId, Normalize(search, 120), token);
+        Require(user, query.BusinessId, InventoryPermissionCodes.Read);
+        if (query.Page < 1 || query.PageSize is < 1 or > 200)
+            throw new InventoryValidationException("Invalid pagination.");
+        if (query.From is not null && query.To is not null && query.From >= query.To)
+            throw new InventoryValidationException("The draft date range is invalid.");
+        return store.ListDraftsAsync(user, query with { Search = Normalize(query.Search, 120) }, token);
     }
 
     public Task<InventoryPhysicalCountDetail?> GetAsync(InventoryUserIdentity user, Guid countId, CancellationToken token = default)
@@ -84,6 +88,8 @@ public sealed class InventoryPhysicalCountService(
         ValidateId(draftId, "Draft");
         if (request.Version < 1 || request.Lines.Count == 0 || request.Lines.Select(line => line.ProductId).Distinct().Count() != request.Lines.Count)
             throw new InventoryValidationException("Draft lines and a valid version are required.");
+        if (request.CaptureStage is not ("Count" or "Recount"))
+            throw new InventoryValidationException("CaptureStage must be Count or Recount.");
         foreach (var line in request.Lines)
         {
             ValidateId(line.ProductId, "Product");
@@ -94,6 +100,9 @@ public sealed class InventoryPhysicalCountService(
         }
         if (request.ReadyForReconciliation && request.Lines.All(line => line.InitialQuantity is null))
             throw new InventoryValidationException("A ready draft must contain at least one initial count.");
+        if (request.CaptureStage == "Recount" && request.ReadyForReconciliation &&
+            request.Lines.Any(line => line.InitialQuantity is not null && line.VerificationQuantity is null))
+            throw new InventoryValidationException("Every counted product must be recounted before the draft is ready for reconciliation.");
         return store.SaveDraftAsync(user, countId, draftId, request with
         {
             Name = NormalizeRequired(request.Name, 120, "Draft name"),

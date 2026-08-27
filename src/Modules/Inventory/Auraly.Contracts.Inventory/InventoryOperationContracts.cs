@@ -50,6 +50,20 @@ public sealed record ConfirmStockCountRequest(
     Guid BusinessId,
     IReadOnlyCollection<StockCountLineRequest> Lines);
 
+public sealed record ApplyStockCountLineRequest(
+    Guid ProductId,
+    decimal InitialQuantity,
+    decimal CountedQuantity);
+
+public sealed record ApplyStockCountRequest(
+    Guid DocumentId,
+    Guid BusinessId,
+    Guid WarehouseId,
+    DateTimeOffset OccurredAt,
+    string ReasonCode,
+    string? Notes,
+    IReadOnlyCollection<ApplyStockCountLineRequest> Lines);
+
 public sealed record InventoryAdjustmentLineRequest(
     int LineNumber,
     Guid ProductId,
@@ -241,7 +255,8 @@ public sealed record InventoryPhysicalCountDraftLineInput(
     Guid ProductId, decimal? InitialQuantity, decimal? VerificationQuantity, string? PendingReason);
 public sealed record SaveInventoryPhysicalCountDraftRequest(
     Guid BusinessId, long Version, string Name,
-    IReadOnlyCollection<InventoryPhysicalCountDraftLineInput> Lines, bool ReadyForReconciliation);
+    IReadOnlyCollection<InventoryPhysicalCountDraftLineInput> Lines, bool ReadyForReconciliation,
+    string CaptureStage = "Count");
 public sealed record PrepareInventoryReconciliationDraft(Guid DraftId, long Version);
 public sealed record PrepareInventoryReconciliationRequest(
     Guid BusinessId, IReadOnlyCollection<PrepareInventoryReconciliationDraft> Drafts);
@@ -256,17 +271,23 @@ public sealed record InventoryPhysicalCountItem(
     int VerifiedCount, int PendingCount, DateTimeOffset CreatedAt, string? FinalDocumentNumber);
 public sealed record InventoryPhysicalCountPage(
     IReadOnlyList<InventoryPhysicalCountItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);
+public sealed record InventoryPhysicalCountDraftQuery(
+    Guid BusinessId, Guid? WarehouseId, string? Search, DateTimeOffset? From, DateTimeOffset? To,
+    int Page = 1, int PageSize = 20);
 public sealed record InventoryPhysicalCountDraftSummary(
     Guid InventoryPhysicalCountId, Guid DraftId, string Name, Guid WarehouseId, string WarehouseName,
     string ScopeType, Guid OwnerUserId, string Status, long Version, int ProductCount,
     int CountedProductCount, DateTimeOffset UpdatedAt);
+public sealed record InventoryPhysicalCountDraftPage(
+    IReadOnlyList<InventoryPhysicalCountDraftSummary> Items, int Page, int PageSize, int TotalCount, int TotalPages);
 public sealed record InventoryPhysicalCountDraftLine(
     Guid ProductId, string ProductCode, string ProductName,
+    decimal SystemQuantity,
     decimal? InitialQuantity, decimal? VerificationQuantity, string? PendingReason,
     DateTimeOffset? InitialCountedAt, DateTimeOffset? VerifiedAt);
 public sealed record InventoryPhysicalCountDraft(
     Guid DraftId, string Name, Guid OwnerUserId, string Status, long Version,
-    DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
+    DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, string CaptureStage,
     IReadOnlyList<InventoryPhysicalCountDraftLine> Lines);
 public sealed record InventoryPhysicalCountDetail(
     Guid InventoryPhysicalCountId, Guid WarehouseId, string WarehouseName, string ScopeType,

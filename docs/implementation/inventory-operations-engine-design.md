@@ -27,6 +27,12 @@ authenticated API
 The document, number, immutable payload, processing sequence and durable job are
 accepted in one serializable SQL transaction.
 
+The interactive count grid can apply a count without first persisting a named
+physical-count draft through `POST /api/commerce/v1/stock-counts/apply`. This is
+an application-level convenience endpoint, not another writer: it idempotently
+orchestrates the existing start and confirm contracts and still enters the same
+ordered document engine and `SqlInventoryLedgerWriter` path.
+
 ## Count semantics
 
 Starting a count freezes `BaseInventorySequence` and `SystemQuantityAtBase` per
