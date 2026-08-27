@@ -1596,11 +1596,10 @@ public sealed class SqlPayrollStore(
         await using var connection = connections.Create(); await connection.OpenAsync(ct);
         await using var command = new SqlCommand("""
             SELECT r.PayrollRunId,r.RunKind,r.PeriodStart,r.PeriodEnd,r.PaymentDate,r.Status,
-              COUNT(e.PayrollRunEmployeeId),r.TotalEarnings,r.TotalDeductions,r.NetPayable,r.RowVersion
-            FROM payroll.Runs r LEFT JOIN payroll.RunEmployees e ON e.PayrollRunId=r.PayrollRunId
-            WHERE r.TenantId=@TenantId AND r.BusinessId=@BusinessId
-            GROUP BY r.PayrollRunId,r.RunKind,r.PeriodStart,r.PeriodEnd,r.PaymentDate,r.Status,
+              (SELECT COUNT(*) FROM payroll.RunEmployees e WHERE e.PayrollRunId=r.PayrollRunId),
               r.TotalEarnings,r.TotalDeductions,r.NetPayable,r.RowVersion
+            FROM payroll.Runs r
+            WHERE r.TenantId=@TenantId AND r.BusinessId=@BusinessId
             ORDER BY r.PeriodEnd DESC,r.CreatedAt DESC;
             """, connection);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);

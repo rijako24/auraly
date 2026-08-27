@@ -120,6 +120,12 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
             Assert.True(approve.IsSuccessStatusCode, await approve.Content.ReadAsStringAsync());
         await AssertBalancedEntryAsync(runId, PayrollAccountingDocumentTypes.Accrual);
 
+        var listedRuns = await GetAsync<PayrollRunSummary[]>(client,
+            "/api/commerce/v1/payroll/runs");
+        var listedRun = Assert.Single(listedRuns, value => value.PayrollRunId == runId);
+        Assert.Equal("Approved", listedRun.Status);
+        Assert.Equal(1, listedRun.EmployeeCount);
+
         var batchId = Guid.NewGuid();
         await PostAsync<PayrollPaymentBatchView>(client, "/api/commerce/v1/payroll/payments",
             new CreatePayrollPaymentBatchRequest(batchId, runId,
