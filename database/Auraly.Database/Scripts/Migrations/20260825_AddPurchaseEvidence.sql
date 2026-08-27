@@ -32,8 +32,3 @@ IF OBJECT_ID(N'dbo.GoodsReceipts',N'U') IS NOT NULL
 IF OBJECT_ID(N'dbo.GoodsReceipts',N'U') IS NOT NULL
    AND COL_LENGTH(N'dbo.GoodsReceipts',N'SupportFiscalNumber') IS NULL
     ALTER TABLE dbo.GoodsReceipts ADD SupportFiscalNumber NVARCHAR(64) NULL;
-
-IF OBJECT_ID(N'dbo.CK_FiscalDocuments_Type',N'C') IS NOT NULL
-    ALTER TABLE dbo.FiscalDocuments DROP CONSTRAINT CK_FiscalDocuments_Type;
-IF OBJECT_ID(N'dbo.CK_FiscalDocuments_UniqueCodeType',N'C') IS NOT NULL
-    ALTER TABLE dbo.FiscalDocuments DROP CONSTRAINT CK_FiscalDocuments_UniqueCodeType;
