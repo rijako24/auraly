@@ -31,6 +31,31 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
         Guid Option(string catalogCode, string code) => catalog[catalogCode]
             .Single(value => value.Code == code).OptionId;
 
+        var legacy = await CreateLegacyInvalidEmploymentAsync(
+            Option(PayrollCatalogCodes.ContractType, "Indefinite"),
+            Option(PayrollCatalogCodes.SalaryType, "Ordinary"),
+            Option(PayrollCatalogCodes.PayFrequency, "Monthly"),
+            Option(PayrollCatalogCodes.RiskClass, "I"),
+            Option(PayrollCatalogCodes.WorkerType, "01"),
+            Option(PayrollCatalogCodes.WorkerSubtype, "00"),
+            Option(PayrollCatalogCodes.PaymentMethod, "BankTransfer"));
+        var deactivatedLegacy = await PutAsync<PayrollEmploymentView>(client,
+            $"/api/commerce/v1/payroll/employments/{legacy.EmploymentId:D}",
+            new SavePayrollEmploymentRequest(legacy.EmploymentId, legacy.PartyId,
+                fixture.BusinessId, null,
+                Option(PayrollCatalogCodes.ContractType, "Indefinite"),
+                Option(PayrollCatalogCodes.SalaryType, "Ordinary"),
+                Option(PayrollCatalogCodes.PayFrequency, "Monthly"),
+                Option(PayrollCatalogCodes.RiskClass, "I"),
+                Option(PayrollCatalogCodes.WorkerType, "01"),
+                Option(PayrollCatalogCodes.WorkerSubtype, "00"),
+                Option(PayrollCatalogCodes.PaymentMethod, "BankTransfer"),
+                "LEGACY-INCOMPLETE", new DateOnly(2026, 1, 1),
+                new DateOnly(2026, 7, 31), 1_000_000m, null, null, false,
+                legacy.RowVersion));
+        Assert.False(deactivatedLegacy.IsActive);
+        Assert.Null(deactivatedLegacy.EmployeeId);
+
         var ruleSetId = Guid.NewGuid();
         var ruleSet = await PutAsync<PayrollRuleSetView>(client,
             $"/api/commerce/v1/payroll/rule-sets/{ruleSetId:D}",
@@ -259,6 +284,50 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@UserId", fixture.UserId);
         await command.ExecuteNonQueryAsync();
         return id;
+    }
+
+    private async Task<(Guid PartyId, Guid EmploymentId, byte[] RowVersion)>
+        CreateLegacyInvalidEmploymentAsync(Guid contractType, Guid salaryType,
+            Guid frequency, Guid riskClass, Guid workerType, Guid? workerSubtype,
+            Guid paymentMethod)
+    {
+        var partyId = Guid.NewGuid();
+        var employmentId = Guid.NewGuid();
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT dbo.Parties(PartyId,TenantId,PartyType,IdentificationCountryId,
+              IdentificationTypeCode,Identification,NormalizedIdentification,DisplayName,
+              CompletionStatus,IsActive,CreatedBy,CreatedAt)
+            SELECT @PartyId,@TenantId,N'NaturalPerson',CountryId,N'CC',N'1032456700',
+              N'1032456700',N'LEGACY INCOMPLETE',N'Incomplete',1,@UserId,SYSUTCDATETIME()
+            FROM dbo.Countries WHERE Code=N'CO';
+
+            INSERT payroll.Employments(EmploymentId,TenantId,PartyId,BusinessId,EmployeeId,
+              ContractTypeOptionId,SalaryTypeOptionId,PayFrequencyOptionId,RiskClassOptionId,
+              WorkerTypeOptionId,WorkerSubtypeOptionId,PaymentMethodOptionId,ContractNumber,
+              StartDate,MonthlySalary,IsActive,CreatedBy,CreatedAt)
+            VALUES(@EmploymentId,@TenantId,@PartyId,@BusinessId,NULL,@ContractType,@SalaryType,
+              @Frequency,@RiskClass,@WorkerType,@WorkerSubtype,@PaymentMethod,N'LEGACY-INCOMPLETE',
+              '2026-01-01',1000000,1,@UserId,SYSUTCDATETIME());
+
+            SELECT RowVersion FROM payroll.Employments WHERE EmploymentId=@EmploymentId;
+            """;
+        command.Parameters.AddWithValue("@PartyId", partyId);
+        command.Parameters.AddWithValue("@EmploymentId", employmentId);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@UserId", fixture.UserId);
+        command.Parameters.AddWithValue("@ContractType", contractType);
+        command.Parameters.AddWithValue("@SalaryType", salaryType);
+        command.Parameters.AddWithValue("@Frequency", frequency);
+        command.Parameters.AddWithValue("@RiskClass", riskClass);
+        command.Parameters.AddWithValue("@WorkerType", workerType);
+        command.Parameters.AddWithValue("@WorkerSubtype", (object?)workerSubtype ?? DBNull.Value);
+        command.Parameters.AddWithValue("@PaymentMethod", paymentMethod);
+        var rowVersion = (byte[])(await command.ExecuteScalarAsync())!;
+        return (partyId, employmentId, rowVersion);
     }
 
     private async Task AssertBalancedEntryAsync(Guid documentId, string documentType)

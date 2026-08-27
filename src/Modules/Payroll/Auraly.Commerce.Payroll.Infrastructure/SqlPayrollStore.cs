@@ -349,7 +349,19 @@ public sealed class SqlPayrollStore(
             await using var command = new SqlCommand("""
                 IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
                     THROW 51700,N'La empresa está fuera del tenant.',1;
-                IF NOT EXISTS(
+                IF @Active=0 AND EXISTS(
+                    SELECT 1 FROM payroll.Employments
+                    WHERE EmploymentId=@Id AND TenantId=@TenantId AND BusinessId=@BusinessId)
+                BEGIN
+                    UPDATE payroll.Employments SET IsActive=0,EndDate=@EndDate,
+                      UpdatedBy=@UserId,UpdatedAt=@Now
+                    WHERE EmploymentId=@Id AND TenantId=@TenantId AND BusinessId=@BusinessId
+                      AND RowVersion=@RowVersion;
+                    IF @@ROWCOUNT<>1 THROW 51705,N'La relación laboral cambió; recargue antes de guardar.',1;
+                END
+                ELSE
+                BEGIN
+                  IF NOT EXISTS(
                     SELECT 1 FROM dbo.Parties p
                     JOIN payroll.CatalogOptions idtype
                       ON idtype.CatalogCode=N'payroll-identification-type'
@@ -396,6 +408,7 @@ public sealed class SqlPayrollStore(
                     VALUES(@Id,@TenantId,@PartyId,@BusinessId,@ResolvedEmployeeId,@ContractType,@SalaryType,@Frequency,
                       @RiskClass,@WorkerType,@WorkerSubtype,@PaymentMethod,@ContractNumber,@StartDate,@EndDate,
                       @Salary,@IntegralPercentage,@BankReference,@Active,@UserId,@Now);
+                END
                 """, connection, tx);
             AddEmploymentParameters(command, user, request);
             await command.ExecuteNonQueryAsync(ct);
