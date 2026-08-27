@@ -2402,7 +2402,9 @@
       "auraly.application.organization": {
         "type": "Project",
         "dependencies": {
+          "Auraly.Application.Authentication": "[1.0.0, )",
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Contracts.Authentication": "[1.0.0, )",
           "Auraly.Contracts.Authorization": "[1.0.0, )",
           "Auraly.Contracts.Catalog": "[1.0.0, )",
           "Auraly.Contracts.Fiscal": "[1.0.0, )",
@@ -2517,6 +2519,8 @@
           "Auraly.Commerce.Accounting.Contracts": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Domain": "[1.0.0, )",
           "Auraly.Commerce.Payroll.Contracts": "[1.0.0, )",
+          "Auraly.Contracts.Dispatching": "[1.0.0, )",
+          "Auraly.Contracts.Inventory": "[1.0.0, )",
           "Auraly.Contracts.WorkSessions": "[1.0.0, )"
         }
       },
@@ -2531,11 +2535,14 @@
         "dependencies": {
           "Auraly.Application.DocumentProcessing": "[1.0.0, )",
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.BuildingBlocks.Infrastructure": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Application": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Contracts": "[1.0.0, )",
           "Auraly.Commerce.Accounting.Domain": "[1.0.0, )",
           "Auraly.Commerce.Payroll.Contracts": "[1.0.0, )",
+          "Auraly.Contracts.Dispatching": "[1.0.0, )",
           "Auraly.Contracts.Expenses": "[1.0.0, )",
+          "Auraly.Contracts.Inventory": "[1.0.0, )",
           "Auraly.Contracts.Payables": "[1.0.0, )",
           "Auraly.Contracts.Purchasing": "[1.0.0, )",
           "Auraly.Contracts.Receivables": "[1.0.0, )",
@@ -2564,6 +2571,7 @@
         "type": "Project",
         "dependencies": {
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.BuildingBlocks.Infrastructure": "[1.0.0, )",
           "Auraly.Commerce.Payroll.Application": "[1.0.0, )",
           "Auraly.Commerce.Payroll.Contracts": "[1.0.0, )",
           "Auraly.Commerce.Payroll.Domain": "[1.0.0, )",
@@ -2636,7 +2644,8 @@
       "auraly.contracts.organization": {
         "type": "Project",
         "dependencies": {
-          "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Contracts.Authentication": "[1.0.0, )"
         }
       },
       "auraly.contracts.parties": {
@@ -2762,6 +2771,7 @@
         "dependencies": {
           "Auraly.Application.Dispatching": "[1.0.0, )",
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.BuildingBlocks.Infrastructure": "[1.0.0, )",
           "Auraly.Contracts.Dispatching": "[1.0.0, )",
           "Microsoft.Data.SqlClient": "[5.2.2, )"
         }
@@ -2807,6 +2817,7 @@
           "Auraly.Contracts.Authentication": "[1.0.0, )",
           "Auraly.Contracts.Authorization": "[1.0.0, )",
           "Auraly.Contracts.Catalog": "[1.0.0, )",
+          "Auraly.Contracts.Dispatching": "[1.0.0, )",
           "Auraly.Contracts.DocumentProcessing": "[1.0.0, )",
           "Auraly.Contracts.Expenses": "[1.0.0, )",
           "Auraly.Contracts.Fiscal": "[1.0.0, )",
@@ -2844,6 +2855,7 @@
         "dependencies": {
           "Auraly.Application.Pricing": "[1.0.0, )",
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.BuildingBlocks.Infrastructure": "[1.0.0, )",
           "Auraly.Contracts.Pricing": "[1.0.0, )",
           "Auraly.Domain.Pricing": "[1.0.0, )",
           "Microsoft.Data.SqlClient": "[5.2.2, )"
@@ -2855,6 +2867,7 @@
           "Auraly.Application.Routes": "[1.0.0, )",
           "Auraly.Application.Sales": "[1.0.0, )",
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.BuildingBlocks.Infrastructure": "[1.0.0, )",
           "Auraly.Contracts.Routes": "[1.0.0, )",
           "Auraly.Contracts.Sales": "[1.0.0, )",
           "Auraly.Domain.Routes": "[1.0.0, )",
