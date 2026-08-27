@@ -23,6 +23,9 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
 
         var options = await GetAsync<PayrollWorkspaceOptions>(client,
             "/api/commerce/v1/payroll/options");
+        var employeeOption = Assert.Single(options.Parties,
+            value => value.PartyId == partyId);
+        Assert.NotEqual(Guid.Empty, employeeOption.EmployeeId);
         var catalog = options.Catalogs;
         Guid Option(string catalogCode, string code) => catalog[catalogCode]
             .Single(value => value.Code == code).OptionId;
@@ -72,7 +75,7 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
                 new DateOnly(2026, 1, 1), null, true, null));
 
         var employmentId = Guid.NewGuid();
-        await PutAsync<PayrollEmploymentView>(client,
+        var employment = await PutAsync<PayrollEmploymentView>(client,
             $"/api/commerce/v1/payroll/employments/{employmentId:D}",
             new SavePayrollEmploymentRequest(employmentId, partyId, fixture.BusinessId, null,
                 Option(PayrollCatalogCodes.ContractType, "Indefinite"),
@@ -83,7 +86,8 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
                 Option(PayrollCatalogCodes.WorkerSubtype, "00"),
                 Option(PayrollCatalogCodes.PaymentMethod, "BankTransfer"),
                 "CERT-EMP-001", new DateOnly(2026, 8, 1), null, 3_000_000m,
-                null, "Cuenta certificación", true, null));
+                  null, "Cuenta certificación", true, null));
+        Assert.Equal(employeeOption.EmployeeId, employment.EmployeeId);
 
         var agreementId = Guid.NewGuid();
         await PutAsync<PayrollDeductionAgreementView>(client,
@@ -175,9 +179,12 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
               N'1032456799',N'EMPLEADA CERTIFICACIÓN',N'EMPLEADA',N'CERTIFICACIÓN',
               N'Complete',1,@UserId,SYSUTCDATETIME()
             FROM dbo.Countries WHERE Code=N'CO';
+            INSERT dbo.Employees(EmployeeId,BusinessId,PartyId,Name,IsActive,CreatedAt)
+            VALUES(NEWID(),@BusinessId,@PartyId,N'EMPLEADA CERTIFICACIÓN',1,SYSUTCDATETIME());
             """;
         command.Parameters.AddWithValue("@PartyId", id);
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
         command.Parameters.AddWithValue("@UserId", fixture.UserId);
         await command.ExecuteNonQueryAsync();
         return id;

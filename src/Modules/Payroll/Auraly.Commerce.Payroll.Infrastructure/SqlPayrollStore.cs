@@ -46,10 +46,19 @@ public sealed class SqlPayrollStore(
             FROM payroll.Employments e JOIN dbo.Parties p ON p.PartyId=e.PartyId AND p.TenantId=e.TenantId
             WHERE e.TenantId=@TenantId AND e.BusinessId=@BusinessId ORDER BY e.IsActive DESC,5;
 
-            SELECT PartyId,COALESCE(Identification,N''),
-                   COALESCE(DisplayName,LegalName,CONCAT(FirstName,N' ',LastName),Identification,N'Persona')
-            FROM dbo.Parties WHERE TenantId=@TenantId AND PartyType=N'NaturalPerson' AND IsActive=1
-            ORDER BY 3,Identification;
+            SELECT p.PartyId,e.EmployeeId,p.Identification,
+                   COALESCE(p.DisplayName,CONCAT(p.FirstName,N' ',p.LastName))
+            FROM dbo.Parties p
+            JOIN dbo.Employees e ON e.PartyId=p.PartyId AND e.BusinessId=@BusinessId AND e.IsActive=1
+            JOIN payroll.CatalogOptions idtype
+              ON idtype.CatalogCode=N'payroll-identification-type'
+             AND idtype.Code=p.IdentificationTypeCode AND idtype.IsActive=1
+             AND NULLIF(idtype.DianCode,N'') IS NOT NULL
+            WHERE p.TenantId=@TenantId AND p.PartyType=N'NaturalPerson' AND p.IsActive=1
+              AND NULLIF(p.Identification,N'') IS NOT NULL
+              AND NULLIF(p.FirstName,N'') IS NOT NULL
+              AND NULLIF(p.LastName,N'') IS NOT NULL
+            ORDER BY 4,p.Identification;
 
             SELECT r.RuleSetId,r.CountryCode,r.Code,r.Name,r.EffectiveFrom,r.EffectiveTo,
                    r.SourceReference,r.Status,r.RowVersion,p.Code,p.NumericValue,p.UnitCode,p.Description
@@ -161,7 +170,8 @@ public sealed class SqlPayrollStore(
         await reader.NextResultAsync(ct);
         var parties = new List<PayrollPartyOption>();
         while (await reader.ReadAsync(ct))
-            parties.Add(new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2).Trim()));
+            parties.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2),
+                reader.GetString(3).Trim()));
 
         await reader.NextResultAsync(ct);
         var rules = new List<PayrollRuleSetView>();
@@ -339,10 +349,24 @@ public sealed class SqlPayrollStore(
             await using var command = new SqlCommand("""
                 IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
                     THROW 51700,N'La empresa está fuera del tenant.',1;
-                IF NOT EXISTS(SELECT 1 FROM dbo.Parties WHERE PartyId=@PartyId AND TenantId=@TenantId AND PartyType=N'NaturalPerson' AND IsActive=1)
-                    THROW 51701,N'El trabajador debe ser una persona natural activa del tenant.',1;
-                IF @EmployeeId IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.Employees WHERE EmployeeId=@EmployeeId AND BusinessId=@BusinessId AND PartyId=@PartyId)
-                    THROW 51702,N'El empleado operativo no corresponde a la persona y empresa.',1;
+                IF NOT EXISTS(
+                    SELECT 1 FROM dbo.Parties p
+                    JOIN payroll.CatalogOptions idtype
+                      ON idtype.CatalogCode=N'payroll-identification-type'
+                     AND idtype.Code=p.IdentificationTypeCode AND idtype.IsActive=1
+                     AND NULLIF(idtype.DianCode,N'') IS NOT NULL
+                    WHERE p.PartyId=@PartyId AND p.TenantId=@TenantId
+                      AND p.PartyType=N'NaturalPerson' AND p.IsActive=1
+                      AND NULLIF(p.Identification,N'') IS NOT NULL
+                      AND NULLIF(p.FirstName,N'') IS NOT NULL
+                      AND NULLIF(p.LastName,N'') IS NOT NULL)
+                    THROW 51701,N'El trabajador debe ser una persona natural activa con identificación y nombres completos.',1;
+                DECLARE @ResolvedEmployeeId uniqueidentifier=(
+                    SELECT EmployeeId FROM dbo.Employees
+                    WHERE BusinessId=@BusinessId AND PartyId=@PartyId AND IsActive=1);
+                IF @ResolvedEmployeeId IS NULL OR
+                   (@EmployeeId IS NOT NULL AND @EmployeeId<>@ResolvedEmployeeId)
+                    THROW 51702,N'El tercero no tiene un rol de empleado activo en la empresa.',1;
                 IF EXISTS(SELECT 1 FROM (VALUES
                     (@ContractType,N'payroll-contract-type'),(@SalaryType,N'payroll-salary-type'),
                     (@Frequency,N'payroll-pay-frequency'),(@RiskClass,N'payroll-risk-class'),
@@ -354,7 +378,7 @@ public sealed class SqlPayrollStore(
 
                 IF EXISTS(SELECT 1 FROM payroll.Employments WHERE EmploymentId=@Id AND TenantId=@TenantId)
                 BEGIN
-                    UPDATE payroll.Employments SET PartyId=@PartyId,BusinessId=@BusinessId,EmployeeId=@EmployeeId,
+                    UPDATE payroll.Employments SET PartyId=@PartyId,BusinessId=@BusinessId,EmployeeId=@ResolvedEmployeeId,
                       ContractTypeOptionId=@ContractType,SalaryTypeOptionId=@SalaryType,PayFrequencyOptionId=@Frequency,
                       RiskClassOptionId=@RiskClass,WorkerTypeOptionId=@WorkerType,WorkerSubtypeOptionId=@WorkerSubtype,
                       PaymentMethodOptionId=@PaymentMethod,ContractNumber=@ContractNumber,StartDate=@StartDate,
@@ -369,7 +393,7 @@ public sealed class SqlPayrollStore(
                       WorkerTypeOptionId,WorkerSubtypeOptionId,PaymentMethodOptionId,ContractNumber,
                       StartDate,EndDate,MonthlySalary,IntegralSalaryPercentage,BankAccountReference,
                       IsActive,CreatedBy,CreatedAt)
-                    VALUES(@Id,@TenantId,@PartyId,@BusinessId,@EmployeeId,@ContractType,@SalaryType,@Frequency,
+                    VALUES(@Id,@TenantId,@PartyId,@BusinessId,@ResolvedEmployeeId,@ContractType,@SalaryType,@Frequency,
                       @RiskClass,@WorkerType,@WorkerSubtype,@PaymentMethod,@ContractNumber,@StartDate,@EndDate,
                       @Salary,@IntegralPercentage,@BankReference,@Active,@UserId,@Now);
                 """, connection, tx);

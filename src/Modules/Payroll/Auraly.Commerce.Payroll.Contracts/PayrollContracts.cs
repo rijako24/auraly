@@ -115,7 +115,11 @@ public sealed record SaveElectronicPayrollConfigurationRequest(
     bool IsActive,
     byte[]? RowVersion);
 
-public sealed record PayrollPartyOption(Guid PartyId, string Identification, string Name);
+public sealed record PayrollPartyOption(
+    Guid PartyId,
+    Guid EmployeeId,
+    string Identification,
+    string Name);
 
 public sealed record PayrollEmploymentOption(
     Guid EmploymentId,
