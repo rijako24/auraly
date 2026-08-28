@@ -112,6 +112,12 @@ producto**. Suma o resta puntos porcentuales al margen propio de cada producto:
 un producto con margen de 20% y ajuste de 10 puntos queda en 30%; con -10 puntos
 queda en 10%. El resultado se limita al intervalo válido de 0% a menos de 100%.
 
+Las estrategias derivadas directamente del costo
+(`PercentageOverAverageCost` y `FixedMarginOverAverageCost`) nunca aceptan un
+valor negativo. Durante una actualización, cualquier valor histórico negativo
+se normaliza a cero antes de volver a confiar la restricción; así el canal más
+conservador vende al costo y nunca por debajo de este.
+
 ### Asignaciones
 
 ```text

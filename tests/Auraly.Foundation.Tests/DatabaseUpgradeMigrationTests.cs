@@ -128,6 +128,33 @@ public sealed class DatabaseUpgradeMigrationTests
     }
 
     [Fact]
+    public void Price_channel_upgrade_normalizes_legacy_values_before_checks_are_revalidated()
+    {
+        var root = FindRepositoryRoot();
+        var migration = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "Migrations",
+            "20260828_NormalizePriceChannelValues.sql"));
+        var preDeployment = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "PreDeployment.sql"));
+
+        Assert.Contains("Strategy = N'FixedMarginOverAverageCost'", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("Value IS NULL OR Value < 0", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("WHEN Value IS NULL OR Value < 0 THEN 0", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("Strategy = N'PercentageOverAverageCost'", migration,
+            StringComparison.Ordinal);
+        Assert.Contains("Strategy = N'ProductMarginAdjustment'", migration,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("\nGO", migration.Replace("\r\n", "\n"),
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("RETURN", migration, StringComparison.Ordinal);
+        Assert.Contains("20260828_NormalizePriceChannelValues.sql", preDeployment,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Release_pipeline_publishes_installer_version_and_manifest_hash_atomically()
     {
         var pipeline = File.ReadAllText(Path.Combine(
