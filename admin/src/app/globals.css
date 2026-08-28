@@ -162,6 +162,33 @@ body.dashboard-shell { overflow: hidden; }
   100% { transform: translateX(210%); }
 }
 
+@keyframes auraly-setup-loader-orbit {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes auraly-setup-loader-stage {
+  0%, 100% { opacity: 0; transform: translateY(7px); }
+  12%, 28% { opacity: 1; transform: translateY(0); }
+  40% { opacity: 0; transform: translateY(-7px); }
+}
+
+.auraly-setup-loader > span:nth-child(2) {
+  animation: auraly-setup-loader-orbit 2.4s linear infinite;
+}
+
+.auraly-setup-loader-stage {
+  animation: auraly-setup-loader-stage 4.8s ease-in-out infinite;
+  inset: 0;
+  opacity: 0;
+  position: absolute;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auraly-setup-loader > span:nth-child(2) { animation: none; }
+  .auraly-setup-loader-stage { animation: none; display: none; }
+  .auraly-setup-loader-stage:first-child { display: inline; opacity: 1; }
+}
+
 @media (display-mode: standalone) {
   html, body { overscroll-behavior: none; }
   body { -webkit-tap-highlight-color: transparent; }

@@ -100,9 +100,10 @@ test("canales administra precios por cantidad y modos calculados sin listas", as
   await expect(createDialog.getByText("Código *", { exact: true })).toHaveCount(0);
   await expect(createDialog.getByRole("button", { name: "Precios por producto y cantidad" })).toBeVisible();
   await expect(createDialog.getByRole("button", { name: "% sobre precio público" })).toBeVisible();
-  await expect(createDialog.getByRole("button", { name: "Descuento sobre precio público" })).toBeVisible();
+  await expect(createDialog.getByRole("button", { name: "Descuento sobre precio público" })).toHaveCount(0);
   await expect(createDialog.getByRole("button", { name: "% sobre costo promedio" })).toBeVisible();
   await expect(createDialog.getByRole("button", { name: "Margen sobre costo promedio" })).toBeVisible();
+  await expect(createDialog.getByRole("button", { name: "Ajustar margen del producto" })).toBeVisible();
   await expect(createDialog.getByRole("button", { name: "Vender al costo promedio" })).toBeVisible();
   await createDialog.getByText("Nombre *", { exact: true }).locator("..").getByRole("textbox").fill("Distribuidores");
   await createDialog.getByPlaceholder(/Código interno/).fill("Aceite");
@@ -120,7 +121,7 @@ test("canales administra precios por cantidad y modos calculados sin listas", as
   const detailDialog = page.getByRole("dialog", { name: "Mayoristas" });
   await expect(detailDialog.getByRole("button", { name: "Agregar producto" })).toHaveCount(0);
   await expect(detailDialog.getByRole("button", { name: "Precios por producto y cantidad" })).toBeVisible();
-  await expect(detailDialog.getByRole("button", { name: "Descuento sobre precio público" })).toBeVisible();
+  await expect(detailDialog.getByRole("button", { name: "Ajustar margen del producto" })).toBeVisible();
   await detailDialog.getByRole("button", { name: "Editar canal" }).click();
   const editDialog = page.getByRole("dialog", { name: "Editar canal de precios" });
   await editDialog.getByRole("button", { name: "Agregar producto" }).click();
@@ -154,10 +155,20 @@ test("canales administra precios por cantidad y modos calculados sin listas", as
   const costDialog = page.getByRole("dialog", { name: "Nuevo canal de precios" });
   await costDialog.getByText("Nombre *", { exact: true }).locator("..").getByRole("textbox").fill("Costo incrementado");
   await costDialog.getByRole("button", { name: "% sobre costo promedio" }).click();
-  const costPercentage = costDialog.getByText(/Variación/).locator("..").locator("input");
-  await costPercentage.fill("-4");
-  await expect(costPercentage).toHaveValue("-4");
+  const costPercentage = costDialog.getByText("Incremento sobre costo (%)", { exact: true }).locator("..").locator("input");
+  await costPercentage.fill("4");
+  await expect(costPercentage).toHaveValue("4");
   await page.keyboard.press("Escape");
+
+  await page.getByRole("button", { name: "Nuevo canal" }).click();
+  const marginAdjustmentDialog = page.getByRole("dialog", { name: "Nuevo canal de precios" });
+  await marginAdjustmentDialog.getByText("Nombre *", { exact: true }).locator("..").getByRole("textbox").fill("Margen especial");
+  await marginAdjustmentDialog.getByRole("button", { name: "Ajustar margen del producto" }).click();
+  await marginAdjustmentDialog.getByText("Puntos de ajuste", { exact: true }).locator("..").locator("input").fill("-10");
+  await expect(marginAdjustmentDialog.getByText(/20% \+ 10 puntos = 30%/)).toBeVisible();
+  await marginAdjustmentDialog.getByRole("button", { name: "Crear canal" }).click();
+  await expect(marginAdjustmentDialog).toBeHidden();
+  expect(createdRequest).toMatchObject({ name: "Margen especial", channelStrategy: "ProductMarginAdjustment", channelValue: -10 });
 
   await page.getByRole("button", { name: "Nuevo canal" }).click();
   const discountDialog = page.getByRole("dialog", { name: "Nuevo canal de precios" });

@@ -15,71 +15,8 @@ public sealed partial class SqlCatalogStore
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var command = connection.CreateCommand();
-        command.CommandText = """
-            IF NOT EXISTS (
-              SELECT 1 FROM dbo.EnrolledDevices d
-              JOIN dbo.Businesses b ON b.BusinessId=@BusinessId
-                AND b.TenantId=d.TenantId AND b.IsActive=1
-              WHERE d.DeviceId=@DeviceId AND d.TenantId=@TenantId
-                AND d.IsActive=1)
-              THROW 51020,'The device pricing scope is invalid.',1;
-
-            ;WITH CategoryAncestors AS
-            (
-              SELECT category.ProductCategoryId AS DescendantId,
-                     category.ProductCategoryId AS AncestorId,
-                     category.ParentProductCategoryId
-              FROM dbo.ProductCategories category
-              WHERE category.BusinessId=@BusinessId
-              UNION ALL
-              SELECT child.DescendantId,parent.ProductCategoryId,parent.ParentProductCategoryId
-              FROM CategoryAncestors child
-              JOIN dbo.ProductCategories parent
-                ON parent.ProductCategoryId=child.ParentProductCategoryId
-               AND parent.BusinessId=@BusinessId
-            )
-            SELECT c.PriceChannelId,p.ProductId,
-              CASE WHEN c.Strategy=N'TieredProductPrice' THEN special.MinimumQuantity ELSE CONVERT(decimal(19,6),1) END,
-              CONVERT(decimal(19,4),ROUND(CASE c.Strategy
-                WHEN N'TieredProductPrice' THEN special.Amount
-                WHEN N'PercentageOverBasePrice' THEN basePrice.Amount*(1+COALESCE(c.Value,0)/100)
-                WHEN N'PercentageBelowBasePrice' THEN basePrice.Amount*(1-COALESCE(c.Value,0)/100)
-                WHEN N'PercentageOverAverageCost' THEN cost.Amount*(1+COALESCE(c.Value,0)/100)
-                WHEN N'FixedMarginOverAverageCost' THEN cost.Amount/(1-COALESCE(c.Value,0)/100)
-                WHEN N'SellAtAverageCost' THEN cost.Amount END,4)),basePrice.CurrencyCode,
-              CONVERT(bit,0)
-            FROM dbo.PriceChannels c
-            JOIN dbo.Products p ON p.BusinessId=c.BusinessId AND p.IsActive=1
-            CROSS APPLY(SELECT TOP(1) pp.Amount,pp.CurrencyCode,pp.CostBasisAmount
-                        FROM dbo.ProductPrices pp
-                        WHERE pp.BusinessId=p.BusinessId AND pp.ProductId=p.ProductId AND pp.IsActive=1
-                          AND pp.ValidFrom<=SYSDATETIMEOFFSET()
-                          AND (pp.ValidUntil IS NULL OR pp.ValidUntil>SYSDATETIMEOFFSET())
-                        ORDER BY pp.ValidFrom DESC) basePrice
-            OUTER APPLY(SELECT COALESCE(MAX(NULLIF(balance.AverageUnitCost,0)),basePrice.CostBasisAmount,0) Amount FROM dbo.InventoryBalances balance WHERE balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId AND balance.ProductId=p.ProductId) cost
-            OUTER APPLY(SELECT item.Amount,item.MinimumQuantity FROM dbo.ResolvedPriceChannelItems item WHERE item.PriceChannelId=c.PriceChannelId AND item.ProductId=p.ProductId AND item.IsActive=1 AND c.Strategy=N'TieredProductPrice') special
-            WHERE c.BusinessId=@BusinessId AND c.IsActive=1
-              AND NOT EXISTS(
-                SELECT 1 FROM dbo.PriceChannelExclusions exclusion
-                WHERE exclusion.PriceChannelId=c.PriceChannelId
-                  AND(exclusion.ProductId=p.ProductId
-                      OR exclusion.ProductBrandId=p.ProductBrandId
-                      OR exclusion.ProductCategoryId IN(
-                        SELECT ancestor.AncestorId FROM CategoryAncestors ancestor
-                        WHERE ancestor.DescendantId=p.ProductCategoryId)))
-              AND(c.Strategy<>N'TieredProductPrice' OR special.Amount IS NOT NULL);
-
-            SELECT c.CustomerId,
-              COALESCE(p.NormalizedIdentification,p.Identification,N''),
-              COALESCE(p.DisplayName,p.LegalName,p.Identification,N''),
-              CASE WHEN s.ValidFrom<=SYSDATETIMEOFFSET()
-                     AND(s.ValidUntil IS NULL OR s.ValidUntil>SYSDATETIMEOFFSET())
-                   THEN s.PriceChannelId END,c.RequiresElectronicInvoice,c.IsActive
-            FROM dbo.Customers c
-            JOIN dbo.Parties p ON p.PartyId=c.PartyId AND p.TenantId=@TenantId
-            LEFT JOIN dbo.CustomerPricingSettings s ON s.CustomerId=c.CustomerId
-            WHERE c.BusinessId=@BusinessId AND p.IsActive=1;
-            """;
+        command.CommandText = "dbo.PosPricingSnapshotGet";
+        command.CommandType = System.Data.CommandType.StoredProcedure;
         command.Parameters.AddRange(
         [
             new SqlParameter("@DeviceId", deviceId),

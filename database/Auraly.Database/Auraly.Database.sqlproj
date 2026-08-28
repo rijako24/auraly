@@ -23,6 +23,7 @@
     <None Include="Scripts\Seeds\*.sql" />
   </ItemGroup>
   <ItemGroup>
+    <Build Include="Functions\PriceChannelAmountCalculate.sql" />
     <Build Include="Functions\CustomerProductPriceResolve.sql" />
     <Build Include="StoredProcedures\SellerOrderCatalogGet.sql" />
     <Build Include="StoredProcedures\SellerOrderContextGet.sql" />
@@ -46,6 +47,7 @@
     <Build Include="StoredProcedures\ExecutionBusinessesList.sql" />
     <Build Include="StoredProcedures\ExecutionAccessResolve.sql" />
     <Build Include="StoredProcedures\PriceSegmentsList.sql" />
+    <Build Include="StoredProcedures\PosPricingSnapshotGet.sql" />
     <Build Include="StoredProcedures\PriceSegmentCreate.sql" />
     <Build Include="StoredProcedures\PriceSegmentItemsList.sql" />
     <Build Include="StoredProcedures\PriceSegmentItemSave.sql" />

@@ -1,6 +1,6 @@
 import { apiClient } from "./client";
 
-export type PriceChannelStrategy = "TieredProductPrice"|"PercentageOverBasePrice"|"PercentageBelowBasePrice"|"PercentageOverAverageCost"|"FixedMarginOverAverageCost"|"SellAtAverageCost";
+export type PriceChannelStrategy = "TieredProductPrice"|"PercentageOverBasePrice"|"PercentageOverAverageCost"|"FixedMarginOverAverageCost"|"SellAtAverageCost"|"ProductMarginAdjustment";
 export interface PriceSegmentSummary { id:string; code:string; name:string; isActive:boolean; createdAt:string; productCount:number; customerCount:number; strategy:PriceChannelStrategy; value:number|null; }
 export interface PriceSegmentItem { productId:string; productCode:string; productName:string; amount:number; currencyCode:string; minimumQuantity:number; }
 export type PriceChannelExclusionScope = "Category"|"Brand"|"Product";

@@ -20,6 +20,7 @@ internal sealed class AuralyDesktopApplicationContext : ApplicationContext
     private readonly System.Windows.Forms.Timer monitor = new() { Interval = 750 };
     private Process? edge;
     private bool restartingEdge;
+    private DateTimeOffset nextEdgeRestartAt;
 
     public AuralyDesktopApplicationContext(
         string root,
@@ -99,7 +100,8 @@ internal sealed class AuralyDesktopApplicationContext : ApplicationContext
 
     private async Task RestoreEdgeAsync()
     {
-        if (restartingEdge || edge is null || !edge.HasExited || shutdown.IsCancellationRequested)
+        if (restartingEdge || edge is null || !edge.HasExited || shutdown.IsCancellationRequested
+            || DateTimeOffset.UtcNow < nextEdgeRestartAt)
             return;
         restartingEdge = true;
         try
@@ -116,6 +118,16 @@ internal sealed class AuralyDesktopApplicationContext : ApplicationContext
         }
         catch (OperationCanceledException)
         {
+        }
+        catch (Exception exception)
+        {
+            nextEdgeRestartAt = DateTimeOffset.UtcNow.AddSeconds(5);
+            if (edge is not null)
+                Program.RemoveChild(edge);
+            var log = Path.Combine(data, "logs", "desktop-error.log");
+            await File.AppendAllTextAsync(
+                log,
+                $"{DateTimeOffset.Now:O} No fue posible reiniciar el servicio local. {exception}{Environment.NewLine}");
         }
         finally
         {

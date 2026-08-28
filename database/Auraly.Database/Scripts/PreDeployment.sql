@@ -30,6 +30,14 @@ BEGIN
     SET Strategy = N'TieredProductPrice',
         Value = NULL
     WHERE Strategy = N'FixedSpecialPrice';
+
+    -- PercentageBelowBasePrice era una segunda representación del mismo
+    -- cálculo que PercentageOverBasePrice con signo negativo. Se normaliza
+    -- antes de reemplazar los checks para conservar todos los canales.
+    UPDATE dbo.PriceChannels
+    SET Strategy = N'PercentageOverBasePrice',
+        Value = -ABS(COALESCE(Value, 0))
+    WHERE Strategy = N'PercentageBelowBasePrice';
 END;
 
 -- La caja conserva cada captura como una línea independiente. El índice

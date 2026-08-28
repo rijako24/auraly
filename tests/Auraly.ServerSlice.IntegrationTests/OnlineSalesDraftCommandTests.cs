@@ -135,6 +135,37 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
         }
 
         await ExecuteAsync(
+            "UPDATE dbo.PriceChannels SET Strategy=N'ProductMarginAdjustment',Value=10 WHERE PriceChannelId=@PriceChannelId;",
+            new SqlParameter("@PriceChannelId", priceChannelId));
+        decimal salesAdjustmentPrice;
+        using (var adjustedSearchResponse = await client.PostAsJsonAsync(
+                   "/api/commerce/v1/pos/drafts/products/search",
+                   new SearchOnlineSalesRequest(context, "P-E2E", 0, 50, customerId)))
+        {
+            adjustedSearchResponse.EnsureSuccessStatusCode();
+            var products = await adjustedSearchResponse.Content.ReadFromJsonAsync<OnlineSalesProductPage>();
+            var product = Assert.Single(products!.Items, item => item.ProductId == fixture.ProductId);
+            salesAdjustmentPrice = product.UnitPrice;
+            Assert.True(salesAdjustmentPrice > 0);
+            Assert.Equal("PriceChannel", product.PriceSource);
+        }
+        using (var adjustedCatalogResponse = await client.PostAsJsonAsync(
+                   "/api/commerce/v1/seller-orders/catalog",
+                   new { businessId = fixture.BusinessId, warehouseId = fixture.WarehouseId,
+                       customerId, search = "P-E2E", skip = 0, take = 50 }))
+        {
+            adjustedCatalogResponse.EnsureSuccessStatusCode();
+            var catalog = await adjustedCatalogResponse.Content.ReadFromJsonAsync<JsonElement>();
+            var product = Assert.Single(catalog.GetProperty("items").EnumerateArray()
+                .Where(item => item.GetProperty("productId").GetGuid() == fixture.ProductId));
+            Assert.Equal(salesAdjustmentPrice, product.GetProperty("unitPrice").GetDecimal());
+            Assert.Equal("PriceChannel", product.GetProperty("priceSource").GetString());
+        }
+        await ExecuteAsync(
+            "UPDATE dbo.PriceChannels SET Strategy=N'TieredProductPrice',Value=NULL WHERE PriceChannelId=@PriceChannelId;",
+            new SqlParameter("@PriceChannelId", priceChannelId));
+
+        await ExecuteAsync(
             """
             INSERT dbo.PriceChannelExclusions(
               PriceChannelExclusionId,PriceChannelId,ScopeType,ProductCategoryId,CreatedAt)

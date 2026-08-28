@@ -1,3 +1,4 @@
+using Auraly.Contracts.Pricing;
 using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
 
@@ -56,9 +57,10 @@ public static class PriceSegmentsApi
         var id = Guid.NewGuid();
         var code = $"CNL-{id:N}".ToUpperInvariant()[..12];
         var requestedItems = request.Items ?? [];
-        var strategy = NormalizeChannelStrategy(request.ChannelStrategy);
-        var channelValue = ValidateChannelValue(strategy, request.ChannelValue);
-        if (strategy == "TieredProductPrice" &&
+        if (!TryNormalizeChannelStrategy(request.ChannelStrategy, out var strategy) ||
+            !TryValidateChannelValue(strategy, request.ChannelValue, out var channelValue))
+            return InvalidChannelSettings();
+        if (strategy == PriceChannelStrategies.TieredProductPrice &&
             requestedItems.Any(item => item.ProductId == Guid.Empty || item.Amount <= 0 || item.MinimumQuantity <= 0))
             return Results.Problem("Cada producto necesita un precio y una cantidad mínima válidos.", statusCode: 400);
         await using var command = Procedure("dbo.PriceSegmentCreate", connection, transaction);
@@ -71,7 +73,7 @@ public static class PriceSegmentsApi
         try
         {
             await command.ExecuteNonQueryAsync(ct);
-            if (strategy == "TieredProductPrice")
+            if (strategy == PriceChannelStrategies.TieredProductPrice)
             {
                 foreach (var item in requestedItems)
                 {
@@ -234,8 +236,9 @@ public static class PriceSegmentsApi
         var name = request.Name?.Trim();
         if (string.IsNullOrWhiteSpace(name) || name.Length > 120)
             return Results.ValidationProblem(new Dictionary<string, string[]> { ["name"] = ["El nombre es obligatorio y admite máximo 120 caracteres."] });
-        var strategy = NormalizeChannelStrategy(request.ChannelStrategy);
-        var value = ValidateChannelValue(strategy, request.ChannelValue);
+        if (!TryNormalizeChannelStrategy(request.ChannelStrategy, out var strategy) ||
+            !TryValidateChannelValue(strategy, request.ChannelValue, out var value))
+            return InvalidChannelSettings();
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(ct);
@@ -275,26 +278,40 @@ public static class PriceSegmentsApi
         return Results.NoContent();
     }
 
-    private static string NormalizeChannelStrategy(string? strategy) => strategy?.Trim() switch
+    private static bool TryNormalizeChannelStrategy(string? strategy, out string normalized)
     {
-        "TieredProductPrice" => "TieredProductPrice",
-        "PercentageOverBasePrice" => "PercentageOverBasePrice",
-        "PercentageBelowBasePrice" => "PercentageBelowBasePrice",
-        "PercentageOverAverageCost" => "PercentageOverAverageCost",
-        "FixedMarginOverAverageCost" => "FixedMarginOverAverageCost",
-        "SellAtAverageCost" => "SellAtAverageCost",
-        _ => throw new BadHttpRequestException("Selecciona un modo de precio válido para el canal.")
-    };
+        normalized = strategy?.Trim() ?? string.Empty;
+        return PriceChannelStrategies.IsSupported(normalized);
+    }
 
-    private static decimal? ValidateChannelValue(string strategy, decimal? value) => strategy switch
+    private static bool TryValidateChannelValue(
+        string strategy,
+        decimal? value,
+        out decimal? normalized)
     {
-        "PercentageOverBasePrice" when value is >= -100 and <= 1000 => value,
-        "PercentageOverAverageCost" when value is >= -100 and <= 1000 => value,
-        "PercentageBelowBasePrice" when value is >= 0 and <= 100 => value,
-        "FixedMarginOverAverageCost" when value is >= -100 and < 100 => value,
-        "TieredProductPrice" or "SellAtAverageCost" => null,
-        _ => throw new BadHttpRequestException("El valor no es válido para el modo de precio seleccionado.")
-    };
+        switch (strategy)
+        {
+            case PriceChannelStrategies.PercentageOverBasePrice when value is >= -100 and <= 1000:
+            case PriceChannelStrategies.PercentageOverAverageCost when value is >= 0 and <= 1000:
+            case PriceChannelStrategies.FixedMarginOverAverageCost when value is >= 0 and < 100:
+            case PriceChannelStrategies.ProductMarginAdjustment when value is >= -99.999999m and <= 99.999999m:
+                normalized = value;
+                return true;
+            case PriceChannelStrategies.TieredProductPrice:
+            case PriceChannelStrategies.SellAtAverageCost:
+                normalized = null;
+                return true;
+            default:
+                normalized = null;
+                return false;
+        }
+    }
+
+    private static IResult InvalidChannelSettings() => Results.ValidationProblem(
+        new Dictionary<string, string[]>
+        {
+            ["channelStrategy"] = ["Selecciona un modo y un valor válidos para el canal."]
+        });
 
     private static SqlCommand Procedure(string name, SqlConnection connection, SqlTransaction? transaction = null) =>
         new(name, connection, transaction) { CommandType = System.Data.CommandType.StoredProcedure };

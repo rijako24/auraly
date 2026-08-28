@@ -161,10 +161,11 @@ public sealed class PosEdgeSaleStore
     {
         await using var context = new PosEdgeDbContext(_options);
         await context.Database.EnsureCreatedAsync(cancellationToken);
+        await PosUnifiedOutboxSchema.EnsureCreatedAsync(
+            context.Database.GetConnectionString()!, cancellationToken);
         await UpgradeDeviceIdentityAsync(context, cancellationToken);
         await UpgradeDocumentNumberingAsync(context, cancellationToken);
         await UpgradeFiscalSeriesAsync(context, cancellationToken);
-        await UpgradeOutboxAsync(context, cancellationToken);
         await UpgradeFiscalStatusAsync(context, cancellationToken);
     }
 
@@ -1290,46 +1291,6 @@ public sealed class PosEdgeSaleStore
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
     }
-
-    private static async Task UpgradeOutboxAsync(
-        PosEdgeDbContext context,
-        CancellationToken cancellationToken)
-    {
-        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        DbConnection connection = context.Database.GetDbConnection();
-        if (connection.State != ConnectionState.Open)
-        {
-            await connection.OpenAsync(cancellationToken);
-        }
-
-        await using (var command = connection.CreateCommand())
-        {
-            command.CommandText = "PRAGMA table_info('Outbox');";
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            while (await reader.ReadAsync(cancellationToken))
-            {
-                columns.Add(reader.GetString(1));
-            }
-        }
-
-        var additions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["NextAttemptAt"] = "TEXT NULL",
-            ["LeaseAcquiredAt"] = "TEXT NULL",
-            ["LastAttemptAt"] = "TEXT NULL",
-            ["LastError"] = "TEXT NULL",
-            ["RemoteStatus"] = "TEXT NULL",
-            ["ServerReceiptId"] = "TEXT NULL"
-        };
-        foreach (var addition in additions.Where(addition => !columns.Contains(addition.Key)))
-        {
-            await using var command = connection.CreateCommand();
-            command.CommandText =
-                $"ALTER TABLE Outbox ADD COLUMN {addition.Key} {addition.Value};";
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
-    }
-
 
     private static async Task UpgradeFiscalStatusAsync(
         PosEdgeDbContext context,

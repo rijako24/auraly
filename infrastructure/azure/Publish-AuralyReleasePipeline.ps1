@@ -84,6 +84,33 @@ function Wait-HttpHealthy {
     }
 }
 
+function Assert-OfflineLeaseSigningConfiguration {
+    $settings = & az webapp config appsettings list `
+        --resource-group $configuration.ResourceGroup `
+        --name $configuration.Api `
+        --query "[?name=='Authentication__OfflineLeaseSigning__KeyId' || name=='Authentication__OfflineLeaseSigning__PrivateKeyPem'].{Name:name,Value:value}" `
+        --output json | ConvertFrom-Json
+    Assert-LastExitCode 'No se pudo inspeccionar la firma del acceso sin conexión'
+    $keyId = @($settings | Where-Object Name -EQ 'Authentication__OfflineLeaseSigning__KeyId')[0].Value
+    $privateKeyPem = @($settings | Where-Object Name -EQ 'Authentication__OfflineLeaseSigning__PrivateKeyPem')[0].Value
+    if ([string]::IsNullOrWhiteSpace($keyId) -or [string]::IsNullOrWhiteSpace($privateKeyPem)) {
+        throw 'La firma del acceso sin conexión no está configurada en la API.'
+    }
+    $rsa = [Security.Cryptography.RSA]::Create()
+    try {
+        $rsa.ImportFromPem($privateKeyPem)
+        if ($rsa.KeySize -lt 2048) {
+            throw 'La clave de firma del acceso sin conexión debe ser RSA de al menos 2048 bits.'
+        }
+    }
+    catch {
+        throw "La firma del acceso sin conexión no contiene una clave PEM privada completa: $($_.Exception.Message)"
+    }
+    finally {
+        $rsa.Dispose()
+    }
+}
+
 function Invoke-ReviewedPreDacpacMigration {
     param(
         [Parameter(Mandatory)][string]$MigrationPath,
@@ -387,6 +414,7 @@ function Publish-PosInstallerIfPresent {
 
 $manifest = Test-Release
 Write-Information "Release $ReleaseVersion verificado; commit $($manifest.commit)." -InformationAction Continue
+Assert-OfflineLeaseSigningConfiguration
 Publish-Database
 Publish-Function
 Publish-Api

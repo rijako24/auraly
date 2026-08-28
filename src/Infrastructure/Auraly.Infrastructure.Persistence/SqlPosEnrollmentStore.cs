@@ -89,6 +89,9 @@ public sealed class SqlPosEnrollmentStore(
         IReadOnlyCollection<string> devicePermissions,
         CancellationToken cancellationToken)
     {
+        // Validate trust material before opening the transaction. A broken
+        // server credential must not consume a session or provision a device.
+        var trustedPublicKeys = offlineLeaseTrust.TrustedPublicKeys;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
         await using var transaction =
@@ -199,7 +202,7 @@ public sealed class SqlPosEnrollmentStore(
                 assignedFiscalSeries.AuthorizationRangeStart,
                 assignedFiscalSeries.AuthorizationRangeEnd),
             receiptDocumentSeries,
-            offlineLeaseTrust.TrustedPublicKeys,
+            trustedPublicKeys,
             now);
     }
 

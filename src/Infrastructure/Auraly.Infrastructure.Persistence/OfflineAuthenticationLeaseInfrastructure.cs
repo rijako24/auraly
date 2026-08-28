@@ -45,6 +45,11 @@ public sealed class RsaOfflineAuthenticationLeaseSigner :
         _options = options.Value;
     }
 
+    public void ValidateConfiguration()
+    {
+        lock (_sync) EnsureInitialized();
+    }
+
     public SignedOfflineAuthenticationLease Sign(
         OfflineAuthenticationLeasePayload payload)
     {
@@ -83,10 +88,16 @@ public sealed class RsaOfflineAuthenticationLeaseSigner :
             _keyId = _options.KeyId.Trim();
             _key = key;
         }
-        catch
+        catch (OfflineAuthenticationLeaseConfigurationException)
         {
             key.Dispose();
             throw;
+        }
+        catch (Exception exception) when (exception is ArgumentException or CryptographicException)
+        {
+            key.Dispose();
+            throw new OfflineAuthenticationLeaseConfigurationException(
+                "La clave de firma para el acceso sin conexión no contiene un PEM RSA privado válido.");
         }
     }
 

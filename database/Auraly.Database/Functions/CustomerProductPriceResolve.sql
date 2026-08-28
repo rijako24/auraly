@@ -35,7 +35,8 @@ RETURN
     FROM dbo.Products product
     CROSS APPLY
     (
-        SELECT TOP (1) price.Amount, price.CurrencyCode, price.CostBasisAmount
+        SELECT TOP (1) price.Amount, price.CurrencyCode, price.CostBasisAmount,
+               price.TargetMarginPercent, price.EffectiveMarginPercent
         FROM dbo.ProductPrices price
         WHERE price.BusinessId = product.BusinessId
           AND price.ProductId = product.ProductId
@@ -80,14 +81,13 @@ RETURN
     ) special
     OUTER APPLY
     (
-        SELECT CONVERT(decimal(19,4), ROUND(CASE channel.Strategy
-            WHEN N'TieredProductPrice' THEN special.Amount
-            WHEN N'PercentageOverBasePrice' THEN basePrice.Amount * (1 + COALESCE(channel.Value, 0) / 100)
-            WHEN N'PercentageBelowBasePrice' THEN basePrice.Amount * (1 - COALESCE(channel.Value, 0) / 100)
-            WHEN N'PercentageOverAverageCost' THEN cost.Amount * (1 + COALESCE(channel.Value, 0) / 100)
-            WHEN N'FixedMarginOverAverageCost' THEN cost.Amount / (1 - COALESCE(channel.Value, 0) / 100)
-            WHEN N'SellAtAverageCost' THEN cost.Amount
-        END, 4)) AS Amount
+        SELECT dbo.PriceChannelAmountCalculate(
+            channel.Strategy,
+            channel.Value,
+            basePrice.Amount,
+            cost.Amount,
+            COALESCE(basePrice.TargetMarginPercent, basePrice.EffectiveMarginPercent),
+            special.Amount) AS Amount
         WHERE NOT EXISTS
         (
             SELECT 1
@@ -102,6 +102,13 @@ RETURN
               )
         )
           AND (channel.Strategy <> N'TieredProductPrice' OR special.Amount IS NOT NULL)
+          AND dbo.PriceChannelAmountCalculate(
+                channel.Strategy,
+                channel.Value,
+                basePrice.Amount,
+                cost.Amount,
+                COALESCE(basePrice.TargetMarginPercent, basePrice.EffectiveMarginPercent),
+                special.Amount) IS NOT NULL
     ) channelPrice
     WHERE product.BusinessId = @BusinessId
       AND product.ProductId = @ProductId

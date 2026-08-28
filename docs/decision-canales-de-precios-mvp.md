@@ -97,9 +97,20 @@ FixedSpecialPrice
 PercentageOverAverageCost
 FixedMarginOverAverageCost
 SellAtAverageCost
+ProductMarginAdjustment
 ```
 
 No se debe trasladar una estrategia solo porque existe en Xion. Cada estrategia necesita fórmula, precisión, permisos y pruebas.
+
+`PercentageBelowBasePrice` no es una estrategia independiente: era exactamente
+`PercentageOverBasePrice` con el signo invertido. Los datos existentes se normalizan
+a esta última para que descuento y aumento tengan un solo propietario y una sola
+fórmula.
+
+`ProductMarginAdjustment` se presenta al usuario como **Ajustar margen del
+producto**. Suma o resta puntos porcentuales al margen propio de cada producto:
+un producto con margen de 20% y ajuste de 10 puntos queda en 30%; con -10 puntos
+queda en 10%. El resultado se limita al intervalo válido de 0% a menos de 100%.
 
 ### Asignaciones
 
@@ -223,6 +234,10 @@ Reglas:
 - un costo cero o inexistente bloquea el cálculo o utiliza una política explícita;
 - se puede configurar margen mínimo;
 - nunca permiten precio negativo;
+- ninguna estrategia materializa un precio inferior al costo promedio vigente;
+- `PercentageOverAverageCost` y `FixedMarginOverAverageCost` no aceptan valores negativos;
+- los descuentos sobre precio público y los precios escalonados usan el costo promedio como piso de seguridad;
+- `ProductMarginAdjustment` permite restar puntos, pero nunca produce un margen menor que 0%;
 - el cambio de costo genera una nueva revisión de precio para cajas afectadas.
 
 Para operación offline, la caja debe recibir el precio efectivo ya materializado. No descarga el costo promedio.

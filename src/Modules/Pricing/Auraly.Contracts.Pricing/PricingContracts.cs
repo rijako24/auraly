@@ -19,6 +19,24 @@ public static class PriceInputModes
     public static bool IsSupported(string value) => value is Margin or SalePrice;
 }
 
+public static class PriceChannelStrategies
+{
+    public const string TieredProductPrice = "TieredProductPrice";
+    public const string PercentageOverBasePrice = "PercentageOverBasePrice";
+    public const string PercentageOverAverageCost = "PercentageOverAverageCost";
+    public const string FixedMarginOverAverageCost = "FixedMarginOverAverageCost";
+    public const string SellAtAverageCost = "SellAtAverageCost";
+    public const string ProductMarginAdjustment = "ProductMarginAdjustment";
+
+    public static bool IsSupported(string value) => value is
+        TieredProductPrice or
+        PercentageOverBasePrice or
+        PercentageOverAverageCost or
+        FixedMarginOverAverageCost or
+        SellAtAverageCost or
+        ProductMarginAdjustment;
+}
+
 public static class PricingRoundingModes
 {
     public const string Nearest = "Nearest";

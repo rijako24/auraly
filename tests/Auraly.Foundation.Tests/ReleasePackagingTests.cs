@@ -174,6 +174,24 @@ public sealed class ReleasePackagingTests
         Assert.Contains("if (-not $healthy)", workflow, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Release_rejects_a_truncated_offline_signing_key_before_deployment()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var deployment = File.ReadAllText(Path.Combine(
+            repositoryRoot, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
+        var api = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "API", "Auraly.Api", "Program.cs"));
+        var installer = File.ReadAllText(Path.Combine(
+            repositoryRoot, "scripts", "Build-AuralyPosInstaller.ps1"));
+
+        Assert.Contains("Assert-OfflineLeaseSigningConfiguration", deployment,
+            StringComparison.Ordinal);
+        Assert.Contains("ImportFromPem($privateKeyPem)", deployment, StringComparison.Ordinal);
+        Assert.Contains("ValidateConfiguration();", api, StringComparison.Ordinal);
+        Assert.Contains("AURALY_DESKTOP_BUILD", installer, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

@@ -115,5 +115,21 @@ function Combo({ title, icon: Icon, items, value, onChange, disabled = false }: 
   return <div className="block"><span className="mb-2 flex items-center gap-2 text-sm font-semibold"><Icon className="h-4 w-4 text-teal-200" />{title}</span>{only ? <div className="flex h-12 items-center rounded-xl border border-teal-300/30 bg-[#102e33] px-4 font-semibold text-white">{only.name}</div> : <Select value={value} onValueChange={onChange} disabled={disabled}><SelectTrigger className="h-12 rounded-xl border-teal-300/30 bg-[#102e33] px-4 font-semibold text-white focus:ring-teal-300"><SelectValue placeholder={`Selecciona ${title.toLocaleLowerCase("es")}`} /></SelectTrigger><SelectContent>{items.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select>}</div>;
 }
 function DocumentButton({ active, icon: Icon, title, onClick, disabled = false }: { active: boolean; icon: typeof Receipt; title: string; onClick: () => void; disabled?: boolean }) { return <button type="button" onClick={onClick} disabled={disabled} className={`flex min-h-16 items-center gap-3 rounded-2xl border p-3 text-left text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-35 ${active ? "border-teal-300 bg-teal-300/15" : "border-white/15 bg-[#102e33]"}`}><Icon className="h-5 w-5 shrink-0 text-teal-200" />{title}{active && <CheckCircle2 className="ml-auto h-4 w-4 text-teal-200" />}</button>; }
-function Loading({ text = "Cargando sedes y bodegas…" }: { text?: string }) { return <div className="flex min-h-24 items-center justify-center gap-3 text-sm text-slate-300"><Loader2 className="h-6 w-6 animate-spin text-teal-300" />{text}</div>; }
+function Loading({ text = "Cargando sedes y bodegas…" }: { text?: string }) {
+  return <div role="status" aria-live="polite" className="relative flex min-h-[28rem] flex-col items-center justify-center overflow-hidden rounded-[1.75rem] border border-teal-200/10 bg-[#092126] px-6 text-center">
+    <div aria-hidden className="absolute h-72 w-72 rounded-full bg-teal-300/[.06] blur-3xl" />
+    <div className="auraly-setup-loader relative grid h-28 w-28 place-items-center rounded-full border border-teal-200/25 bg-[#0b2b30] shadow-[0_0_60px_rgba(94,234,212,.14)]">
+      <span className="absolute inset-2 rounded-full border border-dashed border-teal-200/35" />
+      <span className="absolute inset-[-1px] rounded-full border-2 border-transparent border-t-teal-200 border-r-teal-300/60" />
+      <Building2 className="h-9 w-9 text-teal-200" />
+    </div>
+    <p className="mt-7 text-lg font-bold text-white">{text}</p>
+    <div aria-hidden className="relative mt-3 h-6 w-full max-w-sm text-sm text-slate-300">
+      <span className="auraly-setup-loader-stage">Conectando con Auraly</span>
+      <span className="auraly-setup-loader-stage [animation-delay:1.6s]">Verificando tus sedes</span>
+      <span className="auraly-setup-loader-stage [animation-delay:3.2s]">Preparando la caja</span>
+    </div>
+    <span className="sr-only">Espera mientras Auraly prepara la configuración del punto de venta.</span>
+  </div>;
+}
 function Step({ number, text, active }: { number: string; text: string; active: boolean }) { return <li className={`flex items-center gap-3 ${active ? "text-white" : "text-slate-500"}`}><span className={`grid h-7 w-7 place-items-center rounded-full ${active ? "bg-teal-300 text-[#071a1d]" : "bg-white/10"}`}>{number}</span>{text}</li>; }

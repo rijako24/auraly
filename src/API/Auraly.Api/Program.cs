@@ -689,6 +689,10 @@ builder.Services.AddAuthorization(options =>
     });
 });
 var app = builder.Build();
+// Fail deployment readiness instead of discovering malformed signing material
+// when the first cashier enables offline work.
+app.Services.GetRequiredService<RsaOfflineAuthenticationLeaseSigner>()
+    .ValidateConfiguration();
 app.UseResponseCompression();
 app.UseAuralyPlatformBeforeAuthentication();
 app.UseAuthentication();

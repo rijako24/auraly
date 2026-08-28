@@ -72,6 +72,59 @@ public sealed class PosSynchronizationEventLogTests
         }
     }
 
+    [Fact]
+    public async Task Unified_outbox_upgrades_an_existing_install_without_losing_pending_documents()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"auraly-outbox-upgrade-{Guid.NewGuid():N}.db");
+        var connectionString = $"Data Source={path}";
+        var messageId = Guid.NewGuid().ToString("D");
+        try
+        {
+            await using (var connection = new SqliteConnection(connectionString))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE Outbox(
+                      MessageId TEXT NOT NULL PRIMARY KEY, DocumentId TEXT NOT NULL,
+                      Type TEXT NOT NULL, Payload TEXT NOT NULL, Status TEXT NOT NULL,
+                      AttemptCount INTEGER NOT NULL DEFAULT 0, CreatedAt TEXT NOT NULL,
+                      UploadedAt TEXT NULL);
+                    INSERT INTO Outbox(MessageId,DocumentId,Type,Payload,Status,CreatedAt)
+                    VALUES($id,$id,'sales.receipt.confirmed','{}','Pending','2026-08-28T12:00:00Z');
+                    """;
+                command.Parameters.AddWithValue("$id", messageId);
+                await command.ExecuteNonQueryAsync();
+            }
+
+            await PosUnifiedOutboxSchema.EnsureCreatedAsync(connectionString);
+            await PosUnifiedOutboxSchema.EnsureCreatedAsync(connectionString);
+
+            await using var upgraded = new SqliteConnection(connectionString);
+            await upgraded.OpenAsync();
+            var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            await using (var command = upgraded.CreateCommand())
+            {
+                command.CommandText = "PRAGMA table_info('Outbox');";
+                await using var reader = await command.ExecuteReaderAsync();
+                while (await reader.ReadAsync()) columns.Add(reader.GetString(1));
+            }
+            Assert.Contains("WorkSessionId", columns);
+            Assert.Contains("NextAttemptAt", columns);
+            await using (var command = upgraded.CreateCommand())
+            {
+                command.CommandText = "SELECT COUNT(*) FROM Outbox WHERE MessageId=$id AND Status='Pending';";
+                command.Parameters.AddWithValue("$id", messageId);
+                Assert.Equal(1L, await command.ExecuteScalarAsync());
+            }
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
     private static async Task InsertAsync(
         SqliteConnection connection,
         Guid id,

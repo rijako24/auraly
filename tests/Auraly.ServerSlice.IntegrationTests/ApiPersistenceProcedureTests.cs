@@ -130,6 +130,30 @@ public sealed class ApiPersistenceProcedureTests(ServerSliceFixture fixture)
             Assert.Equal(changedName, updated.Name);
             Assert.Equal("PercentageOverBasePrice", updated.Strategy);
             Assert.Equal(7.5m, updated.Value);
+
+            using var negativeCostPercentage = await client.PutAsJsonAsync(
+                $"/api/commerce/v1/pricing/segments/{channelId:D}/settings",
+                new SavePriceChannelSettingsRequest(
+                    changedName, "PercentageOverAverageCost", -1m));
+            Assert.Equal(HttpStatusCode.BadRequest, negativeCostPercentage.StatusCode);
+
+            using var negativeFixedMargin = await client.PutAsJsonAsync(
+                $"/api/commerce/v1/pricing/segments/{channelId:D}/settings",
+                new SavePriceChannelSettingsRequest(
+                    changedName, "FixedMarginOverAverageCost", -1m));
+            Assert.Equal(HttpStatusCode.BadRequest, negativeFixedMargin.StatusCode);
+
+            using var redundantStrategy = await client.PutAsJsonAsync(
+                $"/api/commerce/v1/pricing/segments/{channelId:D}/settings",
+                new SavePriceChannelSettingsRequest(
+                    changedName, "PercentageBelowBasePrice", 10m));
+            Assert.Equal(HttpStatusCode.BadRequest, redundantStrategy.StatusCode);
+
+            using var marginAdjustment = await client.PutAsJsonAsync(
+                $"/api/commerce/v1/pricing/segments/{channelId:D}/settings",
+                new SavePriceChannelSettingsRequest(
+                    changedName, "ProductMarginAdjustment", -10m));
+            Assert.Equal(HttpStatusCode.NoContent, marginAdjustment.StatusCode);
         }
         finally
         {
@@ -142,6 +166,25 @@ public sealed class ApiPersistenceProcedureTests(ServerSliceFixture fixture)
             cleanup.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
             await cleanup.ExecuteNonQueryAsync();
         }
+    }
+
+    [Fact]
+    public async Task Canonical_price_channel_formula_adjusts_product_margin_and_never_goes_below_average_cost()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT dbo.PriceChannelAmountCalculate(N'ProductMarginAdjustment',10,150,100,20,NULL)
+            UNION ALL SELECT dbo.PriceChannelAmountCalculate(N'ProductMarginAdjustment',-30,150,100,20,NULL)
+            UNION ALL SELECT dbo.PriceChannelAmountCalculate(N'PercentageOverBasePrice',-50,150,100,NULL,NULL)
+            UNION ALL SELECT dbo.PriceChannelAmountCalculate(N'TieredProductPrice',NULL,150,100,NULL,80);
+            """, connection);
+
+        var amounts = new List<decimal>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) amounts.Add(reader.GetDecimal(0));
+
+        Assert.Equal([171.4286m, 120m, 100m, 100m], amounts);
     }
 
     private static async Task<Guid> ClaimAsync(
