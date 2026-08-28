@@ -10,6 +10,10 @@ import {
   resolveAuthenticationClientId,
 } from "@/lib/auth-client";
 import { getBackendRequestUrl } from "@/lib/backend-request-url";
+import {
+  AUTH_SERVICE_UNAVAILABLE_MESSAGE,
+  translateLoginFailure,
+} from "@/lib/auth-login-error";
 import type { AuthResponse, LoginRequest } from "@/types/api";
 
 export async function POST(request: NextRequest) {
@@ -28,14 +32,14 @@ export async function POST(request: NextRequest) {
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
+      const failure = await translateLoginFailure(res);
+      console.warn("[auth/login] upstream request failed", {
+        upstreamStatus: res.status,
+        returnedStatus: failure.status,
+      });
       return NextResponse.json(
-        {
-          message: res.status === 401
-            ? "Usuario, empresa o contraseña incorrectos."
-            : err.detail || err.message || err.title || "Error al iniciar sesión",
-        },
-        { status: res.status },
+        { message: failure.message },
+        { status: failure.status },
       );
     }
 
@@ -63,8 +67,8 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("[auth/login]", error);
     return NextResponse.json(
-      { message: "Error de conexión con el servidor" },
-      { status: 500 },
+      { message: AUTH_SERVICE_UNAVAILABLE_MESSAGE },
+      { status: 503 },
     );
   }
 }
