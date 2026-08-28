@@ -46,7 +46,11 @@ if (-not $AllowDirty -and $gitStatus) {
 $commit = (& git -C $repoRoot rev-parse HEAD).Trim()
 $commitTimestampText = (& git -C $repoRoot show -s --format=%cI $commit).Trim()
 $commitTimestamp = [DateTimeOffset]::Parse($commitTimestampText).ToUniversalTime()
-$temporaryPath = Join-Path ([IO.Path]::GetTempPath()) "auraly-release-$Version-$([guid]::NewGuid().ToString('N'))"
+$temporaryToken = [guid]::NewGuid().ToString('N').Substring(0, 12)
+# Next.js standalone output contains deeply nested route segments. Keep the
+# staging root intentionally short so WiX never reaches the classic MAX_PATH
+# boundary while it binds those immutable payload files.
+$temporaryPath = Join-Path ([IO.Path]::GetTempPath()) "ar-$PID-$temporaryToken"
 $publishPath = Join-Path $temporaryPath 'publish'
 
 function New-DeterministicZip {

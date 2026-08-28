@@ -17,6 +17,8 @@ public sealed class ReleasePackagingTests
             StringComparison.Ordinal);
         Assert.DoesNotContain("$entry.LastWriteTime = $normalizedTimestamp", script,
             StringComparison.Ordinal);
+        Assert.Contains("\"ar-$PID-$temporaryToken\"", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("auraly-release-$Version-", script, StringComparison.Ordinal);
     }
 
     [Fact]
