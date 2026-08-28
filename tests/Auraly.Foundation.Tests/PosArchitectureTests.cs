@@ -204,7 +204,8 @@ public sealed class PosArchitectureTests
         Assert.Contains("focusLastQuantity()", page, StringComparison.Ordinal);
         Assert.Contains("revealLine(quantityToFocus)", page, StringComparison.Ordinal);
         Assert.Contains("focusScanner()", page, StringComparison.Ordinal);
-        Assert.Contains("\"pos.devices.enroll\"", page, StringComparison.Ordinal);
+        Assert.Contains("canEnrollOffline={canEnrollOffline}", page, StringComparison.Ordinal);
+        Assert.Contains("onEnroll={enrollOffline}", page, StringComparison.Ordinal);
         Assert.DoesNotContain(
             "No tienes permiso para preparar este equipo para trabajar sin conexión.",
             page,
@@ -361,7 +362,7 @@ public sealed class PosArchitectureTests
             "online-pos-client.ts"));
 
         Assert.Contains("title=\"Punto de venta\"", peripheralDialog, StringComparison.Ordinal);
-        Assert.Contains("title=\"Pedidos\"", peripheralDialog, StringComparison.Ordinal);
+        Assert.Contains("title=\"Facturas desde pedidos\"", peripheralDialog, StringComparison.Ordinal);
         Assert.Contains("Impresora del sistema", peripheralDialog, StringComparison.Ordinal);
         Assert.Contains("Posición inicial", peripheralDialog, StringComparison.Ordinal);
         Assert.Contains("Dividir el valor por 1.000", peripheralDialog, StringComparison.Ordinal);
