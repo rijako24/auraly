@@ -76,6 +76,15 @@ gráfica. Por eso Auraly usa `BrowserPreview` para XPS y conserva
 
 - selección explícita `BrowserPreview`, `File` o `WindowsRaw`;
 - tirilla HTML de 58/80 mm;
+- formatos documentales `HalfLetter`, `HalfLegal` y `Letter`, además de
+  `Receipt`, con enrutamiento independiente por tipo de documento y formato;
+- media carta y media oficio imprimen dos copias completas por hoja, cada una
+  girada 90 grados dentro de su mitad y sin guía de corte imprimible;
+- media oficio usa el tamaño oficio colombiano de 21,59 x 33,02 cm, no el
+  tamaño Legal estadounidense de 21,59 x 35,56 cm;
+- carta imprime una copia a página completa; los formatos documentales incluyen
+  marca dinámica del tenant, impuestos agrupados por tarifa, todos los medios de
+  pago, CUFE, QR, hora de emisión, paginación y el crédito de emisión de Auraly;
 - líneas, impuestos, totales, pagos, CUFE y QR;
 - apertura de vista previa;
 - impresión ESC/POS existente;

@@ -80,7 +80,9 @@ public sealed class EscPosReceiptRenderer
             WriteLine(stream, "Representacion grafica");
         }
         Write(stream, AlignCenter);
-        WriteLine(stream, "Factura emitida por Auraly");
+        WriteLine(stream, isFiscal
+            ? "Factura emitida por Auraly"
+            : "Comprobante emitido por Auraly");
         WriteLine(stream, "www.auralyapp.co");
         WriteLine(stream, string.Empty);
         WriteLine(stream, string.Empty);

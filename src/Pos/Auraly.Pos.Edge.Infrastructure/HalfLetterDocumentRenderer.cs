@@ -25,10 +25,12 @@ public sealed class HalfLetterDocumentRenderer
             throw new ArgumentOutOfRangeException(nameof(format), "The document format is not supported.");
 
         var isLetter = format == Letter;
-        var pageSize = format == HalfLegal ? "Legal" : "Letter";
+        var pageSize = format == HalfLegal
+            ? "215.9mm 330.2mm"
+            : "Letter portrait";
         var sheetClass = format switch
         {
-            HalfLegal => "half half-legal",
+            HalfLegal => "half half-oficio",
             HalfLetter => "half half-letter",
             _ => "letter"
         };
@@ -42,13 +44,13 @@ public sealed class HalfLetterDocumentRenderer
               <meta charset="utf-8">
               <title>Documentos de venta</title>
               <style>
-                @page { size: {{pageSize}} portrait; margin: 0; }
+                @page { size: {{pageSize}}; margin: 0; }
                 * { box-sizing: border-box; }
                 html, body { margin: 0; color: #07111f; font-family: Arial, sans-serif; }
                 .sheet { width: 215.9mm; page-break-after: always; position: relative; overflow: hidden; background: white; }
                 .sheet:last-child { page-break-after: auto; }
                 .half-letter { height: 279.4mm; --copy-height: 139.7mm; --document-width: 129.7mm; }
-                .half-legal { height: 355.6mm; --copy-height: 177.8mm; --document-width: 167.8mm; }
+                .half-oficio { height: 330.2mm; --copy-height: 165.1mm; --document-width: 155.1mm; }
                 .letter { height: 279.4mm; }
                 .copy { position: relative; overflow: hidden; }
                 .half .copy { width: 215.9mm; height: var(--copy-height); }
@@ -127,18 +129,25 @@ public sealed class HalfLetterDocumentRenderer
 
     private static string RenderCopy(OnlineSalesReceipt receipt)
     {
-        var documentName = receipt.DocumentType == PosSaleDocumentTypes.Invoice
+        var isInvoice = receipt.DocumentType == PosSaleDocumentTypes.Invoice;
+        var documentName = isInvoice
             ? "FACTURA ELECTRÓNICA DE VENTA"
             : "COMPROBANTE DE VENTA";
-        var fiscalNumber = string.IsNullOrWhiteSpace(receipt.FiscalNumber)
+        var representationName = isInvoice
+            ? "Representación gráfica de factura electrónica"
+            : "Representación gráfica del comprobante de venta";
+        var issuedBy = isInvoice
+            ? "Factura emitida por Auraly"
+            : "Comprobante emitido por Auraly";
+        var fiscalNumber = !isInvoice || string.IsNullOrWhiteSpace(receipt.FiscalNumber)
             ? string.Empty
             : $"<div class=\"pair\"><span>Número DIAN</span><strong>{Encode(receipt.FiscalNumber)}</strong></div>";
         var rows = string.Join("", receipt.Lines.Select(line =>
             $"<tr><td>{Encode(line.ProductCode)} · {Encode(line.Description)}</td><td class=\"numeric\">{Quantity(line.Quantity)}</td><td class=\"numeric\">{Money(line.UnitPrice)}</td><td class=\"numeric\">{Money(line.Total)}</td></tr>"));
-        var qr = string.IsNullOrWhiteSpace(receipt.QrPayload)
+        var qr = !isInvoice || string.IsNullOrWhiteSpace(receipt.QrPayload)
             ? string.Empty
             : $"<img class=\"qr\" alt=\"QR DIAN\" src=\"data:image/svg+xml;base64,{QrBase64(receipt.QrPayload)}\">";
-        var cufe = string.IsNullOrWhiteSpace(receipt.Cufe)
+        var cufe = !isInvoice || string.IsNullOrWhiteSpace(receipt.Cufe)
             ? string.Empty
             : $"<div class=\"fiscal\"><strong>CUFE</strong><br>{Encode(receipt.Cufe)}</div>";
         var taxes = string.Join("", receipt.Lines
@@ -167,7 +176,7 @@ public sealed class HalfLetterDocumentRenderer
             <section class="meta"><div class="pair"><span>Cliente</span><strong>{{Encode(receipt.CustomerName)}}</strong></div><div class="pair"><span>Identificación</span><strong>{{Encode(receipt.CustomerIdentification)}}</strong></div>{{fiscalNumber}}</section>
             <table><thead><tr><th>Producto</th><th class="numeric">Cant.</th><th class="numeric">Precio</th><th class="numeric">Total</th></tr></thead><tbody>{{rows}}</tbody></table>
             <section class="details"><div>{{cufe}}<div class="breakdowns"><section class="breakdown"><div class="breakdown-title">Impuestos por tarifa</div>{{taxes}}</section><section class="breakdown"><div class="breakdown-title">Medios de pago</div>{{payments}}</section></div><div class="caption">Representación gráfica · copia cliente / control</div></div><div><div class="totals"><div class="pair"><span>Subtotal</span><strong>{{Money(receipt.UntaxedAmount)}}</strong></div><div class="pair"><span>Total impuestos</span><strong>{{Money(receipt.TaxAmount)}}</strong></div><div class="pair total"><span>Total</span><strong>{{Money(receipt.PayableAmount)}}</strong></div>{{qr}}</div></div></section>
-            <footer class="footer"><span>Representación gráfica de factura electrónica</span><span class="platform">Factura emitida por Auraly · <strong>www.auralyapp.co</strong><br>Emitida: {{issuedAt}}</span><span class="page-number">Página 1 de 1</span></footer>
+            <footer class="footer"><span>{{representationName}}</span><span class="platform">{{issuedBy}} · <strong>www.auralyapp.co</strong><br>Emitido: {{issuedAt}}</span><span class="page-number">Página 1 de 1</span></footer>
           </div></article>
           """;
     }

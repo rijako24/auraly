@@ -32,10 +32,12 @@
   <String Id="OverallProgressPackageText" Value="Preparando los componentes…" />
   <String Id="ProgressCancelButton" Value="Cancelar" />
   <String Id="ModifyHeader" Value="Auraly ya está instalado" />
+  <String Id="ModifyMessage" Value="Puedes reparar la instalación actual o retirar Auraly de este equipo." />
   <String Id="ModifyRepairButton" Value="Reparar" />
   <String Id="ModifyUninstallButton" Value="Desinstalar" />
   <String Id="ModifyCancelButton" Value="Cerrar" />
   <String Id="SuccessHeader" Value="Proceso completado" />
+  <String Id="SuccessMessage" Value="Auraly quedó preparado en este equipo. Puedes abrirlo ahora y continuar con la configuración del punto de venta." />
   <String Id="SuccessCacheHeader" Value="Archivos preparados correctamente" />
   <String Id="SuccessInstallHeader" Value="Auraly está listo para usar" />
   <String Id="SuccessLayoutHeader" Value="Copia local creada correctamente" />

@@ -183,7 +183,6 @@ export default function PosPage() {
   const [onlineUserId, setOnlineUserId] = useState("");
   const [edgeEnrollmentToken, setEdgeEnrollmentToken] = useState<string | null>(null);
   const [edgeEnrollmentRequired, setEdgeEnrollmentRequired] = useState(false);
-  const [localEnrollmentRequired, setLocalEnrollmentRequired] = useState(false);
   const [canEnrollOffline, setCanEnrollOffline] = useState(false);
   const [edgeLoginState, setEdgeLoginState] = useState<"preparing" | "required" | null>(null);
   const [initialDownload, setInitialDownload] = useState({
@@ -380,7 +379,6 @@ export default function PosPage() {
             edgeStartupMode = health.startupMode;
             requiresEnrollment = health.status === "EnrollmentRequired";
             if (active) {
-              setLocalEnrollmentRequired(requiresEnrollment);
               setEdgePermissions(health.permissions ?? []);
               setInitialDownload({
                 identityReady: health.identityReady,
@@ -2071,36 +2069,6 @@ export default function PosPage() {
       throw caught;
     } finally {
       setSetupLoading(false);
-    }
-  }
-
-  async function prepareOfflineMode() {
-    if (!edgeEnrollmentToken) return;
-    if (!localEnrollmentRequired) {
-      await switchExecutionMode("enrolled");
-      return;
-    }
-    const remembered = rememberedSalesWorkspaceKey();
-    const option = onlineOptions.find(candidate =>
-      salesWorkspaceKey(candidate.businessId, candidate.warehouseId) === remembered);
-    if (!option) {
-      setError("Selecciona una sede de venta antes de preparar el modo sin conexión.");
-      return;
-    }
-    try {
-      await authorizeSensitiveEntry(
-        "pos.devices.enroll",
-        null,
-        {
-          action: "EnrollPosDevice",
-          businessName: option.businessName,
-          warehouseName: option.warehouseName,
-          deviceName: window.navigator.platform || "Windows",
-        },
-        async (authorization) => enrollOffline(option, documentType, authorization),
-      );
-    } catch (caught) {
-      showError(caught);
     }
   }
 

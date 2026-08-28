@@ -47,6 +47,9 @@ public sealed class HtmlReceiptPreviewRenderer
                 "Receipt width must be 58 or 80 mm.");
 
         var isFiscal = PosSaleDocumentTypes.IsFiscal(receipt.DocumentType);
+        var issuedBy = isFiscal
+            ? "Factura emitida por Auraly"
+            : "Comprobante emitido por Auraly";
         var qrSvg = string.Empty;
         if (isFiscal)
         {
@@ -178,7 +181,7 @@ public sealed class HtmlReceiptPreviewRenderer
                 {{payments}}
                 <hr class="rule">
                 {{fiscalFooter}}
-                <footer class="platform-footer">Factura emitida por Auraly<br><strong>www.auralyapp.co</strong></footer>
+                <footer class="platform-footer">{{issuedBy}}<br><strong>www.auralyapp.co</strong></footer>
               </main>
               <script>
                 window.addEventListener("load", () => window.setTimeout(() => window.print(), 250));

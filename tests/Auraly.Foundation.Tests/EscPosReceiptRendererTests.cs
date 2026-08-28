@@ -200,11 +200,15 @@ public sealed class EscPosReceiptRendererTests
         Assert.DoesNotContain("NUMERO DIAN", esc);
         Assert.DoesNotContain("CUFE", esc);
         Assert.DoesNotContain("searchqr", esc);
+        Assert.Contains("Comprobante emitido por Auraly", esc);
+        Assert.DoesNotContain("Factura emitida por Auraly", esc);
         Assert.Contains("Comprobante de venta", html);
         Assert.Contains("CVI03-00000042", html);
         Assert.DoesNotContain("Número DIAN", html);
         Assert.DoesNotContain("CUFE", html);
         Assert.DoesNotContain("<svg", html);
+        Assert.Contains("Comprobante emitido por Auraly", html);
+        Assert.DoesNotContain("Factura emitida por Auraly", html);
     }
 
     [Fact]
@@ -258,8 +262,8 @@ public sealed class EscPosReceiptRendererTests
         var html = new HalfLetterDocumentRenderer().Render(
             [receipt], HalfLetterDocumentRenderer.HalfLegal);
 
-        Assert.Contains("@page { size: Legal portrait;", html);
-        Assert.Contains("class=\"sheet half half-legal\"", html);
+        Assert.Contains("@page { size: 215.9mm 330.2mm;", html);
+        Assert.Contains("class=\"sheet half half-oficio\"", html);
         Assert.Contains("rotate(90deg)", html);
         Assert.DoesNotContain("CORTE", html);
         Assert.Equal(2, html.Split(receipt.DocumentNumber).Length - 1);
@@ -279,6 +283,29 @@ public sealed class EscPosReceiptRendererTests
         Assert.Contains("class=\"sheet letter\"", html);
         Assert.Equal(1, html.Split(receipt.DocumentNumber).Length - 1);
         Assert.Equal(1, html.Split("Factura emitida por Auraly").Length - 1);
+    }
+
+    [Fact]
+    public void Commercial_sheet_keeps_the_layout_without_fiscal_artifacts()
+    {
+        var receipt = OnlineReceipt() with
+        {
+            DocumentType = PosSaleDocumentTypes.Receipt
+        };
+
+        var html = new HalfLetterDocumentRenderer().Render(
+            [receipt], HalfLetterDocumentRenderer.Letter);
+
+        Assert.Contains("COMPROBANTE DE VENTA", html);
+        Assert.Contains("Representación gráfica del comprobante de venta", html);
+        Assert.Contains("Comprobante emitido por Auraly", html);
+        Assert.DoesNotContain("FACTURA ELECTRÓNICA DE VENTA", html);
+        Assert.DoesNotContain("Número DIAN", html);
+        Assert.DoesNotContain("CUFE", html);
+        Assert.DoesNotContain("QR DIAN", html);
+        Assert.Contains("Impuestos por tarifa", html);
+        Assert.Contains("Medios de pago", html);
+        Assert.Contains("Página 1 de 1", html);
     }
 
     [Fact]

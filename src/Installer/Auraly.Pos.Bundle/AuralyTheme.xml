@@ -55,7 +55,7 @@
 
     <Page Name="Modify">
       <Label X="245" Y="105" Width="390" Height="34" FontId="2" DisablePrefix="yes">#(loc.ModifyHeader)</Label>
-      <Label X="245" Y="153" Width="390" Height="90" FontId="3" DisablePrefix="yes">Puedes reparar la instalación actual o retirar Auraly de este equipo.</Label>
+      <Label X="245" Y="153" Width="390" Height="90" FontId="3" DisablePrefix="yes">#(loc.ModifyMessage)</Label>
       <Button Name="ModifyUpdateButton" X="245" Y="-31" Width="160" Height="34" TabStop="yes" FontId="4" EnableCondition="WixStdBAUpdateAvailable" HideWhenDisabled="yes">#(loc.UpdateButton)</Button>
       <Button Name="RepairButton" X="-426" Y="-31" Width="120" Height="34" TabStop="yes" FontId="4" HideWhenDisabled="yes" ElevationShieldCondition='(WixBundleAuthoredScope = 1 AND NOT WixBundleElevated) OR ((WixBundleAuthoredScope = 2 OR WixBundleAuthoredScope = 3) AND WixStdBAScope = "PerMachine")'>#(loc.ModifyRepairButton)</Button>
       <Button Name="UninstallButton" X="-296" Y="-31" Width="120" Height="34" TabStop="yes" FontId="0" ElevationShieldCondition='(WixBundleAuthoredScope = 1 AND NOT WixBundleElevated) OR ((WixBundleAuthoredScope = 2 OR WixBundleAuthoredScope = 3) AND WixStdBAScope = "PerMachine")'>#(loc.ModifyUninstallButton)</Button>
@@ -66,7 +66,7 @@
       <Label X="245" Y="105" Width="390" Height="70" FontId="2" DisablePrefix="yes">
         <Text>#(loc.SuccessHeader)</Text><Text Condition="WixBundleAction = 2">#(loc.SuccessLayoutHeader)</Text><Text Condition="WixBundleAction = 3">#(loc.SuccessUninstallHeader)</Text><Text Condition="WixBundleAction = 5">#(loc.SuccessInstallHeader)</Text><Text Condition="WixBundleAction = 7">#(loc.SuccessRepairHeader)</Text>
       </Label>
-      <Label X="245" Y="180" Width="390" Height="70" FontId="3" DisablePrefix="yes">Auraly quedó preparado en este equipo. Puedes abrirlo ahora y continuar con la configuración del punto de venta.</Label>
+      <Label X="245" Y="180" Width="390" Height="70" FontId="3" DisablePrefix="yes">#(loc.SuccessMessage)</Label>
       <Label X="245" Y="270" Width="390" Height="44" FontId="3" DisablePrefix="yes" VisibleCondition="WixStdBARestartRequired"><Text>#(loc.SuccessRestartText)</Text><Text Condition="WixBundleAction = 3">#(loc.SuccessUninstallRestartText)</Text></Label>
       <Button Name="LaunchButton" X="-296" Y="-31" Width="130" Height="34" TabStop="yes" FontId="4" HideWhenDisabled="yes">#(loc.SuccessLaunchButton)</Button>
       <Button Name="SuccessRestartButton" X="-296" Y="-31" Width="130" Height="34" TabStop="yes" FontId="4" HideWhenDisabled="yes">#(loc.SuccessRestartButton)</Button>
