@@ -106,6 +106,32 @@ function Invoke-AuralySigning([string[]]$path) {
     & (Join-Path $PSScriptRoot 'Sign-AuralyWindowsArtifact.ps1') @arguments
 }
 
+function Invoke-WixProjectBuild(
+    [string]$project,
+    [string[]]$arguments,
+    [string]$failureMessage) {
+    $maximumAttempts = 2
+    for ($attempt = 1; $attempt -le $maximumAttempts; $attempt++) {
+        $output = @(& dotnet build $project @arguments 2>&1)
+        $exitCode = $LASTEXITCODE
+        $output | ForEach-Object { Write-Host $_ }
+
+        if ($exitCode -eq 0) {
+            return
+        }
+
+        $hasTransientPipeFailure = ($output -join [Environment]::NewLine) -match
+            'WIX0001:\s+System\.IO\.IOException:\s+The pipe is being closed\.'
+        if ($attempt -lt $maximumAttempts -and $hasTransientPipeFailure) {
+            Write-Warning 'WiX cerró su canal nativo durante la primera ejecución; se reintentará una sola vez.'
+            Start-Sleep -Seconds 3
+            continue
+        }
+
+        throw $failureMessage
+    }
+}
+
 if ($RequireSignature -and [string]::IsNullOrWhiteSpace($normalizedThumbprint)) {
     throw 'SigningCertificateThumbprint es obligatorio para un instalador de release.'
 }
@@ -192,28 +218,40 @@ dotnet tool restore
 if ($LASTEXITCODE -ne 0) { throw 'No fue posible restaurar WiX Toolset.' }
 
 $msiProject = Join-Path $root 'src\Installer\Auraly.Pos.Setup\Auraly.Pos.Setup.wixproj'
-dotnet build $msiProject `
-    --configuration $Configuration `
-    "-p:PayloadDir=$payload" `
-    "-p:ProductVersion=$msiProductVersion" `
-    "-p:OutputPath=$msiBuild\"
-if ($LASTEXITCODE -ne 0) { throw 'La construcción del MSI de Auraly falló.' }
-$builtMsi = Get-ChildItem -LiteralPath $msiBuild -Recurse -Filter 'Auraly.Pos.Setup.msi' -File |
-    Select-Object -Single
-if ($null -eq $builtMsi) { throw 'WiX no produjo Auraly.Pos.Setup.msi.' }
+Invoke-WixProjectBuild `
+    $msiProject `
+    @(
+        '--configuration', $Configuration,
+        "-p:PayloadDir=$payload",
+        "-p:ProductVersion=$msiProductVersion",
+        "-p:OutputPath=$msiBuild\") `
+    'La construcción del MSI de Auraly falló.'
+$builtMsiCandidates = @(
+    Get-ChildItem -LiteralPath $msiBuild -Recurse -Filter 'Auraly.Pos.Setup.msi' -File
+)
+if ($builtMsiCandidates.Count -ne 1) {
+    throw "WiX debía producir un MSI y produjo $($builtMsiCandidates.Count)."
+}
+$builtMsi = $builtMsiCandidates[0]
 Copy-Item -LiteralPath $builtMsi.FullName -Destination $msi
 Invoke-AuralySigning @($msi)
 
 $bundleProject = Join-Path $root 'src\Installer\Auraly.Pos.Bundle\Auraly.Pos.Bundle.wixproj'
-dotnet build $bundleProject `
-    --configuration $Configuration `
-    "-p:MsiPath=$msi" `
-    "-p:BundleVersion=$msiProductVersion" `
-    "-p:OutputPath=$bundleBuild\"
-if ($LASTEXITCODE -ne 0) { throw 'La construcción del bundle de Auraly falló.' }
-$unsignedBundle = Get-ChildItem -LiteralPath $bundleBuild -Recurse -Filter 'Auraly.Pos.Bundle.exe' -File |
-    Select-Object -Single
-if ($null -eq $unsignedBundle) { throw 'WiX no produjo Auraly.Pos.Bundle.exe.' }
+Invoke-WixProjectBuild `
+    $bundleProject `
+    @(
+        '--configuration', $Configuration,
+        "-p:MsiPath=$msi",
+        "-p:BundleVersion=$msiProductVersion",
+        "-p:OutputPath=$bundleBuild\") `
+    'La construcción del bundle de Auraly falló.'
+$unsignedBundleCandidates = @(
+    Get-ChildItem -LiteralPath $bundleBuild -Recurse -Filter 'Auraly.Pos.Bundle.exe' -File
+)
+if ($unsignedBundleCandidates.Count -ne 1) {
+    throw "WiX debía producir un bundle y produjo $($unsignedBundleCandidates.Count)."
+}
+$unsignedBundle = $unsignedBundleCandidates[0]
 
 if ([string]::IsNullOrWhiteSpace($normalizedThumbprint)) {
     Copy-Item -LiteralPath $unsignedBundle.FullName -Destination $setup

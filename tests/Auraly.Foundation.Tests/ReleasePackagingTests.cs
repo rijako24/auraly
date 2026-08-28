@@ -85,6 +85,23 @@ public sealed class ReleasePackagingTests
     }
 
     [Fact]
+    public void Pos_installer_retries_only_the_known_transient_WiX_pipe_failure()
+    {
+        var script = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "scripts",
+            "Build-AuralyPosInstaller.ps1"));
+
+        Assert.Contains("$maximumAttempts = 2", script, StringComparison.Ordinal);
+        Assert.Contains(
+            "WIX0001:\\s+System\\.IO\\.IOException:\\s+The pipe is being closed\\.",
+            script,
+            StringComparison.Ordinal);
+        Assert.Contains("throw $failureMessage", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("Select-Object -Single", script, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Installer_projects_are_visible_but_only_built_by_the_packaging_pipeline()
     {
         var solution = File.ReadAllText(Path.Combine(
