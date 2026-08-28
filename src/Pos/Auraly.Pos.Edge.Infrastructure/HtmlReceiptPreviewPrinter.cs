@@ -218,7 +218,6 @@ public sealed class HtmlReceiptPreviewRenderer
         "DebitCard" => "Tarjeta débito",
         "CreditCard" => "Tarjeta crédito",
         "Transfer" => "Transferencia",
-        "Deposit" => "Consignación",
         "Credit" => "Crédito / cartera",
         "Voucher" => "Bono / vale",
         "Check" => "Cheque",

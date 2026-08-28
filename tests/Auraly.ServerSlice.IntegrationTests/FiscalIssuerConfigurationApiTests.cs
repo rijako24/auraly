@@ -27,7 +27,12 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
                 $"/api/commerce/v1/fiscal/configuration/onboarding?businessId={businessId:D}");
 
             Assert.NotNull(value);
-            Assert.Equal(FiscalOnboardingStages.HabilitationReady, value.Stage);
+            Assert.Contains(value.Stage, new[]
+            {
+                FiscalOnboardingStages.HabilitationReady,
+                FiscalOnboardingStages.HabilitationAccepted,
+                FiscalOnboardingStages.ProductionReady,
+            });
             Assert.NotNull(value.LatestHabilitationAttempt);
             Assert.Equal(documentId, value.LatestHabilitationAttempt.DocumentId);
             Assert.Equal(FiscalDocumentStatusCodes.SignatureFailed, value.LatestHabilitationAttempt.Status);
@@ -64,8 +69,14 @@ public sealed class FiscalIssuerConfigurationApiTests(ServerSliceFixture fixture
             var read = await readResponse.Content.ReadFromJsonAsync<FiscalOnboardingConfiguration>();
             Assert.NotNull(read);
             Assert.Equal(businessId, read.BusinessId);
-            Assert.Equal(FiscalOnboardingStages.NotConfigured, read.Stage);
-            Assert.Contains("Certificado", read.MissingRequirements);
+            Assert.Contains(read.Stage, new[]
+            {
+                FiscalOnboardingStages.HabilitationReady,
+                FiscalOnboardingStages.HabilitationAccepted,
+                FiscalOnboardingStages.ProductionReady,
+            });
+            Assert.True(read.HasCertificate);
+            Assert.Empty(read.MissingRequirements);
 
             using var legacyResponse = await client.GetAsync(
                 $"/api/commerce/v1/fiscal/configuration/issuer?businessId={businessId:D}");

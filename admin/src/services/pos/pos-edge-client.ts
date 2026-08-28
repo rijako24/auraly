@@ -218,6 +218,17 @@ export type PosPaymentInput = {
   cardFranchiseCode?: string | null;
   approvalNumber?: string | null;
 };
+export type PosProductWarehouseAvailability = {
+  businessId: string;
+  businessName: string;
+  warehouseId: string;
+  warehouseCode: string;
+  warehouseName: string;
+  productId: string;
+  productCode: string;
+  quantityOnHand: number;
+  isCurrentBusiness: boolean;
+};
 
 export type PosReceiptLine = {
   productCode: string;
@@ -422,6 +433,7 @@ export interface PosClient {
   openCashDrawer(): Promise<void>;
   readScaleWeight(): Promise<{ weight: number; unit: string; portName: string }>;
   searchProducts(search?: string, skip?: number, take?: number, customerId?: string | null): Promise<PosCatalogSearchPage>;
+  productWarehouseAvailability(productId: string): Promise<PosProductWarehouseAvailability[]>;
   searchCustomers(search?: string, skip?: number, take?: number): Promise<PosCustomerSearchPage>;
   customer(customerId: string): Promise<PosCustomer>;
   customerCountries(): Promise<PosCountry[]>;
@@ -778,6 +790,12 @@ export class PosEdgeClient implements PosClient {
     if (customerId) query.set("customerId", customerId);
     return this.request<PosCatalogSearchPage>(
       `/edge/v1/catalog/products?${query}`,
+    );
+  }
+
+  productWarehouseAvailability(productId: string) {
+    return this.request<PosProductWarehouseAvailability[]>(
+      `/edge/v1/catalog/products/${productId}/warehouse-availability`,
     );
   }
 

@@ -371,7 +371,7 @@ public sealed record InventoryPhysicalCountItem(
 public sealed record InventoryPhysicalCountPage(
     IReadOnlyList<InventoryPhysicalCountItem> Items, int Page, int PageSize, int TotalCount, int TotalPages);
 public sealed record InventoryPhysicalCountDraftQuery(
-    Guid BusinessId, Guid? WarehouseId, string? Search, DateTimeOffset? From, DateTimeOffset? To,
+    Guid BusinessId, Guid? WarehouseId, string? Search, DateTimeOffset? From, DateTimeOffset? To, string? Status,
     int Page = 1, int PageSize = 20);
 public sealed record InventoryPhysicalCountDraftSummary(
     Guid InventoryPhysicalCountId, Guid DraftId, string Name, Guid WarehouseId, string WarehouseName,

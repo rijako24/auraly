@@ -210,6 +210,13 @@ try {
     if ($environments.Count -gt 0 -and (-not $JwtSecret -or -not $OfflineLeaseSigningPrivateKeyPem -or -not $WebPushPublicKey -or -not $WebPushPrivateKey -or -not $FiscalSecretProtectionKey -or -not $WhatsAppVerifyToken)) {
         throw 'JwtSecret, OfflineLeaseSigningPrivateKeyPem, WebPushPublicKey, WebPushPrivateKey, FiscalSecretProtectionKey y WhatsAppVerifyToken son obligatorios para desplegar DEV o PROD.'
     }
+    $posInstallerSha256ByEnvironment = @{}
+    if ($environments.Count -gt 1 -and $PosInstallerSha256) {
+        throw 'PosInstallerSha256 solo se puede indicar al desplegar un único ambiente; DEV y PROD usan instaladores distintos.'
+    }
+    if ($environments.Count -gt 0 -and $PosInstallerSha256) {
+        $posInstallerSha256ByEnvironment[$environments[0]] = $PosInstallerSha256
+    }
     if ($environments.Count -gt 0 -and -not $PosInstallerSha256) {
         $repositoryRoot = (Resolve-Path (Join-Path $templateRoot '..\..')).Path
         $manifestPath = Join-Path $repositoryRoot "artifacts\releases\$ReleaseVersion\manifest.json"
@@ -217,12 +224,18 @@ try {
             throw "No existe el manifiesto del release $ReleaseVersion para resolver el instalador POS."
         }
         $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-        $installerName = "auraly-pos-$ReleaseVersion.exe"
-        $installer = $manifest.artifacts | Where-Object name -EQ $installerName | Select-Object -First 1
-        if (-not $installer -or "$($installer.sha256)" -notmatch '^[0-9A-Fa-f]{64}$') {
-            throw "El release no contiene $installerName con SHA-256 válido."
+        foreach ($environment in $environments) {
+            $installerName = if ($environment -eq 'prod') {
+                "auraly-pos-prod-$ReleaseVersion.exe"
+            } else {
+                "auraly-pos-$ReleaseVersion.exe"
+            }
+            $installer = $manifest.artifacts | Where-Object name -EQ $installerName | Select-Object -First 1
+            if (-not $installer -or "$($installer.sha256)" -notmatch '^[0-9A-Fa-f]{64}$') {
+                throw "El release no contiene $installerName con SHA-256 válido."
+            }
+            $posInstallerSha256ByEnvironment[$environment] = "$($installer.sha256)"
         }
-        $PosInstallerSha256 = "$($installer.sha256)"
     }
 
     foreach ($environment in $environments) {
@@ -236,7 +249,7 @@ try {
                 environment = $environment
                 location = $Location
                 releaseVersion = $ReleaseVersion
-                posInstallerSha256 = $PosInstallerSha256
+                posInstallerSha256 = $posInstallerSha256ByEnvironment[$environment]
                 deployStaticAdminSettings = $Mode -ne 'WhatIf'
                 sqlAdministratorLogin = $SqlAdministratorLogin
                 sqlAdministratorPassword = $SqlAdministratorPassword

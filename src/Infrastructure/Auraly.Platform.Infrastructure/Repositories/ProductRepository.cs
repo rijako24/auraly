@@ -3,6 +3,7 @@ using Auraly.Platform.Domain.Catalog;
 using Auraly.Platform.Domain.Entities;
 using Auraly.Platform.Domain.Repositories;
 using Auraly.Platform.Infrastructure.Data;
+using Auraly.Platform.Infrastructure.Data.ReadModels;
 
 namespace Auraly.Platform.Infrastructure.Repositories;
 
@@ -154,7 +155,7 @@ public sealed partial class ProductRepository : IProductRepository
         return product;
     }
 
-    public Task<Product> CreateAsync(Product product, CancellationToken ct = default)
+    public async Task<Product> CreateAsync(Product product, CancellationToken ct = default)
     {
         var amount = product.UnitPrice;
         var currency = product.Currency;
@@ -162,7 +163,24 @@ public sealed partial class ProductRepository : IProductRepository
         product.Currency = "COP";
         _context.Products.Add(product);
         AddInitialPublishedPrice(product, amount, currency, DateTimeOffset.UtcNow);
-        return Task.FromResult(product);
+        var warehouseIds = await _context.InventoryWarehouseScopes
+            .AsNoTracking()
+            .Where(warehouse => warehouse.BusinessId == product.BusinessId)
+            .Select(warehouse => warehouse.WarehouseId)
+            .ToListAsync(ct);
+        var now = DateTimeOffset.UtcNow;
+        _context.InventoryBalances.AddRange(warehouseIds.Select(warehouseId => new InventoryBalanceRow
+        {
+            BusinessId = product.BusinessId,
+            WarehouseId = warehouseId,
+            ProductId = product.ProductId,
+            QuantityOnHand = 0m,
+            AverageUnitCost = 0m,
+            InventoryValue = 0m,
+            LastProcessingSequence = 0,
+            UpdatedAt = now
+        }));
+        return product;
     }
 
     public async Task UpdateCategoryNameAsync(

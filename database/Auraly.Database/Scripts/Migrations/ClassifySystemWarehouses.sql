@@ -10,6 +10,6 @@ WHERE b.IsActive=1 AND NOT EXISTS(
   SELECT 1 FROM dbo.Warehouses w WHERE w.BusinessId=b.BusinessId AND w.Code=N'AVE');
 
 UPDATE dbo.Warehouses
-SET UseForGoodsReceipts=UseForSales,IsInventoryVisible=UseForSales
-WHERE IsSystem=0 AND (UseForGoodsReceipts<>UseForSales OR IsInventoryVisible<>UseForSales);
+SET UseForGoodsReceipts=IsActive,IsInventoryVisible=IsActive
+WHERE IsSystem=0 AND (UseForGoodsReceipts<>IsActive OR IsInventoryVisible<>IsActive);
 GO

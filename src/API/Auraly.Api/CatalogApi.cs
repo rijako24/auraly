@@ -28,6 +28,11 @@ public static class CatalogApi
                 return product is null ? Results.NotFound() : Results.Ok(product);
             }));
 
+        administration.MapGet("/{productId:guid}/warehouse-availability", async (
+            HttpContext context, CatalogService service, Guid productId, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.WarehouseAvailabilityAsync(
+                context.User.ToCatalogUserIdentity(), productId, ct))));
+
         administration.MapGet("/", async (
             HttpContext context, CatalogService service, int? pageSize, string? afterProductCode,
             string? productCode, string? reference, string? barcode, string? name, bool? isActive,
@@ -126,6 +131,13 @@ public static class CatalogApi
             InventoryAvailabilityRequest request, CancellationToken ct) =>
             await Handle(async () => Results.Ok(await service.AvailabilityAsync(
                 context.User.ToCatalogDeviceIdentity(businessId, request.WarehouseId), request, ct))));
+
+        pos.MapGet("/inventory/products/{productId:guid}/warehouse-availability", async (
+            HttpContext context, PosCatalogService service, Guid productId,
+            Guid businessId, bool? includeOtherBusinesses, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.WarehouseAvailabilityAsync(
+                context.User.ToCatalogDeviceIdentity(businessId, Guid.Empty),
+                productId, includeOtherBusinesses ?? false, ct))));
 
         return endpoints;
     }

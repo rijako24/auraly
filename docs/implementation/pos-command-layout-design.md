@@ -122,6 +122,27 @@ En una caja online compartida, varios cajeros pueden vender simultáneamente.
 Cada venta conserva su usuario y turno. Entregar termina solo el turno del
 solicitante; cerrar la caja termina la `CashSession` y todos sus turnos activos.
 
+Cuando el diálogo de cobro está abierto, su manejador es el propietario de
+`F1` a `F5`: una tecla agrega el medio elegido con el saldo pendiente o cambia
+el medio enfocado si el total ya está completo. El capturador global del POS no
+consume esas teclas mientras el diálogo esté activo.
+
+La búsqueda ampliada de productos conserva dos cargas independientes. El
+catálogo local aparece de inmediato; la disponibilidad por sede y bodega se
+consulta al servidor solo con `inventory.read`. `businesses.read` amplía el
+resultado a otras sedes del mismo tenant. Las bodegas internas nunca se
+exponen. Para no mezclar artículos distintos, la equivalencia entre sedes usa
+identidades estables compartidas —código de barras, identificador tipado o
+identidad del mismo proveedor de integración— y nunca el `ProductCode`, porque
+ese código pertenece a cada negocio y puede coincidir o cambiar. Sin conexión
+la búsqueda local continúa y el panel remoto explica por qué no está disponible.
+
+Una captura que no resuelve producto limpia el lector, emite un sonido negativo
+corto y termina en una señal roja persistente con el código rechazado. La señal
+solo desaparece al iniciar otra captura o al resolver correctamente un producto;
+así el cajero no puede interpretar una animación ya terminada como una venta
+aceptada.
+
 ## Orden de implementación
 
 1. Sesión unificada, enrolamiento y login local/online.

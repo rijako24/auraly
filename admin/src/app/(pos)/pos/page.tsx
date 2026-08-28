@@ -23,6 +23,7 @@ import {
   Wifi,
   WifiOff,
   X,
+  XCircle,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
@@ -116,6 +117,33 @@ const money = new Intl.NumberFormat("es-CO", {
   maximumFractionDigits: 0,
 });
 
+let rejectedScanAudioContext: AudioContext | null = null;
+
+function playRejectedScanTone() {
+  try {
+    rejectedScanAudioContext ??= new AudioContext();
+    const context = rejectedScanAudioContext;
+    void context.resume().then(() => {
+      const startedAt = context.currentTime;
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+
+      oscillator.type = "triangle";
+      oscillator.frequency.setValueAtTime(390, startedAt);
+      oscillator.frequency.exponentialRampToValueAtTime(155, startedAt + 0.18);
+      gain.gain.setValueAtTime(0.0001, startedAt);
+      gain.gain.exponentialRampToValueAtTime(0.09, startedAt + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startedAt + 0.2);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start(startedAt);
+      oscillator.stop(startedAt + 0.21);
+    }).catch(() => undefined);
+  } catch {
+    // The persistent visual signal remains authoritative when audio is unavailable.
+  }
+}
+
 function describeWorkspaceBootstrapError(caught: unknown): string {
   if (typeof caught === "object" && caught !== null) {
     const failure = caught as { message?: unknown; statusCode?: unknown };
@@ -199,7 +227,11 @@ export default function PosPage() {
   const [draft, setDraft] = useState<PosDraft | null>(null);
   const [temporaries, setTemporaries] = useState<PosDraft[]>([]);
   const [scan, setScan] = useState("");
-  const [scanRejected, setScanRejected] = useState(false);
+  const rejectionTimer = useRef<number | null>(null);
+  const [scanRejection, setScanRejection] = useState<{
+    phase: "idle" | "animating" | "latched";
+    value: string;
+  }>({ phase: "idle", value: "" });
   const [inventoryNotice, setInventoryNotice] = useState<string | null>(null);
   const [quantityShortage, setQuantityShortage] = useState<PosQuantityShortage | null>(null);
   const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
@@ -252,6 +284,26 @@ export default function PosPage() {
   const [pricingTransition, setPricingTransition] = useState(false);
   const [documentType, setDocumentType] = useState<PosSaleDocumentType>("SalesReceipt");
   const [habilitationMode, setHabilitationMode] = useState(false);
+
+  const clearScanRejection = useCallback(() => {
+    if (rejectionTimer.current !== null) window.clearTimeout(rejectionTimer.current);
+    rejectionTimer.current = null;
+    setScanRejection({ phase: "idle", value: "" });
+  }, []);
+
+  const rejectScan = useCallback((value: string) => {
+    if (rejectionTimer.current !== null) window.clearTimeout(rejectionTimer.current);
+    setScanRejection({ phase: "animating", value });
+    playRejectedScanTone();
+    rejectionTimer.current = window.setTimeout(() => {
+      setScanRejection({ phase: "latched", value });
+      rejectionTimer.current = null;
+    }, 720);
+  }, []);
+
+  useEffect(() => () => {
+    if (rejectionTimer.current !== null) window.clearTimeout(rejectionTimer.current);
+  }, []);
 
   const [sidePanel, setSidePanel] = useState<"temporaries" | "orders">("temporaries");
   const [ordersRefreshVersion, setOrdersRefreshVersion] = useState(0);
@@ -793,6 +845,8 @@ export default function PosPage() {
     .includes("work-sessions.cash.drawer.open");
   const canReadSynchronizationEvents = (client?.mode === "edge" ? edgePermissions : permissions)
     .includes("pos.synchronization.events.read");
+  const canReadProductAvailability = (client?.mode === "edge" ? edgePermissions : permissions)
+    .includes("inventory.read");
 
   const openCashDrawer = useCallback(async () => {
     if (!client || busy || !workstation.workSessionId) return;
@@ -957,11 +1011,12 @@ export default function PosPage() {
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
+      if (paymentOpen) return;
       capturePosFunctionShortcut(event, shortcut => shortcutAction.current(event, shortcut));
     };
     window.addEventListener("keydown", handleShortcut, true);
     return () => window.removeEventListener("keydown", handleShortcut, true);
-  }, []);
+  }, [paymentOpen]);
 
   useEffect(() => {
     const openSynchronizationEvents = (event: KeyboardEvent) => {
@@ -983,8 +1038,7 @@ export default function PosPage() {
     if (!parsed.valid) {
       setError(parsed.message);
       setMessage("Revisa la captura");
-      setScanRejected(true);
-      window.setTimeout(() => setScanRejected(false), 1200);
+      rejectScan(value);
       focusScanner();
       return;
     }
@@ -1024,6 +1078,7 @@ export default function PosPage() {
       const startsNewSale = !draft?.lines.length;
       const result = await client.capture(value, draft?.customerId ?? null);
       if (result.status === "Added" && result.draft) {
+        clearScanRejection();
         const capturedLine = capturedLineAfterAddition(draft?.lines ?? [], result.draft.lines);
         let confirmedDraft = result.draft;
         if (capturedLine && requestedQuantity !== 1) {
@@ -1062,8 +1117,7 @@ export default function PosPage() {
       }
       if (result.status === "NotFound") {
         setScan("");
-        setScanRejected(true);
-        window.setTimeout(() => setScanRejected(false), 1200);
+        rejectScan(value);
         setError(`No se encontró el producto “${value}”.`);
         setMessage("Producto no encontrado");
       } else {
@@ -2448,7 +2502,7 @@ edgeCapable={edgeEnrollmentRequired}
         <div className="flex min-w-0 flex-col gap-3 xl:min-h-0">
           <form
             onSubmit={capture}
-            className={`rounded-2xl border bg-white p-3 shadow-sm transition-all duration-200 ${scanRejected ? "border-red-500 bg-red-50 shadow-lg shadow-red-200 ring-4 ring-red-300/60" : "border-teal-900/10"}`}
+            className={`relative overflow-hidden rounded-2xl border bg-white p-3 shadow-sm transition-all duration-300 ${scanRejection.phase !== "idle" ? "border-red-500 shadow-lg shadow-red-200/70 ring-4 ring-red-300/50" : "border-teal-900/10"} ${scanRejection.phase === "animating" ? "pos-scan-rejected" : ""}`}
           >
             <label
               htmlFor="pos-scanner"
@@ -2458,14 +2512,28 @@ edgeCapable={edgeEnrollmentRequired}
                 <Barcode className="h-5 w-5 text-teal-700" />
                 Escanea o escribe un código
               </span>
-              <span className="text-xs font-normal text-slate-500">Enter para agregar</span>
+              {scanRejection.phase === "idle" ? (
+                <span className="text-xs font-normal text-slate-500">Enter para agregar</span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-red-600 px-3 py-1 text-xs font-bold uppercase tracking-wide text-white shadow-sm">
+                  <XCircle className="h-3.5 w-3.5" />
+                  Lectura rechazada
+                </span>
+              )}
             </label>
             <div className="flex gap-2">
               <input
                 ref={scanner}
                 id="pos-scanner"
                 value={scan}
-                onChange={(event) => setScan(event.target.value)}
+                onChange={(event) => {
+                  setScan(event.target.value);
+                  if (scanRejection.phase !== "idle") {
+                    clearScanRejection();
+                    setError(null);
+                    setMessage("Leyendo nuevo código");
+                  }
+                }}
                 onKeyDown={(event) => {
                   if (
                     (event.key === "ArrowDown" || event.key === "ArrowUp") &&
@@ -2481,7 +2549,7 @@ edgeCapable={edgeEnrollmentRequired}
                 disabled={busy || !salesReady}
                 autoComplete="off"
                 inputMode="text"
-                className={`h-14 min-w-0 flex-1 rounded-xl border-2 px-4 text-xl font-semibold tracking-wide outline-none transition focus:bg-white focus:ring-4 disabled:opacity-50 ${scanRejected ? "animate-pulse border-red-600 bg-red-100 text-red-900 focus:border-red-600 focus:ring-red-500/20" : "border-teal-700/25 bg-slate-50 focus:border-teal-600 focus:ring-teal-600/10"}`}
+                className={`h-14 min-w-0 flex-1 rounded-xl border-2 px-4 text-xl font-semibold tracking-wide outline-none transition disabled:opacity-50 ${scanRejection.phase !== "idle" ? "border-red-600 bg-white text-red-950 focus:border-red-600 focus:ring-4 focus:ring-red-500/20" : "border-teal-700/25 bg-slate-50 focus:border-teal-600 focus:bg-white focus:ring-4 focus:ring-teal-600/10"}`}
                 placeholder="Código de barras, interno o referencia"
                 aria-describedby="capture-state"
               />
@@ -2502,6 +2570,17 @@ edgeCapable={edgeEnrollmentRequired}
                 Buscar <span className="rounded bg-teal-50 px-1.5 py-0.5 text-xs">F2</span>
               </button>
             </div>
+            {scanRejection.phase !== "idle" && (
+              <div className="mt-2 flex items-center gap-2 rounded-xl border border-red-200 bg-gradient-to-r from-red-50 to-rose-50 px-3 py-2 text-sm text-red-900" role="alert">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-red-600 text-white shadow-sm shadow-red-300">
+                  <X className="h-5 w-5" strokeWidth={3} />
+                </span>
+                <span className="min-w-0">
+                  <strong className="block">Este producto no pasó</strong>
+                  <span className="block truncate text-xs text-red-700">Código: {scanRejection.value || "captura inválida"} · vuelve a escanearlo o búscalo con F2</span>
+                </span>
+              </div>
+            )}
             <p
               id="capture-state"
               className={`mt-2 flex min-h-5 items-center gap-2 text-sm ${
@@ -3051,6 +3130,9 @@ edgeCapable={edgeEnrollmentRequired}
         <PosProductSearchDialog
           busy={busy}
           onSearch={searchProducts}
+          connected={serverConnected}
+          canReadAvailability={canReadProductAvailability}
+          onLoadAvailability={(productId) => client.productWarehouseAvailability(productId)}
           onSelect={selectSearchProduct}
           onCancel={() => {
             setProductSearchOpen(false);

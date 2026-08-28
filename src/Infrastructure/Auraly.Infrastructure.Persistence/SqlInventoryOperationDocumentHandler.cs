@@ -133,9 +133,16 @@ public sealed class SqlInventoryOperationProcessor(
     private async Task<decimal> ProcessDamageAsync(SqlDocumentProcessingSessionAccessor.Session session,
         InventoryOperationDocumentPayload operation, Dictionary<(Guid, Guid), BalanceState> balances, CancellationToken cancellationToken)
     {
+        var damagedWarehouse = operation.DestinationWarehouseId
+            ?? throw new InvalidOperationException("The damaged inventory warehouse is missing.");
         var total = 0m;
         foreach (var line in operation.Lines.OrderBy(line => line.LineNumber))
-            total += await ApplyAsync(session, operation, line, operation.WarehouseId, -line.Quantity, null, "InventoryDamage", balances, cancellationToken);
+        {
+            total += await ApplyAsync(session, operation, line, operation.WarehouseId, -line.Quantity,
+                null, "InventoryDamage", balances, cancellationToken);
+            total += await ApplyAsync(session, operation, line, damagedWarehouse, line.Quantity,
+                0m, "DamageWarehouseIn", balances, cancellationToken, false);
+        }
         return InventoryOperationRules.Money(total);
     }
 

@@ -125,7 +125,6 @@ public sealed class EscPosReceiptRenderer
         "DebitCard" => "Tarjeta debito",
         "CreditCard" => "Tarjeta credito",
         "Transfer" => "Transferencia",
-        "Deposit" => "Consignacion",
         "Credit" => "Credito / cartera",
         "Voucher" => "Bono / vale",
         "Check" => "Cheque",

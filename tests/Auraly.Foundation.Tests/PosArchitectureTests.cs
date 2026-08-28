@@ -111,6 +111,21 @@ public sealed class PosArchitectureTests
     }
 
     [Fact]
+    public void Rejected_pos_scan_finishes_with_persistent_visual_and_audible_feedback()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var page = File.ReadAllText(Path.Combine(
+            repositoryRoot, "admin", "src", "app", "(pos)", "pos", "page.tsx"));
+
+        Assert.Contains("playRejectedScanTone();", page, StringComparison.Ordinal);
+        Assert.Contains("phase: \"latched\"", page, StringComparison.Ordinal);
+        Assert.Contains("Lectura rechazada", page, StringComparison.Ordinal);
+        Assert.Contains("Este producto no pasó", page, StringComparison.Ordinal);
+        Assert.Contains("clearScanRejection();", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("window.setTimeout(() => setScanRejected(false)", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Pos_shortcuts_cycle_between_search_results_scanner_and_sale_quantities()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -156,7 +171,7 @@ public sealed class PosArchitectureTests
             shortcutPropagation < shortcutDispatch,
             "Function keys must be reserved before dispatching the POS action.");
         Assert.Contains(
-            "return () => window.removeEventListener(\"keydown\", handleShortcut, true);\n  }, []);",
+            "if (paymentOpen) return;",
             page.Replace("\r\n", "\n", StringComparison.Ordinal),
             StringComparison.Ordinal);
         Assert.Contains("Buscar <span", page, StringComparison.Ordinal);
@@ -348,6 +363,27 @@ public sealed class PosArchitectureTests
                 source,
                 StringComparison.Ordinal);
         }
+    }
+
+    [Fact]
+    public void Pos_product_search_keeps_local_results_independent_from_online_warehouse_availability()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var dialog = File.ReadAllText(Path.Combine(
+            repositoryRoot, "admin", "src", "app", "(pos)", "pos",
+            "pos-product-search-dialog.tsx"));
+        var page = File.ReadAllText(Path.Combine(
+            repositoryRoot, "admin", "src", "app", "(pos)", "pos", "page.tsx"));
+        var edgeHost = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "Pos", "Auraly.Pos.Edge.Host", "Program.cs"));
+
+        Assert.Contains("const availabilityVersion = useRef(0)", dialog, StringComparison.Ordinal);
+        Assert.Contains("El producto local sigue disponible", dialog, StringComparison.Ordinal);
+        Assert.Contains("aria-label=\"Existencias por sede y bodega\"", dialog, StringComparison.Ordinal);
+        Assert.Contains("connected={serverConnected}", page, StringComparison.Ordinal);
+        Assert.Contains("client.productWarehouseAvailability(productId)", page, StringComparison.Ordinal);
+        Assert.Contains("/catalog/products/{productId:guid}/warehouse-availability", edgeHost, StringComparison.Ordinal);
+        Assert.Contains("const string inventoryRead = \"inventory.read\"", edgeHost, StringComparison.Ordinal);
     }
 
     [Fact]

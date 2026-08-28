@@ -93,6 +93,20 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                   DELETE FROM dbo.ProductScaleConfigurations WHERE ProductId=@ProductId;
                   """, ProductParameters(user, productId, request, now), ct);
             await ExecuteAsync(connection, transaction, """
+                INSERT dbo.InventoryBalances
+                  (BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,
+                   InventoryValue,LastProcessingSequence,UpdatedAt)
+                SELECT @BusinessId,warehouse.WarehouseId,@ProductId,0,0,0,
+                       COALESCE((SELECT LastCompletedSequence FROM dbo.BusinessProcessingCursors WHERE BusinessId=@BusinessId),0),@Now
+                FROM dbo.Warehouses warehouse
+                WHERE warehouse.BusinessId=@BusinessId
+                  AND NOT EXISTS (
+                    SELECT 1 FROM dbo.InventoryBalances balance
+                    WHERE balance.BusinessId=@BusinessId
+                      AND balance.WarehouseId=warehouse.WarehouseId
+                      AND balance.ProductId=@ProductId);
+                """, [P("@BusinessId", user.BusinessId), P("@ProductId", productId), P("@Now", now)], ct);
+            await ExecuteAsync(connection, transaction, """
                 UPDATE dbo.ProductLinks SET IsActive=0,UpdatedAt=@Now WHERE BusinessId=@BusinessId AND ChildProductId=@ProductId AND IsActive=1;
                 IF @ParentProductId IS NOT NULL
                 BEGIN
@@ -566,9 +580,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT w.AllowNegativeStockSales,
-              ISNULL((SELECT SUM(m.QuantityChange) FROM dbo.InventoryMovements m
-                WHERE m.BusinessId=@BusinessId AND m.WarehouseId=w.WarehouseId
-                  AND m.ProductId=COALESCE(link.ParentProductId,p.ProductId)),0) / COALESCE(NULLIF(link.InventoryFactor,0),1)
+              COALESCE(balance.QuantityOnHand,0) / COALESCE(NULLIF(link.InventoryFactor,0),1)
             FROM dbo.EnrolledDevices d
             JOIN dbo.Businesses b ON b.BusinessId=@BusinessId
               AND b.TenantId=d.TenantId AND b.IsActive=1
@@ -578,6 +590,9 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
             LEFT JOIN dbo.ProductLinks link
               ON link.BusinessId=p.BusinessId AND link.ChildProductId=p.ProductId
              AND link.SharesInventory=1 AND link.IsActive=1
+            LEFT JOIN dbo.InventoryBalances balance WITH (UPDLOCK,HOLDLOCK)
+              ON balance.BusinessId=p.BusinessId AND balance.WarehouseId=w.WarehouseId
+             AND balance.ProductId=COALESCE(link.ParentProductId,p.ProductId)
             WHERE d.DeviceId=@DeviceId AND d.TenantId=@TenantId AND d.IsActive=1;
             """;
         command.Parameters.AddRange([P("@DeviceId", deviceId), P("@TenantId", tenantId), P("@BusinessId", businessId),
@@ -589,6 +604,130 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
         return new InventoryAvailabilityResponse(request.ProductId, request.WarehouseId, request.Quantity, available,
             !allowsNegative, allowsNegative || available >= request.Quantity,
             allowsNegative ? "NotRequired" : available >= request.Quantity ? "Available" : "Insufficient");
+    }
+
+    public async Task<IReadOnlyList<ProductWarehouseAvailabilityItem>> WarehouseAvailabilityAsync(
+        Guid? deviceId,
+        Guid tenantId,
+        Guid businessId,
+        Guid productId,
+        bool includeOtherBusinesses,
+        CancellationToken ct)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            IF @DeviceId IS NOT NULL AND NOT EXISTS(
+                SELECT 1
+                FROM dbo.EnrolledDevices device
+                JOIN dbo.PosEnrollmentSessions enrollment
+                  ON enrollment.DeviceId=device.DeviceId
+                 AND enrollment.BusinessId=@BusinessId
+                 AND enrollment.RedeemedAt IS NOT NULL
+                WHERE device.DeviceId=@DeviceId
+                  AND device.TenantId=@TenantId
+                  AND device.IsActive=1)
+              THROW 51011,'The device is not enrolled for the requested business.',1;
+
+            IF NOT EXISTS(
+                SELECT 1
+                FROM dbo.Products product
+                JOIN dbo.Businesses business
+                  ON business.BusinessId=product.BusinessId
+                 AND business.TenantId=@TenantId
+                 AND business.IsActive=1
+                WHERE product.BusinessId=@BusinessId
+                  AND product.ProductId=@ProductId
+                  AND product.IsActive=1)
+              THROW 51012,'The product is not available in the current business.',1;
+
+            ;WITH scopedProducts AS(
+                SELECT product.BusinessId,product.ProductId,
+                       COALESCE(product.ProductCode,product.Sku,product.Reference,N'') ProductCode
+                FROM dbo.Products product
+                JOIN dbo.Businesses business
+                  ON business.BusinessId=product.BusinessId
+                 AND business.TenantId=@TenantId
+                 AND business.IsActive=1
+                WHERE product.IsActive=1
+                  AND product.ManageStock=1
+                  AND ((product.BusinessId=@BusinessId AND product.ProductId=@ProductId)
+                    OR (@IncludeOtherBusinesses=1
+                      AND product.BusinessId<>@BusinessId
+                      AND (
+                        EXISTS(
+                          SELECT 1
+                          FROM dbo.ProductBarcodes candidate
+                          JOIN dbo.ProductBarcodes origin
+                            ON origin.BusinessId=@BusinessId
+                           AND origin.ProductId=@ProductId
+                           AND origin.IsActive=1
+                           AND origin.Barcode=candidate.Barcode
+                          WHERE candidate.BusinessId=product.BusinessId
+                            AND candidate.ProductId=product.ProductId
+                            AND candidate.IsActive=1)
+                        OR EXISTS(
+                          SELECT 1
+                          FROM dbo.ProductIdentifiers candidate
+                          JOIN dbo.ProductIdentifiers origin
+                            ON origin.BusinessId=@BusinessId
+                           AND origin.ProductId=@ProductId
+                           AND origin.IsActive=1
+                           AND origin.IdentifierType=candidate.IdentifierType
+                           AND origin.Value=candidate.Value
+                          WHERE candidate.BusinessId=product.BusinessId
+                            AND candidate.ProductId=product.ProductId
+                            AND candidate.IsActive=1)
+                        OR EXISTS(
+                          SELECT 1
+                          FROM dbo.Products origin
+                          JOIN dbo.IntegrationConnections originConnection
+                            ON originConnection.IntegrationConnectionId=origin.IntegrationConnectionId
+                          JOIN dbo.IntegrationConnections candidateConnection
+                            ON candidateConnection.IntegrationConnectionId=product.IntegrationConnectionId
+                           AND candidateConnection.Provider=originConnection.Provider
+                           AND candidateConnection.Capability=originConnection.Capability
+                           AND ISNULL(candidateConnection.AccountIdentifier,N'')=ISNULL(originConnection.AccountIdentifier,N'')
+                          WHERE origin.BusinessId=@BusinessId
+                            AND origin.ProductId=@ProductId
+                            AND origin.ExternalProductId IS NOT NULL
+                            AND origin.ExternalProductId=product.ExternalProductId)
+                      )))
+            )
+            SELECT business.BusinessId,business.Name,
+                   warehouse.WarehouseId,warehouse.Code,warehouse.Name,
+                   product.ProductId,product.ProductCode,
+                   COALESCE(balance.QuantityOnHand,0),
+                   CONVERT(bit,CASE WHEN business.BusinessId=@BusinessId THEN 1 ELSE 0 END)
+            FROM scopedProducts product
+            JOIN dbo.Businesses business ON business.BusinessId=product.BusinessId
+            JOIN dbo.Warehouses warehouse
+              ON warehouse.BusinessId=business.BusinessId
+             AND warehouse.IsActive=1
+             AND warehouse.IsSystem=0
+            LEFT JOIN dbo.InventoryBalances balance
+              ON balance.BusinessId=product.BusinessId
+             AND balance.WarehouseId=warehouse.WarehouseId
+             AND balance.ProductId=product.ProductId
+            ORDER BY CASE WHEN business.BusinessId=@BusinessId THEN 0 ELSE 1 END,
+                     business.Name,warehouse.Name,warehouse.WarehouseId;
+            """;
+        command.Parameters.AddRange([
+            P("@DeviceId", deviceId),
+            P("@TenantId", tenantId),
+            P("@BusinessId", businessId),
+            P("@ProductId", productId),
+            P("@IncludeOtherBusinesses", includeOtherBusinesses)
+        ]);
+        var result = new List<ProductWarehouseAvailabilityItem>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            result.Add(new ProductWarehouseAvailabilityItem(
+                reader.GetGuid(0), reader.GetString(1),
+                reader.GetGuid(2), reader.GetString(3), reader.GetString(4),
+                reader.GetGuid(5), reader.GetString(6), reader.GetDecimal(7), reader.GetBoolean(8)));
+        return result;
     }
 
     private const string ProductSelect = """

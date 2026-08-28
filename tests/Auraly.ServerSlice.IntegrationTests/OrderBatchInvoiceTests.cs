@@ -420,6 +420,11 @@ public sealed class OrderBatchInvoiceTests(ServerSliceFixture fixture)
               InventoryValue,LastProcessingSequence,UpdatedAt)
             VALUES(@BusinessId,@OrdersWarehouseId,@ProductId,3,5000,15000,1,SYSDATETIMEOFFSET());
 
+            UPDATE dbo.InventoryBalances
+            SET QuantityOnHand=100,AverageUnitCost=5000,InventoryValue=500000,
+                UpdatedAt=SYSDATETIMEOFFSET()
+            WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
+
             INSERT dbo.Orders(
               OrderId,BusinessId,Source,FulfillmentMode,Status,
               CustomerNameSnapshot,CustomerDocumentSnapshot,Currency,

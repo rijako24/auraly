@@ -120,6 +120,8 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         Assert.Contains("DebitCard", totals.Keys);
         Assert.Contains("CreditCard", totals.Keys);
         Assert.Contains("Transfer", totals.Keys);
+        Assert.DoesNotContain("BankTransfer", totals.Keys);
+        Assert.DoesNotContain("Deposit", totals.Keys);
         Assert.All(totals.Values, value => Assert.Equal(0m, value.NetAmount));
         Assert.Equal(0, preview.SalesCount);
         Assert.Equal(0, preview.CreditSalesCount);

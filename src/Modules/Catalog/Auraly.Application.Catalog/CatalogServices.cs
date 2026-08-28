@@ -18,6 +18,9 @@ public interface ICatalogStore
     Task<InventoryAvailabilityResponse> AvailabilityAsync(
         Guid deviceId, Guid tenantId, Guid businessId,
         InventoryAvailabilityRequest request, CancellationToken ct);
+    Task<IReadOnlyList<ProductWarehouseAvailabilityItem>> WarehouseAvailabilityAsync(
+        Guid? deviceId, Guid tenantId, Guid businessId, Guid productId,
+        bool includeOtherBusinesses, CancellationToken ct);
     Task<PosPricingSnapshot> PricingSnapshotAsync(Guid deviceId, Guid tenantId, Guid businessId, Guid warehouseId, CancellationToken ct);
     Task<IReadOnlyList<TaxProfileSummary>> ListTaxProfilesAsync(CatalogUserIdentity user, bool includeInactive, CancellationToken ct);
     Task<TaxProfileSummary> SaveTaxProfileAsync(CatalogUserIdentity user, Guid? taxProfileId, SaveTaxProfileRequest request, DateTimeOffset now, CancellationToken ct);
@@ -31,6 +34,8 @@ public sealed class CatalogService(
     TimeProvider timeProvider,
     IPosSynchronizationOutboxDispatcher synchronization)
 {
+    private const string InventoryReadPermission = "inventory.read";
+    private const string BusinessesReadPermission = "businesses.read";
     public async Task<ProductDetail> CreateAsync(
         CatalogUserIdentity user,
         SaveProductRequest request,
@@ -83,6 +88,17 @@ public sealed class CatalogService(
     {
         Require(user, CatalogPermissionCodes.Read);
         return store.GetAsync(user.TenantId, user.BusinessId, productId, user.Permissions.Contains(CatalogPermissionCodes.ReadCosts), ct);
+    }
+
+    public Task<IReadOnlyList<ProductWarehouseAvailabilityItem>> WarehouseAvailabilityAsync(
+        CatalogUserIdentity user, Guid productId, CancellationToken ct)
+    {
+        Require(user, InventoryReadPermission);
+        if (productId == Guid.Empty)
+            throw new CatalogValidationException("ProductId is required.");
+        return store.WarehouseAvailabilityAsync(
+            null, user.TenantId, user.BusinessId, productId,
+            user.Permissions.Contains(BusinessesReadPermission), ct);
     }
 
     public Task<ProductPage> PageAsync(CatalogUserIdentity user, ProductPageRequest request, CancellationToken ct)

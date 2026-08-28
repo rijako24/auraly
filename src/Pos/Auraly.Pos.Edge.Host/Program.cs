@@ -185,6 +185,7 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton<PosCatalogSynchronizer>();
         builder.Services.AddSingleton<PosIdentitySynchronizer>();
         builder.Services.AddSingleton<PosCustomerServerClient>();
+        builder.Services.AddSingleton<PosProductAvailabilityServerClient>();
         builder.Services.AddSingleton<PosRemoteApprovalClient>();
         builder.Services.AddSingleton<PosSensitiveActionAuthorizer>();
         builder.Services.AddSingleton<PosOrderServerClient>();
@@ -728,6 +729,29 @@ public static class PosEdgeHostApplication
                 hasMore,
                 nextOffset = hasMore ? offset + pageSize : (int?)null
             });
+        });
+        edge.MapGet("/catalog/products/{productId:guid}/warehouse-availability", async (
+            Guid productId,
+            PosProductAvailabilityServerClient availability,
+            PosLocalSessionAccessor sessions,
+            CancellationToken ct) =>
+        {
+            const string inventoryRead = "inventory.read";
+            const string businessesRead = "businesses.read";
+            var user = sessions.Required();
+            if (!user.Permissions.Contains(inventoryRead)) return Results.Forbid();
+            try
+            {
+                return Results.Ok(await availability.GetAsync(
+                    productId, user.Permissions.Contains(businessesRead), ct));
+            }
+            catch (HttpRequestException exception)
+            {
+                return Results.Problem(
+                    "No fue posible consultar las existencias del servidor.",
+                    statusCode: StatusCodes.Status503ServiceUnavailable,
+                    extensions: new Dictionary<string, object?> { ["remoteStatus"] = exception.StatusCode });
+            }
         });
         edge.MapGet("/customers", async (
             string? search,

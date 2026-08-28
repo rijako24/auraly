@@ -12,6 +12,43 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Product_creation_provisions_zero_balance_for_every_warehouse_including_system_warehouses()
+    {
+        var (taxProfileId, _, _) = await ConfigureCatalogAsync();
+        using var admin = fixture.CreateAdminClient(
+            CatalogPermissionCodes.Create,
+            CatalogPermissionCodes.ManagePrices,
+            CatalogPermissionCodes.ManageCosts);
+        using var response = await admin.PostAsJsonAsync(
+            "/api/commerce/v1/products",
+            ProductRequest(taxProfileId, [new ProductPriceInput(10_000m)], []));
+        response.EnsureSuccessStatusCode();
+        var product = (await response.Content.ReadFromJsonAsync<ProductDetail>())!;
+
+        var invalidBalances = await ScalarAsync<string?>(
+            """
+            SELECT STRING_AGG(CONCAT(warehouse.Code,N':',COALESCE(CONVERT(nvarchar(40),balance.QuantityOnHand),N'missing'),N':',
+              COALESCE(CONVERT(nvarchar(40),balance.AverageUnitCost),N'missing'),N':',
+              COALESCE(CONVERT(nvarchar(40),balance.InventoryValue),N'missing')),N',')
+            FROM dbo.Warehouses warehouse
+            LEFT JOIN dbo.InventoryBalances balance
+              ON balance.BusinessId=warehouse.BusinessId
+             AND balance.WarehouseId=warehouse.WarehouseId
+             AND balance.ProductId=@ProductId
+            WHERE warehouse.BusinessId=@BusinessId
+              AND (balance.ProductId IS NULL OR balance.QuantityOnHand<>0
+                   OR balance.AverageUnitCost<>0 OR balance.InventoryValue<>0);
+            """,
+            new SqlParameter("@ProductId", product.ProductId),
+            new SqlParameter("@BusinessId", fixture.BusinessId));
+        Assert.True(string.IsNullOrEmpty(invalidBalances), $"Every product balance must start at zero: {invalidBalances}");
+        Assert.True(await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND ProductId=@ProductId;",
+            new SqlParameter("@BusinessId", fixture.BusinessId),
+            new SqlParameter("@ProductId", product.ProductId)) > 0);
+    }
+
+    [Fact]
     public async Task Product_workspace_creates_classification_brand_and_link_atomically()
     {
         var (taxProfileId, _, _) = await ConfigureCatalogAsync();
@@ -626,6 +663,100 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         await ExecuteAsync(
             "UPDATE dbo.Warehouses SET AllowNegativeStockSales=1 WHERE WarehouseId=@Id;",
             new SqlParameter("@Id", fixture.WarehouseId));
+    }
+
+    [Fact]
+    public async Task Warehouse_availability_uses_stable_product_identity_and_hides_system_warehouses()
+    {
+        await ConfigureCatalogAsync();
+        var currentProductId = Guid.NewGuid();
+        var otherBusinessId = Guid.NewGuid();
+        var otherTaxProfileId = Guid.NewGuid();
+        var matchingProductId = Guid.NewGuid();
+        var codeCollisionProductId = Guid.NewGuid();
+        var otherWarehouseId = Guid.NewGuid();
+        var otherSystemWarehouseId = Guid.NewGuid();
+        var barcode = $"AVAIL-{Guid.NewGuid():N}";
+        var productCode = $"SITE-{Guid.NewGuid():N}";
+
+        try
+        {
+            await ExecuteAsync(
+                """
+                INSERT dbo.Businesses(BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,IsActive,CreatedAt)
+                VALUES(@OtherBusiness,@Tenant,N'Sede secundaria',N'Prueba de disponibilidad',N'Bogotá',N'3000000000',
+                  @Email,N'https://auraly.test',1,SYSUTCDATETIME());
+                INSERT dbo.TaxProfiles(TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
+                VALUES(@OtherTax,@OtherBusiness,N'VAT19',N'IVA 19%',19,1,SYSDATETIMEOFFSET());
+                INSERT dbo.Warehouses(WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,IsActive,CreatedAt)
+                VALUES
+                  (@OtherWarehouse,@OtherBusiness,N'PUBLIC',N'Bodega pública',0,0,1,1,1,1,SYSDATETIMEOFFSET()),
+                  (@OtherSystemWarehouse,@OtherBusiness,N'AVE',N'Averías',0,1,0,0,0,1,SYSDATETIMEOFFSET());
+                INSERT dbo.Products(ProductId,BusinessId,ProductCode,BaseUnitCode,TaxProfileId,Name,ManageStock,IsActive)
+                VALUES
+                  (@CurrentProduct,@Business,@ProductCode,N'EA',@CurrentTax,N'Producto origen',1,1),
+                  (@MatchingProduct,@OtherBusiness,N'OTRO-CODIGO',N'EA',@OtherTax,N'Producto equivalente',1,1),
+                  (@CollisionProduct,@OtherBusiness,@ProductCode,N'EA',@OtherTax,N'Producto no equivalente',1,1);
+                INSERT dbo.ProductBarcodes(ProductBarcodeId,BusinessId,ProductId,Barcode,IsPrimary,IsActive,CreatedAt)
+                VALUES
+                  (NEWID(),@Business,@CurrentProduct,@Barcode,1,1,SYSDATETIMEOFFSET()),
+                  (NEWID(),@OtherBusiness,@MatchingProduct,@Barcode,1,1,SYSDATETIMEOFFSET());
+                INSERT dbo.InventoryBalances(BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,InventoryValue,LastProcessingSequence,UpdatedAt)
+                VALUES
+                  (@Business,@CurrentWarehouse,@CurrentProduct,-3,10,-30,1,SYSDATETIMEOFFSET()),
+                  (@OtherBusiness,@OtherWarehouse,@MatchingProduct,7,10,70,1,SYSDATETIMEOFFSET()),
+                  (@OtherBusiness,@OtherSystemWarehouse,@MatchingProduct,99,0,0,1,SYSDATETIMEOFFSET()),
+                  (@OtherBusiness,@OtherWarehouse,@CollisionProduct,500,10,5000,1,SYSDATETIMEOFFSET());
+                """,
+                new SqlParameter("@Tenant", fixture.TenantId),
+                new SqlParameter("@Business", fixture.BusinessId),
+                new SqlParameter("@CurrentWarehouse", fixture.WarehouseId),
+                new SqlParameter("@CurrentTax", fixture.TaxProfileId),
+                new SqlParameter("@CurrentProduct", currentProductId),
+                new SqlParameter("@OtherBusiness", otherBusinessId),
+                new SqlParameter("@OtherTax", otherTaxProfileId),
+                new SqlParameter("@MatchingProduct", matchingProductId),
+                new SqlParameter("@CollisionProduct", codeCollisionProductId),
+                new SqlParameter("@OtherWarehouse", otherWarehouseId),
+                new SqlParameter("@OtherSystemWarehouse", otherSystemWarehouseId),
+                new SqlParameter("@ProductCode", productCode),
+                new SqlParameter("@Barcode", barcode),
+                new SqlParameter("@Email", $"availability-{otherBusinessId:N}@auraly.test"));
+
+            using var currentOnly = fixture.CreateAdminClient("inventory.read");
+            var currentItems = await currentOnly.GetFromJsonAsync<List<ProductWarehouseAvailabilityItem>>(
+                $"/api/commerce/v1/products/{currentProductId:D}/warehouse-availability");
+            Assert.NotNull(currentItems);
+            Assert.All(currentItems, item => Assert.Equal(fixture.BusinessId, item.BusinessId));
+            Assert.Contains(currentItems, item => item.WarehouseId == fixture.WarehouseId && item.QuantityOnHand == -3m);
+
+            using var allSites = fixture.CreateAdminClient("inventory.read", "businesses.read");
+            var allItems = await allSites.GetFromJsonAsync<List<ProductWarehouseAvailabilityItem>>(
+                $"/api/commerce/v1/products/{currentProductId:D}/warehouse-availability");
+            Assert.NotNull(allItems);
+            Assert.Contains(allItems, item => item.BusinessId == otherBusinessId
+                && item.WarehouseId == otherWarehouseId
+                && item.ProductId == matchingProductId
+                && item.QuantityOnHand == 7m);
+            Assert.DoesNotContain(allItems, item => item.WarehouseId == otherSystemWarehouseId);
+            Assert.DoesNotContain(allItems, item => item.ProductId == codeCollisionProductId);
+        }
+        finally
+        {
+            await ExecuteAsync(
+                """
+                DELETE dbo.InventoryBalances WHERE ProductId IN (@CurrentProduct,@MatchingProduct,@CollisionProduct);
+                DELETE dbo.ProductBarcodes WHERE ProductId IN (@CurrentProduct,@MatchingProduct,@CollisionProduct);
+                DELETE dbo.Products WHERE ProductId IN (@CurrentProduct,@MatchingProduct,@CollisionProduct);
+                DELETE dbo.Warehouses WHERE BusinessId=@OtherBusiness;
+                DELETE dbo.TaxProfiles WHERE BusinessId=@OtherBusiness;
+                DELETE dbo.Businesses WHERE BusinessId=@OtherBusiness;
+                """,
+                new SqlParameter("@CurrentProduct", currentProductId),
+                new SqlParameter("@MatchingProduct", matchingProductId),
+                new SqlParameter("@CollisionProduct", codeCollisionProductId),
+                new SqlParameter("@OtherBusiness", otherBusinessId));
+        }
     }
 
     private async Task<(Guid Tax, Guid Channel, Guid Second)> ConfigureCatalogAsync()

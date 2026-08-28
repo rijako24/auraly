@@ -172,6 +172,20 @@ body.dashboard-shell { overflow: hidden; }
   40% { opacity: 0; transform: translateY(-7px); }
 }
 
+@keyframes pos-scan-rejected {
+  0% { transform: translateX(0) scale(1); }
+  14% { transform: translateX(-7px) scale(1.006); }
+  28% { transform: translateX(7px) scale(1.006); }
+  42% { transform: translateX(-5px) scale(1.004); }
+  58% { transform: translateX(5px) scale(1.004); }
+  76% { transform: translateX(-2px) scale(1.002); }
+  100% { transform: translateX(0) scale(1); }
+}
+
+.pos-scan-rejected {
+  animation: pos-scan-rejected 720ms cubic-bezier(.36,.07,.19,.97) both;
+}
+
 .auraly-setup-loader > span:nth-child(2) {
   animation: auraly-setup-loader-orbit 2.4s linear infinite;
 }
@@ -187,6 +201,7 @@ body.dashboard-shell { overflow: hidden; }
   .auraly-setup-loader > span:nth-child(2) { animation: none; }
   .auraly-setup-loader-stage { animation: none; display: none; }
   .auraly-setup-loader-stage:first-child { display: inline; opacity: 1; }
+  .pos-scan-rejected { animation: none; }
 }
 
 @media (display-mode: standalone) {

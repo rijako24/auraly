@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -75,25 +74,75 @@ export type PhysicalCountDraftSelection = { count: InventoryPhysicalCountDetail;
 
 export function InventoryPhysicalCountWorkspace({
   businessId,
-  warehouseId,
-  search,
+  warehouses,
   permissions,
   onEditDraft,
+  onReconciled,
 }: {
   businessId: string;
   warehouses: Warehouse[];
-  warehouseId?: string;
-  search?: string;
   permissions: Set<string>;
   onEditDraft: (value: PhysicalCountDraftSelection) => void;
+  onReconciled: (value: InventoryReconciliationDetail) => void;
 }) {
   const client = useQueryClient();
+  const today = localDateValue();
+  const [search, setSearch] = useState("");
+  const [warehouseId, setWarehouseId] = useState("all");
+  const [fromDate, setFromDate] = useState(today);
+  const [toDate, setToDate] = useState(today);
+  const [status, setStatus] = useState("all");
+  const [filters, setFilters] = useState({ search: "", warehouseId: "all", fromDate: today, toDate: today, status: "all" });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [selectedDrafts, setSelectedDrafts] = useState<Map<string, InventoryPhysicalCountDraftSummary>>(new Map());
+  const selectedCountId = selectedDrafts.values().next().value?.inventoryPhysicalCountId ?? "";
   const query = useQuery({
-    queryKey: ["inventory-physical-count-drafts", businessId, warehouseId, search, page, pageSize],
-    queryFn: () => inventoryApi.physicalCountDrafts({ warehouseId, search, page, pageSize }),
+    queryKey: ["inventory-physical-count-drafts", businessId, filters, page, pageSize],
+    queryFn: () => inventoryApi.physicalCountDrafts({
+      warehouseId: filters.warehouseId === "all" ? undefined : filters.warehouseId,
+      search: filters.search || undefined,
+      from: dayBoundary(filters.fromDate),
+      to: dayBoundary(filters.toDate, true),
+      status: filters.status === "all" ? undefined : filters.status as "Ready" | "InProgress",
+      page,
+      pageSize,
+    }),
   });
+  const prepare = useMutation({
+    mutationFn: () => inventoryApi.prepareReconciliation(selectedCountId, {
+      businessId,
+      drafts: [...selectedDrafts.values()].map(draft => ({ draftId: draft.draftId, version: draft.version })),
+    }),
+    onSuccess: value => {
+      toast.success("Borradores conciliados por producto.");
+      onReconciled(value);
+    },
+    onError: (error: Error) => toast.error(error.message || "No fue posible conciliar los borradores."),
+  });
+
+  function applyFilters() {
+    if (fromDate && toDate && fromDate > toDate) {
+      toast.error("La fecha inicial no puede ser posterior a la fecha final.");
+      return;
+    }
+    setFilters({ search: search.trim(), warehouseId, fromDate, toDate, status });
+    setSelectedDrafts(new Map());
+    setPage(1);
+  }
+
+  function selectDraft(draft: InventoryPhysicalCountDraftSummary, checked: boolean) {
+    setSelectedDrafts(current => {
+      const next = new Map(current);
+      if (!checked) next.delete(draft.draftId);
+      else {
+        const countId = next.values().next().value?.inventoryPhysicalCountId;
+        if (countId && countId !== draft.inventoryPhysicalCountId) return current;
+        next.set(draft.draftId, draft);
+      }
+      return next;
+    });
+  }
 
   async function resume(countId: string, draftId: string) {
     try {
@@ -113,22 +162,35 @@ export function InventoryPhysicalCountWorkspace({
         <h2 className="text-xl font-semibold">Borradores de inventario</h2>
         <p className="text-sm text-muted-foreground">Edita un conteo guardado en la misma ventana de operación o selecciónalo para conciliar.</p>
       </div>
-      <Button variant="outline" size="sm" onClick={() => void query.refetch()}>
-        <RefreshCw className="mr-2 h-4 w-4" />Actualizar
-      </Button>
+      <Button variant="outline" size="sm" onClick={() => void query.refetch()}><RefreshCw className="mr-2 h-4 w-4" />Actualizar</Button>
     </div>
+    <Card><CardContent className="space-y-4 pt-6">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <Field label="Buscar"><div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input className="pl-9" value={search} onChange={event => setSearch(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); applyFilters(); } }} placeholder="Nombre, producto o código" /></div></Field>
+        <Field label="Bodega"><Select value={warehouseId} onValueChange={setWarehouseId}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todas las bodegas</SelectItem>{warehouses.map(item => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></Field>
+        <Field label="Estado"><Select value={status} onValueChange={setStatus}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos los estados</SelectItem><SelectItem value="Ready">Listo para conciliar</SelectItem><SelectItem value="InProgress">En progreso</SelectItem></SelectContent></Select></Field>
+        <Field label="Actualizado desde"><DatePicker value={fromDate} max={toDate || undefined} onChange={setFromDate} /></Field>
+        <Field label="Actualizado hasta"><DatePicker value={toDate} min={fromDate || undefined} onChange={setToDate} /></Field>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+        <p className="text-sm text-muted-foreground">Los filtros se aplican únicamente a los borradores.</p>
+        <Button onClick={applyFilters}><Search className="mr-2 h-4 w-4" />Aplicar filtros</Button>
+      </div>
+    </CardContent></Card>
+    {permissions.has("inventory.physical-counts.manage") && <Card className="overflow-hidden border-emerald-200 bg-gradient-to-r from-emerald-50 via-background to-background"><CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-3"><span className="rounded-xl bg-emerald-100 p-2 text-emerald-700"><ClipboardCheck className="h-5 w-5" /></span><div><p className="font-semibold">Conciliar inventario</p><p className="text-sm text-muted-foreground">Marca borradores listos del mismo inventario. El resultado abrirá directamente en Contados y No contados.</p><p className="mt-1 text-xs text-muted-foreground">{selectedDrafts.size} {selectedDrafts.size === 1 ? "seleccionado" : "seleccionados"}</p></div></div><Button className="shrink-0" disabled={!selectedCountId || selectedDrafts.size === 0 || prepare.isPending} onClick={() => prepare.mutate()}>{prepare.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ClipboardCheck className="mr-2 h-4 w-4" />}Conciliar seleccionados</Button></CardContent></Card>}
     <Card>
       <CardContent className="overflow-x-auto p-0">
-        <table className="w-full min-w-[900px] text-sm">
+        <table className="w-full min-w-[980px] text-sm">
           <thead className="border-b bg-muted/50 text-xs uppercase text-muted-foreground">
-            <tr>{["Borrador", "Bodega", "Avance", "Propietario", "Actualizado", "Estado", ""].map(label => <th key={label} className="px-4 py-3 text-left">{label}</th>)}</tr>
+            <tr><th className="w-14 px-4 py-3"><span className="sr-only">Seleccionar</span></th>{["Borrador", "Bodega", "Avance", "Propietario", "Actualizado", "Estado", ""].map(label => <th key={label} className="px-4 py-3 text-left">{label}</th>)}</tr>
           </thead>
           <tbody>
             {query.isLoading
-              ? <EmptyRow columns={7} text="Cargando borradores…" />
+              ? <EmptyRow columns={8} text="Cargando borradores…" />
               : (query.data?.items ?? []).length === 0
-                ? <EmptyRow columns={7} text="No hay borradores para estos filtros." />
-                : query.data?.items.map(draft => <tr key={draft.draftId} className="border-b last:border-0">
+                ? <EmptyRow columns={8} text="No hay borradores para estos filtros." />
+                : query.data?.items.map(draft => { const unavailable = draft.status !== "Ready" || Boolean(selectedCountId && selectedCountId !== draft.inventoryPhysicalCountId); return <tr key={draft.draftId} className={`border-b last:border-0 ${unavailable ? "opacity-60" : "hover:bg-emerald-50/40"}`}>
+                  <td className="px-4 py-3 text-center"><Checkbox aria-label={`Seleccionar ${draft.name}`} disabled={unavailable || !permissions.has("inventory.physical-counts.manage")} checked={selectedDrafts.has(draft.draftId)} onCheckedChange={checked => selectDraft(draft, checked === true)} /></td>
                   <td className="px-4 py-3 font-medium">{draft.name}</td>
                   <td className="px-4 py-3">{draft.warehouseName}</td>
                   <td className="px-4 py-3">{draft.countedProductCount}/{draft.productCount}</td>
@@ -138,7 +200,7 @@ export function InventoryPhysicalCountWorkspace({
                   <td className="px-4 py-3 text-right">
                     <Button size="sm" variant="outline" disabled={!permissions.has("inventory.physical-counts.capture")} onClick={() => void resume(draft.inventoryPhysicalCountId, draft.draftId)}>Editar</Button>
                   </td>
-                </tr>)}
+                </tr>; })}
           </tbody>
         </table>
       </CardContent>
@@ -182,10 +244,11 @@ export function PhysicalCountCreationForm({
     queryFn: () => inventoryApi.reasons({ operationType: "StockCount" }),
   });
   const selectedIds = useMemo(() => new Set(lines.map(line => line.productId)), [lines]);
+  const hasCountedProduct = lines.some(line => validNumber(line.count));
   const countsComplete = lines.length > 0 && lines.every(line => validNumber(line.count));
   const recountsComplete = lines.length > 0 && lines.every(line => validNumber(line.recount));
-  const valid = Boolean(warehouse && reason && countsComplete);
-  const applyValid = valid && (captureStage === "Count" || recountsComplete);
+  const canOpenDraftDialog = Boolean(warehouse && reason && hasCountedProduct);
+  const applyValid = Boolean(warehouse && reason && countsComplete && (captureStage === "Count" || recountsComplete));
   const canSave = permissions.has("inventory.physical-counts.capture") && permissions.has("inventory.physical-counts.manage");
   const canApply = permissions.has("inventory.counts.confirm") && permissions.has("inventory.physical-counts.manage");
 
@@ -218,7 +281,7 @@ export function PhysicalCountCreationForm({
         businessId,
         version: draft.version,
         name: draftName.trim(),
-        readyForReconciliation: captureStage === "Count" || recountsComplete,
+        readyForReconciliation: hasCountedProduct && (captureStage === "Count" || recountsComplete),
         captureStage,
         lines: mergeDraftLines(draft, lines),
       });
@@ -300,10 +363,10 @@ export function PhysicalCountCreationForm({
       <Textarea value={notes} onChange={event => setNotes(event.target.value)} maxLength={1000} placeholder="Opcional" />
     </Field>
     <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-      <p className="text-sm text-muted-foreground">{lines.length} {lines.length === 1 ? "producto" : "productos"} en el conteo</p>
+      <div><p className="text-sm text-muted-foreground">{lines.length} {lines.length === 1 ? "producto" : "productos"} en el conteo</p>{lines.length > 0 && !reason && <p className="mt-1 text-sm text-amber-700">Selecciona el motivo para guardar o aplicar este conteo.</p>}</div>
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" onClick={onCancel}>Cerrar</Button>
-        <Button variant="outline" disabled={!valid || !canSave || saveDraft.isPending || apply.isPending} onClick={() => setDraftDialogOpen(true)}>
+        <Button variant="outline" disabled={!canOpenDraftDialog || !canSave || saveDraft.isPending || apply.isPending} onClick={() => setDraftDialogOpen(true)}>
           <Save className="mr-2 h-4 w-4" />Guardar borrador
         </Button>
         {captureStage === "Count" && <Button variant="outline" disabled={!countsComplete || apply.isPending || saveDraft.isPending} onClick={() => { setCaptureStage("Recount"); window.requestAnimationFrame(() => window.requestAnimationFrame(() => { const input = recountRefs.current.get(lines.find(line => !validNumber(line.recount))?.productId ?? lines[0]?.productId); input?.focus(); input?.select(); })); }}><RefreshCw className="mr-2 h-4 w-4" />Recontar</Button>}
@@ -327,68 +390,33 @@ export function PhysicalCountCreationForm({
 export function InventoryReconciliationDialog({
   open,
   businessId,
-  warehouseId,
+  value,
   onClose,
 }: {
   open: boolean;
   businessId: string;
-  warehouseId?: string;
+  value?: InventoryReconciliationDetail;
   onClose: () => void;
 }) {
   const client = useQueryClient();
-  const [search, setSearch] = useState("");
-  const deferredSearch = useDeferredValue(search.trim());
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
-  const [selectedDrafts, setSelectedDrafts] = useState<Map<string, InventoryPhysicalCountDraftSummary>>(new Map());
-  const [result, setResult] = useState<InventoryReconciliationDetail>();
+  const [result, setResult] = useState<InventoryReconciliationDetail | undefined>(value);
   const [section, setSection] = useState<ReconciliationSection>("Counted");
   const [valuation, setValuation] = useState<"cost" | "average">("cost");
   const [draftDialogOpen, setDraftDialogOpen] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [confirmZero, setConfirmZero] = useState(false);
-  const countId = selectedDrafts.values().next().value?.inventoryPhysicalCountId ?? "";
-  const drafts = useQuery({
-    queryKey: ["inventory-physical-count-drafts", businessId, warehouseId, deferredSearch, fromDate, toDate, page, pageSize, "reconcile"],
-    queryFn: () => inventoryApi.physicalCountDrafts({
-      warehouseId,
-      search: deferredSearch || undefined,
-      from: dayBoundary(fromDate),
-      to: dayBoundary(toDate, true),
-      page,
-      pageSize,
-    }),
-    enabled: open,
-  });
-  const candidates = drafts.data?.items ?? [];
+  const countId = result?.inventoryPhysicalCountId ?? "";
 
   useEffect(() => {
-    if (!open) {
-      setSearch("");
-      setFromDate("");
-      setToDate("");
-      setPage(1);
-      setSelectedDrafts(new Map());
+    if (open && value) {
+      setResult(value);
+      setSection("Counted");
+    } else if (!open) {
       setResult(undefined);
       setDraftName("");
       setConfirmZero(false);
     }
-  }, [open]);
-
-  const prepare = useMutation({
-    mutationFn: () => inventoryApi.prepareReconciliation(countId, {
-      businessId,
-      drafts: [...selectedDrafts.values()].map(draft => ({ draftId: draft.draftId, version: draft.version })),
-    }),
-    onSuccess: value => {
-      setResult(value);
-      setSection("Counted");
-      toast.success("Borradores conciliados por producto.");
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
+  }, [open, value]);
   const save = useMutation({
     mutationFn: () => inventoryApi.saveReconciliationDraft(countId, result!.reconciliationId, {
       businessId,
@@ -423,85 +451,14 @@ export function InventoryReconciliationDialog({
   const products = result?.products.filter(product => product.status === section) ?? [];
   const sectionApplied = section === "Counted" ? result?.countedApplicationStatus : result?.uncountedApplicationStatus;
 
-  function selectDraft(draft: InventoryPhysicalCountDraftSummary, checked: boolean) {
-    setSelectedDrafts(current => {
-      const next = new Map(current);
-      if (checked) {
-        const selectedCountId = next.values().next().value?.inventoryPhysicalCountId;
-        if (selectedCountId && selectedCountId !== draft.inventoryPhysicalCountId) return current;
-        next.set(draft.draftId, draft);
-      } else {
-        next.delete(draft.draftId);
-      }
-      return next;
-    });
-  }
-
   return <Dialog open={open} onOpenChange={value => !value && onClose()}>
       <DialogContent className="flex max-h-[94dvh] max-w-7xl flex-col overflow-hidden p-0">
         <DialogHeader className="border-b bg-gradient-to-r from-slate-950 to-emerald-950 px-6 py-5 text-white">
           <DialogTitle className="text-white">Conciliación de inventario</DialogTitle>
-          <DialogDescription className="text-slate-300">
-            {result ? "Revisa los productos agrupados, sus borradores de origen y la acción para cada sección." : "Filtra y selecciona los borradores que deseas conciliar."}
-          </DialogDescription>
+          <DialogDescription className="text-slate-300">Revisa los productos agrupados, sus borradores de origen y la acción para cada sección.</DialogDescription>
         </DialogHeader>
         <div className="space-y-5 overflow-y-auto px-6 py-5">
-          {!result ? <>
-            <Card>
-              <CardHeader className="border-b bg-muted/20">
-                <CardTitle className="text-base">Borradores disponibles</CardTitle>
-                <p className="text-sm text-muted-foreground">El primer borrador elegido fija el mismo inventario y bodega para toda la selección.</p>
-              </CardHeader>
-              <CardContent className="space-y-4 pt-5">
-                <div className="grid gap-3 md:grid-cols-3">
-                  <Field label="Nombre del borrador">
-                    <div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input className="pl-9" value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Buscar por nombre o producto" /></div>
-                  </Field>
-                  <Field label="Actualizado desde"><DatePicker value={fromDate} max={toDate || undefined} onChange={value => { setFromDate(value); setPage(1); }} /></Field>
-                  <Field label="Actualizado hasta"><DatePicker value={toDate} min={fromDate || undefined} onChange={value => { setToDate(value); setPage(1); }} /></Field>
-                </div>
-                <div className="overflow-x-auto rounded-2xl border">
-                  <table className="w-full min-w-[920px] text-sm">
-                    <thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground">
-                      <tr><th className="w-14 px-4 py-3"><span className="sr-only">Seleccionar</span></th><th className="px-4 py-3 text-left">Borrador</th><th className="px-4 py-3 text-left">Bodega</th><th className="px-4 py-3 text-left">Avance</th><th className="px-4 py-3 text-left">Actualizado</th><th className="px-4 py-3 text-left">Estado</th></tr>
-                    </thead>
-                    <tbody>
-                      {drafts.isLoading
-                        ? <EmptyRow columns={6} text="Cargando borradores…" />
-                        : candidates.length === 0
-                          ? <EmptyRow columns={6} text="No hay borradores para los filtros seleccionados." />
-                          : candidates.map(draft => {
-                            const unavailable = draft.status !== "Ready" || Boolean(countId && countId !== draft.inventoryPhysicalCountId);
-                            return <tr key={draft.draftId} className={`border-t transition-colors ${unavailable ? "opacity-55" : "hover:bg-emerald-50/40"}`}>
-                              <td className="px-4 py-3 text-center"><Checkbox aria-label={`Seleccionar ${draft.name}`} disabled={unavailable} checked={selectedDrafts.has(draft.draftId)} onCheckedChange={checked => selectDraft(draft, checked === true)} /></td>
-                              <td className="px-4 py-3"><strong>{draft.name}</strong><span className="block text-xs text-muted-foreground">Propietario {draft.ownerUserId.slice(0, 8)}</span></td>
-                              <td className="px-4 py-3">{draft.warehouseName}</td>
-                              <td className="px-4 py-3"><span className="font-medium">{draft.countedProductCount}/{draft.productCount}</span><span className="block text-xs text-muted-foreground">productos contados</span></td>
-                              <td className="px-4 py-3">{formatDateTime(draft.updatedAt)}</td>
-                              <td className="px-4 py-3"><StatusBadge status={draft.status} /></td>
-                            </tr>;
-                          })}
-                    </tbody>
-                  </table>
-                </div>
-                <DataTablePagination
-                  pageIndex={Math.max(0, page - 1)}
-                  pageSize={pageSize}
-                  pageCount={drafts.data?.totalPages ?? 0}
-                  totalItems={drafts.data?.totalCount ?? 0}
-                  onPageChange={index => setPage(index + 1)}
-                  onPageSizeChange={size => { setPageSize(size); setPage(1); }}
-                />
-              </CardContent>
-            </Card>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm text-muted-foreground">{selectedDrafts.size} {selectedDrafts.size === 1 ? "borrador seleccionado" : "borradores seleccionados"}</p>
-              <Button disabled={!countId || selectedDrafts.size === 0 || prepare.isPending} onClick={() => prepare.mutate()}>
-                {prepare.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ClipboardCheck className="mr-2 h-4 w-4" />}
-                Conciliar seleccionados
-              </Button>
-            </div>
-          </> : <>
+          {result && <>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="font-medium">{result.drafts.length} {result.drafts.length === 1 ? "borrador agrupado" : "borradores agrupados"}</p>
@@ -512,7 +469,7 @@ export function InventoryReconciliationDialog({
                   <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
                   <SelectContent><SelectItem value="cost">Precio costo</SelectItem><SelectItem value="average">Costo promedio</SelectItem></SelectContent>
                 </Select>
-                <Button variant="outline" onClick={() => setResult(undefined)}>Cambiar selección</Button>
+                <Button variant="outline" onClick={onClose}>Cambiar selección</Button>
               </div>
             </div>
             <Tabs value={section} onValueChange={value => { setSection(value as ReconciliationSection); setConfirmZero(false); }}>
@@ -581,10 +538,10 @@ export function PhysicalCountDraftEditForm({
   const countRefs = useRef(new Map<string, HTMLInputElement>());
   const recountRefs = useRef(new Map<string, HTMLInputElement>());
   const selectedIds = useMemo(() => new Set(lines.map(line => line.productId)), [lines]);
+  const hasCountedProduct = lines.some(line => validNumber(line.count));
   const countsComplete = lines.length > 0 && lines.every(line => validNumber(line.count));
   const recountsComplete = lines.length > 0 && lines.every(line => validNumber(line.recount));
-  const valid = countsComplete;
-  const applyValid = valid && (captureStage === "Count" || recountsComplete);
+  const applyValid = countsComplete && (captureStage === "Count" || recountsComplete);
   const canCapture = permissions.has("inventory.physical-counts.capture");
   const canApply = permissions.has("inventory.counts.confirm") && permissions.has("inventory.physical-counts.manage");
 
@@ -599,7 +556,6 @@ export function PhysicalCountDraftEditForm({
       const pending = nextLines.find(line => !validNumber(nextStage === "Count" ? line.count : line.recount));
       const input = pending ? (nextStage === "Count" ? countRefs : recountRefs).current.get(pending.productId) : null;
       if (input) { input.focus(); input.select(); }
-      else if (nextStage === "Count") document.getElementById(pickerId)?.focus();
     }));
   }, [draft]);
 
@@ -617,12 +573,12 @@ export function PhysicalCountDraftEditForm({
       businessId,
       version: draft!.version,
       name: name.trim(),
-      readyForReconciliation: captureStage === "Count" || recountsComplete,
+      readyForReconciliation: hasCountedProduct && (captureStage === "Count" || recountsComplete),
       captureStage,
       lines: mergeDraftLines(draft!, lines),
     }),
     onSuccess: () => {
-      toast.success(captureStage === "Recount" && !recountsComplete ? "Borrador guardado para continuar el reconteo." : "Borrador actualizado y listo para conciliar.");
+      toast.success(!hasCountedProduct ? "Borrador actualizado sin productos contados." : captureStage === "Recount" && !recountsComplete ? "Borrador guardado para continuar el reconteo." : "Borrador actualizado y listo para conciliar.");
       setDraftDialogOpen(false);
       onCompleted("drafts");
     },
@@ -634,7 +590,7 @@ export function PhysicalCountDraftEditForm({
         businessId,
         version: draft!.version,
         name: name.trim(),
-        readyForReconciliation: captureStage === "Count" || recountsComplete,
+        readyForReconciliation: hasCountedProduct && (captureStage === "Count" || recountsComplete),
         captureStage,
         lines: mergeDraftLines(draft!, lines),
       });
@@ -673,7 +629,7 @@ export function PhysicalCountDraftEditForm({
       <p className="text-sm text-muted-foreground">{lines.length} {lines.length === 1 ? "producto" : "productos"} cargados del borrador</p>
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" onClick={onCancel}>Cerrar</Button>
-        {canCapture && <Button variant="outline" disabled={!valid || save.isPending || apply.isPending} onClick={() => setDraftDialogOpen(true)}><Save className="mr-2 h-4 w-4" />Guardar borrador</Button>}
+        {canCapture && <Button variant="outline" disabled={save.isPending || apply.isPending} onClick={() => setDraftDialogOpen(true)}><Save className="mr-2 h-4 w-4" />Guardar borrador</Button>}
         {captureStage === "Count" && <Button variant="outline" disabled={!countsComplete || save.isPending || apply.isPending} onClick={() => { setCaptureStage("Recount"); window.requestAnimationFrame(() => window.requestAnimationFrame(() => { const input = recountRefs.current.get(lines.find(line => !validNumber(line.recount))?.productId ?? lines[0]?.productId); input?.focus(); input?.select(); })); }}><RefreshCw className="mr-2 h-4 w-4" />Recontar</Button>}
         {canApply && <Button disabled={!applyValid || save.isPending || apply.isPending} onClick={() => apply.mutate()}>{apply.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}Aplicar inventario</Button>}
       </div>
@@ -726,7 +682,7 @@ function CountCaptureTable({
           <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{fmt(line.systemQuantity)}</td>
           <td className="px-4 py-3"><Input ref={element => { if (element) countRefs.current.set(line.productId, element); else countRefs.current.delete(line.productId); }} aria-label={`Contar ${line.productName}`} className="ml-auto w-36 text-right tabular-nums" inputMode="decimal" min="0" disabled={disabled || captureStage !== "Count"} value={line.count} onFocus={event => event.currentTarget.select()} onKeyDown={event => advance(event, line.productId)} onChange={event => update(line.productId, { count: event.target.value })} /></td>
           <td className="px-4 py-3"><Input ref={element => { if (element) recountRefs.current.set(line.productId, element); else recountRefs.current.delete(line.productId); }} aria-label={`Recontar ${line.productName}`} className="ml-auto w-36 text-right tabular-nums" inputMode="decimal" min="0" disabled={disabled || captureStage !== "Recount"} value={line.recount} onFocus={event => event.currentTarget.select()} onKeyDown={event => advance(event, line.productId)} onChange={event => update(line.productId, { recount: event.target.value })} placeholder={captureStage === "Recount" ? "Pendiente" : "Opcional"} /></td>
-          <td className="px-3 py-3"><Button type="button" size="icon" variant="ghost" disabled={disabled || captureStage === "Recount"} aria-label={`Quitar ${line.productName}`} onClick={() => onChange(lines.filter(item => item.productId !== line.productId))}><Trash2 className="h-4 w-4 text-destructive" /></Button></td>
+          <td className="px-3 py-3"><Button type="button" size="icon" variant="ghost" disabled={disabled} aria-label={`Quitar ${line.productName}`} onClick={() => onChange(lines.filter(item => item.productId !== line.productId))}><Trash2 className="h-4 w-4 text-destructive" /></Button></td>
         </tr>)}
       </tbody>
     </table>
@@ -830,6 +786,12 @@ function dayBoundary(value: string, next = false) {
   const date = new Date(`${value}T00:00:00`);
   if (next) date.setDate(date.getDate() + 1);
   return date.toISOString();
+}
+
+function localDateValue() {
+  const date = new Date();
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
 }
 
 function StatusBadge({ status }: { status: string }) {

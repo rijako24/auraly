@@ -20,9 +20,13 @@ test("closure print view is a receipt with user and every payment breakdown", ()
   assert.match(html, /https:\/\/media\.test\/logo\.png/);
   assert.match(html, /ARQUEO DE CAJA · CIERRE CONFIRMADO/);
   assert.match(html, /Usuario que trabajó: <strong>Ana<\/strong>/);
-  assert.match(html, /Todos los medios de pago/);
+  assert.match(html, /Detalle por medio de pago/);
   assert.match(html, /Transferencia/);
   assert.match(html, /Devoluciones/);
+  assert.match(html, /Entradas de caja/);
+  assert.match(html, /Salidas de caja/);
+  assert.match(html, /Total neto del turno/);
+  assert.match(html, /Diferencia de efectivo/);
   assert.match(html, /close-1/);
   assert.match(html, /size:80mm auto/);
   assert.match(html, /Automática/);
@@ -33,7 +37,6 @@ test("closure print view is a receipt with user and every payment breakdown", ()
 
 test("closure count rules keep transfer automatic", () => {
   assert.equal(workSessionPaymentMethodName("Transfer"), "Transferencia");
-  assert.equal(workSessionPaymentMethodName("Deposit"), "Consignación");
   assert.equal(workSessionPaymentMethodName("Withholding"), "Retención");
   assert.equal(workSessionPaymentMethodRequiresCount("Transfer"), false);
   assert.equal(workSessionPaymentMethodRequiresCount("Cash"), true);

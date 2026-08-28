@@ -532,8 +532,7 @@ public sealed partial class SqlWorkSessionStore(
                 WHEN N'CreditCard' THEN 2
                 WHEN N'Card' THEN 3
                 WHEN N'Transfer' THEN 4
-                WHEN N'Deposit' THEN 5
-                WHEN N'Credit' THEN 6
+                WHEN N'Credit' THEN 5
                 ELSE 10 END,
               PaymentMethodCode;
             """, connection, transaction);

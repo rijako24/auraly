@@ -374,7 +374,7 @@ public sealed class PosOfflineWorkSessionClosureService(
         "CreditCard" => 2,
         "Card" => 3,
         "Transfer" => 4,
-        "Deposit" => 5,
+        "Credit" => 5,
         _ => 10
     };
 

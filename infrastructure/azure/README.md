@@ -110,7 +110,7 @@ El mismo release debe desplegarse primero en DEV y después en PROD. La versión
 ```powershell
 $version = '0.1.0-rc6'
 $codeSigningThumbprint = Read-Host 'Huella del certificado Authenticode instalado'
-.\infrastructure\azure\New-AuralyRelease.ps1 -Version $version -PosApiUrl 'https://api-auraly-dev-w5usmo6w.azurewebsites.net' -SigningCertificateThumbprint $codeSigningThumbprint
+.\infrastructure\azure\New-AuralyRelease.ps1 -Version $version -PosApiUrl 'https://api-auraly-dev-w5usmo6w.azurewebsites.net' -ProdPosApiUrl 'https://api-auraly-prod-7sov4nxc.azurewebsites.net' -SigningCertificateThumbprint $codeSigningThumbprint
 Get-Content ".\artifacts\releases\$version\manifest.json"
 ```
 
@@ -119,8 +119,14 @@ El script exige un árbol Git limpio, hace restore bloqueado, build determiníst
 - `auraly-function-<version>.zip`
 - `auraly-api-<version>.zip`
 - `auraly-database-<version>.dacpac`
-- `auraly-pos-<version>.exe`, genérico por tenant y configurado únicamente para el ambiente
+- `auraly-pos-<version>.exe`, genérico por tenant y configurado para DEV
+- `auraly-pos-prod-<version>.exe`, genérico por tenant y configurado para PROD
 - `manifest.json` con commit, herramientas, tamaños y SHA-256
+
+Los dos instaladores nacen del mismo commit, quedan firmados y archivados en el
+mismo release inmutable. La promoción no recompila ni modifica binarios: el
+pipeline selecciona el instalador correspondiente al ambiente y valida su hash
+antes de publicarlo como `Auraly-POS-Setup.exe`.
 
 Los releases son inmutables: no se reemplaza una carpeta existente. Para una corrección se crea una versión nueva.
 

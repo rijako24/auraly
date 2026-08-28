@@ -13,7 +13,7 @@ Esta rebanada extiende el modelo canónico existente; no crea un segundo inventa
 - Historial paginado de conteos, ajustes, traslados, conversiones y averías.
 - Costos y valorización visibles solamente con `inventory.costs.read`.
 - Avería como documento definitivo `Damage`, numeración Auraly `AVE00-00000001`, línea `DAMAGE` y movimiento `InventoryDamage`.
-- La avería retira inventario vendible al costo promedio vigente; no edita saldos directamente.
+- La avería retira inventario vendible al costo promedio vigente y mueve la cantidad física a la bodega interna `AVE` con valor contable cero; no edita saldos directamente. La salida valorizada conserva el gasto por avería y la entrada interna evita perder la trazabilidad física sin inflar el activo.
 - El documento se acepta, encola y procesa exactamente una vez; un saldo insuficiente sigue la política común de reintento y dead letter sin adelantar documentos posteriores del mismo negocio.
 - Un evento `inventory.operation.processed` se escribe en la outbox del servidor dentro de la misma transacción.
 
@@ -36,6 +36,13 @@ Esta rebanada extiende el modelo canónico existente; no crea un segundo inventa
 
 Todas las consultas usan el Business autenticado y paginación del servidor. El cuerpo no puede cambiar el alcance del usuario.
 
+## Política de bodegas
+
+- Toda bodega activa creada por el negocio está disponible en inventario, conteos, ajustes, traslados y recepciones, aunque no esté marcada para ventas.
+- `UseForSales` controla exclusivamente los contextos comerciales que necesitan una bodega de venta, incluido el enrolamiento del POS; no controla la visibilidad administrativa de inventario.
+- Las bodegas de sistema (`PED`, `AVE` y las demás internas) no aparecen en ningún selector público y no pueden enviarse manualmente como origen o destino.
+- Averías resuelve `AVE` por código y negocio dentro del motor, la usa como destino interno y nunca expone su identificador al cliente.
+
 ## Interfaz
 
 `/dashboard/inventory` concentra tres contextos estables: Existencias, Kárdex y Operaciones. Operaciones lista y filtra inventarios físicos, ajustes, traslados, conversiones y averías. `Nueva operación` es una acción global que abre el formulario específico sin convertir cada formulario en una pestaña principal. Usa los componentes visuales de Auraly, selector de bodega no nativo, búsqueda combinada y estados vacíos/carga. El menú requiere `inventory.read`; confirmar averías requiere `inventory.damages.confirm`.
@@ -52,7 +59,7 @@ Un inventario físico se abre sobre un único alcance, sin exigir listas previas
 
 `InventoryPhysicalCounts`, `InventoryPhysicalCountLists` e `InventoryPhysicalCountLines` son estado de coordinación y captura, no otro libro de inventario. Guardar una sección conciliada crea otro borrador y no afecta saldos. Aplicar `Contados` o `No contados` crea y acepta un documento canónico `StockCount` mediante `InventoryOperationService`; ambas secciones pueden producir documentos independientes. El handler de inventario del motor ordenado es el único que modifica `InventoryBalances`, escribe `InventoryMovements` y completa la coordinación, todo dentro de la misma transacción de procesamiento.
 
-Cada conteo conserva la secuencia procesada en la que se capturó. El cierre suma al valor contado los movimientos posteriores a esa captura antes de confirmar el `StockCount`; por eso una venta, recepción, ajuste o traslado ocurrido mientras otros equipos terminan no se pierde ni se vuelve a contar como diferencia. La creación bloquea que un producto participe simultáneamente en dos inventarios físicos activos de la misma bodega.
+Cada conteo conserva la secuencia procesada en la que se capturó. El cierre suma al valor contado los movimientos posteriores a esa captura antes de confirmar el `StockCount`; por eso una venta, recepción, ajuste o traslado ocurrido mientras otros equipos terminan no se pierde ni se vuelve a contar como diferencia. Un producto puede participar simultáneamente en inventarios físicos activos distintos de la misma bodega; cada borrador conserva versión y secuencia propias, y la conciliación y el documento canónico `StockCount` resuelven la concurrencia al aplicar.
 
 Los permisos se separan por responsabilidad: `inventory.physical-counts.manage` crea sesiones y concilia; `inventory.physical-counts.capture` crea y edita borradores; aplicar también exige `inventory.counts.confirm` porque genera el documento definitivo.
 
@@ -61,7 +68,7 @@ Los permisos se separan por responsabilidad: `inventory.physical-counts.manage` 
 El proyecto SQL provisiona las series operativas CTI, AJI, TRB, CNV y AVE para negocios que aún no poseen una serie activa. No son prefijos DIAN. Los permisos se asignan al rol Administrator mediante el postdeployment.
 ## Cierre de la captura operativa
 
-La acción `Inventario > Nueva operación` es el único punto de entrada para inventarios físicos, ajustes, traslados, conversiones y averías. No replica reglas de negocio: consume los casos de uso canónicos y todos los documentos confirmados entran al mismo motor ordenado mediante su señal RabbitMQ.
+La acción `Inventario > Nueva operación` es el único punto de entrada para inventarios físicos, ajustes, traslados, conversiones y averías. No replica reglas de negocio: consume los casos de uso canónicos y todos los documentos confirmados entran al mismo motor ordenado mediante su señal RabbitMQ. En todos los formularios, la acción primaria de confirmar o aplicar se ubica al extremo derecho del pie de acciones.
 
 Reglas de teclado comunes a sus grillas:
 

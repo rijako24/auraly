@@ -59,10 +59,10 @@ public static class InventoryApi
             var identity = principal.ToInventoryIdentity();
             return await ExecuteAsync(() => service.ListAsync(identity, new(identity.BusinessId, warehouseId, search, status, page == 0 ? 1 : page, pageSize == 0 ? 50 : pageSize), token), Results.Ok);
         }).RequireAuthorization("inventory.user");
-        endpoints.MapGet("/api/commerce/v1/inventory/physical-count-drafts", async (ClaimsPrincipal principal, Guid? warehouseId, string? search, DateTimeOffset? from, DateTimeOffset? to, int page, int pageSize, InventoryPhysicalCountService service, CancellationToken token) =>
+        endpoints.MapGet("/api/commerce/v1/inventory/physical-count-drafts", async (ClaimsPrincipal principal, Guid? warehouseId, string? search, DateTimeOffset? from, DateTimeOffset? to, string? status, int page, int pageSize, InventoryPhysicalCountService service, CancellationToken token) =>
         {
             var identity = principal.ToInventoryIdentity();
-            return await ExecuteAsync(() => service.ListDraftsAsync(identity, new(identity.BusinessId, warehouseId, search, from, to, page == 0 ? 1 : page, pageSize == 0 ? 20 : pageSize), token), Results.Ok);
+            return await ExecuteAsync(() => service.ListDraftsAsync(identity, new(identity.BusinessId, warehouseId, search, from, to, status, page == 0 ? 1 : page, pageSize == 0 ? 20 : pageSize), token), Results.Ok);
         }).RequireAuthorization("inventory.user");
         endpoints.MapGet("/api/commerce/v1/inventory/physical-counts/{countId:guid}", async (ClaimsPrincipal principal, Guid countId, InventoryPhysicalCountService service, CancellationToken token) =>
             await ExecuteAsync(() => service.GetAsync(principal.ToInventoryIdentity(), countId, token), value => value is null ? Results.NotFound() : Results.Ok(value))).RequireAuthorization("inventory.user");

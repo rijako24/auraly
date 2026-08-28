@@ -74,8 +74,10 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
         var customerId = Guid.NewGuid();
         var updatedCustomerPartyId = Guid.NewGuid();
         var updatedCustomerId = Guid.NewGuid();
+        var sellerPartyId = Guid.NewGuid();
+        var sellerId = Guid.NewGuid();
         var orderId = Guid.NewGuid();
-        var ordersWarehouseId = Guid.NewGuid();
+        var ordersWarehouseId = await EnsureOrdersWarehouseAsync();
         var attributes = System.Text.Json.JsonSerializer.Serialize(new
         {
             WarehouseId = fixture.WarehouseId,
@@ -99,32 +101,43 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
               (@PartyId,@TenantId,N'Organization',N'Cliente edición',N'Cliente edición',
                N'Incomplete',1,@UserId,SYSDATETIMEOFFSET()),
               (@UpdatedPartyId,@TenantId,N'Organization',N'Cliente actualizado',N'Cliente actualizado',
-               N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
+               N'Incomplete',1,@UserId,SYSDATETIMEOFFSET()),
+              (@SellerPartyId,@TenantId,N'NaturalPerson',N'Vendedor edición',N'Vendedor edición',
+               N'Complete',1,@UserId,SYSDATETIMEOFFSET());
 
             INSERT dbo.Customers(CustomerId,PartyId,BusinessId,IsActive,CreatedBy,CreatedAt)
             VALUES
               (@CustomerId,@PartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET()),
               (@UpdatedCustomerId,@UpdatedPartyId,@BusinessId,1,@UserId,SYSDATETIMEOFFSET());
 
-            INSERT dbo.Warehouses(
-              WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,
-              IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,IsActive,CreatedAt)
-            VALUES(
-              @OrdersWarehouseId,@BusinessId,N'PED',N'Pedidos edición',0,
-              1,0,0,0,1,SYSDATETIMEOFFSET());
+            INSERT dbo.CommerceSellers(
+              SellerId,BusinessId,PartyId,Code,CommissionBasis,CommissionTrigger,IsActive,CreatedAt)
+            VALUES(@SellerId,@BusinessId,@SellerPartyId,@SellerCode,
+              N'SaleAfterTax',N'Sale',1,SYSDATETIMEOFFSET());
 
-            INSERT dbo.InventoryBalances(
+            MERGE dbo.InventoryBalances AS target
+            USING (SELECT @BusinessId BusinessId,@OrdersWarehouseId WarehouseId,@ProductId ProductId) AS source
+              ON target.BusinessId=source.BusinessId AND target.WarehouseId=source.WarehouseId
+             AND target.ProductId=source.ProductId
+            WHEN MATCHED THEN UPDATE SET QuantityOnHand=2,AverageUnitCost=5000,
+              InventoryValue=10000,LastProcessingSequence=1,UpdatedAt=SYSDATETIMEOFFSET()
+            WHEN NOT MATCHED THEN INSERT(
               BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,
               InventoryValue,LastProcessingSequence,UpdatedAt)
-            VALUES(@BusinessId,@OrdersWarehouseId,@ProductId,2,5000,10000,1,SYSDATETIMEOFFSET());
+            VALUES(source.BusinessId,source.WarehouseId,source.ProductId,2,5000,10000,1,SYSDATETIMEOFFSET());
+
+            UPDATE dbo.InventoryBalances
+            SET QuantityOnHand=100,AverageUnitCost=5000,InventoryValue=500000,
+                UpdatedAt=SYSDATETIMEOFFSET()
+            WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
 
             INSERT dbo.Orders(
-              OrderId,BusinessId,Source,FulfillmentMode,Status,CustomerId,
+              OrderId,BusinessId,Source,FulfillmentMode,Status,CustomerId,SellerId,
               CustomerNameSnapshot,CustomerDocumentSnapshot,Currency,
               Subtotal,DiscountTotal,Total,CustomerConfirmed,
               ExternalDocumentNumber,CustomAttributesJson,CreatedAt)
             VALUES(
-              @OrderId,@BusinessId,1,0,2,@CustomerId,
+              @OrderId,@BusinessId,1,0,2,@CustomerId,@SellerId,
               N'Cliente edición',N'900100200',N'COP',
               20000,1000,19000,1,@OrderNumber,@Attributes,SYSUTCDATETIME());
 
@@ -143,7 +156,11 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
             new("@CustomerId", customerId),
             new("@UpdatedPartyId", updatedCustomerPartyId),
             new("@UpdatedCustomerId", updatedCustomerId),
+            new("@SellerPartyId", sellerPartyId),
+            new("@SellerId", sellerId),
+            new("@SellerCode", $"SE-{sellerId:N}"[..20]),
             new("@BusinessId", fixture.BusinessId),
+            new("@WarehouseId", fixture.WarehouseId),
             new("@OrdersWarehouseId", ordersWarehouseId),
             new("@ProductId", fixture.ProductId),
             new("@OrderId", orderId),
@@ -213,6 +230,33 @@ public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
         Assert.Equal(22_500m, reader.GetDecimal(8));
         Assert.Equal(2m, reader.GetDecimal(9));
         Assert.Equal("Pedido actualizado desde el POS", reader.GetString(10));
+    }
+
+    private async Task<Guid> EnsureOrdersWarehouseAsync()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+        await using var command = new SqlCommand(
+            """
+            DECLARE @WarehouseId uniqueidentifier=(
+              SELECT WarehouseId FROM dbo.Warehouses WITH(UPDLOCK,HOLDLOCK)
+              WHERE BusinessId=@BusinessId AND Code=N'PED');
+            IF @WarehouseId IS NULL
+            BEGIN
+              SET @WarehouseId=NEWID();
+              INSERT dbo.Warehouses(
+                WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,
+                IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,IsActive,CreatedAt)
+              VALUES(@WarehouseId,@BusinessId,N'PED',N'Pedidos',0,1,0,0,0,1,SYSDATETIMEOFFSET());
+            END;
+            SELECT @WarehouseId;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        var warehouseId = (Guid)(await command.ExecuteScalarAsync()
+            ?? throw new InvalidOperationException("No fue posible aprovisionar la bodega PED para la prueba."));
+        await transaction.CommitAsync();
+        return warehouseId;
     }
 
     [Fact]

@@ -20,7 +20,7 @@ BEGIN
     INNER JOIN dbo.Products p ON p.ProductId=m.ProductId AND p.BusinessId=m.BusinessId
     INNER JOIN dbo.Warehouses w ON w.WarehouseId=m.WarehouseId AND w.BusinessId=m.BusinessId
     LEFT JOIN dbo.InventoryOperations o ON o.InventoryOperationId=m.DocumentId
-    WHERE m.BusinessId=@BusinessId AND w.UseForSales=1
+    WHERE m.BusinessId=@BusinessId AND w.IsSystem=0
       AND (@WarehouseId IS NULL OR m.WarehouseId=@WarehouseId)
       AND (@ProductId IS NULL OR m.ProductId=@ProductId)
       AND (@DocumentType IS NULL OR m.DocumentType=@DocumentType)
@@ -42,7 +42,7 @@ BEGIN
     INNER JOIN dbo.Products p ON p.ProductId=m.ProductId AND p.BusinessId=m.BusinessId
     INNER JOIN dbo.Warehouses w ON w.WarehouseId=m.WarehouseId AND w.BusinessId=m.BusinessId
     LEFT JOIN dbo.InventoryOperations o ON o.InventoryOperationId=m.DocumentId
-    WHERE m.BusinessId=@BusinessId AND w.UseForSales=1
+    WHERE m.BusinessId=@BusinessId AND w.IsSystem=0
       AND (@WarehouseId IS NULL OR m.WarehouseId=@WarehouseId)
       AND (@ProductId IS NULL OR m.ProductId=@ProductId)
       AND (@DocumentType IS NULL OR m.DocumentType=@DocumentType)

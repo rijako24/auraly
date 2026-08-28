@@ -28,12 +28,15 @@ BEGIN
            COALESCE(NULLIF(p.BaseUnitCode,N''),N'EA'),
            resolved.Amount,
            resolved.PriceSource,
-           COALESCE((SELECT SUM(m.QuantityChange) FROM dbo.InventoryMovements m
-                     WHERE m.BusinessId=p.BusinessId AND m.WarehouseId=@WarehouseId AND m.ProductId=p.ProductId),0),
+           COALESCE(balance.QuantityOnHand,0),
            p.ManageStock
     FROM dbo.Products p
     CROSS APPLY dbo.CustomerProductPriceResolve(
       @BusinessId,@WarehouseId,@CustomerId,p.ProductId,1,SYSDATETIMEOFFSET()) resolved
+    LEFT JOIN dbo.InventoryBalances balance
+      ON balance.BusinessId=p.BusinessId
+     AND balance.WarehouseId=@WarehouseId
+     AND balance.ProductId=p.ProductId
     WHERE p.BusinessId=@BusinessId AND p.IsActive=1 AND(@Search=N''
       OR p.Name COLLATE Latin1_General_100_CI_AI LIKE @Contains COLLATE Latin1_General_100_CI_AI
       OR p.ProductCode COLLATE Latin1_General_100_CI_AI LIKE @Prefix COLLATE Latin1_General_100_CI_AI

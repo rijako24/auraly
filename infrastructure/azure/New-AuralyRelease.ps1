@@ -13,6 +13,9 @@ param(
     [ValidatePattern('^https://')]
     [string]$PosApiUrl,
 
+    [ValidatePattern('^https://')]
+    [string]$ProdPosApiUrl,
+
     [ValidatePattern('^[0-9A-Fa-f]{40}$')]
     [string]$SigningCertificateThumbprint,
 
@@ -32,6 +35,9 @@ $releasePath = Join-Path $outputRootPath $Version
 
 if (-not $outputRootPath.StartsWith($repoRoot, [StringComparison]::OrdinalIgnoreCase)) {
     throw 'OutputRoot debe estar dentro del repositorio.'
+}
+if ([string]::IsNullOrWhiteSpace($PosApiUrl) -ne [string]::IsNullOrWhiteSpace($ProdPosApiUrl)) {
+    throw 'PosApiUrl y ProdPosApiUrl deben configurarse juntos para producir los dos instaladores promovibles.'
 }
 
 if (Test-Path -LiteralPath $releasePath) {
@@ -186,22 +192,27 @@ try {
     }
 
     if ($PosApiUrl) {
-        $posArtifactPath = Join-Path $temporaryPath 'pos-installer'
-        & (Join-Path $repoRoot 'scripts\Build-AuralyPosInstaller.ps1') `
-            -ApiUrl $PosApiUrl `
-            -Version $Version `
-            -Configuration Release `
-            -ArtifactPath $posArtifactPath `
-            -SigningCertificateThumbprint $SigningCertificateThumbprint `
-            -SigningTimestampUrl $SigningTimestampUrl `
-            -RequireSignature
-        if ($LASTEXITCODE) { throw 'La construcción del instalador POS falló.' }
-        $posSetup = Join-Path $posArtifactPath 'Auraly Setup.exe'
-        if (-not (Test-Path -LiteralPath $posSetup)) {
-            throw 'La construcción no produjo Auraly Setup.exe.'
+        $posTargets = @(
+            @{ Key = 'dev'; ApiUrl = $PosApiUrl; Name = "auraly-pos-$Version.exe" },
+            @{ Key = 'prod'; ApiUrl = $ProdPosApiUrl; Name = "auraly-pos-prod-$Version.exe" }
+        )
+        foreach ($target in $posTargets) {
+            $posArtifactPath = Join-Path $temporaryPath "pos-installer-$($target.Key)"
+            & (Join-Path $repoRoot 'scripts\Build-AuralyPosInstaller.ps1') `
+                -ApiUrl $target.ApiUrl `
+                -Version $Version `
+                -Configuration Release `
+                -ArtifactPath $posArtifactPath `
+                -SigningCertificateThumbprint $SigningCertificateThumbprint `
+                -SigningTimestampUrl $SigningTimestampUrl `
+                -RequireSignature
+            if ($LASTEXITCODE) { throw "La construcción del instalador POS $($target.Key) falló." }
+            $posSetup = Join-Path $posArtifactPath 'Auraly Setup.exe'
+            if (-not (Test-Path -LiteralPath $posSetup)) {
+                throw "La construcción del instalador POS $($target.Key) no produjo Auraly Setup.exe."
+            }
+            Copy-Item -LiteralPath $posSetup -Destination (Join-Path $releasePath $target.Name)
         }
-        Copy-Item -LiteralPath $posSetup `
-            -Destination (Join-Path $releasePath "auraly-pos-$Version.exe")
     }
     New-DeterministicZip `
         -SourceDirectory $functionPublish `

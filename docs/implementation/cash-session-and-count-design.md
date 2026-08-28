@@ -158,10 +158,14 @@ El cierre produce `ARQ{caja}-{consecutivo}` y congela:
 - ventas, devoluciones, descuentos y neto;
 - resumen por cajero;
 - conciliación por medio: esperado, contado y diferencia;
-- entradas y salidas;
+- entradas y salidas en renglones separados;
 - impuestos agrupados por código y tarifa;
 - total esperado, contado y diferencia;
 - observación y responsables.
 
 La cabecera muestra `ARQUEO DE CAJA · CIERRE CONFIRMADO`. La tirilla funciona
 en 58 y 80 mm. La reimpresión usa exactamente el snapshot guardado.
+El detalle se presenta antes del total neto y la diferencia de efectivo cierra
+el comprobante con mayor jerarquía visual. El catálogo comercial usa un único
+medio `Transfer`; no existen variantes paralelas para transferencia bancaria o
+consignación.

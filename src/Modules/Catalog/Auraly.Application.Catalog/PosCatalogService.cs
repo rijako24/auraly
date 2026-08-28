@@ -4,6 +4,8 @@ namespace Auraly.Application.Catalog;
 
 public sealed class PosCatalogService(ICatalogStore store, TimeProvider timeProvider)
 {
+    private const string InventoryReadPermission = "inventory.read";
+    private const string BusinessesReadPermission = "businesses.read";
     public Task<CatalogSyncSessionResponse> StartSyncAsync(CatalogDeviceIdentity device, CancellationToken ct)
     {
         RequireSync(device);
@@ -63,6 +65,22 @@ public sealed class PosCatalogService(ICatalogStore store, TimeProvider timeProv
             device.BusinessId,
             request,
             ct);
+    }
+
+    public Task<IReadOnlyList<ProductWarehouseAvailabilityItem>> WarehouseAvailabilityAsync(
+        CatalogDeviceIdentity device,
+        Guid productId,
+        bool includeOtherBusinesses,
+        CancellationToken ct)
+    {
+        RequireSync(device);
+        if (!device.Permissions.Contains(InventoryReadPermission))
+            throw new CatalogForbiddenException($"Permission '{InventoryReadPermission}' is required.");
+        if (productId == Guid.Empty)
+            throw new CatalogValidationException("ProductId is required.");
+        return store.WarehouseAvailabilityAsync(
+            device.DeviceId, device.TenantId, device.BusinessId, productId,
+            includeOtherBusinesses && device.Permissions.Contains(BusinessesReadPermission), ct);
     }
 
     private static void RequireSync(CatalogDeviceIdentity device)

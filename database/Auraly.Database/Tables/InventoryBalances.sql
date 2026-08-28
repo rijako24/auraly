@@ -20,7 +20,7 @@ CREATE TABLE [dbo].[InventoryBalances]
     CONSTRAINT [CK_InventoryBalances_AverageCost]
         CHECK ([AverageUnitCost] >= 0),
     CONSTRAINT [CK_InventoryBalances_Sequence]
-        CHECK ([LastProcessingSequence] > 0)
+        CHECK ([LastProcessingSequence] >= 0)
 );
 
 GO

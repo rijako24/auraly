@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Contracts.Inventory;
+using Auraly.Contracts.Purchasing;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -232,13 +233,73 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         var recountDraft = Assert.Single(recounting.Drafts);
         Assert.Equal("Recount", recountDraft.CaptureStage);
 
+        InventoryPhysicalCountDetail afterRemoval;
+        using (var response = await client.PutAsJsonAsync(
+                   $"/api/commerce/v1/inventory/physical-counts/{countId:D}/drafts/{draft.DraftId:D}",
+                   new SaveInventoryPhysicalCountDraftRequest(fixture.BusinessId, recountDraft.Version, draft.Name,
+                       [new(first, 4m, 4m, null), new(added, null, null, null)], false, "Recount")))
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            afterRemoval = Assert.IsType<InventoryPhysicalCountDetail>(
+                await response.Content.ReadFromJsonAsync<InventoryPhysicalCountDetail>());
+        }
+        var removalDraft = Assert.Single(afterRemoval.Drafts);
+        Assert.Null(Assert.Single(removalDraft.Lines, line => line.ProductId == added).InitialQuantity);
+        Assert.Equal("Recount", removalDraft.CaptureStage);
+
         using var rejected = await client.PutAsJsonAsync(
             $"/api/commerce/v1/inventory/physical-counts/{countId:D}/drafts/{draft.DraftId:D}",
-            new SaveInventoryPhysicalCountDraftRequest(fixture.BusinessId, recountDraft.Version, draft.Name,
-                [new(first, 4m, 4m, null), new(added, 2m, 2m, null), new(rejectedAfterRecount, 1m, null, null)],
+            new SaveInventoryPhysicalCountDraftRequest(fixture.BusinessId, removalDraft.Version, draft.Name,
+                [new(first, 4m, 4m, null), new(added, null, null, null), new(rejectedAfterRecount, 1m, null, null)],
                 true, "Count"));
         Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
         await ClosePhysicalCountForTestAsync(countId);
+    }
+
+    [Fact]
+    public async Task Active_physical_counts_can_capture_the_same_product_independently()
+    {
+        var product = Guid.NewGuid();
+        await SeedAsync(product, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        using var client = fixture.CreateAdminClient(
+            InventoryPermissionCodes.Read,
+            InventoryPermissionCodes.Adjust,
+            InventoryPermissionCodes.ManagePhysicalCounts,
+            InventoryPermissionCodes.CapturePhysicalCounts);
+        await ConfirmAdjustmentAsync(client, new(
+            Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, DateTimeOffset.UtcNow,
+            "INITIAL_BALANCE", null, null, [new(1, product, 1m, 1m)]));
+        var firstCountId = Guid.NewGuid();
+        var secondCountId = Guid.NewGuid();
+
+        try
+        {
+            var first = await client.PostAsJsonAsync(
+                "/api/commerce/v1/inventory/physical-counts",
+                new CreateInventoryPhysicalCountRequest(firstCountId, fixture.BusinessId, fixture.WarehouseId,
+                    "Partial", "PHYSICAL_COUNT", null, "Conteo simultáneo A", [product]));
+            Assert.True(first.StatusCode == HttpStatusCode.Created,
+                $"Expected first count to be created but received {first.StatusCode}: {await first.Content.ReadAsStringAsync()}");
+
+            var second = await client.PostAsJsonAsync(
+                "/api/commerce/v1/inventory/physical-counts",
+                new CreateInventoryPhysicalCountRequest(secondCountId, fixture.BusinessId, fixture.WarehouseId,
+                    "Partial", "PHYSICAL_COUNT", null, "Conteo simultáneo B", [product]));
+            Assert.True(second.StatusCode == HttpStatusCode.Created,
+                $"Expected the same product in a second active count but received {second.StatusCode}: {await second.Content.ReadAsStringAsync()}");
+
+            var firstDetail = Assert.IsType<InventoryPhysicalCountDetail>(
+                await first.Content.ReadFromJsonAsync<InventoryPhysicalCountDetail>());
+            var secondDetail = Assert.IsType<InventoryPhysicalCountDetail>(
+                await second.Content.ReadFromJsonAsync<InventoryPhysicalCountDetail>());
+            Assert.Equal(product, Assert.Single(Assert.Single(firstDetail.Drafts).Lines).ProductId);
+            Assert.Equal(product, Assert.Single(Assert.Single(secondDetail.Drafts).Lines).ProductId);
+        }
+        finally
+        {
+            await ClosePhysicalCountForTestAsync(firstCountId);
+            await ClosePhysicalCountForTestAsync(secondCountId);
+        }
     }
 
     [Fact]
@@ -573,8 +634,12 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         var replay = await SendAsync(client, "/api/commerce/v1/inventory-damages/confirm", request, key);
         Assert.False(accepted.IdempotentReplay); Assert.True(replay.IdempotentReplay);
         Assert.Equal((7m,5m,35m), await BalanceAsync(fixture.WarehouseId, product));
+        var damagedWarehouseId = await ScalarAsync<Guid>(
+            "SELECT DestinationWarehouseId FROM dbo.InventoryOperations WHERE InventoryOperationId=@Id", damageId);
+        Assert.Equal((3m,0m,0m), await BalanceAsync(damagedWarehouseId, product));
         Assert.Equal(-3m, await ScalarAsync<decimal>("SELECT QuantityChange FROM dbo.InventoryMovements WHERE DocumentId=@Id AND MovementType=N'InventoryDamage'", damageId));
-        Assert.Equal(1, await CountAsync("InventoryMovements", damageId)); Assert.Equal(1, await CountAsync("ServerOutboxMessages", damageId));
+        Assert.Equal(3m, await ScalarAsync<decimal>("SELECT QuantityChange FROM dbo.InventoryMovements WHERE DocumentId=@Id AND MovementType=N'DamageWarehouseIn'", damageId));
+        Assert.Equal(2, await CountAsync("InventoryMovements", damageId)); Assert.Equal(1, await CountAsync("ServerOutboxMessages", damageId));
         Assert.Equal("Posted", await ScalarAsync<string>(
             "SELECT Status FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@Id AND SourceDocumentType=N'Damage'", damageId));
         Assert.Equal("DamagedInventoryExpense", await ScalarAsync<string>(
@@ -692,12 +757,91 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.Equal(0, await CountAsync("ServerOutboxMessages", conversionId));
     }
 
+    [Fact]
+    public async Task Active_non_sales_warehouses_are_available_to_inventory_and_system_warehouses_are_never_selectable()
+    {
+        var product = Guid.NewGuid();
+        await SeedAsync(product, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+        using var client = fixture.CreateAdminClient(
+            InventoryPermissionCodes.Read,
+            InventoryPermissionCodes.Adjust,
+            InventoryPermissionCodes.DispatchTransfer,
+            InventoryPermissionCodes.ManageWarehouses,
+            InventoryPermissionCodes.ManagePhysicalCounts,
+            InventoryPermissionCodes.CapturePhysicalCounts,
+            PurchasingPermissionCodes.ReadGoodsReceipts);
+
+        using var create = await client.PostAsJsonAsync(
+            "/api/commerce/v1/inventory/warehouse-masters",
+            new SaveWarehouseRequest("Bodega Tina", false, "WeightedAverageCost", false, true));
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var created = Assert.IsType<WarehouseMasterItem>(
+            await create.Content.ReadFromJsonAsync<WarehouseMasterItem>());
+        Assert.False(created.UseForSales);
+        Assert.True(created.UseForGoodsReceipts);
+        Assert.True(created.IsInventoryVisible);
+        Assert.Equal(0, await ScalarAsync<int>(
+            """
+            SELECT COUNT(*)
+            FROM dbo.Warehouses warehouse
+            INNER JOIN dbo.Products product ON product.BusinessId=warehouse.BusinessId
+            LEFT JOIN dbo.InventoryBalances balance
+              ON balance.BusinessId=warehouse.BusinessId
+             AND balance.WarehouseId=warehouse.WarehouseId
+             AND balance.ProductId=product.ProductId
+            WHERE warehouse.WarehouseId=@Id
+              AND (balance.ProductId IS NULL OR balance.QuantityOnHand<>0
+                   OR balance.AverageUnitCost<>0 OR balance.InventoryValue<>0)
+            """, created.WarehouseId));
+
+        var options = Assert.IsAssignableFrom<IReadOnlyList<InventoryWarehouseOption>>(
+            await client.GetFromJsonAsync<List<InventoryWarehouseOption>>(
+                "/api/commerce/v1/inventory/warehouses"));
+        Assert.Contains(options, option => option.WarehouseId == created.WarehouseId);
+        Assert.DoesNotContain(options, option => option.Code is "AVE" or "PED" or "TRA");
+        var receiptOptions = Assert.IsType<GoodsReceiptWorkspaceOptions>(
+            await client.GetFromJsonAsync<GoodsReceiptWorkspaceOptions>(
+                "/api/commerce/v1/goods-receipts/options"));
+        Assert.Contains(receiptOptions.Warehouses,
+            option => option.WarehouseId == created.WarehouseId);
+        Assert.DoesNotContain(receiptOptions.Warehouses,
+            option => option.Code is "AVE" or "PED" or "TRA");
+
+        await ConfirmAdjustmentAsync(client, new(
+            Guid.NewGuid(), fixture.BusinessId, created.WarehouseId, DateTimeOffset.UtcNow,
+            "INITIAL_BALANCE", null, null, [new(1, product, 2m, 3m)]));
+        Assert.Equal((2m,3m,6m), await BalanceAsync(created.WarehouseId, product));
+
+        var systemWarehouseId = await SystemWarehouseIdAsync("AVE");
+        var rejectedAdjustment = new ConfirmInventoryAdjustmentRequest(
+            Guid.NewGuid(), fixture.BusinessId, systemWarehouseId, DateTimeOffset.UtcNow,
+            "INITIAL_BALANCE", null, null, [new(1, product, 1m, 1m)]);
+        using (var request = CreateMessage(
+                   "/api/commerce/v1/inventory-adjustments/confirm", rejectedAdjustment,
+                   $"system-warehouse-{Guid.NewGuid():N}"))
+        using (var response = await client.SendAsync(request))
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        using var count = await client.PostAsJsonAsync(
+            "/api/commerce/v1/inventory/physical-counts",
+            new CreateInventoryPhysicalCountRequest(Guid.NewGuid(), fixture.BusinessId,
+                systemWarehouseId, "Partial", "PHYSICAL_COUNT", null,
+                "Conteo inválido de sistema", [product]));
+        Assert.Equal(HttpStatusCode.BadRequest, count.StatusCode);
+    }
+
     private async Task SeedAsync(Guid first, Guid second, Guid third, Guid destination)
     {
         const string sql = """
             IF NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND Code=N'TRA')
               INSERT dbo.Warehouses(WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,IsActive,CreatedAt)
               VALUES(NEWID(),@BusinessId,N'TRA',N'Mercancía en tránsito',0,1,0,0,0,1,SYSDATETIMEOFFSET());
+            IF NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND Code=N'PED')
+              INSERT dbo.Warehouses(WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,IsActive,CreatedAt)
+              VALUES(NEWID(),@BusinessId,N'PED',N'Bodega de pedidos',0,1,0,0,0,1,SYSDATETIMEOFFSET());
+            IF NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND Code=N'AVE')
+              INSERT dbo.Warehouses(WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,IsActive,CreatedAt)
+              VALUES(NEWID(),@BusinessId,N'AVE',N'Bodega de averías',0,1,0,0,0,1,SYSDATETIMEOFFSET());
             INSERT dbo.Warehouses(WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,IsActive,CreatedAt)
             VALUES(@Destination,@BusinessId,@WarehouseCode,N'Bodega destino',0,1,SYSDATETIMEOFFSET());
             INSERT dbo.TaxProfiles(
@@ -707,6 +851,13 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             VALUES(@First,@BusinessId,@FirstSku,@FirstReference,N'EA',@TaxProfileId,0,@FirstSku,N'Insumo',0,N'COP',1,0,1,SYSUTCDATETIME()),
                   (@Second,@BusinessId,NULL,NULL,N'EA',@TaxProfileId,0,@SecondSku,N'Salida uno',0,N'COP',1,NULL,1,SYSUTCDATETIME()),
                   (@Third,@BusinessId,NULL,NULL,N'EA',@TaxProfileId,0,@ThirdSku,N'Salida dos',0,N'COP',1,NULL,1,SYSUTCDATETIME());
+            INSERT dbo.InventoryBalances(BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,InventoryValue,LastProcessingSequence,UpdatedAt)
+            SELECT product.BusinessId,warehouse.WarehouseId,product.ProductId,0,0,0,
+                   COALESCE((SELECT LastCompletedSequence FROM dbo.BusinessProcessingCursors WHERE BusinessId=@BusinessId),0),SYSDATETIMEOFFSET()
+            FROM dbo.Products product
+            INNER JOIN dbo.Warehouses warehouse ON warehouse.BusinessId=product.BusinessId
+            WHERE product.ProductId IN(@First,@Second,@Third)
+              AND NOT EXISTS(SELECT 1 FROM dbo.InventoryBalances balance WHERE balance.BusinessId=product.BusinessId AND balance.WarehouseId=warehouse.WarehouseId AND balance.ProductId=product.ProductId);
             INSERT dbo.ProductLinks(ProductLinkId,BusinessId,ChildProductId,ParentProductId,InventoryFactor,PriceFactor,ConversionFactor,SharesInventory,SharesPrice,AllowsConversion,IsActive,CreatedAt)
             VALUES(NEWID(),@BusinessId,@Second,@First,NULL,NULL,1,0,0,1,1,SYSUTCDATETIME()),
                   (NEWID(),@BusinessId,@Third,@First,NULL,NULL,2,0,0,1,1,SYSUTCDATETIME());
@@ -741,6 +892,11 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             INSERT dbo.Products(ProductId,BusinessId,ProductCode,Reference,BaseUnitCode,TaxProfileId,Source,Sku,Name,UnitPrice,Currency,ManageStock,IsActive,CreatedAt)
             SELECT @ProductId,@BusinessId,@Sku,@Sku,N'EA',MIN(TaxProfileId),0,@Sku,N'Producto agregado después del conteo',0,N'COP',1,1,SYSUTCDATETIME()
             FROM dbo.TaxProfiles WHERE BusinessId=@BusinessId;
+            INSERT dbo.InventoryBalances(BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,InventoryValue,LastProcessingSequence,UpdatedAt)
+            SELECT @BusinessId,warehouse.WarehouseId,@ProductId,0,0,0,
+                   COALESCE((SELECT LastCompletedSequence FROM dbo.BusinessProcessingCursors WHERE BusinessId=@BusinessId),0),SYSDATETIMEOFFSET()
+            FROM dbo.Warehouses warehouse
+            WHERE warehouse.BusinessId=@BusinessId;
             """;
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
@@ -782,6 +938,7 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
     {await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();await using var command=new SqlCommand("SELECT QuantityOnHand,AverageUnitCost,InventoryValue FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId",connection);command.Parameters.AddWithValue("@BusinessId",fixture.BusinessId);command.Parameters.AddWithValue("@WarehouseId",warehouse);command.Parameters.AddWithValue("@ProductId",product);await using var reader=await command.ExecuteReaderAsync();if(!await reader.ReadAsync())return(0,0,0);return(reader.GetDecimal(0),reader.GetDecimal(1),reader.GetDecimal(2));}
     private async Task<T> ScalarAsync<T>(string sql,Guid id){await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();await using var command=new SqlCommand(sql,connection);command.Parameters.AddWithValue("@Id",id);return (T)Convert.ChangeType((await command.ExecuteScalarAsync())!,typeof(T));}
     private async Task ExecuteAsync(string sql,Guid id){await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();await using var command=new SqlCommand(sql,connection);command.Parameters.AddWithValue("@Id",id);await command.ExecuteNonQueryAsync();}
+    private async Task<Guid> SystemWarehouseIdAsync(string code){await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();await using var command=new SqlCommand("SELECT WarehouseId FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND Code=@Code AND IsSystem=1 AND IsActive=1",connection);command.Parameters.AddWithValue("@BusinessId",fixture.BusinessId);command.Parameters.AddWithValue("@Code",code);return (Guid)(await command.ExecuteScalarAsync() ?? throw new InvalidOperationException($"System warehouse '{code}' is missing."));}
     private async Task<int> CountAsync(string table,Guid id){Assert.Contains(table,new[]{"InventoryMovements","ServerOutboxMessages"});return await ScalarAsync<int>($"SELECT COUNT(*) FROM dbo.[{table}] WHERE DocumentId=@Id",id);}
     private async Task<(decimal Dispatched,decimal Received)> TransferQuantitiesAsync(Guid id,int line)
     {await using var connection=new SqlConnection(fixture.ConnectionString);await connection.OpenAsync();await using var command=new SqlCommand("SELECT DispatchedQuantity,ReceivedQuantity FROM dbo.InventoryOperationLines WHERE InventoryOperationId=@Id AND LineNumber=@Line",connection);command.Parameters.AddWithValue("@Id",id);command.Parameters.AddWithValue("@Line",line);await using var reader=await command.ExecuteReaderAsync();Assert.True(await reader.ReadAsync());return(reader.GetDecimal(0),reader.GetDecimal(1));}

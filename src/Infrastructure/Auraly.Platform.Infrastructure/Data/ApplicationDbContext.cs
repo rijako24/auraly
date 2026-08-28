@@ -96,6 +96,8 @@ public class ApplicationDbContext : DbContext
     public DbSet<ReservationIntegrationEvent> ReservationIntegrationEvents { get; set; }
     public DbSet<Product> Products { get; set; }
     public DbSet<PublishedProductPriceRow> PublishedProductPrices { get; set; }
+    public DbSet<InventoryBalanceRow> InventoryBalances { get; set; }
+    public DbSet<InventoryWarehouseScopeRow> InventoryWarehouseScopes { get; set; }
     public DbSet<ProductOffer> ProductOffers { get; set; }
     public DbSet<ProductImage> ProductImages { get; set; }
     public DbSet<ProductLink> ProductLinks { get; set; }
@@ -646,6 +648,25 @@ public class ApplicationDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(price => price.ProductId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+        modelBuilder.Entity<InventoryBalanceRow>(entity =>
+        {
+            entity.ToTable("InventoryBalances");
+            entity.HasKey(balance => new { balance.BusinessId, balance.WarehouseId, balance.ProductId });
+            entity.Property(balance => balance.QuantityOnHand).HasPrecision(19, 6);
+            entity.Property(balance => balance.AverageUnitCost).HasPrecision(19, 6);
+            entity.Property(balance => balance.InventoryValue).HasPrecision(19, 4);
+            entity.Property(balance => balance.UpdatedAt).HasColumnType("datetimeoffset");
+            entity.Property(balance => balance.RowVersion).IsRowVersion();
+            entity.HasOne<Product>()
+                .WithMany()
+                .HasForeignKey(balance => balance.ProductId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+        modelBuilder.Entity<InventoryWarehouseScopeRow>(entity =>
+        {
+            entity.ToTable("Warehouses");
+            entity.HasKey(warehouse => warehouse.WarehouseId);
         });
         modelBuilder.Entity<ExternalCommerceCustomer>(entity =>
         {

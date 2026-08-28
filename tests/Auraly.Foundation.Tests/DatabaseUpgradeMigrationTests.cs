@@ -136,6 +136,8 @@ public sealed class DatabaseUpgradeMigrationTests
 
         Assert.Contains("auraly-pos-$ReleaseVersion.exe", pipeline,
             StringComparison.Ordinal);
+        Assert.Contains("auraly-pos-prod-$ReleaseVersion.exe", pipeline,
+            StringComparison.Ordinal);
         Assert.Contains("PosInstaller__Version=$ReleaseVersion", pipeline,
             StringComparison.Ordinal);
         Assert.Contains("PosInstaller__Sha256=$($installerArtifact.sha256)", pipeline,

@@ -7,7 +7,7 @@ Este documento responde qué componente es dueño de cada efecto y dónde se agr
 | Necesidad | Extender | No crear ni escribir directamente |
 | --- | --- | --- |
 | Nuevo documento definitivo con inventario | contrato documental, `IConfirmedDocumentHandler` y registro DI del motor documental | otro engine, poller, job table o escritura desde endpoint |
-| Efecto de inventario | handler documental → `SqlInventoryLedgerWriter`; operaciones dedicadas además usan `SqlInventoryOperationProcessor` | SQL a `InventoryBalances`/`InventoryMovements`, segundo kardex o motor |
+| Efecto de inventario | handler documental → `SqlInventoryLedgerWriter`; operaciones dedicadas además usan `SqlInventoryOperationProcessor`. `InventoryBalances` es el saldo actual por negocio+bodega+producto y `InventoryMovements` solo el kardex historico | SQL a `InventoryBalances`/`InventoryMovements`, reconstruir existencias sumando movimientos, segundo kardex o motor |
 | Nuevo documento fiscal DIAN | snapshot/regla del `FiscalProcessingCoordinator` y workers fiscales existentes | worker DIAN por módulo, tenant o tipo |
 | Nuevo asiento automático | política/regla del `AccountingProcessingCoordinator` y `SqlAccountingPostingProcessor` | asiento desde API o segundo posting service |
 | Nuevo efecto de CxC/CxP, pago, aplicación, crédito o anticipo | contrato y transacción del único `SqlAccountingPostingProcessor` | handler operacional, worker financiero adicional o job lateral |

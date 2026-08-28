@@ -22,7 +22,6 @@ export function ProductPicker({
   label = "Agregar productos",
   conversionOnly = false,
   conversionFamilyRootProductId,
-  resultsMode = "popover",
   inputId = "product-picker-search",
   requireZeroInventory = false,
 }: {
@@ -35,7 +34,6 @@ export function ProductPicker({
   label?: string;
   conversionOnly?: boolean;
   conversionFamilyRootProductId?: string;
-  resultsMode?: "popover" | "inline";
   inputId?: string;
   requireZeroInventory?: boolean;
 }) {
@@ -104,20 +102,19 @@ export function ProductPicker({
     if (target.scrollHeight - target.scrollTop - target.clientHeight < 80 && query.hasNextPage && !query.isFetchingNextPage) void query.fetchNextPage();
   }
 
-  function resultRows(inline: boolean) {
-    const messageClass = inline ? "col-span-3 p-4 text-sm text-muted-foreground" : "p-4 text-sm text-muted-foreground";
-    if (!open) return <p className={messageClass}>Busca un producto para ver resultados.</p>;
+  function resultRows() {
+    const messageClass = "p-4 text-sm text-muted-foreground";
     if (query.isLoading) return <p className={`${messageClass} flex items-center gap-2`}><Loader2 className="h-4 w-4 animate-spin" />Buscando productos…</p>;
-    if (query.isError) return <div className={inline ? "col-span-3 p-4 text-sm text-red-700" : "p-4 text-sm text-red-700"}><p>No fue posible cargar los productos.</p><Button className="mt-3" size="sm" variant="outline" onClick={() => void query.refetch()}>Reintentar</Button></div>;
+    if (query.isError) return <div className="p-4 text-sm text-red-700"><p>No fue posible cargar los productos.</p><Button className="mt-3" size="sm" variant="outline" onClick={() => void query.refetch()}>Reintentar</Button></div>;
     if (products.length === 0) return <p className={messageClass}>No hay productos activos que coincidan con la búsqueda.</p>;
     return <>
-      <div className={inline ? "col-span-3 px-3 py-2 text-xs text-muted-foreground" : "px-3 py-2 text-xs text-muted-foreground"}>{products.length.toLocaleString("es-CO")} de {totalCount.toLocaleString("es-CO")} productos</div>
-      {products.map((product, index) => <button key={product.productId} type="button" role="option" aria-selected={activeIndex === index} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActiveIndex(index)} onClick={() => choose(product)} className={`${inline ? "col-span-3 grid grid-cols-[minmax(0,1fr)_minmax(120px,0.55fr)_100px] items-center" : "flex items-center justify-between"} w-full gap-4 border-t px-3 py-2.5 text-left text-sm ${activeIndex === index ? "bg-emerald-50 text-emerald-950" : "hover:bg-muted"}`}>
+      <div className="px-3 py-2 text-xs text-muted-foreground">{products.length.toLocaleString("es-CO")} de {totalCount.toLocaleString("es-CO")} productos</div>
+      {products.map((product, index) => <button key={product.productId} type="button" role="option" aria-selected={activeIndex === index} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActiveIndex(index)} onClick={() => choose(product)} className={`flex w-full items-center justify-between gap-4 border-t px-3 py-2.5 text-left text-sm ${activeIndex === index ? "bg-emerald-50 text-emerald-950" : "hover:bg-muted"}`}>
         <span className="min-w-0"><strong className="block truncate">{product.productName}</strong>{conversionOnly && product.conversionFactor && <small className="block truncate text-muted-foreground">Factor {product.conversionFactor}</small>}</span>
         <small className="min-w-0 truncate text-muted-foreground">{product.productCode || "Sin código"}{product.reference ? ` · ${product.reference}` : ""}</small>
         <span className="flex items-center justify-end gap-3 text-xs text-muted-foreground">{product.quantityOnHand}{selectedProductIds.has(product.productId) && <Check className="h-4 w-4 text-emerald-700" aria-label="Agregado" />}</span>
       </button>)}
-      {query.hasNextPage && <Button type="button" variant="ghost" className={inline ? "col-span-3 m-1" : "mt-1 w-full"} disabled={query.isFetchingNextPage} onMouseDown={(event) => event.preventDefault()} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Cargar 50 más</Button>}
+      {query.hasNextPage && <Button type="button" variant="ghost" className="mt-1 w-full" disabled={query.isFetchingNextPage} onMouseDown={(event) => event.preventDefault()} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Cargar 50 más</Button>}
     </>;
   }
 
@@ -127,12 +124,7 @@ export function ProductPicker({
       <div className="relative min-w-0 flex-1"><Barcode className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-primary" /><Input id={inputId} data-testid="product-picker-search" className="pl-9" disabled={disabled} value={search} onFocus={() => setOpen(true)} onClick={() => setOpen(true)} onChange={(event) => { setSearch(event.target.value); setOpen(true); }} onKeyDown={keyDown} autoComplete="off" aria-autocomplete="list" aria-expanded={open} aria-controls={`${inputId}-results`} placeholder="Código interno, código de barras, referencia o nombre" /></div>
       <Button type="button" disabled={disabled || query.isFetching || activeIndex === null} onMouseDown={(event) => event.preventDefault()} onClick={chooseActive}>{query.isFetching && !query.isFetchingNextPage ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />} Agregar</Button>
     </div>
-    {resultsMode === "inline" ? <div id={`${inputId}-results`} ref={listRef} role="listbox" onScroll={scroll} className="relative mt-2 grid min-h-40 max-h-72 w-full grid-cols-[minmax(0,1fr)_minmax(120px,0.55fr)_100px] content-start overflow-auto rounded-xl border bg-background">
-      <div className="sticky top-0 z-10 bg-muted/80 px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Producto</div>
-      <div className="sticky top-0 z-10 bg-muted/80 px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Código / referencia</div>
-      <div className="sticky top-0 z-10 bg-muted/80 px-3 py-2 text-right text-xs font-medium uppercase tracking-wide text-muted-foreground">Saldo</div>
-      {resultRows(true)}
-    </div> : open && <div id={`${inputId}-results`} ref={listRef} role="listbox" onScroll={scroll} className="absolute z-30 mt-1 max-h-72 w-full overflow-auto rounded-xl border bg-popover p-1 shadow-xl">{resultRows(false)}</div>}
+    {open && <div id={`${inputId}-results`} ref={listRef} role="listbox" onScroll={scroll} className="absolute z-30 mt-1 max-h-72 w-full overflow-auto rounded-xl border bg-popover p-1 shadow-xl">{resultRows()}</div>}
     <Dialog open={Boolean(inventoryBlocked)} onOpenChange={(value) => !value && setInventoryBlocked(null)}>
       <DialogContent className="max-w-md overflow-hidden p-0">
         <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-teal-950 px-6 py-5 text-white">

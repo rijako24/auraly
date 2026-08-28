@@ -57,7 +57,10 @@ public sealed class InventoryPhysicalCountService(
             throw new InventoryValidationException("Invalid pagination.");
         if (query.From is not null && query.To is not null && query.From >= query.To)
             throw new InventoryValidationException("The draft date range is invalid.");
-        return store.ListDraftsAsync(user, query with { Search = Normalize(query.Search, 120) }, token);
+        var status = Normalize(query.Status, 24);
+        if (status is not null && status is not ("Ready" or "InProgress"))
+            throw new InventoryValidationException("Draft status must be Ready or InProgress.");
+        return store.ListDraftsAsync(user, query with { Search = Normalize(query.Search, 120), Status = status }, token);
     }
 
     public Task<InventoryPhysicalCountDetail?> GetAsync(InventoryUserIdentity user, Guid countId, CancellationToken token = default)

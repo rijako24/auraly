@@ -32,7 +32,7 @@ BEGIN
            CAST(NULL AS uniqueidentifier) SupplierId,CAST(NULL AS nvarchar(40)) PurchaseEvidenceType
     INTO #InventoryHistory
     FROM dbo.InventoryOperations o
-    INNER JOIN dbo.Warehouses w ON w.WarehouseId=o.WarehouseId AND w.UseForSales=1
+    INNER JOIN dbo.Warehouses w ON w.WarehouseId=o.WarehouseId AND w.IsSystem=0
     LEFT JOIN dbo.Warehouses dw ON dw.WarehouseId=o.DestinationWarehouseId
     WHERE o.BusinessId=@BusinessId
     UNION ALL
@@ -46,7 +46,7 @@ BEGIN
               FROM dbo.GoodsReceiptLines l INNER JOIN dbo.Products p ON p.ProductId=l.ProductId
               WHERE l.GoodsReceiptId=g.GoodsReceiptId)),g.SupplierId,g.PurchaseEvidenceType
     FROM dbo.GoodsReceipts g
-    INNER JOIN dbo.Warehouses w ON w.WarehouseId=g.WarehouseId AND w.UseForSales=1
+    INNER JOIN dbo.Warehouses w ON w.WarehouseId=g.WarehouseId AND w.IsSystem=0
     INNER JOIN dbo.Suppliers supplier ON supplier.SupplierId=g.SupplierId
     INNER JOIN dbo.Parties s ON s.PartyId=supplier.PartyId
     WHERE g.BusinessId=@BusinessId;

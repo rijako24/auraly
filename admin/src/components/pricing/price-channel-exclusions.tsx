@@ -91,7 +91,7 @@ export function PriceChannelExclusions({ channelId, businessId, canManage }: {
         {selectorKinds.map((item) => <Button key={item.value} type="button" size="sm" variant={kind === item.value ? "default" : "outline"} onClick={() => { setKind(item.value); setScopeId(""); }}>{item.label}</Button>)}
       </div>
       {kind === "Product"
-        ? <ProductPicker businessId={businessId} selectedProductIds={excludedProductIds} disabled={save.isPending} label="Buscar producto para excluir" resultsMode="inline" inputId={`channel-excluded-product-${channelId}`} onSelect={(product) => save.mutate({ scopeType: "Product", id: product.productId })} />
+        ? <ProductPicker businessId={businessId} selectedProductIds={excludedProductIds} disabled={save.isPending} label="Buscar producto para excluir" inputId={`channel-excluded-product-${channelId}`} onSelect={(product) => save.mutate({ scopeType: "Product", id: product.productId })} />
         : <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
             <div className="space-y-2"><Label>{selectedKind.label}</Label><Select value={scopeId} onValueChange={setScopeId}><SelectTrigger><SelectValue placeholder={`Selecciona ${selectedKind.label.toLocaleLowerCase("es-CO")}`} /></SelectTrigger><SelectContent>{kind === "Brand" ? (brands.data ?? []).map((item) => <SelectItem key={item.productBrandId} value={item.productBrandId}>{item.name}</SelectItem>) : categoryOptions.map((item) => <SelectItem key={item.productCategoryId} value={item.productCategoryId}>{item.path}</SelectItem>)}</SelectContent></Select></div>
             <Button type="button" disabled={!scopeId || save.isPending} onClick={addSelected}><Plus className="mr-2 h-4 w-4" />Agregar exclusión</Button>

@@ -201,6 +201,17 @@ public sealed record InventoryAvailabilityResponse(
     bool IsAvailable,
     string Status);
 
+public sealed record ProductWarehouseAvailabilityItem(
+    Guid BusinessId,
+    string BusinessName,
+    Guid WarehouseId,
+    string WarehouseCode,
+    string WarehouseName,
+    Guid ProductId,
+    string ProductCode,
+    decimal QuantityOnHand,
+    bool IsCurrentBusiness);
+
 public sealed record TaxProfileSummary(
     Guid TaxProfileId, Guid BusinessId, string Code, string DianTaxCode, string Name,
     decimal Rate, bool IsActive);

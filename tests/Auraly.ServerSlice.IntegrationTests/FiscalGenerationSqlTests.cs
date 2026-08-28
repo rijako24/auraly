@@ -31,7 +31,7 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         var connections = new SqlServerConnectionFactory(
             new AuralySqlConnectionSource(fixture.ConnectionString));
         var store = new SqlFiscalGenerationWorkStore(connections, new TestIds());
-        var clock = new FixedTimeProvider(new DateTimeOffset(2026, 7, 29, 15, 0, 0, TimeSpan.Zero));
+        var clock = new FixedTimeProvider(DateTimeOffset.UtcNow.AddMinutes(5));
         var first = CreateWorker(store, clock);
         var second = CreateWorker(store, clock);
         var results = await Task.WhenAll(
@@ -40,7 +40,8 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
                 fixture.BusinessId,
                 request.DocumentId, "worker-two"));
 
-        Assert.Single(results.Where(result => result));
+        Assert.True(results.Count(result => result) == 1,
+            $"Se esperaba un único generador fiscal exitoso. {await FiscalProcessStateAsync(request.DocumentId)}");
         Assert.Single(results.Where(result => !result));
         Assert.Equal(FiscalDocumentStatusCodes.PendingSubmission,
             await ScalarStringAsync("SELECT Status FROM dbo.FiscalDocumentProcesses WHERE DocumentId=@DocumentId", request.DocumentId));
@@ -63,11 +64,12 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         var connections = new SqlServerConnectionFactory(
             new AuralySqlConnectionSource(fixture.ConnectionString));
         var ids = new TestIds();
-        var generatedAt = new DateTimeOffset(2026, 7, 29, 16, 0, 0, TimeSpan.Zero);
+        var generatedAt = DateTimeOffset.UtcNow.AddMinutes(5);
         Assert.True(await CreateWorker(
             new SqlFiscalGenerationWorkStore(connections, ids),
             new FixedTimeProvider(generatedAt)).ProcessAsync(
-                fixture.BusinessId, request.DocumentId, "generator"));
+                fixture.BusinessId, request.DocumentId, "generator"),
+            await FiscalProcessStateAsync(request.DocumentId));
         await QuarantineOtherPendingFiscalWorkAsync(request.DocumentId);
 
         var submissionStore = new SqlFiscalSubmissionWorkStore(connections, ids);
@@ -207,7 +209,7 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         var connections = new SqlServerConnectionFactory(
             new AuralySqlConnectionSource(fixture.ConnectionString));
         var ids = new TestIds();
-        var generatedAt = new DateTimeOffset(2026, 8, 1, 16, 5, 0, TimeSpan.Zero);
+        var generatedAt = DateTimeOffset.UtcNow.AddMinutes(5);
         var generator = CreateWorker(
             new SqlFiscalGenerationWorkStore(connections, ids),
             new FixedTimeProvider(generatedAt));
@@ -320,7 +322,7 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
                 "COP", "01", supplier, customer,
                 new PosSaleUblAuthorizationContract(ServerSliceFixture.AuthorizationNumber,
                     new DateOnly(2026, 1, 1), new DateOnly(2028, 12, 31),
-                    ServerSliceFixture.Prefix, 1, 10000),
+                    ServerSliceFixture.Prefix, 1, 20000),
                 "auraly-test-software",
                 [new PosSaleUblLineContract(1, "P-E2E", "999", "EA", "IVA", 19m)],
                 "1", "10", DateOnly.FromDateTime(request.FiscalSnapshot!.IssuedAt.Date), null)
@@ -349,6 +351,20 @@ public sealed class FiscalGenerationSqlTests(ServerSliceFixture fixture)
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@DocumentId", documentId);
         return (string)(await command.ExecuteScalarAsync())!;
+    }
+
+    private async Task<string> FiscalProcessStateAsync(Guid documentId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT CONCAT(N'Estado=',Status,N'; Código=',COALESCE(LastErrorCode,N'<null>'),
+              N'; Error=',COALESCE(LastErrorMessage,N'<null>'))
+            FROM dbo.FiscalDocumentProcesses WHERE DocumentId=@DocumentId;
+            """;
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        return (string?)await command.ExecuteScalarAsync() ?? "No existe el proceso fiscal.";
     }
 
     private async Task<int> ScalarIntAsync(string sql, Guid documentId)

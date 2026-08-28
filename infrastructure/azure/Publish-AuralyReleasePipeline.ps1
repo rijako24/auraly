@@ -158,7 +158,8 @@ function Test-Release {
         "auraly-database-$ReleaseVersion.dacpac",
         "auraly-function-$ReleaseVersion.zip",
         "auraly-api-$ReleaseVersion.zip",
-        "auraly-pos-$ReleaseVersion.exe")) {
+        "auraly-pos-$ReleaseVersion.exe",
+        "auraly-pos-prod-$ReleaseVersion.exe")) {
         if (-not ($manifest.artifacts.name -contains $requiredName)) {
             throw "El release no contiene $requiredName."
         }
@@ -381,7 +382,11 @@ function Publish-Api {
 }
 
 function Publish-PosInstallerIfPresent {
-    $installerName = "auraly-pos-$ReleaseVersion.exe"
+    $installerName = if ($Environment -eq 'prod') {
+        "auraly-pos-prod-$ReleaseVersion.exe"
+    } else {
+        "auraly-pos-$ReleaseVersion.exe"
+    }
     $installerPath = Join-Path $releasePath $installerName
     if (-not (Test-Path -LiteralPath $installerPath)) {
         throw "El release no contiene el instalador POS $installerName."

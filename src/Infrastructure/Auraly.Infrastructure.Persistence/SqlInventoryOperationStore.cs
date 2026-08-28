@@ -29,7 +29,8 @@ public sealed class SqlInventoryOperationStore(
         {
             var productIds = request.Lines.Select(line => line.ProductId).ToArray();
             var preCounts = request.Lines.ToDictionary(line => line.ProductId, line => line.PreCountQuantity);
-            await ValidateScopeAsync(connection, transaction, user, request.WarehouseId, null, productIds, cancellationToken);
+            await ValidateScopeAsync(connection, transaction, user, InventoryDocumentTypes.StockCount,
+                request.WarehouseId, null, productIds, cancellationToken);
             var reasonDescription = await LoadActiveReasonAsync(connection, transaction, user.BusinessId, InventoryDocumentTypes.StockCount, request.ReasonCode, cancellationToken);
             var baseSequence = await ReadBaseSequenceAsync(connection, transaction, request.BusinessId, cancellationToken);
             var products = await LoadProductsAsync(connection, transaction, request.BusinessId, request.WarehouseId, productIds, cancellationToken);
@@ -122,7 +123,8 @@ public sealed class SqlInventoryOperationStore(
                 InventoryDocumentTypes.TransferDispatch, idempotencyKey, requestHash, cancellationToken);
             if (replay is not null) { await transaction.CommitAsync(cancellationToken); return replay; }
 
-            await ValidateScopeAsync(connection, transaction, user, request.SourceWarehouseId,
+            await ValidateScopeAsync(connection, transaction, user, InventoryDocumentTypes.Transfer,
+                request.SourceWarehouseId,
                 request.DestinationWarehouseId, request.Lines.Select(line => line.ProductId), cancellationToken);
             var transitWarehouseId = await LoadTransitWarehouseAsync(connection, transaction, request.BusinessId, cancellationToken);
             var reasonDescription = await LoadActiveReasonAsync(connection, transaction, user.BusinessId,
@@ -293,8 +295,10 @@ public sealed class SqlInventoryOperationStore(
         }
 
         await RequireCurrentProcessingSequenceAsync(connection, transaction, request.BusinessId, cancellationToken);
-        await ValidateScopeAsync(connection, transaction, user, request.SourceWarehouseId,
-            request.DestinationWarehouseId, inputLines.Select(line => line.ProductId), cancellationToken);
+        await ValidateScopeAsync(connection, transaction, user, InventoryDocumentTypes.Transfer,
+            request.SourceWarehouseId,
+            request.DestinationWarehouseId, inputLines.Select(line => line.ProductId), cancellationToken,
+            allowSystemWarehouses: true);
         var reasonDescription = await LoadActiveReasonAsync(connection, transaction, user.BusinessId,
             InventoryDocumentTypes.Transfer, request.ReasonCode, cancellationToken);
         var products = (await LoadProductsAsync(connection, transaction, request.BusinessId,
@@ -358,7 +362,11 @@ public sealed class SqlInventoryOperationStore(
         {
             var replay = await TryReplayAsync(connection, transaction, user.BusinessId, documentId, idempotencyKey, requestHash, cancellationToken);
             if (replay is not null) { await transaction.CommitAsync(cancellationToken); return replay; }
-            await ValidateScopeAsync(connection, transaction, user, warehouseId, destinationWarehouseId, inputLines.Select(line => line.ProductId), cancellationToken);
+            if (documentType == InventoryDocumentTypes.Damage)
+                destinationWarehouseId = await LoadSystemWarehouseAsync(
+                    connection, transaction, user.BusinessId, "AVE", cancellationToken);
+            await ValidateScopeAsync(connection, transaction, user, documentType, warehouseId,
+                destinationWarehouseId, inputLines.Select(line => line.ProductId), cancellationToken);
             var reasonDescription = await LoadActiveReasonAsync(connection, transaction, user.BusinessId, documentType, reasonCode, cancellationToken);
             var products = (await LoadProductsAsync(connection, transaction, user.BusinessId, warehouseId, inputLines.Select(line => line.ProductId), cancellationToken)).ToDictionary(product => product.Id);
             var lines = inputLines.Select(line => new InventoryOperationLineSnapshot(
@@ -718,18 +726,19 @@ public sealed class SqlInventoryOperationStore(
     }
 
     private static async Task ValidateScopeAsync(SqlConnection connection, SqlTransaction transaction,
-        InventoryUserIdentity user, Guid warehouseId, Guid? destinationWarehouseId,
-        IEnumerable<Guid> productIds, CancellationToken cancellationToken)
+        InventoryUserIdentity user, string documentType, Guid warehouseId, Guid? destinationWarehouseId,
+        IEnumerable<Guid> productIds, CancellationToken cancellationToken,
+        bool allowSystemWarehouses = false)
     {
         const string sql = """
             IF NOT EXISTS(SELECT 1 FROM dbo.Businesses WHERE BusinessId=@BusinessId AND TenantId=@TenantId)
               THROW 51200,'The business is outside the authenticated tenant.',1;
             IF NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@WarehouseId AND BusinessId=@BusinessId
-              AND IsActive=1 AND (UseForSales=1 OR (@AllowSystemWarehouse=1 AND IsSystem=1)))
-              THROW 51201,'La bodega no está habilitada como bodega de venta.',1;
+              AND IsActive=1 AND (IsSystem=0 OR @AllowSystemWarehouses=1))
+              THROW 51201,'Selecciona una bodega de inventario activa.',1;
             IF @Destination IS NOT NULL AND NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE WarehouseId=@Destination AND BusinessId=@BusinessId
-              AND IsActive=1 AND (UseForSales=1 OR (@AllowSystemWarehouse=1 AND IsSystem=1)))
-              THROW 51202,'La bodega de destino no está habilitada como bodega de venta.',1;
+              AND IsActive=1 AND (IsSystem=0 OR @AllowSystemWarehouses=1 OR (@DocumentType=N'Damage' AND IsSystem=1 AND Code=N'AVE')))
+              THROW 51202,'Selecciona una bodega de inventario de destino activa.',1;
             IF EXISTS(SELECT x.ProductId FROM OPENJSON(@Products) WITH(ProductId UNIQUEIDENTIFIER '$') x
               LEFT JOIN dbo.Products p ON p.ProductId=x.ProductId AND p.BusinessId=@BusinessId AND p.IsActive=1 AND p.ManageStock=1
               WHERE p.ProductId IS NULL)
@@ -738,12 +747,29 @@ public sealed class SqlInventoryOperationStore(
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@TenantId", user.TenantId);
+        command.Parameters.AddWithValue("@DocumentType", documentType);
         command.Parameters.AddWithValue("@WarehouseId", warehouseId);
         command.Parameters.AddWithValue("@Destination", (object?)destinationWarehouseId ?? DBNull.Value);
-        command.Parameters.AddWithValue("@AllowSystemWarehouse", user.Permissions.Contains("inventory.system-warehouses.use"));
+        command.Parameters.AddWithValue("@AllowSystemWarehouses", allowSystemWarehouses);
         command.Parameters.AddWithValue("@Products", JsonSerializer.Serialize(productIds.Distinct()));
         try { await command.ExecuteNonQueryAsync(cancellationToken); }
         catch (SqlException exception) when (exception.Number is >= 51200 and <= 51203) { throw new InventoryValidationException(exception.Message); }
+    }
+
+    private static async Task<Guid> LoadSystemWarehouseAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid businessId,
+        string code,
+        CancellationToken cancellationToken)
+    {
+        const string sql = "SELECT WarehouseId FROM dbo.Warehouses WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@BusinessId AND Code=@Code AND IsSystem=1 AND IsActive=1;";
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@Code", code);
+        return await command.ExecuteScalarAsync(cancellationToken) is Guid warehouseId
+            ? warehouseId
+            : throw new InventoryValidationException($"La bodega interna '{code}' no está aprovisionada.");
     }
 
     private static async Task<string> LoadActiveReasonAsync(SqlConnection connection, SqlTransaction transaction, Guid businessId, string operationType, string reasonCode, CancellationToken cancellationToken)

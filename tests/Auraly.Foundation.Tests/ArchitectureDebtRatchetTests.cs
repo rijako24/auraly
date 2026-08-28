@@ -7,18 +7,50 @@ public sealed class ArchitectureDebtRatchetTests
     private static readonly string RepositoryRoot = FindRepositoryRoot();
 
     [Fact]
-    public void InventoryLedger_HasOneWriter()
+    public void InventoryLedger_HasOneMovementWriter_AndBalanceProvisioningIsBounded()
     {
         var files = CSharpFiles("src");
-        var writerPattern = new Regex(
-            @"\b(?:INSERT(?:\s+INTO)?|UPDATE)\s+dbo\.(?:InventoryBalances|InventoryMovements)\b",
+        var ledgerWriterPattern = new Regex(
+            @"\b(?:INSERT(?:\s+INTO)?\s+dbo\.InventoryMovements|UPDATE\s+dbo\.InventoryBalances)\b",
             RegexOptions.IgnoreCase);
-        var writers = files.Where(file => writerPattern.IsMatch(File.ReadAllText(file)));
+        var ledgerWriters = files.Where(file => ledgerWriterPattern.IsMatch(File.ReadAllText(file)));
 
-        var writer = Assert.Single(writers);
+        var writer = Assert.Single(ledgerWriters);
         Assert.Equal(
             Path.Combine(RepositoryRoot, "src", "Infrastructure", "Auraly.Infrastructure.Persistence", "SqlInventoryLedgerWriter.cs"),
             writer);
+
+        var balanceInsertPattern = new Regex(
+            @"\bINSERT(?:\s+INTO)?\s+dbo\.InventoryBalances\b",
+            RegexOptions.IgnoreCase);
+        var balanceSqlOwners = files
+            .Where(file => balanceInsertPattern.IsMatch(File.ReadAllText(file)))
+            .Select(Path.GetFileName)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(
+            new[] { "SqlCatalogStore.cs", "SqlInventoryLedgerWriter.cs", "SqlInventoryQueryStore.cs" },
+            balanceSqlOwners);
+    }
+
+    [Fact]
+    public void Operational_stock_is_never_reconstructed_by_summing_inventory_movements()
+    {
+        var runtimeFiles = CSharpFiles("src").Concat(
+            Directory.GetFiles(
+                Path.Combine(RepositoryRoot, "database", "Auraly.Database", "StoredProcedures"),
+                "*.sql",
+                SearchOption.AllDirectories));
+        var forbidden = new Regex(
+            @"SUM\s*\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\.)?QuantityChange\s*\)",
+            RegexOptions.IgnoreCase);
+
+        var violations = runtimeFiles
+            .Where(file => forbidden.IsMatch(File.ReadAllText(file)))
+            .Select(file => Path.GetRelativePath(RepositoryRoot, file))
+            .ToArray();
+
+        Assert.Empty(violations);
     }
 
     [Fact]

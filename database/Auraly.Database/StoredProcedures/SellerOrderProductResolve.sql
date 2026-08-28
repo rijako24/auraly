@@ -10,9 +10,13 @@ BEGIN
     SELECT COALESCE(NULLIF(p.ProductCode,N''),NULLIF(p.Sku,N''),N''),p.Name,
            COALESCE(NULLIF(p.BaseUnitCode,N''),N'EA'),resolved.Amount,
            resolved.PriceSource,
-           COALESCE((SELECT SUM(m.QuantityChange) FROM dbo.InventoryMovements m WHERE m.BusinessId=p.BusinessId AND m.WarehouseId=@WarehouseId AND m.ProductId=p.ProductId),0),
+           COALESCE(balance.QuantityOnHand,0),
            p.ManageStock,COALESCE(tax.Rate,0)
     FROM dbo.Products p
+    LEFT JOIN dbo.InventoryBalances balance
+      ON balance.BusinessId=p.BusinessId
+     AND balance.WarehouseId=@WarehouseId
+     AND balance.ProductId=p.ProductId
     LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=p.TaxProfileId AND tax.IsActive=1
     CROSS APPLY dbo.CustomerProductPriceResolve(
       @BusinessId,@WarehouseId,@CustomerId,p.ProductId,@Quantity,SYSDATETIMEOFFSET()) resolved

@@ -114,6 +114,38 @@ public sealed class ProductRepositorySearchTests
         result.Should().BeNull();
     }
 
+    [Fact]
+    public async Task Product_list_uses_negative_balance_from_every_active_public_warehouse()
+    {
+        await using var context = CreateContext();
+        var businessId = Guid.NewGuid();
+        var product = Product(businessId, "PRODUCTO CON SALDO NEGATIVO", "NEG-3", active: true);
+        product.ManageStock = true;
+        var salesWarehouseId = Guid.NewGuid();
+        var secondPublicWarehouseId = Guid.NewGuid();
+        var systemWarehouseId = Guid.NewGuid();
+        var inactiveWarehouseId = Guid.NewGuid();
+        context.Products.Add(product);
+        Publish(context, product, 10m);
+        context.InventoryWarehouseScopes.AddRange(
+            Warehouse(businessId, salesWarehouseId, isSystem: false, isActive: true),
+            Warehouse(businessId, secondPublicWarehouseId, isSystem: false, isActive: true),
+            Warehouse(businessId, systemWarehouseId, isSystem: true, isActive: true),
+            Warehouse(businessId, inactiveWarehouseId, isSystem: false, isActive: false));
+        context.InventoryBalances.AddRange(
+            Balance(businessId, salesWarehouseId, product.ProductId, -5m),
+            Balance(businessId, secondPublicWarehouseId, product.ProductId, 2m),
+            Balance(businessId, systemWarehouseId, product.ProductId, 3m),
+            Balance(businessId, inactiveWarehouseId, product.ProductId, 10m));
+        await context.SaveChangesAsync();
+
+        var result = await new ProductRepository(context).GetPagedByBusinessIdAsync(
+            businessId, 1, 20, includeInactive: true);
+
+        result.Items.Should().ContainSingle();
+        result.Items[0].StockQuantity.Should().Be(-3m);
+    }
+
     private static ApplicationDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -131,6 +163,24 @@ public sealed class ProductRepositorySearchTests
         UnitPrice = 10m,
         Currency = "COP",
         IsActive = active
+    };
+
+    private static InventoryWarehouseScopeRow Warehouse(
+        Guid businessId, Guid warehouseId, bool isSystem, bool isActive) => new()
+    {
+        BusinessId = businessId,
+        WarehouseId = warehouseId,
+        IsSystem = isSystem,
+        IsActive = isActive
+    };
+
+    private static InventoryBalanceRow Balance(
+        Guid businessId, Guid warehouseId, Guid productId, decimal quantity) => new()
+    {
+        BusinessId = businessId,
+        WarehouseId = warehouseId,
+        ProductId = productId,
+        QuantityOnHand = quantity
     };
 
     [Fact]

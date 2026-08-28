@@ -16,6 +16,7 @@ import {
   PosCaptureResult,
   PosCatalogProduct,
   PosCatalogSearchPage,
+  PosProductWarehouseAvailability,
   PosClient,
   PosCompleteSaleResult,
   PosCustomer,
@@ -385,6 +386,12 @@ export class OnlinePosClient implements PosClient {
       this.post({ context: this.scope(), search, skip, take, customerId }),
     );
     return page satisfies PosCatalogSearchPage;
+  }
+
+  productWarehouseAvailability(productId: string) {
+    return request<PosProductWarehouseAvailability[]>(
+      `/api/commerce/v1/products/${productId}/warehouse-availability`,
+    );
   }
 
   async searchCustomers(search = "", skip = 0, take = 50) {
@@ -1217,5 +1224,5 @@ function taxName(code: string) {
 }
 
 function paymentMethodName(code: string) {
-  return ({ Cash: "Efectivo", Card: "Tarjeta", DebitCard: "Tarjeta débito", CreditCard: "Tarjeta crédito", Transfer: "Transferencia", Deposit: "Consignación", Credit: "Crédito / cartera", Voucher: "Bono / vale", Check: "Cheque", Withholding: "Retención" } as Record<string, string>)[code] ?? code;
+  return ({ Cash: "Efectivo", Card: "Tarjeta", DebitCard: "Tarjeta débito", CreditCard: "Tarjeta crédito", Transfer: "Transferencia", Credit: "Crédito / cartera", Voucher: "Bono / vale", Check: "Cheque", Withholding: "Retención" } as Record<string, string>)[code] ?? code;
 }

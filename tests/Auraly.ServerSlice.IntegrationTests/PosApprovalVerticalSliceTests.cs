@@ -279,7 +279,8 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
         using var localResponse = await requester.PostAsJsonAsync(
             $"/api/commerce/v1/pos/approvals/{local.ApprovalRequestId:D}/local-authorization",
             new AuthorizePosApprovalLocallyRequest(secret));
-        localResponse.EnsureSuccessStatusCode();
+        Assert.True(localResponse.IsSuccessStatusCode,
+            $"La aprobación local de {action} respondió {(int)localResponse.StatusCode}: {await localResponse.Content.ReadAsStringAsync()}");
 
         var remote = await CreateAsync();
         using var remoteResponse = await supervisor.PostAsJsonAsync(
@@ -519,7 +520,7 @@ public sealed class PosApprovalVerticalSliceTests(ServerSliceFixture fixture)
             INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
             SELECT NEWID(),@RoleId,PermissionId,SYSUTCDATETIME()
             FROM dbo.Permissions WHERE Resource IN(
-              N'sales.create',N'sales.discount',N'sales.lines.remove',N'sales.drafts.restart',
+              N'sales.create',N'sales.discount',N'sales.change-price',N'sales.lines.remove',N'sales.drafts.restart',
               N'work-sessions.close',N'pos.devices.enroll',
               N'pos.approvals.read',N'pos.approvals.authorize',N'pos.approvals.receive_notifications',N'pos.approvals.manage_credential');
             """;

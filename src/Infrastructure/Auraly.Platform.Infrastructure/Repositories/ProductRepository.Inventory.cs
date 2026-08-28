@@ -12,12 +12,23 @@ public sealed partial class ProductRepository
     {
         if (products.Count == 0) return;
 
-        var rows = await _context.Database.SqlQuery<InventoryQuantityProjection>($"""
-            SELECT ProductId,SUM(QuantityOnHand) AS QuantityOnHand
-            FROM dbo.InventoryBalances
-            WHERE BusinessId={businessId}
-            GROUP BY ProductId
-            """).ToListAsync(ct);
+        var productIds = products.Select(product => product.ProductId).Distinct().ToArray();
+        var rows = await (
+            from balance in _context.InventoryBalances.AsNoTracking()
+            join warehouse in _context.InventoryWarehouseScopes.AsNoTracking()
+                on new { balance.BusinessId, balance.WarehouseId }
+                equals new { warehouse.BusinessId, warehouse.WarehouseId }
+            where balance.BusinessId == businessId
+                && productIds.Contains(balance.ProductId)
+                && warehouse.IsActive
+                && !warehouse.IsSystem
+            group balance by balance.ProductId
+            into balances
+            select new InventoryQuantityProjection
+            {
+                ProductId = balances.Key,
+                QuantityOnHand = balances.Sum(balance => balance.QuantityOnHand)
+            }).ToListAsync(ct);
         var quantities = rows.ToDictionary(row => row.ProductId, row => row.QuantityOnHand);
 
         foreach (var product in products)

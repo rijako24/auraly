@@ -9,8 +9,9 @@ El inventario físico se divide en dos experiencias relacionadas, pero separadas
    guardar o aplicar el resultado.
 
 No se muestran listas ni equipos. El término visible y persistente es
-`borrador`. La conciliación se abre con un botón junto a `Nueva operación` y
-ocurre completa dentro de un solo diálogo, sin diálogos anidados.
+`borrador`. La selección para conciliar ocurre directamente en la pestaña
+`Borradores` y el resultado abre en un solo diálogo, sin repetir la selección
+ni abrir diálogos anidados.
 
 La conciliación no crea otro motor de inventario. Cada aplicación genera un
 documento canónico `StockCount`; el motor ordenado conserva la autoridad única
@@ -37,24 +38,30 @@ Cada borrador pertenece a un usuario, tiene nombre, versión y estas cantidades:
   la columna de reconteo y esa cantidad pasa a ser la final del borrador.
 - `Motivo pendiente`: opcional cuando todavía no existe conteo inicial.
 
-Guardar exige al menos un producto contado. En la etapa `Contar` deja el
-borrador listo para conciliar; si se inició `Recontar`, puede guardarse todavía
-incompleto como `En progreso` y sólo queda listo cuando todos los productos
-contados tienen su segunda lectura. Los demás productos del alcance general
+Crear un borrador nuevo exige al menos un producto contado. Al editar, se puede
+quitar cualquier producto capturado en `Contar` o `Recontar`; si se quitan
+todos, el borrador permanece `En progreso` para poder retomarlo. En la etapa
+`Contar` un borrador con capturas queda listo para conciliar; si se inició
+`Recontar`, puede guardarse todavía incompleto como `En progreso` y sólo queda
+listo cuando todos los productos contados tienen su segunda lectura. Los demás productos del alcance general
 permanecen pendientes sin obligar al usuario a verlos en la grilla de captura.
 La edición usa versión optimista y sólo la puede hacer su propietario. Un
 borrador seleccionado por una conciliación activa queda inmutable.
 
 La vista de conteo es lineal y conserva su etapa en el servidor. Inicialmente
 sólo `Contar` está habilitado. La acción `Recontar` inicia la segunda lectura,
-enfoca el primer producto sin reconteo y deshabilita la primera columna. Al
+impide agregar productos nuevos, enfoca el primer producto sin reconteo y
+deshabilita la primera columna. Quitar una captura sí está permitido en ambas
+etapas. Al
 reabrir, el borrador restaura `Contar` o `Recontar` y enfoca el primer campo sin
 valor; si el conteo visible está completo, el foco vuelve al buscador.
 
 ## Recuperación de borradores
 
 `Operaciones > Inventarios` separa `Documentos de inventario` y `Borradores` en
-dos pestañas. La pestaña de borradores muestra:
+dos pestañas. Cada pestaña conserva filtros propios con fechas inicializadas al
+día actual y una acción explícita para aplicarlos; los borradores no se consultan
+hasta que el usuario abre su pestaña. La pestaña de borradores muestra:
 
 - nombre del borrador;
 - inventario y bodega;
@@ -73,12 +80,13 @@ de documentos; no se apilan debajo de los borradores.
 
 ## Conciliación de inventario
 
-La acción superior `Conciliación de inventario` abre un solo diálogo con dos
-pasos.
+La pestaña `Borradores` permite marcar borradores listos del mismo inventario y
+ejecutar `Conciliar seleccionados`. El diálogo abre directamente el resultado
+agrupado.
 
-### 1. Selección
+### Selección en borradores
 
-El diálogo muestra una grilla paginada de borradores abiertos, con filtros por
+La pestaña muestra una grilla paginada de borradores abiertos, con filtros por
 nombre/producto y rango de última actualización, además de bodega, avance,
 propietario y estado. Sólo los marcados `Listo para conciliar`
 son elegibles. El primer borrador elegido fija el inventario; los borradores de
@@ -90,7 +98,7 @@ La selección guarda el identificador y versión de cada borrador. Una nueva
 conciliación reemplaza la activa anterior. Nunca se mezclan bodegas, sesiones o
 alcances.
 
-### 2. Resultado agrupado
+### Resultado agrupado
 
 El resultado tiene únicamente dos pestañas:
 
@@ -177,7 +185,9 @@ El identificador de documento es estable para reintentos idempotentes.
   borradores; el nombre técnico no se expone a contratos ni interfaz.
 - `InventoryPhysicalCountLines`: conteo inicial, verificación, usuario, tiempo y
   secuencia por borrador y producto. La llave permite repetir el mismo producto
-  en borradores diferentes.
+  en borradores e inventarios físicos activos diferentes. Cada captura conserva
+  su propia secuencia para ajustar de forma segura los movimientos posteriores
+  cuando se aplique su conciliación.
 - `InventoryPhysicalCountReconciliations`: selección, secuencia de snapshot,
   cantidad de productos por sección y documentos de aplicación.
 - `InventoryPhysicalCountReconciliationDrafts`: versiones de borradores
@@ -201,6 +211,10 @@ después de procesar el `StockCount`.
 Todas las consultas se limitan por `BusinessId` y tenant. La preparación de la
 conciliación valida versiones; la aplicación reutiliza un identificador de
 documento si se reintenta después de una respuesta perdida.
+Un producto puede capturarse simultáneamente en más de un inventario físico de
+la misma bodega. No se bloquea al agregarlo: la versión del borrador, la
+secuencia de captura y el documento `StockCount` canónico protegen la
+concurrencia al conciliar y aplicar.
 
 ## Criterios de aceptación
 
@@ -211,7 +225,7 @@ documento si se reintenta después de una respuesta perdida.
 5. Un borrador aparece en `Operaciones > Inventarios > Borradores`, se puede editar en la misma ventana de operación y conserva foco, conteos y reconteos.
 6. `Aplicar inventario` produce un `StockCount` idempotente sin exigir guardar antes.
 7. Documentos y borradores se muestran en pestañas separadas.
-8. La conciliación está junto a `Nueva operación` y usa un solo diálogo.
+8. La selección para conciliar está en la pestaña Borradores y el resultado usa un solo diálogo.
 9. La selección filtra por nombre y rango de fecha y se pagina en servidor.
 10. Se pueden seleccionar borradores de cualquier usuario de la misma sesión.
 11. Un producto repetido suma la cantidad final de todos los borradores elegidos y muestra cada borrador de origen.

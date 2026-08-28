@@ -1016,16 +1016,16 @@ public sealed partial class SqlOnlineSalesDraftStore(
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT COALESCE(SUM(m.QuantityChange),0) / COALESCE(NULLIF(link.InventoryFactor,0),1)
+            SELECT COALESCE(balance.QuantityOnHand,0) / COALESCE(NULLIF(link.InventoryFactor,0),1)
             FROM dbo.Products p
             LEFT JOIN dbo.ProductLinks link
               ON link.BusinessId=p.BusinessId AND link.ChildProductId=p.ProductId
              AND link.SharesInventory=1 AND link.IsActive=1
-            LEFT JOIN dbo.InventoryMovements m WITH (UPDLOCK,HOLDLOCK)
-              ON m.BusinessId=p.BusinessId AND m.WarehouseId=@WarehouseId
-             AND m.ProductId=COALESCE(link.ParentProductId,p.ProductId)
+            LEFT JOIN dbo.InventoryBalances balance WITH (UPDLOCK,HOLDLOCK)
+              ON balance.BusinessId=p.BusinessId AND balance.WarehouseId=@WarehouseId
+             AND balance.ProductId=COALESCE(link.ParentProductId,p.ProductId)
             WHERE p.BusinessId=@BusinessId AND p.ProductId=@ProductId
-            GROUP BY link.InventoryFactor;
+            ;
             """;
         command.Parameters.AddRange([
             P("@BusinessId", state.BusinessId), P("@WarehouseId", state.WarehouseId),

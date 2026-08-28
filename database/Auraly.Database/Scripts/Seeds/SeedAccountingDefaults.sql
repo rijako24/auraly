@@ -86,8 +86,6 @@ USING (VALUES
   (N'PosPaymentMethod',N'CreditCard',N'CreditCardClearing'),
   (N'PosPaymentMethod',N'Transfer',N'TransferClearing'),
   (N'PosPaymentMethod',N'Credit',N'AccountsReceivable'),
-  (N'PosPaymentMethod',N'BankTransfer',N'Bank'),
-  (N'PosPaymentMethod',N'Deposit',N'Bank'),
   (N'SupplierPaymentMethod',N'Cash',N'Cash'),
   (N'SupplierPaymentMethod',N'BankTransfer',N'Bank'),
   (N'CustomerPaymentMethod',N'Cash',N'Cash'),
@@ -101,7 +99,11 @@ USING (VALUES
 ON target.ProfileCode=N'AURALY_CO' AND target.SourceType=source.SourceType AND target.SourceCode=source.SourceCode
 WHEN MATCHED THEN UPDATE SET Category=source.Category
 WHEN NOT MATCHED THEN INSERT(ProfileCode,SourceType,SourceCode,Category)
-  VALUES(N'AURALY_CO',source.SourceType,source.SourceCode,source.Category);
+  VALUES(N'AURALY_CO',source.SourceType,source.SourceCode,source.Category)
+WHEN NOT MATCHED BY SOURCE
+  AND target.ProfileCode=N'AURALY_CO'
+  AND target.SourceType=N'PosPaymentMethod'
+THEN DELETE;
 
 MERGE dbo.ReasonTemplates AS target
 USING (VALUES

@@ -110,6 +110,7 @@ jobs:
           ./infrastructure/azure/New-AuralyRelease.ps1
           -Version '${{ inputs.version }}'
           -PosApiUrl 'https://api-auraly-dev-w5usmo6w.azurewebsites.net'
+          -ProdPosApiUrl 'https://api-auraly-prod-7sov4nxc.azurewebsites.net'
           -SigningCertificateThumbprint '${{ steps.signing_certificate.outputs.thumbprint }}'
           -SigningTimestampUrl 'https://timestamp.digicert.com'
           -SkipAdmin

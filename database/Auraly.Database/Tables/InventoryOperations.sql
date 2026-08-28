@@ -48,7 +48,7 @@ CREATE TABLE [dbo].[InventoryOperations]
     CONSTRAINT [CK_InventoryOperations_Type] CHECK ([DocumentType] IN (N'StockCount',N'InventoryAdjustment',N'WarehouseTransfer',N'ProductConversion',N'Damage')),
     CONSTRAINT [CK_InventoryOperations_Status] CHECK ([Status] IN (N'Draft',N'Accepted',N'Processed',N'DispatchPending',N'Dispatched',N'ReceiptPending',N'PartiallyReceived',N'Received',N'Reversed')),
     CONSTRAINT [CK_InventoryOperations_TransferMode] CHECK (([DocumentType]=N'WarehouseTransfer' AND ([TransferMode] IN (N'DispatchAndReceive',N'ImmediateSystem') OR [TransferMode] IS NULL)) OR ([DocumentType]<>N'WarehouseTransfer' AND [TransferMode] IS NULL)),
-    CONSTRAINT [CK_InventoryOperations_Transfer] CHECK (([DocumentType]=N'WarehouseTransfer' AND [DestinationWarehouseId] IS NOT NULL AND [DestinationWarehouseId]<>[WarehouseId]) OR ([DocumentType]<>N'WarehouseTransfer' AND [DestinationWarehouseId] IS NULL)),
+    CONSTRAINT [CK_InventoryOperations_Destination] CHECK (([DocumentType] IN (N'WarehouseTransfer',N'Damage') AND [DestinationWarehouseId] IS NOT NULL AND [DestinationWarehouseId]<>[WarehouseId]) OR ([DocumentType] NOT IN (N'WarehouseTransfer',N'Damage') AND [DestinationWarehouseId] IS NULL)),
     CONSTRAINT [CK_InventoryOperations_CountBase] CHECK (([DocumentType]=N'StockCount' AND [BaseInventorySequence] IS NOT NULL) OR ([DocumentType]<>N'StockCount' AND [BaseInventorySequence] IS NULL)),
     CONSTRAINT [CK_InventoryOperations_ConversionSnapshot] CHECK (
         ([ConversionFamilyRootProductId] IS NULL AND [ConversionInputEquivalent] IS NULL AND [ConversionOutputEquivalent] IS NULL AND [ConversionLossQuantity] IS NULL AND [ConversionLossPercent] IS NULL AND [ConversionMaximumLossPercent] IS NULL)

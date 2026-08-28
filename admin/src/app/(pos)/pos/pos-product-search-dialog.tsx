@@ -1,11 +1,12 @@
 "use client";
 
-import { Loader2, PackageSearch, Search, X, Scale } from "lucide-react";
+import { Boxes, Loader2, PackageSearch, Search, ShieldAlert, Warehouse, WifiOff, X, Scale } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 import type {
   PosCatalogProduct,
   PosCatalogSearchPage,
+  PosProductWarehouseAvailability,
 } from "@/services/pos/pos-edge-client";
 
 const money = new Intl.NumberFormat("es-CO", {
@@ -17,11 +18,17 @@ const money = new Intl.NumberFormat("es-CO", {
 export function PosProductSearchDialog({
   busy,
   onSearch,
+  connected,
+  canReadAvailability,
+  onLoadAvailability,
   onSelect,
   onCancel,
 }: {
   busy: boolean;
   onSearch: (term: string, skip: number) => Promise<PosCatalogSearchPage>;
+  connected: boolean;
+  canReadAvailability: boolean;
+  onLoadAvailability: (productId: string) => Promise<PosProductWarehouseAvailability[]>;
   onSelect: (product: PosCatalogProduct) => Promise<boolean>;
   onCancel: () => void;
 }) {
@@ -35,7 +42,11 @@ export function PosProductSearchDialog({
   const [error, setError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const requestVersion = useRef(0);
+  const availabilityVersion = useRef(0);
   const resultElements = useRef(new Map<number, HTMLButtonElement>());
+  const [availability, setAvailability] = useState<PosProductWarehouseAvailability[]>([]);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() =>
@@ -74,6 +85,38 @@ export function PosProductSearchDialog({
 
     return () => window.clearTimeout(timer);
   }, [onSearch, term]);
+
+  useEffect(() => {
+    const product = results[selected];
+    const version = ++availabilityVersion.current;
+    setAvailability([]);
+    setAvailabilityLoading(false);
+    if (!product) {
+      setAvailabilityError(null);
+      return;
+    }
+    if (!canReadAvailability) {
+      setAvailabilityError("Tu perfil no tiene permiso para consultar existencias por bodega.");
+      return;
+    }
+    if (!connected) {
+      setAvailabilityError("Sin conexión al servidor. El producto local sigue disponible, pero no podemos consultar otras bodegas.");
+      return;
+    }
+    setAvailabilityError(null);
+    setAvailabilityLoading(true);
+    void onLoadAvailability(product.productId)
+      .then((items) => {
+        if (availabilityVersion.current === version) setAvailability(items);
+      })
+      .catch(() => {
+        if (availabilityVersion.current === version)
+          setAvailabilityError("No fue posible consultar las existencias del servidor.");
+      })
+      .finally(() => {
+        if (availabilityVersion.current === version) setAvailabilityLoading(false);
+      });
+  }, [canReadAvailability, connected, onLoadAvailability, results, selected]);
 
   useEffect(() => {
     const close = (event: globalThis.KeyboardEvent) => {
@@ -261,6 +304,7 @@ export function PosProductSearchDialog({
                 setSelected(index);
                 if (index === results.length - 1) void loadMore();
               }}
+              onMouseEnter={() => setSelected(index)}
               onClick={() => void choose(product)}
               onKeyDown={handleListNavigation}
               disabled={busy}
@@ -307,6 +351,44 @@ export function PosProductSearchDialog({
             </p>
           )}
         </div>
+
+        <section className="shrink-0 border-t border-slate-200 bg-slate-50/80 px-5 py-4" aria-label="Existencias por sede y bodega">
+          <header className="mb-2 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                <Boxes className="h-4 w-4 text-teal-700" />
+                Existencias por sede y bodega
+              </h3>
+              <p className="truncate text-xs text-slate-500">
+                {results[selected]?.name ?? "Selecciona un producto para consultar su disponibilidad."}
+              </p>
+            </div>
+            {availabilityLoading && <span className="flex shrink-0 items-center gap-2 text-xs font-medium text-teal-800" role="status"><Loader2 className="h-4 w-4 animate-spin" />Consultando servidor</span>}
+          </header>
+
+          {availabilityError ? (
+            <div className="flex min-h-16 items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 text-sm text-amber-950">
+              {connected ? <ShieldAlert className="h-5 w-5 shrink-0 text-amber-700" /> : <WifiOff className="h-5 w-5 shrink-0 text-amber-700" />}
+              {availabilityError}
+            </div>
+          ) : (
+            <div className="max-h-36 overflow-auto rounded-xl border border-slate-200 bg-white">
+              <div className="sticky top-0 grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_110px] gap-3 border-b bg-slate-100 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                <span>Sede</span><span>Bodega</span><span className="text-right">Existencias</span>
+              </div>
+              {availability.map((item) => (
+                <div key={`${item.businessId}-${item.warehouseId}`} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_110px] items-center gap-3 border-b border-slate-100 px-3 py-2 text-sm last:border-b-0">
+                  <span className="truncate font-medium text-slate-800">{item.businessName}{item.isCurrentBusiness && <small className="ml-2 rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-bold text-teal-800">Actual</small>}</span>
+                  <span className="flex min-w-0 items-center gap-2 truncate text-slate-600"><Warehouse className="h-3.5 w-3.5 shrink-0 text-teal-700" />{item.warehouseName} · {item.warehouseCode}</span>
+                  <strong className={`text-right tabular-nums ${item.quantityOnHand < 0 ? "text-red-700" : "text-slate-900"}`}>{item.quantityOnHand.toLocaleString("es-CO", { maximumFractionDigits: 3 })}</strong>
+                </div>
+              ))}
+              {!availabilityLoading && availability.length === 0 && results[selected] && (
+                <p className="p-4 text-center text-sm text-slate-500">No hay bodegas operativas para este producto.</p>
+              )}
+            </div>
+          )}
+        </section>
       </section>
     </div>
   );

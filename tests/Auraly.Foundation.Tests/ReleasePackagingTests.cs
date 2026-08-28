@@ -87,6 +87,32 @@ public sealed class ReleasePackagingTests
     }
 
     [Fact]
+    public void Immutable_release_contains_environment_specific_signed_pos_installers()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var release = File.ReadAllText(Path.Combine(
+            repositoryRoot, "infrastructure", "azure", "New-AuralyRelease.ps1"));
+        var pipeline = File.ReadAllText(Path.Combine(
+            repositoryRoot, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
+        var workflow = File.ReadAllText(Path.Combine(
+            repositoryRoot, ".github", "workflows", "deploy-auraly-release.yml"));
+
+        Assert.Contains("[string]$ProdPosApiUrl", release, StringComparison.Ordinal);
+        Assert.Contains("auraly-pos-prod-$Version.exe", release, StringComparison.Ordinal);
+        Assert.Contains("$Environment -eq 'prod'", pipeline, StringComparison.Ordinal);
+        Assert.Contains("auraly-pos-prod-$ReleaseVersion.exe", pipeline, StringComparison.Ordinal);
+        Assert.Contains("-ProdPosApiUrl 'https://api-auraly-prod-7sov4nxc.azurewebsites.net'", workflow,
+            StringComparison.Ordinal);
+
+        var infrastructureDeployment = File.ReadAllText(Path.Combine(
+            repositoryRoot, "infrastructure", "azure", "Deploy-Auraly.ps1"));
+        Assert.Contains("$posInstallerSha256ByEnvironment[$environment]", infrastructureDeployment,
+            StringComparison.Ordinal);
+        Assert.Contains("DEV y PROD usan instaladores distintos", infrastructureDeployment,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Pos_installer_retries_only_the_known_transient_WiX_pipe_failure()
     {
         var script = File.ReadAllText(Path.Combine(

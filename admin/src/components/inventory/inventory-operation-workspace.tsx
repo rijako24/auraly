@@ -620,14 +620,14 @@ export function InventoryOperationWorkspace({
           <Field label="Observaciones">
             <Textarea value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={1000} />
           </Field>
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-3 border-t pt-4">
+            <Button type="button" variant="outline" disabled={mutation.isPending || lines.length === 0} onClick={clear}>Limpiar</Button>
+            {!allowed && <span className="text-sm text-amber-700">No tienes permiso para confirmar esta operación.</span>}
             <Button disabled={!ready || mutation.isPending} onClick={() => mutation.mutate()}>
               {mutation.isPending
                 ? "Procesando…"
                 : kind === "transfer" ? "Confirmar salida" : `Confirmar ${selected.label.toLowerCase()}`}
             </Button>
-            <Button type="button" variant="outline" disabled={mutation.isPending || lines.length === 0} onClick={clear}>Limpiar</Button>
-            {!allowed && <span className="text-sm text-amber-700">No tienes permiso para confirmar esta operación.</span>}
           </div>
         </CardContent>
       </Card></>}

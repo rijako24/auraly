@@ -193,5 +193,5 @@ public sealed class HalfLetterDocumentRenderer
     private static string Quantity(decimal value) => value.ToString("0.###", ColombianCulture);
     private static string Rate(decimal value) => value.ToString("0.##", ColombianCulture);
     private static string TaxName(string code) => code switch { "01" => "IVA", "02" => "IC", "03" => "ICA", "04" => "INC", _ => code };
-    private static string PaymentName(string code) => code switch { "Cash" => "Efectivo", "Card" => "Tarjeta", "DebitCard" => "Tarjeta débito", "CreditCard" => "Tarjeta crédito", "Transfer" => "Transferencia", "Deposit" => "Consignación", "Credit" => "Crédito / cartera", "Voucher" => "Bono / vale", "Check" => "Cheque", "Withholding" => "Retención", _ => code };
+    private static string PaymentName(string code) => code switch { "Cash" => "Efectivo", "Card" => "Tarjeta", "DebitCard" => "Tarjeta débito", "CreditCard" => "Tarjeta crédito", "Transfer" => "Transferencia", "Credit" => "Crédito / cartera", "Voucher" => "Bono / vale", "Check" => "Cheque", "Withholding" => "Retención", _ => code };
 }

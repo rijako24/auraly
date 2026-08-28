@@ -494,7 +494,6 @@ internal static class WorkSessionClosureReceiptRenderer
         "CreditCard" => "Tarjeta credito",
         "Card" => "Tarjeta",
         "Transfer" => "Transferencia",
-        "Deposit" => "Consignacion",
         "Credit" => "Credito / cartera",
         "Voucher" => "Bono / vale",
         "Check" => "Cheque",
