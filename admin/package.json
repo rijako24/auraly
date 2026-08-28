@@ -7,6 +7,7 @@
   },
   "scripts": {
     "check:encoding": "node scripts/check-text-encoding.mjs",
+    "test:orders-ui": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/services/orders/order-http-error.test.js\"",
     "prebuild": "npm run check:encoding",
     "dev": "next dev",
     "dev:pos": "next dev --hostname 127.0.0.1 --port 47830",

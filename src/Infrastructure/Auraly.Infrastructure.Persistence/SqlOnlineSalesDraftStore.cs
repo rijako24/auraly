@@ -103,7 +103,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
             .Where(line => line.ProductId == productId)
             .Sum(line => line.Quantity) + quantity;
         await DemandInventoryAsync(
-            connection, transaction, state, productId,
+            connection, transaction, state, productId, product.ManagesStock,
             totalQuantity, cancellationToken);
         var price = await ResolvePriceAsync(
             connection, transaction, state.BusinessId, state.WarehouseId, state.CustomerId,
@@ -199,7 +199,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
             .Where(candidate => candidate.ProductId == line.ProductId && candidate.LineId != lineId)
             .Sum(candidate => candidate.Quantity) + quantity;
         await DemandInventoryAsync(
-            connection, transaction, state, line.ProductId,
+            connection, transaction, state, line.ProductId, product.ManagesStock,
             totalQuantity, cancellationToken);
         var price = await ResolvePriceAsync(
             connection, transaction, state.BusinessId, state.WarehouseId, state.CustomerId,
@@ -1008,10 +1008,11 @@ public sealed partial class SqlOnlineSalesDraftStore(
         SqlTransaction transaction,
         DraftState state,
         Guid productId,
+        bool managesStock,
         decimal requestedQuantity,
         CancellationToken ct)
     {
-        if (state.WarehouseAllowsNegativeStock) return;
+        if (!managesStock || state.WarehouseAllowsNegativeStock) return;
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """

@@ -292,8 +292,10 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         }
         Assert.Equal("Uncounted", Assert.Single(reconciliation.Products,
             product => product.ProductId == originalUncounted).Status);
-        Assert.Equal("Uncounted", Assert.Single(reconciliation.Products,
-            product => product.ProductId == addedAfterStart).Status);
+        var addedProduct = Assert.Single(reconciliation.Products,
+            product => product.ProductId == addedAfterStart);
+        Assert.Equal("Uncounted", addedProduct.Status);
+        Assert.Equal(0m, addedProduct.ProposedQuantity);
         await ClosePhysicalCountForTestAsync(countId);
     }
 
@@ -377,7 +379,8 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         }
         Assert.Equal(11m, Assert.Single(reconciliation.Products, product => product.ProductId == first).ProposedQuantity);
         Assert.Equal(22m, Assert.Single(reconciliation.Products, product => product.ProductId == second).ProposedQuantity);
-        Assert.DoesNotContain(reconciliation.Products, product => product.Status == "Uncounted");
+        Assert.All(reconciliation.Products.Where(product => product.Status == "Uncounted"),
+            product => Assert.Equal(0m, product.ProposedQuantity));
 
         await ConfirmAdjustmentAsync(client, new(
             Guid.NewGuid(), fixture.BusinessId, fixture.WarehouseId, occurred.AddMinutes(5),
@@ -412,7 +415,7 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             var completed = await client.GetFromJsonAsync<InventoryPhysicalCountDetail>(
                 $"/api/commerce/v1/inventory/physical-counts/{countId:D}");
             Assert.NotNull(completed);
-            Assert.Equal("Closed", completed.Status);
+            Assert.Equal("Reconciling", completed.Status);
         }
         finally
         {
@@ -423,6 +426,7 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
         Assert.Equal(14m, (await BalanceAsync(fixture.WarehouseId, first)).Quantity);
         Assert.Equal(22m, (await BalanceAsync(fixture.WarehouseId, second)).Quantity);
         Assert.Equal(2, await CountAsync("InventoryMovements", finalOperationId));
+        await ClosePhysicalCountForTestAsync(countId);
     }
 
     [Fact]
@@ -472,8 +476,10 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             reconciliation = Assert.IsType<InventoryReconciliationDetail>(
                 await response.Content.ReadFromJsonAsync<InventoryReconciliationDetail>());
         }
-        Assert.Equal("Uncounted", Assert.Single(reconciliation.Products,
-            product => product.ProductId == uncountedProduct).Status);
+        var uncounted = reconciliation.Products.Where(product => product.Status == "Uncounted").ToArray();
+        Assert.Contains(uncounted, product => product.ProductId == uncountedProduct);
+        Assert.Contains(uncounted, product => product.ProductId == fixture.ProductId);
+        Assert.All(uncounted, product => Assert.Equal(0m, product.ProposedQuantity));
 
         var pendingDraftId = Guid.NewGuid();
         using (var response = await client.PostAsJsonAsync(
@@ -485,9 +491,10 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             var detail = Assert.IsType<InventoryPhysicalCountDetail>(
                 await response.Content.ReadFromJsonAsync<InventoryPhysicalCountDetail>());
             var pendingDraft = Assert.Single(detail.Drafts, draft => draft.DraftId == pendingDraftId);
-            var line = Assert.Single(pendingDraft.Lines);
-            Assert.Equal(uncountedProduct, line.ProductId);
-            Assert.Null(line.InitialQuantity);
+            Assert.Equal(uncounted.Length, pendingDraft.Lines.Count);
+            Assert.Contains(pendingDraft.Lines, line => line.ProductId == uncountedProduct);
+            Assert.Contains(pendingDraft.Lines, line => line.ProductId == fixture.ProductId);
+            Assert.All(pendingDraft.Lines, line => Assert.Null(line.InitialQuantity));
         }
 
         using (var response = await client.PostAsJsonAsync(

@@ -68,6 +68,8 @@
     "src/services/pos/pos-workspace-selection.test.ts",
     "src/services/orders/pos-order-update-lines.ts",
     "src/services/orders/pos-order-update-lines.test.ts",
+    "src/services/orders/order-http-error.ts",
+    "src/services/orders/order-http-error.test.ts",
     "src/lib/product-pricing-calculator.ts",
     "src/lib/product-pricing-calculator.test.ts",
     "src/lib/pricing-publication-draft.ts",

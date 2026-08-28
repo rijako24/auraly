@@ -83,6 +83,15 @@ La web usa JWT de usuario. POS Edge usa identidad del dispositivo y además resu
 - modo compacto dentro del POS;
 - expansión a espacio completo sin abandonar la venta.
 
+El perfil operativo de vendedor ruta consume la misma consulta canónica desde
+la pestaña `Pedidos` de su recorrido diario. La vista filtra por bodega, usuario
+autenticado y límites UTC del día operativo, y permite abrir el mismo detalle de
+líneas sin navegar fuera del recorrido. Los atributos heredados de un pedido se
+leen únicamente cuando contienen JSON válido; una carga histórica malformada no
+puede derribar ni la lista ni el detalle. El cliente web sólo presenta mensajes
+de problema JSON controlados y nunca imprime una página HTML de error dentro de
+la interfaz.
+
 ## No incluido en esta rebanada
 
 - edición comercial completa del pedido;

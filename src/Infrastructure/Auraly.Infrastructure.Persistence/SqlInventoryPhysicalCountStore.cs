@@ -367,12 +367,10 @@ public sealed class SqlInventoryPhysicalCountStore(
                 UPDATE reconciliation SET
                   CountedProductCount=(SELECT COUNT(DISTINCT line.ProductId) FROM dbo.InventoryPhysicalCountReconciliationDrafts selected INNER JOIN dbo.InventoryPhysicalCountLines line ON line.InventoryPhysicalCountListId=selected.InventoryPhysicalCountListId WHERE selected.InventoryPhysicalCountReconciliationId=@ReconciliationId AND line.PreCountQuantity IS NOT NULL),
                   UncountedProductCount=(SELECT COUNT(*) FROM (
-                    SELECT line.ProductId FROM dbo.InventoryPhysicalCountLines line WHERE line.InventoryPhysicalCountId=@CountId GROUP BY line.ProductId
-                    UNION
                     SELECT product.ProductId FROM dbo.InventoryPhysicalCounts countHeader
                     INNER JOIN dbo.Products product ON product.BusinessId=countHeader.BusinessId AND product.IsActive=1 AND product.ManageStock=1
                     LEFT JOIN dbo.ProductLinks link ON link.BusinessId=product.BusinessId AND link.ChildProductId=product.ProductId AND link.SharesInventory=1 AND link.IsActive=1
-                    WHERE countHeader.InventoryPhysicalCountId=@CountId AND countHeader.ScopeType=N'General' AND link.ProductLinkId IS NULL
+                    WHERE countHeader.InventoryPhysicalCountId=@CountId AND link.ProductLinkId IS NULL
                   ) scope WHERE NOT EXISTS(SELECT 1 FROM dbo.InventoryPhysicalCountReconciliationDrafts selected INNER JOIN dbo.InventoryPhysicalCountLines line ON line.InventoryPhysicalCountListId=selected.InventoryPhysicalCountListId WHERE selected.InventoryPhysicalCountReconciliationId=@ReconciliationId AND line.ProductId=scope.ProductId AND line.PreCountQuantity IS NOT NULL))
                 FROM dbo.InventoryPhysicalCountReconciliations reconciliation WHERE reconciliation.InventoryPhysicalCountReconciliationId=@ReconciliationId;
                 """;
@@ -419,7 +417,7 @@ public sealed class SqlInventoryPhysicalCountStore(
               FROM dbo.InventoryPhysicalCounts countHeader
               INNER JOIN dbo.Products product ON product.BusinessId=countHeader.BusinessId AND product.IsActive=1 AND product.ManageStock=1
               LEFT JOIN dbo.ProductLinks link ON link.BusinessId=product.BusinessId AND link.ChildProductId=product.ProductId AND link.SharesInventory=1 AND link.IsActive=1
-              WHERE countHeader.InventoryPhysicalCountId=@CountId AND countHeader.ScopeType=N'General' AND link.ProductLinkId IS NULL
+              WHERE countHeader.InventoryPhysicalCountId=@CountId AND link.ProductLinkId IS NULL
                 AND NOT EXISTS(SELECT 1 FROM dbo.InventoryPhysicalCountLines existing WHERE existing.InventoryPhysicalCountId=@CountId AND existing.ProductId=product.ProductId)
             )
             SELECT scope.ProductId,MAX(scope.ProductCodeSnapshot),MAX(scope.ProductNameSnapshot),
@@ -477,7 +475,7 @@ public sealed class SqlInventoryPhysicalCountStore(
                     FROM dbo.InventoryPhysicalCounts countHeader
                     INNER JOIN dbo.Products product ON product.BusinessId=countHeader.BusinessId AND product.IsActive=1 AND product.ManageStock=1
                     LEFT JOIN dbo.ProductLinks link ON link.BusinessId=product.BusinessId AND link.ChildProductId=product.ProductId AND link.SharesInventory=1 AND link.IsActive=1
-                    WHERE countHeader.InventoryPhysicalCountId=@CountId AND countHeader.ScopeType=N'General' AND link.ProductLinkId IS NULL
+                    WHERE countHeader.InventoryPhysicalCountId=@CountId AND link.ProductLinkId IS NULL
                       AND NOT EXISTS(SELECT 1 FROM dbo.InventoryPhysicalCountLines existing WHERE existing.InventoryPhysicalCountId=@CountId AND existing.ProductId=product.ProductId)
                   )
                   INSERT dbo.InventoryPhysicalCountLines(InventoryPhysicalCountId,InventoryPhysicalCountListId,ProductId,ProductCodeSnapshot,ProductNameSnapshot,SystemQuantityAtBase)
@@ -530,12 +528,10 @@ public sealed class SqlInventoryPhysicalCountStore(
                 FROM candidates candidate;
                 """:"""
                 SELECT scope.ProductId,CAST(0 AS DECIMAL(19,6)),CAST(0 AS DECIMAL(19,6)) FROM (
-                  SELECT line.ProductId FROM dbo.InventoryPhysicalCountLines line WHERE line.InventoryPhysicalCountId=@CountId GROUP BY line.ProductId
-                  UNION
                   SELECT product.ProductId FROM dbo.InventoryPhysicalCounts countHeader
                   INNER JOIN dbo.Products product ON product.BusinessId=countHeader.BusinessId AND product.IsActive=1 AND product.ManageStock=1
                   LEFT JOIN dbo.ProductLinks link ON link.BusinessId=product.BusinessId AND link.ChildProductId=product.ProductId AND link.SharesInventory=1 AND link.IsActive=1
-                  WHERE countHeader.InventoryPhysicalCountId=@CountId AND countHeader.ScopeType=N'General' AND link.ProductLinkId IS NULL
+                  WHERE countHeader.InventoryPhysicalCountId=@CountId AND link.ProductLinkId IS NULL
                 ) scope
                 WHERE NOT EXISTS(SELECT 1 FROM dbo.InventoryPhysicalCountReconciliationDrafts selected INNER JOIN dbo.InventoryPhysicalCountLines counted ON counted.InventoryPhysicalCountListId=selected.InventoryPhysicalCountListId WHERE selected.InventoryPhysicalCountReconciliationId=@ReconciliationId AND counted.ProductId=scope.ProductId AND counted.PreCountQuantity IS NOT NULL)
                 GROUP BY scope.ProductId;
@@ -557,7 +553,7 @@ public sealed class SqlInventoryPhysicalCountStore(
     private static InventoryReconciliationProduct BuildProduct(ProductState product,IReadOnlyList<SourceState> sourceStates)
     {
         var sources=sourceStates.Select(source=>new InventoryReconciliationSource(source.DraftId,source.DraftName,source.OwnerId,source.Initial,source.Verification,source.Verification??source.Initial)).ToArray();
-        var proposed=sources.Length==0?(decimal?)null:sources.Sum(source=>source.FinalQuantity);
+        var proposed=sources.Length==0?0m:sources.Sum(source=>source.FinalQuantity);
         return new(product.Id,product.Code,product.Name,sources.Length==0?"Uncounted":"Counted",proposed,product.SystemQuantity,product.UnitCost,product.AverageUnitCost,sources);
     }
 

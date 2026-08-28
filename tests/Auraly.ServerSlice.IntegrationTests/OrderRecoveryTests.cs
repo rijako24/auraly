@@ -11,6 +11,62 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class OrderRecoveryTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Seller_route_can_list_todays_orders_and_open_detail_with_legacy_non_json_attributes()
+    {
+        var orderId = Guid.NewGuid();
+        var orderNumber = $"PED-RUTA-{orderId:N}";
+        await ExecuteAsync(
+            """
+            INSERT dbo.Orders(
+              OrderId,BusinessId,Source,FulfillmentMode,Status,CustomerId,
+              WarehouseId,CapturedByUserId,CustomerNameSnapshot,Currency,
+              Subtotal,DiscountTotal,Total,CustomerConfirmed,
+              ExternalDocumentNumber,CustomAttributesJson,CreatedAt)
+            VALUES(
+              @OrderId,@BusinessId,1,0,3,NULL,
+              @WarehouseId,@UserId,N'Cliente de ruta',N'COP',
+              12500,0,12500,1,@OrderNumber,
+              N'<!doctype html><meta name="viewport" content="width=device-width"><h1>legacy</h1>',
+              SYSUTCDATETIME());
+
+            INSERT dbo.OrderItems(
+              OrderItemId,OrderId,BusinessId,ProductId,Sku,ProductCodeSnapshot,
+              ProductNameSnapshot,UnitCodeSnapshot,Quantity,UnitPrice,
+              DiscountAmount,LineTotal,CreatedAt)
+            VALUES(
+              NEWID(),@OrderId,@BusinessId,@ProductId,N'P-RUTA',N'P-RUTA',
+              N'Producto tomado en ruta',N'EA',1,12500,0,12500,SYSUTCDATETIME());
+            """,
+            new("@OrderId", orderId),
+            new("@BusinessId", fixture.BusinessId),
+            new("@WarehouseId", fixture.WarehouseId),
+            new("@UserId", fixture.UserId),
+            new("@OrderNumber", orderNumber),
+            new("@ProductId", fixture.ProductId));
+
+        using var client = fixture.CreateAdminClient(OrderPermissionCodes.Read);
+        using (var response = await client.GetAsync(
+                   $"/api/commerce/v1/orders?page=1&pageSize=100&source=1&warehouseId={fixture.WarehouseId:D}&onlyMine=true&createdFrom=2020-01-01T00:00:00Z&createdTo=2035-01-01T00:00:00Z"))
+        {
+            Assert.True(response.IsSuccessStatusCode,
+                $"La pestaña Pedidos respondió {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
+            Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+            var page = Assert.IsType<OrderPage>(await response.Content.ReadFromJsonAsync<OrderPage>());
+            Assert.Contains(page.Items, item => item.OrderId == orderId && item.OrderNumber == orderNumber);
+        }
+
+        using (var response = await client.GetAsync($"/api/commerce/v1/orders/{orderId:D}"))
+        {
+            Assert.True(response.IsSuccessStatusCode,
+                $"El detalle respondió {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
+            Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+            var detail = Assert.IsType<OrderDetail>(await response.Content.ReadFromJsonAsync<OrderDetail>());
+            Assert.Equal(orderId, detail.OrderId);
+            Assert.Equal("Producto tomado en ruta", Assert.Single(detail.Lines).ProductName);
+        }
+    }
+
+    [Fact]
     public async Task Recovered_order_update_preserves_price_discount_and_reserved_quantity()
     {
         var userId = Guid.NewGuid();

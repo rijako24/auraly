@@ -105,8 +105,12 @@ aportaron al producto, por ejemplo:
 
 `Borrador A: 3 + Borrador B: 5 = 8`.
 
-Un producto queda en `No contados` cuando pertenece al alcance del inventario y
-ningún borrador seleccionado aporta conteo inicial.
+Un producto queda en `No contados` cuando es un producto inventariable activo
+del negocio y ningún borrador seleccionado aporta conteo inicial. Esta consulta
+se hace contra todo el catálogo inventariable de la base de datos, sin limitarse
+al alcance con el que se creó el conteo ni a los productos que ya tenían saldo o
+líneas de captura. Los productos no contados se presentan con cantidad propuesta
+`0`.
 
 Ambas pestañas muestran existencia del sistema, diferencia y valorización. El
 usuario puede cambiar entre `Precio costo` y `Costo promedio`; los costos sólo
@@ -213,12 +217,15 @@ documento si se reintenta después de una respuesta perdida.
 11. Un producto repetido suma la cantidad final de todos los borradores elegidos y muestra cada borrador de origen.
 12. El resultado sólo tiene `Contados` y `No contados`.
 13. Guardar Contados crea un borrador poblado con cantidades consolidadas.
-14. Guardar No contados crea un borrador poblado con productos pendientes.
-15. Aplicar Contados produce un `StockCount` normal para esa sección.
-16. Aplicar No contados produce un `StockCount` normal con cantidades cero y exige confirmación explícita.
-17. Precio costo y costo promedio valorizan ambas pestañas.
-18. Los movimientos posteriores a la captura no se pierden al aplicar.
-19. El motor ordenado conserva autoridad exclusiva sobre saldos y kárdex.
+14. No contados incluye todos los productos inventariables activos del negocio
+    que no fueron contados, aunque no pertenecieran al alcance inicial, y los
+    presenta con cantidad propuesta cero.
+15. Guardar No contados crea un borrador poblado con productos pendientes.
+16. Aplicar Contados produce un `StockCount` normal para esa sección.
+17. Aplicar No contados produce un `StockCount` normal con cantidades cero y exige confirmación explícita.
+18. Precio costo y costo promedio valorizan ambas pestañas.
+19. Los movimientos posteriores a la captura no se pierden al aplicar.
+20. El motor ordenado conserva autoridad exclusiva sobre saldos y kárdex.
 
 ## Referencia Xion
 

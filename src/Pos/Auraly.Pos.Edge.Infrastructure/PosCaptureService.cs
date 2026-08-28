@@ -47,6 +47,9 @@ public sealed class PosCaptureService(
         var issues = new List<OnlineSalesInventoryIssue>();
         foreach (var group in draft.Lines.GroupBy(line => line.ProductId))
         {
+            var product = await catalog.GetByProductIdAsync(group.Key.Value, cancellationToken)
+                ?? throw new KeyNotFoundException("The product does not exist in the local catalog.");
+            if (!product.ManagesStock) continue;
             InventoryAvailabilityResponse availabilityResult;
             try
             {
@@ -98,6 +101,7 @@ public sealed class PosCaptureService(
             captured.Product.ProductId,
             scope.WarehouseId.Value,
             totalQuantity,
+            captured.Product.ManagesStock,
             warehouseAllowsNegativeStock,
             operationId,
             cancellationToken);
@@ -160,6 +164,7 @@ public sealed class PosCaptureService(
             line.ProductId.Value,
             current.Scope.WarehouseId.Value,
             totalQuantity,
+            product.ManagesStock,
             warehouseAllowsNegativeStock,
             operationId,
             cancellationToken);
@@ -219,11 +224,12 @@ public sealed class PosCaptureService(
         Guid productId,
         Guid warehouseId,
         decimal quantity,
+        bool managesStock,
         bool warehouseAllowsNegativeStock,
         Guid operationId,
         CancellationToken ct)
     {
-        if (warehouseAllowsNegativeStock)
+        if (!managesStock || warehouseAllowsNegativeStock)
             return (PosCaptureStatus.Added, null);
         try
         {

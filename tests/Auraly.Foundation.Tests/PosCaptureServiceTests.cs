@@ -149,8 +149,34 @@ public sealed class PosCaptureServiceTests
         });
     }
 
+    [Fact]
+    public async Task Product_that_does_not_manage_stock_never_queries_or_blocks_inventory()
+    {
+        await WithServiceAsync(async (service, _, scope, _, customerId, availability) =>
+        {
+            availability.Failure = new HttpRequestException("Inventory must not be queried.");
+            var captured = await service.CaptureAsync(
+                "770123", scope, customerId, false, Guid.NewGuid());
+            var line = Assert.Single(captured.Draft!.Lines);
+
+            var changed = await service.ChangeQuantityAsync(
+                captured.Draft.DraftId, line.LineId, 999_999m, false, Guid.NewGuid());
+            var validation = await service.ValidateDraftInventoryAsync(
+                captured.Draft.DraftId, false, Guid.NewGuid());
+
+            Assert.True(captured.Added);
+            Assert.True(changed.Added);
+            Assert.Equal(999_999m, Assert.Single(changed.Draft!.Lines).Quantity);
+            Assert.True(validation.WasValidated);
+            Assert.True(validation.IsValid);
+            Assert.Empty(validation.Issues);
+            Assert.Empty(availability.Requests);
+        }, managesStock: false);
+    }
+
     private static async Task WithServiceAsync(
-        Func<PosCaptureService, PosDraftStore, PosDraftScope, Guid, Guid, RecordingAvailabilityClient, Task> test)
+        Func<PosCaptureService, PosDraftStore, PosDraftScope, Guid, Guid, RecordingAvailabilityClient, Task> test,
+        bool managesStock = true)
     {
         var path = Path.Combine(Path.GetTempPath(), $"auraly-capture-{Guid.NewGuid():N}.db");
         try
@@ -160,7 +186,9 @@ public sealed class PosCaptureServiceTests
             var productId = Guid.NewGuid();
             var item = new PosCatalogItem(
                 productId, "P-1", "REF-1", "Product", "EA", "VAT19", 19m,
-                100m, "COP", true, null, ["770123"], []);
+                100m, "COP", IsActive: true, IsWeighable: false,
+                AllowsFractionalSale: false, Scale: null, Barcodes: ["770123"],
+                Identifiers: [], UnitCost: 0m, ManagesStock: managesStock);
             var sessionId = Guid.NewGuid();
             var items = new[] { item };
             var hash = Convert.ToHexString(

@@ -1,4 +1,5 @@
 import { fetchWithSessionRetry } from "@/services/api/client";
+import { orderHttpError } from "@/services/orders/order-http-error";
 
 export type CommerceOrderClaim = {
   claimId: string;
@@ -225,19 +226,7 @@ async function orderRequest<T>(
     },
   });
   if (!response.ok) {
-    const raw = await response.text();
-    let detail = raw || response.statusText;
-    try {
-      const problem = JSON.parse(raw) as {
-        detail?: string;
-        message?: string;
-        title?: string;
-      };
-      detail = problem.detail || problem.message || problem.title || detail;
-    } catch {
-      // Preserve plain server text.
-    }
-    throw new Error(detail);
+    throw await orderHttpError(response);
   }
   return (await response.json()) as T;
 }

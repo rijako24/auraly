@@ -297,6 +297,61 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Online_capture_does_not_validate_inventory_for_non_stock_products()
+    {
+        var userId = Guid.NewGuid();
+        await ExecuteAsync(
+            """
+            INSERT dbo.AppUsers(
+              UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,FirstName,LastName,
+              IsActive,CreatedAt)
+            VALUES(
+              @UserId,@TenantId,@Username,@NormalizedUsername,
+              CONCAT(@Username,N'@test.local'),UPPER(CONCAT(@Username,N'@test.local')),N'Venta',N'Sin inventario',
+              1,SYSDATETIMEOFFSET());
+            UPDATE dbo.Warehouses SET AllowNegativeStockSales=0 WHERE WarehouseId=@WarehouseId;
+            UPDATE dbo.Products SET ManageStock=0 WHERE ProductId=@ProductId;
+            """,
+            new("@UserId", userId),
+            new("@TenantId", fixture.TenantId),
+            new("@Username", $"no-stock-{userId:N}"),
+            new("@NormalizedUsername", $"NO-STOCK-{userId:N}".ToUpperInvariant()),
+            new("@WarehouseId", fixture.WarehouseId),
+            new("@ProductId", fixture.ProductId));
+        try
+        {
+            using var client = fixture.CreateUserClient(
+                userId, CommercePermissionCodes.SalesCreate, WorkSessionPermissionCodes.Open);
+            var workSession = await fixture.OpenWorkSessionAsync(client);
+            var draft = await OpenAsync(client, workSession.WorkSessionId);
+            var captured = await MutateAsync<OnlineSalesDraft>(
+                client,
+                HttpMethod.Post,
+                $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/items",
+                new AddOnlineSalesDraftItemRequest("P-E2E", 999_999m, draft.Version));
+            var line = Assert.Single(captured.Lines);
+            Assert.Equal(999_999m, line.Quantity);
+
+            var changed = await MutateAsync<OnlineSalesDraft>(
+                client,
+                HttpMethod.Put,
+                $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/lines/{line.LineId:D}/quantity",
+                new ChangeOnlineSalesDraftQuantityRequest(1_000_000m, captured.Version));
+            Assert.Equal(1_000_000m, Assert.Single(changed.Lines).Quantity);
+        }
+        finally
+        {
+            await ExecuteAsync(
+                """
+                UPDATE dbo.Products SET ManageStock=1 WHERE ProductId=@ProductId;
+                UPDATE dbo.Warehouses SET AllowNegativeStockSales=1 WHERE WarehouseId=@WarehouseId;
+                """,
+                new("@ProductId", fixture.ProductId),
+                new("@WarehouseId", fixture.WarehouseId));
+        }
+    }
+
+    [Fact]
     public async Task Online_capture_allows_decimals_only_for_fractional_products()
     {
         var userId = Guid.NewGuid();
