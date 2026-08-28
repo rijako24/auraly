@@ -346,7 +346,11 @@ export class OnlinePosClient implements PosClient {
     // Online mode reads authoritative server data and has no local catalog to synchronize.
   }
   synchronizationEvents(take = 100) {
-    return this.localEdge().synchronizationEvents(take);
+    void take;
+    // Online sales use authoritative server data and do not run the local
+    // synchronization pipeline. Edge events become available after entering
+    // the enrolled/offline workspace with its locally authenticated user.
+    return Promise.resolve([]);
   }
   openCashDrawer() {
     return this.localEdge().openCashDrawer();

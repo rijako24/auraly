@@ -31,6 +31,7 @@
     "src/app/(pos)/pos/pos-capture-presentation.test.ts",
     "src/app/(pos)/pos/pos-barcode-capture.ts",
     "src/app/(pos)/pos/pos-barcode-capture.test.ts",
+    "src/app/(pos)/pos/pos-quantity-validation.ts",
     "src/app/(pos)/pos/pos-desktop-update-protocol.ts",
     "src/app/(pos)/pos/pos-desktop-update-protocol.test.ts",
     "src/app/(pos)/pos/pos-function-shortcut.ts",

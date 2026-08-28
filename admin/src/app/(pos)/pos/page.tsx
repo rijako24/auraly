@@ -106,6 +106,7 @@ import { canRequestOrderSave } from "./pos-order-save-availability";
 import { capturedLineAfterAddition } from "./pos-capture-presentation";
 import { capturePosFunctionShortcut } from "./pos-function-shortcut";
 import { parsePosBarcodeCapture } from "./pos-barcode-capture";
+import { acceptsPosQuantityDraft, blocksPosQuantityKey, validatePosQuantity } from "./pos-quantity-validation";
 import { useAuthStore } from "@/stores/auth-store";
 
 
@@ -1119,6 +1120,7 @@ export default function PosPage() {
               availableQuantity: result.availability.availableQuantity,
               maximumLineQuantity: Math.max(0, result.availability.availableQuantity - otherQuantity),
               allowsFractionalSale: confirmed.allowsFractionalSale,
+              managesInventory: true,
             });
           }
         }
@@ -2633,14 +2635,14 @@ edgeCapable={edgeEnrollmentRequired}
                           value={quantityDrafts[line.lineId] ?? String(line.quantity)}
                           onChange={(event) => {
                             const value = event.target.value;
-                            if (!line.allowsFractionalSale && value !== "" && !/^\d+$/.test(value)) return;
+                            if (!acceptsPosQuantityDraft(value, { allowsFractionalSale: line.allowsFractionalSale, managesInventory: false })) return;
                             setQuantityDrafts((current) => ({
-                              ...current, [line.lineId]: value,
+                              ...current, [line.lineId]: value.replace(",", "."),
                             }));
                           }}
                           onFocus={() => setSelectedLineId(line.lineId)}
                           onKeyDown={(event) => {
-                            if (!line.allowsFractionalSale && [".", ",", "e", "E", "+", "-"].includes(event.key)) {
+                            if (blocksPosQuantityKey(event.key, { allowsFractionalSale: line.allowsFractionalSale, managesInventory: false })) {
                               event.preventDefault();
                               return;
                             }
@@ -2672,18 +2674,18 @@ edgeCapable={edgeEnrollmentRequired}
                               skipQuantityBlur.current = null;
                               return;
                             }
-                            const quantity = event.currentTarget.valueAsNumber;
-                            if (!Number.isFinite(quantity) || quantity <= 0) {
+                            const validation = validatePosQuantity(event.currentTarget.value, { allowsFractionalSale: line.allowsFractionalSale, managesInventory: false });
+                            if (!validation.valid && validation.reason !== "whole-units") {
                               setQuantityDrafts((current) => ({
                                 ...current, [line.lineId]: String(line.quantity),
                               }));
                               focusScanner();
-                            } else if (!line.allowsFractionalSale && !Number.isInteger(quantity)) {
+                            } else if (!validation.valid) {
                               setQuantityDrafts((current) => ({ ...current, [line.lineId]: String(line.quantity) }));
                               setError(`${line.description} solo se vende en unidades completas.`);
                               focusScanner();
-                            } else if (quantity !== line.quantity) {
-                              void changeQuantity(line.lineId, quantity);
+                            } else if (validation.quantity !== line.quantity) {
+                              void changeQuantity(line.lineId, validation.quantity);
                             } else {
                               focusScanner();
                             }

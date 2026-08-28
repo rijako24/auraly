@@ -10,6 +10,7 @@ using Auraly.Domain.Authorization;
 using Auraly.Fiscal.Core;
 using Auraly.Pos.Edge.Infrastructure;
 using Microsoft.Data.Sqlite;
+using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -74,6 +75,18 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
             var reopened = new PosEdgeSaleStore(connectionString, confirmation);
             await reopened.InitializeAsync();
             Assert.Equal(2, (await reopened.GetPendingOutboxAsync()).Count);
+
+            await using (var server = new SqlConnection(fixture.ConnectionString))
+            {
+                await server.OpenAsync();
+                await using var exhaust = new SqlCommand("""
+                    UPDATE dbo.FiscalSeries
+                    SET IsActive=0,AllocationState=N'Exhausted'
+                    WHERE SeriesId=@SeriesId;
+                    """, server);
+                exhaust.Parameters.AddWithValue("@SeriesId", fixture.SeriesId);
+                Assert.Equal(1, await exhaust.ExecuteNonQueryAsync());
+            }
 
             using var httpClient = fixture.CreateClient();
             var realClient = new HttpPosSaleUploadClient(

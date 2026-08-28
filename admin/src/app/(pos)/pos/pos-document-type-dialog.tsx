@@ -84,20 +84,18 @@ export function PosDocumentTypeDialog({
     }
     setCheckingFiscal(true);
     try {
+      if (edgeMode) {
+        if (edgeFiscalReady) await onSelect(next);
+        else onFiscalEnrollmentRequired();
+        return;
+      }
       const state = await loadFiscalState();
-      const serverReady = edgeMode
-        ? state.isReadyForEnrollment
-        : state.isReadyForOnlineSales;
-      if (!serverReady) {
+      if (!state.isReadyForOnlineSales) {
         if (!canManageFiscal) {
           setFiscalError("La factura electrónica no está lista en esta sede. Solicita a un usuario con permiso de configuración fiscal que complete la resolución; esta venta permanecerá guardada.");
           return;
         }
         setConfiguringInvoice(true);
-        return;
-      }
-      if (edgeMode && !edgeFiscalReady) {
-        onFiscalEnrollmentRequired();
         return;
       }
       await onSelect(next);

@@ -23,7 +23,13 @@ public sealed record PosEdgeSeriesProvision(
     long RangeEnd,
     DateOnly ValidUntil,
     Guid FiscalAuthorizationId = default,
-    DateOnly? ValidFrom = null);
+    DateOnly? ValidFrom = null,
+    string AllocationState = "Active",
+    long? AuthorizationRangeStart = null,
+    long? AuthorizationRangeEnd = null);
+
+public sealed record PosEdgeFiscalCursorState(
+    Guid SeriesId, long NextConsecutive, long RangeEnd);
 
 public sealed record PosEdgeDocumentSeriesProvision(
     Guid SeriesId,
@@ -84,6 +90,7 @@ public sealed record PosEdgeIssueResult(
     decimal Total,
     Guid OutboxMessageId,
     bool WasAlreadyIssued,
+    [property: JsonIgnore] bool FiscalStandbyPromoted,
     [property: JsonIgnore] PosSaleUploadRequest Upload);
 
 public sealed record PosEdgeOutboxItem(
@@ -171,37 +178,14 @@ public sealed class PosEdgeSaleStore
         }
 
         await using var context = new PosEdgeDbContext(_options);
-        var deviceIdText = provision.DeviceId.Value.ToString("D");
         var seriesIdText = provision.SeriesId.ToString("D");
         var current = await context.FiscalSeriesCursors
-            .FromSqlInterpolated($"SELECT * FROM FiscalSeriesCursors WHERE lower(DeviceId) = lower({deviceIdText})")
+            .FromSqlInterpolated($"SELECT * FROM FiscalSeriesCursors WHERE lower(SeriesId) = lower({seriesIdText})")
             .SingleOrDefaultAsync(cancellationToken);
-        if (current is not null && current.SeriesId != provision.SeriesId)
-        {
-            var today = DateOnly.FromDateTime(DateTime.Now);
-            if (current.NextConsecutive <= current.RangeEnd && today <= current.ValidUntil)
-                throw new InvalidOperationException(
-                    "El equipo todavía tiene una serie fiscal vigente con numeración disponible.");
-            context.FiscalSeriesCursors.Remove(current);
-            await context.SaveChangesAsync(cancellationToken);
-            current = null;
-        }
 
         if (current is null)
         {
-            current = await context.FiscalSeriesCursors
-                .FromSqlInterpolated($"SELECT * FROM FiscalSeriesCursors WHERE lower(SeriesId) = lower({seriesIdText})")
-                .SingleOrDefaultAsync(cancellationToken);
-            if (current is not null)
-            {
-                current.DeviceId = provision.DeviceId.Value;
-                await context.SaveChangesAsync(cancellationToken);
-            }
-        }
-
-        if (current is null)
-        {
-            context.FiscalSeriesCursors.Add(new FiscalSeriesCursorRow
+            current = new FiscalSeriesCursorRow
             {
                 SeriesId = provision.SeriesId,
                 DeviceId = provision.DeviceId.Value,
@@ -215,14 +199,20 @@ public sealed class PosEdgeSaleStore
                 RangeEnd = provision.RangeEnd,
                 ValidFrom = provision.ValidFrom ?? DateOnly.MinValue,
                 ValidUntil = provision.ValidUntil,
-                IsActive = true
-            });
-            await context.SaveChangesAsync(cancellationToken);
+                IsActive = string.Equals(provision.AllocationState, "Active", StringComparison.Ordinal),
+                AllocationState = provision.AllocationState,
+                AuthorizationRangeStart = provision.AuthorizationRangeStart ?? provision.RangeStart,
+                AuthorizationRangeEnd = provision.AuthorizationRangeEnd ?? provision.RangeEnd
+            };
+            context.FiscalSeriesCursors.Add(current);
         }
         else
         {
             if (current.RangeStart != provision.RangeStart || current.RangeEnd != provision.RangeEnd)
                 throw new InvalidOperationException("The provisioned fiscal range differs from the durable local series.");
+            var wasExhausted = string.Equals(
+                current.AllocationState, "Exhausted", StringComparison.Ordinal);
+            current.DeviceId = provision.DeviceId.Value;
             await BackfillFiscalAuthorizationAsync(
                 context,
                 provision.SeriesId,
@@ -230,7 +220,49 @@ public sealed class PosEdgeSaleStore
                     ? provision.SeriesId
                     : provision.FiscalAuthorizationId,
                 cancellationToken);
+            current.AuthorizationRangeStart = provision.AuthorizationRangeStart ?? provision.RangeStart;
+            current.AuthorizationRangeEnd = provision.AuthorizationRangeEnd ?? provision.RangeEnd;
+            if (!wasExhausted)
+            {
+                current.AllocationState = provision.AllocationState;
+                current.IsActive = string.Equals(provision.AllocationState, "Active", StringComparison.Ordinal);
+            }
         }
+        var newerActiveExists = await context.FiscalSeriesCursors.AnyAsync(
+            row => row.DeviceId == provision.DeviceId.Value && row.SeriesId != provision.SeriesId &&
+                   row.IsActive && row.RangeStart > provision.RangeStart,
+            cancellationToken);
+        if (newerActiveExists)
+        {
+            current.IsActive = false;
+            current.AllocationState = "Exhausted";
+        }
+        else if (current.IsActive && string.Equals(
+                     provision.AllocationState, "Active", StringComparison.Ordinal))
+        {
+            foreach (var other in await context.FiscalSeriesCursors
+                         .Where(row => row.DeviceId == provision.DeviceId.Value && row.SeriesId != provision.SeriesId && row.IsActive)
+                         .ToListAsync(cancellationToken))
+            {
+                other.IsActive = false;
+                other.AllocationState = other.RangeStart < current.RangeStart
+                    ? "Exhausted"
+                    : "Standby";
+            }
+        }
+        await context.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<PosEdgeFiscalCursorState?> GetFiscalCursorStateAsync(
+        DeviceId deviceId, CancellationToken cancellationToken = default)
+    {
+        await using var context = new PosEdgeDbContext(_options);
+        var cursor = await context.FiscalSeriesCursors.AsNoTracking()
+            .Where(row => row.DeviceId == deviceId.Value && row.IsActive)
+            .OrderBy(row => row.RangeStart)
+            .FirstOrDefaultAsync(cancellationToken);
+        return cursor is null ? null : new PosEdgeFiscalCursorState(
+            cursor.SeriesId, cursor.NextConsecutive, cursor.RangeEnd);
     }
 
     public async Task ProvisionDocumentSeriesAsync(
@@ -350,13 +382,19 @@ public sealed class PosEdgeSaleStore
         CancellationToken cancellationToken = default)
     {
         await using var context = new PosEdgeDbContext(_options);
-        var cursor = await context.FiscalSeriesCursors
-            .AsNoTracking()
-            .SingleAsync(row => row.DeviceId == deviceId.Value, cancellationToken);
         var issueDate = DateOnly.FromDateTime(issuedAt.Date);
-        var available = cursor.IsActive &&
-                        issueDate >= cursor.ValidFrom &&
-                        issueDate <= cursor.ValidUntil &&
+        var cursors = await context.FiscalSeriesCursors.AsNoTracking()
+            .Where(row => row.DeviceId == deviceId.Value)
+            .OrderByDescending(row => row.IsActive)
+            .ThenBy(row => row.RangeStart)
+            .ToListAsync(cancellationToken);
+        var cursor = cursors.FirstOrDefault(row =>
+                         (row.IsActive || row.AllocationState == "Standby") &&
+                         issueDate >= row.ValidFrom && issueDate <= row.ValidUntil &&
+                         row.NextConsecutive <= row.RangeEnd)
+                     ?? cursors.First();
+        var available = (cursor.IsActive || cursor.AllocationState == "Standby") &&
+                        issueDate >= cursor.ValidFrom && issueDate <= cursor.ValidUntil &&
                         cursor.NextConsecutive <= cursor.RangeEnd;
         return new PosFiscalNumberPreview(
             cursor.SeriesId,
@@ -393,6 +431,7 @@ public sealed class PosEdgeSaleStore
                 existing.Total,
                 existingOutbox.MessageId,
                 WasAlreadyIssued: true,
+                FiscalStandbyPromoted: false,
                 existingUpload);
         }
 
@@ -426,6 +465,7 @@ public sealed class PosEdgeSaleStore
         FiscalNumberAssignment? fiscalNumber = null;
         ImmutableFiscalSnapshot? snapshot = null;
         Guid? fiscalAuthorizationId = null;
+        var fiscalStandbyPromoted = false;
         SalesInvoice invoice;
         Guid outboxMessageId;
         string outboxType;
@@ -441,16 +481,37 @@ public sealed class PosEdgeSaleStore
             var technicalKey = command.TechnicalKey;
             var environment = command.Environment.Value;
             var qrValidationUrl = command.QrValidationUrl;
-            var cursor = await context.FiscalSeriesCursors.SingleAsync(
-                row => row.DeviceId == deviceId,
-                cancellationToken);
+            var cursor = await context.FiscalSeriesCursors
+                .Where(row => row.DeviceId == deviceId && row.IsActive)
+                .OrderBy(row => row.RangeStart)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (cursor is null || cursor.NextConsecutive > cursor.RangeEnd)
+            {
+                if (cursor is not null)
+                {
+                    cursor.IsActive = false;
+                    cursor.AllocationState = "Exhausted";
+                }
+                cursor = await context.FiscalSeriesCursors
+                    .Where(row => row.DeviceId == deviceId && !row.IsActive &&
+                                  row.AllocationState == "Standby" &&
+                                  row.NextConsecutive <= row.RangeEnd)
+                    .OrderBy(row => row.RangeStart)
+                    .FirstOrDefaultAsync(cancellationToken);
+                if (cursor is not null)
+                {
+                    cursor.IsActive = true;
+                    cursor.AllocationState = "Active";
+                    fiscalStandbyPromoted = true;
+                }
+            }
             var issueDate = DateOnly.FromDateTime(command.IssuedAt.Date);
-            if (!cursor.IsActive || issueDate < cursor.ValidFrom || issueDate > cursor.ValidUntil)
+            if (cursor is null || !cursor.IsActive || issueDate < cursor.ValidFrom || issueDate > cursor.ValidUntil)
                 throw new InvalidOperationException(
                     "La resolución fiscal no está vigente para la fecha de emisión.");
             if (cursor.NextConsecutive > cursor.RangeEnd)
                 throw new InvalidOperationException(
-                    "La numeración DIAN asignada a esta caja está agotada. Un administrador debe asignar una nueva resolución antes de facturar electrónicamente.");
+                    "La numeración DIAN preparada para esta caja está agotada. Conecta el equipo para descargar el siguiente bloque autorizado.");
 
             ValidateUblSnapshot(command, cursor);
             var consecutive = cursor.NextConsecutive++;
@@ -533,6 +594,7 @@ public sealed class PosEdgeSaleStore
             invoice.PayableAmount,
             outboxMessageId,
             WasAlreadyIssued: false,
+            FiscalStandbyPromoted: fiscalStandbyPromoted,
             upload);
     }
 
@@ -1200,6 +1262,33 @@ public sealed class PosEdgeSaleStore
                 "ALTER TABLE FiscalSeriesCursors ADD COLUMN ValidFrom TEXT NOT NULL DEFAULT '0001-01-01';";
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
+        var additions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["AllocationState"] = "TEXT NOT NULL DEFAULT 'Active'",
+            ["AuthorizationRangeStart"] = "INTEGER NOT NULL DEFAULT 1",
+            ["AuthorizationRangeEnd"] = "INTEGER NOT NULL DEFAULT 1"
+        };
+        foreach (var addition in additions.Where(item => !columns.Contains(item.Key)))
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"ALTER TABLE FiscalSeriesCursors ADD COLUMN {addition.Key} {addition.Value};";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                DROP INDEX IF EXISTS IX_FiscalSeriesCursors_DeviceId;
+                CREATE INDEX IF NOT EXISTS IX_FiscalSeriesCursors_DeviceId_IsActive
+                    ON FiscalSeriesCursors(DeviceId,IsActive);
+                UPDATE FiscalSeriesCursors
+                SET AuthorizationRangeStart=RangeStart
+                WHERE AuthorizationRangeStart=1 AND RangeStart<>1;
+                UPDATE FiscalSeriesCursors
+                SET AuthorizationRangeEnd=RangeEnd
+                WHERE AuthorizationRangeEnd=1 AND RangeEnd<>1;
+                """;
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
     }
 
     private static async Task UpgradeOutboxAsync(
@@ -1315,8 +1404,8 @@ public sealed class PosEdgeSaleStore
             throw new InvalidOperationException("The UBL supplier or customer differs from the sale being issued.");
         if (snapshot.Authorization.Number != cursor.AuthorizationNumber ||
             snapshot.Authorization.Prefix != cursor.Prefix ||
-            snapshot.Authorization.RangeStart != cursor.RangeStart ||
-            snapshot.Authorization.RangeEnd != cursor.RangeEnd ||
+            snapshot.Authorization.RangeStart != cursor.AuthorizationRangeStart ||
+            snapshot.Authorization.RangeEnd != cursor.AuthorizationRangeEnd ||
             snapshot.Authorization.ValidUntil != cursor.ValidUntil)
             throw new InvalidOperationException("The UBL authorization differs from the provisioned fiscal series.");
         if (snapshot.Lines.Count != command.Lines.Count ||

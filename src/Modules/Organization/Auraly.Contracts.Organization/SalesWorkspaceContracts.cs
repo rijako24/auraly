@@ -70,7 +70,9 @@ public sealed record PosEnrollmentFiscalSeries(
     string TechnicalKey,
     string TechnicalKeyVersion,
     string QrValidationUrl,
-    DateOnly? ValidFrom = null);
+    DateOnly? ValidFrom = null,
+    long? AuthorizationRangeStart = null,
+    long? AuthorizationRangeEnd = null);
 
 public sealed record PosEnrollmentPackage(
     Guid DeviceId,

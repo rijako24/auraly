@@ -125,6 +125,10 @@ public sealed class PosEdgeEnrollmentStore(
                 fiscal.AuthorizationNumber;
             values["PosEdge:Fiscal:RangeStart"] = fiscal.RangeStart.ToString();
             values["PosEdge:Fiscal:RangeEnd"] = fiscal.RangeEnd.ToString();
+            values["PosEdge:Fiscal:AuthorizationRangeStart"] =
+                (fiscal.AuthorizationRangeStart ?? fiscal.RangeStart).ToString();
+            values["PosEdge:Fiscal:AuthorizationRangeEnd"] =
+                (fiscal.AuthorizationRangeEnd ?? fiscal.RangeEnd).ToString();
             values["PosEdge:Fiscal:ValidUntil"] =
                 fiscal.ValidUntil.ToString("yyyy-MM-dd");
             values["PosEdge:Fiscal:ValidFrom"] =

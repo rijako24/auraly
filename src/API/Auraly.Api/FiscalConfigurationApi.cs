@@ -29,7 +29,8 @@ public static class FiscalConfigurationApi
                 context.User.ToFiscalConfigurationUser(), businessId, request, ct)));
 
         endpoints.MapGet("/api/pos/v1/fiscal/provisioning", async (
-                HttpContext context, Guid businessId,
+                HttpContext context, Guid businessId, Guid? currentSeriesId,
+                long? nextConsecutive,
                 FiscalDeviceSeriesService service, CancellationToken ct) =>
             {
                 var tenantId = RequiredDeviceGuid(
@@ -37,8 +38,27 @@ public static class FiscalConfigurationApi
                 var deviceId = RequiredDeviceGuid(
                     context.User, PosAuthenticationDefaults.DeviceIdClaim);
                 var result = await service.GetProvisioningAsync(
-                    tenantId, businessId, deviceId, ct);
-                return result is null ? Results.NoContent() : Results.Ok(result);
+                    tenantId, businessId, deviceId, currentSeriesId,
+                    nextConsecutive, ct);
+                var active = result.FirstOrDefault(item => string.Equals(
+                    item.AllocationState, "Active", StringComparison.Ordinal));
+                return active is null ? Results.NoContent() : Results.Ok(active);
+            })
+            .RequireAuthorization("pos.synchronization");
+
+        endpoints.MapGet("/api/pos/v1/fiscal/provisioning-bundle", async (
+                HttpContext context, Guid businessId, Guid? currentSeriesId,
+                long? nextConsecutive,
+                FiscalDeviceSeriesService service, CancellationToken ct) =>
+            {
+                var tenantId = RequiredDeviceGuid(
+                    context.User, PosAuthenticationDefaults.TenantIdClaim);
+                var deviceId = RequiredDeviceGuid(
+                    context.User, PosAuthenticationDefaults.DeviceIdClaim);
+                var result = await service.GetProvisioningAsync(
+                    tenantId, businessId, deviceId, currentSeriesId,
+                    nextConsecutive, ct);
+                return result.Count == 0 ? Results.NoContent() : Results.Ok(result);
             })
             .RequireAuthorization("pos.synchronization");
 

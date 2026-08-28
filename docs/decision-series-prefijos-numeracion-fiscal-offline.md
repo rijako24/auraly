@@ -70,21 +70,31 @@ La clave técnica no llega a React, no se escribe en logs y se almacena cifrada
 en POS Edge. El certificado privado de firma permanece exclusivamente en el
 servidor o en su almacén seguro.
 
-### Regla del MVP para cajas offline
+### Regla para cajas offline
 
-Cada caja que pueda emitir facturas electrónicas sin conexión tiene una serie
-fiscal exclusiva. Dos cajas offline no comparten la misma serie ni el mismo
-cursor de consecutivos.
+La autorización DIAN pertenece a la empresa y no al equipo. El servidor conserva
+la serie central para ventas en línea y un único rango disponible para POS Edge.
+De ese rango asigna, dentro de una transacción serializable, bloques exclusivos y
+no solapados a cada dispositivo enrolado. Dos cajas nunca consumen el mismo
+bloque ni comparten un cursor local.
 
-La exclusividad evita depender de reservas distribuidas o de coordinación entre
-cajas desconectadas. La asignación por bloques queda fuera del MVP y requerirá
-una ADR posterior con reglas de reserva, expiración, recuperación y auditoría de
-rangos no consumidos.
+La política de tamaño se almacena en `fiscal.FiscalNumberingPolicies`; no se
+codifica en React ni se decide manualmente al enrolar. Cada dispositivo conserva
+un bloque activo y, cuando existe numeración autorizada, un bloque preparado. El
+servidor prepara ambos durante el enrolamiento y repone el preparado después de
+promoverlo, al iniciar o al recuperar conectividad. La consulta es
+idempotente: repetirla devuelve las mismas asignaciones y no consume otro rango.
 
-Una serie fiscal solo puede estar activa en una instalación POS Edge a la vez.
-El enrolamiento registra el dispositivo propietario. El cambio de dispositivo,
-la revocación o la reasignación exigen cerrar la asignación anterior y dejan
-traza auditable.
+Al agotar el bloque activo, POS Edge promueve el preparado en la misma transacción
+local que inicia la siguiente emisión. Los rangos asignados nunca se recuperan ni
+se entregan a otra caja, aunque un dispositivo se pierda, sea revocado o deje
+números sin consumir. Si no queda un bloque preparado y no hay conexión, la
+factura electrónica se bloquea de forma explícita; los comprobantes no fiscales
+conservan sus reglas propias.
+
+El estado de asignación (`Pool`, `Active`, `Standby`, `Exhausted`) es un catálogo
+cerrado persistido y auditado. El cambio de dispositivo o la revocación conserva
+la historia y nunca renumera documentos ya emitidos.
 
 ### Consumo del número
 
@@ -163,7 +173,8 @@ El proyecto SQL Database es el único dueño de la evolución del esquema. Debe
 garantizar:
 
 - unicidad del número fiscal por empresa, tipo, prefijo y consecutivo;
-- una sola asignación activa de serie fiscal por caja/dispositivo;
+- máximo un bloque activo y uno preparado por caja/dispositivo;
+- asignación serializable y no solapada desde un único rango disponible;
 - concurrencia optimista para cursores de series del servidor;
 - inmutabilidad lógica del snapshot fiscal emitido;
 - auditoría de consumo, revocación, agotamiento y reasignación.
@@ -183,13 +194,17 @@ No se permite `MAX(numero) + 1`.
   `FiscalIntegrityConflict`;
 - el documento duplicado se procesa una sola vez;
 - una caída durante sincronización reanuda sin renumerar.
+- tres cajas reciben bloques disjuntos aun cuando solicitan simultáneamente;
+- promover el bloque preparado reserva una sola vez su reemplazo;
+- reiniciar POS Edge conserva y promueve el bloque preparado sin conexión;
+- repetir la consulta de aprovisionamiento no reserva bloques adicionales.
 
 ## Decisiones desplazadas
 
 Esta ADR reemplaza cualquier interpretación histórica que permita:
 
 - calcular el número mediante `MAX + 1`;
-- compartir una misma serie entre cajas offline en el MVP;
+- compartir un mismo cursor o bloque entre cajas offline;
 - consumir números al guardar borradores;
 - reemplazar en el servidor el número emitido por POS Edge;
 - corregir el snapshot después de imprimir;

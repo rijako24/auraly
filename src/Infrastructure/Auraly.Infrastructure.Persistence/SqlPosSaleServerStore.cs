@@ -60,12 +60,12 @@ public sealed class SqlPosSaleServerStore(
               AND s.DocumentType=@DocumentType
               AND s.Prefix=@Prefix
               AND @Consecutive BETWEEN s.RangeStart AND s.RangeEnd
+              AND s.AllocationState IN(N'Active',N'Standby',N'Exhausted')
               AND a.AuthorizationNumber=@AuthorizationNumber
               AND a.SupplierTaxId=@SupplierTaxId
               AND a.Environment=@Environment
               AND CONVERT(date,@IssuedAt) BETWEEN a.ValidFrom AND a.ValidUntil
-              AND s.IsActive=1
-              AND a.IsActive=1;
+              ;
             """;
 
         var snapshot = request.FiscalSnapshot;

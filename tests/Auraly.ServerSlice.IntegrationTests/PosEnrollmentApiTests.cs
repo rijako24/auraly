@@ -40,7 +40,8 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         using var redeemResponse = await client.PostAsJsonAsync(
             "/api/pos/v1/enrollments/redeem",
             redeemRequest);
-        redeemResponse.EnsureSuccessStatusCode();
+        Assert.True(redeemResponse.IsSuccessStatusCode,
+            await redeemResponse.Content.ReadAsStringAsync());
         var package =
             await redeemResponse.Content.ReadFromJsonAsync<PosEnrollmentPackage>();
         Assert.NotNull(package);

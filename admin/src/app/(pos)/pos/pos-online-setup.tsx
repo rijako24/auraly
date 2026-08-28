@@ -5,7 +5,9 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { fiscalConfigurationApi, type FiscalResolutionConfiguration } from "@/services/api/fiscal-configuration";
 import type { PosSaleDocumentType } from "@/services/pos/pos-edge-client";
-import { fiscalConfigurationRequiredMessage } from "@/services/pos/pos-fiscal-guard";
+import {
+  fiscalLaunchReadinessError,
+} from "@/services/pos/pos-fiscal-guard";
 import { rememberedSalesWorkspaceKey, salesWorkspaceKey, type SalesWorkspaceOption } from "@/services/pos/online-pos-client";
 import { resolvePosWorkspaceSelection } from "@/services/pos/pos-workspace-selection";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -72,9 +74,9 @@ export function PosOnlineSetup({ options, loading, error, notice, tenantName, us
       if (documentType === "SalesInvoice") {
         const latest = await fiscalConfigurationApi.get(selected.businessId);
         setFiscal(latest);
-        const ready = mode === "enroll" ? latest.isReadyForEnrollment : latest.isReadyForOnlineSales;
-        if (!ready) {
-          setFiscalError(fiscalConfigurationRequiredMessage);
+        const readinessError = fiscalLaunchReadinessError(mode, latest);
+        if (readinessError) {
+          setFiscalError(readinessError);
           return;
         }
       }

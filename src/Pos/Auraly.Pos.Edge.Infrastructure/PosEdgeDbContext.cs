@@ -27,7 +27,7 @@ internal sealed class PosEdgeDbContext(DbContextOptions<PosEdgeDbContext> option
         {
             entity.ToTable("FiscalSeriesCursors");
             entity.HasKey(row => row.SeriesId);
-            entity.HasIndex(row => row.DeviceId).IsUnique();
+            entity.HasIndex(row => new { row.DeviceId, row.IsActive });
             entity.Property(row => row.Prefix).HasMaxLength(16);
             entity.Property(row => row.AuthorizationNumber).HasMaxLength(64);
         });
@@ -93,6 +93,9 @@ internal sealed class FiscalSeriesCursorRow
     public DateOnly ValidFrom { get; set; }
     public DateOnly ValidUntil { get; set; }
     public bool IsActive { get; set; }
+    public string AllocationState { get; set; } = "Active";
+    public long AuthorizationRangeStart { get; set; }
+    public long AuthorizationRangeEnd { get; set; }
 }
 
 internal sealed class IssuedSaleRow

@@ -169,9 +169,9 @@ export const fiscalConfigurationApi = {
   getDevices: (businessId: string) =>
     apiClient.get<FiscalDeviceSeriesWorkspace>(
       "/commerce/v1/fiscal/configuration/devices", { businessId }),
-  assignDeviceSeries: (businessId: string, deviceId: string, consecutiveCount: number) =>
+  assignDeviceSeries: (businessId: string, deviceId: string) =>
     apiClient.post<FiscalDeviceSeriesWorkspace>(
       `/commerce/v1/fiscal/configuration/devices/assign?businessId=${encodeURIComponent(businessId)}`,
-      { deviceId, consecutiveCount },
+      { deviceId },
     ),
 };

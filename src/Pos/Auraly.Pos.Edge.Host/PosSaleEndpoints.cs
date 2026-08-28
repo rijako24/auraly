@@ -182,6 +182,8 @@ internal static class PosSaleHostModule
                         request.DocumentType),
                     ct);
                 synchronization.Signal(PosSynchronizationTrigger.LocalOutbox);
+                if (result.IssuedSale.FiscalStandbyPromoted)
+                    synchronization.Signal(PosSynchronizationTrigger.FiscalProvisioning);
                 // The sale is already durably issued at this point. Every completed
                 // sale opens the local drawer, including offline sales. A disconnected
                 // drawer must not turn a successful sale into a 409.
@@ -265,7 +267,12 @@ internal static class PosSaleHostModule
                 RequiredLong(configuration, "PosEdge:Fiscal:RangeEnd"),
                 RequiredDate(configuration, "PosEdge:Fiscal:ValidUntil"),
                 RequiredGuid(configuration, "PosEdge:Fiscal:FiscalAuthorizationId"),
-                RequiredDate(configuration, "PosEdge:Fiscal:ValidFrom")));
+                RequiredDate(configuration, "PosEdge:Fiscal:ValidFrom"),
+                "Active",
+                OptionalLong(configuration, "PosEdge:Fiscal:AuthorizationRangeStart",
+                    RequiredLong(configuration, "PosEdge:Fiscal:RangeStart")),
+                OptionalLong(configuration, "PosEdge:Fiscal:AuthorizationRangeEnd",
+                    RequiredLong(configuration, "PosEdge:Fiscal:RangeEnd"))));
     }
 
     private static string Required(IConfiguration configuration, string key) =>
@@ -282,6 +289,10 @@ internal static class PosSaleHostModule
         long.TryParse(Required(configuration, key), out var value)
             ? value
             : throw new InvalidOperationException($"{key} must be an integer.");
+
+    private static long OptionalLong(
+        IConfiguration configuration, string key, long fallback) =>
+        long.TryParse(configuration[key], out var value) ? value : fallback;
 
     private static int RequiredInt(IConfiguration configuration, string key) =>
         int.TryParse(Required(configuration, key), out var value)

@@ -448,15 +448,15 @@ public sealed class SqlFiscalOnboardingStore(
             SET @OnlineRangeEnd=@RangeStart+((@RangeEnd-@RangeStart)/2);
             SET @OfflineRangeStart=@OnlineRangeEnd+1;
             INSERT dbo.FiscalSeries(SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
-                DocumentType,Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)
+                DocumentType,Prefix,RangeStart,RangeEnd,AllocationState,IsActive,CreatedAt)
             VALUES(@OnlineSeriesId,@BusinessId,NULL,N'Server',@AuthorizationId,
-                   N'SalesInvoice',@Prefix,@RangeStart,@OnlineRangeEnd,1,@Now);
+                   N'SalesInvoice',@Prefix,@RangeStart,@OnlineRangeEnd,N'Active',1,@Now);
             INSERT dbo.FiscalSeriesCursors(SeriesId,NextConsecutive,UpdatedAt)
             VALUES(@OnlineSeriesId,@RangeStart,@Now);
             INSERT dbo.FiscalSeries(SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
-                DocumentType,Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)
+                DocumentType,Prefix,RangeStart,RangeEnd,AllocationState,IsActive,CreatedAt)
             VALUES(@OfflineSeriesId,@BusinessId,NULL,N'Device',@AuthorizationId,
-                   N'SalesInvoice',@Prefix,@OfflineRangeStart,@RangeEnd,1,@Now);
+                   N'SalesInvoice',@Prefix,@OfflineRangeStart,@RangeEnd,N'Pool',1,@Now);
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);

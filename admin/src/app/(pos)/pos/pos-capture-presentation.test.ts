@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { capturedLineAfterAddition } from "./pos-capture-presentation";
+import { acceptsPosQuantityDraft, blocksPosQuantityKey, validatePosQuantity } from "./pos-quantity-validation";
 import {
   capturePosFunctionShortcut,
   resolvePosFunctionShortcut,
@@ -34,6 +35,24 @@ test("usa la última línea como respaldo del contrato de captura", () => {
 
 test("no inventa una línea cuando el borrador está vacío", () => {
   assert.equal(capturedLineAfterAddition([], []), undefined);
+});
+
+test("la pantalla y el modal comparten reglas de cantidad, fracción e inventario", () => {
+  assert.deepEqual(validatePosQuantity("1.5", {
+    allowsFractionalSale: false, managesInventory: false,
+  }), { valid: false, reason: "whole-units" });
+  assert.deepEqual(validatePosQuantity("1.5", {
+    allowsFractionalSale: true, managesInventory: false,
+  }), { valid: true, quantity: 1.5 });
+  assert.deepEqual(validatePosQuantity(8, {
+    allowsFractionalSale: false, managesInventory: true, maximumQuantity: 7,
+  }), { valid: false, reason: "inventory-limit" });
+  assert.equal(acceptsPosQuantityDraft("1.2", {
+    allowsFractionalSale: false, managesInventory: false,
+  }), false);
+  assert.equal(blocksPosQuantityKey("e", {
+    allowsFractionalSale: true, managesInventory: false,
+  }), true);
 });
 
 test("reconoce las teclas F por su código físico aunque el sistema cambie event.key", () => {

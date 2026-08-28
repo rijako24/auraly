@@ -17,6 +17,75 @@ namespace Auraly.Foundation.Tests;
 public sealed class PosEdgeDurabilityTests
 {
     [Fact]
+    public async Task Exhausted_active_block_promotes_durable_standby_without_connection()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"auraly-pos-blocks-{Guid.NewGuid():N}.db");
+        try
+        {
+            var tenantId = new TenantId(Guid.NewGuid());
+            var userId = new UserId(Guid.NewGuid());
+            var deviceId = new DeviceId(Guid.NewGuid());
+            var context = new SalesExecutionContext(
+                tenantId, new BusinessId(Guid.NewGuid()), new WarehouseId(Guid.NewGuid()),
+                userId, deviceId, new WorkSessionId(Guid.NewGuid()), true);
+            var confirmation = new ConfirmOfflineSaleService(new PermissionAuthorizer(
+                new FixedPermissionProvider(new UserPermissionSet(
+                    tenantId, userId, [CommercePermissionCodes.SalesCreate]))));
+            var connectionString = $"Data Source={databasePath}";
+            var store = new PosEdgeSaleStore(connectionString, confirmation);
+            await store.InitializeAsync();
+            await store.ProvisionDocumentSeriesAsync(new PosEdgeDocumentSeriesProvision(
+                Guid.NewGuid(), deviceId, AuralyDocumentTypes.SalesInvoice,
+                "VTA", "77", 8, 1, 100));
+            var authorizationId = Guid.NewGuid();
+            var firstSeriesId = Guid.NewGuid();
+            var firstProvision = new PosEdgeSeriesProvision(
+                firstSeriesId, deviceId, "FV", "AUTH", 1, 1,
+                new DateOnly(2027, 12, 31), authorizationId, new DateOnly(2026, 1, 1),
+                "Active", 1, 3);
+            await store.ProvisionSeriesAsync(firstProvision);
+            await store.ProvisionSeriesAsync(new PosEdgeSeriesProvision(
+                Guid.NewGuid(), deviceId, "FV", "AUTH", 2, 3,
+                new DateOnly(2027, 12, 31), authorizationId, new DateOnly(2026, 1, 1),
+                "Standby", 1, 3));
+
+            var first = await store.IssueAsync(CreateCommand(
+                userId, new DocumentId(Guid.NewGuid()), context,
+                new DateTimeOffset(2026, 8, 28, 10, 0, 0, TimeSpan.FromHours(-5))));
+            var previewAfterExhaustion = await store.PreviewNextFiscalNumberAsync(
+                deviceId,
+                new DateTimeOffset(2026, 8, 28, 10, 0, 30, TimeSpan.FromHours(-5)));
+            var second = await store.IssueAsync(CreateCommand(
+                userId, new DocumentId(Guid.NewGuid()), context,
+                new DateTimeOffset(2026, 8, 28, 10, 1, 0, TimeSpan.FromHours(-5))));
+
+            var restarted = new PosEdgeSaleStore(connectionString, confirmation);
+            await restarted.InitializeAsync();
+            await restarted.ProvisionSeriesAsync(firstProvision);
+            var third = await restarted.IssueAsync(CreateCommand(
+                userId, new DocumentId(Guid.NewGuid()), context,
+                new DateTimeOffset(2026, 8, 28, 10, 2, 0, TimeSpan.FromHours(-5))));
+
+            Assert.Equal("FV1", first.FiscalNumber);
+            Assert.True(previewAfterExhaustion.IsAvailable);
+            Assert.Equal("FV2", previewAfterExhaustion.FullNumber);
+            Assert.Equal("FV2", second.FiscalNumber);
+            Assert.True(second.FiscalStandbyPromoted);
+            Assert.Equal("FV3", third.FiscalNumber);
+            var cursor = await restarted.GetFiscalCursorStateAsync(deviceId);
+            Assert.NotNull(cursor);
+            Assert.Equal(4, cursor.NextConsecutive);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            DeleteIfPresent(databasePath);
+            DeleteIfPresent($"{databasePath}-wal");
+            DeleteIfPresent($"{databasePath}-shm");
+        }
+    }
+
+    [Fact]
     public async Task Restart_preserves_sales_outbox_cufe_and_idempotency()
     {
         var databasePath = Path.Combine(

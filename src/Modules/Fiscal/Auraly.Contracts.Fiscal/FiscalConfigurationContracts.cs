@@ -31,9 +31,7 @@ public sealed record FiscalDeviceSeriesWorkspace(
     long AvailableConsecutives,
     IReadOnlyList<FiscalDeviceSeriesAssignment> Devices);
 
-public sealed record AssignFiscalDeviceSeriesRequest(
-    Guid DeviceId,
-    long ConsecutiveCount);
+public sealed record AssignFiscalDeviceSeriesRequest(Guid DeviceId);
 
 public sealed record PosFiscalSeriesProvisioning(
     Guid SeriesId,
@@ -48,7 +46,10 @@ public sealed record PosFiscalSeriesProvisioning(
     string TechnicalKey,
     string TechnicalKeyVersion,
     string QrValidationUrl,
-    DateOnly ValidFrom);
+    DateOnly ValidFrom,
+    string AllocationState = "Active",
+    long? AuthorizationRangeStart = null,
+    long? AuthorizationRangeEnd = null);
 
 public interface IFiscalTechnicalKeySecretWriter
 {

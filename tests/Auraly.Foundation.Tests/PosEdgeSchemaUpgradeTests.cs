@@ -61,7 +61,11 @@ public sealed class PosEdgeSchemaUpgradeTests
                     EXISTS(SELECT 1 FROM pragma_table_info('IssuedSales') WHERE name='RemoteFiscalStatus'),
                     EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='PosSyncState'),
                     EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='PosPrintAudit'),
-                    EXISTS(SELECT 1 FROM pragma_table_info('FiscalSeriesCursors') WHERE name='ValidFrom')
+                    EXISTS(SELECT 1 FROM pragma_table_info('FiscalSeriesCursors') WHERE name='ValidFrom'),
+                    EXISTS(SELECT 1 FROM pragma_table_info('FiscalSeriesCursors') WHERE name='AllocationState'),
+                    EXISTS(SELECT 1 FROM pragma_table_info('FiscalSeriesCursors') WHERE name='AuthorizationRangeStart'),
+                    EXISTS(SELECT 1 FROM pragma_table_info('FiscalSeriesCursors') WHERE name='AuthorizationRangeEnd'),
+                    EXISTS(SELECT 1 FROM pragma_index_list('FiscalSeriesCursors') WHERE name='IX_FiscalSeriesCursors_DeviceId_IsActive' AND [unique]=0)
                 FROM FiscalSeriesCursors;
                 """;
             await using var reader = await command.ExecuteReaderAsync();
@@ -74,6 +78,10 @@ public sealed class PosEdgeSchemaUpgradeTests
             Assert.Equal(1L, reader.GetInt64(6));
             Assert.Equal(1L, reader.GetInt64(7));
             Assert.Equal(1L, reader.GetInt64(8));
+            Assert.Equal(1L, reader.GetInt64(9));
+            Assert.Equal(1L, reader.GetInt64(10));
+            Assert.Equal(1L, reader.GetInt64(11));
+            Assert.Equal(1L, reader.GetInt64(12));
             Assert.Equal(0L, reader.GetInt64(4));
         }
         finally

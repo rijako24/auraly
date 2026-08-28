@@ -231,7 +231,8 @@ public sealed class SqlFiscalGenerationWorkStore(
                    c.Environment, c.CertificateProvider, c.CertificateKeyReference,
                    c.CertificateThumbprint, c.TechnicalAnnexVersion, c.GeneratorVersion,
                    a.AuthorizationNumber, a.ValidFrom, a.ValidUntil,
-                   fs.Prefix, fs.RangeStart, fs.RangeEnd,debit.SnapshotJson,support.SnapshotJson,
+                   fs.Prefix, a.AuthorizedRangeStart, a.AuthorizedRangeEnd,
+                   debit.SnapshotJson,support.SnapshotJson,
                    payrollDocument.SourceSnapshotJson
             FROM dbo.FiscalDocumentProcesses p
             INNER JOIN dbo.FiscalDocuments fd ON fd.DocumentId=p.DocumentId

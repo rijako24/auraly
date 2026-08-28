@@ -20,8 +20,9 @@ public interface IFiscalDeviceSeriesStore
     Task<FiscalDeviceSeriesWorkspace> AssignAsync(
         Guid tenantId, Guid businessId, AssignFiscalDeviceSeriesRequest request,
         CancellationToken cancellationToken);
-    Task<PosFiscalSeriesProvisioning?> GetProvisioningAsync(
-        Guid tenantId, Guid businessId, Guid deviceId,
+    Task<IReadOnlyList<PosFiscalSeriesProvisioning>> GetProvisioningAsync(
+        Guid tenantId, Guid businessId, Guid deviceId, Guid? currentSeriesId,
+        long? nextConsecutive,
         CancellationToken cancellationToken);
 }
 
@@ -45,22 +46,24 @@ public sealed class FiscalDeviceSeriesService(IFiscalDeviceSeriesStore store)
         ValidateBusiness(businessId);
         if (request.DeviceId == Guid.Empty)
             throw new FiscalConfigurationValidationException("El equipo enrolado es obligatorio.");
-        if (request.ConsecutiveCount < 1)
-            throw new FiscalConfigurationValidationException(
-                "La cantidad de consecutivos debe ser mayor o igual a uno.");
         return store.AssignAsync(user.TenantId, businessId, request, cancellationToken);
     }
 
-    public Task<PosFiscalSeriesProvisioning?> GetProvisioningAsync(
-        Guid tenantId, Guid businessId, Guid deviceId,
+    public Task<IReadOnlyList<PosFiscalSeriesProvisioning>> GetProvisioningAsync(
+        Guid tenantId, Guid businessId, Guid deviceId, Guid? currentSeriesId,
+        long? nextConsecutive,
         CancellationToken cancellationToken = default)
     {
         ValidateBusiness(businessId);
         if (tenantId == Guid.Empty || deviceId == Guid.Empty)
             throw new FiscalConfigurationForbiddenException(
                 "La identidad del equipo no es válida.");
+        if (currentSeriesId.HasValue != nextConsecutive.HasValue || nextConsecutive < 1)
+            throw new FiscalConfigurationValidationException(
+                "El cursor fiscal local debe informarse completo y ser positivo.");
         return store.GetProvisioningAsync(
-            tenantId, businessId, deviceId, cancellationToken);
+            tenantId, businessId, deviceId, currentSeriesId, nextConsecutive,
+            cancellationToken);
     }
 
     private static void ValidateBusiness(Guid businessId)

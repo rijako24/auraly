@@ -9,6 +9,7 @@ CREATE TABLE [dbo].[FiscalSeries]
     [Prefix] NVARCHAR(16) NOT NULL,
     [RangeStart] BIGINT NOT NULL,
     [RangeEnd] BIGINT NOT NULL,
+    [AllocationState] NVARCHAR(16) NOT NULL CONSTRAINT [DF_FiscalSeries_AllocationState] DEFAULT (N'Active'),
     [IsActive] BIT NOT NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     CONSTRAINT [PK_FiscalSeries] PRIMARY KEY CLUSTERED ([SeriesId]),
@@ -19,6 +20,7 @@ CREATE TABLE [dbo].[FiscalSeries]
         ([EmitterKind]=N'Server' AND [DeviceId] IS NULL)
         OR [EmitterKind]=N'Device'),
     CONSTRAINT [CK_FiscalSeries_Range] CHECK ([RangeStart] > 0 AND [RangeEnd] >= [RangeStart])
+    ,CONSTRAINT [CK_FiscalSeries_AllocationState] CHECK ([AllocationState] IN (N'Pool',N'Active',N'Standby',N'Exhausted'))
 );
 GO
 
@@ -28,7 +30,7 @@ CREATE UNIQUE INDEX [UX_FiscalSeries_Online]
 GO
 
 CREATE UNIQUE INDEX [UX_FiscalSeries_Device]
-    ON [dbo].[FiscalSeries] ([BusinessId],[DeviceId],[DocumentType],[FiscalAuthorizationId],[Prefix])
+    ON [dbo].[FiscalSeries] ([BusinessId],[DeviceId],[DocumentType],[FiscalAuthorizationId],[Prefix],[AllocationState])
     WHERE [EmitterKind]=N'Device' AND [DeviceId] IS NOT NULL AND [IsActive]=1;
 GO
 
