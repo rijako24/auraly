@@ -103,6 +103,26 @@ public sealed class ReleasePackagingTests
         Assert.Contains("auraly-pos-prod-$ReleaseVersion.exe", pipeline, StringComparison.Ordinal);
         Assert.Contains("-ProdPosApiUrl 'https://api-auraly-prod-7sov4nxc.azurewebsites.net'", workflow,
             StringComparison.Ordinal);
+        var installerBuild = File.ReadAllText(Path.Combine(
+            repositoryRoot, "scripts", "Build-AuralyPosInstaller.ps1"));
+        Assert.Contains("-p:IntermediateOutputPath=$msiIntermediate\\", installerBuild,
+            StringComparison.Ordinal);
+        Assert.Contains("-p:IntermediateOutputPath=$bundleIntermediate\\", installerBuild,
+            StringComparison.Ordinal);
+        Assert.Contains("Join-Path $msiBuild 'Auraly.Pos.Setup.msi'", installerBuild,
+            StringComparison.Ordinal);
+        Assert.Contains("Join-Path $bundleBuild 'Auraly.Pos.Bundle.exe'", installerBuild,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("Get-ChildItem -LiteralPath $msiBuild -Recurse", installerBuild,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("Get-ChildItem -LiteralPath $bundleBuild -Recurse", installerBuild,
+            StringComparison.Ordinal);
+        Assert.Contains("$posInstallerHashes['dev'] -eq $posInstallerHashes['prod']", release,
+            StringComparison.Ordinal);
+        Assert.Contains("Los instaladores DEV y PROD resultaron idénticos", release,
+            StringComparison.Ordinal);
+        Assert.Contains("posInstallers = if ($PosApiUrl)", release,
+            StringComparison.Ordinal);
 
         var infrastructureDeployment = File.ReadAllText(Path.Combine(
             repositoryRoot, "infrastructure", "azure", "Deploy-Auraly.ps1"));

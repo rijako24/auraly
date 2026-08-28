@@ -32,6 +32,8 @@ $runtime = Join-Path $payload "runtime"
 $desktopPublish = Join-Path $artifacts "desktop"
 $msiBuild = Join-Path $artifacts "msi-build"
 $bundleBuild = Join-Path $artifacts "bundle-build"
+$msiIntermediate = Join-Path $artifacts "msi-obj"
+$bundleIntermediate = Join-Path $artifacts "bundle-obj"
 $bundleSigning = Join-Path $artifacts "bundle-signing"
 $msi = Join-Path $artifacts "Auraly.Pos.Setup.msi"
 $setup = Join-Path $artifacts "Auraly Setup.exe"
@@ -146,7 +148,8 @@ if (Test-Path -LiteralPath $artifacts) {
     Remove-Item -LiteralPath $artifacts -Recurse -Force
 }
 New-Item -ItemType Directory -Force -Path `
-    $edge,$web,$runtime,$desktopPublish,$msiBuild,$bundleBuild,$bundleSigning | Out-Null
+    $edge,$web,$runtime,$desktopPublish,$msiBuild,$bundleBuild,$bundleSigning,`
+    $msiIntermediate,$bundleIntermediate | Out-Null
 
 Push-Location (Join-Path $root "admin")
 try {
@@ -226,16 +229,14 @@ Invoke-WixProjectBuild `
         '--configuration', $Configuration,
         "-p:PayloadDir=$payload",
         "-p:ProductVersion=$msiProductVersion",
+        "-p:IntermediateOutputPath=$msiIntermediate\",
         "-p:OutputPath=$msiBuild\") `
     'La construcción del MSI de Auraly falló.'
-$builtMsiCandidates = @(
-    Get-ChildItem -LiteralPath $msiBuild -Recurse -Filter 'Auraly.Pos.Setup.msi' -File
-)
-if ($builtMsiCandidates.Count -ne 1) {
-    throw "WiX debía producir un MSI y produjo $($builtMsiCandidates.Count)."
+$builtMsi = Join-Path $msiBuild 'Auraly.Pos.Setup.msi'
+if (-not (Test-Path -LiteralPath $builtMsi -PathType Leaf)) {
+    throw 'WiX no produjo el MSI final de Auraly en la salida esperada.'
 }
-$builtMsi = $builtMsiCandidates[0]
-Copy-Item -LiteralPath $builtMsi.FullName -Destination $msi
+Copy-Item -LiteralPath $builtMsi -Destination $msi
 Invoke-AuralySigning @($msi)
 
 $bundleProject = Join-Path $root 'src\Installer\Auraly.Pos.Bundle\Auraly.Pos.Bundle.wixproj'
@@ -245,25 +246,23 @@ Invoke-WixProjectBuild `
         '--configuration', $Configuration,
         "-p:MsiPath=$msi",
         "-p:BundleVersion=$msiProductVersion",
+        "-p:IntermediateOutputPath=$bundleIntermediate\",
         "-p:OutputPath=$bundleBuild\") `
     'La construcción del bundle de Auraly falló.'
-$unsignedBundleCandidates = @(
-    Get-ChildItem -LiteralPath $bundleBuild -Recurse -Filter 'Auraly.Pos.Bundle.exe' -File
-)
-if ($unsignedBundleCandidates.Count -ne 1) {
-    throw "WiX debía producir un bundle y produjo $($unsignedBundleCandidates.Count)."
+$unsignedBundle = Join-Path $bundleBuild 'Auraly.Pos.Bundle.exe'
+if (-not (Test-Path -LiteralPath $unsignedBundle -PathType Leaf)) {
+    throw 'WiX no produjo el bundle final de Auraly en la salida esperada.'
 }
-$unsignedBundle = $unsignedBundleCandidates[0]
 
 if ([string]::IsNullOrWhiteSpace($normalizedThumbprint)) {
-    Copy-Item -LiteralPath $unsignedBundle.FullName -Destination $setup
+    Copy-Item -LiteralPath $unsignedBundle -Destination $setup
 }
 else {
     $engine = Join-Path $bundleSigning 'Auraly.Pos.Bundle.Engine.exe'
-    dotnet tool run wix -- burn detach $unsignedBundle.FullName -engine $engine
+    dotnet tool run wix -- burn detach $unsignedBundle -engine $engine
     if ($LASTEXITCODE -ne 0) { throw 'WiX no pudo separar el motor del bundle para firmarlo.' }
     Invoke-AuralySigning @($engine)
-    dotnet tool run wix -- burn reattach $unsignedBundle.FullName -engine $engine -o $setup
+    dotnet tool run wix -- burn reattach $unsignedBundle -engine $engine -o $setup
     if ($LASTEXITCODE -ne 0) { throw 'WiX no pudo reensamblar el bundle firmado.' }
     Invoke-AuralySigning @($setup)
 }

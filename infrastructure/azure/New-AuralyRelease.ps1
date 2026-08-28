@@ -191,6 +191,7 @@ try {
         }
     }
 
+    $posInstallerHashes = @{}
     if ($PosApiUrl) {
         $posTargets = @(
             @{ Key = 'dev'; ApiUrl = $PosApiUrl; Name = "auraly-pos-$Version.exe" },
@@ -211,7 +212,14 @@ try {
             if (-not (Test-Path -LiteralPath $posSetup)) {
                 throw "La construcción del instalador POS $($target.Key) no produjo Auraly Setup.exe."
             }
-            Copy-Item -LiteralPath $posSetup -Destination (Join-Path $releasePath $target.Name)
+            $destination = Join-Path $releasePath $target.Name
+            Copy-Item -LiteralPath $posSetup -Destination $destination
+            $posInstallerHashes[$target.Key] =
+                (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+        if ($PosApiUrl -ne $ProdPosApiUrl -and
+            $posInstallerHashes['dev'] -eq $posInstallerHashes['prod']) {
+            throw 'Los instaladores DEV y PROD resultaron idénticos aunque usan endpoints distintos.'
         }
     }
     New-DeterministicZip `
@@ -244,6 +252,22 @@ try {
         dotnetSdk = (& dotnet --version).Trim()
         node = (& node --version).Trim()
         npm = (& npm --version).Trim()
+        posInstallers = if ($PosApiUrl) {
+            @(
+                [ordered]@{
+                    environment = 'dev'
+                    apiUrl = $PosApiUrl
+                    name = "auraly-pos-$Version.exe"
+                    sha256 = $posInstallerHashes['dev']
+                },
+                [ordered]@{
+                    environment = 'prod'
+                    apiUrl = $ProdPosApiUrl
+                    name = "auraly-pos-prod-$Version.exe"
+                    sha256 = $posInstallerHashes['prod']
+                })
+        }
+        else { @() }
         artifacts = @($artifacts)
     }
     $manifestJson = $manifest | ConvertTo-Json -Depth 5
