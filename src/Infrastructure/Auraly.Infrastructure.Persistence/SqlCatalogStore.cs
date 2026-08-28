@@ -92,20 +92,16 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                   DELETE FROM dbo.ProductIdentifiers WHERE ProductId=@ProductId;
                   DELETE FROM dbo.ProductScaleConfigurations WHERE ProductId=@ProductId;
                   """, ProductParameters(user, productId, request, now), ct);
-            await ExecuteAsync(connection, transaction, """
-                INSERT dbo.InventoryBalances
-                  (BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,
-                   InventoryValue,LastProcessingSequence,UpdatedAt)
-                SELECT @BusinessId,warehouse.WarehouseId,@ProductId,0,0,0,
-                       COALESCE((SELECT LastCompletedSequence FROM dbo.BusinessProcessingCursors WHERE BusinessId=@BusinessId),0),@Now
-                FROM dbo.Warehouses warehouse
-                WHERE warehouse.BusinessId=@BusinessId
-                  AND NOT EXISTS (
-                    SELECT 1 FROM dbo.InventoryBalances balance
-                    WHERE balance.BusinessId=@BusinessId
-                      AND balance.WarehouseId=warehouse.WarehouseId
-                      AND balance.ProductId=@ProductId);
-                """, [P("@BusinessId", user.BusinessId), P("@ProductId", productId), P("@Now", now)], ct);
+            if (create)
+                await ExecuteAsync(connection, transaction, """
+                    INSERT dbo.InventoryBalances
+                      (BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,
+                       InventoryValue,LastProcessingSequence,UpdatedAt)
+                    SELECT @BusinessId,warehouse.WarehouseId,@ProductId,0,0,0,
+                           COALESCE((SELECT LastCompletedSequence FROM dbo.BusinessProcessingCursors WHERE BusinessId=@BusinessId),0),@Now
+                    FROM dbo.Warehouses warehouse
+                    WHERE warehouse.BusinessId=@BusinessId;
+                    """, [P("@BusinessId", user.BusinessId), P("@ProductId", productId), P("@Now", now)], ct);
             await ExecuteAsync(connection, transaction, """
                 UPDATE dbo.ProductLinks SET IsActive=0,UpdatedAt=@Now WHERE BusinessId=@BusinessId AND ChildProductId=@ProductId AND IsActive=1;
                 IF @ParentProductId IS NOT NULL

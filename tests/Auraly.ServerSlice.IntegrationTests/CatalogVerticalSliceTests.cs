@@ -81,6 +81,50 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Product_edit_does_not_create_update_or_repair_inventory_balances()
+    {
+        var (taxProfileId, _, _) = await ConfigureCatalogAsync();
+        var request = ProductRequest(taxProfileId, [new ProductPriceInput(10_000m)], []) with
+        {
+            Name = $"Balance read only {Guid.NewGuid():N}"
+        };
+        using var client = fixture.CreateAdminClient(
+            CatalogPermissionCodes.Create,
+            CatalogPermissionCodes.Read,
+            CatalogPermissionCodes.Update,
+            CatalogPermissionCodes.ManagePrices,
+            CatalogPermissionCodes.ManageCosts);
+        using var create = await client.PostAsJsonAsync("/api/commerce/v1/products", request);
+        create.EnsureSuccessStatusCode();
+        var product = (await create.Content.ReadFromJsonAsync<ProductDetail>())!;
+
+        await ExecuteAsync(
+            "DELETE dbo.InventoryBalances WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;",
+            new SqlParameter("@BusinessId", fixture.BusinessId),
+            new SqlParameter("@WarehouseId", fixture.WarehouseId),
+            new SqlParameter("@ProductId", product.ProductId));
+        var before = await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND ProductId=@ProductId;",
+            new SqlParameter("@BusinessId", fixture.BusinessId),
+            new SqlParameter("@ProductId", product.ProductId));
+
+        using var update = await client.PutAsJsonAsync(
+            $"/api/commerce/v1/products/{product.ProductId:D}",
+            request with { Name = $"{request.Name} editado" });
+        update.EnsureSuccessStatusCode();
+
+        Assert.Equal(before, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND ProductId=@ProductId;",
+            new SqlParameter("@BusinessId", fixture.BusinessId),
+            new SqlParameter("@ProductId", product.ProductId)));
+        Assert.Equal(0, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;",
+            new SqlParameter("@BusinessId", fixture.BusinessId),
+            new SqlParameter("@WarehouseId", fixture.WarehouseId),
+            new SqlParameter("@ProductId", product.ProductId)));
+    }
+
+    [Fact]
     public async Task Product_workspace_creates_classification_brand_and_link_atomically()
     {
         var (taxProfileId, _, _) = await ConfigureCatalogAsync();
