@@ -32,7 +32,10 @@ concurrency:
 jobs:
   release:
     name: Resolve immutable release
-    runs-on: windows-latest
+    # WiX 6.0.2 can lose its native pipe on console-less Windows 2025 runners.
+    # Keep the release builder on the stable Windows generation until the
+    # upstream fix (wixtoolset/wix#701) is available in a stable WiX release.
+    runs-on: windows-2022
     environment: ${{ inputs.environment }}
     outputs:
       commit: ${{ steps.metadata.outputs.commit }}

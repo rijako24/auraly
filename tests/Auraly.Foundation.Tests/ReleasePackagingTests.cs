@@ -99,6 +99,11 @@ public sealed class ReleasePackagingTests
             StringComparison.Ordinal);
         Assert.Contains("throw $failureMessage", script, StringComparison.Ordinal);
         Assert.DoesNotContain("Select-Object -Single", script, StringComparison.Ordinal);
+
+        var workflow = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), ".github", "workflows", "deploy-auraly-release.yml"));
+        Assert.Contains("runs-on: windows-2022", workflow, StringComparison.Ordinal);
+        Assert.Contains("wixtoolset/wix#701", workflow, StringComparison.Ordinal);
     }
 
     [Fact]
