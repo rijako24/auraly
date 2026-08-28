@@ -53,9 +53,12 @@ Algoritmo:
 1. Obtener el precio base vigente por negocio y producto.
 2. Si el cliente tiene lista vigente, escoger el detalle con mayor
    cantidad mínima que no supere la cantidad. Si no existe, usar base.
-3. En otro caso, si tiene canal vigente y no existe exclusión, usar el precio
-   resuelto del canal. Para precios por cantidad se escoge la mayor cantidad
-   mínima aplicable. Si falta, usar base.
+3. En otro caso, si tiene canal vigente y no existe exclusión por producto,
+   marca o categoría —incluido cualquier ancestro del nodo asignado al
+   producto—, usar el precio resuelto del canal. La UI denomina área, línea,
+   grupo y subgrupo a las profundidades 0 a 3 de esa única jerarquía. Para
+   precios por cantidad se escoge la mayor cantidad mínima aplicable. Si falta
+   o existe una exclusión, usar base.
 4. Sin asignación, usar base.
 5. Evaluar promoción con una precedencia explícita, sin acumular beneficios no
    combinables.
@@ -92,7 +95,8 @@ SQLite contiene:
 - precios base del negocio;
 - listas, detalles y vigencias;
 - canales y precios finales materializados;
-- exclusiones;
+- exclusiones resueltas: un producto excluido por categoría, marca o identidad
+  no recibe una fila de canal y el resolvedor local conserva el precio base;
 - clientes mínimos y su asignación excluyente;
 - versiones y tombstones.
 

@@ -24,13 +24,35 @@ CREATE UNIQUE INDEX [UX_ResolvedPriceChannelItems_Active]
 GO
 
 CREATE TABLE [dbo].[PriceChannelExclusions] (
+    [PriceChannelExclusionId] UNIQUEIDENTIFIER NOT NULL CONSTRAINT [DF_PriceChannelExclusions_Id] DEFAULT NEWID(),
     [PriceChannelId] UNIQUEIDENTIFIER NOT NULL,
-    [ProductId] UNIQUEIDENTIFIER NOT NULL,
+    [ScopeType] NVARCHAR(16) NOT NULL CONSTRAINT [DF_PriceChannelExclusions_ScopeType] DEFAULT N'Product',
+    [ProductId] UNIQUEIDENTIFIER NULL,
+    [ProductCategoryId] UNIQUEIDENTIFIER NULL,
+    [ProductBrandId] UNIQUEIDENTIFIER NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
-    CONSTRAINT [PK_PriceChannelExclusions] PRIMARY KEY ([PriceChannelId], [ProductId]),
+    CONSTRAINT [PK_PriceChannelExclusions] PRIMARY KEY ([PriceChannelExclusionId]),
     CONSTRAINT [FK_PriceChannelExclusions_PriceChannels] FOREIGN KEY ([PriceChannelId]) REFERENCES [dbo].[PriceChannels] ([PriceChannelId]),
-    CONSTRAINT [FK_PriceChannelExclusions_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId])
+    CONSTRAINT [FK_PriceChannelExclusions_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
+    CONSTRAINT [FK_PriceChannelExclusions_ProductCategories] FOREIGN KEY ([ProductCategoryId]) REFERENCES [dbo].[ProductCategories] ([ProductCategoryId]),
+    CONSTRAINT [FK_PriceChannelExclusions_ProductBrands] FOREIGN KEY ([ProductBrandId]) REFERENCES [dbo].[ProductBrands] ([ProductBrandId]),
+    CONSTRAINT [CK_PriceChannelExclusions_Scope] CHECK (
+        ([ScopeType] = N'Product' AND [ProductId] IS NOT NULL AND [ProductCategoryId] IS NULL AND [ProductBrandId] IS NULL) OR
+        ([ScopeType] = N'Category' AND [ProductId] IS NULL AND [ProductCategoryId] IS NOT NULL AND [ProductBrandId] IS NULL) OR
+        ([ScopeType] = N'Brand' AND [ProductId] IS NULL AND [ProductCategoryId] IS NULL AND [ProductBrandId] IS NOT NULL))
 );
+GO
+CREATE UNIQUE INDEX [UX_PriceChannelExclusions_Product]
+    ON [dbo].[PriceChannelExclusions] ([PriceChannelId], [ProductId])
+    WHERE [ProductId] IS NOT NULL;
+GO
+CREATE UNIQUE INDEX [UX_PriceChannelExclusions_Category]
+    ON [dbo].[PriceChannelExclusions] ([PriceChannelId], [ProductCategoryId])
+    WHERE [ProductCategoryId] IS NOT NULL;
+GO
+CREATE UNIQUE INDEX [UX_PriceChannelExclusions_Brand]
+    ON [dbo].[PriceChannelExclusions] ([PriceChannelId], [ProductBrandId])
+    WHERE [ProductBrandId] IS NOT NULL;
 GO
 
 CREATE TABLE [dbo].[CommerceSellers] (

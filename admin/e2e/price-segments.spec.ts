@@ -20,6 +20,7 @@ test("canales administra precios por cantidad y modos calculados sin listas", as
     { id: "88888888-8888-7888-8888-888888888888", code: "WEB", name: "Tienda web", strategy: "PercentageOverBasePrice", value: -5, isActive: true, createdAt: "2026-08-14T10:00:00Z", productCount: 0, customerCount: 0 },
   ];
   let savedItem: Record<string, unknown> | null = null;
+  let savedExclusion: Record<string, unknown> | null = null;
   let createdRequest: Record<string, unknown> | null = null;
 
   await page.route("**/api/auth/me", async (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ userId: "33333333-3333-3333-3333-333333333333", tenantId: "11111111-1111-1111-1111-111111111111", tenantKey: "AURALY", username: "e2e", email: "e2e@auraly.test", firstName: "Prueba", lastName: "E2E", avatarUrl: null, roles: ["Administrator"], permissions: ["dashboard.read", "catalog.read", "pricing.read", "pricing.segments.read", "pricing.segments.manage"] }) }));
@@ -27,6 +28,12 @@ test("canales administra precios por cantidad y modos calculados sin listas", as
   await page.route("**/api/commerce/v1/pricing/segments**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
+    if (/\/exclusions(?:\/[^/]+)?$/.test(url.pathname)) {
+      if (request.method() === "GET") await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+      else if (request.method() === "POST") { savedExclusion = request.postDataJSON() as Record<string, unknown>; await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ exclusionId: crypto.randomUUID() }) }); }
+      else await route.fulfill({ status: 204 });
+      return;
+    }
     if (request.method() === "GET" && /\/items$/.test(url.pathname)) {
       await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
       return;
@@ -64,6 +71,8 @@ test("canales administra precios por cantidad y modos calculados sin listas", as
       }),
     });
   });
+  await page.route("**/api/businesses/*/product-categories**", async (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
+  await page.route("**/api/commerce/v1/product-brands**", async (route) => route.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
 
   await page.route("**/api/execution-context/access", async (route) => {
     const headers = route.request().headers();
@@ -97,8 +106,7 @@ test("canales administra precios por cantidad y modos calculados sin listas", as
   await expect(createDialog.getByRole("button", { name: "Vender al costo promedio" })).toBeVisible();
   await createDialog.getByText("Nombre *", { exact: true }).locator("..").getByRole("textbox").fill("Distribuidores");
   await createDialog.getByPlaceholder(/Código interno/).fill("Aceite");
-  await expect(createDialog.getByRole("button", { name: "Agregar", exact: true })).toBeEnabled();
-  await createDialog.getByRole("button", { name: "Agregar", exact: true }).click();
+  await createDialog.getByRole("option", { name: /Aceite vegetal 3000 ml/ }).click();
   await expect(createDialog.getByText("Aceite vegetal 3000 ml", { exact: true })).toBeVisible();
   await createDialog.getByText("Desde cantidad", { exact: true }).locator("..").locator("input").fill("3");
   await createDialog.getByRole("button", { name: "Agregar precio" }).click();
@@ -119,14 +127,18 @@ test("canales administra precios por cantidad y modos calculados sin listas", as
 
   const itemDialog = page.getByRole("dialog", { name: "Agregar producto" });
   await itemDialog.getByPlaceholder(/Código interno/).fill("Aceite");
-  await expect(itemDialog.getByRole("button", { name: "Agregar", exact: true })).toBeEnabled();
-  await itemDialog.getByRole("button", { name: "Agregar", exact: true }).click();
+  await itemDialog.getByRole("option", { name: /Aceite vegetal 3000 ml/ }).click();
   const minimum = itemDialog.getByText("Cantidad mínima *", { exact: true }).locator("..").locator("input");
   await minimum.fill("12");
   await itemDialog.getByRole("button", { name: "Guardar condición" }).click();
   await expect(itemDialog).toBeHidden();
   await expect(editDialog).toBeVisible();
-  expect(savedItem).toMatchObject({ amount: 29500, minimumQuantity: 12, excluded: false });
+  expect(savedItem).toMatchObject({ amount: 29500, minimumQuantity: 12 });
+  const exclusions = editDialog.getByRole("heading", { name: "Excluidos" }).locator("xpath=ancestor::section");
+  await exclusions.getByRole("button", { name: "Producto", exact: true }).click();
+  await exclusions.getByPlaceholder(/Código interno/).fill("Aceite");
+  await exclusions.getByRole("option", { name: /Aceite vegetal 3000 ml/ }).click();
+  expect(savedExclusion).toMatchObject({ scopeType: "Product", scopeId: productId });
 
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Nuevo canal" }).click();
@@ -144,7 +156,7 @@ test("canales administra precios por cantidad y modos calculados sin listas", as
   await costDialog.getByRole("button", { name: "% sobre costo promedio" }).click();
   const costPercentage = costDialog.getByText(/Variación/).locator("..").locator("input");
   await costPercentage.fill("-4");
-  await expect(costPercentage).toHaveValue("4");
+  await expect(costPercentage).toHaveValue("-4");
   await page.keyboard.press("Escape");
 
   await page.getByRole("button", { name: "Nuevo canal" }).click();

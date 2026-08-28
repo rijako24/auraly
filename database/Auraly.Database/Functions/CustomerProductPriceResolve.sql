@@ -11,6 +11,22 @@ RETURNS TABLE
 AS
 RETURN
 (
+    WITH ProductCategoryAncestors AS
+    (
+        SELECT category.ProductCategoryId, category.ParentProductCategoryId
+        FROM dbo.Products scopedProduct
+        JOIN dbo.ProductCategories category
+          ON category.ProductCategoryId = scopedProduct.ProductCategoryId
+         AND category.BusinessId = scopedProduct.BusinessId
+        WHERE scopedProduct.BusinessId = @BusinessId
+          AND scopedProduct.ProductId = @ProductId
+        UNION ALL
+        SELECT parent.ProductCategoryId, parent.ParentProductCategoryId
+        FROM dbo.ProductCategories parent
+        JOIN ProductCategoryAncestors child
+          ON child.ParentProductCategoryId = parent.ProductCategoryId
+        WHERE parent.BusinessId = @BusinessId
+    )
     SELECT
         COALESCE(channelPrice.Amount, basePrice.Amount) AS Amount,
         basePrice.CurrencyCode,
@@ -77,7 +93,13 @@ RETURN
             SELECT 1
             FROM dbo.PriceChannelExclusions exclusion
             WHERE exclusion.PriceChannelId = channel.PriceChannelId
-              AND exclusion.ProductId = product.ProductId
+              AND
+              (
+                  exclusion.ProductId = product.ProductId
+                  OR exclusion.ProductBrandId = product.ProductBrandId
+                  OR exclusion.ProductCategoryId IN
+                     (SELECT ancestor.ProductCategoryId FROM ProductCategoryAncestors ancestor)
+              )
         )
           AND (channel.Strategy <> N'TieredProductPrice' OR special.Amount IS NOT NULL)
     ) channelPrice

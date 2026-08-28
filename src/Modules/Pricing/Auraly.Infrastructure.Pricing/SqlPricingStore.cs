@@ -68,7 +68,8 @@ public sealed class SqlPricingStore(
             ) candidate
             INNER JOIN dbo.Businesses b ON b.BusinessId=@BusinessId
             WHERE b.TenantId=@TenantId
-              AND (@Status IS NULL OR candidate.Status=@Status)
+              AND (@Status IS NULL OR candidate.Status=@Status
+                   OR (@Status=N'Pending' AND candidate.Status IN(N'PendingReview',N'Approved')))
               AND (@SupplierId IS NULL OR candidate.SupplierId=@SupplierId)
               AND (@SourceDocumentId IS NULL OR candidate.SourceDocumentId=@SourceDocumentId)
               AND (@Search IS NULL OR candidate.ProductCode LIKE '%'+@Search+'%'

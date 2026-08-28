@@ -20,6 +20,10 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
         var priceChannelId = Guid.NewGuid();
         var priceChannelItemId = Guid.NewGuid();
         var volumePriceChannelItemId = Guid.NewGuid();
+        var areaId = Guid.NewGuid();
+        var subgroupId = Guid.NewGuid();
+        var brandId = Guid.NewGuid();
+        var categoryExclusionId = Guid.NewGuid();
         var barcodeId = Guid.NewGuid();
         var barcode = $"770{Random.Shared.NextInt64(1_000_000_000, 9_999_999_999)}";
         await ExecuteAsync(
@@ -61,6 +65,16 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
               CustomerId,PriceChannelId,UpdatedBy,UpdatedAt)
             VALUES(
               @CustomerId,@PriceChannelId,@UserId,SYSDATETIMEOFFSET());
+            INSERT dbo.ProductCategories(ProductCategoryId,BusinessId,Name,CreatedAt)
+            VALUES(@AreaId,@BusinessId,N'Área excluible',SYSUTCDATETIME());
+            INSERT dbo.ProductCategories(
+              ProductCategoryId,BusinessId,ParentProductCategoryId,Name,CreatedAt)
+            VALUES(@SubgroupId,@BusinessId,@AreaId,N'Subgrupo excluible',SYSUTCDATETIME());
+            INSERT dbo.ProductBrands(ProductBrandId,BusinessId,Name,IsActive,CreatedAt)
+            VALUES(@BrandId,@BusinessId,N'Marca excluible',1,SYSDATETIMEOFFSET());
+            UPDATE dbo.Products
+            SET ProductCategoryId=@SubgroupId, ProductBrandId=@BrandId
+            WHERE ProductId=@ProductId AND BusinessId=@BusinessId;
             INSERT dbo.ProductBarcodes(
               ProductBarcodeId,BusinessId,ProductId,Barcode,IsPrimary,IsActive,CreatedAt)
             VALUES(
@@ -77,6 +91,9 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             new("@ChannelCode", $"C-{priceChannelId:N}"[..20]),
             new("@PriceChannelItemId", priceChannelItemId),
             new("@VolumePriceChannelItemId", volumePriceChannelItemId),
+            new("@AreaId", areaId),
+            new("@SubgroupId", subgroupId),
+            new("@BrandId", brandId),
             new("@ProductId", fixture.ProductId),
             new("@BarcodeId", barcodeId),
             new("@Barcode", barcode));
@@ -116,6 +133,44 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
             Assert.Equal(8_000m, product.GetProperty("unitPrice").GetDecimal());
             Assert.Equal("PriceChannel", product.GetProperty("priceSource").GetString());
         }
+
+        await ExecuteAsync(
+            """
+            INSERT dbo.PriceChannelExclusions(
+              PriceChannelExclusionId,PriceChannelId,ScopeType,ProductCategoryId,CreatedAt)
+            VALUES(@ExclusionId,@PriceChannelId,N'Category',@AreaId,SYSDATETIMEOFFSET());
+            """,
+            new("@ExclusionId", categoryExclusionId),
+            new("@PriceChannelId", priceChannelId),
+            new("@AreaId", areaId));
+
+        using (var excludedSearchResponse = await client.PostAsJsonAsync(
+                   "/api/commerce/v1/pos/drafts/products/search",
+                   new SearchOnlineSalesRequest(context, "P-E2E", 0, 50, customerId)))
+        {
+            excludedSearchResponse.EnsureSuccessStatusCode();
+            var products = await excludedSearchResponse.Content.ReadFromJsonAsync<OnlineSalesProductPage>();
+            var product = Assert.Single(products!.Items, item => item.ProductId == fixture.ProductId);
+            Assert.Equal(10_000m, product.UnitPrice);
+            Assert.Equal("Base", product.PriceSource);
+        }
+
+        using (var excludedCatalogResponse = await client.PostAsJsonAsync(
+                   "/api/commerce/v1/seller-orders/catalog",
+                   new { businessId = fixture.BusinessId, warehouseId = fixture.WarehouseId,
+                       customerId, search = "P-E2E", skip = 0, take = 50 }))
+        {
+            excludedCatalogResponse.EnsureSuccessStatusCode();
+            var catalog = await excludedCatalogResponse.Content.ReadFromJsonAsync<JsonElement>();
+            var product = Assert.Single(catalog.GetProperty("items").EnumerateArray()
+                .Where(item => item.GetProperty("productId").GetGuid() == fixture.ProductId));
+            Assert.Equal(10_000m, product.GetProperty("unitPrice").GetDecimal());
+            Assert.Equal("Base", product.GetProperty("priceSource").GetString());
+        }
+
+        await ExecuteAsync(
+            "DELETE dbo.PriceChannelExclusions WHERE PriceChannelExclusionId=@ExclusionId;",
+            new SqlParameter("@ExclusionId", categoryExclusionId));
 
         var captured = await MutateAsync<OnlineSalesDraft>(
             client,
@@ -192,7 +247,7 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
               CONCAT(@Username,N'@test.local'),UPPER(CONCAT(@Username,N'@test.local')),N'Venta',N'Inventario',
               1,SYSDATETIMEOFFSET());
             UPDATE dbo.Warehouses
-            SET AllowNegativeStockSales=0
+            SET AllowNegativeStockSales=1
             WHERE WarehouseId=@WarehouseId;
             """,
             new("@UserId", userId),
@@ -208,14 +263,26 @@ public sealed class OnlineSalesDraftCommandTests(ServerSliceFixture fixture)
                 WorkSessionPermissionCodes.Open);
             var workSession = await fixture.OpenWorkSessionAsync(client);
             var draft = await OpenAsync(client, workSession.WorkSessionId);
-            using var request = Mutation(
+            var captured = await MutateAsync<OnlineSalesDraft>(
+                client,
                 HttpMethod.Post,
                 $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/items",
-                new AddOnlineSalesDraftItemRequest("P-E2E", 999_999m, draft.Version));
+                new AddOnlineSalesDraftItemRequest("P-E2E", 1m, draft.Version));
+            var line = Assert.Single(captured.Lines);
+            await ExecuteAsync(
+                "UPDATE dbo.Warehouses SET AllowNegativeStockSales=0 WHERE WarehouseId=@WarehouseId;",
+                new SqlParameter("@WarehouseId", fixture.WarehouseId));
+            using var request = Mutation(
+                HttpMethod.Put,
+                $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/lines/{line.LineId:D}/quantity",
+                new ChangeOnlineSalesDraftQuantityRequest(999_999m, captured.Version));
             using var response = await client.SendAsync(request);
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
             var problem = await response.Content.ReadAsStringAsync();
             Assert.Contains("Inventario insuficiente", problem, StringComparison.Ordinal);
+            Assert.Contains("Disponible:", problem, StringComparison.Ordinal);
+            var unchanged = await OpenAsync(client, workSession.WorkSessionId);
+            Assert.Equal(1m, Assert.Single(unchanged.Lines).Quantity);
         }
         finally
         {

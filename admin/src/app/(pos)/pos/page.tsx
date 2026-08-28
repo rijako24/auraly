@@ -82,6 +82,7 @@ import { PosLineEditorDialog } from "./pos-line-editor-dialog";
 import { PosExitMenuButton } from "./pos-exit-menu-button";
 import { PosInvoiceSearchDialog } from "./pos-invoice-search-dialog";
 import { PosInventoryResolutionDialog } from "./pos-inventory-resolution-dialog";
+import { PosQuantityAvailabilityDialog, type PosQuantityShortage } from "./pos-quantity-availability-dialog";
 import { temporaryNameForCustomer } from "./pos-temporary-name";
 import { PosLocalLogin } from "./pos-local-login";
 import { PosOnlineSetup } from "./pos-online-setup";
@@ -199,6 +200,7 @@ export default function PosPage() {
   const [scan, setScan] = useState("");
   const [scanRejected, setScanRejected] = useState(false);
   const [inventoryNotice, setInventoryNotice] = useState<string | null>(null);
+  const [quantityShortage, setQuantityShortage] = useState<PosQuantityShortage | null>(null);
   const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [edgeReady, setEdgeReady] = useState(false);
@@ -1106,7 +1108,19 @@ export default function PosPage() {
         if (failure) {
           setError(failure.error);
           setMessage(failure.message);
-          if (result.status === "InsufficientInventory") setInventoryNotice(failure.error);
+          if (result.status === "InsufficientInventory" && result.availability && confirmed) {
+            const otherQuantity = draft.lines
+              .filter((line) => line.productId.value === confirmed.productId.value && line.lineId !== lineId)
+              .reduce((total, line) => total + line.quantity, 0);
+            setQuantityShortage({
+              lineId,
+              productName: confirmed.description,
+              requestedQuantity: quantity,
+              availableQuantity: result.availability.availableQuantity,
+              maximumLineQuantity: Math.max(0, result.availability.availableQuantity - otherQuantity),
+              allowsFractionalSale: confirmed.allowsFractionalSale,
+            });
+          }
         }
       }
     } catch (caught) {
@@ -3234,6 +3248,25 @@ edgeCapable={edgeEnrollmentRequired}
           onCancel={() => { setInventoryNotice(null); focusScanner(); }}
         />
       )}
+
+      {quantityShortage && <PosQuantityAvailabilityDialog
+        value={quantityShortage}
+        busy={busy}
+        onConfirm={async (quantity) => {
+          const lineId = quantityShortage.lineId;
+          setQuantityShortage(null);
+          await changeQuantity(lineId, quantity, false);
+          focusScanner();
+        }}
+        onCancel={() => {
+          const lineId = quantityShortage.lineId;
+          setQuantityShortage(null);
+          window.requestAnimationFrame(() => {
+            quantityInputs.current.get(lineId)?.focus();
+            quantityInputs.current.get(lineId)?.select();
+          });
+        }}
+      />}
 
       {temporaryOpen && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/55 p-4">

@@ -1432,4 +1432,13 @@ El reporte inicial de productos se denomina `Productos`, consulta todo el catál
 
 Proveedor no forma parte de este primer contrato. Cuando se agregue, será una dimensión y agrupación explícita; no se inferirá ni se convertirá en requisito de creación como efecto secundario de un reporte.
 
+El reporte operativo `Actualización de precios para mostradores` se abre desde la selección de propuestas pendientes en `Precios y rentabilidad` y reutiliza exclusivamente `ReportViewer`. Mantiene la misma identidad corporativa, búsqueda, CSV, impresión/PDF y pie del reporte `Productos`; no crea otra plantilla HTML ni otro exportador. Incluye, en el orden de la selección:
+
+1. código interno;
+2. descripción del producto;
+3. precio público actual con moneda;
+4. precio preparado pendiente de publicación con moneda.
+
+Generar el reporte no publica ni modifica precios. El filtro inicial de `Precios y rentabilidad` es `Pendientes por publicar`, que agrupa los estados técnicos `PendingReview` y `Approved`; por eso una publicación o descarte confirmado deja de pertenecer al conjunto al refrescar. La UI puede retirar de inmediato las filas exitosas mientras invalida la consulta, pero el estado persistido de Pricing sigue siendo la autoridad.
+
 El reporte detallado de un despacho agrupa sus renglones bajo el comprobante o factura que los originó. Cliente y vendedor aparecen en ese encabezado de grupo, en lugar de repetirse en cada producto. Los modos consolidados muestran exclusivamente su dimensión —producto, cliente o vendedor— y no rellenan columnas sin significado con valores como `Varios`.

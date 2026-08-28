@@ -13,7 +13,7 @@ export function usePriceProposals(params: {
   page: number;
   pageSize: number;
   search?: string;
-  status?: PriceProposalStatus;
+  status?: PriceProposalStatus | "Pending";
   supplierId?: string;
   sourceDocumentId?: string;
 }) {

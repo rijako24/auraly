@@ -7,6 +7,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { PackageCheck, Search, Send, TrendingUp, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
+import { ReportViewer } from "@/components/reports/report-viewer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -23,6 +24,7 @@ import {
   createPricePublicationDraft,
   type PricePublicationDraft,
 } from "@/lib/pricing-publication-draft";
+import type { ReportRow } from "@/lib/report-viewer";
 import { formatCurrency, formatDateTime, formatRelativeTime } from "@/lib/utils";
 import { goodsReceiptsApi } from "@/services/api/goods-receipts";
 import type { PriceProposalStatus, PriceRevisionListItem } from "@/services/api/pricing";
@@ -46,9 +48,11 @@ export default function PricingPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState<PriceProposalStatus | "all">("all");
+  const [status, setStatus] = useState<PriceProposalStatus | "Pending" | "all">("Pending");
   const [supplierId, setSupplierId] = useState("all");
   const [drafts, setDrafts] = useState<Record<string, PricePublicationDraft>>({});
+  const [hiddenProposalIds, setHiddenProposalIds] = useState<Set<string>>(new Set());
+  const [priceReportRows, setPriceReportRows] = useState<ReportRow[] | null>(null);
   const draftsRef = useRef(drafts);
   draftsRef.current = drafts;
   const receiptOptions = useQuery({
@@ -159,6 +163,7 @@ export default function PricingPage() {
           concurrencyToken: row.concurrencyToken,
           reason: "Descartada desde la lista de precios",
         });
+        setHiddenProposalIds((current) => new Set(current).add(row.proposalId));
       }
       toast.success(candidates.length === 1 ? "Propuesta descartada." : "Propuestas descartadas.");
     } catch {
@@ -176,6 +181,11 @@ export default function PricingPage() {
       const items = candidates.map((row) =>
         buildPricePublicationItem(row, drafts[row.proposalId] ?? createPricePublicationDraft(row)));
       await publish.mutateAsync(items);
+      setHiddenProposalIds((current) => {
+        const next = new Set(current);
+        candidates.forEach((row) => next.add(row.proposalId));
+        return next;
+      });
       toast.success(candidates.length === 1
         ? "Precio publicado y notificado al punto de venta."
         : `${candidates.length} precios publicados en una sola operación.`);
@@ -185,6 +195,26 @@ export default function PricingPage() {
         : "No fue posible publicar. Actualiza la lista y vuelve a intentar.");
     }
   }, [drafts, publish]);
+
+  const openReport = useCallback((rows: PriceRevisionListItem[]) => {
+    const candidates = rows.filter(isPublishable).flatMap((row) => {
+      const preparedSalePrice = draftFor(row).salePrice;
+      return preparedSalePrice !== null && preparedSalePrice > 0
+        ? [{ productCode: row.productCode, productName: row.productName, currentSalePrice: row.currentSalePrice, preparedSalePrice }]
+        : [];
+    });
+    if (!candidates.length) {
+      toast.info("La selección no contiene precios preparados válidos.");
+      return;
+    }
+    setPriceReportRows(candidates.map((row, index) => ({
+      id: `${row.productCode}-${index}`,
+      code: row.productCode,
+      product: row.productName,
+      currentPrice: row.currentSalePrice,
+      preparedPrice: row.preparedSalePrice,
+    })));
+  }, [draftFor]);
 
   const columns = useMemo<ColumnDef<PriceRevisionListItem>[]>(() => [
     {
@@ -278,19 +308,12 @@ export default function PricingPage() {
     {
       id: "actions",
       header: "",
-      cell: ({ row }) => canReview && isPublishable(row.original) ? <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        disabled={reject.isPending}
-        onClick={() => void rejectRows([row.original])}
-        aria-label={`Descartar propuesta de ${row.original.productName}`}
-      >
-        <XCircle className="mr-2 h-4 w-4" />
-        Descartar
-      </Button> : null,
+      cell: ({ row }) => isPublishable(row.original) ? <div className="flex items-center justify-end gap-1">
+        {canPublish && <Button type="button" variant="ghost" size="sm" disabled={publish.isPending} onClick={() => void publishRows([row.original])} aria-label={`Publicar precio de ${row.original.productName}`}><Send className="mr-2 h-4 w-4" />Publicar</Button>}
+        {canReview && <Button type="button" variant="ghost" size="sm" disabled={reject.isPending} onClick={() => void rejectRows([row.original])} aria-label={`Descartar propuesta de ${row.original.productName}`}><XCircle className="mr-2 h-4 w-4" />Descartar</Button>}
+      </div> : null,
     },
-  ], [canPublish, canReview, draftFor, navigatePricingGrid, reject.isPending, rejectRows, updateMargin, updateSalePrice]);
+  ], [canPublish, canReview, draftFor, navigatePricingGrid, publish.isPending, publishRows, reject.isPending, rejectRows, updateMargin, updateSalePrice]);
 
   const bulkActions = useMemo(() => {
     const actions = [] as Array<{
@@ -302,13 +325,35 @@ export default function PricingPage() {
       label: publish.isPending ? "Publicando..." : "Publicar selección",
       onClick: (rows) => void publishRows(rows),
     });
+    if (canPublish || canReview) actions.push({
+      label: "Reporte para mostradores",
+      onClick: openReport,
+    });
     if (canReview) actions.push({
       label: "Descartar selección",
       onClick: (rows) => void rejectRows(rows),
       variant: "destructive",
     });
     return actions;
-  }, [canBulk, canPublish, canReview, publish.isPending, publishRows, rejectRows]);
+  }, [canBulk, canPublish, canReview, openReport, publish.isPending, publishRows, rejectRows]);
+
+  const visibleItems = status === "Pending"
+    ? (query.data?.items ?? []).filter((item) => !hiddenProposalIds.has(item.proposalId))
+    : (query.data?.items ?? []);
+
+  if (priceReportRows) return <ReportViewer
+    onClose={() => setPriceReportRows(null)}
+    title="Actualización de precios para mostradores"
+    description="Precio público actual frente al precio preparado pendiente de publicación · orden de la selección"
+    fileName="actualizacion-precios-mostradores"
+    rows={priceReportRows}
+    columns={[
+      { key: "code", label: "Código interno" },
+      { key: "product", label: "Producto" },
+      { key: "currentPrice", label: "Precio público actual", align: "right", format: (value) => formatCurrency(Number(value)) },
+      { key: "preparedPrice", label: "Precio preparado", align: "right", format: (value) => formatCurrency(Number(value)) },
+    ]}
+  />;
 
   return <div className="space-y-6">
     <header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
@@ -343,11 +388,12 @@ export default function PricingPage() {
         />
       </div>
       <Select value={status} onValueChange={(value) => {
-        setStatus(value as PriceProposalStatus | "all");
+        setStatus(value as PriceProposalStatus | "Pending" | "all");
         setPage(1);
       }}>
         <SelectTrigger><SelectValue /></SelectTrigger>
         <SelectContent>
+          <SelectItem value="Pending">Pendientes por publicar</SelectItem>
           <SelectItem value="all">Todos los estados</SelectItem>
           {Object.entries(statuses).map(([value, label]) =>
             <SelectItem key={value} value={value}>{label}</SelectItem>)}
@@ -371,7 +417,7 @@ export default function PricingPage() {
       <Button variant="link" onClick={() => query.refetch()}>Reintentar</Button>
     </div> : <DataTable
       columns={columns}
-      data={query.data?.items ?? []}
+      data={visibleItems}
       isLoading={query.isLoading}
       page={query.data?.page}
       pageSize={query.data?.pageSize}

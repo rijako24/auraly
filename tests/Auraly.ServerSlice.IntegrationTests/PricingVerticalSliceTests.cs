@@ -177,7 +177,7 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
             "SELECT COUNT(*) FROM dbo.PricePublicationAudits WHERE ProductId=@Product", productId));
 
         var candidates = await pricing.GetFromJsonAsync<PriceRevisionPage>(
-            "/api/commerce/v1/pricing/proposals?page=1&pageSize=20&status=Approved");
+            "/api/commerce/v1/pricing/proposals?page=1&pageSize=20&status=Pending");
         var candidate = Assert.Single(candidates!.Items.Where(x => x.ProductId == productId));
         Assert.Equal("Product", candidate.Origin);
         Assert.Equal(4_000m, candidate.CurrentSalePrice);
@@ -189,6 +189,9 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
                 candidate.ProposalId, PriceInputModes.SalePrice, null, 5_500m,
                 1m, PricingRoundingModes.Nearest, candidate.ConcurrencyToken)]));
         publicationResponse.EnsureSuccessStatusCode();
+        var remaining = await pricing.GetFromJsonAsync<PriceRevisionPage>(
+            "/api/commerce/v1/pricing/proposals?page=1&pageSize=20&status=Pending");
+        Assert.DoesNotContain(remaining!.Items, item => item.ProductId == productId);
         Assert.Equal(5_500m, await ScalarAsync<decimal>(
             "SELECT Amount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1", productId));
         Assert.Equal(1, await ScalarAsync<int>(

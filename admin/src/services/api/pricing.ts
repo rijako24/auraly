@@ -111,7 +111,7 @@ export const pricingApi = {
     page: number;
     pageSize: number;
     search?: string;
-    status?: PriceProposalStatus;
+    status?: PriceProposalStatus | "Pending";
     supplierId?: string;
     sourceDocumentId?: string;
   }) => apiClient.get<PriceRevisionPage>(

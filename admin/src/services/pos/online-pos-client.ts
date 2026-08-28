@@ -506,17 +506,31 @@ export class OnlinePosClient implements PosClient {
   }
 
   async changeQuantity(draftId: string, lineId: string, quantity: number) {
-    const updated = await request<OnlineDraft>(
-      `/api/commerce/v1/pos/drafts/${draftId}/lines/${lineId}/quantity`,
-      this.mutation(
-        { quantity, expectedVersion: this.version(draftId) },
-        "PUT",
-      ),
-    );
-    return {
-      status: "Added",
-      draft: this.mapDraft(updated),
-    } satisfies PosCaptureResult;
+    const current = await this.ensureActive();
+    try {
+      const updated = await request<OnlineDraft>(
+        `/api/commerce/v1/pos/drafts/${draftId}/lines/${lineId}/quantity`,
+        this.mutation(
+          { quantity, expectedVersion: this.version(draftId) },
+          "PUT",
+        ),
+      );
+      return {
+        status: "Added",
+        draft: this.mapDraft(updated),
+      } satisfies PosCaptureResult;
+    } catch (error) {
+      const available = error instanceof PosEdgeError && error.status === 400
+        ? inventoryAvailableFromProblem(error.message)
+        : null;
+      if (available !== null)
+        return {
+          status: "InsufficientInventory",
+          draft: current,
+          availability: { requestedQuantity: quantity, availableQuantity: available, isAvailable: false },
+        } satisfies PosCaptureResult;
+      throw error;
+    }
   }
 
   async setDiscount(draftId: string, lineId: string, discount: number, authorization?: PosSensitiveAuthorization) {
@@ -1165,6 +1179,14 @@ function escapeHtml(value: string | null) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function inventoryAvailableFromProblem(message: string) {
+  if (!message.toLocaleLowerCase("es-CO").includes("inventario insuficiente")) return null;
+  const match = message.match(/Disponible:\s*(-?\d+(?:\.\d+)?)/i);
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : null;
 }
 
 function receiptTaxRows(receipt: PosPrintableReceipt, currency: Intl.NumberFormat, element: "div") {

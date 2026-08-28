@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ProductPicker } from "@/components/products/product-picker";
+import { PriceChannelExclusions } from "@/components/pricing/price-channel-exclusions";
 import { formatCurrency } from "@/lib/utils";
 import { priceSegmentsApi, type PriceChannelStrategy, type PriceSegmentItem, type PriceSegmentSummary } from "@/services/api/price-segments";
 import { useAuthStore } from "@/stores/auth-store";
@@ -25,7 +26,6 @@ type ItemDraft = {
   productName: string;
   amount: number;
   minimumQuantity: number;
-  excluded: boolean;
 };
 
 export function PriceSegmentsManager() {
@@ -84,7 +84,6 @@ export function PriceSegmentsManager() {
       await priceSegmentsApi.saveItem(selected.id, value.productId, {
         amount: value.amount,
         minimumQuantity: value.minimumQuantity,
-        excluded: value.excluded,
       });
     },
     onSuccess: async () => {
@@ -202,10 +201,11 @@ export function PriceSegmentsManager() {
           {channelStrategy === "TieredProductPrice" && <section className="space-y-4 rounded-2xl border bg-muted/15 p-4">
             <div className="flex items-center justify-between gap-3"><div><h3 className="font-semibold">Productos y precios por cantidad</h3><p className="text-sm text-muted-foreground">Un producto puede tener varias escalas por cantidad.</p></div>{editingChannel && canManage && <Button onClick={() => { setDetailOpen(false); setDraft(emptyDraft()); }}><Plus className="mr-2 h-4 w-4" />Agregar producto</Button>}</div>
             <div className="overflow-hidden rounded-xl border bg-background"><table className="w-full text-sm"><thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-3 text-left">Producto</th><th className="px-4 py-3 text-right">Desde</th><th className="px-4 py-3 text-right">Precio</th>{editingChannel && <th className="w-24" />}</tr></thead><tbody>
-              {(items.data ?? []).map((item) => <tr key={item.productId + "-" + item.minimumQuantity} className="border-t align-middle"><td className="px-4 py-3"><b className="block">{item.productName}</b><small className="text-muted-foreground">{item.productCode || "Sin código"}</small></td><td className="px-4 py-3 text-right tabular-nums">{item.minimumQuantity}</td><td className="px-4 py-3 text-right"><span className={item.excluded ? "text-destructive" : "font-medium"}>{item.excluded ? "Excluido" : formatCurrency(item.amount)}</span></td>{editingChannel && <td className="px-2 py-3"><div className="flex justify-end"><Button size="icon" variant="ghost" aria-label={"Editar " + item.productName} onClick={() => { setDetailOpen(false); setDraft(fromItem(item)); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" className="text-destructive" aria-label={"Retirar " + item.productName} onClick={() => { setDetailOpen(false); setDeleteItem(item); }}><Trash2 className="h-4 w-4" /></Button></div></td>}</tr>)}
+              {(items.data ?? []).map((item) => <tr key={item.productId + "-" + item.minimumQuantity} className="border-t align-middle"><td className="px-4 py-3"><b className="block">{item.productName}</b><small className="text-muted-foreground">{item.productCode || "Sin código"}</small></td><td className="px-4 py-3 text-right tabular-nums">{item.minimumQuantity}</td><td className="px-4 py-3 text-right font-medium">{formatCurrency(item.amount)}</td>{editingChannel && <td className="px-2 py-3"><div className="flex justify-end"><Button size="icon" variant="ghost" aria-label={"Editar " + item.productName} onClick={() => { setDetailOpen(false); setDraft(fromItem(item)); }}><Pencil className="h-4 w-4" /></Button><Button size="icon" variant="ghost" className="text-destructive" aria-label={"Retirar " + item.productName} onClick={() => { setDetailOpen(false); setDeleteItem(item); }}><Trash2 className="h-4 w-4" /></Button></div></td>}</tr>)}
               {!items.isLoading && (items.data ?? []).length === 0 && <tr><td colSpan={editingChannel ? 4 : 3} className="p-10 text-center text-muted-foreground">Sin productos configurados</td></tr>}
             </tbody></table></div>
           </section>}
+          {businessId && <PriceChannelExclusions channelId={selected.id} businessId={businessId} canManage={editingChannel && canManage} />}
           <DialogFooter>
             <Button variant="outline" onClick={() => { if (editingChannel) { setEditingChannel(false); setName(selected.name); setChannelStrategy(selected.strategy); setChannelValue(selected.value ?? 0); } else { setDetailOpen(false); setSelected(null); } }}>{editingChannel ? "Cancelar" : "Cerrar"}</Button>
             {editingChannel && <Button disabled={saveChannel.isPending || !name.trim() || !validChannelValue(channelStrategy, channelValue)} onClick={() => saveChannel.mutate()}>{saveChannel.isPending ? "Guardando…" : "Guardar canal"}</Button>}
@@ -250,10 +250,10 @@ function PriceItemDialog({ segment, draft, onChange, onSave, saving }: { segment
 }
 
 function emptyDraft(): ItemDraft {
-  return { originalMinimumQuantity: null, productId: "", productCode: "", productName: "", amount: 0, minimumQuantity: 1, excluded: false };
+  return { originalMinimumQuantity: null, productId: "", productCode: "", productName: "", amount: 0, minimumQuantity: 1 };
 }
 function fromItem(item: PriceSegmentItem): ItemDraft {
-  return { originalMinimumQuantity: item.minimumQuantity, productId: item.productId, productCode: item.productCode, productName: item.productName, amount: item.amount, minimumQuantity: item.minimumQuantity, excluded: item.excluded };
+  return { originalMinimumQuantity: item.minimumQuantity, productId: item.productId, productCode: item.productCode, productName: item.productName, amount: item.amount, minimumQuantity: item.minimumQuantity };
 }
 const channelStrategies: Array<{ value: PriceChannelStrategy; label: string }> = [
   { value: "TieredProductPrice", label: "Precios por producto y cantidad" },

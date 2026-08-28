@@ -16,6 +16,9 @@ public static class PriceSegmentsApi
         group.MapPut("/{id:guid}/items/{productId:guid}", SaveItemAsync);
         group.MapDelete("/{id:guid}/items/{productId:guid}", DeleteItemAsync);
         group.MapPut("/{id:guid}/settings", SaveChannelSettingsAsync);
+        group.MapGet("/{id:guid}/exclusions", ExclusionsAsync);
+        group.MapPost("/{id:guid}/exclusions", SaveExclusionAsync);
+        group.MapDelete("/{id:guid}/exclusions/{exclusionId:guid}", DeleteExclusionAsync);
         return endpoints;
     }
 
@@ -78,7 +81,6 @@ public static class PriceSegmentsApi
                     itemCommand.Parameters.AddWithValue("@ProductId", item.ProductId);
                     itemCommand.Parameters.AddWithValue("@MinimumQuantity", item.MinimumQuantity);
                     itemCommand.Parameters.AddWithValue("@Amount", item.Amount);
-                    itemCommand.Parameters.AddWithValue("@Excluded", false);
                     await itemCommand.ExecuteNonQueryAsync(ct);
                 }
             }
@@ -109,8 +111,7 @@ public static class PriceSegmentsApi
         var items = new List<PriceSegmentItem>();
         while (await reader.ReadAsync(ct))
             items.Add(new(reader.GetGuid(0), reader.IsDBNull(1) ? "" : reader.GetString(1),
-                reader.GetString(2), reader.GetDecimal(3), reader.GetString(4), reader.GetDecimal(5),
-                reader.GetBoolean(6)));
+                reader.GetString(2), reader.GetDecimal(3), reader.GetString(4), reader.GetDecimal(5)));
         return Results.Ok(items);
     }
 
@@ -131,10 +132,96 @@ public static class PriceSegmentsApi
         command.Parameters.AddWithValue("@ProductId", productId);
         command.Parameters.AddWithValue("@MinimumQuantity", request.MinimumQuantity);
         command.Parameters.AddWithValue("@Amount", request.Amount);
-        command.Parameters.AddWithValue("@Excluded", request.Excluded);
         try { await command.ExecuteNonQueryAsync(ct); await transaction.CommitAsync(ct); }
         catch (SqlException exception) when (exception.Number == 51004)
         { await transaction.RollbackAsync(ct); return Results.NotFound(); }
+        return Results.NoContent();
+    }
+
+    private static async Task<IResult> ExclusionsAsync(
+        HttpContext context, Guid id, SqlServerConnectionFactory connections,
+        CancellationToken ct)
+    {
+        var identity = context.User.ToPricingIdentity();
+        if (!identity.Permissions.Contains("pricing.segments.read")) return Results.Forbid();
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = Procedure("dbo.PriceChannelExclusionsList", connection);
+        command.Parameters.AddWithValue("@Id", id);
+        command.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
+        try
+        {
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            var items = new List<PriceChannelExclusion>();
+            while (await reader.ReadAsync(ct))
+                items.Add(new(
+                    reader.GetGuid(0), reader.GetString(1), reader.GetGuid(2),
+                    reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetInt32(4),
+                    reader.IsDBNull(5) ? null : reader.GetString(5)));
+            return Results.Ok(items);
+        }
+        catch (SqlException exception) when (exception.Number == 51004)
+        {
+            return Results.NotFound();
+        }
+    }
+
+    private static async Task<IResult> SaveExclusionAsync(
+        HttpContext context, Guid id, SavePriceChannelExclusionRequest request,
+        SqlServerConnectionFactory connections, CancellationToken ct)
+    {
+        var identity = context.User.ToPricingIdentity();
+        if (!identity.Permissions.Contains("pricing.segments.manage")) return Results.Forbid();
+        var scopeType = request.ScopeType?.Trim() switch
+        {
+            "Category" => "Category",
+            "Brand" => "Brand",
+            "Product" => "Product",
+            _ => null
+        };
+        if (scopeType is null || request.ScopeId == Guid.Empty)
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["scope"] = ["Selecciona un alcance válido para la exclusión."]
+            });
+        var exclusionId = Guid.NewGuid();
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = Procedure("dbo.PriceChannelExclusionSave", connection);
+        command.Parameters.AddWithValue("@ExclusionId", exclusionId);
+        command.Parameters.AddWithValue("@Id", id);
+        command.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
+        command.Parameters.AddWithValue("@ScopeType", scopeType);
+        command.Parameters.AddWithValue("@ScopeId", request.ScopeId);
+        try
+        {
+            await command.ExecuteNonQueryAsync(ct);
+            return Results.Created($"/api/commerce/v1/pricing/segments/{id:D}/exclusions/{exclusionId:D}",
+                new { exclusionId });
+        }
+        catch (SqlException exception) when (exception.Number == 51004)
+        {
+            return Results.NotFound();
+        }
+        catch (SqlException exception) when (exception.Number is 2601 or 2627)
+        {
+            return Results.Conflict(new { message = "Ese alcance ya está excluido del canal." });
+        }
+    }
+
+    private static async Task<IResult> DeleteExclusionAsync(
+        HttpContext context, Guid id, Guid exclusionId,
+        SqlServerConnectionFactory connections, CancellationToken ct)
+    {
+        var identity = context.User.ToPricingIdentity();
+        if (!identity.Permissions.Contains("pricing.segments.manage")) return Results.Forbid();
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = Procedure("dbo.PriceChannelExclusionDelete", connection);
+        command.Parameters.AddWithValue("@ExclusionId", exclusionId);
+        command.Parameters.AddWithValue("@Id", id);
+        command.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
+        await command.ExecuteNonQueryAsync(ct);
         return Results.NoContent();
     }
 
@@ -214,9 +301,12 @@ public static class PriceSegmentsApi
 }
 
 public sealed record PriceSegmentSummary(Guid Id, string Code, string Name, bool IsActive, DateTimeOffset CreatedAt, int ProductCount, int CustomerCount, string Strategy, decimal? Value);
-public sealed record PriceSegmentItem(Guid ProductId, string ProductCode, string ProductName, decimal Amount, string CurrencyCode, decimal MinimumQuantity, bool Excluded);
+public sealed record PriceSegmentItem(Guid ProductId, string ProductCode, string ProductName, decimal Amount, string CurrencyCode, decimal MinimumQuantity);
 public sealed record SavePriceSegmentRequest(string Name,
     string ChannelStrategy, decimal? ChannelValue, IReadOnlyList<CreatePriceSegmentItemRequest>? Items);
 public sealed record CreatePriceSegmentItemRequest(Guid ProductId, decimal Amount, decimal MinimumQuantity);
-public sealed record SavePriceSegmentItemRequest(decimal Amount, decimal MinimumQuantity, bool Excluded);
+public sealed record SavePriceSegmentItemRequest(decimal Amount, decimal MinimumQuantity);
 public sealed record SavePriceChannelSettingsRequest(string Name, string ChannelStrategy, decimal? ChannelValue);
+public sealed record PriceChannelExclusion(Guid ExclusionId, string ScopeType, Guid ScopeId,
+    string ScopeName, int? CategoryDepth, string? ProductCode);
+public sealed record SavePriceChannelExclusionRequest(string ScopeType, Guid ScopeId);

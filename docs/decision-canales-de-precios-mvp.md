@@ -140,7 +140,9 @@ Brand
 Product
 ```
 
-No es necesario reproducir los cinco niveles de familias de Xion. Se utiliza la taxonomía real de Auraly.
+`Category` referencia cualquier nodo de la taxonomía real de Auraly. La interfaz lo presenta según su profundidad como área, línea, grupo o subgrupo. Excluir un nodo excluye los productos clasificados en ese nodo y en todos sus descendientes. `Brand` y `Product` referencian sus maestros canónicos; la selección individual reutiliza el buscador general de productos.
+
+Las exclusiones pertenecen al canal y son independientes de su estrategia. No se guardan como una condición de precio por producto ni se duplican en venta, pedido o POS. El resolutor canónico las evalúa antes de la fórmula del canal; una coincidencia conserva el precio público vigente y el producto continúa vendible.
 
 ---
 
@@ -179,7 +181,7 @@ El orden determinista será:
 ```text
 1. Obtener precio base vigente
 2. Resolver canal
-3. Verificar exclusiones
+3. Verificar exclusiones por categoría (incluidos descendientes), marca o producto
 4. Aplicar fórmula del canal
 5. Aplicar promociones compatibles
 6. Aplicar descuento manual autorizado
@@ -363,6 +365,8 @@ Todos los importes y porcentajes usan `DECIMAL`.
 - Pricing y Promotions son módulos distintos.
 - El canal puede asignarse por cliente, caja, sucursal o negocio.
 - Existen exclusiones por categoría, marca o producto.
+- Área, línea, grupo y subgrupo son profundidades de la categoría canónica y excluyen sus descendientes.
+- Una exclusión se resuelve una sola vez en Pricing y produce precio público tanto en venta como en pedido y POS offline.
 - La resolución tiene precedencia determinista.
 - Impuestos no se modifican desde el canal.
 - El precio aplicado conserva snapshots y explicación.

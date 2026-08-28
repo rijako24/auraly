@@ -42,7 +42,7 @@ public sealed class PricingService(
         Require(user, PricingPermissionCodes.ReadCostBasis);
         if (query.Page < 1 || query.PageSize is < 1 or > 100)
             throw new PricingValidationException("Page and PageSize are invalid.");
-        if (query.Status is not null && query.Status is not ("PendingReview" or "Approved" or "Published" or "Rejected" or "Superseded"))
+        if (query.Status is not null && query.Status is not ("Pending" or "PendingReview" or "Approved" or "Published" or "Rejected" or "Superseded"))
             throw new PricingValidationException("The proposal status is invalid.");
         return store.ListAsync(user, query with { Search = Normalize(query.Search, 120) }, ct);
     }
