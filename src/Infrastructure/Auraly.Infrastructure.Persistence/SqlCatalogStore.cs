@@ -77,10 +77,10 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                 ? """
                   INSERT dbo.Products
                     (ProductId,BusinessId,ProductCode,Reference,Sku,Name,Description,ProductCategoryId,CategoryName,ProductBrandId,BaseUnitCode,TaxProfileId,
-                     PurchaseTaxProfileId,PurchaseTaxTreatment,ManageStock,ConversionMaximumLossPercent,AllowsFractionalSale,IsWeighable,IsActive,Source,UnitPrice,Currency,CreatedAt,UpdatedAt,CreatedByUserId,UpdatedByUserId)
+                     PurchaseTaxProfileId,PurchaseTaxTreatment,ManageStock,ConversionMaximumLossPercent,AllowsFractionalSale,IsWeighable,IsActive,Source,Currency,CreatedAt,UpdatedAt,CreatedByUserId,UpdatedByUserId)
                   VALUES
                     (@ProductId,@BusinessId,@ProductCode,@Reference,@Reference,@Name,@Description,@ProductCategoryId,(SELECT Name FROM dbo.ProductCategories WHERE ProductCategoryId=@ProductCategoryId),@ProductBrandId,@BaseUnitCode,@TaxProfileId,
-                     @PurchaseTaxProfileId,@PurchaseTaxTreatment,@ManageInventory,@ConversionMaximumLossPercent,@AllowsFractionalSale,@IsWeighable,1,0,@InitialPrice,N'COP',@Now,NULL,@UserId,NULL);
+                     @PurchaseTaxProfileId,@PurchaseTaxTreatment,@ManageInventory,@ConversionMaximumLossPercent,@AllowsFractionalSale,@IsWeighable,1,0,N'COP',@Now,NULL,@UserId,NULL);
                   """
                 : """
                   UPDATE dbo.Products SET ProductCode=@ProductCode,Reference=@Reference,Sku=@Reference,Name=@Name,
@@ -872,7 +872,6 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
     }
     private static SqlParameter[] ProductParameters(CatalogUserIdentity user, Guid id, SaveProductRequest r, DateTimeOffset now) =>
         [P("@ProductId", id), P("@TenantId", user.TenantId), P("@BusinessId", user.BusinessId), P("@ProductCode", r.ProductCode.Trim()),
-         P("@InitialPrice", r.Prices.Single().Amount),
          P("@Reference", r.Reference), P("@Name", r.Name.Trim()), P("@Description", r.Description), P("@BaseUnitCode", r.BaseUnitCode.Trim()),
          P("@TaxProfileId", r.TaxProfileId), P("@PurchaseTaxProfileId", r.PurchaseTaxProfileId == Guid.Empty ? r.TaxProfileId : r.PurchaseTaxProfileId),
          P("@PurchaseTaxTreatment", r.PurchaseTaxTreatment), P("@ManageInventory", r.ManageInventory), P("@IsWeighable", r.IsWeighable),

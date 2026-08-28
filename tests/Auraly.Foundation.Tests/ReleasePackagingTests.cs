@@ -155,6 +155,40 @@ public sealed class ReleasePackagingTests
     }
 
     [Fact]
+    public void Desktop_children_are_bound_to_a_kill_on_close_windows_job()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var desktopDirectory = Path.Combine(
+            repositoryRoot, "src", "Desktop", "Auraly.Desktop");
+        var program = File.ReadAllText(Path.Combine(desktopDirectory, "Program.cs"));
+        var processJob = File.ReadAllText(Path.Combine(
+            desktopDirectory, "AuralyChildProcessJob.cs"));
+        var applicationContext = File.ReadAllText(Path.Combine(
+            desktopDirectory, "AuralyDesktopApplicationContext.cs"));
+
+        Assert.Contains("AuralyChildProcessJob ChildProcessJob", program,
+            StringComparison.Ordinal);
+        Assert.Contains("ChildProcessJob.Add(process)", program,
+            StringComparison.Ordinal);
+        Assert.Contains("ChildProcessJob.Dispose()", program,
+            StringComparison.Ordinal);
+        Assert.Contains("JobObjectLimitKillOnJobClose", processJob,
+            StringComparison.Ordinal);
+        Assert.Contains("AssignProcessToJobObject", processJob,
+            StringComparison.Ordinal);
+        Assert.Contains("process.SafeHandle", processJob,
+            StringComparison.Ordinal);
+        Assert.Contains("Program.StopStaleLocalComponents(root)", applicationContext,
+            StringComparison.Ordinal);
+        Assert.Contains("Path.Combine(root, \"runtime\", \"node.exe\")", program,
+            StringComparison.Ordinal);
+        Assert.Contains("Path.GetFullPath(actualPath)", program,
+            StringComparison.Ordinal);
+        Assert.Contains("process.Kill(entireProcessTree: true)", program,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Installer_projects_are_visible_but_only_built_by_the_packaging_pipeline()
     {
         var solution = File.ReadAllText(Path.Combine(

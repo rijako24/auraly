@@ -199,8 +199,8 @@ public sealed class PayablesVerticalSliceTests(ServerSliceFixture fixture)
             }
             await using (var product = new SqlCommand("""
                 INSERT dbo.Products
-                  (ProductId,BusinessId,Source,Sku,Name,UnitPrice,Currency,ManageStock,IsActive,CreatedAt)
-                VALUES(@ProductId,@BusinessId,0,@Sku,N'Producto aislado de cartera',10000,N'COP',1,1,SYSUTCDATETIME());
+                  (ProductId,BusinessId,Source,Sku,Name,Currency,ManageStock,IsActive,CreatedAt)
+                VALUES(@ProductId,@BusinessId,0,@Sku,N'Producto aislado de cartera',N'COP',1,1,SYSUTCDATETIME());
                 INSERT dbo.ProductPrices
                   (ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,
                    TargetMarginPercent,RoundingIncrement,RoundingMode,IsActive,CreatedAt)

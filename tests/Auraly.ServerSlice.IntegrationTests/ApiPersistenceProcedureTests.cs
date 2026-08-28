@@ -169,6 +169,37 @@ public sealed class ApiPersistenceProcedureTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Price_channel_creation_persists_excluded_products_in_the_same_request()
+    {
+        using var client = fixture.CreateAdminClient("pricing.segments.read", "pricing.segments.manage");
+        var name = $"Canal con excluidos {Guid.NewGuid():N}";
+        using var create = await client.PostAsJsonAsync(
+            "/api/commerce/v1/pricing/segments/",
+            new SavePriceSegmentRequest(name, "PercentageOverBasePrice", -5m, null,
+                [new CreatePriceChannelExclusionRequest("Product", fixture.ProductId)]));
+        Assert.True(create.IsSuccessStatusCode, await create.Content.ReadAsStringAsync());
+        var channel = (await create.Content.ReadFromJsonAsync<PriceSegmentSummary>())!;
+        try
+        {
+            var exclusions = (await client.GetFromJsonAsync<PriceChannelExclusion[]>(
+                $"/api/commerce/v1/pricing/segments/{channel.Id:D}/exclusions"))!;
+            var exclusion = Assert.Single(exclusions);
+            Assert.Equal("Product", exclusion.ScopeType);
+            Assert.Equal(fixture.ProductId, exclusion.ScopeId);
+        }
+        finally
+        {
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var cleanup = new SqlCommand(
+                "DELETE dbo.PriceChannelExclusions WHERE PriceChannelId=@Id; DELETE dbo.PriceChannels WHERE PriceChannelId=@Id;",
+                connection);
+            cleanup.Parameters.AddWithValue("@Id", channel.Id);
+            await cleanup.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Fact]
     public async Task Canonical_price_channel_formula_adjusts_product_margin_and_never_goes_below_average_cost()
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);

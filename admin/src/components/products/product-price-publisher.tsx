@@ -18,6 +18,7 @@ import {
 import type { PreparedProductPrice, PricingRoundingMode } from "@/services/api/pricing";
 
 export interface ProductPricingEditorValue {
+  publicAmount: number;
   amount: number;
   costBasisAmount: number;
   targetMarginPercent: number;
@@ -68,6 +69,7 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
   }, [context.data]);
 
   const effectiveSalesTaxRate = salesTaxRateOverride ?? context.data?.salesTaxRate ?? 0;
+  const publicSalePrice = context.data?.publicSalePrice;
 
   useEffect(() => {
     if (!context.data || previousSalesTaxRate.current === null) return;
@@ -160,9 +162,12 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
 
   useImperativeHandle(ref, () => ({
     getValue: () => {
+      if (publicSalePrice === undefined)
+        throw new Error("La configuración de precio todavía no ha terminado de cargar.");
       if (!valid || resolvedSale === null || resolvedCost === null || resolvedMargin === null || resolvedIncrement === null)
         throw new Error("El costo y el precio de venta deben ser mayores que cero; el margen puede ser 0 % y debe ser menor que 100 %.");
       return {
+        publicAmount: publicSalePrice,
         amount: resolvedSale,
         costBasisAmount: resolvedCost,
         targetMarginPercent: resolvedMargin,
@@ -182,7 +187,7 @@ export const ProductPricingEditor = forwardRef<ProductPricingEditorHandle, {
       if (!valid) throw new Error("El costo y el precio de venta deben ser mayores que cero; el margen puede ser 0 % y debe ser menor que 100 %.");
       if (dirty) await save();
     },
-  }), [dirty, resolvedCost, resolvedIncrement, resolvedMargin, resolvedSale, roundingMode, save, savesBySalePrice, valid]);
+  }), [dirty, publicSalePrice, resolvedCost, resolvedIncrement, resolvedMargin, resolvedSale, roundingMode, save, savesBySalePrice, valid]);
   const costOrigin = context.data?.costBasisOrigin === "ObservedSupplierCost"
     ? "Último proveedor"
     : context.data?.costBasisOrigin === "Manual" ? "Costo manual" : "Sin costo registrado";

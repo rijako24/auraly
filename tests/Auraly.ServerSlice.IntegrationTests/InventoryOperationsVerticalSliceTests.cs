@@ -847,10 +847,10 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
             INSERT dbo.TaxProfiles(
                 TaxProfileId,BusinessId,Code,Name,Rate,IsActive,CreatedAt)
             VALUES(@TaxProfileId,@BusinessId,@TaxCode,N'IVA de prueba',19,1,SYSDATETIMEOFFSET());
-            INSERT dbo.Products(ProductId,BusinessId,ProductCode,Reference,BaseUnitCode,TaxProfileId,Source,Sku,Name,UnitPrice,Currency,ManageStock,ConversionMaximumLossPercent,IsActive,CreatedAt)
-            VALUES(@First,@BusinessId,@FirstSku,@FirstReference,N'EA',@TaxProfileId,0,@FirstSku,N'Insumo',0,N'COP',1,0,1,SYSUTCDATETIME()),
-                  (@Second,@BusinessId,NULL,NULL,N'EA',@TaxProfileId,0,@SecondSku,N'Salida uno',0,N'COP',1,NULL,1,SYSUTCDATETIME()),
-                  (@Third,@BusinessId,NULL,NULL,N'EA',@TaxProfileId,0,@ThirdSku,N'Salida dos',0,N'COP',1,NULL,1,SYSUTCDATETIME());
+            INSERT dbo.Products(ProductId,BusinessId,ProductCode,Reference,BaseUnitCode,TaxProfileId,Source,Sku,Name,Currency,ManageStock,ConversionMaximumLossPercent,IsActive,CreatedAt)
+            VALUES(@First,@BusinessId,@FirstSku,@FirstReference,N'EA',@TaxProfileId,0,@FirstSku,N'Insumo',N'COP',1,0,1,SYSUTCDATETIME()),
+                  (@Second,@BusinessId,NULL,NULL,N'EA',@TaxProfileId,0,@SecondSku,N'Salida uno',N'COP',1,NULL,1,SYSUTCDATETIME()),
+                  (@Third,@BusinessId,NULL,NULL,N'EA',@TaxProfileId,0,@ThirdSku,N'Salida dos',N'COP',1,NULL,1,SYSUTCDATETIME());
             INSERT dbo.InventoryBalances(BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,InventoryValue,LastProcessingSequence,UpdatedAt)
             SELECT product.BusinessId,warehouse.WarehouseId,product.ProductId,0,0,0,
                    COALESCE((SELECT LastCompletedSequence FROM dbo.BusinessProcessingCursors WHERE BusinessId=@BusinessId),0),SYSDATETIMEOFFSET()
@@ -889,8 +889,8 @@ public sealed class InventoryOperationsVerticalSliceTests(ServerSliceFixture fix
     private async Task SeedAdditionalInventoryProductAsync(Guid productId)
     {
         const string sql = """
-            INSERT dbo.Products(ProductId,BusinessId,ProductCode,Reference,BaseUnitCode,TaxProfileId,Source,Sku,Name,UnitPrice,Currency,ManageStock,IsActive,CreatedAt)
-            SELECT @ProductId,@BusinessId,@Sku,@Sku,N'EA',MIN(TaxProfileId),0,@Sku,N'Producto agregado después del conteo',0,N'COP',1,1,SYSUTCDATETIME()
+            INSERT dbo.Products(ProductId,BusinessId,ProductCode,Reference,BaseUnitCode,TaxProfileId,Source,Sku,Name,Currency,ManageStock,IsActive,CreatedAt)
+            SELECT @ProductId,@BusinessId,@Sku,@Sku,N'EA',MIN(TaxProfileId),0,@Sku,N'Producto agregado después del conteo',N'COP',1,1,SYSUTCDATETIME()
             FROM dbo.TaxProfiles WHERE BusinessId=@BusinessId;
             INSERT dbo.InventoryBalances(BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,InventoryValue,LastProcessingSequence,UpdatedAt)
             SELECT @BusinessId,warehouse.WarehouseId,@ProductId,0,0,0,

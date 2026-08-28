@@ -126,19 +126,30 @@ WHEN MATCHED THEN UPDATE SET
     [Name] = source.[Name],
     [Description] = source.TechnicalDescription,
     CategoryName = N'iPhone ' + CONVERT(NVARCHAR(10), source.Generation),
-    UnitPrice = source.UsedPrice,
     Currency = N'COP',
     ManageStock = 0,
     IsActive = 1,
     UpdatedAt = SYSUTCDATETIME()
 WHEN NOT MATCHED THEN INSERT
     (ProductId, BusinessId, Source, Sku, [Name], [Description], CategoryName,
-     UnitPrice, Currency, ManageStock, IsActive, CreatedAt)
+     Currency, ManageStock, IsActive, CreatedAt)
 VALUES
     (NEWID(), @BusinessId, 0, source.Sku, source.[Name],
      source.TechnicalDescription,
      N'iPhone ' + CONVERT(NVARCHAR(10), source.Generation),
-     source.UsedPrice, N'COP', 0, 1, SYSUTCDATETIME());
+     N'COP', 0, 1, SYSUTCDATETIME());
+
+MERGE dbo.ProductPrices AS target
+USING (
+    SELECT product.ProductId, catalog.UsedPrice AS Amount
+    FROM @Catalog catalog
+    JOIN dbo.Products product ON product.BusinessId=@BusinessId AND product.Sku=catalog.Sku
+) AS source
+ON target.BusinessId=@BusinessId AND target.ProductId=source.ProductId AND target.IsActive=1
+WHEN NOT MATCHED THEN INSERT
+    (ProductPriceId,BusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,InputMode,ValidFrom,IsActive,CreatedAt)
+VALUES
+    (NEWID(),@BusinessId,source.ProductId,source.Amount,source.Amount,N'COP',N'SalePrice',SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET());
 
 DECLARE @Offers TABLE
 (
@@ -224,14 +235,26 @@ USING @AccessoryCatalog AS source
 ON target.BusinessId = @BusinessId AND target.Sku = source.Sku
 WHEN MATCHED THEN UPDATE SET
     [Name] = source.[Name], [Description] = source.[Description], CategoryName = N'Accesorios',
-    UnitPrice = source.UnitPrice, Currency = N'COP', ManageStock = 0, IsActive = 1,
+    Currency = N'COP', ManageStock = 0, IsActive = 1,
     UpdatedAt = SYSUTCDATETIME()
 WHEN NOT MATCHED THEN INSERT
     (ProductId, BusinessId, Source, Sku, [Name], [Description], CategoryName,
-     UnitPrice, Currency, ManageStock, IsActive, CreatedAt)
+     Currency, ManageStock, IsActive, CreatedAt)
 VALUES
     (NEWID(), @BusinessId, 0, source.Sku, source.[Name], source.[Description],
-     N'Accesorios', source.UnitPrice, N'COP', 0, 1, SYSUTCDATETIME());
+     N'Accesorios', N'COP', 0, 1, SYSUTCDATETIME());
+
+MERGE dbo.ProductPrices AS target
+USING (
+    SELECT product.ProductId, accessory.UnitPrice AS Amount
+    FROM @AccessoryCatalog accessory
+    JOIN dbo.Products product ON product.BusinessId=@BusinessId AND product.Sku=accessory.Sku
+) AS source
+ON target.BusinessId=@BusinessId AND target.ProductId=source.ProductId AND target.IsActive=1
+WHEN NOT MATCHED THEN INSERT
+    (ProductPriceId,BusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,InputMode,ValidFrom,IsActive,CreatedAt)
+VALUES
+    (NEWID(),@BusinessId,source.ProductId,source.Amount,source.Amount,N'COP',N'SalePrice',SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET());
 
 MERGE dbo.ProductOffers AS target
 USING (

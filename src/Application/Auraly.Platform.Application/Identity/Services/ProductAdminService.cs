@@ -92,15 +92,10 @@ public sealed class ProductAdminService : IProductAdminService
             ?? throw new NotFoundException(nameof(Product), productId);
 
         var name = request.Name?.Trim() ?? string.Empty;
-        var currency = request.Currency?.Trim().ToUpperInvariant() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(name))
             throw new DomainValidationException("Name", "El nombre del producto es obligatorio.");
         if (name.Length > 200)
             throw new DomainValidationException("Name", "El nombre no puede superar 200 caracteres.");
-        if (request.UnitPrice < 0)
-            throw new DomainValidationException("UnitPrice", "El precio no puede ser negativo.");
-        if (currency.Length != 3 || !currency.All(char.IsLetter))
-            throw new DomainValidationException("Currency", "La moneda debe ser un codigo de tres letras.");
 
         var reference = NormalizeOptional(request.Reference);
         var description = NormalizeOptional(request.Description);
@@ -121,10 +116,6 @@ public sealed class ProductAdminService : IProductAdminService
             || !string.Equals(product.CategoryName, categoryName, StringComparison.Ordinal);
         var productChanged = searchIndexChanged
             || product.ProductCategoryId != category?.ProductCategoryId;
-        productChanged = productChanged
-            || product.UnitPrice != request.UnitPrice
-            || !string.Equals(product.Currency, currency, StringComparison.OrdinalIgnoreCase);
-
         var oldState = MapToDto(product);
         if (!productChanged)
             return oldState;
@@ -136,9 +127,6 @@ public sealed class ProductAdminService : IProductAdminService
         product.CategoryName = categoryName;
         product.UpdatedAt = DateTime.UtcNow;
         product.ProductCategoryId = category?.ProductCategoryId;
-        product.UnitPrice = request.UnitPrice;
-        product.Currency = currency;
-
         await _unitOfWork.Products.UpdateAsync(product, ct);
         if (searchIndexChanged)
             await _unitOfWork.Products.ReplaceSearchTermsAsync(product, ct);
@@ -326,12 +314,12 @@ public sealed class ProductAdminService : IProductAdminService
         (int Depth, string Path) Resolve(ProductCategory category, HashSet<Guid> visited)
         {
             if (!visited.Add(category.ProductCategoryId))
-                return (1, category.Name);
+                return (0, category.Name);
             if (category.ParentProductCategoryId is not Guid parentId
                 || !byId.TryGetValue(parentId, out var parent))
-                return (1, category.Name);
+                return (0, category.Name);
             var resolved = Resolve(parent, visited);
-            return (Math.Min(4, resolved.Depth + 1), $"{resolved.Path} > {category.Name}");
+            return (Math.Min(3, resolved.Depth + 1), $"{resolved.Path} > {category.Name}");
         }
         return categories.Select(category =>
             {

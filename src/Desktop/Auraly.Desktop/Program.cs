@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.ComponentModel;
 using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -16,6 +17,7 @@ internal sealed record DesktopConfiguration(
 internal static class Program
 {
     private static readonly List<Process> Children = [];
+    private static readonly AuralyChildProcessJob ChildProcessJob = new();
     private static readonly CancellationTokenSource Shutdown = new();
 
     [STAThread]
@@ -171,6 +173,51 @@ internal static class Program
         return StartLogged(info, "edge", edgeOrigin);
     }
 
+    internal static void StopStaleLocalComponents(string root)
+    {
+        var expectedPaths = new[]
+        {
+            Path.Combine(root, "runtime", "node.exe"),
+            Path.Combine(root, "edge", "Auraly.Pos.Edge.Host.exe")
+        };
+
+        foreach (var expectedPath in expectedPaths)
+        {
+            var processName = Path.GetFileNameWithoutExtension(expectedPath);
+            foreach (var process in Process.GetProcessesByName(processName))
+            {
+                using (process)
+                {
+                    string? actualPath;
+                    try
+                    {
+                        actualPath = process.MainModule?.FileName;
+                    }
+                    catch (Win32Exception)
+                    {
+                        continue;
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        continue;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(actualPath) ||
+                        !string.Equals(
+                            Path.GetFullPath(expectedPath),
+                            Path.GetFullPath(actualPath),
+                            StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    if (!process.HasExited) process.Kill(entireProcessTree: true);
+                    if (!process.WaitForExit(10_000))
+                        throw new TimeoutException(
+                            $"The stale local component did not stop: {expectedPath}.");
+                }
+            }
+        }
+    }
+
     private static Process StartLogged(
         ProcessStartInfo info,
         string component,
@@ -239,7 +286,26 @@ internal static class Program
         throw new TimeoutException($"The local component did not answer at {url}.");
     }
 
-    internal static void RegisterChild(Process process) => Children.Add(process);
+    internal static void RegisterChild(Process process)
+    {
+        try
+        {
+            ChildProcessJob.Add(process);
+            Children.Add(process);
+        }
+        catch
+        {
+            try
+            {
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+            }
+            finally
+            {
+                process.Dispose();
+            }
+            throw;
+        }
+    }
 
     internal static void RemoveChild(Process process)
     {
@@ -264,6 +330,7 @@ internal static class Program
             }
         }
         Children.Clear();
+        ChildProcessJob.Dispose();
     }
 
 }

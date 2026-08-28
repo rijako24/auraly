@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useDeferredValue,
   useMemo,
   useRef,
   useState,
@@ -92,19 +93,19 @@ export function InventoryPhysicalCountWorkspace({
   const [fromDate, setFromDate] = useState(today);
   const [toDate, setToDate] = useState(today);
   const [status, setStatus] = useState("all");
-  const [filters, setFilters] = useState({ search: "", warehouseId: "all", fromDate: today, toDate: today, status: "all" });
+  const deferredSearch = useDeferredValue(search.trim());
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [selectedDrafts, setSelectedDrafts] = useState<Map<string, InventoryPhysicalCountDraftSummary>>(new Map());
   const selectedCountId = selectedDrafts.values().next().value?.inventoryPhysicalCountId ?? "";
   const query = useQuery({
-    queryKey: ["inventory-physical-count-drafts", businessId, filters, page, pageSize],
+    queryKey: ["inventory-physical-count-drafts", businessId, deferredSearch, warehouseId, fromDate, toDate, status, page, pageSize],
     queryFn: () => inventoryApi.physicalCountDrafts({
-      warehouseId: filters.warehouseId === "all" ? undefined : filters.warehouseId,
-      search: filters.search || undefined,
-      from: dayBoundary(filters.fromDate),
-      to: dayBoundary(filters.toDate, true),
-      status: filters.status === "all" ? undefined : filters.status as "Ready" | "InProgress",
+      warehouseId: warehouseId === "all" ? undefined : warehouseId,
+      search: deferredSearch || undefined,
+      from: dayBoundary(fromDate),
+      to: dayBoundary(toDate || today, true),
+      status: status === "all" ? undefined : status as "Ready" | "InProgress",
       page,
       pageSize,
     }),
@@ -121,12 +122,8 @@ export function InventoryPhysicalCountWorkspace({
     onError: (error: Error) => toast.error(error.message || "No fue posible conciliar los borradores."),
   });
 
-  function applyFilters() {
-    if (fromDate && toDate && fromDate > toDate) {
-      toast.error("La fecha inicial no puede ser posterior a la fecha final.");
-      return;
-    }
-    setFilters({ search: search.trim(), warehouseId, fromDate, toDate, status });
+  function changeFilter(setter: (value: string) => void, value: string) {
+    setter(value);
     setSelectedDrafts(new Map());
     setPage(1);
   }
@@ -166,16 +163,13 @@ export function InventoryPhysicalCountWorkspace({
     </div>
     <Card><CardContent className="space-y-4 pt-6">
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-        <Field label="Buscar"><div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input className="pl-9" value={search} onChange={event => setSearch(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); applyFilters(); } }} placeholder="Nombre, producto o código" /></div></Field>
-        <Field label="Bodega"><Select value={warehouseId} onValueChange={setWarehouseId}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todas las bodegas</SelectItem>{warehouses.map(item => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></Field>
-        <Field label="Estado"><Select value={status} onValueChange={setStatus}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos los estados</SelectItem><SelectItem value="Ready">Listo para conciliar</SelectItem><SelectItem value="InProgress">En progreso</SelectItem></SelectContent></Select></Field>
-        <Field label="Actualizado desde"><DatePicker value={fromDate} max={toDate || undefined} onChange={setFromDate} /></Field>
-        <Field label="Actualizado hasta"><DatePicker value={toDate} min={fromDate || undefined} onChange={setToDate} /></Field>
+        <Field label="Buscar"><div className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input className="pl-9" value={search} onChange={event => changeFilter(setSearch, event.target.value)} placeholder="Nombre, producto o código" /></div></Field>
+        <Field label="Bodega"><Select value={warehouseId} onValueChange={value => changeFilter(setWarehouseId, value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todas las bodegas</SelectItem>{warehouses.map(item => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></Field>
+        <Field label="Estado"><Select value={status} onValueChange={value => changeFilter(setStatus, value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">Todos los estados</SelectItem><SelectItem value="Ready">Listo para conciliar</SelectItem><SelectItem value="InProgress">En progreso</SelectItem></SelectContent></Select></Field>
+        <Field label="Actualizado desde"><DatePicker value={fromDate} max={toDate || today} onChange={value => changeFilter(setFromDate, value)} /></Field>
+        <Field label="Actualizado hasta"><DatePicker value={toDate} min={fromDate || undefined} onChange={value => changeFilter(setToDate, value)} /><p className="text-xs text-muted-foreground">Si se deja vacío, se consulta hasta hoy.</p></Field>
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-        <p className="text-sm text-muted-foreground">Los filtros se aplican únicamente a los borradores.</p>
-        <Button onClick={applyFilters}><Search className="mr-2 h-4 w-4" />Aplicar filtros</Button>
-      </div>
+      <p className="border-t pt-4 text-sm text-muted-foreground">Los filtros se aplican automáticamente y únicamente a los borradores.</p>
     </CardContent></Card>
     {permissions.has("inventory.physical-counts.manage") && <Card className="overflow-hidden border-emerald-200 bg-gradient-to-r from-emerald-50 via-background to-background"><CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-start gap-3"><span className="rounded-xl bg-emerald-100 p-2 text-emerald-700"><ClipboardCheck className="h-5 w-5" /></span><div><p className="font-semibold">Conciliar inventario</p><p className="text-sm text-muted-foreground">Marca borradores listos del mismo inventario. El resultado abrirá directamente en Contados y No contados.</p><p className="mt-1 text-xs text-muted-foreground">{selectedDrafts.size} {selectedDrafts.size === 1 ? "seleccionado" : "seleccionados"}</p></div></div><Button className="shrink-0" disabled={!selectedCountId || selectedDrafts.size === 0 || prepare.isPending} onClick={() => prepare.mutate()}>{prepare.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ClipboardCheck className="mr-2 h-4 w-4" />}Conciliar seleccionados</Button></CardContent></Card>}
     <Card>

@@ -57,12 +57,22 @@ public static class PriceSegmentsApi
         var id = Guid.NewGuid();
         var code = $"CNL-{id:N}".ToUpperInvariant()[..12];
         var requestedItems = request.Items ?? [];
+        var requestedExclusions = request.Exclusions ?? [];
         if (!TryNormalizeChannelStrategy(request.ChannelStrategy, out var strategy) ||
             !TryValidateChannelValue(strategy, request.ChannelValue, out var channelValue))
             return InvalidChannelSettings();
         if (strategy == PriceChannelStrategies.TieredProductPrice &&
             requestedItems.Any(item => item.ProductId == Guid.Empty || item.Amount <= 0 || item.MinimumQuantity <= 0))
             return Results.Problem("Cada producto necesita un precio y una cantidad mínima válidos.", statusCode: 400);
+        if (requestedExclusions.Any(exclusion =>
+                !TryNormalizeExclusionScope(exclusion.ScopeType, out _) || exclusion.ScopeId == Guid.Empty)
+            || requestedExclusions.GroupBy(exclusion =>
+                    $"{exclusion.ScopeType.Trim().ToUpperInvariant()}:{exclusion.ScopeId:D}")
+                .Any(group => group.Count() > 1))
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["exclusions"] = ["Cada exclusión debe tener un alcance válido y no puede repetirse."]
+            });
         await using var command = Procedure("dbo.PriceSegmentCreate", connection, transaction);
         command.Parameters.AddWithValue("@Id", id);
         command.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
@@ -85,6 +95,18 @@ public static class PriceSegmentsApi
                     itemCommand.Parameters.AddWithValue("@Amount", item.Amount);
                     await itemCommand.ExecuteNonQueryAsync(ct);
                 }
+            }
+            foreach (var exclusion in requestedExclusions)
+            {
+                TryNormalizeExclusionScope(exclusion.ScopeType, out var scopeType);
+                await using var exclusionCommand = Procedure(
+                    "dbo.PriceChannelExclusionSave", connection, transaction);
+                exclusionCommand.Parameters.AddWithValue("@ExclusionId", Guid.NewGuid());
+                exclusionCommand.Parameters.AddWithValue("@Id", id);
+                exclusionCommand.Parameters.AddWithValue("@BusinessId", identity.BusinessId);
+                exclusionCommand.Parameters.AddWithValue("@ScopeType", scopeType);
+                exclusionCommand.Parameters.AddWithValue("@ScopeId", exclusion.ScopeId);
+                await exclusionCommand.ExecuteNonQueryAsync(ct);
             }
             await transaction.CommitAsync(ct);
         }
@@ -174,14 +196,8 @@ public static class PriceSegmentsApi
     {
         var identity = context.User.ToPricingIdentity();
         if (!identity.Permissions.Contains("pricing.segments.manage")) return Results.Forbid();
-        var scopeType = request.ScopeType?.Trim() switch
-        {
-            "Category" => "Category",
-            "Brand" => "Brand",
-            "Product" => "Product",
-            _ => null
-        };
-        if (scopeType is null || request.ScopeId == Guid.Empty)
+        if (!TryNormalizeExclusionScope(request.ScopeType, out var scopeType)
+            || request.ScopeId == Guid.Empty)
             return Results.ValidationProblem(new Dictionary<string, string[]>
             {
                 ["scope"] = ["Selecciona un alcance válido para la exclusión."]
@@ -284,6 +300,18 @@ public static class PriceSegmentsApi
         return PriceChannelStrategies.IsSupported(normalized);
     }
 
+    private static bool TryNormalizeExclusionScope(string? scopeType, out string normalized)
+    {
+        normalized = scopeType?.Trim() switch
+        {
+            "Category" => "Category",
+            "Brand" => "Brand",
+            "Product" => "Product",
+            _ => string.Empty
+        };
+        return normalized.Length > 0;
+    }
+
     private static bool TryValidateChannelValue(
         string strategy,
         decimal? value,
@@ -320,8 +348,10 @@ public static class PriceSegmentsApi
 public sealed record PriceSegmentSummary(Guid Id, string Code, string Name, bool IsActive, DateTimeOffset CreatedAt, int ProductCount, int CustomerCount, string Strategy, decimal? Value);
 public sealed record PriceSegmentItem(Guid ProductId, string ProductCode, string ProductName, decimal Amount, string CurrencyCode, decimal MinimumQuantity);
 public sealed record SavePriceSegmentRequest(string Name,
-    string ChannelStrategy, decimal? ChannelValue, IReadOnlyList<CreatePriceSegmentItemRequest>? Items);
+    string ChannelStrategy, decimal? ChannelValue, IReadOnlyList<CreatePriceSegmentItemRequest>? Items,
+    IReadOnlyList<CreatePriceChannelExclusionRequest>? Exclusions = null);
 public sealed record CreatePriceSegmentItemRequest(Guid ProductId, decimal Amount, decimal MinimumQuantity);
+public sealed record CreatePriceChannelExclusionRequest(string ScopeType, Guid ScopeId);
 public sealed record SavePriceSegmentItemRequest(decimal Amount, decimal MinimumQuantity);
 public sealed record SavePriceChannelSettingsRequest(string Name, string ChannelStrategy, decimal? ChannelValue);
 public sealed record PriceChannelExclusion(Guid ExclusionId, string ScopeType, Guid ScopeId,

@@ -1796,11 +1796,11 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         await connection.OpenAsync();
         await using var command = new SqlCommand("""
             INSERT dbo.Products
-              (ProductId,BusinessId,Source,Sku,Name,UnitPrice,Currency,
+              (ProductId,BusinessId,Source,Sku,Name,Currency,
                ManageStock,IsActive,CreatedAt)
             VALUES
               (@ProductId,@BusinessId,0,@Sku,N'Servicio de compra',
-               10000,N'COP',0,1,SYSUTCDATETIME());
+               N'COP',0,1,SYSUTCDATETIME());
 
             INSERT dbo.ProductPrices
               (ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,

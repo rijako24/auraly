@@ -145,11 +145,11 @@ public sealed class LinkedPricePublicationTests(ServerSliceFixture fixture)
             INSERT dbo.Products
               (ProductId,BusinessId,ProductCode,Reference,Sku,Name,Description,
                BaseUnitCode,TaxProfileId,ManageStock,IsWeighable,IsActive,Source,
-               UnitPrice,Currency,CreatedAt)
+               Currency,CreatedAt)
             VALUES
               (@ProductId,@BusinessId,@ProductCode,@ProductCode,@ProductCode,
                N'Producto vinculado',N'Prueba de publicacion vinculada',N'EA',
-               @TaxProfileId,1,0,1,0,@Price,N'COP',SYSDATETIMEOFFSET());
+               @TaxProfileId,1,0,1,0,N'COP',SYSDATETIMEOFFSET());
             INSERT dbo.ProductPrices
               (ProductPriceId,BusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,
                CostBasisType,CostBasisAmount,TargetMarginPercent,EffectiveMarginPercent,

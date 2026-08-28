@@ -206,6 +206,9 @@ function Publish-Database {
         Invoke-ReviewedPreDacpacMigration `
             -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260825_AddPurchaseEvidence.sql') `
             -AccessToken $accessToken
+        Invoke-ReviewedPreDacpacMigration `
+            -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260828_RemoveProductsUnitPrice.sql') `
+            -AccessToken $accessToken
 
         $commonArguments = @(
             "/SourceFile:$dacpac",

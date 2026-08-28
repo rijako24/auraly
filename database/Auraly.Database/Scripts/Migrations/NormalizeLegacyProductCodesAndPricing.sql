@@ -62,12 +62,11 @@ SET ProductCode=N'PRD-'+RIGHT(N'000000'+CONVERT(nvarchar(12),normalization.Seque
 FROM dbo.Products productValue
 JOIN #ProductCodeNormalization normalization ON normalization.ProductId=productValue.ProductId;
 
--- Recupera el precio público real: primero el activo, después el valor heredado del
--- producto y finalmente el último precio histórico positivo.
+-- Recupera el precio público exclusivamente desde su propietario canónico. La tabla
+-- Products ya no conserva una copia heredada del precio.
 SELECT productValue.ProductId,productValue.BusinessId,
        CAST(COALESCE(
          NULLIF(activePrice.Amount,0),
-         NULLIF(productValue.UnitPrice,0),
          historicalPrice.Amount
        ) AS decimal(19,4)) AS PublicAmount,
        CAST(COALESCE(taxProfile.Rate,0) AS decimal(9,6)) AS SalesTaxRate

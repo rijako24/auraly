@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ProductPicker } from "@/components/products/product-picker";
-import { PriceChannelExclusions } from "@/components/pricing/price-channel-exclusions";
+import { PriceChannelExclusionDraftEditor, PriceChannelExclusions, type DraftPriceChannelExclusion } from "@/components/pricing/price-channel-exclusions";
 import { formatCurrency } from "@/lib/utils";
 import { priceSegmentsApi, type PriceChannelStrategy, type PriceSegmentItem, type PriceSegmentSummary } from "@/services/api/price-segments";
 import { useAuthStore } from "@/stores/auth-store";
@@ -45,6 +45,7 @@ export function PriceSegmentsManager() {
   const [channelValue, setChannelValue] = useState(0);
   const [createItems, setCreateItems] = useState<ItemDraft[]>([]);
   const [createItem, setCreateItem] = useState<ItemDraft>(emptyDraft());
+  const [createExclusions, setCreateExclusions] = useState<DraftPriceChannelExclusion[]>([]);
 
   const segments = useQuery({ queryKey: ["price-segments"], queryFn: priceSegmentsApi.list });
   const items = useQuery({
@@ -60,6 +61,7 @@ export function PriceSegmentsManager() {
         channelStrategy,
         channelValue: requiresChannelValue(channelStrategy) ? channelValue : null,
         items: channelStrategy === "TieredProductPrice" ? createItems.map((item) => ({ productId: item.productId, amount: item.amount, minimumQuantity: item.minimumQuantity })) : undefined,
+        exclusions: createExclusions.map((item) => ({ scopeType: item.scopeType, scopeId: item.scopeId })),
       });
     },
     onSuccess: async () => {
@@ -70,6 +72,7 @@ export function PriceSegmentsManager() {
       setChannelValue(0);
       setCreateItems([]);
       setCreateItem(emptyDraft());
+      setCreateExclusions([]);
       toast.success("Canal de precios creado.");
     },
     onError: (error: { message?: string }) => toast.error(error.message ?? "No fue posible crear el segmento."),
@@ -151,7 +154,7 @@ export function PriceSegmentsManager() {
         <h1 className="text-3xl font-semibold tracking-tight">Canales de precios</h1>
         <p className="mt-1 max-w-3xl text-muted-foreground">Define una regla general o precios por producto y cantidad. Si no aplica un canal se usa el precio público.</p>
       </div>
-      {canManage && <Button onClick={() => { setName(""); setChannelStrategy("TieredProductPrice"); setChannelValue(0); setCreateItems([]); setCreateItem(emptyDraft()); setCreateOpen(true); }}><Plus className="mr-2 h-4 w-4" />Nuevo canal</Button>}
+      {canManage && <Button onClick={() => { setName(""); setChannelStrategy("TieredProductPrice"); setChannelValue(0); setCreateItems([]); setCreateItem(emptyDraft()); setCreateExclusions([]); setCreateOpen(true); }}><Plus className="mr-2 h-4 w-4" />Nuevo canal</Button>}
     </header>
 
     <Card>
@@ -180,6 +183,7 @@ export function PriceSegmentsManager() {
           <div className="space-y-2"><Label>Nombre *</Label><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Mayoristas" maxLength={120} /></div>
           <div className="space-y-3"><Label>Modo de precio</Label><div className="grid gap-2 sm:grid-cols-2">{channelStrategies.map((mode) => <Button key={mode.value} type="button" variant={channelStrategy === mode.value ? "default" : "outline"} className="h-auto justify-start whitespace-normal py-3 text-left" onClick={() => { setChannelStrategy(mode.value); setChannelValue(0); }}>{mode.label}</Button>)}</div>{requiresChannelValue(channelStrategy) && <div className="space-y-2"><Label>{channelValueLabel(channelStrategy)}</Label><FormattedNumberInput kind="percent" allowNegative={allowsNegativeChannelValue(channelStrategy)} value={channelValue} invalid={!validChannelValue(channelStrategy, channelValue)} onValueChange={(value) => setChannelValue(value ?? 0)} /></div>}<p className="text-xs text-muted-foreground">{channelStrategyHelp(channelStrategy)}</p></div>
           {channelStrategy === "TieredProductPrice" && <div className="space-y-4 rounded-2xl border bg-muted/15 p-4"><div><h3 className="font-semibold">Productos y precios por cantidad</h3><p className="text-sm text-muted-foreground">Busca como en Inventario y agrega cada escala a la grilla. La primera escala inicia en cantidad 1.</p></div>{businessId && <ProductPicker businessId={businessId} selectedProductIds={new Set(createItems.map(item=>item.productId))} disabled={create.isPending} label="Producto" onSelect={(product) => setCreateItem({ ...createItem, productId: product.productId, productCode: product.productCode, productName: product.productName, amount: product.saleUnitPrice ?? 0, minimumQuantity: 1 })} />}{createItem.productId && <div className="grid gap-3 rounded-xl border bg-background p-3 sm:grid-cols-[1fr_170px_150px_auto] sm:items-end"><div><Label>Producto</Label><p className="mt-2 font-medium">{createItem.productName}</p><p className="text-xs text-muted-foreground">{createItem.productCode || "Sin código"}</p></div><div className="space-y-2"><Label>Precio</Label><FormattedNumberInput kind="currency" value={createItem.amount} invalid={createItem.amount <= 0} onValueChange={(value) => setCreateItem({ ...createItem, amount: value ?? 0 })} /></div><div className="space-y-2"><Label>Desde cantidad</Label><FormattedNumberInput value={createItem.minimumQuantity} invalid={createItem.minimumQuantity <= 0} onValueChange={(value) => setCreateItem({ ...createItem, minimumQuantity: value ?? 0 })} /></div><Button type="button" variant="secondary" disabled={createItem.amount <= 0 || createItem.minimumQuantity <= 0} onClick={addCreateItem}>Agregar precio</Button></div>}<div className="overflow-hidden rounded-xl border bg-background"><table className="w-full text-sm"><thead className="bg-muted/60"><tr><th className="px-3 py-2 text-left">Producto</th><th className="px-3 py-2 text-right">Desde</th><th className="px-3 py-2 text-right">Precio</th><th className="w-12" /></tr></thead><tbody>{createItems.length === 0 ? <tr aria-hidden="true"><td colSpan={4} className="h-24 border-t" /></tr> : createItems.map((item, index) => <tr key={`${item.productId}-${item.minimumQuantity}`} className="border-t"><td className="px-3 py-2"><b>{item.productName}</b><small className="block text-muted-foreground">{item.productCode}</small></td><td className="px-3 py-2 text-right">{item.minimumQuantity}</td><td className="px-3 py-2 text-right font-medium">{formatCurrency(item.amount)}</td><td><Button type="button" size="icon" variant="ghost" aria-label={`Eliminar precio de ${item.productName}`} onClick={() => setCreateItems((current) => current.filter((_, currentIndex) => currentIndex !== index))}><Trash2 className="h-4 w-4 text-destructive" /></Button></td></tr>)}</tbody></table></div></div>}
+          {businessId && <PriceChannelExclusionDraftEditor businessId={businessId} value={createExclusions} onChange={setCreateExclusions} disabled={create.isPending} />}
         </div>
         <DialogFooter><Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancelar</Button><Button disabled={!name.trim() || create.isPending || !validChannelValue(channelStrategy, channelValue)} onClick={() => create.mutate()}>{create.isPending ? "Guardando…" : `Crear canal${channelStrategy === "TieredProductPrice" && createItems.length ? ` · ${createItems.length} precios` : ""}`}</Button></DialogFooter>
       </DialogContent>

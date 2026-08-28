@@ -914,9 +914,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
              @DocumentType, @Prefix, 10001, 20000, 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.Products
-            (ProductId, BusinessId, Source, Sku, Name, UnitPrice, Currency, ManageStock, IsActive, CreatedAt)
+            (ProductId, BusinessId, Source, Sku, Name, Currency, ManageStock, IsActive, CreatedAt)
             VALUES
-            (@ProductId, @BusinessId, 0, N'P-E2E', N'Producto E2E', 10000, N'COP', 1, 1, SYSUTCDATETIME());
+            (@ProductId, @BusinessId, 0, N'P-E2E', N'Producto E2E', N'COP', 1, 1, SYSUTCDATETIME());
 
             INSERT dbo.ProductPrices
               (ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,
@@ -1017,7 +1017,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             StartInfo = new ProcessStartInfo(sqlPackage)
             {
                 UseShellExecute = false,
-                CreateNoWindow = true
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
             }
         };
         // SqlPackage can target a newer servicing patch than the SDK used by
@@ -1031,11 +1033,19 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         process.StartInfo.ArgumentList.Add("/p:DropObjectsNotInSource=False");
         process.StartInfo.ArgumentList.Add("/p:BlockOnPossibleDataLoss=True");
         process.Start();
+        var standardOutput = process.StandardOutput.ReadToEndAsync();
+        var standardError = process.StandardError.ReadToEndAsync();
         await process.WaitForExitAsync();
         if (process.ExitCode != 0)
         {
+            var diagnostic = string.Join(
+                Environment.NewLine,
+                new[] { await standardOutput, await standardError }
+                    .Where(value => !string.IsNullOrWhiteSpace(value)));
+            if (diagnostic.Length > 8_000)
+                diagnostic = diagnostic[^8_000..];
             throw new InvalidOperationException(
-                $"SqlPackage failed with exit code {process.ExitCode} while deploying the isolated SQL Server test database.");
+                $"SqlPackage failed with exit code {process.ExitCode} while deploying the isolated SQL Server test database.{Environment.NewLine}{diagnostic}");
         }
     }
 

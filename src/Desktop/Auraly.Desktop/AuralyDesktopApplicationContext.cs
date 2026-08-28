@@ -50,6 +50,7 @@ internal sealed class AuralyDesktopApplicationContext : ApplicationContext
         try
         {
             splash.SetStage("Iniciando servicios locales", 0);
+            Program.StopStaleLocalComponents(root);
             var web = Program.StartWeb(root, configuration, data, webOrigin);
             Program.RegisterChild(web);
             edge = Program.StartEdge(

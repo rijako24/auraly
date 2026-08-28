@@ -31,9 +31,9 @@ VALUES
 
 INSERT dbo.Products(
     ProductId,BusinessId,ProductCode,Reference,BaseUnitCode,TaxProfileId,
-    Source,Sku,Name,UnitPrice,Currency,ManageStock,IsWeighable,IsActive,CreatedAt)
+    Source,Sku,Name,Currency,ManageStock,IsWeighable,IsActive,CreatedAt)
 SELECT p.ProductId,@BusinessId,p.Code,p.Reference,N'EA',@TaxProfileId,
-       0,p.Code,p.Name,p.Price,N'COP',1,0,1,@Now
+       0,p.Code,p.Name,N'COP',1,0,1,@Now
 FROM @Products p
 WHERE NOT EXISTS (SELECT 1 FROM dbo.Products x WHERE x.ProductId=p.ProductId);
 

@@ -17,6 +17,8 @@ public class Product
     public string Name { get; set; } = string.Empty;
     public string? Description { get; set; }
     public string? CategoryName { get; set; }
+    /// <summary>Effective price loaded from the canonical ProductPrices table.</summary>
+    [NotMapped]
     public decimal UnitPrice { get; set; }
 
     /// <summary>Set by the canonical ProductPrices reader; never persisted on Products.</summary>

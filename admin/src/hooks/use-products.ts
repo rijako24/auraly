@@ -5,7 +5,6 @@ import {
   productsApi,
   type PromoteProductAliasRequest,
   type ReviewProductAliasRequest,
-  type UpdateProductRequest,
 } from "@/services/api/products";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
@@ -42,19 +41,6 @@ export function useProductConfiguration(productId?: string) {
     queryKey: ["product-configuration", businessId, productId],
     queryFn: () => productsApi.getConfiguration(businessId!, productId!),
     enabled: !!businessId && !!productId,
-  });
-}
-
-export function useUpdateProduct() {
-  const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ productId, request }: { productId: string; request: UpdateProductRequest }) =>
-      productsApi.update(businessId!, productId, request),
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["products", businessId] });
-      queryClient.invalidateQueries({ queryKey: ["product-configuration", businessId, variables.productId] });
-    },
   });
 }
 

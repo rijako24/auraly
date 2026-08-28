@@ -218,7 +218,7 @@ export default function ProductsPage() {
         barcodes: merchandising.barcodes,
         identifiers: [],
         prices: [{
-          amount: selectedProduct.unitPrice,
+          amount: pricing.publicAmount,
           preparedAmount: pricing.amount,
           currencyCode: selectedProduct.currency || "COP",
           costBasisAmount: pricing.costBasisAmount,

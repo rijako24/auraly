@@ -187,7 +187,6 @@ WHEN MATCHED THEN
         [Name] = source.[Name],
         [Description] = source.[Description],
         CategoryName = source.CategoryName,
-        UnitPrice = source.UnitPrice,
         Currency = source.Currency,
         ManageStock = 0,
         StockQuantity = source.StockQuantity,
@@ -196,11 +195,19 @@ WHEN MATCHED THEN
         UpdatedAt = GETUTCDATE()
 WHEN NOT MATCHED THEN
     INSERT (ProductId, BusinessId, IntegrationConnectionId, ExternalProductId, Source, Sku, [Name],
-            [Description], CategoryName, UnitPrice, Currency, ManageStock, StockQuantity,
+            [Description], CategoryName, Currency, ManageStock, StockQuantity,
             IsActive, RawPayloadJson, LastSyncedAt, CreatedAt)
     VALUES (source.ProductId, @BusinessId, @LocalCommerceConnectionId, NULL, 0, source.Sku, source.[Name],
-            source.[Description], source.CategoryName, source.UnitPrice, source.Currency, 0, source.StockQuantity,
+            source.[Description], source.CategoryName, source.Currency, 0, source.StockQuantity,
             source.IsActive, NULL, NULL, GETUTCDATE());
+
+MERGE dbo.ProductPrices AS target
+USING @Products AS source
+ON target.BusinessId=@BusinessId AND target.ProductId=source.ProductId AND target.IsActive=1
+WHEN NOT MATCHED THEN INSERT
+    (ProductPriceId,BusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,InputMode,ValidFrom,IsActive,CreatedAt)
+VALUES
+    (NEWID(),@BusinessId,source.ProductId,source.UnitPrice,source.UnitPrice,source.Currency,N'SalePrice',SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET());
 
 DELETE FROM dbo.Products
 WHERE BusinessId = @BusinessId

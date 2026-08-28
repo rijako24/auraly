@@ -603,7 +603,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Reference).HasMaxLength(120);
             entity.Property(e => e.Name).IsRequired().HasMaxLength(250);
             entity.Property(e => e.CategoryName).HasMaxLength(150);
-            entity.Property(e => e.UnitPrice).HasPrecision(18, 2);
+            entity.Ignore(e => e.UnitPrice);
             entity.Property(e => e.Currency).IsRequired().HasMaxLength(10);
             entity.Property(e => e.StockQuantity).HasPrecision(18, 2);
             entity.Property(e => e.ConversionMaximumLossPercent).HasPrecision(9, 6);

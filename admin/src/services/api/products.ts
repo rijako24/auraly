@@ -72,7 +72,6 @@ export interface ProductAlias {
 }
 
 export interface ProductConfiguration { aliases: ProductAlias[]; searchTerms: string[] }
-export interface UpdateProductRequest { name: string; reference: string | null; description: string | null; categoryName: string | null; unitPrice: number; currency: string }
 
 export interface CreateCatalogProductRequest {
   businessId: string;
@@ -164,7 +163,6 @@ export const productsApi = {
     ]);
     return { aliases, searchTerms };
   },
-  update: (businessId: string, productId: string, request: UpdateProductRequest) => apiClient.put<Product>(`/businesses/${businessId}/products/${productId}`, request),
   updateStatus: (_businessId: string, productId: string, isActive: boolean) => apiClient.patch<void>(`/commerce/v1/products/${productId}/status`, { isActive }),
   addManualAlias: (businessId: string, productId: string, alias: string) =>
     apiClient.post<{ created: number; updated: number; skipped: number; errors: Array<{ message: string }> }>(`/businesses/${businessId}/products/aliases/import`, {

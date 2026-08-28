@@ -29,9 +29,7 @@ public record UpdateProductRequest(
     string Name,
     string? Reference,
     string? Description,
-    string? CategoryName,
-    decimal UnitPrice,
-    string Currency);
+    string? CategoryName);
 
 public sealed record ProductCategoryAdminDto(
     Guid ProductCategoryId,

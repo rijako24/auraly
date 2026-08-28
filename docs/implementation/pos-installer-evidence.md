@@ -13,6 +13,21 @@ The installer bundles the Auraly desktop launcher, the production Next.js
 standalone build, Node.js runtime and the self-contained POS Edge host. It
 preserves `%LOCALAPPDATA%\Auraly\PosEdge` during an update.
 
+## Process ownership during updates
+
+The desktop launcher assigns its Node.js and POS Edge children to one Windows
+Job Object configured with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. If Windows
+Installer must terminate the launcher during an update, Windows also terminates
+both local children and releases ports 47830 and 47831 before the new version is
+launched. This prevents an older Node.js process from serving stale Next.js
+chunks after the package files have been replaced.
+
+At startup, after obtaining the single-instance mutex and before opening either
+local port, Desktop also removes a stale process only when its executable path
+matches the installed Auraly Node.js or POS Edge binary exactly. This recovers
+machines affected before Job Object ownership existed without terminating an
+unrelated Node.js or web process.
+
 ## Automated verification
 
 - `dotnet build Auraly.Commerce.sln --configuration Release --no-restore`:

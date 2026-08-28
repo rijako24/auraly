@@ -20,7 +20,7 @@ public sealed class ProductAdminServiceTests
             fixture.TenantId,
             fixture.BusinessId,
             fixture.Product.ProductId,
-            new UpdateProductRequest("Producto", "REF-1", "Descripcion", "Categoria", 100m, "cop"));
+            new UpdateProductRequest("Producto", "REF-1", "Descripcion", "Categoria"));
 
         result.Name.Should().Be("Producto");
         fixture.Products.Verify(repository => repository.UpdateAsync(It.IsAny<Product>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -29,7 +29,7 @@ public sealed class ProductAdminServiceTests
     }
 
     [Fact]
-    public async Task Update_WhenOnlyPriceChanged_PersistsWithoutRebuildingSearchIndex()
+    public async Task Update_DoesNotExposeAParallelPriceWriteContract()
     {
         var fixture = CreateFixture();
 
@@ -37,12 +37,12 @@ public sealed class ProductAdminServiceTests
             fixture.TenantId,
             fixture.BusinessId,
             fixture.Product.ProductId,
-            new UpdateProductRequest("Producto", "REF-1", "Descripcion", "Categoria", 125m, "COP"));
+            new UpdateProductRequest("Producto", "REF-1", "Descripcion", "Categoria"));
 
-        result.UnitPrice.Should().Be(125m);
-        fixture.Products.Verify(repository => repository.UpdateAsync(fixture.Product, It.IsAny<CancellationToken>()), Times.Once);
+        result.UnitPrice.Should().Be(100m);
+        fixture.Products.Verify(repository => repository.UpdateAsync(fixture.Product, It.IsAny<CancellationToken>()), Times.Never);
         fixture.Products.Verify(repository => repository.ReplaceSearchTermsAsync(It.IsAny<Product>(), It.IsAny<CancellationToken>()), Times.Never);
-        fixture.UnitOfWork.Verify(unit => unit.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once);
+        fixture.UnitOfWork.Verify(unit => unit.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -54,7 +54,7 @@ public sealed class ProductAdminServiceTests
             fixture.TenantId,
             fixture.BusinessId,
             fixture.Product.ProductId,
-            new UpdateProductRequest("Producto actualizado", "REF-2", "Descripcion", "Categoria", 100m, "COP"));
+            new UpdateProductRequest("Producto actualizado", "REF-2", "Descripcion", "Categoria"));
 
         result.Name.Should().Be("Producto actualizado");
         result.Reference.Should().Be("REF-2");

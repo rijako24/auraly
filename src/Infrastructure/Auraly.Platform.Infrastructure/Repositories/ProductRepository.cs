@@ -203,7 +203,6 @@ public sealed partial class ProductRepository : IProductRepository
     {
         await ReplacePublishedPriceIfChangedAsync(product, DateTimeOffset.UtcNow, ct);
         _context.Products.Update(product);
-        _context.Entry(product).Property(item => item.UnitPrice).IsModified = false;
         _context.Entry(product).Property(item => item.Currency).IsModified = false;
         return product;
     }

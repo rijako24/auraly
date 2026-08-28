@@ -12,6 +12,38 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Product_category_endpoint_returns_zero_based_area_line_group_and_subgroup_depths()
+    {
+        var ids = Enumerable.Range(0, 4).Select(_ => Guid.NewGuid()).ToArray();
+        await ExecuteAsync(
+            """
+            INSERT dbo.ProductCategories(ProductCategoryId,BusinessId,ParentProductCategoryId,Name,DisplayOrder,IsActive,IsBrowsable,CreatedAt)
+            VALUES
+              (@Area,@Business,NULL,N'Área profundidad',0,1,1,SYSUTCDATETIME()),
+              (@Line,@Business,@Area,N'Línea profundidad',0,1,1,SYSUTCDATETIME()),
+              (@Group,@Business,@Line,N'Grupo profundidad',0,1,1,SYSUTCDATETIME()),
+              (@Subgroup,@Business,@Group,N'Subgrupo profundidad',0,1,1,SYSUTCDATETIME());
+            """,
+            new SqlParameter("@Area", ids[0]), new SqlParameter("@Line", ids[1]),
+            new SqlParameter("@Group", ids[2]), new SqlParameter("@Subgroup", ids[3]),
+            new SqlParameter("@Business", fixture.BusinessId));
+        try
+        {
+            using var client = fixture.CreateAdminClient("products.read");
+            var categories = (await client.GetFromJsonAsync<List<Auraly.Platform.Application.Identity.DTOs.ProductCategoryAdminDto>>(
+                $"/api/v1/businesses/{fixture.BusinessId:D}/product-categories"))!;
+            Assert.Equal([0, 1, 2, 3], ids.Select(id => categories.Single(item => item.ProductCategoryId == id).Depth));
+        }
+        finally
+        {
+            await ExecuteAsync(
+                "DELETE dbo.ProductCategories WHERE ProductCategoryId IN (@Area,@Line,@Group,@Subgroup);",
+                new SqlParameter("@Area", ids[0]), new SqlParameter("@Line", ids[1]),
+                new SqlParameter("@Group", ids[2]), new SqlParameter("@Subgroup", ids[3]));
+        }
+    }
+
+    [Fact]
     public async Task Product_creation_provisions_zero_balance_for_every_warehouse_including_system_warehouses()
     {
         var (taxProfileId, _, _) = await ConfigureCatalogAsync();
@@ -505,6 +537,64 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(2, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.SupplierCostAgreements WHERE SupplierProductId=@Id;",
             new SqlParameter("@Id", supplierProductId)));
+    }
+
+    [Fact]
+    public async Task Complete_product_edit_can_change_primary_supplier_and_prepare_a_new_sale_price()
+    {
+        var (taxProfileId, _, _) = await ConfigureCatalogAsync();
+        var request = ProductRequest(taxProfileId, [new ProductPriceInput(12_500m)], []);
+        using var admin = fixture.CreateAdminClient(
+            CatalogPermissionCodes.Create, CatalogPermissionCodes.Read, CatalogPermissionCodes.Update,
+            CatalogPermissionCodes.ManagePrices, CatalogPermissionCodes.ManageCosts);
+        using var creation = await admin.PostAsJsonAsync("/api/commerce/v1/products", request);
+        creation.EnsureSuccessStatusCode();
+        var created = (await creation.Content.ReadFromJsonAsync<ProductDetail>())!;
+
+        var secondSupplierId = Guid.NewGuid();
+        var secondPartyId = Guid.NewGuid();
+        await ExecuteAsync(
+            """
+            INSERT dbo.Parties(PartyId,TenantId,PartyType,DisplayName,LegalName,CompletionStatus,IsActive,CreatedBy,CreatedAt)
+            VALUES(@Party,@Tenant,N'Organization',N'Proveedor alterno',N'Proveedor alterno',N'Incomplete',1,@User,SYSDATETIMEOFFSET());
+            INSERT dbo.Suppliers(SupplierId,BusinessId,PartyId,Identification,Name,IsActive,CreatedAt)
+            VALUES(@Supplier,@Business,@Party,@Identification,N'Proveedor alterno',1,SYSDATETIMEOFFSET());
+            """,
+            new SqlParameter("@Party", secondPartyId), new SqlParameter("@Tenant", fixture.TenantId),
+            new SqlParameter("@User", fixture.UserId), new SqlParameter("@Supplier", secondSupplierId),
+            new SqlParameter("@Business", fixture.BusinessId),
+            new SqlParameter("@Identification", $"ALT-{secondSupplierId:N}"));
+        try
+        {
+            var changed = request with
+            {
+                Prices = [request.Prices.Single() with { PreparedAmount = 14_900m, InputMode = "SalePrice" }],
+                Suppliers = [new SupplierCostInput(secondSupplierId, $"ALT-{secondSupplierId:N}",
+                    "Proveedor alterno", "ALT-CODE", 8_400m, true, "Caja", 12m)]
+            };
+            using var response = await admin.PutAsJsonAsync(
+                $"/api/commerce/v1/products/{created.ProductId:D}", changed);
+            Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+            Assert.Equal(1, await ScalarAsync<int>(
+                "SELECT COUNT(*) FROM dbo.SupplierProducts WHERE ProductId=@Product AND SupplierId=@Supplier AND IsPrimary=1 AND IsActive=1;",
+                new SqlParameter("@Product", created.ProductId), new SqlParameter("@Supplier", secondSupplierId)));
+            Assert.Equal(14_900m, await ScalarAsync<decimal>(
+                "SELECT PreparedAmount FROM dbo.ProductPrices WHERE ProductId=@Product AND IsActive=1;",
+                new SqlParameter("@Product", created.ProductId)));
+        }
+        finally
+        {
+            await ExecuteAsync(
+                """
+                DELETE agreements FROM dbo.SupplierCostAgreements agreements
+                  JOIN dbo.SupplierProducts relations ON relations.SupplierProductId=agreements.SupplierProductId
+                  WHERE relations.SupplierId=@Supplier;
+                DELETE dbo.SupplierProducts WHERE SupplierId=@Supplier;
+                DELETE dbo.Suppliers WHERE SupplierId=@Supplier;
+                DELETE dbo.Parties WHERE PartyId=@Party;
+                """,
+                new SqlParameter("@Supplier", secondSupplierId), new SqlParameter("@Party", secondPartyId));
+        }
     }
 
     [Fact]

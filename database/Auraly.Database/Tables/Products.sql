@@ -16,7 +16,6 @@ CREATE TABLE [dbo].[Products] (
     [Name] NVARCHAR(250) NOT NULL,
     [Description] NVARCHAR(MAX) NULL,
     [CategoryName] NVARCHAR(150) NULL,
-    [UnitPrice] DECIMAL(18, 2) NOT NULL DEFAULT 0,
     [Currency] NVARCHAR(10) NOT NULL DEFAULT N'COP',
     [ManageStock] BIT NOT NULL DEFAULT 0,
     [ConversionMaximumLossPercent] DECIMAL(9,6) NULL,

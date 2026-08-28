@@ -18,6 +18,7 @@ Ante contradicción, reemplaza las reglas antiguas que:
 La regla vigente es:
 
 - `ProductPrices` contiene el precio base por `BusinessId + ProductId`;
+- `Products` no persiste `UnitPrice`: cualquier precio mostrado desde el producto es una proyección de la versión activa de `ProductPrices`;
 - lista o canal son configuraciones excluyentes del cliente;
 - sin precio especial se usa siempre el precio base del negocio;
 - la ausencia de precio especial nunca bloquea una venta;

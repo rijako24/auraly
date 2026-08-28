@@ -189,6 +189,25 @@ public sealed class ArchitectureTests
     }
 
     [Fact]
+    public void Product_master_does_not_duplicate_the_canonical_price()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var productsSchema = File.ReadAllText(Path.Combine(
+            repositoryRoot, "database", "Auraly.Database", "Tables", "Products.sql"));
+        var catalogWriter = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "Infrastructure", "Auraly.Infrastructure.Persistence", "SqlCatalogStore.cs"));
+        var postDeployment = File.ReadAllText(Path.Combine(
+            repositoryRoot, "database", "Auraly.Database", "Scripts", "PostDeployment.sql"));
+        var releasePublisher = File.ReadAllText(Path.Combine(
+            repositoryRoot, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
+
+        Assert.DoesNotContain("[UnitPrice]", productsSchema, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("@InitialPrice", catalogWriter, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("20260828_RemoveProductsUnitPrice.sql", releasePublisher, StringComparison.Ordinal);
+        Assert.DoesNotContain("MigrateProductsToCanonicalPrices", postDeployment, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Database_postdeployment_batches_do_not_redeclare_variables()
     {
         var repositoryRoot = FindRepositoryRoot();

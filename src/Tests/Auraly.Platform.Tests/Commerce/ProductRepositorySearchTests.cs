@@ -11,6 +11,16 @@ namespace Auraly.Platform.Tests.Commerce;
 public sealed class ProductRepositorySearchTests
 {
     [Fact]
+    public async Task ProductModel_DoesNotPersistTheProjectedUnitPrice()
+    {
+        await using var context = CreateContext();
+
+        context.Model.FindEntityType(typeof(Auraly.Platform.Domain.Entities.Product))!
+            .FindProperty(nameof(Auraly.Platform.Domain.Entities.Product.UnitPrice))
+            .Should().BeNull();
+    }
+
+    [Fact]
     public async Task SearchByIndexTerms_IncludesActiveProductWithoutIndexRows()
     {
         await using var context = CreateContext();

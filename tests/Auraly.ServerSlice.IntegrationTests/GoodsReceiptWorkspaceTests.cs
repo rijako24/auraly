@@ -232,10 +232,10 @@ public sealed class GoodsReceiptWorkspaceTests(ServerSliceFixture fixture)
                 INSERT dbo.Products
                   (ProductId,BusinessId,ProductCode,Reference,Sku,Name,Description,BaseUnitCode,
                    TaxProfileId,PurchaseTaxProfileId,PurchaseTaxTreatment,ManageStock,IsWeighable,
-                   IsActive,Source,UnitPrice,Currency,CreatedAt)
+                   IsActive,Source,Currency,CreatedAt)
                 SELECT @ProductId,BusinessId,@Code,@Code,@Code,N'Producto catálogo general',
                        N'Producto aún no asociado al proveedor',N'EA',@TaxProfileId,
-                       @TaxProfileId,N'CapitalizedCost',ManageStock,0,1,Source,0,Currency,SYSUTCDATETIME()
+                       @TaxProfileId,N'CapitalizedCost',ManageStock,0,1,Source,Currency,SYSUTCDATETIME()
                 FROM dbo.Products WHERE ProductId=@SourceProductId;
                 """;
             command.Parameters.AddWithValue("@ProductId", productId);
