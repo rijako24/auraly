@@ -134,7 +134,7 @@ public sealed class ApiPersistenceProcedureTests(ServerSliceFixture fixture)
             using var negativeCostPercentage = await client.PutAsJsonAsync(
                 $"/api/commerce/v1/pricing/segments/{channelId:D}/settings",
                 new SavePriceChannelSettingsRequest(
-                    changedName, "PercentageOverAverageCost", -1m));
+                    changedName, "MarginOverLatestCost", -1m));
             Assert.Equal(HttpStatusCode.BadRequest, negativeCostPercentage.StatusCode);
 
             using var negativeFixedMargin = await client.PutAsJsonAsync(
@@ -169,32 +169,63 @@ public sealed class ApiPersistenceProcedureTests(ServerSliceFixture fixture)
     }
 
     [Fact]
-    public async Task Price_channel_creation_persists_excluded_products_in_the_same_request()
+    public async Task Price_channel_creation_persists_product_and_line_exclusions_in_the_same_request()
     {
         using var client = fixture.CreateAdminClient("pricing.segments.read", "pricing.segments.manage");
         var name = $"Canal con excluidos {Guid.NewGuid():N}";
-        using var create = await client.PostAsJsonAsync(
-            "/api/commerce/v1/pricing/segments/",
-            new SavePriceSegmentRequest(name, "PercentageOverBasePrice", -5m, null,
-                [new CreatePriceChannelExclusionRequest("Product", fixture.ProductId)]));
-        Assert.True(create.IsSuccessStatusCode, await create.Content.ReadAsStringAsync());
-        var channel = (await create.Content.ReadFromJsonAsync<PriceSegmentSummary>())!;
+        var areaId = Guid.NewGuid();
+        var lineId = Guid.NewGuid();
+        Guid? channelId = null;
+        await using (var setup = new SqlConnection(fixture.ConnectionString))
+        {
+            await setup.OpenAsync();
+            await using var command = new SqlCommand("""
+                INSERT dbo.ProductCategories(ProductCategoryId,BusinessId,Name,IsActive,IsBrowsable)
+                VALUES(@AreaId,@BusinessId,N'Área exclusión',1,1);
+                INSERT dbo.ProductCategories(ProductCategoryId,BusinessId,ParentProductCategoryId,Name,IsActive,IsBrowsable)
+                VALUES(@LineId,@BusinessId,@AreaId,N'Línea exclusión',1,1);
+                """, setup);
+            command.Parameters.AddWithValue("@AreaId", areaId);
+            command.Parameters.AddWithValue("@LineId", lineId);
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            await command.ExecuteNonQueryAsync();
+        }
         try
         {
+            using var create = await client.PostAsJsonAsync(
+                "/api/commerce/v1/pricing/segments/",
+                new SavePriceSegmentRequest(name, "PercentageOverBasePrice", -5m, null,
+                [
+                    new CreatePriceChannelExclusionRequest("Product", fixture.ProductId),
+                    new CreatePriceChannelExclusionRequest("Category", lineId)
+                ]));
+            Assert.True(create.IsSuccessStatusCode, await create.Content.ReadAsStringAsync());
+            var channel = (await create.Content.ReadFromJsonAsync<PriceSegmentSummary>())!;
+            channelId = channel.Id;
             var exclusions = (await client.GetFromJsonAsync<PriceChannelExclusion[]>(
                 $"/api/commerce/v1/pricing/segments/{channel.Id:D}/exclusions"))!;
-            var exclusion = Assert.Single(exclusions);
-            Assert.Equal("Product", exclusion.ScopeType);
-            Assert.Equal(fixture.ProductId, exclusion.ScopeId);
+            Assert.Equal(2, exclusions.Length);
+            Assert.Contains(exclusions, exclusion =>
+                exclusion.ScopeType == "Product" && exclusion.ScopeId == fixture.ProductId);
+            Assert.Contains(exclusions, exclusion =>
+                exclusion.ScopeType == "Category" && exclusion.ScopeId == lineId
+                && exclusion.CategoryDepth == 1 && exclusion.ScopeName.Contains("Línea exclusión"));
         }
         finally
         {
             await using var connection = new SqlConnection(fixture.ConnectionString);
             await connection.OpenAsync();
             await using var cleanup = new SqlCommand(
-                "DELETE dbo.PriceChannelExclusions WHERE PriceChannelId=@Id; DELETE dbo.PriceChannels WHERE PriceChannelId=@Id;",
+                """
+                DELETE dbo.PriceChannelExclusions WHERE PriceChannelId=@Id;
+                DELETE dbo.PriceChannels WHERE PriceChannelId=@Id;
+                DELETE dbo.ProductCategories WHERE ProductCategoryId=@LineId;
+                DELETE dbo.ProductCategories WHERE ProductCategoryId=@AreaId;
+                """,
                 connection);
-            cleanup.Parameters.AddWithValue("@Id", channel.Id);
+            cleanup.Parameters.AddWithValue("@Id", (object?)channelId ?? Guid.Empty);
+            cleanup.Parameters.AddWithValue("@LineId", lineId);
+            cleanup.Parameters.AddWithValue("@AreaId", areaId);
             await cleanup.ExecuteNonQueryAsync();
         }
     }
@@ -205,17 +236,18 @@ public sealed class ApiPersistenceProcedureTests(ServerSliceFixture fixture)
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = new SqlCommand("""
-            SELECT dbo.PriceChannelAmountCalculate(N'ProductMarginAdjustment',10,150,100,20,NULL)
-            UNION ALL SELECT dbo.PriceChannelAmountCalculate(N'ProductMarginAdjustment',-30,150,100,20,NULL)
-            UNION ALL SELECT dbo.PriceChannelAmountCalculate(N'PercentageOverBasePrice',-50,150,100,NULL,NULL)
-            UNION ALL SELECT dbo.PriceChannelAmountCalculate(N'TieredProductPrice',NULL,150,100,NULL,80);
+            SELECT dbo.PriceChannelAmountCalculate(N'ProductMarginAdjustment',10,150,100,110,20,NULL)
+            UNION ALL SELECT dbo.PriceChannelAmountCalculate(N'ProductMarginAdjustment',-30,150,100,110,20,NULL)
+            UNION ALL SELECT dbo.PriceChannelAmountCalculate(N'PercentageOverBasePrice',-50,150,100,110,NULL,NULL)
+            UNION ALL SELECT dbo.PriceChannelAmountCalculate(N'TieredProductPrice',NULL,150,100,110,NULL,80)
+            UNION ALL SELECT dbo.PriceChannelAmountCalculate(N'MarginOverLatestCost',20,150,100,120,NULL,NULL);
             """, connection);
 
         var amounts = new List<decimal>();
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync()) amounts.Add(reader.GetDecimal(0));
 
-        Assert.Equal([171.4286m, 120m, 100m, 100m], amounts);
+        Assert.Equal([171.4286m, 120m, 100m, 100m, 150m], amounts);
     }
 
     private static async Task<Guid> ClaimAsync(

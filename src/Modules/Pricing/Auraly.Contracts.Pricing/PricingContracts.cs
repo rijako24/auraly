@@ -23,7 +23,7 @@ public static class PriceChannelStrategies
 {
     public const string TieredProductPrice = "TieredProductPrice";
     public const string PercentageOverBasePrice = "PercentageOverBasePrice";
-    public const string PercentageOverAverageCost = "PercentageOverAverageCost";
+    public const string MarginOverLatestCost = "MarginOverLatestCost";
     public const string FixedMarginOverAverageCost = "FixedMarginOverAverageCost";
     public const string SellAtAverageCost = "SellAtAverageCost";
     public const string ProductMarginAdjustment = "ProductMarginAdjustment";
@@ -31,7 +31,7 @@ public static class PriceChannelStrategies
     public static bool IsSupported(string value) => value is
         TieredProductPrice or
         PercentageOverBasePrice or
-        PercentageOverAverageCost or
+        MarginOverLatestCost or
         FixedMarginOverAverageCost or
         SellAtAverageCost or
         ProductMarginAdjustment;

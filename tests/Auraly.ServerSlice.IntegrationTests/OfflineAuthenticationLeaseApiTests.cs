@@ -66,16 +66,18 @@ public sealed class OfflineAuthenticationLeaseApiTests(ServerSliceFixture fixtur
     }
 
     [Fact]
-    public async Task Active_online_session_blocks_offline_acquisition()
+    public async Task Offline_acquisition_takes_over_active_online_sessions_without_conflict()
     {
         var user = await CreatePasswordUserAsync("online-first");
         using var online = await SendOnlineLoginAsync(user.Username);
         online.EnsureSuccessStatusCode();
+        Assert.Equal(1, await CountActiveSessionsAsync(user.UserId));
 
         using var request = CreateAcquireRequest(user.Username);
         using var response = await fixture.CreateClient().SendAsync(request);
-        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-        Assert.Equal(0, await CountActiveLeasesAsync(user.UserId));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, await CountActiveLeasesAsync(user.UserId));
+        Assert.Equal(0, await CountActiveSessionsAsync(user.UserId));
     }
 
     [Fact]
@@ -165,6 +167,20 @@ public sealed class OfflineAuthenticationLeaseApiTests(ServerSliceFixture fixtur
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT COUNT(*) FROM dbo.OfflineAuthenticationLeases
+            WHERE TenantId=@TenantId AND UserId=@UserId AND Status=N'Active';
+            """;
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        command.Parameters.AddWithValue("@UserId", userId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<int> CountActiveSessionsAsync(Guid userId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(*) FROM dbo.AuthenticationSessions
             WHERE TenantId=@TenantId AND UserId=@UserId AND Status=N'Active';
             """;
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);

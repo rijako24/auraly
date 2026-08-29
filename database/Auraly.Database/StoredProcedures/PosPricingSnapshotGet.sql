@@ -72,6 +72,18 @@ BEGIN
     ) cost
     OUTER APPLY
     (
+        SELECT COALESCE(
+            (SELECT TOP (1) latest.LatestUnitCost
+             FROM dbo.SupplierProductLatestCosts latest
+             WHERE latest.BusinessId = @BusinessId
+               AND latest.ProductId = product.ProductId
+             ORDER BY latest.ObservedAt DESC, latest.SupplierId),
+            basePrice.CostBasisAmount,
+            cost.Amount,
+            0) AS Amount
+    ) latestCost
+    OUTER APPLY
+    (
         SELECT item.Amount, item.MinimumQuantity
         FROM dbo.ResolvedPriceChannelItems item
         WHERE item.PriceChannelId = channelValue.PriceChannelId
@@ -86,6 +98,7 @@ BEGIN
             channelValue.Value,
             basePrice.Amount,
             cost.Amount,
+            latestCost.Amount,
             COALESCE(basePrice.TargetMarginPercent, basePrice.EffectiveMarginPercent),
             special.Amount) AS Amount
     ) calculated

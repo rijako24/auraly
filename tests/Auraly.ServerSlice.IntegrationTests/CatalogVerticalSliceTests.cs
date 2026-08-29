@@ -198,7 +198,7 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             Name = $"Familia conversión {Guid.NewGuid():N}"
         };
         using var rootResponse = await client.PostAsJsonAsync("/api/commerce/v1/products", rootRequest);
-        rootResponse.EnsureSuccessStatusCode();
+        Assert.True(rootResponse.IsSuccessStatusCode, await rootResponse.Content.ReadAsStringAsync());
         var root = (await rootResponse.Content.ReadFromJsonAsync<ProductDetail>())!;
         var child = await CreateAsync($"Presentación conversión {Guid.NewGuid():N}");
         var current = (await client.GetFromJsonAsync<ProductMerchandisingConfiguration>(
@@ -221,6 +221,36 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(0.5m, link.ConversionFactor);
         Assert.Equal(1, await ScalarAsync<int>(
             "SELECT COUNT(*) FROM dbo.ProductLinks WHERE ParentProductId=@Parent AND ChildProductId=@Child AND AllowsConversion=1 AND ConversionFactor=0.5 AND SharesInventory=0;",
+            new SqlParameter("@Parent", root.ProductId), new SqlParameter("@Child", child.ProductId)));
+
+        await ExecuteAsync(
+            "UPDATE dbo.InventoryBalances SET QuantityOnHand=5,AverageUnitCost=1000,InventoryValue=5000 WHERE BusinessId=@Business AND ProductId=@Child;",
+            new SqlParameter("@Business", fixture.BusinessId), new SqlParameter("@Child", child.ProductId));
+        var completeEdit = rootRequest with
+        {
+            Name = rootRequest.Name + " editada",
+            LinkedProducts = [new LinkedProductInput(child.ProductId, false, null, false, null, true, 0.5m)],
+            ConversionMaximumLossPercent = 2.5m
+        };
+        using var completeEditResponse = await client.PutAsJsonAsync(
+            $"/api/commerce/v1/products/{root.ProductId:D}", completeEdit);
+        Assert.True(completeEditResponse.IsSuccessStatusCode,
+            await completeEditResponse.Content.ReadAsStringAsync());
+        Assert.Equal(0, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.InventoryBalances WHERE BusinessId=@Business AND ProductId=@Child AND QuantityOnHand<>5;",
+            new SqlParameter("@Business", fixture.BusinessId), new SqlParameter("@Child", child.ProductId)));
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.ProductLinks WHERE ParentProductId=@Parent AND ChildProductId=@Child AND AllowsConversion=1 AND SharesInventory=0 AND IsActive=1;",
+            new SqlParameter("@Parent", root.ProductId), new SqlParameter("@Child", child.ProductId)));
+
+        using var sharingInventoryResponse = await client.PutAsJsonAsync(
+            $"/api/commerce/v1/products/{root.ProductId:D}", completeEdit with
+            {
+                LinkedProducts = [new LinkedProductInput(child.ProductId, true, 1m, false, null, false, null)]
+            });
+        Assert.Equal(HttpStatusCode.BadRequest, sharingInventoryResponse.StatusCode);
+        Assert.Equal(1, await ScalarAsync<int>(
+            "SELECT COUNT(*) FROM dbo.ProductLinks WHERE ParentProductId=@Parent AND ChildProductId=@Child AND SharesInventory=0 AND IsActive=1;",
             new SqlParameter("@Parent", root.ProductId), new SqlParameter("@Child", child.ProductId)));
 
         using var invalidRootUpdate = await client.PutAsJsonAsync(
@@ -592,7 +622,7 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             CatalogPermissionCodes.Create, CatalogPermissionCodes.Read, CatalogPermissionCodes.Update,
             CatalogPermissionCodes.ManagePrices, CatalogPermissionCodes.ManageCosts);
         using var creation = await admin.PostAsJsonAsync("/api/commerce/v1/products", request);
-        creation.EnsureSuccessStatusCode();
+        Assert.True(creation.IsSuccessStatusCode, await creation.Content.ReadAsStringAsync());
         var created = (await creation.Content.ReadFromJsonAsync<ProductDetail>())!;
 
         var secondSupplierId = Guid.NewGuid();

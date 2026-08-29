@@ -138,10 +138,12 @@ public sealed class SqlOfflineAuthenticationLeaseStore(
                 connection, transaction, payload, cancellationToken))
             throw new OfflineAuthenticationLeaseConflictException(
                 "The user or enrolled device already owns another active offline lease.");
-        if (await HasActiveOnlineSessionAsync(
-                connection, transaction, payload, cancellationToken))
-            throw new OfflineAuthenticationLeaseConflictException(
-                "The user already has an active online session.");
+
+        // Choosing local POS mode is an explicit authenticated handoff. Keep the
+        // work session/cash drawer open, but revoke stale browser sessions so
+        // they cannot immediately invalidate the newly issued offline lease.
+        await RevokeOnlineSessionsForHandoffAsync(
+            connection, transaction, payload, cancellationToken);
 
         await UpdateOfflineVerifierAsync(
             connection, transaction, candidate, cancellationToken);
@@ -408,22 +410,6 @@ public sealed class SqlOfflineAuthenticationLeaseStore(
         command.Parameters.AddWithValue("@TenantId", payload.TenantId);
         command.Parameters.AddWithValue("@UserId", payload.UserId);
         command.Parameters.AddWithValue("@DeviceId", payload.DeviceId);
-        return await command.ExecuteScalarAsync(cancellationToken) is Guid;
-    }
-
-    private static async Task<bool> HasActiveOnlineSessionAsync(
-        SqlConnection connection,
-        SqlTransaction transaction,
-        OfflineAuthenticationLeasePayload payload,
-        CancellationToken cancellationToken)
-    {
-        await using var command = new SqlCommand("""
-            SELECT AuthenticationSessionId
-            FROM dbo.AuthenticationSessions WITH (UPDLOCK,HOLDLOCK)
-            WHERE TenantId=@TenantId AND UserId=@UserId AND Status=N'Active';
-            """, connection, transaction);
-        command.Parameters.AddWithValue("@TenantId", payload.TenantId);
-        command.Parameters.AddWithValue("@UserId", payload.UserId);
         return await command.ExecuteScalarAsync(cancellationToken) is Guid;
     }
 

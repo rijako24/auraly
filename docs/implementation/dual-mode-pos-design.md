@@ -37,9 +37,12 @@ autenticada y permite seguir navegando.
 
 Varios usuarios online pueden operar simultáneamente el mismo `RegisterId` desde
 computadores diferentes. Comparten la sesión física y la numeración, pero cada
-venta conserva su cajero y turno. Una instalación POS Edge sí mantiene un solo
-usuario local activo por dispositivo; cambiarlo reemplaza únicamente el lease de
-esa estación y no expulsa a usuarios online ni a otros equipos.
+venta conserva su cajero y turno. Una instalación POS Edge mantiene un solo
+usuario local activo por dispositivo. Al elegir operación local se realiza un
+traspaso explícito: se revocan las sesiones web activas de ese mismo usuario para
+que no compitan con la concesión offline, sin cerrar la sesión física ni el turno
+de caja. No se expulsan otros usuarios ni se afecta otro dispositivo enrolado por
+identidad compartida.
 
 No se descargan hashes de las contraseñas principales. El login offline usa
 identidades POS previamente autorizadas y un verificador por dispositivo,

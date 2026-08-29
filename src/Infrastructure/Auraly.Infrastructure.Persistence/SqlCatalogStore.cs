@@ -60,7 +60,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                   THROW 51022, 'A product cannot be linked to itself.', 1;
                 IF @ParentProductId IS NOT NULL AND EXISTS (SELECT 1 FROM dbo.ProductLinks WHERE BusinessId=@BusinessId AND ChildProductId=@ParentProductId AND IsActive=1)
                   THROW 51022, 'Linked product chains are not allowed.', 1;
-                IF @ParentProductId IS NOT NULL AND EXISTS (
+                IF @ParentProductId IS NOT NULL AND @SharesInventory=1 AND EXISTS (
                   SELECT 1 FROM dbo.InventoryBalances
                   WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND QuantityOnHand<>0)
                   THROW 51024, 'El producto tiene existencias. Deja su inventario en cero antes de vincularlo.', 1;
@@ -261,7 +261,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                       THROW 51024,'A product cannot be linked to itself.',1;
                     IF NOT EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ChildId AND BusinessId=@BusinessId AND IsActive=1)
                       THROW 51024,'The linked product is outside the business or inactive.',1;
-                    IF EXISTS(SELECT 1 FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND ProductId=@ChildId AND QuantityOnHand<>0)
+                    IF @SharesInventory=1 AND EXISTS(SELECT 1 FROM dbo.InventoryBalances WHERE BusinessId=@BusinessId AND ProductId=@ChildId AND QuantityOnHand<>0)
                       THROW 51024,'El producto tiene existencias. Deja su inventario en cero antes de vincularlo.',1;
                     IF @AllowsConversion=1 AND NOT EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ProductId AND BusinessId=@BusinessId AND ManageStock=1 AND ConversionMaximumLossPercent IS NOT NULL)
                       THROW 51024,'A convertible family must manage inventory and define a maximum conversion loss.',1;
@@ -279,7 +279,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
                       VALUES(@Id,@BusinessId,@ChildId,@ProductId,@InventoryFactor,@PriceFactor,@ConversionFactor,@SharesInventory,@SharesPrice,@AllowsConversion,1,@Now);
                     INSERT dbo.CatalogChanges(BusinessId,ProductId,ChangeKind,OccurredAt)
                     VALUES(@BusinessId,@ChildId,N'Upsert',@Now);
-                    UPDATE dbo.Products SET ManageStock=CASE WHEN @SharesInventory=1 THEN 0 WHEN @AllowsConversion=1 THEN 1 ELSE ManageStock END,UpdatedAt=@Now
+                    UPDATE dbo.Products SET ManageStock=CASE WHEN @SharesInventory=1 THEN 0 ELSE 1 END,UpdatedAt=@Now
                     WHERE ProductId=@ChildId AND BusinessId=@BusinessId;
                     """, [P("@Id", ids.NewId()), P("@BusinessId", user.BusinessId), P("@ProductId", productId),
                     P("@ChildId", child.ChildProductId), P("@SharesInventory", child.SharesInventory),
@@ -874,6 +874,7 @@ public sealed partial class SqlCatalogStore(SqlServerConnectionFactory connectio
          P("@ConversionMaximumLossPercent", r.ConversionMaximumLossPercent),
          P("@ProductCategoryId", r.ProductCategoryId), P("@ProductBrandId", r.ProductBrandId), P("@AllowsFractionalSale", r.AllowsFractionalSale),
          P("@ParentProductId", r.Link?.ParentProductId),
+         P("@SharesInventory", r.Link?.SharesInventory ?? false),
          P("@AllowsConversion", r.Link?.AllowsConversion ?? false),
          P("@Now", now), P("@UserId", user.UserId)];
 

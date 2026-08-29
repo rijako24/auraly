@@ -12,7 +12,9 @@ obtener de `Auraly.Api` una concesion exclusiva firmada:
 1. POS Edge envia usuario y contrasena por el canal autenticado del dispositivo.
 2. El servidor valida tenant, dispositivo, permiso, usuario, BCrypt y bloqueos.
 3. SQL Server serializa la operacion por usuario y dispositivo.
-4. Una sesion online activa impide adquirir la concesion offline.
+4. Elegir el modo local constituye un traspaso autenticado: revoca las sesiones
+   web activas del mismo usuario y adquiere la concesion offline sin cerrar su
+   turno ni la sesion fisica de caja.
 5. Una concesion offline activa impide abrir otra sesion online.
 6. El servidor firma con RSA-PSS/SHA-256 (`PS256`) un payload que contiene
    `LeaseId`, `TenantId`, `UserId`, `DeviceId`, vigencia y nonce.
@@ -98,7 +100,8 @@ Los escenarios nuevos prueban:
 
 - dos adquisiciones concurrentes producen una sola concesion durable;
 - la firma RSA-PSS se valida con la clave publica del enrolamiento;
-- una sesion online activa bloquea el acceso offline y viceversa;
+- el traspaso a modo local revoca una sesion online activa y entrega una unica
+  concesion offline; mientras esta siga activa no se abre otra sesion online;
 - liberar dos veces es idempotente y vuelve a permitir login online;
 - un dispositivo sin permiso no adquiere concesiones;
 - firma alterada, dispositivo diferente y concesion vencida son rechazados;

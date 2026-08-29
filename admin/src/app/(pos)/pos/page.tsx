@@ -1118,7 +1118,6 @@ export default function PosPage() {
       if (result.status === "NotFound") {
         setScan("");
         rejectScan(value);
-        setError(`No se encontró el producto “${value}”.`);
         setMessage("Producto no encontrado");
       } else {
         const failure = describeCaptureFailure(result);
@@ -2165,18 +2164,6 @@ export default function PosPage() {
       setEdgeLoginState(null);
       setEdgeEnrollmentToken(launchToken);
       setClient(new PosEdgeClient(launchToken, session.token));
-
-      if (serverConnected) {
-        try {
-          const tenantKey = useAuthStore.getState().user?.tenantKey;
-          if (!tenantKey)
-            throw new Error("No se pudo identificar la empresa para abrir la sesion en linea.");
-          const onlineSession = await authApi.login({ tenantKey, username, password });
-          useAuthStore.getState().setAuth(onlineSession.user);
-        } catch {
-          // Local authentication remains valid when the server cannot create a web session.
-        }
-      }
     } catch (caught) {
       setEdgeLoginError(
         caught instanceof Error ? caught.message : "No fue posible iniciar sesión en este dispositivo.",

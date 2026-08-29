@@ -320,7 +320,7 @@ public static class PriceSegmentsApi
         switch (strategy)
         {
             case PriceChannelStrategies.PercentageOverBasePrice when value is >= -100 and <= 1000:
-            case PriceChannelStrategies.PercentageOverAverageCost when value is >= 0 and <= 1000:
+            case PriceChannelStrategies.MarginOverLatestCost when value is >= 0 and < 100:
             case PriceChannelStrategies.FixedMarginOverAverageCost when value is >= 0 and < 100:
             case PriceChannelStrategies.ProductMarginAdjustment when value is >= -99.999999m and <= 99.999999m:
                 normalized = value;

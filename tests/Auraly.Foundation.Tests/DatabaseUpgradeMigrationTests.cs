@@ -155,6 +155,24 @@ public sealed class DatabaseUpgradeMigrationTests
     }
 
     [Fact]
+    public void Price_channel_upgrade_converts_average_cost_markup_to_latest_cost_margin_before_dacpac()
+    {
+        var root = FindRepositoryRoot();
+        var migrationName = "20260828_ReplaceAverageCostMarkupWithLatestCostMargin.sql";
+        var migration = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "Migrations", migrationName));
+        var preDeployment = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "PreDeployment.sql"));
+
+        Assert.Contains("DROP CONSTRAINT CK_PriceChannels_Strategy", migration, StringComparison.Ordinal);
+        Assert.Contains("Strategy = N'MarginOverLatestCost'", migration, StringComparison.Ordinal);
+        Assert.Contains("100 * Value / (100 + Value)", migration, StringComparison.Ordinal);
+        Assert.Contains("WHERE Strategy = N'PercentageOverAverageCost'", migration, StringComparison.Ordinal);
+        Assert.DoesNotContain("\nGO", migration.Replace("\r\n", "\n"), StringComparison.Ordinal);
+        Assert.Contains(migrationName, preDeployment, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Release_pipeline_publishes_installer_version_and_manifest_hash_atomically()
     {
         var pipeline = File.ReadAllText(Path.Combine(

@@ -28,6 +28,8 @@ type ItemDraft = {
   minimumQuantity: number;
 };
 
+type CreateProductDraft = Pick<ItemDraft, "productId" | "productCode" | "productName">;
+
 export function PriceSegmentsManager() {
   const client = useQueryClient();
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
@@ -44,7 +46,8 @@ export function PriceSegmentsManager() {
   const [channelStrategy, setChannelStrategy] = useState<PriceChannelStrategy>("TieredProductPrice");
   const [channelValue, setChannelValue] = useState(0);
   const [createItems, setCreateItems] = useState<ItemDraft[]>([]);
-  const [createItem, setCreateItem] = useState<ItemDraft>(emptyDraft());
+  const [createProduct, setCreateProduct] = useState<CreateProductDraft | null>(null);
+  const [createProductPrices, setCreateProductPrices] = useState<ItemDraft[]>([]);
   const [createExclusions, setCreateExclusions] = useState<DraftPriceChannelExclusion[]>([]);
 
   const segments = useQuery({ queryKey: ["price-segments"], queryFn: priceSegmentsApi.list });
@@ -71,7 +74,8 @@ export function PriceSegmentsManager() {
       setChannelStrategy("TieredProductPrice");
       setChannelValue(0);
       setCreateItems([]);
-      setCreateItem(emptyDraft());
+      setCreateProduct(null);
+      setCreateProductPrices([]);
       setCreateExclusions([]);
       toast.success("Canal de precios creado.");
     },
@@ -138,13 +142,19 @@ export function PriceSegmentsManager() {
       !term || segment.name.toLocaleLowerCase("es-CO").includes(term));
   }, [search, segments.data]);
 
-  function addCreateItem() {
-    if (!createItem.productId || createItem.amount <= 0 || createItem.minimumQuantity <= 0) return;
-    setCreateItems((current) => {
-      const duplicate = current.findIndex((item) => item.productId === createItem.productId && item.minimumQuantity === createItem.minimumQuantity);
-      return duplicate < 0 ? [...current, createItem] : current.map((item, index) => index === duplicate ? createItem : item);
-    });
-    setCreateItem(emptyDraft());
+  function editCreateProduct(product: CreateProductDraft, defaultAmount: number) {
+    const existing = createItems.filter((item) => item.productId === product.productId);
+    setCreateProduct(product);
+    setCreateProductPrices(existing.length > 0 ? existing : [{ ...product, originalMinimumQuantity: null, amount: defaultAmount, minimumQuantity: 1 }]);
+    requestAnimationFrame(() => document.getElementById("new-channel-product-minimum-0")?.focus());
+  }
+
+  function saveCreateProductPrices() {
+    if (!createProduct || !validProductPrices(createProductPrices)) return;
+    setCreateItems((current) => [...current.filter((item) => item.productId !== createProduct.productId), ...createProductPrices]);
+    setCreateProduct(null);
+    setCreateProductPrices([]);
+    requestAnimationFrame(() => document.getElementById("new-channel-product-search")?.focus());
   }
 
   return <div className="space-y-6">
@@ -154,7 +164,7 @@ export function PriceSegmentsManager() {
         <h1 className="text-3xl font-semibold tracking-tight">Canales de precios</h1>
         <p className="mt-1 max-w-3xl text-muted-foreground">Define una regla general o precios por producto y cantidad. Si no aplica un canal se usa el precio público.</p>
       </div>
-      {canManage && <Button onClick={() => { setName(""); setChannelStrategy("TieredProductPrice"); setChannelValue(0); setCreateItems([]); setCreateItem(emptyDraft()); setCreateExclusions([]); setCreateOpen(true); }}><Plus className="mr-2 h-4 w-4" />Nuevo canal</Button>}
+      {canManage && <Button onClick={() => { setName(""); setChannelStrategy("TieredProductPrice"); setChannelValue(0); setCreateItems([]); setCreateProduct(null); setCreateProductPrices([]); setCreateExclusions([]); setCreateOpen(true); }}><Plus className="mr-2 h-4 w-4" />Nuevo canal</Button>}
     </header>
 
     <Card>
@@ -182,10 +192,24 @@ export function PriceSegmentsManager() {
         <div className="space-y-4">
           <div className="space-y-2"><Label>Nombre *</Label><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Mayoristas" maxLength={120} /></div>
           <div className="space-y-3"><Label>Modo de precio</Label><div className="grid gap-2 sm:grid-cols-2">{channelStrategies.map((mode) => <Button key={mode.value} type="button" variant={channelStrategy === mode.value ? "default" : "outline"} className="h-auto justify-start whitespace-normal py-3 text-left" onClick={() => { setChannelStrategy(mode.value); setChannelValue(0); }}>{mode.label}</Button>)}</div>{requiresChannelValue(channelStrategy) && <div className="space-y-2"><Label>{channelValueLabel(channelStrategy)}</Label><FormattedNumberInput kind="percent" allowNegative={allowsNegativeChannelValue(channelStrategy)} value={channelValue} invalid={!validChannelValue(channelStrategy, channelValue)} onValueChange={(value) => setChannelValue(value ?? 0)} /></div>}<p className="text-xs text-muted-foreground">{channelStrategyHelp(channelStrategy)}</p></div>
-          {channelStrategy === "TieredProductPrice" && <div className="space-y-4 rounded-2xl border bg-muted/15 p-4"><div><h3 className="font-semibold">Productos y precios por cantidad</h3><p className="text-sm text-muted-foreground">Busca como en Inventario y agrega cada escala a la grilla. La primera escala inicia en cantidad 1.</p></div>{businessId && <ProductPicker businessId={businessId} selectedProductIds={new Set(createItems.map(item=>item.productId))} disabled={create.isPending} label="Producto" onSelect={(product) => setCreateItem({ ...createItem, productId: product.productId, productCode: product.productCode, productName: product.productName, amount: product.saleUnitPrice ?? 0, minimumQuantity: 1 })} />}{createItem.productId && <div className="grid gap-3 rounded-xl border bg-background p-3 sm:grid-cols-[1fr_170px_150px_auto] sm:items-end"><div><Label>Producto</Label><p className="mt-2 font-medium">{createItem.productName}</p><p className="text-xs text-muted-foreground">{createItem.productCode || "Sin código"}</p></div><div className="space-y-2"><Label>Precio</Label><FormattedNumberInput kind="currency" value={createItem.amount} invalid={createItem.amount <= 0} onValueChange={(value) => setCreateItem({ ...createItem, amount: value ?? 0 })} /></div><div className="space-y-2"><Label>Desde cantidad</Label><FormattedNumberInput value={createItem.minimumQuantity} invalid={createItem.minimumQuantity <= 0} onValueChange={(value) => setCreateItem({ ...createItem, minimumQuantity: value ?? 0 })} /></div><Button type="button" variant="secondary" disabled={createItem.amount <= 0 || createItem.minimumQuantity <= 0} onClick={addCreateItem}>Agregar precio</Button></div>}<div className="overflow-hidden rounded-xl border bg-background"><table className="w-full text-sm"><thead className="bg-muted/60"><tr><th className="px-3 py-2 text-left">Producto</th><th className="px-3 py-2 text-right">Desde</th><th className="px-3 py-2 text-right">Precio</th><th className="w-12" /></tr></thead><tbody>{createItems.length === 0 ? <tr aria-hidden="true"><td colSpan={4} className="h-24 border-t" /></tr> : createItems.map((item, index) => <tr key={`${item.productId}-${item.minimumQuantity}`} className="border-t"><td className="px-3 py-2"><b>{item.productName}</b><small className="block text-muted-foreground">{item.productCode}</small></td><td className="px-3 py-2 text-right">{item.minimumQuantity}</td><td className="px-3 py-2 text-right font-medium">{formatCurrency(item.amount)}</td><td><Button type="button" size="icon" variant="ghost" aria-label={`Eliminar precio de ${item.productName}`} onClick={() => setCreateItems((current) => current.filter((_, currentIndex) => currentIndex !== index))}><Trash2 className="h-4 w-4 text-destructive" /></Button></td></tr>)}</tbody></table></div></div>}
+          {channelStrategy === "TieredProductPrice" && <div className="space-y-4 rounded-2xl border bg-muted/15 p-4"><div><h3 className="font-semibold">Productos y precios por cantidad</h3><p className="text-sm text-muted-foreground">Busca un producto y pulsa Enter para configurar todas sus escalas de cantidad y precio en una sola ventana.</p></div>{businessId && <ProductPicker inputId="new-channel-product-search" businessId={businessId} selectedProductIds={new Set(createItems.map(item=>item.productId))} disabled={create.isPending} label="Producto" showAddButton={false} onSelect={(product) => editCreateProduct({ productId: product.productId, productCode: product.productCode, productName: product.productName }, product.saleUnitPrice ?? 0)} />}<div className="overflow-hidden rounded-xl border bg-background"><table className="w-full text-sm"><thead className="bg-muted/60"><tr><th className="px-3 py-2 text-left">Producto</th><th className="px-3 py-2 text-right">Desde</th><th className="px-3 py-2 text-right">Precio</th><th className="w-20" /></tr></thead><tbody>{createItems.length === 0 ? <tr><td colSpan={4} className="h-24 border-t text-center text-sm text-muted-foreground">Selecciona un producto para configurar sus precios.</td></tr> : createItems.map((item, index) => <tr key={`${item.productId}-${item.minimumQuantity}`} className="border-t"><td className="px-3 py-2"><b>{item.productName}</b><small className="block text-muted-foreground">{item.productCode}</small></td><td className="px-3 py-2 text-right tabular-nums">{item.minimumQuantity}</td><td className="px-3 py-2 text-right font-medium">{formatCurrency(item.amount)}</td><td><div className="flex"><Button type="button" size="icon" variant="ghost" aria-label={`Editar precios de ${item.productName}`} onClick={() => editCreateProduct(item, item.amount)}><Pencil className="h-4 w-4" /></Button><Button type="button" size="icon" variant="ghost" aria-label={`Eliminar precio de ${item.productName}`} onClick={() => setCreateItems((current) => current.filter((_, currentIndex) => currentIndex !== index))}><Trash2 className="h-4 w-4 text-destructive" /></Button></div></td></tr>)}</tbody></table></div></div>}
           {businessId && <PriceChannelExclusionDraftEditor businessId={businessId} value={createExclusions} onChange={setCreateExclusions} disabled={create.isPending} />}
         </div>
         <DialogFooter><Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancelar</Button><Button disabled={!name.trim() || create.isPending || !validChannelValue(channelStrategy, channelValue)} onClick={() => create.mutate()}>{create.isPending ? "Guardando…" : `Crear canal${channelStrategy === "TieredProductPrice" && createItems.length ? ` · ${createItems.length} precios` : ""}`}</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog open={Boolean(createProduct)} onOpenChange={(open) => { if (!open) { setCreateProduct(null); setCreateProductPrices([]); } }}>
+      <DialogContent className="max-w-2xl">
+        {createProduct && <>
+          <DialogHeader><DialogTitle>Precios por cantidad</DialogTitle><DialogDescription>{createProduct.productName} · {createProduct.productCode || "Sin código"}</DialogDescription></DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-[1fr_1fr_44px] gap-3 px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground"><span>Cantidad desde</span><span>Precio</span><span /></div>
+            {createProductPrices.map((item, index) => <div key={index} className="grid grid-cols-[1fr_1fr_44px] items-center gap-3"><FormattedNumberInput id={`new-channel-product-minimum-${index}`} value={item.minimumQuantity} invalid={item.minimumQuantity <= 0 || createProductPrices.some((other, otherIndex) => otherIndex !== index && other.minimumQuantity === item.minimumQuantity)} onValueChange={(value) => setCreateProductPrices((current) => current.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, minimumQuantity: value ?? 0 } : currentItem))} /><FormattedNumberInput kind="currency" value={item.amount} invalid={item.amount <= 0} onValueChange={(value) => setCreateProductPrices((current) => current.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, amount: value ?? 0 } : currentItem))} /><Button type="button" size="icon" variant="ghost" disabled={createProductPrices.length === 1} aria-label={`Eliminar escala ${index + 1}`} onClick={() => setCreateProductPrices((current) => current.filter((_, currentIndex) => currentIndex !== index))}><Trash2 className="h-4 w-4 text-destructive" /></Button></div>)}
+            <Button type="button" variant="outline" onClick={() => setCreateProductPrices((current) => { const last = current[current.length - 1]; const nextQuantity = Math.max(1, ...current.map((item) => item.minimumQuantity)) + 1; return [...current, { ...createProduct, originalMinimumQuantity: null, amount: last?.amount ?? 0, minimumQuantity: nextQuantity }]; })}><Plus className="mr-2 h-4 w-4" />Agregar otro precio</Button>
+          </div>
+          <DialogFooter><Button type="button" variant="outline" onClick={() => { setCreateProduct(null); setCreateProductPrices([]); }}>Cancelar</Button><Button type="button" disabled={!validProductPrices(createProductPrices)} onClick={saveCreateProductPrices}>Agregar precios</Button></DialogFooter>
+        </>}
       </DialogContent>
     </Dialog>
 
@@ -259,17 +283,20 @@ function emptyDraft(): ItemDraft {
 function fromItem(item: PriceSegmentItem): ItemDraft {
   return { originalMinimumQuantity: item.minimumQuantity, productId: item.productId, productCode: item.productCode, productName: item.productName, amount: item.amount, minimumQuantity: item.minimumQuantity };
 }
+function validProductPrices(items: ItemDraft[]) {
+  return items.length > 0 && items.every((item) => item.minimumQuantity > 0 && item.amount > 0) && new Set(items.map((item) => item.minimumQuantity)).size === items.length;
+}
 const channelStrategies: Array<{ value: PriceChannelStrategy; label: string }> = [
   { value: "TieredProductPrice", label: "Precios por producto y cantidad" },
   { value: "PercentageOverBasePrice", label: "% sobre precio público" },
-  { value: "PercentageOverAverageCost", label: "% sobre costo promedio" },
+  { value: "MarginOverLatestCost", label: "Margen sobre último costo" },
   { value: "FixedMarginOverAverageCost", label: "Margen sobre costo promedio" },
   { value: "ProductMarginAdjustment", label: "Ajustar margen del producto" },
   { value: "SellAtAverageCost", label: "Vender al costo promedio" },
 ];
 function channelStrategyLabel(value: PriceChannelStrategy | null) { return channelStrategies.find((item) => item.value === value)?.label ?? "Sin configurar"; }
-function requiresChannelValue(value: PriceChannelStrategy) { return value === "PercentageOverBasePrice" || value === "PercentageOverAverageCost" || value === "FixedMarginOverAverageCost" || value === "ProductMarginAdjustment"; }
+function requiresChannelValue(value: PriceChannelStrategy) { return value === "PercentageOverBasePrice" || value === "MarginOverLatestCost" || value === "FixedMarginOverAverageCost" || value === "ProductMarginAdjustment"; }
 function allowsNegativeChannelValue(value: PriceChannelStrategy) { return value === "PercentageOverBasePrice" || value === "ProductMarginAdjustment"; }
-function validChannelValue(strategy: PriceChannelStrategy, value: number) { return !requiresChannelValue(strategy) || (strategy === "FixedMarginOverAverageCost" ? value >= 0 && value < 100 : strategy === "ProductMarginAdjustment" ? value >= -99.999999 && value <= 99.999999 : strategy === "PercentageOverAverageCost" ? value >= 0 && value <= 1000 : value >= -100 && value <= 1000); }
-function channelValueLabel(strategy: PriceChannelStrategy) { return strategy === "FixedMarginOverAverageCost" ? "Margen objetivo (%)" : strategy === "ProductMarginAdjustment" ? "Puntos de ajuste" : strategy === "PercentageOverAverageCost" ? "Incremento sobre costo (%)" : "Variación (%) — usa negativo para descuento"; }
-function channelStrategyHelp(strategy: PriceChannelStrategy) { return ({ TieredProductPrice: "Define precios por producto y escalas desde cualquier cantidad. El precio efectivo nunca queda por debajo del costo promedio.", PercentageOverBasePrice: "Aumenta o reduce el precio público vigente; acepta valores negativos, con costo promedio como piso.", PercentageOverAverageCost: "Incrementa el costo promedio vigente. Cero vende al costo y no admite porcentajes negativos.", FixedMarginOverAverageCost: "Calcula el precio para un margen objetivo entre 0% y menos de 100%.", ProductMarginAdjustment: "Suma o resta puntos al margen de cada producto. Ejemplo: 20% + 10 puntos = 30%; el resultado mínimo es 0%.", SellAtAverageCost: "Vende al costo promedio vigente, con margen de 0%." } satisfies Record<PriceChannelStrategy,string>)[strategy]; }
+function validChannelValue(strategy: PriceChannelStrategy, value: number) { return !requiresChannelValue(strategy) || (strategy === "FixedMarginOverAverageCost" || strategy === "MarginOverLatestCost" ? value >= 0 && value < 100 : strategy === "ProductMarginAdjustment" ? value >= -99.999999 && value <= 99.999999 : value >= -100 && value <= 1000); }
+function channelValueLabel(strategy: PriceChannelStrategy) { return strategy === "FixedMarginOverAverageCost" || strategy === "MarginOverLatestCost" ? "Margen objetivo (%)" : strategy === "ProductMarginAdjustment" ? "Puntos de ajuste" : "Variación (%) — usa negativo para descuento"; }
+function channelStrategyHelp(strategy: PriceChannelStrategy) { return ({ TieredProductPrice: "Define precios por producto y escalas desde cualquier cantidad. El precio efectivo nunca queda por debajo del costo promedio.", PercentageOverBasePrice: "Aumenta o reduce el precio público vigente; acepta valores negativos, con costo promedio como piso.", MarginOverLatestCost: "Calcula el precio con el margen objetivo sobre el último costo de compra observado; si aún no existe una recepción usa el costo configurado del producto.", FixedMarginOverAverageCost: "Calcula el precio para un margen objetivo entre 0% y menos de 100% sobre el costo promedio.", ProductMarginAdjustment: "Suma o resta puntos al margen de cada producto. Ejemplo: 20% + 10 puntos = 30%; el resultado mínimo es 0%.", SellAtAverageCost: "Vende al costo promedio vigente, con margen de 0%." } satisfies Record<PriceChannelStrategy,string>)[strategy]; }

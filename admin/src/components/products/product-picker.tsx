@@ -2,9 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type UIEvent } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { AlertTriangle, Barcode, Check, Loader2, PackageX, Plus } from "lucide-react";
+import { Barcode, Check, Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { inventoryApi, type InventoryProductItem } from "@/services/api/inventory";
@@ -23,7 +22,7 @@ export function ProductPicker({
   conversionOnly = false,
   conversionFamilyRootProductId,
   inputId = "product-picker-search",
-  requireZeroInventory = false,
+  showAddButton = true,
 }: {
   businessId: string;
   warehouseId?: string;
@@ -35,12 +34,11 @@ export function ProductPicker({
   conversionOnly?: boolean;
   conversionFamilyRootProductId?: string;
   inputId?: string;
-  requireZeroInventory?: boolean;
+  showAddButton?: boolean;
 }) {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
-  const [inventoryBlocked, setInventoryBlocked] = useState<InventoryProductItem | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
 
@@ -72,11 +70,6 @@ export function ProductPicker({
   useEffect(() => { if (activeIndex !== null && activeIndex >= products.length) setActiveIndex(null); }, [activeIndex, products.length]);
 
   function choose(product: InventoryProductItem) {
-    if (requireZeroInventory && product.quantityOnHand !== 0) {
-      setInventoryBlocked(product);
-      setOpen(false);
-      return;
-    }
     onSelect(product); setSearch(""); setOpen(false);
   }
   function chooseActive() {
@@ -92,9 +85,9 @@ export function ProductPicker({
     if (nextLength > previousLength) setActiveIndex(previousLength);
   }
   function keyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key === "ArrowDown") { event.preventDefault(); setOpen(true); void moveDown(); }
-    else if (event.key === "ArrowUp") { event.preventDefault(); setActiveIndex((current) => current === null ? Math.max(0, products.length - 1) : Math.max(0, current - 1)); }
-    else if (event.key === "Enter") { event.preventDefault(); if (activeIndex === null && products.length) choose(products[0]); else chooseActive(); }
+    if (event.key === "ArrowDown" && search.trim()) { event.preventDefault(); setOpen(true); void moveDown(); }
+    else if (event.key === "ArrowUp" && search.trim()) { event.preventDefault(); setActiveIndex((current) => current === null ? Math.max(0, products.length - 1) : Math.max(0, current - 1)); }
+    else if (event.key === "Enter" && search.trim()) { event.preventDefault(); if (activeIndex === null && products.length) choose(products[0]); else chooseActive(); }
     else if (event.key === "Escape") { event.preventDefault(); setOpen(false); }
   }
   function scroll(event: UIEvent<HTMLDivElement>) {
@@ -121,22 +114,9 @@ export function ProductPicker({
   return <div ref={pickerRef} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false); }} className="relative [&_strong]:font-normal">
     <Label htmlFor={inputId}>{label}</Label>
     <div className="mt-2 flex gap-2">
-      <div className="relative min-w-0 flex-1"><Barcode className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-primary" /><Input id={inputId} data-testid="product-picker-search" className="pl-9" disabled={disabled} value={search} onFocus={() => setOpen(true)} onClick={() => setOpen(true)} onChange={(event) => { setSearch(event.target.value); setOpen(true); }} onKeyDown={keyDown} autoComplete="off" aria-autocomplete="list" aria-expanded={open} aria-controls={`${inputId}-results`} placeholder="Código interno, código de barras, referencia o nombre" /></div>
-      <Button type="button" disabled={disabled || query.isFetching || activeIndex === null} onMouseDown={(event) => event.preventDefault()} onClick={chooseActive}>{query.isFetching && !query.isFetchingNextPage ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />} Agregar</Button>
+      <div className="relative min-w-0 flex-1"><Barcode className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-primary" /><Input id={inputId} data-testid="product-picker-search" className="pl-9" disabled={disabled} value={search} onChange={(event) => { const value = event.target.value; setSearch(value); setOpen(Boolean(value.trim())); }} onKeyDown={keyDown} autoComplete="off" aria-autocomplete="list" aria-expanded={open} aria-controls={`${inputId}-results`} placeholder="Código interno, código de barras, referencia o nombre" /></div>
+      {showAddButton && <Button type="button" disabled={disabled || query.isFetching || activeIndex === null} onMouseDown={(event) => event.preventDefault()} onClick={chooseActive}>{query.isFetching && !query.isFetchingNextPage ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />} Agregar</Button>}
     </div>
     {open && <div id={`${inputId}-results`} ref={listRef} role="listbox" onScroll={scroll} className="absolute z-30 mt-1 max-h-72 w-full overflow-auto rounded-xl border bg-popover p-1 shadow-xl">{resultRows()}</div>}
-    <Dialog open={Boolean(inventoryBlocked)} onOpenChange={(value) => !value && setInventoryBlocked(null)}>
-      <DialogContent className="max-w-md overflow-hidden p-0">
-        <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-teal-950 px-6 py-5 text-white">
-          <span className="mb-3 grid h-11 w-11 place-items-center rounded-2xl bg-amber-400/15 text-amber-300"><PackageX className="h-6 w-6" /></span>
-          <DialogHeader><DialogTitle className="text-white">Primero deja el inventario en cero</DialogTitle><DialogDescription className="text-slate-300">Este producto todavía tiene existencias y no puede compartir inventario con otro.</DialogDescription></DialogHeader>
-        </div>
-        <div className="space-y-4 p-6">
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-950"><p className="font-semibold">{inventoryBlocked?.productName}</p><p className="mt-1 text-sm">Saldo actual: <strong>{inventoryBlocked?.quantityOnHand.toLocaleString("es-CO")}</strong></p></div>
-          <p className="flex gap-2 text-sm text-muted-foreground"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />Traslada, ajusta o vende las existencias actuales. Cuando el saldo sea cero podrás vincularlo y Auraly dejará de manejarle inventario propio.</p>
-        </div>
-        <DialogFooter className="border-t bg-muted/20 px-6 py-4"><Button type="button" onClick={() => setInventoryBlocked(null)}>Entendido</Button></DialogFooter>
-      </DialogContent>
-    </Dialog>
   </div>;
 }

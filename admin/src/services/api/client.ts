@@ -19,6 +19,18 @@ let activeRefresh: Promise<SessionRefreshResult> | null = null;
 
 let sessionRuntime: Promise<SessionRuntime> | null = null;
 const REQUEST_TIMEOUT_MS = 45_000;
+
+class ApiClientError extends Error implements ApiError {
+  statusCode: number;
+  errors?: Record<string, string[]>;
+
+  constructor(message: string, statusCode: number, errors?: Record<string, string[]>) {
+    super(message);
+    this.name = "ApiClientError";
+    this.statusCode = statusCode;
+    this.errors = errors;
+  }
+}
 function getSelectedTenantId(): string | null {
   if (typeof window === "undefined") return null;
   try {
@@ -162,18 +174,16 @@ class ApiClient {
 
   private async handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
-      const error: ApiError = {
-        message: "An error occurred",
-        statusCode: response.status,
-      };
+      let message = "An error occurred";
+      let errors: Record<string, string[]> | undefined;
       try {
         const body = await response.json();
-        error.message = body.detail || body.message || body.title || "An error occurred";
-        error.errors = body.errors;
+        message = body.detail || body.message || body.title || message;
+        errors = body.errors;
       } catch {
-        error.message = response.statusText;
+        message = response.statusText || message;
       }
-      throw error;
+      throw new ApiClientError(message, response.status, errors);
     }
     if (response.status === 204) return undefined as T;
     return response.json();

@@ -94,7 +94,7 @@ RowVersion
 ```text
 PercentageOverBasePrice
 FixedSpecialPrice
-PercentageOverAverageCost
+MarginOverLatestCost
 FixedMarginOverAverageCost
 SellAtAverageCost
 ProductMarginAdjustment
@@ -113,7 +113,7 @@ un producto con margen de 20% y ajuste de 10 puntos queda en 30%; con -10 puntos
 queda en 10%. El resultado se limita al intervalo válido de 0% a menos de 100%.
 
 Las estrategias derivadas directamente del costo
-(`PercentageOverAverageCost` y `FixedMarginOverAverageCost`) nunca aceptan un
+(`MarginOverLatestCost` y `FixedMarginOverAverageCost`) nunca aceptan un
 valor negativo. Durante una actualización, cualquier valor histórico negativo
 se normaliza a cero antes de volver a confiar la restricción; así el canal más
 conservador vende al costo y nunca por debajo de este.
@@ -241,7 +241,8 @@ Reglas:
 - se puede configurar margen mínimo;
 - nunca permiten precio negativo;
 - ninguna estrategia materializa un precio inferior al costo promedio vigente;
-- `PercentageOverAverageCost` y `FixedMarginOverAverageCost` no aceptan valores negativos;
+- `MarginOverLatestCost` calcula margen real sobre el último costo de compra observado; si todavía no existe una recepción usa el costo configurado del producto;
+- `MarginOverLatestCost` y `FixedMarginOverAverageCost` no aceptan valores negativos ni márgenes iguales o superiores a 100%;
 - los descuentos sobre precio público y los precios escalonados usan el costo promedio como piso de seguridad;
 - `ProductMarginAdjustment` permite restar puntos, pero nunca produce un margen menor que 0%;
 - el cambio de costo genera una nueva revisión de precio para cajas afectadas.

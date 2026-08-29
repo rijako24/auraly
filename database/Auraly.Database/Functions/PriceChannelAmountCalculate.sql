@@ -4,6 +4,7 @@ CREATE FUNCTION [dbo].[PriceChannelAmountCalculate]
     @Value DECIMAL(19,6),
     @BaseAmount DECIMAL(19,4),
     @AverageCost DECIMAL(19,6),
+    @LatestCost DECIMAL(19,6),
     @ProductTargetMarginPercent DECIMAL(9,6),
     @SpecialAmount DECIMAL(19,4)
 )
@@ -17,8 +18,8 @@ BEGIN
         SET @calculated = @SpecialAmount;
     ELSE IF @Strategy = N'PercentageOverBasePrice'
         SET @calculated = @BaseAmount * (1 + COALESCE(@Value, 0) / 100);
-    ELSE IF @Strategy = N'PercentageOverAverageCost' AND @AverageCost > 0
-        SET @calculated = @AverageCost * (1 + COALESCE(@Value, 0) / 100);
+    ELSE IF @Strategy = N'MarginOverLatestCost' AND @LatestCost > 0
+        SET @calculated = @LatestCost / (1 - COALESCE(@Value, 0) / 100);
     ELSE IF @Strategy = N'FixedMarginOverAverageCost' AND @AverageCost > 0
         SET @calculated = @AverageCost / (1 - COALESCE(@Value, 0) / 100);
     ELSE IF @Strategy = N'SellAtAverageCost' AND @AverageCost > 0

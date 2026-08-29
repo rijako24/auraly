@@ -70,8 +70,8 @@ CREATE TABLE [dbo].[PriceChannels] (
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,
     CONSTRAINT [FK_PriceChannels_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
-    CONSTRAINT [CK_PriceChannels_Strategy] CHECK ([Strategy] IN (N'TieredProductPrice',N'PercentageOverBasePrice',N'PercentageOverAverageCost',N'FixedMarginOverAverageCost',N'SellAtAverageCost',N'ProductMarginAdjustment')),
-    CONSTRAINT [CK_PriceChannels_Value] CHECK (([Strategy] IN (N'TieredProductPrice',N'SellAtAverageCost') AND [Value] IS NULL) OR ([Strategy]=N'PercentageOverBasePrice' AND [Value] BETWEEN -100 AND 1000) OR ([Strategy]=N'PercentageOverAverageCost' AND [Value] BETWEEN 0 AND 1000) OR ([Strategy]=N'FixedMarginOverAverageCost' AND [Value] BETWEEN 0 AND 99.999999) OR ([Strategy]=N'ProductMarginAdjustment' AND [Value] BETWEEN -99.999999 AND 99.999999)),
+    CONSTRAINT [CK_PriceChannels_Strategy] CHECK ([Strategy] IN (N'TieredProductPrice',N'PercentageOverBasePrice',N'MarginOverLatestCost',N'FixedMarginOverAverageCost',N'SellAtAverageCost',N'ProductMarginAdjustment')),
+    CONSTRAINT [CK_PriceChannels_Value] CHECK (([Strategy] IN (N'TieredProductPrice',N'SellAtAverageCost') AND [Value] IS NULL) OR ([Strategy]=N'PercentageOverBasePrice' AND [Value] BETWEEN -100 AND 1000) OR ([Strategy]=N'MarginOverLatestCost' AND [Value] BETWEEN 0 AND 99.999999) OR ([Strategy]=N'FixedMarginOverAverageCost' AND [Value] BETWEEN 0 AND 99.999999) OR ([Strategy]=N'ProductMarginAdjustment' AND [Value] BETWEEN -99.999999 AND 99.999999)),
     CONSTRAINT [UQ_PriceChannels_Business_Code] UNIQUE ([BusinessId], [Code])
 );
 GO

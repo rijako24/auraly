@@ -71,6 +71,18 @@ RETURN
     ) cost
     OUTER APPLY
     (
+        SELECT COALESCE(
+            (SELECT TOP (1) latest.LatestUnitCost
+             FROM dbo.SupplierProductLatestCosts latest
+             WHERE latest.BusinessId = @BusinessId
+               AND latest.ProductId = product.ProductId
+             ORDER BY latest.ObservedAt DESC, latest.SupplierId),
+            basePrice.CostBasisAmount,
+            cost.Amount,
+            0) AS Amount
+    ) latestCost
+    OUTER APPLY
+    (
         SELECT TOP (1) item.Amount
         FROM dbo.ResolvedPriceChannelItems item
         WHERE item.PriceChannelId = channel.PriceChannelId
@@ -86,6 +98,7 @@ RETURN
             channel.Value,
             basePrice.Amount,
             cost.Amount,
+            latestCost.Amount,
             COALESCE(basePrice.TargetMarginPercent, basePrice.EffectiveMarginPercent),
             special.Amount) AS Amount
         WHERE NOT EXISTS
@@ -107,6 +120,7 @@ RETURN
                 channel.Value,
                 basePrice.Amount,
                 cost.Amount,
+                latestCost.Amount,
                 COALESCE(basePrice.TargetMarginPercent, basePrice.EffectiveMarginPercent),
                 special.Amount) IS NOT NULL
     ) channelPrice

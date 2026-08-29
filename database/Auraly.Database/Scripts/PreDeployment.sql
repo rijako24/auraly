@@ -20,6 +20,7 @@ Pre-Deployment Script Template
 :r .\Migrations\20260824_MoveFiscalCredentialsToTenant.sql
 :r .\Migrations\20260825_AddPurchaseEvidence.sql
 :r .\Migrations\20260828_NormalizePriceChannelValues.sql
+:r .\Migrations\20260828_ReplaceAverageCostMarkupWithLatestCostMargin.sql
 :r .\Migrations\MoveDispatchReasonsToOwnedSchema.sql
 
 -- Scripts de pre-despliegue

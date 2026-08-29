@@ -101,16 +101,17 @@ test("canales administra precios por cantidad y modos calculados sin listas", as
   await expect(createDialog.getByRole("button", { name: "Precios por producto y cantidad" })).toBeVisible();
   await expect(createDialog.getByRole("button", { name: "% sobre precio público" })).toBeVisible();
   await expect(createDialog.getByRole("button", { name: "Descuento sobre precio público" })).toHaveCount(0);
-  await expect(createDialog.getByRole("button", { name: "% sobre costo promedio" })).toBeVisible();
+  await expect(createDialog.getByRole("button", { name: "Margen sobre último costo" })).toBeVisible();
   await expect(createDialog.getByRole("button", { name: "Margen sobre costo promedio" })).toBeVisible();
   await expect(createDialog.getByRole("button", { name: "Ajustar margen del producto" })).toBeVisible();
   await expect(createDialog.getByRole("button", { name: "Vender al costo promedio" })).toBeVisible();
   await createDialog.getByText("Nombre *", { exact: true }).locator("..").getByRole("textbox").fill("Distribuidores");
   await createDialog.getByPlaceholder(/Código interno/).fill("Aceite");
   await createDialog.getByRole("option", { name: /Aceite vegetal 3000 ml/ }).click();
-  await expect(createDialog.getByText("Aceite vegetal 3000 ml", { exact: true })).toBeVisible();
-  await createDialog.getByText("Desde cantidad", { exact: true }).locator("..").locator("input").fill("3");
-  await createDialog.getByRole("button", { name: "Agregar precio" }).click();
+  const pricesDialog = page.getByRole("dialog", { name: "Precios por cantidad" });
+  await expect(pricesDialog.getByText(/Aceite vegetal 3000 ml/)).toBeVisible();
+  await pricesDialog.locator("#new-channel-product-minimum-0").fill("3");
+  await pricesDialog.getByRole("button", { name: "Agregar precios" }).click();
   await createDialog.getByRole("button", { name: /Crear canal · 1 precios/ }).click();
   await expect(createDialog).toBeHidden();
   await expect(page.getByRole("dialog", { name: "Distribuidores" })).toHaveCount(0);
@@ -153,12 +154,14 @@ test("canales administra precios por cantidad y modos calculados sin listas", as
 
   await page.getByRole("button", { name: "Nuevo canal" }).click();
   const costDialog = page.getByRole("dialog", { name: "Nuevo canal de precios" });
-  await costDialog.getByText("Nombre *", { exact: true }).locator("..").getByRole("textbox").fill("Costo incrementado");
-  await costDialog.getByRole("button", { name: "% sobre costo promedio" }).click();
-  const costPercentage = costDialog.getByText("Incremento sobre costo (%)", { exact: true }).locator("..").locator("input");
+  await costDialog.getByText("Nombre *", { exact: true }).locator("..").getByRole("textbox").fill("Margen último costo");
+  await costDialog.getByRole("button", { name: "Margen sobre último costo" }).click();
+  const costPercentage = costDialog.getByText("Margen objetivo (%)", { exact: true }).locator("..").locator("input");
   await costPercentage.fill("4");
   await expect(costPercentage).toHaveValue("4");
-  await page.keyboard.press("Escape");
+  await costDialog.getByRole("button", { name: "Crear canal" }).click();
+  await expect(costDialog).toBeHidden();
+  expect(createdRequest).toMatchObject({ name: "Margen último costo", channelStrategy: "MarginOverLatestCost", channelValue: 4 });
 
   await page.getByRole("button", { name: "Nuevo canal" }).click();
   const marginAdjustmentDialog = page.getByRole("dialog", { name: "Nuevo canal de precios" });

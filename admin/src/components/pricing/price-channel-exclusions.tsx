@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ban, Plus, Trash2 } from "lucide-react";
+import { Ban, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { ProductPicker } from "@/components/products/product-picker";
@@ -70,12 +70,11 @@ function ExclusionSelector({ businessId, inputId, excludedProductIds, disabled, 
   onAdd: (item: DraftPriceChannelExclusion) => void;
 }) {
   const [kind, setKind] = useState<SelectorKind>("Area");
-  const [scopeId, setScopeId] = useState("");
   const categories = useQuery({ queryKey: ["product-categories", businessId, false], queryFn: () => productsApi.listCategories(businessId) });
   const brands = useQuery({ queryKey: ["product-brands"], queryFn: productMerchandisingApi.brands });
   const selectedKind = selectorKinds.find((item) => item.value === kind)!;
   const categoryOptions = useMemo(() => (categories.data ?? []).filter((item) => item.depth === selectedKind.depth), [categories.data, selectedKind.depth]);
-  function addSelected() {
+  function addSelected(scopeId: string) {
     if (!scopeId) return;
     if (kind === "Brand") {
       const brand = brands.data?.find((item) => item.productBrandId === scopeId);
@@ -84,13 +83,11 @@ function ExclusionSelector({ businessId, inputId, excludedProductIds, disabled, 
       const category = categoryOptions.find((item) => item.productCategoryId === scopeId);
       if (category) onAdd({ scopeType: "Category", scopeId, scopeName: category.path, categoryDepth: category.depth, productCode: null });
     }
-    setScopeId("");
   }
   return <div className="space-y-3 rounded-xl border bg-background p-3">
-    <div className="flex flex-wrap gap-2" aria-label="Tipo de exclusión">{selectorKinds.map((item) => <Button key={item.value} type="button" size="sm" variant={kind === item.value ? "default" : "outline"} onClick={() => { setKind(item.value); setScopeId(""); }}>{item.label}</Button>)}</div>
-    {kind === "Product" ? <ProductPicker businessId={businessId} selectedProductIds={excludedProductIds} disabled={disabled} label="Buscar producto para excluir" inputId={inputId} onSelect={(product) => onAdd({ scopeType: "Product", scopeId: product.productId, scopeName: product.productName, categoryDepth: null, productCode: product.productCode })} /> : <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-      <div className="space-y-2"><Label>{selectedKind.label}</Label><Select value={scopeId} onValueChange={setScopeId}><SelectTrigger><SelectValue placeholder={`Selecciona ${selectedKind.label.toLocaleLowerCase("es-CO")}`} /></SelectTrigger><SelectContent>{kind === "Brand" ? (brands.data ?? []).map((item) => <SelectItem key={item.productBrandId} value={item.productBrandId}>{item.name}</SelectItem>) : categoryOptions.map((item) => <SelectItem key={item.productCategoryId} value={item.productCategoryId}>{item.path}</SelectItem>)}</SelectContent></Select></div>
-      <Button type="button" disabled={!scopeId || disabled} onClick={addSelected}><Plus className="mr-2 h-4 w-4" />Agregar exclusión</Button>
+    <div className="flex flex-wrap gap-2" aria-label="Tipo de exclusión">{selectorKinds.map((item) => <Button key={item.value} type="button" size="sm" variant={kind === item.value ? "default" : "outline"} onClick={() => setKind(item.value)}>{item.label}</Button>)}</div>
+    {kind === "Product" ? <ProductPicker businessId={businessId} selectedProductIds={excludedProductIds} disabled={disabled} label="Buscar producto para excluir" inputId={inputId} showAddButton={false} onSelect={(product) => onAdd({ scopeType: "Product", scopeId: product.productId, scopeName: product.productName, categoryDepth: null, productCode: product.productCode })} /> : <div className="space-y-2">
+      <Label>{selectedKind.label}</Label><Select disabled={disabled} value="" onValueChange={addSelected}><SelectTrigger><SelectValue placeholder={`Selecciona ${selectedKind.label.toLocaleLowerCase("es-CO")} para excluirla`} /></SelectTrigger><SelectContent>{kind === "Brand" ? (brands.data ?? []).map((item) => <SelectItem key={item.productBrandId} value={item.productBrandId}>{item.name}</SelectItem>) : categoryOptions.map((item) => <SelectItem key={item.productCategoryId} value={item.productCategoryId}>{item.path}</SelectItem>)}</SelectContent></Select>
     </div>}
   </div>;
 }
