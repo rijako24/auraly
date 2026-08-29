@@ -164,7 +164,9 @@ public sealed class DatabaseUpgradeMigrationTests
         var preDeployment = File.ReadAllText(Path.Combine(
             root, "database", "Auraly.Database", "Scripts", "PreDeployment.sql"));
 
-        Assert.Contains("DROP CONSTRAINT CK_PriceChannels_Strategy", migration, StringComparison.Ordinal);
+        Assert.Contains("NOCHECK CONSTRAINT CK_PriceChannels_Strategy", migration, StringComparison.Ordinal);
+        Assert.Contains("NOCHECK CONSTRAINT CK_PriceChannels_Value", migration, StringComparison.Ordinal);
+        Assert.DoesNotContain("DROP CONSTRAINT CK_PriceChannels", migration, StringComparison.Ordinal);
         Assert.Contains("Strategy = N'MarginOverLatestCost'", migration, StringComparison.Ordinal);
         Assert.Contains("100 * Value / (100 + Value)", migration, StringComparison.Ordinal);
         Assert.Contains("WHERE Strategy = N'PercentageOverAverageCost'", migration, StringComparison.Ordinal);

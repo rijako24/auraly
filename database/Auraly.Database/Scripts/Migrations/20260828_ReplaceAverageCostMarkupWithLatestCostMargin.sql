@@ -7,7 +7,7 @@ BEGIN
         WHERE parent_object_id = OBJECT_ID(N'dbo.PriceChannels')
           AND name = N'CK_PriceChannels_Strategy'
     )
-        ALTER TABLE dbo.PriceChannels DROP CONSTRAINT CK_PriceChannels_Strategy;
+        ALTER TABLE dbo.PriceChannels NOCHECK CONSTRAINT CK_PriceChannels_Strategy;
 
     IF EXISTS
     (
@@ -16,7 +16,7 @@ BEGIN
         WHERE parent_object_id = OBJECT_ID(N'dbo.PriceChannels')
           AND name = N'CK_PriceChannels_Value'
     )
-        ALTER TABLE dbo.PriceChannels DROP CONSTRAINT CK_PriceChannels_Value;
+        ALTER TABLE dbo.PriceChannels NOCHECK CONSTRAINT CK_PriceChannels_Value;
 
     -- La estrategia anterior expresaba markup sobre costo promedio. Conservamos
     -- el precio matemático equivalente al convertir ese markup a margen y dejamos
