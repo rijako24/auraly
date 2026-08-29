@@ -14,6 +14,7 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
     {
         var sharedBusinessId = Guid.NewGuid();
         var sharedWarehouseId = Guid.NewGuid();
+        var sharedSupplierId = Guid.NewGuid();
         var receipt = CreateRequest() with { DocumentId = Guid.NewGuid() };
         var previousShares = await ScalarAsync<bool>(
             "SELECT SharesProductPrices FROM dbo.Businesses WHERE BusinessId=@BusinessId", receipt.DocumentId);
@@ -28,17 +29,26 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             INSERT dbo.Businesses(BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,TimeZone,SharesProductPrices,IsActive,CreatedAt)
             SELECT @OtherBusinessId,TenantId,N'Sede costo compartido',N'',N'',N'',N'',N'',TimeZone,1,1,SYSUTCDATETIME()
             FROM dbo.Businesses WHERE BusinessId=@BusinessId;
+            INSERT dbo.UserRoles(UserRoleId,UserId,RoleId,BusinessId,AssignedAt)
+            SELECT NEWID(),UserId,RoleId,@OtherBusinessId,SYSUTCDATETIME()
+            FROM dbo.UserRoles WHERE UserId=@UserId AND BusinessId=@BusinessId;
             INSERT dbo.Warehouses(WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,PriceFormationCostBasis,IsActive,CreatedAt)
             VALUES(@OtherWarehouseId,@OtherBusinessId,N'BOD-SHARED',N'Bodega compartida',1,0,1,1,1,N'WeightedAverageCost',1,SYSUTCDATETIME());
             INSERT dbo.ProductPrices(ProductPriceId,BusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,CostBasisType,CostBasisAmount,TargetMarginPercent,EffectiveMarginPercent,InputMode,RoundingIncrement,RoundingMode,ValidFrom,IsActive,CreatedAt)
             SELECT NEWID(),@OtherBusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,CostBasisType,CostBasisAmount,TargetMarginPercent,EffectiveMarginPercent,InputMode,RoundingIncrement,RoundingMode,SYSUTCDATETIME(),1,SYSUTCDATETIME()
             FROM dbo.ProductPrices WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND IsActive=1;
+            INSERT dbo.Suppliers(SupplierId,BusinessId,PartyId,Identification,Name,IsActive,CreatedAt)
+            SELECT @OtherSupplierId,@OtherBusinessId,PartyId,Identification,Name,1,SYSUTCDATETIME()
+            FROM dbo.Suppliers WHERE SupplierId=@SupplierId;
+            INSERT dbo.SupplierProducts(SupplierProductId,BusinessId,ProductId,SupplierId,SupplierProductCode,IsPrimary,IsActive,CreatedAt)
+            VALUES(NEWID(),@OtherBusinessId,@ProductId,@OtherSupplierId,N'PROV-SHARED',1,1,SYSUTCDATETIME());
             INSERT dbo.InventoryBalances(BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,InventoryValue,LastProcessingSequence,UpdatedAt)
             VALUES(@OtherBusinessId,@OtherWarehouseId,@ProductId,@OtherQuantity,@OtherAverage,@OtherValue,0,SYSUTCDATETIME());
             UPDATE dbo.Businesses SET SharesProductPrices=1 WHERE BusinessId=@BusinessId;
             UPDATE dbo.Tenants SET InventoryCostBasis=N'WeightedAverageCost'
             WHERE TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
-            """, sharedBusinessId, sharedWarehouseId, otherQuantity, otherAverage);
+            """, sharedBusinessId, sharedWarehouseId, otherQuantity, otherAverage,
+            otherSupplierId: sharedSupplierId);
 
         try
         {
@@ -61,6 +71,50 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
                 await ReadBalanceAsync(sharedBusinessId, sharedWarehouseId, "InventoryValue"));
             Assert.Equal(2, await ScalarAsync<int>(
                 "SELECT COUNT(*) FROM dbo.PriceRevisionProposals WHERE SourceDocumentId=@Id", receipt.DocumentId));
+
+            var reverseReceipt = CreateRequest() with
+            {
+                DocumentId = Guid.NewGuid(),
+                BusinessId = sharedBusinessId,
+                WarehouseId = sharedWarehouseId,
+                SupplierId = sharedSupplierId
+            };
+            var primaryQuantityBeforeReverse = await ReadNullableDecimalAsync("QuantityOnHand") ?? 0m;
+            var sharedQuantityBeforeReverse = await ReadBalanceAsync(
+                sharedBusinessId, sharedWarehouseId, "QuantityOnHand");
+            var poolValueBeforeReverse =
+                (await ReadNullableDecimalAsync("InventoryValue") ?? 0m) +
+                await ReadBalanceAsync(sharedBusinessId, sharedWarehouseId, "InventoryValue");
+            using var sharedClient = fixture.CreateAdminClientWithBusinessHeader(
+                sharedBusinessId,
+                PurchasingPermissionCodes.CreateGoodsReceipts,
+                PurchasingPermissionCodes.ConfirmGoodsReceipts);
+            using var reverseMessage = CreateMessage(
+                reverseReceipt, $"shared-cost-reverse-{reverseReceipt.DocumentId:N}");
+            using var reverseResponse = await sharedClient.SendAsync(reverseMessage);
+            Assert.Equal(HttpStatusCode.Accepted, reverseResponse.StatusCode);
+            Assert.Equal("Completed", (await ReadJobAsync(reverseReceipt.DocumentId)).Status);
+
+            var reverseExpectedAverage = decimal.Round(
+                (poolValueBeforeReverse + 50_000m) /
+                (primaryQuantityBeforeReverse + sharedQuantityBeforeReverse + 10m),
+                6, MidpointRounding.AwayFromZero);
+            Assert.Equal(primaryQuantityBeforeReverse,
+                await ReadNullableDecimalAsync("QuantityOnHand"));
+            Assert.Equal(sharedQuantityBeforeReverse + 10m,
+                await ReadBalanceAsync(sharedBusinessId, sharedWarehouseId, "QuantityOnHand"));
+            var primaryAverageAfterReverse =
+                await ReadNullableDecimalAsync("AverageUnitCost");
+            var sharedAverageAfterReverse = await ReadBalanceAsync(
+                sharedBusinessId, sharedWarehouseId, "AverageUnitCost");
+            Assert.True(
+                primaryAverageAfterReverse == reverseExpectedAverage &&
+                sharedAverageAfterReverse == reverseExpectedAverage,
+                $"Expected shared average {reverseExpectedAverage}; primary was " +
+                $"{primaryAverageAfterReverse} and receiving business was {sharedAverageAfterReverse}.");
+            Assert.Equal(2, await ScalarAsync<int>(
+                "SELECT COUNT(*) FROM dbo.PriceRevisionProposals WHERE SourceDocumentId=@Id",
+                reverseReceipt.DocumentId));
         }
         finally
         {
@@ -70,6 +124,53 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
                 UPDATE dbo.Tenants SET InventoryCostBasis=@PreviousCostBasis
                 WHERE TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
                 """, sharedBusinessId, sharedWarehouseId, otherQuantity, otherAverage,
+                previousShares, previousCostBasis, sharedSupplierId);
+        }
+    }
+
+    [Fact]
+    public async Task Weighted_cost_receipt_preserves_negative_quantity_without_corrupting_shared_cost()
+    {
+        var previousQuantity = await ReadNullableDecimalAsync("QuantityOnHand") ?? 0m;
+        var previousAverage = await ReadNullableDecimalAsync("AverageUnitCost") ?? 0m;
+        var previousValue = await ReadNullableDecimalAsync("InventoryValue") ?? 0m;
+        var previousShares = await ScalarAsync<bool>(
+            "SELECT SharesProductPrices FROM dbo.Businesses WHERE BusinessId=@BusinessId", Guid.NewGuid());
+        var previousCostBasis = await ScalarAsync<string>(
+            "SELECT InventoryCostBasis FROM dbo.Tenants WHERE TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)", Guid.NewGuid());
+
+        try
+        {
+            await SetPrimaryCostStateAsync(-10m, 5_000m, -50_000m, true, "WeightedAverageCost");
+            var request = CreateRequest() with
+            {
+                DocumentId = Guid.NewGuid(),
+                Lines =
+                [
+                    CreateRequest().Lines.Single() with
+                    {
+                        Quantity = 4m,
+                        UnitCost = 6_000m,
+                        DiscountAmount = 0m
+                    }
+                ]
+            };
+            using var client = fixture.CreateAdminClient(
+                PurchasingPermissionCodes.CreateGoodsReceipts,
+                PurchasingPermissionCodes.ConfirmGoodsReceipts);
+            using var message = CreateMessage(request, $"negative-shared-cost-{request.DocumentId:N}");
+            using var response = await client.SendAsync(message);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            Assert.Equal("Completed", (await ReadJobAsync(request.DocumentId)).Status);
+
+            Assert.Equal(-6m, await ReadNullableDecimalAsync("QuantityOnHand"));
+            Assert.Equal(6_000m, await ReadNullableDecimalAsync("AverageUnitCost"));
+            Assert.Equal(-36_000m, await ReadNullableDecimalAsync("InventoryValue"));
+        }
+        finally
+        {
+            await SetPrimaryCostStateAsync(
+                previousQuantity, previousAverage, previousValue,
                 previousShares, previousCostBasis);
         }
     }
@@ -375,22 +476,54 @@ public sealed class GoodsReceiptProcessingTests(ServerSliceFixture fixture)
             ?? throw new InvalidOperationException("The shared inventory balance was not found."));
     }
 
+    private async Task SetPrimaryCostStateAsync(
+        decimal quantity, decimal average, decimal value,
+        bool sharesPrices, string costBasis)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE dbo.InventoryBalances
+            SET QuantityOnHand=@Quantity,AverageUnitCost=@Average,InventoryValue=@Value,
+                UpdatedAt=SYSUTCDATETIME()
+            WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
+            UPDATE dbo.Businesses SET SharesProductPrices=@SharesPrices
+            WHERE BusinessId=@BusinessId;
+            UPDATE dbo.Tenants SET InventoryCostBasis=@CostBasis
+            WHERE TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
+            """;
+        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+        command.Parameters.AddWithValue("@ProductId", fixture.ProductId);
+        command.Parameters.AddWithValue("@Quantity", quantity);
+        command.Parameters.AddWithValue("@Average", average);
+        command.Parameters.AddWithValue("@Value", value);
+        command.Parameters.AddWithValue("@SharesPrices", sharesPrices);
+        command.Parameters.AddWithValue("@CostBasis", costBasis);
+        await command.ExecuteNonQueryAsync();
+    }
+
     private async Task ExecuteAsync(
         string sql, Guid otherBusinessId, Guid otherWarehouseId,
         decimal otherQuantity, decimal otherAverage,
-        bool? previousShares = null, string? previousCostBasis = null)
+        bool? previousShares = null, string? previousCostBasis = null,
+        Guid? otherSupplierId = null)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = sql;
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@UserId", fixture.UserId);
         command.Parameters.AddWithValue("@ProductId", fixture.ProductId);
+        command.Parameters.AddWithValue("@SupplierId", fixture.SupplierId);
         command.Parameters.AddWithValue("@OtherBusinessId", otherBusinessId);
         command.Parameters.AddWithValue("@OtherWarehouseId", otherWarehouseId);
         command.Parameters.AddWithValue("@OtherQuantity", otherQuantity);
         command.Parameters.AddWithValue("@OtherAverage", otherAverage);
         command.Parameters.AddWithValue("@OtherValue", otherQuantity * otherAverage);
+        command.Parameters.AddWithValue("@OtherSupplierId", (object?)otherSupplierId ?? DBNull.Value);
         command.Parameters.AddWithValue("@PreviousShares", (object?)previousShares ?? false);
         command.Parameters.AddWithValue("@PreviousCostBasis", (object?)previousCostBasis ?? "LatestReceiptCost");
         await command.ExecuteNonQueryAsync();
