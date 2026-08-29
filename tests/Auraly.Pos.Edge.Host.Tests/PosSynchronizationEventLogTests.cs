@@ -28,6 +28,40 @@ public sealed class PosSynchronizationEventLogTests
     }
 
     [Fact]
+    public void Customer_event_identifies_the_customer_that_was_received()
+    {
+        var log = new PosSynchronizationEventLog(TimeProvider.System);
+        var customer = new PosCustomerPricing(
+            Guid.NewGuid(), "900123456", "Cliente sincronizado", null, true);
+
+        log.CustomerReceived(customer, previous: null);
+
+        var value = Assert.Single(log.Read());
+        Assert.Equal("Cliente", value.Category);
+        Assert.Contains(customer.Name, value.Title, StringComparison.Ordinal);
+        Assert.Contains(customer.Identification, value.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Channel_price_event_preserves_product_and_price_detail()
+    {
+        var log = new PosSynchronizationEventLog(TimeProvider.System);
+        var productId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
+        var previous = new PosPriceChannelItem(channelId, productId, 5m, 10_000m, "COP", false);
+        var current = previous with { Amount = 9_500m };
+
+        log.ChannelPriceReceived(current, previous, "Producto sincronizado");
+
+        var value = Assert.Single(log.Read());
+        Assert.Equal("Precio", value.Category);
+        Assert.Equal(productId, value.ProductId);
+        Assert.Equal(previous.Amount, value.PreviousPrice);
+        Assert.Equal(current.Amount, value.NewPrice);
+        Assert.Contains("Producto sincronizado", value.Title, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Event_history_is_newest_first_and_bounded()
     {
         var log = new PosSynchronizationEventLog(TimeProvider.System);
@@ -39,6 +73,20 @@ public sealed class PosSynchronizationEventLogTests
         Assert.Equal(250, values.Count);
         Assert.Equal("Evento 300", values[0].Title);
         Assert.Equal("Evento 51", values[^1].Title);
+    }
+
+    [Fact]
+    public void Every_new_event_notifies_the_local_user_interface()
+    {
+        var signal = new PosUiStateSignal();
+        var subscription = signal.Subscribe();
+        var log = new PosSynchronizationEventLog(TimeProvider.System, signal);
+
+        log.Record("Info", "Cliente", "Cliente recibido");
+
+        Assert.True(subscription.Reader.TryRead(out var message));
+        Assert.Equal("state", message);
+        signal.Unsubscribe(subscription.SubscriptionId);
     }
 
     [Fact]

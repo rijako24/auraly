@@ -48,12 +48,13 @@ public sealed partial class SqlOnlineSalesDraftStore
                    inventoryProduct.ManageStock,COALESCE(balance.QuantityOnHand,0),line.Position
             FROM dbo.SalesDraftLines line WITH(UPDLOCK,HOLDLOCK)
             JOIN dbo.Products product
-              ON product.BusinessId=@BusinessId AND product.ProductId=line.ProductId
+              ON product.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+             AND product.ProductId=line.ProductId
             LEFT JOIN dbo.ProductLinks link
               ON link.BusinessId=@BusinessId AND link.ChildProductId=line.ProductId
              AND link.SharesInventory=1 AND link.IsActive=1
             JOIN dbo.Products inventoryProduct
-              ON inventoryProduct.BusinessId=@BusinessId
+              ON inventoryProduct.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
              AND inventoryProduct.ProductId=COALESCE(link.ParentProductId,line.ProductId)
             LEFT JOIN dbo.InventoryBalances balance WITH(UPDLOCK,HOLDLOCK)
               ON balance.BusinessId=@BusinessId AND balance.WarehouseId=@InventoryWarehouseId

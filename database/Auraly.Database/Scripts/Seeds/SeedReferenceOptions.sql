@@ -18,6 +18,23 @@ VALUES
 ('10000000-0000-0000-0000-000000000003',N'payment-method',N'CreditCard',N'Tarjeta crédito',NULL,30),
 ('10000000-0000-0000-0000-000000000004',N'payment-method',N'Transfer',N'Transferencia',NULL,40),
 ('10000000-0000-0000-0000-000000000005',N'payment-method',N'Credit',N'Crédito cliente',NULL,50),
+('10100000-0000-0000-0000-000000000001',N'cash-closure-method',N'Cash',N'Efectivo',NULL,10),
+('10100000-0000-0000-0000-000000000002',N'cash-closure-method',N'Card',N'Tarjeta',NULL,20),
+('10100000-0000-0000-0000-000000000003',N'cash-closure-method',N'Transfer',N'Transferencia',NULL,30),
+('10200000-0000-0000-0000-000000000001',N'cash-denomination',N'50',N'$50',N'Moneda',10),
+('10200000-0000-0000-0000-000000000002',N'cash-denomination',N'100',N'$100',N'Moneda',20),
+('10200000-0000-0000-0000-000000000003',N'cash-denomination',N'200',N'$200',N'Moneda',30),
+('10200000-0000-0000-0000-000000000004',N'cash-denomination',N'500',N'$500',N'Moneda',40),
+('10200000-0000-0000-0000-000000000005',N'cash-denomination',N'1000',N'$1.000',N'Moneda',50),
+('10200000-0000-0000-0000-000000000006',N'cash-denomination',N'2000',N'$2.000',N'Billete',60),
+('10200000-0000-0000-0000-000000000007',N'cash-denomination',N'5000',N'$5.000',N'Billete',70),
+('10200000-0000-0000-0000-000000000008',N'cash-denomination',N'10000',N'$10.000',N'Billete',80),
+('10200000-0000-0000-0000-000000000009',N'cash-denomination',N'20000',N'$20.000',N'Billete',90),
+('10200000-0000-0000-0000-000000000010',N'cash-denomination',N'50000',N'$50.000',N'Billete',100),
+('10200000-0000-0000-0000-000000000011',N'cash-denomination',N'100000',N'$100.000',N'Billete',110),
+('10300000-0000-0000-0000-000000000001',N'cash-reconciliation-reason',N'COUNT_DIFFERENCE',N'Diferencia confirmada en el conteo',NULL,10),
+('10300000-0000-0000-0000-000000000002',N'cash-reconciliation-reason',N'UNSUPPORTED_RECEIPT',N'Soporte del medio de pago no encontrado',NULL,20),
+('10300000-0000-0000-0000-000000000003',N'cash-reconciliation-reason',N'OTHER_VERIFIED',N'Otra diferencia verificada',NULL,30),
 ('11000000-0000-0000-0000-000000000001',N'card-franchise',N'Visa',N'Visa',NULL,10),
 ('11000000-0000-0000-0000-000000000002',N'card-franchise',N'Mastercard',N'Mastercard',NULL,20),
 ('11000000-0000-0000-0000-000000000003',N'card-franchise',N'AmericanExpress',N'American Express',NULL,30),
@@ -89,10 +106,25 @@ WHEN NOT MATCHED THEN
            source.Description,1,source.SortOrder,@Now,@Now)
 WHEN NOT MATCHED BY SOURCE
      AND target.CatalogCode IN
-       (N'payment-method',N'card-franchise',N'sales-return-resolution-method',N'sales-return-scope',N'sales-document-type',N'purchase-presentation',
+       (N'payment-method',N'cash-closure-method',N'cash-denomination',N'cash-reconciliation-reason',N'card-franchise',N'sales-return-resolution-method',N'sales-return-scope',N'sales-document-type',N'purchase-presentation',
         N'inventory-operation-type',N'agent-bot-type',N'accounting-account-type',
         N'accounting-subledger-kind',N'accounting-adjustment-direction',
         N'accounting-manual-concept',N'accounting-report-type',
         N'accounting-withholding-kind',N'accounting-opening-balance-mode',
         N'tenant-entity-type',N'tenant-identification-type',N'purchase-evidence-type')
 THEN UPDATE SET target.IsActive=0,target.UpdatedAt=@Now;
+
+MERGE worksessions.CashClosurePaymentMethodMappings AS target
+USING (VALUES
+  (N'Cash',N'Cash',CAST(1 AS bit),10),
+  (N'Card',N'Card',CAST(1 AS bit),20),
+  (N'DebitCard',N'Card',CAST(1 AS bit),20),
+  (N'CreditCard',N'Card',CAST(1 AS bit),20),
+  (N'Transfer',N'Transfer',CAST(1 AS bit),30),
+  (N'Credit',N'Credit',CAST(0 AS bit),40)
+) AS source(PaymentMethodCode,ClosureMethodCode,RequiresCount,SortOrder)
+ON target.PaymentMethodCode=source.PaymentMethodCode
+WHEN MATCHED THEN UPDATE SET ClosureMethodCode=source.ClosureMethodCode,
+  RequiresCount=source.RequiresCount,SortOrder=source.SortOrder
+WHEN NOT MATCHED THEN INSERT(PaymentMethodCode,ClosureMethodCode,RequiresCount,SortOrder)
+  VALUES(source.PaymentMethodCode,source.ClosureMethodCode,source.RequiresCount,source.SortOrder);

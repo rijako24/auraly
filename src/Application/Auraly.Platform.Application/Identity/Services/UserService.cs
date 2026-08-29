@@ -1,4 +1,5 @@
 using Auraly.Contracts.Authorization;
+using Auraly.BuildingBlocks.Application.Synchronization;
 using Microsoft.Extensions.Logging;
 using Auraly.Platform.Application.Auth.Interfaces;
 using Auraly.Platform.Application.Common.DTOs;
@@ -17,17 +18,23 @@ public class UserService : IUserService
     private readonly IPasswordHasher _passwordHasher;
     private readonly ICorrelationIdProvider _correlationIdProvider;
     private readonly ILogger<UserService> _logger;
+    private readonly IPosSecuritySynchronizationWriter _securitySynchronization;
+    private readonly IPosSynchronizationOutboxDispatcher _synchronization;
 
     public UserService(
         IUnitOfWork unitOfWork,
         IPasswordHasher passwordHasher,
         ICorrelationIdProvider correlationIdProvider,
-        ILogger<UserService> logger)
+        ILogger<UserService> logger,
+        IPosSecuritySynchronizationWriter securitySynchronization,
+        IPosSynchronizationOutboxDispatcher synchronization)
     {
         _unitOfWork = unitOfWork;
         _passwordHasher = passwordHasher;
         _correlationIdProvider = correlationIdProvider;
         _logger = logger;
+        _securitySynchronization = securitySynchronization;
+        _synchronization = synchronization;
     }
 
     public async Task<UserDto> GetByIdAsync(Guid userId, CancellationToken ct)
@@ -48,8 +55,9 @@ public class UserService : IUserService
             totalCount, request.Page, request.PageSize);
     }
 
-    public Task<UserDto> CreateAsync(Guid tenantId, CreateUserRequest request, Guid createdByUserId, CancellationToken ct) =>
-        _unitOfWork.ExecuteInTransactionAsync(async () =>
+    public async Task<UserDto> CreateAsync(Guid tenantId, CreateUserRequest request, Guid createdByUserId, CancellationToken ct)
+    {
+        var result = await _unitOfWork.ExecuteInTransactionAsync(async () =>
         {
             var normalizedUsername = request.Username.ToUpperInvariant();
             var normalizedEmail = request.Email.ToUpperInvariant();
@@ -113,6 +121,7 @@ public class UserService : IUserService
                 }, ct);
             }
             await _unitOfWork.SaveChangesAsync(ct);
+            await _securitySynchronization.EnqueueTenantAsync(tenantId, ct);
             _logger.LogInformation(
                 "User {Username} created by {CreatedBy} [CorrelationId: {CorrelationId}]",
                 user.Username, createdByUserId, _correlationIdProvider.CorrelationId);
@@ -120,22 +129,28 @@ public class UserService : IUserService
                 ?? throw new NotFoundException(nameof(AppUser), user.UserId);
             return MapToDto(created);
         }, ct);
+        await DispatchSecurityAsync(tenantId, ct);
+        return result;
+    }
 
     public async Task<UserDto> UpdateAsync(Guid userId, UpdateUserRequest request, CancellationToken ct)
     {
-        var user = await _unitOfWork.AppUsers.GetByIdAsync(userId, ct)
-            ?? throw new NotFoundException(nameof(AppUser), userId);
-
-        if (request.FirstName is not null) user.FirstName = request.FirstName;
-        if (request.LastName is not null) user.LastName = request.LastName;
-        if (request.PhoneNumber is not null) user.PhoneNumber = request.PhoneNumber;
-        if (request.AvatarUrl is not null) user.AvatarUrl = request.AvatarUrl;
-
-        user.UpdatedAt = DateTime.UtcNow;
-        _unitOfWork.AppUsers.Update(user);
-        await _unitOfWork.SaveChangesAsync(ct);
-
-        return MapToDto(user);
+        var result = await _unitOfWork.ExecuteInTransactionAsync(async () =>
+        {
+            var user = await _unitOfWork.AppUsers.GetByIdAsync(userId, ct)
+                ?? throw new NotFoundException(nameof(AppUser), userId);
+            if (request.FirstName is not null) user.FirstName = request.FirstName;
+            if (request.LastName is not null) user.LastName = request.LastName;
+            if (request.PhoneNumber is not null) user.PhoneNumber = request.PhoneNumber;
+            if (request.AvatarUrl is not null) user.AvatarUrl = request.AvatarUrl;
+            user.UpdatedAt = DateTime.UtcNow;
+            _unitOfWork.AppUsers.Update(user);
+            await _unitOfWork.SaveChangesAsync(ct);
+            await _securitySynchronization.EnqueueTenantAsync(user.TenantId, ct);
+            return (User: MapToDto(user), user.TenantId);
+        }, ct);
+        await DispatchSecurityAsync(result.TenantId, ct);
+        return result.User;
     }
 
     public async Task ResetPasswordAsync(Guid userId, ResetUserPasswordRequest request, CancellationToken ct)
@@ -143,40 +158,51 @@ public class UserService : IUserService
         if (string.IsNullOrWhiteSpace(request.Password) || request.Password.Length < 10)
             throw new DomainValidationException("password", "La contraseña debe tener al menos 10 caracteres.");
 
-        var user = await _unitOfWork.AppUsers.GetByIdAsync(userId, ct)
-            ?? throw new NotFoundException(nameof(AppUser), userId);
-        var offlinePassword = PosOfflinePasswordHasher.Hash(request.Password, DateTimeOffset.UtcNow);
-        user.PasswordHash = _passwordHasher.Hash(request.Password);
-        user.PosOfflinePasswordSalt = offlinePassword.Salt;
-        user.PosOfflinePasswordHash = offlinePassword.Hash;
-        user.PosOfflinePasswordIterations = offlinePassword.Iterations;
-        user.PosOfflinePasswordChangedAt = offlinePassword.ChangedAt;
-        user.AccessFailedCount = 0;
-        user.LockoutEnd = null;
-        user.UpdatedAt = DateTime.UtcNow;
-        _unitOfWork.AppUsers.Update(user);
-        await _unitOfWork.RefreshTokens.RevokeAllByUserIdAsync(userId, ct);
-        await _unitOfWork.SaveChangesAsync(ct);
-    }
-    public async Task DeactivateAsync(Guid userId, CancellationToken ct)
-    {
-        var user = await _unitOfWork.AppUsers.GetByIdAsync(userId, ct)
-            ?? throw new NotFoundException(nameof(AppUser), userId);
-
-        user.IsActive = false;
-        user.UpdatedAt = DateTime.UtcNow;
-        _unitOfWork.AppUsers.Update(user);
-
-        await _unitOfWork.RefreshTokens.RevokeAllByUserIdAsync(userId, ct);
-        await _unitOfWork.SaveChangesAsync(ct);
-    }
-
-    public Task ActivateAsync(Guid userId, CancellationToken ct) =>
-        _unitOfWork.ExecuteInTransactionAsync(async () =>
+        var tenantId = await _unitOfWork.ExecuteInTransactionAsync(async () =>
         {
             var user = await _unitOfWork.AppUsers.GetByIdAsync(userId, ct)
                 ?? throw new NotFoundException(nameof(AppUser), userId);
-            if (user.IsActive) return;
+            var offlinePassword = PosOfflinePasswordHasher.Hash(request.Password, DateTimeOffset.UtcNow);
+            user.PasswordHash = _passwordHasher.Hash(request.Password);
+            user.PosOfflinePasswordSalt = offlinePassword.Salt;
+            user.PosOfflinePasswordHash = offlinePassword.Hash;
+            user.PosOfflinePasswordIterations = offlinePassword.Iterations;
+            user.PosOfflinePasswordChangedAt = offlinePassword.ChangedAt;
+            user.AccessFailedCount = 0;
+            user.LockoutEnd = null;
+            user.UpdatedAt = DateTime.UtcNow;
+            _unitOfWork.AppUsers.Update(user);
+            await _unitOfWork.RefreshTokens.RevokeAllByUserIdAsync(userId, ct);
+            await _unitOfWork.SaveChangesAsync(ct);
+            await _securitySynchronization.EnqueueTenantAsync(user.TenantId, ct);
+            return user.TenantId;
+        }, ct);
+        await DispatchSecurityAsync(tenantId, ct);
+    }
+    public async Task DeactivateAsync(Guid userId, CancellationToken ct)
+    {
+        var tenantId = await _unitOfWork.ExecuteInTransactionAsync(async () =>
+        {
+            var user = await _unitOfWork.AppUsers.GetByIdAsync(userId, ct)
+                ?? throw new NotFoundException(nameof(AppUser), userId);
+            user.IsActive = false;
+            user.UpdatedAt = DateTime.UtcNow;
+            _unitOfWork.AppUsers.Update(user);
+            await _unitOfWork.RefreshTokens.RevokeAllByUserIdAsync(userId, ct);
+            await _unitOfWork.SaveChangesAsync(ct);
+            await _securitySynchronization.EnqueueTenantAsync(user.TenantId, ct);
+            return user.TenantId;
+        }, ct);
+        await DispatchSecurityAsync(tenantId, ct);
+    }
+
+    public async Task ActivateAsync(Guid userId, CancellationToken ct)
+    {
+        var result = await _unitOfWork.ExecuteInTransactionAsync(async () =>
+        {
+            var user = await _unitOfWork.AppUsers.GetByIdAsync(userId, ct)
+                ?? throw new NotFoundException(nameof(AppUser), userId);
+            if (user.IsActive) return (user.TenantId, Changed: false);
 
             await EnsureTenantCanAddActiveUserAsync(user.TenantId, ct);
             user.IsActive = true;
@@ -185,44 +211,60 @@ public class UserService : IUserService
             user.UpdatedAt = DateTime.UtcNow;
             _unitOfWork.AppUsers.Update(user);
             await _unitOfWork.SaveChangesAsync(ct);
+            await _securitySynchronization.EnqueueTenantAsync(user.TenantId, ct);
+            return (user.TenantId, Changed: true);
         }, ct);
+        if (result.Changed) await DispatchSecurityAsync(result.TenantId, ct);
+    }
 
     public async Task AssignRoleAsync(Guid userId, AssignRoleRequest request, Guid assignedByUserId, CancellationToken ct)
     {
-        var user = await _unitOfWork.AppUsers.GetByIdAsync(userId, ct)
-            ?? throw new NotFoundException(nameof(AppUser), userId);
-        var role = await AuthorizeRoleDelegationAsync(user, request.RoleId, assignedByUserId, ct);
-        if (!role.IsActive) throw new ConflictException("El rol está inactivo.");
-
-        if (request.BusinessId.HasValue)
+        var tenantId = await _unitOfWork.ExecuteInTransactionAsync(async () =>
         {
-            var business = await _unitOfWork.Businesses.GetByIdAsync(request.BusinessId.Value)
-                ?? throw new NotFoundException(nameof(Business), request.BusinessId.Value);
-            if (business.TenantId != user.TenantId)
-                throw new ForbiddenException("El negocio y el usuario deben pertenecer a la misma organización.");
-        }
+            var user = await _unitOfWork.AppUsers.GetByIdAsync(userId, ct)
+                ?? throw new NotFoundException(nameof(AppUser), userId);
+            var role = await AuthorizeRoleDelegationAsync(user, request.RoleId, assignedByUserId, ct);
+            if (!role.IsActive) throw new ConflictException("El rol está inactivo.");
 
-        if (await _unitOfWork.UserRoles.ExistsAsync(userId, request.RoleId, request.BusinessId, ct))
-            throw new ConflictException("El usuario ya tiene asignado este rol en el scope indicado.");
+            if (request.BusinessId.HasValue)
+            {
+                var business = await _unitOfWork.Businesses.GetByIdAsync(request.BusinessId.Value)
+                    ?? throw new NotFoundException(nameof(Business), request.BusinessId.Value);
+                if (business.TenantId != user.TenantId)
+                    throw new ForbiddenException("El negocio y el usuario deben pertenecer a la misma organización.");
+            }
 
-        await _unitOfWork.UserRoles.AddAsync(new UserRole
-        {
-            UserRoleId = Guid.NewGuid(), UserId = userId, RoleId = request.RoleId,
-            BusinessId = request.BusinessId, AssignedAt = DateTime.UtcNow,
-            AssignedByUserId = assignedByUserId
+            if (await _unitOfWork.UserRoles.ExistsAsync(userId, request.RoleId, request.BusinessId, ct))
+                throw new ConflictException("El usuario ya tiene asignado este rol en el scope indicado.");
+
+            await _unitOfWork.UserRoles.AddAsync(new UserRole
+            {
+                UserRoleId = Guid.NewGuid(), UserId = userId, RoleId = request.RoleId,
+                BusinessId = request.BusinessId, AssignedAt = DateTime.UtcNow,
+                AssignedByUserId = assignedByUserId
+            }, ct);
+            await _unitOfWork.SaveChangesAsync(ct);
+            await _securitySynchronization.EnqueueTenantAsync(user.TenantId, ct);
+            return user.TenantId;
         }, ct);
-        await _unitOfWork.SaveChangesAsync(ct);
+        await DispatchSecurityAsync(tenantId, ct);
     }
 
     public async Task RemoveRoleAsync(Guid userId, Guid roleId, Guid? businessId, Guid actorUserId, CancellationToken ct)
     {
-        var user = await _unitOfWork.AppUsers.GetByIdAsync(userId, ct)
-            ?? throw new NotFoundException(nameof(AppUser), userId);
-        await AuthorizeRoleDelegationAsync(user, roleId, actorUserId, ct);
-        var userRole = await _unitOfWork.UserRoles.GetAsync(userId, roleId, businessId, ct)
-            ?? throw new NotFoundException("UserRole", $"{userId}/{roleId}/{businessId}");
-        _unitOfWork.UserRoles.Delete(userRole);
-        await _unitOfWork.SaveChangesAsync(ct);
+        var tenantId = await _unitOfWork.ExecuteInTransactionAsync(async () =>
+        {
+            var user = await _unitOfWork.AppUsers.GetByIdAsync(userId, ct)
+                ?? throw new NotFoundException(nameof(AppUser), userId);
+            await AuthorizeRoleDelegationAsync(user, roleId, actorUserId, ct);
+            var userRole = await _unitOfWork.UserRoles.GetAsync(userId, roleId, businessId, ct)
+                ?? throw new NotFoundException("UserRole", $"{userId}/{roleId}/{businessId}");
+            _unitOfWork.UserRoles.Delete(userRole);
+            await _unitOfWork.SaveChangesAsync(ct);
+            await _securitySynchronization.EnqueueTenantAsync(user.TenantId, ct);
+            return user.TenantId;
+        }, ct);
+        await DispatchSecurityAsync(tenantId, ct);
     }
 
     private async Task<AppRole> AuthorizeRoleDelegationAsync(AppUser targetUser, Guid roleId, Guid actorUserId, CancellationToken ct)
@@ -263,6 +305,14 @@ public class UserService : IUserService
         var activeUsers = await _unitOfWork.AppUsers.CountActiveByTenantAsync(tenantId, ct);
         if (activeUsers >= tenant.MaximumUsers)
             throw new ConflictException($"La organizaci\u00f3n alcanz\u00f3 su capacidad de {tenant.MaximumUsers} usuarios activos. Inactiva un usuario o solicita a un administrador de Auraly ampliar el cupo.");
+    }
+
+    private async Task DispatchSecurityAsync(Guid tenantId, CancellationToken ct)
+    {
+        var businesses = await _unitOfWork.Businesses.GetByTenantIdAsync(tenantId, ct);
+        foreach (var business in businesses.Where(item => item.IsActive))
+            await _synchronization.DispatchPendingAsync(
+                tenantId, business.BusinessId, CancellationToken.None);
     }
 
     private static UserDto MapToDto(AppUser user) => new(

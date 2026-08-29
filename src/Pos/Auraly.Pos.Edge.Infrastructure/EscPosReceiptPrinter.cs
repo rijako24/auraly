@@ -29,7 +29,7 @@ public sealed class EscPosReceiptRenderer
         WriteLine(stream, (receipt.CompanyName ?? string.Empty).ToUpperInvariant());
         var isFiscal = PosSaleDocumentTypes.IsFiscal(receipt.DocumentType);
         WriteLine(stream, isFiscal ? "FACTURA ELECTRONICA DE VENTA" : "COMPROBANTE DE VENTA");
-        WriteLine(stream, $"DOCUMENTO: {receipt.DocumentNumber}");
+        WriteLine(stream, $"N. TICKET: {receipt.DocumentNumber}");
         if (isFiscal) WriteLine(stream, $"NUMERO DIAN: {receipt.FiscalNumber}");
         WriteLine(stream, receipt.IssuedAt.ToString("yyyy-MM-dd HH:mm:ss zzz", CultureInfo.InvariantCulture));
         WriteLine(stream, $"ADQUIRENTE: {receipt.CustomerIdentification}");

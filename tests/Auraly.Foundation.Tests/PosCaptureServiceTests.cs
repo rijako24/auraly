@@ -86,7 +86,7 @@ public sealed class PosCaptureServiceTests
     }
 
     [Fact]
-    public async Task Recovered_draft_is_blocked_when_inventory_cannot_be_revalidated()
+    public async Task Recovered_draft_remains_sellable_when_inventory_cannot_be_revalidated_offline()
     {
         await WithServiceAsync(async (service, _, scope, productId, customerId, availability) =>
         {
@@ -100,7 +100,7 @@ public sealed class PosCaptureServiceTests
                 captured.Draft!.DraftId, false, Guid.NewGuid());
 
             Assert.False(validation.WasValidated);
-            Assert.False(validation.IsValid);
+            Assert.True(validation.IsValid);
             Assert.Empty(validation.Issues);
         });
     }
@@ -123,7 +123,7 @@ public sealed class PosCaptureServiceTests
     }
 
     [Fact]
-    public async Task Blocking_warehouse_does_not_add_a_line_when_network_is_unavailable()
+    public async Task Blocking_warehouse_adds_a_line_when_network_is_unavailable()
     {
         await WithServiceAsync(async (service, _, scope, _, customerId, availability) =>
         {
@@ -131,8 +131,28 @@ public sealed class PosCaptureServiceTests
             var result = await service.CaptureAsync(
                 "770123", scope, customerId, false, Guid.NewGuid());
 
-            Assert.Equal(PosCaptureStatus.OfflineValidationRequired, result.Status);
-            Assert.Empty(result.Draft!.Lines);
+            Assert.Equal(PosCaptureStatus.Added, result.Status);
+            Assert.Single(result.Draft!.Lines);
+        });
+    }
+
+    [Fact]
+    public async Task Quantity_change_remains_available_when_network_is_lost_after_capture()
+    {
+        await WithServiceAsync(async (service, _, scope, productId, customerId, availability) =>
+        {
+            availability.Response = new(
+                productId, scope.WarehouseId.Value, 1m, 10m, true, true, "Available");
+            var captured = await service.CaptureAsync(
+                "770123", scope, customerId, false, Guid.NewGuid());
+            var line = Assert.Single(captured.Draft!.Lines);
+            availability.Failure = new HttpRequestException("offline");
+
+            var changed = await service.ChangeQuantityAsync(
+                captured.Draft.DraftId, line.LineId, 7m, false, Guid.NewGuid());
+
+            Assert.True(changed.Added);
+            Assert.Equal(7m, Assert.Single(changed.Draft!.Lines).Quantity);
         });
     }
 

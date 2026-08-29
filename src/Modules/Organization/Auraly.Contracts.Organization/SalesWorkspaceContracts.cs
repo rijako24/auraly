@@ -17,7 +17,18 @@ public sealed record SalesWorkspaceBootstrap(
     Guid UserId,
     string UserDisplayName,
     IReadOnlyList<SalesWorkspaceOption> Options,
-    bool CanEnrollPosDevice);
+    bool CanEnrollPosDevice,
+    int ActiveEnrolledDeviceCount,
+    int MaximumEnrolledDevices,
+    string? EnrollmentUnavailableReason);
+
+public sealed record PosEnrollmentCapacity(
+    int ActiveEnrolledDeviceCount,
+    int MaximumEnrolledDevices)
+{
+    public bool HasAvailableCapacity =>
+        ActiveEnrolledDeviceCount < MaximumEnrolledDevices;
+}
 
 public sealed record SalesWorkspaceSelection(
     Guid BusinessId,

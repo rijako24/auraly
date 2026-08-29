@@ -93,12 +93,6 @@ public static class PosEdgeHostApplication
             packagePath = Path.Combine(
                 Path.GetDirectoryName(Path.GetFullPath(databasePath))!,
                 "enrollment.protected");
-        var startupModePath = builder.Configuration["PosEdge:StartupModePath"];
-        if (string.IsNullOrWhiteSpace(startupModePath))
-            startupModePath = Path.Combine(
-                Path.GetDirectoryName(Path.GetFullPath(databasePath))!,
-                "startup-mode");
-        var startupModeStore = new PosStartupModeStore(startupModePath);
         var enrollmentStore = new PosEdgeEnrollmentStore(packagePath, keyDirectory);
         var identityRecovery = new PosLocalDeviceIdentityRecovery(databasePath);
         var enrollment = enrollmentStore.Load();
@@ -110,7 +104,6 @@ public static class PosEdgeHostApplication
                 allowedOrigin,
                 serverUrl,
                 enrollmentStore,
-                startupModeStore,
                 identityRecovery,
                 databasePath);
         if (enrollment is not null)
@@ -137,7 +130,6 @@ public static class PosEdgeHostApplication
             runtime.WarehouseId.Value));
         builder.Services.AddSingleton<PosLocalSessionAccessor>();
         builder.Services.AddSingleton(enrollmentStore);
-        builder.Services.AddSingleton(startupModeStore);
         builder.Services.AddSingleton(identityRecovery);
         builder.Services.AddSingleton<PosEdgeEnrollmentClient>();
         builder.Services.AddSingleton(sp => new PosLocalIdentityStore(
@@ -350,26 +342,10 @@ public static class PosEdgeHostApplication
 
         var edge = app.MapGroup("/edge/v1");
         edge.MapPosPeripheralEndpoints();
-        edge.MapGet("/configuration/startup-mode", (
-            PosStartupModeStore startupMode) =>
-            Results.Ok(new { mode = startupMode.Load(hasEnrollment: true) }));
-        edge.MapPut("/configuration/startup-mode", (
-            PosStartupModeRequest request,
-            PosStartupModeStore startupMode) =>
-        {
-            if (!PosStartupModes.IsValid(request.Mode))
-                return Results.ValidationProblem(new Dictionary<string, string[]>
-                {
-                    [nameof(request.Mode)] = ["El modo debe ser online o enrolled."]
-                });
-            startupMode.Save(request.Mode);
-            return Results.NoContent();
-        });
         edge.MapPost("/cash-drawer/open", async (
             HttpContext http,
             PosCashDrawer cashDrawer,
             PosLocalIdentityStore identities,
-            PosStartupModeStore startupMode,
             CancellationToken ct) =>
         {
             // In enrolled/offline operation the local identity is authoritative.
@@ -377,7 +353,7 @@ public static class PosEdgeHostApplication
             // the authenticated server permission has been resolved.
             var user = await identities.ResolveAsync(
                 http.Request.Headers["X-Auraly-User-Session"].ToString(), ct);
-            if (startupMode.Load(hasEnrollment: true) != "online" && user is null)
+            if (user is null)
                 return Results.Problem(
                     "Inicia sesión en este dispositivo para abrir el cajón.",
                     statusCode: StatusCodes.Status401Unauthorized,
@@ -629,7 +605,6 @@ public static class PosEdgeHostApplication
             PosCashMovementStore cashMovements,
             PosOfflineWorkSessionClosureStore closures,
             PosSaleHostSettings saleSettings,
-            PosStartupModeStore startupMode,
             PosSynchronizationState synchronizationState,
             CancellationToken ct) =>
         {
@@ -686,8 +661,7 @@ public static class PosEdgeHostApplication
                     !string.IsNullOrWhiteSpace(lastSynchronizationError),
                 pendingSynchronizationCount,
                 oldestPendingSynchronizationAt,
-                lastSynchronizationError,
-                startupMode = startupMode.Load(hasEnrollment: true)
+                lastSynchronizationError
             });
         });
         edge.MapGet("/drafts/active", async (
@@ -753,6 +727,11 @@ public static class PosEdgeHostApplication
                     extensions: new Dictionary<string, object?> { ["remoteStatus"] = exception.StatusCode });
             }
         });
+        edge.MapGet("/reference-options/{catalogCode}", async (
+            string catalogCode,
+            PosCatalogStore catalog,
+            CancellationToken ct) =>
+            Results.Ok(await catalog.ReferenceOptionsAsync(catalogCode, ct)));
         edge.MapGet("/customers", async (
             string? search,
             int? skip,
@@ -792,9 +771,9 @@ public static class PosEdgeHostApplication
             PosSynchronizationEventLog events,
             CancellationToken ct) =>
         {
-            events.Record("Info", "Customer", "Creando cliente", request.DisplayName);
+            events.Record("Info", "Cliente", "Creando cliente", request.DisplayName);
             var customer = await server.CreateAsync(request, ct);
-            events.Record("Success", "Customer", $"Cliente creado: {customer.Name}",
+            events.Record("Success", "Cliente", $"Cliente creado: {customer.Name}",
                 customer.Identification);
             return Results.Ok(customer);
         });
@@ -849,8 +828,6 @@ public static class PosEdgeHostApplication
                 PosCaptureStatus.Added => Results.Ok(result),
                 PosCaptureStatus.NotFound => Results.NotFound(result),
                 PosCaptureStatus.InsufficientInventory => Results.Conflict(result),
-                PosCaptureStatus.OfflineValidationRequired =>
-                    Results.Json(result, statusCode: StatusCodes.Status503ServiceUnavailable),
                 _ => Results.Problem("Unknown POS capture result.")
             };
         });
@@ -1050,7 +1027,6 @@ public static class PosEdgeHostApplication
         string allowedOrigin,
         string serverUrl,
         PosEdgeEnrollmentStore store,
-        PosStartupModeStore startupModeStore,
         PosLocalDeviceIdentityRecovery identityRecovery,
         string databasePath)
     {
@@ -1059,7 +1035,6 @@ public static class PosEdgeHostApplication
             throw new InvalidOperationException(
                 "PosEdge:ServerUrl must use HTTPS except for a loopback development server.");
         builder.Services.AddSingleton(store);
-        builder.Services.AddSingleton(startupModeStore);
         builder.Services.AddSingleton(identityRecovery);
         builder.Services.AddSingleton(new HttpClient { BaseAddress = serverUri });
         builder.Services.AddSingleton<PosEdgeEnrollmentClient>();
@@ -1122,22 +1097,6 @@ public static class PosEdgeHostApplication
                     statusCode: StatusCodes.Status503ServiceUnavailable);
             }
         });
-        edge.MapGet("/configuration/startup-mode", () =>
-            Results.Ok(new
-            {
-                mode = startupModeStore.Load(hasEnrollment: false)
-            }));
-        edge.MapPut("/configuration/startup-mode", (
-            PosStartupModeRequest request) =>
-        {
-            if (!PosStartupModes.IsValid(request.Mode))
-                return Results.ValidationProblem(new Dictionary<string, string[]>
-                {
-                    [nameof(request.Mode)] = ["El modo debe ser online o enrolled."]
-                });
-            startupModeStore.Save(request.Mode);
-            return Results.NoContent();
-        });
         edge.MapGet("/events", async (
             HttpContext context,
             PosUiStateSignal uiState,
@@ -1174,8 +1133,7 @@ public static class PosEdgeHostApplication
             businessName = "",
             warehouseName = "",
             userDisplayName = "",
-            fiscalReady = false,
-            startupMode = startupModeStore.Load(hasEnrollment: false)
+            fiscalReady = false
         }));
         edge.MapPost("/enrollment/redeem", async (
             LocalPosEnrollmentRequest request,
@@ -1246,7 +1204,6 @@ public static class PosEdgeHostApplication
         !path.Equals("/edge/v1/health") &&
         !path.Equals("/edge/v1/auth/login") &&
         !path.Equals("/edge/v1/enrollment/redeem") &&
-        !path.Equals("/edge/v1/configuration/startup-mode") &&
         !path.StartsWithSegments("/edge/v1/configuration/printers") &&
         !path.StartsWithSegments("/edge/v1/print") &&
         !path.Equals("/edge/v1/cash-drawer/open") &&

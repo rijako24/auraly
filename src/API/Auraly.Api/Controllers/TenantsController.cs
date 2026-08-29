@@ -43,12 +43,14 @@ public sealed class TenantsController(ITenantService tenantService, ITenantDevic
     {
         if (request.Name is not null || request.Email is not null || request.LegalName is not null
             || request.Nit is not null || request.VerificationDigit is not null
-            || request.EntityType is not null || request.IdentificationTypeCode is not null)
+            || request.EntityType is not null || request.IdentificationTypeCode is not null
+            || request.InventoryCostBasis is not null)
             EnsurePermission("tenants.update");
         if (request.MaximumUsers.HasValue || request.MaximumEnrolledDevices.HasValue) EnsurePermission("tenants.capacity.update");
         return Ok(await tenantService.UpdateAsync(tenantId, request.Name, request.Email,
             request.MaximumUsers, request.MaximumEnrolledDevices, request.LegalName, request.Nit,
-            request.VerificationDigit, request.EntityType, request.IdentificationTypeCode, ct));
+            request.VerificationDigit, request.EntityType, request.IdentificationTypeCode,
+            request.InventoryCostBasis, ct));
     }
 
     [HttpPost("{tenantId:guid}/logo")]

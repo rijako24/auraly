@@ -34,10 +34,10 @@ BEGIN
     CROSS APPLY dbo.CustomerProductPriceResolve(
       @BusinessId,@WarehouseId,@CustomerId,p.ProductId,1,SYSDATETIMEOFFSET()) resolved
     LEFT JOIN dbo.InventoryBalances balance
-      ON balance.BusinessId=p.BusinessId
+      ON balance.BusinessId=@BusinessId
      AND balance.WarehouseId=@WarehouseId
      AND balance.ProductId=p.ProductId
-    WHERE p.BusinessId=@BusinessId AND p.IsActive=1 AND(@Search=N''
+    WHERE p.TenantId=@TenantId AND p.IsActive=1 AND(@Search=N''
       OR p.Name COLLATE Latin1_General_100_CI_AI LIKE @Contains COLLATE Latin1_General_100_CI_AI
       OR p.ProductCode COLLATE Latin1_General_100_CI_AI LIKE @Prefix COLLATE Latin1_General_100_CI_AI
       OR p.Sku COLLATE Latin1_General_100_CI_AI LIKE @Prefix COLLATE Latin1_General_100_CI_AI

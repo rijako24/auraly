@@ -81,6 +81,7 @@ public sealed record DispatchPage(IReadOnlyCollection<DispatchListItem> Items, i
 public sealed record DispatchWarehouseOption(Guid WarehouseId, string Code, string Name);
 public sealed record DispatchRouteOption(Guid RouteId, string Code, string Name, string SellerName);
 public sealed record DispatchDriverOption(Guid UserId, string Name);
+public sealed record DispatchDriverPage(IReadOnlyCollection<DispatchDriverOption> Items, int Page, int PageSize, int TotalCount, int TotalPages);
 public sealed record DispatchOptions(IReadOnlyCollection<DispatchWarehouseOption> Warehouses, IReadOnlyCollection<DispatchRouteOption> Routes, IReadOnlyCollection<DispatchDriverOption> Drivers);
 
 public sealed record DispatchCandidateQuery(int Page = 1, int PageSize = 50, string? Search = null, string? DocumentType = null, DateOnly? From = null, DateOnly? To = null, Guid? WarehouseId = null);

@@ -16,7 +16,6 @@ public static class PosCaptureStatus
     public const string Added = "Added";
     public const string NotFound = "NotFound";
     public const string InsufficientInventory = "InsufficientInventory";
-    public const string OfflineValidationRequired = "OfflineValidationRequired";
 }
 
 public sealed record PosCaptureResult(
@@ -61,11 +60,11 @@ public sealed class PosCaptureService(
             }
             catch (HttpRequestException)
             {
-                return new OnlineSalesInventoryValidation(false, false, []);
+                return new OnlineSalesInventoryValidation(true, false, []);
             }
             catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                return new OnlineSalesInventoryValidation(false, false, []);
+                return new OnlineSalesInventoryValidation(true, false, []);
             }
 
             var remaining = availabilityResult.AvailableQuantity;
@@ -242,11 +241,11 @@ public sealed class PosCaptureService(
         }
         catch (HttpRequestException)
         {
-            return (PosCaptureStatus.OfflineValidationRequired, null);
+            return (PosCaptureStatus.Added, null);
         }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested)
         {
-            return (PosCaptureStatus.OfflineValidationRequired, null);
+            return (PosCaptureStatus.Added, null);
         }
     }
 }

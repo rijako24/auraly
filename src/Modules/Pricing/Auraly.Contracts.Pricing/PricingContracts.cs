@@ -98,7 +98,9 @@ public sealed record PriceRevisionListItem(
     string Status,
     DateTimeOffset CreatedAt,
     string ConcurrencyToken,
-    string Origin);
+    string Origin,
+    decimal? AverageUnitCost,
+    decimal? LatestUnitCost);
 
 public sealed record PriceRevisionPage(
     IReadOnlyList<PriceRevisionListItem> Items,

@@ -20,7 +20,9 @@ public sealed record PosSynchronizationEvent(
     decimal? PreviousPrice = null,
     decimal? NewPrice = null);
 
-public sealed class PosSynchronizationEventLog(TimeProvider timeProvider)
+public sealed class PosSynchronizationEventLog(
+    TimeProvider timeProvider,
+    PosUiStateSignal? uiState = null)
     : IPosSynchronizationEventSink
 {
     private const int Capacity = 250;
@@ -48,14 +50,44 @@ public sealed class PosSynchronizationEventLog(TimeProvider timeProvider)
                 ? $"{product.CurrencyCode} {previous!.UnitPrice:N2} → {product.UnitPrice:N2} · {product.ProductCode}"
                 : product.ProductCode;
         Add(new(Interlocked.Increment(ref sequence), timeProvider.GetUtcNow(),
-            "Info", "Catalog", title, detail, product.ProductId,
+            "Info", changedPrice ? "Precio" : "Producto", title, detail, product.ProductId,
             changedPrice ? previous!.UnitPrice : null,
             changedPrice ? product.UnitPrice : null));
+    }
+
+    public void CustomerReceived(PosCustomerPricing customer, PosCustomerPricing? previous)
+    {
+        var title = previous is null
+            ? $"Cliente descargado: {customer.Name}"
+            : $"Cliente actualizado: {customer.Name}";
+        var detail = string.IsNullOrWhiteSpace(customer.Identification)
+            ? "Sin identificación"
+            : $"Identificación {customer.Identification}";
+        Add(new(Interlocked.Increment(ref sequence), timeProvider.GetUtcNow(),
+            "Info", "Cliente", title, detail));
+    }
+
+    public void ChannelPriceReceived(
+        PosPriceChannelItem price,
+        PosPriceChannelItem? previous,
+        string? productName)
+    {
+        var name = string.IsNullOrWhiteSpace(productName)
+            ? price.ProductId.ToString("D")
+            : productName;
+        var title = previous is null
+            ? $"Precio por cantidad descargado: {name}"
+            : $"Precio por cantidad actualizado: {name}";
+        var detail = $"Desde {price.MinimumQuantity:N2} unidades · {price.CurrencyCode}";
+        Add(new(Interlocked.Increment(ref sequence), timeProvider.GetUtcNow(),
+            "Info", "Precio", title, detail, price.ProductId,
+            previous?.Amount, price.Amount));
     }
 
     private void Add(PosSynchronizationEvent item)
     {
         events.Enqueue(item);
         while (events.Count > Capacity) events.TryDequeue(out _);
+        uiState?.Publish();
     }
 }

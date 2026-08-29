@@ -11,7 +11,6 @@ import {
   ClipboardList,
   Loader2,
   LogOut,
-  PackageOpen,
   PencilLine,
   Printer,
   RotateCcw,
@@ -27,7 +26,6 @@ import {
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
-import { authApi } from "@/services/api/auth";
 import { useRouter } from "next/navigation";
 import { OrdersWorkspace } from "@/components/orders/orders-workspace";
 import { SalesReturnWorkspace } from "@/components/returns/sales-return-workspace";
@@ -105,10 +103,11 @@ import { approvalRequestConfirmsExistingPermission } from "@/services/pos/pos-ap
 import { calculateRetailUnitPrice } from "./pos-retail-price";
 import { canRequestOrderSave } from "./pos-order-save-availability";
 import { capturedLineAfterAddition } from "./pos-capture-presentation";
-import { capturePosFunctionShortcut } from "./pos-function-shortcut";
+import { capturePosFunctionShortcut, isPosCashDrawerShortcut } from "./pos-function-shortcut";
 import { parsePosBarcodeCapture } from "./pos-barcode-capture";
 import { acceptsPosQuantityDraft, blocksPosQuantityKey, validatePosQuantity } from "./pos-quantity-validation";
 import { useAuthStore } from "@/stores/auth-store";
+import { usesEnrolledPosRuntime } from "@/services/pos/pos-launch-session";
 
 
 const money = new Intl.NumberFormat("es-CO", {
@@ -171,11 +170,6 @@ function describeCaptureFailure(result: PosCaptureResult) {
       message: "Inventario insuficiente",
     };
   }
-  if (result.status === "OfflineValidationRequired")
-    return {
-      error: "La bodega exige validar inventario y no hay conexión.",
-      message: "No fue posible validar el inventario",
-    };
   return null;
 }
 
@@ -214,6 +208,11 @@ export default function PosPage() {
   const [edgeEnrollmentToken, setEdgeEnrollmentToken] = useState<string | null>(null);
   const [edgeEnrollmentRequired, setEdgeEnrollmentRequired] = useState(false);
   const [canEnrollOffline, setCanEnrollOffline] = useState(false);
+  const [enrollmentAvailability, setEnrollmentAvailability] = useState<{
+    active: number;
+    maximum: number;
+    reason: string | null;
+  } | null>(null);
   const [edgeLoginState, setEdgeLoginState] = useState<"preparing" | "required" | null>(null);
   const [initialDownload, setInitialDownload] = useState({
     identityReady: false,
@@ -264,6 +263,7 @@ export default function PosPage() {
   const [temporaryOpen, setTemporaryOpen] = useState(false);
   const [temporaryName, setTemporaryName] = useState("");
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [saleSettlement, setSaleSettlement] = useState<import("@/services/pos/pos-edge-client").PosSaleSettlement | null>(null);
   const [inventoryResolution, setInventoryResolution] = useState<PosInventoryValidation | null>(null);
   const [productSearchOpen, setProductSearchOpen] = useState(false);
   const [customerSearchOpen, setCustomerSearchOpen] = useState(false);
@@ -423,16 +423,12 @@ export default function PosPage() {
       try {
         const edgeToken = readEdgeTokenFromLaunch();
         const cachedOnlineClient = recalledOnlinePosClient();
-        let edgeStartupMode: "online" | "enrolled" = "online";
-        let requiresEnrollment = false;
 
         if (edgeToken) {
           if (active) setEdgeEnrollmentToken(edgeToken);
           try {
             const edgeClient = new PosEdgeClient(edgeToken, readEdgeUserSession());
             const health = await edgeClient.health();
-            edgeStartupMode = health.startupMode;
-            requiresEnrollment = health.status === "EnrollmentRequired";
             if (active) {
               setEdgePermissions(health.permissions ?? []);
               setInitialDownload({
@@ -461,7 +457,7 @@ export default function PosPage() {
               });
             }
 
-            if (!requiresEnrollment) {
+            if (usesEnrolledPosRuntime(health)) {
               if (active) {
                 setEdgeLoginState(
                   !health.identityReady || health.status === "IdentitySynchronizing" || health.status === "Synchronizing"
@@ -475,7 +471,14 @@ export default function PosPage() {
               return;
             }
           } catch {
-            // The installed app remains usable online when the local service is restarting.
+            if (active) {
+              setClient(new PosEdgeClient(edgeToken, readEdgeUserSession()));
+              setEdgeLoginState("preparing");
+              setEdgeLoginError(
+                "El servicio local está reiniciando. Auraly volverá a conectarse automáticamente.",
+              );
+            }
+            return;
           }
         }
 
@@ -490,6 +493,11 @@ export default function PosPage() {
         if (!active) return;
         setEdgeEnrollmentRequired(Boolean(edgeToken));
         setCanEnrollOffline(serverBootstrap.canEnrollPosDevice);
+        setEnrollmentAvailability({
+          active: serverBootstrap.activeEnrolledDeviceCount,
+          maximum: serverBootstrap.maximumEnrolledDevices,
+          reason: serverBootstrap.enrollmentUnavailableReason,
+        });
         const displayName = serverBootstrap.userDisplayName.trim() || "Cajero";
         window.localStorage.setItem("selected_tenant_id", serverBootstrap.tenantId);
         setOnlineTenantName(serverBootstrap.tenantName.trim());
@@ -501,7 +509,7 @@ export default function PosPage() {
         const selected = available.find(
           (option) => salesWorkspaceKey(option.businessId, option.warehouseId) === remembered,
         );
-        if (selected && edgeStartupMode === "online") {
+        if (selected) {
           window.localStorage.setItem("selected_business_id", selected.businessId);
           const context = await selectSalesWorkspace(selected);
           if (active) {
@@ -918,7 +926,7 @@ export default function PosPage() {
         !paymentOpen &&
         !confirmation
       ) {
-        setPaymentOpen(true);
+        void openPayment();
       } else if (
         shortcut === "F2" &&
         !busy &&
@@ -941,13 +949,6 @@ export default function PosPage() {
         !confirmation
       ) {
         setCustomerSearchOpen(true);
-      } else if (
-        event.ctrlKey &&
-        shortcut === "F7" &&
-        canOpenCashDrawer &&
-        canOpenCashMovement
-      ) {
-        void openCashDrawer();
       } else if (
         !event.ctrlKey &&
         shortcut === "F7" &&
@@ -1017,6 +1018,52 @@ export default function PosPage() {
     window.addEventListener("keydown", handleShortcut, true);
     return () => window.removeEventListener("keydown", handleShortcut, true);
   }, [paymentOpen]);
+
+  useEffect(() => {
+    const handleCashDrawerShortcut = (event: KeyboardEvent) => {
+      if (!isPosCashDrawerShortcut(event) || !canOpenCashDrawer) return;
+
+      const canOpenCashMovement =
+        Boolean(workstation.workSessionId) &&
+        !busy &&
+        !temporaryOpen &&
+        !paymentOpen &&
+        !productSearchOpen &&
+        !customerSearchOpen &&
+        !discountOpen &&
+        !printerOpen &&
+        !closurePreview &&
+        !confirmation &&
+        !invoiceSearchOpen &&
+        !returnsOpen &&
+        !documentTypeOpen &&
+        !cashMovementDirection;
+      if (!canOpenCashMovement) return;
+
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void openCashDrawer();
+    };
+    window.addEventListener("keydown", handleCashDrawerShortcut, true);
+    return () => window.removeEventListener("keydown", handleCashDrawerShortcut, true);
+  }, [
+    busy,
+    canOpenCashDrawer,
+    cashMovementDirection,
+    closurePreview,
+    confirmation,
+    customerSearchOpen,
+    discountOpen,
+    documentTypeOpen,
+    invoiceSearchOpen,
+    openCashDrawer,
+    paymentOpen,
+    printerOpen,
+    productSearchOpen,
+    returnsOpen,
+    temporaryOpen,
+    workstation.workSessionId,
+  ]);
 
   useEffect(() => {
     const openSynchronizationEvents = (event: KeyboardEvent) => {
@@ -1733,14 +1780,23 @@ export default function PosPage() {
     }
   }
 
-  function openPayment() {
-    if (!draft?.lines.length || busy) return;
+  async function openPayment() {
+    if (!client || !draft?.lines.length || busy) return;
     if (inventoryResolution) {
       setError("Resuelve primero los productos con inventario insuficiente.");
       return;
     }
     setError(null);
-    setPaymentOpen(true);
+    setBusy(true);
+    try {
+      const settlement = await client.previewSettlement(draft.draftId.value);
+      setSaleSettlement(settlement);
+      setPaymentOpen(true);
+    } catch (caught) {
+      showError(caught);
+    } finally {
+      setBusy(false);
+    }
   }
   async function changeDocumentType(value: PosSaleDocumentType) {
     if (!client || busy) return;
@@ -1814,6 +1870,7 @@ export default function PosPage() {
       setScan("");
       setError(null);
       setPaymentOpen(false);
+      setSaleSettlement(null);
       const issuedLabel =
         result.printPreviewOpened === false
           ? "emitida e impresa directamente"
@@ -1923,7 +1980,9 @@ export default function PosPage() {
       ? `Subiendo ${synchronization.pendingCount} documento${synchronization.pendingCount === 1 ? "" : "s"} pendiente${synchronization.pendingCount === 1 ? "" : "s"}`
       : "Descargando cambios para la caja"
     : synchronization.failed
-      ? `${synchronization.pendingCount} documento${synchronization.pendingCount === 1 ? "" : "s"} sin sincronizar. ${synchronization.error ?? "Haz clic para reintentar."}`
+      ? synchronization.pendingCount > 0
+        ? `${synchronization.pendingCount} documento${synchronization.pendingCount === 1 ? "" : "s"} sin sincronizar. ${synchronization.error ?? "Haz clic para reintentar."}`
+        : `Sin conexión para actualizar datos. ${synchronization.error ?? "Haz clic para reintentar."}`
       : synchronization.pendingCount > 0
         ? `${synchronization.pendingCount} documento${synchronization.pendingCount === 1 ? "" : "s"} pendiente${synchronization.pendingCount === 1 ? "" : "s"} por subir`
       : synchronization.lastAt
@@ -2069,9 +2128,6 @@ export default function PosPage() {
     try {
       window.localStorage.setItem("selected_business_id", option.businessId);
       const context = await selectSalesWorkspace(option, workspaceChanging);
-      if (edgeEnrollmentToken) {
-        await new PosEdgeClient(edgeEnrollmentToken).setStartupMode("online");
-      }
       const onlineClient = new OnlinePosClient(context, onlineUserId, onlineUserName, edgeEnrollmentToken);
       rememberOnlinePosClient(onlineClient);
       setDraft(null);
@@ -2105,14 +2161,14 @@ export default function PosPage() {
     }
   }
 
-  async function enrollOffline(
+  async function prepareInstalledPos(
     option: SalesWorkspaceOption,
     initialDocumentType: PosSaleDocumentType,
     authorization?: PosSensitiveAuthorization,
   ) {
     if (!edgeEnrollmentToken) return;
     setSetupError(null);
-    setSetupNotice("Autorizando este equipo para trabajar sin conexión…");
+    setSetupNotice("Autorizando y preparando esta caja…");
     window.localStorage.setItem("auraly.pos.document-type", initialDocumentType);
     setSetupLoading(true);
     try {
@@ -2172,31 +2228,6 @@ export default function PosPage() {
     }
   }
 
-  async function loginOnlineFromLocal(username: string, password: string) {
-    if (!edgeEnrollmentToken || !serverConnected) {
-      setEdgeLoginError("Necesitas conexión con Auraly para entrar en línea.");
-      return;
-    }
-    setEdgeLoginError(null);
-    try {
-      const tenantKey = useAuthStore.getState().user?.tenantKey;
-      if (!tenantKey)
-        throw new Error("No se pudo identificar la empresa para abrir la sesion en linea.");
-      const onlineSession = await authApi.login({ tenantKey, username, password });
-      useAuthStore.getState().setAuth(onlineSession.user);
-      await new PosEdgeClient(edgeEnrollmentToken).setStartupMode("online");
-      forgetSalesWorkspace();
-      router.push("/dashboard");
-    } catch (caught) {
-      const message =
-        typeof caught === "object" && caught !== null && "message" in caught
-          ? String(caught.message)
-          : "No fue posible iniciar sesión en línea.";
-      setEdgeLoginError(message);
-      throw caught;
-    }
-  }
-
   async function logoutLocal(force = false) {
     if (!(client instanceof PosEdgeClient) || (busy && !force)) return;
     try {
@@ -2222,42 +2253,6 @@ function changeOnlineWorkspace() {
     setWorkspaceChanging(true);
   }
 
-  async function switchExecutionMode(mode: "online" | "enrolled") {
-    if (busy || !edgeEnrollmentToken) return;
-    if (mode === "online" && !serverConnected) {
-      setError("Para entrar en línea necesitas conexión con Auraly.");
-      return;
-    }
-    try {
-      await new PosEdgeClient(
-        edgeEnrollmentToken,
-        readEdgeUserSession(),
-      ).setStartupMode(mode);
-      if (mode === "online") {
-        forgetSalesWorkspace();
-        router.push("/dashboard");
-      } else {
-        window.location.reload();
-      }
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "No fue posible cambiar el modo de trabajo.");
-    }
-  }
-
-  async function reconfigureEdge() {
-    if (busy || !serverConnected || !edgeEnrollmentToken) return;
-    try {
-      await new PosEdgeClient(
-        edgeEnrollmentToken,
-        readEdgeUserSession(),
-      ).setStartupMode("online");
-      forgetSalesWorkspace();
-      window.location.reload();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "No fue posible abrir la configuración.");
-    }
-  }
-
   if (client instanceof PosEdgeClient && edgeLoginState) {
     return (
       <PosLocalLogin
@@ -2274,7 +2269,6 @@ function changeOnlineWorkspace() {
             : null
         )}
         onLogin={loginLocal}
-        onOnlineLogin={loginOnlineFromLocal}
       />
     );
   }
@@ -2289,10 +2283,12 @@ function changeOnlineWorkspace() {
         tenantName={onlineTenantName || "Auraly"}
         userDisplayName={onlineUserName || "usuario"}
         onSelect={activateOnline}
-                onCancel={workspaceChanging ? () => setWorkspaceChanging(false) : undefined}
-edgeCapable={edgeEnrollmentRequired}
+        onCancel={workspaceChanging ? () => setWorkspaceChanging(false) : undefined}
+        edgeCapable={edgeEnrollmentRequired}
         canEnrollOffline={canEnrollOffline}
-        onEnroll={enrollOffline}
+        enrollmentUnavailableReason={enrollmentAvailability?.reason}
+        enrollmentCapacity={enrollmentAvailability}
+        onEnroll={prepareInstalledPos}
         forcedDocumentType={habilitationMode ? "SalesInvoice" : undefined}
       />
     );
@@ -2323,20 +2319,6 @@ edgeCapable={edgeEnrollmentRequired}
               <span className="hidden md:inline">Cerrar sesión de venta</span>
               <kbd className="hidden xl:inline text-[10px] opacity-70">Ctrl+F10</kbd>
             </button>
-            {canOpenCashDrawer && (
-              <button
-                type="button"
-                onClick={() => void openCashDrawer()}
-                disabled={busy || !workstation.workSessionId}
-                title="Abrir cajón de dinero (Ctrl+F7)"
-                aria-keyshortcuts="Control+F7"
-                className="flex h-8 items-center gap-1.5 rounded-full border border-violet-300/20 px-3 text-xs font-semibold text-violet-200 transition hover:bg-violet-300/10 hover:text-white disabled:opacity-40"
-              >
-                <PackageOpen className="h-3.5 w-3.5" />
-                <span className="hidden md:inline">Abrir cajón</span>
-                <kbd className="hidden xl:inline text-[10px] opacity-70">Ctrl+F7</kbd>
-              </button>
-            )}
             <button
               type="button"
               onClick={() => setCashMovementDirection("In")}
@@ -2375,7 +2357,9 @@ edgeCapable={edgeEnrollmentRequired}
               <span>{synchronization.inProgress
                 ? "Sincronizando"
                 : synchronization.failed
-                  ? `${synchronization.pendingCount} sin sincronizar`
+                  ? synchronization.pendingCount > 0
+                    ? `${synchronization.pendingCount} sin sincronizar`
+                    : "Sin conexión"
                   : synchronization.pendingCount > 0
                     ? `${synchronization.pendingCount} por subir`
                     : "Datos al día"}</span>
@@ -2397,18 +2381,6 @@ edgeCapable={edgeEnrollmentRequired}
               <span className="hidden lg:inline">Configuración</span>
             </button>
           )}
-          {client.mode === "edge" && (
-            <button
-              type="button"
-              onClick={() => void switchExecutionMode("online")}
-              disabled={busy || !serverConnected}
-              title="Cambiar a facturación en línea"
-              className="flex h-8 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-xs font-semibold text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
-            >
-              <Wifi className="h-4 w-4" />
-              <span className="hidden lg:inline">Modo online</span>
-            </button>
-          )}
           {client && (
             <button
               type="button"
@@ -2419,18 +2391,6 @@ edgeCapable={edgeEnrollmentRequired}
             >
               <Printer className="h-4 w-4" />
               <span className="hidden lg:inline">Periféricos</span>
-            </button>
-          )}
-          {client.mode === "edge" && serverConnected && (
-            <button
-              type="button"
-              onClick={() => void reconfigureEdge()}
-              disabled={busy}
-              title="Cambiar sede, bodega o volver a enrolar el equipo"
-              className="flex h-8 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-xs font-semibold text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
-            >
-              <Settings2 className="h-4 w-4" />
-              <span className="hidden lg:inline">Configurar equipo</span>
             </button>
           )}
           {client.mode === "edge" && (
@@ -2460,8 +2420,8 @@ edgeCapable={edgeEnrollmentRequired}
         </div>
       )}
 
-      {client.mode === "edge" &&
-        (synchronization.failed || (!serverConnected && synchronization.pendingCount > 0)) && (
+      {client.mode === "edge" && synchronization.pendingCount > 0 &&
+        (synchronization.failed || !serverConnected) && (
         <div
           role="alert"
           className="flex items-center justify-between gap-4 border-b border-amber-300/30 bg-amber-100 px-5 py-2 text-sm text-amber-950"
@@ -3159,6 +3119,7 @@ edgeCapable={edgeEnrollmentRequired}
 
       {closurePreview && (
         <PosCashClosureDialog
+          client={client}
           value={closurePreview}
           busy={busy}
           submitted={Boolean(closureAttempt)}
@@ -3183,9 +3144,12 @@ edgeCapable={edgeEnrollmentRequired}
         />
       )}
 
-      {paymentOpen && draft && (
+      {paymentOpen && draft && saleSettlement && (
         <PosPaymentDialog
-          total={draft.payableAmount}
+          client={client}
+          total={saleSettlement.netAmount}
+          grossTotal={saleSettlement.grossAmount}
+          withholdingTotal={saleSettlement.withholdingTotal}
           busy={busy}
           documentType={selectedCustomer?.requiresElectronicInvoice ? "SalesInvoice" : documentType}
           documentTypeLocked={selectedCustomer?.requiresElectronicInvoice ?? false}
@@ -3197,6 +3161,7 @@ edgeCapable={edgeEnrollmentRequired}
           onChangeDocumentType={() => setDocumentTypeOpen(true)}
           onCancel={() => {
             setPaymentOpen(false);
+            setSaleSettlement(null);
             focusScanner();
           }}
           onConfirm={completeSale}
@@ -3223,12 +3188,13 @@ edgeCapable={edgeEnrollmentRequired}
 
       {documentTypeOpen && (
         <PosDocumentTypeDialog
+          client={client}
           value={documentType}
           invoiceRequired={selectedCustomer?.requiresElectronicInvoice ?? false}
           businessId={workstation.businessId}
           edgeMode={client.mode === "edge"}
           edgeFiscalReady={workstation.fiscalReady}
-          onFiscalEnrollmentRequired={() => void reconfigureEdge()}
+          onFiscalEnrollmentRequired={() => setError("La factura electrónica no está disponible en esta caja. Un administrador debe completar la configuración fiscal y la caja la recibirá automáticamente.")}
           busy={busy}
           onSelect={changeDocumentType}
           onCancel={() => {
@@ -3306,7 +3272,7 @@ edgeCapable={edgeEnrollmentRequired}
           }}
         />
       )}
-      {synchronizationEventsOpen && client && canReadSynchronizationEvents && <PosSynchronizationEventsDialog open client={client} connected={serverConnected} pendingCount={synchronization.pendingCount} inProgress={synchronization.inProgress} lastAt={synchronization.lastAt} onClose={() => { setSynchronizationEventsOpen(false); focusScanner(); }} />}
+      {synchronizationEventsOpen && client && canReadSynchronizationEvents && <PosSynchronizationEventsDialog open client={client} connected={serverConnected} inProgress={synchronization.inProgress} onClose={() => { setSynchronizationEventsOpen(false); focusScanner(); }} />}
 
       {inventoryNotice && (
         <PosConfirmDialog

@@ -153,6 +153,7 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => e.TenantKey).IsUnique();
             entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
             entity.Property(e => e.Email).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.InventoryCostBasis).IsRequired().HasMaxLength(32);
             entity.HasIndex(e => e.Email).IsUnique();
         });
 
@@ -597,6 +598,7 @@ public class ApplicationDbContext : DbContext
         {
             entity.HasKey(e => e.ProductId);
             entity.Property(e => e.Source).HasConversion<int>();
+            entity.Property(e => e.TenantId).IsRequired();
             entity.Property(e => e.ExternalProductId).HasMaxLength(300);
             entity.Property(e => e.Sku).HasMaxLength(100);
             entity.Property(e => e.ProductCode).HasMaxLength(64);
@@ -623,6 +625,8 @@ public class ApplicationDbContext : DbContext
                 .OnDelete(DeleteBehavior.Restrict)
                 .IsRequired(false);
             entity.HasIndex(e => e.BusinessId);
+            entity.HasIndex(e => new { e.TenantId, e.ProductCode }).IsUnique()
+                .HasFilter("[ProductCode] IS NOT NULL");
             entity.HasIndex(e => new { e.BusinessId, e.Name });
             entity.HasIndex(e => new { e.BusinessId, e.CategoryName });
             entity.HasIndex(e => new { e.BusinessId, e.Sku });

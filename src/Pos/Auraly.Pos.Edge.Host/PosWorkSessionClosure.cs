@@ -478,15 +478,13 @@ internal static class WorkSessionClosureReceiptRenderer
     private static string Money(decimal value) =>
         value.ToString("0.00", CultureInfo.InvariantCulture);
     private static string SignedMoney(decimal value) =>
-        value > 0
-            ? "+" + Money(value)
-            : Money(value);
+        Money(Math.Abs(value));
     private static string DifferenceLabel(decimal value) =>
         value > 0
-            ? "DIFERENCIA (+) SOBRANTE"
+            ? "SOBRANTE"
             : value < 0
-                ? "DIFERENCIA (-) FALTANTE"
-                : "DIFERENCIA (CUADRADO)";
+                ? "FALTANTE"
+                : "CUADRA";
     private static string PaymentMethodName(string code) => code switch
     {
         "Cash" => "Efectivo",

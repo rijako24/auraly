@@ -41,7 +41,9 @@ No se agrega un asistente fiscal paralelo ni estados duplicados.
 
 Después del login y de conocer el contexto operativo, Auraly comprueba si POS Edge está disponible:
 
-- si está disponible, continúa con la inicialización y sincronización local;
+- si está disponible pero no está enrolado, ofrece preparar el equipo mediante una opción explícita y un único botón para continuar;
+- si el usuario continúa sin preparar, el escritorio usa el mismo POS online del navegador y POS Edge se limita a periféricos y enrolamiento: no abre Web PubSub, no descarga proyecciones, no inicia sincronizadores y no mantiene outbox operativo;
+- si el usuario prepara el equipo, el enrolamiento se convierte en la única fuente de verdad para activar la operación local sincronizada;
 - si no está disponible, muestra una tarjeta de instalación y permite seguir vendiendo online;
 - la descarga obtiene de una única API autenticada la versión, URL HTTPS y SHA-256 del instalador publicado;
 - el instalador es genérico: no contiene tenant, usuario, contraseña, token, sede ni caja;
@@ -67,8 +69,8 @@ El resumen de aprovisionamiento de una empresa usa exactamente la misma fuente d
 
 ```text
 Interfaz React compartida
-  ├─ navegador: API online
-  └─ Auraly Desktop: API local de POS Edge
+  ├─ navegador o escritorio no enrolado: API online
+  └─ Auraly Desktop enrolado: API local de POS Edge
                          ├─ SQLite y outbox durable
                          ├─ impresión y cajón
                          ├─ identidad offline protegida
@@ -94,10 +96,14 @@ El navegador no intenta emular capacidades locales. POS Edge no implementa otro 
 
 ### POS instalado
 
+- sin enrolamiento conserva el flujo online: borrador y venta permanecen en la API, no se descargan datos operativos y no existe una conexión push local;
+- el usuario puede marcar `Preparar este equipo para trabajar sin conexión` antes de continuar; sin marcarla no se crea enrolamiento ni estado sincronizado;
+- el bootstrap consulta el cupo autoritativo y muestra uso/límite; sin permiso o sin cupo la opción queda deshabilitada y el canje vuelve a comprobar la capacidad bajo bloqueo transaccional para cubrir carreras entre cajas;
 - el catálogo, identidad autorizada, consecutivos y documentos necesarios se guardan localmente;
 - el primer usuario con permiso `sales.create` que elige trabajar sin conexión entra a ventas automáticamente cuando termina la descarga inicial, sin un segundo login;
 - la identidad local incluye a todos los usuarios activos con permiso `sales.create` para ese negocio, de modo que cualquiera de ellos puede iniciar una sesión local posteriormente;
-- el modo puede volver a online de forma explícita; esa transición cierra la sesión local y vuelve a la autenticación autoritativa del servidor;
+- una sesión local vigente se recupera al reiniciar la aplicación; el lanzador no la revoca ni obliga a adquirir otra concesión por abrir de nuevo;
+- una vez enrolado, el equipo usa siempre el runtime local-first; no existe un archivo ni selector de modo que pueda contradecir el enrolamiento;
 - confirmar una venta escribe documento, numeración y outbox en una sola transacción SQLite;
 - la sincronización es idempotente y llega al mismo motor del servidor;
 - Web PubSub notifica cambios; no reemplaza la outbox ni la reconciliación por cursor;

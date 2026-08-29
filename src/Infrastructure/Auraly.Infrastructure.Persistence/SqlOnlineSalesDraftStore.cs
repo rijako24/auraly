@@ -676,18 +676,20 @@ public sealed partial class SqlOnlineSalesDraftStore(
                    COALESCE(NULLIF(balance.AverageUnitCost,0),price.CostBasisAmount,0),p.ManageStock
             FROM dbo.Products p
             LEFT JOIN dbo.TaxProfiles t
-              ON t.TaxProfileId=p.TaxProfileId AND t.BusinessId=p.BusinessId AND t.IsActive=1
+              ON t.TaxProfileId=p.TaxProfileId AND t.IsActive=1
             CROSS APPLY (
               SELECT TOP(1) pp.Amount,pp.CurrencyCode,pp.CostBasisAmount
               FROM dbo.ProductPrices pp
-              WHERE pp.BusinessId=p.BusinessId AND pp.ProductId=p.ProductId
+              WHERE pp.BusinessId=@BusinessId AND pp.ProductId=p.ProductId
                 AND pp.IsActive=1 AND pp.ValidFrom<=SYSDATETIMEOFFSET()
                 AND (pp.ValidUntil IS NULL OR pp.ValidUntil>SYSDATETIMEOFFSET())
               ORDER BY pp.ValidFrom DESC,pp.ProductPriceId
             ) price
-            LEFT JOIN dbo.InventoryBalances balance ON balance.BusinessId=p.BusinessId
+            LEFT JOIN dbo.InventoryBalances balance ON balance.BusinessId=@BusinessId
               AND balance.ProductId=p.ProductId AND balance.WarehouseId=@WarehouseId
-            WHERE p.BusinessId=@BusinessId AND p.ProductId=@ProductId AND p.IsActive=1;
+            WHERE p.ProductId=@ProductId AND p.IsActive=1
+              AND (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+                   OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId));
             """;
         command.Parameters.AddRange([
             P("@BusinessId", businessId), P("@WarehouseId", warehouseId), P("@ProductId", productId)
@@ -802,30 +804,31 @@ public sealed partial class SqlOnlineSalesDraftStore(
                 WHEN p.ProductId=TRY_CONVERT(uniqueidentifier,@Selector) THEN 0
                 WHEN EXISTS (
                   SELECT 1 FROM dbo.ProductBarcodes b
-                  WHERE b.ProductId=p.ProductId AND b.BusinessId=p.BusinessId
+                  WHERE b.ProductId=p.ProductId AND b.BusinessId=@BusinessId
                     AND b.IsActive=1 AND b.Barcode=@Selector) THEN 1
                 WHEN p.ProductCode=@Selector THEN 2
                 WHEN p.Sku=@Selector THEN 3
                 WHEN p.Reference=@Selector THEN 4
                 WHEN EXISTS (
                   SELECT 1 FROM dbo.ProductIdentifiers i
-                  WHERE i.ProductId=p.ProductId AND i.BusinessId=p.BusinessId
+                  WHERE i.ProductId=p.ProductId AND i.BusinessId=@BusinessId
                     AND i.IsActive=1 AND i.Value=@Selector) THEN 5
                 ELSE 6
               END AS MatchRank
             FROM dbo.Products p
-            WHERE p.BusinessId=@BusinessId AND p.IsActive=1
+            WHERE (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+                   OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId)) AND p.IsActive=1
               AND (
                 p.ProductId=TRY_CONVERT(uniqueidentifier,@Selector) OR
                 p.ProductCode=@Selector OR p.Sku=@Selector OR
                 p.Reference=@Selector OR p.Name=@Selector OR
                 EXISTS (
                   SELECT 1 FROM dbo.ProductBarcodes b
-                  WHERE b.ProductId=p.ProductId AND b.BusinessId=p.BusinessId
+                  WHERE b.ProductId=p.ProductId AND b.BusinessId=@BusinessId
                     AND b.IsActive=1 AND b.Barcode=@Selector) OR
                 EXISTS (
                   SELECT 1 FROM dbo.ProductIdentifiers i
-                  WHERE i.ProductId=p.ProductId AND i.BusinessId=p.BusinessId
+                  WHERE i.ProductId=p.ProductId AND i.BusinessId=@BusinessId
                     AND i.IsActive=1 AND i.Value=@Selector))
             ORDER BY MatchRank,p.ProductId;
             """;
@@ -1019,12 +1022,14 @@ public sealed partial class SqlOnlineSalesDraftStore(
             SELECT COALESCE(balance.QuantityOnHand,0) / COALESCE(NULLIF(link.InventoryFactor,0),1)
             FROM dbo.Products p
             LEFT JOIN dbo.ProductLinks link
-              ON link.BusinessId=p.BusinessId AND link.ChildProductId=p.ProductId
+              ON link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId
              AND link.SharesInventory=1 AND link.IsActive=1
             LEFT JOIN dbo.InventoryBalances balance WITH (UPDLOCK,HOLDLOCK)
-              ON balance.BusinessId=p.BusinessId AND balance.WarehouseId=@WarehouseId
+              ON balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId
              AND balance.ProductId=COALESCE(link.ParentProductId,p.ProductId)
-            WHERE p.BusinessId=@BusinessId AND p.ProductId=@ProductId
+            WHERE p.ProductId=@ProductId
+              AND (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+                   OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId))
             ;
             """;
         command.Parameters.AddRange([
@@ -1164,7 +1169,7 @@ public sealed partial class SqlOnlineSalesDraftStore(
         CancellationToken ct)
     {
         await using var command = new SqlCommand(
-            "SELECT ManageStock FROM dbo.Products WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND IsActive=1;",
+            "SELECT ManageStock FROM dbo.Products WHERE TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND ProductId=@ProductId AND IsActive=1;",
             connection, transaction);
         command.Parameters.AddRange([P("@BusinessId", businessId), P("@ProductId", productId)]);
         return await command.ExecuteScalarAsync(ct) is bool value

@@ -58,6 +58,8 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
 
         await LinkSourceOrderAsync(session, request, cancellationToken);
 
+        await PersistWithholdingSnapshotAsync(session, request, cancellationToken);
+
         foreach (var payment in request.Payments.OrderBy(payment => payment.PaymentNumber))
         {
             await InsertPaymentAsync(session, request, payment, cancellationToken);
@@ -70,6 +72,57 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             session, document, _idGenerator, _timeProvider, cancellationToken);
         await InsertOutboxAsync(session, request, document.Payload, cancellationToken);
         await MarkDocumentProcessedAsync(session, request, cancellationToken);
+    }
+
+    private static async Task PersistWithholdingSnapshotAsync(
+        SqlDocumentProcessingSessionAccessor.Session session,
+        PosSaleUploadRequest request,
+        CancellationToken cancellationToken)
+    {
+        var withholding = request.CommercialSnapshot.Withholding;
+        if (withholding is null) return;
+        await using (var command = new SqlCommand("""
+            INSERT dbo.DocumentWithholdingSnapshots
+              (DocumentId,DocumentType,BusinessId,GrossAmount,WithholdingTotal,NetAmount,RecognizedAt)
+            VALUES
+              (@DocumentId,@DocumentType,@BusinessId,@Gross,@Withholding,@Net,@RecognizedAt);
+            """, session.Connection, session.Transaction))
+        {
+            command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+            command.Parameters.AddWithValue("@DocumentType", request.CommercialSnapshot.DocumentType);
+            command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
+            AddDecimal(command, "@Gross", withholding.GrossAmount, 19, 4);
+            AddDecimal(command, "@Withholding", withholding.WithholdingTotal, 19, 4);
+            AddDecimal(command, "@Net", withholding.NetAmount, 19, 4);
+            command.Parameters.AddWithValue("@RecognizedAt", request.CommercialSnapshot.IssuedAt);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        foreach (var item in withholding.Lines.Select((line, index) => (line, index)))
+        {
+            await using var command = new SqlCommand("""
+                INSERT dbo.DocumentWithholdingLines
+                  (DocumentId,DocumentType,LineNumber,RuleId,RuleVersion,RuleCode,Name,
+                   Kind,BaseKind,TaxableBase,Rate,Amount,JurisdictionCode)
+                VALUES
+                  (@DocumentId,@DocumentType,@LineNumber,@RuleId,@RuleVersion,@RuleCode,@Name,
+                   @Kind,@BaseKind,@TaxableBase,@Rate,@Amount,@JurisdictionCode);
+                """, session.Connection, session.Transaction);
+            command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+            command.Parameters.AddWithValue("@DocumentType", request.CommercialSnapshot.DocumentType);
+            command.Parameters.AddWithValue("@LineNumber", item.index + 1);
+            command.Parameters.AddWithValue("@RuleId", item.line.RuleId);
+            command.Parameters.AddWithValue("@RuleVersion", item.line.RuleVersion);
+            command.Parameters.AddWithValue("@RuleCode", item.line.RuleCode);
+            command.Parameters.AddWithValue("@Name", item.line.Name);
+            command.Parameters.AddWithValue("@Kind", item.line.Kind);
+            command.Parameters.AddWithValue("@BaseKind", item.line.BaseKind);
+            AddDecimal(command, "@TaxableBase", item.line.TaxableBase, 19, 4);
+            AddDecimal(command, "@Rate", item.line.Rate, 9, 6);
+            AddDecimal(command, "@Amount", item.line.Amount, 19, 4);
+            command.Parameters.AddWithValue("@JurisdictionCode", (object?)item.line.JurisdictionCode ?? DBNull.Value);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
     }
 
     private static async Task InsertLineAsync(
@@ -97,14 +150,14 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
                 1
             FROM dbo.Products p
             LEFT JOIN dbo.ProductCategories category
-              ON category.ProductCategoryId=p.ProductCategoryId AND category.BusinessId=p.BusinessId
+              ON category.ProductCategoryId=p.ProductCategoryId
             OUTER APPLY
             (
               SELECT TOP(1) s.SupplierId,s.Name
               FROM dbo.SupplierProducts sp
               INNER JOIN dbo.Suppliers s
                 ON s.SupplierId=sp.SupplierId AND s.BusinessId=sp.BusinessId AND s.IsActive=1
-              WHERE sp.BusinessId=p.BusinessId AND sp.ProductId=p.ProductId AND sp.IsActive=1
+              WHERE sp.BusinessId=@BusinessId AND sp.ProductId=p.ProductId AND sp.IsActive=1
               ORDER BY sp.IsPrimary DESC,sp.CreatedAt,sp.SupplierProductId
             ) supplier
             OUTER APPLY
@@ -114,7 +167,9 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
               WHERE movement.DocumentId=@DocumentId AND movement.DocumentType=@DocumentType
                 AND movement.LineNumber=@LineNumber AND movement.MovementType=N'Sale'
             ) movement
-            WHERE p.ProductId=@ProductId AND p.BusinessId=@BusinessId;
+            WHERE p.ProductId=@ProductId
+              AND (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+                   OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId));
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
@@ -173,7 +228,7 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
         if (line.DocumentUnitCost < 0)
             throw new InvalidOperationException("The document unit cost cannot be negative.");
         await using var command = new SqlCommand(
-            "SELECT ManageStock FROM dbo.Products WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND IsActive=1;",
+            "SELECT ManageStock FROM dbo.Products WHERE ProductId=@ProductId AND IsActive=1 AND (TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) OR (TenantId IS NULL AND BusinessId=@BusinessId));",
             session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@ProductId", line.ProductId);

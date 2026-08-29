@@ -8,8 +8,9 @@ public sealed partial class ProductRepository
 {
     public async Task<Product?> GetByAnyExternalIdAsync(Guid businessId, string externalProductId, CancellationToken ct = default)
     {
+        var tenantId = await ResolveTenantIdAsync(businessId, ct);
         var product = await _context.Products.AsNoTracking().FirstOrDefaultAsync(item =>
-            item.BusinessId == businessId && item.ExternalProductId == externalProductId, ct);
+            item.TenantId == tenantId && item.ExternalProductId == externalProductId, ct);
         if (product is not null)
             await ApplyPublishedPricesAsync([product], businessId, ct);
         return product;
@@ -17,8 +18,9 @@ public sealed partial class ProductRepository
 
     public async Task<Product?> GetBySkuAsync(Guid businessId, string sku, CancellationToken ct = default)
     {
+        var tenantId = await ResolveTenantIdAsync(businessId, ct);
         var product = await _context.Products.AsNoTracking().FirstOrDefaultAsync(item =>
-            item.BusinessId == businessId && item.Sku == sku, ct);
+            item.TenantId == tenantId && item.Sku == sku, ct);
         if (product is not null)
             await ApplyPublishedPricesAsync([product], businessId, ct);
         return product;
@@ -26,7 +28,8 @@ public sealed partial class ProductRepository
 
     public async Task<IReadOnlyList<Product>> GetIdentityCatalogAsync(Guid businessId, CancellationToken ct = default)
     {
-        var products = await _context.Products.AsNoTracking().Where(product => product.BusinessId == businessId).ToListAsync(ct);
+        var tenantId = await ResolveTenantIdAsync(businessId, ct);
+        var products = await _context.Products.AsNoTracking().Where(product => product.TenantId == tenantId).ToListAsync(ct);
         await ApplyPublishedPricesAsync(products, businessId, ct);
         return products;
     }
@@ -66,6 +69,7 @@ public sealed partial class ProductRepository
             return [];
 
         limit = Math.Clamp(limit, 1, 250);
+        var tenantId = await ResolveTenantIdAsync(businessId, ct);
         var indexedMatches = await _context.ProductSearchTerms.AsNoTracking()
             .Where(term => term.BusinessId == businessId && keys.Contains(term.Term))
             .GroupBy(term => term.ProductId).OrderByDescending(group => group.Count())
@@ -75,13 +79,13 @@ public sealed partial class ProductRepository
         var indexedIds = indexedScores.Keys.ToArray();
         var candidates = indexedIds.Length == 0
             ? new Dictionary<Guid, Product>()
-            : (await _context.Products.AsNoTracking().Where(product => product.BusinessId == businessId && indexedIds.Contains(product.ProductId)).ToListAsync(ct))
+            : (await _context.Products.AsNoTracking().Where(product => product.TenantId == tenantId && indexedIds.Contains(product.ProductId)).ToListAsync(ct))
                 .ToDictionary(product => product.ProductId);
 
         foreach (var key in keys.OrderByDescending(value => value.Length).Take(6))
         {
             var matches = await _context.Products.AsNoTracking()
-                .Where(product => product.BusinessId == businessId
+                .Where(product => product.TenantId == tenantId
                     && (product.Name.ToLower().Contains(key)
                         || product.Sku != null && product.Sku.ToLower().Contains(key)
                         || product.ExternalProductId != null && product.ExternalProductId.ToLower().Contains(key)

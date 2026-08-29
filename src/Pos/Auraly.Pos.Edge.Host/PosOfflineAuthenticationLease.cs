@@ -141,6 +141,9 @@ public sealed class PosOfflineLeaseStore(
             UPDATE PosOfflineAuthenticationLeases
             SET Status='Expired',UpdatedAt=$now
             WHERE Status='Active' AND ExpiresAt<=$now;
+            UPDATE PosOfflineAuthenticationLeases
+            SET Status='Replaced',UpdatedAt=$now
+            WHERE UserId=$user AND Status='Active' AND LeaseId<>$lease;
             INSERT INTO PosOfflineAuthenticationLeases(
                 LeaseId,TenantId,UserId,DeviceId,KeyId,Algorithm,
                 SignedPayload,Signature,IssuedAt,NotBefore,ExpiresAt,

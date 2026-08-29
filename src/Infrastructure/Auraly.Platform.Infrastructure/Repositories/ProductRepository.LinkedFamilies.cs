@@ -35,9 +35,10 @@ public sealed partial class ProductRepository
         }
 
         var now = DateTimeOffset.UtcNow;
+        var tenantId = await ResolveTenantIdAsync(businessId, ct);
         var ids = familyIds.ToArray();
         var products = await _context.Products.AsNoTracking()
-            .Where(product => product.BusinessId == businessId
+            .Where(product => product.TenantId == tenantId
                 && product.IsActive
                 && ids.Contains(product.ProductId)
                 && _context.PublishedProductPrices.Any(price =>

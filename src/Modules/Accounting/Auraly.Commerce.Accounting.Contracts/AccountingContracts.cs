@@ -17,6 +17,8 @@ public static class AccountingCategories
     public const string DebitCardClearing = "DebitCardClearing";
     public const string CreditCardClearing = "CreditCardClearing";
     public const string TransferClearing = "TransferClearing";
+    public const string CardClearing = "CardClearing";
+    public const string CashClosureDifferencesPending = "CashClosureDifferencesPending";
     public const string AccountsReceivable = "AccountsReceivable";
     public const string SalesRevenue = "SalesRevenue";
     public const string SalesReturns = "SalesReturns";

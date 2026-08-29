@@ -23,6 +23,7 @@
     <None Include="Scripts\Seeds\*.sql" />
   </ItemGroup>
   <ItemGroup>
+    <Build Include="Schemas\WorkSessions.sql" />
     <Build Include="Functions\PriceChannelAmountCalculate.sql" />
     <Build Include="Functions\CustomerProductPriceResolve.sql" />
     <Build Include="StoredProcedures\SellerOrderCatalogGet.sql" />
@@ -70,6 +71,7 @@
     <Build Include="StoredProcedures\DocumentProcessingJobByDocumentGet.sql" />
     <Build Include="StoredProcedures\DispatchCashDifferenceDocumentCreate.sql" />
     <Build Include="StoredProcedures\DispatchSettlementOperationComplete.sql" />
+    <Build Include="StoredProcedures\PosSecuritySynchronizationEnqueue.sql" />
     <Build Include="Schemas\Reference.sql" />
     <Build Include="Schemas\Dispatch.sql" />
     <Build Include="Schemas\Fiscal.sql" />
@@ -178,6 +180,7 @@
 
     <Build Include="Tables\WorkSessions.sql" />
     <Build Include="Tables\WorkSessionClosures.sql" />
+    <Build Include="Tables\CashClosureConfiguration.sql" />
     <Build Include="Tables\SupervisorCredentials.sql" />
     <Build Include="Tables\PosApprovalRequests.sql" />
     <Build Include="Tables\PosApprovalPushSubscriptions.sql" />

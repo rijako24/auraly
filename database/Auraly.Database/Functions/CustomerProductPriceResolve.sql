@@ -17,8 +17,8 @@ RETURN
         FROM dbo.Products scopedProduct
         JOIN dbo.ProductCategories category
           ON category.ProductCategoryId = scopedProduct.ProductCategoryId
-         AND category.BusinessId = scopedProduct.BusinessId
-        WHERE scopedProduct.BusinessId = @BusinessId
+         AND category.BusinessId = @BusinessId
+        WHERE scopedProduct.TenantId = (SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
           AND scopedProduct.ProductId = @ProductId
         UNION ALL
         SELECT parent.ProductCategoryId, parent.ParentProductCategoryId
@@ -38,7 +38,7 @@ RETURN
         SELECT TOP (1) price.Amount, price.CurrencyCode, price.CostBasisAmount,
                price.TargetMarginPercent, price.EffectiveMarginPercent
         FROM dbo.ProductPrices price
-        WHERE price.BusinessId = product.BusinessId
+        WHERE price.BusinessId = @BusinessId
           AND price.ProductId = product.ProductId
           AND price.IsActive = 1
           AND price.ValidFrom <= @At
@@ -124,7 +124,7 @@ RETURN
                 COALESCE(basePrice.TargetMarginPercent, basePrice.EffectiveMarginPercent),
                 special.Amount) IS NOT NULL
     ) channelPrice
-    WHERE product.BusinessId = @BusinessId
+    WHERE product.TenantId = (SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
       AND product.ProductId = @ProductId
       AND product.IsActive = 1
 );

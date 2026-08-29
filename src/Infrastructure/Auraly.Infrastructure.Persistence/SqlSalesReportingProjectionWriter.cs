@@ -537,11 +537,12 @@ public sealed class SqlSalesReportingProjectionWriter(
             INNER JOIN dbo.Products p ON p.ProductId=sourceLine.ProductId
             LEFT JOIN dbo.ProductCategories pc ON pc.ProductCategoryId=p.ProductCategoryId
             OUTER APPLY(SELECT TOP(1) s.SupplierId,s.Name FROM dbo.SupplierProducts sp
-              INNER JOIN dbo.Suppliers s ON s.SupplierId=sp.SupplierId AND s.BusinessId=p.BusinessId
-              WHERE sp.ProductId=p.ProductId AND sp.BusinessId=p.BusinessId AND sp.IsActive=1 AND s.IsActive=1
+              INNER JOIN dbo.Suppliers s ON s.SupplierId=sp.SupplierId AND s.BusinessId=@BusinessId
+              WHERE sp.ProductId=p.ProductId AND sp.BusinessId=@BusinessId AND sp.IsActive=1 AND s.IsActive=1
               ORDER BY sp.IsPrimary DESC,sp.CreatedAt,sp.SupplierProductId) supplier
             WHERE sourceLine.DocumentId=@DocumentId AND sourceLine.LineNumber=@LineNumber
-              AND p.ProductId=@ProductId AND p.BusinessId=@BusinessId;
+              AND p.ProductId=@ProductId
+              AND p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@FactId", ids.NewId());
@@ -720,10 +721,10 @@ public sealed class SqlSalesReportingProjectionWriter(
             FROM dbo.Products p
             LEFT JOIN dbo.ProductCategories pc ON pc.ProductCategoryId=p.ProductCategoryId
             OUTER APPLY(SELECT TOP(1) s.SupplierId,s.Name FROM dbo.SupplierProducts sp
-              INNER JOIN dbo.Suppliers s ON s.SupplierId=sp.SupplierId AND s.BusinessId=p.BusinessId
-              WHERE sp.ProductId=p.ProductId AND sp.BusinessId=p.BusinessId AND sp.IsActive=1 AND s.IsActive=1
+              INNER JOIN dbo.Suppliers s ON s.SupplierId=sp.SupplierId AND s.BusinessId=@BusinessId
+              WHERE sp.ProductId=p.ProductId AND sp.BusinessId=@BusinessId AND sp.IsActive=1 AND s.IsActive=1
               ORDER BY sp.IsPrimary DESC,sp.CreatedAt,sp.SupplierProductId) supplier
-            WHERE p.ProductId=@ProductId AND p.BusinessId=@BusinessId;
+            WHERE p.ProductId=@ProductId AND p.TenantId=@TenantId;
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@FactId", ids.NewId());

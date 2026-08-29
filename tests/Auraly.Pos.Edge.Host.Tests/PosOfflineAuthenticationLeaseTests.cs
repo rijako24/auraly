@@ -75,6 +75,38 @@ public sealed class PosOfflineAuthenticationLeaseTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Renewing_login_replaces_the_previous_active_lease_for_the_user()
+    {
+        var connectionString = $"Data Source={_databasePath}";
+        var store = new PosOfflineLeaseStore(
+            connectionString, _tenantId, _deviceId, CreateVerifier(), _clock);
+        await store.InitializeAsync();
+        var first = await store.SaveAsync(CreateResponse(_clock.GetUtcNow().AddHours(8)));
+        _clock.Advance(TimeSpan.FromMinutes(1));
+
+        var second = await store.SaveAsync(CreateResponse(_clock.GetUtcNow().AddHours(8)));
+
+        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection(connectionString);
+        await connection.OpenAsync();
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT LeaseId,Status
+            FROM PosOfflineAuthenticationLeases
+            WHERE UserId=$user
+            ORDER BY UpdatedAt,LeaseId;
+            """;
+        command.Parameters.AddWithValue("$user", _userId.ToString("D"));
+        await using var reader = await command.ExecuteReaderAsync();
+        var statuses = new Dictionary<Guid, string>();
+        while (await reader.ReadAsync())
+            statuses[Guid.Parse(reader.GetString(0))] = reader.GetString(1);
+
+        Assert.Equal("Replaced", statuses[first.Payload.LeaseId]);
+        Assert.Equal("Active", statuses[second.Payload.LeaseId]);
+        Assert.Single(statuses.Where(item => item.Value == "Active"));
+    }
+
+    [Fact]
     public void Tampered_signature_is_rejected()
     {
         var response = CreateResponse(_clock.GetUtcNow().AddHours(8));

@@ -141,7 +141,7 @@ public sealed class GoodsReceiptWorkspaceTests(ServerSliceFixture fixture)
             "/api/commerce/v1/goods-receipts/options");
         Assert.NotNull(options);
         Assert.Contains(options.Warehouses, item => item.WarehouseId == fixture.WarehouseId);
-        Assert.Contains(options.Suppliers, item => item.SupplierId == fixture.SupplierId);
+        Assert.Empty(options.Suppliers);
 
         var products = await client.GetFromJsonAsync<GoodsReceiptProductPage>(
             $"/api/commerce/v1/goods-receipts/products?supplierId={fixture.SupplierId:D}&page=1&pageSize=50");
@@ -230,10 +230,10 @@ public sealed class GoodsReceiptWorkspaceTests(ServerSliceFixture fixture)
                     (@TaxProfileId,@BusinessId,@TaxCode,N'01',N'IVA compra 19%',19,1,SYSDATETIMEOFFSET());
 
                 INSERT dbo.Products
-                  (ProductId,BusinessId,ProductCode,Reference,Sku,Name,Description,BaseUnitCode,
+                  (ProductId,TenantId,BusinessId,ProductCode,Reference,Sku,Name,Description,BaseUnitCode,
                    TaxProfileId,PurchaseTaxProfileId,PurchaseTaxTreatment,ManageStock,IsWeighable,
                    IsActive,Source,Currency,CreatedAt)
-                SELECT @ProductId,BusinessId,@Code,@Code,@Code,N'Producto catálogo general',
+                SELECT @ProductId,TenantId,BusinessId,@Code,@Code,@Code,N'Producto catálogo general',
                        N'Producto aún no asociado al proveedor',N'EA',@TaxProfileId,
                        @TaxProfileId,N'CapitalizedCost',ManageStock,0,1,Source,Currency,SYSUTCDATETIME()
                 FROM dbo.Products WHERE ProductId=@SourceProductId;

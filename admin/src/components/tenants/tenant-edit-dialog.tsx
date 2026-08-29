@@ -44,6 +44,7 @@ export function TenantEditDialog({ tenant, open, onOpenChange, onSaved }: Props)
         name: form.name.trim(), email: form.email.trim(), legalName: form.legalName.trim(),
         nit: form.identification.trim(), verificationDigit: form.identificationTypeCode === "NIT" ? form.verificationDigit.trim() : null,
         entityType: form.entityType, identificationTypeCode: form.identificationTypeCode,
+        inventoryCostBasis: form.inventoryCostBasis as Tenant["inventoryCostBasis"],
       });
       profileSaved = true;
       if (logo) await tenantsApi.uploadLogo(tenant.tenantId, logo);
@@ -74,6 +75,7 @@ export function TenantEditDialog({ tenant, open, onOpenChange, onSaved }: Props)
           <Field label={form.identificationTypeCode === "CC" ? "Cédula" : "NIT"}><Input value={form.identification} onChange={event => set("identification", event.target.value)} /></Field>
           {form.identificationTypeCode === "NIT" && <Field label="Dígito de verificación"><Input maxLength={4} value={form.verificationDigit} onChange={event => set("verificationDigit", event.target.value)} /></Field>}
           <Field label="Correo empresarial" className="sm:col-span-2"><Input type="email" value={form.email} onChange={event => set("email", event.target.value)} /></Field>
+          <Field label="Base para formar costos" className="sm:col-span-2"><Select value={form.inventoryCostBasis} onValueChange={value => set("inventoryCostBasis", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="LatestReceiptCost">Último costo recibido</SelectItem><SelectItem value="WeightedAverageCost">Costo promedio ponderado</SelectItem></SelectContent></Select><p className="text-xs text-muted-foreground">Define la base que usa el tenant al preparar precios. El costo promedio consolida las sedes que comparten precios.</p></Field>
         </section>
       </div>
       <DialogFooter><Button variant="outline" disabled={saving} onClick={() => onOpenChange(false)}>Cancelar</Button><Button disabled={saving || !valid || entityTypes.isLoading || identificationTypes.isLoading} onClick={() => void save()}>{saving ? "Guardando…" : "Guardar cambios"}</Button></DialogFooter>
@@ -82,5 +84,5 @@ export function TenantEditDialog({ tenant, open, onOpenChange, onSaved }: Props)
 }
 
 function Field({ label, className, children }: { label: string; className?: string; children: React.ReactNode }) { return <div className={`space-y-2 ${className ?? ""}`}><Label>{label}</Label>{children}</div>; }
-function initial(tenant: Tenant) { return { name: tenant.name, email: tenant.email, legalName: tenant.legalName ?? tenant.name, identification: tenant.nit ?? "", verificationDigit: tenant.verificationDigit ?? "", entityType: tenant.entityType ?? "Organization", identificationTypeCode: tenant.identificationTypeCode ?? "NIT" }; }
+function initial(tenant: Tenant) { return { name: tenant.name, email: tenant.email, legalName: tenant.legalName ?? tenant.name, identification: tenant.nit ?? "", verificationDigit: tenant.verificationDigit ?? "", entityType: tenant.entityType ?? "Organization", identificationTypeCode: tenant.identificationTypeCode ?? "NIT", inventoryCostBasis: tenant.inventoryCostBasis }; }
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : "No fue posible actualizar el tenant."; }

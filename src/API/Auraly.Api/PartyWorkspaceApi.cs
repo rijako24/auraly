@@ -9,9 +9,9 @@ public static class PartyWorkspaceApi
     {
         var parties=endpoints.MapGroup("/api/commerce/v1/parties").RequireAuthorization("parties.user");
         parties.MapGet("/", async(HttpContext context,PartyWorkspaceService service,int? page,int? pageSize,
-            string? search,string? role,bool? isActive,bool? isIncomplete,CancellationToken ct)=>
+            string? search,string? role,bool? isActive,bool? isIncomplete,Guid? roleId,Guid? partyId,CancellationToken ct)=>
             await Handle(async()=>Results.Ok(await service.PageAsync(context.User.ToPartyUserIdentity(),page??1,
-                new PartyWorkspaceQuery(pageSize??25,search,role,isActive,isIncomplete),ct))));
+                new PartyWorkspaceQuery(pageSize??25,search,role,isActive,isIncomplete,roleId,partyId),ct))));
         parties.MapPost("/identity", async(
             HttpContext context,
             PartyWorkspaceService service,

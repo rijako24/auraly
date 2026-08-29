@@ -17,7 +17,8 @@ BEGIN
 
     SELECT COUNT(*)
     FROM dbo.InventoryMovements m
-    INNER JOIN dbo.Products p ON p.ProductId=m.ProductId AND p.BusinessId=m.BusinessId
+    INNER JOIN dbo.Products p ON p.ProductId=m.ProductId
+      AND p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=m.BusinessId)
     INNER JOIN dbo.Warehouses w ON w.WarehouseId=m.WarehouseId AND w.BusinessId=m.BusinessId
     LEFT JOIN dbo.InventoryOperations o ON o.InventoryOperationId=m.DocumentId
     WHERE m.BusinessId=@BusinessId AND w.IsSystem=0
@@ -30,7 +31,7 @@ BEGIN
         OR p.Name LIKE @Pattern OR o.DocumentNumber LIKE @Pattern
         OR m.DocumentType LIKE @Pattern OR m.MovementType LIKE @Pattern
         OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes barcode
-                   WHERE barcode.BusinessId=p.BusinessId AND barcode.ProductId=p.ProductId
+                   WHERE barcode.BusinessId=m.BusinessId AND barcode.ProductId=p.ProductId
                      AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1));
 
     SELECT m.InventoryMovementId,m.WarehouseId,w.Name,m.ProductId,COALESCE(p.ProductCode,N''),p.Name,
@@ -39,7 +40,8 @@ BEGIN
            CASE WHEN @IncludeCosts=1 THEN m.RecognizedUnitCost END,
            CASE WHEN @IncludeCosts=1 THEN m.ValueChange END,m.OccurredAt,m.PostedAt
     FROM dbo.InventoryMovements m
-    INNER JOIN dbo.Products p ON p.ProductId=m.ProductId AND p.BusinessId=m.BusinessId
+    INNER JOIN dbo.Products p ON p.ProductId=m.ProductId
+      AND p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=m.BusinessId)
     INNER JOIN dbo.Warehouses w ON w.WarehouseId=m.WarehouseId AND w.BusinessId=m.BusinessId
     LEFT JOIN dbo.InventoryOperations o ON o.InventoryOperationId=m.DocumentId
     WHERE m.BusinessId=@BusinessId AND w.IsSystem=0
@@ -52,7 +54,7 @@ BEGIN
         OR p.Name LIKE @Pattern OR o.DocumentNumber LIKE @Pattern
         OR m.DocumentType LIKE @Pattern OR m.MovementType LIKE @Pattern
         OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes barcode
-                   WHERE barcode.BusinessId=p.BusinessId AND barcode.ProductId=p.ProductId
+                   WHERE barcode.BusinessId=m.BusinessId AND barcode.ProductId=p.ProductId
                      AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1))
     ORDER BY m.ProcessingSequence DESC,m.LineNumber
     OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;

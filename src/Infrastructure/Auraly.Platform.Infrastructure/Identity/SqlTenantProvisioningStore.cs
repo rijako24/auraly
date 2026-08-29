@@ -66,8 +66,8 @@ public sealed class SqlTenantProvisioningStore(
                     THROW 51021,'La ciudad no pertenece al departamento seleccionado.',1;
                 IF EXISTS (SELECT 1 FROM dbo.TenantLegalProfiles WHERE NormalizedNit=@NormalizedNit)
                     THROW 51022,'Ya existe una empresa con este NIT.',1;
-                INSERT dbo.Tenants(TenantId,TenantKey,Name,Email,IsActive,MaximumUsers,MaximumEnrolledDevices,CreatedAt)
-                VALUES(@TenantId,@TenantKey,@TradeName,@CompanyEmail,1,@MaximumUsers,@MaximumEnrolledDevices,@Now);
+                INSERT dbo.Tenants(TenantId,TenantKey,Name,Email,IsActive,MaximumUsers,MaximumEnrolledDevices,InventoryCostBasis,CreatedAt)
+                VALUES(@TenantId,@TenantKey,@TradeName,@CompanyEmail,1,@MaximumUsers,@MaximumEnrolledDevices,@CostBasis,@Now);
 
                 INSERT dbo.Businesses
                   (BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,TimeZone,IsActive,CreatedAt)

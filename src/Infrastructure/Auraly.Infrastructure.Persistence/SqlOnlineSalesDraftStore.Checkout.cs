@@ -6,6 +6,7 @@ using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
+using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Fiscal.Core;
 using Microsoft.Data.SqlClient;
 
@@ -13,6 +14,28 @@ namespace Auraly.Infrastructure.Persistence;
 
 public sealed partial class SqlOnlineSalesDraftStore
 {
+    public async Task<OnlineSaleSettlementContext> ReadSettlementContextAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.ReadCommitted, cancellationToken);
+        var state = await LockDraftAsync(
+            connection, transaction, user, draftId, cancellationToken);
+        var draft = await ReadDraftAsync(
+            connection, transaction, draftId, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new OnlineSaleSettlementContext(
+            state.BusinessId,
+            state.CustomerId,
+            draft.UntaxedAmount,
+            draft.TaxAmount,
+            time.GetUtcNow());
+    }
+
     public async Task<OnlineSalesFiscalKeyContext> ResolveFiscalKeyContextAsync(
         OnlineSalesUserIdentity user,
         Guid draftId,
@@ -93,6 +116,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         CompleteOnlineSalesDraftRequest request,
         string idempotencyKey,
         FiscalVerificationMaterial fiscalMaterial,
+        WithholdingCalculationSnapshot withholding,
         CancellationToken cancellationToken)
     {
         var requestHash = CheckoutHash(draftId, request);
@@ -129,7 +153,8 @@ public sealed partial class SqlOnlineSalesDraftStore
         if (!inventoryValidation.IsValid)
             throw new OnlineSalesDraftValidationException(
                 "El inventario cambió y uno o más productos ya no tienen existencias suficientes. Ajusta sus cantidades o elimínalos antes de cobrar.");
-        if (request.Payments.Sum(payment => payment.Amount) + (request.Credit?.Amount ?? 0m) != draft.PayableAmount)
+        ValidateWithholding(draft, withholding);
+        if (request.Payments.Sum(payment => payment.Amount) + (request.Credit?.Amount ?? 0m) != withholding.NetAmount)
             throw new OnlineSalesDraftValidationException(
                 "Los pagos reales y el saldo financiado deben ser iguales al total de la venta.");
 
@@ -234,7 +259,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                 taxes,
                 draft.UntaxedAmount,
                 draft.TaxAmount,
-                draft.PayableAmount),
+                draft.PayableAmount,
+                withholding),
             new PosSaleFiscalSnapshotContract(
                 configuration.FiscalSeriesId,
                 configuration.FiscalAuthorizationId,

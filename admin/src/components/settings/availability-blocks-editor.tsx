@@ -16,11 +16,10 @@ import {
 import { DatePicker } from "@/components/ui/date-picker";
 import { Label } from "@/components/ui/label";
 import { TimePicker } from "@/components/ui/time-picker";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { useEmployees } from "@/hooks/use-employees";
+import { PartyRoleSelect } from "@/components/parties/party-role-select";
 import {
   useBusinessAvailabilityBlocks,
   useCreateBusinessAvailabilityBlock,
@@ -42,7 +41,6 @@ const emptyForm = (): BusinessAvailabilityBlockPayload => ({
 
 export function AvailabilityBlocksEditor() {
   const { data, isLoading } = useBusinessAvailabilityBlocks();
-  const { data: employeesData } = useEmployees({ page: 1, pageSize: 500 });
   const createBlock = useCreateBusinessAvailabilityBlock();
   const updateBlock = useUpdateBusinessAvailabilityBlock();
   const deleteBlock = useDeleteBusinessAvailabilityBlock();
@@ -51,7 +49,6 @@ export function AvailabilityBlocksEditor() {
   const [form, setForm] = useState<BusinessAvailabilityBlockPayload>(emptyForm);
 
   const blocks = data ?? [];
-  const employees = employeesData?.items ?? [];
   const isSaving = createBlock.isPending || updateBlock.isPending;
 
   const beginCreate = () => {
@@ -160,15 +157,10 @@ export function AvailabilityBlocksEditor() {
           <div className="grid gap-4 py-2">
             <div className="grid gap-2">
               <Label>Empleado</Label>
-              <Select value={form.employeeId ?? ALL_EMPLOYEES} onValueChange={(value) => setForm((current) => ({ ...current, employeeId: value === ALL_EMPLOYEES ? null : value }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL_EMPLOYEES}>Todo el negocio</SelectItem>
-                  {employees.map((employee) => (
-                    <SelectItem key={employee.employeeId} value={employee.employeeId}>{employee.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <PartyRoleSelect role="Employee" value={form.employeeId ?? ALL_EMPLOYEES}
+                leadingOptions={[{ value: ALL_EMPLOYEES, label: "Todo el negocio" }]}
+                selectedOption={editing?.employeeId && editing.employeeName ? { value: editing.employeeId, label: editing.employeeName } : null}
+                onChange={(value) => setForm((current) => ({ ...current, employeeId: value === ALL_EMPLOYEES ? null : value }))}/>
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="grid gap-2"><Label>Fecha</Label><DatePicker value={form.date} onChange={(date) => setForm((current) => ({ ...current, date }))} /></div>

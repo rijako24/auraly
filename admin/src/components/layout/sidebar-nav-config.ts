@@ -84,7 +84,7 @@ export const navigation: NavEntry[] = [
   { name: "Contabilidad", href: "/dashboard/accounting", icon: Library, permission: "accounting.read" },
   { name: "Notas crédito de venta", href: "/dashboard/sales-returns", icon: Undo2, permission: "sales.returns.read" },
   { name: "Notas débito de venta", href: "/dashboard/sales-debit-notes", icon: ReceiptText, permission: "sales.debit-notes.read" },
-  { name: "Diferencias de caja", href: "/dashboard/cash-differences", icon: Scale, permission: "work-sessions.differences.read" },
+  { name: "Cierres de caja", href: "/dashboard/cash-differences", icon: Scale, permission: "work-sessions.differences.read" },
   { name: "Retenciones", href: "/dashboard/accounting/withholdings", icon: ReceiptText, permission: "commerce.taxation.withholdings.view" },
   { name: "Suscripcion", href: "/dashboard/subscription", icon: Gem, permission: "dashboard.read" },
   { name: "Pedidos", href: "/dashboard/orders", icon: ShoppingCart, permission: "orders.read" },

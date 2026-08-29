@@ -238,15 +238,22 @@ public sealed class ReceivePosSaleService(
     {
         var paid = request.Payments.Sum(payment => payment.Amount);
         var credit = request.Credit?.Amount ?? 0m;
+        var withholding = request.CommercialSnapshot.Withholding;
+        if (withholding is not null &&
+            (withholding.GrossAmount != request.CommercialSnapshot.PayableAmount ||
+             withholding.WithholdingTotal != withholding.Lines.Sum(line => line.Amount) ||
+             withholding.NetAmount + withholding.WithholdingTotal != withholding.GrossAmount))
+            throw new PosSaleInvalidException(
+                "The immutable sale withholding snapshot does not reconcile.");
         if (request.Payments.Any(payment => payment.Amount <= 0) ||
             request.Payments.Select(payment => payment.PaymentNumber).Distinct().Count() != request.Payments.Count ||
             request.Payments.Any(payment =>
                 payment.CardFranchiseCode?.Length > 64 || payment.ApprovalNumber?.Length > 100 ||
                 (payment.MethodCode is "Card" or "DebitCard" or "CreditCard") !=
                 (!string.IsNullOrWhiteSpace(payment.CardFranchiseCode) && !string.IsNullOrWhiteSpace(payment.ApprovalNumber))) ||
-            paid + credit != request.Lines.Sum(line => line.LineTotal))
+            paid + credit != request.CommercialSnapshot.NetPayableAmount)
             throw new PosSaleInvalidException(
-                "Actual payments plus financed balance must equal the invoice total.");
+                "Actual payments plus financed balance must equal the net sale settlement.");
         if (request.Credit is null) return;
         if (request.Credit.CustomerId == Guid.Empty || request.CustomerId != request.Credit.CustomerId)
             throw new PosSaleInvalidException(

@@ -1,5 +1,6 @@
 CREATE TABLE [dbo].[Products] (
     [ProductId] UNIQUEIDENTIFIER NOT NULL PRIMARY KEY DEFAULT NEWID(),
+    [TenantId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [ProductCode] NVARCHAR(64) NULL,
     [Reference] NVARCHAR(120) NULL,
@@ -37,6 +38,7 @@ CREATE TABLE [dbo].[Products] (
     CONSTRAINT [FK_Products_Businesses] FOREIGN KEY ([BusinessId])
         REFERENCES [dbo].[Businesses] ([BusinessId])
         ON DELETE NO ACTION,
+    CONSTRAINT [FK_Products_Tenants] FOREIGN KEY ([TenantId]) REFERENCES [dbo].[Tenants] ([TenantId]),
     CONSTRAINT [FK_Products_IntegrationConnections] FOREIGN KEY ([IntegrationConnectionId])
         REFERENCES [dbo].[IntegrationConnections] ([IntegrationConnectionId])
         ON DELETE NO ACTION,
@@ -57,6 +59,8 @@ CREATE TABLE [dbo].[Products] (
 GO
 
 CREATE INDEX [IX_Products_BusinessId] ON [dbo].[Products] ([BusinessId]);
+GO
+CREATE UNIQUE INDEX [UX_Products_Tenant_ProductCode] ON [dbo].[Products] ([TenantId], [ProductCode]) WHERE [TenantId] IS NOT NULL AND [ProductCode] IS NOT NULL;
 GO
 CREATE UNIQUE INDEX [UX_Products_Business_ProductCode] ON [dbo].[Products] ([BusinessId], [ProductCode]) WHERE [ProductCode] IS NOT NULL;
 GO

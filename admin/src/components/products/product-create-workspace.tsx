@@ -16,12 +16,12 @@ import { useProductCategories } from "@/hooks/use-products";
 import { recalculateProductPricing } from "@/lib/product-pricing-calculator";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { formatCurrency } from "@/lib/utils";
-import { goodsReceiptsApi } from "@/services/api/goods-receipts";
 import { productMerchandisingApi, type LinkedProduct, type ProductBarcode } from "@/services/api/product-merchandising";
 import { productsApi } from "@/services/api/products";
 import { productOffersApi } from "@/services/api/product-offers";
 import { PendingProductImagePicker, type PendingProductImage } from "@/components/products/product-image-gallery";
 import { ProductPicker } from "@/components/products/product-picker";
+import { PartyRoleSelect } from "@/components/parties/party-role-select";
 import { taxProfilesApi } from "@/services/api/tax-profiles";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 
@@ -69,12 +69,12 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
   const [pendingImages, setPendingImages] = useState<PendingProductImage[]>([]);
   const [linkedProducts, setLinkedProducts] = useState<LinkedProduct[]>([]);
   const [conversionMaximumLossPercent, setConversionMaximumLossPercent] = useState<number | null>(null);
+  const [selectedSupplier, setSelectedSupplier] = useState<{ name: string; identification: string } | null>(null);
   const categories = useProductCategories(false);
   const purchasePresentations = useReferenceOptions("purchase-presentation", open);
   const brands = useQuery({ queryKey: ["product-brands"], queryFn: productMerchandisingApi.brands, enabled: open });
   const units = useQuery({ queryKey: ["product-units"], queryFn: productMerchandisingApi.units, enabled: open });
   const taxes = useQuery({ queryKey: ["tax-profiles", businessId], queryFn: () => taxProfilesApi.list(false), enabled: open && !!businessId });
-  const options = useQuery({ queryKey: ["goods-receipt-options", businessId], queryFn: goodsReceiptsApi.options, enabled: open && !!businessId });
   const chain = useMemo(() => categoryChain(categories.data ?? [], form.productCategoryId), [categories.data, form.productCategoryId]);
   const salesTax = taxes.data?.find((item) => item.taxProfileId === form.salesTaxProfileId);
   const purchaseTax = taxes.data?.find((item) => item.taxProfileId === form.purchaseTaxProfileId);
@@ -107,7 +107,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
       if (!(form.margin >= 0 && form.margin < 100)) throw new Error("El margen debe estar entre 0 % y menos de 100 %.");
       if (!(form.salePrice > 0)) throw new Error("El precio público debe ser mayor que cero.");
       if (form.isWeighable && !form.allowsFractionalSale) throw new Error("Habilita la venta fraccionada antes de usar balanza.");
-      const supplier = options.data?.suppliers.find((item) => item.supplierId === form.supplierId);
+      const supplier = form.supplierId && selectedSupplier ? { supplierId: form.supplierId, ...selectedSupplier } : null;
       const product = await productsApi.createCatalog({
         businessId,
         productCode: "", reference: form.reference.trim() || null,
@@ -239,7 +239,7 @@ export function ProductCreateWorkspace({ open, onOpenChange, onCreated }: Props)
               </Section>
 
               <Section id="new-supplier" icon={Truck} title="Proveedor principal y empaque habitual" description="Requerido para que cada producto tenga trazabilidad de compra desde su creación.">
-                <div className="grid items-start gap-4 lg:grid-cols-3"><Field label="Proveedor principal *" error={fieldErrors.supplierId}><Select value={form.supplierId??undefined} onValueChange={(value) => setForm({ ...form, supplierId:value })}><SelectTrigger aria-invalid={Boolean(fieldErrors.supplierId)}><SelectValue placeholder="Selecciona un proveedor" /></SelectTrigger><SelectContent>{(options.data?.suppliers ?? []).map((supplier) => <SelectItem key={supplier.supplierId} value={supplier.supplierId}>{supplier.name} · {supplier.identification}</SelectItem>)}</SelectContent></Select></Field><Field label="Código del proveedor"><Input value={form.supplierProductCode} onChange={(e) => setForm({ ...form, supplierProductCode: e.target.value })} /></Field><Field label="Empaque en que lo entrega"><Select value={form.packageName} onValueChange={(value) => setForm({ ...form, packageName: value })}><SelectTrigger><SelectValue placeholder="Selecciona el empaque" /></SelectTrigger><SelectContent>{(purchasePresentations.data ?? []).map((option) => <SelectItem key={option.id} value={option.code}>{option.label}</SelectItem>)}</SelectContent></Select></Field><Field label="Contenido por empaque"><Input type="number" min="0.000001" step="0.001" value={form.unitsPerPackage} onChange={(e) => setForm({ ...form, unitsPerPackage: Number(e.target.value) })} /></Field></div>
+                <div className="grid items-start gap-4 lg:grid-cols-3"><Field label="Proveedor principal *" error={fieldErrors.supplierId}><PartyRoleSelect role="Supplier" value={form.supplierId??""} placeholder="Busca un proveedor" onChange={(value, party) => { if (!party) return; setSelectedSupplier({ name: party.displayName, identification: party.identification ?? "" }); setForm({ ...form, supplierId:value }); }}/></Field><Field label="Código del proveedor"><Input value={form.supplierProductCode} onChange={(e) => setForm({ ...form, supplierProductCode: e.target.value })} /></Field><Field label="Empaque en que lo entrega"><Select value={form.packageName} onValueChange={(value) => setForm({ ...form, packageName: value })}><SelectTrigger><SelectValue placeholder="Selecciona el empaque" /></SelectTrigger><SelectContent>{(purchasePresentations.data ?? []).map((option) => <SelectItem key={option.id} value={option.code}>{option.label}</SelectItem>)}</SelectContent></Select></Field><Field label="Contenido por empaque"><Input type="number" min="0.000001" step="0.001" value={form.unitsPerPackage} onChange={(e) => setForm({ ...form, unitsPerPackage: Number(e.target.value) })} /></Field></div>
               </Section>
               <Section id="new-taxes" icon={CircleDollarSign} title="IVA, costo y precio" description="El IVA se incluye en el precio público. El precio preparado y el público nacen con el mismo valor.">
                 <div className="grid gap-4 md:grid-cols-3"><Field label="IVA de venta *" error={fieldErrors.salesTaxProfileId}><Select value={form.salesTaxProfileId} onValueChange={(value) => { const rate = taxes.data?.find((item) => item.taxProfileId === value)?.rate ?? 0; const next = recalculateProductPricing("cost", form.cost, { cost: form.cost, margin: form.margin, salePrice: form.salePrice, salesTaxRate: rate }); setForm({ ...form, salesTaxProfileId: value, salePrice: next.salePrice }); }}><SelectTrigger aria-invalid={Boolean(fieldErrors.salesTaxProfileId)}><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(taxes.data ?? []).map((tax) => <SelectItem key={tax.taxProfileId} value={tax.taxProfileId}>{tax.name} · {tax.rate}%</SelectItem>)}</SelectContent></Select></Field><Field label="IVA de compra *" error={fieldErrors.purchaseTaxProfileId}><Select value={form.purchaseTaxProfileId} onValueChange={(value) => { const rate = taxes.data?.find((item) => item.taxProfileId === value)?.rate ?? 0; setForm({ ...form, purchaseTaxProfileId: value, purchaseTaxTreatment: rate === 0 ? "NotApplicable" : form.purchaseTaxTreatment === "NotApplicable" ? "DeductibleInputVat" : form.purchaseTaxTreatment }); }}><SelectTrigger aria-invalid={Boolean(fieldErrors.purchaseTaxProfileId)}><SelectValue placeholder="Selecciona" /></SelectTrigger><SelectContent>{(taxes.data ?? []).map((tax) => <SelectItem key={tax.taxProfileId} value={tax.taxProfileId}>{tax.name} · {tax.rate}%</SelectItem>)}</SelectContent></Select></Field><Field label="Tratamiento del IVA de compra"><Select value={form.purchaseTaxTreatment} disabled={(purchaseTax?.rate ?? 0) === 0} onValueChange={(value) => setForm({ ...form, purchaseTaxTreatment: value as CreateState["purchaseTaxTreatment"] })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="DeductibleInputVat">IVA descontable</SelectItem><SelectItem value="CapitalizedCost">Mayor valor del costo</SelectItem><SelectItem value="NotApplicable">No aplica</SelectItem></SelectContent></Select></Field></div>

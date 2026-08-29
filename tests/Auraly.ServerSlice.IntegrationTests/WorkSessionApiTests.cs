@@ -109,7 +109,8 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
 
         using var response = await client.GetAsync(
             $"/api/commerce/v1/work-sessions/{opened.WorkSessionId:D}/closure-preview");
-        response.EnsureSuccessStatusCode();
+        Assert.True(response.IsSuccessStatusCode,
+            $"Closure preview failed with {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
         var preview = await response.Content.ReadFromJsonAsync<WorkSessionClosurePreviewView>();
 
         Assert.NotNull(preview);
@@ -117,9 +118,9 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
             value => value.PaymentMethodCode,
             StringComparer.OrdinalIgnoreCase);
         Assert.Contains("Cash", totals.Keys);
-        Assert.Contains("DebitCard", totals.Keys);
-        Assert.Contains("CreditCard", totals.Keys);
+        Assert.Contains("Card", totals.Keys);
         Assert.Contains("Transfer", totals.Keys);
+        Assert.Equal(3, totals.Values.Count(value => value.RequiresCount));
         Assert.DoesNotContain("BankTransfer", totals.Keys);
         Assert.DoesNotContain("Deposit", totals.Keys);
         Assert.All(totals.Values, value => Assert.Equal(0m, value.NetAmount));
@@ -216,9 +217,9 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
                 "Faltante de efectivo verificado",
                 PaymentCounts:
                 [
-                    new WorkSessionPaymentCount("DebitCard", 30_000m),
-                    new WorkSessionPaymentCount("CreditCard", 20_000m),
-                    new WorkSessionPaymentCount("Cash", 75_000m)
+                    new WorkSessionPaymentCount("Cash", 75_000m),
+                    new WorkSessionPaymentCount("Card", 50_000m),
+                    new WorkSessionPaymentCount("Transfer", 30_000m)
                 ]));
         Assert.Equal(0m, closure.TotalSales);
         Assert.Equal(0m, closure.TotalRefunds);
@@ -233,15 +234,12 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         Assert.Equal(80_000m, totals["Cash"].NetAmount);
         Assert.Equal(75_000m, totals["Cash"].CountedAmount);
         Assert.Equal(-5_000m, totals["Cash"].Difference);
-        Assert.Equal(30_000m, totals["DebitCard"].NetAmount);
-        Assert.Equal(30_000m, totals["DebitCard"].CountedAmount);
-        Assert.Equal(0m, totals["DebitCard"].Difference);
-        Assert.Equal(20_000m, totals["CreditCard"].NetAmount);
-        Assert.Equal(20_000m, totals["CreditCard"].CountedAmount);
-        Assert.Equal(0m, totals["CreditCard"].Difference);
+        Assert.Equal(50_000m, totals["Card"].NetAmount);
+        Assert.Equal(50_000m, totals["Card"].CountedAmount);
+        Assert.Equal(0m, totals["Card"].Difference);
         Assert.Equal(30_000m, totals["Transfer"].NetAmount);
-        Assert.Null(totals["Transfer"].CountedAmount);
-        Assert.Null(totals["Transfer"].Difference);
+        Assert.Equal(30_000m, totals["Transfer"].CountedAmount);
+        Assert.Equal(0m, totals["Transfer"].Difference);
 
         var replay = await CloseAsync(
             client,
@@ -252,9 +250,9 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
                 "Faltante de efectivo verificado",
                 PaymentCounts:
                 [
-                    new WorkSessionPaymentCount("DebitCard", 30_000m),
-                    new WorkSessionPaymentCount("CreditCard", 20_000m),
-                    new WorkSessionPaymentCount("Cash", 75_000m)
+                    new WorkSessionPaymentCount("Cash", 75_000m),
+                    new WorkSessionPaymentCount("Card", 50_000m),
+                    new WorkSessionPaymentCount("Transfer", 30_000m)
                 ]));
         Assert.Equal(closure.WorkSessionClosureId, replay.WorkSessionClosureId);
 
@@ -284,6 +282,60 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
 
         var reopened = await OpenAsync(client, command);
         Assert.NotEqual(opened.WorkSessionId, reopened.WorkSessionId);
+    }
+
+    [Fact]
+    public async Task Closure_reconciliation_reclassifies_a_payment_method_error_without_negative_display_amounts()
+    {
+        var userId = await CreateUserAsync("work-session-reconciliation");
+        using var client = fixture.CreateUserClient(
+            userId,
+            WorkSessionPermissionCodes.Read,
+            WorkSessionPermissionCodes.Open,
+            WorkSessionPermissionCodes.Close,
+            WorkSessionPermissionCodes.ReadCashDifferences,
+            WorkSessionPermissionCodes.ReconcileClosures);
+        var opened = await OpenAsync(client, new OpenWorkSessionRequest(
+            fixture.BusinessId, fixture.WarehouseId, null));
+        await InsertMovementsAsync(opened.WorkSessionId, userId);
+        var closure = await CloseAsync(client, opened.WorkSessionId, $"close-{Guid.NewGuid():N}",
+            new CloseWorkSessionRequest(100_000m, "Medio de pago por verificar", PaymentCounts:
+            [
+                new WorkSessionPaymentCount("Cash", 100_000m),
+                new WorkSessionPaymentCount("Card", 50_000m),
+                new WorkSessionPaymentCount("Transfer", 10_000m)
+            ]));
+
+        var from = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-1));
+        var to = DateOnly.FromDateTime(DateTime.UtcNow.AddDays(1));
+        var page = await client.GetFromJsonAsync<WorkSessionClosurePage>(
+            $"/api/commerce/v1/work-sessions/closures?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}");
+        var listed = Assert.Single(page!.Items, item => item.WorkSessionClosureId == closure.WorkSessionClosureId);
+        Assert.Equal("Pending", listed.ReconciliationStatus);
+        Assert.Equal(20_000m, listed.PaymentTotals.Single(item => item.PaymentMethodCode == "Cash").Difference);
+        Assert.Equal(-20_000m, listed.PaymentTotals.Single(item => item.PaymentMethodCode == "Transfer").Difference);
+
+        using var message = new HttpRequestMessage(HttpMethod.Post,
+            $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/reconcile")
+        {
+            Content = JsonContent.Create(new ReconcileWorkSessionClosureRequest(
+            [
+                new("Cash", 100_000m, true, null),
+                new("Card", 50_000m, true, null),
+                new("Transfer", 10_000m, true, null)
+            ], [new("Transfer", "Cash", 20_000m)], "Transferencia registrada como efectivo"))
+        };
+        message.Headers.Add("Idempotency-Key", $"reconcile-{Guid.NewGuid():N}");
+        using var response = await client.SendAsync(message);
+        response.EnsureSuccessStatusCode();
+        var reconciliation = await response.Content.ReadFromJsonAsync<WorkSessionClosureReconciliationView>();
+        Assert.NotNull(reconciliation);
+        Assert.Equal("Reconciled", reconciliation.Status);
+        Assert.Equal("NotRequired", reconciliation.AccountingStatus);
+        var reclassification = Assert.Single(reconciliation.Reclassifications);
+        Assert.Equal("Transfer", reclassification.FromPaymentMethodCode);
+        Assert.Equal("Cash", reclassification.ToPaymentMethodCode);
+        Assert.Equal(20_000m, reclassification.Amount);
     }
 
     private static async Task<WorkSessionView> OpenAsync(

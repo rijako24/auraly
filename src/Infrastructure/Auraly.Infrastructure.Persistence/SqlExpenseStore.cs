@@ -24,7 +24,8 @@ public sealed class SqlExpenseStore(SqlServerConnectionFactory connections, IAur
             LEFT JOIN dbo.AccountingCostCenters cc ON cc.CostCenterId=c.DefaultCostCenterId
             WHERE c.BusinessId=@BusinessId AND c.IsActive=1 ORDER BY c.Name,c.Code;
             SELECT SupplierId,Identification,Name FROM dbo.Suppliers
-              WHERE BusinessId=@BusinessId AND IsActive=1 ORDER BY Name,Identification;
+              WHERE BusinessId=@BusinessId AND IsActive=1 AND 1=0
+              ORDER BY Name,Identification;
             SELECT a.AccountId,a.Code,a.Name FROM dbo.AccountingAccounts a
               JOIN dbo.Businesses b ON b.TenantId=a.TenantId
               WHERE b.BusinessId=@BusinessId AND a.IsActive=1 AND a.AllowsPosting=1 AND a.AccountType=N'Expense'

@@ -99,6 +99,8 @@ Los códigos son estables; label, descripción, activación y orden pertenecen a
 
 Catálogos iniciales: medios de pago, tipos de documento de venta, presentaciones de compra, tipos de operación de inventario y tipos de bot. Al tocar otro selector heredado, se agrega su slice completo en esta ruta; no se crea otro endpoint genérico ni otra lista local.
 
+Los terceros no pasan por `reference.Options`: su propietario es el workspace de `Parties`. Clientes, proveedores, vendedores, transportadores, empleados y usuarios se resuelven mediante la consulta paginada de `Parties`, filtrada por rol y scope, conservando `PartyId` o el ID del rol según el contrato consumidor.
+
 ## Fronteras y persistencia
 
 - API: autenticación, autorización, binding, error HTTP y llamada al caso de uso.

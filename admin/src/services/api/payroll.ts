@@ -3,6 +3,7 @@ import { apiClient } from "@/services/api/client";
 export interface PayrollCatalogOption { optionId:string;catalogCode:string;code:string;label:string;description:string|null;metadataCode:string|null;dianCode:string|null;isActive:boolean;sortOrder:number }
 export interface PayrollConcept { conceptId:string;code:string;name:string;natureCode:string;calculationMethodCode:string;treatmentCode:string;dianConceptCode:string|null;accountingCategoryCode:string;systemRoleCode:string|null;isSalaryBase:boolean;isSocialSecurityBase:boolean;isBenefitsBase:boolean;isTaxWithholdingBase:boolean;requiresDeductionAgreement:boolean;effectiveFrom:string;effectiveTo:string|null;isActive:boolean;rowVersion:string }
 export interface PayrollEmployment { employmentId:string;partyId:string;businessId:string;contractNumber:string;employeeName:string;monthlySalary:number;isActive:boolean;employeeId:string|null;contractTypeOptionId:string;salaryTypeOptionId:string;payFrequencyOptionId:string;riskClassOptionId:string;workerTypeOptionId:string;workerSubtypeOptionId:string|null;paymentMethodOptionId:string;startDate:string;endDate:string|null;integralSalaryPercentage:number|null;bankAccountReference:string|null;bankOptionId:string|null;bankAccountTypeOptionId:string|null;bankAccountNumber:string|null;rowVersion:string }
+export interface PayrollEmploymentPage { items:PayrollEmployment[];page:number;pageSize:number;totalCount:number;totalPages:number }
 export interface PayrollParty { partyId:string;employeeId:string;identification:string;name:string }
 export interface PayrollRuleParameter { code:string;numericValue:number;unitCode:string;description:string|null }
 export interface PayrollRuleSet { ruleSetId:string;countryCode:string;code:string;name:string;effectiveFrom:string;effectiveTo:string|null;sourceReference:string;status:string;parameters:PayrollRuleParameter[];rowVersion:string }
@@ -35,6 +36,7 @@ export interface CreatePayrollPayment { paymentBatchId:string;payrollRunId:strin
 
 export const payrollApi = {
   options: () => apiClient.get<PayrollOptions>("/commerce/v1/payroll/options"),
+  employments: (params:{page:number;pageSize:number;search?:string;isActive?:boolean;employmentId?:string}) => apiClient.get<PayrollEmploymentPage>("/commerce/v1/payroll/employments",params),
   runs: () => apiClient.get<PayrollRunSummary[]>("/commerce/v1/payroll/runs"),
   run: (id:string) => apiClient.get<PayrollRun>(`/commerce/v1/payroll/runs/${id}`),
   createRun: (request:CreateRun) => apiClient.post<PayrollRun>("/commerce/v1/payroll/runs",request),

@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Building2, CheckCircle2, FileKey2, Loader2, MonitorSmartphone, Receipt, Warehouse, WifiOff } from "lucide-react";
+import { ArrowLeft, Building2, CheckCircle2, FileKey2, Loader2, MonitorSmartphone, Receipt, Warehouse } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { fiscalConfigurationApi, type FiscalResolutionConfiguration } from "@/services/api/fiscal-configuration";
@@ -10,6 +10,7 @@ import {
 } from "@/services/pos/pos-fiscal-guard";
 import { rememberedSalesWorkspaceKey, salesWorkspaceKey, type SalesWorkspaceOption } from "@/services/pos/online-pos-client";
 import { resolvePosWorkspaceSelection } from "@/services/pos/pos-workspace-selection";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type Props = {
@@ -23,16 +24,19 @@ type Props = {
   onCancel?: () => void;
   edgeCapable?: boolean;
   canEnrollOffline?: boolean;
+  enrollmentUnavailableReason?: string | null;
+  enrollmentCapacity?: { active: number; maximum: number } | null;
   onEnroll?: (option: SalesWorkspaceOption, documentType: PosSaleDocumentType) => Promise<void>;
   forcedDocumentType?: PosSaleDocumentType;
 };
 
-export function PosOnlineSetup({ options, loading, error, notice, tenantName, userDisplayName, onSelect, onCancel, edgeCapable = false, canEnrollOffline = false, onEnroll, forcedDocumentType }: Props) {
+export function PosOnlineSetup({ options, loading, error, notice, tenantName, userDisplayName, onSelect, onCancel, edgeCapable = false, canEnrollOffline = false, enrollmentUnavailableReason, enrollmentCapacity, onEnroll, forcedDocumentType }: Props) {
   const businesses = useMemo(() => Array.from(new Map(options.map((option) => [option.businessId, option.businessName]))), [options]);
   const [businessId, setBusinessId] = useState("");
   const [warehouseId, setWarehouseId] = useState("");
   const [documentType, setDocumentType] = useState<PosSaleDocumentType>("SalesReceipt");
   const [busy, setBusy] = useState(false);
+  const [prepareInstalled, setPrepareInstalled] = useState(false);
   const [fiscal, setFiscal] = useState<FiscalResolutionConfiguration | null>(null);
   const [fiscalLoading, setFiscalLoading] = useState(false);
   const [fiscalError, setFiscalError] = useState<string | null>(null);
@@ -102,9 +106,11 @@ export function PosOnlineSetup({ options, loading, error, notice, tenantName, us
         {(error || fiscalError) && <p className="rounded-xl border border-red-300/20 bg-red-400/10 p-3 text-sm text-red-100">{error || fiscalError}</p>}
         {notice && <p role="status" className="flex items-center gap-2 rounded-xl border border-teal-300/25 bg-teal-300/10 p-3 text-sm font-semibold text-teal-50"><Loader2 className="h-4 w-4 animate-spin" />{notice}</p>}
         {!options.length && !error && <p className="rounded-xl border border-amber-300/20 bg-amber-300/10 p-4 text-sm text-amber-100">No hay bodegas activas disponibles para este usuario.</p>}
-        <button onClick={() => void choose("online")} disabled={!selected || busy || (invoice && fiscalLoading)} className="h-12 w-full rounded-xl bg-teal-300 font-bold text-[#071a1d] disabled:opacity-35">{busy ? "Preparando…" : "Entrar a ventas online"}</button>
-        {edgeCapable && <div className="rounded-2xl border border-teal-300/20 bg-teal-300/10 p-4 text-sm text-teal-50"><p className="font-bold">Auraly está instalado</p><p className="mt-1 text-slate-300">Puedes configurar impresión directa y balanza desde Periféricos después de entrar.</p></div>}
-        {edgeCapable && canEnrollOffline && <button type="button" onClick={() => void choose("enroll")} disabled={!selected || busy || (invoice && fiscalLoading)} className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-teal-300/40 font-bold text-teal-100 disabled:opacity-35"><WifiOff className="h-4 w-4" />Activar respaldo sin conexión</button>}
+        {edgeCapable && <label className={`flex items-start gap-3 rounded-2xl border p-4 text-sm transition ${prepareInstalled ? "border-teal-300/50 bg-teal-300/15" : "border-white/15 bg-[#102e33]"} ${canEnrollOffline ? "cursor-pointer" : "opacity-70"}`}>
+          <Checkbox className="mt-0.5 border-teal-200 data-[state=checked]:bg-teal-300 data-[state=checked]:text-[#071a1d]" checked={prepareInstalled} disabled={!canEnrollOffline || busy} onCheckedChange={(checked) => setPrepareInstalled(checked === true)} />
+          <span><strong className="block text-white">Preparar este equipo para trabajar sin conexión</strong><span className="mt-1 block leading-5 text-slate-300">Descarga usuarios, permisos, productos, clientes y precios. Después del enrolamiento la caja usa siempre el motor local sincronizado.</span>{enrollmentCapacity && <span className="mt-2 block text-xs text-teal-100">Cajas enroladas: {enrollmentCapacity.active} de {enrollmentCapacity.maximum}</span>}{!canEnrollOffline && <span role="alert" className="mt-2 block font-semibold text-amber-100">{enrollmentUnavailableReason ?? "No es posible enrolar otra caja. Comunícate con el administrador."}</span>}</span>
+        </label>}
+        <button onClick={() => void choose(edgeCapable && prepareInstalled ? "enroll" : "online")} disabled={!selected || busy || (invoice && fiscalLoading)} className="h-12 w-full rounded-xl bg-teal-300 font-bold text-[#071a1d] disabled:opacity-35">{busy ? (prepareInstalled ? "Preparando equipo…" : "Entrando…") : "Continuar a ventas"}</button>
       </div>}</div>
     </section></div>
   </main>;

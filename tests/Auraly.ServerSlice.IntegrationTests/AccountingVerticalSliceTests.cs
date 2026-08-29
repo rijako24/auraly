@@ -281,7 +281,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                     "The accounting defaults response is empty.");
             Assert.True(defaults.IsReady);
             Assert.True(defaults.AccountCount >= 43);
-            Assert.Equal(49, defaults.MappingCount);
+            Assert.Equal(51, defaults.MappingCount);
             Assert.True(defaults.HasDefaultCostCenter);
             Assert.True(defaults.HasOpenPeriod);
         }
@@ -383,7 +383,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             Assert.Equal(-1_000m, closure.CashDifference);
             await AssertBalancedAsync(closure.WorkSessionClosureId);
             Assert.Equal(1_000m, await AccountAmountAsync(
-                closure.WorkSessionClosureId, "539596", debit: true));
+                closure.WorkSessionClosureId, "139995", debit: true));
             Assert.Equal(1_000m, await AccountAmountAsync(
                 closure.WorkSessionClosureId, "110505", debit: false));
 
@@ -414,7 +414,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             Assert.Equal(1_000m, await AccountAmountAsync(
                 secondClosure.WorkSessionClosureId, "110505", debit: true));
             Assert.Equal(1_000m, await AccountAmountAsync(
-                secondClosure.WorkSessionClosureId, "429596", debit: false));
+                secondClosure.WorkSessionClosureId, "139995", debit: false));
 
             using var differencesResponse = await cashier.GetAsync(
                 "/api/commerce/v1/work-sessions/cash-differences?from=2026-01-01&to=2026-12-31");
@@ -1796,10 +1796,10 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         await connection.OpenAsync();
         await using var command = new SqlCommand("""
             INSERT dbo.Products
-              (ProductId,BusinessId,Source,Sku,Name,Currency,
+              (ProductId,TenantId,BusinessId,Source,Sku,Name,Currency,
                ManageStock,IsActive,CreatedAt)
             VALUES
-              (@ProductId,@BusinessId,0,@Sku,N'Servicio de compra',
+              (@ProductId,@TenantId,@BusinessId,0,@Sku,N'Servicio de compra',
                N'COP',0,1,SYSUTCDATETIME());
 
             INSERT dbo.ProductPrices
@@ -1816,6 +1816,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
                SYSDATETIMEOFFSET());
             """, connection);
         command.Parameters.AddWithValue("@ProductId", productId);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
         command.Parameters.AddWithValue("@SupplierId", fixture.SupplierId);
         command.Parameters.AddWithValue("@Sku", $"NS-{productId:N}");
@@ -1832,7 +1833,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
             accountCode,
             new[] { "143505", "240810", "519595", "220505",
                 "236540", "236701", "236805", "110505", "111005", "130505",
-                "130510", "130515", "130520", "429595", "429596", "539595", "539596" });
+                "130510", "130515", "130520", "139995", "429595", "429596", "539595", "539596" });
         var column = debit ? "Debit" : "Credit";
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();

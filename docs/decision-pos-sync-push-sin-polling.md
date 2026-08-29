@@ -88,6 +88,14 @@ No se descargan inventario completo, costos, costo promedio, márgenes,
 propuestas de precio, secretos fiscales, reportes ni consolidaciones. Los
 pedidos continúan online conforme al diseño vigente.
 
+La validación de existencias conserva esta frontera: cuando Auraly Server está
+disponible, POS Edge consulta en línea la proyección canónica
+`InventoryBalances` de la bodega enrolada. Si el servidor no responde, la
+captura, el cambio de cantidad y la recuperación de un borrador no se bloquean
+por inventario, porque no existe una copia local autoritativa que permita
+validarlo. La venta queda durable en el outbox y, al sincronizar, entra por el
+motor documental canónico; POS Edge nunca reconstruye ni descarga saldos.
+
 ## 4. Transporte y escala
 
 Cada caja abre una conexión TLS saliente:
@@ -100,6 +108,11 @@ La API HTTP o Function no mantiene los sockets. Web PubSub realiza el fan-out.
 Las conexiones se agrupan por `BusinessId` y stream. Una importación de mil
 productos produce una invalidación agregada por cursor, no mil llamadas a cada
 caja.
+
+Solo un POS instalado y enrolado abre esta conexión. El navegador y el escritorio
+instalado que decidió continuar sin enrolarse trabajan contra la API online y no
+registran el suscriptor push, no descargan deltas ni consumen una conexión de Azure
+Web PubSub.
 
 ## 5. Garantía durable sin polling
 

@@ -92,11 +92,11 @@ IF NOT EXISTS (SELECT 1 FROM dbo.TaxProfiles WHERE TaxProfileId = @TaxProfileId)
 
 IF NOT EXISTS (SELECT 1 FROM dbo.Products WHERE ProductId = @ProductId)
     INSERT dbo.Products(
-        ProductId,BusinessId,ProductCode,Reference,BaseUnitCode,TaxProfileId,
+        ProductId,TenantId,BusinessId,ProductCode,Reference,BaseUnitCode,TaxProfileId,
         Source,Sku,Name,Currency,ManageStock,IsWeighable,
         IsActive,CreatedAt)
     VALUES(
-        @ProductId,@BusinessId,N'DEMO-001',N'REF-DEMO-001',N'EA',@TaxProfileId,
+        @ProductId,(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId),@BusinessId,N'DEMO-001',N'REF-DEMO-001',N'EA',@TaxProfileId,
         0,N'DEMO-001',N'Producto Auraly de demostración',N'COP',1,0,
         1,SYSUTCDATETIME());
 

@@ -10,5 +10,6 @@ public record BusinessDto(
     string? Email,
     string? Website,
     string TimeZone,
+    bool SharesProductPrices,
     bool IsActive,
     DateTime CreatedAt);

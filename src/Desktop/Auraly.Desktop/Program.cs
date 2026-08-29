@@ -55,15 +55,6 @@ internal static class Program
         }
     }
 
-    internal static string LoadStartupMode(string path, bool enrolled)
-    {
-        if (!File.Exists(path)) return enrolled ? "enrolled" : "online";
-        var mode = File.ReadAllText(path).Trim().ToLowerInvariant();
-        return mode is "online" or "enrolled"
-            ? mode
-            : enrolled ? "enrolled" : "online";
-    }
-
     internal static DesktopConfiguration LoadConfiguration(string root)
     {
         var path = Path.Combine(root, "desktopsettings.json");
@@ -168,8 +159,6 @@ internal static class Program
         info.Environment["PosEdge__SecretKeyDirectory"] = Path.Combine(data, "keys");
         info.Environment["PosEdge__EnrollmentPackagePath"] =
             Path.Combine(data, "enrollment.protected");
-        info.Environment["PosEdge__StartupModePath"] =
-            Path.Combine(data, "startup-mode");
         return StartLogged(info, "edge", edgeOrigin);
     }
 

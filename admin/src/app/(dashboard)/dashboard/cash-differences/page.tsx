@@ -1,79 +1,57 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Banknote, CheckCircle2, Loader2 } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowRightLeft, CheckCircle2, Clock3, Loader2, Scale } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { DatePicker } from "@/components/ui/date-picker";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { workSessionDifferencesApi } from "@/services/api/work-session-differences";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { useReferenceOptions } from "@/hooks/use-reference-options";
+import { workSessionDifferencesApi, type ReconcileClosureRequest, type WorkSessionClosure } from "@/services/api/work-session-differences";
+import { workSessionPaymentMethodName } from "@/services/pos/pos-work-session-close";
 
-const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
-const isoDate = (value: Date) => value.toISOString().slice(0, 10);
+const money=new Intl.NumberFormat("es-CO",{style:"currency",currency:"COP",maximumFractionDigits:0});
+const isoDate=(value:Date)=>value.toISOString().slice(0,10);
+const result=(difference:number|null)=>difference==null?"Sin conteo":difference>0?`Sobrante ${money.format(difference)}`:difference<0?`Faltante ${money.format(Math.abs(difference))}`:"Cuadra";
 
-export default function CashDifferencesPage() {
-  const today = useMemo(() => new Date(), []);
-  const monthStart = useMemo(() => new Date(today.getFullYear(), today.getMonth(), 1), [today]);
-  const [from, setFrom] = useState(isoDate(monthStart));
-  const [to, setTo] = useState(isoDate(today));
-  const differences = useQuery({
-    queryKey: ["work-session-cash-differences", from, to],
-    queryFn: () => workSessionDifferencesApi.list(from, to),
-    enabled: Boolean(from && to && from <= to),
-  });
-  const rows = differences.data ?? [];
-  const surplus = rows.filter((row) => row.difference > 0).reduce((sum, row) => sum + row.difference, 0);
-  const shortage = rows.filter((row) => row.difference < 0).reduce((sum, row) => sum + Math.abs(row.difference), 0);
-
+export default function CashClosuresPage(){
+  const today=useMemo(()=>new Date(),[]);const monthStart=useMemo(()=>new Date(today.getFullYear(),today.getMonth(),1),[today]);
+  const [from,setFrom]=useState(isoDate(monthStart));const [to,setTo]=useState(isoDate(today));const [page,setPage]=useState(1);const [selected,setSelected]=useState<WorkSessionClosure|null>(null);
+  const closures=useQuery({queryKey:["work-session-closures",from,to,page],queryFn:()=>workSessionDifferencesApi.listClosures(from,to,undefined,page,50),enabled:Boolean(from&&to&&from<=to)});
+  const rows=closures.data?.items??[];const pending=rows.filter(row=>row.reconciliationStatus==="Pending").length;
   return <div className="space-y-5">
-    <header className="rounded-3xl bg-gradient-to-r from-slate-950 via-amber-950 to-orange-700 p-6 text-white shadow-lg">
-      <p className="text-xs font-bold uppercase tracking-[.2em] text-amber-200">Control de cierres</p>
-      <h1 className="mt-2 text-3xl font-black">Diferencias de efectivo</h1>
-      <p className="mt-2 max-w-3xl text-sm text-amber-50/80">Cada sobrante o faltante se contabiliza al cerrar la sesión y permanece aquí con trazabilidad por cajero.</p>
-    </header>
-
-    <div className="grid gap-4 sm:grid-cols-3">
-      <Summary title="Cierres con diferencia" value={String(rows.length)} icon={<Banknote className="h-5 w-5" />} />
-      <Summary title="Sobrantes" value={money.format(surplus)} icon={<CheckCircle2 className="h-5 w-5 text-emerald-600" />} />
-      <Summary title="Faltantes" value={money.format(shortage)} icon={<AlertTriangle className="h-5 w-5 text-red-600" />} />
-    </div>
-
-    <Card className="rounded-3xl">
-      <CardHeader className="gap-4 border-b sm:flex-row sm:items-end sm:justify-between">
-        <div><CardTitle>Historial auditable</CardTitle><p className="mt-1 text-sm text-muted-foreground">Consulta los cierres con diferencia dentro del periodo seleccionado.</p></div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="min-w-0 space-y-1.5"><Label>Desde</Label><DatePicker value={from} onChange={setFrom} className="sm:w-56" /></div>
-          <div className="min-w-0 space-y-1.5"><Label>Hasta</Label><DatePicker value={to} onChange={setTo} className="sm:w-56" /></div>
-        </div>
-      </CardHeader>
-      <CardContent className="p-0">
-        {differences.isLoading && <div className="flex items-center justify-center gap-2 p-10 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" />Consultando cierres…</div>}
-        {differences.isError && <p className="p-8 text-center text-sm text-destructive">No fue posible consultar las diferencias.</p>}
-        {!differences.isLoading && !rows.length && <p className="p-10 text-center text-sm text-muted-foreground">No hay cierres con diferencia en el periodo.</p>}
-        {rows.length > 0 && <div className="overflow-x-auto"><table className="w-full min-w-[980px] text-sm">
-          <thead className="bg-muted/50"><tr><th className="p-3 text-left">Cierre</th><th className="text-left">Cajero</th><th className="text-left">Sede</th><th className="text-right">Esperado</th><th className="text-right">Contado</th><th className="text-right">Diferencia</th><th className="text-left">Tratamiento</th><th className="pr-3 text-left">Contabilidad</th></tr></thead>
-          <tbody>{rows.map((row) => <tr key={row.workSessionClosureId} className="border-t">
-            <td className="p-3 whitespace-nowrap">{new Date(row.closedAt).toLocaleString("es-CO")}</td>
-            <td>{row.userName}</td><td>{row.businessName}<small className="block text-muted-foreground">{row.warehouseName}</small></td>
-            <td className="text-right">{money.format(row.expectedCash)}</td><td className="text-right">{money.format(row.countedCash)}</td>
-            <td className={`text-right font-bold ${row.difference > 0 ? "text-emerald-700" : "text-red-700"}`}>{row.difference > 0 ? "+" : "−"}{money.format(Math.abs(row.difference))}</td>
-            <td><Badge variant={row.difference > 0 ? "secondary" : "destructive"}>{row.difference > 0 ? "Ingreso por sobrante" : "Gasto por faltante"}</Badge></td>
-            <td className="pr-3"><AccountingStatus status={row.accountingStatus} entry={row.accountingEntryNumber} /></td>
-          </tr>)}</tbody>
-        </table></div>}
-      </CardContent>
-    </Card>
-  </div>;
+    <header className="rounded-3xl bg-gradient-to-r from-slate-950 via-teal-950 to-cyan-700 p-6 text-white shadow-lg"><p className="text-xs font-bold uppercase tracking-[.2em] text-teal-200">Control y conciliación</p><h1 className="mt-2 text-3xl font-black">Cierres de caja</h1><p className="mt-2 max-w-3xl text-sm text-teal-50/80">Todos los cierres, sus conteos por medio de pago, reclasificaciones y salida contable en un solo lugar.</p></header>
+    <div className="grid gap-4 sm:grid-cols-3"><Summary title="Cierres en esta página" value={String(rows.length)} icon={<Scale className="h-5 w-5"/>}/><Summary title="Pendientes" value={String(pending)} icon={<Clock3 className="h-5 w-5 text-amber-600"/>}/><Summary title="Conciliados" value={String(rows.length-pending)} icon={<CheckCircle2 className="h-5 w-5 text-emerald-600"/>}/></div>
+    <Card className="rounded-3xl"><CardHeader className="gap-4 border-b sm:flex-row sm:items-end sm:justify-between"><div><CardTitle>Historial auditable</CardTitle><p className="mt-1 text-sm text-muted-foreground">La vista anterior de diferencias queda integrada en el detalle de cada cierre.</p></div><div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1.5"><Label>Desde</Label><DatePicker value={from} onChange={(value)=>{setFrom(value);setPage(1)}} className="sm:w-52"/></div><div className="space-y-1.5"><Label>Hasta</Label><DatePicker value={to} onChange={(value)=>{setTo(value);setPage(1)}} className="sm:w-52"/></div></div></CardHeader><CardContent className="p-0">
+      {closures.isLoading&&<div className="flex items-center justify-center gap-2 p-10 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin"/>Consultando cierres…</div>}{closures.isError&&<p className="p-8 text-center text-sm text-destructive">No fue posible consultar los cierres.</p>}
+      {!closures.isLoading&&!rows.length&&<p className="p-10 text-center text-sm text-muted-foreground">No hay cierres en el periodo.</p>}
+      {!!rows.length&&<div className="overflow-x-auto"><table className="w-full min-w-[1100px] text-sm"><thead className="bg-muted/50"><tr><th className="p-3 text-left">Periodo</th><th className="text-left">Cajero / sede</th><th className="text-right">Ventas</th><th className="text-right">Devoluciones</th><th className="text-left">Resultados del arqueo</th><th className="text-left">Estado</th><th className="pr-3 text-right">Acción</th></tr></thead><tbody>{rows.map(row=><tr key={row.workSessionClosureId} className="border-t align-top"><td className="p-3 whitespace-nowrap">{new Date(row.openedAt).toLocaleString("es-CO")}<small className="block text-muted-foreground">a {new Date(row.closedAt).toLocaleString("es-CO")}</small></td><td>{row.userName}<small className="block text-muted-foreground">{row.businessName} · {row.warehouseName}</small></td><td className="text-right">{money.format(row.totalSales)}<small className="block text-muted-foreground">{row.salesCount} ventas · {row.creditSalesCount} crédito</small></td><td className="text-right">{money.format(row.totalRefunds)}<small className="block text-muted-foreground">{row.returnCount} devoluciones</small></td><td>{row.paymentTotals.filter(item=>item.requiresCount).map(item=><small key={item.paymentMethodCode} className={`block font-semibold ${item.difference&&item.difference<0?"text-red-700":item.difference&&item.difference>0?"text-emerald-700":"text-slate-600"}`}>{workSessionPaymentMethodName(item.paymentMethodCode)}: {result(item.difference)}</small>)}</td><td><Status value={row.reconciliationStatus}/><small className="mt-1 block text-muted-foreground">Contabilidad: {row.accountingStatus}</small></td><td className="pr-3 text-right"><Button size="sm" variant={row.reconciliationStatus==="Pending"?"default":"outline"} onClick={()=>setSelected(row)}>{row.reconciliationStatus==="Pending"?"Conciliar":"Ver detalle"}</Button></td></tr>)}</tbody></table></div>}
+      {!!closures.data&&<div className="flex items-center justify-between border-t p-4"><small className="text-muted-foreground">{closures.data.totalItems} cierres</small><div className="flex gap-2"><Button variant="outline" size="sm" disabled={page===1} onClick={()=>setPage(value=>value-1)}>Anterior</Button><Button variant="outline" size="sm" disabled={page*50>=closures.data.totalItems} onClick={()=>setPage(value=>value+1)}>Siguiente</Button></div></div>}
+    </CardContent></Card>{selected&&<ReconciliationDialog closure={selected} onClose={()=>setSelected(null)}/>}</div>;
 }
 
-function Summary({ title, value, icon }: { title: string; value: string; icon: React.ReactNode }) {
-  return <Card className="rounded-3xl"><CardContent className="flex items-center gap-3 p-5"><div className="rounded-2xl bg-muted p-3">{icon}</div><div><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</p><strong className="text-xl">{value}</strong></div></CardContent></Card>;
+function ReconciliationDialog({closure,onClose}:{closure:WorkSessionClosure;onClose:()=>void}){
+  const queryClient=useQueryClient();const countable=closure.paymentTotals.filter(item=>item.requiresCount);const editable=closure.reconciliationStatus==="Pending";
+  const [verified,setVerified]=useState<Record<string,string>>(()=>Object.fromEntries(countable.map(item=>[item.paymentMethodCode,String(item.countedAmount??item.netAmount)])));
+  const [confirmed,setConfirmed]=useState<Record<string,boolean>>(()=>Object.fromEntries(countable.map(item=>[item.paymentMethodCode,false])));const [reclassifications,setReclassifications]=useState<ReconcileClosureRequest["reclassifications"]>([]);const [note,setNote]=useState("");
+  const reasons=useReferenceOptions("cash-reconciliation-reason",editable);const [reasonCode,setReasonCode]=useState("COUNT_DIFFERENCE");
+  const differences=Object.fromEntries(countable.map(item=>[item.paymentMethodCode,Number(verified[item.paymentMethodCode]??0)-item.netAmount]));
+  const adjustedDifferences={...differences};for(const item of reclassifications){adjustedDifferences[item.fromPaymentMethodCode]=(adjustedDifferences[item.fromPaymentMethodCode]??0)+item.amount;adjustedDifferences[item.toPaymentMethodCode]=(adjustedDifferences[item.toPaymentMethodCode]??0)-item.amount;}
+  const mutation=useMutation({mutationFn:()=>workSessionDifferencesApi.reconcile(closure.workSessionClosureId,{lines:countable.map(item=>({paymentMethodCode:item.paymentMethodCode,verifiedAmount:Number(verified[item.paymentMethodCode]),isConfirmed:confirmed[item.paymentMethodCode],reasonCode:adjustedDifferences[item.paymentMethodCode]===0?null:reasonCode})),reclassifications,note:note.trim()||null}),onSuccess:async()=>{await queryClient.invalidateQueries({queryKey:["work-session-closures"]});onClose();}});
+  const suggestReclassification=()=>{const shortage=countable.find(item=>differences[item.paymentMethodCode]<0);const surplus=countable.find(item=>differences[item.paymentMethodCode]>0);if(shortage&&surplus)setReclassifications([{fromPaymentMethodCode:shortage.paymentMethodCode,toPaymentMethodCode:surplus.paymentMethodCode,amount:Math.min(Math.abs(differences[shortage.paymentMethodCode]),differences[surplus.paymentMethodCode])}]);};
+  const valid=countable.every(item=>Number.isFinite(Number(verified[item.paymentMethodCode]))&&Number(verified[item.paymentMethodCode])>=0&&confirmed[item.paymentMethodCode]);
+  return <Dialog open onOpenChange={open=>!open&&onClose()}><DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto"><DialogHeader><DialogTitle>{editable?"Conciliar cierre":"Detalle del cierre"}</DialogTitle><DialogDescription>{closure.userName} · {closure.businessName} · {new Date(closure.closedAt).toLocaleString("es-CO")}</DialogDescription></DialogHeader><div className="space-y-4">{countable.map(item=><section key={item.paymentMethodCode} className="grid gap-3 rounded-2xl border p-4 sm:grid-cols-[1fr_160px_auto] sm:items-end"><div><strong>{workSessionPaymentMethodName(item.paymentMethodCode)}</strong><p className="text-sm text-muted-foreground">Esperado {money.format(item.netAmount)} · Cajero {money.format(item.countedAmount??0)}</p><p className={`mt-1 text-sm font-bold ${differences[item.paymentMethodCode]<0?"text-red-700":differences[item.paymentMethodCode]>0?"text-emerald-700":"text-slate-600"}`}>{result(differences[item.paymentMethodCode])}</p></div><div className="space-y-1"><Label>Valor verificado</Label><Input inputMode="numeric" disabled={!editable} value={verified[item.paymentMethodCode]} onChange={event=>setVerified(current=>({...current,[item.paymentMethodCode]:event.target.value.replace(/\D/g,"")}))}/></div><label className="flex h-10 items-center gap-2"><Checkbox disabled={!editable} checked={confirmed[item.paymentMethodCode]} onCheckedChange={value=>setConfirmed(current=>({...current,[item.paymentMethodCode]:value===true}))}/>Verificado</label></section>)}
+    {editable&&<div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><strong className="flex items-center gap-2 text-indigo-950"><ArrowRightLeft className="h-4 w-4"/>Reclasificar medio de pago</strong><p className="text-sm text-indigo-800">Compensa un faltante con un sobrante cuando el cajero registró el medio equivocado.</p></div><Button type="button" variant="outline" onClick={suggestReclassification}>Detectar compensación</Button></div>{reclassifications.map((item,index)=><p key={index} className="mt-3 rounded-xl bg-white p-3 text-sm font-semibold">{workSessionPaymentMethodName(item.fromPaymentMethodCode)} → {workSessionPaymentMethodName(item.toPaymentMethodCode)} · {money.format(item.amount)} <button type="button" className="ml-2 text-red-700" onClick={()=>setReclassifications([])}>Quitar</button></p>)}</div>}
+    {editable&&Object.values(differences).some(value=>value!==0)&&<div className="space-y-2"><Label>Motivo de la diferencia residual</Label><Select value={reasonCode} onValueChange={setReasonCode}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{(reasons.data??[]).map(item=><SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent></Select></div>}
+    <div className="space-y-2"><Label>Observación</Label><Textarea disabled={!editable} value={note} onChange={event=>setNote(event.target.value)} maxLength={500}/></div>{mutation.isError&&<p className="text-sm text-destructive">No fue posible conciliar. Revisa diferencias, motivos y reclasificaciones.</p>}</div><footer className="flex justify-end gap-2"><Button variant="outline" onClick={onClose}>Cerrar</Button>{editable&&<Button disabled={!valid||mutation.isPending} onClick={()=>mutation.mutate()}>{mutation.isPending?"Conciliando…":"Confirmar conciliación"}</Button>}</footer></DialogContent></Dialog>;
 }
 
-function AccountingStatus({ status, entry }: { status: string; entry: string | null }) {
-  if (status === "Posted") return <><Badge variant="secondary">Contabilizado</Badge>{entry && <small className="mt-1 block font-mono text-muted-foreground">{entry}</small>}</>;
-  if (status === "AccountingDisabled") return <Badge variant="outline">Contabilidad no activa</Badge>;
-  if (status === "AccountingPendingConfiguration") return <Badge variant="destructive">Configuración pendiente</Badge>;
-  return <Badge variant="outline">En proceso</Badge>;
-}
+function Summary({title,value,icon}:{title:string;value:string;icon:React.ReactNode}){return <Card className="rounded-3xl"><CardContent className="flex items-center gap-3 p-5"><div className="rounded-2xl bg-muted p-3">{icon}</div><div><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</p><strong className="text-xl">{value}</strong></div></CardContent></Card>}
+function Status({value}:{value:WorkSessionClosure["reconciliationStatus"]}){return <Badge variant={value==="Pending"?"destructive":"secondary"}>{value==="Pending"?"Pendiente":value==="Reconciled"?"Conciliado":value==="ReconciledWithDifferences"?"Conciliado con diferencias":"Parcial"}</Badge>}

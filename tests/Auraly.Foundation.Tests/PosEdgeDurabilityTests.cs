@@ -17,6 +17,36 @@ namespace Auraly.Foundation.Tests;
 public sealed class PosEdgeDurabilityTests
 {
     [Fact]
+    public async Task Fiscal_preview_is_unavailable_when_enrolled_device_has_no_local_block()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"auraly-pos-no-fiscal-block-{Guid.NewGuid():N}.db");
+        try
+        {
+            var tenantId = new TenantId(Guid.NewGuid());
+            var userId = new UserId(Guid.NewGuid());
+            var confirmation = new ConfirmOfflineSaleService(new PermissionAuthorizer(
+                new FixedPermissionProvider(new UserPermissionSet(tenantId, userId, []))));
+            var store = new PosEdgeSaleStore($"Data Source={databasePath}", confirmation);
+            await store.InitializeAsync();
+
+            var preview = await store.PreviewNextFiscalNumberAsync(
+                new DeviceId(Guid.NewGuid()),
+                new DateTimeOffset(2026, 8, 29, 9, 0, 0, TimeSpan.FromHours(-5)));
+
+            Assert.False(preview.IsAvailable);
+            Assert.Equal(Guid.Empty, preview.SeriesId);
+            Assert.Empty(preview.FullNumber);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            DeleteIfPresent(databasePath);
+            DeleteIfPresent($"{databasePath}-wal");
+            DeleteIfPresent($"{databasePath}-shm");
+        }
+    }
+
+    [Fact]
     public async Task Exhausted_active_block_promotes_durable_standby_without_connection()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"auraly-pos-blocks-{Guid.NewGuid():N}.db");

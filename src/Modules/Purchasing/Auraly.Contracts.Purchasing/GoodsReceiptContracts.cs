@@ -181,7 +181,9 @@ public sealed record GoodsReceiptPage(
 public sealed record GoodsReceiptWorkspaceOptions(
     IReadOnlyList<GoodsReceiptWarehouseOption> Warehouses,
     IReadOnlyList<GoodsReceiptSupplierOption> Suppliers,
-    IReadOnlyList<PurchaseEvidenceTypeOption> PurchaseEvidenceTypes);
+    IReadOnlyList<PurchaseEvidenceTypeOption> PurchaseEvidenceTypes,
+    IReadOnlyList<GoodsReceiptTaxOption> WithholdingConcepts,
+    IReadOnlyList<GoodsReceiptTaxOption> WithholdingJurisdictions);
 
 public sealed record GoodsReceiptWarehouseOption(Guid WarehouseId, string Code, string Name);
 public sealed record GoodsReceiptSupplierOption(
@@ -189,10 +191,11 @@ public sealed record GoodsReceiptSupplierOption(
     string? PurchaseEvidencePolicy,
     IReadOnlyList<string> AllowedPurchaseEvidenceTypes);
 public sealed record PurchaseEvidenceTypeOption(string Code, string Label, string? Description);
+public sealed record GoodsReceiptTaxOption(string Code, string Label);
 
 public sealed record GoodsReceiptProductOption(
     Guid ProductId, string ProductCode, string? Reference, string Name,
-    string? SupplierProductCode, decimal? LatestUnitCost,
+    string? SupplierProductCode, decimal? LatestUnitCost, decimal? AverageUnitCost,
     string TaxCode, decimal TaxRate, string TaxTreatment, IReadOnlyList<string> Barcodes, string BaseUnitCode,
     bool IsAssociated, string PurchasePresentationName = "Unidad",
     decimal UnitsPerPresentation = 1, bool IsPrimary = false);

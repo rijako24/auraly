@@ -42,7 +42,7 @@ BEGIN
            CONVERT(BIT, 0)
     FROM dbo.PriceChannels channelValue
     JOIN dbo.Products product
-      ON product.BusinessId = channelValue.BusinessId
+      ON product.TenantId = @TenantId
      AND product.IsActive = 1
     CROSS APPLY
     (
@@ -52,7 +52,7 @@ BEGIN
                price.TargetMarginPercent,
                price.EffectiveMarginPercent
         FROM dbo.ProductPrices price
-        WHERE price.BusinessId = product.BusinessId
+        WHERE price.BusinessId = @BusinessId
           AND price.ProductId = product.ProductId
           AND price.IsActive = 1
           AND price.ValidFrom <= SYSDATETIMEOFFSET()
@@ -130,13 +130,33 @@ BEGIN
                      AND (setting.ValidUntil IS NULL OR setting.ValidUntil > SYSDATETIMEOFFSET())
                 THEN setting.PriceChannelId END,
            customer.RequiresElectronicInvoice,
-           customer.IsActive
+           customer.IsActive,
+           COALESCE(taxProfile.AppliesWithholding,CONVERT(BIT,0)),
+           COALESCE(taxProfile.Responsibilities,N'[]'),
+           taxProfile.JurisdictionCode
     FROM dbo.Customers customer
     JOIN dbo.Parties party
       ON party.PartyId = customer.PartyId
      AND party.TenantId = @TenantId
     LEFT JOIN dbo.CustomerPricingSettings setting
       ON setting.CustomerId = customer.CustomerId
+    LEFT JOIN dbo.CounterpartyTaxProfiles taxProfile
+      ON taxProfile.BusinessId=customer.BusinessId
+     AND taxProfile.CounterpartyId=customer.CustomerId
     WHERE customer.BusinessId = @BusinessId
       AND party.IsActive = 1;
+
+    ;WITH CurrentRules AS
+    (
+        SELECT ruleValue.*,
+               ROW_NUMBER() OVER(PARTITION BY ruleValue.RuleId ORDER BY ruleValue.Version DESC) AS rn
+        FROM dbo.WithholdingRules ruleValue
+        WHERE ruleValue.BusinessId=@BusinessId
+    )
+    SELECT RuleId,Version,Code,Name,Kind,Direction,Moment,BaseKind,
+           ConceptCode,JurisdictionCode,Rate,MinimumBase,
+           RequiredResponsibilities,EffectiveFrom,EffectiveTo,IsActive
+    FROM CurrentRules
+    WHERE rn=1 AND IsActive=1 AND Direction=N'Sale' AND Moment=N'Accrual'
+    ORDER BY Kind,Code;
 END;

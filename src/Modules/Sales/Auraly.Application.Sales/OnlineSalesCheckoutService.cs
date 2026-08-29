@@ -1,6 +1,7 @@
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
+using Auraly.Commerce.Taxation.Contracts;
 
 namespace Auraly.Application.Sales;
 
@@ -11,8 +12,28 @@ public sealed record PreparedOnlineSalesCheckout(
     OnlineSalesDraft NextDraft,
     bool IsReplay);
 
+public sealed record OnlineSaleSettlementContext(
+    Guid BusinessId,
+    Guid? CustomerId,
+    decimal TaxExclusiveAmount,
+    decimal VatAmount,
+    DateTimeOffset OccurredAt);
+
+public interface IOnlineSaleWithholdingCalculator
+{
+    Task<WithholdingCalculationSnapshot> CalculateAsync(
+        Guid tenantId,
+        OnlineSaleSettlementContext context,
+        CancellationToken cancellationToken);
+}
+
 public interface IOnlineSalesCheckoutStore
 {
+    Task<OnlineSaleSettlementContext> ReadSettlementContextAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        CancellationToken cancellationToken);
+
     Task PrepareSourceOrderInventoryAsync(
         OnlineSalesUserIdentity user,
         Guid businessId,
@@ -31,6 +52,7 @@ public interface IOnlineSalesCheckoutStore
         CompleteOnlineSalesDraftRequest request,
         string idempotencyKey,
         FiscalVerificationMaterial? fiscalMaterial,
+        WithholdingCalculationSnapshot withholding,
         CancellationToken cancellationToken);
 
     Task MarkResultAsync(
@@ -44,7 +66,8 @@ public interface IOnlineSalesCheckoutStore
 public sealed class OnlineSalesCheckoutService(
     IOnlineSalesCheckoutStore checkouts,
     IFiscalTechnicalKeyProvider technicalKeys,
-    ReceivePosSaleService receiver)
+    ReceivePosSaleService receiver,
+    IOnlineSaleWithholdingCalculator withholdings)
 {
     private static readonly HashSet<string> PaymentMethods =
     [
@@ -78,6 +101,8 @@ public sealed class OnlineSalesCheckoutService(
     {
         DemandPermission(user);
         Validate(draftId, request, idempotencyKey);
+        var withholding = await PreviewSettlementAsync(
+            user, draftId, cancellationToken);
         FiscalVerificationMaterial? material = null;
         if (PosSaleDocumentTypes.IsFiscal(request.DocumentType))
         {
@@ -90,7 +115,7 @@ public sealed class OnlineSalesCheckoutService(
         }
         var prepared = await checkouts.PrepareAsync(
             user, draftId, request, idempotencyKey.Trim(),
-            material, cancellationToken);
+            material, withholding, cancellationToken);
         var reception = await receiver.ReceiveOnlineAsync(
             user,
             $"online:{prepared.Request.DocumentId:N}",
@@ -108,6 +133,20 @@ public sealed class OnlineSalesCheckoutService(
             OnlineSalesReceiptMapper.From(prepared.Request, reception.Status),
             prepared.NextDraft,
             prepared.IsReplay || reception.IsDuplicate);
+    }
+
+    public async Task<WithholdingCalculationSnapshot> PreviewSettlementAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        CancellationToken cancellationToken = default)
+    {
+        DemandPermission(user);
+        if (draftId == Guid.Empty)
+            throw new OnlineSalesDraftValidationException("El borrador es obligatorio.");
+        var context = await checkouts.ReadSettlementContextAsync(
+            user, draftId, cancellationToken);
+        return await withholdings.CalculateAsync(
+            user.TenantId, context, cancellationToken);
     }
 
     private static void DemandPermission(OnlineSalesUserIdentity user)

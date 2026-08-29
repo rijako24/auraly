@@ -160,7 +160,7 @@ public sealed class SqlRouteStore(
             FROM dbo.CommerceSellers seller
             INNER JOIN dbo.Businesses business ON business.BusinessId=seller.BusinessId AND business.TenantId=@TenantId
             INNER JOIN dbo.Parties party ON party.PartyId=seller.PartyId
-            WHERE seller.BusinessId=@BusinessId AND seller.IsActive=1 ORDER BY party.DisplayName;
+            WHERE seller.BusinessId=@BusinessId AND seller.IsActive=1 AND 1=0 ORDER BY party.DisplayName;
             SELECT zone.ZoneId,zone.Code,zone.Name,zone.IsActive,zone.RowVersion
             FROM dbo.SalesZones zone
             INNER JOIN dbo.Businesses business ON business.BusinessId=zone.BusinessId AND business.TenantId=@TenantId

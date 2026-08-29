@@ -133,25 +133,45 @@ public sealed class SqlGoodsReceiptDocumentHandler(
     {
         const string sql = """
             SELECT inventoryProduct.ManageStock,pp.Amount,lc.LatestUnitCost,
-                   ib.QuantityOnHand,ib.AverageUnitCost,ib.InventoryValue,
-                   COALESCE(tax.Rate,0),w.PriceFormationCostBasis,pp.TargetMarginPercent,
+                   COALESCE(pool.QuantityOnHand,0),COALESCE(pool.AverageUnitCost,0),COALESCE(pool.InventoryValue,0),
+                   COALESCE(tax.Rate,0),tenant.InventoryCostBasis,pp.TargetMarginPercent,
                    COALESCE(pp.RoundingIncrement,1),COALESCE(pp.RoundingMode,N'Nearest')
             FROM dbo.Products p WITH (UPDLOCK,HOLDLOCK)
             INNER JOIN dbo.Warehouses w WITH (UPDLOCK,HOLDLOCK)
               ON w.WarehouseId=@WarehouseId AND w.BusinessId=@BusinessId
+            INNER JOIN dbo.Businesses business WITH (UPDLOCK,HOLDLOCK)
+              ON business.BusinessId=@BusinessId
+            INNER JOIN dbo.Tenants tenant WITH (UPDLOCK,HOLDLOCK)
+              ON tenant.TenantId=business.TenantId
             INNER JOIN dbo.SupplierProducts sp WITH (UPDLOCK,HOLDLOCK)
               ON sp.ProductId=p.ProductId AND sp.SupplierId=@SupplierId
              AND sp.BusinessId=@BusinessId AND sp.IsActive=1
             INNER JOIN dbo.Products inventoryProduct WITH (UPDLOCK,HOLDLOCK)
-              ON inventoryProduct.ProductId=@InventoryProductId AND inventoryProduct.BusinessId=p.BusinessId
-            LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=p.TaxProfileId AND tax.BusinessId=p.BusinessId
+             ON inventoryProduct.ProductId=@InventoryProductId
+             AND (inventoryProduct.TenantId=business.TenantId
+                  OR (inventoryProduct.TenantId IS NULL AND inventoryProduct.BusinessId=@BusinessId))
+            LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=p.TaxProfileId AND tax.BusinessId=@BusinessId
             INNER JOIN dbo.ProductPrices pp WITH (UPDLOCK,HOLDLOCK)
               ON pp.ProductId=p.ProductId AND pp.BusinessId=@BusinessId AND pp.IsActive=1
             LEFT JOIN dbo.SupplierProductLatestCosts lc WITH (UPDLOCK,HOLDLOCK)
               ON lc.BusinessId=@BusinessId AND lc.SupplierId=@SupplierId AND lc.ProductId=p.ProductId
-            LEFT JOIN dbo.InventoryBalances ib WITH (UPDLOCK,HOLDLOCK)
-              ON ib.BusinessId=@BusinessId AND ib.WarehouseId=@WarehouseId AND ib.ProductId=inventoryProduct.ProductId
-            WHERE p.ProductId=@ProductId AND p.BusinessId=@BusinessId;
+            OUTER APPLY
+            (
+              SELECT SUM(balance.QuantityOnHand) QuantityOnHand,
+                     CASE WHEN SUM(balance.QuantityOnHand)=0 THEN MAX(balance.AverageUnitCost)
+                          ELSE SUM(balance.InventoryValue)/SUM(balance.QuantityOnHand) END AverageUnitCost,
+                     SUM(balance.InventoryValue) InventoryValue
+              FROM dbo.InventoryBalances balance WITH (UPDLOCK,HOLDLOCK)
+              INNER JOIN dbo.Businesses poolBusiness WITH (UPDLOCK,HOLDLOCK)
+                ON poolBusiness.BusinessId=balance.BusinessId
+              WHERE balance.ProductId=inventoryProduct.ProductId
+                AND ((business.SharesProductPrices=1
+                      AND poolBusiness.TenantId=business.TenantId
+                      AND poolBusiness.SharesProductPrices=1 AND poolBusiness.IsActive=1)
+                  OR (business.SharesProductPrices=0 AND balance.BusinessId=@BusinessId))
+            ) pool
+            WHERE p.ProductId=@ProductId
+              AND (p.TenantId=business.TenantId OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId));
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@BusinessId", receipt.BusinessId);
@@ -167,10 +187,8 @@ public sealed class SqlGoodsReceiptDocumentHandler(
             reader.GetBoolean(0),
             reader.GetDecimal(1),
             reader.IsDBNull(2) ? null : reader.GetDecimal(2),
-            reader.IsDBNull(3) ? 0 : reader.GetDecimal(3),
-            reader.IsDBNull(4) ? 0 : reader.GetDecimal(4),
-            reader.IsDBNull(5) ? 0 : reader.GetDecimal(5),
-            !reader.IsDBNull(3),
+            reader.GetDecimal(3), reader.GetDecimal(4), reader.GetDecimal(5),
+            true,
             reader.GetDecimal(6),reader.GetString(7),reader.IsDBNull(8) ? null : reader.GetDecimal(8),
             reader.GetDecimal(9),reader.GetString(10));
     }
@@ -264,20 +282,36 @@ public sealed class SqlGoodsReceiptDocumentHandler(
             ? "WeightedAverageCost"
             : "LatestReceiptCost";
         const string sql = """
-            UPDATE dbo.ProductPrices
+            DECLARE @SharesPrices BIT;
+            DECLARE @TenantId UNIQUEIDENTIFIER;
+            SELECT @SharesPrices=SharesProductPrices,@TenantId=TenantId
+            FROM dbo.Businesses WITH(UPDLOCK,HOLDLOCK) WHERE BusinessId=@BusinessId;
+
+            UPDATE price
             SET CostBasisType=@CostBasisType,CostBasisAmount=@ObservedCost,PreparedAmount=@RoundedPrice,
                 TargetMarginPercent=@TargetMargin,EffectiveMarginPercent=@EffectiveMargin,
                 InputMode=N'Margin'
-            WHERE BusinessId=@BusinessId AND ProductId=@ProductId AND IsActive=1;
+            FROM dbo.ProductPrices price
+            INNER JOIN dbo.Businesses target ON target.BusinessId=price.BusinessId
+            WHERE price.ProductId=@ProductId AND price.IsActive=1
+              AND ((@SharesPrices=1 AND target.TenantId=@TenantId
+                    AND target.SharesProductPrices=1 AND target.IsActive=1)
+                OR (@SharesPrices=0 AND price.BusinessId=@BusinessId));
 
             INSERT dbo.PriceRevisionProposals
               (PriceRevisionProposalId,BusinessId,ProductId,SourceDocumentId,SourceLineNumber,
                PreviousObservedUnitCost,ObservedUnitCost,CurrentSalePrice,CurrentMarginPercent,
                TargetMarginPercent,SuggestedSalePrice,RoundedSuggestedSalePrice,
                EffectiveMarginAfterRounding,LastInputMode,Status,CreatedAt)
-            VALUES(@Id,@BusinessId,@ProductId,@DocumentId,@LineNumber,@PreviousCost,@ObservedCost,
-               @CurrentPrice,@CurrentMargin,@TargetMargin,@RawPrice,@RoundedPrice,
-               @EffectiveMargin,N'Margin',N'PendingReview',@Now);
+            SELECT NEWID(),price.BusinessId,@ProductId,@DocumentId,@LineNumber,@PreviousCost,@ObservedCost,
+               price.Amount,@CurrentMargin,@TargetMargin,@RawPrice,@RoundedPrice,
+               @EffectiveMargin,N'Margin',N'PendingReview',@Now
+            FROM dbo.ProductPrices price
+            INNER JOIN dbo.Businesses target ON target.BusinessId=price.BusinessId
+            WHERE price.ProductId=@ProductId AND price.IsActive=1
+              AND ((@SharesPrices=1 AND target.TenantId=@TenantId
+                    AND target.SharesProductPrices=1 AND target.IsActive=1)
+                OR (@SharesPrices=0 AND price.BusinessId=@BusinessId));
             """;
         await using var command = new SqlCommand(sql, session.Connection, session.Transaction);
         command.Parameters.AddWithValue("@Id", ids.NewId());

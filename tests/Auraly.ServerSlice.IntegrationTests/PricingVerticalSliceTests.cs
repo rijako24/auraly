@@ -257,11 +257,11 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
             VALUES
               (@TaxProfileId,@BusinessId,@TaxCode,N'Sin impuesto',0,1,SYSDATETIMEOFFSET());
             INSERT dbo.Products
-              (ProductId,BusinessId,ProductCode,Reference,Sku,Name,Description,
+              (ProductId,TenantId,BusinessId,ProductCode,Reference,Sku,Name,Description,
                BaseUnitCode,TaxProfileId,ManageStock,IsWeighable,IsActive,Source,
                Currency,CreatedAt)
             VALUES
-              (@ProductId,@BusinessId,@ProductCode,@ProductCode,@ProductCode,
+              (@ProductId,@TenantId,@BusinessId,@ProductCode,@ProductCode,@ProductCode,
                N'Producto pricing',N'Producto de prueba de publicacion',N'EA',
                @TaxProfileId,1,0,1,0,N'COP',SYSDATETIMEOFFSET());
             INSERT dbo.ProductBarcodes
@@ -284,6 +284,7 @@ public sealed class PricingVerticalSliceTests(ServerSliceFixture fixture)
               VALUES(@DeviceId,@CatalogSyncPermission,1,SYSDATETIMEOFFSET());
             """;
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
         command.Parameters.AddWithValue("@ProductId", productId);
         command.Parameters.AddWithValue("@SupplierId", fixture.SupplierId);
         command.Parameters.AddWithValue("@DeviceId", fixture.DeviceId);

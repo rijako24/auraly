@@ -8,6 +8,9 @@ export type SalesWorkspaceBootstrap = {
   userDisplayName: string;
   options: SalesWorkspaceOption[];
   canEnrollPosDevice: boolean;
+  activeEnrolledDeviceCount: number;
+  maximumEnrolledDevices: number;
+  enrollmentUnavailableReason: string | null;
 };
 
 export async function loadSalesWorkspaceBootstrap(): Promise<SalesWorkspaceBootstrap> {

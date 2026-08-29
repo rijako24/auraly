@@ -35,11 +35,12 @@ test("closure print view is a receipt with user and every payment breakdown", ()
   assert.doesNotMatch(html, /window\.print/);
 });
 
-test("closure count rules keep transfer automatic", () => {
+test("closure count rules require cash, card and transfer", () => {
   assert.equal(workSessionPaymentMethodName("Transfer"), "Transferencia");
   assert.equal(workSessionPaymentMethodName("Withholding"), "Retención");
-  assert.equal(workSessionPaymentMethodRequiresCount("Transfer"), false);
+  assert.equal(workSessionPaymentMethodRequiresCount("Transfer"), true);
   assert.equal(workSessionPaymentMethodRequiresCount("Cash"), true);
+  assert.equal(workSessionPaymentMethodRequiresCount("Card"), true);
 });
 
 test("closure money inputs format Colombian thousands while typing", () => {

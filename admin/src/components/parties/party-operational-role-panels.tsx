@@ -86,33 +86,43 @@ export function CustomerCreditTermsFields({ enabled, limit, dueDays, onLimitChan
 
 function CreditReadValue({label,value,help}:{label:string;value:string;help:string}) { return <div className="space-y-2"><Label>{label}</Label><p className="rounded-xl border bg-background p-3 font-medium">{value}</p><p className="text-xs text-muted-foreground">{help}</p></div>; }
 
+export function PartyCustomerTaxRolePanel({ customerId, editing, primarySite, registerSave }: { customerId: string; editing: boolean; primarySite: PartySiteDetail | null; registerSave: RegisterSave }) {
+  return <PartyCounterpartyTaxRolePanel counterpartyId={customerId} role="customer" editing={editing} primarySite={primarySite} registerSave={registerSave}/>;
+}
+
 export function PartySupplierTaxRolePanel({ supplierId, editing, primarySite, registerSave }: { supplierId: string; editing: boolean; primarySite: PartySiteDetail | null; registerSave: RegisterSave }) {
+  return <PartyCounterpartyTaxRolePanel counterpartyId={supplierId} role="supplier" editing={editing} primarySite={primarySite} registerSave={registerSave}/>;
+}
+
+function PartyCounterpartyTaxRolePanel({ counterpartyId, role, editing, primarySite, registerSave }: { counterpartyId: string; role: "customer" | "supplier"; editing: boolean; primarySite: PartySiteDetail | null; registerSave: RegisterSave }) {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
   const queryClient = useQueryClient();
-  const profile = useQuery({ queryKey: ["withholding-profile", businessId, supplierId], queryFn: () => taxationApi.getProfile(supplierId), enabled: Boolean(businessId && supplierId), retry: false });
-  const rules = useQuery({ queryKey: ["withholding-rules", businessId, "supplier-profile-options"], queryFn: () => taxationApi.listRules(false), enabled: Boolean(businessId) });
+  const profile = useQuery({ queryKey: ["withholding-profile", businessId, counterpartyId], queryFn: () => taxationApi.getProfile(counterpartyId), enabled: Boolean(businessId && counterpartyId), retry: false });
+  const rules = useQuery({ queryKey: ["withholding-rules", businessId, `${role}-profile-options`], queryFn: () => taxationApi.listRules(false), enabled: Boolean(businessId) });
   const cities = useCities(primarySite?.administrativeDivisionId ?? "");
+  const [appliesWithholding, setAppliesWithholding] = useState(false);
   const [responsibilities, setResponsibilities] = useState<Set<string>>(new Set());
   const [responsibilityToAdd, setResponsibilityToAdd] = useState("");
 
   useEffect(() => {
+    setAppliesWithholding(profile.data?.appliesWithholding ?? false);
     setResponsibilities(new Set(profile.data?.responsibilities ?? []));
   }, [profile.data]);
 
   const save = async () => {
     if (!businessId) return;
     const cityCode = cities.data?.find((city) => city.cityId === primarySite?.cityId)?.code ?? profile.data?.jurisdictionCode ?? null;
-    await taxationApi.saveProfile({ businessId, counterpartyId: supplierId, appliesWithholding: true, responsibilities: [...responsibilities], jurisdictionCode: cityCode });
-    await queryClient.invalidateQueries({ queryKey: ["withholding-profile", businessId, supplierId] });
+    await taxationApi.saveProfile({ businessId, counterpartyId, appliesWithholding, responsibilities: [...responsibilities], jurisdictionCode: cityCode });
+    await queryClient.invalidateQueries({ queryKey: ["withholding-profile", businessId, counterpartyId] });
   };
-  useEffect(() => registerSave(`supplier-tax-${supplierId}`, save), [registerSave, supplierId, businessId, responsibilities, cities.data, primarySite?.cityId, profile.data?.jurisdictionCode]);
+  useEffect(() => registerSave(`${role}-tax-${counterpartyId}`, save), [registerSave, role, counterpartyId, businessId, appliesWithholding, responsibilities, cities.data, primarySite?.cityId, profile.data?.jurisdictionCode]);
 
   const catalog = [...new Set((rules.data ?? []).flatMap((rule) => rule.requiredResponsibilities))].sort();
   const available = catalog.filter((code) => !responsibilities.has(code));
   const city = cities.data?.find((item) => item.cityId === primarySite?.cityId);
 
   return <div className="space-y-4">
-    <PanelHeader icon={ReceiptText} title="Perfil tributario" description="Las responsabilidades se toman del catálogo configurado en Contabilidad y la jurisdicción de la ciudad principal."><Badge variant="secondary">Configuración automática</Badge></PanelHeader>
+    <PanelHeader icon={ReceiptText} title="Retenciones y perfil tributario" description={`Define las responsabilidades de este ${role === "customer" ? "cliente" : "proveedor"} para que el motor canónico aplique las reglas vigentes.`}><div className="flex items-center gap-3"><span className="text-sm">Aplicar retenciones</span><Switch checked={appliesWithholding} onCheckedChange={setAppliesWithholding} disabled={!editing}/></div></PanelHeader>
     {profile.isLoading ? <PanelLoading /> : <section className="space-y-4 rounded-2xl border p-5">
       <div className="grid gap-4 md:grid-cols-2">
         <div className={editing ? "space-y-2" : "grid content-start grid-rows-[auto_3rem_auto] gap-2"}><Label>Responsabilidades tributarias</Label>{editing&&<Select value={responsibilityToAdd} disabled={rules.isLoading||rules.isError||available.length===0} onValueChange={(value) => { setResponsibilityToAdd(""); setResponsibilities((current) => new Set(current).add(value)); }}><SelectTrigger><SelectValue placeholder={rules.isLoading?"Cargando catálogo...":rules.isError?"No fue posible cargar el catálogo":catalog.length===0?"No hay responsabilidades configuradas":"Agregar responsabilidad"}/></SelectTrigger><SelectContent>{available.map((code) => <SelectItem key={code} value={code}>{code}</SelectItem>)}</SelectContent></Select>}<div className="flex min-h-12 flex-wrap items-center gap-2 rounded-xl border bg-muted/10 p-3">{[...responsibilities].map((code) => <Badge key={code} variant="secondary" className="gap-1">{code}{editing&&<button type="button" aria-label={`Quitar ${code}`} onClick={() => setResponsibilities((current) => { const next = new Set(current); next.delete(code); return next; })}><X className="h-3 w-3"/></button>}</Badge>)}{responsibilities.size===0&&<span className="text-sm text-muted-foreground">Sin responsabilidades seleccionadas</span>}</div><p className="text-xs text-muted-foreground">Se obtienen de las reglas activas. <Link className="font-medium text-primary underline underline-offset-2" href="/dashboard/accounting/withholdings" target="_blank">Abrir Retenciones</Link></p></div>

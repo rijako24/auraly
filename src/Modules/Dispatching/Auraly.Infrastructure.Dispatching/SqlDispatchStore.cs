@@ -45,15 +45,45 @@ public sealed class SqlDispatchStore(DispatchingSqlConnectionFactory connections
         """,connection))
         { Scope(command,actor); await using var reader=await command.ExecuteReaderAsync(ct); while(await reader.ReadAsync(ct)) routes.Add(new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetString(3))); }
         var drivers=new List<DispatchDriverOption>();
-        await using(var command=new SqlCommand("""
-          SELECT DISTINCT u.UserId,CONCAT(u.FirstName,N' ',u.LastName)
-          FROM dbo.AppUsers u INNER JOIN dbo.UserRoles ur ON ur.UserId=u.UserId AND (ur.BusinessId=@BusinessId OR ur.BusinessId IS NULL)
-          INNER JOIN dbo.RolePermissions rp ON rp.RoleId=ur.RoleId INNER JOIN dbo.Permissions p ON p.PermissionId=rp.PermissionId
-          WHERE u.TenantId=@TenantId AND u.IsActive=1 AND p.Resource=N'dispatches.delivery.execute'
-          ORDER BY CONCAT(u.FirstName,N' ',u.LastName)
-        """,connection))
-        { Scope(command,actor); await using var reader=await command.ExecuteReaderAsync(ct); while(await reader.ReadAsync(ct)) drivers.Add(new(reader.GetGuid(0),reader.GetString(1))); }
         return new(warehouses,routes,drivers);
+    }
+
+    public async Task<DispatchDriverPage> DriversAsync(DispatchActorIdentity actor,
+        int page, int pageSize, string? search, Guid? userId, CancellationToken ct)
+    {
+        await using var connection=connections.Create(); await connection.OpenAsync(ct);
+        const string scope="""
+          FROM dbo.AppUsers u
+          WHERE u.TenantId=@TenantId AND u.IsActive=1
+            AND (@UserId IS NULL OR u.UserId=@UserId)
+            AND (@Search IS NULL OR u.Username LIKE N'%'+@Search+N'%'
+                 OR u.Email LIKE N'%'+@Search+N'%'
+                 OR CONCAT(u.FirstName,N' ',u.LastName) LIKE N'%'+@Search+N'%')
+            AND EXISTS
+            (
+              SELECT 1 FROM dbo.UserRoles ur
+              JOIN dbo.RolePermissions rp ON rp.RoleId=ur.RoleId
+              JOIN dbo.Permissions p ON p.PermissionId=rp.PermissionId
+              WHERE ur.UserId=u.UserId AND (ur.BusinessId=@BusinessId OR ur.BusinessId IS NULL)
+                AND p.Resource=N'dispatches.delivery.execute'
+            )
+        """;
+        await using var command=new SqlCommand($"""
+          SELECT COUNT_BIG(1) {scope};
+          SELECT u.UserId,CONCAT(u.FirstName,N' ',u.LastName) {scope}
+          ORDER BY CONCAT(u.FirstName,N' ',u.LastName),u.UserId
+          OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+        """,connection);
+        Scope(command,actor);
+        command.Parameters.AddWithValue("@UserId",(object?)userId??DBNull.Value);
+        command.Parameters.AddWithValue("@Search",(object?)search??DBNull.Value);
+        command.Parameters.AddWithValue("@Offset",(page-1)*pageSize);
+        command.Parameters.AddWithValue("@PageSize",pageSize);
+        await using var reader=await command.ExecuteReaderAsync(ct);
+        await reader.ReadAsync(ct);var total=checked((int)reader.GetInt64(0));
+        await reader.NextResultAsync(ct);var items=new List<DispatchDriverOption>();
+        while(await reader.ReadAsync(ct))items.Add(new(reader.GetGuid(0),reader.GetString(1).Trim()));
+        return new(items,page,pageSize,total,total==0?0:(int)Math.Ceiling(total/(double)pageSize));
     }
 
     public async Task<DispatchCandidatePage> CandidatesAsync(DispatchActorIdentity actor, DispatchCandidateQuery query, CancellationToken ct)

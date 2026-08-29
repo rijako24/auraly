@@ -14,6 +14,7 @@ public class Business
     public string Website { get; set; } = string.Empty;
     
     public string TimeZone { get; set; } = "America/Bogota";
+    public bool SharesProductPrices { get; set; }
 
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; }

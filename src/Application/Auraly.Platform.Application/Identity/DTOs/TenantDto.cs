@@ -10,6 +10,7 @@ public record TenantDto(
     int BusinessCount,
     int MaximumUsers,
     int MaximumEnrolledDevices,
+    string InventoryCostBasis,
     int ActiveUserCount,
     int ActiveEnrolledDeviceCount,
     string? LegalName,

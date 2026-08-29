@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
+import { PartyRoleSelect } from "@/components/parties/party-role-select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -38,12 +39,13 @@ import {
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
+import type { PartyWorkspaceItem } from "@/services/api/parties";
 import {
   calculateBaseQuantity, calculateGoodsReceiptLine, calculateGoodsReceiptTotals, goodsReceiptUnitLabel,
   nextGoodsReceiptQuantityIndex,
 } from "@/lib/goods-receipt-calculator";
 
-type PendingSupplierChange = { supplierId: string; supplierName: string };
+type PendingSupplierChange = { supplier: PartyWorkspaceItem };
 
 type EditorDraft = {
   draftId: string; warehouseId: string; supplierId: string;
@@ -319,6 +321,7 @@ function ReceiptEditor({
   const [unitsPerPresentation, setUnitsPerPresentation] = useState(1);
   const [detailsExpanded, setDetailsExpanded] = useState(() => !draft?.lines.length);
   const [pendingSupplierChange, setPendingSupplierChange] = useState<PendingSupplierChange>();
+  const [selectedSupplier, setSelectedSupplier] = useState<PartyWorkspaceItem | null>(null);
   const products = useGoodsReceiptProducts(
     draft?.supplierId || undefined, productSearch, includeUnassociated,
   );
@@ -348,16 +351,16 @@ function ReceiptEditor({
 
   if (!draft || !businessId) return null;
   const totals = calculateGoodsReceiptTotals(draft.lines);
-  const selectedSupplier = options.data?.suppliers.find((item) => item.supplierId === draft.supplierId);
-  const allowedEvidenceTypes = selectedSupplier?.allowedPurchaseEvidenceTypes ?? [];
+  const allowedEvidenceTypes = allowedPurchaseEvidenceTypes(selectedSupplier?.supplierPurchaseEvidencePolicy ?? null);
   const visibleEvidenceTypes = options.data?.purchaseEvidenceTypes.filter((item) =>
     allowedEvidenceTypes.includes(item.code)) ?? [];
 
   const change = (values: Partial<EditorDraft>) => onChange({ ...draft, ...values });
 
-  const applySupplierChange = (supplierId: string) => {
-    const supplier = options.data?.suppliers.find((item) => item.supplierId === supplierId);
-    const evidenceType = supplier?.purchaseEvidencePolicy ?? "";
+  const applySupplierChange = (supplier: PartyWorkspaceItem) => {
+    const supplierId = supplier.supplierId ?? "";
+    setSelectedSupplier(supplier);
+    const evidenceType = supplier.supplierPurchaseEvidencePolicy ?? "";
     change({ supplierId, lines: [], purchaseEvidenceType: evidenceType,
       supplierInvoiceNumber: "", supplierInvoiceDate: "" });
     setPendingSupplierChange(undefined);
@@ -365,14 +368,14 @@ function ReceiptEditor({
     setProductSearch("");
   };
 
-  const requestSupplierChange = (supplierId: string) => {
+  const requestSupplierChange = (supplierId: string, supplier?: PartyWorkspaceItem) => {
+    if (!supplier) return;
     if (supplierId === draft.supplierId) return;
     if (draft.lines.length === 0) {
-      applySupplierChange(supplierId);
+      applySupplierChange(supplier);
       return;
     }
-    const supplierName = options.data?.suppliers.find((item) => item.supplierId === supplierId)?.name ?? "el nuevo proveedor";
-    setPendingSupplierChange({ supplierId, supplierName });
+    setPendingSupplierChange({ supplier });
   };
   const request = (): SaveGoodsReceiptDraftRequest => ({
     draftId: draft.draftId, businessId,
@@ -424,6 +427,8 @@ function ReceiptEditor({
         baseUnitCode: product.baseUnitCode,
         preferredPresentationName: product.purchasePresentationName,
         preferredUnitsPerPresentation: product.unitsPerPresentation,
+        latestUnitCost: product.latestUnitCost,
+        averageUnitCost: product.averageUnitCost,
       } satisfies GoodsReceiptLine];
     change({ lines });
     setProductSearch("");
@@ -591,13 +596,9 @@ function ReceiptEditor({
         {detailsExpanded && <>
         <section className="grid gap-4 rounded-2xl border bg-muted/20 p-4 md:grid-cols-4">
           <Field label="Proveedor">
-            <Select value={draft.supplierId} onValueChange={requestSupplierChange}>
-              <SelectTrigger><SelectValue placeholder="Seleccionar proveedor" /></SelectTrigger>
-              <SelectContent>{options.data?.suppliers.map((item) =>
-                <SelectItem key={item.supplierId} value={item.supplierId}>
-                  {item.name} · {item.identification}
-                </SelectItem>)}</SelectContent>
-            </Select>
+            <PartyRoleSelect role="Supplier" value={draft.supplierId} placeholder="Buscar proveedor"
+              onResolved={setSelectedSupplier}
+              onChange={requestSupplierChange}/>
           </Field>
           <Field label="Bodega">
             <Select value={draft.warehouseId} onValueChange={(value) => change({ warehouseId: value })}>
@@ -714,8 +715,9 @@ function ReceiptEditor({
                       {product.supplierProductCode ? ` · Prov. ${product.supplierProductCode}` : ""}
                     </span>
                   </span>
-                  <span className="text-sm font-medium">
-                    {product.latestUnitCost == null ? "Sin costo recibido" : formatCurrency(product.latestUnitCost)}
+                  <span className="text-right text-xs">
+                    <span className="block font-medium">Último {product.latestUnitCost == null ? "—" : formatCurrency(product.latestUnitCost)}</span>
+                    <span className="block text-muted-foreground">Promedio {product.averageUnitCost == null ? "—" : formatCurrency(product.averageUnitCost)}</span>
                   </span>
                 </button>)}
               {products.hasNextPage && <Button type="button" variant="ghost" className="mt-2 w-full"
@@ -738,6 +740,7 @@ function ReceiptEditor({
                 return <tr key={line.productId} className="border-t align-middle">
                   <td className="px-4 py-3"><p className="font-semibold">{line.description}</p>
                     <p className="text-xs text-muted-foreground">IVA de compra {line.taxRate} % · {purchaseTaxTreatmentLabels[line.taxTreatment] ?? line.taxTreatment}</p>
+                    <p className="text-xs text-muted-foreground">Costo promedio {line.averageUnitCost == null ? "—" : formatCurrency(line.averageUnitCost)} · Último costo {line.latestUnitCost == null ? "—" : formatCurrency(line.latestUnitCost)}</p>
                     <p className="text-xs text-muted-foreground">{line.presentationQuantity} {line.presentationName.toLowerCase()} × {line.unitsPerPresentation} = {line.quantity} {goodsReceiptUnitLabel(line.baseUnitCode, line.quantity)}</p></td>
                   <td className="px-3 py-2"><Input type="number" min="0.000001" step="0.001"
                     ref={(element) => {
@@ -811,11 +814,17 @@ function ReceiptEditor({
         </section>
 
         <section className="grid gap-3 rounded-2xl border p-4 md:grid-cols-2">
-              <Field label="Concepto de retención">
-            <Input value={draft.withholdingConceptCode} onChange={(event) => change({ withholdingConceptCode: event.target.value })} placeholder="Ej. MERCANCIA (opcional)" />
+          <Field label="Concepto de retención">
+            <Select value={draft.withholdingConceptCode || "__none"} onValueChange={(value) => change({ withholdingConceptCode: value === "__none" ? "" : value })}>
+              <SelectTrigger><SelectValue placeholder="Sin concepto" /></SelectTrigger>
+              <SelectContent><SelectItem value="__none">Sin concepto</SelectItem>{(options.data?.withholdingConcepts ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent>
+            </Select>
           </Field>
           <Field label="Municipio para reteICA">
-            <Input value={draft.withholdingJurisdictionCode} onChange={(event) => change({ withholdingJurisdictionCode: event.target.value })} placeholder="Ej. 11001 (opcional)" />
+            <Select value={draft.withholdingJurisdictionCode || "__none"} onValueChange={(value) => change({ withholdingJurisdictionCode: value === "__none" ? "" : value })}>
+              <SelectTrigger><SelectValue placeholder="Sin municipio" /></SelectTrigger>
+              <SelectContent><SelectItem value="__none">Sin municipio</SelectItem>{(options.data?.withholdingJurisdictions ?? []).map((item) => <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent>
+            </Select>
           </Field>
               <p className="text-xs text-muted-foreground md:col-span-2">Al confirmar, el motor tributario aplica las reglas vigentes del proveedor y congela el cálculo en el documento.</p>
         </section>
@@ -827,13 +836,13 @@ function ReceiptEditor({
             <DialogTitle>Cambiar proveedor</DialogTitle>
             <DialogDescription>
               Esta recepción ya tiene {draft.lines.length} {draft.lines.length === 1 ? "producto agregado" : "productos agregados"}.
-              Al cambiar a {pendingSupplierChange?.supplierName}, limpiaremos esas líneas para evitar mezclar productos, costos o códigos de proveedores distintos.
+              Al cambiar a {pendingSupplierChange?.supplier.displayName}, limpiaremos esas líneas para evitar mezclar productos, costos o códigos de proveedores distintos.
             </DialogDescription>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">Los demás datos de la recepción se conservarán.</p>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setPendingSupplierChange(undefined)}>Conservar proveedor actual</Button>
-            <Button type="button" variant="destructive" onClick={() => pendingSupplierChange && applySupplierChange(pendingSupplierChange.supplierId)}>
+            <Button type="button" variant="destructive" onClick={() => pendingSupplierChange && applySupplierChange(pendingSupplierChange.supplier)}>
               Cambiar y limpiar productos
             </Button>
           </DialogFooter>
@@ -945,6 +954,12 @@ function plusDays(days: number) {
 
 function toIso(value: string) { return new Date(value).toISOString(); }
 function toIsoOrNull(value: string) { return value ? new Date(value).toISOString() : null; }
+function allowedPurchaseEvidenceTypes(policy: string | null) {
+  if (policy === "SupplierElectronicInvoice") return ["SupplierElectronicInvoice", "InternalReceiptVoucher"];
+  if (policy === "BuyerElectronicSupportDocument") return ["BuyerElectronicSupportDocument", "InternalReceiptVoucher"];
+  if (policy === "InternalReceiptVoucher") return ["InternalReceiptVoucher"];
+  return ["SupplierElectronicInvoice", "BuyerElectronicSupportDocument", "InternalReceiptVoucher"];
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <div className="space-y-2"><Label>{label}</Label>{children}</div>;

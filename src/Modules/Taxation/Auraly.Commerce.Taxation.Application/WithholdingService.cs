@@ -1,5 +1,6 @@
 using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Commerce.Taxation.Domain;
+using Auraly.BuildingBlocks.Application.Synchronization;
 
 namespace Auraly.Commerce.Taxation.Application;
 public interface IWithholdingRuleStore
@@ -12,7 +13,10 @@ public interface IWithholdingRuleStore
         Guid tenantId, Guid userId, SaveCounterpartyTaxProfileRequest request, CancellationToken ct);
 }
 
-public sealed class WithholdingService(IWithholdingRuleStore store, WithholdingEngine engine)
+public sealed class WithholdingService(
+    IWithholdingRuleStore store,
+    WithholdingEngine engine,
+    IPosSynchronizationOutboxDispatcher synchronization)
 {
     public async Task<IReadOnlyList<WithholdingRuleView>> ListAsync(
         TaxationUserIdentity user, bool includeInactive, CancellationToken ct = default)
@@ -31,10 +35,7 @@ public sealed class WithholdingService(IWithholdingRuleStore store, WithholdingE
             throw new TaxationForbiddenException("The rule belongs to another business.");
         if (!string.Equals(request.Moment, WithholdingRecognitionMoments.Accrual, StringComparison.Ordinal))
             throw new TaxationValidationException(
-                "Only accrual withholding is available in the automated purchasing flow.");
-        if (!string.Equals(request.Direction, WithholdingDirections.Purchase, StringComparison.Ordinal))
-            throw new TaxationValidationException(
-                "Only purchase withholding is available in the automated purchasing flow.");
+                "Only accrual withholding is available in the automated document flows.");
         var proposed = WithholdingRule.Create(
             ruleId ?? Guid.NewGuid(), user.BusinessId, 1, request.Code, request.Name,
             Parse<WithholdingKind>(request.Kind, nameof(request.Kind)),
@@ -43,7 +44,11 @@ public sealed class WithholdingService(IWithholdingRuleStore store, WithholdingE
             Parse<WithholdingBaseKind>(request.BaseKind, nameof(request.BaseKind)),
             request.ConceptCode, request.JurisdictionCode, request.Rate, request.MinimumBase,
             request.RequiredResponsibilities, request.EffectiveFrom, request.EffectiveTo, request.IsActive);
-        return ToView(await store.SaveVersionAsync(user.TenantId, user.UserId, ruleId, proposed, ct));
+        var saved = ToView(await store.SaveVersionAsync(
+            user.TenantId, user.UserId, ruleId, proposed, ct));
+        await synchronization.DispatchPendingAsync(
+            user.TenantId, user.BusinessId, CancellationToken.None);
+        return saved;
     }
 
     public async Task<CounterpartyTaxProfileView?> GetProfileAsync(
@@ -82,7 +87,11 @@ public sealed class WithholdingService(IWithholdingRuleStore store, WithholdingE
         if (normalized.JurisdictionCode?.Length > 16)
             throw new TaxationValidationException(
                 "JurisdictionCode cannot exceed 16 characters.");
-        return await store.SaveProfileAsync(user.TenantId, user.UserId, normalized, ct);
+        var saved = await store.SaveProfileAsync(
+            user.TenantId, user.UserId, normalized, ct);
+        await synchronization.DispatchPendingAsync(
+            user.TenantId, user.BusinessId, CancellationToken.None);
+        return saved;
     }
 
     public async Task<WithholdingCalculationSnapshot> PreviewAsync(

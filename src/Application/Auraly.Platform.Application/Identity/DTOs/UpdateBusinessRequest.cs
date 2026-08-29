@@ -7,4 +7,5 @@ public record UpdateBusinessRequest(
     string? Phone,
     string? Email,
     string? Website,
-    string? TimeZone);
+    string? TimeZone,
+    bool? SharesProductPrices = null);

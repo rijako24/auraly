@@ -131,10 +131,10 @@ WHEN MATCHED THEN UPDATE SET
     IsActive = 1,
     UpdatedAt = SYSUTCDATETIME()
 WHEN NOT MATCHED THEN INSERT
-    (ProductId, BusinessId, Source, Sku, [Name], [Description], CategoryName,
+    (ProductId, TenantId, BusinessId, Source, Sku, [Name], [Description], CategoryName,
      Currency, ManageStock, IsActive, CreatedAt)
 VALUES
-    (NEWID(), @BusinessId, 0, source.Sku, source.[Name],
+    (NEWID(), @TenantId, @BusinessId, 0, source.Sku, source.[Name],
      source.TechnicalDescription,
      N'iPhone ' + CONVERT(NVARCHAR(10), source.Generation),
      N'COP', 0, 1, SYSUTCDATETIME());
@@ -238,10 +238,10 @@ WHEN MATCHED THEN UPDATE SET
     Currency = N'COP', ManageStock = 0, IsActive = 1,
     UpdatedAt = SYSUTCDATETIME()
 WHEN NOT MATCHED THEN INSERT
-    (ProductId, BusinessId, Source, Sku, [Name], [Description], CategoryName,
+    (ProductId, TenantId, BusinessId, Source, Sku, [Name], [Description], CategoryName,
      Currency, ManageStock, IsActive, CreatedAt)
 VALUES
-    (NEWID(), @BusinessId, 0, source.Sku, source.[Name], source.[Description],
+    (NEWID(), @TenantId, @BusinessId, 0, source.Sku, source.[Name], source.[Description],
      N'Accesorios', N'COP', 0, 1, SYSUTCDATETIME());
 
 MERGE dbo.ProductPrices AS target

@@ -56,6 +56,7 @@ import {
 import { resolvePosOrderPrintRoute } from "./pos-order-print-routing";
 import { fetchWithSessionRetry } from "@/services/api/client";
 import { tenantsApi } from "@/services/api/tenants";
+import { referenceOptionsApi } from "@/services/api/reference-options";
 import { printWorkSessionClosure, workSessionCloseRequest, workSessionClosureHtml, workSessionClosurePreviewRequest } from "./pos-work-session-close";
 import { receiptBrandMarkup } from "./pos-receipt-brand";
 
@@ -352,6 +353,9 @@ export class OnlinePosClient implements PosClient {
     // synchronization pipeline. Edge events become available after entering
     // the enrolled/offline workspace with its locally authenticated user.
     return Promise.resolve([]);
+  }
+  referenceOptions(catalogCode: string) {
+    return referenceOptionsApi.list(catalogCode);
   }
   openCashDrawer() {
     return this.localEdge().openCashDrawer();
@@ -1208,6 +1212,12 @@ function receiptTaxRows(receipt: PosPrintableReceipt, currency: Intl.NumberForma
     current.base += line.total - line.tax;
     current.tax += line.tax;
     groups.set(key, current);
+  }
+
+  previewSettlement(draftId: string) {
+    return request<import("./pos-edge-client").PosSaleSettlement>(
+      `/api/commerce/v1/pos/drafts/${draftId}/settlement`,
+    );
   }
   return [...groups.values()]
     .sort((left, right) => left.code.localeCompare(right.code) || left.rate - right.rate)

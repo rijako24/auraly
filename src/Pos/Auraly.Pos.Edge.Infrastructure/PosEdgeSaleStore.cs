@@ -8,6 +8,7 @@ using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Organization;
 using Auraly.Contracts.Sales;
+using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Fiscal.Core;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
@@ -63,7 +64,8 @@ public sealed record PosEdgeIssueCommand(
     PosSaleUblSnapshotContract? UblSnapshot = null,
     Guid? CustomerId = null,
     Guid? SourceOrderId = null,
-    string DocumentType = PosSaleDocumentTypes.Invoice);
+    string DocumentType = PosSaleDocumentTypes.Invoice,
+    WithholdingCalculationSnapshot? Withholding = null);
 
 public sealed record PosFiscalNumberPreview(
     Guid SeriesId,
@@ -389,6 +391,8 @@ public sealed class PosEdgeSaleStore
             .OrderByDescending(row => row.IsActive)
             .ThenBy(row => row.RangeStart)
             .ToListAsync(cancellationToken);
+        if (cursors.Count == 0)
+            return new PosFiscalNumberPreview(Guid.Empty, string.Empty, 0, string.Empty, false);
         var cursor = cursors.FirstOrDefault(row =>
                          (row.IsActive || row.AllocationState == "Standby") &&
                          issueDate >= row.ValidFrom && issueDate <= row.ValidUntil &&
@@ -1013,8 +1017,14 @@ public sealed class PosEdgeSaleStore
                     payment.CardFranchiseCode,
                     payment.ApprovalNumber))
                 .ToArray()
-            : [new PosSalePaymentContract(1, "Cash", invoice.PayableAmount, null)];
-        if (payments.Sum(payment => payment.Amount) != invoice.PayableAmount)
+            : [new PosSalePaymentContract(1, "Cash", command.Withholding?.NetAmount ?? invoice.PayableAmount, null)];
+        var withholding = command.Withholding ??
+            new WithholdingCalculationSnapshot(invoice.PayableAmount, 0m, invoice.PayableAmount, []);
+        if (withholding.GrossAmount != invoice.PayableAmount ||
+            withholding.WithholdingTotal != withholding.Lines.Sum(line => line.Amount) ||
+            withholding.NetAmount + withholding.WithholdingTotal != invoice.PayableAmount)
+            throw new InvalidOperationException("The withholding snapshot does not reconcile with the sale.");
+        if (payments.Sum(payment => payment.Amount) != withholding.NetAmount)
         {
             throw new InvalidOperationException("Payments must equal the payable amount.");
         }
@@ -1053,7 +1063,8 @@ public sealed class PosEdgeSaleStore
                 taxes,
                 invoice.UntaxedAmount,
                 invoice.TaxAmount,
-                invoice.PayableAmount),
+                invoice.PayableAmount,
+                withholding),
             snapshot is null || fiscalNumber is null || fiscalAuthorizationId is null
                 ? null
                 : new PosSaleFiscalSnapshotContract(

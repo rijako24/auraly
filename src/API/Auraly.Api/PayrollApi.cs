@@ -14,6 +14,12 @@ public static class PayrollApi
         group.MapGet("/options", (HttpContext context, PayrollService service,
             CancellationToken ct) => Execute(() => service.GetOptionsAsync(context.User.Identity(), ct)));
 
+        group.MapGet("/employments", (HttpContext context, int? page, int? pageSize,
+            string? search, bool? isActive, Guid? employmentId, PayrollService service,
+            CancellationToken ct) => Execute(() => service.PageEmploymentsAsync(
+                context.User.Identity(), page ?? 1, pageSize ?? 30, search, isActive,
+                employmentId, ct)));
+
         group.MapGet("/reports/definitions", (HttpContext context,
             PayrollReportingService service, CancellationToken ct) =>
             Execute(() => service.ListDefinitionsAsync(context.User.Identity(), ct)));

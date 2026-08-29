@@ -1,5 +1,6 @@
 using Auraly.Contracts.Catalog;
 using Microsoft.Data.SqlClient;
+using System.Text.Json;
 
 namespace Auraly.Infrastructure.Persistence;
 
@@ -36,7 +37,21 @@ public sealed partial class SqlCatalogStore
             customers.Add(new(
                 reader.GetGuid(0), reader.GetString(1), reader.GetString(2),
                 reader.IsDBNull(3) ? null : reader.GetGuid(3),
-                reader.GetBoolean(5), reader.GetBoolean(4)));
-        return new PosPricingSnapshot(channels, customers);
+                reader.GetBoolean(5), reader.GetBoolean(4), reader.GetBoolean(6),
+                JsonSerializer.Deserialize<string[]>(reader.GetString(7)) ?? [],
+                reader.IsDBNull(8) ? null : reader.GetString(8)));
+        var rules = new List<PosWithholdingRule>();
+        await reader.NextResultAsync(ct);
+        while (await reader.ReadAsync(ct))
+            rules.Add(new(
+                reader.GetGuid(0), reader.GetInt32(1), reader.GetString(2), reader.GetString(3),
+                reader.GetString(4), reader.GetString(5), reader.GetString(6), reader.GetString(7),
+                reader.IsDBNull(8) ? null : reader.GetString(8),
+                reader.IsDBNull(9) ? null : reader.GetString(9), reader.GetDecimal(10),
+                reader.GetDecimal(11), JsonSerializer.Deserialize<string[]>(reader.GetString(12)) ?? [],
+                DateOnly.FromDateTime(reader.GetDateTime(13)),
+                reader.IsDBNull(14) ? null : DateOnly.FromDateTime(reader.GetDateTime(14)),
+                reader.GetBoolean(15)));
+        return new PosPricingSnapshot(channels, customers, rules);
     }
 }

@@ -73,7 +73,9 @@ public sealed record PartyWorkspaceQuery(
     string? Search = null,
     string? Role = null,
     bool? IsActive = null,
-    bool? IsIncomplete = null);
+    bool? IsIncomplete = null,
+    Guid? RoleId = null,
+    Guid? PartyId = null);
 
 public sealed record PartyWorkspaceItem(
     Guid PartyId,
@@ -92,7 +94,14 @@ public sealed record PartyWorkspaceItem(
     string? CityName,
     bool IsActive,
     string CompletionStatus,
-    string RowVersion);
+    string RowVersion,
+    Guid? CustomerId,
+    Guid? SupplierId,
+    Guid? SellerId,
+    Guid? CarrierId,
+    Guid? EmployeeId,
+    Guid? UserId,
+    string? SupplierPurchaseEvidencePolicy);
 
 public sealed record PartyWorkspacePage(
     IReadOnlyCollection<PartyWorkspaceItem> Items,

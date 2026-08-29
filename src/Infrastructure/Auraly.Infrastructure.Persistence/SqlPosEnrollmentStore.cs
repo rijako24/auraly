@@ -18,6 +18,30 @@ public sealed class SqlPosEnrollmentStore(
     IAuralyIdGenerator idGenerator,
     IOfflineAuthenticationLeaseTrustProvider offlineLeaseTrust) : IPosEnrollmentStore
 {
+    public async Task<PosEnrollmentCapacity> ReadCapacityAsync(
+        Guid tenantId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT t.MaximumEnrolledDevices,
+                   (SELECT COUNT_BIG(1) FROM dbo.EnrolledDevices d
+                    WHERE d.TenantId=t.TenantId AND d.IsActive=1)
+            FROM dbo.Tenants t
+            WHERE t.TenantId=@TenantId AND t.IsActive=1;
+            """;
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection);
+        Add(command, "@TenantId", tenantId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            throw new PosEnrollmentConflictException(
+                "La organización no existe o está inactiva.");
+        return new PosEnrollmentCapacity(
+            checked((int)reader.GetInt64(1)),
+            reader.GetInt32(0));
+    }
+
     public async Task<SalesWorkspaceContext?> ResolveWorkspaceAsync(
         Guid tenantId,
         CreatePosEnrollmentRequest request,

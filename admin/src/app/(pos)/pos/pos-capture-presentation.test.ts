@@ -5,6 +5,7 @@ import { capturedLineAfterAddition } from "./pos-capture-presentation";
 import { acceptsPosQuantityDraft, blocksPosQuantityKey, validatePosQuantity } from "./pos-quantity-validation";
 import {
   capturePosFunctionShortcut,
+  isPosCashDrawerShortcut,
   resolvePosFunctionShortcut,
 } from "./pos-function-shortcut";
 
@@ -90,4 +91,19 @@ test("no interfiere con teclas que no pertenecen al POS", () => {
 
   assert.equal(captured, false);
   assert.equal(cancelled, false);
+});
+
+test("abre el cajón únicamente con Control+A", () => {
+  assert.equal(isPosCashDrawerShortcut({
+    key: "a", ctrlKey: true, altKey: false, shiftKey: false, metaKey: false,
+  }), true);
+  assert.equal(isPosCashDrawerShortcut({
+    key: "A", ctrlKey: true, altKey: false, shiftKey: false, metaKey: false,
+  }), true);
+  assert.equal(isPosCashDrawerShortcut({
+    key: "a", ctrlKey: false, altKey: false, shiftKey: false, metaKey: false,
+  }), false);
+  assert.equal(isPosCashDrawerShortcut({
+    key: "a", ctrlKey: true, altKey: false, shiftKey: true, metaKey: false,
+  }), false);
 });

@@ -55,9 +55,9 @@ public sealed class SqlInventoryPhysicalCountStore(
                       (InventoryPhysicalCountId,InventoryPhysicalCountListId,ProductId,ProductCodeSnapshot,ProductNameSnapshot,SystemQuantityAtBase)
                     SELECT @CountId,@DraftId,p.ProductId,COALESCE(p.ProductCode,p.Sku,p.Reference,N''),p.Name,COALESCE(balance.QuantityOnHand,0)
                     FROM dbo.Products p
-                    LEFT JOIN dbo.ProductLinks link ON link.BusinessId=p.BusinessId AND link.ChildProductId=p.ProductId AND link.SharesInventory=1 AND link.IsActive=1
-                    LEFT JOIN dbo.InventoryBalances balance ON balance.BusinessId=p.BusinessId AND balance.WarehouseId=@WarehouseId AND balance.ProductId=p.ProductId
-                    WHERE p.BusinessId=@BusinessId AND p.IsActive=1 AND p.ManageStock=1 AND link.ProductLinkId IS NULL;
+                    LEFT JOIN dbo.ProductLinks link ON link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId AND link.SharesInventory=1 AND link.IsActive=1
+                    LEFT JOIN dbo.InventoryBalances balance ON balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId AND balance.ProductId=p.ProductId
+                    WHERE p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND p.IsActive=1 AND p.ManageStock=1 AND link.ProductLinkId IS NULL;
                     """;
                 await ExecuteAsync(connection, transaction, general, token,
                     P("@CountId", request.InventoryPhysicalCountId), P("@DraftId", draftId), P("@BusinessId", user.BusinessId), P("@WarehouseId", request.WarehouseId));
@@ -371,8 +371,8 @@ public sealed class SqlInventoryPhysicalCountStore(
                   CountedProductCount=(SELECT COUNT(DISTINCT line.ProductId) FROM dbo.InventoryPhysicalCountReconciliationDrafts selected INNER JOIN dbo.InventoryPhysicalCountLines line ON line.InventoryPhysicalCountListId=selected.InventoryPhysicalCountListId WHERE selected.InventoryPhysicalCountReconciliationId=@ReconciliationId AND line.PreCountQuantity IS NOT NULL),
                   UncountedProductCount=(SELECT COUNT(*) FROM (
                     SELECT product.ProductId FROM dbo.InventoryPhysicalCounts countHeader
-                    INNER JOIN dbo.Products product ON product.BusinessId=countHeader.BusinessId AND product.IsActive=1 AND product.ManageStock=1
-                    LEFT JOIN dbo.ProductLinks link ON link.BusinessId=product.BusinessId AND link.ChildProductId=product.ProductId AND link.SharesInventory=1 AND link.IsActive=1
+                    INNER JOIN dbo.Products product ON product.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=countHeader.BusinessId) AND product.IsActive=1 AND product.ManageStock=1
+                    LEFT JOIN dbo.ProductLinks link ON link.BusinessId=countHeader.BusinessId AND link.ChildProductId=product.ProductId AND link.SharesInventory=1 AND link.IsActive=1
                     WHERE countHeader.InventoryPhysicalCountId=@CountId AND link.ProductLinkId IS NULL
                   ) scope WHERE NOT EXISTS(SELECT 1 FROM dbo.InventoryPhysicalCountReconciliationDrafts selected INNER JOIN dbo.InventoryPhysicalCountLines line ON line.InventoryPhysicalCountListId=selected.InventoryPhysicalCountListId WHERE selected.InventoryPhysicalCountReconciliationId=@ReconciliationId AND line.ProductId=scope.ProductId AND line.PreCountQuantity IS NOT NULL))
                 FROM dbo.InventoryPhysicalCountReconciliations reconciliation WHERE reconciliation.InventoryPhysicalCountReconciliationId=@ReconciliationId;
@@ -417,8 +417,8 @@ public sealed class SqlInventoryPhysicalCountStore(
               UNION ALL
               SELECT product.ProductId,COALESCE(product.ProductCode,product.Sku,product.Reference,N''),product.Name
               FROM dbo.InventoryPhysicalCounts countHeader
-              INNER JOIN dbo.Products product ON product.BusinessId=countHeader.BusinessId AND product.IsActive=1 AND product.ManageStock=1
-              LEFT JOIN dbo.ProductLinks link ON link.BusinessId=product.BusinessId AND link.ChildProductId=product.ProductId AND link.SharesInventory=1 AND link.IsActive=1
+              INNER JOIN dbo.Products product ON product.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=countHeader.BusinessId) AND product.IsActive=1 AND product.ManageStock=1
+              LEFT JOIN dbo.ProductLinks link ON link.BusinessId=countHeader.BusinessId AND link.ChildProductId=product.ProductId AND link.SharesInventory=1 AND link.IsActive=1
               WHERE countHeader.InventoryPhysicalCountId=@CountId AND link.ProductLinkId IS NULL
                 AND NOT EXISTS(SELECT 1 FROM dbo.InventoryPhysicalCountLines existing WHERE existing.InventoryPhysicalCountId=@CountId AND existing.ProductId=product.ProductId)
             )
@@ -477,8 +477,8 @@ public sealed class SqlInventoryPhysicalCountStore(
                     SELECT product.ProductId,COALESCE(product.ProductCode,product.Sku,product.Reference,N''),product.Name,
                       COALESCE(balance.QuantityOnHand,0)
                     FROM dbo.InventoryPhysicalCounts countHeader
-                    INNER JOIN dbo.Products product ON product.BusinessId=countHeader.BusinessId AND product.IsActive=1 AND product.ManageStock=1
-                    LEFT JOIN dbo.ProductLinks link ON link.BusinessId=product.BusinessId AND link.ChildProductId=product.ProductId AND link.SharesInventory=1 AND link.IsActive=1
+                    INNER JOIN dbo.Products product ON product.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=countHeader.BusinessId) AND product.IsActive=1 AND product.ManageStock=1
+                    LEFT JOIN dbo.ProductLinks link ON link.BusinessId=countHeader.BusinessId AND link.ChildProductId=product.ProductId AND link.SharesInventory=1 AND link.IsActive=1
                     LEFT JOIN dbo.InventoryBalances balance ON balance.BusinessId=countHeader.BusinessId AND balance.WarehouseId=countHeader.WarehouseId AND balance.ProductId=product.ProductId
                     WHERE countHeader.InventoryPhysicalCountId=@CountId AND link.ProductLinkId IS NULL
                       AND NOT EXISTS(SELECT 1 FROM dbo.InventoryPhysicalCountLines existing WHERE existing.InventoryPhysicalCountId=@CountId AND existing.ProductId=product.ProductId)
@@ -544,8 +544,8 @@ public sealed class SqlInventoryPhysicalCountStore(
                 """:"""
                 SELECT scope.ProductId,balance.QuantityOnHand,CAST(0 AS DECIMAL(19,6)) FROM (
                   SELECT product.ProductId FROM dbo.InventoryPhysicalCounts countHeader
-                  INNER JOIN dbo.Products product ON product.BusinessId=countHeader.BusinessId AND product.IsActive=1 AND product.ManageStock=1
-                  LEFT JOIN dbo.ProductLinks link ON link.BusinessId=product.BusinessId AND link.ChildProductId=product.ProductId AND link.SharesInventory=1 AND link.IsActive=1
+                  INNER JOIN dbo.Products product ON product.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=countHeader.BusinessId) AND product.IsActive=1 AND product.ManageStock=1
+                  LEFT JOIN dbo.ProductLinks link ON link.BusinessId=countHeader.BusinessId AND link.ChildProductId=product.ProductId AND link.SharesInventory=1 AND link.IsActive=1
                   WHERE countHeader.InventoryPhysicalCountId=@CountId AND link.ProductLinkId IS NULL
                 ) scope
                 INNER JOIN dbo.InventoryBalances balance WITH(UPDLOCK,HOLDLOCK)
@@ -577,12 +577,12 @@ public sealed class SqlInventoryPhysicalCountStore(
     private static async Task InsertDraftLineAsync(SqlConnection connection,SqlTransaction transaction,Guid countId,Guid draftId,Guid productId,Guid businessId,Guid warehouseId,bool addFromCatalog,CancellationToken token)
     {
         var sql=addFromCatalog?"""
-            IF NOT EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ProductId AND BusinessId=@BusinessId AND IsActive=1 AND ManageStock=1)
+            IF NOT EXISTS(SELECT 1 FROM dbo.Products WHERE ProductId=@ProductId AND TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND IsActive=1 AND ManageStock=1)
               THROW 51201,'A selected product is not inventory enabled.',1;
             INSERT dbo.InventoryPhysicalCountLines(InventoryPhysicalCountId,InventoryPhysicalCountListId,ProductId,ProductCodeSnapshot,ProductNameSnapshot,SystemQuantityAtBase)
             SELECT @CountId,@DraftId,p.ProductId,COALESCE(p.ProductCode,p.Sku,p.Reference,N''),p.Name,COALESCE(balance.QuantityOnHand,0)
-            FROM dbo.Products p LEFT JOIN dbo.InventoryBalances balance ON balance.BusinessId=p.BusinessId AND balance.WarehouseId=@WarehouseId AND balance.ProductId=p.ProductId
-            WHERE p.ProductId=@ProductId AND p.BusinessId=@BusinessId;
+            FROM dbo.Products p LEFT JOIN dbo.InventoryBalances balance ON balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId AND balance.ProductId=p.ProductId
+            WHERE p.ProductId=@ProductId AND p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId);
             """:"""
             IF NOT EXISTS(SELECT 1 FROM dbo.InventoryPhysicalCountLines WHERE InventoryPhysicalCountId=@CountId AND ProductId=@ProductId)
               THROW 51201,'A draft can only contain products in the physical count scope.',1;

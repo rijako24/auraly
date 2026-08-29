@@ -248,6 +248,14 @@ group.MapPost("/{draftId:guid}/items", async (
             await Handle(() => service.ValidateInventoryAsync(
                 context.User.ToOnlineSalesUserIdentity(), draftId, ct)));
 
+        group.MapGet("/{draftId:guid}/settlement", async (
+            HttpContext context,
+            Guid draftId,
+            OnlineSalesCheckoutService service,
+            CancellationToken ct) =>
+            await Handle(() => service.PreviewSettlementAsync(
+                context.User.ToOnlineSalesUserIdentity(), draftId, ct)));
+
         group.MapPost("/temporaries/{draftId:guid}/remove", async (
             HttpContext context,
             Guid draftId,

@@ -75,6 +75,7 @@ public class BusinessAdminService : IBusinessAdminService
             Email = request.Email ?? string.Empty,
             Website = request.Website ?? string.Empty,
             TimeZone = NormalizeTimeZone(request.TimeZone),
+            SharesProductPrices = request.SharesProductPrices,
             IsActive = true,
             CreatedAt = DateTime.UtcNow
         };
@@ -86,7 +87,7 @@ public class BusinessAdminService : IBusinessAdminService
             await _defaultsProvisioner.ProvisionWarehousesAsync(
                 tenantId,
                 business.BusinessId,
-                "LatestReceiptCost",
+                await ReadTenantCostBasisAsync(tenantId, ct),
                 ct);
         }, ct);
 
@@ -113,6 +114,7 @@ public class BusinessAdminService : IBusinessAdminService
         if (request.Email is not null) business.Email = request.Email;
         if (request.Website is not null) business.Website = request.Website;
         if (request.TimeZone is not null) business.TimeZone = NormalizeTimeZone(request.TimeZone);
+        if (request.SharesProductPrices is not null) business.SharesProductPrices = request.SharesProductPrices.Value;
 
         business.UpdatedAt = DateTime.UtcNow;
         await _unitOfWork.Businesses.UpdateAsync(business);
@@ -152,7 +154,14 @@ public class BusinessAdminService : IBusinessAdminService
     private static string NormalizeTimeZone(string? timeZone) =>
         string.IsNullOrWhiteSpace(timeZone) ? BusinessClock.DefaultTimeZoneId : timeZone.Trim();
 
+    private async Task<string> ReadTenantCostBasisAsync(Guid tenantId, CancellationToken ct)
+    {
+        var tenant = await _unitOfWork.Tenants.GetByIdAsync(tenantId, ct)
+            ?? throw new NotFoundException(nameof(Tenant), tenantId);
+        return tenant.InventoryCostBasis;
+    }
+
     private static BusinessDto MapToDto(Business b) => new(
         b.BusinessId, b.TenantId, b.Name, b.Description, b.Address,
-        b.Phone, b.Email, b.Website, b.TimeZone, b.IsActive, b.CreatedAt);
+        b.Phone, b.Email, b.Website, b.TimeZone, b.SharesProductPrices, b.IsActive, b.CreatedAt);
 }

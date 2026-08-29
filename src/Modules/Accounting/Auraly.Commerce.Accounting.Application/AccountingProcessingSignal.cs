@@ -93,6 +93,7 @@ public static class AccountingProcessingPolicy
         AccountingManualDocumentTypes.ManualVoucher,
         AccountingManualDocumentTypes.OpeningBalance,
         Auraly.Contracts.WorkSessions.WorkSessionAccountingDocumentTypes.CashDifference,
+        Auraly.Contracts.WorkSessions.WorkSessionAccountingDocumentTypes.ClosureReconciliation,
         PayrollAccountingDocumentTypes.Accrual,
         PayrollAccountingDocumentTypes.Payment,
         PayrollAccountingDocumentTypes.Adjustment,

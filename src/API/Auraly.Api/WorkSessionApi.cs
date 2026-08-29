@@ -140,6 +140,17 @@ public static class WorkSessionApi
             await Handle(async () => Results.Ok(await service.ListCashDifferencesAsync(
                 context.User.ToWorkSessionIdentity(), from, to, cancellationToken))));
 
+        group.MapGet("/closures", async (HttpContext context, DateOnly from, DateOnly to,
+            string? status, int? page, int? pageSize, WorkSessionService service, CancellationToken cancellationToken) =>
+            await Handle(async () => Results.Ok(await service.ListClosuresAsync(
+                context.User.ToWorkSessionIdentity(),from,to,status,page ?? 1,pageSize ?? 50,cancellationToken))));
+
+        group.MapPost("/closures/{closureId:guid}/reconcile", async (HttpContext context, Guid closureId,
+            ReconcileWorkSessionClosureRequest request, WorkSessionService service, CancellationToken cancellationToken) =>
+            await Handle(async () => Results.Ok(await service.ReconcileClosureAsync(
+                context.User.ToWorkSessionIdentity(),closureId,
+                context.Request.Headers["Idempotency-Key"].ToString(),request,cancellationToken))));
+
         group.MapGet("/cash-reasons", async (
             HttpContext context,
             Guid businessId,

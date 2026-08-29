@@ -21,7 +21,9 @@ public interface ISalesWorkspaceDirectory
 public sealed class SalesWorkspaceForbiddenException(string message) : Exception(message);
 public sealed class SalesWorkspaceValidationException(string message) : Exception(message);
 
-public sealed class SalesWorkspaceService(ISalesWorkspaceDirectory directory)
+public sealed class SalesWorkspaceService(
+    ISalesWorkspaceDirectory directory,
+    IPosEnrollmentStore enrollments)
 {
     private const string SellerOrderCreatePermission = "orders.create";
     public async Task<string> TenantNameAsync(
@@ -40,6 +42,14 @@ public sealed class SalesWorkspaceService(ISalesWorkspaceDirectory directory)
     {
         DemandSalesPermission(user);
         return directory.ListAsync(user.TenantId, cancellationToken);
+    }
+
+    public Task<PosEnrollmentCapacity> EnrollmentCapacityAsync(
+        SalesWorkspaceUserIdentity user,
+        CancellationToken cancellationToken = default)
+    {
+        DemandSalesPermission(user);
+        return enrollments.ReadCapacityAsync(user.TenantId, cancellationToken);
     }
 
     public async Task<SalesWorkspaceContext> SelectAsync(

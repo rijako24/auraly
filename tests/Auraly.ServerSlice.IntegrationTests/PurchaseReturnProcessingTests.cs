@@ -140,9 +140,9 @@ public sealed class PurchaseReturnProcessingTests(ServerSliceFixture fixture)
         await connection.OpenAsync();await using var command=connection.CreateCommand();
         command.CommandText="""
             INSERT dbo.Products
-              (ProductId,BusinessId,Source,Sku,Name,Currency,
+              (ProductId,TenantId,BusinessId,Source,Sku,Name,Currency,
                ManageStock,IsActive,CreatedAt)
-            VALUES(@ProductId,@BusinessId,0,@Sku,N'Producto devolución',
+            VALUES(@ProductId,@TenantId,@BusinessId,0,@Sku,N'Producto devolución',
                N'COP',1,1,SYSDATETIMEOFFSET());
             INSERT dbo.ProductPrices
               (ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,
@@ -157,6 +157,7 @@ public sealed class PurchaseReturnProcessingTests(ServerSliceFixture fixture)
                SYSDATETIMEOFFSET());
             """;
         command.Parameters.AddWithValue("@ProductId",productId);
+        command.Parameters.AddWithValue("@TenantId",fixture.TenantId);
         command.Parameters.AddWithValue("@BusinessId",fixture.BusinessId);
         command.Parameters.AddWithValue("@SupplierId",fixture.SupplierId);
         command.Parameters.AddWithValue("@Sku",$"RET-{productId:N}");

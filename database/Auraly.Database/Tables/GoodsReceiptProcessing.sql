@@ -201,7 +201,7 @@ CREATE TABLE [dbo].[PriceRevisionProposals]
     CONSTRAINT [FK_PriceRevisionProposals_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_PriceRevisionProposals_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
     CONSTRAINT [FK_PriceRevisionProposals_ReceiptLine] FOREIGN KEY ([SourceDocumentId], [SourceLineNumber]) REFERENCES [dbo].[GoodsReceiptLines] ([GoodsReceiptId], [LineNumber]),
-    CONSTRAINT [UQ_PriceRevisionProposals_Source] UNIQUE ([SourceDocumentId], [SourceLineNumber]),
+    CONSTRAINT [UQ_PriceRevisionProposals_Source] UNIQUE ([BusinessId], [SourceDocumentId], [SourceLineNumber]),
     CONSTRAINT [CK_PriceRevisionProposals_Values] CHECK ([ObservedUnitCost] >= 0 AND [CurrentSalePrice] >= 0 AND [SuggestedSalePrice] >= 0 AND ([CurrentMarginPercent] IS NULL OR [CurrentMarginPercent] < 100) AND ([TargetMarginPercent] IS NULL OR [TargetMarginPercent] BETWEEN 0 AND 99.999999)),
     CONSTRAINT [CK_PriceRevisionProposals_Rounded] CHECK ([RoundedSuggestedSalePrice] IS NULL OR [RoundedSuggestedSalePrice] >= 0),
     CONSTRAINT [CK_PriceRevisionProposals_InputMode] CHECK ([LastInputMode] IS NULL OR [LastInputMode] IN (N'Margin',N'SalePrice')),

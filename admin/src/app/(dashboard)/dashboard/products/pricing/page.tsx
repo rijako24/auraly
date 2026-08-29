@@ -1,13 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { PackageCheck, Search, Send, TrendingUp, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { DataTable } from "@/components/tables/data-table";
 import { ReportViewer } from "@/components/reports/report-viewer";
+import { PartyRoleSelect } from "@/components/parties/party-role-select";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -26,7 +26,6 @@ import {
 } from "@/lib/pricing-publication-draft";
 import type { ReportRow } from "@/lib/report-viewer";
 import { formatCurrency, formatDateTime, formatRelativeTime } from "@/lib/utils";
-import { goodsReceiptsApi } from "@/services/api/goods-receipts";
 import type { PriceProposalStatus, PriceRevisionListItem } from "@/services/api/pricing";
 import { useAuthStore } from "@/stores/auth-store";
 
@@ -55,10 +54,6 @@ export default function PricingPage() {
   const [priceReportRows, setPriceReportRows] = useState<ReportRow[] | null>(null);
   const draftsRef = useRef(drafts);
   draftsRef.current = drafts;
-  const receiptOptions = useQuery({
-    queryKey: ["goods-receipt-options"],
-    queryFn: goodsReceiptsApi.options,
-  });
   const query = usePriceProposals({
     page,
     pageSize,
@@ -238,10 +233,16 @@ export default function PricingPage() {
       cell: ({ row }) => <div className="grid min-h-20 min-w-28 grid-rows-[2.5rem_1rem] content-center">
         <p className="flex items-center font-medium">{formatCurrency(row.original.observedUnitCost)}</p>
         <p className="text-xs text-muted-foreground">
-          {row.original.previousObservedUnitCost !== null
-            ? `Antes ${formatCurrency(row.original.previousObservedUnitCost)}`
-            : "Costo registrado"}
+          Base usada para preparar
         </p>
+      </div>,
+    },
+    {
+      id: "costReferences",
+      header: "Costos de referencia",
+      cell: ({ row }) => <div className="min-w-40 space-y-1 text-sm">
+        <p>Promedio: <span className="font-medium">{row.original.averageUnitCost == null ? "Sin movimientos" : formatCurrency(row.original.averageUnitCost)}</span></p>
+        <p>Último: <span className="font-medium">{row.original.latestUnitCost == null ? "Sin recepciones" : formatCurrency(row.original.latestUnitCost)}</span></p>
       </div>,
     },
     {
@@ -399,17 +400,9 @@ export default function PricingPage() {
             <SelectItem key={value} value={value}>{label}</SelectItem>)}
         </SelectContent>
       </Select>
-      <Select value={supplierId} onValueChange={(value) => {
-        setSupplierId(value);
-        setPage(1);
-      }}>
-        <SelectTrigger><SelectValue placeholder="Todos los proveedores" /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">Todos los proveedores</SelectItem>
-          {(receiptOptions.data?.suppliers ?? []).map((supplier) =>
-            <SelectItem key={supplier.supplierId} value={supplier.supplierId}>{supplier.name}</SelectItem>)}
-        </SelectContent>
-      </Select>
+      <PartyRoleSelect role="Supplier" value={supplierId}
+        leadingOptions={[{value:"all",label:"Todos los proveedores"}]}
+        placeholder="Buscar proveedor" onChange={(value) => { setSupplierId(value); setPage(1); }}/>
     </section>
 
     {query.isError ? <div className="rounded-2xl border border-destructive/30 p-8 text-center">

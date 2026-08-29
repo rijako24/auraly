@@ -17,15 +17,25 @@ public static class SalesWorkspaceApi
             await Handle(async () =>
             {
                 var identity = context.User.ToSalesWorkspaceUserIdentity();
+                var hasPermission = context.User.FindAll("permission").Any(claim =>
+                    StringComparer.Ordinal.Equals(
+                        claim.Value, CommercePermissionCodes.EnrolledDevicesEnroll));
+                var capacity = await service.EnrollmentCapacityAsync(identity, ct);
+                var canEnroll = hasPermission && capacity.HasAvailableCapacity;
                 return Results.Ok(new SalesWorkspaceBootstrap(
                     identity.TenantId,
                     await service.TenantNameAsync(identity, ct),
                     identity.UserId,
                     context.User.PosUserDisplayName(),
                     await service.ListAsync(identity, ct),
-                    context.User.FindAll("permission").Any(claim =>
-                        StringComparer.Ordinal.Equals(
-                            claim.Value, CommercePermissionCodes.EnrolledDevicesEnroll))));
+                    canEnroll,
+                    capacity.ActiveEnrolledDeviceCount,
+                    capacity.MaximumEnrolledDevices,
+                    canEnroll
+                        ? null
+                        : !hasPermission
+                            ? "Tu usuario no tiene permiso para enrolar cajas."
+                            : $"Ya están enroladas las {capacity.MaximumEnrolledDevices} cajas permitidas. Comunícate con el administrador para liberar una caja o ampliar la capacidad."));
             }));
 
         group.MapGet("/options", async (

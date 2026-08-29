@@ -21,6 +21,7 @@ Pre-Deployment Script Template
 :r .\Migrations\20260825_AddPurchaseEvidence.sql
 :r .\Migrations\20260828_NormalizePriceChannelValues.sql
 :r .\Migrations\20260828_ReplaceAverageCostMarkupWithLatestCostMargin.sql
+:r .\Migrations\20260829_BackfillProductTenant.sql
 :r .\Migrations\MoveDispatchReasonsToOwnedSchema.sql
 
 -- Scripts de pre-despliegue
@@ -41,6 +42,8 @@ BEGIN
         Value = -ABS(COALESCE(Value, 0))
     WHERE Strategy = N'PercentageBelowBasePrice';
 END;
+
+:r .\Migrations\20260829_BackfillProductTenant.sql
 
 -- La caja conserva cada captura como una línea independiente. El índice
 -- histórico por producto impedía agregar el mismo producto dos veces y debe

@@ -182,7 +182,7 @@ export type PosDraft = {
 };
 
 export type PosCaptureResult = {
-  status: "Added" | "NotFound" | "InsufficientInventory" | "OfflineValidationRequired";
+  status: "Added" | "NotFound" | "InsufficientInventory";
   draft: PosDraft | null;
   availability?: {
     requestedQuantity: number;
@@ -217,6 +217,24 @@ export type PosPaymentInput = {
   reference: string | null;
   cardFranchiseCode?: string | null;
   approvalNumber?: string | null;
+};
+
+export type PosSaleSettlement = {
+  grossAmount: number;
+  withholdingTotal: number;
+  netAmount: number;
+  lines: Array<{
+    ruleId: string;
+    ruleVersion: number;
+    ruleCode: string;
+    name: string;
+    kind: string;
+    baseKind: string;
+    taxableBase: number;
+    rate: number;
+    amount: number;
+    jurisdictionCode: string | null;
+  }>;
 };
 export type PosProductWarehouseAvailability = {
   businessId: string;
@@ -321,6 +339,7 @@ export type PosWorkSessionPaymentTotal = {
   netAmount: number;
   countedAmount: number | null;
   difference: number | null;
+  requiresCount: boolean;
 };
 
 export type PosInventoryIssue = {
@@ -403,6 +422,14 @@ export type PosCloseWorkSessionInput = {
   note: string | null;
 };
 
+export type PosReferenceOption = {
+  id: string;
+  code: string;
+  label: string;
+  description: string | null;
+  sortOrder: number;
+};
+
 export interface PosClient {
   readonly mode: "edge" | "online";
   health(): Promise<{
@@ -430,6 +457,7 @@ export interface PosClient {
   }>;
   synchronizeNow(): Promise<void>;
   synchronizationEvents(take?: number): Promise<PosSynchronizationEvent[]>;
+  referenceOptions(catalogCode: string): Promise<PosReferenceOption[]>;
   openCashDrawer(): Promise<void>;
   readScaleWeight(): Promise<{ weight: number; unit: string; portName: string }>;
   searchProducts(search?: string, skip?: number, take?: number, customerId?: string | null): Promise<PosCatalogSearchPage>;
@@ -465,6 +493,7 @@ export interface PosClient {
   deleteTemporary(draftId: string): Promise<void>;
   recoverTemporary(draftId: string): Promise<PosDraft>;
   validateDraftInventory(draftId: string): Promise<PosInventoryValidation>;
+  previewSettlement(draftId: string): Promise<PosSaleSettlement>;
   completeSale(
     draftId: string,
     customerIdentification: string | null,
@@ -607,7 +636,6 @@ export class PosEdgeClient implements PosClient {
   health() {
     return this.request<{
       status: string;
-      startupMode: "online" | "enrolled";
       serverConnected: boolean;
       deviceSeriesCode: string;
       businessId: string;
@@ -635,12 +663,6 @@ export class PosEdgeClient implements PosClient {
 
   synchronizeNow() {
     return this.requestVoid("/edge/v1/synchronization/refresh", { method: "POST" });
-  }
-  setStartupMode(mode: "online" | "enrolled") {
-    return this.requestVoid("/edge/v1/configuration/startup-mode", {
-      method: "PUT",
-      body: JSON.stringify({ mode }),
-    });
   }
 
   printerConfiguration() {
@@ -673,6 +695,12 @@ export class PosEdgeClient implements PosClient {
   synchronizationEvents(take = 100) {
     return this.request<PosSynchronizationEvent[]>(
       `/edge/v1/synchronization/events?take=${take}`,
+    );
+  }
+
+  referenceOptions(catalogCode: string) {
+    return this.request<PosReferenceOption[]>(
+      `/edge/v1/reference-options/${encodeURIComponent(catalogCode)}`,
     );
   }
 
@@ -758,7 +786,7 @@ export class PosEdgeClient implements PosClient {
     });
     if (!session.token) throw new PosEdgeError("El servicio local no devolvió una sesión de usuario.", 500);
     this.userSessionToken = session.token;
-    window.sessionStorage.setItem("auraly.pos.user-session", session.token);
+    window.localStorage.setItem("auraly.pos.user-session", session.token);
     return session;
   }
 
@@ -769,7 +797,7 @@ export class PosEdgeClient implements PosClient {
     );
     if (!session.token) throw new PosEdgeError("El servicio local no devolvió la sesión inicial.", 500);
     this.userSessionToken = session.token;
-    window.sessionStorage.setItem("auraly.pos.user-session", session.token);
+    window.localStorage.setItem("auraly.pos.user-session", session.token);
     return session;
   }
 
@@ -778,7 +806,7 @@ export class PosEdgeClient implements PosClient {
       await this.requestVoid("/edge/v1/auth/logout", { method: "POST" });
     }
     this.userSessionToken = null;
-    window.sessionStorage.removeItem("auraly.pos.user-session");
+    window.localStorage.removeItem("auraly.pos.user-session");
   }
 
   searchProducts(search = "", skip = 0, take = 50, customerId: string | null = null) {
@@ -1000,6 +1028,12 @@ export class PosEdgeClient implements PosClient {
     );
   }
 
+  previewSettlement(draftId: string) {
+    return this.request<PosSaleSettlement>(
+      `/edge/v1/drafts/${draftId}/settlement`,
+    );
+  }
+
   updateLines(draftId: string, lines: PosDraftLineUpdate[], authorization?: PosSensitiveAuthorization) {
     return this.request<PosDraft>(`/edge/v1/drafts/${draftId}/lines`, {
       method: "PUT",
@@ -1121,7 +1155,7 @@ export class PosEdgeClient implements PosClient {
 }
 
 export function readEdgeUserSession(): string | null {
-  return window.sessionStorage.getItem("auraly.pos.user-session");
+  return window.localStorage.getItem("auraly.pos.user-session");
 }
 
 export function readEdgeTokenFromLaunch(): string | null {

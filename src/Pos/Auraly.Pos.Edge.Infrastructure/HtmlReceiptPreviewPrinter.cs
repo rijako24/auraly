@@ -165,7 +165,7 @@ public sealed class HtmlReceiptPreviewRenderer
                   <div class="muted">{{Encode(receipt.IssuedAt.ToString("yyyy-MM-dd HH:mm:ss zzz", CultureInfo.InvariantCulture))}}</div>
                 </header>
                 <hr class="rule">
-                {{Pair("Documento", Encode(receipt.DocumentNumber))}}
+                {{Pair("N.º de ticket", Encode(receipt.DocumentNumber))}}
                 {{fiscalNumber}}
                 <div class="pair"><span>Adquirente</span><strong>{{Encode(receipt.CustomerIdentification)}}</strong></div>
                 <hr class="rule">

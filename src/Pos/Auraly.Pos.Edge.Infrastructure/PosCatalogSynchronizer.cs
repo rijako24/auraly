@@ -10,6 +10,11 @@ public interface IPosSynchronizationEventSink
 {
     void Record(string level, string category, string title, string? detail = null);
     void ProductReceived(PosCatalogItem product, PosCatalogItem? previous, bool bootstrap);
+    void CustomerReceived(PosCustomerPricing customer, PosCustomerPricing? previous);
+    void ChannelPriceReceived(
+        PosPriceChannelItem price,
+        PosPriceChannelItem? previous,
+        string? productName);
 }
 
 public sealed class PosCatalogSynchronizer(
@@ -19,6 +24,9 @@ public sealed class PosCatalogSynchronizer(
     PosOperationalScope scope,
     IPosSynchronizationEventSink? events = null) : IPosInventoryAvailabilityClient
 {
+    private static readonly string[] OperationalReferenceCatalogs =
+        ["payment-method", "card-franchise", "sales-document-type", "cash-denomination"];
+
     public async Task SynchronizeAsync(CancellationToken cancellationToken = default)
     {
         await store.InitializeAsync(cancellationToken);
@@ -61,12 +69,43 @@ public sealed class PosCatalogSynchronizer(
             }
         }
 
+        var previousPricing = events is null
+            ? null
+            : await store.ReadPricingSnapshotAsync(cancellationToken);
         var pricing = await SendAsync<PosPricingSnapshot>(
             HttpMethod.Get,
             $"api/pos/v1/pricing/snapshot?{ScopeQuery}",
             content: null,
             cancellationToken);
+        if (previousPricing is not null)
+        {
+            var previousCustomers = previousPricing.Customers.ToDictionary(item => item.CustomerId);
+            foreach (var customer in pricing.Customers)
+            {
+                previousCustomers.TryGetValue(customer.CustomerId, out var previous);
+                if (previous != customer)
+                    events!.CustomerReceived(customer, previous);
+            }
+
+            var previousPrices = previousPricing.PriceChannelItems.ToDictionary(PriceKey);
+            foreach (var price in pricing.PriceChannelItems)
+            {
+                previousPrices.TryGetValue(PriceKey(price), out var previous);
+                if (previous == price) continue;
+                var product = await store.GetByProductIdAsync(price.ProductId, cancellationToken);
+                events!.ChannelPriceReceived(price, previous, product?.Name);
+            }
+        }
         await store.ApplyPricingSnapshotAsync(pricing, cancellationToken);
+        foreach (var catalogCode in OperationalReferenceCatalogs)
+        {
+            var options = await SendAsync<IReadOnlyList<ReferenceOption>>(
+                HttpMethod.Get,
+                $"api/commerce/v1/reference-options/{Uri.EscapeDataString(catalogCode)}",
+                content: null,
+                cancellationToken);
+            await store.ApplyReferenceOptionsAsync(catalogCode, options, cancellationToken);
+        }
         while (true)
         {
             status = await store.StatusAsync(cancellationToken);
@@ -96,6 +135,10 @@ public sealed class PosCatalogSynchronizer(
 
     private string ScopeQuery =>
         $"businessId={scope.BusinessId:D}&warehouseId={scope.WarehouseId:D}";
+
+    private static (Guid PriceChannelId, Guid ProductId, decimal MinimumQuantity) PriceKey(
+        PosPriceChannelItem item) =>
+        (item.PriceChannelId, item.ProductId, item.MinimumQuantity);
 
     private async Task<T> SendAsync<T>(
         HttpMethod method,

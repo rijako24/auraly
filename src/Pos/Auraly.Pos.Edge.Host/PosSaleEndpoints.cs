@@ -141,6 +141,13 @@ internal static class PosSaleHostModule
             return Results.Ok(new { document, fiscal });
         });
 
+        edge.MapGet("/drafts/{draftId:guid}/settlement", async (
+            Guid draftId,
+            PosSaleCompletionService completion,
+            CancellationToken ct) =>
+            Results.Ok(await completion.PreviewSettlementAsync(
+                new DraftId(draftId), ct)));
+
         edge.MapPost("/drafts/{draftId:guid}/complete", async (
             Guid draftId,
             CompleteDraftRequest request,

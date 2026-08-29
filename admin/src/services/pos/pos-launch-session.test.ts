@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { resolvePosOrderPrintRoute } from "./pos-order-print-routing";
 import {
-  clearInstalledPosUserSession,
   installedPosLaunchDestination,
+  usesEnrolledPosRuntime,
 } from "./pos-launch-session";
 import {
   canIssuePosDocument,
@@ -61,13 +61,22 @@ test("an unenrolled installed POS uses the online login", () => {
     installedPosLaunchDestination({ status: "EnrollmentRequired", identityReady: false }),
     "/login?redirect=%2Fpos",
   );
-  assert.equal(installedPosLaunchDestination(null), "/login?redirect=%2Fpos");
+  assert.equal(installedPosLaunchDestination(null), "/pos");
 });
 
-test("a desktop launch removes a prior cashier lease", () => {
-  const removed: string[] = [];
-  clearInstalledPosUserSession({ removeItem: (key) => removed.push(key) });
-  assert.deepEqual(removed, ["auraly.pos.user-session"]);
+test("enrollment is the single owner of installed runtime selection", () => {
+  assert.equal(
+    usesEnrolledPosRuntime({ status: "LoginRequired", identityReady: true }),
+    true,
+  );
+  assert.equal(
+    usesEnrolledPosRuntime({ status: "Ready", identityReady: true }),
+    true,
+  );
+  assert.equal(
+    usesEnrolledPosRuntime({ status: "EnrollmentRequired", identityReady: false }),
+    false,
+  );
 });
 test("connected Auraly orders use the installed orders printer", () => {
   assert.equal(resolvePosOrderPrintRoute("edge-session"), "installed-pos");

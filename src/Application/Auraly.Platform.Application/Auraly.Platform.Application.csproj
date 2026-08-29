@@ -12,6 +12,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\BuildingBlocks\Auraly.BuildingBlocks.Application\Auraly.BuildingBlocks.Application.csproj" />
     <ProjectReference Include="..\..\Domain\Auraly.Platform.Domain\Auraly.Platform.Domain.csproj" />
     <ProjectReference Include="..\..\Modules\Authorization\Auraly.Contracts.Authorization\Auraly.Contracts.Authorization.csproj" />
     <ProjectReference Include="..\..\Modules\Parties\Auraly.Contracts.Parties\Auraly.Contracts.Parties.csproj" />

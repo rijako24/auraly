@@ -173,10 +173,10 @@ WHEN MATCHED THEN
         RawPayloadJson = NULL,
         UpdatedAt = GETUTCDATE()
 WHEN NOT MATCHED THEN
-    INSERT (ProductId, BusinessId, IntegrationConnectionId, ExternalProductId, Source, Sku, [Name],
+    INSERT (ProductId, TenantId, BusinessId, IntegrationConnectionId, ExternalProductId, Source, Sku, [Name],
             [Description], CategoryName, Currency, ManageStock, StockQuantity,
             IsActive, RawPayloadJson, LastSyncedAt, CreatedAt)
-    VALUES (source.ProductId, @BusinessId, @MantisCommerceConnectionId, NULL, 0, source.Sku, source.[Name],
+    VALUES (source.ProductId, @TenantId, @BusinessId, @MantisCommerceConnectionId, NULL, 0, source.Sku, source.[Name],
             source.[Description], source.CategoryName, source.Currency, 1, source.StockQuantity,
             source.IsActive, NULL, NULL, GETUTCDATE());
 

@@ -23,6 +23,8 @@ export interface GoodsReceiptLine {
   preferredUnitsPerPresentation?: number;
   presentationQuantity: number;
   unitsPerPresentation: number;
+  latestUnitCost?: number | null;
+  averageUnitCost?: number | null;
 }
 
 export interface GoodsReceiptLineSnapshot extends GoodsReceiptLine {
@@ -124,6 +126,8 @@ export interface GoodsReceiptOptions {
     allowedPurchaseEvidenceTypes: PurchaseEvidenceType[];
   }>;
   purchaseEvidenceTypes: Array<{ code: PurchaseEvidenceType; label: string; description: string | null }>;
+  withholdingConcepts: Array<{ code: string; label: string }>;
+  withholdingJurisdictions: Array<{ code: string; label: string }>;
 }
 
 export interface GoodsReceiptProduct {
@@ -133,6 +137,7 @@ export interface GoodsReceiptProduct {
   name: string;
   supplierProductCode: string | null;
   latestUnitCost: number | null;
+  averageUnitCost: number | null;
   taxCode: string;
   taxRate: number;
   taxTreatment: PurchaseTaxTreatment;

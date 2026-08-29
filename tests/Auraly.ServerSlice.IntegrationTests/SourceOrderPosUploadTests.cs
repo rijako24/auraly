@@ -27,10 +27,10 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
                   N'04',8,1,99999999,1,1,SYSDATETIMEOFFSET());
 
                 INSERT dbo.Products(
-                  ProductId,BusinessId,Source,Sku,Name,Currency,
+                  ProductId,TenantId,BusinessId,Source,Sku,Name,Currency,
                   ManageStock,IsActive,CreatedAt)
                 VALUES(
-                  @ProductId,@BusinessId,0,@Sku,N'Producto documentos sin pedido',N'COP',
+                  @ProductId,@TenantId,@BusinessId,0,@Sku,N'Producto documentos sin pedido',N'COP',
                   1,1,SYSUTCDATETIME());
 
                 INSERT dbo.InventoryBalances(
@@ -39,6 +39,7 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
                 VALUES(@BusinessId,@WarehouseId,@ProductId,10,5000,50000,1,SYSDATETIMEOFFSET());
                 """;
             seed.Parameters.AddWithValue("@SeriesId", receiptSeriesId);
+            seed.Parameters.AddWithValue("@TenantId", fixture.TenantId);
             seed.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
             seed.Parameters.AddWithValue("@DeviceId", fixture.DeviceId);
             seed.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);

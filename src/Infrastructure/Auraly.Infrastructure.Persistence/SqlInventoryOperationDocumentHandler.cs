@@ -88,7 +88,8 @@ public sealed class SqlInventoryOperationProcessor(
             INNER JOIN dbo.Warehouses w WITH(UPDLOCK,HOLDLOCK) ON w.WarehouseId=@WarehouseId AND w.BusinessId=@BusinessId
             LEFT JOIN dbo.InventoryBalances b WITH(UPDLOCK,HOLDLOCK)
               ON b.BusinessId=@BusinessId AND b.WarehouseId=@WarehouseId AND b.ProductId=p.ProductId
-            WHERE p.BusinessId=@BusinessId AND p.ProductId=@ProductId AND p.IsActive=1;
+            WHERE p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+              AND p.ProductId=@ProductId AND p.IsActive=1;
             """;
         foreach (var key in keys.Distinct().OrderBy(key => key.Item1).ThenBy(key => key.ProductId))
         {

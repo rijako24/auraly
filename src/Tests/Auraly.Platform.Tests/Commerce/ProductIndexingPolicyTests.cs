@@ -16,10 +16,20 @@ public sealed class ProductIndexingPolicyTests
             .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
             .Options;
         await using var context = new ApplicationDbContext(options);
+        var businessId = Guid.NewGuid();
+        context.Businesses.Add(new Business
+        {
+            BusinessId = businessId,
+            TenantId = businessId,
+            Name = "Test business",
+            IsActive = true
+        });
+        await context.SaveChangesAsync();
         var product = new Product
         {
             ProductId = Guid.NewGuid(),
-            BusinessId = Guid.NewGuid(),
+            TenantId = businessId,
+            BusinessId = businessId,
             Name = "JAMON CUNIT X 500GR",
             Sku = "CF17",
             UnitPrice = 10m,

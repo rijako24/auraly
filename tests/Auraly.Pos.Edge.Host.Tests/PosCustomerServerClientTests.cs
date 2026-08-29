@@ -122,6 +122,8 @@ public sealed class PosCustomerServerClientTests
                 return Ok(new PosPricingSnapshot([], [
                     new PosCustomerPricing(customerId, "1.234.567", "Cliente POS nuevo", null, true)
                 ]));
+            if (path.StartsWith("/api/commerce/v1/reference-options/", StringComparison.Ordinal))
+                return Ok<IReadOnlyList<ReferenceOption>>([]);
             if (path.StartsWith("/api/pos/v1/catalog/changes?", StringComparison.Ordinal))
                 return Ok(new CatalogDeltaPage(0, 0, false, []));
             return new HttpResponseMessage(HttpStatusCode.NotFound)

@@ -914,9 +914,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
              @DocumentType, @Prefix, 10001, 20000, 1, SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.Products
-            (ProductId, BusinessId, Source, Sku, Name, Currency, ManageStock, IsActive, CreatedAt)
+            (ProductId, TenantId, BusinessId, Source, Sku, Name, Currency, ManageStock, IsActive, CreatedAt)
             VALUES
-            (@ProductId, @BusinessId, 0, N'P-E2E', N'Producto E2E', N'COP', 1, 1, SYSUTCDATETIME());
+            (@ProductId, @TenantId, @BusinessId, 0, N'P-E2E', N'Producto E2E', N'COP', 1, 1, SYSUTCDATETIME());
 
             INSERT dbo.ProductPrices
               (ProductPriceId,BusinessId,ProductId,Amount,CurrencyCode,ValidFrom,

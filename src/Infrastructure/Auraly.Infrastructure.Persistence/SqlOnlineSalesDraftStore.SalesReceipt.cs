@@ -4,27 +4,40 @@ using Auraly.Application.Sales;
 using Auraly.BuildingBlocks.Domain.Documents;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
+using Auraly.Commerce.Taxation.Contracts;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.Infrastructure.Persistence;
 
 public sealed partial class SqlOnlineSalesDraftStore
 {
+    private static void ValidateWithholding(
+        OnlineSalesDraft draft,
+        WithholdingCalculationSnapshot withholding)
+    {
+        if (withholding.GrossAmount != draft.PayableAmount ||
+            withholding.WithholdingTotal != withholding.Lines.Sum(line => line.Amount) ||
+            withholding.NetAmount + withholding.WithholdingTotal != draft.PayableAmount)
+            throw new OnlineSalesDraftValidationException(
+                "La retención calculada ya no coincide con el total del borrador.");
+    }
+
     public Task<PreparedOnlineSalesCheckout> PrepareAsync(
         OnlineSalesUserIdentity user,
         Guid draftId,
         CompleteOnlineSalesDraftRequest request,
         string idempotencyKey,
         FiscalVerificationMaterial? fiscalMaterial,
+        WithholdingCalculationSnapshot withholding,
         CancellationToken cancellationToken) => request.DocumentType switch
     {
         PosSaleDocumentTypes.Invoice => PrepareInvoiceAsync(
             user, draftId, request, idempotencyKey,
             fiscalMaterial ?? throw new OnlineSalesDraftValidationException(
                 "La factura electronica requiere material fiscal activo."),
-            cancellationToken),
+            withholding, cancellationToken),
         PosSaleDocumentTypes.Receipt => PrepareSalesReceiptAsync(
-            user, draftId, request, idempotencyKey, cancellationToken),
+            user, draftId, request, idempotencyKey, withholding, cancellationToken),
         _ => throw new OnlineSalesDraftValidationException(
             "El tipo de documento de venta no es valido.")
     };
@@ -34,6 +47,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         Guid draftId,
         CompleteOnlineSalesDraftRequest request,
         string idempotencyKey,
+        WithholdingCalculationSnapshot withholding,
         CancellationToken ct)
     {
         var requestHash = CheckoutHash(draftId, request);
@@ -62,7 +76,8 @@ public sealed partial class SqlOnlineSalesDraftStore
         if (!inventoryValidation.IsValid)
             throw new OnlineSalesDraftValidationException(
                 "El inventario cambió y uno o más productos ya no tienen existencias suficientes. Ajusta sus cantidades o elimínalos antes de cobrar.");
-        if (request.Payments.Sum(payment => payment.Amount) + (request.Credit?.Amount ?? 0m) != draft.PayableAmount)
+        ValidateWithholding(draft, withholding);
+        if (request.Payments.Sum(payment => payment.Amount) + (request.Credit?.Amount ?? 0m) != withholding.NetAmount)
             throw new OnlineSalesDraftValidationException(
                 "Los pagos reales y el saldo financiado deben ser iguales al total de la venta.");
         await ValidateCreditAsync(
@@ -100,7 +115,7 @@ public sealed partial class SqlOnlineSalesDraftStore
                 number.SeriesCode, number.Consecutive, number.Padding, number.FullNumber),
             new PosSaleCommercialSnapshotContract(
                 PosSaleDocumentTypes.Receipt, now, customerIdentification, taxes,
-                draft.UntaxedAmount, draft.TaxAmount, draft.PayableAmount),
+                draft.UntaxedAmount, draft.TaxAmount, draft.PayableAmount, withholding),
             null,
             lines,
             payments,

@@ -13,11 +13,11 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
             IF NOT EXISTS(SELECT 1 FROM dbo.Warehouses WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND IsActive=1 AND IsSystem=0)
               THROW 51201,'Selecciona una bodega de inventario activa.',1;
             SELECT COUNT(*) FROM dbo.Products p
-            LEFT JOIN dbo.ProductLinks link ON link.BusinessId=p.BusinessId AND link.ChildProductId=p.ProductId AND link.SharesInventory=1 AND link.IsActive=1
-            LEFT JOIN dbo.Products root ON root.BusinessId=p.BusinessId AND root.ProductId=link.ParentProductId
-            WHERE p.BusinessId=@BusinessId AND p.IsActive=1 AND COALESCE(root.ManageStock,p.ManageStock)=1
+            LEFT JOIN dbo.ProductLinks link ON link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId AND link.SharesInventory=1 AND link.IsActive=1
+            LEFT JOIN dbo.Products root ON root.ProductId=link.ParentProductId
+            WHERE (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId)) AND p.IsActive=1 AND COALESCE(root.ManageStock,p.ManageStock)=1
               AND link.ProductLinkId IS NULL AND (@ProductCategoryId IS NULL OR p.ProductCategoryId=@ProductCategoryId)
-              AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Reference LIKE @Pattern OR p.Name LIKE @Pattern OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes barcode WHERE barcode.BusinessId=p.BusinessId AND barcode.ProductId=p.ProductId AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1));
+              AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Reference LIKE @Pattern OR p.Name LIKE @Pattern OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes barcode WHERE barcode.BusinessId=@BusinessId AND barcode.ProductId=p.ProductId AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1));
             SELECT p.ProductId,COALESCE(p.ProductCode,N''),p.Reference,p.Name,COALESCE(p.BaseUnitCode,N'UN'),
                    COALESCE(b.QuantityOnHand,0) / COALESCE(NULLIF(link.InventoryFactor,0),1),
                    CASE WHEN @IncludeCosts=1
@@ -25,14 +25,14 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                    END,
                    price.Amount * COALESCE(NULLIF(link.PriceFactor,0),1),p.ProductCategoryId,p.CategoryName
             FROM dbo.Products p
-            LEFT JOIN dbo.ProductLinks link ON link.BusinessId=p.BusinessId AND link.ChildProductId=p.ProductId AND link.SharesInventory=1 AND link.IsActive=1
-            LEFT JOIN dbo.Products root ON root.BusinessId=p.BusinessId AND root.ProductId=link.ParentProductId
-            LEFT JOIN dbo.InventoryBalances b ON b.BusinessId=p.BusinessId AND b.ProductId=COALESCE(link.ParentProductId,p.ProductId) AND b.WarehouseId=@WarehouseId
-            LEFT JOIN dbo.ProductPrices price ON price.BusinessId=p.BusinessId AND price.ProductId=p.ProductId
+            LEFT JOIN dbo.ProductLinks link ON link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId AND link.SharesInventory=1 AND link.IsActive=1
+            LEFT JOIN dbo.Products root ON root.ProductId=link.ParentProductId
+            LEFT JOIN dbo.InventoryBalances b ON b.BusinessId=@BusinessId AND b.ProductId=COALESCE(link.ParentProductId,p.ProductId) AND b.WarehouseId=@WarehouseId
+            LEFT JOIN dbo.ProductPrices price ON price.BusinessId=@BusinessId AND price.ProductId=p.ProductId
               AND price.IsActive=1 AND price.ValidFrom<=SYSUTCDATETIME() AND (price.ValidUntil IS NULL OR price.ValidUntil>SYSUTCDATETIME())
-            WHERE p.BusinessId=@BusinessId AND p.IsActive=1 AND COALESCE(root.ManageStock,p.ManageStock)=1
+            WHERE (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId)) AND p.IsActive=1 AND COALESCE(root.ManageStock,p.ManageStock)=1
               AND link.ProductLinkId IS NULL AND (@ProductCategoryId IS NULL OR p.ProductCategoryId=@ProductCategoryId)
-              AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Reference LIKE @Pattern OR p.Name LIKE @Pattern OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes barcode WHERE barcode.BusinessId=p.BusinessId AND barcode.ProductId=p.ProductId AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1))
+              AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Reference LIKE @Pattern OR p.Name LIKE @Pattern OR EXISTS (SELECT 1 FROM dbo.ProductBarcodes barcode WHERE barcode.BusinessId=@BusinessId AND barcode.ProductId=p.ProductId AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1))
             ORDER BY p.Name,p.ProductId OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             """;
         await using var connection=connections.Create(); await connection.OpenAsync(token); await using var command=new SqlCommand(sql,connection);
@@ -52,22 +52,22 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                    root.ConversionMaximumLossPercent MaximumLossPercent
             FROM dbo.Products p
             LEFT JOIN dbo.ProductLinks childLink
-              ON childLink.BusinessId=p.BusinessId AND childLink.ChildProductId=p.ProductId
+              ON childLink.BusinessId=@BusinessId AND childLink.ChildProductId=p.ProductId
              AND childLink.AllowsConversion=1 AND childLink.IsActive=1
             INNER JOIN dbo.Products root
-              ON root.BusinessId=p.BusinessId AND root.ProductId=COALESCE(childLink.ParentProductId,p.ProductId)
+              ON root.TenantId=p.TenantId AND root.ProductId=COALESCE(childLink.ParentProductId,p.ProductId)
              AND root.IsActive=1 AND root.ManageStock=1 AND root.ConversionMaximumLossPercent IS NOT NULL
             LEFT JOIN dbo.InventoryBalances b
-              ON b.BusinessId=p.BusinessId AND b.ProductId=p.ProductId AND b.WarehouseId=@WarehouseId
-            WHERE p.BusinessId=@BusinessId AND p.IsActive=1 AND p.ManageStock=1
+              ON b.BusinessId=@BusinessId AND b.ProductId=p.ProductId AND b.WarehouseId=@WarehouseId
+            WHERE p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND p.IsActive=1 AND p.ManageStock=1
               AND (childLink.ProductLinkId IS NOT NULL OR EXISTS(
                     SELECT 1 FROM dbo.ProductLinks familyLink
-                    WHERE familyLink.BusinessId=p.BusinessId AND familyLink.ParentProductId=p.ProductId
+                    WHERE familyLink.BusinessId=@BusinessId AND familyLink.ParentProductId=p.ProductId
                       AND familyLink.AllowsConversion=1 AND familyLink.IsActive=1))
               AND (@FamilyRootProductId IS NULL OR root.ProductId=@FamilyRootProductId)
               AND (@Search IS NULL OR p.ProductCode LIKE @Pattern OR p.Reference LIKE @Pattern OR p.Name LIKE @Pattern OR EXISTS(
                     SELECT 1 FROM dbo.ProductBarcodes barcode
-                    WHERE barcode.BusinessId=p.BusinessId AND barcode.ProductId=p.ProductId
+                    WHERE barcode.BusinessId=@BusinessId AND barcode.ProductId=p.ProductId
                       AND barcode.Barcode LIKE @Pattern AND barcode.IsActive=1))
             """;
         var sql = $"""
@@ -130,7 +130,7 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                    COALESCE((SELECT LastCompletedSequence FROM dbo.BusinessProcessingCursors WHERE BusinessId=@BusinessId),0),
                    SYSUTCDATETIME()
             FROM dbo.Products product
-            WHERE product.BusinessId=@BusinessId
+            WHERE product.TenantId=@TenantId
               AND NOT EXISTS (
                 SELECT 1 FROM dbo.InventoryBalances balance
                 WHERE balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId

@@ -49,7 +49,8 @@ public sealed class TenantService(
     public async Task<TenantDto> UpdateAsync(Guid tenantId, string? name, string? email,
         int? maximumUsers, int? maximumEnrolledDevices, string? legalName = null,
         string? nit = null, string? verificationDigit = null, string? entityType = null,
-        string? identificationTypeCode = null, CancellationToken ct = default)
+        string? identificationTypeCode = null, string? inventoryCostBasis = null,
+        CancellationToken ct = default)
     {
         var tenant = await unitOfWork.Tenants.GetByIdAsync(tenantId, ct)
             ?? throw new NotFoundException(nameof(Tenant), tenantId);
@@ -73,6 +74,12 @@ public sealed class TenantService(
             throw new ConflictException($"El cupo no puede ser menor que las {tenant.ActiveEnrolledDeviceCount} cajas enroladas actuales.");
         if (maximumUsers.HasValue) tenant.MaximumUsers = maximumUsers.Value;
         if (maximumEnrolledDevices.HasValue) tenant.MaximumEnrolledDevices = maximumEnrolledDevices.Value;
+        if (inventoryCostBasis is not null)
+        {
+            if (inventoryCostBasis is not ("LatestReceiptCost" or "WeightedAverageCost"))
+                throw new ArgumentException("La base de costo de inventario no es válida.");
+            tenant.InventoryCostBasis = inventoryCostBasis;
+        }
         var changesLegalIdentity = legalName is not null || nit is not null || verificationDigit is not null
             || entityType is not null || identificationTypeCode is not null;
         if (changesLegalIdentity)
@@ -165,7 +172,7 @@ public sealed class TenantService(
     private static TenantDto MapToDto(Tenant tenant) => new(
         tenant.TenantId, tenant.TenantKey, tenant.Name, tenant.Email, tenant.IsActive,
         tenant.CreatedAt, tenant.Businesses?.Count ?? 0,
-        tenant.MaximumUsers, tenant.MaximumEnrolledDevices,
+        tenant.MaximumUsers, tenant.MaximumEnrolledDevices, tenant.InventoryCostBasis,
         tenant.ActiveUserCount, tenant.ActiveEnrolledDeviceCount,
         tenant.LegalName, tenant.Nit, tenant.VerificationDigit,
         tenant.EntityType, tenant.IdentificationTypeCode, null);

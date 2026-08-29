@@ -10,6 +10,9 @@ export interface PartyWorkspaceItem {
   email: string | null; phone: string | null; roles: PartyRole[];
   primarySiteName: string | null; cityName: string | null; isActive: boolean;
   completionStatus: "Complete" | "Incomplete"; rowVersion: string;
+  customerId: string | null; supplierId: string | null; sellerId: string | null;
+  carrierId: string | null; employeeId: string | null; userId: string | null;
+  supplierPurchaseEvidencePolicy: PurchaseEvidencePolicy | null;
 }
 export interface PartyWorkspacePage { items: PartyWorkspaceItem[]; page: number; pageSize: number; totalCount: number; totalPages: number; }
 export interface CustomerMapAssignment { routeId:string; routeName:string; sellerId:string; sellerName:string; }
@@ -56,7 +59,7 @@ export interface SellerUserAccess { userId:string; partyId:string; username:stri
 export interface CreateSellerUserAccess { username:string; email:string; password:string; firstName:string; lastName:string; phoneNumber:string|null; }
 
 export const partiesApi = {
-  page: (params: { page: number; pageSize: number; search?: string; role?: string; isActive?: boolean; isIncomplete?: boolean }) =>
+  page: (params: { page: number; pageSize: number; search?: string; role?: string; isActive?: boolean; isIncomplete?: boolean; roleId?: string; partyId?: string }) =>
     apiClient.get<PartyWorkspacePage>("/commerce/v1/parties", params),
   createIdentity: (request: CreateThirdPartyRequest & { targetRole: "Employee" | "User" }) => apiClient.post<PartyIdentityAcceptance>("/commerce/v1/parties/identity", request),
   customerMap: () => apiClient.get<CustomerMapSite[]>("/commerce/v1/parties/customer-map"),

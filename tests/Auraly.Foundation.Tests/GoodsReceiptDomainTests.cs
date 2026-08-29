@@ -64,6 +64,28 @@ public sealed class GoodsReceiptDomainTests
     }
 
     [Fact]
+    public void Weighted_average_preserves_negative_stock_and_does_not_corrupt_cost()
+    {
+        var result = WeightedAverageCost.ApplyReceipt(-10m, -50_000m, 4m, 6_000m);
+
+        Assert.Equal(-6m, result.QuantityAfter);
+        Assert.Equal(6_000m, result.AverageUnitCostAfter);
+        Assert.Equal(-36_000m, result.InventoryValueAfter);
+        Assert.Equal(24_000m, result.ReceiptValue);
+    }
+
+    [Fact]
+    public void Receipt_crossing_negative_stock_starts_positive_inventory_at_receipt_cost()
+    {
+        var result = WeightedAverageCost.ApplyReceipt(-10m, -50_000m, 14m, 6_000m);
+
+        Assert.Equal(4m, result.QuantityAfter);
+        Assert.Equal(6_000m, result.AverageUnitCostAfter);
+        Assert.Equal(24_000m, result.InventoryValueAfter);
+        Assert.Equal(84_000m, result.ReceiptValue);
+    }
+
+    [Fact]
     public void Payable_requires_a_valid_due_date_and_preserves_the_opening_balance()
     {
         var received = new DateTimeOffset(2026, 7, 31, 10, 0, 0, TimeSpan.FromHours(-5));

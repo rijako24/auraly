@@ -159,7 +159,7 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
     public async Task New_device_enrollment_never_exceeds_tenant_capacity()
     {
         var original = await ReadDeviceCapacityAsync();
-        await SetDeviceCapacityAsync(original.ActiveDevices);
+        await SetDeviceCapacityAsync(original.ActiveDevices + 1);
         var fiscalSeriesId = Guid.NewGuid();
         await SeedAvailableDeviceFiscalSeriesAsync(fiscalSeriesId);
 
@@ -177,6 +177,10 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
             var authorization = await authorizationResponse.Content
                 .ReadFromJsonAsync<PosEnrollmentAuthorization>();
             Assert.NotNull(authorization);
+
+            // Another workstation can consume the last slot between preflight and redeem.
+            // Redemption must keep the transactional capacity check as the final authority.
+            await SetDeviceCapacityAsync(original.ActiveDevices);
 
             using var redeemResponse = await client.PostAsJsonAsync(
                 "/api/pos/v1/enrollments/redeem",

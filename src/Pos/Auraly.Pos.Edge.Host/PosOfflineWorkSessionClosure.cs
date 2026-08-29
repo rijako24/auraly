@@ -338,12 +338,14 @@ public sealed class PosOfflineWorkSessionClosureService(
         IReadOnlyList<WorkSessionPaymentCount>? counts)
     {
         var amounts = sales.SelectMany(value => value.Payments)
-            .GroupBy(value => value.MethodCode, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(value => ClosureMethod(value.MethodCode), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.Sum(value => value.Amount),
                 StringComparer.OrdinalIgnoreCase);
         var creditAmount = sales.Sum(value => value.CreditAmount);
         if (creditAmount > 0) amounts["Credit"] = creditAmount;
         amounts.TryAdd("Cash", 0);
+        amounts.TryAdd("Card", 0);
+        amounts.TryAdd("Transfer", 0);
         var counted = (counts ?? [])
             .GroupBy(value => value.PaymentMethodCode, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.Sum(value => value.CountedAmount),
@@ -362,7 +364,8 @@ public sealed class PosOfflineWorkSessionClosureService(
                 return new WorkSessionPaymentTotal(
                     value.Key, value.Value, 0, other, net,
                     manual && hasCount ? countedAmount : null,
-                    manual && hasCount ? countedAmount - net : null);
+                    manual && hasCount ? countedAmount - net : null,
+                    manual);
             })
             .ToArray();
     }
@@ -381,8 +384,15 @@ public sealed class PosOfflineWorkSessionClosureService(
     private static bool RequiresManualCount(string code) =>
         code.Equals("Cash", StringComparison.OrdinalIgnoreCase) ||
         code.Equals("Card", StringComparison.OrdinalIgnoreCase) ||
-        code.Equals("DebitCard", StringComparison.OrdinalIgnoreCase) ||
-        code.Equals("CreditCard", StringComparison.OrdinalIgnoreCase);
+        code.Equals("Transfer", StringComparison.OrdinalIgnoreCase);
+
+    private static string ClosureMethod(string code) => code switch
+    {
+        "DebitCard" or "CreditCard" or "Card" => "Card",
+        "Transfer" => "Transfer",
+        "Cash" => "Cash",
+        _ => code
+    };
 }
 
 public sealed class PosWorkSessionClosureUploader(

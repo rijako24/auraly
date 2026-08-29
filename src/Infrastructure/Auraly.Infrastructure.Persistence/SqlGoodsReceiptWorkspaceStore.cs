@@ -25,12 +25,20 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             ORDER BY Name,Code;
             SELECT SupplierId,Identification,Name,PurchaseEvidencePolicy
             FROM dbo.Suppliers
-            WHERE BusinessId=@BusinessId AND IsActive=1
+            WHERE BusinessId=@BusinessId AND IsActive=1 AND 1=0
             ORDER BY Name,Identification;
             SELECT Code,Label,Description
             FROM reference.Options
             WHERE CatalogCode=N'purchase-evidence-type' AND IsActive=1
             ORDER BY SortOrder,Label;
+            SELECT DISTINCT ConceptCode AS Code,ConceptCode AS Label
+            FROM dbo.WithholdingRules
+            WHERE BusinessId=@BusinessId AND Direction=N'Purchase' AND IsActive=1 AND ConceptCode IS NOT NULL
+            ORDER BY Code;
+            SELECT DISTINCT JurisdictionCode AS Code,JurisdictionCode AS Label
+            FROM dbo.WithholdingRules
+            WHERE BusinessId=@BusinessId AND Direction=N'Purchase' AND IsActive=1 AND JurisdictionCode IS NOT NULL
+            ORDER BY Code;
             """;
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
@@ -51,7 +59,15 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         while (await reader.ReadAsync(cancellationToken))
             evidenceTypes.Add(new(reader.GetString(0), reader.GetString(1),
                 reader.IsDBNull(2) ? null : reader.GetString(2)));
-        return new(warehouses, suppliers, evidenceTypes);
+        await reader.NextResultAsync(cancellationToken);
+        var concepts = new List<GoodsReceiptTaxOption>();
+        while (await reader.ReadAsync(cancellationToken))
+            concepts.Add(new(reader.GetString(0), reader.GetString(1)));
+        await reader.NextResultAsync(cancellationToken);
+        var jurisdictions = new List<GoodsReceiptTaxOption>();
+        while (await reader.ReadAsync(cancellationToken))
+            jurisdictions.Add(new(reader.GetString(0), reader.GetString(1)));
+        return new(warehouses, suppliers, evidenceTypes, concepts, jurisdictions);
     }
 
     public async Task<GoodsReceiptProductPage> FindProductsAsync(
@@ -71,9 +87,10 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             LEFT JOIN dbo.SupplierProducts sp
               ON sp.ProductId=p.ProductId AND sp.BusinessId=@BusinessId
              AND sp.SupplierId=@SupplierId AND sp.IsActive=1
-            WHERE p.BusinessId=@BusinessId AND p.IsActive=1
+            WHERE (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+                   OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId)) AND p.IsActive=1
               AND NOT EXISTS(SELECT 1 FROM dbo.ProductLinks link
-                             WHERE link.BusinessId=p.BusinessId AND link.ChildProductId=p.ProductId
+                             WHERE link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId
                                AND link.SharesInventory=1 AND link.IsActive=1)
               AND (@IncludeUnassociated=1 OR sp.SupplierProductId IS NOT NULL)
               AND (@Search IS NULL OR p.ProductCode LIKE N'%'+@Search+N'%'
@@ -84,7 +101,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                                 AND pb.IsActive=1 AND pb.Barcode LIKE N'%'+@Search+N'%'));
 
             SELECT p.ProductId,COALESCE(p.ProductCode,N''),p.Reference,p.Name,
-                   sp.SupplierProductCode,latest.LatestUnitCost,
+                   sp.SupplierProductCode,latest.LatestUnitCost,averageCost.AverageUnitCost,
                    COALESCE(tp.Code,N'00'),COALESCE(tp.Rate,0),
                    COALESCE(p.PurchaseTaxTreatment,N'DeductibleInputVat'),
                    COALESCE(b.Barcodes,N''),
@@ -103,13 +120,26 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
               ON latest.BusinessId=@BusinessId AND latest.SupplierId=@SupplierId
              AND latest.ProductId=p.ProductId
             OUTER APPLY (
+              SELECT COALESCE(
+                SUM(CASE WHEN balance.QuantityOnHand>0 THEN balance.InventoryValue ELSE 0 END)
+                  / NULLIF(SUM(CASE WHEN balance.QuantityOnHand>0 THEN balance.QuantityOnHand ELSE 0 END),0),
+                MAX(balance.AverageUnitCost)) AverageUnitCost
+              FROM dbo.InventoryBalances balance
+              INNER JOIN dbo.Businesses balanceBusiness ON balanceBusiness.BusinessId=balance.BusinessId
+              INNER JOIN dbo.Businesses currentBusiness ON currentBusiness.BusinessId=@BusinessId
+              WHERE balance.ProductId=p.ProductId
+                AND (currentBusiness.SharesProductPrices=1 AND balanceBusiness.TenantId=currentBusiness.TenantId
+                     AND balanceBusiness.SharesProductPrices=1 OR balance.BusinessId=@BusinessId)
+            ) averageCost
+            OUTER APPLY (
               SELECT STRING_AGG(CONVERT(NVARCHAR(MAX),pb.Barcode),N'|') AS Barcodes
               FROM dbo.ProductBarcodes pb
               WHERE pb.ProductId=p.ProductId AND pb.BusinessId=@BusinessId AND pb.IsActive=1
             ) b
-            WHERE p.BusinessId=@BusinessId AND p.IsActive=1
+            WHERE (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+                   OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId)) AND p.IsActive=1
               AND NOT EXISTS(SELECT 1 FROM dbo.ProductLinks link
-                             WHERE link.BusinessId=p.BusinessId AND link.ChildProductId=p.ProductId
+                             WHERE link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId
                                AND link.SharesInventory=1 AND link.IsActive=1)
               AND (@IncludeUnassociated=1 OR sp.SupplierProductId IS NOT NULL)
               AND (@Search IS NULL OR p.ProductCode LIKE N'%'+@Search+N'%'
@@ -159,7 +189,9 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                                WHERE SupplierId=@SupplierId AND BusinessId=@BusinessId AND IsActive=1)
                   THROW 51120,'The supplier is outside the authenticated business.',1;
                 IF NOT EXISTS (SELECT 1 FROM dbo.Products
-                               WHERE ProductId=@ProductId AND BusinessId=@BusinessId AND IsActive=1)
+                               WHERE ProductId=@ProductId AND IsActive=1
+                                 AND (TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+                                      OR (TenantId IS NULL AND BusinessId=@BusinessId)))
                   THROW 51125,'The product is outside the authenticated business.',1;
                 IF EXISTS (SELECT 1 FROM dbo.ProductLinks
                            WHERE BusinessId=@BusinessId AND ChildProductId=@ProductId
@@ -184,7 +216,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                     (@SupplierProductId,@BusinessId,@ProductId,@SupplierId,@SupplierProductCode,@PresentationName,@UnitsPerPresentation,@IsPrimary,1,@Now);
 
                 SELECT p.ProductId,COALESCE(p.ProductCode,N''),p.Reference,p.Name,
-                       sp.SupplierProductCode,latest.LatestUnitCost,
+                       sp.SupplierProductCode,latest.LatestUnitCost,averageCost.AverageUnitCost,
                        COALESCE(tp.Code,N'00'),COALESCE(tp.Rate,0),
                        COALESCE(p.PurchaseTaxTreatment,N'DeductibleInputVat'),
                        COALESCE(b.Barcodes,N''),COALESCE(p.BaseUnitCode,N'EA'),CONVERT(BIT,1),
@@ -200,11 +232,25 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                   ON latest.BusinessId=@BusinessId AND latest.SupplierId=@SupplierId
                  AND latest.ProductId=p.ProductId
                 OUTER APPLY (
+                  SELECT COALESCE(
+                    SUM(CASE WHEN balance.QuantityOnHand>0 THEN balance.InventoryValue ELSE 0 END)
+                      / NULLIF(SUM(CASE WHEN balance.QuantityOnHand>0 THEN balance.QuantityOnHand ELSE 0 END),0),
+                    MAX(balance.AverageUnitCost)) AverageUnitCost
+                  FROM dbo.InventoryBalances balance
+                  INNER JOIN dbo.Businesses balanceBusiness ON balanceBusiness.BusinessId=balance.BusinessId
+                  INNER JOIN dbo.Businesses currentBusiness ON currentBusiness.BusinessId=@BusinessId
+                  WHERE balance.ProductId=p.ProductId
+                    AND (currentBusiness.SharesProductPrices=1 AND balanceBusiness.TenantId=currentBusiness.TenantId
+                         AND balanceBusiness.SharesProductPrices=1 OR balance.BusinessId=@BusinessId)
+                ) averageCost
+                OUTER APPLY (
                   SELECT STRING_AGG(CONVERT(NVARCHAR(MAX),pb.Barcode),N'|') AS Barcodes
                   FROM dbo.ProductBarcodes pb
                   WHERE pb.ProductId=p.ProductId AND pb.BusinessId=@BusinessId AND pb.IsActive=1
                 ) b
-                WHERE p.ProductId=@ProductId AND p.BusinessId=@BusinessId;
+                WHERE p.ProductId=@ProductId
+                  AND (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+                       OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId));
                 """;
             await using var command = new SqlCommand(sql, connection, transaction);
             command.Parameters.AddWithValue("@SupplierProductId", ids.NewId());
@@ -238,13 +284,13 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
 
     private static GoodsReceiptProductOption ReadProduct(SqlDataReader reader)
     {
-        var barcodes = reader.GetString(9).Split('|', StringSplitOptions.RemoveEmptyEntries);
+        var barcodes = reader.GetString(10).Split('|', StringSplitOptions.RemoveEmptyEntries);
         return new(
             reader.GetGuid(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2),
             reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4),
-            reader.IsDBNull(5) ? null : reader.GetDecimal(5), reader.GetString(6),
-            reader.GetDecimal(7), reader.GetString(8), barcodes, reader.GetString(10), reader.GetBoolean(11),
-            reader.GetString(12), reader.GetDecimal(13), reader.GetBoolean(14));
+            reader.IsDBNull(5) ? null : reader.GetDecimal(5), reader.IsDBNull(6) ? null : reader.GetDecimal(6),
+            reader.GetString(7), reader.GetDecimal(8), reader.GetString(9), barcodes, reader.GetString(11), reader.GetBoolean(12),
+            reader.GetString(13), reader.GetDecimal(14), reader.GetBoolean(15));
     }
     public async Task<GoodsReceiptPage> ListAsync(
         PurchasingUserIdentity user, string? search, string? status,
@@ -484,7 +530,8 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             IF @ProductsJson<>N'[]' AND EXISTS (
               SELECT x.ProductId
               FROM OPENJSON(@ProductsJson) WITH (ProductId UNIQUEIDENTIFIER '$') x
-              LEFT JOIN dbo.Products p ON p.ProductId=x.ProductId AND p.BusinessId=@BusinessId AND p.IsActive=1
+              LEFT JOIN dbo.Products p ON p.ProductId=x.ProductId AND p.IsActive=1
+                AND p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
               LEFT JOIN dbo.SupplierProducts sp ON sp.ProductId=x.ProductId AND sp.SupplierId=@SupplierId
                     AND sp.BusinessId=@BusinessId AND sp.IsActive=1
               WHERE p.ProductId IS NULL OR sp.SupplierProductId IS NULL)

@@ -498,6 +498,16 @@ public sealed partial class PosCatalogStore(string connectionString)
           PRIMARY KEY(ProductId,Type,Value),
           FOREIGN KEY(ProductId) REFERENCES PosCatalogProducts(ProductId) ON DELETE CASCADE);
         CREATE INDEX IF NOT EXISTS IX_PosCatalogIdentifiers_Value ON PosCatalogIdentifiers(Value);
+        CREATE TABLE IF NOT EXISTS PosReferenceOptions(
+          CatalogCode TEXT NOT NULL,
+          OptionId TEXT NOT NULL,
+          Code TEXT NOT NULL,
+          Label TEXT NOT NULL,
+          Description TEXT NULL,
+          SortOrder INTEGER NOT NULL,
+          PRIMARY KEY(CatalogCode,OptionId));
+        CREATE UNIQUE INDEX IF NOT EXISTS UX_PosReferenceOptions_Code
+          ON PosReferenceOptions(CatalogCode,Code);
         CREATE TABLE IF NOT EXISTS PosCatalogStagingBarcodes(
           ProductId TEXT NOT NULL,Value TEXT NOT NULL,
           PRIMARY KEY(ProductId,Value),

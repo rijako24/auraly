@@ -17,6 +17,58 @@ public sealed class SqlPayrollStore(
     IAuralyIdGenerator ids,
     TimeProvider timeProvider) : IPayrollStore
 {
+    public async Task<PayrollEmploymentPage> PageEmploymentsAsync(
+        PayrollUserIdentity user, int page, int pageSize, string? search,
+        bool? isActive, Guid? employmentId, CancellationToken ct)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(ct);
+        await using var command = new SqlCommand("""
+            SELECT COUNT_BIG(1)
+            FROM payroll.Employments e
+            JOIN dbo.Parties p ON p.PartyId=e.PartyId AND p.TenantId=e.TenantId
+            WHERE e.TenantId=@TenantId AND e.BusinessId=@BusinessId
+              AND (@IsActive IS NULL OR e.IsActive=@IsActive)
+              AND (@EmploymentId IS NULL OR e.EmploymentId=@EmploymentId)
+              AND (@Search IS NULL OR p.DisplayName LIKE N'%'+@Search+N'%'
+                   OR p.Identification LIKE N'%'+@Search+N'%'
+                   OR e.ContractNumber LIKE N'%'+@Search+N'%');
+
+            SELECT e.EmploymentId,e.PartyId,e.BusinessId,e.ContractNumber,
+                   COALESCE(p.DisplayName,p.LegalName,CONCAT(p.FirstName,N' ',p.LastName),e.ContractNumber),
+                   e.MonthlySalary,e.IsActive,e.EmployeeId,e.ContractTypeOptionId,
+                   e.SalaryTypeOptionId,e.PayFrequencyOptionId,e.RiskClassOptionId,
+                   e.WorkerTypeOptionId,e.WorkerSubtypeOptionId,e.PaymentMethodOptionId,
+                   e.StartDate,e.EndDate,e.IntegralSalaryPercentage,e.BankAccountReference,
+                   e.BankOptionId,e.BankAccountTypeOptionId,e.BankAccountNumber,e.RowVersion
+            FROM payroll.Employments e
+            JOIN dbo.Parties p ON p.PartyId=e.PartyId AND p.TenantId=e.TenantId
+            WHERE e.TenantId=@TenantId AND e.BusinessId=@BusinessId
+              AND (@IsActive IS NULL OR e.IsActive=@IsActive)
+              AND (@EmploymentId IS NULL OR e.EmploymentId=@EmploymentId)
+              AND (@Search IS NULL OR p.DisplayName LIKE N'%'+@Search+N'%'
+                   OR p.Identification LIKE N'%'+@Search+N'%'
+                   OR e.ContractNumber LIKE N'%'+@Search+N'%')
+            ORDER BY e.IsActive DESC,5,e.EmploymentId
+            OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", user.TenantId);
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        command.Parameters.AddWithValue("@Search", (object?)search ?? DBNull.Value);
+        command.Parameters.AddWithValue("@IsActive", (object?)isActive ?? DBNull.Value);
+        command.Parameters.AddWithValue("@EmploymentId", (object?)employmentId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
+        command.Parameters.AddWithValue("@PageSize", pageSize);
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        await reader.ReadAsync(ct);
+        var total = checked((int)reader.GetInt64(0));
+        await reader.NextResultAsync(ct);
+        var items = new List<PayrollEmploymentOption>();
+        while (await reader.ReadAsync(ct)) items.Add(ReadEmployment(reader));
+        return new(items, page, pageSize, total,
+            total == 0 ? 0 : (int)Math.Ceiling(total / (double)pageSize));
+    }
+
     public async Task<PayrollWorkspaceOptions> GetOptionsAsync(PayrollUserIdentity user, CancellationToken ct)
     {
         await using var connection = connections.Create();
@@ -45,7 +97,7 @@ public sealed class SqlPayrollStore(
                    e.StartDate,e.EndDate,e.IntegralSalaryPercentage,e.BankAccountReference,
                    e.BankOptionId,e.BankAccountTypeOptionId,e.BankAccountNumber,e.RowVersion
             FROM payroll.Employments e JOIN dbo.Parties p ON p.PartyId=e.PartyId AND p.TenantId=e.TenantId
-            WHERE e.TenantId=@TenantId AND e.BusinessId=@BusinessId ORDER BY e.IsActive DESC,5;
+            WHERE e.TenantId=@TenantId AND e.BusinessId=@BusinessId AND 1=0 ORDER BY e.IsActive DESC,5;
 
             SELECT p.PartyId,e.EmployeeId,p.Identification,
                    COALESCE(p.DisplayName,CONCAT(p.FirstName,N' ',p.LastName))
@@ -56,6 +108,7 @@ public sealed class SqlPayrollStore(
              AND idtype.Code=p.IdentificationTypeCode AND idtype.IsActive=1
              AND NULLIF(idtype.DianCode,N'') IS NOT NULL
             WHERE p.TenantId=@TenantId AND p.PartyType=N'NaturalPerson' AND p.IsActive=1
+              AND 1=0
               AND NULLIF(p.Identification,N'') IS NOT NULL
               AND NULLIF(p.FirstName,N'') IS NOT NULL
               AND NULLIF(p.LastName,N'') IS NOT NULL
@@ -157,18 +210,7 @@ public sealed class SqlPayrollStore(
 
         await reader.NextResultAsync(ct);
         var employments = new List<PayrollEmploymentOption>();
-        while (await reader.ReadAsync(ct))
-            employments.Add(new(reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
-                reader.GetString(3), reader.GetString(4).Trim(), reader.GetDecimal(5), reader.GetBoolean(6),
-                reader.IsDBNull(7) ? null : reader.GetGuid(7), reader.GetGuid(8), reader.GetGuid(9),
-                reader.GetGuid(10), reader.GetGuid(11), reader.GetGuid(12),
-                reader.IsDBNull(13) ? null : reader.GetGuid(13), reader.GetGuid(14),
-                DateOnly.FromDateTime(reader.GetDateTime(15)),
-                reader.IsDBNull(16) ? null : DateOnly.FromDateTime(reader.GetDateTime(16)),
-                reader.IsDBNull(17) ? null : reader.GetDecimal(17), NullableString(reader, 18),
-                reader.IsDBNull(19) ? null : reader.GetGuid(19),
-                reader.IsDBNull(20) ? null : reader.GetGuid(20), NullableString(reader, 21),
-                (byte[])reader[22]));
+        while (await reader.ReadAsync(ct)) employments.Add(ReadEmployment(reader));
 
         await reader.NextResultAsync(ct);
         var parties = new List<PayrollPartyOption>();
@@ -1818,6 +1860,18 @@ public sealed class SqlPayrollStore(
     private static PayrollConceptView ReadConcept(SqlDataReader reader) => new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetString(5),
         NullableString(reader, 6), reader.GetString(7), NullableString(reader, 8), reader.GetBoolean(9), reader.GetBoolean(10), reader.GetBoolean(11), reader.GetBoolean(12), reader.GetBoolean(13),
         DateOnly.FromDateTime(reader.GetDateTime(14)), reader.IsDBNull(15) ? null : DateOnly.FromDateTime(reader.GetDateTime(15)), reader.GetBoolean(16), (byte[])reader[17]);
+    private static PayrollEmploymentOption ReadEmployment(SqlDataReader reader) => new(
+        reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2), reader.GetString(3),
+        reader.GetString(4).Trim(), reader.GetDecimal(5), reader.GetBoolean(6),
+        reader.IsDBNull(7) ? null : reader.GetGuid(7), reader.GetGuid(8), reader.GetGuid(9),
+        reader.GetGuid(10), reader.GetGuid(11), reader.GetGuid(12),
+        reader.IsDBNull(13) ? null : reader.GetGuid(13), reader.GetGuid(14),
+        DateOnly.FromDateTime(reader.GetDateTime(15)),
+        reader.IsDBNull(16) ? null : DateOnly.FromDateTime(reader.GetDateTime(16)),
+        reader.IsDBNull(17) ? null : reader.GetDecimal(17), NullableString(reader, 18),
+        reader.IsDBNull(19) ? null : reader.GetGuid(19),
+        reader.IsDBNull(20) ? null : reader.GetGuid(20), NullableString(reader, 21),
+        (byte[])reader[22]);
     private static string? NullableString(SqlDataReader reader, int ordinal) => reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
     private static object DbDate(DateOnly? value) => value is null ? DBNull.Value : value.Value.ToDateTime(TimeOnly.MinValue);
     private static void Decimal(SqlCommand command, string name, decimal value, byte scale) { var p = command.Parameters.Add(name, SqlDbType.Decimal); p.Precision = 19; p.Scale = scale; p.Value = value; }

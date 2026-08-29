@@ -26,6 +26,7 @@ export interface Tenant {
   updatedAt: string | null;
   maximumUsers: number;
   maximumEnrolledDevices: number;
+  inventoryCostBasis: "LatestReceiptCost" | "WeightedAverageCost";
   businessCount: number;
   activeUserCount: number;
     activeEnrolledDeviceCount: number;
@@ -47,6 +48,8 @@ export interface Business {
   phone: string;
   email: string;
   website: string;
+  timeZone: string;
+  sharesProductPrices: boolean;
   isActive: boolean;
   createdAt: string;
   updatedAt: string | null;

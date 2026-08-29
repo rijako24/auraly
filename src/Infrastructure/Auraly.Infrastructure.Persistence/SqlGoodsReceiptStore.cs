@@ -184,7 +184,9 @@ public sealed class SqlGoodsReceiptStore(
               SELECT x.ProductId
               FROM OPENJSON(@ProductsJson)
                 WITH (ProductId UNIQUEIDENTIFIER '$') x
-              LEFT JOIN dbo.Products p ON p.ProductId=x.ProductId AND p.BusinessId=@BusinessId AND p.IsActive=1
+              LEFT JOIN dbo.Products p ON p.ProductId=x.ProductId AND p.IsActive=1
+                AND (p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+                     OR (p.TenantId IS NULL AND p.BusinessId=@BusinessId))
               LEFT JOIN dbo.SupplierProducts sp ON sp.ProductId=x.ProductId AND sp.SupplierId=@SupplierId AND sp.BusinessId=@BusinessId AND sp.IsActive=1
               WHERE p.ProductId IS NULL OR sp.SupplierProductId IS NULL)
               THROW 51103,'Every product must be active and associated with the selected supplier.',1;
@@ -473,7 +475,7 @@ public sealed class SqlGoodsReceiptStore(
     {
         const string productsSql = """
             SELECT ProductId,COALESCE(NULLIF(ProductCode,N''),CONVERT(nvarchar(36),ProductId)),COALESCE(BaseUnitCode,N'EA')
-            FROM dbo.Products WHERE BusinessId=@BusinessId AND ProductId IN
+            FROM dbo.Products WHERE TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId) AND ProductId IN
               (SELECT value FROM OPENJSON(@Ids) WITH (value uniqueidentifier '$'));
             """;
         var metadata = new Dictionary<Guid, (string Code, string Unit)>();

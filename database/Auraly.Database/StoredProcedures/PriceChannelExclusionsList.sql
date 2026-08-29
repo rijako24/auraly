@@ -37,7 +37,8 @@ BEGIN
            product.ProductCode
     FROM dbo.PriceChannelExclusions exclusion
     LEFT JOIN dbo.Products product
-      ON product.ProductId = exclusion.ProductId AND product.BusinessId = @BusinessId
+      ON product.ProductId = exclusion.ProductId
+     AND product.TenantId = (SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
     LEFT JOIN CategoryTree category
       ON category.ProductCategoryId = exclusion.ProductCategoryId
     LEFT JOIN dbo.ProductBrands brand

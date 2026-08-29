@@ -219,10 +219,12 @@ public sealed partial class SqlWorkSessionStore(
             await InsertTotalsAsync(
                 connection, transaction, closure.WorkSessionClosureId,
                 totals, cancellationToken);
-            if (difference is not null && difference != 0 && countedCash is not null)
+            var differenceLines = await LoadClosureDifferenceLinesAsync(
+                connection, transaction, totals, cancellationToken);
+            if (differenceLines.Count > 0)
             {
                 var accountingPayload = JsonSerializer.Serialize(
-                    new WorkSessionCashDifferencePayload(
+                    new WorkSessionClosureDifferencePayload(
                         closure.WorkSessionClosureId,
                         closure.WorkSessionId,
                         identity.TenantId,
@@ -230,9 +232,7 @@ public sealed partial class SqlWorkSessionStore(
                         closure.WarehouseId,
                         closure.UserId,
                         closure.UserName,
-                        closure.ExpectedCash,
-                        countedCash.Value,
-                        difference.Value,
+                        differenceLines,
                         closure.ClosedAt),
                     Json);
                 await InsertCashDifferenceAccountingJobAsync(
@@ -471,27 +471,35 @@ public sealed partial class SqlWorkSessionStore(
         await using var command = new SqlCommand("""
             WITH PaymentMovements AS
             (
-                SELECT p.MethodCode AS PaymentMethodCode,N'SalePayment' AS MovementType,p.Amount
+                SELECT COALESCE(mapping.ClosureMethodCode,p.MethodCode) AS PaymentMethodCode,
+                       N'SalePayment' AS MovementType,p.Amount
                 FROM dbo.SalesPayments p
                 INNER JOIN dbo.SalesDocuments d ON d.DocumentId=p.DocumentId
+                LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping
+                  ON mapping.PaymentMethodCode=p.MethodCode
                 WHERE d.WorkSessionId=@WorkSessionId
                 UNION ALL
                 SELECT N'Credit',N'SalePayment',CreditAmount
                 FROM dbo.SalesDocuments
                 WHERE WorkSessionId=@WorkSessionId AND CreditAmount>0
                 UNION ALL
-                SELECT CASE WHEN s.SettlementType=N'CustomerCredit' THEN N'Credit' ELSE s.MethodCode END,
+                SELECT CASE WHEN s.SettlementType=N'CustomerCredit' THEN N'Credit'
+                            ELSE COALESCE(mapping.ClosureMethodCode,s.MethodCode) END,
                        N'Refund',-s.Amount
                 FROM dbo.SalesReturnSettlements s
                 INNER JOIN dbo.SalesReturns r ON r.ReturnId=s.ReturnId
                 INNER JOIN dbo.WorkSessions ws ON ws.WorkSessionId=@WorkSessionId
+                LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping
+                  ON mapping.PaymentMethodCode=s.MethodCode
                 WHERE r.CreatedByUserId=ws.UserId AND r.ReturnedAt>=ws.OpenedAt
                   AND (ws.ClosedAt IS NULL OR r.ReturnedAt<=ws.ClosedAt)
                 UNION ALL
-                SELECT PaymentMethodCode,MovementType,Amount
-                FROM dbo.WorkSessionMovements
-                WHERE WorkSessionId=@WorkSessionId
-                  AND MovementType NOT IN(N'SalePayment',N'Refund')
+                SELECT COALESCE(mapping.ClosureMethodCode,movement.PaymentMethodCode),movement.MovementType,movement.Amount
+                FROM dbo.WorkSessionMovements movement
+                LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping
+                  ON mapping.PaymentMethodCode=movement.PaymentMethodCode
+                WHERE movement.WorkSessionId=@WorkSessionId
+                  AND movement.MovementType NOT IN(N'SalePayment',N'Refund')
             ),
             Totals AS
             (
@@ -512,7 +520,7 @@ public sealed partial class SqlWorkSessionStore(
                        COALESCE(totals.NetAmount,0) NetAmount
                 FROM reference.Options options
                 LEFT JOIN Totals totals ON totals.PaymentMethodCode=options.Code
-                WHERE options.CatalogCode=N'payment-method' AND options.IsActive=1
+                WHERE options.CatalogCode=N'cash-closure-method' AND options.IsActive=1
                 UNION ALL
                 SELECT totals.PaymentMethodCode,totals.SalesAmount,totals.RefundAmount,
                        totals.OtherAmount,totals.NetAmount
@@ -520,28 +528,23 @@ public sealed partial class SqlWorkSessionStore(
                 WHERE NOT EXISTS
                 (
                     SELECT 1 FROM reference.Options options
-                    WHERE options.CatalogCode=N'payment-method' AND options.IsActive=1
+                    WHERE options.CatalogCode=N'cash-closure-method' AND options.IsActive=1
                       AND options.Code=totals.PaymentMethodCode
                 )
             )
-            SELECT PaymentMethodCode,SalesAmount,RefundAmount,OtherAmount,NetAmount
-            FROM AllTotals
-            ORDER BY CASE PaymentMethodCode
-                WHEN N'Cash' THEN 0
-                WHEN N'DebitCard' THEN 1
-                WHEN N'CreditCard' THEN 2
-                WHEN N'Card' THEN 3
-                WHEN N'Transfer' THEN 4
-                WHEN N'Credit' THEN 5
-                ELSE 10 END,
-              PaymentMethodCode;
+            SELECT total.PaymentMethodCode,total.SalesAmount,total.RefundAmount,total.OtherAmount,total.NetAmount,
+                   CAST(CASE WHEN closureOption.OptionId IS NOT NULL THEN 1 ELSE 0 END AS bit)
+            FROM AllTotals total
+            LEFT JOIN reference.Options closureOption ON closureOption.CatalogCode=N'cash-closure-method'
+              AND closureOption.Code=total.PaymentMethodCode AND closureOption.IsActive=1
+            ORDER BY COALESCE(closureOption.SortOrder,1000),total.PaymentMethodCode;
             """, connection, transaction);
         command.Parameters.AddWithValue("@WorkSessionId", workSessionId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
             values.Add(new WorkSessionPaymentTotal(
                 reader.GetString(0), reader.GetDecimal(1), reader.GetDecimal(2),
-                reader.GetDecimal(3), reader.GetDecimal(4)));
+                reader.GetDecimal(3), reader.GetDecimal(4), RequiresCount: reader.GetBoolean(5)));
         return values;
     }
 
@@ -693,6 +696,35 @@ public sealed partial class SqlWorkSessionStore(
         }
     }
 
+    private static async Task<IReadOnlyList<WorkSessionClosureDifferenceLine>> LoadClosureDifferenceLinesAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        IReadOnlyList<WorkSessionPaymentTotal> totals,
+        CancellationToken cancellationToken)
+    {
+        var result = new List<WorkSessionClosureDifferenceLine>();
+        foreach (var total in totals.Where(value => value.Difference is not null and not 0))
+        {
+            await using var command = new SqlCommand("""
+                SELECT mapping.Category
+                FROM dbo.AccountingConfigurationProfiles profile
+                INNER JOIN dbo.AccountingSourceCategoryMappings mapping
+                  ON mapping.ProfileCode=profile.ProfileCode
+                 AND mapping.SourceType=N'ClosurePaymentMethod'
+                 AND mapping.SourceCode=@Method
+                WHERE profile.IsDefault=1 AND profile.IsActive=1;
+                """, connection, transaction);
+            command.Parameters.AddWithValue("@Method", total.PaymentMethodCode);
+            var category = await command.ExecuteScalarAsync(cancellationToken) as string
+                ?? throw new WorkSessionValidationException(
+                    $"El medio de pago '{total.PaymentMethodCode}' no tiene configuración contable para cierres.");
+            result.Add(new WorkSessionClosureDifferenceLine(
+                total.PaymentMethodCode, category, total.NetAmount,
+                total.CountedAmount!.Value, total.Difference!.Value));
+        }
+        return result;
+    }
+
     private async Task InsertCashDifferenceAccountingJobAsync(
         SqlConnection connection,
         SqlTransaction transaction,
@@ -764,7 +796,7 @@ public sealed partial class SqlWorkSessionStore(
             value => value.CountedAmount,
             StringComparer.OrdinalIgnoreCase);
         var expectedCodes = expected
-            .Where(value => RequiresManualCount(value.PaymentMethodCode))
+            .Where(value => value.RequiresCount)
             .Select(value => value.PaymentMethodCode)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var allExpectedCodes = expected.Select(value => value.PaymentMethodCode)
@@ -772,8 +804,8 @@ public sealed partial class SqlWorkSessionStore(
         if (expectedCodes.Any(code => !counts.ContainsKey(code))
             || counts.Keys.Any(code => !allExpectedCodes.Contains(code)))
             throw new WorkSessionValidationException(
-                "The count must include cash and card methods in the session exactly once.");
-        return expected.Select(value => RequiresManualCount(value.PaymentMethodCode)
+                "The count must include cash, card and transfer exactly once.");
+        return expected.Select(value => value.RequiresCount
             ? value with
             {
                 CountedAmount = counts[value.PaymentMethodCode],
@@ -781,12 +813,6 @@ public sealed partial class SqlWorkSessionStore(
             }
             : value).ToArray();
     }
-
-    private static bool RequiresManualCount(string paymentMethodCode) =>
-        paymentMethodCode.Equals("Cash", StringComparison.OrdinalIgnoreCase) ||
-        paymentMethodCode.Equals("Card", StringComparison.OrdinalIgnoreCase) ||
-        paymentMethodCode.Equals("DebitCard", StringComparison.OrdinalIgnoreCase) ||
-        paymentMethodCode.Equals("CreditCard", StringComparison.OrdinalIgnoreCase);
 
     private sealed record SalesMetrics(
         long SalesCount, int CreditSalesCount, decimal CreditSalesAmount, long ReturnCount);

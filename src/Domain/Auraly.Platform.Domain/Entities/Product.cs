@@ -6,6 +6,11 @@ namespace Auraly.Platform.Domain.Entities;
 public class Product
 {
     public Guid ProductId { get; set; }
+    public Guid TenantId { get; set; }
+    /// <summary>
+    /// Legacy origin business retained for dependent business-scoped configuration.
+    /// Product identity and visibility are tenant-scoped through <see cref="TenantId"/>.
+    /// </summary>
     public Guid BusinessId { get; set; }
     public Guid? ProductCategoryId { get; set; }
     public Guid? IntegrationConnectionId { get; set; }

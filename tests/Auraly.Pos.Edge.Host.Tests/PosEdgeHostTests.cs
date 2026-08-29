@@ -83,7 +83,6 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         var client = new PosEdgeEnrollmentClient(
             http,
             new PosEdgeEnrollmentStore(_path + ".enrollment", _secretPath),
-            new PosStartupModeStore(_path + ".startup-mode"),
             new PosLocalDeviceIdentityRecovery(_path));
 
         var exception = await Assert.ThrowsAsync<PosEnrollmentServerException>(() =>
@@ -190,8 +189,6 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     {
         var enrollmentPath =
             Path.Combine(Path.GetTempPath(), $"auraly-enrollment-{Guid.NewGuid():N}.protected");
-        var startupModePath =
-            Path.Combine(Path.GetTempPath(), $"auraly-startup-mode-{Guid.NewGuid():N}");
         try
         {
             using var factory = new WebApplicationFactory<Program>()
@@ -211,7 +208,6 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                     webHost.UseSetting(
                         "PosEdge:SecretKeyDirectory",
                         _secretPath + "-unenrolled");
-                    webHost.UseSetting("PosEdge:StartupModePath", startupModePath);
                     webHost.UseSetting("PosEdge:DeviceId", "");
                 });
             using var client = factory.CreateClient();
@@ -221,15 +217,12 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             response.EnsureSuccessStatusCode();
             var body = await response.Content.ReadFromJsonAsync<JsonElement>();
             Assert.Equal("EnrollmentRequired", body.GetProperty("status").GetString());
-            Assert.Equal("online", body.GetProperty("startupMode").GetString());
-
-            using var update = await client.PutAsJsonAsync(
-                "/edge/v1/configuration/startup-mode",
-                new PosStartupModeRequest(PosStartupModes.Enrolled));
-            Assert.Equal(HttpStatusCode.NoContent, update.StatusCode);
-
-            body = await client.GetFromJsonAsync<JsonElement>("/edge/v1/health");
-            Assert.Equal("enrolled", body.GetProperty("startupMode").GetString());
+            Assert.False(body.TryGetProperty("startupMode", out _));
+            Assert.Null(factory.Services.GetService<PosWebPubSubConnection>());
+            Assert.Null(factory.Services.GetService<PosSynchronizationSignal>());
+            Assert.Equal(
+                HttpStatusCode.NotFound,
+                (await client.PostAsync("/edge/v1/synchronization/refresh", null)).StatusCode);
             using var printers = await client.GetAsync(
                 "/edge/v1/configuration/printers");
             printers.EnsureSuccessStatusCode();
@@ -242,7 +235,6 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         finally
         {
             if (File.Exists(enrollmentPath)) File.Delete(enrollmentPath);
-            if (File.Exists(startupModePath)) File.Delete(startupModePath);
         }
     }
 
@@ -655,7 +647,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         Assert.Equal(total, preview.Preview.TotalSales);
         Assert.Equal(total, preview.Preview.ExpectedCash);
         Assert.Equal(
-            new[] { "Cash" },
+            new[] { "Cash", "Card", "Transfer" },
             preview.Preview.PaymentTotals
                 .Select(value => value.PaymentMethodCode));
 
@@ -665,7 +657,9 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             preview.AuthorizationToken,
             total,
             [
-                new WorkSessionPaymentCount("Cash", total)
+                new WorkSessionPaymentCount("Cash", total),
+                new WorkSessionPaymentCount("Card", 0),
+                new WorkSessionPaymentCount("Transfer", 0)
             ],
             null);
         _closurePrinter.FailuresRemaining = 1;

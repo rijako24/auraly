@@ -3,12 +3,12 @@ export type PosLaunchHealth = {
   identityReady: boolean;
 };
 
-export function clearInstalledPosUserSession(storage: Pick<Storage, "removeItem">) {
-  storage.removeItem("auraly.pos.user-session");
+export function usesEnrolledPosRuntime(health: PosLaunchHealth) {
+  return health.status !== "EnrollmentRequired";
 }
 
 export function installedPosLaunchDestination(health: PosLaunchHealth | null) {
-  return health && health.status !== "EnrollmentRequired" && health.identityReady
-    ? "/pos"
-    : "/login?redirect=%2Fpos";
+  return health && !usesEnrolledPosRuntime(health)
+    ? "/login?redirect=%2Fpos"
+    : "/pos";
 }

@@ -43,6 +43,12 @@ public interface IWorkSessionStore
         DateOnly from,
         DateOnly to,
         CancellationToken cancellationToken);
+    Task<WorkSessionClosurePage> ListClosuresAsync(
+        WorkSessionIdentity identity, DateOnly from, DateOnly to, string? status,
+        int page, int pageSize, CancellationToken cancellationToken);
+    Task<WorkSessionClosureReconciliationView> ReconcileClosureAsync(
+        WorkSessionIdentity identity, Guid closureId, string idempotencyKey,
+        ReconcileWorkSessionClosureRequest request, CancellationToken cancellationToken);
     Task<IReadOnlyList<CashMovementReasonView>> ListCashReasonsAsync(
         WorkSessionIdentity identity,
         Guid businessId,
@@ -135,7 +141,7 @@ public sealed class WorkSessionService(
             idempotencyKey.Trim(),
             request with { Note = NullIfWhiteSpace(request.Note) },
             cancellationToken);
-        if (closure.CashDifference is not null && closure.CashDifference != 0)
+        if (closure.PaymentTotals.Any(value => value.Difference is not null and not 0))
             await accountingProcessing.RequestPostingAsync(
                 closure.BusinessId,
                 closure.WorkSessionClosureId,
@@ -214,6 +220,37 @@ public sealed class WorkSessionService(
             throw new WorkSessionValidationException(
                 "The cash-difference date range must contain at most 367 days.");
         return store.ListCashDifferencesAsync(identity, from, to, cancellationToken);
+    }
+
+    public Task<WorkSessionClosurePage> ListClosuresAsync(
+        WorkSessionIdentity identity, DateOnly from, DateOnly to, string? status,
+        int page, int pageSize, CancellationToken cancellationToken = default)
+    {
+        Demand(identity, WorkSessionPermissionCodes.ReadCashDifferences);
+        if (from==default || to==default || from>to || to.DayNumber-from.DayNumber>366)
+            throw new WorkSessionValidationException("El rango de cierres debe contener máximo 367 días.");
+        if (page<1 || pageSize is < 1 or > 100)
+            throw new WorkSessionValidationException("La paginación de cierres no es válida.");
+        if (status is not null && status is not ("Pending" or "Partial" or "Reconciled" or "ReconciledWithDifferences"))
+            throw new WorkSessionValidationException("El estado de conciliación no es válido.");
+        return store.ListClosuresAsync(identity,from,to,status,page,pageSize,cancellationToken);
+    }
+
+    public async Task<WorkSessionClosureReconciliationView> ReconcileClosureAsync(
+        WorkSessionIdentity identity, Guid closureId, string idempotencyKey,
+        ReconcileWorkSessionClosureRequest request, CancellationToken cancellationToken = default)
+    {
+        Demand(identity,WorkSessionPermissionCodes.ReconcileClosures);
+        if (closureId==Guid.Empty || string.IsNullOrWhiteSpace(idempotencyKey) || idempotencyKey.Length>128)
+            throw new WorkSessionValidationException("El cierre y la clave idempotente son obligatorios.");
+        if (request.Lines.Count==0 || request.Lines.Any(line=>string.IsNullOrWhiteSpace(line.PaymentMethodCode) || line.VerifiedAmount<0) ||
+            request.Reclassifications.Any(line=>line.Amount<=0) || request.Note?.Trim().Length>500)
+            throw new WorkSessionValidationException("Los valores de conciliación no son válidos.");
+        var result=await store.ReconcileClosureAsync(identity,closureId,idempotencyKey.Trim(),request with { Note=NullIfWhiteSpace(request.Note) },cancellationToken);
+        if (result.AccountingStatus == "Pending")
+            await accountingProcessing.RequestPostingAsync(result.BusinessId,result.ReconciliationId,
+                WorkSessionAccountingDocumentTypes.ClosureReconciliation,cancellationToken);
+        return result;
     }
 
     public Task<IReadOnlyList<CashMovementReasonView>> ListCashReasonsAsync(

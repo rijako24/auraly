@@ -26,6 +26,8 @@ export interface PriceRevisionListItem {
   createdAt: string;
   concurrencyToken: string;
   origin: "GoodsReceipt" | "Product";
+  averageUnitCost?: number | null;
+  latestUnitCost?: number | null;
 }
 
 export interface PriceRevisionPage {

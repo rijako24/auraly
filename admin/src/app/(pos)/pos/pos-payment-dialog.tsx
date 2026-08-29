@@ -10,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PosPaymentInput, type PosCustomer, type PosSaleDocumentType } from "@/services/pos/pos-edge-client";
+import { PosPaymentInput, type PosClient, type PosCustomer, type PosSaleDocumentType } from "@/services/pos/pos-edge-client";
 import {
   calculatePaymentSettlement,
   chooseAdditionalPaymentMethod,
@@ -21,7 +21,7 @@ import {
   formatMoneyValue,
   parseMoneyDraft,
 } from "./pos-money-input";
-import { useReferenceOptions } from "@/hooks/use-reference-options";
+import { usePosReferenceOptions } from "./use-pos-reference-options";
 
 const money = new Intl.NumberFormat("es-CO", {
   style: "currency",
@@ -32,7 +32,10 @@ const money = new Intl.NumberFormat("es-CO", {
 type PaymentRow = PosPaymentInput & { id: string };
 
 export function PosPaymentDialog({
+  client,
   total,
+  grossTotal,
+  withholdingTotal,
   busy,
   documentType,
   documentTypeLocked,
@@ -42,7 +45,10 @@ export function PosPaymentDialog({
   onCancel,
   onConfirm,
 }: {
+  client: PosClient;
   total: number;
+  grossTotal: number;
+  withholdingTotal: number;
   busy: boolean;
   documentType: PosSaleDocumentType;
   documentTypeLocked: boolean;
@@ -55,8 +61,8 @@ export function PosPaymentDialog({
     settlement: PosPaymentSettlement,
   ) => Promise<void>;
 }) {
-  const paymentMethods = useReferenceOptions("payment-method");
-  const cardFranchises = useReferenceOptions("card-franchise");
+  const paymentMethods = usePosReferenceOptions(client, "payment-method");
+  const cardFranchises = usePosReferenceOptions(client, "card-franchise");
   const methods = useMemo(
     () => (paymentMethods.data ?? []).slice(0, 5).map((option, index) => ({
       code: option.code,
@@ -256,7 +262,7 @@ export function PosPaymentDialog({
             </p>
           </div>
           <p className="text-right">
-            <span className="block text-xs uppercase tracking-wide text-slate-500">Total</span>
+            <span className="block text-xs uppercase tracking-wide text-slate-500">Total a pagar</span>
             <span className="text-2xl font-bold text-teal-800">{money.format(total)}</span>
           </p>
         </div>
@@ -381,8 +387,9 @@ export function PosPaymentDialog({
           ))}
         </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <PaymentMetric label="Total venta" value={total} />
+        <div className={`mt-4 grid grid-cols-1 gap-3 ${withholdingTotal > 0 ? "sm:grid-cols-4" : "sm:grid-cols-3"}`}>
+          <PaymentMetric label={withholdingTotal > 0 ? "Total venta" : "Total a pagar"} value={grossTotal} />
+          {withholdingTotal > 0 && <PaymentMetric label="Retenciones" value={-withholdingTotal} />}
           <PaymentMetric label="Valor recibido" value={settlement.received} />
           <PaymentMetric
             label="Cambio a entregar"

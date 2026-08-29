@@ -52,11 +52,63 @@ public sealed class SalesWorkspaceApiTests(ServerSliceFixture fixture)
         Assert.NotNull(bootstrap);
         Assert.Equal("Cajero de pruebas", bootstrap.UserDisplayName);
         Assert.False(bootstrap.CanEnrollPosDevice);
+        Assert.True(bootstrap.MaximumEnrolledDevices >= bootstrap.ActiveEnrolledDeviceCount);
+        Assert.Contains("permiso", bootstrap.EnrollmentUnavailableReason, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(
             bootstrap.Options,
             option =>
                 option.BusinessId == fixture.BusinessId &&
                 option.WarehouseId == fixture.WarehouseId);
+    }
+
+    [Fact]
+    public async Task Bootstrap_disables_enrollment_when_tenant_capacity_is_exhausted()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var read = new SqlCommand("""
+            SELECT t.MaximumEnrolledDevices,
+                   (SELECT COUNT(*) FROM dbo.EnrolledDevices d
+                    WHERE d.TenantId=t.TenantId AND d.IsActive=1)
+            FROM dbo.Tenants t WHERE t.TenantId=@TenantId;
+            """, connection);
+        read.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+        await using var reader = await read.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        var originalMaximum = reader.GetInt32(0);
+        var active = reader.GetInt32(1);
+        await reader.DisposeAsync();
+
+        try
+        {
+            await using var exhaust = new SqlCommand(
+                "UPDATE dbo.Tenants SET MaximumEnrolledDevices=@Active WHERE TenantId=@TenantId;",
+                connection);
+            exhaust.Parameters.AddWithValue("@Active", active);
+            exhaust.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            Assert.Equal(1, await exhaust.ExecuteNonQueryAsync());
+
+            using var client = fixture.CreateAdminClient(
+                CommercePermissionCodes.SalesCreate,
+                CommercePermissionCodes.EnrolledDevicesEnroll);
+            var bootstrap = await client.GetFromJsonAsync<SalesWorkspaceBootstrap>(
+                "/api/commerce/v1/pos/workspace/bootstrap");
+
+            Assert.NotNull(bootstrap);
+            Assert.False(bootstrap.CanEnrollPosDevice);
+            Assert.Equal(active, bootstrap.ActiveEnrolledDeviceCount);
+            Assert.Equal(active, bootstrap.MaximumEnrolledDevices);
+            Assert.Contains("administrador", bootstrap.EnrollmentUnavailableReason, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            await using var restore = new SqlCommand(
+                "UPDATE dbo.Tenants SET MaximumEnrolledDevices=@Maximum WHERE TenantId=@TenantId;",
+                connection);
+            restore.Parameters.AddWithValue("@Maximum", originalMaximum);
+            restore.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            await restore.ExecuteNonQueryAsync();
+        }
     }
 
     [Fact]

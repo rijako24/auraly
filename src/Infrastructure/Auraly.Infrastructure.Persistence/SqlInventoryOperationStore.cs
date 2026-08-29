@@ -740,7 +740,7 @@ public sealed class SqlInventoryOperationStore(
               AND IsActive=1 AND (IsSystem=0 OR @AllowSystemWarehouses=1 OR (@DocumentType=N'Damage' AND IsSystem=1 AND Code=N'AVE')))
               THROW 51202,'Selecciona una bodega de inventario de destino activa.',1;
             IF EXISTS(SELECT x.ProductId FROM OPENJSON(@Products) WITH(ProductId UNIQUEIDENTIFIER '$') x
-              LEFT JOIN dbo.Products p ON p.ProductId=x.ProductId AND p.BusinessId=@BusinessId AND p.IsActive=1 AND p.ManageStock=1
+              LEFT JOIN dbo.Products p ON p.ProductId=x.ProductId AND p.TenantId=@TenantId AND p.IsActive=1 AND p.ManageStock=1
               WHERE p.ProductId IS NULL)
               THROW 51203,'Every product must be active, belong to the business and manage stock.',1;
             """;
@@ -845,14 +845,16 @@ public sealed class SqlInventoryOperationStore(
                    COALESCE(b.QuantityOnHand / NULLIF(CASE WHEN link.ProductLinkId IS NULL THEN 1 ELSE link.InventoryFactor END,0),0)
             FROM dbo.Products p WITH (UPDLOCK,HOLDLOCK)
             LEFT JOIN dbo.ProductLinks link WITH (UPDLOCK,HOLDLOCK)
-              ON link.BusinessId=p.BusinessId AND link.ChildProductId=p.ProductId
+              ON link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId
              AND link.SharesInventory=1 AND link.IsActive=1
             INNER JOIN dbo.Products inventoryProduct WITH (UPDLOCK,HOLDLOCK)
-              ON inventoryProduct.ProductId=COALESCE(link.ParentProductId,p.ProductId) AND inventoryProduct.BusinessId=p.BusinessId
+              ON inventoryProduct.ProductId=COALESCE(link.ParentProductId,p.ProductId)
+             AND inventoryProduct.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
             LEFT JOIN dbo.InventoryBalances b WITH (UPDLOCK,HOLDLOCK)
-              ON b.BusinessId=p.BusinessId AND b.WarehouseId=@WarehouseId AND b.ProductId=inventoryProduct.ProductId
+              ON b.BusinessId=@BusinessId AND b.WarehouseId=@WarehouseId AND b.ProductId=inventoryProduct.ProductId
             INNER JOIN OPENJSON(@Products) WITH(ProductId UNIQUEIDENTIFIER '$') x ON x.ProductId=p.ProductId
-            WHERE p.BusinessId=@BusinessId AND p.IsActive=1 AND inventoryProduct.ManageStock=1;
+            WHERE p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+              AND p.IsActive=1 AND inventoryProduct.ManageStock=1;
             """;
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", businessId);
@@ -880,19 +882,20 @@ public sealed class SqlInventoryOperationStore(
             FROM dbo.Products p WITH(UPDLOCK,HOLDLOCK)
             INNER JOIN OPENJSON(@Products) WITH(ProductId uniqueidentifier '$') requested ON requested.ProductId=p.ProductId
             LEFT JOIN dbo.ProductLinks link WITH(UPDLOCK,HOLDLOCK)
-              ON link.BusinessId=p.BusinessId AND link.ChildProductId=p.ProductId
+              ON link.BusinessId=@BusinessId AND link.ChildProductId=p.ProductId
              AND link.IsActive=1 AND link.AllowsConversion=1
             INNER JOIN dbo.Products root WITH(UPDLOCK,HOLDLOCK)
-              ON root.BusinessId=p.BusinessId AND root.ProductId=COALESCE(link.ParentProductId,p.ProductId)
-            WHERE p.BusinessId=@BusinessId AND p.IsActive=1 AND p.ManageStock=1
+              ON root.TenantId=p.TenantId AND root.ProductId=COALESCE(link.ParentProductId,p.ProductId)
+            WHERE p.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+              AND p.IsActive=1 AND p.ManageStock=1
               AND root.IsActive=1 AND root.ManageStock=1
               AND root.ConversionMaximumLossPercent IS NOT NULL
               AND (link.ProductLinkId IS NOT NULL OR EXISTS(
                     SELECT 1 FROM dbo.ProductLinks child WITH(UPDLOCK,HOLDLOCK)
                     INNER JOIN dbo.Products childProduct WITH(UPDLOCK,HOLDLOCK)
-                      ON childProduct.ProductId=child.ChildProductId AND childProduct.BusinessId=child.BusinessId
+                      ON childProduct.ProductId=child.ChildProductId AND childProduct.TenantId=p.TenantId
                      AND childProduct.IsActive=1 AND childProduct.ManageStock=1
-                    WHERE child.BusinessId=p.BusinessId AND child.ParentProductId=p.ProductId
+                    WHERE child.BusinessId=@BusinessId AND child.ParentProductId=p.ProductId
                       AND child.IsActive=1 AND child.AllowsConversion=1));
             """;
         await using var command = new SqlCommand(sql, connection, transaction);

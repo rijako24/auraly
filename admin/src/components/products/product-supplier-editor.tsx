@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useGoodsReceiptOptions } from "@/hooks/use-goods-receipts";
+import { PartyRoleSelect } from "@/components/parties/party-role-select";
 import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { goodsReceiptsApi } from "@/services/api/goods-receipts";
 import { productsApi } from "@/services/api/products";
@@ -30,9 +30,9 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
   saleUnitName?: string;
 }>(function ProductSupplierEditor({ productId, productName, saleUnitName = "unidad de venta", embedded = false }, ref) {
   const client = useQueryClient();
-  const options = useGoodsReceiptOptions();
   const purchasePresentations = useReferenceOptions("purchase-presentation");
   const [supplierId, setSupplierId] = useState("");
+  const [selectedSupplier, setSelectedSupplier] = useState<{ name: string; identification: string } | null>(null);
   const [supplierProductCode, setSupplierProductCode] = useState("");
   const [packageName, setPackageName] = useState("Unidad");
   const [unitsPerPackage, setUnitsPerPackage] = useState("1");
@@ -48,6 +48,7 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
       ?? catalogProduct.data?.suppliers?.[0];
     if (!primary) return;
     setSupplierId(primary.supplierId);
+    setSelectedSupplier({ name: primary.name, identification: primary.identification });
     setSupplierProductCode(primary.supplierProductCode ?? "");
     setPackageName(primary.purchasePresentationName || "Unidad");
     setUnitsPerPackage(String(primary.unitsPerPresentation || 1));
@@ -96,12 +97,11 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
     getValue: () => {
       if (!supplierId) throw new Error("Selecciona el proveedor principal del producto.");
       if (!packageName || Number(unitsPerPackage) <= 0) throw new Error("Revisa el empaque del proveedor.");
-      const supplier = options.data?.suppliers.find((item) => item.supplierId === supplierId);
-      if (!supplier) throw new Error("El proveedor seleccionado ya no está disponible.");
+      if (!selectedSupplier) throw new Error("El proveedor seleccionado ya no está disponible.");
       return {
         supplierId,
-        identification: supplier.identification,
-        name: supplier.name,
+        identification: selectedSupplier.identification,
+        name: selectedSupplier.name,
         supplierProductCode: supplierProductCode.trim() || null,
         purchasePresentationName: packageName,
         unitsPerPresentation: Number(unitsPerPackage),
@@ -125,7 +125,7 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
       if (!packageName || Number(unitsPerPackage) <= 0) throw new Error("Revisa el empaque del proveedor.");
       await save.mutateAsync();
     },
-  }), [options.data?.suppliers, packageName, save, supplierId, supplierProductCode, unitsPerPackage]);
+  }), [packageName, save, selectedSupplier, supplierId, supplierProductCode, unitsPerPackage]);
   const valid = Boolean(supplierId && packageName) && Number(unitsPerPackage) > 0;
   const directUnit = Number(unitsPerPackage) === 1 && packageName.toLocaleLowerCase("es-CO") === "unidad";
 
@@ -140,14 +140,9 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
     <div className="grid items-start gap-4 lg:grid-cols-[minmax(260px,1.3fr)_minmax(180px,.8fr)_minmax(180px,.8fr)]">
       <div className="space-y-2">
         <Label>Proveedor <span className="text-destructive">*</span></Label>
-        <Select value={supplierId} onValueChange={(value) => { setSupplierId(value); setValidationError(undefined); }}>
-          <SelectTrigger aria-invalid={Boolean(validationError && !supplierId)}><SelectValue placeholder="Selecciona un proveedor" /></SelectTrigger>
-          <SelectContent>
-            {(options.data?.suppliers ?? []).map((supplier) => <SelectItem key={supplier.supplierId} value={supplier.supplierId}>
-              {supplier.name} · {supplier.identification}
-            </SelectItem>)}
-          </SelectContent>
-        </Select>
+        <PartyRoleSelect role="Supplier" value={supplierId} placeholder="Busca un proveedor"
+          selectedOption={selectedSupplier ? { value: supplierId, label: selectedSupplier.name, description: selectedSupplier.identification } : null}
+          onChange={(value, party) => { if (!party) return; setSupplierId(value); setSelectedSupplier({ name: party.displayName, identification: party.identification ?? "" }); setValidationError(undefined); }}/>
         {validationError && !supplierId && <p className="text-sm text-destructive">{validationError}</p>}
         <p className="text-xs text-muted-foreground">Al guardar, este proveedor queda como el principal del producto.</p>
       </div>

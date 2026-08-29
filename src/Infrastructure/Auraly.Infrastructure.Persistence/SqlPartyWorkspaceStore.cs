@@ -42,6 +42,14 @@ public sealed partial class SqlPartyWorkspaceStore(
                    OR EXISTS(SELECT 1 FROM dbo.AppUsers u WHERE u.PartyId=p.PartyId AND u.TenantId=@TenantId AND u.IsActive=1)
                    THEN 1 ELSE 0 END)
               AND (@Incomplete IS NULL OR @Incomplete=CASE WHEN p.CompletionStatus=N'Incomplete' THEN 1 ELSE 0 END)
+              AND (@PartyId IS NULL OR p.PartyId=@PartyId)
+              AND (@RoleId IS NULL
+                   OR (@Role=N'Customer' AND EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId AND c.CustomerId=@RoleId))
+                   OR (@Role=N'Supplier' AND EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId AND s.SupplierId=@RoleId))
+                   OR (@Role=N'Seller' AND EXISTS(SELECT 1 FROM dbo.CommerceSellers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId AND s.SellerId=@RoleId))
+                   OR (@Role=N'Carrier' AND EXISTS(SELECT 1 FROM dbo.Carriers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId AND c.CarrierId=@RoleId))
+                   OR (@Role=N'Employee' AND EXISTS(SELECT 1 FROM dbo.Employees e WHERE e.PartyId=p.PartyId AND e.BusinessId=@BusinessId AND e.EmployeeId=@RoleId))
+                   OR (@Role=N'User' AND EXISTS(SELECT 1 FROM dbo.AppUsers u WHERE u.PartyId=p.PartyId AND u.TenantId=@TenantId AND u.UserId=@RoleId)))
             """;
         await using var command = connection.CreateCommand();
         command.CommandText = $"""
@@ -64,7 +72,14 @@ public sealed partial class SqlPartyWorkspaceStore(
                    OR EXISTS(SELECT 1 FROM dbo.Employees e WHERE e.PartyId=p.PartyId AND e.BusinessId=@BusinessId AND e.IsActive=1)
                    OR EXISTS(SELECT 1 FROM dbo.AppUsers u WHERE u.PartyId=p.PartyId AND u.TenantId=@TenantId AND u.IsActive=1)
                         THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END,
-                   p.CompletionStatus,p.RowVersion
+                   p.CompletionStatus,p.RowVersion,
+                   (SELECT TOP(1) c.CustomerId FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId),
+                   (SELECT TOP(1) s.SupplierId FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId),
+                   (SELECT TOP(1) s.SellerId FROM dbo.CommerceSellers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId),
+                   (SELECT TOP(1) c.CarrierId FROM dbo.Carriers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId),
+                   (SELECT TOP(1) e.EmployeeId FROM dbo.Employees e WHERE e.PartyId=p.PartyId AND e.BusinessId=@BusinessId),
+                   (SELECT TOP(1) u.UserId FROM dbo.AppUsers u WHERE u.PartyId=p.PartyId AND u.TenantId=@TenantId),
+                   (SELECT TOP(1) s.PurchaseEvidencePolicy FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId)
             FROM dbo.Parties p
             OUTER APPLY(SELECT TOP(1) ps.Name,ci.Name CityName
                         FROM dbo.PartySites ps JOIN dbo.Cities ci ON ci.CityId=ps.CityId
@@ -95,13 +110,21 @@ public sealed partial class SqlPartyWorkspaceStore(
                    OR EXISTS(SELECT 1 FROM dbo.AppUsers u WHERE u.PartyId=p.PartyId AND u.TenantId=@TenantId AND u.IsActive=1)
                    THEN 1 ELSE 0 END)
               AND (@Incomplete IS NULL OR @Incomplete=CASE WHEN p.CompletionStatus=N'Incomplete' THEN 1 ELSE 0 END)
+              AND (@PartyId IS NULL OR p.PartyId=@PartyId)
+              AND (@RoleId IS NULL
+                   OR (@Role=N'Customer' AND EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId AND c.CustomerId=@RoleId))
+                   OR (@Role=N'Supplier' AND EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId AND s.SupplierId=@RoleId))
+                   OR (@Role=N'Seller' AND EXISTS(SELECT 1 FROM dbo.CommerceSellers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId AND s.SellerId=@RoleId))
+                   OR (@Role=N'Carrier' AND EXISTS(SELECT 1 FROM dbo.Carriers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId AND c.CarrierId=@RoleId))
+                   OR (@Role=N'Employee' AND EXISTS(SELECT 1 FROM dbo.Employees e WHERE e.PartyId=p.PartyId AND e.BusinessId=@BusinessId AND e.EmployeeId=@RoleId))
+                   OR (@Role=N'User' AND EXISTS(SELECT 1 FROM dbo.AppUsers u WHERE u.PartyId=p.PartyId AND u.TenantId=@TenantId AND u.UserId=@RoleId)))
             ORDER BY CASE WHEN p.IdentificationTypeCode=N'CC' AND p.NormalizedIdentification=N'222222222222' THEN 0 ELSE 1 END,
                      p.DisplayName,p.PartyId
             OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
             """;
         command.Parameters.AddRange([
             P("@TenantId",actor.TenantId),P("@BusinessId",actor.BusinessId),P("@Search",Empty(query.Search)),
-            P("@Role",Empty(query.Role)),P("@IsActive",query.IsActive),P("@Incomplete",query.IsIncomplete),
+            P("@Role",Empty(query.Role)),P("@IsActive",query.IsActive),P("@Incomplete",query.IsIncomplete),P("@RoleId",query.RoleId),P("@PartyId",query.PartyId),
             P("@Offset",offset),P("@PageSize",query.PageSize)]);
         await using var reader = await command.ExecuteReaderAsync(ct);
         await reader.ReadAsync(ct);
@@ -428,7 +451,14 @@ public sealed partial class SqlPartyWorkspaceStore(
                    OR EXISTS(SELECT 1 FROM dbo.Employees e WHERE e.PartyId=p.PartyId AND e.BusinessId=@BusinessId AND e.IsActive=1)
                    OR EXISTS(SELECT 1 FROM dbo.AppUsers u WHERE u.PartyId=p.PartyId AND u.TenantId=@TenantId AND u.IsActive=1)
                         THEN CAST(1 AS bit) ELSE CAST(0 AS bit) END,
-                   p.CompletionStatus,p.RowVersion
+                   p.CompletionStatus,p.RowVersion,
+                   (SELECT TOP(1) c.CustomerId FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId),
+                   (SELECT TOP(1) s.SupplierId FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId),
+                   (SELECT TOP(1) s.SellerId FROM dbo.CommerceSellers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId),
+                   (SELECT TOP(1) c.CarrierId FROM dbo.Carriers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId),
+                   (SELECT TOP(1) e.EmployeeId FROM dbo.Employees e WHERE e.PartyId=p.PartyId AND e.BusinessId=@BusinessId),
+                   (SELECT TOP(1) u.UserId FROM dbo.AppUsers u WHERE u.PartyId=p.PartyId AND u.TenantId=@TenantId),
+                   (SELECT TOP(1) s.PurchaseEvidencePolicy FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId)
             FROM dbo.Parties p
             OUTER APPLY(SELECT TOP(1) ps.Name,ci.Name CityName FROM dbo.PartySites ps
                         JOIN dbo.Cities ci ON ci.CityId=ps.CityId WHERE ps.PartyId=p.PartyId AND ps.IsActive=1
@@ -450,7 +480,8 @@ public sealed partial class SqlPartyWorkspaceStore(
     {
         var roles=new List<string>(6); if(Convert.ToBoolean(r.GetValue(11)))roles.Add("Customer"); if(Convert.ToBoolean(r.GetValue(12)))roles.Add("Supplier"); if(Convert.ToBoolean(r.GetValue(13)))roles.Add("Seller"); if(Convert.ToBoolean(r.GetValue(14)))roles.Add("Carrier"); if(Convert.ToBoolean(r.GetValue(15)))roles.Add("Employee"); if(Convert.ToBoolean(r.GetValue(16)))roles.Add("User");
         return new PartyWorkspaceItem(r.GetGuid(0),r.GetString(1),S(r,2),S(r,3),S(r,4),r.GetString(5),S(r,6),S(r,7),S(r,8),
-            S(r,9),S(r,10),roles,S(r,17),S(r,18),r.GetBoolean(19),r.GetString(20),Convert.ToBase64String((byte[])r[21]));
+            S(r,9),S(r,10),roles,S(r,17),S(r,18),r.GetBoolean(19),r.GetString(20),Convert.ToBase64String((byte[])r[21]),
+            G(r,22),G(r,23),G(r,24),G(r,25),G(r,26),G(r,27),S(r,28));
     }
 
     private static async Task ValidateScopeAsync(SqlConnection c,SqlTransaction t,PartyActorIdentity a,PartySiteInput s,CancellationToken ct)

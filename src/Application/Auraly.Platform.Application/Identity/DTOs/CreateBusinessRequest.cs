@@ -7,4 +7,5 @@ public record CreateBusinessRequest(
     string? Phone,
     string? Email,
     string? Website,
-    string? TimeZone = null);
+    string? TimeZone = null,
+    bool SharesProductPrices = false);

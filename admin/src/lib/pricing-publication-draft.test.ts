@@ -18,6 +18,8 @@ const proposal: PriceRevisionListItem = {
   supplierName: "Proveedor",
   previousObservedUnitCost: null,
   observedUnitCost: 20_000,
+  averageUnitCost: null,
+  latestUnitCost: 20_000,
   currentPricePublishedAt: "2026-08-10T14:00:00Z",
   currentSalePrice: 29_500,
   currentMarginPercent: 15,

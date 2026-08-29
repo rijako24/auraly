@@ -124,8 +124,8 @@ public sealed partial class SqlCatalogStore
             SELECT p.ProductId,p.TaxProfileId,COALESCE(p.PurchaseTaxProfileId,p.TaxProfileId),
                    p.PurchaseTaxTreatment
             FROM dbo.Products p
-            INNER JOIN dbo.Businesses b ON b.BusinessId=p.BusinessId
-            WHERE p.ProductId=@ProductId AND p.BusinessId=@BusinessId AND b.TenantId=@TenantId;
+            WHERE p.ProductId=@ProductId AND p.TenantId=@TenantId
+              AND EXISTS(SELECT 1 FROM dbo.Businesses b WHERE b.BusinessId=@BusinessId AND b.TenantId=@TenantId);
             """, connection);
         command.Parameters.AddWithValue("@ProductId", productId);
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
@@ -164,8 +164,8 @@ public sealed partial class SqlCatalogStore
                   PurchaseTaxTreatment=@PurchaseTaxTreatment,
                   UpdatedAt=@Now,UpdatedByUserId=@UserId
                 FROM dbo.Products p
-                INNER JOIN dbo.Businesses b ON b.BusinessId=p.BusinessId
-                WHERE p.ProductId=@ProductId AND p.BusinessId=@BusinessId AND b.TenantId=@TenantId;
+                WHERE p.ProductId=@ProductId AND p.TenantId=@TenantId
+                  AND EXISTS(SELECT 1 FROM dbo.Businesses b WHERE b.BusinessId=@BusinessId AND b.TenantId=@TenantId);
                 IF @@ROWCOUNT=0 THROW 51010,'The product was not found.',1;
 
                 DECLARE @Change TABLE(CatalogChangeId BIGINT NOT NULL);

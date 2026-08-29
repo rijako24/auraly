@@ -13,6 +13,12 @@ public sealed partial class ProductRepository : IProductRepository
 
     public ProductRepository(ApplicationDbContext context) => _context = context;
 
+    private async Task<Guid> ResolveTenantIdAsync(Guid businessId, CancellationToken ct) =>
+        await _context.Businesses.AsNoTracking()
+            .Where(business => business.BusinessId == businessId)
+            .Select(business => business.TenantId)
+            .SingleAsync(ct);
+
     public async Task<IReadOnlyList<Product>> SearchAsync(
         Guid businessId,
         string? query,
@@ -22,9 +28,10 @@ public sealed partial class ProductRepository : IProductRepository
         bool includeInactive = false)
     {
         limit = Math.Clamp(limit, 1, 50);
+        var tenantId = await ResolveTenantIdAsync(businessId, ct);
         var now = DateTimeOffset.UtcNow;
         var products = _context.Products.AsNoTracking().Where(product =>
-            product.BusinessId == businessId
+            product.TenantId == tenantId
             && _context.PublishedProductPrices.Any(price =>
                 price.BusinessId == businessId
                 && price.ProductId == product.ProductId
@@ -68,9 +75,10 @@ public sealed partial class ProductRepository : IProductRepository
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 50);
+        var tenantId = await ResolveTenantIdAsync(businessId, ct);
         var now = DateTimeOffset.UtcNow;
         var products = _context.Products.AsNoTracking().Where(product =>
-            product.BusinessId == businessId
+            product.TenantId == tenantId
             && _context.PublishedProductPrices.Any(price =>
                 price.BusinessId == businessId
                 && price.ProductId == product.ProductId
@@ -114,7 +122,8 @@ public sealed partial class ProductRepository : IProductRepository
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 100);
-        var query = _context.Products.AsNoTracking().Where(product => product.BusinessId == businessId);
+        var tenantId = await ResolveTenantIdAsync(businessId, ct);
+        var query = _context.Products.AsNoTracking().Where(product => product.TenantId == tenantId);
         if (!includeInactive)
             query = query.Where(product => product.IsActive);
         if (!string.IsNullOrWhiteSpace(search))
@@ -137,7 +146,8 @@ public sealed partial class ProductRepository : IProductRepository
 
     public async Task<Product?> GetByIdAsync(Guid businessId, Guid productId, CancellationToken ct = default)
     {
-        var product = await _context.Products.AsNoTracking().FirstOrDefaultAsync(product => product.BusinessId == businessId && product.ProductId == productId, ct);
+        var tenantId = await ResolveTenantIdAsync(businessId, ct);
+        var product = await _context.Products.AsNoTracking().FirstOrDefaultAsync(product => product.TenantId == tenantId && product.ProductId == productId, ct);
         if (product is not null)
         {
             await ApplyPublishedPricesAsync([product], businessId, ct);
@@ -148,8 +158,9 @@ public sealed partial class ProductRepository : IProductRepository
 
     public async Task<Product?> GetByExternalIdAsync(Guid businessId, Guid integrationConnectionId, string externalProductId, CancellationToken ct = default)
     {
+        var tenantId = await ResolveTenantIdAsync(businessId, ct);
         var product = await _context.Products.AsNoTracking().FirstOrDefaultAsync(product =>
-            product.BusinessId == businessId && product.IntegrationConnectionId == integrationConnectionId && product.ExternalProductId == externalProductId, ct);
+            product.TenantId == tenantId && product.IntegrationConnectionId == integrationConnectionId && product.ExternalProductId == externalProductId, ct);
         if (product is not null)
             await ApplyPublishedPricesAsync([product], businessId, ct);
         return product;
@@ -157,22 +168,28 @@ public sealed partial class ProductRepository : IProductRepository
 
     public async Task<Product> CreateAsync(Product product, CancellationToken ct = default)
     {
+        var tenantId = await ResolveTenantIdAsync(product.BusinessId, ct);
+        product.TenantId = tenantId;
         var amount = product.UnitPrice;
         var currency = product.Currency;
         product.UnitPrice = 0m;
         product.Currency = "COP";
         _context.Products.Add(product);
-        AddInitialPublishedPrice(product, amount, currency, DateTimeOffset.UtcNow);
+        var businessIds = await _context.Businesses.AsNoTracking()
+            .Where(business => business.TenantId == tenantId && business.IsActive)
+            .Select(business => business.BusinessId)
+            .ToListAsync(ct);
+        AddInitialPublishedPrices(product, businessIds, amount, currency, DateTimeOffset.UtcNow);
         var warehouseIds = await _context.InventoryWarehouseScopes
             .AsNoTracking()
-            .Where(warehouse => warehouse.BusinessId == product.BusinessId)
-            .Select(warehouse => warehouse.WarehouseId)
+            .Where(warehouse => businessIds.Contains(warehouse.BusinessId))
+            .Select(warehouse => new { warehouse.BusinessId, warehouse.WarehouseId })
             .ToListAsync(ct);
         var now = DateTimeOffset.UtcNow;
-        _context.InventoryBalances.AddRange(warehouseIds.Select(warehouseId => new InventoryBalanceRow
+        _context.InventoryBalances.AddRange(warehouseIds.Select(warehouse => new InventoryBalanceRow
         {
-            BusinessId = product.BusinessId,
-            WarehouseId = warehouseId,
+            BusinessId = warehouse.BusinessId,
+            WarehouseId = warehouse.WarehouseId,
             ProductId = product.ProductId,
             QuantityOnHand = 0m,
             AverageUnitCost = 0m,
@@ -189,8 +206,9 @@ public sealed partial class ProductRepository : IProductRepository
         string categoryName,
         CancellationToken ct = default)
     {
+        var tenantId = await ResolveTenantIdAsync(businessId, ct);
         var products = await _context.Products
-            .Where(product => product.BusinessId == businessId
+            .Where(product => product.TenantId == tenantId
                 && product.ProductCategoryId == productCategoryId)
             .ToListAsync(ct);
         foreach (var product in products)

@@ -21,10 +21,10 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
             await using var seed = new SqlCommand(
                 """
                 INSERT dbo.Products
-                  (ProductId,BusinessId,Source,Sku,Name,
+                  (ProductId,TenantId,BusinessId,Source,Sku,Name,
                    Currency,ManageStock,IsActive,CreatedAt)
                 VALUES
-                  (@ProductId,@BusinessId,0,@Code,N'Producto genérico',
+                  (@ProductId,@TenantId,@BusinessId,0,@Code,N'Producto genérico',
                    N'COP',0,1,SYSUTCDATETIME());
                 INSERT dbo.ProductPrices
                   (ProductPriceId,BusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,
@@ -37,6 +37,7 @@ public sealed class OnlineSalesDraftApiTests(ServerSliceFixture fixture)
                 """, connection);
             seed.Parameters.AddWithValue("@ProductId", productId);
             seed.Parameters.AddWithValue("@PriceId", priceId);
+            seed.Parameters.AddWithValue("@TenantId", fixture.TenantId);
             seed.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
             seed.Parameters.AddWithValue("@Code", code);
             await seed.ExecuteNonQueryAsync();

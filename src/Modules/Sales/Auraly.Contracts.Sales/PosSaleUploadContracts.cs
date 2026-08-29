@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Auraly.BuildingBlocks.Domain.Documents;
+using Auraly.Commerce.Taxation.Contracts;
 
 namespace Auraly.Contracts.Sales;
 
@@ -89,7 +90,12 @@ public sealed record PosSaleCommercialSnapshotContract(
     IReadOnlyList<PosSaleTaxContract> Taxes,
     decimal UntaxedAmount,
     decimal TaxAmount,
-    decimal PayableAmount);
+    decimal PayableAmount,
+    WithholdingCalculationSnapshot? Withholding = null)
+{
+    public decimal NetPayableAmount =>
+        Withholding?.NetAmount ?? PayableAmount;
+}
 
 public sealed record PosSaleUblAddressContract(
     string MunicipalityCode,

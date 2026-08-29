@@ -37,20 +37,20 @@ public sealed partial class SqlOnlineSalesDraftStore
                    resolved.PriceSource
             FROM dbo.Products p
             LEFT JOIN dbo.TaxProfiles t
-              ON t.TaxProfileId=p.TaxProfileId AND t.BusinessId=p.BusinessId AND t.IsActive=1
+              ON t.TaxProfileId=p.TaxProfileId AND t.BusinessId=@BusinessId AND t.IsActive=1
             CROSS APPLY dbo.CustomerProductPriceResolve(
               @BusinessId,@WarehouseId,@CustomerId,p.ProductId,1,SYSDATETIMEOFFSET()) resolved
-            WHERE p.BusinessId=@BusinessId AND p.IsActive=1
+            WHERE p.TenantId=@TenantId AND p.IsActive=1
               AND (@Search=N'' OR p.Name LIKE @Contains
                    OR p.ProductCode LIKE @Prefix OR p.Sku LIKE @Prefix
                    OR p.Reference LIKE @Prefix
                    OR EXISTS(
                      SELECT 1 FROM dbo.ProductBarcodes b
-                     WHERE b.ProductId=p.ProductId AND b.BusinessId=p.BusinessId
+                     WHERE b.ProductId=p.ProductId AND b.BusinessId=@BusinessId
                        AND b.IsActive=1 AND b.Barcode LIKE @Prefix)
                    OR EXISTS(
                      SELECT 1 FROM dbo.ProductIdentifiers i
-                     WHERE i.ProductId=p.ProductId AND i.BusinessId=p.BusinessId
+                     WHERE i.ProductId=p.ProductId AND i.BusinessId=@BusinessId
                        AND i.IsActive=1 AND i.Value LIKE @Prefix))
             ORDER BY CASE
                        WHEN p.ProductCode=@Search OR p.Sku=@Search OR p.Reference=@Search THEN 0
@@ -65,7 +65,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             """;
         var search = request.Search?.Trim() ?? string.Empty;
         command.Parameters.AddRange([
-            P("@BusinessId", scope.BusinessId), P("@WarehouseId", scope.WarehouseId),
+            P("@TenantId", user.TenantId), P("@BusinessId", scope.BusinessId), P("@WarehouseId", scope.WarehouseId),
             P("@CustomerId", request.CustomerId), P("@Search", search),
             P("@Contains", $"%{search}%"), P("@Prefix", $"{search}%"),
             P("@Skip", request.Skip), P("@Take", request.Take + 1)

@@ -179,6 +179,41 @@ public sealed class PosCatalogStoreTests
         }
     }
 
+    [Fact]
+    public async Task Operational_reference_options_are_replaced_atomically_and_survive_restart()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"auraly-pos-options-{Guid.NewGuid():N}.db");
+        try
+        {
+            var connectionString = $"Data Source={path}";
+            var store = new PosCatalogStore(connectionString);
+            await store.InitializeAsync();
+            await store.ApplyReferenceOptionsAsync("payment-method",
+            [
+                new ReferenceOption(Guid.NewGuid(), "Cash", "Efectivo", null, 10),
+                new ReferenceOption(Guid.NewGuid(), "DebitCard", "Tarjeta débito", null, 20)
+            ]);
+
+            var reopened = new PosCatalogStore(connectionString);
+            var initial = await reopened.ReferenceOptionsAsync("payment-method");
+            Assert.Equal(["Cash", "DebitCard"], initial.Select(option => option.Code));
+
+            await reopened.ApplyReferenceOptionsAsync("payment-method",
+            [
+                new ReferenceOption(Guid.NewGuid(), "Transfer", "Transferencia", null, 5)
+            ]);
+
+            var replaced = await reopened.ReferenceOptionsAsync("payment-method");
+            Assert.Single(replaced);
+            Assert.Equal("Transfer", replaced[0].Code);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
     private static PosCatalogItem Product() =>
         new(
             Guid.Parse("019ad1f0-8ec7-7e2f-a4d4-919f1c4cb080"),

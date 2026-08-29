@@ -169,3 +169,11 @@ El detalle se presenta antes del total neto y la diferencia de efectivo cierra
 el comprobante con mayor jerarquía visual. El catálogo comercial usa un único
 medio `Transfer`; no existen variantes paralelas para transferencia bancaria o
 consignación.
+
+## Conciliación posterior del cierre
+
+La vista `/dashboard/cash-differences` queda consolidada como **Cierres de caja** y lista todos los cierres, no solo los que tienen diferencia. El detalle conserva ventas, devoluciones, ventas a crédito, periodo, usuario, sede, bodega y esperado/contado por medio. El POS solicita exactamente tres valores ciegos: `Cash`, `Card` y `Transfer`.
+
+Las diferencias nunca se presentan como números negativos: se rotulan `Sobrante`, `Faltante` o `Cuadra` y se muestra su valor absoluto. Para efectivo, el botón **Contar por denominaciones** abre **Te ayudamos a contar**, alimentado por el catálogo `cash-denomination` con monedas y billetes colombianos.
+
+La conciliación exige confirmar cada medio, registra valor verificado, motivo catalogado y snapshot inmutable. Puede reclasificar un faltante contra un sobrante —por ejemplo, transferencia registrada como efectivo— sin exceder las diferencias reales. El cierre contabiliza inicialmente cada diferencia contra `CashClosureDifferencesPending`; la conciliación lleva solo la diferencia genuina a ingreso/gasto y conserva trazabilidad e idempotencia. Si la reclasificación compensa exactamente ambos medios, los asientos del cierre ya forman la reclasificación y no se genera un asiento duplicado.

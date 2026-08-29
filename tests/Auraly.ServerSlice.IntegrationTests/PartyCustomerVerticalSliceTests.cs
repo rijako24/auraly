@@ -422,6 +422,17 @@ public sealed class PartyCustomerVerticalSliceTests(ServerSliceFixture fixture)
         var item = Assert.Single(page.Items.Where(value => value.PartyId == customer.PartyId));
         Assert.Equal(new[] { "Carrier", "Customer", "Seller", "Supplier" }, item.Roles.OrderBy(value => value).ToArray());
         Assert.Equal("4", item.VerificationDigit);
+        Assert.Equal(customer.CustomerId, item.CustomerId);
+        Assert.Equal(supplier.SupplierId, item.SupplierId);
+        Assert.Equal(seller.RoleId, item.SellerId);
+        Assert.Equal(carrier.RoleId, item.CarrierId);
+
+        var supplierPage = await admin.GetFromJsonAsync<PartyWorkspacePage>(
+            $"/api/commerce/v1/parties?page=1&pageSize=1&role=Supplier&roleId={supplier.SupplierId:D}");
+        Assert.Equal(customer.PartyId, Assert.Single(supplierPage!.Items).PartyId);
+        var identityPage = await admin.GetFromJsonAsync<PartyWorkspacePage>(
+            $"/api/commerce/v1/parties?page=1&pageSize=1&role=Supplier&partyId={customer.PartyId:D}");
+        Assert.Equal(supplier.SupplierId, Assert.Single(identityPage!.Items).SupplierId);
 
         var update = new UpdatePartyRequest(
             PartyTypes.Organization, "Comercial unificada renovada",

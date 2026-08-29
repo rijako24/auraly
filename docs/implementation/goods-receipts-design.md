@@ -50,6 +50,10 @@ La bandeja pagina en servidor y combina b?squeda y estado. El editor permite sel
 
 Los costos observados alimentan la propuesta de precios, pero la entrada nunca publica un precio de venta autom?ticamente.
 
+Cada producto de la grilla muestra informativamente último costo recibido y costo promedio vigente antes de capturar el nuevo costo. El concepto de retención y el municipio para reteICA son selectores provenientes de reglas tributarias activas de compra; no aceptan texto libre que el motor no pueda resolver.
+
+Cuando la sede comparte precios, confirmar mantiene la cantidad física exclusivamente en la bodega receptora y recalcula costo/promedio/precio preparado para todas las sedes compartidas. Las sedes independientes conservan el flujo aislado existente.
+
 ## Decisiones a?n no implementadas
 
 La reversi?n de una entrada confirmada y la devoluci?n de compra deben construirse como documentos compensatorios procesados por el motor. No se incluyeron aqu? porque necesitan preservar costo original, comprobar cantidades a?n retornables y compensar inventario, cuentas por pagar y contabilidad en una sola operaci?n. No se simulan mediante eliminaci?n ni edici?n del documento confirmado.

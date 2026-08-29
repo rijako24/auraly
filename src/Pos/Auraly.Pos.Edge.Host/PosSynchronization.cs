@@ -228,8 +228,9 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
 
     private Task OnDisconnectedAsync(WebPubSubDisconnectedEventArgs _)
     {
-        connectionState.MarkDisconnected();
-        events.Record("Warning", "Connection", "Caja sin conexión con Auraly Server");
+        // The push channel is optional transport. Its disconnection does not prove that
+        // the HTTP server is unreachable; PosServerConnectionHandler owns that signal.
+        events.Record("Warning", "Connection", "Canal de eventos desconectado; reconectando");
         uiState.Publish();
         return Task.CompletedTask;
     }

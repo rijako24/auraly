@@ -41,22 +41,27 @@ public sealed partial class ProductRepository
             product.HasPublishedPrice = false;
         }
     }
-    private void AddInitialPublishedPrice(Product product, decimal amount, string currency, DateTimeOffset now)
+    private void AddInitialPublishedPrices(
+        Product product,
+        IReadOnlyCollection<Guid> businessIds,
+        decimal amount,
+        string currency,
+        DateTimeOffset now)
     {
         if (amount <= 0m)
             return;
 
-        _context.PublishedProductPrices.Add(new PublishedProductPriceRow
+        _context.PublishedProductPrices.AddRange(businessIds.Select(businessId => new PublishedProductPriceRow
         {
             ProductPriceId = Guid.NewGuid(),
-            BusinessId = product.BusinessId,
+            BusinessId = businessId,
             ProductId = product.ProductId,
             Amount = amount,
             CurrencyCode = NormalizeCurrency(currency),
             ValidFrom = now,
             IsActive = true,
             CreatedAt = now
-        });
+        }));
     }
 
     private async Task ReplacePublishedPriceIfChangedAsync(Product product, DateTimeOffset now, CancellationToken ct)
@@ -71,7 +76,7 @@ public sealed partial class ProductRepository
 
         if (current is null)
         {
-            AddInitialPublishedPrice(product, amount, currency, now);
+            AddInitialPublishedPrices(product, [product.BusinessId], amount, currency, now);
             return;
         }
 
@@ -80,7 +85,7 @@ public sealed partial class ProductRepository
 
         current.IsActive = false;
         current.ValidUntil = now;
-        AddInitialPublishedPrice(product, amount, currency, now);
+        AddInitialPublishedPrices(product, [product.BusinessId], amount, currency, now);
     }
 
     private static string NormalizeCurrency(string? currency) =>

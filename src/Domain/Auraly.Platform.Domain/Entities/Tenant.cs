@@ -11,6 +11,7 @@ public class Tenant
     public bool IsActive { get; set; } = true;
     public int MaximumUsers { get; set; } = 5;
     public int MaximumEnrolledDevices { get; set; } = 1;
+    public string InventoryCostBasis { get; set; } = "LatestReceiptCost";
     [NotMapped] public int ActiveUserCount => AppUsers.Count(user => user.IsActive);
     [NotMapped] public int ActiveEnrolledDeviceCount { get; set; }
     [NotMapped] public string? LegalName { get; set; }

@@ -13,6 +13,7 @@
     <ProjectReference Include="..\..\DocumentProcessing\Auraly.Contracts.DocumentProcessing\Auraly.Contracts.DocumentProcessing.csproj" />
     <ProjectReference Include="..\..\Fiscal\Auraly.Contracts.Fiscal\Auraly.Contracts.Fiscal.csproj" />
     <ProjectReference Include="..\..\Organization\Auraly.Contracts.Organization\Auraly.Contracts.Organization.csproj" />
+    <ProjectReference Include="..\..\Taxation\Auraly.Commerce.Taxation.Contracts\Auraly.Commerce.Taxation.Contracts.csproj" />
     <ProjectReference Include="..\Auraly.Contracts.Sales\Auraly.Contracts.Sales.csproj" />
     <ProjectReference Include="..\Auraly.Domain.Sales\Auraly.Domain.Sales.csproj" />
   </ItemGroup>

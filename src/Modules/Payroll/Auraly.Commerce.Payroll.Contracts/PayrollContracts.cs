@@ -149,6 +149,13 @@ public sealed record PayrollEmploymentOption(
     string? BankAccountNumber,
     byte[] RowVersion);
 
+public sealed record PayrollEmploymentPage(
+    IReadOnlyList<PayrollEmploymentOption> Items,
+    int Page,
+    int PageSize,
+    int TotalCount,
+    int TotalPages);
+
 public sealed record SavePayrollEmploymentRequest(
     Guid EmploymentId,
     Guid PartyId,

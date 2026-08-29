@@ -7,6 +7,7 @@ public interface IDispatchStore
 {
     Task<DispatchPage> PageAsync(DispatchActorIdentity actor, DispatchQuery query, CancellationToken ct);
     Task<DispatchOptions> OptionsAsync(DispatchActorIdentity actor, CancellationToken ct);
+    Task<DispatchDriverPage> DriversAsync(DispatchActorIdentity actor, int page, int pageSize, string? search, Guid? userId, CancellationToken ct);
     Task<DispatchCandidatePage> CandidatesAsync(DispatchActorIdentity actor, DispatchCandidateQuery query, CancellationToken ct);
     Task<DispatchDetail?> GetAsync(DispatchActorIdentity actor, Guid dispatchId, CancellationToken ct);
     Task<DispatchMutationResult> CreateAsync(DispatchActorIdentity actor, Guid dispatchId, string dispatchNumber, CreateDispatchRequest request, string driverName, string? vehiclePlate, string? notes, DateTimeOffset now, CancellationToken ct);
@@ -33,6 +34,14 @@ public sealed class DispatchService(IDispatchStore store, IAuralyIdGenerator ids
     {
         RequireAny(actor, DispatchPermissionCodes.Read, DispatchPermissionCodes.Create);
         return store.OptionsAsync(actor, ct);
+    }
+
+    public Task<DispatchDriverPage> DriversAsync(DispatchActorIdentity actor, int page,
+        int pageSize, string? search, Guid? userId, CancellationToken ct)
+    {
+        RequireAny(actor, DispatchPermissionCodes.Read, DispatchPermissionCodes.Create);
+        Page(page, pageSize);
+        return store.DriversAsync(actor, page, pageSize, Text(search, 160), userId, ct);
     }
 
     public Task<DispatchCandidatePage> CandidatesAsync(DispatchActorIdentity actor, DispatchCandidateQuery query, CancellationToken ct)

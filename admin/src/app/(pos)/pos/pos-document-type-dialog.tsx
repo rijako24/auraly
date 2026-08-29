@@ -8,9 +8,9 @@ import {
   fiscalConfigurationApi,
   type FiscalResolutionConfiguration,
 } from "@/services/api/fiscal-configuration";
-import { useReferenceOptions } from "@/hooks/use-reference-options";
-import type { PosSaleDocumentType } from "@/services/pos/pos-edge-client";
+import type { PosClient, PosSaleDocumentType } from "@/services/pos/pos-edge-client";
 import { useAuthStore } from "@/stores/auth-store";
+import { usePosReferenceOptions } from "./use-pos-reference-options";
 
 const documentVisuals: Record<PosSaleDocumentType, { icon: typeof FileText }> = {
   SalesInvoice: { icon: FileText },
@@ -19,6 +19,7 @@ const documentVisuals: Record<PosSaleDocumentType, { icon: typeof FileText }> = 
 
 
 export function PosDocumentTypeDialog({
+  client,
   value,
   invoiceRequired = false,
   businessId,
@@ -29,6 +30,7 @@ export function PosDocumentTypeDialog({
   onSelect,
   onCancel,
 }: {
+  client: PosClient;
   value: PosSaleDocumentType;
   invoiceRequired?: boolean;
   businessId: string;
@@ -42,7 +44,7 @@ export function PosDocumentTypeDialog({
   const canManageFiscal = useAuthStore(state =>
     state.user?.permissions.includes("fiscal.configuration.manage") ?? false,
   );
-  const documentTypes = useReferenceOptions("sales-document-type");
+  const documentTypes = usePosReferenceOptions(client, "sales-document-type");
   const options = (documentTypes.data ?? []).flatMap((option) => {
     if (option.code !== "SalesInvoice" && option.code !== "SalesReceipt") return [];
     const documentType = option.code as PosSaleDocumentType;

@@ -85,7 +85,8 @@ public sealed partial class SqlOnlineSalesDraftStore
             SELECT item.ProductId,SUM(item.Quantity)
             FROM dbo.OrderItems item WITH(UPDLOCK,HOLDLOCK)
             INNER JOIN dbo.Products product WITH(UPDLOCK,HOLDLOCK)
-              ON product.ProductId=item.ProductId AND product.BusinessId=item.BusinessId
+              ON product.ProductId=item.ProductId
+             AND product.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=item.BusinessId)
             WHERE item.OrderId=@OrderId AND item.BusinessId=@BusinessId AND product.ManageStock=1
             GROUP BY item.ProductId
             ORDER BY item.ProductId;

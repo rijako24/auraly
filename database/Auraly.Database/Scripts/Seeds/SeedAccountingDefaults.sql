@@ -12,6 +12,8 @@ USING (VALUES
   (N'DebitCardClearing',N'Tarjeta débito por conciliar',N'130510',N'Tarjetas débito por conciliar',N'Asset',0,3),
   (N'CreditCardClearing',N'Tarjeta crédito por conciliar',N'130515',N'Tarjetas crédito por conciliar',N'Asset',0,4),
   (N'TransferClearing',N'Transferencias por conciliar',N'130520',N'Transferencias por conciliar',N'Asset',0,5),
+  (N'CardClearing',N'Tarjetas por conciliar',N'130525',N'Tarjetas por conciliar',N'Asset',0,50),
+  (N'CashClosureDifferencesPending',N'Diferencias de cierre pendientes',N'139995',N'Diferencias de cierre pendientes de conciliación',N'Asset',0,51),
   (N'AccountsReceivable',N'Clientes',N'130505',N'Clientes nacionales',N'Asset',1,6),
   (N'SupplierCreditsReceivable',N'Saldos a favor con proveedores',N'133595',N'Saldos a favor con proveedores',N'Asset',1,7),
   (N'WithholdingIncomeTaxReceivable',N'Retefuente a favor',N'135515',N'Retención en la fuente a favor',N'Asset',0,8),
@@ -86,6 +88,9 @@ USING (VALUES
   (N'PosPaymentMethod',N'CreditCard',N'CreditCardClearing'),
   (N'PosPaymentMethod',N'Transfer',N'TransferClearing'),
   (N'PosPaymentMethod',N'Credit',N'AccountsReceivable'),
+  (N'ClosurePaymentMethod',N'Cash',N'Cash'),
+  (N'ClosurePaymentMethod',N'Card',N'CardClearing'),
+  (N'ClosurePaymentMethod',N'Transfer',N'TransferClearing'),
   (N'SupplierPaymentMethod',N'Cash',N'Cash'),
   (N'SupplierPaymentMethod',N'BankTransfer',N'Bank'),
   (N'CustomerPaymentMethod',N'Cash',N'Cash'),
@@ -94,7 +99,10 @@ USING (VALUES
   (N'CustomerPaymentMethod',N'CreditCard',N'CreditCardClearing'),
   (N'PurchaseWithholdingKind',N'IncomeTax',N'WithholdingIncomeTaxPayable'),
   (N'PurchaseWithholdingKind',N'Vat',N'WithholdingVatPayable'),
-  (N'PurchaseWithholdingKind',N'IndustryCommerce',N'WithholdingIcaPayable')
+  (N'PurchaseWithholdingKind',N'IndustryCommerce',N'WithholdingIcaPayable'),
+  (N'SaleWithholdingKind',N'IncomeTax',N'WithholdingIncomeTaxReceivable'),
+  (N'SaleWithholdingKind',N'Vat',N'WithholdingVatReceivable'),
+  (N'SaleWithholdingKind',N'IndustryCommerce',N'WithholdingIcaReceivable')
 ) AS source(SourceType,SourceCode,Category)
 ON target.ProfileCode=N'AURALY_CO' AND target.SourceType=source.SourceType AND target.SourceCode=source.SourceCode
 WHEN MATCHED THEN UPDATE SET Category=source.Category
@@ -102,7 +110,7 @@ WHEN NOT MATCHED THEN INSERT(ProfileCode,SourceType,SourceCode,Category)
   VALUES(N'AURALY_CO',source.SourceType,source.SourceCode,source.Category)
 WHEN NOT MATCHED BY SOURCE
   AND target.ProfileCode=N'AURALY_CO'
-  AND target.SourceType=N'PosPaymentMethod'
+  AND target.SourceType IN(N'PosPaymentMethod',N'ClosurePaymentMethod')
 THEN DELETE;
 
 MERGE dbo.ReasonTemplates AS target

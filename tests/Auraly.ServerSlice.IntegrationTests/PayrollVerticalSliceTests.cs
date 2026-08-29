@@ -3,6 +3,7 @@ using System.Text.Json;
 using Auraly.Commerce.Accounting.Contracts;
 using Auraly.Commerce.Payroll.Contracts;
 using Auraly.Commerce.Payroll.Domain;
+using Auraly.Contracts.Parties;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -19,14 +20,18 @@ public sealed class PayrollVerticalSliceTests(ServerSliceFixture fixture)
         using var client = fixture.CreateAdminClient(
             PayrollPermissionCodes.Read, PayrollPermissionCodes.Manage,
             PayrollPermissionCodes.Calculate, PayrollPermissionCodes.Approve,
-            PayrollPermissionCodes.Pay, PayrollPermissionCodes.Configure,
-            PayrollPermissionCodes.Fiscal, AccountingPermissionCodes.Read);
+             PayrollPermissionCodes.Pay, PayrollPermissionCodes.Configure,
+             PayrollPermissionCodes.Fiscal, AccountingPermissionCodes.Read,
+             PartyWorkspacePermissionCodes.Read);
 
         var options = await GetAsync<PayrollWorkspaceOptions>(client,
             "/api/commerce/v1/payroll/options");
-        var employeeOption = Assert.Single(options.Parties,
+        Assert.Empty(options.Parties);
+        var employeeOptions = await GetAsync<PartyWorkspacePage>(client,
+            $"/api/commerce/v1/parties?page=1&pageSize=25&role=Employee&partyId={partyId:D}");
+        var employeeOption = Assert.Single(employeeOptions.Items,
             value => value.PartyId == partyId);
-        Assert.NotEqual(Guid.Empty, employeeOption.EmployeeId);
+        Assert.NotNull(employeeOption.EmployeeId);
         var catalog = options.Catalogs;
         Guid Option(string catalogCode, string code) => catalog[catalogCode]
             .Single(value => value.Code == code).OptionId;

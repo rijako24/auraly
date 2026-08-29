@@ -101,6 +101,8 @@ La existencia de una lista quemada actual no la convierte en patron valido. No s
 - La validacion del backend usa el ID/codigo canonico y verifica existencia, vigencia, scope y autorizacion. No confia en el label enviado por UI.
 - Valores inactivos usados historicamente se pueden mostrar en registros existentes, pero no ofrecer para nuevas selecciones.
 - Catalogos grandes usan busqueda/paginacion; los pequenos pueden cachearse con una politica explicita de invalidacion y scope.
+- Cualquier selector de terceros usa `Parties` como identidad canonica y filtra el rol operativo requerido (`Customer`, `Supplier`, `Seller`, `Carrier`, `Employee` o `User`). Siempre busca y pagina en servidor; un endpoint de opciones no puede precargar en segundo plano la lista completa de terceros.
+- El valor persistido por cada flujo sigue siendo el identificador que le pertenece: `PartyId` cuando el contrato consume la identidad, o el ID del rol (`CustomerId`, `SupplierId`, etc.) cuando consume esa relacion operativa. El selector no crea identidades ni codigos paralelos.
 
 Los menus de acciones de interfaz —por ejemplo editar, ver o eliminar— y opciones puramente visuales que no se persisten ni representan dominio no son catalogos de negocio.
 

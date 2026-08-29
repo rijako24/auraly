@@ -55,6 +55,8 @@ public sealed class SqlWithholdingRuleStore(
                 proposed.ConceptCode, proposed.JurisdictionCode, proposed.Rate, proposed.MinimumBase,
                 proposed.RequiredResponsibilities, proposed.EffectiveFrom, proposed.EffectiveTo, proposed.IsActive);
             await InsertAsync(connection, transaction, rule, userId, ct);
+            await EnqueueCustomerSynchronizationAsync(
+                connection, transaction, proposed.BusinessId, ct);
             await transaction.CommitAsync(ct);
             return rule;
         }
@@ -131,6 +133,8 @@ public sealed class SqlWithholdingRuleStore(
             command.Parameters.AddWithValue("@Now", now);
             command.Parameters.AddWithValue("@UserId", userId);
             await command.ExecuteNonQueryAsync(ct);
+            await EnqueueCustomerSynchronizationAsync(
+                connection, transaction, request.BusinessId, ct);
             await transaction.CommitAsync(ct);
             return new CounterpartyTaxProfileView(
                 request.BusinessId, request.CounterpartyId, request.AppliesWithholding, responsibilities,
@@ -192,6 +196,25 @@ public sealed class SqlWithholdingRuleStore(
         command.Parameters.AddWithValue("@RuleId", ruleId);
         command.Parameters.AddWithValue("@BusinessId", businessId);
         return Convert.ToInt32(await command.ExecuteScalarAsync(ct));
+    }
+
+    private static async Task EnqueueCustomerSynchronizationAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid businessId,
+        CancellationToken ct)
+    {
+        await using var command = new SqlCommand("""
+            DECLARE @Cursor BIGINT;
+            SELECT @Cursor=ISNULL(MAX(AvailableThroughCursor),0)+1
+            FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
+            WHERE BusinessId=@BusinessId AND Stream=N'Customers';
+            INSERT dbo.PosSynchronizationOutboxMessages
+              (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
+            VALUES(NEWID(),@BusinessId,N'Customers',@Cursor,SYSDATETIMEOFFSET());
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        await command.ExecuteNonQueryAsync(ct);
     }
 
     private async Task InsertAsync(

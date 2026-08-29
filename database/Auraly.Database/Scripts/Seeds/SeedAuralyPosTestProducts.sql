@@ -30,9 +30,9 @@ VALUES
 ('22220002-0000-7000-8000-000000000005','22220002-0000-7000-8000-000000000015','22220002-0000-7000-8000-000000000025',N'DEMO-006',N'REF-DEMO-006',N'Aceite corporal 120 ml',N'7700000000006',22800);
 
 INSERT dbo.Products(
-    ProductId,BusinessId,ProductCode,Reference,BaseUnitCode,TaxProfileId,
+    ProductId,TenantId,BusinessId,ProductCode,Reference,BaseUnitCode,TaxProfileId,
     Source,Sku,Name,Currency,ManageStock,IsWeighable,IsActive,CreatedAt)
-SELECT p.ProductId,@BusinessId,p.Code,p.Reference,N'EA',@TaxProfileId,
+SELECT p.ProductId,(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId),@BusinessId,p.Code,p.Reference,N'EA',@TaxProfileId,
        0,p.Code,p.Name,N'COP',1,0,1,@Now
 FROM @Products p
 WHERE NOT EXISTS (SELECT 1 FROM dbo.Products x WHERE x.ProductId=p.ProductId);

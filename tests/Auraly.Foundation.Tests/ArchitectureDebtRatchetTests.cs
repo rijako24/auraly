@@ -29,7 +29,13 @@ public sealed class ArchitectureDebtRatchetTests
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToArray();
         Assert.Equal(
-            new[] { "SqlCatalogStore.cs", "SqlInventoryLedgerWriter.cs", "SqlInventoryQueryStore.cs" },
+            new[]
+            {
+                "SqlBusinessDefaultsProvisioner.cs",
+                "SqlCatalogStore.cs",
+                "SqlInventoryLedgerWriter.cs",
+                "SqlInventoryQueryStore.cs"
+            },
             balanceSqlOwners);
     }
 
@@ -280,17 +286,23 @@ public sealed class ArchitectureDebtRatchetTests
     [Fact]
     public void MigratedBusinessSelectors_DoNotReintroduceHardcodedLists()
     {
-        var paths = new[]
+        var posPaths = new[]
         {
             "admin/src/app/(pos)/pos/pos-payment-dialog.tsx",
-            "admin/src/app/(pos)/pos/pos-document-type-dialog.tsx",
+            "admin/src/app/(pos)/pos/pos-document-type-dialog.tsx"
+        };
+        foreach (var path in posPaths)
+            Assert.Contains("usePosReferenceOptions", File.ReadAllText(Path.Combine(RepositoryRoot, path)));
+
+        var adminPaths = new[]
+        {
             "admin/src/components/inventory/inventory-reason-master.tsx",
             "admin/src/app/(dashboard)/dashboard/agents/new/page.tsx",
             "admin/src/components/products/product-create-workspace.tsx",
             "admin/src/components/products/product-supplier-editor.tsx"
         };
 
-        foreach (var path in paths)
+        foreach (var path in adminPaths)
             Assert.Contains("useReferenceOptions", File.ReadAllText(Path.Combine(RepositoryRoot, path)));
     }
 

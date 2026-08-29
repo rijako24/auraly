@@ -16,12 +16,25 @@ public static class WeightedAverageCost
     {
         if (receivedQuantity <= 0) throw new ArgumentOutOfRangeException(nameof(receivedQuantity));
         if (acquisitionUnitCost < 0) throw new ArgumentOutOfRangeException(nameof(acquisitionUnitCost));
-        var quantityAfter = Quantity(quantityBefore + receivedQuantity);
+        var normalizedQuantityBefore = Quantity(quantityBefore);
+        var quantityAfter = Quantity(normalizedQuantityBefore + receivedQuantity);
         var receiptValue = Money(receivedQuantity * acquisitionUnitCost);
-        var valueAfter = Money(inventoryValueBefore + receiptValue);
-        var averageAfter = quantityAfter == 0
-            ? 0
-            : UnitCost(valueAfter / quantityAfter);
+        decimal averageAfter;
+        decimal valueAfter;
+        if (normalizedQuantityBefore <= 0)
+        {
+            // Preserve the real negative balance but treat its weighting quantity
+            // as zero. Every receipt therefore establishes a valid current cost,
+            // even when the physical balance remains negative after that receipt.
+            averageAfter = UnitCost(acquisitionUnitCost);
+            valueAfter = Money(quantityAfter * averageAfter);
+        }
+        else
+        {
+            var safeValueBefore = Math.Max(0, Money(inventoryValueBefore));
+            valueAfter = Money(safeValueBefore + receiptValue);
+            averageAfter = UnitCost(valueAfter / quantityAfter);
+        }
         return new InventoryReceiptValuation(
             quantityAfter,
             averageAfter,

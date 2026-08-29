@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { businessesApi } from "@/services/api";
 import type { PagedRequest } from "@/types/api";
 
@@ -16,6 +16,26 @@ export function useBusinesses(params?: Partial<PagedRequest>) {
   return useQuery({
     queryKey: businessKeys.list(params),
     queryFn: () => businessesApi.list(params),
+  });
+}
+
+export function useUpdateBusiness() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, values }: { id: string; values: Parameters<typeof businessesApi.update>[1] }) =>
+      businessesApi.update(id, values),
+    onSuccess: (business) => {
+      queryClient.setQueryData(businessKeys.detail(business.businessId), business);
+      void queryClient.invalidateQueries({ queryKey: businessKeys.lists() });
+    },
+  });
+}
+
+export function useCreateBusiness() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (values: Parameters<typeof businessesApi.create>[0]) => businessesApi.create(values),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: businessKeys.lists() }),
   });
 }
 

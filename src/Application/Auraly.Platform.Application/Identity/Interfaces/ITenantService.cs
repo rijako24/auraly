@@ -13,7 +13,8 @@ public interface ITenantService
     Task<TenantDto> UpdateAsync(Guid tenantId, string? name, string? email, int? maximumUsers,
         int? maximumEnrolledDevices, string? legalName = null, string? nit = null,
         string? verificationDigit = null, string? entityType = null,
-        string? identificationTypeCode = null, CancellationToken ct = default);
+        string? identificationTypeCode = null, string? inventoryCostBasis = null,
+        CancellationToken ct = default);
     Task<TenantDto> UploadLogoAsync(Guid tenantId, Stream stream, string fileName, CancellationToken ct = default);
     Task DeactivateAsync(Guid tenantId, CancellationToken ct = default);
     Task ActivateAsync(Guid tenantId, CancellationToken ct = default);

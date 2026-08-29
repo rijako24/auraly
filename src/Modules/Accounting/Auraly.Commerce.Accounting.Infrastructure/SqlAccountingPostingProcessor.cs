@@ -101,6 +101,8 @@ public sealed partial class SqlAccountingPostingProcessor(
                     FinancialFactsResult.Ready(LoadManualVoucherFacts(source)),
                 WorkSessionAccountingDocumentTypes.CashDifference =>
                     FinancialFactsResult.Ready(LoadWorkSessionCashDifferenceFacts(source)),
+                WorkSessionAccountingDocumentTypes.ClosureReconciliation =>
+                    FinancialFactsResult.Ready(LoadWorkSessionClosureReconciliationFacts(source)),
                 DispatchAccountingDocumentTypes.CashDifference =>
                     FinancialFactsResult.Ready(LoadDispatchCashDifferenceFacts(source)),
                 PayrollAccountingDocumentTypes.Accrual or
@@ -205,23 +207,21 @@ public sealed partial class SqlAccountingPostingProcessor(
     private static FinancialFacts LoadWorkSessionCashDifferenceFacts(
         SourceEnvelope source)
     {
-        var payload = JsonSerializer.Deserialize<WorkSessionCashDifferencePayload>(
+        var payload = JsonSerializer.Deserialize<WorkSessionClosureDifferencePayload>(
             source.PayloadJson,
             new JsonSerializerOptions(JsonSerializerDefaults.Web))
             ?? throw new InvalidOperationException(
                 "The work-session cash-difference payload is invalid.");
         if (payload.WorkSessionClosureId != source.DocumentId ||
             payload.BusinessId != source.BusinessId || payload.TenantId != source.TenantId ||
-            payload.Difference == 0 ||
-            decimal.Round(payload.CountedCash - payload.ExpectedCash, 4) !=
-            decimal.Round(payload.Difference, 4))
+            payload.Lines.Count == 0 || payload.Lines.Any(line =>
+                line.Difference == 0 || string.IsNullOrWhiteSpace(line.AccountingCategory) ||
+                decimal.Round(line.CountedAmount-line.ExpectedAmount,4) != decimal.Round(line.Difference,4)))
             throw new InvalidOperationException(
                 "The work-session cash-difference payload is inconsistent.");
-        var surplus = payload.Difference > 0;
-        return FinancialFacts.CashDifference(
-            $"{(surplus ? "Sobrante" : "Faltante")} de efectivo en cierre {payload.WorkSessionClosureId:D} · {payload.UserName}",
-            surplus,
-            Math.Abs(payload.Difference));
+        return FinancialFacts.ClosureDifferences(
+            $"Diferencias pendientes del cierre {payload.WorkSessionClosureId:D} · {payload.UserName}",
+            payload.Lines);
     }
 
     private static FinancialFacts LoadDispatchCashDifferenceFacts(SourceEnvelope source)
@@ -245,6 +245,20 @@ public sealed partial class SqlAccountingPostingProcessor(
             Math.Abs(payload.Difference),
             AccountingCategories.DispatchCashOverageIncome,
             AccountingCategories.DispatchCashShortageExpense);
+    }
+
+    private static FinancialFacts LoadWorkSessionClosureReconciliationFacts(SourceEnvelope source)
+    {
+        var payload = JsonSerializer.Deserialize<WorkSessionClosureReconciliationPayload>(
+            source.PayloadJson,new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            ?? throw new InvalidOperationException("The work-session reconciliation payload is invalid.");
+        if (payload.ReconciliationId!=source.DocumentId || payload.BusinessId!=source.BusinessId ||
+            payload.TenantId!=source.TenantId || payload.Lines.Count==0 || payload.Lines.Any(line=>
+                string.IsNullOrWhiteSpace(line.AccountingCategory) || line.CountedAmount<0 || line.VerifiedAmount<0 ||
+                decimal.Round(line.VerifiedAmount-line.ExpectedAmount,4)!=decimal.Round(line.Difference,4)))
+            throw new InvalidOperationException("The work-session reconciliation payload is inconsistent.");
+        return FinancialFacts.ClosureReconciliation(
+            $"Conciliación del cierre {payload.WorkSessionClosureId:D}",payload);
     }
 
     private static FinancialFacts LoadPayrollFacts(SourceEnvelope source)
@@ -462,6 +476,22 @@ public sealed partial class SqlAccountingPostingProcessor(
         foreach (var payment in paymentSources)
             payments.Add((await ResolveSourceCategoryAsync(connection, transaction,
                 "PosPaymentMethod", payment.MethodCode, cancellationToken), payment.Amount));
+        var withholdingSources = new List<(string Kind, decimal Amount)>();
+        await using (var command = new SqlCommand("""
+            SELECT Kind,SUM(Amount) FROM dbo.DocumentWithholdingLines
+            WHERE DocumentId=@DocumentId AND DocumentType=@DocumentType
+            GROUP BY Kind ORDER BY Kind;
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue("@DocumentId", source.DocumentId);
+            command.Parameters.AddWithValue("@DocumentType", source.DocumentType);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                withholdingSources.Add((reader.GetString(0), reader.GetDecimal(1)));
+        }
+        foreach (var withholding in withholdingSources)
+            payments.Add((await ResolveSourceCategoryAsync(connection, transaction,
+                "SaleWithholdingKind", withholding.Kind, cancellationToken), withholding.Amount));
         var paid = payments.Sum(payment => payment.Amount);
         if (paid > total) throw new InvalidOperationException("Payments exceed the immutable invoice total.");
         if (paid < total) payments.Add((AccountingCategories.AccountsReceivable, total - paid));
@@ -1270,6 +1300,67 @@ public sealed partial class SqlAccountingPostingProcessor(
                 null, 0, 0, amount, 0,
                 [(surplus ? overageCategory : shortageCategory, amount)],
                 false, false, false, false, true, surplus);
+        public static FinancialFacts ClosureDifferences(
+            string description,
+            IReadOnlyList<WorkSessionClosureDifferenceLine> differences)
+        {
+            var lines = new List<CategoryLineSpec>(differences.Count * 2);
+            foreach (var difference in differences)
+            {
+                var amount = Math.Abs(difference.Difference);
+                if (difference.Difference > 0)
+                {
+                    lines.Add(new(difference.AccountingCategory, amount, 0, null, description));
+                    lines.Add(new(AccountingCategories.CashClosureDifferencesPending, 0, amount, null, description));
+                }
+                else
+                {
+                    lines.Add(new(AccountingCategories.CashClosureDifferencesPending, amount, 0, null, description));
+                    lines.Add(new(difference.AccountingCategory, 0, amount, null, description));
+                }
+            }
+            return new(description, null, 0, 0, 0, 0, [], false, false, false, false,
+                DirectCategoryLines: lines);
+        }
+        public static FinancialFacts ClosureReconciliation(
+            string description, WorkSessionClosureReconciliationPayload payload)
+        {
+            var lines=new List<CategoryLineSpec>();
+            var residual=payload.Lines.ToDictionary(line=>line.PaymentMethodCode,line=>line.Difference,StringComparer.OrdinalIgnoreCase);
+            foreach(var line in payload.Lines)
+            {
+                var correction=decimal.Round(line.VerifiedAmount-line.CountedAmount,4);
+                if(correction>0)
+                {
+                    lines.Add(new(line.AccountingCategory,correction,0,null,description));
+                    lines.Add(new(AccountingCategories.CashClosureDifferencesPending,0,correction,null,description));
+                }
+                else if(correction<0)
+                {
+                    lines.Add(new(AccountingCategories.CashClosureDifferencesPending,-correction,0,null,description));
+                    lines.Add(new(line.AccountingCategory,0,-correction,null,description));
+                }
+            }
+            foreach(var reclassification in payload.Reclassifications)
+            {
+                residual[reclassification.FromPaymentMethodCode]+=reclassification.Amount;
+                residual[reclassification.ToPaymentMethodCode]-=reclassification.Amount;
+            }
+            foreach(var difference in residual.Values)
+            {
+                if(difference>0)
+                {
+                    lines.Add(new(AccountingCategories.CashClosureDifferencesPending,difference,0,null,description));
+                    lines.Add(new(AccountingCategories.CashOverageIncome,0,difference,null,description));
+                }
+                else if(difference<0)
+                {
+                    lines.Add(new(AccountingCategories.CashShortageExpense,-difference,0,null,description));
+                    lines.Add(new(AccountingCategories.CashClosureDifferencesPending,0,-difference,null,description));
+                }
+            }
+            return new(description,null,0,0,0,0,[],false,false,false,false,DirectCategoryLines:lines);
+        }
         public static FinancialFacts Manual(string description, IReadOnlyList<ManualLineSpec> lines) =>
             new(description, null, 0, 0, 0, 0, [], false, false, false, false,
                 DirectLines: lines);

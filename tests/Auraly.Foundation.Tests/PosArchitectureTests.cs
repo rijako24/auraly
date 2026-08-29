@@ -191,7 +191,7 @@ public sealed class PosArchitectureTests
             StringComparison.Ordinal);
 
         Assert.Contains(
-            "useReferenceOptions(\"payment-method\")",
+            "usePosReferenceOptions(client, \"payment-method\")",
             paymentDialog,
             StringComparison.Ordinal);
         Assert.Contains(
@@ -220,7 +220,8 @@ public sealed class PosArchitectureTests
         Assert.Contains("revealLine(quantityToFocus)", page, StringComparison.Ordinal);
         Assert.Contains("focusScanner()", page, StringComparison.Ordinal);
         Assert.Contains("canEnrollOffline={canEnrollOffline}", page, StringComparison.Ordinal);
-        Assert.Contains("onEnroll={enrollOffline}", page, StringComparison.Ordinal);
+        Assert.Contains("onEnroll={prepareInstalledPos}", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("setStartupMode", page, StringComparison.Ordinal);
         Assert.DoesNotContain(
             "No tienes permiso para preparar este equipo para trabajar sin conexión.",
             page,

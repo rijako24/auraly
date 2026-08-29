@@ -6,6 +6,8 @@ using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Organization;
 using Auraly.Contracts.Sales;
+using Auraly.Commerce.Taxation.Contracts;
+using Auraly.Commerce.Taxation.Domain;
 using Auraly.Fiscal.Core;
 using Microsoft.Data.Sqlite;
 
@@ -39,7 +41,10 @@ public sealed record PosReceipt(
     int PaperWidthMillimeters,
     string DocumentType = PosSaleDocumentTypes.Invoice,
     string? CompanyName = null,
-    string? CompanyLogoSource = null);
+    string? CompanyLogoSource = null,
+    decimal WithholdingTotal = 0m,
+    decimal NetPayableAmount = 0m,
+    IReadOnlyList<WithholdingLineSnapshot>? Withholdings = null);
 
 public interface IPosReceiptPrinter
 {
@@ -204,8 +209,9 @@ public sealed class PosSaleCompletionService(
             ?? throw new KeyNotFoundException("The active sale does not exist.");
         if (draft.Status != PosDraftStatus.Active || draft.Lines.Count == 0)
             throw new InvalidOperationException("Only a non-empty active sale can be completed.");
+        var withholding = await CalculateWithholdingAsync(draft, command.IssuedAt, ct);
         if (command.Payments.Count == 0 ||
-            command.Payments.Sum(payment => payment.Amount) != draft.PayableAmount)
+            command.Payments.Sum(payment => payment.Amount) != withholding.NetAmount)
             throw new InvalidOperationException("Payments must equal the payable amount.");
         if (command.DocumentType == PosSaleDocumentTypes.Receipt && draft.CustomerId is not null)
         {
@@ -247,7 +253,8 @@ public sealed class PosSaleCompletionService(
                 command.UblSnapshot,
                 draft.CustomerId,
                 draft.SourceOrderId,
-                command.DocumentType),
+                command.DocumentType,
+                withholding),
             ct);
         await issuance.MarkIssuedAsync(draftId, issued.DocumentId, ct);
         var immutable = issued.Upload;
@@ -280,7 +287,10 @@ public sealed class PosSaleCompletionService(
             issued.Cufe,
             issued.QrPayload,
             command.PaperWidthMillimeters,
-            immutable.CommercialSnapshot.DocumentType);
+            immutable.CommercialSnapshot.DocumentType,
+            WithholdingTotal: immutable.CommercialSnapshot.Withholding?.WithholdingTotal ?? 0m,
+            NetPayableAmount: immutable.CommercialSnapshot.NetPayableAmount,
+            Withholdings: immutable.CommercialSnapshot.Withholding?.Lines);
 
         await printer.PrintAsync(payload, ct);
         await issuance.CompleteAsync(draftId, issued.DocumentId, ct);
@@ -351,7 +361,10 @@ public sealed class PosSaleCompletionService(
             immutable.FiscalSnapshot?.Cufe,
             immutable.FiscalSnapshot?.QrPayload,
             paperWidthMillimeters,
-            immutable.CommercialSnapshot.DocumentType);
+            immutable.CommercialSnapshot.DocumentType,
+            WithholdingTotal: immutable.CommercialSnapshot.Withholding?.WithholdingTotal ?? 0m,
+            NetPayableAmount: immutable.CommercialSnapshot.NetPayableAmount,
+            Withholdings: immutable.CommercialSnapshot.Withholding?.Lines);
 
         await printer.PrintAsync(payload, ct);
         await sales.RecordReprintAsync(
@@ -359,5 +372,46 @@ public sealed class PosSaleCompletionService(
             userId,
             timeProvider?.GetUtcNow() ?? DateTimeOffset.UtcNow,
             ct);
+    }
+
+    public async Task<WithholdingCalculationSnapshot> PreviewSettlementAsync(
+        DraftId draftId,
+        CancellationToken ct = default)
+    {
+        var draft = await drafts.GetAsync(draftId, ct)
+            ?? throw new KeyNotFoundException("The active sale does not exist.");
+        return await CalculateWithholdingAsync(
+            draft, timeProvider?.GetUtcNow() ?? DateTimeOffset.UtcNow, ct);
+    }
+
+    private async Task<WithholdingCalculationSnapshot> CalculateWithholdingAsync(
+        PosDraft draft,
+        DateTimeOffset occurredAt,
+        CancellationToken ct)
+    {
+        var calculation = catalog is null
+            ? new WithholdingCalculation(draft.PayableAmount, 0m, draft.PayableAmount, [])
+            : await catalog.CalculateSaleWithholdingAsync(
+                draft.Scope.BusinessId.Value,
+                draft.CustomerId,
+                draft.UntaxedAmount,
+                draft.TaxAmount,
+                occurredAt,
+                ct);
+        return new WithholdingCalculationSnapshot(
+            calculation.GrossAmount,
+            calculation.WithholdingTotal,
+            calculation.NetAmount,
+            calculation.Lines.Select(line => new WithholdingLineSnapshot(
+                line.RuleId,
+                line.RuleVersion,
+                line.RuleCode,
+                line.Name,
+                line.Kind.ToString(),
+                line.BaseKind.ToString(),
+                line.TaxableBase,
+                line.Rate,
+                line.Amount,
+                line.JurisdictionCode)).ToArray());
     }
 }

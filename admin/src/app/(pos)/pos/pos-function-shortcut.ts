@@ -30,6 +30,21 @@ type PosFunctionKeyboardEvent = Pick<
   "key" | "code" | "keyCode" | "preventDefault" | "stopImmediatePropagation"
 >;
 
+type PosCashDrawerKeyboardEvent = Pick<
+  KeyboardEvent,
+  "key" | "ctrlKey" | "altKey" | "shiftKey" | "metaKey"
+>;
+
+export function isPosCashDrawerShortcut(event: PosCashDrawerKeyboardEvent): boolean {
+  return (
+    event.ctrlKey &&
+    !event.altKey &&
+    !event.shiftKey &&
+    !event.metaKey &&
+    event.key.toLowerCase() === "a"
+  );
+}
+
 export function capturePosFunctionShortcut(
   event: PosFunctionKeyboardEvent,
   onShortcut: (shortcut: string) => void,

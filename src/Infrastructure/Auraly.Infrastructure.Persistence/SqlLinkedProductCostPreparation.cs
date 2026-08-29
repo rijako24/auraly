@@ -21,36 +21,54 @@ internal static class SqlLinkedProductCostPreparation
               OUTER APPLY (
                 SELECT TOP(1) value.LatestUnitCost
                 FROM dbo.SupplierProductLatestCosts value
-                WHERE value.BusinessId=product.BusinessId AND value.ProductId=product.ProductId
+                WHERE value.BusinessId=@BusinessId AND value.ProductId=product.ProductId
                 ORDER BY value.ObservedAt DESC) latest
               OUTER APPLY (
                 SELECT TOP(1) value.CostBasisAmount
                 FROM dbo.ProductPrices value
-                WHERE value.BusinessId=product.BusinessId AND value.ProductId=product.ProductId AND value.IsActive=1
+                WHERE value.BusinessId=@BusinessId AND value.ProductId=product.ProductId AND value.IsActive=1
                 ORDER BY value.ValidFrom DESC,value.ProductPriceId) price
-              WHERE product.BusinessId=@BusinessId AND product.ProductId=@ParentProductId);
+              WHERE product.TenantId=(SELECT TenantId FROM dbo.Businesses WHERE BusinessId=@BusinessId)
+                AND product.ProductId=@ParentProductId);
             IF @ParentCost IS NULL OR @ParentCost<=0
               THROW 51020,'El producto principal necesita un costo válido antes de vincular costos.',1;
 
-            DECLARE @ChildPriceId UNIQUEIDENTIFIER,@Margin DECIMAL(9,6),@TaxRate DECIMAL(9,6);
-            SELECT TOP(1) @ChildPriceId=price.ProductPriceId,
-              @Margin=COALESCE(price.TargetMarginPercent,price.EffectiveMarginPercent),
-              @TaxRate=COALESCE(tax.Rate,0)
-            FROM dbo.Products product
-            JOIN dbo.ProductPrices price ON price.BusinessId=product.BusinessId AND price.ProductId=product.ProductId AND price.IsActive=1
-            LEFT JOIN dbo.TaxProfiles tax ON tax.BusinessId=product.BusinessId AND tax.TaxProfileId=product.TaxProfileId
-            WHERE product.BusinessId=@BusinessId AND product.ProductId=@ChildProductId
-            ORDER BY price.ValidFrom DESC,price.ProductPriceId;
-            IF @ChildPriceId IS NULL OR @Margin IS NULL OR @Margin<0 OR @Margin>=100
+            DECLARE @TenantId UNIQUEIDENTIFIER,@SharesPrices BIT;
+            SELECT @TenantId=TenantId,@SharesPrices=SharesProductPrices
+            FROM dbo.Businesses WHERE BusinessId=@BusinessId;
+            IF NOT EXISTS(
+              SELECT 1 FROM dbo.ProductPrices price
+              JOIN dbo.Businesses target ON target.BusinessId=price.BusinessId
+              WHERE price.ProductId=@ChildProductId AND price.IsActive=1
+                AND ((@SharesPrices=1 AND target.TenantId=@TenantId AND target.SharesProductPrices=1 AND target.IsActive=1)
+                  OR (@SharesPrices=0 AND target.BusinessId=@BusinessId)))
+              THROW 51020,'El producto vinculado necesita un margen válido para preparar su precio.',1;
+            IF EXISTS(
+              SELECT 1 FROM dbo.ProductPrices price
+              JOIN dbo.Businesses target ON target.BusinessId=price.BusinessId
+              WHERE price.ProductId=@ChildProductId AND price.IsActive=1
+                AND ((@SharesPrices=1 AND target.TenantId=@TenantId AND target.SharesProductPrices=1 AND target.IsActive=1)
+                  OR (@SharesPrices=0 AND target.BusinessId=@BusinessId))
+                AND (COALESCE(price.TargetMarginPercent,price.EffectiveMarginPercent) IS NULL
+                  OR COALESCE(price.TargetMarginPercent,price.EffectiveMarginPercent)<0
+                  OR COALESCE(price.TargetMarginPercent,price.EffectiveMarginPercent)>=100))
               THROW 51020,'El producto vinculado necesita un margen válido para preparar su precio.',1;
 
             DECLARE @LinkedCost DECIMAL(19,6)=ROUND(@ParentCost*@CostFactor,6);
-            DECLARE @PreparedAmount DECIMAL(19,4)=ROUND(
-              (@LinkedCost/(1-(@Margin/100)))*(1+(@TaxRate/100)),4);
-            UPDATE dbo.ProductPrices
+            UPDATE price
             SET CostBasisType=N'LinkedProduct',CostBasisAmount=@LinkedCost,
-                TargetMarginPercent=@Margin,PreparedAmount=@PreparedAmount
-            WHERE ProductPriceId=@ChildPriceId AND BusinessId=@BusinessId;
+                TargetMarginPercent=COALESCE(price.TargetMarginPercent,price.EffectiveMarginPercent),
+                PreparedAmount=ROUND((@LinkedCost/(1-(COALESCE(price.TargetMarginPercent,price.EffectiveMarginPercent)/100)))
+                  *(1+(COALESCE(tax.Rate,0)/100)),4)
+            FROM dbo.ProductPrices price
+            JOIN dbo.Businesses target ON target.BusinessId=price.BusinessId
+            JOIN dbo.Products product ON product.ProductId=price.ProductId AND product.TenantId=@TenantId
+            LEFT JOIN dbo.TaxProfiles tax ON tax.TaxProfileId=product.TaxProfileId
+            WHERE price.ProductId=@ChildProductId AND price.IsActive=1
+              AND COALESCE(price.TargetMarginPercent,price.EffectiveMarginPercent)>=0
+              AND COALESCE(price.TargetMarginPercent,price.EffectiveMarginPercent)<100
+              AND ((@SharesPrices=1 AND target.TenantId=@TenantId AND target.SharesProductPrices=1 AND target.IsActive=1)
+                OR (@SharesPrices=0 AND target.BusinessId=@BusinessId));
             """, connection, transaction);
         command.Parameters.AddWithValue("@BusinessId", businessId);
         command.Parameters.AddWithValue("@ParentProductId", parentProductId);

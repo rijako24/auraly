@@ -42,11 +42,11 @@ Auraly conserva ese comportamiento, pero no las cuatro escalas rígidas, los for
 | Concepto | Propietario | Uso |
 |---|---|---|
 | Precio costo | Pricing/Purchasing | Costo vigente con el que el negocio prepara el precio. Puede originarse en edición autorizada o en una entrada procesada. |
-| Precio costo promedio | Inventory | Promedio móvil ponderado autoritativo por `BusinessId + WarehouseId + ProductId`. No es editable. |
+| Precio costo promedio | Inventory | Promedio móvil ponderado autoritativo del grupo de sedes que comparte precios; para una sede independiente usa solo sus bodegas. No es editable. |
 | Precio de venta | Pricing | Precio final preparado, incluido el IVA de venta, todavía no visible para facturación. |
 | Precio público | Pricing | Precio final publicado, incluido el IVA de venta, que consumen catálogo, pedidos y facturación. |
 
-El costo promedio no se duplica dentro de `ProductPrices`: una sede puede tener varias bodegas con saldos y promedios diferentes. La API de producto proyecta los cuatro valores juntos, pero obtiene el promedio desde `InventoryBalances`.
+El producto pertenece al tenant: existe un solo `ProductId` y un solo código para todas sus sedes. `ProductPrices` materializa una fila activa por `BusinessId + ProductId`. El costo promedio no se duplica dentro de `ProductPrices`; Inventory lo calcula con las existencias reales de todas las bodegas de las sedes activas cuyo `SharesProductPrices=1`, o con las bodegas de la sede actual cuando esta no comparte. Cada `InventoryBalance` conserva su cantidad física —incluidos saldos negativos— y recibe el promedio común del grupo.
 
 ## 3. IVA de compra e IVA de venta
 
@@ -168,14 +168,16 @@ Cada línea captura cantidad, costo neto unitario, descuento, IVA de compra real
 10. genera cuenta por pagar y contabilización;
 11. no modifica `PublicPrice`.
 
-La bodega configura `PriceFormationCostBasis`:
+El tenant configura `InventoryCostBasis`:
 
 ```text
 LatestReceiptCost
 WeightedAverageCost
 ```
 
-El promedio se calcula siempre. Esta configuración solo elige la base de la propuesta y del análisis comercial.
+El aprovisionamiento propone `LatestReceiptCost` y permite elegir `WeightedAverageCost`; la empresa puede cambiarlo después. El promedio se calcula siempre. Esta configuración solo elige la base de la propuesta y del análisis comercial.
+
+Si una recepción ocurre en una sede compartida, solo aumenta las existencias de la bodega receptora. El nuevo costo promedio se calcula con la suma real de existencias del grupo y se propaga como costo común a sus balances y precios preparados. Una venta que deja saldo negativo nunca se transforma en saldo cero: mientras el grupo no tenga unidades positivas se conserva el último promedio válido; cuando una entrada cruza de saldo no positivo a positivo, el nuevo promedio parte del costo real de esa entrada.
 
 ## 7. Precios y rentabilidad
 
@@ -251,6 +253,10 @@ Además de las pruebas anteriores de Pricing:
 - publicar es el único camino que cambia `PublicPrice` y notifica cajas;
 - el POS recibe precio público bruto, pero ningún costo o margen;
 - costo promedio ponderado por bodega, incluida entrada después de inventario negativo;
+- mismo `ProductId` y código en todas las sedes del tenant, con precio por `BusinessId + ProductId`;
+- recepción compartida cambia cantidad solo en su bodega y costo/preparado en todo el grupo;
+- publicación desde una sede compartida publica atómicamente en todo el grupo;
+- una sede independiente no recibe costo, preparado ni publicación del grupo;
 - procesamiento y propuestas idempotentes;
 - concurrencia de publicaciones;
 - SQL Server real y SQLite POS.

@@ -836,8 +836,6 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
         var currentProductId = Guid.NewGuid();
         var otherBusinessId = Guid.NewGuid();
         var otherTaxProfileId = Guid.NewGuid();
-        var matchingProductId = Guid.NewGuid();
-        var codeCollisionProductId = Guid.NewGuid();
         var otherWarehouseId = Guid.NewGuid();
         var otherSystemWarehouseId = Guid.NewGuid();
         var barcode = $"AVAIL-{Guid.NewGuid():N}";
@@ -856,21 +854,17 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
                 VALUES
                   (@OtherWarehouse,@OtherBusiness,N'PUBLIC',N'Bodega pública',0,0,1,1,1,1,SYSDATETIMEOFFSET()),
                   (@OtherSystemWarehouse,@OtherBusiness,N'AVE',N'Averías',0,1,0,0,0,1,SYSDATETIMEOFFSET());
-                INSERT dbo.Products(ProductId,BusinessId,ProductCode,BaseUnitCode,TaxProfileId,Name,ManageStock,IsActive)
-                VALUES
-                  (@CurrentProduct,@Business,@ProductCode,N'EA',@CurrentTax,N'Producto origen',1,1),
-                  (@MatchingProduct,@OtherBusiness,N'OTRO-CODIGO',N'EA',@OtherTax,N'Producto equivalente',1,1),
-                  (@CollisionProduct,@OtherBusiness,@ProductCode,N'EA',@OtherTax,N'Producto no equivalente',1,1);
+                INSERT dbo.Products(ProductId,TenantId,BusinessId,ProductCode,BaseUnitCode,TaxProfileId,Name,ManageStock,IsActive)
+                VALUES(@CurrentProduct,@Tenant,@Business,@ProductCode,N'EA',@CurrentTax,N'Producto tenant',1,1);
                 INSERT dbo.ProductBarcodes(ProductBarcodeId,BusinessId,ProductId,Barcode,IsPrimary,IsActive,CreatedAt)
                 VALUES
                   (NEWID(),@Business,@CurrentProduct,@Barcode,1,1,SYSDATETIMEOFFSET()),
-                  (NEWID(),@OtherBusiness,@MatchingProduct,@Barcode,1,1,SYSDATETIMEOFFSET());
+                  (NEWID(),@OtherBusiness,@CurrentProduct,@Barcode,1,1,SYSDATETIMEOFFSET());
                 INSERT dbo.InventoryBalances(BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,InventoryValue,LastProcessingSequence,UpdatedAt)
                 VALUES
                   (@Business,@CurrentWarehouse,@CurrentProduct,-3,10,-30,1,SYSDATETIMEOFFSET()),
-                  (@OtherBusiness,@OtherWarehouse,@MatchingProduct,7,10,70,1,SYSDATETIMEOFFSET()),
-                  (@OtherBusiness,@OtherSystemWarehouse,@MatchingProduct,99,0,0,1,SYSDATETIMEOFFSET()),
-                  (@OtherBusiness,@OtherWarehouse,@CollisionProduct,500,10,5000,1,SYSDATETIMEOFFSET());
+                  (@OtherBusiness,@OtherWarehouse,@CurrentProduct,7,10,70,1,SYSDATETIMEOFFSET()),
+                  (@OtherBusiness,@OtherSystemWarehouse,@CurrentProduct,99,0,0,1,SYSDATETIMEOFFSET());
                 """,
                 new SqlParameter("@Tenant", fixture.TenantId),
                 new SqlParameter("@Business", fixture.BusinessId),
@@ -879,8 +873,6 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
                 new SqlParameter("@CurrentProduct", currentProductId),
                 new SqlParameter("@OtherBusiness", otherBusinessId),
                 new SqlParameter("@OtherTax", otherTaxProfileId),
-                new SqlParameter("@MatchingProduct", matchingProductId),
-                new SqlParameter("@CollisionProduct", codeCollisionProductId),
                 new SqlParameter("@OtherWarehouse", otherWarehouseId),
                 new SqlParameter("@OtherSystemWarehouse", otherSystemWarehouseId),
                 new SqlParameter("@ProductCode", productCode),
@@ -900,25 +892,22 @@ public sealed class CatalogVerticalSliceTests(ServerSliceFixture fixture)
             Assert.NotNull(allItems);
             Assert.Contains(allItems, item => item.BusinessId == otherBusinessId
                 && item.WarehouseId == otherWarehouseId
-                && item.ProductId == matchingProductId
+                && item.ProductId == currentProductId
                 && item.QuantityOnHand == 7m);
             Assert.DoesNotContain(allItems, item => item.WarehouseId == otherSystemWarehouseId);
-            Assert.DoesNotContain(allItems, item => item.ProductId == codeCollisionProductId);
         }
         finally
         {
             await ExecuteAsync(
                 """
-                DELETE dbo.InventoryBalances WHERE ProductId IN (@CurrentProduct,@MatchingProduct,@CollisionProduct);
-                DELETE dbo.ProductBarcodes WHERE ProductId IN (@CurrentProduct,@MatchingProduct,@CollisionProduct);
-                DELETE dbo.Products WHERE ProductId IN (@CurrentProduct,@MatchingProduct,@CollisionProduct);
+                DELETE dbo.InventoryBalances WHERE ProductId=@CurrentProduct;
+                DELETE dbo.ProductBarcodes WHERE ProductId=@CurrentProduct;
+                DELETE dbo.Products WHERE ProductId=@CurrentProduct;
                 DELETE dbo.Warehouses WHERE BusinessId=@OtherBusiness;
                 DELETE dbo.TaxProfiles WHERE BusinessId=@OtherBusiness;
                 DELETE dbo.Businesses WHERE BusinessId=@OtherBusiness;
                 """,
                 new SqlParameter("@CurrentProduct", currentProductId),
-                new SqlParameter("@MatchingProduct", matchingProductId),
-                new SqlParameter("@CollisionProduct", codeCollisionProductId),
                 new SqlParameter("@OtherBusiness", otherBusinessId));
         }
     }

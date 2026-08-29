@@ -25,6 +25,7 @@ public sealed class ProductRepositorySearchTests
     {
         await using var context = CreateContext();
         var businessId = Guid.NewGuid();
+        AddBusinessScope(context, businessId);
         var jamon = Product(businessId, "JAMON CUNIT X 500GR", "CF17", active: true);
         context.Products.Add(jamon);
         Publish(context, jamon, 10m);
@@ -41,6 +42,7 @@ public sealed class ProductRepositorySearchTests
     {
         await using var context = CreateContext();
         var businessId = Guid.NewGuid();
+        AddBusinessScope(context, businessId);
         var inactiveExternal = Product(businessId, "TOCINETA IMPORTADA", "EXT-1", active: false);
         var activeLocal = Product(businessId, "Tocineta ahumada 500 g", "LOCAL-1", active: true);
         context.Products.AddRange(inactiveExternal, activeLocal);
@@ -68,6 +70,7 @@ public sealed class ProductRepositorySearchTests
     {
         await using var context = CreateContext();
         var businessId = Guid.NewGuid();
+        AddBusinessScope(context, businessId);
         var keywordProduct = Product(businessId, "PRESENTACION ESPECIAL", "KEY-1", active: true);
         var nativeProduct = Product(businessId, "Papa a la francesa 2.5 kg", "PAPA-1", active: true);
         context.Products.AddRange(keywordProduct, nativeProduct);
@@ -94,6 +97,7 @@ public sealed class ProductRepositorySearchTests
     {
         await using var context = CreateContext();
         var businessId = Guid.NewGuid();
+        AddBusinessScope(context, businessId);
         var product = Product(businessId, "ALKAPARRAS VINAGRE x500gr", "PV48", active: true);
         product.ExternalProductId = "PV48";
         product.CategoryName = "VINAGRES";
@@ -117,6 +121,8 @@ public sealed class ProductRepositorySearchTests
     {
         await using var context = CreateContext();
         var businessId = Guid.NewGuid();
+        AddBusinessScope(context, businessId);
+        await context.SaveChangesAsync();
 
         var result = await new ProductRepository(context).GetByIdAsync(
             businessId, Guid.NewGuid());
@@ -129,6 +135,7 @@ public sealed class ProductRepositorySearchTests
     {
         await using var context = CreateContext();
         var businessId = Guid.NewGuid();
+        AddBusinessScope(context, businessId);
         var product = Product(businessId, "PRODUCTO CON SALDO NEGATIVO", "NEG-3", active: true);
         product.ManageStock = true;
         var salesWarehouseId = Guid.NewGuid();
@@ -167,6 +174,7 @@ public sealed class ProductRepositorySearchTests
     private static Product Product(Guid businessId, string name, string sku, bool active) => new()
     {
         ProductId = Guid.NewGuid(),
+        TenantId = businessId,
         BusinessId = businessId,
         Name = name,
         Sku = sku,
@@ -174,6 +182,15 @@ public sealed class ProductRepositorySearchTests
         Currency = "COP",
         IsActive = active
     };
+
+    private static void AddBusinessScope(ApplicationDbContext context, Guid businessId) =>
+        context.Businesses.Add(new Business
+        {
+            BusinessId = businessId,
+            TenantId = businessId,
+            Name = "Test business",
+            IsActive = true
+        });
 
     private static InventoryWarehouseScopeRow Warehouse(
         Guid businessId, Guid warehouseId, bool isSystem, bool isActive) => new()
@@ -198,6 +215,7 @@ public sealed class ProductRepositorySearchTests
     {
         await using var context = CreateContext();
         var businessId = Guid.NewGuid();
+        AddBusinessScope(context, businessId);
         var product = Product(businessId, "PRODUCTO SIN PUBLICAR", "NO-PUBLICADO", active: true);
         product.UnitPrice = 98765m;
         context.Products.Add(product);
@@ -214,6 +232,7 @@ public sealed class ProductRepositorySearchTests
     {
         await using var context = CreateContext();
         var businessId = Guid.NewGuid();
+        AddBusinessScope(context, businessId);
         var product = Product(businessId, "PRODUCTO PUBLICADO", "PUBLICADO", active: true);
         product.UnitPrice = 111m;
         context.Products.Add(product);
@@ -229,10 +248,45 @@ public sealed class ProductRepositorySearchTests
     }
 
     [Fact]
+    public async Task Product_master_is_visible_in_another_business_of_the_same_tenant_with_that_business_price()
+    {
+        await using var context = CreateContext();
+        var tenantId = Guid.NewGuid();
+        var originBusinessId = Guid.NewGuid();
+        var targetBusinessId = Guid.NewGuid();
+        context.Businesses.AddRange(
+            new Business { BusinessId = originBusinessId, TenantId = tenantId, Name = "Origin", IsActive = true },
+            new Business { BusinessId = targetBusinessId, TenantId = tenantId, Name = "Target", IsActive = true });
+        var product = Product(originBusinessId, "PRODUCTO DEL TENANT", "TENANT-1", active: true);
+        product.TenantId = tenantId;
+        context.Products.Add(product);
+        context.PublishedProductPrices.Add(new PublishedProductPriceRow
+        {
+            ProductPriceId = Guid.NewGuid(),
+            BusinessId = targetBusinessId,
+            ProductId = product.ProductId,
+            Amount = 42_500m,
+            CurrencyCode = "COP",
+            ValidFrom = DateTimeOffset.UtcNow.AddMinutes(-1),
+            IsActive = true,
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+        await context.SaveChangesAsync();
+
+        var result = await new ProductRepository(context).SearchAsync(
+            targetBusinessId, null, null, 10);
+
+        result.Should().ContainSingle();
+        result[0].ProductId.Should().Be(product.ProductId);
+        result[0].UnitPrice.Should().Be(42_500m);
+    }
+
+    [Fact]
     public async Task GetLinkedFamily_ReturnsEveryOptionWithItsIndependentPriceAndStock()
     {
         await using var context = CreateContext();
         var businessId = Guid.NewGuid();
+        AddBusinessScope(context, businessId);
         var model = Product(businessId, "Tenis Runner", "RUNNER", active: true);
         var black40 = Product(businessId, "Tenis Runner negro talla 40", "RUN-N40", active: true);
         var white41 = Product(businessId, "Tenis Runner blanco talla 41", "RUN-B41", active: true);

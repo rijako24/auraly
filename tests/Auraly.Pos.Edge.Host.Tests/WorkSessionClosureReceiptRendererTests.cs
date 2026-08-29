@@ -8,9 +8,9 @@ namespace Auraly.Pos.Edge.Host.Tests;
 public sealed class WorkSessionClosureReceiptRendererTests
 {
     [Theory]
-    [InlineData(25, "DIFERENCIA (+) SOBRANTE", "+25.00")]
-    [InlineData(-25, "DIFERENCIA (-) FALTANTE", "-25.00")]
-    [InlineData(0, "DIFERENCIA (CUADRADO)", "0.00")]
+    [InlineData(25, "SOBRANTE", "25.00")]
+    [InlineData(-25, "FALTANTE", "25.00")]
+    [InlineData(0, "CUADRA", "0.00")]
     public void Receipt_identifies_positive_negative_and_balanced_differences(
         decimal difference,
         string expectedLabel,

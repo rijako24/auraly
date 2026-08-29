@@ -6,6 +6,7 @@ export type DeliveryStatus = "Pending" | "Delivered" | "PartiallyDelivered" | "N
 export interface DispatchListItem { dispatchId:string;dispatchNumber:string;scheduledDate:string;driverName:string;vehiclePlate:string|null;status:DispatchStatus;documentCount:number;lineCount:number;expectedQuantity:number;verifiedQuantity:number;shortageQuantity:number;updatedAt:string;rowVersion:string; }
 export interface DispatchPage { items:DispatchListItem[];page:number;pageSize:number;totalCount:number;totalPages:number; }
 export interface DispatchOptions { warehouses:Array<{warehouseId:string;code:string;name:string}>;routes:Array<{routeId:string;code:string;name:string;sellerName:string}>;drivers:Array<{userId:string;name:string}>; }
+export interface DispatchDriverPage { items:Array<{userId:string;name:string}>;page:number;pageSize:number;totalCount:number;totalPages:number; }
 export interface DispatchCandidate { documentId:string;documentType:"SalesInvoice"|"SalesReceipt";documentNumber:string;issuedAt:string;warehouseId:string;warehouseName:string;customerId:string|null;customerName:string;deliveryAddress:string|null;sellerName:string;lineCount:number;pendingQuantity:number;documentTotal:number; }
 export interface DispatchCandidatePage { items:DispatchCandidate[];page:number;pageSize:number;totalCount:number;totalPages:number; }
 export interface DispatchDocument { dispatchSourceDocumentId:string;sourceDocumentId:string;documentType:string;documentNumber:string;customerId:string|null;customerName:string;deliveryAddress:string|null;sellerName:string;documentTotal:number;status:string; }
@@ -34,6 +35,7 @@ async function offlineExpense(id:string,request:{category:string;amount:number;d
 export const dispatchesApi = {
   page: (params:{page?:number;pageSize?:number;search?:string;status?:string;from?:string;to?:string}) => apiClient.get<DispatchPage>("/commerce/v1/dispatches",withPagedDefaults(params)),
   options: () => apiClient.get<DispatchOptions>("/commerce/v1/dispatches/options"),
+  drivers: (params:{page:number;pageSize:number;search?:string;userId?:string}) => apiClient.get<DispatchDriverPage>("/commerce/v1/dispatches/drivers",params),
   reasons: (type:"NotDelivered"|"DeliveryReturn") => apiClient.get<DispatchReasonOption[]>("/commerce/v1/dispatches/delivery-reasons",{type}),
   candidates: (params:{page?:number;pageSize?:number;search?:string;documentType?:string;from?:string;to?:string;warehouseId?:string}) => apiClient.get<DispatchCandidatePage>("/commerce/v1/dispatches/candidates",withPagedDefaults(params)),
   detail: (id:string) => apiClient.get<DispatchDetail>(`/commerce/v1/dispatches/${id}`),

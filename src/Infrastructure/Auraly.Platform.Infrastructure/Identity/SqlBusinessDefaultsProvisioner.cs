@@ -75,6 +75,61 @@ public sealed class SqlBusinessDefaultsProvisioner(
               (NEWID(),@BusinessId,N'KG',N'Kilogramo',N'kg',1,3,1,@Now),
               (NEWID(),@BusinessId,N'M',N'Metro',N'm',1,3,1,@Now),
               (NEWID(),@BusinessId,N'L',N'Litro',N'L',1,3,1,@Now);
+
+            INSERT dbo.ProductPrices
+              (ProductPriceId,BusinessId,ProductId,Amount,PreparedAmount,CurrencyCode,
+               CostBasisType,CostBasisAmount,TargetMarginPercent,EffectiveMarginPercent,
+               InputMode,RoundingIncrement,RoundingMode,PublishedByUserId,PublishedAt,
+               ValidFrom,ValidUntil,IsActive,CreatedAt)
+            SELECT NEWID(),@BusinessId,product.ProductId,
+                   COALESCE(sourcePrice.Amount,0),COALESCE(sourcePrice.PreparedAmount,sourcePrice.Amount,0),
+                   COALESCE(sourcePrice.CurrencyCode,product.Currency,N'COP'),sourcePrice.CostBasisType,
+                   sourcePrice.CostBasisAmount,sourcePrice.TargetMarginPercent,sourcePrice.EffectiveMarginPercent,
+                   sourcePrice.InputMode,sourcePrice.RoundingIncrement,sourcePrice.RoundingMode,
+                   sourcePrice.PublishedByUserId,sourcePrice.PublishedAt,@Now,NULL,1,@Now
+            FROM dbo.Products product
+            OUTER APPLY (
+              SELECT TOP(1) price.* FROM dbo.ProductPrices price
+              WHERE price.ProductId=product.ProductId AND price.IsActive=1
+              ORDER BY CASE WHEN price.BusinessId=product.BusinessId THEN 0 ELSE 1 END,price.ValidFrom DESC
+            ) sourcePrice
+            WHERE product.TenantId=@TenantId;
+
+            INSERT dbo.InventoryBalances
+              (BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,InventoryValue,
+               LastProcessingSequence,UpdatedAt)
+            SELECT @BusinessId,warehouse.WarehouseId,product.ProductId,0,
+                   COALESCE(sourceBalance.AverageUnitCost,0),0,0,@Now
+            FROM dbo.Products product
+            CROSS JOIN dbo.Warehouses warehouse
+            OUTER APPLY (
+              SELECT TOP(1) balance.AverageUnitCost FROM dbo.InventoryBalances balance
+              WHERE balance.ProductId=product.ProductId ORDER BY balance.UpdatedAt DESC
+            ) sourceBalance
+            WHERE product.TenantId=@TenantId AND product.ManageStock=1
+              AND warehouse.BusinessId=@BusinessId;
+
+            INSERT dbo.ProductBarcodes(ProductBarcodeId,BusinessId,ProductId,Barcode,IsPrimary,IsActive,CreatedAt)
+            SELECT NEWID(),@BusinessId,source.ProductId,source.Barcode,source.IsPrimary,source.IsActive,@Now
+            FROM (
+              SELECT barcode.ProductId,barcode.Barcode,MAX(CONVERT(INT,barcode.IsPrimary)) IsPrimary,
+                     MAX(CONVERT(INT,barcode.IsActive)) IsActive
+              FROM dbo.ProductBarcodes barcode
+              INNER JOIN dbo.Products product ON product.ProductId=barcode.ProductId
+              WHERE product.TenantId=@TenantId
+              GROUP BY barcode.ProductId,barcode.Barcode
+            ) source;
+
+            INSERT dbo.ProductIdentifiers(ProductIdentifierId,BusinessId,ProductId,IdentifierType,Value,IsActive,CreatedAt)
+            SELECT NEWID(),@BusinessId,source.ProductId,source.IdentifierType,source.Value,source.IsActive,@Now
+            FROM (
+              SELECT identifier.ProductId,identifier.IdentifierType,identifier.Value,
+                     MAX(CONVERT(INT,identifier.IsActive)) IsActive
+              FROM dbo.ProductIdentifiers identifier
+              INNER JOIN dbo.Products product ON product.ProductId=identifier.ProductId
+              WHERE product.TenantId=@TenantId
+              GROUP BY identifier.ProductId,identifier.IdentifierType,identifier.Value
+            ) source;
             """, connection, transaction);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@BusinessId", businessId);

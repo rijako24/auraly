@@ -185,7 +185,6 @@ public sealed class PosEnrollmentSessionCompleter(
 public sealed class PosEdgeEnrollmentClient(
     HttpClient httpClient,
     PosEdgeEnrollmentStore store,
-    PosStartupModeStore startupMode,
     PosLocalDeviceIdentityRecovery identityRecovery)
 {
     public async Task<LocalPosEnrollmentResult> RedeemAsync(
@@ -211,7 +210,6 @@ public sealed class PosEdgeEnrollmentClient(
                 "The Auraly server returned an empty enrollment package.");
         package = await CacheCompanyLogoAsync(package, cancellationToken);
         store.Save(package);
-        startupMode.Save(PosStartupModes.Enrolled);
         return new LocalPosEnrollmentResult(
             "Enrolled",
             package.DeviceId,

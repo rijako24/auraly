@@ -12,6 +12,8 @@ public sealed record PayrollRunCalculationData(
 public interface IPayrollStore
 {
     Task<PayrollWorkspaceOptions> GetOptionsAsync(PayrollUserIdentity user, CancellationToken ct);
+    Task<PayrollEmploymentPage> PageEmploymentsAsync(PayrollUserIdentity user, int page,
+        int pageSize, string? search, bool? isActive, Guid? employmentId, CancellationToken ct);
     Task<PayrollEmploymentView> SaveEmploymentAsync(PayrollUserIdentity user,
         SavePayrollEmploymentRequest request, CancellationToken ct);
     Task<PayrollConceptView> SaveConceptAsync(PayrollUserIdentity user,
@@ -124,6 +126,17 @@ public sealed class PayrollService(
         if (ruleSetId == Guid.Empty || rowVersion.Length != 8)
             throw new PayrollValidationException("La versión del conjunto de reglas no es válida.");
         return store.ApproveRuleSetAsync(user, ruleSetId, rowVersion, ct);
+    }
+
+    public Task<PayrollEmploymentPage> PageEmploymentsAsync(PayrollUserIdentity user,
+        int page, int pageSize, string? search, bool? isActive, Guid? employmentId,
+        CancellationToken ct = default)
+    {
+        Demand(user, PayrollPermissionCodes.Read);
+        if (page < 1 || pageSize is < 1 or > 100)
+            throw new PayrollValidationException("La paginación de trabajadores no es válida.");
+        return store.PageEmploymentsAsync(user, page, pageSize,
+            string.IsNullOrWhiteSpace(search) ? null : search.Trim(), isActive, employmentId, ct);
     }
 
     public Task<PayrollRuleSetView> RetireRuleSetAsync(PayrollUserIdentity user,

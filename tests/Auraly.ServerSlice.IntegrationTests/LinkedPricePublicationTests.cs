@@ -143,11 +143,11 @@ public sealed class LinkedPricePublicationTests(ServerSliceFixture fixture)
             VALUES
               (@TaxProfileId,@BusinessId,@TaxCode,N'Sin impuesto',0,1,SYSDATETIMEOFFSET());
             INSERT dbo.Products
-              (ProductId,BusinessId,ProductCode,Reference,Sku,Name,Description,
+              (ProductId,TenantId,BusinessId,ProductCode,Reference,Sku,Name,Description,
                BaseUnitCode,TaxProfileId,ManageStock,IsWeighable,IsActive,Source,
                Currency,CreatedAt)
             VALUES
-              (@ProductId,@BusinessId,@ProductCode,@ProductCode,@ProductCode,
+              (@ProductId,@TenantId,@BusinessId,@ProductCode,@ProductCode,@ProductCode,
                N'Producto vinculado',N'Prueba de publicacion vinculada',N'EA',
                @TaxProfileId,1,0,1,0,N'COP',SYSDATETIMEOFFSET());
             INSERT dbo.ProductPrices
@@ -159,6 +159,7 @@ public sealed class LinkedPricePublicationTests(ServerSliceFixture fixture)
                N'Margin',1,N'Nearest',SYSDATETIMEOFFSET(),1,SYSDATETIMEOFFSET());
             """;
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
         command.Parameters.AddWithValue("@ProductId", productId);
         command.Parameters.AddWithValue("@ProductCode", $"LINK-{productId:N}");
         command.Parameters.AddWithValue("@TaxCode", $"TL-{productId:N}"[..32]);

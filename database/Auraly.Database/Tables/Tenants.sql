@@ -7,8 +7,10 @@ CREATE TABLE [dbo].[Tenants] (
     [IsActive] BIT NOT NULL DEFAULT 1,
     [MaximumUsers] INT NOT NULL CONSTRAINT [DF_Tenants_MaximumUsers] DEFAULT (5),
     [MaximumEnrolledDevices] INT NOT NULL CONSTRAINT [DF_Tenants_MaximumEnrolledDevices] DEFAULT (1),
+    [InventoryCostBasis] NVARCHAR(32) NOT NULL CONSTRAINT [DF_Tenants_InventoryCostBasis] DEFAULT N'LatestReceiptCost',
     CONSTRAINT [CK_Tenants_MaximumUsers] CHECK ([MaximumUsers] >= 1),
     CONSTRAINT [CK_Tenants_MaximumEnrolledDevices] CHECK ([MaximumEnrolledDevices] >= 0),
+    CONSTRAINT [CK_Tenants_InventoryCostBasis] CHECK ([InventoryCostBasis] IN (N'LatestReceiptCost',N'WeightedAverageCost')),
     [CreatedAt] DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
     [UpdatedAt] DATETIME2 NULL
 );
