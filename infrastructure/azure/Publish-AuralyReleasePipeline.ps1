@@ -273,6 +273,7 @@ function Publish-Function {
     $zip = Join-Path $releasePath "auraly-function-$ReleaseVersion.zip"
     $uploaded = $false
     $packageUri = $null
+    $parameterFile = $null
     try {
         for ($attempt = 1; $attempt -le 12; $attempt++) {
             & az storage blob upload `
@@ -303,11 +304,22 @@ function Publish-Function {
         Assert-LastExitCode 'No se pudo generar el SAS de delegacion para Function'
         if (-not $packageUri) { throw 'Azure devolvio un SAS vacio para Function.' }
 
+        $parameterFile = [IO.Path]::GetTempFileName()
+        @{
+            '$schema' = 'https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#'
+            contentVersion = '1.0.0.0'
+            parameters = @{
+                functionAppName = @{ value = $configuration.Function }
+                location = @{ value = 'eastus2' }
+                packageUri = @{ value = $packageUri }
+            }
+        } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $parameterFile -Encoding utf8NoBOM
+
         & az deployment group create `
             --name "auraly-$Environment-function-$ReleaseVersion" `
             --resource-group $configuration.ResourceGroup `
             --template-file (Join-Path $PSScriptRoot 'function-onedeploy-v2.bicep') `
-            --parameters "functionAppName=$($configuration.Function)" 'location=eastus2' "packageUri=$packageUri" `
+            --parameters "@$parameterFile" `
             --output none
         Assert-LastExitCode 'OneDeploy de Function fallo'
         & az functionapp config appsettings set `
@@ -356,6 +368,9 @@ function Publish-Function {
     }
     finally {
         $packageUri = $null
+        if ($parameterFile -and (Test-Path -LiteralPath $parameterFile)) {
+            Remove-Item -LiteralPath $parameterFile -Force
+        }
         if ($uploaded) {
             & az storage blob delete `
                 --account-name $configuration.Storage `
