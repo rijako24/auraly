@@ -198,6 +198,9 @@ function Publish-Database {
         # Se ejecuta antes del DeployReport para que BlockOnPossibleDataLoss siga
         # protegiendo cualquier otra eliminacion no revisada del DACPAC.
         Invoke-ReviewedPreDacpacMigration `
+            -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260817_NormalizeAuralyPlatformTenantKey.sql') `
+            -AccessToken $accessToken
+        Invoke-ReviewedPreDacpacMigration `
             -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260823_MoveBusinessLogoToTenant.sql') `
             -AccessToken $accessToken
         Invoke-ReviewedPreDacpacMigration `
