@@ -1378,6 +1378,7 @@
         "dependencies": {
           "Auraly.Application.DocumentProcessing": "[1.0.0, )",
           "Auraly.BuildingBlocks.Application": "[1.0.0, )",
+          "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )",
           "Auraly.Contracts.Authorization": "[1.0.0, )",
           "Auraly.Contracts.Catalog": "[1.0.0, )",
           "Auraly.Contracts.DocumentProcessing": "[1.0.0, )",
@@ -1436,6 +1437,7 @@
       "auraly.commerce.taxation.application": {
         "type": "Project",
         "dependencies": {
+          "Auraly.BuildingBlocks.Application": "[1.0.0, )",
           "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )",
           "Auraly.Commerce.Taxation.Domain": "[1.0.0, )"
         }
@@ -1533,7 +1535,8 @@
       "auraly.contracts.sales": {
         "type": "Project",
         "dependencies": {
-          "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )"
         }
       },
       "auraly.contracts.worksessions": {
@@ -1675,6 +1678,7 @@
       "auraly.platform.application": {
         "type": "Project",
         "dependencies": {
+          "Auraly.BuildingBlocks.Application": "[1.0.0, )",
           "Auraly.Contracts.Authorization": "[1.0.0, )",
           "Auraly.Contracts.Parties": "[1.0.0, )",
           "Auraly.Platform.Domain": "[1.0.0, )",

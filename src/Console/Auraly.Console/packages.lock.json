@@ -659,6 +659,12 @@
           "System.Drawing.Common": "6.0.0"
         }
       },
+      "auraly.buildingblocks.application": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
       "auraly.buildingblocks.domain": {
         "type": "Project"
       },
@@ -686,6 +692,7 @@
       "auraly.platform.application": {
         "type": "Project",
         "dependencies": {
+          "Auraly.BuildingBlocks.Application": "[1.0.0, )",
           "Auraly.Contracts.Authorization": "[1.0.0, )",
           "Auraly.Contracts.Parties": "[1.0.0, )",
           "Auraly.Platform.Domain": "[1.0.0, )",
