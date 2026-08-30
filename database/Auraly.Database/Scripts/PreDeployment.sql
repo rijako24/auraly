@@ -22,6 +22,7 @@ Pre-Deployment Script Template
 :r .\Migrations\20260828_NormalizePriceChannelValues.sql
 :r .\Migrations\20260828_ReplaceAverageCostMarkupWithLatestCostMargin.sql
 :r .\Migrations\20260829_BackfillProductTenant.sql
+:r .\Migrations\20260829_RemoveFiscalSeriesAllocationState.sql
 :r .\Migrations\MoveDispatchReasonsToOwnedSchema.sql
 
 -- Scripts de pre-despliegue

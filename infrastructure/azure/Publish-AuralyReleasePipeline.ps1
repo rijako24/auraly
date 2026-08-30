@@ -209,6 +209,9 @@ function Publish-Database {
         Invoke-ReviewedPreDacpacMigration `
             -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260828_RemoveProductsUnitPrice.sql') `
             -AccessToken $accessToken
+        Invoke-ReviewedPreDacpacMigration `
+            -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260829_RemoveFiscalSeriesAllocationState.sql') `
+            -AccessToken $accessToken
 
         $whatsAppAccessTokenArgument = if ([string]::IsNullOrWhiteSpace($env:CJ_WHATSAPP_ACCESS_TOKEN)) {
             '/v:CJWhatsAppAccessToken=""'
