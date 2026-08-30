@@ -29,4 +29,3 @@ BEGIN
 END
 ELSE
     PRINT N'NormalizeAuralyPlatformTenantKey: fresh database; skipped before schema creation.';
-GO
