@@ -210,12 +210,19 @@ function Publish-Database {
             -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260828_RemoveProductsUnitPrice.sql') `
             -AccessToken $accessToken
 
+        $whatsAppAccessTokenArgument = if ([string]::IsNullOrWhiteSpace($env:CJ_WHATSAPP_ACCESS_TOKEN)) {
+            '/v:CJWhatsAppAccessToken=""'
+        }
+        else {
+            "/v:CJWhatsAppAccessToken=$($env:CJ_WHATSAPP_ACCESS_TOKEN)"
+        }
+
         $commonArguments = @(
             "/SourceFile:$dacpac",
             "/TargetServerName:tcp:$($configuration.SqlServer).database.windows.net,1433",
             "/TargetDatabaseName:$($configuration.Database)",
             "/AccessToken:$accessToken",
-            "/v:CJWhatsAppAccessToken=$($env:CJ_WHATSAPP_ACCESS_TOKEN)",
+            $whatsAppAccessTokenArgument,
             '/p:BlockOnPossibleDataLoss=True',
             '/p:DropObjectsNotInSource=False',
             '/p:CommandTimeout=120',

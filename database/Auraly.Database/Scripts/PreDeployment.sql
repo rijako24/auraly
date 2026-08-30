@@ -43,8 +43,6 @@ BEGIN
     WHERE Strategy = N'PercentageBelowBasePrice';
 END;
 
-:r .\Migrations\20260829_BackfillProductTenant.sql
-
 -- La caja conserva cada captura como una línea independiente. El índice
 -- histórico por producto impedía agregar el mismo producto dos veces y debe
 -- retirarse explícitamente porque DEV publica conservando objetos ajenos al DACPAC.
