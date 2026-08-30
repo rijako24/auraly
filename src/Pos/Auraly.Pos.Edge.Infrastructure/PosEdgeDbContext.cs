@@ -37,7 +37,12 @@ internal sealed class PosEdgeDbContext(DbContextOptions<PosEdgeDbContext> option
             entity.ToTable("IssuedSales");
             entity.HasKey(row => row.DocumentId);
             entity.HasIndex(row => row.DocumentNumber).IsUnique();
-            entity.HasIndex(row => row.FiscalNumber).IsUnique();
+            // Commercial receipts do not have a DIAN number and are stored with an
+            // empty value. Keep uniqueness only for actual fiscal documents so more
+            // than one receipt can be issued while the checkout is offline.
+            entity.HasIndex(row => row.FiscalNumber)
+                .IsUnique()
+                .HasFilter("FiscalNumber <> ''");
             entity.Property(row => row.DocumentNumber).HasMaxLength(64);
             entity.Property(row => row.FiscalNumber).HasMaxLength(64);
             entity.Property(row => row.Cufe).HasMaxLength(96);
@@ -93,7 +98,6 @@ internal sealed class FiscalSeriesCursorRow
     public DateOnly ValidFrom { get; set; }
     public DateOnly ValidUntil { get; set; }
     public bool IsActive { get; set; }
-    public string AllocationState { get; set; } = "Active";
     public long AuthorizationRangeStart { get; set; }
     public long AuthorizationRangeEnd { get; set; }
 }

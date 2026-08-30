@@ -11,6 +11,17 @@ public sealed class PosServerConnectionState
     public void MarkDisconnected() => Interlocked.Exchange(ref _connected, 0);
 }
 
+public sealed class PosPushConnectionState
+{
+    private int connected;
+
+    public bool IsConnected => Volatile.Read(ref connected) == 1;
+
+    public void MarkConnected() => Interlocked.Exchange(ref connected, 1);
+
+    public void MarkDisconnected() => Interlocked.Exchange(ref connected, 0);
+}
+
 public sealed class PosServerConnectionHandler(
     HttpMessageHandler innerHandler,
     PosServerConnectionState state) : DelegatingHandler(innerHandler)

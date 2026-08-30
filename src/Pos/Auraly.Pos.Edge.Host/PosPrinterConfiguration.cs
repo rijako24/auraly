@@ -125,9 +125,12 @@ public sealed record PosPrinterConfigurationView(
 
 public sealed class PosPrinterConfigurationStore(
     string settingsPath,
-    string receiptOutputDirectory)
+    string receiptOutputDirectory,
+    PosPrinterConfiguration? enrollmentDefault = null)
 {
     private readonly object gate = new();
+    private readonly PosPrinterConfiguration initial =
+        enrollmentDefault ?? PosPrinterConfiguration.Default;
 
     public string ReceiptOutputDirectory { get; } = receiptOutputDirectory;
 
@@ -135,7 +138,7 @@ public sealed class PosPrinterConfigurationStore(
     {
         lock (gate)
         {
-            if (!File.Exists(settingsPath)) return PosPrinterConfiguration.Default;
+            if (!File.Exists(settingsPath)) return initial;
             try
             {
                 var stored = JsonSerializer.Deserialize<PosPrinterConfiguration>(
@@ -149,7 +152,7 @@ public sealed class PosPrinterConfigurationStore(
             }
             catch (JsonException)
             {
-                return PosPrinterConfiguration.Default;
+                return initial;
             }
         }
     }

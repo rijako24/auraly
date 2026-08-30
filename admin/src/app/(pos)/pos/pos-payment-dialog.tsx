@@ -14,6 +14,7 @@ import { PosPaymentInput, type PosClient, type PosCustomer, type PosSaleDocument
 import {
   calculatePaymentSettlement,
   chooseAdditionalPaymentMethod,
+  handlePosPaymentAmountEnter,
   PosPaymentSettlement,
 } from "./pos-payment-settlement";
 import {
@@ -226,11 +227,11 @@ export function PosPaymentDialog({
   }
 
   function handleAmountEnter(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key !== "Enter") return;
-    if (settlement.missing > 0) {
-      event.preventDefault();
-      addPayment("Cash");
-    }
+    // Installed WebView versions do not consistently perform the same
+    // implicit form action for Enter. Own the keyboard contract here: an
+    // incomplete payment fills the remainder and a complete payment submits
+    // this same form through its canonical submit handler.
+    handlePosPaymentAmountEnter(event, settlement.missing, () => addPayment("Cash"));
   }
 
   function saveCardCapture() {

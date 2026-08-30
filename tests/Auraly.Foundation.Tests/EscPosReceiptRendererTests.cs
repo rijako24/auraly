@@ -1,6 +1,7 @@
 using System.Text;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.Sales;
+using Auraly.Commerce.Taxation.Contracts;
 using Auraly.Pos.Edge.Infrastructure;
 
 namespace Auraly.Foundation.Tests;
@@ -252,6 +253,39 @@ public sealed class EscPosReceiptRendererTests
         Assert.Equal(2, html.Split("Factura emitida por Auraly").Length - 1);
         Assert.Equal(2, html.Split("www.auralyapp.co").Length - 1);
         Assert.Equal(2, html.Split("Página 1 de 1").Length - 1);
+    }
+
+    [Fact]
+    public void Receipt_discriminates_withholdings_and_net_amount_to_pay()
+    {
+        var receipt = new PosReceipt(
+            Guid.NewGuid(), new DocumentId(Guid.NewGuid()), "TCK-42", null,
+            DateTimeOffset.UtcNow, "900123456",
+            [new PosReceiptLine("P-1", "Producto", 1m, 100_000m, 0m, 19_000m, 119_000m)],
+            [new OfflineSalePayment("Cash", 116_500m)],
+            100_000m, 19_000m, 119_000m, null, null, 80,
+            PosSaleDocumentTypes.Receipt,
+            WithholdingTotal: 2_500m,
+            NetPayableAmount: 116_500m,
+            Withholdings:
+            [
+                new WithholdingLineSnapshot(
+                    Guid.NewGuid(), 1, "RETEFUENTE", "Retefuente", "IncomeTax",
+                    "TaxExclusive", 100_000m, 2.5m, 2_500m, null)
+            ]);
+
+        var esc = Encoding.UTF8.GetString(new EscPosReceiptRenderer().Render(receipt));
+        var html = new HtmlReceiptPreviewRenderer().Render(receipt);
+
+        Assert.Contains("TOTAL BRUTO", esc);
+        Assert.Contains("RET. RETEFUENTE", esc);
+        Assert.Contains("-2500.00", esc);
+        Assert.Contains("TOTAL A PAGAR", esc);
+        Assert.Contains("116500.00", esc);
+        Assert.Contains("Total bruto", html);
+        Assert.Contains("Ret. Retefuente", html);
+        Assert.Contains("Total retenciones", html);
+        Assert.Contains("Total a pagar", html);
     }
 
     [Fact]

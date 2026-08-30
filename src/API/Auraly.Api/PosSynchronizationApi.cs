@@ -29,7 +29,11 @@ public static class PosSynchronizationApi
                         cancellationToken);
                     return Results.Ok(new PosSynchronizationNegotiationResponse(
                         uri,
-                        DateTimeOffset.UtcNow.AddMinutes(15)));
+                        DateTimeOffset.UtcNow.AddMinutes(15),
+                        [
+                            PosSynchronizationGroups.Business(tenantId, businessId),
+                            PosSynchronizationGroups.Device(tenantId, deviceId)
+                        ]));
                 })
             .RequireAuthorization("pos.synchronization");
         return endpoints;

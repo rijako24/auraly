@@ -19,6 +19,13 @@ public sealed record PosLocalUserSession(
     DateTimeOffset ExpiresAt,
     string? Token);
 
+public sealed record PosLocalIdentitySummary(
+    Guid UserId,
+    string Username,
+    string DisplayName,
+    DateTimeOffset PasswordChangedAt,
+    IReadOnlyList<string> Permissions);
+
 public sealed class PosLocalLoginException(
     string code,
     string message) : Exception(message)
@@ -210,6 +217,44 @@ public sealed partial class PosLocalIdentityStore(
         state.Parameters.AddWithValue("$now", Format(timeProvider.GetUtcNow()));
         await state.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<PosLocalIdentitySummary>> ReadIdentitySummariesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT u.UserId,u.Username,u.DisplayName,u.ProtectedPasswordVerifier,
+                   p.PermissionCode
+            FROM PosOfflineUsers u
+            LEFT JOIN PosOfflineUserPermissions p ON p.UserId=u.UserId
+            ORDER BY u.UserId,p.PermissionCode;
+            """;
+        var users = new Dictionary<Guid, MutableIdentitySummary>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var userId = Guid.Parse(reader.GetString(0));
+            if (!users.TryGetValue(userId, out var user))
+            {
+                var verifier = JsonSerializer.Deserialize<PosOfflinePasswordVerifier>(
+                    PosEdgeProtectedSecret.UnprotectIdentityVerifier(
+                        keyDirectory, reader.GetString(3)))
+                    ?? throw new InvalidDataException(
+                        $"El verificador local del usuario {userId:D} no es válido.");
+                user = new MutableIdentitySummary(
+                    userId, reader.GetString(1), reader.GetString(2), verifier.ChangedAt);
+                users.Add(userId, user);
+            }
+            if (!reader.IsDBNull(4)) user.Permissions.Add(reader.GetString(4));
+        }
+        return users.Values
+            .Select(user => new PosLocalIdentitySummary(
+                user.UserId, user.Username, user.DisplayName,
+                user.PasswordChangedAt, user.Permissions.ToArray()))
+            .ToArray();
     }
 
     public async Task<bool> HasValidSnapshotAsync(
@@ -648,4 +693,13 @@ public sealed partial class PosLocalIdentityStore(
         string ProtectedVerifier,
         int FailedCount,
         DateTimeOffset? LockedUntil);
+
+    private sealed record MutableIdentitySummary(
+        Guid UserId,
+        string Username,
+        string DisplayName,
+        DateTimeOffset PasswordChangedAt)
+    {
+        public List<string> Permissions { get; } = [];
+    }
 }

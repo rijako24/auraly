@@ -4,9 +4,36 @@ import { describe, it } from "node:test";
 import {
   calculatePaymentSettlement,
   chooseAdditionalPaymentMethod,
+  handlePosPaymentAmountEnter,
   splitCreditCheckout,
   shouldShowCashChange,
 } from "./pos-payment-settlement";
+
+describe("handlePosPaymentAmountEnter", () => {
+  it("adds cash for the remainder while the payment is incomplete", () => {
+    let addedCash = false;
+    let submitted = false;
+    handlePosPaymentAmountEnter({
+      key: "Enter",
+      preventDefault: () => undefined,
+      currentTarget: { form: { requestSubmit: () => { submitted = true; } } },
+    }, 35, () => { addedCash = true; });
+
+    assert.equal(addedCash, true);
+    assert.equal(submitted, false);
+  });
+
+  it("submits the canonical payment form when the total is complete", () => {
+    let submitted = false;
+    handlePosPaymentAmountEnter({
+      key: "Enter",
+      preventDefault: () => undefined,
+      currentTarget: { form: { requestSubmit: () => { submitted = true; } } },
+    }, 0, () => assert.fail("must not add another payment"));
+
+    assert.equal(submitted, true);
+  });
+});
 
 describe("chooseAdditionalPaymentMethod", () => {
   it("uses cash first when a partial payment still has a balance", () => {

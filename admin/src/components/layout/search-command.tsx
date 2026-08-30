@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { useAuthStore } from "@/stores/auth-store";
 
 import {
   CommandDialog,
@@ -14,11 +15,12 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { navigation } from "./sidebar-nav-config";
+import { authorizedNavigationItems } from "./sidebar-nav-config";
 
 export function SearchCommand() {
   const [open, setOpen] = useState(false);
   const router = useRouter();
+  const permissions = useAuthStore((state) => state.user?.permissions ?? []);
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -31,7 +33,7 @@ export function SearchCommand() {
     return () => document.removeEventListener("keydown", down);
   }, []);
 
-  const navItems = navigation.filter((entry) => "href" in entry);
+  const navItems = authorizedNavigationItems(permissions);
 
   const runCommand = (href: string) => {
     setOpen(false);
@@ -55,12 +57,12 @@ export function SearchCommand() {
         <CommandEmpty>No se encontraron resultados.</CommandEmpty>
         <CommandGroup heading="Navegación">
           {navItems.map((item) => {
-            const Icon = "icon" in item ? item.icon : null;
+            const Icon = item.icon;
             return (
               <CommandItem
-                key={"href" in item ? item.href : ""}
+                key={item.href}
                 value={item.name}
-                onSelect={() => "href" in item && runCommand(item.href)}
+                onSelect={() => runCommand(item.href)}
               >
                 {Icon && <Icon className="mr-2 h-4 w-4" />}
                 {item.name}

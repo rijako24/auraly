@@ -1,6 +1,7 @@
 CREATE TABLE [dbo].[FiscalAuthorizations]
 (
     [FiscalAuthorizationId] UNIQUEIDENTIFIER NOT NULL,
+    [DianNumberingRangeId] UNIQUEIDENTIFIER NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [AuthorizationNumber] NVARCHAR(64) NOT NULL,
     [SupplierTaxId] NVARCHAR(32) NOT NULL,
@@ -15,6 +16,7 @@ CREATE TABLE [dbo].[FiscalAuthorizations]
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     CONSTRAINT [PK_FiscalAuthorizations] PRIMARY KEY CLUSTERED ([FiscalAuthorizationId]),
     CONSTRAINT [FK_FiscalAuthorizations_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
+    CONSTRAINT [FK_FiscalAuthorizations_DianNumberingRanges] FOREIGN KEY ([DianNumberingRangeId]) REFERENCES [fiscal].[DianNumberingRanges] ([DianNumberingRangeId]),
     CONSTRAINT [UQ_FiscalAuthorizations_Business_Number] UNIQUE ([BusinessId], [AuthorizationNumber]),
     CONSTRAINT [CK_FiscalAuthorizations_Environment] CHECK ([Environment] IN (1, 2)),
     CONSTRAINT [CK_FiscalAuthorizations_Validity] CHECK ([ValidUntil] >= [ValidFrom]),
@@ -27,4 +29,10 @@ GO
 
 CREATE INDEX [IX_FiscalAuthorizations_Business]
     ON [dbo].[FiscalAuthorizations] ([BusinessId]);
+
+GO
+
+CREATE UNIQUE INDEX [UX_FiscalAuthorizations_DianNumberingRange]
+    ON [dbo].[FiscalAuthorizations] ([DianNumberingRangeId])
+    WHERE [DianNumberingRangeId] IS NOT NULL;
 

@@ -4,6 +4,7 @@ using Auraly.Application.Authorization;
 using Auraly.Application.Organization;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Organization;
+using Auraly.Platform.Application.Identity.DTOs;
 using Auraly.Platform.Application.Identity.Interfaces;
 
 namespace Auraly.Api;
@@ -65,20 +66,57 @@ public static class PosEnrollmentApi
                 async (
                     RedeemPosEnrollmentRequest request,
                     PosEnrollmentService service,
-                    ITenantService tenants,
+                    IServiceProvider services,
+                    ILoggerFactory loggerFactory,
                     CancellationToken ct) =>
                     await Handle(async () =>
                     {
                         var package = await service.RedeemAsync(request, ct);
-                        var branding = await tenants.GetBrandingAsync(package.TenantId, ct);
-                        return package with
-                        {
-                            CompanyName = branding.DisplayName,
-                            CompanyLogoSource = branding.LogoUrl
-                        };
+                        return await EnrichBrandingAsync(
+                            package,
+                            cancellationToken => services
+                                .GetRequiredService<ITenantService>()
+                                .GetBrandingAsync(package.TenantId, cancellationToken),
+                            loggerFactory.CreateLogger("PosEnrollmentBranding"),
+                            ct);
                     }))
             .AllowAnonymous();
         return endpoints;
+    }
+
+    internal static async Task<PosEnrollmentPackage> EnrichBrandingAsync(
+        PosEnrollmentPackage package,
+        Func<CancellationToken, Task<TenantBrandingDto>> loadBranding,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var branding = await loadBranding(cancellationToken);
+            return package with
+            {
+                CompanyName = string.IsNullOrWhiteSpace(branding.DisplayName)
+                    ? package.BusinessName
+                    : branding.DisplayName,
+                CompanyLogoSource = branding.LogoUrl
+            };
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Device identity and numbering were already committed. Optional
+            // visual branding cannot turn that success into a failed redemption.
+            logger.LogWarning(
+                exception,
+                "POS enrollment {DeviceId} completed without optional tenant branding.",
+                package.DeviceId);
+            return package with
+            {
+                CompanyName = string.IsNullOrWhiteSpace(package.CompanyName)
+                    ? package.BusinessName
+                    : package.CompanyName,
+                CompanyLogoSource = null
+            };
+        }
     }
 
     private static async Task<IResult> Handle<T>(Func<Task<T>> action)

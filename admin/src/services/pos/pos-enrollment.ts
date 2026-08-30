@@ -1,6 +1,7 @@
 import type { SalesWorkspaceOption } from "@/services/pos/online-pos-client";
 import { fetchWithSessionRetry } from "@/services/api/client";
 import type { PosSensitiveAuthorization } from "@/services/pos/pos-edge-client";
+import { posEnrollmentProblemDetail } from "./pos-enrollment-error";
 
 const EDGE_BASE_URL =
   process.env.NEXT_PUBLIC_AURALY_POS_EDGE_URL ?? "http://127.0.0.1:47831";
@@ -43,7 +44,7 @@ export async function authorizePosEnrollment(
         : `Auraly · ${window.navigator.platform || "Windows"}`,
     }),
   });
-  if (!response.ok) throw new Error(await problemDetail(response));
+  if (!response.ok) throw new Error(await posEnrollmentProblemDetail(response));
   return (await response.json()) as PosEnrollmentAuthorization;
 }
 
@@ -62,7 +63,7 @@ export async function redeemPosEnrollment(
       redemptionCode: authorization.redemptionCode,
     }),
   });
-  if (!response.ok) throw new Error(await problemDetail(response));
+  if (!response.ok) throw new Error(await posEnrollmentProblemDetail(response));
 }
 
 export async function waitForRedeemedPosEdge(
@@ -87,20 +88,6 @@ export async function waitForRedeemedPosEdge(
     await new Promise((resolve) => window.setTimeout(resolve, 500));
   }
   throw new Error("El equipo quedó enrolado, pero el servicio local no volvió a iniciar. Cierra y abre Auraly.");
-}
-
-async function problemDetail(response: Response): Promise<string> {
-  const raw = await response.text();
-  try {
-    const problem = JSON.parse(raw) as {
-      detail?: string;
-      title?: string;
-      message?: string;
-    };
-    return problem.detail || problem.message || problem.title || raw;
-  } catch {
-    return raw || response.statusText;
-  }
 }
 
 declare global {

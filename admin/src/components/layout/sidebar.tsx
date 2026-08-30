@@ -24,38 +24,14 @@ import { getInitials } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth-store";
 import { useSidebarStore } from "@/stores/sidebar-store";
 
-import { navigation } from "./sidebar-nav-config";
-
-function hasPermission(permissions: Set<string>, item: { permission?: string }): boolean {
-  if (!item.permission) return true;
-  return permissions.has(item.permission);
-}
+import { authorizedNavigationGroups } from "./sidebar-nav-config";
 
 export function Sidebar() {
   const pathname = usePathname();
   const { isCollapsed, setCollapsed } = useSidebarStore();
   const { user } = useAuthStore();
 
-  const permissions = new Set(user?.permissions ?? []);
-
-  // Group navigation by separators, filtering by permission (show if user has at least one permission in module)
-  const groups: { label: string; items: (typeof navigation)[number][] }[] = [];
-  let currentGroup: { label: string; items: (typeof navigation)[number][] } | null = null;
-
-  for (const entry of navigation) {
-    if ("type" in entry && entry.type === "separator") {
-      currentGroup = { label: entry.label, items: [] };
-      groups.push(currentGroup);
-    } else if ("href" in entry && hasPermission(permissions, entry)) {
-      if (!currentGroup) {
-        currentGroup = { label: "Principal", items: [] };
-        groups.push(currentGroup);
-      }
-      currentGroup.items.push(entry);
-    }
-  }
-
-  const filteredGroups = groups.filter((g) => g.items.length > 0);
+  const filteredGroups = authorizedNavigationGroups(user?.permissions ?? []);
 
   return (
     <aside
@@ -107,7 +83,6 @@ export function Sidebar() {
                 <CollapsibleContent>
                   <div className={cn(isCollapsed ? "space-y-1" : "mt-1 space-y-0.5 pl-4 pr-1")}>
                     {group.items.map((item) => {
-                      if (!("href" in item)) return null;
                       const Icon = item.icon;
                       const isActive = item.href === "/dashboard" ? pathname === item.href : pathname === item.href || pathname.startsWith(item.href + "/");
 

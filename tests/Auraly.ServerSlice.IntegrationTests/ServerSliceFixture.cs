@@ -66,6 +66,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public const string OfflineLeaseKeyId = "integration-test-offline-lease";
     public const string QrValidationUrl =
         "https://catalogo-vpfe.dian.gov.co/document/searchqr";
+    public static readonly byte[] FiscalSecretProtectionKey =
+        SHA256.HashData(Encoding.UTF8.GetBytes("Auraly.ServerSlice fiscal secret protection key"));
 
     private WebApplicationFactory<Program>? _factory;
     private string? _databaseName;
@@ -156,6 +158,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                     ["Auraly:Fiscal:TechnicalKeys:0:Value"] = TechnicalKeyValue,
                     ["Auraly:Fiscal:TechnicalKeys:0:SupplierTaxId"] = SupplierTaxId,
                     ["Auraly:Fiscal:TechnicalKeys:0:QrValidationUrl"] = QrValidationUrl,
+                    ["Auraly:Fiscal:SecretProtectionKey"] =
+                        Convert.ToBase64String(FiscalSecretProtectionKey),
                     ["Auraly:Fiscal:Worker:Enabled"] = "false",
                     ["Auraly:PosSynchronization:WebPubSub:ConnectionString"] =
                         $"Endpoint=https://push.auraly.test;" +

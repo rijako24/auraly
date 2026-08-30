@@ -10,6 +10,24 @@ export type PosPaymentSettlement = {
   appliedPayments: PosPaymentInput[];
 };
 
+type PosPaymentAmountEnterEvent = {
+  key: string;
+  preventDefault: () => void;
+  currentTarget: { form: { requestSubmit: () => void } | null };
+};
+
+export function handlePosPaymentAmountEnter(
+  event: PosPaymentAmountEnterEvent,
+  missing: number,
+  addCashPayment: () => void,
+): boolean {
+  if (event.key !== "Enter") return false;
+  event.preventDefault();
+  if (missing > tolerance) addCashPayment();
+  else event.currentTarget.form?.requestSubmit();
+  return true;
+}
+
 export function chooseAdditionalPaymentMethod(
   methodCodes: readonly string[],
   usedMethodCodes: ReadonlySet<string>,

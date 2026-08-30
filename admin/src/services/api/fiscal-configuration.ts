@@ -18,13 +18,20 @@ export type FiscalResolutionConfiguration = {
 export type FiscalDeviceSeriesAssignment = {
   deviceId: string; deviceName: string; deviceIsActive: boolean;
   lastSeenAt: string | null; businessId: string; businessName: string;
-  seriesId: string | null; prefix: string | null; rangeStart: number | null;
+  seriesId: string | null; fiscalAuthorizationId: string | null;
+  authorizationNumber: string | null; prefix: string | null; rangeStart: number | null;
   rangeEnd: number | null; isProvisioned: boolean;
+};
+
+export type FiscalAssignableResolution = {
+  dianNumberingRangeId: string; authorizationNumber: string; prefix: string;
+  rangeStart: number; rangeEnd: number; validFrom: string; validUntil: string;
 };
 
 export type FiscalDeviceSeriesWorkspace = {
   businessId: string;
   availableConsecutives: number;
+  availableResolutions: FiscalAssignableResolution[];
   devices: FiscalDeviceSeriesAssignment[];
 };
 
@@ -169,9 +176,9 @@ export const fiscalConfigurationApi = {
   getDevices: (businessId: string) =>
     apiClient.get<FiscalDeviceSeriesWorkspace>(
       "/commerce/v1/fiscal/configuration/devices", { businessId }),
-  assignDeviceSeries: (businessId: string, deviceId: string) =>
+  assignDeviceSeries: (businessId: string, deviceId: string, dianNumberingRangeId: string) =>
     apiClient.post<FiscalDeviceSeriesWorkspace>(
       `/commerce/v1/fiscal/configuration/devices/assign?businessId=${encodeURIComponent(businessId)}`,
-      { deviceId },
+      { deviceId, dianNumberingRangeId },
     ),
 };

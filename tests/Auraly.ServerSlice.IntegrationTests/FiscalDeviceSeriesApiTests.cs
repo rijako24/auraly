@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using Auraly.Contracts.Fiscal;
 using Microsoft.Data.SqlClient;
 
@@ -10,240 +12,192 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class FiscalDeviceSeriesApiTests(ServerSliceFixture fixture)
 {
     [Fact]
-    public async Task Concurrent_devices_receive_disjoint_active_and_standby_blocks()
+    public async Task Manager_assigns_complete_resolution_idempotently_and_read_only_cannot_mutate()
     {
-        var devices = Enumerable.Range(1, 3).Select(_ => Guid.NewGuid()).ToArray();
-        var poolId = Guid.NewGuid();
-        await using var seed = new SqlConnection(fixture.ConnectionString);
-        await seed.OpenAsync();
-        await using (var command = new SqlCommand("""
-            INSERT fiscal.FiscalNumberingPolicies(BusinessId,DocumentType,BlockSize,UpdatedAt)
-            VALUES(@BusinessId,N'SalesInvoice',10,SYSDATETIMEOFFSET());
-            INSERT dbo.FiscalSeries(SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
-                DocumentType,Prefix,RangeStart,RangeEnd,AllocationState,IsActive,CreatedAt)
-            VALUES(@PoolId,@BusinessId,NULL,N'Device',@FiscalAuthorizationId,
-                N'SalesInvoice',N'FC',60001,60100,N'Pool',1,SYSDATETIMEOFFSET());
-            """, seed))
-        {
-            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
-            command.Parameters.AddWithValue("@PoolId", poolId);
-            command.Parameters.AddWithValue("@FiscalAuthorizationId", fixture.FiscalAuthorizationId);
-            await command.ExecuteNonQueryAsync();
-        }
-        for (var index = 0; index < devices.Length; index++)
-        {
-            await using var command = new SqlCommand("""
-                INSERT dbo.EnrolledDevices(DeviceId,TenantId,Name,CredentialSalt,CredentialHash,
-                    CredentialIterations,IsActive,CreatedAt)
-                VALUES(@DeviceId,@TenantId,@Name,0x01,0x02,100000,1,SYSDATETIMEOFFSET());
-                INSERT dbo.DocumentSeries(DocumentSeriesId,BusinessId,DeviceId,DocumentType,
-                    Prefix,SeriesCode,Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
-                VALUES(NEWID(),@BusinessId,@DeviceId,N'SalesInvoice',N'VTA',@Code,8,1,99999999,1,1,SYSDATETIMEOFFSET());
-                """, seed);
-            command.Parameters.AddWithValue("@DeviceId", devices[index]);
-            command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
-            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
-            command.Parameters.AddWithValue("@Name", $"Concurrent {index + 1}");
-            command.Parameters.AddWithValue("@Code", $"C{index + 1}");
-            await command.ExecuteNonQueryAsync();
-        }
-
+        var rangeId = Guid.NewGuid();
+        var seriesId = Guid.NewGuid();
+        await SeedAsync(rangeId, fixture.DeniedDeviceId, seriesId, "DI98", 81001, 81100);
         try
         {
-            await Task.WhenAll(devices.Select(EnsureNumberingAsync));
-            await using var verify = new SqlCommand("""
-                SELECT COUNT(*),COUNT(DISTINCT DeviceId),MIN(RangeStart),MAX(RangeEnd)
-                FROM dbo.FiscalSeries
-                WHERE BusinessId=@BusinessId AND Prefix=N'FC' AND DeviceId IS NOT NULL
-                  AND IsActive=1 AND AllocationState IN(N'Active',N'Standby');
-                SELECT COUNT(*) FROM (
-                  SELECT RangeStart,LAG(RangeEnd) OVER(ORDER BY RangeStart) PreviousEnd
-                  FROM dbo.FiscalSeries
-                  WHERE BusinessId=@BusinessId AND Prefix=N'FC' AND DeviceId IS NOT NULL
-                ) ranges WHERE PreviousEnd>=RangeStart;
-                """, seed);
-            verify.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
-            await using var reader = await verify.ExecuteReaderAsync();
-            Assert.True(await reader.ReadAsync());
-            Assert.Equal(6, reader.GetInt32(0));
-            Assert.Equal(3, reader.GetInt32(1));
-            Assert.Equal(60001, reader.GetInt64(2));
-            Assert.Equal(60060, reader.GetInt64(3));
-            Assert.True(await reader.NextResultAsync());
-            Assert.True(await reader.ReadAsync());
-            Assert.Equal(0, reader.GetInt32(0));
-        }
-        finally
-        {
-            await using var cleanup = new SqlCommand("""
-                DELETE dbo.PosSynchronizationOutboxMessages WHERE BusinessId=@BusinessId AND Stream=N'FiscalProvisioning';
-                DELETE dbo.FiscalSeries WHERE BusinessId=@BusinessId AND Prefix=N'FC';
-                DELETE fiscal.FiscalNumberingPolicies WHERE BusinessId=@BusinessId AND DocumentType=N'SalesInvoice';
-                DELETE dbo.DocumentSeries WHERE DeviceId IN(@Device1,@Device2,@Device3);
-                DELETE dbo.EnrolledDevices WHERE DeviceId IN(@Device1,@Device2,@Device3);
-                """, seed);
-            cleanup.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
-            cleanup.Parameters.AddWithValue("@Device1", devices[0]);
-            cleanup.Parameters.AddWithValue("@Device2", devices[1]);
-            cleanup.Parameters.AddWithValue("@Device3", devices[2]);
-            await cleanup.ExecuteNonQueryAsync();
-        }
+            using var readOnly = fixture.CreateAdminClient(FiscalPermissionCodes.ConfigurationRead);
+            var before = await WorkspaceAsync(readOnly);
+            Assert.Contains(before.AvailableResolutions, x => x.DianNumberingRangeId == rangeId);
+            Assert.Equal(100, before.AvailableConsecutives);
+            using var denied = await readOnly.PostAsJsonAsync(AssignmentUrl,
+                new AssignFiscalDeviceSeriesRequest(fixture.DeniedDeviceId, rangeId));
+            Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
 
-        async Task EnsureNumberingAsync(Guid deviceId)
-        {
-            await using var connection = new SqlConnection(fixture.ConnectionString);
-            await connection.OpenAsync();
-            await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
-                System.Data.IsolationLevel.Serializable);
-            await using var command = new SqlCommand("fiscal.FiscalDeviceNumberingEnsure", connection, transaction)
-            { CommandType = System.Data.CommandType.StoredProcedure };
-            command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
-            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
-            command.Parameters.AddWithValue("@DeviceId", deviceId);
-            command.Parameters.AddWithValue("@CurrentSeriesId", DBNull.Value);
-            command.Parameters.AddWithValue("@NextConsecutive", DBNull.Value);
-            command.Parameters.AddWithValue("@ActiveSeriesId", Guid.NewGuid());
-            command.Parameters.AddWithValue("@StandbySeriesId", Guid.NewGuid());
-            command.Parameters.AddWithValue("@ActiveNotificationId", Guid.NewGuid());
-            command.Parameters.AddWithValue("@StandbyNotificationId", Guid.NewGuid());
-            command.Parameters.AddWithValue("@Now", DateTimeOffset.UtcNow);
-            await command.ExecuteNonQueryAsync();
-            await transaction.CommitAsync();
+            using var manager = fixture.CreateAdminClient(
+                FiscalPermissionCodes.ConfigurationRead, FiscalPermissionCodes.ConfigurationManage);
+            using var response = await manager.PostAsJsonAsync(AssignmentUrl,
+                new AssignFiscalDeviceSeriesRequest(fixture.DeniedDeviceId, rangeId));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var assigned = (await response.Content.ReadFromJsonAsync<FiscalDeviceSeriesWorkspace>())!;
+            Assert.DoesNotContain(assigned.AvailableResolutions, x => x.DianNumberingRangeId == rangeId);
+            var device = Assert.Single(assigned.Devices, x => x.DeviceId == fixture.DeniedDeviceId);
+            Assert.True(device.IsProvisioned);
+            Assert.Equal("DI98", device.Prefix);
+            Assert.Equal(81001, device.RangeStart);
+            Assert.Equal(81100, device.RangeEnd);
+
+            using var repeated = await manager.PostAsJsonAsync(AssignmentUrl,
+                new AssignFiscalDeviceSeriesRequest(fixture.DeniedDeviceId, rangeId));
+            Assert.Equal(HttpStatusCode.OK, repeated.StatusCode);
+            Assert.Equal(1, await ScalarAsync("""
+                SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages
+                WHERE BusinessId=@BusinessId AND Stream=N'FiscalProvisioning';
+                """));
+            Assert.Equal(1, await ScalarAsync("""
+                SELECT COUNT(*) FROM dbo.FiscalSeries s
+                JOIN dbo.FiscalAuthorizations a ON a.FiscalAuthorizationId=s.FiscalAuthorizationId
+                WHERE s.DeviceId=@DeviceId AND a.DianNumberingRangeId=@RangeId
+                  AND s.RangeStart=81001 AND s.RangeEnd=81100 AND s.IsActive=1;
+                """, fixture.DeniedDeviceId, rangeId));
         }
+        finally { await CleanupAsync(rangeId, [seriesId], [fixture.DeniedDeviceId], false); }
     }
 
     [Fact]
-    public async Task Administrator_prepares_idempotent_active_and_standby_blocks_and_read_only_user_cannot_mutate_it()
+    public async Task One_resolution_cannot_be_assigned_concurrently_to_two_devices()
     {
-        var documentSeriesId = Guid.NewGuid();
-        var poolId = Guid.NewGuid();
-        var expiredAuthorizationId = Guid.NewGuid();
-        var expiredPoolId = Guid.NewGuid();
-        await SeedDeviceScopeAndPoolAsync(
-            documentSeriesId, poolId, expiredAuthorizationId, expiredPoolId);
-
+        var rangeId = Guid.NewGuid();
+        var devices = new[] { Guid.NewGuid(), Guid.NewGuid() };
+        var series = new[] { Guid.NewGuid(), Guid.NewGuid() };
+        await SeedAsync(rangeId, devices[0], series[0], "DIC", 82001, 82100, true);
+        await SeedDeviceAsync(devices[1], series[1], true);
         try
         {
-            using var readOnly = fixture.CreateAdminClient(
-                FiscalPermissionCodes.ConfigurationRead);
-            using var beforeResponse = await readOnly.GetAsync(
-                $"/api/commerce/v1/fiscal/configuration/devices?businessId={fixture.BusinessId:D}");
-            Assert.True(beforeResponse.IsSuccessStatusCode,
-                await beforeResponse.Content.ReadAsStringAsync());
-            var before = await beforeResponse.Content
-                .ReadFromJsonAsync<FiscalDeviceSeriesWorkspace>();
-            Assert.NotNull(before);
-            Assert.Equal(500, before.AvailableConsecutives);
-            Assert.Contains(before.Devices, device =>
-                device.DeviceId == fixture.DeniedDeviceId && !device.IsProvisioned);
-
-            using var deniedResponse = await readOnly.PostAsJsonAsync(
-                $"/api/commerce/v1/fiscal/configuration/devices/assign?businessId={fixture.BusinessId:D}",
-                new AssignFiscalDeviceSeriesRequest(fixture.DeniedDeviceId));
-            Assert.Equal(HttpStatusCode.Forbidden, deniedResponse.StatusCode);
-
-            using var manager = fixture.CreateAdminClient(
-                FiscalPermissionCodes.ConfigurationRead,
-                FiscalPermissionCodes.ConfigurationManage);
-            using var assignedResponse = await manager.PostAsJsonAsync(
-                $"/api/commerce/v1/fiscal/configuration/devices/assign?businessId={fixture.BusinessId:D}",
-                new AssignFiscalDeviceSeriesRequest(fixture.DeniedDeviceId));
-            Assert.Equal(HttpStatusCode.OK, assignedResponse.StatusCode);
-            var assigned = await assignedResponse.Content
-                .ReadFromJsonAsync<FiscalDeviceSeriesWorkspace>();
-            Assert.NotNull(assigned);
-            Assert.Equal(300, assigned.AvailableConsecutives);
-            var deviceAssignment = Assert.Single(assigned.Devices, device =>
-                device.DeviceId == fixture.DeniedDeviceId);
-            Assert.True(deviceAssignment.IsProvisioned);
-            Assert.Equal(30001, deviceAssignment.RangeStart);
-            Assert.Equal(30100, deviceAssignment.RangeEnd);
-
-            using var duplicateResponse = await manager.PostAsJsonAsync(
-                $"/api/commerce/v1/fiscal/configuration/devices/assign?businessId={fixture.BusinessId:D}",
-                new AssignFiscalDeviceSeriesRequest(fixture.DeniedDeviceId));
-            Assert.Equal(HttpStatusCode.OK, duplicateResponse.StatusCode);
-            var duplicate = await duplicateResponse.Content
-                .ReadFromJsonAsync<FiscalDeviceSeriesWorkspace>();
-            Assert.NotNull(duplicate);
-            Assert.Equal(300, duplicate.AvailableConsecutives);
-
-            Assert.Equal(2, await ScalarAsync(
-                "SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages WHERE BusinessId=@BusinessId AND Stream=N'FiscalProvisioning'"));
+            using var first = fixture.CreateAdminClient(FiscalPermissionCodes.ConfigurationRead, FiscalPermissionCodes.ConfigurationManage);
+            using var second = fixture.CreateAdminClient(FiscalPermissionCodes.ConfigurationRead, FiscalPermissionCodes.ConfigurationManage);
+            var responses = await Task.WhenAll(
+                first.PostAsJsonAsync(AssignmentUrl, new AssignFiscalDeviceSeriesRequest(devices[0], rangeId)),
+                second.PostAsJsonAsync(AssignmentUrl, new AssignFiscalDeviceSeriesRequest(devices[1], rangeId)));
+            Assert.Single(responses, x => x.StatusCode == HttpStatusCode.OK);
+            Assert.Single(responses, x => x.StatusCode == HttpStatusCode.BadRequest);
+            Assert.Equal(1, await ScalarAsync("""
+                SELECT COUNT(*) FROM dbo.FiscalSeries s
+                JOIN dbo.FiscalAuthorizations a ON a.FiscalAuthorizationId=s.FiscalAuthorizationId
+                WHERE a.DianNumberingRangeId=@RangeId AND s.IsActive=1;
+                """, rangeId: rangeId));
         }
-        finally
-        {
-            await ExecuteAsync("""
-                DELETE dbo.PosSynchronizationOutboxMessages
-                WHERE BusinessId=@BusinessId AND Stream=N'FiscalProvisioning'
-                  ;
-                DELETE dbo.FiscalSeries
-                WHERE BusinessId=@BusinessId AND EmitterKind=N'Device'
-                  AND (DeviceId=@DeviceId OR SeriesId IN(@PoolId,@ExpiredPoolId));
-                DELETE fiscal.FiscalNumberingPolicies
-                WHERE BusinessId=@BusinessId AND DocumentType=N'SalesInvoice';
-                DELETE dbo.DocumentSeries WHERE DocumentSeriesId=@DocumentSeriesId;
-                DELETE dbo.FiscalAuthorizations
-                WHERE FiscalAuthorizationId=@ExpiredAuthorizationId;
-                """, documentSeriesId, poolId, expiredAuthorizationId, expiredPoolId);
-        }
+        finally { await CleanupAsync(rangeId, series, devices, true); }
     }
 
-    private async Task SeedDeviceScopeAndPoolAsync(
-        Guid documentSeriesId, Guid poolId, Guid expiredAuthorizationId,
-        Guid expiredPoolId) =>
-        await ExecuteAsync("""
-            INSERT dbo.DocumentSeries
-              (DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,
-               Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
-            VALUES
-              (@DocumentSeriesId,@BusinessId,@DeviceId,N'SalesInvoice',N'VTA',N'98',
-               8,1,99999999,1,1,SYSDATETIMEOFFSET());
-            INSERT dbo.FiscalSeries
-              (SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
-               DocumentType,Prefix,RangeStart,RangeEnd,AllocationState,IsActive,CreatedAt)
-            VALUES
-              (@PoolId,@BusinessId,NULL,N'Device',@FiscalAuthorizationId,
-               N'SalesInvoice',N'FV99',30001,30500,N'Pool',1,SYSDATETIMEOFFSET());
-            INSERT dbo.FiscalAuthorizations(
-              FiscalAuthorizationId,BusinessId,AuthorizationNumber,SupplierTaxId,
-              Environment,QrValidationUrl,TechnicalKeyVersion,ValidFrom,ValidUntil,
-              AuthorizedRangeStart,AuthorizedRangeEnd,IsActive,CreatedAt)
-            VALUES(
-              @ExpiredAuthorizationId,@BusinessId,N'EXPIRED-TEST',N'9001234567',2,
-              N'https://example.test/qr',N'expired-test','2020-01-01','2020-12-31',
-              40001,40020,1,SYSDATETIMEOFFSET());
-            INSERT dbo.FiscalSeries(
-              SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
-              DocumentType,Prefix,RangeStart,RangeEnd,AllocationState,IsActive,CreatedAt)
-            VALUES(
-              @ExpiredPoolId,@BusinessId,NULL,N'Device',@ExpiredAuthorizationId,
-              N'SalesInvoice',N'OLD',40001,40020,N'Pool',1,SYSDATETIMEOFFSET());
-            """, documentSeriesId, poolId, expiredAuthorizationId, expiredPoolId);
+    private string AssignmentUrl =>
+        $"/api/commerce/v1/fiscal/configuration/devices/assign?businessId={fixture.BusinessId:D}";
 
-    private async Task ExecuteAsync(
-        string sql, Guid documentSeriesId, Guid poolId,
-        Guid expiredAuthorizationId, Guid expiredPoolId)
+    private async Task<FiscalDeviceSeriesWorkspace> WorkspaceAsync(HttpClient client)
+    {
+        using var response = await client.GetAsync(
+            $"/api/commerce/v1/fiscal/configuration/devices?businessId={fixture.BusinessId:D}");
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        return (await response.Content.ReadFromJsonAsync<FiscalDeviceSeriesWorkspace>())!;
+    }
+
+    private async Task SeedAsync(Guid rangeId, Guid deviceId, Guid documentSeriesId,
+        string prefix, long start, long end, bool createDevice = false)
+    {
+        await ExecuteAsync("""
+            UPDATE dbo.FiscalIssuerConfigurations SET Environment=1
+            WHERE BusinessId=@BusinessId AND IsActive=1;
+            """, environment: 1);
+        await SeedDeviceAsync(deviceId, documentSeriesId, createDevice);
+        await ExecuteAsync("""
+            INSERT fiscal.DianNumberingRanges(
+                DianNumberingRangeId,TenantId,AuthorizationNumber,ResolutionDate,Prefix,
+                RangeStart,RangeEnd,ValidFrom,ValidUntil,ProtectedTechnicalKey,ImportedAt,LastSeenAt)
+            SELECT @RangeId,@TenantId,CONCAT(N'TEST-',CONVERT(nvarchar(36),@RangeId)),CONVERT(date,SYSUTCDATETIME()),
+                   @Prefix,@Start,@End,DATEADD(day,-1,CONVERT(date,SYSUTCDATETIME())),
+                   DATEADD(year,1,CONVERT(date,SYSUTCDATETIME())),@ProtectedTechnicalKey,
+                   SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET();
+            """, deviceId, rangeId, prefix, start, end);
+    }
+
+    private Task SeedDeviceAsync(Guid deviceId, Guid documentSeriesId, bool createDevice) => ExecuteAsync("""
+        IF @CreateDevice=1
+            INSERT dbo.EnrolledDevices(DeviceId,TenantId,Name,CredentialSalt,CredentialHash,
+                CredentialIterations,IsActive,CreatedAt)
+            VALUES(@DeviceId,@TenantId,N'POS DIAN test',0x01,0x02,100000,1,SYSDATETIMEOFFSET());
+        INSERT dbo.DocumentSeries(DocumentSeriesId,BusinessId,DeviceId,DocumentType,
+            Prefix,SeriesCode,Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
+        VALUES(@DocumentSeriesId,@BusinessId,@DeviceId,N'SalesInvoice',N'VTA',
+            RIGHT(CONCAT(N'00',ABS(CHECKSUM(@DocumentSeriesId))%100),2),8,1,99999999,1,1,SYSDATETIMEOFFSET());
+        """, deviceId, documentSeriesId: documentSeriesId, createDevice: createDevice);
+
+    private async Task CleanupAsync(Guid rangeId, IReadOnlyCollection<Guid> documentSeriesIds,
+        IReadOnlyCollection<Guid> deviceIds, bool deleteDevices)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        foreach (var deviceId in deviceIds)
+        {
+            await using var command = new SqlCommand("""
+                DELETE dbo.PosSynchronizationOutboxMessages WHERE BusinessId=@BusinessId AND Stream=N'FiscalProvisioning';
+                DELETE secret FROM dbo.FiscalTechnicalKeySecrets secret JOIN dbo.FiscalAuthorizations a
+                  ON a.FiscalAuthorizationId=secret.FiscalAuthorizationId WHERE a.DianNumberingRangeId=@RangeId;
+                DELETE series FROM dbo.FiscalSeries series JOIN dbo.FiscalAuthorizations a
+                  ON a.FiscalAuthorizationId=series.FiscalAuthorizationId WHERE a.DianNumberingRangeId=@RangeId;
+                DELETE dbo.FiscalAuthorizations WHERE DianNumberingRangeId=@RangeId;
+                DELETE dbo.DocumentSeries WHERE DeviceId=@DeviceId AND DocumentSeriesId<>@FixtureDocumentSeriesId;
+                IF @DeleteDevice=1 DELETE dbo.EnrolledDevices WHERE DeviceId=@DeviceId;
+                """, connection);
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            command.Parameters.AddWithValue("@RangeId", rangeId);
+            command.Parameters.AddWithValue("@DeviceId", deviceId);
+            command.Parameters.AddWithValue("@FixtureDocumentSeriesId", Guid.Empty);
+            command.Parameters.AddWithValue("@DeleteDevice", deleteDevices);
+            await command.ExecuteNonQueryAsync();
+        }
+        await using var finish = new SqlCommand("""
+            DELETE fiscal.DianNumberingRanges WHERE DianNumberingRangeId=@RangeId;
+            UPDATE dbo.FiscalIssuerConfigurations SET Environment=2 WHERE BusinessId=@BusinessId AND IsActive=1;
+            """, connection);
+        finish.Parameters.AddWithValue("@RangeId", rangeId);
+        finish.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        await finish.ExecuteNonQueryAsync();
+    }
+
+    private async Task ExecuteAsync(string sql, Guid? deviceId = null, Guid? rangeId = null,
+        string? prefix = null, long? start = null, long? end = null,
+        Guid? documentSeriesId = null, bool createDevice = false, int? environment = null)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
-        command.Parameters.AddWithValue("@DeviceId", fixture.DeniedDeviceId);
-        command.Parameters.AddWithValue("@FiscalAuthorizationId", fixture.FiscalAuthorizationId);
-        command.Parameters.AddWithValue("@DocumentSeriesId", documentSeriesId);
-        command.Parameters.AddWithValue("@PoolId", poolId);
-        command.Parameters.AddWithValue("@ExpiredAuthorizationId", expiredAuthorizationId);
-        command.Parameters.AddWithValue("@ExpiredPoolId", expiredPoolId);
+        command.Parameters.AddWithValue("@FixtureAuthorizationId", fixture.FiscalAuthorizationId);
+        command.Parameters.AddWithValue("@DeviceId", deviceId ?? Guid.Empty);
+        command.Parameters.AddWithValue("@RangeId", rangeId ?? Guid.Empty);
+        command.Parameters.AddWithValue("@Prefix", prefix ?? string.Empty);
+        command.Parameters.AddWithValue("@Start", start ?? 0);
+        command.Parameters.AddWithValue("@End", end ?? 0);
+        command.Parameters.AddWithValue("@DocumentSeriesId", documentSeriesId ?? Guid.Empty);
+        command.Parameters.AddWithValue("@CreateDevice", createDevice);
+        command.Parameters.AddWithValue("@Environment", environment ?? 0);
+        command.Parameters.AddWithValue("@ProtectedTechnicalKey", ProtectTechnicalKey());
         await command.ExecuteNonQueryAsync();
     }
 
-    private async Task<int> ScalarAsync(string sql)
+    private static byte[] ProtectTechnicalKey()
+    {
+        var nonce = RandomNumberGenerator.GetBytes(12);
+        var plaintext = Encoding.UTF8.GetBytes(ServerSliceFixture.TechnicalKeyValue);
+        var ciphertext = new byte[plaintext.Length];
+        var tag = new byte[16];
+        using var aes = new AesGcm(ServerSliceFixture.FiscalSecretProtectionKey, tag.Length);
+        aes.Encrypt(nonce, plaintext, ciphertext, tag);
+        return [.. nonce, .. tag, .. ciphertext];
+    }
+
+    private async Task<int> ScalarAsync(string sql, Guid? deviceId = null, Guid? rangeId = null)
     {
         await using var connection = new SqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+        command.Parameters.AddWithValue("@DeviceId", deviceId ?? Guid.Empty);
+        command.Parameters.AddWithValue("@RangeId", rangeId ?? Guid.Empty);
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 }

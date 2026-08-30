@@ -276,6 +276,16 @@ export type PosPrintableReceipt = {
   cufe: string | null;
   qrPayload: string | null;
   fiscalStatus: string;
+  withholdingTotal: number;
+  netPayableAmount: number;
+  withholdings: Array<{
+    ruleCode: string;
+    name: string;
+    kind: string;
+    taxableBase: number;
+    rate: number;
+    amount: number;
+  }> | null;
 };
 
 export type PosCompleteSaleResult = {
@@ -435,6 +445,7 @@ export interface PosClient {
   health(): Promise<{
     status: string;
     serverConnected: boolean;
+    pushConnected: boolean;
     deviceSeriesCode: string;
     businessId: string;
     businessName: string;
@@ -637,6 +648,7 @@ export class PosEdgeClient implements PosClient {
     return this.request<{
       status: string;
       serverConnected: boolean;
+      pushConnected: boolean;
       deviceSeriesCode: string;
       businessId: string;
       warehouseId: string;

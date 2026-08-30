@@ -18,9 +18,8 @@ public sealed class SqlFiscalOnboardingStore(
         "https://vpfe-hab.dian.gov.co/WcfDianCustomerServices.svc";
     private const string ProductionEndpoint =
         "https://vpfe.dian.gov.co/WcfDianCustomerServices.svc";
-    private const string QrValidationUrl =
-        "https://catalogo-vpfe.dian.gov.co/document/searchqr";
-    private const string TechnicalKeyVersion = "dian-get-numbering-range";
+    private const string QrValidationUrl = DianFiscalDefaults.ProductionQrValidationUrl;
+    private const string TechnicalKeyVersion = DianFiscalDefaults.NumberingRangeTechnicalKeyVersion;
 
     public async Task<FiscalOnboardingConfiguration> GetAsync(
         Guid tenantId, Guid businessId, CancellationToken cancellationToken)
@@ -77,11 +76,12 @@ public sealed class SqlFiscalOnboardingStore(
                        r.Prefix,r.RangeStart,r.RangeEnd,r.ValidFrom,r.ValidUntil
                 FROM fiscal.DianNumberingRanges r
                 JOIN dbo.FiscalAuthorizations a
-                  ON a.BusinessId=b.BusinessId AND a.AuthorizationNumber=r.AuthorizationNumber
+                  ON a.BusinessId=b.BusinessId AND a.DianNumberingRangeId=r.DianNumberingRangeId
                  AND a.Environment=1 AND a.IsActive=1
                 JOIN dbo.FiscalSeries series
                   ON series.FiscalAuthorizationId=a.FiscalAuthorizationId
-                 AND series.DocumentType=N'SalesInvoice' AND series.IsActive=1
+                 AND series.DocumentType=N'SalesInvoice' AND series.EmitterKind=N'Server'
+                 AND series.DeviceId IS NULL AND series.IsActive=1
                 WHERE r.TenantId=b.TenantId AND r.AssignedBusinessId=b.BusinessId
                 ORDER BY r.AssignedAt DESC) assigned
             OUTER APPLY(
@@ -98,11 +98,12 @@ public sealed class SqlFiscalOnboardingStore(
                        r.Prefix,r.RangeStart,r.RangeEnd,r.ValidFrom,r.ValidUntil
                 FROM fiscal.DianNumberingRanges r
                 JOIN dbo.FiscalAuthorizations a
-                  ON a.BusinessId=b.BusinessId AND a.AuthorizationNumber=r.AuthorizationNumber
+                  ON a.BusinessId=b.BusinessId AND a.DianNumberingRangeId=r.DianNumberingRangeId
                  AND a.Environment=1 AND a.IsActive=1
                 JOIN dbo.FiscalSeries series
                   ON series.FiscalAuthorizationId=a.FiscalAuthorizationId
-                 AND series.DocumentType=N'SupportDocument' AND series.IsActive=1
+                 AND series.DocumentType=N'SupportDocument' AND series.EmitterKind=N'Server'
+                 AND series.DeviceId IS NULL AND series.IsActive=1
                 WHERE r.TenantId=b.TenantId AND r.AssignedBusinessId=b.BusinessId
                 ORDER BY r.AssignedAt DESC) supportAssigned
             WHERE b.BusinessId=@BusinessId;
@@ -374,7 +375,7 @@ public sealed class SqlFiscalOnboardingStore(
             DECLARE @AuthorizationNumber nvarchar(64),@Prefix nvarchar(16),@RangeStart bigint,
                     @RangeEnd bigint,@ValidFrom date,@ValidUntil date,@ProtectedTechnicalKey varbinary(max),
                     @SupplierTaxId nvarchar(32),@AuthorizationId uniqueidentifier=@NewAuthorizationId,
-                    @Version int,@OnlineRangeEnd bigint,@OfflineRangeStart bigint;
+                    @Version int;
             SELECT @AuthorizationNumber=AuthorizationNumber,@Prefix=Prefix,@RangeStart=RangeStart,
                    @RangeEnd=RangeEnd,@ValidFrom=ValidFrom,@ValidUntil=ValidUntil,
                    @ProtectedTechnicalKey=ProtectedTechnicalKey
@@ -384,9 +385,6 @@ public sealed class SqlFiscalOnboardingStore(
               AND ValidUntil>=CONVERT(date,@Now);
             IF @AuthorizationNumber IS NULL
                 THROW 51022,'La resolución ya fue asignada a otra sede, venció o no existe.',1;
-            IF @RangeStart=@RangeEnd
-                THROW 51022,'La resolución necesita al menos dos consecutivos para servidor y POS offline.',1;
-
             UPDATE fiscal.DianNumberingRanges
             SET AssignedBusinessId=@BusinessId,AssignedAt=COALESCE(AssignedAt,@Now),
                 AssignedByUserId=COALESCE(AssignedByUserId,@UserId)
@@ -429,12 +427,11 @@ public sealed class SqlFiscalOnboardingStore(
             ORDER BY configuration.CreatedAt DESC,configuration.Version DESC;
             IF @@ROWCOUNT<>1 THROW 51022,'No existe una configuración de habilitación vigente para activar.',1;
 
-            UPDATE dbo.FiscalAuthorizations SET IsActive=0 WHERE BusinessId=@BusinessId AND IsActive=1;
             INSERT dbo.FiscalAuthorizations(
-                FiscalAuthorizationId,BusinessId,AuthorizationNumber,SupplierTaxId,Environment,
+                FiscalAuthorizationId,BusinessId,DianNumberingRangeId,AuthorizationNumber,SupplierTaxId,Environment,
                 QrValidationUrl,TechnicalKeyVersion,ValidFrom,ValidUntil,AuthorizedRangeStart,
                 AuthorizedRangeEnd,IsActive,CreatedAt)
-            VALUES(@AuthorizationId,@BusinessId,@AuthorizationNumber,@SupplierTaxId,1,
+            VALUES(@AuthorizationId,@BusinessId,@RangeId,@AuthorizationNumber,@SupplierTaxId,1,
                    @QrUrl,@TechnicalKeyVersion,@ValidFrom,@ValidUntil,@RangeStart,@RangeEnd,
                    1,@Now);
             INSERT dbo.FiscalTechnicalKeySecrets(
@@ -443,20 +440,12 @@ public sealed class SqlFiscalOnboardingStore(
             VALUES(@TechnicalKeySecretId,@BusinessId,@AuthorizationId,@TechnicalKeyVersion,
                    1,@ProtectedTechnicalKey,@Now,@Now);
 
-            UPDATE dbo.FiscalSeries SET IsActive=0
-            WHERE BusinessId=@BusinessId AND DocumentType=N'SalesInvoice' AND IsActive=1;
-            SET @OnlineRangeEnd=@RangeStart+((@RangeEnd-@RangeStart)/2);
-            SET @OfflineRangeStart=@OnlineRangeEnd+1;
             INSERT dbo.FiscalSeries(SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
-                DocumentType,Prefix,RangeStart,RangeEnd,AllocationState,IsActive,CreatedAt)
+                DocumentType,Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)
             VALUES(@OnlineSeriesId,@BusinessId,NULL,N'Server',@AuthorizationId,
-                   N'SalesInvoice',@Prefix,@RangeStart,@OnlineRangeEnd,N'Active',1,@Now);
+                   N'SalesInvoice',@Prefix,@RangeStart,@RangeEnd,1,@Now);
             INSERT dbo.FiscalSeriesCursors(SeriesId,NextConsecutive,UpdatedAt)
             VALUES(@OnlineSeriesId,@RangeStart,@Now);
-            INSERT dbo.FiscalSeries(SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
-                DocumentType,Prefix,RangeStart,RangeEnd,AllocationState,IsActive,CreatedAt)
-            VALUES(@OfflineSeriesId,@BusinessId,NULL,N'Device',@AuthorizationId,
-                   N'SalesInvoice',@Prefix,@OfflineRangeStart,@RangeEnd,N'Pool',1,@Now);
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
@@ -470,7 +459,6 @@ public sealed class SqlFiscalOnboardingStore(
         Add(command, "@NewAuthorizationId", ids.NewId());
         Add(command, "@TechnicalKeySecretId", ids.NewId());
         Add(command, "@OnlineSeriesId", ids.NewId());
-        Add(command, "@OfflineSeriesId", ids.NewId());
         Add(command, "@ProductionEndpoint", ProductionEndpoint);
         Add(command, "@QrUrl", QrValidationUrl);
         Add(command, "@TechnicalKeyVersion", TechnicalKeyVersion);
@@ -517,10 +505,10 @@ public sealed class SqlFiscalOnboardingStore(
             UPDATE dbo.FiscalSeries SET IsActive=0
             WHERE BusinessId=@BusinessId AND DocumentType=N'SupportDocument' AND IsActive=1;
             INSERT dbo.FiscalAuthorizations(
-                FiscalAuthorizationId,BusinessId,AuthorizationNumber,SupplierTaxId,Environment,
+                FiscalAuthorizationId,BusinessId,DianNumberingRangeId,AuthorizationNumber,SupplierTaxId,Environment,
                 QrValidationUrl,TechnicalKeyVersion,ValidFrom,ValidUntil,
                 AuthorizedRangeStart,AuthorizedRangeEnd,IsActive,CreatedAt)
-            VALUES(@AuthorizationId,@BusinessId,@AuthorizationNumber,@SupplierTaxId,1,
+            VALUES(@AuthorizationId,@BusinessId,@RangeId,@AuthorizationNumber,@SupplierTaxId,1,
                    @QrUrl,N'cuds-sha384',@ValidFrom,@ValidUntil,@RangeStart,@RangeEnd,1,@Now);
             INSERT dbo.FiscalSeries(
                 SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,

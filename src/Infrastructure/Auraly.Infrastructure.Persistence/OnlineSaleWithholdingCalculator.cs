@@ -10,19 +10,29 @@ public sealed class OnlineSaleWithholdingCalculator(
     public Task<WithholdingCalculationSnapshot> CalculateAsync(
         Guid tenantId,
         OnlineSaleSettlementContext context,
-        CancellationToken cancellationToken) =>
-        withholdings.CalculateAsync(
+        CancellationToken cancellationToken)
+    {
+        var gross = decimal.Round(
+            context.TaxExclusiveAmount + context.VatAmount,
+            4,
+            MidpointRounding.AwayFromZero);
+        if (context.CustomerId is null)
+            return Task.FromResult(new WithholdingCalculationSnapshot(
+                gross, 0m, gross, []));
+
+        return withholdings.CalculateAsync(
             tenantId,
             context.BusinessId,
             new WithholdingPreviewRequest(
                 context.BusinessId,
                 WithholdingDirections.Sale,
                 WithholdingRecognitionMoments.Accrual,
-                context.CustomerId ?? Guid.Empty,
+                context.CustomerId.Value,
                 null,
                 null,
                 context.TaxExclusiveAmount,
                 context.VatAmount,
                 context.OccurredAt),
             cancellationToken);
+    }
 }

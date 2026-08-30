@@ -73,6 +73,7 @@ public sealed class HttpPosSaleUploadClient(
                 receipt is not null &&
                 receipt.DocumentId == request.DocumentId &&
                 receipt.Status is PosSaleRemoteStatuses.FiscalVerified
+                    or PosSaleRemoteStatuses.CommercialAccepted
                     or PosSaleRemoteStatuses.AlreadyProcessed)
             {
                 return new PosSaleUploadAttempt(

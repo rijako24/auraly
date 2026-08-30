@@ -72,29 +72,23 @@ servidor o en su almacén seguro.
 
 ### Regla para cajas offline
 
-La autorización DIAN pertenece a la empresa y no al equipo. El servidor conserva
-la serie central para ventas en línea y un único rango disponible para POS Edge.
-De ese rango asigna, dentro de una transacción serializable, bloques exclusivos y
-no solapados a cada dispositivo enrolado. Dos cajas nunca consumen el mismo
-bloque ni comparten un cursor local.
+Cada resolución DIAN completa tiene un solo emisor. Para emisión offline se
+asigna explícita y exclusivamente a un dispositivo enrolado. No se divide en
+bloques, no existe un pool compartido, no hay standby y el enrolamiento no toma
+una resolución automáticamente.
 
-La política de tamaño se almacena en `fiscal.FiscalNumberingPolicies`; no se
-codifica en React ni se decide manualmente al enrolar. Cada dispositivo conserva
-un bloque activo y, cuando existe numeración autorizada, un bloque preparado. El
-servidor prepara ambos durante el enrolamiento y repone el preparado después de
-promoverlo, al iniciar o al recuperar conectividad. La consulta es
-idempotente: repetirla devuelve las mismas asignaciones y no consume otro rango.
+La asignación se realiza desde DIAN en una transacción serializable. La base de
+datos impide que el mismo rango DIAN se vincule a más de una autorización y que
+un dispositivo tenga más de una serie fiscal activa del mismo tipo. Repetir la
+misma asignación es idempotente; intentar asignar la resolución o el dispositivo
+a otro propietario falla de forma explícita.
 
-Al agotar el bloque activo, POS Edge promueve el preparado en la misma transacción
-local que inicia la siguiente emisión. Los rangos asignados nunca se recuperan ni
-se entregan a otra caja, aunque un dispositivo se pierda, sea revocado o deje
-números sin consumir. Si no queda un bloque preparado y no hay conexión, la
-factura electrónica se bloquea de forma explícita; los comprobantes no fiscales
-conservan sus reglas propias.
-
-El estado de asignación (`Pool`, `Active`, `Standby`, `Exhausted`) es un catálogo
-cerrado persistido y auditado. El cambio de dispositivo o la revocación conserva
-la historia y nunca renumera documentos ya emitidos.
+POS Edge descarga únicamente la resolución asignada al equipo, incluida su
+vigencia, rango completo, prefijo y clave técnica protegida. Mantiene localmente
+un cursor durable y atómico. Al llegar al final del rango o vencer la resolución,
+bloquea nuevas facturas electrónicas; nunca solicita otro bloque, inventa una
+serie ni toma la resolución de otra caja. El administrador debe asignar una nueva
+resolución completa conforme al procedimiento auditado.
 
 ### Consumo del número
 
@@ -173,8 +167,9 @@ El proyecto SQL Database es el único dueño de la evolución del esquema. Debe
 garantizar:
 
 - unicidad del número fiscal por empresa, tipo, prefijo y consecutivo;
-- máximo un bloque activo y uno preparado por caja/dispositivo;
-- asignación serializable y no solapada desde un único rango disponible;
+- máximo una resolución DIAN completa y activa por caja/dispositivo y tipo;
+- un único propietario por rango DIAN;
+- asignación serializable, explícita e idempotente;
 - concurrencia optimista para cursores de series del servidor;
 - inmutabilidad lógica del snapshot fiscal emitido;
 - auditoría de consumo, revocación, agotamiento y reasignación.
@@ -194,17 +189,18 @@ No se permite `MAX(numero) + 1`.
   `FiscalIntegrityConflict`;
 - el documento duplicado se procesa una sola vez;
 - una caída durante sincronización reanuda sin renumerar.
-- tres cajas reciben bloques disjuntos aun cuando solicitan simultáneamente;
-- promover el bloque preparado reserva una sola vez su reemplazo;
-- reiniciar POS Edge conserva y promueve el bloque preparado sin conexión;
-- repetir la consulta de aprovisionamiento no reserva bloques adicionales.
+- dos cajas que compiten por la misma resolución obtienen un solo ganador;
+- el equipo recibe exactamente los límites completos del rango DIAN;
+- reiniciar POS Edge conserva el cursor local sin reasignar la resolución;
+- repetir la consulta de aprovisionamiento no crea autorizaciones ni series.
 
 ## Decisiones desplazadas
 
 Esta ADR reemplaza cualquier interpretación histórica que permita:
 
 - calcular el número mediante `MAX + 1`;
-- compartir un mismo cursor o bloque entre cajas offline;
+- compartir una resolución, cursor o rango entre cajas offline;
+- dividir una resolución en bloques activos o preparados;
 - consumir números al guardar borradores;
 - reemplazar en el servidor el número emitido por POS Edge;
 - corregir el snapshot después de imprimir;

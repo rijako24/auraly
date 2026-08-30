@@ -163,6 +163,7 @@ public static class PosEdgeHostApplication
             sp.GetRequiredService<IAuralyIdGenerator>(),
             sp.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton<PosServerConnectionState>();
+        builder.Services.AddSingleton<PosPushConnectionState>();
         builder.Services.AddSingleton(sp => new HttpClient(
             new PosServerConnectionHandler(
                 new HttpClientHandler(),
@@ -231,6 +232,7 @@ public static class PosEdgeHostApplication
             credentials,
             sp.GetRequiredService<PosSynchronizationSignal>(),
             sp.GetRequiredService<PosServerConnectionState>(),
+            sp.GetRequiredService<PosPushConnectionState>(),
             sp.GetRequiredService<PosUiStateSignal>(),
             sp.GetRequiredService<PosSynchronizationEventLog>(),
             tenantId,
@@ -574,7 +576,7 @@ public static class PosEdgeHostApplication
             var user = await identities.ResolveAsync(
                 http.Request.Headers["X-Auraly-User-Session"].ToString(), ct);
             if (user is null || !user.Permissions.Contains(PosSynchronizationPermissions.ReadEvents))
-                return Results.Forbid();
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
             return Results.Ok(events.Read(take ?? 100));
         });
         edge.MapPost("/auth/complete-enrollment", async (
@@ -598,6 +600,7 @@ public static class PosEdgeHostApplication
         edge.MapGet("/health", async (
             HttpContext http,
             PosServerConnectionState server,
+            PosPushConnectionState push,
             PosWorkstationIdentity workstation,
             PosCatalogStore catalog,
             PosLocalIdentityStore identities,
@@ -640,6 +643,7 @@ public static class PosEdgeHostApplication
             {
                 status,
                 serverConnected = server.IsConnected,
+                pushConnected = push.IsConnected,
                 deviceSeriesCode = workstation.DeviceSeriesCode,
                 businessId = runtime.BusinessId.Value,
                 warehouseId = runtime.WarehouseId.Value,
@@ -1128,6 +1132,7 @@ public static class PosEdgeHostApplication
         {
             status = "EnrollmentRequired",
             serverConnected = false,
+            pushConnected = false,
             deviceSeriesCode = "",
             businessId = "",
             businessName = "",

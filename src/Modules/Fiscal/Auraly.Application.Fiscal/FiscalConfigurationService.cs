@@ -18,7 +18,8 @@ public interface IFiscalDeviceSeriesStore
     Task<FiscalDeviceSeriesWorkspace> ListAsync(
         Guid tenantId, Guid businessId, CancellationToken cancellationToken);
     Task<FiscalDeviceSeriesWorkspace> AssignAsync(
-        Guid tenantId, Guid businessId, AssignFiscalDeviceSeriesRequest request,
+        Guid tenantId, Guid businessId, Guid userId,
+        AssignFiscalDeviceSeriesRequest request,
         CancellationToken cancellationToken);
     Task<IReadOnlyList<PosFiscalSeriesProvisioning>> GetProvisioningAsync(
         Guid tenantId, Guid businessId, Guid deviceId, Guid? currentSeriesId,
@@ -46,7 +47,10 @@ public sealed class FiscalDeviceSeriesService(IFiscalDeviceSeriesStore store)
         ValidateBusiness(businessId);
         if (request.DeviceId == Guid.Empty)
             throw new FiscalConfigurationValidationException("El equipo enrolado es obligatorio.");
-        return store.AssignAsync(user.TenantId, businessId, request, cancellationToken);
+        if (request.DianNumberingRangeId == Guid.Empty)
+            throw new FiscalConfigurationValidationException("La resolución DIAN es obligatoria.");
+        return store.AssignAsync(
+            user.TenantId, businessId, user.UserId, request, cancellationToken);
     }
 
     public Task<IReadOnlyList<PosFiscalSeriesProvisioning>> GetProvisioningAsync(

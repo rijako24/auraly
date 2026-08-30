@@ -49,6 +49,11 @@ export interface NavSeparator {
 
 export type NavEntry = NavItem | NavSeparator;
 
+export interface NavGroup {
+  label: string;
+  items: NavItem[];
+}
+
 export const navigation: NavEntry[] = [
   { name: "Hoy", href: "/dashboard", icon: TrendingUp, permission: "sales.reports.read" },
   { type: "separator", label: "Reportes" },
@@ -100,6 +105,35 @@ export const navigation: NavEntry[] = [
   { name: "Auditoria", href: "/dashboard/audit-logs", icon: FileSearch, permission: "audit_logs.read" },
   { type: "separator", label: "Configuracion" },
   { name: "Maestros", href: "/dashboard/settings/masters", icon: Library, permission: "masters.geography.read" },
-  { name: "Facturación electrónica", href: "/dashboard/settings/fiscal", icon: FileKey2, permission: "fiscal.configuration.read" },
+  { name: "DIAN", href: "/dashboard/settings/fiscal", icon: FileKey2, permission: "fiscal.configuration.read" },
   { name: "Configuracion", href: "/dashboard/settings", icon: Settings, permission: "business_config.read" },
 ];
+
+export function authorizedNavigationItems(permissions: readonly string[]): NavItem[] {
+  const granted = new Set(permissions);
+  return navigation.filter((entry): entry is NavItem =>
+    "href" in entry && (!entry.permission || granted.has(entry.permission)));
+}
+
+export function authorizedNavigationGroups(permissions: readonly string[]): NavGroup[] {
+  const granted = new Set(permissions);
+  const groups: NavGroup[] = [];
+  let currentGroup: NavGroup | undefined;
+
+  for (const entry of navigation) {
+    if ("type" in entry) {
+      currentGroup = { label: entry.label, items: [] };
+      groups.push(currentGroup);
+      continue;
+    }
+
+    if (entry.permission && !granted.has(entry.permission)) continue;
+    if (!currentGroup) {
+      currentGroup = { label: "Principal", items: [] };
+      groups.push(currentGroup);
+    }
+    currentGroup.items.push(entry);
+  }
+
+  return groups.filter((group) => group.items.length > 0);
+}

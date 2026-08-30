@@ -104,7 +104,7 @@ import { calculateRetailUnitPrice } from "./pos-retail-price";
 import { canRequestOrderSave } from "./pos-order-save-availability";
 import { capturedLineAfterAddition } from "./pos-capture-presentation";
 import { capturePosFunctionShortcut, isPosCashDrawerShortcut } from "./pos-function-shortcut";
-import { parsePosBarcodeCapture } from "./pos-barcode-capture";
+import { parsePosBarcodeCapture, submitPosCaptureOnEnter } from "./pos-barcode-capture";
 import { acceptsPosQuantityDraft, blocksPosQuantityKey, validatePosQuantity } from "./pos-quantity-validation";
 import { useAuthStore } from "@/stores/auth-store";
 import { usesEnrolledPosRuntime } from "@/services/pos/pos-launch-session";
@@ -237,6 +237,7 @@ export default function PosPage() {
   const [busy, setBusy] = useState(false);
   const [edgeReady, setEdgeReady] = useState(false);
   const [serverConnected, setServerConnected] = useState(false);
+  const [pushConnected, setPushConnected] = useState(false);
   const [synchronization, setSynchronization] = useState({
     inProgress: false,
     lastAt: null as string | null,
@@ -381,13 +382,11 @@ export default function PosPage() {
       ? "No hay conexión con Auraly. La venta en línea requiere conexión con el servidor."
       : client?.mode === "online" && caught instanceof PosEdgeError
         ? caught.message
-        : status === 409 && caught instanceof PosEdgeError && caught.message.includes("pendiente de imprimir")
+        : status === 409 && caught instanceof PosEdgeError
           ? caught.message
           : status === 404
             ? "Producto no encontrado en el catálogo local"
-            : status === 409
-              ? "La cantidad solicitada no está disponible"
-              : status === 503 && caught instanceof PosEdgeError && caught.message.includes("tirilla")
+            : status === 503 && caught instanceof PosEdgeError && caught.message.includes("tirilla")
                 ? "La factura fue emitida, pero la tirilla no pudo imprimirse. Reintenta sin modificar la venta."
                 : status === 503
                   ? "La bodega exige validar inventario y no hay conexión"
@@ -444,6 +443,7 @@ export default function PosPage() {
                 error: health.lastSynchronizationError,
               });
               setServerConnected(health.serverConnected);
+              setPushConnected(health.pushConnected);
               setWorkstation({
                 deviceSeriesCode: health.deviceSeriesCode,
                 businessId: health.businessId,
@@ -565,6 +565,7 @@ export default function PosPage() {
             error: health.lastSynchronizationError,
           });
           setServerConnected(health.serverConnected);
+          setPushConnected(health.pushConnected);
           setWorkstation({
             deviceSeriesCode: health.deviceSeriesCode,
             businessId: health.businessId,
@@ -2482,7 +2483,9 @@ function changeOnlineWorkspace() {
                   }
                 }}
                 onKeyDown={(event) => {
-                  if (
+                  // Barcode readers send Enter as a synthetic keyboard event and
+                  // some installed WebView versions skip implicit form submission.
+                  if (!submitPosCaptureOnEnter(event) &&
                     (event.key === "ArrowDown" || event.key === "ArrowUp") &&
                     draft?.lines.length
                   ) {
@@ -3272,7 +3275,7 @@ function changeOnlineWorkspace() {
           }}
         />
       )}
-      {synchronizationEventsOpen && client && canReadSynchronizationEvents && <PosSynchronizationEventsDialog open client={client} connected={serverConnected} inProgress={synchronization.inProgress} onClose={() => { setSynchronizationEventsOpen(false); focusScanner(); }} />}
+      {synchronizationEventsOpen && client && canReadSynchronizationEvents && <PosSynchronizationEventsDialog open client={client} connected={client.mode === "online" ? serverConnected : pushConnected} inProgress={synchronization.inProgress} onClose={() => { setSynchronizationEventsOpen(false); focusScanner(); }} />}
 
       {inventoryNotice && (
         <PosConfirmDialog

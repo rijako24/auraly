@@ -30,7 +30,7 @@ public sealed class SqlFiscalConfigurationStore(
                 FROM dbo.FiscalSeries s WHERE s.BusinessId=a.BusinessId
                   AND s.FiscalAuthorizationId=a.FiscalAuthorizationId
                   AND s.DocumentType=N'SalesInvoice' AND s.EmitterKind=N'Device'
-                  AND s.DeviceId IS NULL AND s.IsActive=1 ORDER BY s.CreatedAt) offline
+                  AND s.DeviceId IS NOT NULL AND s.IsActive=1 ORDER BY s.CreatedAt) offline
             OUTER APPLY(SELECT TOP(1) k.FiscalTechnicalKeySecretId
                 FROM dbo.FiscalTechnicalKeySecrets k WHERE k.BusinessId=a.BusinessId
                   AND k.FiscalAuthorizationId=a.FiscalAuthorizationId
@@ -41,7 +41,8 @@ public sealed class SqlFiscalConfigurationStore(
                   WHERE salesSeries.FiscalAuthorizationId=a.FiscalAuthorizationId
                     AND salesSeries.BusinessId=a.BusinessId
                     AND salesSeries.DocumentType=N'SalesInvoice')
-            ORDER BY a.CreatedAt DESC,a.FiscalAuthorizationId;
+            ORDER BY CASE WHEN online.SeriesId IS NOT NULL THEN 0 ELSE 1 END,
+                     a.CreatedAt DESC,a.FiscalAuthorizationId;
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);

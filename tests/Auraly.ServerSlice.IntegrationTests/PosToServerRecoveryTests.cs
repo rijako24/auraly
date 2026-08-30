@@ -11,12 +11,38 @@ using Auraly.Fiscal.Core;
 using Auraly.Pos.Edge.Infrastructure;
 using Microsoft.Data.Sqlite;
 using Microsoft.Data.SqlClient;
+using System.Net;
+using System.Net.Http.Json;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
 public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task Commercial_receipt_acknowledgement_completes_the_local_upload()
+    {
+        var request = fixture.CreateValidRequest(99);
+        var receipt = new PosSaleUploadResponse(
+            Guid.NewGuid(), request.DocumentId,
+            PosSaleRemoteStatuses.CommercialAccepted,
+            null, null, false, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, null);
+        using var http = new HttpClient(new FixedResponseHandler(
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(receipt)
+            }))
+        {
+            BaseAddress = new Uri("https://auraly.test")
+        };
+        var client = new HttpPosSaleUploadClient(http, "device-secret");
+
+        var attempt = await client.UploadAsync(request, request.DocumentId.ToString("D"));
+
+        Assert.Equal(PosSaleUploadDisposition.Uploaded, attempt.Disposition);
+        Assert.Equal(PosSaleRemoteStatuses.CommercialAccepted, attempt.Response?.Status);
+    }
+
     [Fact]
     public async Task Physical_sqlite_restarts_uploads_once_and_preserves_conflict()
     {
@@ -59,8 +85,8 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
                     register.DeviceId!.Value,
                     ServerSliceFixture.Prefix,
                     ServerSliceFixture.AuthorizationNumber,
-                    501,
-                    600,
+                    1,
+                    10_000,
                     new DateOnly(2028, 12, 31),
                     fixture.FiscalAuthorizationId));
             var firstDocument = new DocumentId(Guid.NewGuid());
@@ -81,7 +107,7 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
                 await server.OpenAsync();
                 await using var exhaust = new SqlCommand("""
                     UPDATE dbo.FiscalSeries
-                    SET IsActive=0,AllocationState=N'Exhausted'
+                    SET IsActive=0
                     WHERE SeriesId=@SeriesId;
                     """, server);
                 exhaust.Parameters.AddWithValue("@SeriesId", fixture.SeriesId);
@@ -345,6 +371,14 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
             string idempotencyKey,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(result);
+    }
+
+    private sealed class FixedResponseHandler(HttpResponseMessage response)
+        : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) => Task.FromResult(response);
     }
 }
 

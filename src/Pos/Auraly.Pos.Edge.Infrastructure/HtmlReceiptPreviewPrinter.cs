@@ -88,6 +88,16 @@ public sealed class HtmlReceiptPreviewRenderer
                 .Select(tax => Pair(
                     $"{TaxName(tax.TaxCode)} {Rate(tax.TaxRate)}% · base {Money(tax.Base)}",
                     Money(tax.Amount))));
+        var withholdingLines = string.Join(
+            Environment.NewLine,
+            (receipt.Withholdings ?? []).Select(withholding =>
+                Pair($"Ret. {withholding.Name} ({Rate(withholding.Rate)}%)", $"-{Money(withholding.Amount)}")));
+        var withholdings = receipt.WithholdingTotal <= 0
+            ? string.Empty
+            : $"<div class=\"section-title\">Retenciones</div>{withholdingLines}{Pair("Total retenciones", $"-{Money(receipt.WithholdingTotal)}")}";
+        var netPayable = receipt.WithholdingTotal > 0
+            ? receipt.NetPayableAmount
+            : receipt.PayableAmount;
 
         var companyName = Encode(receipt.CompanyName ?? string.Empty);
         var companyLogo = string.IsNullOrWhiteSpace(receipt.CompanyLogoSource)
@@ -175,7 +185,9 @@ public sealed class HtmlReceiptPreviewRenderer
                 <div class="section-title">Impuestos por tarifa</div>
                 {{taxes}}
                 {{Pair("Total impuestos", Money(receipt.TaxAmount))}}
-                <div class="pair total"><span>Total</span><strong>{{Money(receipt.PayableAmount)}}</strong></div>
+                {{Pair("Total bruto", Money(receipt.PayableAmount))}}
+                {{withholdings}}
+                <div class="pair total"><span>Total a pagar</span><strong>{{Money(netPayable)}}</strong></div>
                 <hr class="rule">
                 <div class="section-title">Medios de pago</div>
                 {{payments}}

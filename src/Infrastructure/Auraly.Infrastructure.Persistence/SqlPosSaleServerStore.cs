@@ -60,7 +60,8 @@ public sealed class SqlPosSaleServerStore(
               AND s.DocumentType=@DocumentType
               AND s.Prefix=@Prefix
               AND @Consecutive BETWEEN s.RangeStart AND s.RangeEnd
-              AND s.AllocationState IN(N'Active',N'Standby',N'Exhausted')
+              -- A delayed offline document keeps the assignment that was valid when issued.
+              -- IsActive governs new issuance and must not invalidate historical reception.
               AND a.AuthorizationNumber=@AuthorizationNumber
               AND a.SupplierTaxId=@SupplierTaxId
               AND a.Environment=@Environment
@@ -340,7 +341,13 @@ public sealed class SqlPosSaleServerStore(
         sqlCommand.Parameters.AddWithValue("@DocumentId", request.DocumentId);
         sqlCommand.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         sqlCommand.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
-        sqlCommand.Parameters.AddWithValue("@WorkSessionId", request.WorkSessionId);
+        // Reception persists the immutable document first. The canonical document
+        // processor owns work-session validation/materialization and links the
+        // document in the same processing transaction (EnsureWorkSessionAsync).
+        // An offline login creates this identifier locally, so requiring its FK to
+        // exist before processing makes every first offline upload impossible.
+        sqlCommand.Parameters.Add("@WorkSessionId", SqlDbType.UniqueIdentifier).Value =
+            DBNull.Value;
         sqlCommand.Parameters.AddWithValue("@DeviceId", request.DeviceId == Guid.Empty ? DBNull.Value : request.DeviceId);
         sqlCommand.Parameters.AddWithValue("@SourceMode", request.SourceMode);
         sqlCommand.Parameters.AddWithValue("@DocumentSeriesId", request.DocumentNumber.SeriesId);

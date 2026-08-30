@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Auraly.Api;
+using Auraly.BuildingBlocks.Application.Synchronization;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -34,6 +35,13 @@ public sealed class PosSynchronizationApiTests(ServerSliceFixture fixture)
             $"device={fixture.DeviceId:D}",
             negotiation.ClientAccessUri.Query,
             StringComparison.Ordinal);
+        Assert.NotNull(negotiation.Groups);
+        Assert.Contains(
+            PosSynchronizationGroups.Business(fixture.TenantId, fixture.BusinessId),
+            negotiation.Groups);
+        Assert.Contains(
+            PosSynchronizationGroups.Device(fixture.TenantId, fixture.DeviceId),
+            negotiation.Groups);
     }
 
     [Fact]

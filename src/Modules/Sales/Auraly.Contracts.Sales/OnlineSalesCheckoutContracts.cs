@@ -1,3 +1,5 @@
+using Auraly.Commerce.Taxation.Contracts;
+
 namespace Auraly.Contracts.Sales;
 
 public sealed record OnlineSalesPayment(
@@ -46,7 +48,10 @@ public sealed record OnlineSalesReceipt(
     string? FiscalStatus,
     string CustomerName,
     string? CompanyName = null,
-    string? CompanyLogoSource = null);
+    string? CompanyLogoSource = null,
+    decimal WithholdingTotal = 0m,
+    decimal NetPayableAmount = 0m,
+    IReadOnlyList<WithholdingLineSnapshot>? Withholdings = null);
 
 public sealed record CompleteOnlineSalesDraftResponse(
     OnlineSalesReceipt Receipt,

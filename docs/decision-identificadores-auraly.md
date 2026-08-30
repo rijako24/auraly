@@ -286,6 +286,13 @@ La unicidad offline requiere propiedad exclusiva previa sobre los números.
 
 ### 8.3. Estrategia adoptada
 
+> **Decisión desplazada (27 de julio de 2026):** el diseño de bloques descrito
+> en las secciones 8.3 a 8.7 se conserva solo como contexto histórico y no debe
+> implementarse. La regla prevalente está en
+> `decision-series-prefijos-numeracion-fiscal-offline.md`: una resolución DIAN
+> completa se asigna de manera exclusiva a un dispositivo enrolado, sin pool,
+> prefetch, standby ni reparto de rangos.
+
 El servidor entrega anticipadamente a cada caja un bloque no superpuesto:
 
 ```text

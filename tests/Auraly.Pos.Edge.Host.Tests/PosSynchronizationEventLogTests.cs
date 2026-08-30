@@ -1,4 +1,5 @@
 using Auraly.Contracts.Catalog;
+using Auraly.Contracts.Authorization;
 using Auraly.Pos.Edge.Host;
 using Auraly.Pos.Edge.Infrastructure;
 using Microsoft.Data.Sqlite;
@@ -59,6 +60,26 @@ public sealed class PosSynchronizationEventLogTests
         Assert.Equal(previous.Amount, value.PreviousPrice);
         Assert.Equal(current.Amount, value.NewPrice);
         Assert.Contains("Producto sincronizado", value.Title, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void User_event_identifies_the_user_and_local_credential_change()
+    {
+        var now = new DateTimeOffset(2026, 8, 29, 21, 0, 0, TimeSpan.Zero);
+        var log = new PosSynchronizationEventLog(new FixedTimeProvider(now));
+        var userId = Guid.NewGuid();
+        var previous = new PosLocalIdentitySummary(
+            userId, "cajero", "Cajero anterior", now.AddDays(-1), ["sales.create"]);
+        var current = new PosOfflineUserProjection(
+            userId, "cajero", "Cajero actualizado", ["sales.create"],
+            new PosOfflinePasswordVerifier([1], [2], 10, now));
+
+        log.UserReceived(current, previous);
+
+        var value = Assert.Single(log.Read());
+        Assert.Equal("Usuario", value.Category);
+        Assert.Contains(current.DisplayName, value.Title, StringComparison.Ordinal);
+        Assert.Contains("credencial local actualizada", value.Detail, StringComparison.Ordinal);
     }
 
     [Fact]

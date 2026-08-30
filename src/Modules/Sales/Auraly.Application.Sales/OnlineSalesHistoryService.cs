@@ -136,6 +136,9 @@ public static class OnlineSalesReceiptMapper
             request.FiscalSnapshot?.Cufe,
             request.FiscalSnapshot?.QrPayload,
             fiscalStatus,
-            request.UblSnapshot?.Customer.RegistrationName ?? "Consumidor final");
+            request.UblSnapshot?.Customer.RegistrationName ?? "Consumidor final",
+            WithholdingTotal: snapshot.Withholding?.WithholdingTotal ?? 0m,
+            NetPayableAmount: snapshot.Withholding?.NetAmount ?? snapshot.PayableAmount,
+            Withholdings: snapshot.Withholding?.Lines);
     }
 }

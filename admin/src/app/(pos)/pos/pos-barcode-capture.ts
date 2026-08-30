@@ -2,6 +2,19 @@ export type PosBarcodeCapture =
   | { valid: true; code: string; quantity: number }
   | { valid: false; message: string };
 
+type PosCaptureEnterEvent = {
+  key: string;
+  preventDefault: () => void;
+  currentTarget: { form: { requestSubmit: () => void } | null };
+};
+
+export function submitPosCaptureOnEnter(event: PosCaptureEnterEvent): boolean {
+  if (event.key !== "Enter") return false;
+  event.preventDefault();
+  event.currentTarget.form?.requestSubmit();
+  return true;
+}
+
 export function parsePosBarcodeCapture(raw: string): PosBarcodeCapture {
   const value = raw.trim();
   if (!value) return { valid: false, message: "Escribe o escanea un código." };

@@ -19,6 +19,10 @@ public sealed record OnlineSaleSettlementContext(
     decimal VatAmount,
     DateTimeOffset OccurredAt);
 
+public sealed record PreparedOnlineSaleSettlement(
+    OnlineSaleSettlementContext Context,
+    WithholdingCalculationSnapshot Withholding);
+
 public interface IOnlineSaleWithholdingCalculator
 {
     Task<WithholdingCalculationSnapshot> CalculateAsync(
@@ -52,7 +56,7 @@ public interface IOnlineSalesCheckoutStore
         CompleteOnlineSalesDraftRequest request,
         string idempotencyKey,
         FiscalVerificationMaterial? fiscalMaterial,
-        WithholdingCalculationSnapshot withholding,
+        PreparedOnlineSaleSettlement settlement,
         CancellationToken cancellationToken);
 
     Task MarkResultAsync(
@@ -101,7 +105,7 @@ public sealed class OnlineSalesCheckoutService(
     {
         DemandPermission(user);
         Validate(draftId, request, idempotencyKey);
-        var withholding = await PreviewSettlementAsync(
+        var settlement = await PrepareSettlementAsync(
             user, draftId, cancellationToken);
         FiscalVerificationMaterial? material = null;
         if (PosSaleDocumentTypes.IsFiscal(request.DocumentType))
@@ -115,7 +119,7 @@ public sealed class OnlineSalesCheckoutService(
         }
         var prepared = await checkouts.PrepareAsync(
             user, draftId, request, idempotencyKey.Trim(),
-            material, withholding, cancellationToken);
+            material, settlement, cancellationToken);
         var reception = await receiver.ReceiveOnlineAsync(
             user,
             $"online:{prepared.Request.DocumentId:N}",
@@ -143,10 +147,20 @@ public sealed class OnlineSalesCheckoutService(
         DemandPermission(user);
         if (draftId == Guid.Empty)
             throw new OnlineSalesDraftValidationException("El borrador es obligatorio.");
+        return (await PrepareSettlementAsync(user, draftId, cancellationToken))
+            .Withholding;
+    }
+
+    private async Task<PreparedOnlineSaleSettlement> PrepareSettlementAsync(
+        OnlineSalesUserIdentity user,
+        Guid draftId,
+        CancellationToken cancellationToken)
+    {
         var context = await checkouts.ReadSettlementContextAsync(
             user, draftId, cancellationToken);
-        return await withholdings.CalculateAsync(
+        var withholding = await withholdings.CalculateAsync(
             user.TenantId, context, cancellationToken);
+        return new PreparedOnlineSaleSettlement(context, withholding);
     }
 
     private static void DemandPermission(OnlineSalesUserIdentity user)

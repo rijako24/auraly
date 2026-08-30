@@ -12,6 +12,18 @@ public static class PosSynchronizationStreams
     public const string Authentication = "Authentication";
 }
 
+public static class PosSynchronizationGroups
+{
+    public static string Business(Guid tenantId, Guid businessId) =>
+        $"tenant:{tenantId:D}:business:{businessId:D}";
+
+    public static string Device(Guid tenantId, Guid deviceId) =>
+        $"tenant:{tenantId:D}:device:{deviceId:D}";
+
+    public static string User(Guid tenantId, Guid userId) =>
+        $"tenant:{tenantId:D}:user:{userId:D}";
+}
+
 public sealed record PosSynchronizationInvalidation(
     Guid NotificationId,
     Guid TenantId,

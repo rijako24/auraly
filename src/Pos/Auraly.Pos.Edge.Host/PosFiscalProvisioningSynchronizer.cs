@@ -34,27 +34,17 @@ internal sealed class PosFiscalProvisioningSynchronizer(
             .ReadFromJsonAsync<IReadOnlyList<PosFiscalSeriesProvisioning>>(cancellationToken)
             ?? throw new InvalidDataException(
                 "El servidor devolvió una asignación fiscal vacía.");
-        PosFiscalSeriesProvisioning? active = null;
-        PosEdgeSeriesProvision? activeEdge = null;
-        foreach (var provision in provisions.OrderBy(item =>
-                     string.Equals(item.AllocationState, "Active", StringComparison.Ordinal) ? 0 : 1))
-        {
-            var edgeProvision = new PosEdgeSeriesProvision(
-                provision.SeriesId, new DeviceId(credentials.DeviceId),
-                provision.Prefix, provision.AuthorizationNumber,
-                provision.RangeStart, provision.RangeEnd, provision.ValidUntil,
-                provision.FiscalAuthorizationId, provision.ValidFrom,
-                provision.AllocationState,
-                provision.AuthorizationRangeStart, provision.AuthorizationRangeEnd);
-            await sales.ProvisionSeriesAsync(edgeProvision, cancellationToken);
-            if (string.Equals(provision.AllocationState, "Active", StringComparison.Ordinal))
-            {
-                active = provision;
-                activeEdge = edgeProvision;
-            }
-        }
-        if (active is null || activeEdge is null)
-            throw new InvalidDataException("El servidor no devolvió un bloque fiscal activo.");
+        if (provisions.Count != 1)
+            throw new InvalidDataException(
+                "El servidor debe devolver exactamente una resolución DIAN por equipo.");
+        var active = provisions[0];
+        var activeEdge = new PosEdgeSeriesProvision(
+            active.SeriesId, new DeviceId(credentials.DeviceId),
+            active.Prefix, active.AuthorizationNumber,
+            active.RangeStart, active.RangeEnd, active.ValidUntil,
+            active.FiscalAuthorizationId, active.ValidFrom,
+            active.AuthorizationRangeStart, active.AuthorizationRangeEnd);
+        await sales.ProvisionSeriesAsync(activeEdge, cancellationToken);
         settings.Replace(new PosFiscalHostSettings(
             active.SupplierTaxId,
             new FiscalTechnicalKey(active.TechnicalKey, active.TechnicalKeyVersion),

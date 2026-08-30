@@ -142,7 +142,8 @@ internal sealed class PosSynchronizationWork(
 
 public sealed record PosSynchronizationNegotiation(
     Uri ClientAccessUri,
-    DateTimeOffset ExpiresAt);
+    DateTimeOffset ExpiresAt,
+    IReadOnlyList<string>? Groups = null);
 
 public sealed class PosWebPubSubConnection : IAsyncDisposable
 {
@@ -150,17 +151,27 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
     private readonly PosDeviceCredentials credentials;
     private readonly PosSynchronizationSignal signal;
     private readonly PosServerConnectionState connectionState;
+    private readonly PosPushConnectionState pushState;
     private readonly PosUiStateSignal uiState;
     private readonly PosSynchronizationEventLog events;
     private readonly Guid tenantId;
     private readonly Guid businessId;
     private readonly WebPubSubClient client;
+    private IReadOnlyList<string> authorizedGroups = [];
+    private readonly Channel<bool> terminalDisconnections =
+        Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
+        {
+            SingleReader = true,
+            SingleWriter = false,
+            FullMode = BoundedChannelFullMode.DropWrite
+        });
 
     public PosWebPubSubConnection(
         HttpClient http,
         PosDeviceCredentials credentials,
         PosSynchronizationSignal signal,
         PosServerConnectionState connectionState,
+        PosPushConnectionState pushState,
         PosUiStateSignal uiState,
         PosSynchronizationEventLog events,
         Guid tenantId,
@@ -170,6 +181,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
         this.credentials = credentials;
         this.signal = signal;
         this.connectionState = connectionState;
+        this.pushState = pushState;
         this.uiState = uiState;
         this.events = events;
         this.tenantId = tenantId;
@@ -188,8 +200,19 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
         client.GroupMessageReceived += OnGroupMessageReceivedAsync;
     }
 
-    public Task StartAsync(CancellationToken cancellationToken) =>
-        client.StartAsync(cancellationToken);
+    public async Task StartAsync(CancellationToken cancellationToken)
+    {
+        while (terminalDisconnections.Reader.TryRead(out _)) { }
+        events.Record("Info", "Push", "Conectando canal de eventos");
+        await client.StartAsync(cancellationToken);
+        foreach (var group in authorizedGroups)
+            await client.JoinGroupAsync(group, cancellationToken: cancellationToken);
+        events.Record("Success", "Push", "Canal suscrito a cambios del negocio");
+    }
+
+    public async Task WaitForTerminalDisconnectionAsync(
+        CancellationToken cancellationToken) =>
+        await terminalDisconnections.Reader.ReadAsync(cancellationToken);
 
     public Task StopAsync() => client.StopAsync();
 
@@ -198,6 +221,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
     private async ValueTask<Uri> NegotiateAsync(
         CancellationToken cancellationToken)
     {
+        events.Record("Info", "Push", "Negociando señal en tiempo real");
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
             $"/api/pos/v1/synchronization/negotiate?businessId={businessId:D}");
@@ -214,12 +238,18 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
                 cancellationToken)
             ?? throw new InvalidDataException(
                 "Auraly Server returned an empty synchronization negotiation.");
+        authorizedGroups = negotiation.Groups ?? [];
+        if (authorizedGroups.Count == 0)
+            throw new InvalidDataException(
+                "Auraly Server did not authorize a synchronization group.");
+        events.Record("Info", "Push", "Señal en tiempo real autorizada");
         return negotiation.ClientAccessUri;
     }
 
     private Task OnConnectedAsync(WebPubSubConnectedEventArgs _)
     {
         connectionState.MarkConnected();
+        pushState.MarkConnected();
         events.Record("Success", "Connection", "Caja conectada con Auraly Server");
         uiState.Publish();
         signal.Signal(PosSynchronizationTrigger.All);
@@ -230,8 +260,10 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
     {
         // The push channel is optional transport. Its disconnection does not prove that
         // the HTTP server is unreachable; PosServerConnectionHandler owns that signal.
+        pushState.MarkDisconnected();
         events.Record("Warning", "Connection", "Canal de eventos desconectado; reconectando");
         uiState.Publish();
+        terminalDisconnections.Writer.TryWrite(true);
         return Task.CompletedTask;
     }
 
@@ -324,7 +356,13 @@ internal sealed class PosEventDrivenSynchronizationHostedService(
             try
             {
                 await push.StartAsync(cancellationToken);
-                return;
+                failedAttempts = 0;
+                await push.WaitForTerminalDisconnectionAsync(cancellationToken);
+                // WebPubSub reports a terminal disconnect before its client state is
+                // reusable. Complete the lifecycle explicitly; starting the same
+                // instance again while it is still Disconnected throws and leaves the
+                // enrolled checkout permanently without real-time synchronization.
+                await push.StopAsync();
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {

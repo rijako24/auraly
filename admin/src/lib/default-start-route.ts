@@ -1,4 +1,4 @@
-import { navigation } from "../components/layout/sidebar-nav-config";
+import { authorizedNavigationItems } from "../components/layout/sidebar-nav-config";
 
 const sellerRoles = new Set(["seller", "vendedor"]);
 const transporterRoles = new Set(["transporter", "transportador", "conductor", "driver"]);
@@ -29,11 +29,7 @@ export function defaultStartRoute(roles: readonly string[], permissions: readonl
     return "/dashboard/deliveries";
   if (isSellerOperationalProfile(roles, permissions))
     return "/dashboard/orders?view=today-route";
-  const firstAuthorizedView = navigation.find((entry) =>
-    "href" in entry && (!entry.permission || permissions.includes(entry.permission)));
-  return firstAuthorizedView && "href" in firstAuthorizedView
-    ? firstAuthorizedView.href
-    : "/dashboard";
+  return authorizedNavigationItems(permissions)[0]?.href ?? "/dashboard";
 }
 
 export function shouldRestoreOperationalStart(pathname: string, target: string): boolean {

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Catalog;
 using Auraly.Pos.Edge.Infrastructure;
 
@@ -83,6 +84,25 @@ public sealed class PosSynchronizationEventLog(
             "Info", "Precio", title, detail, price.ProductId,
             previous?.Amount, price.Amount));
     }
+
+    public void UserReceived(
+        PosOfflineUserProjection user,
+        PosLocalIdentitySummary? previous)
+    {
+        var title = previous is null
+            ? $"Usuario descargado: {user.DisplayName}"
+            : $"Usuario actualizado: {user.DisplayName}";
+        var detail = previous is not null &&
+                     previous.PasswordChangedAt != user.PasswordVerifier.ChangedAt
+            ? $"{user.Username} · credencial local actualizada"
+            : $"{user.Username} · {user.Permissions.Count} permisos";
+        Add(new(Interlocked.Increment(ref sequence), timeProvider.GetUtcNow(),
+            "Info", "Usuario", title, detail));
+    }
+
+    public void UserRemoved(PosLocalIdentitySummary user) =>
+        Add(new(Interlocked.Increment(ref sequence), timeProvider.GetUtcNow(),
+            "Warning", "Usuario", $"Acceso local retirado: {user.DisplayName}", user.Username));
 
     private void Add(PosSynchronizationEvent item)
     {

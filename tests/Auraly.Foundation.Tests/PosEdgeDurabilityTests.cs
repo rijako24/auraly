@@ -17,7 +17,7 @@ namespace Auraly.Foundation.Tests;
 public sealed class PosEdgeDurabilityTests
 {
     [Fact]
-    public async Task Fiscal_preview_is_unavailable_when_enrolled_device_has_no_local_block()
+    public async Task Fiscal_preview_is_unavailable_when_enrolled_device_has_no_assigned_resolution()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"auraly-pos-no-fiscal-block-{Guid.NewGuid():N}.db");
         try
@@ -47,7 +47,7 @@ public sealed class PosEdgeDurabilityTests
     }
 
     [Fact]
-    public async Task Exhausted_active_block_promotes_durable_standby_without_connection()
+    public async Task Exclusive_resolution_stops_at_authorized_end_and_preserves_cursor_after_restart()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"auraly-pos-blocks-{Guid.NewGuid():N}.db");
         try
@@ -70,41 +70,41 @@ public sealed class PosEdgeDurabilityTests
             var authorizationId = Guid.NewGuid();
             var firstSeriesId = Guid.NewGuid();
             var firstProvision = new PosEdgeSeriesProvision(
-                firstSeriesId, deviceId, "FV", "AUTH", 1, 1,
+                firstSeriesId, deviceId, "FV", "AUTH", 1, 2,
                 new DateOnly(2027, 12, 31), authorizationId, new DateOnly(2026, 1, 1),
-                "Active", 1, 3);
+                1, 2);
             await store.ProvisionSeriesAsync(firstProvision);
-            await store.ProvisionSeriesAsync(new PosEdgeSeriesProvision(
-                Guid.NewGuid(), deviceId, "FV", "AUTH", 2, 3,
-                new DateOnly(2027, 12, 31), authorizationId, new DateOnly(2026, 1, 1),
-                "Standby", 1, 3));
 
             var first = await store.IssueAsync(CreateCommand(
                 userId, new DocumentId(Guid.NewGuid()), context,
                 new DateTimeOffset(2026, 8, 28, 10, 0, 0, TimeSpan.FromHours(-5))));
-            var previewAfterExhaustion = await store.PreviewNextFiscalNumberAsync(
+            var previewBeforeLast = await store.PreviewNextFiscalNumberAsync(
                 deviceId,
                 new DateTimeOffset(2026, 8, 28, 10, 0, 30, TimeSpan.FromHours(-5)));
             var second = await store.IssueAsync(CreateCommand(
                 userId, new DocumentId(Guid.NewGuid()), context,
                 new DateTimeOffset(2026, 8, 28, 10, 1, 0, TimeSpan.FromHours(-5))));
 
+            var previewAfterExhaustion = await store.PreviewNextFiscalNumberAsync(
+                deviceId,
+                new DateTimeOffset(2026, 8, 28, 10, 1, 30, TimeSpan.FromHours(-5)));
             var restarted = new PosEdgeSaleStore(connectionString, confirmation);
             await restarted.InitializeAsync();
             await restarted.ProvisionSeriesAsync(firstProvision);
-            var third = await restarted.IssueAsync(CreateCommand(
+            var exhausted = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                restarted.IssueAsync(CreateCommand(
                 userId, new DocumentId(Guid.NewGuid()), context,
-                new DateTimeOffset(2026, 8, 28, 10, 2, 0, TimeSpan.FromHours(-5))));
+                new DateTimeOffset(2026, 8, 28, 10, 2, 0, TimeSpan.FromHours(-5)))));
 
             Assert.Equal("FV1", first.FiscalNumber);
-            Assert.True(previewAfterExhaustion.IsAvailable);
-            Assert.Equal("FV2", previewAfterExhaustion.FullNumber);
+            Assert.True(previewBeforeLast.IsAvailable);
+            Assert.Equal("FV2", previewBeforeLast.FullNumber);
             Assert.Equal("FV2", second.FiscalNumber);
-            Assert.True(second.FiscalStandbyPromoted);
-            Assert.Equal("FV3", third.FiscalNumber);
+            Assert.False(previewAfterExhaustion.IsAvailable);
+            Assert.Contains("agotó su numeración", exhausted.Message, StringComparison.Ordinal);
             var cursor = await restarted.GetFiscalCursorStateAsync(deviceId);
             Assert.NotNull(cursor);
-            Assert.Equal(4, cursor.NextConsecutive);
+            Assert.Equal(3, cursor.NextConsecutive);
         }
         finally
         {
@@ -277,13 +277,20 @@ public sealed class PosEdgeDurabilityTests
                 DocumentType: PosSaleDocumentTypes.Receipt);
 
             var issued = await store.IssueAsync(command);
+            var second = await store.IssueAsync(command with
+            {
+                DocumentId = new DocumentId(Guid.NewGuid()),
+                IssuedAt = command.IssuedAt.AddMinutes(1)
+            });
             var reopened = new PosEdgeSaleStore(connectionString, confirmation);
             await reopened.InitializeAsync();
             var replay = await reopened.IssueAsync(command);
             var pending = await reopened.GetPendingOutboxAsync();
 
             Assert.Equal("CVI03-00000001", issued.DocumentNumber);
+            Assert.Equal("CVI03-00000002", second.DocumentNumber);
             Assert.Null(issued.FiscalNumber);
+            Assert.Null(second.FiscalNumber);
             Assert.Null(issued.Cufe);
             Assert.Null(issued.QrPayload);
             Assert.Equal(PosSaleDocumentTypes.Receipt, issued.Upload.CommercialSnapshot.DocumentType);
@@ -292,8 +299,9 @@ public sealed class PosEdgeDurabilityTests
             Assert.True(replay.WasAlreadyIssued);
             Assert.Equal(issued.DocumentNumber, replay.DocumentNumber);
             Assert.Null(replay.Cufe);
-            Assert.Single(pending);
-            Assert.Equal("sales.receipt.confirmed", pending.Single().Type);
+            Assert.Equal(2, pending.Count);
+            Assert.All(pending, item =>
+                Assert.Equal("sales.receipt.confirmed", item.Type));
         }
         finally
         {

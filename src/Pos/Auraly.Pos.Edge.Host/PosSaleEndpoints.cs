@@ -189,8 +189,6 @@ internal static class PosSaleHostModule
                         request.DocumentType),
                     ct);
                 synchronization.Signal(PosSynchronizationTrigger.LocalOutbox);
-                if (result.IssuedSale.FiscalStandbyPromoted)
-                    synchronization.Signal(PosSynchronizationTrigger.FiscalProvisioning);
                 // The sale is already durably issued at this point. Every completed
                 // sale opens the local drawer, including offline sales. A disconnected
                 // drawer must not turn a successful sale into a 409.
@@ -275,7 +273,6 @@ internal static class PosSaleHostModule
                 RequiredDate(configuration, "PosEdge:Fiscal:ValidUntil"),
                 RequiredGuid(configuration, "PosEdge:Fiscal:FiscalAuthorizationId"),
                 RequiredDate(configuration, "PosEdge:Fiscal:ValidFrom"),
-                "Active",
                 OptionalLong(configuration, "PosEdge:Fiscal:AuthorizationRangeStart",
                     RequiredLong(configuration, "PosEdge:Fiscal:RangeStart")),
                 OptionalLong(configuration, "PosEdge:Fiscal:AuthorizationRangeEnd",

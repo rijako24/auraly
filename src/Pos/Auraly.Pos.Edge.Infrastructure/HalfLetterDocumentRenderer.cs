@@ -164,6 +164,11 @@ public sealed class HalfLetterDocumentRenderer
             .Select(tax => $"<div class=\"pair\"><span>{Encode(TaxName(tax.TaxCode))} {Rate(tax.TaxRate)}% · base {Money(tax.Base)}</span><strong>{Money(tax.Amount)}</strong></div>"));
         var payments = string.Join("", receipt.Payments.Select(payment =>
             $"<div class=\"pair\"><span>{Encode(PaymentName(payment.MethodCode))}</span><strong>{Money(payment.Amount)}</strong></div>"));
+        var withholdings = string.Join("", (receipt.Withholdings ?? []).Select(withholding =>
+            $"<div class=\"pair\"><span>Ret. {Encode(withholding.Name)} ({Rate(withholding.Rate)}%)</span><strong>-{Money(withholding.Amount)}</strong></div>"));
+        var withholdingTotals = receipt.WithholdingTotal <= 0 ? string.Empty :
+            $"{withholdings}<div class=\"pair\"><span>Total retenciones</span><strong>-{Money(receipt.WithholdingTotal)}</strong></div>";
+        var netPayable = receipt.WithholdingTotal > 0 ? receipt.NetPayableAmount : receipt.PayableAmount;
         var companyName = Encode(receipt.CompanyName);
         var companyLogo = string.IsNullOrWhiteSpace(receipt.CompanyLogoSource)
             ? string.Empty
@@ -175,7 +180,7 @@ public sealed class HalfLetterDocumentRenderer
             <header class="top"><div><div class="brand-lockup">{{companyLogo}}<h1>{{companyName}}</h1></div><h2>{{documentName}}</h2></div><div class="number"><span>N.º de ticket</span><br><strong>{{Encode(receipt.DocumentNumber)}}</strong><br>{{issuedAt}}</div></header>
             <section class="meta"><div class="pair"><span>Cliente</span><strong>{{Encode(receipt.CustomerName)}}</strong></div><div class="pair"><span>Identificación</span><strong>{{Encode(receipt.CustomerIdentification)}}</strong></div>{{fiscalNumber}}</section>
             <table><thead><tr><th>Producto</th><th class="numeric">Cant.</th><th class="numeric">Precio</th><th class="numeric">Total</th></tr></thead><tbody>{{rows}}</tbody></table>
-            <section class="details"><div>{{cufe}}<div class="breakdowns"><section class="breakdown"><div class="breakdown-title">Impuestos por tarifa</div>{{taxes}}</section><section class="breakdown"><div class="breakdown-title">Medios de pago</div>{{payments}}</section></div><div class="caption">Representación gráfica · copia cliente / control</div></div><div><div class="totals"><div class="pair"><span>Subtotal</span><strong>{{Money(receipt.UntaxedAmount)}}</strong></div><div class="pair"><span>Total impuestos</span><strong>{{Money(receipt.TaxAmount)}}</strong></div><div class="pair total"><span>Total</span><strong>{{Money(receipt.PayableAmount)}}</strong></div>{{qr}}</div></div></section>
+            <section class="details"><div>{{cufe}}<div class="breakdowns"><section class="breakdown"><div class="breakdown-title">Impuestos por tarifa</div>{{taxes}}</section><section class="breakdown"><div class="breakdown-title">Medios de pago</div>{{payments}}</section></div><div class="caption">Representación gráfica · copia cliente / control</div></div><div><div class="totals"><div class="pair"><span>Subtotal</span><strong>{{Money(receipt.UntaxedAmount)}}</strong></div><div class="pair"><span>Total impuestos</span><strong>{{Money(receipt.TaxAmount)}}</strong></div><div class="pair"><span>Total bruto</span><strong>{{Money(receipt.PayableAmount)}}</strong></div>{{withholdingTotals}}<div class="pair total"><span>Total a pagar</span><strong>{{Money(netPayable)}}</strong></div>{{qr}}</div></div></section>
             <footer class="footer"><span>{{representationName}}</span><span class="platform">{{issuedBy}} · <strong>www.auralyapp.co</strong><br>Emitido: {{issuedAt}}</span><span class="page-number">Página 1 de 1</span></footer>
           </div></article>
           """;

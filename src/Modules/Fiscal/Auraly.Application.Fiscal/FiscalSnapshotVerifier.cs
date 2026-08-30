@@ -183,11 +183,11 @@ public sealed class FiscalSnapshotVerifier(IFiscalTechnicalKeyProvider keyProvid
 
         var financedAmount = request.Credit?.Amount ?? 0m;
         if (request.Payments.Sum(payment => payment.Amount) + financedAmount !=
-                snapshot.PayableAmount ||
+                request.CommercialSnapshot.NetPayableAmount ||
             request.Payments.Any(payment => payment.PaymentNumber <= 0 || payment.Amount <= 0) ||
             request.Credit is { Amount: <= 0m })
         {
-            return "Actual payments plus financed balance do not match the payable amount.";
+            return "Actual payments plus financed balance do not match the net sale settlement.";
         }
 
         var lineTaxes = request.Lines

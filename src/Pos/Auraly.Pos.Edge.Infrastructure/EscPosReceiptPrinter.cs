@@ -66,7 +66,17 @@ public sealed class EscPosReceiptRenderer
             WriteLine(stream, Pair("    IMPUESTO", Money(tax.Amount), columns));
         }
         WriteLine(stream, Pair("TOTAL IMPUESTOS", Money(receipt.TaxAmount), columns));
-        WriteLine(stream, Pair("TOTAL", Money(receipt.PayableAmount), columns));
+        WriteLine(stream, Pair("TOTAL BRUTO", Money(receipt.PayableAmount), columns));
+        foreach (var withholding in receipt.Withholdings ?? [])
+            WriteLine(stream, Pair(
+                $"RET. {withholding.Name.ToUpperInvariant()}",
+                $"-{Money(withholding.Amount)}", columns));
+        if (receipt.WithholdingTotal > 0)
+            WriteLine(stream, Pair("TOTAL RETENCIONES", $"-{Money(receipt.WithholdingTotal)}", columns));
+        WriteLine(stream, Pair(
+            "TOTAL A PAGAR",
+            Money(receipt.WithholdingTotal > 0 ? receipt.NetPayableAmount : receipt.PayableAmount),
+            columns));
         WriteLine(stream, "MEDIOS DE PAGO");
         foreach (var payment in receipt.Payments)
             WriteLine(stream, Pair(PaymentName(payment.MethodCode).ToUpperInvariant(), Money(payment.Amount), columns));

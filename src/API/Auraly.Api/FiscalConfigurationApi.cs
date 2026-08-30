@@ -40,9 +40,7 @@ public static class FiscalConfigurationApi
                 var result = await service.GetProvisioningAsync(
                     tenantId, businessId, deviceId, currentSeriesId,
                     nextConsecutive, ct);
-                var active = result.FirstOrDefault(item => string.Equals(
-                    item.AllocationState, "Active", StringComparison.Ordinal));
-                return active is null ? Results.NoContent() : Results.Ok(active);
+                return result.Count == 0 ? Results.NoContent() : Results.Ok(result[0]);
             })
             .RequireAuthorization("pos.synchronization");
 

@@ -116,7 +116,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         CompleteOnlineSalesDraftRequest request,
         string idempotencyKey,
         FiscalVerificationMaterial fiscalMaterial,
-        WithholdingCalculationSnapshot withholding,
+        PreparedOnlineSaleSettlement settlement,
         CancellationToken cancellationToken)
     {
         var requestHash = CheckoutHash(draftId, request);
@@ -153,7 +153,8 @@ public sealed partial class SqlOnlineSalesDraftStore
         if (!inventoryValidation.IsValid)
             throw new OnlineSalesDraftValidationException(
                 "El inventario cambió y uno o más productos ya no tienen existencias suficientes. Ajusta sus cantidades o elimínalos antes de cobrar.");
-        ValidateWithholding(draft, withholding);
+        ValidateSettlementContext(state, draft, settlement);
+        var withholding = settlement.Withholding;
         if (request.Payments.Sum(payment => payment.Amount) + (request.Credit?.Amount ?? 0m) != withholding.NetAmount)
             throw new OnlineSalesDraftValidationException(
                 "Los pagos reales y el saldo financiado deben ser iguales al total de la venta.");
@@ -161,7 +162,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         await ValidateCreditAsync(connection, transaction, state.BusinessId,
             state.CustomerId, request.Credit, cancellationToken);
 
-        var now = time.GetUtcNow();
+        var now = settlement.Context.OccurredAt;
         var configuration = await ReadCheckoutConfigurationAsync(
             connection, transaction, state, now, cancellationToken);
         if (configuration.SupplierTaxId != fiscalMaterial.SupplierTaxId ||

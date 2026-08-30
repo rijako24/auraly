@@ -3,12 +3,55 @@ using System.Net.Http.Json;
 using Auraly.Application.Fiscal;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
+using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
 [Collection(ServerSliceCollection.Name)]
 public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
 {
+    [Fact]
+    public async Task First_offline_sale_materializes_its_local_work_session_idempotently()
+    {
+        var userId = Guid.NewGuid();
+        var workSessionId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT dbo.AppUsers
+                  (UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,
+                   FirstName,LastName,IsActive,CreatedAt)
+                VALUES
+                  (@UserId,@TenantId,CONCAT(N'offline-',@UserId),UPPER(CONCAT(N'offline-',@UserId)),
+                   CONCAT(@UserId,N'@test.local'),UPPER(CONCAT(@UserId,N'@test.local')),
+                   N'Offline',N'Cashier',1,SYSUTCDATETIME());
+                """;
+            command.Parameters.AddWithValue("@UserId", userId);
+            command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            await command.ExecuteNonQueryAsync();
+        }
+        var request = fixture.CreateValidRequest(100) with
+        {
+            SoldByUserId = userId,
+            WorkSessionId = workSessionId
+        };
+        using var client = fixture.CreateClient();
+        using var upload = fixture.CreateUploadMessage(request);
+        using var response = await client.SendAsync(upload);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var responsibility = await fixture.GetSalesWorkResponsibilityAsync(request.DocumentId);
+        Assert.Equal(userId, responsibility.SoldByUserId);
+        Assert.Equal(workSessionId, responsibility.WorkSessionId);
+
+        using var duplicate = fixture.CreateUploadMessage(request);
+        using var duplicateResponse = await client.SendAsync(duplicate);
+        Assert.Equal(HttpStatusCode.OK, duplicateResponse.StatusCode);
+        Assert.Equal(1, await fixture.CountAsync("SalesDocuments", request.DocumentId));
+    }
+
     [Fact]
     public async Task Authenticated_concurrent_duplicate_is_processed_exactly_once()
     {

@@ -25,7 +25,6 @@ public sealed record PosEdgeSeriesProvision(
     DateOnly ValidUntil,
     Guid FiscalAuthorizationId = default,
     DateOnly? ValidFrom = null,
-    string AllocationState = "Active",
     long? AuthorizationRangeStart = null,
     long? AuthorizationRangeEnd = null);
 
@@ -92,7 +91,6 @@ public sealed record PosEdgeIssueResult(
     decimal Total,
     Guid OutboxMessageId,
     bool WasAlreadyIssued,
-    [property: JsonIgnore] bool FiscalStandbyPromoted,
     [property: JsonIgnore] PosSaleUploadRequest Upload);
 
 public sealed record PosEdgeOutboxItem(
@@ -202,8 +200,7 @@ public sealed class PosEdgeSaleStore
                 RangeEnd = provision.RangeEnd,
                 ValidFrom = provision.ValidFrom ?? DateOnly.MinValue,
                 ValidUntil = provision.ValidUntil,
-                IsActive = string.Equals(provision.AllocationState, "Active", StringComparison.Ordinal),
-                AllocationState = provision.AllocationState,
+                IsActive = true,
                 AuthorizationRangeStart = provision.AuthorizationRangeStart ?? provision.RangeStart,
                 AuthorizationRangeEnd = provision.AuthorizationRangeEnd ?? provision.RangeEnd
             };
@@ -213,8 +210,6 @@ public sealed class PosEdgeSaleStore
         {
             if (current.RangeStart != provision.RangeStart || current.RangeEnd != provision.RangeEnd)
                 throw new InvalidOperationException("The provisioned fiscal range differs from the durable local series.");
-            var wasExhausted = string.Equals(
-                current.AllocationState, "Exhausted", StringComparison.Ordinal);
             current.DeviceId = provision.DeviceId.Value;
             await BackfillFiscalAuthorizationAsync(
                 context,
@@ -225,33 +220,16 @@ public sealed class PosEdgeSaleStore
                 cancellationToken);
             current.AuthorizationRangeStart = provision.AuthorizationRangeStart ?? provision.RangeStart;
             current.AuthorizationRangeEnd = provision.AuthorizationRangeEnd ?? provision.RangeEnd;
-            if (!wasExhausted)
-            {
-                current.AllocationState = provision.AllocationState;
-                current.IsActive = string.Equals(provision.AllocationState, "Active", StringComparison.Ordinal);
-            }
+            current.IsActive = true;
         }
-        var newerActiveExists = await context.FiscalSeriesCursors.AnyAsync(
-            row => row.DeviceId == provision.DeviceId.Value && row.SeriesId != provision.SeriesId &&
-                   row.IsActive && row.RangeStart > provision.RangeStart,
+        var conflicting = await context.FiscalSeriesCursors.AnyAsync(
+            row => row.DeviceId == provision.DeviceId.Value &&
+                   row.SeriesId != provision.SeriesId && row.IsActive,
             cancellationToken);
-        if (newerActiveExists)
+        if (conflicting)
         {
-            current.IsActive = false;
-            current.AllocationState = "Exhausted";
-        }
-        else if (current.IsActive && string.Equals(
-                     provision.AllocationState, "Active", StringComparison.Ordinal))
-        {
-            foreach (var other in await context.FiscalSeriesCursors
-                         .Where(row => row.DeviceId == provision.DeviceId.Value && row.SeriesId != provision.SeriesId && row.IsActive)
-                         .ToListAsync(cancellationToken))
-            {
-                other.IsActive = false;
-                other.AllocationState = other.RangeStart < current.RangeStart
-                    ? "Exhausted"
-                    : "Standby";
-            }
+            throw new InvalidOperationException(
+                "El equipo ya conserva otra resolución DIAN activa. No se reemplazará silenciosamente.");
         }
         await context.SaveChangesAsync(cancellationToken);
     }
@@ -394,11 +372,11 @@ public sealed class PosEdgeSaleStore
         if (cursors.Count == 0)
             return new PosFiscalNumberPreview(Guid.Empty, string.Empty, 0, string.Empty, false);
         var cursor = cursors.FirstOrDefault(row =>
-                         (row.IsActive || row.AllocationState == "Standby") &&
+                         row.IsActive &&
                          issueDate >= row.ValidFrom && issueDate <= row.ValidUntil &&
                          row.NextConsecutive <= row.RangeEnd)
                      ?? cursors.First();
-        var available = (cursor.IsActive || cursor.AllocationState == "Standby") &&
+        var available = cursor.IsActive &&
                         issueDate >= cursor.ValidFrom && issueDate <= cursor.ValidUntil &&
                         cursor.NextConsecutive <= cursor.RangeEnd;
         return new PosFiscalNumberPreview(
@@ -436,7 +414,6 @@ public sealed class PosEdgeSaleStore
                 existing.Total,
                 existingOutbox.MessageId,
                 WasAlreadyIssued: true,
-                FiscalStandbyPromoted: false,
                 existingUpload);
         }
 
@@ -470,7 +447,6 @@ public sealed class PosEdgeSaleStore
         FiscalNumberAssignment? fiscalNumber = null;
         ImmutableFiscalSnapshot? snapshot = null;
         Guid? fiscalAuthorizationId = null;
-        var fiscalStandbyPromoted = false;
         SalesInvoice invoice;
         Guid outboxMessageId;
         string outboxType;
@@ -490,33 +466,13 @@ public sealed class PosEdgeSaleStore
                 .Where(row => row.DeviceId == deviceId && row.IsActive)
                 .OrderBy(row => row.RangeStart)
                 .FirstOrDefaultAsync(cancellationToken);
-            if (cursor is null || cursor.NextConsecutive > cursor.RangeEnd)
-            {
-                if (cursor is not null)
-                {
-                    cursor.IsActive = false;
-                    cursor.AllocationState = "Exhausted";
-                }
-                cursor = await context.FiscalSeriesCursors
-                    .Where(row => row.DeviceId == deviceId && !row.IsActive &&
-                                  row.AllocationState == "Standby" &&
-                                  row.NextConsecutive <= row.RangeEnd)
-                    .OrderBy(row => row.RangeStart)
-                    .FirstOrDefaultAsync(cancellationToken);
-                if (cursor is not null)
-                {
-                    cursor.IsActive = true;
-                    cursor.AllocationState = "Active";
-                    fiscalStandbyPromoted = true;
-                }
-            }
             var issueDate = DateOnly.FromDateTime(command.IssuedAt.Date);
             if (cursor is null || !cursor.IsActive || issueDate < cursor.ValidFrom || issueDate > cursor.ValidUntil)
                 throw new InvalidOperationException(
                     "La resolución fiscal no está vigente para la fecha de emisión.");
             if (cursor.NextConsecutive > cursor.RangeEnd)
                 throw new InvalidOperationException(
-                    "La numeración DIAN preparada para esta caja está agotada. Conecta el equipo para descargar el siguiente bloque autorizado.");
+                    "La resolución DIAN asignada a este equipo agotó su numeración autorizada.");
 
             ValidateUblSnapshot(command, cursor);
             var consecutive = cursor.NextConsecutive++;
@@ -599,7 +555,6 @@ public sealed class PosEdgeSaleStore
             invoice.PayableAmount,
             outboxMessageId,
             WasAlreadyIssued: false,
-            FiscalStandbyPromoted: fiscalStandbyPromoted,
             upload);
     }
 
@@ -1276,7 +1231,6 @@ public sealed class PosEdgeSaleStore
         }
         var additions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["AllocationState"] = "TEXT NOT NULL DEFAULT 'Active'",
             ["AuthorizationRangeStart"] = "INTEGER NOT NULL DEFAULT 1",
             ["AuthorizationRangeEnd"] = "INTEGER NOT NULL DEFAULT 1"
         };
@@ -1298,6 +1252,20 @@ public sealed class PosEdgeSaleStore
                 UPDATE FiscalSeriesCursors
                 SET AuthorizationRangeEnd=RangeEnd
                 WHERE AuthorizationRangeEnd=1 AND RangeEnd<>1;
+                """;
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        // EnsureCreated does not update indexes in an existing enrolled checkout.
+        // Reassert the schema invariant idempotently: empty fiscal numbers belong to
+        // commercial receipts and must not collide with one another.
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                DROP INDEX IF EXISTS IX_IssuedSales_FiscalNumber;
+                CREATE UNIQUE INDEX IF NOT EXISTS IX_IssuedSales_FiscalNumber
+                    ON IssuedSales(FiscalNumber)
+                    WHERE FiscalNumber <> '';
                 """;
             await command.ExecuteNonQueryAsync(cancellationToken);
         }

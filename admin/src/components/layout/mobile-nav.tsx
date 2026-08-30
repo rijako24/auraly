@@ -20,7 +20,7 @@ import { useSidebarStore } from "@/stores/sidebar-store";
 import { useMediaQuery } from "@/hooks/use-media-query";
 
 import { UserMenu } from "./user-menu";
-import { navigation } from "./sidebar-nav-config";
+import { authorizedNavigationGroups } from "./sidebar-nav-config";
 
 export function MobileNav() {
   const pathname = usePathname();
@@ -30,28 +30,7 @@ export function MobileNav() {
 
   const handleClose = () => setOpen(false);
 
-  const permissions = new Set(user?.permissions ?? []);
-
-  const groups: { label: string; items: (typeof navigation)[number][] }[] = [];
-  let currentGroup: { label: string; items: (typeof navigation)[number][] } | null = null;
-
-  for (const entry of navigation) {
-    if ("type" in entry && entry.type === "separator") {
-      currentGroup = { label: entry.label, items: [] };
-      groups.push(currentGroup);
-    } else if (
-      "href" in entry &&
-      (!entry.permission || permissions.has(entry.permission))
-    ) {
-      if (!currentGroup) {
-        currentGroup = { label: "Principal", items: [] };
-        groups.push(currentGroup);
-      }
-      currentGroup.items.push(entry);
-    }
-  }
-
-  const filteredGroups = groups.filter((g) => g.items.length > 0);
+  const filteredGroups = authorizedNavigationGroups(user?.permissions ?? []);
 
   return (
     <Sheet
@@ -84,7 +63,6 @@ export function MobileNav() {
                 </p>
                 <div className="space-y-0.5 pl-4 pr-1">
                   {group.items.map((item) => {
-                    if (!("href" in item)) return null;
                     const Icon = item.icon;
                     const isActive =
                       pathname === item.href ||

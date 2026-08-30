@@ -197,13 +197,6 @@ public sealed class SqlPosEnrollmentStore(
                 connection, transaction, data, existing, credential,
                 devicePermissions, request.InstallationId, now, cancellationToken);
         }
-        AssignedFiscalSeries? assignedFiscalSeries = null;
-        if (data.FiscalSeriesId is not null)
-            assignedFiscalSeries = await AssignFiscalSeriesAsync(
-                connection, transaction, data, deviceId,
-                idGenerator.NewId(), idGenerator.NewId(),
-                idGenerator.NewId(), idGenerator.NewId(), now,
-                cancellationToken);
         var receiptDocumentSeries = await EnsureReceiptDocumentSeriesAsync(
             connection, transaction, data.BusinessId, deviceId,
             documentSeries.SeriesCode, idGenerator.NewId(), now, cancellationToken);
@@ -216,15 +209,14 @@ public sealed class SqlPosEnrollmentStore(
             data.UserId, data.UserDisplayName,
             devicePermissions.Order(StringComparer.Ordinal).ToArray(),
             documentSeries,
-            material is null || assignedFiscalSeries is null ? null : new PosEnrollmentFiscalSeries(
-                assignedFiscalSeries.SeriesId, assignedFiscalSeries.FiscalAuthorizationId,
-                assignedFiscalSeries.Prefix, data.AuthorizationNumber!,
-                assignedFiscalSeries.RangeStart, assignedFiscalSeries.RangeEnd,
-                assignedFiscalSeries.ValidUntil, data.Environment!.Value, data.SupplierTaxId!,
+            material is null || data.FiscalSeriesId is null ? null : new PosEnrollmentFiscalSeries(
+                data.FiscalSeriesId.Value, data.FiscalAuthorizationId!.Value,
+                data.FiscalPrefix!, data.AuthorizationNumber!,
+                data.FiscalRangeStart!.Value, data.FiscalRangeEnd!.Value,
+                data.ValidUntil!.Value, data.Environment!.Value, data.SupplierTaxId!,
                 new string(material.TechnicalKey.Reveal()), data.TechnicalKeyVersion!,
                 data.QrValidationUrl!, data.ValidFrom,
-                assignedFiscalSeries.AuthorizationRangeStart,
-                assignedFiscalSeries.AuthorizationRangeEnd),
+                data.FiscalRangeStart, data.FiscalRangeEnd),
             receiptDocumentSeries,
             trustedPublicKeys,
             now);
@@ -519,53 +511,6 @@ public sealed class SqlPosEnrollmentStore(
             await permissionCommand.ExecuteNonQueryAsync(cancellationToken);
         }
     }
-
-    private static async Task<AssignedFiscalSeries> AssignFiscalSeriesAsync(
-        SqlConnection connection,
-        SqlTransaction transaction,
-        Provisioning data,
-        Guid deviceId,
-        Guid activeSeriesId,
-        Guid standbySeriesId,
-        Guid activeNotificationId,
-        Guid standbyNotificationId,
-        DateTimeOffset now,
-        CancellationToken cancellationToken)
-    {
-        await using var command = new SqlCommand(
-            "fiscal.FiscalDeviceNumberingEnsure", connection, transaction)
-        {
-            CommandType = System.Data.CommandType.StoredProcedure
-        };
-        Add(command, "@TenantId", data.TenantId);
-        Add(command, "@BusinessId", data.BusinessId);
-        Add(command, "@DeviceId", deviceId);
-        command.Parameters.AddWithValue("@CurrentSeriesId", DBNull.Value);
-        command.Parameters.AddWithValue("@NextConsecutive", DBNull.Value);
-        Add(command, "@ActiveSeriesId", activeSeriesId);
-        Add(command, "@StandbySeriesId", standbySeriesId);
-        Add(command, "@ActiveNotificationId", activeNotificationId);
-        Add(command, "@StandbyNotificationId", standbyNotificationId);
-        Add(command, "@Now", now);
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            if (!string.Equals(reader.GetString(12), "Active", StringComparison.Ordinal))
-                continue;
-            return new AssignedFiscalSeries(
-                reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2),
-                reader.GetInt64(4), reader.GetInt64(5),
-                DateOnly.FromDateTime(reader.GetDateTime(7)),
-                reader.GetInt64(13), reader.GetInt64(14));
-        }
-        throw new PosEnrollmentValidationException(
-            "La resolución no tiene numeración disponible para preparar esta caja.");
-    }
-
-    private sealed record AssignedFiscalSeries(
-        Guid SeriesId, Guid FiscalAuthorizationId, string Prefix,
-        long RangeStart, long RangeEnd, DateOnly ValidUntil,
-        long AuthorizationRangeStart, long AuthorizationRangeEnd);
 
     private static async Task<PosEnrollmentDocumentSeries> EnsureReceiptDocumentSeriesAsync(
         SqlConnection connection,

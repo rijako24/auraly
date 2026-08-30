@@ -18,10 +18,18 @@ internal static class PosPeripheralModule
         services.AddSingleton<IWindowsRenderedPrintJob, SystemWindowsRenderedPrintJob>();
         services.AddSingleton<IReceiptPreviewLauncher, ShellReceiptPreviewLauncher>();
         var dataDirectory = Path.GetDirectoryName(Path.GetFullPath(databasePath))!;
+        var enrollmentPrinterMode = configuration["PosEdge:PrinterMode"]?.Trim();
+        var enrollmentPrinterDefault = PosPrinterConfiguration.Default with
+        {
+            ReceiptMode = PosPrinterModes.IsValid(enrollmentPrinterMode ?? string.Empty)
+                ? enrollmentPrinterMode!
+                : PosPrinterConfiguration.Default.ReceiptMode
+        };
         services.AddSingleton(new PosPrinterConfigurationStore(
             Path.Combine(dataDirectory, "printer-settings.json"),
             configuration["PosEdge:ReceiptOutputDirectory"]
-                ?? Path.Combine(dataDirectory, "receipts")));
+                ?? Path.Combine(dataDirectory, "receipts"),
+            enrollmentPrinterDefault));
         services.AddSingleton<ConfigurableOrderDocumentPrinter>();
         services.AddSingleton<ConfigurablePosReceiptPrinter>();
         services.AddSingleton<IPosReceiptPrinter>(sp =>

@@ -78,7 +78,7 @@ public sealed class PosEdgeSchemaUpgradeTests
             Assert.Equal(1L, reader.GetInt64(6));
             Assert.Equal(1L, reader.GetInt64(7));
             Assert.Equal(1L, reader.GetInt64(8));
-            Assert.Equal(1L, reader.GetInt64(9));
+            Assert.Equal(0L, reader.GetInt64(9));
             Assert.Equal(1L, reader.GetInt64(10));
             Assert.Equal(1L, reader.GetInt64(11));
             Assert.Equal(1L, reader.GetInt64(12));

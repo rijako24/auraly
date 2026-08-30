@@ -12,6 +12,29 @@ namespace Auraly.Pos.Edge.Host.Tests;
 
 public sealed class PosConfigurationTests
 {
+    [Fact]
+    public void Enrollment_preview_is_used_until_the_cashier_configures_a_printer()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(), "auraly-printer-default-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new PosPrinterConfigurationStore(
+                Path.Combine(directory, "settings.json"),
+                Path.Combine(directory, "receipts"),
+                PosPrinterConfiguration.Default with
+                {
+                    ReceiptMode = PosPrinterModes.BrowserPreview
+                });
+
+            Assert.Equal(PosPrinterModes.BrowserPreview, store.Load().ReceiptMode);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Theory]
     [InlineData("Microsoft Print to PDF")]
     [InlineData("Adobe PDF")]

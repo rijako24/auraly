@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Sales;
 using Auraly.Contracts.WorkSessions;
+using Auraly.Commerce.Taxation.Contracts;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -400,6 +401,72 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
 
 
     [Fact]
+    public async Task Customer_withholding_reduces_amount_to_collect_and_is_snapshotted()
+    {
+        var userId = await CreateUserAsync("sale-withholding");
+        var customerId = await CreateCustomerAsync(userId, false, "Cliente con retefuente");
+        using (var taxation = fixture.CreateAdminClient(
+                   TaxationPermissionCodes.ViewWithholdingRules,
+                   TaxationPermissionCodes.ManageWithholdingRules))
+        {
+            using var profile = await taxation.PutAsJsonAsync(
+                $"/api/commerce/v1/taxation/counterparty-profiles/{customerId:D}",
+                new SaveCounterpartyTaxProfileRequest(
+                    fixture.BusinessId, customerId, true, ["O-23"], null));
+            Assert.Equal(HttpStatusCode.OK, profile.StatusCode);
+            using var rule = await taxation.PostAsJsonAsync(
+                "/api/commerce/v1/taxation/withholding-rules",
+                new SaveWithholdingRuleRequest(
+                    fixture.BusinessId, ($"RF-VTA-{Guid.NewGuid():N}")[..15],
+                    "Retefuente venta", WithholdingKinds.IncomeTax,
+                    WithholdingDirections.Sale, WithholdingRecognitionMoments.Accrual,
+                    WithholdingBaseKinds.TaxExclusiveAmount, null, null,
+                    2.5m, 0m, ["O-23"], new DateOnly(2026, 1, 1), null, true));
+            Assert.Equal(HttpStatusCode.Created, rule.StatusCode);
+        }
+
+        using var client = fixture.CreateUserClient(
+            userId, CommercePermissionCodes.SalesCreate, WorkSessionPermissionCodes.Open);
+        var draft = await OpenAsync(client);
+        using (var select = new HttpRequestMessage(
+                   HttpMethod.Put, $"/api/commerce/v1/pos/drafts/{draft.DraftId:D}/customer")
+               {
+                   Content = JsonContent.Create(
+                       new SelectOnlineSalesDraftCustomerRequest(customerId, draft.Version))
+               })
+        {
+            select.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+            using var selected = await client.SendAsync(select);
+            selected.EnsureSuccessStatusCode();
+            draft = (await selected.Content.ReadFromJsonAsync<OnlineSalesCustomerSelection>())!.Draft;
+        }
+        var captured = await CaptureAsync(client, draft);
+        var settlement = await client.GetFromJsonAsync<WithholdingCalculationSnapshot>(
+            $"/api/commerce/v1/pos/drafts/{captured.DraftId:D}/settlement");
+        Assert.NotNull(settlement);
+        Assert.Equal(captured.PayableAmount, settlement.GrossAmount);
+        Assert.Equal(captured.UntaxedAmount * 0.025m, settlement.WithholdingTotal);
+        Assert.Equal(settlement.GrossAmount - settlement.WithholdingTotal, settlement.NetAmount);
+        Assert.Single(settlement.Lines);
+
+        var completed = await CompleteAsync(
+            client, captured.DraftId,
+            new CompleteOnlineSalesDraftRequest(
+                captured.Version,
+                [new OnlineSalesPayment("Cash", settlement.NetAmount, null)]),
+            $"sale-withholding-{Guid.NewGuid():N}");
+
+        Assert.Equal(PosSaleRemoteStatuses.FiscalVerified, completed.Receipt.FiscalStatus);
+        Assert.Equal(settlement.WithholdingTotal, completed.Receipt.WithholdingTotal);
+        Assert.Equal(settlement.NetAmount, completed.Receipt.NetPayableAmount);
+        Assert.Single(completed.Receipt.Withholdings!);
+        var persisted = await WaitForWithholdingSnapshotAsync(completed.Receipt.DocumentId);
+        Assert.Equal(settlement.GrossAmount, persisted.Gross);
+        Assert.Equal(settlement.WithholdingTotal, persisted.Withholding);
+        Assert.Equal(settlement.NetAmount, persisted.Net);
+    }
+
+    [Fact]
     public async Task Two_online_users_share_server_series_without_number_collisions()
     {
         var firstUserId = await CreateUserAsync("parallel-a");
@@ -526,7 +593,13 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
         return userId;
     }
 
-    private async Task<Guid> CreateElectronicInvoiceCustomerAsync(Guid userId)
+    private Task<Guid> CreateElectronicInvoiceCustomerAsync(Guid userId) =>
+        CreateCustomerAsync(userId, true, "Cliente factura requerida");
+
+    private async Task<Guid> CreateCustomerAsync(
+        Guid userId,
+        bool requiresElectronicInvoice,
+        string name)
     {
         var partyId = Guid.NewGuid();
         var customerId = Guid.NewGuid();
@@ -536,19 +609,21 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
               PartyId,TenantId,PartyType,DisplayName,LegalName,
               CompletionStatus,IsActive,CreatedBy,CreatedAt)
             VALUES(
-              @PartyId,@TenantId,N'Organization',N'Cliente factura requerida',
-              N'Cliente factura requerida',N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
+              @PartyId,@TenantId,N'Organization',@Name,
+              @Name,N'Incomplete',1,@UserId,SYSDATETIMEOFFSET());
             INSERT dbo.Customers(
               CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,
               IsActive,CreatedBy,CreatedAt)
             VALUES(
-              @CustomerId,@PartyId,@BusinessId,1,1,@UserId,SYSDATETIMEOFFSET());
+              @CustomerId,@PartyId,@BusinessId,@RequiresElectronicInvoice,1,@UserId,SYSDATETIMEOFFSET());
             """,
             new("@PartyId", partyId),
             new("@CustomerId", customerId),
             new("@TenantId", fixture.TenantId),
             new("@BusinessId", fixture.BusinessId),
-            new("@UserId", userId));
+            new("@UserId", userId),
+            new("@Name", name),
+            new("@RequiresElectronicInvoice", requiresElectronicInvoice));
         return customerId;
     }
 
@@ -561,6 +636,47 @@ public sealed class OnlineSalesCheckoutTests(ServerSliceFixture fixture)
             connection);
         command.Parameters.AddWithValue("@CustomerId", customerId);
         return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<(decimal Gross, decimal Withholding, decimal Net)>
+        WaitForWithholdingSnapshotAsync(Guid documentId)
+    {
+        var expiresAt = DateTimeOffset.UtcNow.AddSeconds(10);
+        string? processingState = null;
+        do
+        {
+            await using var connection = new SqlConnection(fixture.ConnectionString);
+            await connection.OpenAsync();
+            await using var command = new SqlCommand(
+                """
+                SELECT GrossAmount,WithholdingTotal,NetAmount
+                FROM dbo.DocumentWithholdingSnapshots WHERE DocumentId=@DocumentId;
+                SELECT d.ProcessingStatus,COALESCE(s.ConflictReason,j.LastError)
+                FROM dbo.SalesDocuments d
+                LEFT JOIN dbo.FiscalSnapshots s ON s.DocumentId=d.DocumentId
+                LEFT JOIN dbo.DocumentProcessingJobs j ON j.DocumentId=d.DocumentId
+                WHERE d.DocumentId=@DocumentId;
+                """, connection);
+            command.Parameters.AddWithValue("@DocumentId", documentId);
+            await using var reader = await command.ExecuteReaderAsync();
+            if (await reader.ReadAsync())
+                return (reader.GetDecimal(0), reader.GetDecimal(1), reader.GetDecimal(2));
+            await reader.NextResultAsync();
+            if (await reader.ReadAsync())
+            {
+                var status = reader.GetString(0);
+                var lastError = reader.IsDBNull(1) ? null : reader.GetString(1);
+                processingState = lastError is null
+                    ? $"Estado del procesamiento: {status}."
+                    : $"Estado del procesamiento: {status}. Error: {lastError}";
+                if (status is "NeedsIntervention" or "DeadLettered") break;
+            }
+            await Task.Delay(50);
+        } while (DateTimeOffset.UtcNow < expiresAt);
+
+        throw new Xunit.Sdk.XunitException(
+            $"La venta no persistió su snapshot de retenciones. " +
+            (processingState ?? "No se almacenó la recepción de la venta en 10 segundos."));
     }
 
     private async Task<int> CountDocumentsForDraftAsync(Guid draftId)

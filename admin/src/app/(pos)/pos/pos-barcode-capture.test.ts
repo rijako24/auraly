@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { parsePosBarcodeCapture } from "./pos-barcode-capture";
+import { parsePosBarcodeCapture, submitPosCaptureOnEnter } from "./pos-barcode-capture";
 
 describe("parsePosBarcodeCapture", () => {
   it("preserves the current single-code capture", () => {
@@ -11,5 +11,33 @@ describe("parsePosBarcodeCapture", () => {
   });
   it("rejects malformed prefixes instead of searching them as barcodes", () => {
     assert.equal(parsePosBarcodeCapture("3**770123").valid, false);
+  });
+});
+
+describe("submitPosCaptureOnEnter", () => {
+  it("owns the scanner Enter contract instead of relying on implicit WebView submission", () => {
+    let prevented = false;
+    let submitted = false;
+    const handled = submitPosCaptureOnEnter({
+      key: "Enter",
+      preventDefault: () => { prevented = true; },
+      currentTarget: { form: { requestSubmit: () => { submitted = true; } } },
+    });
+
+    assert.equal(handled, true);
+    assert.equal(prevented, true);
+    assert.equal(submitted, true);
+  });
+
+  it("does not consume navigation keys", () => {
+    let prevented = false;
+    const handled = submitPosCaptureOnEnter({
+      key: "ArrowDown",
+      preventDefault: () => { prevented = true; },
+      currentTarget: { form: null },
+    });
+
+    assert.equal(handled, false);
+    assert.equal(prevented, false);
   });
 });

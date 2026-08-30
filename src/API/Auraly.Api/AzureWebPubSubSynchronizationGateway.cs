@@ -16,30 +16,26 @@ public sealed class AzureWebPubSubSynchronizationGateway(
         Guid businessId,
         Guid deviceId,
         CancellationToken cancellationToken = default) =>
-        client.GetClientAccessUri(
-            expiresAfter: AccessDuration,
-            userId: deviceId.ToString("D"),
-            groups:
+        CreateAccessUri(
+            deviceId,
             [
                 PosSynchronizationGroups.Business(tenantId, businessId),
                 PosSynchronizationGroups.Device(tenantId, deviceId)
             ],
-            cancellationToken: cancellationToken);
+            cancellationToken);
 
     public Uri CreateUserClientAccessUri(
         Guid tenantId,
         Guid businessId,
         Guid userId,
         CancellationToken cancellationToken = default) =>
-        client.GetClientAccessUri(
-            expiresAfter: AccessDuration,
-            userId: userId.ToString("D"),
-            groups:
+        CreateAccessUri(
+            userId,
             [
                 PosSynchronizationGroups.Business(tenantId, businessId),
                 PosSynchronizationGroups.User(tenantId, userId)
             ],
-            cancellationToken: cancellationToken);
+            cancellationToken);
 
     public Task SendAsync(
         PosSynchronizationInvalidation invalidation,
@@ -53,20 +49,20 @@ public sealed class AzureWebPubSubSynchronizationGateway(
             excluded: null,
             filter: null,
             new RequestContext { CancellationToken = cancellationToken });
-}
 
-public static class PosSynchronizationGroups
-{
-    public static string Business(Guid tenantId, Guid businessId) =>
-        $"tenant:{tenantId:D}:business:{businessId:D}";
-
-    public static string Device(Guid tenantId, Guid deviceId) =>
-        $"tenant:{tenantId:D}:device:{deviceId:D}";
-
-    public static string User(Guid tenantId, Guid userId) =>
-        $"tenant:{tenantId:D}:user:{userId:D}";
+    private Uri CreateAccessUri(
+        Guid userId,
+        IReadOnlyList<string> groups,
+        CancellationToken cancellationToken) =>
+        client.GetClientAccessUri(
+            expiresAfter: AccessDuration,
+            userId: userId.ToString("D"),
+            roles: groups.Select(group => $"webpubsub.joinLeaveGroup.{group}"),
+            groups: groups,
+            cancellationToken: cancellationToken);
 }
 
 public sealed record PosSynchronizationNegotiationResponse(
     Uri ClientAccessUri,
-    DateTimeOffset ExpiresAt);
+    DateTimeOffset ExpiresAt,
+    IReadOnlyList<string>? Groups = null);
