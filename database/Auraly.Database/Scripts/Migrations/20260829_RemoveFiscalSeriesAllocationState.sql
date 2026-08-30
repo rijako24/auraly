@@ -36,6 +36,11 @@ END;
 IF OBJECT_ID(N'dbo.FiscalSeries', N'U') IS NOT NULL
 BEGIN
     UPDATE dbo.FiscalSeries
+    SET IsActive = 0
+    WHERE IsActive = 1
+      AND EmitterKind <> CASE WHEN DeviceId IS NULL THEN N'Server' ELSE N'Device' END;
+
+    UPDATE dbo.FiscalSeries
     SET EmitterKind = CASE WHEN DeviceId IS NULL THEN N'Server' ELSE N'Device' END
     WHERE EmitterKind <> CASE WHEN DeviceId IS NULL THEN N'Server' ELSE N'Device' END;
 
