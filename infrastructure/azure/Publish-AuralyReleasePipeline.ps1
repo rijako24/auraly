@@ -210,6 +210,9 @@ function Publish-Database {
             -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260828_RemoveProductsUnitPrice.sql') `
             -AccessToken $accessToken
         Invoke-ReviewedPreDacpacMigration `
+            -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260829_BackfillProductTenant.sql') `
+            -AccessToken $accessToken
+        Invoke-ReviewedPreDacpacMigration `
             -MigrationPath (Join-Path $repoRoot 'database/Auraly.Database/Scripts/Migrations/20260829_RemoveFiscalSeriesAllocationState.sql') `
             -AccessToken $accessToken
 

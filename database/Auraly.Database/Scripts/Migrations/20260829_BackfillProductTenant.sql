@@ -20,4 +20,12 @@ BEGIN
             WHERE ProductCode IS NOT NULL
             GROUP BY TenantId,ProductCode HAVING COUNT(*)>1)
             THROW 51090,''Existen codigos de producto duplicados entre sedes del mismo tenant. Deben consolidarse antes del despliegue.'',1;';
+
+    IF EXISTS (
+        SELECT 1
+        FROM sys.columns
+        WHERE object_id = OBJECT_ID(N'dbo.Products')
+          AND name = N'TenantId'
+          AND is_nullable = 1)
+        ALTER TABLE dbo.Products ALTER COLUMN TenantId UNIQUEIDENTIFIER NOT NULL;
 END;
