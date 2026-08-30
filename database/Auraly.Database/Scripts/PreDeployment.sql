@@ -35,8 +35,6 @@ GO
 :r .\Migrations\20260829_BackfillProductTenant.sql
 GO
 :r .\Migrations\20260829_RemoveFiscalSeriesAllocationState.sql
-:r .\Migrations\20260830_AddFiscalResolutionAlertSettings.sql
-GO
 :r .\Migrations\MoveDispatchReasonsToOwnedSchema.sql
 GO
 
