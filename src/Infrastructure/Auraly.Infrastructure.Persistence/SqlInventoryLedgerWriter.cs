@@ -71,6 +71,7 @@ public sealed class SqlInventoryLedgerWriter(
                 OR (@SharesPrices=0 AND balance.BusinessId=@BusinessId));
 
             DECLARE @PoolAverageBefore DECIMAL(19,6)=CASE
+              WHEN @SharesPrices=0 THEN @AverageBefore
               WHEN @PoolQuantityBefore<>0 AND @PoolValueBefore/@PoolQuantityBefore>=0
                 THEN CAST(@PoolValueBefore/@PoolQuantityBefore AS DECIMAL(19,6))
               ELSE @AverageBefore END;

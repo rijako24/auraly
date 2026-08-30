@@ -183,13 +183,16 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         using var accountsResponse = await accounting.GetAsync("/api/commerce/v1/accounting/accounts");
         accountsResponse.EnsureSuccessStatusCode();
         var accounts = await accountsResponse.Content.ReadFromJsonAsync<AccountingAccountView[]>() ?? [];
-        var debitAccount = accounts.First(account => account.IsActive && account.AllowsPosting && account.AccountType == "Asset" && !account.RequiresParty);
+        var debitAccount = accounts.First(account => account.IsActive && account.AllowsPosting && account.AccountType == "Asset" && account.RequiresParty);
         var creditAccount = accounts.First(account => account.IsActive && account.AllowsPosting && account.AccountType == "Equity" && !account.RequiresParty);
+        var supplierPartyId = await ScalarAsync<Guid>(
+            "SELECT PartyId FROM dbo.Suppliers WHERE SupplierId=@Id",
+            fixture.SupplierId);
         var batchId = Guid.NewGuid();
         var request = new SaveAccountingOpeningBalanceRequest(
             batchId, fixture.BusinessId, effectiveOn, "COP", "Asiento de apertura certificado", null,
             [
-                new(debitAccount.AccountId, null, null, "Disponible inicial", 125_000m, 0m),
+                new(debitAccount.AccountId, supplierPartyId, null, "Saldo inicial del proveedor", 125_000m, 0m),
                 new(creditAccount.AccountId, null, null, "Patrimonio inicial", 0m, 125_000m)
             ]);
         using (var save = await accounting.PutAsJsonAsync(
@@ -202,7 +205,8 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         using (var approve = await accounting.PostAsJsonAsync(
                    $"/api/commerce/v1/accounting/opening-balances/{batchId:D}/approve", new { }))
         {
-            approve.EnsureSuccessStatusCode();
+            Assert.True(approve.IsSuccessStatusCode,
+                await approve.Content.ReadAsStringAsync());
             Assert.Equal(AccountingOpeningBalanceStatuses.Approved,
                 (await approve.Content.ReadFromJsonAsync<AccountingOpeningBalanceView>())!.Status);
         }
@@ -223,6 +227,7 @@ public sealed class AccountingVerticalSliceTests(ServerSliceFixture fixture)
         Assert.Equal(125_000m, entry.DebitTotal);
         Assert.Equal(entry.DebitTotal, entry.CreditTotal);
         Assert.Equal(2, entry.Lines.Count);
+        Assert.Contains(entry.Lines, line => line.PartyId == supplierPartyId);
     }
 
     [Fact]

@@ -21,6 +21,10 @@ public interface IFiscalDeviceSeriesStore
         Guid tenantId, Guid businessId, Guid userId,
         AssignFiscalDeviceSeriesRequest request,
         CancellationToken cancellationToken);
+    Task<FiscalDeviceSeriesWorkspace> SaveAlertSettingsAsync(
+        Guid tenantId, Guid businessId, Guid userId,
+        SaveFiscalResolutionAlertSettingsRequest request,
+        CancellationToken cancellationToken);
     Task<IReadOnlyList<PosFiscalSeriesProvisioning>> GetProvisioningAsync(
         Guid tenantId, Guid businessId, Guid deviceId, Guid? currentSeriesId,
         long? nextConsecutive,
@@ -68,6 +72,24 @@ public sealed class FiscalDeviceSeriesService(IFiscalDeviceSeriesStore store)
         return store.GetProvisioningAsync(
             tenantId, businessId, deviceId, currentSeriesId, nextConsecutive,
             cancellationToken);
+    }
+
+    public Task<FiscalDeviceSeriesWorkspace> SaveAlertSettingsAsync(
+        FiscalConfigurationUser user, Guid businessId,
+        SaveFiscalResolutionAlertSettingsRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, FiscalPermissionCodes.ConfigurationManage);
+        ValidateBusiness(businessId);
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.ExpirationWarningDays is < 0 or > 365)
+            throw new FiscalConfigurationValidationException(
+                "Los días de alerta deben estar entre 0 y 365.");
+        if (request.RemainingNumberWarningThreshold is < 0 or > 1_000_000_000)
+            throw new FiscalConfigurationValidationException(
+                "El umbral de numeración debe estar entre 0 y 1.000.000.000.");
+        return store.SaveAlertSettingsAsync(
+            user.TenantId, businessId, user.UserId, request, cancellationToken);
     }
 
     private static void ValidateBusiness(Guid businessId)

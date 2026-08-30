@@ -180,6 +180,7 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
         try
         {
             var store = await CreateSinglePendingStoreAsync(databasePath);
+            var clock = new MutableTimeProvider(DateTimeOffset.UtcNow);
             var timeoutUploader = new PosEdgeOutboxUploader(
                 store,
                 new FixedUploadClient(
@@ -187,7 +188,7 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
                         PosSaleUploadDisposition.RetryableFailure,
                         null,
                         "timeout")),
-                TimeProvider.System);
+                clock);
             Assert.True(await timeoutUploader.UploadNextAsync());
             var pending = Assert.Single(await store.GetPendingOutboxAsync());
             Assert.Equal(PosOutboxStatus.RetryScheduled, pending.Status);
@@ -198,6 +199,33 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
             Assert.NotNull(persisted);
             Assert.Equal(PosOutboxStatus.RetryScheduled, persisted.Status);
             Assert.NotNull(persisted.NextAttemptAt);
+
+            clock.Advance(TimeSpan.FromSeconds(5));
+            var receiptId = Guid.NewGuid();
+            var recoveredUploader = new PosEdgeOutboxUploader(
+                reopened,
+                new FixedUploadClient(
+                    new PosSaleUploadAttempt(
+                        PosSaleUploadDisposition.Uploaded,
+                        new PosSaleUploadResponse(
+                            receiptId,
+                            pending.DocumentId.Value,
+                            PosSaleRemoteStatuses.CommercialAccepted,
+                            null,
+                            null,
+                            false,
+                            clock.GetUtcNow(),
+                            clock.GetUtcNow(),
+                            null),
+                        null)),
+                clock);
+            Assert.True(await recoveredUploader.UploadNextAsync());
+            var uploaded = await reopened.GetOutboxAsync(pending.DocumentId);
+            Assert.NotNull(uploaded);
+            Assert.Equal(PosOutboxStatus.Uploaded, uploaded.Status);
+            Assert.Equal(2, uploaded.AttemptCount);
+            Assert.Equal(receiptId, uploaded.ServerReceiptId);
+            Assert.Empty(await reopened.GetPendingOutboxAsync());
         }
         finally
         {
@@ -371,6 +399,15 @@ public sealed class PosToServerRecoveryTests(ServerSliceFixture fixture)
             string idempotencyKey,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(result);
+    }
+
+    private sealed class MutableTimeProvider(DateTimeOffset value) : TimeProvider
+    {
+        private DateTimeOffset current = value;
+
+        public override DateTimeOffset GetUtcNow() => current;
+
+        public void Advance(TimeSpan amount) => current = current.Add(amount);
     }
 
     private sealed class FixedResponseHandler(HttpResponseMessage response)

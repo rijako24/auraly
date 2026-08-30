@@ -13,6 +13,11 @@ import {
   ChevronRight,
   Clock3,
   CreditCard,
+  Calculator,
+  FileCheck2,
+  Landmark,
+  MonitorSmartphone,
+  ReceiptText,
   Gauge,
   HandCoins,
   LifeBuoy,
@@ -49,13 +54,8 @@ const PLANS = [
     capacity: "20-30 conversaciones diarias",
     highlight: false,
     features: [
-      "1 agente de IA",
-      "Hasta 3 usuarios",
-      "5 GB de almacenamiento de base de datos",
-      "1 linea de WhatsApp",
-      "Reservas, pagos y catalogo",
-      "Dashboard de consumo",
-      "Alertas de consumo del plan",
+      "1 agente de IA", "Hasta 3 usuarios", "5 GB de almacenamiento de base de datos",
+      "1 linea de WhatsApp", "Reservas, pagos y catalogo", "Dashboard de consumo", "Alertas de consumo del plan",
     ],
   },
   {
@@ -66,13 +66,8 @@ const PLANS = [
     capacity: "120-160 conversaciones diarias",
     highlight: true,
     features: [
-      "3 agentes de IA",
-      "Hasta 5 usuarios",
-      "10 GB de almacenamiento de base de datos",
-      "Hasta 3 lineas de WhatsApp",
-      "Analytics avanzado",
-      "Integraciones operativas",
-      "Soporte prioritario",
+      "3 agentes de IA", "Hasta 5 usuarios", "10 GB de almacenamiento de base de datos",
+      "Hasta 3 lineas de WhatsApp", "Analytics avanzado", "Integraciones operativas", "Soporte prioritario",
     ],
   },
   {
@@ -83,13 +78,8 @@ const PLANS = [
     capacity: "350-500 conversaciones diarias",
     highlight: false,
     features: [
-      "Agentes de IA ilimitados",
-      "Usuarios ilimitados",
-      "20 GB de almacenamiento de base de datos",
-      "Multi-sede",
-      "Reportes avanzados",
-      "Flujos de venta complejos",
-      "Acompanamiento prioritario",
+      "Agentes de IA ilimitados", "Usuarios ilimitados", "20 GB de almacenamiento de base de datos",
+      "Multi-sede", "Reportes avanzados", "Flujos de venta complejos", "Acompanamiento prioritario",
     ],
   },
   {
@@ -100,15 +90,26 @@ const PLANS = [
     capacity: "Sin limite fijo",
     highlight: false,
     features: [
-      "Creditos por consumo",
-      "Agentes personalizados",
-      "50 GB de almacenamiento de base de datos",
-      "Soporte dedicado",
-      "Acuerdos de servicio",
-      "Arquitectura a medida",
+      "Creditos por consumo", "Agentes personalizados", "50 GB de almacenamiento de base de datos",
+      "Soporte dedicado", "Acuerdos de servicio", "Arquitectura a medida",
     ],
   },
 ];
+
+const OPERATIONS_PLANS = [
+  { name: "Esencial", price: "119.900", tagline: "Empieza con control", hint: "Para organizar y facturar una operación que empieza a crecer.", highlight: false, features: ["3 usuarios completos", "1 caja", "500 documentos DIAN / mes", "10 empleados de nómina", "POS, contabilidad y nómina"] },
+  { name: "Negocio", price: "299.900", tagline: "Más capacidad", hint: "La combinación recomendada para equipos con operación diaria.", highlight: true, features: ["8 usuarios completos", "3 cajas", "1.500 documentos DIAN / mes", "30 empleados de nómina", "Soporte prioritario"] },
+  { name: "Empresa", price: "449.900", tagline: "Opera a escala", hint: "Para varias áreas, más cajas y una operación exigente.", highlight: false, features: ["12 usuarios completos", "5 cajas", "3.000 documentos DIAN / mes", "100 empleados de nómina", "Soporte prioritario"] },
+  { name: "Corporativo a medida", price: "A medida", tagline: "Capacidad configurable", hint: "Paga exactamente por la capacidad de una operación de gran escala.", highlight: false, features: ["Usuarios y vendedores a medida", "Cajas y documentos a medida", "Sedes del mismo NIT sin costo", "Acompañamiento especializado"] },
+] as const;
+
+const PRODUCT_SCENES = [
+  { icon: MonitorSmartphone, number: "01", kicker: "Punto de venta", title: "Vende rápido. Auraly mantiene el control.", text: "Caja online u offline, inventario, pedidos, devoluciones y cierres conectados con una sola operación.", metric: "Una venta, un inventario", accent: "from-[#69D9D0] to-[#1A5860]" },
+  { icon: ReceiptText, number: "02", kicker: "Facturación electrónica", title: "De la caja a la DIAN, sin saltos manuales.", text: "Resoluciones por equipo, numeración segura, validación de vigencia y trazabilidad fiscal en cada documento.", metric: "Numeración protegida", accent: "from-cyan-300 to-blue-700" },
+  { icon: Calculator, number: "03", kicker: "Contabilidad", title: "Cada movimiento explica sus números.", text: "Ventas, compras, inventario, cartera y gastos alimentan la contabilidad con reglas auditables.", metric: "Contabilidad conectada", accent: "from-amber-300 to-orange-600" },
+  { icon: Landmark, number: "04", kicker: "Nómina", title: "Personas, novedades y pago en el mismo contexto.", text: "Administra empleados, periodos y documentos de nómina sin perder el aislamiento de tu empresa.", metric: "Equipo al día", accent: "from-violet-300 to-fuchsia-700" },
+  { icon: Bot, number: "05", kicker: "Agentes de IA", title: "Tu operación también conversa y vende 24/7.", text: "Agentes configurables atienden, cotizan, agendan, cobran y escalan con datos reales del negocio.", metric: "IA que sí opera", accent: "from-emerald-300 to-teal-700" },
+] as const;
 
 const OUTCOMES = [
   { icon: Clock3, title: "Atiende 24/7", text: "Responde al instante fuera de horario, baja tiempos de espera y mantiene conversaciones activas cuando tu equipo no esta conectado." },
@@ -295,7 +296,8 @@ export default function LandingPage() {
             <AuralyLogo className="[&>span]:text-[#151515]" />
           </Link>
           <div className="hidden items-center gap-8 md:flex">
-            <a href="#producto" className="text-sm font-medium text-black/65 hover:text-black">Producto</a>
+            <a href="#servicios" className="text-sm font-medium text-black/65 hover:text-black">Servicios</a>
+            <a href="#facturacion" className="text-sm font-medium text-black/65 hover:text-black">Facturación electrónica</a>
             <a href="#agentes" className="text-sm font-medium text-black/65 hover:text-black">Agentes</a>
             <a href="#planes" className="text-sm font-medium text-black/65 hover:text-black">Planes</a>
             <a href="#faq" className="text-sm font-medium text-black/65 hover:text-black">FAQ</a>
@@ -304,7 +306,7 @@ export default function LandingPage() {
             <ThemeToggle />
             <Button variant="ghost" asChild><Link href="/login">Entrar</Link></Button>
             <Button asChild className="hidden bg-[#151515] text-white hover:bg-black sm:inline-flex"><a href="#demo">Solicitar demo</a></Button>
-            <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobileMenuOpen((v) => !v)} aria-label="Menu">
+            <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobileMenuOpen((v) => !v)} aria-label={mobileMenuOpen ? "Cerrar menú" : "Abrir menú"}>
               {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </Button>
           </div>
@@ -312,7 +314,8 @@ export default function LandingPage() {
         {mobileMenuOpen && (
           <div className="border-t border-black/10 px-4 py-4 md:hidden">
             <div className="mx-auto flex max-w-7xl flex-col gap-3 text-sm">
-              <a href="#producto" onClick={() => setMobileMenuOpen(false)}>Producto</a>
+              <a href="#servicios" onClick={() => setMobileMenuOpen(false)}>Servicios</a>
+              <a href="#facturacion" onClick={() => setMobileMenuOpen(false)}>Facturación electrónica</a>
               <a href="#agentes" onClick={() => setMobileMenuOpen(false)}>Agentes</a>
               <a href="#planes" onClick={() => setMobileMenuOpen(false)}>Planes</a>
               <a href="#faq" onClick={() => setMobileMenuOpen(false)}>FAQ</a>
@@ -327,12 +330,12 @@ export default function LandingPage() {
       <section className="bg-[#f7f8f2]">
         <div className="mx-auto grid min-h-[calc(100vh-4rem)] max-w-7xl items-center gap-10 px-4 py-10 lg:grid-cols-[1.05fr_0.95fr]">
         <div className="max-w-3xl">
-          <Badge className="mb-5 bg-[#69D9D0] text-[#07161A] hover:bg-[#69D9D0]">Para negocios que venden por WhatsApp</Badge>
+          <Badge className="mb-5 bg-[#69D9D0] text-[#07161A] hover:bg-[#69D9D0]">Tu empresa, conectada de punta a punta</Badge>
           <h1 className="text-5xl font-semibold leading-[1.02] tracking-normal sm:text-6xl lg:text-7xl">
-            Empleados digitales para vender, agendar y atender 24/7.
+            Factura, opera y crece con una inteligencia que entiende tu negocio.
           </h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-black/70">
-            AURALY crea empleados digitales configurables que responden, califican, recomiendan, agendan demos o citas, cobran y hacen seguimiento desde WhatsApp. Aly es nuestra asesora digital: entiende la necesidad, explica que hacemos y lleva la conversacion hasta una demo agendada.
+            POS, facturación electrónica, contabilidad, nómina y agentes de IA trabajan sobre la misma verdad. Menos tareas separadas; más control para decidir y vender.
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
             <Button size="lg" asChild className="bg-[#151515] text-white hover:bg-black">
@@ -343,7 +346,7 @@ export default function LandingPage() {
             </Button>
           </div>
           <div className="mt-8 grid max-w-2xl gap-3 sm:grid-cols-3">
-            {["WhatsApp Cloud API", "Azure OpenAI", "Pagos y reservas"].map((item) => (
+            {["Facturación DIAN", "Operación y finanzas", "Agentes de IA 24/7"].map((item) => (
               <div key={item} className="flex items-center gap-2 text-sm text-black/70"><Check className="h-4 w-4 text-[#1A5860]" />{item}</div>
             ))}
           </div>
@@ -380,6 +383,39 @@ export default function LandingPage() {
             </div>
           </div>
         </div>
+        </div>
+      </section>
+
+      <section id="servicios" className="relative overflow-clip bg-[#07161A] py-24 text-white">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_18%,rgba(105,217,208,.2),transparent_32%),radial-gradient(circle_at_88%_72%,rgba(42,122,130,.25),transparent_34%)]" />
+        <div className="relative mx-auto max-w-7xl px-4">
+          <div className="max-w-3xl">
+            <p className="text-xs font-bold uppercase tracking-[.26em] text-[#69D9D0]">Una plataforma. Cinco escenas.</p>
+            <h2 className="mt-4 text-4xl font-semibold tracking-[-.04em] sm:text-6xl">Desplázate por una operación que por fin habla el mismo idioma.</h2>
+          </div>
+          <div className="mt-16 space-y-7">
+            {PRODUCT_SCENES.map((scene, index) => {
+              const Icon = scene.icon;
+              return <article id={index === 1 ? "facturacion" : undefined} key={scene.number} className="landing-scene group sticky overflow-hidden rounded-[2rem] border border-white/10 bg-[#0F2C33]/90 p-6 shadow-[0_35px_100px_rgba(0,0,0,.32)] backdrop-blur-xl sm:p-10" style={{ top: `${84 + index * 14}px` }}>
+                <div className="grid min-h-[58vh] items-center gap-10 lg:grid-cols-[.85fr_1.15fr]">
+                  <div>
+                    <div className="flex items-center gap-3 text-sm text-[#A6F1EA]"><span className="font-mono">{scene.number}</span><span className="h-px w-12 bg-[#69D9D0]/50"/><span className="font-semibold uppercase tracking-[.18em]">{scene.kicker}</span></div>
+                    <h3 className="mt-7 text-4xl font-semibold leading-tight tracking-[-.035em] sm:text-5xl">{scene.title}</h3>
+                    <p className="mt-5 max-w-xl text-lg leading-8 text-white/65">{scene.text}</p>
+                    <div className="mt-9 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm"><FileCheck2 className="h-4 w-4 text-[#69D9D0]"/>{scene.metric}</div>
+                  </div>
+                  <div className="relative mx-auto aspect-square w-full max-w-lg">
+                    <div className={cn("landing-orbit absolute inset-[8%] rounded-full bg-gradient-to-br opacity-25 blur-2xl", scene.accent)} />
+                    <div className="absolute inset-[14%] rounded-full border border-white/10" />
+                    <div className="landing-float absolute inset-[25%] grid place-items-center rounded-[2.5rem] border border-white/15 bg-white/[.08] shadow-2xl backdrop-blur-xl">
+                      <Icon className="h-24 w-24 text-[#A6F1EA] sm:h-32 sm:w-32" strokeWidth={1.15}/>
+                    </div>
+                    {["top-4 left-1/2", "bottom-8 right-3", "bottom-12 left-2"].map((position, dot) => <span key={position} className={cn("absolute h-3 w-3 rounded-full bg-[#69D9D0] shadow-[0_0_25px_#69D9D0]", position)} style={{ animationDelay: `${dot * 350}ms` }}/>) }
+                  </div>
+                </div>
+              </article>;
+            })}
+          </div>
         </div>
       </section>
 
@@ -513,18 +549,19 @@ export default function LandingPage() {
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div>
               <Badge className="mb-4 bg-[#69D9D0] text-[#07161A] hover:bg-[#69D9D0]">Planes AURALY</Badge>
-              <h2 className="text-3xl font-semibold sm:text-5xl">Precios claros para volumen real de WhatsApp.</h2>
+              <h2 className="text-3xl font-semibold sm:text-5xl">Planes que crecen contigo.</h2>
             </div>
-            <p className="max-w-md text-sm leading-6 text-black/65">Campanas y plantillas marketing de WhatsApp se cobran aparte. Asi protegemos margen y evitamos sorpresas.</p>
+            <p className="max-w-md text-sm leading-6 text-black/65">POS, facturación electrónica, contabilidad y nómina con capacidad visible y ampliaciones sin sorpresas.</p>
           </div>
           <div className="mt-10 grid auto-rows-fr items-stretch gap-4 min-[560px]:grid-cols-2 xl:grid-cols-4">
-            {PLANS.map((plan) => (
+            {OPERATIONS_PLANS.map((plan) => (
               <Card key={plan.name} className={cn("flex h-full flex-col rounded-lg border-black/10 bg-white text-[#151515]", plan.highlight && "border-[#69D9D0] bg-[#E6FFFD]")}>
                 <CardHeader>
                   <div className="flex items-center justify-between">
                     <CardTitle>{plan.name}</CardTitle>
                     {plan.highlight && <Badge className="bg-[#69D9D0] text-[#07161A] hover:bg-[#69D9D0]">Recomendado</Badge>}
                   </div>
+                  <p className="mt-3 text-xs font-bold uppercase tracking-[.16em] text-[#1A5860]">{plan.tagline}</p>
                   <div className="min-h-[84px] pt-4">
                     <p className="text-4xl font-semibold">{plan.price === "A medida" ? plan.price : `$${plan.price}`}</p>
                     {plan.price !== "A medida" && <p className="text-sm text-black/55">COP / mes</p>}
@@ -533,10 +570,6 @@ export default function LandingPage() {
                 <CardContent className="flex flex-1 flex-col gap-5">
                   <p className="min-h-12 text-sm leading-6 text-black/65">{plan.hint}</p>
                   <Separator className="bg-black/10" />
-                  <div className="grid gap-2 text-sm">
-                    <p><span className="text-[#1A5860]">{plan.credits}</span> creditos mensuales</p>
-                    <p className="text-black/65">{plan.capacity}</p>
-                  </div>
                   <ul className="space-y-3 text-sm">
                     {plan.features.map((feature) => (
                       <li key={feature} className="flex gap-2"><Check className="mt-0.5 h-4 w-4 shrink-0 text-[#1A5860]" />{feature}</li>
@@ -548,6 +581,27 @@ export default function LandingPage() {
                 </CardContent>
               </Card>
             ))}
+          </div>
+          <div className="mt-6 grid gap-5 rounded-[2rem] border border-[#1A5860]/15 bg-gradient-to-br from-white to-[#E6FFFD] p-6 lg:grid-cols-[.72fr_1.28fr] lg:p-8">
+            <div><p className="text-xs font-bold uppercase tracking-[.2em] text-[#1A5860]">Amplía cuando lo necesites</p><h3 className="mt-2 text-2xl font-semibold">Tu plan no limita tu crecimiento.</h3><p className="mt-3 text-sm leading-6 text-black/60">Agrega capacidad al crear la empresa o desde tu suscripción. El total se recalcula antes del pago.</p></div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {[["Usuario completo","$30.000 / mes"],["Usuario vendedor","$10.000 / mes"],["Caja adicional","$20.000 / mes"],["Paquete de 1.000 documentos DIAN","$20.000 / mes"],["Sedes dentro del mismo NIT","Sin costo"]].map(([label, price]) => <div key={label} className="flex items-center justify-between gap-4 rounded-xl border border-black/5 bg-white/80 px-4 py-3 text-sm"><span>{label}</span><strong className="whitespace-nowrap text-[#0F2C33]">{price}</strong></div>)}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="planes-ia" className="border-t border-white/10 bg-[#06090B] py-20 text-white">
+        <div className="mx-auto max-w-7xl px-4">
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div><Badge className="mb-4 bg-[#69D9D0] text-[#07161A]">Planes de agentes de IA</Badge><h2 className="text-3xl font-semibold sm:text-5xl">Créditos y capacidad para conversaciones reales.</h2></div>
+            <p className="max-w-md text-sm leading-6 text-white/60">Conserva la oferta de agentes, almacenamiento y líneas de WhatsApp; escala según el volumen de atención.</p>
+          </div>
+          <div className="mt-10 grid auto-rows-fr gap-4 min-[560px]:grid-cols-2 xl:grid-cols-4">
+            {PLANS.map((plan) => <Card key={plan.name} className={cn("flex h-full flex-col rounded-2xl border-white/10 bg-white/[.06] text-white", plan.highlight && "border-[#69D9D0] bg-[#0F2C33]")}>
+              <CardHeader><div className="flex items-center justify-between gap-2"><CardTitle>{plan.name}</CardTitle>{plan.highlight && <Badge className="bg-[#69D9D0] text-[#07161A]">Recomendado</Badge>}</div><p className="pt-4 text-4xl font-semibold">{plan.price === "A medida" ? plan.price : `$${plan.price}`}</p>{plan.price !== "A medida" && <p className="text-sm text-white/50">COP / mes</p>}</CardHeader>
+              <CardContent className="flex flex-1 flex-col gap-5"><p className="min-h-12 text-sm leading-6 text-white/60">{plan.hint}</p><Separator className="bg-white/10"/><div className="text-sm"><strong className="text-[#69D9D0]">{plan.credits}</strong> créditos mensuales<p className="mt-1 text-white/55">{plan.capacity}</p></div><ul className="space-y-3 text-sm">{plan.features.map(feature => <li key={feature} className="flex gap-2"><Check className="mt-0.5 h-4 w-4 shrink-0 text-[#69D9D0]"/>{feature}</li>)}</ul><Button asChild className="mt-auto w-full bg-[#69D9D0] text-[#07161A] hover:bg-[#7CE3DB]"><a href="#demo">Solicitar demo <ChevronRight className="ml-1 h-4 w-4"/></a></Button></CardContent>
+            </Card>)}
           </div>
         </div>
       </section>
@@ -611,7 +665,8 @@ export default function LandingPage() {
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 text-sm text-black/60 sm:flex-row sm:items-center sm:justify-between">
           <p>AURALY. Intelligence Amplified. Imagination Realized.</p>
           <div className="flex gap-4">
-            <a href="#producto">Producto</a>
+            <a href="#servicios">Servicios</a>
+            <a href="#facturacion">Facturación</a>
             <a href="#agentes">Agentes</a>
             <a href="#planes">Planes</a>
             <a href="#faq">FAQ</a>

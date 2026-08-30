@@ -557,6 +557,13 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         {
             Lines = [first, second],
             Payments = [new PosSalePaymentContract(1, "Cash", payable, null)],
+            CommercialSnapshot = request.CommercialSnapshot with
+            {
+                Taxes = [new PosSaleTaxContract("01", tax)],
+                UntaxedAmount = untaxed,
+                TaxAmount = tax,
+                PayableAmount = payable
+            },
             FiscalSnapshot = request.FiscalSnapshot with
             {
                 Taxes = [new PosSaleTaxContract("01", tax)],

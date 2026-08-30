@@ -2,6 +2,8 @@
 
 Este documento responde qué componente es dueño de cada efecto y dónde se agrega una capacidad sin duplicar código. Es operativo; las decisiones detalladas enlazadas siguen siendo la autoridad de diseño.
 
+Para creación de empresas, planes, pagos de suscripción, ampliaciones y cupos de usuarios, vendedores, cajas, nómina o documentos DIAN, la autoridad es `docs/decision-aprovisionamiento-suscripciones-cuotas-y-wompi.md`. El alta física continúa en `ITenantProvisioningStore`; webhook y polling convergen antes de invocarlo.
+
 ## Regla de navegación
 
 | Necesidad | Extender | No crear ni escribir directamente |
@@ -17,6 +19,11 @@ Este documento responde qué componente es dueño de cada efecto y dónde se agr
 | Regla dependiente de fecha/hora | `IBusinessClock` y `TimeProvider` | `DateTime.Now/UtcNow` dentro de la regla |
 | Nuevo comportamiento conversacional | configuración, fact/signal/action/outcome y operación existentes según el manual | condición de tenant o vocabulario comercial en el engine |
 | Nueva regla o concepto de nómina | módulo `Payroll`, rule sets versionados y calculador determinístico | salarios en `Employees`, listas locales o segundo motor contable/fiscal |
+| Pago de suscripción o ampliación | ciclo de pagos existente → confirmación idempotente → suscripción/entitlements | aprovisionar desde redirect, webhook o poller por separado |
+| Espera fiscal por cupo y recuperación POS offline | `FiscalDocumentProcesses` + motor fiscal y outbox POS existentes; usar `PendingCapacity` y despertar el mismo proceso al ampliar/renovar | otra factura, numeración, cola, tabla de jobs o worker de reenvío |
+| Renovación mensual y mora | `TimedProcessScheduler` → `TenantBillingCharge` → pago existente → factura de servicio en motor documental/fiscal + `SqlAccountingPostingProcessor` | auto-renovar sin cobro, timer nuevo, CxC paralela o desactivar `Tenant.IsActive` por mora |
+| Facturar productos y servicios | catálogos `Products`/`Services` → única `SalesDocumentLines` con referencia exclusiva → mismo job, handler, contabilidad y fiscal | tabla de líneas de servicio, numeración, writer o pipeline DIAN paralelo |
+| Entregar factura aceptada | transición `DianAccepted` → outbox de entrega → contenedor `AttachedDocument`/respuesta DIAN + representación PDF del almacén fiscal | enviar antes de aceptación, regenerar XML en la plantilla o reenviar DIAN desde correo |
 
 ## Documento e inventario
 

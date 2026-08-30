@@ -6,9 +6,12 @@
 /.pos-test-dist/
 # testing
 /coverage
+/test-results/
+/playwright-report/
 
 # next.js
 /.next/
+/.next-codex-*/
 /out/
 
 # production

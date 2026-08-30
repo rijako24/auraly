@@ -182,6 +182,25 @@ body.dashboard-shell { overflow: hidden; }
   100% { transform: translateX(0) scale(1); }
 }
 
+@keyframes landing-float {
+  0%, 100% { transform: translate3d(0, -5px, 0) rotate(-1deg); }
+  50% { transform: translate3d(0, 10px, 0) rotate(1deg); }
+}
+
+@keyframes landing-orbit {
+  0% { transform: rotate(0deg) scale(.96); }
+  50% { transform: rotate(180deg) scale(1.04); }
+  100% { transform: rotate(360deg) scale(.96); }
+}
+
+.landing-float { animation: landing-float 6s ease-in-out infinite; }
+.landing-orbit { animation: landing-orbit 18s linear infinite; }
+.landing-scene { scroll-margin-top: 6rem; }
+
+@media (max-width: 767px) {
+  .landing-scene { position: relative !important; top: auto !important; }
+}
+
 .pos-scan-rejected {
   animation: pos-scan-rejected 720ms cubic-bezier(.36,.07,.19,.97) both;
 }
@@ -202,6 +221,8 @@ body.dashboard-shell { overflow: hidden; }
   .auraly-setup-loader-stage { animation: none; display: none; }
   .auraly-setup-loader-stage:first-child { display: inline; opacity: 1; }
   .pos-scan-rejected { animation: none; }
+  .landing-float, .landing-orbit { animation: none; }
+  .landing-scene { position: relative !important; top: auto !important; }
 }
 
 @media (display-mode: standalone) {

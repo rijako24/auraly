@@ -40,6 +40,7 @@
     <Build Include="StoredProcedures\InventoryOperationsSearch.sql" />
     <Build Include="StoredProcedures\AccountingDefaultsProvision.sql" />
     <Build Include="StoredProcedures\FiscalDeviceSeriesAssign.sql" />
+    <Build Include="StoredProcedures\FiscalResolutionAlertSettingsSave.sql" />
     <Build Include="StoredProcedures\FiscalDeviceSeriesProvisioningGet.sql" />
     <Build Include="StoredProcedures\FiscalDeviceSeriesWorkspaceGet.sql" />
     <Build Include="StoredProcedures\DocumentProcessingPayloadGet.sql" />
@@ -178,6 +179,7 @@
     <Build Include="Tables\FiscalCredentialSecrets.sql" />
     <Build Include="Tables\DianNumberingRanges.sql" />
     <Build Include="Tables\FiscalSeries.sql" />
+    <Build Include="Tables\FiscalResolutionAlertSettings.sql" />
 
     <Build Include="Tables\WorkSessions.sql" />
     <Build Include="Tables\WorkSessionClosures.sql" />

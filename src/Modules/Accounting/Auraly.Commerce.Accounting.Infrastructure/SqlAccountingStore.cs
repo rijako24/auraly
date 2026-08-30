@@ -839,11 +839,22 @@ public sealed class SqlAccountingStore(
                     line.CostCenterId, cancellationToken);
                 if (line.PartyId is Guid partyId)
                 {
-                    await using var party = new SqlCommand("SELECT COUNT_BIG(1) FROM dbo.Parties WHERE PartyId=@PartyId AND TenantId=@TenantId AND IsActive=1;", connection, transaction);
+                    await using var party = new SqlCommand("""
+                        SELECT COUNT_BIG(1)
+                        FROM dbo.Parties p
+                        WHERE p.PartyId=@PartyId AND p.TenantId=@TenantId AND p.IsActive=1
+                          AND (EXISTS(SELECT 1 FROM dbo.Customers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId)
+                               OR EXISTS(SELECT 1 FROM dbo.Suppliers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId)
+                               OR EXISTS(SELECT 1 FROM dbo.CommerceSellers s WHERE s.PartyId=p.PartyId AND s.BusinessId=@BusinessId)
+                               OR EXISTS(SELECT 1 FROM dbo.Carriers c WHERE c.PartyId=p.PartyId AND c.BusinessId=@BusinessId)
+                               OR EXISTS(SELECT 1 FROM dbo.Employees e WHERE e.PartyId=p.PartyId AND e.BusinessId=@BusinessId)
+                               OR EXISTS(SELECT 1 FROM dbo.AppUsers u WHERE u.PartyId=p.PartyId AND u.TenantId=@TenantId));
+                        """, connection, transaction);
                     party.Parameters.AddWithValue("@PartyId", partyId);
                     party.Parameters.AddWithValue("@TenantId", user.TenantId);
+                    party.Parameters.AddWithValue("@BusinessId", user.BusinessId);
                     if (Convert.ToInt64(await party.ExecuteScalarAsync(cancellationToken)) != 1)
-                        throw new AccountingValidationException("El saldo inicial referencia un tercero inexistente o inactivo.");
+                        throw new AccountingValidationException("El saldo inicial referencia un tercero inexistente, inactivo o ajeno al negocio.");
                 }
             }
 
@@ -949,13 +960,21 @@ public sealed class SqlAccountingStore(
                 SELECT COUNT(*),COALESCE(SUM(Debit),0),COALESCE(SUM(Credit),0),
                   SUM(CASE WHEN a.AccountId IS NULL OR a.IsActive=0 OR a.AllowsPosting=0
                             OR (a.RequiresParty=1 AND l.PartyId IS NULL)
-                            OR (l.PartyId IS NOT NULL AND p.PartyId IS NULL)
+                            OR (l.PartyId IS NOT NULL AND (p.PartyId IS NULL OR partyScope.IsInBusiness=0))
                             OR (l.CostCenterId IS NOT NULL AND c.CostCenterId IS NULL)
                            THEN 1 ELSE 0 END)
                 FROM dbo.AccountingOpeningBalanceLines l
                 LEFT JOIN dbo.AccountingAccounts a ON a.AccountId=l.AccountId AND a.TenantId=@TenantId
                 LEFT JOIN dbo.Parties p ON p.PartyId=l.PartyId AND p.TenantId=@TenantId AND p.IsActive=1
                 LEFT JOIN dbo.AccountingCostCenters c ON c.CostCenterId=l.CostCenterId AND c.BusinessId=@BusinessId AND c.IsActive=1
+                CROSS APPLY(SELECT CONVERT(bit,CASE WHEN l.PartyId IS NULL
+                    OR EXISTS(SELECT 1 FROM dbo.Customers customer WHERE customer.PartyId=l.PartyId AND customer.BusinessId=@BusinessId)
+                    OR EXISTS(SELECT 1 FROM dbo.Suppliers supplier WHERE supplier.PartyId=l.PartyId AND supplier.BusinessId=@BusinessId)
+                    OR EXISTS(SELECT 1 FROM dbo.CommerceSellers seller WHERE seller.PartyId=l.PartyId AND seller.BusinessId=@BusinessId)
+                    OR EXISTS(SELECT 1 FROM dbo.Carriers carrier WHERE carrier.PartyId=l.PartyId AND carrier.BusinessId=@BusinessId)
+                    OR EXISTS(SELECT 1 FROM dbo.Employees employee WHERE employee.PartyId=l.PartyId AND employee.BusinessId=@BusinessId)
+                    OR EXISTS(SELECT 1 FROM dbo.AppUsers appUser WHERE appUser.PartyId=l.PartyId AND appUser.TenantId=@TenantId)
+                    THEN 1 ELSE 0 END) IsInBusiness) partyScope
                 WHERE l.BatchId=@BatchId;
                 """, connection, transaction))
             {

@@ -334,6 +334,7 @@ export class OnlinePosClient implements PosClient {
       workSessionId: this.context.workSessionId,
       deviceId: local?.deviceId ?? null,
       fiscalReady: fiscal?.isReadyForOnlineSales === true,
+      fiscalWarnings: fiscal?.warningMessages ?? [],
       identityReady: true,
       catalogStatus: "Ready",
       synchronizationInProgress: false,

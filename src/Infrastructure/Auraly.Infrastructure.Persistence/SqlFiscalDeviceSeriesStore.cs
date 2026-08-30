@@ -10,7 +10,8 @@ namespace Auraly.Infrastructure.Persistence;
 public sealed class SqlFiscalDeviceSeriesStore(
     SqlServerConnectionFactory connections,
     IAuralyIdGenerator ids,
-    IFiscalTechnicalKeyProvider technicalKeys) : IFiscalDeviceSeriesStore
+    IFiscalTechnicalKeyProvider technicalKeys,
+    TimeProvider timeProvider) : IFiscalDeviceSeriesStore
 {
     public async Task<FiscalDeviceSeriesWorkspace> ListAsync(
         Guid tenantId, Guid businessId, CancellationToken cancellationToken)
@@ -47,11 +48,33 @@ public sealed class SqlFiscalDeviceSeriesStore(
                 seriesId.HasValue));
         }
 
+        await reader.NextResultAsync(cancellationToken);
+        FiscalOnlineSeriesAssignment? online = null;
+        if (await reader.ReadAsync(cancellationToken))
+            online = new FiscalOnlineSeriesAssignment(
+                reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2),
+                reader.GetString(3), reader.GetInt64(4), reader.GetInt64(5),
+                reader.GetInt64(6), reader.GetInt64(7),
+                DateOnly.FromDateTime(reader.GetDateTime(8)),
+                DateOnly.FromDateTime(reader.GetDateTime(9)));
+
+        await reader.NextResultAsync(cancellationToken);
+        var expirationWarningDays = 3;
+        long remainingNumberWarningThreshold = 100;
+        if (await reader.ReadAsync(cancellationToken))
+        {
+            expirationWarningDays = reader.GetInt32(0);
+            remainingNumberWarningThreshold = reader.GetInt64(1);
+        }
+
         return new FiscalDeviceSeriesWorkspace(
             businessId,
             resolutions.Sum(item => item.RangeEnd - item.RangeStart + 1),
             resolutions,
-            devices);
+            devices,
+            online,
+            expirationWarningDays,
+            remainingNumberWarningThreshold);
     }
 
     public async Task<FiscalDeviceSeriesWorkspace> AssignAsync(
@@ -76,13 +99,40 @@ public sealed class SqlFiscalDeviceSeriesStore(
         Add(command, "@NotificationId", ids.NewId());
         Add(command, "@QrValidationUrl", DianFiscalDefaults.ProductionQrValidationUrl);
         Add(command, "@TechnicalKeyVersion", DianFiscalDefaults.NumberingRangeTechnicalKeyVersion);
-        Add(command, "@Now", DateTimeOffset.UtcNow);
+        Add(command, "@Now", timeProvider.GetUtcNow());
         try
         {
             await command.ExecuteNonQueryAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }
         catch (SqlException exception) when (exception.Number is 51023 or 51027)
+        {
+            throw new FiscalConfigurationValidationException(exception.Message);
+        }
+        return await ListAsync(tenantId, businessId, cancellationToken);
+    }
+
+    public async Task<FiscalDeviceSeriesWorkspace> SaveAlertSettingsAsync(
+        Guid tenantId, Guid businessId, Guid userId,
+        SaveFiscalResolutionAlertSettingsRequest request,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = StoredProcedure(
+            "fiscal.FiscalResolutionAlertSettingsSave", connection);
+        Add(command, "@TenantId", tenantId);
+        Add(command, "@BusinessId", businessId);
+        Add(command, "@UserId", userId);
+        Add(command, "@ExpirationWarningDays", request.ExpirationWarningDays);
+        Add(command, "@RemainingNumberWarningThreshold",
+            request.RemainingNumberWarningThreshold);
+        Add(command, "@Now", timeProvider.GetUtcNow());
+        try
+        {
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        catch (SqlException exception) when (exception.Number is 51021 or 51027)
         {
             throw new FiscalConfigurationValidationException(exception.Message);
         }
@@ -114,7 +164,8 @@ public sealed class SqlFiscalDeviceSeriesStore(
                     DateOnly.FromDateTime(reader.GetDateTime(6)),
                     DateOnly.FromDateTime(reader.GetDateTime(7)), reader.GetByte(8),
                     reader.GetString(9), reader.GetString(10), reader.GetString(11),
-                    reader.GetInt64(12), reader.GetInt64(13)));
+                    reader.GetInt64(12), reader.GetInt64(13),
+                    reader.GetInt32(14), reader.GetInt64(15)));
         }
         catch (SqlException exception) when (exception.Number is 51023 or 51027)
         {
@@ -136,7 +187,9 @@ public sealed class SqlFiscalDeviceSeriesStore(
                 row.ValidUntil, row.Environment, material.SupplierTaxId,
                 new string(material.TechnicalKey.Reveal()), row.TechnicalKeyVersion,
                 material.QrValidationUrl, row.ValidFrom,
-                row.AuthorizationRangeStart, row.AuthorizationRangeEnd));
+                row.AuthorizationRangeStart, row.AuthorizationRangeEnd,
+                row.ExpirationWarningDays,
+                row.RemainingNumberWarningThreshold));
         }
         return result;
     }
@@ -146,7 +199,8 @@ public sealed class SqlFiscalDeviceSeriesStore(
         string AuthorizationNumber, long RangeStart, long RangeEnd,
         DateOnly ValidFrom, DateOnly ValidUntil, byte Environment,
         string SupplierTaxId, string TechnicalKeyVersion, string QrValidationUrl,
-        long AuthorizationRangeStart, long AuthorizationRangeEnd);
+        long AuthorizationRangeStart, long AuthorizationRangeEnd,
+        int ExpirationWarningDays, long RemainingNumberWarningThreshold);
 
     private static SqlCommand StoredProcedure(
         string name, SqlConnection connection, SqlTransaction? transaction = null) =>

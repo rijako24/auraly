@@ -341,13 +341,15 @@ public sealed class SqlPosSaleServerStore(
         sqlCommand.Parameters.AddWithValue("@DocumentId", request.DocumentId);
         sqlCommand.Parameters.AddWithValue("@BusinessId", request.BusinessId);
         sqlCommand.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
-        // Reception persists the immutable document first. The canonical document
-        // processor owns work-session validation/materialization and links the
-        // document in the same processing transaction (EnsureWorkSessionAsync).
-        // An offline login creates this identifier locally, so requiring its FK to
-        // exist before processing makes every first offline upload impossible.
+        // Online checkout has already validated and materialized the work session,
+        // so retain that historical link before publishing the processing signal.
+        // An offline login creates the identifier locally, where the corresponding
+        // server row may not exist yet; those uploads remain unlinked until the
+        // canonical processor validates/materializes the session atomically.
         sqlCommand.Parameters.Add("@WorkSessionId", SqlDbType.UniqueIdentifier).Value =
-            DBNull.Value;
+            request.SourceMode == SaleSourceModes.Online
+                ? request.WorkSessionId
+                : DBNull.Value;
         sqlCommand.Parameters.AddWithValue("@DeviceId", request.DeviceId == Guid.Empty ? DBNull.Value : request.DeviceId);
         sqlCommand.Parameters.AddWithValue("@SourceMode", request.SourceMode);
         sqlCommand.Parameters.AddWithValue("@DocumentSeriesId", request.DocumentNumber.SeriesId);

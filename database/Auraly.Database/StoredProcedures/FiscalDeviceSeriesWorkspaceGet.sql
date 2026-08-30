@@ -14,6 +14,7 @@ BEGIN
            r.RangeStart,r.RangeEnd,r.ValidFrom,r.ValidUntil
     FROM fiscal.DianNumberingRanges r
     WHERE r.TenantId=@TenantId AND r.AssignedBusinessId IS NULL
+      AND r.ValidFrom<=CONVERT(date,SYSUTCDATETIME())
       AND r.ValidUntil>=CONVERT(date,SYSUTCDATETIME())
     ORDER BY r.ValidUntil,r.Prefix,r.RangeStart;
 
@@ -39,5 +40,29 @@ BEGIN
       ON auth.FiscalAuthorizationId=fs.FiscalAuthorizationId
     WHERE d.TenantId=@TenantId AND scope.BusinessId=@BusinessId
     ORDER BY d.IsActive DESC,d.Name,d.DeviceId;
+
+    SELECT TOP(1) fs.SeriesId,fs.FiscalAuthorizationId,auth.AuthorizationNumber,
+           fs.Prefix,fs.RangeStart,fs.RangeEnd,
+           COALESCE(seriesCursor.NextConsecutive,fs.RangeStart) NextConsecutive,
+           CASE WHEN COALESCE(seriesCursor.NextConsecutive,fs.RangeStart)>fs.RangeEnd THEN 0
+                ELSE fs.RangeEnd-COALESCE(seriesCursor.NextConsecutive,fs.RangeStart)+1 END RemainingConsecutives,
+           auth.ValidFrom,auth.ValidUntil
+    FROM dbo.FiscalSeries fs
+    JOIN dbo.Businesses onlineBusiness
+      ON onlineBusiness.BusinessId=fs.BusinessId AND onlineBusiness.TenantId=@TenantId
+    JOIN dbo.FiscalAuthorizations auth
+      ON auth.FiscalAuthorizationId=fs.FiscalAuthorizationId
+    LEFT JOIN dbo.FiscalSeriesCursors seriesCursor ON seriesCursor.SeriesId=fs.SeriesId
+    WHERE fs.BusinessId=@BusinessId AND fs.DeviceId IS NULL
+      AND fs.EmitterKind=N'Server' AND fs.DocumentType=N'SalesInvoice'
+      AND fs.IsActive=1 AND auth.IsActive=1
+    ORDER BY fs.CreatedAt DESC,fs.SeriesId;
+
+    SELECT COALESCE(settings.ExpirationWarningDays,3) ExpirationWarningDays,
+           COALESCE(settings.RemainingNumberWarningThreshold,100) RemainingNumberWarningThreshold
+    FROM dbo.Businesses business
+    LEFT JOIN fiscal.FiscalResolutionAlertSettings settings
+      ON settings.BusinessId=business.BusinessId
+    WHERE business.BusinessId=@BusinessId AND business.TenantId=@TenantId;
 END;
 GO

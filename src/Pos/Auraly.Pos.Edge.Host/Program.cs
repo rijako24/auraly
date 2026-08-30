@@ -609,6 +609,7 @@ public static class PosEdgeHostApplication
             PosOfflineWorkSessionClosureStore closures,
             PosSaleHostSettings saleSettings,
             PosSynchronizationState synchronizationState,
+            TimeProvider timeProvider,
             CancellationToken ct) =>
         {
             var catalogStatus = await catalog.StatusAsync(ct);
@@ -632,6 +633,10 @@ public static class PosEdgeHostApplication
                 ?? saleOutbox.LastError;
             var user = await identities.ResolveAsync(
                 http.Request.Headers["X-Auraly-User-Session"].ToString(), ct);
+            var fiscalWarnings = await sales.GetFiscalWarningsAsync(
+                runtime.DeviceId, timeProvider.GetUtcNow(), ct);
+            var fiscalPreview = await sales.PreviewNextFiscalNumberAsync(
+                runtime.DeviceId, timeProvider.GetUtcNow(), ct);
             var status = !identityReady
                 ? "IdentitySynchronizing"
                 : catalogStatus.Status != "Ready"
@@ -653,7 +658,8 @@ public static class PosEdgeHostApplication
                 userId = user?.UserId,
                 workSessionId = user?.WorkSessionId,
                 deviceId = runtime.DeviceId.Value,
-                fiscalReady = saleSettings.Fiscal is not null,
+                fiscalReady = saleSettings.Fiscal is not null && fiscalPreview.IsAvailable,
+                fiscalWarnings,
                 permissions = user?.Permissions ?? Array.Empty<string>(),
                 identityReady,
                 catalogStatus = catalogStatus.Status,

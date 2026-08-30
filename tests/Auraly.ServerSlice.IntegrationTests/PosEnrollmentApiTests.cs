@@ -12,8 +12,6 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Authorized_user_enrolls_a_device_and_code_can_only_be_redeemed_once()
     {
-        var fiscalSeriesId = Guid.NewGuid();
-        await SeedAvailableDeviceFiscalSeriesAsync(fiscalSeriesId);
         await PrepareInitialCashierAsync();
         using var client = fixture.CreateAdminClient(
             CommercePermissionCodes.EnrolledDevicesEnroll,
@@ -55,8 +53,7 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         Assert.Equal(
             fixture.OfflineLeasePublicKeyPem,
             package.OfflineLeaseTrustedPublicKeys![ServerSliceFixture.OfflineLeaseKeyId]);
-        var fiscal = Assert.IsType<PosEnrollmentFiscalSeries>(package.FiscalSeries);
-        Assert.Equal(ServerSliceFixture.TechnicalKeyValue, fiscal.TechnicalKey);
+        Assert.Null(package.FiscalSeries);
         Assert.NotEqual(Guid.Empty, package.DocumentSeries.SeriesId);
         Assert.Contains("catalog.sync", package.Permissions);
         Assert.Contains(CommercePermissionCodes.SalesCreate, package.Permissions);
@@ -89,8 +86,6 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
     [Fact]
     public async Task Reenrollment_recovers_device_identity_when_local_package_was_lost()
     {
-        var fiscalSeriesId = Guid.NewGuid();
-        await SeedAvailableDeviceFiscalSeriesAsync(fiscalSeriesId);
         using var client = fixture.CreateAdminClient(
             CommercePermissionCodes.EnrolledDevicesEnroll);
 
@@ -160,9 +155,6 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
     {
         var original = await ReadDeviceCapacityAsync();
         await SetDeviceCapacityAsync(original.ActiveDevices + 1);
-        var fiscalSeriesId = Guid.NewGuid();
-        await SeedAvailableDeviceFiscalSeriesAsync(fiscalSeriesId);
-
         try
         {
             using var client = fixture.CreateAdminClient(
@@ -243,29 +235,6 @@ public sealed class PosEnrollmentApiTests(ServerSliceFixture fixture)
         command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
         Assert.Equal(1, await command.ExecuteNonQueryAsync());
     }
-    private async Task SeedAvailableDeviceFiscalSeriesAsync(Guid fiscalSeriesId)
-    {
-        const string sql = """
-            INSERT dbo.FiscalSeries
-              (SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
-               DocumentType,Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)
-            VALUES
-              (@FiscalSeriesId,@BusinessId,NULL,N'Device',@FiscalAuthorizationId,
-               N'SalesInvoice',@Prefix,20001,30000,1,SYSDATETIMEOFFSET());
-            """;
-        await using var connection = new SqlConnection(fixture.ConnectionString);
-        await connection.OpenAsync();
-        await using var command = new SqlCommand(sql, connection);
-        command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
-        command.Parameters.AddWithValue("@FiscalSeriesId", fiscalSeriesId);
-        command.Parameters.AddWithValue(
-            "@FiscalAuthorizationId", fixture.FiscalAuthorizationId);
-        command.Parameters.AddWithValue(
-            "@Prefix",
-            ("T" + fiscalSeriesId.ToString("N")[..3]).ToUpperInvariant());
-        await command.ExecuteNonQueryAsync();
-    }
-
     private async Task PrepareInitialCashierAsync()
     {
         var verifier = PosOfflinePasswordHasher.Hash(

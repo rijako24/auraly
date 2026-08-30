@@ -13,6 +13,17 @@ export type FiscalResolutionConfiguration = {
   hasActiveAuthorization: boolean;
   isReadyForOnlineSales: boolean;
   isReadyForEnrollment: boolean;
+  nextConsecutive: number | null;
+  remainingConsecutives: number | null;
+  expirationWarningDays: number;
+  remainingNumberWarningThreshold: number;
+  warningMessages: string[] | null;
+};
+
+export type FiscalOnlineSeriesAssignment = {
+  seriesId: string; fiscalAuthorizationId: string; authorizationNumber: string;
+  prefix: string; rangeStart: number; rangeEnd: number; nextConsecutive: number;
+  remainingConsecutives: number; validFrom: string; validUntil: string;
 };
 
 export type FiscalDeviceSeriesAssignment = {
@@ -33,6 +44,9 @@ export type FiscalDeviceSeriesWorkspace = {
   availableConsecutives: number;
   availableResolutions: FiscalAssignableResolution[];
   devices: FiscalDeviceSeriesAssignment[];
+  onlineAssignment: FiscalOnlineSeriesAssignment | null;
+  expirationWarningDays: number;
+  remainingNumberWarningThreshold: number;
 };
 
 export type DianNumberingRangeOption = {
@@ -181,4 +195,12 @@ export const fiscalConfigurationApi = {
       `/commerce/v1/fiscal/configuration/devices/assign?businessId=${encodeURIComponent(businessId)}`,
       { deviceId, dianNumberingRangeId },
     ),
+  saveResolutionAlerts: (
+    businessId: string,
+    expirationWarningDays: number,
+    remainingNumberWarningThreshold: number,
+  ) => apiClient.put<FiscalDeviceSeriesWorkspace>(
+    `/commerce/v1/fiscal/configuration/resolutions/alerts?businessId=${encodeURIComponent(businessId)}`,
+    { expirationWarningDays, remainingNumberWarningThreshold },
+  ),
 };

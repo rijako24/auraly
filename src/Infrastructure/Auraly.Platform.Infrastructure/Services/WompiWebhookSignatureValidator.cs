@@ -15,7 +15,7 @@ public class WompiWebhookSignatureValidator : IWompiWebhookSignatureValidator
     public bool Validate(JsonElement root, string eventsSecret)
     {
         if (string.IsNullOrWhiteSpace(eventsSecret))
-            return true;
+            return false;
 
         if (!root.TryGetProperty("signature", out var signature) ||
             !root.TryGetProperty("timestamp", out var timestampEl) ||
@@ -42,13 +42,17 @@ public class WompiWebhookSignatureValidator : IWompiWebhookSignatureValidator
         };
 
         var sb = new StringBuilder();
+        if (properties.ValueKind != JsonValueKind.Array)
+            return false;
+
         foreach (var prop in properties.EnumerateArray())
         {
             var path = prop.GetString();
             if (string.IsNullOrEmpty(path))
-                continue;
+                return false;
 
-            var value = GetValueByPath(data, path);
+            if (!TryGetValueByPath(data, path, out var value))
+                return false;
             sb.Append(value);
         }
         sb.Append(timestamp);
@@ -58,7 +62,7 @@ public class WompiWebhookSignatureValidator : IWompiWebhookSignatureValidator
         return string.Equals(computedHash, expectedChecksum, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string GetValueByPath(JsonElement data, string path)
+    private static bool TryGetValueByPath(JsonElement data, string path, out string value)
     {
         var parts = path.Split('.');
         JsonElement current = data;
@@ -67,13 +71,19 @@ public class WompiWebhookSignatureValidator : IWompiWebhookSignatureValidator
         {
             var part = parts[i];
             if (string.IsNullOrEmpty(part))
-                return "";
+            {
+                value = string.Empty;
+                return false;
+            }
 
             if (!current.TryGetProperty(part, out current))
-                return "";
+            {
+                value = string.Empty;
+                return false;
+            }
         }
 
-        return current.ValueKind switch
+        value = current.ValueKind switch
         {
             JsonValueKind.String => current.GetString() ?? "",
             JsonValueKind.Number => current.GetRawText(),
@@ -82,6 +92,7 @@ public class WompiWebhookSignatureValidator : IWompiWebhookSignatureValidator
             JsonValueKind.Null => "",
             _ => current.GetRawText()
         };
+        return true;
     }
 
     private static string ComputeSha256Hex(string input)

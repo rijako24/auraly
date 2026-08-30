@@ -83,7 +83,9 @@ public sealed record PosEnrollmentFiscalSeries(
     string QrValidationUrl,
     DateOnly? ValidFrom = null,
     long? AuthorizationRangeStart = null,
-    long? AuthorizationRangeEnd = null);
+    long? AuthorizationRangeEnd = null,
+    int ExpirationWarningDays = 3,
+    long RemainingNumberWarningThreshold = 100);
 
 public sealed record PosEnrollmentPackage(
     Guid DeviceId,

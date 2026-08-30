@@ -381,14 +381,15 @@ public sealed class SqlFiscalOnboardingStore(
                    @ProtectedTechnicalKey=ProtectedTechnicalKey
             FROM fiscal.DianNumberingRanges WITH(UPDLOCK,HOLDLOCK)
             WHERE DianNumberingRangeId=@RangeId AND TenantId=@TenantId
-              AND (AssignedBusinessId IS NULL OR AssignedBusinessId=@BusinessId)
+              AND AssignedBusinessId IS NULL
+              AND ValidFrom<=CONVERT(date,@Now)
               AND ValidUntil>=CONVERT(date,@Now);
             IF @AuthorizationNumber IS NULL
                 THROW 51022,'La resolución ya fue asignada a otra sede, venció o no existe.',1;
             UPDATE fiscal.DianNumberingRanges
-            SET AssignedBusinessId=@BusinessId,AssignedAt=COALESCE(AssignedAt,@Now),
-                AssignedByUserId=COALESCE(AssignedByUserId,@UserId)
-            WHERE DianNumberingRangeId=@RangeId AND (AssignedBusinessId IS NULL OR AssignedBusinessId=@BusinessId);
+            SET AssignedBusinessId=@BusinessId,AssignedAt=@Now,
+                AssignedByUserId=@UserId
+            WHERE DianNumberingRangeId=@RangeId AND AssignedBusinessId IS NULL;
             IF @@ROWCOUNT<>1 THROW 51022,'La resolución fue asignada simultáneamente a otra sede.',1;
 
             SELECT TOP(1) @SupplierTaxId=SupplierTaxId

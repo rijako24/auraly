@@ -276,7 +276,10 @@ internal static class PosSaleHostModule
                 OptionalLong(configuration, "PosEdge:Fiscal:AuthorizationRangeStart",
                     RequiredLong(configuration, "PosEdge:Fiscal:RangeStart")),
                 OptionalLong(configuration, "PosEdge:Fiscal:AuthorizationRangeEnd",
-                    RequiredLong(configuration, "PosEdge:Fiscal:RangeEnd"))));
+                    RequiredLong(configuration, "PosEdge:Fiscal:RangeEnd")),
+                OptionalInt(configuration, "PosEdge:Fiscal:ExpirationWarningDays", 3),
+                OptionalLong(configuration,
+                    "PosEdge:Fiscal:RemainingNumberWarningThreshold", 100)));
     }
 
     private static string Required(IConfiguration configuration, string key) =>
@@ -297,6 +300,10 @@ internal static class PosSaleHostModule
     private static long OptionalLong(
         IConfiguration configuration, string key, long fallback) =>
         long.TryParse(configuration[key], out var value) ? value : fallback;
+
+    private static int OptionalInt(
+        IConfiguration configuration, string key, int fallback) =>
+        int.TryParse(configuration[key], out var value) ? value : fallback;
 
     private static int RequiredInt(IConfiguration configuration, string key) =>
         int.TryParse(Required(configuration, key), out var value)

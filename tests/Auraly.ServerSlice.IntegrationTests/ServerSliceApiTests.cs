@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Auraly.Application.Fiscal;
 using Auraly.Contracts.Fiscal;
 using Auraly.Contracts.Sales;
+using Auraly.Infrastructure.Persistence;
 using Microsoft.Data.SqlClient;
 
 namespace Auraly.ServerSlice.IntegrationTests;
@@ -14,7 +15,11 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
     public async Task First_offline_sale_materializes_its_local_work_session_idempotently()
     {
         var userId = Guid.NewGuid();
+        var deviceId = Guid.NewGuid();
+        var documentSeriesId = Guid.NewGuid();
         var workSessionId = Guid.NewGuid();
+        const string deviceSecret = "offline-device-secret-for-integration-test";
+        var deviceCredential = PosDeviceCredentialHasher.Create(deviceSecret);
         await using (var connection = new SqlConnection(fixture.ConnectionString))
         {
             await connection.OpenAsync();
@@ -27,26 +32,73 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
                   (@UserId,@TenantId,CONCAT(N'offline-',@UserId),UPPER(CONCAT(N'offline-',@UserId)),
                    CONCAT(@UserId,N'@test.local'),UPPER(CONCAT(@UserId,N'@test.local')),
                    N'Offline',N'Cashier',1,SYSUTCDATETIME());
+
+                INSERT dbo.EnrolledDevices
+                  (DeviceId,TenantId,Name,CredentialSalt,CredentialHash,
+                   CredentialIterations,IsActive,CreatedAt)
+                VALUES
+                  (@DeviceId,@TenantId,CONCAT(N'Offline device ',@DeviceId),
+                   @CredentialSalt,@CredentialHash,@CredentialIterations,1,SYSUTCDATETIME());
+
+                INSERT dbo.PosDevicePermissions
+                  (DeviceId,PermissionCode,IsGranted,GrantedAt)
+                SELECT @DeviceId,PermissionCode,IsGranted,SYSUTCDATETIME()
+                FROM dbo.PosDevicePermissions
+                WHERE DeviceId=@SourceDeviceId;
+
+                INSERT dbo.DocumentSeries
+                  (DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,
+                   Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
+                VALUES
+                  (@DocumentSeriesId,@BusinessId,@DeviceId,N'SalesReceipt',N'CVI',N'91',
+                   8,1,99999999,1,1,SYSUTCDATETIME());
                 """;
             command.Parameters.AddWithValue("@UserId", userId);
             command.Parameters.AddWithValue("@TenantId", fixture.TenantId);
+            command.Parameters.AddWithValue("@DeviceId", deviceId);
+            command.Parameters.AddWithValue("@SourceDeviceId", fixture.DeviceId);
+            command.Parameters.AddWithValue("@DocumentSeriesId", documentSeriesId);
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            command.Parameters.Add("@CredentialSalt", System.Data.SqlDbType.VarBinary, 32)
+                .Value = deviceCredential.Salt;
+            command.Parameters.Add("@CredentialHash", System.Data.SqlDbType.VarBinary, 32)
+                .Value = deviceCredential.Hash;
+            command.Parameters.AddWithValue(
+                "@CredentialIterations", deviceCredential.Iterations);
             await command.ExecuteNonQueryAsync();
         }
-        var request = fixture.CreateValidRequest(100) with
+        var baseRequest = fixture.CreateValidRequest(100);
+        var request = baseRequest with
         {
+            DeviceId = deviceId,
             SoldByUserId = userId,
-            WorkSessionId = workSessionId
+            WorkSessionId = workSessionId,
+            DocumentNumber = new PosSaleDocumentNumberContract(
+                documentSeriesId,
+                PosSaleDocumentTypes.Receipt,
+                "CVI",
+                "91",
+                100,
+                8,
+                "CVI91-00000100"),
+            CommercialSnapshot = baseRequest.CommercialSnapshot with
+            {
+                DocumentType = PosSaleDocumentTypes.Receipt
+            },
+            FiscalSnapshot = null
         };
         using var client = fixture.CreateClient();
-        using var upload = fixture.CreateUploadMessage(request);
+        using var upload = fixture.CreateUploadMessage(request, deviceSecret);
         using var response = await client.SendAsync(upload);
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(
+            response.StatusCode == HttpStatusCode.OK,
+            await response.Content.ReadAsStringAsync());
         var responsibility = await fixture.GetSalesWorkResponsibilityAsync(request.DocumentId);
         Assert.Equal(userId, responsibility.SoldByUserId);
         Assert.Equal(workSessionId, responsibility.WorkSessionId);
 
-        using var duplicate = fixture.CreateUploadMessage(request);
+        using var duplicate = fixture.CreateUploadMessage(request, deviceSecret);
         using var duplicateResponse = await client.SendAsync(duplicate);
         Assert.Equal(HttpStatusCode.OK, duplicateResponse.StatusCode);
         Assert.Equal(1, await fixture.CountAsync("SalesDocuments", request.DocumentId));
@@ -99,7 +151,9 @@ public sealed class ServerSliceApiTests(ServerSliceFixture fixture)
         using var upload = fixture.CreateUploadMessage(request);
         using var response = await client.SendAsync(upload);
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(
+            response.StatusCode == HttpStatusCode.OK,
+            await response.Content.ReadAsStringAsync());
         var summaries = await fixture.GetLineTaxBreakdownAsync(request.DocumentId);
         Assert.Collection(
             summaries,

@@ -17,6 +17,7 @@ export default defineConfig([
   },
   globalIgnores([
     ".next/**",
+    ".next-codex-*/**",
     "out/**",
     "build/**",
     ".pos-test-dist/**",

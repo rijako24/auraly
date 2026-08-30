@@ -83,8 +83,48 @@ public sealed class FiscalDeviceSeriesApiTests(ServerSliceFixture fixture)
         finally { await CleanupAsync(rangeId, series, devices, true); }
     }
 
+    [Fact]
+    public async Task Resolution_alert_thresholds_are_tenant_scoped_validated_and_persisted()
+    {
+        using var readOnly = fixture.CreateAdminClient(FiscalPermissionCodes.ConfigurationRead);
+        using var denied = await readOnly.PutAsJsonAsync(AlertSettingsUrl,
+            new SaveFiscalResolutionAlertSettingsRequest(7, 250));
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+
+        using var manager = fixture.CreateAdminClient(
+            FiscalPermissionCodes.ConfigurationRead, FiscalPermissionCodes.ConfigurationManage);
+        try
+        {
+            using var invalid = await manager.PutAsJsonAsync(AlertSettingsUrl,
+                new SaveFiscalResolutionAlertSettingsRequest(366, 250));
+            Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+
+            using var saved = await manager.PutAsJsonAsync(AlertSettingsUrl,
+                new SaveFiscalResolutionAlertSettingsRequest(7, 250));
+            Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+            var workspace = (await saved.Content
+                .ReadFromJsonAsync<FiscalDeviceSeriesWorkspace>())!;
+            Assert.Equal(7, workspace.ExpirationWarningDays);
+            Assert.Equal(250, workspace.RemainingNumberWarningThreshold);
+
+            var reloaded = await WorkspaceAsync(readOnly);
+            Assert.Equal(7, reloaded.ExpirationWarningDays);
+            Assert.Equal(250, reloaded.RemainingNumberWarningThreshold);
+        }
+        finally
+        {
+            await ExecuteAsync("""
+                DELETE fiscal.FiscalResolutionAlertSettings
+                WHERE BusinessId=@BusinessId;
+                """);
+        }
+    }
+
     private string AssignmentUrl =>
         $"/api/commerce/v1/fiscal/configuration/devices/assign?businessId={fixture.BusinessId:D}";
+
+    private string AlertSettingsUrl =>
+        $"/api/commerce/v1/fiscal/configuration/resolutions/alerts?businessId={fixture.BusinessId:D}";
 
     private async Task<FiscalDeviceSeriesWorkspace> WorkspaceAsync(HttpClient client)
     {

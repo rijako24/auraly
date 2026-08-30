@@ -99,15 +99,17 @@ public class IntegrationAdminService : IIntegrationAdminService
         };
         allSecrets[mode] = secrets;
 
+        ValidateWompiConfiguration(request, mode, secrets);
+
         connection.Name = "Wompi";
         connection.AccountIdentifier = null;
         connection.SettingsJson = Serialize(new
         {
             mode,
-            sandboxBaseUrl = string.IsNullOrWhiteSpace(request.SandboxBaseUrl) ? "https://sandbox.wompi.co/v1" : request.SandboxBaseUrl.Trim(),
-            productionBaseUrl = string.IsNullOrWhiteSpace(request.ProductionBaseUrl) ? "https://production.wompi.co/v1" : request.ProductionBaseUrl.Trim(),
+            sandboxBaseUrl = NormalizeOfficialWompiUrl(request.SandboxBaseUrl, "https://sandbox.wompi.co/v1", "sandboxBaseUrl"),
+            productionBaseUrl = NormalizeOfficialWompiUrl(request.ProductionBaseUrl, "https://production.wompi.co/v1", "productionBaseUrl"),
             requestTimeoutSeconds = request.RequestTimeoutSeconds <= 0 ? 30 : request.RequestTimeoutSeconds,
-            checkoutBaseUrl = string.IsNullOrWhiteSpace(request.CheckoutBaseUrl) ? "https://checkout.wompi.co/l/" : request.CheckoutBaseUrl.Trim()
+            checkoutBaseUrl = NormalizeOfficialWompiUrl(request.CheckoutBaseUrl, "https://checkout.wompi.co/l/", "checkoutBaseUrl")
         });
         connection.SecretsJson = Serialize(allSecrets);
         connection.IsEnabled = request.IsEnabled;
@@ -652,6 +654,45 @@ public class IntegrationAdminService : IIntegrationAdminService
     private static string? UseNewOrExisting(string? incoming, Dictionary<string, string?> existing, string key)
     {
         return incoming is null ? GetNullable(existing, key) : incoming.Trim();
+    }
+
+    private static void ValidateWompiConfiguration(
+        UpdateWompiIntegrationRequest request,
+        string mode,
+        IReadOnlyDictionary<string, string?> secrets)
+    {
+        if (request.RequestTimeoutSeconds is < 0 or > 120)
+            throw new DomainValidationException("requestTimeoutSeconds", "El timeout de Wompi debe estar entre 1 y 120 segundos.");
+
+        if (!request.IsEnabled)
+            return;
+
+        foreach (var key in new[] { "privateKey", "publicKey", "eventsSecret", "integritySecret" })
+        {
+            if (!secrets.TryGetValue(key, out var value) || string.IsNullOrWhiteSpace(value))
+                throw new DomainValidationException(key, $"{key} es obligatorio para activar Wompi en modo {mode}.");
+        }
+
+        var prefix = mode == "production" ? "prod" : "test";
+        if (!secrets["privateKey"]!.StartsWith($"prv_{prefix}_", StringComparison.Ordinal))
+            throw new DomainValidationException("privateKey", $"La llave privada no corresponde al modo {mode}.");
+        if (!secrets["publicKey"]!.StartsWith($"pub_{prefix}_", StringComparison.Ordinal))
+            throw new DomainValidationException("publicKey", $"La llave pública no corresponde al modo {mode}.");
+    }
+
+    private static string NormalizeOfficialWompiUrl(string? candidate, string expected, string field)
+    {
+        var value = string.IsNullOrWhiteSpace(candidate) ? expected : candidate.Trim();
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var actualUri)
+            || !Uri.TryCreate(expected, UriKind.Absolute, out var expectedUri)
+            || actualUri.Scheme != Uri.UriSchemeHttps
+            || !string.Equals(actualUri.Host, expectedUri.Host, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(actualUri.AbsolutePath.TrimEnd('/'), expectedUri.AbsolutePath.TrimEnd('/'), StringComparison.Ordinal))
+        {
+            throw new DomainValidationException(field, $"Usa el endpoint oficial de Wompi: {expected}");
+        }
+
+        return expected;
     }
 
     private static Dictionary<string, string?> ReadJson(string? json)

@@ -24,9 +24,13 @@ BEGIN
     SELECT s.SeriesId,s.FiscalAuthorizationId,s.Prefix,a.AuthorizationNumber,
            s.RangeStart,s.RangeEnd,a.ValidFrom,a.ValidUntil,a.Environment,
            a.SupplierTaxId,a.TechnicalKeyVersion,a.QrValidationUrl,
-           a.AuthorizedRangeStart,a.AuthorizedRangeEnd
+           a.AuthorizedRangeStart,a.AuthorizedRangeEnd,
+           COALESCE(alerts.ExpirationWarningDays,3),
+           COALESCE(alerts.RemainingNumberWarningThreshold,100)
     FROM dbo.FiscalSeries s
     JOIN dbo.FiscalAuthorizations a ON a.FiscalAuthorizationId=s.FiscalAuthorizationId
+    LEFT JOIN fiscal.FiscalResolutionAlertSettings alerts
+      ON alerts.BusinessId=s.BusinessId
     WHERE s.BusinessId=@BusinessId AND s.DeviceId=@DeviceId
       AND s.EmitterKind=N'Device' AND s.DocumentType=N'SalesInvoice'
       AND s.IsActive=1 AND a.IsActive=1;

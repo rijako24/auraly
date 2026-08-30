@@ -26,7 +26,9 @@ public sealed record PosEdgeSeriesProvision(
     Guid FiscalAuthorizationId = default,
     DateOnly? ValidFrom = null,
     long? AuthorizationRangeStart = null,
-    long? AuthorizationRangeEnd = null);
+    long? AuthorizationRangeEnd = null,
+    int ExpirationWarningDays = 3,
+    long RemainingNumberWarningThreshold = 100);
 
 public sealed record PosEdgeFiscalCursorState(
     Guid SeriesId, long NextConsecutive, long RangeEnd);
@@ -202,7 +204,9 @@ public sealed class PosEdgeSaleStore
                 ValidUntil = provision.ValidUntil,
                 IsActive = true,
                 AuthorizationRangeStart = provision.AuthorizationRangeStart ?? provision.RangeStart,
-                AuthorizationRangeEnd = provision.AuthorizationRangeEnd ?? provision.RangeEnd
+                AuthorizationRangeEnd = provision.AuthorizationRangeEnd ?? provision.RangeEnd,
+                ExpirationWarningDays = provision.ExpirationWarningDays,
+                RemainingNumberWarningThreshold = provision.RemainingNumberWarningThreshold
             };
             context.FiscalSeriesCursors.Add(current);
         }
@@ -220,6 +224,8 @@ public sealed class PosEdgeSaleStore
                 cancellationToken);
             current.AuthorizationRangeStart = provision.AuthorizationRangeStart ?? provision.RangeStart;
             current.AuthorizationRangeEnd = provision.AuthorizationRangeEnd ?? provision.RangeEnd;
+            current.ExpirationWarningDays = provision.ExpirationWarningDays;
+            current.RemainingNumberWarningThreshold = provision.RemainingNumberWarningThreshold;
             current.IsActive = true;
         }
         var conflicting = await context.FiscalSeriesCursors.AnyAsync(
@@ -244,6 +250,36 @@ public sealed class PosEdgeSaleStore
             .FirstOrDefaultAsync(cancellationToken);
         return cursor is null ? null : new PosEdgeFiscalCursorState(
             cursor.SeriesId, cursor.NextConsecutive, cursor.RangeEnd);
+    }
+
+    public async Task<IReadOnlyList<string>> GetFiscalWarningsAsync(
+        DeviceId deviceId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = new PosEdgeDbContext(_options);
+        var cursor = await context.FiscalSeriesCursors.AsNoTracking()
+            .Where(row => row.DeviceId == deviceId.Value && row.IsActive)
+            .OrderBy(row => row.RangeStart)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (cursor is null) return [];
+
+        var warnings = new List<string>();
+        var today = DateOnly.FromDateTime(now.UtcDateTime);
+        var daysRemaining = cursor.ValidUntil.DayNumber - today.DayNumber;
+        if (daysRemaining < 0)
+            warnings.Add($"La resolución DIAN {cursor.AuthorizationNumber} está vencida.");
+        else if (daysRemaining <= cursor.ExpirationWarningDays)
+            warnings.Add(daysRemaining == 0
+                ? $"La resolución DIAN {cursor.AuthorizationNumber} vence hoy."
+                : $"La resolución DIAN {cursor.AuthorizationNumber} vence en {daysRemaining} días.");
+
+        var remaining = Math.Max(0, cursor.RangeEnd - cursor.NextConsecutive + 1);
+        if (remaining <= cursor.RemainingNumberWarningThreshold)
+            warnings.Add(remaining == 0
+                ? $"La resolución DIAN {cursor.AuthorizationNumber} agotó su numeración."
+                : $"A la resolución DIAN {cursor.AuthorizationNumber} le quedan {remaining} números disponibles.");
+        return warnings;
     }
 
     public async Task ProvisionDocumentSeriesAsync(
@@ -1232,7 +1268,9 @@ public sealed class PosEdgeSaleStore
         var additions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["AuthorizationRangeStart"] = "INTEGER NOT NULL DEFAULT 1",
-            ["AuthorizationRangeEnd"] = "INTEGER NOT NULL DEFAULT 1"
+            ["AuthorizationRangeEnd"] = "INTEGER NOT NULL DEFAULT 1",
+            ["ExpirationWarningDays"] = "INTEGER NOT NULL DEFAULT 3",
+            ["RemainingNumberWarningThreshold"] = "INTEGER NOT NULL DEFAULT 100"
         };
         foreach (var addition in additions.Where(item => !columns.Contains(item.Key)))
         {

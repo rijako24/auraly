@@ -30,6 +30,7 @@ export function PagedEntitySelect<T>({
   selectedOption,
   leadingOptions = [],
   placeholder = "Selecciona",
+  ariaLabel,
   searchPlaceholder = "Buscar por nombre o identificación…",
   emptyMessage = "No hay resultados.",
   disabled = false,
@@ -44,6 +45,7 @@ export function PagedEntitySelect<T>({
   selectedOption?: PagedEntityOption | null;
   leadingOptions?: PagedEntityOption[];
   placeholder?: string;
+  ariaLabel?: string;
   searchPlaceholder?: string;
   emptyMessage?: string;
   disabled?: boolean;
@@ -86,7 +88,7 @@ export function PagedEntitySelect<T>({
 
   return <Popover open={open} onOpenChange={setOpen}>
     <PopoverTrigger asChild>
-      <Button type="button" variant="outline" role="combobox" aria-expanded={open} disabled={disabled} className={cn("w-full justify-between font-normal", className)}>
+      <Button type="button" variant="outline" role="combobox" aria-label={ariaLabel} aria-expanded={open} disabled={disabled} className={cn("w-full justify-between font-normal", className)}>
         <span className="truncate">{selected?.label ?? placeholder}</span>
         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50"/>
       </Button>

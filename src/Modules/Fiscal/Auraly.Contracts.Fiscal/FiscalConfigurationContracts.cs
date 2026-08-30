@@ -18,7 +18,24 @@ public sealed record FiscalResolutionConfiguration(
     long? RangeEnd,
     bool HasActiveAuthorization,
     bool IsReadyForOnlineSales,
-    bool IsReadyForEnrollment);
+    bool IsReadyForEnrollment,
+    long? NextConsecutive = null,
+    long? RemainingConsecutives = null,
+    int ExpirationWarningDays = 3,
+    long RemainingNumberWarningThreshold = 100,
+    IReadOnlyList<string>? WarningMessages = null);
+
+public sealed record FiscalOnlineSeriesAssignment(
+    Guid SeriesId,
+    Guid FiscalAuthorizationId,
+    string AuthorizationNumber,
+    string Prefix,
+    long RangeStart,
+    long RangeEnd,
+    long NextConsecutive,
+    long RemainingConsecutives,
+    DateOnly ValidFrom,
+    DateOnly ValidUntil);
 
 public sealed record FiscalDeviceSeriesAssignment(
     Guid DeviceId,
@@ -48,11 +65,18 @@ public sealed record FiscalDeviceSeriesWorkspace(
     Guid BusinessId,
     long AvailableConsecutives,
     IReadOnlyList<FiscalAssignableResolution> AvailableResolutions,
-    IReadOnlyList<FiscalDeviceSeriesAssignment> Devices);
+    IReadOnlyList<FiscalDeviceSeriesAssignment> Devices,
+    FiscalOnlineSeriesAssignment? OnlineAssignment = null,
+    int ExpirationWarningDays = 3,
+    long RemainingNumberWarningThreshold = 100);
 
 public sealed record AssignFiscalDeviceSeriesRequest(
     Guid DeviceId,
     Guid DianNumberingRangeId);
+
+public sealed record SaveFiscalResolutionAlertSettingsRequest(
+    int ExpirationWarningDays,
+    long RemainingNumberWarningThreshold);
 
 public sealed record PosFiscalSeriesProvisioning(
     Guid SeriesId,
@@ -69,7 +93,9 @@ public sealed record PosFiscalSeriesProvisioning(
     string QrValidationUrl,
     DateOnly ValidFrom,
     long? AuthorizationRangeStart = null,
-    long? AuthorizationRangeEnd = null);
+    long? AuthorizationRangeEnd = null,
+    int ExpirationWarningDays = 3,
+    long RemainingNumberWarningThreshold = 100);
 
 public interface IFiscalTechnicalKeySecretWriter
 {

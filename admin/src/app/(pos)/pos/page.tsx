@@ -256,6 +256,7 @@ export default function PosPage() {
     workSessionId: null as string | null,
     deviceId: null as string | null,
     fiscalReady: false,
+    fiscalWarnings: [] as string[],
   });
   const [returnsOpen, setReturnsOpen] = useState(false);
   const [synchronizationEventsOpen, setSynchronizationEventsOpen] = useState(false);
@@ -454,6 +455,7 @@ export default function PosPage() {
                 workSessionId: health.workSessionId ?? null,
                 deviceId: health.deviceId ?? null,
                 fiscalReady: health.fiscalReady,
+                fiscalWarnings: health.fiscalWarnings ?? [],
               });
             }
 
@@ -576,6 +578,7 @@ export default function PosPage() {
             workSessionId: health.workSessionId ?? null,
             deviceId: health.deviceId ?? null,
             fiscalReady: health.fiscalReady,
+            fiscalWarnings: health.fiscalWarnings ?? [],
           });
         }
         if (
@@ -2148,6 +2151,7 @@ export default function PosPage() {
         workSessionId: null,
         deviceId: null,
         fiscalReady: true,
+        fiscalWarnings: [],
       });
       setServerConnected(true);
       setClient(onlineClient);
@@ -2418,6 +2422,13 @@ function changeOnlineWorkspace() {
         <div className="flex items-center justify-between gap-4 border-b border-violet-200 bg-gradient-to-r from-violet-950 via-indigo-950 to-teal-950 px-5 py-2 text-sm text-white">
           <span className="font-semibold">Asistente DIAN · documento técnico de prueba, sin inventario, ventas ni contabilidad</span>
           <button type="button" onClick={() => router.push("/dashboard/settings/fiscal")} className="rounded-lg border border-white/20 px-3 py-1 text-xs font-bold hover:bg-white/10">Volver a configuración</button>
+        </div>
+      )}
+
+      {workstation.fiscalWarnings.length > 0 && (
+        <div role="alert" className="flex items-start gap-3 border-b border-amber-300/40 bg-amber-100 px-5 py-3 text-sm text-amber-950">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div><strong className="block">Atención con la resolución DIAN</strong><ul className="mt-1 list-disc pl-5">{workstation.fiscalWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>
         </div>
       )}
 

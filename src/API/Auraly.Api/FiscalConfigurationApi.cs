@@ -28,6 +28,12 @@ public static class FiscalConfigurationApi
             await Handle(() => service.AssignAsync(
                 context.User.ToFiscalConfigurationUser(), businessId, request, ct)));
 
+        group.MapPut("/resolutions/alerts", async (HttpContext context, Guid businessId,
+            SaveFiscalResolutionAlertSettingsRequest request,
+            FiscalDeviceSeriesService service, CancellationToken ct) =>
+            await Handle(() => service.SaveAlertSettingsAsync(
+                context.User.ToFiscalConfigurationUser(), businessId, request, ct)));
+
         endpoints.MapGet("/api/pos/v1/fiscal/provisioning", async (
                 HttpContext context, Guid businessId, Guid? currentSeriesId,
                 long? nextConsecutive,

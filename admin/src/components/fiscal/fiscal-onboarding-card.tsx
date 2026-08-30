@@ -26,16 +26,13 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
   const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [activating, setActivating] = useState(false);
   const [activatingSupport, setActivatingSupport] = useState(false);
   const [softwareId, setSoftwareId] = useState("");
   const [softwarePin, setSoftwarePin] = useState("");
   const [testSetId, setTestSetId] = useState("");
   const [certificatePassword, setCertificatePassword] = useState("");
   const [certificate, setCertificate] = useState<File | null>(null);
-  const [selectedRangeId, setSelectedRangeId] = useState("");
   const [selectedSupportRangeId, setSelectedSupportRangeId] = useState("");
-  const [confirmed, setConfirmed] = useState(false);
   const [supportConfirmed, setSupportConfirmed] = useState(false);
   const [editingCredentials, setEditingCredentials] = useState(false);
 
@@ -113,21 +110,6 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
     }
   }
 
-  async function activate() {
-    if (!selectedRangeId || !confirmed) return;
-    setActivating(true);
-    try {
-      const result = await fiscalConfigurationApi.activateProduction(businessId, selectedRangeId);
-      setValue(result);
-      setConfirmed(false);
-      toast.success("Producción DIAN activada para esta sede.");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "No fue posible activar producción.");
-    } finally {
-      setActivating(false);
-    }
-  }
-
   async function activateSupportDocument() {
     if (!selectedSupportRangeId || !supportConfirmed) return;
     setActivatingSupport(true);
@@ -172,7 +154,7 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
           <div className="grid gap-3 md:grid-cols-4">
             <Stage number="1" label="Certificado y software" active={value.stage !== "NotConfigured"} />
             <Stage number="2" label="Habilitación DIAN" active={value.habilitationAccepted} />
-            <Stage number="3" label="Asignar resolución" active={value.stage === "ProductionReady" || value.productionActive} />
+            <Stage number="3" label="Asignar resoluciones" active={value.stage === "ProductionReady" || value.productionActive} />
             <Stage number="4" label="Producción" active={value.productionActive} />
           </div>
         </CardContent>
@@ -240,28 +222,6 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
           )}
         </CardContent>
       </Card>
-
-      {value.habilitationAccepted && !value.productionActive && (
-        <Card>
-          <CardHeader>
-            <CardTitle>3. Resolución para esta sede</CardTitle>
-            <CardDescription>Auraly consulta GetNumberingRange en producción. Una resolución se asigna una sola vez y no puede usarse en otra sede.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Button variant="outline" disabled={!canManage || syncing} onClick={() => void synchronize()}>{syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />} Consultar resoluciones en DIAN</Button>
-            {available.length > 0 ? (
-              <>
-                <Field label="Resolución disponible">
-                  <Select value={selectedRangeId||undefined} onValueChange={value=>{setSelectedRangeId(value);setConfirmed(false)}}><SelectTrigger><SelectValue placeholder="Selecciona una resolución"/></SelectTrigger><SelectContent>{available.map((item) => <SelectItem key={item.dianNumberingRangeId} value={item.dianNumberingRangeId}>{item.authorizationNumber} · {item.prefix}{item.rangeStart}–{item.rangeEnd} · vence {item.validUntil}</SelectItem>)}</SelectContent></Select>
-                </Field>
-                <label className="flex items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><span>Confirmo que esta resolución corresponde a <b>{value.businessName}</b>. Al activar quedará reservada para esta sede y no podrá trasladarse desde la aplicación.</span><Switch checked={confirmed} onCheckedChange={setConfirmed}/></label>
-                <Button disabled={!canManage || !selectedRangeId || !confirmed || activating} onClick={() => void activate()}>{activating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Activar producción</Button>
-              </>
-            ) : <p className="text-sm text-muted-foreground">No hay resoluciones libres. Solicita y asocia la numeración en el portal DIAN, luego vuelve a consultar.</p>}
-            {value.availableRanges.filter((item) => !item.isAvailable).map((item) => <p key={item.dianNumberingRangeId} className="text-xs text-muted-foreground">{item.authorizationNumber} · {item.prefix}: asignada a {item.assignedBusinessName}</p>)}
-          </CardContent>
-        </Card>
-      )}
 
       {value.productionActive && value.assignedRange && (
         <Card className="border-emerald-200 bg-emerald-50/50">

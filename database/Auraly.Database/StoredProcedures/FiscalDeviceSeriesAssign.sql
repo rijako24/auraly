@@ -31,7 +31,9 @@ BEGIN
         WHERE s.BusinessId=@BusinessId AND s.DeviceId=@DeviceId
           AND s.DocumentType=N'SalesInvoice' AND s.IsActive=1
           AND a.DianNumberingRangeId=@DianNumberingRangeId)
+    BEGIN
         RETURN;
+    END;
 
     IF EXISTS (
         SELECT 1 FROM dbo.FiscalSeries WITH (UPDLOCK,HOLDLOCK)
