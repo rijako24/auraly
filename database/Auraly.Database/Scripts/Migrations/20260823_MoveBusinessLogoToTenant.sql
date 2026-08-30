@@ -22,11 +22,18 @@ BEGIN
             WHERE NULLIF(LTRIM(RTRIM(profile.LogoMediaRef)), N'''') IS NULL
               AND NULLIF(LTRIM(RTRIM(business.LogoUrl)), N'''') IS NOT NULL;';
     END
-    ELSE IF EXISTS (
-        SELECT 1 FROM dbo.Businesses
-        WHERE NULLIF(LTRIM(RTRIM(LogoUrl)), N'') IS NOT NULL)
+    ELSE
     BEGIN
-        THROW 51091, 'No se pueden preservar logos: TenantLegalProfiles aun no existe.', 1;
+        DECLARE @HasBusinessLogo BIT = 0;
+        EXEC sys.sp_executesql
+            N'SELECT @HasLogo = CASE WHEN EXISTS (
+                SELECT 1 FROM dbo.Businesses
+                WHERE NULLIF(LTRIM(RTRIM(LogoUrl)), N'''') IS NOT NULL)
+                THEN 1 ELSE 0 END;',
+            N'@HasLogo BIT OUTPUT',
+            @HasLogo = @HasBusinessLogo OUTPUT;
+        IF @HasBusinessLogo = 1
+            THROW 51091, 'No se pueden preservar logos: TenantLegalProfiles aun no existe.', 1;
     END;
 
     ALTER TABLE dbo.Businesses DROP COLUMN LogoUrl;
