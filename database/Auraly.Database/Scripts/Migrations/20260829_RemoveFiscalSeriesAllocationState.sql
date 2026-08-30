@@ -11,7 +11,11 @@ BEGIN
       AND column_object.name = N'AllocationState';
 
     IF @DefaultConstraint IS NOT NULL
-        EXEC(N'ALTER TABLE dbo.FiscalSeries DROP CONSTRAINT ' + QUOTENAME(@DefaultConstraint) + N';');
+    BEGIN
+        DECLARE @DropConstraintSql NVARCHAR(MAX) =
+            N'ALTER TABLE dbo.FiscalSeries DROP CONSTRAINT ' + QUOTENAME(@DefaultConstraint) + N';';
+        EXEC sys.sp_executesql @DropConstraintSql;
+    END;
 
     ALTER TABLE dbo.FiscalSeries DROP COLUMN AllocationState;
     PRINT N'RemoveFiscalSeriesAllocationState: estado del asignador de bloques retirado.';
