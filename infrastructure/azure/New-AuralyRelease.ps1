@@ -177,7 +177,12 @@ try {
     if ($LASTEXITCODE) { throw 'La compilacion de base de datos fallo.' }
 
     if (-not $SkipAdmin -or $PosApiUrl) {
-        Push-Location (Join-Path $repoRoot 'admin')
+        $adminPath = Join-Path $repoRoot 'admin'
+        $nextOutputPath = Join-Path $adminPath '.next'
+        if (Test-Path -LiteralPath $nextOutputPath) {
+            [IO.Directory]::Delete($nextOutputPath, $true)
+        }
+        Push-Location $adminPath
         try {
             & npm ci
             if ($LASTEXITCODE) { throw 'npm ci fallo.' }
