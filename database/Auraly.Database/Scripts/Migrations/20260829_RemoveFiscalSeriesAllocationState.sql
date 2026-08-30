@@ -2,6 +2,18 @@ IF COL_LENGTH(N'dbo.FiscalSeries', N'AllocationState') IS NOT NULL
 BEGIN
     DECLARE @DefaultConstraint SYSNAME;
 
+    IF EXISTS (
+        SELECT 1 FROM sys.indexes
+        WHERE object_id = OBJECT_ID(N'dbo.FiscalSeries')
+          AND name = N'UX_FiscalSeries_Device')
+        DROP INDEX [UX_FiscalSeries_Device] ON dbo.FiscalSeries;
+
+    IF EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE parent_object_id = OBJECT_ID(N'dbo.FiscalSeries')
+          AND name = N'CK_FiscalSeries_AllocationState')
+        ALTER TABLE dbo.FiscalSeries DROP CONSTRAINT [CK_FiscalSeries_AllocationState];
+
     SELECT @DefaultConstraint = constraint_object.name
     FROM sys.default_constraints constraint_object
     INNER JOIN sys.columns column_object
