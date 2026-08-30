@@ -11,19 +11,33 @@ Pre-Deployment Script Template
 */
 
 :r .\Migrations\20260730_CollapseOrganizationScope.sql
+GO
 :r .\Migrations\20260801_CreateFiscalDocumentRoot.sql
+GO
 :r .\Migrations\20260802_RemoveCashRegisterContext.sql
+GO
 :r .\Migrations\20260811_NormalizeGoodsReceiptPresentations.sql
+GO
 :r .\Migrations\20260811_ExpandAuditAction.sql
+GO
 :r .\Migrations\20260817_NormalizeAuralyPlatformTenantKey.sql
+GO
 :r .\Migrations\20260823_MoveBusinessLogoToTenant.sql
+GO
 :r .\Migrations\20260824_MoveFiscalCredentialsToTenant.sql
+GO
 :r .\Migrations\20260825_AddPurchaseEvidence.sql
+GO
 :r .\Migrations\20260828_NormalizePriceChannelValues.sql
+GO
 :r .\Migrations\20260828_ReplaceAverageCostMarkupWithLatestCostMargin.sql
+GO
 :r .\Migrations\20260829_BackfillProductTenant.sql
+GO
 :r .\Migrations\20260829_RemoveFiscalSeriesAllocationState.sql
+GO
 :r .\Migrations\MoveDispatchReasonsToOwnedSchema.sql
+GO
 
 -- Scripts de pre-despliegue
 -- Aquí puedes agregar validaciones, limpieza, etc.
