@@ -134,13 +134,14 @@ public sealed class PosOfflineAuthenticationLeaseTests : IAsyncLifetime
     }
 
     [Fact]
-    public void Expired_lease_is_rejected()
+    public void Historical_lease_expiration_does_not_invalidate_durable_enrollment()
     {
         var response = CreateResponse(_clock.GetUtcNow().AddMinutes(-1));
-        var error = Assert.Throws<PosLocalLoginException>(() =>
-            CreateVerifier().Verify(
-                response.Lease, _tenantId, _deviceId, _clock.GetUtcNow()));
-        Assert.Equal("OfflineLeaseExpired", error.Code);
+        var validated = CreateVerifier().Verify(
+            response.Lease, _tenantId, _deviceId, _clock.GetUtcNow());
+
+        Assert.Equal(response.Lease, validated.SignedLease);
+        Assert.True(validated.Payload.ExpiresAt < _clock.GetUtcNow());
     }
 
     [Fact]
@@ -173,14 +174,51 @@ public sealed class PosOfflineAuthenticationLeaseTests : IAsyncLifetime
                 response.User.Permissions,
                 verifier,
                 null)]));
-        var lease = await leases.SaveAsync(response);
+        await leases.SaveAsync(response);
 
         var session = await identities.LoginFromEnrollmentAsync(
-            _userId, lease.Payload.ExpiresAt);
+            _userId);
 
         Assert.False(string.IsNullOrWhiteSpace(session.Token));
         Assert.Equal(_userId, session.UserId);
         Assert.Contains(CommercePermissionCodes.SalesCreate, session.Permissions);
+    }
+
+    [Fact]
+    public async Task Prepared_identity_allows_local_login_after_snapshot_and_lease_dates_pass()
+    {
+        var connectionString = $"Data Source={_databasePath}";
+        var identities = new PosLocalIdentityStore(
+            connectionString,
+            _keyDirectory,
+            new Uuid7AuralyIdGenerator(_clock),
+            _clock);
+        await identities.InitializeAsync();
+        var response = CreateResponse(_clock.GetUtcNow().AddMinutes(10));
+        var verifier = new PosOfflinePasswordVerifier(
+            response.User.PasswordSalt,
+            response.User.PasswordHash,
+            response.User.PasswordIterations,
+            response.User.PasswordChangedAt);
+        await identities.ApplySnapshotAsync(new PosOfflineIdentitySnapshot(
+            "prepared",
+            _clock.GetUtcNow(),
+            _clock.GetUtcNow().AddMinutes(10),
+            [new PosOfflineUserProjection(
+                _userId,
+                response.User.Username,
+                response.User.DisplayName,
+                response.User.Permissions,
+                verifier,
+                null)]));
+
+        _clock.Advance(TimeSpan.FromDays(30));
+
+        var session = await identities.LoginAsync(
+            new PosLocalLoginRequest("cashier", "Cashier-Password-1"));
+
+        Assert.Equal(_userId, session.UserId);
+        Assert.Equal(_clock.GetUtcNow().AddHours(12), session.ExpiresAt);
     }
 
     public Task InitializeAsync() => Task.CompletedTask;

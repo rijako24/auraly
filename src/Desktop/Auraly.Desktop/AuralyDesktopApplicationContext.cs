@@ -58,13 +58,13 @@ internal sealed class AuralyDesktopApplicationContext : ApplicationContext
             Program.RegisterChild(edge);
 
             await Program.WaitUntilReadyAsync(
-                $"{webOrigin}/pos", TimeSpan.FromSeconds(45), shutdown.Token);
-            splash.SetStage("Preparando la caja", 1);
+                $"{webOrigin}/login", TimeSpan.FromSeconds(45), shutdown.Token);
+            splash.SetStage("Preparando Auraly", 1);
             await Program.WaitUntilReadyAsync(
                 $"{edgeOrigin}/edge/v1/health", TimeSpan.FromSeconds(45), shutdown.Token);
 
             splash.SetStage("Abriendo Auraly", 2);
-            var target = $"{webOrigin}/pos-launch#edgeToken={Uri.EscapeDataString(sessionToken)}";
+            var target = $"{webOrigin}/login#edgeToken={Uri.EscapeDataString(sessionToken)}";
             var window = new AuralyPosForm(root, data, webOrigin, configuration, shutdown);
             window.FormClosed += (_, _) =>
             {

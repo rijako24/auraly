@@ -11,8 +11,39 @@ public sealed class PosIdentitySynchronizer(
     PosLocalIdentityStore identities,
     PosSynchronizationEventLog events)
 {
+    private readonly SemaphoreSlim gate = new(1, 1);
+
     public async Task SynchronizeAsync(
         CancellationToken cancellationToken = default)
+    {
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            await SynchronizeCoreAsync(cancellationToken);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    public async Task SynchronizeIfUserMissingAsync(
+        string username,
+        CancellationToken cancellationToken = default)
+    {
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            if (!await identities.ContainsUserAsync(username, cancellationToken))
+                await SynchronizeCoreAsync(cancellationToken);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task SynchronizeCoreAsync(CancellationToken cancellationToken)
     {
         var previous = (await identities.ReadIdentitySummariesAsync(cancellationToken))
             .ToDictionary(user => user.UserId);

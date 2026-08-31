@@ -8,7 +8,6 @@ export function usesEnrolledPosRuntime(health: PosLaunchHealth) {
 }
 
 export function installedPosLaunchDestination(health: PosLaunchHealth | null) {
-  return health && !usesEnrolledPosRuntime(health)
-    ? "/login?redirect=%2Fpos"
-    : "/pos";
+  void health;
+  return "/login";
 }

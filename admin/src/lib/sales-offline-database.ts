@@ -1,5 +1,5 @@
 export const SALES_OFFLINE_DATABASE = "auraly-sales-pwa";
-export const SALES_OFFLINE_DATABASE_VERSION = 5;
+export const SALES_OFFLINE_DATABASE_VERSION = 6;
 
 const stores: Array<[string, IDBObjectStoreParameters]> = [
   ["seller-catalog", { keyPath: "key" }],
@@ -10,7 +10,6 @@ const stores: Array<[string, IDBObjectStoreParameters]> = [
   ["route-visit-outbox", { keyPath: "idempotencyKey" }],
   ["seller-offline-preparations", { keyPath: "key" }],
   ["seller-workspaces", { keyPath: "key" }],
-  ["offline-logins", { keyPath: "key" }],
 ];
 
 export function openSalesOfflineDatabase(): Promise<IDBDatabase> {
@@ -18,6 +17,8 @@ export function openSalesOfflineDatabase(): Promise<IDBDatabase> {
     const request = indexedDB.open(SALES_OFFLINE_DATABASE, SALES_OFFLINE_DATABASE_VERSION);
     request.onupgradeneeded = () => {
       const database = request.result;
+      if (database.objectStoreNames.contains("offline-logins"))
+        database.deleteObjectStore("offline-logins");
       for (const [name, options] of stores)
         if (!database.objectStoreNames.contains(name)) database.createObjectStore(name, options);
     };

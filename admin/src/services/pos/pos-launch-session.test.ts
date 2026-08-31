@@ -45,23 +45,23 @@ test("online invoices still require the active server fiscal configuration", () 
   );
 });
 
-test("an enrolled installed POS always returns to the cashier login surface", () => {
+test("an enrolled installation opens the shared Auraly login", () => {
   assert.equal(
     installedPosLaunchDestination({ status: "LoginRequired", identityReady: true }),
-    "/pos",
+    "/login",
   );
   assert.equal(
     installedPosLaunchDestination({ status: "Ready", identityReady: true }),
-    "/pos",
+    "/login",
   );
 });
 
-test("an unenrolled installed POS uses the online login", () => {
+test("an unenrolled installation opens the same shared Auraly login", () => {
   assert.equal(
     installedPosLaunchDestination({ status: "EnrollmentRequired", identityReady: false }),
-    "/login?redirect=%2Fpos",
+    "/login",
   );
-  assert.equal(installedPosLaunchDestination(null), "/pos");
+  assert.equal(installedPosLaunchDestination(null), "/login");
 });
 
 test("enrollment is the single owner of installed runtime selection", () => {

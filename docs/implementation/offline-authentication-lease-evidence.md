@@ -1,5 +1,11 @@
 # Evidencia: concesion exclusiva de autenticacion offline
 
+> Actualización 2026-08-30: este mecanismo queda limitado al traspaso inicial de
+> enrolamiento y a compatibilidad con ejecutables anteriores. En el ejecutable
+> vigente, un login local posterior no llama este endpoint ni exige que la
+> concesión siga vigente. La autoridad local durable es el equipo enrolado más la
+> proyección protegida de identidades; su antigüedad no bloquea el acceso.
+
 Fecha: 2026-08-01
 Rama: `feature/auraly-commerce-accounting-engine`
 
@@ -20,16 +26,16 @@ obtener de `Auraly.Api` una concesion exclusiva firmada:
    `LeaseId`, `TenantId`, `UserId`, `DeviceId`, vigencia y nonce.
 7. El enrolamiento entrega al POS solamente la clave publica de confianza. La
    clave privada nunca llega al instalador, SQLite, navegador ni respuesta HTTP.
-8. POS Edge verifica firma, tenant, dispositivo, usuario, vigencia y continuidad
-   del reloj antes de validar la contrasena local.
+8. El ejecutable actual verifica firma, tenant, dispositivo, usuario y que el
+   artefacto no tenga una fecha futura imposible. La expiración histórica del
+   lease se conserva como metadata de compatibilidad y no invalida el enrolamiento.
 9. La concesion, su payload exacto y la liberacion pendiente se conservan en
    SQLite; cerrar o reiniciar la aplicacion no los pierde.
 10. El logout cierra primero la sesion local, deja durable la liberacion y solo la
     marca como completada despues de la confirmacion idempotente del servidor.
 
-La duracion configurada no puede superar 24 horas. El login local queda limitado
-por la fecha de expiracion de la concesion, aunque la duracion normal de una
-sesion local fuera mayor.
+La duración configurada no puede superar 24 horas para el traspaso heredado. No
+limita sesiones ni logins locales posteriores en un equipo ya preparado.
 
 ## Persistencia
 
@@ -118,6 +124,6 @@ Los escenarios nuevos prueban:
   `PeriodicTimer`. La concesion no crea un segundo sondeo, pero la decision global
   de operar exclusivamente mediante Pub/Sub todavia exige reemplazar ese ciclo
   completo. No se declara resuelto aqui.
-- La revocacion remota de una concesion en un POS totalmente desconectado solo se
-  conoce al reconectar; por eso el dispositivo nunca acepta operar despues de la
-  expiracion firmada.
+- Una revocación, desactivación o cambio de permisos ocurrido mientras el POS
+  está totalmente desconectado solo se conoce al reconectar. Esta es una
+  consecuencia explícita del acceso local durable sin vencimiento temporal.

@@ -23,9 +23,7 @@ public sealed class PosLocalApprovalTests : IAsyncLifetime
     {
         var store = Assert.IsType<PosLocalIdentityStore>(_store);
         var session = await store.LoginAsync(
-            new PosLocalLoginRequest("cashier", "Cashier-Password-1"),
-            _cashierId,
-            DateTimeOffset.UtcNow.AddHours(8));
+            new PosLocalLoginRequest("cashier", "Cashier-Password-1"));
         var draftId = Guid.NewGuid();
         var lineId = Guid.NewGuid();
 
@@ -69,9 +67,7 @@ public sealed class PosLocalApprovalTests : IAsyncLifetime
     {
         var store = Assert.IsType<PosLocalIdentityStore>(_store);
         var session = await store.LoginAsync(
-            new PosLocalLoginRequest("cashier", "Cashier-Password-1"),
-            _cashierId,
-            DateTimeOffset.UtcNow.AddHours(8));
+            new PosLocalLoginRequest("cashier", "Cashier-Password-1"));
 
         var error = await Assert.ThrowsAsync<PosLocalApprovalException>(() =>
             store.AuthorizeSensitiveAsync(
@@ -122,9 +118,7 @@ public sealed class PosLocalApprovalTests : IAsyncLifetime
             ]);
         await store.ApplySnapshotAsync(snapshot);
         var session = await store.LoginAsync(
-            new PosLocalLoginRequest("cashier", "Cashier-Password-1"),
-            _cashierId,
-            now.AddHours(8));
+            new PosLocalLoginRequest("cashier", "Cashier-Password-1"));
 
         await store.AuthorizeSensitiveAsync(
             session,

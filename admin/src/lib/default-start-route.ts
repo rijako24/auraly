@@ -32,6 +32,17 @@ export function defaultStartRoute(roles: readonly string[], permissions: readonl
   return authorizedNavigationItems(permissions)[0]?.href ?? "/dashboard";
 }
 
+export function requiresCloudWorkspace(permissions: readonly string[]): boolean {
+  return authorizedNavigationItems(permissions).some((item) => item.href !== "/pos");
+}
+
+export function canOpenPosAdministrativeMenu(
+  cloudAuthenticated: boolean,
+  permissions: readonly string[],
+): boolean {
+  return cloudAuthenticated && requiresCloudWorkspace(permissions);
+}
+
 export function shouldRestoreOperationalStart(pathname: string, target: string): boolean {
   if (pathname === "/dashboard" || pathname === "/dashboard/") return false;
   if (target === "/dashboard/deliveries")

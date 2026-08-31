@@ -1,11 +1,12 @@
 # Dispositivo POS, login offline y preparación inicial
 
 
-Actualizacion 2026-08-01: enrolamiento protegido, proyeccion local de usuarios y
-concesion exclusiva offline firmada ya estan implementados. Consulta
-`docs/implementation/offline-authentication-lease-evidence.md`. Siguen pendientes
-el shell completo y reemplazar el ciclo periodico general por Pub/Sub real; el
-estado historico al final de este documento queda reemplazado por esta nota.
+Actualizacion 2026-08-30: enrolamiento protegido y proyeccion local de usuarios
+ya estan implementados. Una vez preparado el equipo, el login local no adquiere
+ni exige una concesion temporal: la preparación durable permanece utilizable sin
+vencimiento por paso del tiempo. El shell de escritorio y el transporte push ya
+están conectados; el estado historico al final de este documento queda reemplazado
+por esta nota.
 Fecha: 2026-07-29
 
 ## Decisión
@@ -15,14 +16,16 @@ sesión y permisos. La estrategia de autenticación cambia según el contexto:
 
 - un acceso desde la landing o un navegador usa el login online existente, la
   sesión del servidor y cookies HttpOnly;
-- una instalación enrolada como caja admite login local cuando no hay conexión;
+- una instalación no enrolada usa siempre el login online del servidor;
+- una instalación enrolada admite login local desde la misma pantalla general;
 - POS Edge aporta persistencia, impresión, periféricos y sincronización local,
   pero no reemplaza la autorización del servidor;
 - los módulos administrativos consultan la API directamente;
 - únicamente Facturación y sus capacidades explícitamente offline usan datos
   operativos locales.
 
-No se crearán dos PWAs ni dos menús. Un `AuralySession` normaliza la identidad,
+No se crean dos formularios de login: `/login` es la única superficie visible y
+`/pos` redirige allí cuando necesita una nueva sesión local. Un `AuralySession` normaliza la identidad,
 el negocio activo, el origen de autenticación, la vigencia y los permisos.
 
 ## Primera activación
@@ -37,7 +40,7 @@ login local ejecuta un asistente mediante un código de activación de un solo u
 5. registra impresora, balanza y preferencias locales;
 6. crea claves del dispositivo protegidas por el almacén seguro del sistema;
 7. sincroniza usuarios POS autorizados, permisos y manifiesto de módulos;
-8. registra cursores y vigencias;
+8. registra cursores y el estado durable de preparación;
 9. habilita el login local.
 
 La bodega no se selecciona independientemente si la caja ya tiene una bodega
@@ -55,11 +58,12 @@ y el dispositivo, con la proyección mínima:
 - estado;
 - permisos efectivos relevantes;
 - negocios/cajas autorizados;
-- versión y vigencia;
+- versión y fecha de última sincronización;
 - credencial offline específica de POS, ligada al dispositivo.
 
 La credencial offline se almacena cifrada usando protección del sistema
-operativo. Tiene expiración, intentos limitados y posibilidad de revocación.
+operativo. No expira por el paso del tiempo; conserva intentos limitados y se
+actualiza o retira cuando el equipo recibe una sincronización de seguridad.
 Una sesión local nunca autoriza por sí sola una llamada al servidor.
 
 Antes de mostrar el login, una caja conectada obtiene del cursor local:
@@ -71,8 +75,12 @@ Antes de mostrar el login, una caja conectada obtiene del cursor local:
 - cambios en el manifiesto de módulos.
 
 Esta puesta al día empieza al abrir, pero no bloquea el login de un usuario ya
-provisionado. Sin Internet usa el último paquete firmado y vigente. Un paquete
-vencido no se acepta silenciosamente.
+provisionado. Sin Internet usa la última proyección local protegida. La ausencia
+o corrupción de esa proyección sí bloquea; su antigüedad, por sí sola, no.
+Si el usuario escrito no está en SQLite y el dispositivo tiene conexión, el
+login solicita una única actualización de identidades con la credencial del
+equipo y vuelve a validar localmente. Una contraseña incorrecta de un usuario ya
+conocido no provoca llamadas al servidor.
 
 ## Menú y módulos
 
@@ -142,8 +150,7 @@ Con un catálogo local válido, la conciliación es siempre no bloqueante:
 
 Durante la puesta al día la caja puede usar brevemente la última versión local,
 la misma semántica que tendría offline. Solo bloquean la primera sincronización,
-un almacenamiento local inexistente o corrupto, una migración incompatible o
-una credencial offline vencida.
+un almacenamiento local inexistente o corrupto o una migración incompatible.
 
 ## Estado durable de preparación
 
@@ -171,7 +178,7 @@ error sanitizado y si puede reanudar.
 - un código usado o vencido se rechaza;
 - una caja descarga solo usuarios autorizados;
 - no existen hashes de contraseña principal en SQLite;
-- login offline válido y expirado;
+- login local repetido aun cuando hayan pasado las fechas históricas de vigencia del snapshot y de la concesión de compatibilidad;
 - usuario bloqueado mientras la app está cerrada no entra después del catch-up;
 - usuario creado con la app cerrada aparece después de abrir;
 - permisos cambiados con la app cerrada actualizan el menú;

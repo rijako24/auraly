@@ -19,10 +19,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { authApi } from "@/services/api/auth";
-import { readEdgeTokenFromLaunch } from "@/services/pos/pos-edge-client";
+import {
+  PosEdgeClient,
+  PosEdgeError,
+  readEdgeTokenFromLaunch,
+  readEdgeUserSession,
+} from "@/services/pos/pos-edge-client";
+import { usesEnrolledPosRuntime } from "@/services/pos/pos-launch-session";
 import { readRememberedTenantKey, rememberTenantKey } from "@/lib/remembered-tenant-key";
-import { rememberOfflineLogin, verifyOfflineLogin } from "@/lib/offline-login-store";
-import { defaultStartRoute } from "@/lib/default-start-route";
+import { defaultStartRoute, requiresCloudWorkspace } from "@/lib/default-start-route";
 import { useAuthStore } from "@/stores/auth-store";
 import type { ApiError } from "@/types/api";
 
@@ -42,7 +47,9 @@ function LoginForm() {
   const [isHydrated, setIsHydrated] = useState(false);
   const [wasTenantRemembered, setWasTenantRemembered] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [offlineAccess, setOfflineAccess] = useState(false);
+  const [edgeClient, setEdgeClient] = useState<PosEdgeClient | null>(null);
+  const [preparedBusinessName, setPreparedBusinessName] = useState("");
+  const [tenantKeyRequired, setTenantKeyRequired] = useState(false);
 
   useEffect(() => {
     if (!tenantFromUrl) {
@@ -52,8 +59,21 @@ function LoginForm() {
         setWasTenantRemembered(true);
       }
     }
-    setIsHydrated(true);
-    readEdgeTokenFromLaunch();
+    let active = true;
+    const resolveInstalledRuntime = async () => {
+      const edgeToken = readEdgeTokenFromLaunch();
+      if (edgeToken) {
+        const client = new PosEdgeClient(edgeToken, readEdgeUserSession());
+        const health = await client.health().catch(() => null);
+        if (active && health && usesEnrolledPosRuntime(health)) {
+          setEdgeClient(client);
+          setPreparedBusinessName(health.businessName);
+        }
+      }
+      if (active) setIsHydrated(true);
+    };
+    void resolveInstalledRuntime();
+    return () => { active = false; };
   }, [tenantFromUrl]);
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -61,27 +81,52 @@ function LoginForm() {
     setIsLoading(true);
 
     try {
-      const response = await authApi.login({ tenantKey: tenantKey.trim(), username, password });
-      await rememberOfflineLogin(tenantKey, username, password, response.user).catch(() => undefined);
-      rememberTenantKey(response.user.tenantKey || tenantKey);
-      setAuth(response.user);
-      const redirect = searchParams.get("redirect") ?? "/dashboard";
-      router.push(redirect.startsWith("/") ? redirect : "/dashboard");
-    } catch (err) {
-      const apiError = err as ApiError;
-      const mayUseOffline = !navigator.onLine || !apiError?.statusCode || apiError.statusCode >= 500;
-      const savedUser = mayUseOffline ? await verifyOfflineLogin(tenantKey, username, password).catch(() => null) : null;
-      if (savedUser) {
-        rememberTenantKey(savedUser.tenantKey || tenantKey);
-        setAuth(savedUser);
-        setOfflineAccess(true);
-        const redirect = searchParams.get("redirect") ?? defaultStartRoute(savedUser.roles, savedUser.permissions);
-        window.location.replace(redirect.startsWith("/") ? redirect : "/dashboard");
+      const loginToCloud = async () => {
+        const effectiveTenantKey = tenantKey.trim() || readRememberedTenantKey();
+        if (!effectiveTenantKey) {
+          setTenantKeyRequired(true);
+          throw new Error("Escribe la clave de tu empresa para acceder a los módulos administrativos.");
+        }
+        const response = await authApi.login({
+          tenantKey: effectiveTenantKey,
+          username,
+          password,
+        });
+        rememberTenantKey(response.user.tenantKey || effectiveTenantKey);
+        setAuth(response.user);
+        const redirect = searchParams.get("redirect")
+          ?? defaultStartRoute(response.user.roles, response.user.permissions);
+        router.push(redirect.startsWith("/") ? redirect : "/dashboard");
+      };
+
+      if (edgeClient) {
+        try {
+          const localSession = await edgeClient.login(username, password);
+          if (requiresCloudWorkspace(localSession.permissions)) {
+            try {
+              await loginToCloud();
+            } catch (error) {
+              await edgeClient.logout().catch(() => undefined);
+              throw error;
+            }
+            return;
+          }
+          window.location.replace("/pos");
+        } catch (error) {
+          if (error instanceof PosEdgeError && error.code === "CloudLoginRequired") {
+            await loginToCloud();
+            return;
+          }
+          throw error;
+        }
         return;
       }
-      setError(mayUseOffline
-        ? "No hay conexión y este usuario no quedó preparado en este teléfono, o la contraseña no coincide."
-        : apiError?.message || "Error al iniciar sesión. Verifica tus credenciales.");
+      await loginToCloud();
+    } catch (err) {
+      const apiError = err as ApiError;
+      setError(apiError?.message || (edgeClient
+        ? "No fue posible iniciar sesión en este equipo. Verifica tus credenciales."
+        : "No fue posible conectar con Auraly. Este equipo debe estar enrolado para iniciar sesión sin Internet."));
     } finally {
       setIsLoading(false);
     }
@@ -95,13 +140,17 @@ function LoginForm() {
             <ShieldCheck className="h-3.5 w-3.5" />
             Acceso seguro
           </span>
-          <span className="text-xs text-[#77918f]">Auraly Cloud</span>
+          <span className="text-xs text-[#77918f]">
+            {edgeClient ? "Equipo preparado" : "Auraly Cloud"}
+          </span>
         </div>
         <h2 className="text-3xl font-semibold tracking-[-0.035em] text-[#07161a]">
           Bienvenido de vuelta
         </h2>
         <p className="mt-2 text-sm leading-6 text-[#667f7d]">
-          Ingresa a tu espacio de trabajo empresarial.
+          {edgeClient
+            ? `Acceso local seguro${preparedBusinessName ? ` · ${preparedBusinessName}` : ""}.`
+            : "Ingresa a tu espacio de trabajo empresarial."}
         </p>
       </div>
 
@@ -115,9 +164,7 @@ function LoginForm() {
             <span>{error}</span>
           </div>
         )}
-        {offlineAccess && <p className="rounded-xl bg-amber-50 p-3 text-sm font-medium text-amber-900">Entrando con la sesión preparada en este teléfono…</p>}
-
-        <div className="space-y-2">
+        {(!edgeClient || tenantKeyRequired) && <div className="space-y-2">
           <div className="flex items-center justify-between gap-3">
             <Label htmlFor="tenantKey" className="font-medium text-[#17383c]">
               Empresa
@@ -153,7 +200,7 @@ function LoginForm() {
                 ? "Recordamos esta empresa en este dispositivo. Puedes cambiarla si lo necesitas."
                 : "Escribe la clave incluida en el enlace de acceso de tu empresa."}
           </p>
-        </div>
+        </div>}
 
         <div className="space-y-2">
           <Label htmlFor="username" className="font-medium text-[#17383c]">

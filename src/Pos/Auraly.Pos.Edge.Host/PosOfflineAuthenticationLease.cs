@@ -56,11 +56,8 @@ public sealed class PosOfflineLeaseVerifier(
             payload.DeviceId != expectedDeviceId || payload.LeaseId == Guid.Empty ||
             payload.UserId == Guid.Empty || payload.Nonce == Guid.Empty)
             throw Invalid("The offline lease does not belong to this enrolled device.");
-        if (payload.IssuedAt > payload.NotBefore || payload.NotBefore > now ||
-            payload.ExpiresAt <= now)
-            throw new PosLocalLoginException(
-                "OfflineLeaseExpired",
-                "La autorización para trabajar sin conexión venció. Conecta el equipo con Auraly.");
+        if (payload.IssuedAt > payload.NotBefore || payload.NotBefore > now)
+            throw Invalid("The offline lease is not valid yet.");
         return new PosValidatedOfflineLease(payload, lease);
     }
 

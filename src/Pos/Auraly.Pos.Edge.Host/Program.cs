@@ -557,12 +557,10 @@ public static class PosEdgeHostApplication
         edge.MapPost("/auth/logout", async (
             HttpContext http,
             PosEdgeAuthenticationService authentication,
-            PosSynchronizationSignal synchronization,
             CancellationToken ct) =>
         {
             await authentication.LogoutAsync(
                 http.Request.Headers["X-Auraly-User-Session"].ToString(), ct);
-            synchronization.Signal(PosSynchronizationTrigger.Authentication);
             return Results.NoContent();
         });
         edge.MapPost("/synchronization/refresh", (PosSynchronizationSignal synchronization) => { synchronization.Signal(PosSynchronizationTrigger.All); return Results.Accepted(); });
@@ -589,7 +587,7 @@ public static class PosEdgeHostApplication
             }
             catch (PosLocalLoginException error)
             {
-                var status = error.Code == "IdentityUnavailable"
+                var status = error.Code is "IdentityUnavailable" or "CloudLoginRequired"
                     ? StatusCodes.Status409Conflict
                     : StatusCodes.Status401Unauthorized;
                 return Results.Json(
@@ -613,7 +611,7 @@ public static class PosEdgeHostApplication
             CancellationToken ct) =>
         {
             var catalogStatus = await catalog.StatusAsync(ct);
-            var identityReady = await identities.HasValidSnapshotAsync(ct);
+            var identityReady = await identities.HasIdentitySnapshotAsync(ct);
             var syncStatus = synchronizationState.Current;
             var saleOutbox = await sales.ReadOutboxStatusAsync(ct);
             var cashOutbox = await cashMovements.ReadOutboxStatusAsync(ct);

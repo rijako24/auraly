@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { PosEdgeClient, readEdgeTokenFromLaunch, readEdgeUserSession } from "@/services/pos/pos-edge-client";
-import { installedPosLaunchDestination } from "@/services/pos/pos-launch-session";
+import { readEdgeTokenFromLaunch } from "@/services/pos/pos-edge-client";
 import { AuralyLoadingState } from "@/components/brand/auraly-loading-state";
 import { useAuthStore } from "@/stores/auth-store";
 
@@ -12,12 +11,11 @@ export default function PosLaunchPage() {
     const launch = async () => {
       const edgeToken = readEdgeTokenFromLaunch();
       if (!edgeToken) {
-        window.location.replace("/login?redirect=%2Fpos");
+        window.location.replace("/login");
         return;
       }
-      const health = await new PosEdgeClient(edgeToken, readEdgeUserSession()).health().catch(() => null);
-      if (health && health.status !== "EnrollmentRequired") useAuthStore.getState().clearAuth();
-      if (active) window.location.replace(installedPosLaunchDestination(health));
+      useAuthStore.getState().clearAuth();
+      if (active) window.location.replace("/login");
     };
     void launch();
     return () => { active = false; };

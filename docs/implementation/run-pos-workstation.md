@@ -68,7 +68,7 @@ cd admin
 npm run dev
 ```
 
-El instalador de escritorio debe abrir la ruta `/pos` con el token efímero de sesión en el fragmento de la URL. POS Edge escucha únicamente en loopback y valida token y origen.
+El ejecutable abre la ruta general `/login` con el token efímero de sesión en el fragmento de la URL. Esa única pantalla decide si autentica online o mediante el POS Edge enrolado; `/pos` no publica un segundo login. POS Edge escucha únicamente en loopback y valida token y origen.
 
 ## Verificaciones automatizadas
 

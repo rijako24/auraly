@@ -14,10 +14,9 @@ public enum PosSynchronizationTrigger
     Security = 2,
     FiscalStatus = 4,
     LocalOutbox = 8,
-    Authentication = 16,
     FiscalProvisioning = 32,
     Approvals = 64,
-    All = Catalog | Security | FiscalStatus | LocalOutbox | Authentication | FiscalProvisioning | Approvals
+    All = Catalog | Security | FiscalStatus | LocalOutbox | FiscalProvisioning | Approvals
 }
 
 public sealed class PosSynchronizationSignal
@@ -76,7 +75,6 @@ internal sealed class PosSynchronizationWork(
     PosUnifiedOutboxDispatcher outbox,
     PosFiscalStatusSynchronizer fiscalStatuses,
     PosFiscalProvisioningSynchronizer fiscalProvisioning,
-    PosEdgeAuthenticationService authentication,
     PosUiStateSignal uiState,
     PosSynchronizationState state,
     PosSynchronizationEventLog events,
@@ -116,12 +114,6 @@ internal sealed class PosSynchronizationWork(
                         PosSynchronizationTrigger.LocalOutbox,
                         delay,
                         cancellationToken);
-            }
-            if (trigger.HasFlag(PosSynchronizationTrigger.Authentication))
-            {
-                while (await authentication.ReleasePendingAsync(cancellationToken))
-                {
-                }
             }
             if (trigger.HasFlag(PosSynchronizationTrigger.FiscalStatus))
                 await fiscalStatuses.SynchronizeAsync(cancellationToken);
@@ -296,7 +288,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
             PosSynchronizationStreams.FiscalStatus => PosSynchronizationTrigger.FiscalStatus,
             PosSynchronizationStreams.FiscalProvisioning => PosSynchronizationTrigger.FiscalProvisioning,
             PosSynchronizationStreams.LocalOutbox => PosSynchronizationTrigger.LocalOutbox,
-            PosSynchronizationStreams.Authentication => PosSynchronizationTrigger.Authentication,
+            PosSynchronizationStreams.Authentication => PosSynchronizationTrigger.Security,
             PosSynchronizationStreams.Approvals => PosSynchronizationTrigger.Approvals,
             _ => PosSynchronizationTrigger.None
         };

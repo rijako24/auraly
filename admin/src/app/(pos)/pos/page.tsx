@@ -27,6 +27,7 @@ import {
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { useRouter } from "next/navigation";
+import { canOpenPosAdministrativeMenu } from "@/lib/default-start-route";
 import { OrdersWorkspace } from "@/components/orders/orders-workspace";
 import { SalesReturnWorkspace } from "@/components/returns/sales-return-workspace";
 import {
@@ -83,7 +84,6 @@ import { PosInvoiceSearchDialog } from "./pos-invoice-search-dialog";
 import { PosInventoryResolutionDialog } from "./pos-inventory-resolution-dialog";
 import { PosQuantityAvailabilityDialog, type PosQuantityShortage } from "./pos-quantity-availability-dialog";
 import { temporaryNameForCustomer } from "./pos-temporary-name";
-import { PosLocalLogin } from "./pos-local-login";
 import { PosOnlineSetup } from "./pos-online-setup";
 import { PosPaymentDialog } from "./pos-payment-dialog";
 import { PosPrinterDialog } from "./pos-printer-dialog";
@@ -184,6 +184,8 @@ export default function PosPage() {
   const scanner = useRef<HTMLInputElement>(null);
   const router = useRouter();
   const permissions = useAuthStore((state) => state.user?.permissions ?? []);
+  const cloudAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const logoutCloud = useAuthStore((state) => state.logout);
   const quantityInputs = useRef(new Map<string, HTMLInputElement>());
   const lineRows = useRef(new Map<string, HTMLTableRowElement>());
   const recoveredOrderFromUrl = useRef<string | null>(null);
@@ -258,6 +260,10 @@ export default function PosPage() {
     fiscalReady: false,
     fiscalWarnings: [] as string[],
   });
+  const canOpenAdministrativeMenu = canOpenPosAdministrativeMenu(
+    cloudAuthenticated,
+    permissions,
+  );
   const [returnsOpen, setReturnsOpen] = useState(false);
   const [synchronizationEventsOpen, setSynchronizationEventsOpen] = useState(false);
   const [message, setMessage] = useState("Esperando producto");
@@ -400,6 +406,11 @@ export default function PosPage() {
     if (saved === "SalesInvoice" || saved === "SalesReceipt")
       setDocumentType(saved);
   }, []);
+
+  useEffect(() => {
+    if (client instanceof PosEdgeClient && edgeLoginState === "required")
+      window.location.replace("/login");
+  }, [client, edgeLoginState]);
 
 
   useEffect(() => {
@@ -2202,37 +2213,6 @@ export default function PosPage() {
     }
   }
 
-  async function loginLocal(username: string, password: string) {
-    const launchToken = edgeEnrollmentToken ?? readEdgeTokenFromLaunch();
-    if (!launchToken) {
-      const message =
-        "Auraly perdió la conexión segura con el servicio local. Cierra y vuelve a abrir la aplicación.";
-      setEdgeLoginError(message);
-      throw new Error(message);
-    }
-    const edgeClient = client instanceof PosEdgeClient
-      ? client
-      : new PosEdgeClient(launchToken, readEdgeUserSession());
-    setEdgeLoginError(null);
-    try {
-      const session = await edgeClient.login(username, password);
-      setWorkstation((current) => ({
-        ...current,
-        userDisplayName: session.displayName,
-        userId: session.userId,
-      }));
-      setEdgePermissions(session.permissions);
-      setEdgeLoginState(null);
-      setEdgeEnrollmentToken(launchToken);
-      setClient(new PosEdgeClient(launchToken, session.token));
-    } catch (caught) {
-      setEdgeLoginError(
-        caught instanceof Error ? caught.message : "No fue posible iniciar sesión en este dispositivo.",
-      );
-      throw caught;
-    }
-  }
-
   async function logoutLocal(force = false) {
     if (!(client instanceof PosEdgeClient) || (busy && !force)) return;
     try {
@@ -2258,24 +2238,32 @@ function changeOnlineWorkspace() {
     setWorkspaceChanging(true);
   }
 
-  if (client instanceof PosEdgeClient && edgeLoginState) {
+  if (client instanceof PosEdgeClient && edgeLoginState === "preparing") {
     return (
-      <PosLocalLogin
-        deviceSeriesCode={workstation.deviceSeriesCode}
-        businessName={workstation.businessName}
-        warehouseName={workstation.warehouseName}
-        serverConnected={serverConnected}
-        preparing={edgeLoginState === "preparing"}
-        identityReady={initialDownload.identityReady}
-        catalogReady={initialDownload.catalogReady}
-        error={edgeLoginError ?? (
-          edgeLoginState === "preparing" && synchronization.failed
-            ? "No pudimos descargar los datos iniciales. Verifica internet e informa al supervisor si continúa. Auraly reintentará automáticamente."
-            : null
-        )}
-        onLogin={loginLocal}
-      />
+      <main className="grid min-h-screen place-items-center bg-[#071a1d] text-white">
+        <div className="text-center">
+          <Loader2 className="mx-auto h-8 w-8 animate-spin text-teal-200" />
+          <p className="mt-3 font-bold">Preparando los datos de este equipo…</p>
+          <p className="mt-1 text-sm text-slate-300">Auraly abrirá facturación cuando la preparación inicial termine.</p>
+          {(edgeLoginError || synchronization.error) && (
+            <p role="alert" className="mx-auto mt-4 max-w-xl rounded-xl border border-red-300/20 bg-red-400/10 p-3 text-sm text-red-100">
+              {edgeLoginError ?? synchronization.error}
+            </p>
+          )}
+        </div>
+      </main>
     );
+  }
+
+  async function logoutOnlineUser() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await logoutCloud();
+      router.replace("/login");
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (!client || workspaceChanging) {
@@ -2304,7 +2292,7 @@ function changeOnlineWorkspace() {
       <PosDesktopUpdater />
       <header className="flex min-h-14 items-center justify-between gap-4 bg-auraly-background px-5 py-2.5 text-auraly-text shadow-lg">
         <div className="flex items-center gap-2">
-          <PosExitMenuButton />
+          {canOpenAdministrativeMenu && <PosExitMenuButton />}
           <StatusChip
             ok={serverConnected}
             label={serverConnected ? "Conectado con Auraly" : "Modo sin conexión"}
@@ -2368,6 +2356,18 @@ function changeOnlineWorkspace() {
                   : synchronization.pendingCount > 0
                     ? `${synchronization.pendingCount} por subir`
                     : "Datos al día"}</span>
+            </button>
+          )}
+          {client.mode === "online" && !canOpenAdministrativeMenu && (
+            <button
+              type="button"
+              onClick={() => void logoutOnlineUser()}
+              disabled={busy}
+              title="Cerrar sesión"
+              className="flex h-8 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-xs font-semibold text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
+            >
+              <LogOut className="h-4 w-4" />
+              <span className="hidden lg:inline">Cerrar sesión</span>
             </button>
           )}
         </div>

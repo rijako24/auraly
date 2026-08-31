@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { defaultStartRoute, ordersLandingView, shouldRestoreOperationalStart } from "./default-start-route";
+import {
+  canOpenPosAdministrativeMenu,
+  defaultStartRoute,
+  ordersLandingView,
+  requiresCloudWorkspace,
+  shouldRestoreOperationalStart,
+} from "./default-start-route";
 
 test("seller-only users start in today's route", () => {
   assert.equal(defaultStartRoute(["Vendedor"], ["orders.read"]), "/dashboard/orders?view=today-route");
@@ -27,6 +33,18 @@ test("the generic landing follows the first visible navigation item", () => {
 test("users without any navigable permission keep the neutral dashboard", () => {
   assert.equal(defaultStartRoute(["Vendedor"], []), "/dashboard");
   assert.equal(defaultStartRoute(["Transportador"], []), "/dashboard");
+});
+
+test("installed login distinguishes local POS access from administrative workspaces", () => {
+  assert.equal(requiresCloudWorkspace(["sales.create", "sales.change-price"]), false);
+  assert.equal(requiresCloudWorkspace(["sales.create", "sales.reports.read"]), true);
+  assert.equal(requiresCloudWorkspace(["catalog.read"]), true);
+});
+
+test("POS menu requires both a cloud session and another authorized module", () => {
+  assert.equal(canOpenPosAdministrativeMenu(true, ["sales.create", "catalog.read"]), true);
+  assert.equal(canOpenPosAdministrativeMenu(true, ["sales.create"]), false);
+  assert.equal(canOpenPosAdministrativeMenu(false, ["sales.create", "catalog.read"]), false);
 });
 
 test("the dashboard root remains available after the initial login redirect", () => {

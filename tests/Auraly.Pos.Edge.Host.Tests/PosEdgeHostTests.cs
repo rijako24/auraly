@@ -3,7 +3,6 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Auraly.Contracts.Authentication;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Catalog;
 using Auraly.Contracts.Fiscal;
@@ -603,7 +602,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     {
         // The test host uses UnavailableServerHandler for every server request.
         // Authentication must therefore be resolved exclusively from the
-        // protected offline lease and the durable local identity snapshot.
+        // durable protected local identity snapshot.
         using var loginClient = _factory!.CreateClient();
         loginClient.DefaultRequestHeaders.Add("X-Auraly-Edge-Session", Token);
 
@@ -770,8 +769,6 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         var userId = Guid.NewGuid();
         var tenantId = Guid.NewGuid();
         var deviceId = Guid.NewGuid();
-        using var leaseSigningKey = RSA.Create(2048);
-        const string leaseKeyId = "pos-host-test";
         var ids = new Dictionary<string, string?>
         {
             ["PosEdge:DatabasePath"] = _path,
@@ -788,8 +785,6 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
             ["PosEdge:Documents:SalesInvoice:SeriesCode"] = "03",
             ["PosEdge:WarehouseAllowsNegativeStock"] = "true",
             ["PosEdge:TenantId"] = tenantId.ToString("D"),
-            [$"PosEdge:OfflineLeaseTrust:TrustedPublicKeys:{leaseKeyId}"] =
-                leaseSigningKey.ExportSubjectPublicKeyInfoPem(),
             ["PosEdge:SupplierTaxId"] = "9001234567",
             ["PosEdge:DefaultCustomerIdentification"] = "222222222",
             ["PosEdge:Permissions:0"] = "sales.create",
@@ -863,33 +858,6 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                         Auraly.Contracts.WorkSessions.WorkSessionPermissionCodes.Close],
                     password)
             ]));
-        var issuedAt = DateTimeOffset.UtcNow;
-        var payload = new OfflineAuthenticationLeasePayload(
-            1, Guid.NewGuid(), tenantId, userId, deviceId,
-            issuedAt, issuedAt, issuedAt.AddHours(8), Guid.NewGuid());
-        var payloadBytes = OfflineAuthenticationLeaseTokenCodec.Serialize(payload);
-        var signature = leaseSigningKey.SignData(
-            payloadBytes,
-            HashAlgorithmName.SHA256,
-            RSASignaturePadding.Pss);
-        var signedLease = new SignedOfflineAuthenticationLease(
-            leaseKeyId,
-            OfflineAuthenticationLeaseAlgorithms.RsaPssSha256,
-            OfflineAuthenticationLeaseTokenCodec.Encode(payloadBytes),
-            OfflineAuthenticationLeaseTokenCodec.Encode(signature));
-        await scope.ServiceProvider.GetRequiredService<PosOfflineLeaseStore>().SaveAsync(
-            new OfflineAuthenticationLeaseAcquireResponse(
-                signedLease,
-                new OfflineAuthenticationLeaseUser(
-                    userId,
-                    "cashier",
-                    "Cajera de prueba",
-                    ["sales.create", "sales.discount", "sales.reprint", "sales.void",
-                        Auraly.Contracts.WorkSessions.WorkSessionPermissionCodes.Close],
-                    password.Salt,
-                    password.Hash,
-                    password.Iterations,
-                    password.ChangedAt)));
         var loginResponse = await _client.PostAsJsonAsync(
             "/edge/v1/auth/login",
             new PosLocalLoginRequest("cashier", "Cashier-Password-1"));

@@ -257,33 +257,45 @@ public sealed partial class PosLocalIdentityStore(
             .ToArray();
     }
 
-    public async Task<bool> HasValidSnapshotAsync(
+    public async Task<bool> HasIdentitySnapshotAsync(
         CancellationToken cancellationToken = default)
     {
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText =
-            "SELECT ValidUntil FROM PosIdentityState WHERE Singleton=1;";
-        var value = await command.ExecuteScalarAsync(cancellationToken);
-        return value is string text &&
-               DateTimeOffset.Parse(text) > timeProvider.GetUtcNow();
+        command.CommandText = "SELECT COUNT(1) FROM PosIdentityState WHERE Singleton=1;";
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) == 1;
+    }
+
+    public async Task<bool> ContainsUserAsync(
+        string username,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(username)) return false;
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT COUNT(1)
+            FROM PosOfflineUsers
+            WHERE NormalizedUsername=$username;
+            """;
+        command.Parameters.AddWithValue("$username", Normalize(username));
+        return Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) == 1;
     }
 
     public async Task<PosLocalUserSession> LoginAsync(
         PosLocalLoginRequest request,
-        Guid expectedUserId,
-        DateTimeOffset leaseExpiresAt,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(request.Username) ||
             string.IsNullOrEmpty(request.Password))
             throw new PosLocalLoginException(
                 "InvalidCredentials", "Usuario y contraseña son obligatorios.");
-        if (!await HasValidSnapshotAsync(cancellationToken))
+        if (!await HasIdentitySnapshotAsync(cancellationToken))
             throw new PosLocalLoginException(
                 "IdentityUnavailable",
-                "La información de acceso local aún no está lista o venció. Conecta este dispositivo con Auraly.");
+                "La información de acceso local aún no está lista. Conecta este dispositivo con Auraly para completar la preparación.");
 
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
@@ -295,10 +307,6 @@ public sealed partial class PosLocalIdentityStore(
             ?? throw new PosLocalLoginException(
                 "InvalidCredentials", "Usuario o contraseña incorrectos.");
         var now = timeProvider.GetUtcNow();
-        if (user.UserId != expectedUserId)
-            throw new PosLocalLoginException(
-                "OfflineLeaseUserMismatch",
-                "La identidad local no coincide con la concesion offline activa.");
         if (user.LockedUntil is not null && user.LockedUntil > now)
             throw new PosLocalLoginException(
                 "Locked",
@@ -323,16 +331,14 @@ public sealed partial class PosLocalIdentityStore(
             (SqliteTransaction)transaction,
             user,
             now,
-            leaseExpiresAt,
             cancellationToken);
     }
 
     public async Task<PosLocalUserSession> LoginFromEnrollmentAsync(
         Guid userId,
-        DateTimeOffset leaseExpiresAt,
         CancellationToken cancellationToken = default)
     {
-        if (!await HasValidSnapshotAsync(cancellationToken))
+        if (!await HasIdentitySnapshotAsync(cancellationToken))
             throw new PosLocalLoginException(
                 "IdentityUnavailable",
                 "La información de acceso local aún no está lista. Espera a que termine la descarga inicial.");
@@ -355,7 +361,6 @@ public sealed partial class PosLocalIdentityStore(
             (SqliteTransaction)transaction,
             user,
             timeProvider.GetUtcNow(),
-            leaseExpiresAt,
             cancellationToken);
     }
 
@@ -364,7 +369,6 @@ public sealed partial class PosLocalIdentityStore(
         SqliteTransaction transaction,
         LocalUser user,
         DateTimeOffset now,
-        DateTimeOffset leaseExpiresAt,
         CancellationToken cancellationToken)
     {
         var workSessionId = ids.NewId();
@@ -405,7 +409,7 @@ public sealed partial class PosLocalIdentityStore(
         var sessionId = ids.NewId();
         var token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
             .TrimEnd('=').Replace('+', '-').Replace('/', '_');
-        var expiresAt = new[] { now.Add(SessionDuration), leaseExpiresAt }.Min();
+        var expiresAt = now.Add(SessionDuration);
         await using (var insert = connection.CreateCommand())
         {
             insert.Transaction = transaction;

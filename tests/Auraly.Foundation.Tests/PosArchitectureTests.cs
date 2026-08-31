@@ -422,7 +422,7 @@ public sealed class PosArchitectureTests
             repositoryRoot, "src", "Desktop", "Auraly.Desktop",
             "AuralyDesktopApplicationContext.cs"));
         Assert.Contains(
-            "/pos-launch#edgeToken=",
+            "/login#edgeToken=",
             desktopApplicationContext,
             StringComparison.Ordinal);
         var apiProjects = Directory.GetFiles(

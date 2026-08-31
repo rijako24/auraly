@@ -6,7 +6,7 @@
 
 ## 1. Decisión
 
-La ruta `/pos` es la entrada única. El usuario no elige entre dos productos ni recibe un instalador preparado para una empresa.
+La ruta `/login` es la entrada única tanto para web como para el ejecutable. El usuario no elige entre dos productos ni recibe un instalador preparado para una empresa. `/pos` es el módulo de facturación, no un login alternativo.
 
 - En navegador, Auraly trabaja online contra la API y el motor documental central.
 - En una instalación Auraly POS, la misma interfaz usa POS Edge, SQLite, periféricos y sincronización durable para operar sin conexión.
@@ -18,11 +18,13 @@ No es técnicamente seguro ni posible que una página web instale silenciosament
 
 ### Acceso genérico
 
-1. El usuario abre Auraly o `/pos`.
+1. El usuario abre Auraly y siempre ve el login general. El ejecutable no presupone que el usuario sea cajero ni lo redirige a Facturación por el solo hecho de estar instalado.
 2. Si no existe tenant en la URL, el login solicita empresa, usuario y contraseña. El ejemplo de empresa es `@auraly`.
 3. Si el enlace contiene el tenant key, por ejemplo `?tenant=@auraly`, el campo empresa aparece resuelto y no se puede editar.
-4. Un login correcto recuerda el tenant key en ese dispositivo. Un intento fallido nunca reemplaza el valor recordado.
-5. El tenant key es inmutable después de crear la empresa. La aplicación puede copiar un enlace empresarial, pero no modificar la clave.
+4. Sin enrolamiento, el login siempre valida contra Auraly Server y un fallo de red no se sustituye por una credencial almacenada en el navegador.
+5. Con enrolamiento, la misma pantalla visual delega la autenticación al runtime local protegido y entra a Facturación; no existe una segunda pantalla de “cajero”.
+6. Un login online correcto recuerda el tenant key en ese dispositivo. Un intento fallido nunca reemplaza el valor recordado.
+7. El tenant key es inmutable después de crear la empresa. La aplicación puede copiar un enlace empresarial, pero no modificar la clave.
 
 La identidad sigue siendo única dentro de un tenant, no globalmente. Correo, nombre de usuario e identificación pueden repetirse en empresas diferentes.
 
@@ -100,6 +102,10 @@ El navegador no intenta emular capacidades locales. POS Edge no implementa otro 
 - el usuario puede marcar `Preparar este equipo para trabajar sin conexión` antes de continuar; sin marcarla no se crea enrolamiento ni estado sincronizado;
 - el bootstrap consulta el cupo autoritativo y muestra uso/límite; sin permiso o sin cupo la opción queda deshabilitada y el canje vuelve a comprobar la capacidad bajo bloqueo transaccional para cubrir carreras entre cajas;
 - el catálogo, identidad autorizada, consecutivos y documentos necesarios se guardan localmente;
+- una vez completada la preparación, el paso del tiempo no invalida la identidad local ni obliga a contactar al servidor para iniciar sesión; el usuario puede entrar cuantas veces necesite con la credencial protegida descargada;
+- una conexión disponible actualiza usuarios, permisos, bloqueos y revocaciones mediante la sincronización de seguridad existente, pero una falla de red no convierte en inválida una preparación durable ya completada;
+- al abrir, POS Edge inicia la actualización de identidades en segundo plano sin bloquear a usuarios ya descargados; si el usuario escrito no existe localmente, el submit visible conserva su estado de carga, espera como máximo una única actualización serializada y reintenta localmente, cubriendo la carrera con usuarios creados mientras la aplicación estuvo cerrada;
+- una contraseña incorrecta de un usuario ya presente nunca dispara sincronización ni consulta de autenticación al servidor;
 - el primer usuario con permiso `sales.create` que elige trabajar sin conexión entra a ventas automáticamente cuando termina la descarga inicial, sin un segundo login;
 - la identidad local incluye a todos los usuarios activos con permiso `sales.create` para ese negocio, de modo que cualquiera de ellos puede iniciar una sesión local posteriormente;
 - una sesión local vigente se recupera al reiniciar la aplicación; el lanzador no la revoca ni obliga a adquirir otra concesión por abrir de nuevo;
@@ -132,6 +138,7 @@ Las entradas y salidas de efectivo son movimientos explícitos del turno, con mo
 - POS Edge escucha únicamente en loopback y valida origen/token de sesión local;
 - enrolamiento revocable y sujeto al cupo de dispositivos del tenant;
 - el tenant y el dispositivo se validan en servidor en cada operación sensible;
+- el acceso local depende del enrolamiento durable y de la proyección mínima de identidades protegida por el sistema operativo, no de un lease temporal por login;
 - el instalador no confiere permisos ni autoridad;
 - el SHA-256 publicado permite comprobar integridad y el artefacto debe firmarse antes de producción.
 
@@ -149,16 +156,17 @@ Las entradas y salidas de efectivo son movimientos explícitos del turno, con mo
 
 ## 9. Criterios de aceptación
 
-1. Login genérico y enlaces empresariales llegan a la misma sesión.
-2. El tenant key no se puede editar después de crearlo.
-3. El dispositivo recuerda la última empresa solo tras autenticación correcta.
-4. El instalador descargado no contiene información del tenant.
-5. Navegador y escritorio muestran las mismas opciones autorizadas.
-6. Comprobante entra sin configuración fiscal; factura no entra sin fiscalidad válida.
-7. POS instalado reinicia y conserva SQLite, enrolamiento y outbox.
-8. Impresoras y cajón usan configuración local por dispositivo.
-9. Entrada/salida de efectivo afecta el arqueo y su contabilización exactamente una vez.
-10. La venta sincronizada produce los mismos efectos operativos, fiscales y contables que la venta online.
+1. Web y ejecutable presentan exactamente el mismo login general; no existe un login separado de cajero.
+2. Una instalación no enrolada solo autentica contra el servidor; una instalación enrolada usa el runtime local para Facturación.
+3. El tenant key no se puede editar después de crearlo.
+4. El dispositivo recuerda la última empresa solo tras autenticación correcta.
+5. El instalador descargado no contiene información del tenant.
+6. Navegador y escritorio muestran las mismas opciones autorizadas.
+7. Comprobante entra sin configuración fiscal; factura no entra sin fiscalidad válida.
+8. POS instalado reinicia y conserva SQLite, enrolamiento y outbox.
+9. Impresoras y cajón usan configuración local por dispositivo.
+10. Entrada/salida de efectivo afecta el arqueo y su contabilización exactamente una vez.
+11. La venta sincronizada produce los mismos efectos operativos, fiscales y contables que la venta online.
 
 ## 10. Conclusión
 

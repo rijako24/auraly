@@ -27,8 +27,8 @@ el cierre de caja no controla la visibilidad del resto de Auraly.
 |---|---|---|---|
 | No enrolado, en línea | Servidor y cookie HttpOnly | Shell normal de Auraly | Según permisos |
 | No enrolado, sin red | No disponible | Pantalla de conexión | No disponibles |
-| Enrolado, en línea | Servidor; refresca el verificador local | POS si tiene `sales.create` | Disponibles según permisos |
-| Enrolado, sin red | Verificador local del dispositivo | POS | Visibles pero deshabilitados si requieren servidor |
+| Enrolado, en línea | Verificador local del dispositivo; sincronización de seguridad en segundo plano | POS | La sesión local solo autoriza capacidades locales de Facturación |
+| Enrolado, sin red | Verificador local del dispositivo | POS | No disponibles si requieren servidor |
 
 El usuario puede abrir el lanzador desde el POS sin entregar ni cerrar la caja.
 Si regresa a Facturación, reanuda la sesión física y el turno que continúen
@@ -46,7 +46,8 @@ identidad compartida.
 
 No se descargan hashes de las contraseñas principales. El login offline usa
 identidades POS previamente autorizadas y un verificador por dispositivo,
-cifrado, revocable y con vigencia.
+protegido por el sistema operativo y revocable por sincronización. La preparación
+no expira por el paso del tiempo.
 
 ## Selección inicial
 

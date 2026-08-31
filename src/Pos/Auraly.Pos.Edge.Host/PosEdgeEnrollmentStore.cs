@@ -171,10 +171,9 @@ public sealed class PosEnrollmentSessionCompleter(
                     "EnrollmentSessionConsumed",
                     "La sesión inicial del enrolamiento ya fue utilizada.");
             await identities.ApplyLeaseUserAsync(access.User, cancellationToken);
-            var lease = await leases.SaveAsync(access, cancellationToken);
+            await leases.SaveAsync(access, cancellationToken);
             var session = await identities.LoginFromEnrollmentAsync(
                 access.User.UserId,
-                lease.Payload.ExpiresAt,
                 cancellationToken);
             enrollments.Save(package with { InitialOfflineAccess = null });
             return session;
