@@ -363,6 +363,8 @@ internal static class WorkSessionClosureReceiptRenderer
     private static readonly byte[] Initialize = [0x1B, 0x40];
     private static readonly byte[] AlignLeft = [0x1B, 0x61, 0x00];
     private static readonly byte[] AlignCenter = [0x1B, 0x61, 0x01];
+    private static readonly byte[] DoubleHeight = [0x1D, 0x21, 0x10];
+    private static readonly byte[] NormalSize = [0x1D, 0x21, 0x00];
     private static readonly byte[] Cut = [0x1D, 0x56, 0x41, 0x03];
 
     public static byte[] Render(
@@ -406,31 +408,28 @@ internal static class WorkSessionClosureReceiptRenderer
             Wrapped(stream, PaymentMethodName(payment.PaymentMethodCode).ToUpperInvariant(), columns);
             Line(stream, Pair("  VENTAS", Money(payment.SalesAmount), columns));
             Line(stream, Pair("  DEVOLUCIONES", Money(payment.RefundAmount), columns));
-            Line(stream, Pair("  ENTR./SAL.", Money(payment.OtherAmount), columns));
-            Line(stream, Pair("  ESPERADO", Money(payment.NetAmount), columns));
-            if (RequiresManualCount(payment.PaymentMethodCode))
+            if (IsCash(payment.PaymentMethodCode))
             {
+                Line(stream, Pair("  ENTR./SAL.", Money(payment.OtherAmount), columns));
+                Line(stream, Pair("  ESPERADO", Money(payment.NetAmount), columns));
                 Line(stream, Pair("  CONTADO", Money(payment.CountedAmount ?? 0), columns));
                 var paymentDifference = payment.Difference ?? 0;
                 Line(stream, Pair("  " + DifferenceLabel(paymentDifference), SignedMoney(paymentDifference), columns));
-            }
-            else
-            {
-                Line(stream, "  CONCILIACION AUTOMATICA");
             }
         }
         Line(stream, new string('-', columns));
         Line(stream, Pair("EFECTIVO ESPERADO", Money(value.ExpectedCash), columns));
         Line(stream, Pair("EFECTIVO CONTADO", Money(value.CountedCash ?? 0), columns));
         var difference = value.CashDifference ?? 0;
+        Write(stream, DoubleHeight);
         Line(stream, Pair(DifferenceLabel(difference), SignedMoney(difference), columns));
+        Write(stream, NormalSize);
         if (!string.IsNullOrWhiteSpace(value.Note))
         {
             Line(stream, new string('-', columns));
             Wrapped(stream, "NOTA: " + value.Note, columns);
         }
         Line(stream, new string('-', columns));
-        Wrapped(stream, $"CIERRE: {value.WorkSessionClosureId:D}", columns);
         Line(stream, string.Empty);
         Line(stream, string.Empty);
         Write(stream, Cut);
@@ -444,10 +443,10 @@ internal static class WorkSessionClosureReceiptRenderer
     {
         var payments = string.Join(string.Empty, value.PaymentTotals.Select(payment =>
         {
-            var counted = RequiresManualCount(payment.PaymentMethodCode)
-                ? $"<td>{Money(payment.CountedAmount ?? 0)}</td><td>{SignedMoney(payment.Difference ?? 0)}</td>"
-                : "<td colspan=\"2\">Conciliación automática</td>";
-            return $"<tr><td>{Encode(PaymentMethodName(payment.PaymentMethodCode))}</td><td>{Money(payment.SalesAmount)}</td><td>{Money(payment.RefundAmount)}</td><td>{Money(payment.OtherAmount)}</td><td>{Money(payment.NetAmount)}</td>{counted}</tr>";
+            var cashDetails = IsCash(payment.PaymentMethodCode)
+                ? $"<div class=\"payment-details\"><span>Entradas / salidas <strong>{Money(payment.OtherAmount)}</strong></span><span>Esperado <strong>{Money(payment.NetAmount)}</strong></span><span>Contado <strong>{Money(payment.CountedAmount ?? 0)}</strong></span><span class=\"payment-result\">{Encode(DifferenceLabel(payment.Difference ?? 0))} <strong>{SignedMoney(payment.Difference ?? 0)}</strong></span></div>"
+                : string.Empty;
+            return $"<section class=\"payment\" data-payment-method=\"{Encode(payment.PaymentMethodCode)}\"><h3>{Encode(PaymentMethodName(payment.PaymentMethodCode))}</h3><div class=\"payment-details\"><span>Ventas <strong>{Money(payment.SalesAmount)}</strong></span><span>Devoluciones <strong>{Money(payment.RefundAmount)}</strong></span></div>{cashDetails}</section>";
         }));
         var note = string.IsNullOrWhiteSpace(value.Note)
             ? string.Empty
@@ -457,14 +456,14 @@ internal static class WorkSessionClosureReceiptRenderer
             : $"<img class=\"brand-logo\" src=\"{Encode(companyLogoSource)}\" alt=\"Logo de {Encode(companyName ?? value.BusinessName)}\">";
         return $$"""
 <!doctype html><html lang="es"><head><meta charset="utf-8"><title>Cierre de sesión de venta</title>
-<style>@page{size:80mm auto;margin:4mm}body{width:72mm;font:10px Arial,sans-serif;color:#111;margin:auto}.brand-logo{display:block;max-width:48mm;max-height:18mm;object-fit:contain;margin:0 auto 3mm}h1{text-align:center;font-size:15px;margin:3px 0}h2{text-align:center;font-size:11px;margin:3px 0}table{width:100%;border-collapse:collapse;margin:8px 0}th,td{padding:3px 1px;border-bottom:1px solid #ddd;text-align:right;font-size:8px}th:first-child,td:first-child{text-align:left}.summary{font-weight:bold}.difference{font-size:13px}</style></head><body>
+<style>@page{size:80mm auto;margin:4mm}body{width:72mm;font:10px Arial,sans-serif;color:#111;margin:auto}.brand-logo{display:block;max-width:48mm;max-height:18mm;object-fit:contain;margin:0 auto 3mm}h1{text-align:center;font-size:15px;margin:3px 0}h2{text-align:center;font-size:11px;margin:3px 0}table{width:100%;border-collapse:collapse;margin:8px 0}td{padding:3px 1px;border-bottom:1px solid #ddd;text-align:right;font-size:8px}td:first-child{text-align:left}.summary{font-weight:bold}.payment{border-top:1px dashed #777;padding:4px 0}.payment h3{font-size:10px;margin:2px 0}.payment-details{display:flex;justify-content:space-between;gap:4px;flex-wrap:wrap}.payment-details span{display:flex;justify-content:space-between;gap:4px;min-width:46%}.payment-result{font-weight:bold}.difference{font-size:16px;border:2px solid #111;padding:5px;text-align:center}</style></head><body>
 {{logo}}<h1>{{Encode(companyName ?? value.BusinessName)}}</h1><h2>ARQUEO DE CAJA · CIERRE CONFIRMADO</h2><h2>Sede: {{Encode(value.BusinessName)}} · {{Encode(value.WarehouseName)}}</h2>
 <p><strong>Usuario que trabajó:</strong> {{Encode(value.UserName)}}<br><strong>Apertura:</strong> {{Date(value.OpenedAt)}}<br><strong>Cierre:</strong> {{Date(value.ClosedAt)}}<br><strong>Duración:</strong> {{Duration(value.OpenedAt, value.ClosedAt)}}</p>
 <table><tbody><tr><td>Número de ventas</td><td>{{value.SalesCount}}</td></tr><tr><td>Ventas a cartera</td><td>{{value.CreditSalesCount}}</td></tr><tr><td>Valor a cartera</td><td>{{Money(value.CreditSalesAmount)}}</td></tr><tr><td>Devoluciones</td><td>{{value.ReturnCount}}</td></tr><tr><td>Total ventas</td><td>{{Money(value.TotalSales)}}</td></tr><tr><td>Total devoluciones</td><td>{{Money(value.TotalRefunds)}}</td></tr><tr><td>Entradas / salidas</td><td>{{Money(value.TotalOther)}}</td></tr><tr class="summary"><td>Neto</td><td>{{Money(value.NetAmount)}}</td></tr></tbody></table>
-<h3>Todos los medios de pago</h3><table><thead><tr><th>Medio</th><th>Venta</th><th>Dev.</th><th>Entr./sal.</th><th>Esper.</th><th>Cont.</th><th>Dif.</th></tr></thead><tbody>{{payments}}</tbody></table>
+<h3>Todos los medios de pago</h3>{{payments}}
 <p>Efectivo esperado: <strong>{{Money(value.ExpectedCash)}}</strong><br>Efectivo contado: <strong>{{Money(value.CountedCash ?? 0)}}</strong></p>
 <p class="difference"><strong>{{Encode(DifferenceLabel(value.CashDifference ?? 0))}}:</strong> {{SignedMoney(value.CashDifference ?? 0)}}</p>{{note}}
-<p>Cierre: {{value.WorkSessionClosureId:D}}</p></body></html>
+</body></html>
 """;
     }
 
@@ -498,11 +497,8 @@ internal static class WorkSessionClosureReceiptRenderer
         "Withholding" => "Retencion",
         _ => code
     };
-    private static bool RequiresManualCount(string code) =>
-        code.Equals("Cash", StringComparison.OrdinalIgnoreCase) ||
-        code.Equals("Card", StringComparison.OrdinalIgnoreCase) ||
-        code.Equals("DebitCard", StringComparison.OrdinalIgnoreCase) ||
-        code.Equals("CreditCard", StringComparison.OrdinalIgnoreCase);
+    private static bool IsCash(string code) =>
+        code.Equals("Cash", StringComparison.OrdinalIgnoreCase);
     private static string Encode(string value) => WebUtility.HtmlEncode(value);
     private static string Pair(string label, string value, int columns)
     {
