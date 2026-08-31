@@ -6,12 +6,70 @@ using Auraly.Pos.Edge.Host;
 using Auraly.Pos.Edge.Infrastructure;
 using Microsoft.Data.Sqlite;
 using System.IO.Ports;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace Auraly.Pos.Edge.Host.Tests;
 
 public sealed class PosConfigurationTests
 {
+    [Fact]
+    public async Task Warehouse_policy_push_is_applied_in_memory_and_persisted_for_offline_restart()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(), "auraly-warehouse-policy-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var enrollment = EnrollmentPackage(allowsNegativeStock: false);
+            var store = new PosEdgeEnrollmentStore(
+                Path.Combine(directory, "enrollment.protected"),
+                Path.Combine(directory, "keys"));
+            store.Save(enrollment);
+            var runtime = new PosEdgeRuntimeContext(
+                new BusinessId(enrollment.BusinessId),
+                new WarehouseId(enrollment.WarehouseId),
+                new DeviceId(enrollment.DeviceId),
+                warehouseAllowsNegativeStock: false);
+            var sink = new PosWarehousePolicySink(
+                runtime, store, NullLogger<PosWarehousePolicySink>.Instance);
+
+            await sink.ApplyAsync(true);
+
+            Assert.True(runtime.WarehouseAllowsNegativeStock);
+            Assert.True(store.Load()!.WarehouseAllowsNegativeStock);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Remote_unenrollment_removes_only_the_protected_enrollment_identity()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(), "auraly-unenrollment-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var databasePath = Path.Combine(directory, "auraly-pos.db");
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(databasePath, "audit-data");
+            var store = new PosEdgeEnrollmentStore(
+                Path.Combine(directory, "enrollment.protected"),
+                Path.Combine(directory, "keys"));
+            store.Save(EnrollmentPackage(allowsNegativeStock: false));
+
+            store.Clear();
+
+            Assert.Null(store.Load());
+            Assert.True(File.Exists(databasePath));
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
     [Fact]
     public void Enrollment_preview_is_used_until_the_cashier_configures_a_printer()
     {
@@ -46,7 +104,7 @@ public sealed class PosConfigurationTests
     }
 
     [Fact]
-    public async Task Pdf_printer_receives_rendered_html_instead_of_esc_pos_bytes()
+    public async Task Pdf_printer_defers_receipts_to_the_browser_dialog_instead_of_opening_html()
     {
         var directory = Path.Combine(
             Path.GetTempPath(), "auraly-pdf-printer-" + Guid.NewGuid().ToString("N"));
@@ -69,12 +127,12 @@ public sealed class PosConfigurationTests
                 new EscPosReceiptRenderer(),
                 new HtmlReceiptPreviewRenderer(),
                 new NoopPreviewLauncher(),
-                new ConfigurableOrderDocumentPrinter(
-                    store, new HalfLetterDocumentRenderer()),
-                raw,
-                rendered);
+                raw);
 
-            await printer.PrintAsync(Receipt());
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => printer.PrintAsync(Receipt()));
+            Assert.Contains("diálogo de impresión", error.Message,
+                StringComparison.OrdinalIgnoreCase);
             var now = DateTimeOffset.UtcNow;
             await new PosWorkSessionClosurePrinter(store, raw, rendered).PrintAsync(
                 new WorkSessionClosureView(
@@ -85,15 +143,10 @@ public sealed class PosConfigurationTests
                 CancellationToken.None);
 
             Assert.Empty(raw.PrinterNames);
-            Assert.Equal(2, rendered.PrinterNames.Count);
-            Assert.All(rendered.PrinterNames,
-                name => Assert.Equal("Microsoft Print to PDF", name));
-            Assert.All(rendered.Documents,
-                html => Assert.Contains("<!doctype html>", html,
-                    StringComparison.OrdinalIgnoreCase));
-            Assert.Contains(rendered.Documents,
-                html => html.Contains("ARQUEO DE CAJA",
-                    StringComparison.Ordinal));
+            Assert.Single(rendered.PrinterNames);
+            Assert.Equal("Microsoft Print to PDF", rendered.PrinterNames[0]);
+            Assert.Contains("ARQUEO DE CAJA", rendered.Documents[0],
+                StringComparison.Ordinal);
         }
         finally
         {
@@ -143,6 +196,28 @@ public sealed class PosConfigurationTests
             key => key.StartsWith("PosEdge:Fiscal:", StringComparison.Ordinal));
         Assert.DoesNotContain("PosEdge:SupplierTaxId", configuration.Keys);
     }
+
+    private static PosEnrollmentPackage EnrollmentPackage(bool allowsNegativeStock) =>
+        new(
+            Guid.NewGuid(),
+            "device-secret",
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            "Negocio",
+            "01",
+            "Bodega",
+            allowsNegativeStock,
+            Guid.NewGuid(),
+            "Cajero",
+            ["sales.create"],
+            new PosEnrollmentDocumentSeries(
+                Guid.NewGuid(), "SalesInvoice", "VTA", "01", 8, 1, 99_999_999),
+            null,
+            new PosEnrollmentDocumentSeries(
+                Guid.NewGuid(), "SalesReceipt", "CVI", "01", 8, 1, 99_999_999),
+            null,
+            DateTimeOffset.UtcNow);
 
     [Fact]
     public void Printer_configuration_is_validated_normalized_and_persisted()
@@ -318,10 +393,7 @@ public sealed class PosConfigurationTests
                 new EscPosReceiptRenderer(),
                 new HtmlReceiptPreviewRenderer(),
                 new NoopPreviewLauncher(),
-                new ConfigurableOrderDocumentPrinter(
-                    store, new HalfLetterDocumentRenderer()),
-                raw,
-                rendered);
+                raw);
             var receipt = Receipt();
 
             await receiptPrinter.PrintAsync(receipt);

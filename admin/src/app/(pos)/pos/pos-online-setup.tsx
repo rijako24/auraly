@@ -28,9 +28,10 @@ type Props = {
   enrollmentCapacity?: { active: number; maximum: number } | null;
   onEnroll?: (option: SalesWorkspaceOption, documentType: PosSaleDocumentType) => Promise<void>;
   forcedDocumentType?: PosSaleDocumentType;
+  enrollmentState?: "web" | "available" | "enrolled";
 };
 
-export function PosOnlineSetup({ options, loading, error, notice, tenantName, userDisplayName, onSelect, onCancel, edgeCapable = false, canEnrollOffline = false, enrollmentUnavailableReason, enrollmentCapacity, onEnroll, forcedDocumentType }: Props) {
+export function PosOnlineSetup({ options, loading, error, notice, tenantName, userDisplayName, onSelect, onCancel, edgeCapable = false, canEnrollOffline = false, enrollmentUnavailableReason, enrollmentCapacity, onEnroll, forcedDocumentType, enrollmentState = "web" }: Props) {
   const businesses = useMemo(() => Array.from(new Map(options.map((option) => [option.businessId, option.businessName]))), [options]);
   const [businessId, setBusinessId] = useState("");
   const [warehouseId, setWarehouseId] = useState("");
@@ -107,6 +108,10 @@ export function PosOnlineSetup({ options, loading, error, notice, tenantName, us
         {(error || fiscalError) && <p className="rounded-xl border border-red-300/20 bg-red-400/10 p-3 text-sm text-red-100">{error || fiscalError}</p>}
         {notice && <p role="status" className="flex items-center gap-2 rounded-xl border border-teal-300/25 bg-teal-300/10 p-3 text-sm font-semibold text-teal-50"><Loader2 className="h-4 w-4 animate-spin" />{notice}</p>}
         {!options.length && !error && <p className="rounded-xl border border-amber-300/20 bg-amber-300/10 p-4 text-sm text-amber-100">No hay bodegas activas disponibles para este usuario.</p>}
+        {enrollmentState === "enrolled" && <div role="status" className="flex items-start gap-3 rounded-2xl border border-emerald-300/30 bg-emerald-300/10 p-4 text-sm text-emerald-50">
+          <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
+          <span><strong className="block text-white">Equipo enrolado</strong><span className="mt-1 block leading-5 text-emerald-100">Esta instalación trabaja con el motor local y recibe los cambios por sincronización.</span></span>
+        </div>}
         {edgeCapable && <label className={`flex items-start gap-3 rounded-2xl border p-4 text-sm transition ${prepareInstalled ? "border-teal-300/50 bg-teal-300/15" : "border-white/15 bg-[#102e33]"} ${canEnrollOffline ? "cursor-pointer" : "opacity-70"}`}>
           <Checkbox className="mt-0.5 border-teal-200 data-[state=checked]:bg-teal-300 data-[state=checked]:text-[#071a1d]" checked={prepareInstalled} disabled={!canEnrollOffline || busy} onCheckedChange={(checked) => setPrepareInstalled(checked === true)} />
           <span><strong className="block text-white">Preparar este equipo para trabajar sin conexión</strong><span className="mt-1 block leading-5 text-slate-300">Descarga usuarios, permisos, productos, clientes y precios. Después del enrolamiento la caja usa siempre el motor local sincronizado.</span>{enrollmentCapacity && <span className="mt-2 block text-xs text-teal-100">Cajas enroladas: {enrollmentCapacity.active} de {enrollmentCapacity.maximum}</span>}{!canEnrollOffline && <span role="alert" className="mt-2 block font-semibold text-amber-100">{enrollmentUnavailableReason ?? "No es posible enrolar otra caja. Comunícate con el administrador."}</span>}</span>

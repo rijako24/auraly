@@ -212,7 +212,7 @@ public sealed class DatabaseUpgradeMigrationTests
     }
 
     [Fact]
-    public void Authentication_session_schema_leaves_index_replacement_to_the_dacpac_plan()
+    public void Authentication_session_schema_enforces_one_active_login_per_user()
     {
         var root = FindRepositoryRoot();
         var table = File.ReadAllText(Path.Combine(
@@ -221,11 +221,11 @@ public sealed class DatabaseUpgradeMigrationTests
         var preDeployment = File.ReadAllText(Path.Combine(
             root, "database", "Auraly.Database", "Scripts", "PreDeployment.sql"));
 
-        Assert.DoesNotContain("UX_AuthenticationSessions_User_Active", table,
+        Assert.Contains("UX_AuthenticationSessions_User_Active", table,
             StringComparison.Ordinal);
-        Assert.Contains("UX_AuthenticationSessions_User_Client_Active", table,
+        Assert.DoesNotContain("UX_AuthenticationSessions_User_Client_Active", table,
             StringComparison.Ordinal);
-        Assert.DoesNotContain("AllowAuthenticationSessionsPerClient", preDeployment,
+        Assert.Contains("20260831_EnforceExclusiveUserSessions.sql", preDeployment,
             StringComparison.Ordinal);
     }
 

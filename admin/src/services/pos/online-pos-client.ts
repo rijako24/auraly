@@ -291,7 +291,7 @@ export class OnlinePosClient implements PosClient {
     workflow: "pos" | "orders" = "pos",
     browserPreview: Window | null = null,
   ) {
-    if (this.edgeSessionToken) {
+    if (this.edgeSessionToken && workflow === "orders") {
       const edge = this.localEdge();
       const branding = await tenantsApi.getBranding().catch(() => null);
       const jobs = receipts.map((receipt) => edge.printReceipt(receipt, branding));
@@ -518,6 +518,19 @@ export class OnlinePosClient implements PosClient {
         error.message.toLocaleLowerCase("es").includes("no se encontr")
       )
         return { status: "NotFound", draft } satisfies PosCaptureResult;
+      const available = error instanceof PosEdgeError && error.status === 400
+        ? inventoryAvailableFromProblem(error.message)
+        : null;
+      if (available !== null)
+        return {
+          status: "InsufficientInventory",
+          draft,
+          availability: {
+            requestedQuantity: 1,
+            availableQuantity: available,
+            isAvailable: false,
+          },
+        } satisfies PosCaptureResult;
       throw error;
     }
   }
@@ -664,7 +677,7 @@ export class OnlinePosClient implements PosClient {
     credit: PosCreditTerms | null = null,
     fiscalHabilitationOnly = false,
   ) {
-    const browserPreview = this.edgeSessionToken || fiscalHabilitationOnly
+    const browserPreview = fiscalHabilitationOnly
       ? null
       : openHalfLetterPrintPreview();
     try {
@@ -693,10 +706,11 @@ export class OnlinePosClient implements PosClient {
         nextDocumentNumber: null,
         nextFiscalNumber: null,
         receipt: result.receipt,
-        printPreviewOpened: false,
+        printPreviewOpened: !fiscalHabilitationOnly,
+        printedDirectly: false,
       } satisfies PosCompleteSaleResult;
     } catch (error) {
-      browserPreview?.close();
+      closePrintPreview(browserPreview);
       throw error;
     }
   }
@@ -735,7 +749,7 @@ export class OnlinePosClient implements PosClient {
       );
       await this.printDirect([receipt], false, "pos", browserPreview);
     } catch (error) {
-      browserPreview?.close();
+      closePrintPreview(browserPreview);
       throw error;
     }
   }
@@ -916,7 +930,7 @@ export class OnlinePosClient implements PosClient {
       await this.printDirect(receipts, receipts.length > 0, "orders", browserPreview);
       response.printStatus = response.completedCount ? "Sent" : "NotRequired";
     } catch (error) {
-      browserPreview?.close();
+      closePrintPreview(browserPreview);
       response.printStatus = "Failed";
       response.printError = `Los pedidos se facturaron, pero no fue posible imprimir: ${
         error instanceof Error ? error.message : "error desconocido"
@@ -1060,12 +1074,38 @@ async function request<T>(
   return (await response.json()) as T;
 }
 
+const browserPrintFrames = new WeakMap<Window, HTMLIFrameElement>();
+
 export function openHalfLetterPrintPreview(): Window | null {
-  return window.open(
-    "",
-    "_blank",
-    "popup=yes,width=920,height=820,resizable=yes,scrollbars=yes",
-  );
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.position = "fixed";
+  frame.style.left = "-10000px";
+  frame.style.top = "0";
+  frame.style.width = "1px";
+  frame.style.height = "1px";
+  frame.style.border = "0";
+  frame.style.opacity = "0";
+  document.body.appendChild(frame);
+  const target = frame.contentWindow;
+  if (!target) {
+    frame.remove();
+    return null;
+  }
+  browserPrintFrames.set(target, frame);
+  target.addEventListener("afterprint", () => closePrintPreview(target), { once: true });
+  return target;
+}
+
+export function closePrintPreview(preview: Window | null): void {
+  if (!preview) return;
+  const frame = browserPrintFrames.get(preview);
+  if (frame) {
+    browserPrintFrames.delete(preview);
+    frame.remove();
+    return;
+  }
+  preview.close();
 }
 
 export async function renderInvoiceOrdersReceipt(
@@ -1075,7 +1115,7 @@ export async function renderInvoiceOrdersReceipt(
 ) {
   const documentIds = response.results.flatMap((result) =>
     result.documentId && !result.error ? [result.documentId] : []);
-  if (!documentIds.length) { preview?.close(); return; }
+  if (!documentIds.length) { closePrintPreview(preview); return; }
   if (!preview) throw new Error("El navegador bloqueó la vista previa de impresión.");
   const receipts = await Promise.all(documentIds.map((documentId) =>
     request<PosPrintableReceipt>(
@@ -1091,7 +1131,7 @@ export async function renderReceiptsReceipt(
   context: Pick<SalesWorkspaceContext, "businessId" | "warehouseId" | "workSessionId">,
   paperWidthMillimeters = 80,
 ) {
-  if (!receipts.length) { preview?.close(); return; }
+  if (!receipts.length) { closePrintPreview(preview); return; }
   if (!preview) throw new Error("El navegador bloqueó la vista previa de impresión.");
   const paperWidth = paperWidthMillimeters === 58 ? 58 : 80;
   const bodyWidth = paperWidth - 8;
@@ -1131,7 +1171,7 @@ export async function renderInvoiceOrdersHalfLetter(
   const documentIds = response.results.flatMap((result) =>
     result.documentId && !result.error ? [result.documentId] : []);
   if (!documentIds.length) {
-    preview?.close();
+    closePrintPreview(preview);
     return;
   }
   if (!preview)
@@ -1153,7 +1193,7 @@ export async function renderReceiptsHalfLetter(
   context: Pick<SalesWorkspaceContext, "businessId" | "warehouseId" | "workSessionId">,
   format: Exclude<PosPrintTemplateFormat, "Receipt"> = "HalfLetter",
 ) {
-  if (!receipts.length) { preview?.close(); return; }
+  if (!receipts.length) { closePrintPreview(preview); return; }
   if (!preview) throw new Error("El navegador bloqueó la vista previa de impresión.");
   const currency = new Intl.NumberFormat("es-CO", {
     style: "currency", currency: "COP", maximumFractionDigits: 0,

@@ -382,9 +382,7 @@ public sealed class ConfigurablePosReceiptPrinter(
     EscPosReceiptRenderer escPos,
     HtmlReceiptPreviewRenderer html,
     IReceiptPreviewLauncher preview,
-    ConfigurableOrderDocumentPrinter halfLetter,
     IWindowsRawPrintJob rawPrintJob,
-    IWindowsRenderedPrintJob renderedPrintJob,
     PosWorkstationIdentity? workstation = null) : IPosReceiptPrinter
 {
     public Task PrintAsync(
@@ -393,11 +391,8 @@ public sealed class ConfigurablePosReceiptPrinter(
     {
         var configuration = settings.Load();
         if (configuration.PosOutputFormat != PrintTemplateFormats.Receipt)
-            return halfLetter.PrintAsync(
-                receipt,
-                configuration.PosPrinterName,
-                configuration.PosOutputFormat,
-                cancellationToken);
+            throw new InvalidOperationException(
+                "El formato configurado requiere el diálogo de impresión.");
         return PrintReceiptAsync(receipt, cancellationToken);
     }
 
@@ -434,8 +429,7 @@ public sealed class ConfigurablePosReceiptPrinter(
                 workflowPrinterName ?? configuration.PrinterFor(
                     receipt.DocumentType, PrintTemplateFormats.Receipt)
                     ?? throw new InvalidOperationException(
-                        "La impresora de tirilla no esta configurada."),
-                receipt.CompanyLogoSource),
+                        "La impresora de tirilla no esta configurada.")),
             _ => throw new InvalidOperationException(
                 "La configuracion de impresora no es valida.")
         };
@@ -448,14 +442,13 @@ public sealed class ConfigurablePosReceiptPrinter(
             cancellationToken);
     }
 
-    private IPosReceiptPrinter ReceiptPrinterForWindows(
-        string printerName,
-        string? companyLogoSource) =>
-        WindowsPrinterOutput.RequiresRenderedDocument(printerName) ||
-        !string.IsNullOrWhiteSpace(companyLogoSource)
-            ? new RenderedWindowsReceiptPrinter(
-                printerName, settings.ReceiptOutputDirectory, html, renderedPrintJob)
-            : new WindowsRawReceiptPrinter(printerName, escPos, rawPrintJob);
+    private IPosReceiptPrinter ReceiptPrinterForWindows(string printerName)
+    {
+        if (WindowsPrinterOutput.RequiresRenderedDocument(printerName))
+            throw new InvalidOperationException(
+                "La impresora configurada requiere el diálogo de impresión.");
+        return new WindowsRawReceiptPrinter(printerName, escPos, rawPrintJob);
+    }
 
     public Task PrintReceiptAsync(
         Auraly.Contracts.Sales.OnlineSalesReceipt receipt,

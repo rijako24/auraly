@@ -12,8 +12,8 @@
 2. La caja sí mantiene catálogo, códigos, precios, impuestos y configuración de productos.
 3. El inventario se consulta únicamente online.
 4. El POS no consulta el servidor por cada escaneo.
-5. El MVP no mantendrá una conexión SignalR/WebSocket permanente por caja.
-6. Los cambios se detectan mediante manifiestos versionados livianos.
+5. Azure Web PubSub se usa como acelerador de invalidaciones, nunca como fuente de verdad.
+6. Los cambios se recuperan mediante checkpoints y deltas/snapshots versionados.
 7. Cuando cambia una versión, la caja descarga solamente el delta correspondiente.
 
 ---
@@ -101,28 +101,15 @@ La caja:
 
 No existe una validación local aproximada.
 
-### Política de negativos de la caja
+### Política de negativos de la bodega
 
-`AllowNegativeStockSales` tiene efecto completo cuando la caja está online.
+`AllowNegativeStockSales` se sincroniza y persiste localmente como configuración
+heredada de la bodega.
 
-Si está deshabilitado:
+Si está habilitado, capturar no consulta inventario. Si está deshabilitado:
 
-- online: consulta/valida inventario al confirmar;
-- offline: la política adicional de la caja decide entre:
-  - permitir la venta sin validación;
-  - exigir supervisor;
-  - impedir ventas offline.
-
-Configuración:
-
-```text
-OfflineStockPolicy =
-    AllowWithoutValidation
-    | RequireSupervisor
-    | BlockOfflineSale
-```
-
-Para una caja presencial se recomienda `AllowWithoutValidation`, porque el cliente tiene el producto físicamente.
+- online: consulta al capturar y cambiar cantidad; el motor revalida al confirmar;
+- offline: permite la venta sin validación y sincroniza después.
 
 ---
 
@@ -131,7 +118,7 @@ Para una caja presencial se recomienda `AllowWithoutValidation`, porque el clien
 La consulta se realiza:
 
 - cuando el cajero abre “Consultar existencias”;
-- cuando una caja con negativos deshabilitados confirma una venta;
+- cuando una bodega con negativos deshabilitados captura o cambia la cantidad;
 - cuando un módulo administrativo necesita disponibilidad;
 - nunca para resolver cada código de barras.
 

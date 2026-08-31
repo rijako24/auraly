@@ -157,6 +157,7 @@ internal static class PosSaleHostModule
             PosCashDrawer cashDrawer,
             PosSynchronizationSignal synchronization,
             PosLocalSessionAccessor sessions,
+            ILogger<PosSaleCompletionService> logger,
             CancellationToken ct) =>
         {
             try
@@ -189,18 +190,16 @@ internal static class PosSaleHostModule
                         request.DocumentType),
                     ct);
                 synchronization.Signal(PosSynchronizationTrigger.LocalOutbox);
+                if (!result.PrintedDirectly && !string.IsNullOrWhiteSpace(result.PrintError))
+                    logger.LogWarning(
+                        "Sale {DocumentId} was issued but direct printing failed: {PrintError}",
+                        result.IssuedSale.DocumentId.Value,
+                        result.PrintError);
                 // The sale is already durably issued at this point. Every completed
                 // sale opens the local drawer, including offline sales. A disconnected
                 // drawer must not turn a successful sale into a 409.
                 cashDrawer.TryOpen();
                 return Results.Ok(result);
-            }
-            catch (IOException error)
-            {
-                return Results.Problem(
-                    error.Message,
-                    statusCode: StatusCodes.Status503ServiceUnavailable,
-                    title: "La venta fue emitida, pero la tirilla no pudo imprimirse.");
             }
             catch (InvalidOperationException error)
             {
@@ -279,7 +278,8 @@ internal static class PosSaleHostModule
                     RequiredLong(configuration, "PosEdge:Fiscal:RangeEnd")),
                 OptionalInt(configuration, "PosEdge:Fiscal:ExpirationWarningDays", 3),
                 OptionalLong(configuration,
-                    "PosEdge:Fiscal:RemainingNumberWarningThreshold", 100)));
+                    "PosEdge:Fiscal:RemainingNumberWarningThreshold", 100),
+                OptionalBool(configuration, "PosEdge:Fiscal:ProductionActive", true)));
     }
 
     private static string Required(IConfiguration configuration, string key) =>
@@ -304,6 +304,10 @@ internal static class PosSaleHostModule
     private static int OptionalInt(
         IConfiguration configuration, string key, int fallback) =>
         int.TryParse(configuration[key], out var value) ? value : fallback;
+
+    private static bool OptionalBool(
+        IConfiguration configuration, string key, bool fallback) =>
+        bool.TryParse(configuration[key], out var value) ? value : fallback;
 
     private static int RequiredInt(IConfiguration configuration, string key) =>
         int.TryParse(Required(configuration, key), out var value)

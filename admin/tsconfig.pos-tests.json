@@ -35,6 +35,8 @@
     "src/app/(pos)/pos/pos-desktop-update-protocol.ts",
     "src/app/(pos)/pos/pos-desktop-update-protocol.test.ts",
     "src/app/(pos)/pos/pos-function-shortcut.ts",
+    "src/app/(pos)/pos/pos-synchronization-event-feed.ts",
+    "src/app/(pos)/pos/pos-synchronization-event-feed.test.ts",
     "src/services/pos/pos-edge-client.ts",
     "src/services/pos/pos-launch-session.ts",
     "src/services/pos/pos-launch-session.test.ts",

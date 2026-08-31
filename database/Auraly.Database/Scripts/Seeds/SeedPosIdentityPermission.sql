@@ -41,7 +41,7 @@ ELSE
 INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId)
 SELECT NEWID(),r.RoleId,@PosSynchronizationEventsPermissionId
 FROM dbo.AppRoles r
-WHERE r.NormalizedName=N'ADMINISTRATOR'
+WHERE r.NormalizedName IN(N'ADMINISTRATOR',N'TENANTADMINISTRATOR',N'CASHIER')
   AND NOT EXISTS (SELECT 1 FROM dbo.RolePermissions rp
                   WHERE rp.RoleId=r.RoleId AND rp.PermissionId=@PosSynchronizationEventsPermissionId);
 

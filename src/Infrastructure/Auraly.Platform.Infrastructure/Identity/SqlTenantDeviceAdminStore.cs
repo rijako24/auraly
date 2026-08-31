@@ -4,10 +4,15 @@ using Auraly.Platform.Application.Identity.Interfaces;
 using Auraly.Platform.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.SqlClient;
+using Auraly.BuildingBlocks.Application.Synchronization;
+using Auraly.BuildingBlocks.Domain.Identifiers;
 
 namespace Auraly.Platform.Infrastructure.Identity;
 
-public sealed class SqlTenantDeviceAdminStore(ApplicationDbContext db) : ITenantDeviceAdminStore
+public sealed class SqlTenantDeviceAdminStore(
+    ApplicationDbContext db,
+    IAuralyIdGenerator ids,
+    IPosSynchronizationOutboxDispatcher synchronization) : ITenantDeviceAdminStore
 {
     public async Task<IReadOnlyList<TenantEnrolledDeviceDto>> ListAsync(Guid tenantId, CancellationToken ct = default)
     {
@@ -45,6 +50,10 @@ public sealed class SqlTenantDeviceAdminStore(ApplicationDbContext db) : ITenant
         {
             const string sql = """
                 DECLARE @Now DATETIMEOFFSET(7)=SYSDATETIMEOFFSET();
+                DECLARE @BusinessId UNIQUEIDENTIFIER=(
+                  SELECT TOP(1) BusinessId FROM dbo.DocumentSeries
+                  WHERE DeviceId=@DeviceId ORDER BY IsActive DESC,CreatedAt DESC);
+                IF @BusinessId IS NULL THROW 51090,N'La caja no tiene una sede enrolada válida.',1;
                 UPDATE dbo.EnrolledDevices SET IsActive=0 WHERE DeviceId=@DeviceId AND TenantId=@TenantId AND IsActive=1;
                 IF @@ROWCOUNT<>1 THROW 51090,N'La caja no existe, ya fue desenrolada o pertenece a otra organización.',1;
                 UPDATE dbo.DocumentSeries SET IsActive=0 WHERE DeviceId=@DeviceId AND IsActive=1;
@@ -53,12 +62,25 @@ public sealed class SqlTenantDeviceAdminStore(ApplicationDbContext db) : ITenant
                 UPDATE dbo.OfflineAuthenticationLeases
                 SET Status=N'Revoked',EndedAt=@Now,EndReason=N'DeviceUnenrolled',UpdatedAt=@Now
                 WHERE DeviceId=@DeviceId AND Status=N'Active';
+
+                DECLARE @Cursor BIGINT;
+                SELECT @Cursor=ISNULL(MAX(AvailableThroughCursor),0)+1
+                FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
+                WHERE BusinessId=@BusinessId AND Stream=N'DeviceEnrollment';
+                INSERT dbo.PosSynchronizationOutboxMessages
+                  (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt,TargetDeviceId)
+                VALUES(@NotificationId,@BusinessId,N'DeviceEnrollment',@Cursor,@Now,@DeviceId);
+                SELECT @BusinessId;
                 """;
             await using var command = new SqlCommand(sql, connection, transaction);
             command.Parameters.AddWithValue("@TenantId", tenantId);
             command.Parameters.AddWithValue("@DeviceId", deviceId);
-            await command.ExecuteNonQueryAsync(ct);
+            command.Parameters.AddWithValue("@NotificationId", ids.NewId());
+            var businessId = (Guid)(await command.ExecuteScalarAsync(ct)
+                ?? throw new InvalidOperationException("Device revocation did not return its business scope."));
             await transaction.CommitAsync(ct);
+            await synchronization.DispatchPendingAsync(
+                tenantId, businessId, CancellationToken.None);
         }
         catch (SqlException exception) when (exception.Number == 51090)
         {

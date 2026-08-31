@@ -32,6 +32,11 @@ public sealed record OpenWorkSessionRequest(
     Guid? DeviceId,
     decimal OpeningCash = 0);
 
+public sealed record DeviceOpenWorkSessionRequest(
+    Guid UserId,
+    Guid BusinessId,
+    Guid WarehouseId);
+
 public sealed record CloseWorkSessionRequest(
     decimal? CountedCash,
     string? Note,

@@ -135,9 +135,18 @@ public sealed class SqlInventoryQueryStore(SqlServerConnectionFactory connection
                 SELECT 1 FROM dbo.InventoryBalances balance
                 WHERE balance.BusinessId=@BusinessId AND balance.WarehouseId=@WarehouseId
                   AND balance.ProductId=product.ProductId);
+
+            DECLARE @ConfigurationCursor BIGINT;
+            SELECT @ConfigurationCursor=ISNULL(MAX(AvailableThroughCursor),0)+1
+            FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
+            WHERE BusinessId=@BusinessId AND Stream=N'Configuration';
+            INSERT dbo.PosSynchronizationOutboxMessages
+              (NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
+            VALUES(@NotificationId,@BusinessId,N'Configuration',@ConfigurationCursor,SYSUTCDATETIME());
+
             SELECT WarehouseId,Code,Name,AllowNegativeStockSales,PriceFormationCostBasis,IsSystem,UseForSales,UseForGoodsReceipts,IsInventoryVisible,IsActive FROM dbo.Warehouses WHERE WarehouseId=@WarehouseId;
             """;
-        await using var connection=connections.Create();await connection.OpenAsync(token);await using var command=new SqlCommand(sql,connection);command.Parameters.AddWithValue("@WarehouseId",id);command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@TenantId",user.TenantId);command.Parameters.AddWithValue("@Code",code);command.Parameters.AddWithValue("@Name",request.Name);command.Parameters.AddWithValue("@AllowNegative",request.AllowNegativeStockSales);command.Parameters.AddWithValue("@CostBasis",request.PriceFormationCostBasis);command.Parameters.AddWithValue("@UseForSales",request.UseForSales);command.Parameters.AddWithValue("@IsActive",request.IsActive);command.Parameters.AddWithValue("@IsNew",warehouseId is null);
+        await using var connection=connections.Create();await connection.OpenAsync(token);await using var command=new SqlCommand(sql,connection);command.Parameters.AddWithValue("@WarehouseId",id);command.Parameters.AddWithValue("@BusinessId",user.BusinessId);command.Parameters.AddWithValue("@TenantId",user.TenantId);command.Parameters.AddWithValue("@Code",code);command.Parameters.AddWithValue("@Name",request.Name);command.Parameters.AddWithValue("@AllowNegative",request.AllowNegativeStockSales);command.Parameters.AddWithValue("@CostBasis",request.PriceFormationCostBasis);command.Parameters.AddWithValue("@UseForSales",request.UseForSales);command.Parameters.AddWithValue("@IsActive",request.IsActive);command.Parameters.AddWithValue("@IsNew",warehouseId is null);command.Parameters.AddWithValue("@NotificationId",ids.NewId());
         await using var reader=await command.ExecuteReaderAsync(token);await reader.ReadAsync(token);return new(reader.GetGuid(0),reader.GetString(1),reader.GetString(2),reader.GetBoolean(3),reader.GetString(4),reader.GetBoolean(5),reader.GetBoolean(6),reader.GetBoolean(7),reader.GetBoolean(8),reader.GetBoolean(9));
     }
     public async Task<IReadOnlyList<InventoryReasonItem>> GetReasonsAsync(InventoryUserIdentity user, string? operationType, bool includeInactive, string? search, CancellationToken token)

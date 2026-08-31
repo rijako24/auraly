@@ -146,6 +146,15 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Cashier_with_synchronization_permission_can_read_events()
+    {
+        using var response = await Client.GetAsync(
+            "/edge/v1/synchronization/events?take=10");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Manual_cash_drawer_requires_the_configurable_user_permission_offline()
     {
         using var denied = await Client.PostAsync(
@@ -434,6 +443,35 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
         Assert.Null(printed.FiscalNumber);
         Assert.Null(printed.Cufe);
         Assert.Null(printed.QrPayload);
+    }
+
+    [Fact]
+    public async Task Direct_print_failure_does_not_fail_or_leave_the_sale_active()
+    {
+        var capture = await Client.PostAsJsonAsync(
+            "/edge/v1/capture",
+            new CaptureRequest("770123", null));
+        capture.EnsureSuccessStatusCode();
+        var draft = (await capture.Content.ReadFromJsonAsync<PosCaptureResult>())!.Draft!;
+        _printer.FailuresRemaining = 1;
+
+        var completed = await Client.PostAsJsonAsync(
+            $"/edge/v1/drafts/{draft.DraftId.Value:D}/complete",
+            new CompleteDraftRequest(
+                null,
+                [new CompletePaymentRequest("Cash", draft.PayableAmount, null)],
+                DocumentType: PosSaleDocumentTypes.Receipt));
+
+        completed.EnsureSuccessStatusCode();
+        var result = await completed.Content.ReadFromJsonAsync<CompletePosSaleResult>();
+        Assert.NotNull(result);
+        Assert.False(result.PrintedDirectly);
+        Assert.Contains("impresora", result.PrintError, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(result.IssuedSale.DocumentId, result.Receipt.DocumentId);
+        Assert.Empty(result.NextDraft.Lines);
+        Assert.Empty(_printer.Receipts);
+        var active = await Client.GetFromJsonAsync<PosDraft>("/edge/v1/drafts/active");
+        Assert.Equal(result.NextDraft.DraftId, active!.DraftId);
     }
 
     [Fact]
@@ -855,6 +893,7 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                     ["sales.create", "sales.discount", "sales.reprint", "sales.void",
                         CommercePermissionCodes.SalesRemoveLine,
                         CommercePermissionCodes.SalesRestartDraft,
+                        PosSynchronizationPermissions.ReadEvents,
                         Auraly.Contracts.WorkSessions.WorkSessionPermissionCodes.Close],
                     password)
             ]));
@@ -965,11 +1004,17 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     private sealed class RecordingPrinter : IPosReceiptPrinter
     {
         public List<PosReceipt> Receipts { get; } = [];
+        public int FailuresRemaining { get; set; }
 
         public Task PrintAsync(
             PosReceipt receipt,
             CancellationToken cancellationToken = default)
         {
+            if (FailuresRemaining > 0)
+            {
+                FailuresRemaining--;
+                throw new IOException("La impresora de prueba no respondió.");
+            }
             Receipts.Add(receipt);
             return Task.CompletedTask;
         }

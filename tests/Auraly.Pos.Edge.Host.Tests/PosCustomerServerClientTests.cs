@@ -43,7 +43,9 @@ public sealed class PosCustomerServerClientTests
             using var http = new HttpClient(handler) { BaseAddress = new Uri("https://auraly.test") };
             var credentials = new PosDeviceCredentials(deviceId, "device-secret");
             var scope = new PosOperationalScope(businessId, warehouseId);
-            var synchronization = new PosCatalogSynchronizer(http, store, credentials, scope);
+            var warehousePolicy = new RecordingWarehousePolicySink();
+            var synchronization = new PosCatalogSynchronizer(
+                http, store, credentials, scope, warehousePolicy: warehousePolicy);
             var client = new PosCustomerServerClient(http, credentials, scope, synchronization, store);
 
             var countries = await client.CountriesAsync(default);
@@ -64,6 +66,7 @@ public sealed class PosCustomerServerClientTests
             Assert.Equal("Cliente POS nuevo", created.Name);
             Assert.Equal(created, await store.GetCustomerAsync(customerId));
             Assert.True(handler.CustomerCreated);
+            Assert.True(warehousePolicy.Applied);
             Assert.All(handler.DeviceRequests, request =>
             {
                 Assert.Equal(deviceId.ToString("D"), request.DeviceId);
@@ -121,7 +124,7 @@ public sealed class PosCustomerServerClientTests
             if (path.StartsWith("/api/pos/v1/pricing/snapshot?", StringComparison.Ordinal))
                 return Ok(new PosPricingSnapshot([], [
                     new PosCustomerPricing(customerId, "1.234.567", "Cliente POS nuevo", null, true)
-                ]));
+                ], WarehouseAllowsNegativeStock: true));
             if (path.StartsWith("/api/commerce/v1/reference-options/", StringComparison.Ordinal))
                 return Ok<IReadOnlyList<ReferenceOption>>([]);
             if (path.StartsWith("/api/pos/v1/catalog/changes?", StringComparison.Ordinal))
@@ -136,6 +139,19 @@ public sealed class PosCustomerServerClientTests
         {
             Content = JsonContent.Create(value)
         };
+    }
+
+    private sealed class RecordingWarehousePolicySink : IPosWarehousePolicySink
+    {
+        public bool Applied { get; private set; }
+
+        public Task ApplyAsync(
+            bool allowsNegativeStock,
+            CancellationToken cancellationToken = default)
+        {
+            Applied = allowsNegativeStock;
+            return Task.CompletedTask;
+        }
     }
 }
 

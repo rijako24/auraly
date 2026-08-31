@@ -7,12 +7,11 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PosEdgeClient } from "@/services/pos/pos-edge-client";
 import type { PosClient, PosSynchronizationEvent } from "@/services/pos/pos-edge-client";
+import { nextSynchronizationEventFeed } from "./pos-synchronization-event-feed";
 
 const visibleForMs = 10_000;
 const fadeForMs = 900;
-const initialFreshnessMs = 3_000;
 const maxVisibleEvents = 4;
-const hiddenCategories = new Set(["Synchronization", "Push"]);
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 
 type LiveEvent = PosSynchronizationEvent & { expiresAt: number };
@@ -25,21 +24,33 @@ export function PosSynchronizationEventsDialog({ open, client, connected, inProg
   const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const seen = useRef(new Set<number>());
-  const query = useQuery({
+  const initialized = useRef(false);
+  const wasOpen = useRef(false);
+  const {
+    data: synchronizationEvents,
+    isError: synchronizationEventsFailed,
+    refetch: refetchSynchronizationEvents,
+  } = useQuery({
     queryKey: ["pos-synchronization-events", client.mode],
     queryFn: () => client.synchronizationEvents(80),
     enabled: open,
   });
 
   useEffect(() => {
+    if (open && !wasOpen.current) {
+      setLiveEvents([]);
+      seen.current = new Set<number>();
+      initialized.current = false;
+    }
+    wasOpen.current = open;
+  }, [open]);
+
+  useEffect(() => {
     if (!open || !(client instanceof PosEdgeClient)) return;
-    const stopWatching = client.watchLocalState(() => void query.refetch());
-    // Opening the monitor is an explicit user action. Refresh once so a change
-    // committed while the push channel was reconnecting is also visible; live
-    // changes after that continue arriving through the canonical local signal.
-    void client.synchronizeNow().catch(() => undefined);
+    const stopWatching = client.watchLocalState(
+      () => void refetchSynchronizationEvents());
     return stopWatching;
-  }, [client, open, query.refetch]);
+  }, [client, open, refetchSynchronizationEvents]);
 
   useEffect(() => {
     if (!open) return;
@@ -52,19 +63,23 @@ export function PosSynchronizationEventsDialog({ open, client, connected, inProg
   }, [open]);
 
   useEffect(() => {
-    if (!query.data) return;
+    if (!synchronizationEvents) return;
     const receivedAt = Date.now();
-    const additions = query.data
-      .filter(event => !hiddenCategories.has(event.category))
-      .filter(event => !seen.current.has(event.sequence))
-      .filter(event => receivedAt - new Date(event.occurredAt).getTime() <= initialFreshnessMs)
+    const next = nextSynchronizationEventFeed(
+      synchronizationEvents,
+      seen.current,
+      initialized.current,
+      maxVisibleEvents,
+    );
+    seen.current = next.seenSequences;
+    initialized.current = true;
+    const additions = next.events
       .map(event => ({ ...event, expiresAt: receivedAt + visibleForMs }));
-    query.data.forEach(event => seen.current.add(event.sequence));
     if (additions.length === 0) return;
     setLiveEvents(current => [...additions.reverse(), ...current]
       .sort((left, right) => right.sequence - left.sequence)
       .slice(0, maxVisibleEvents));
-  }, [query.data]);
+  }, [synchronizationEvents]);
 
   return (
     <Dialog open={open} onOpenChange={(value) => !value && onClose()}>
@@ -88,14 +103,14 @@ export function PosSynchronizationEventsDialog({ open, client, connected, inProg
 
         <section className="relative h-[21rem] overflow-hidden px-5 py-5">
           <div className="pointer-events-none absolute inset-x-8 top-0 h-20 bg-cyan-300/[0.035] blur-3xl" />
-          {query.isError && (
+          {synchronizationEventsFailed && (
             <div className="grid h-full place-items-center text-center"><div className="max-w-xs">
               <AlertTriangle className="mx-auto h-7 w-7 text-amber-300" />
               <p className="mt-3 text-sm font-bold text-slate-100">No pudimos leer la actividad local</p>
               <p className="mt-1 text-xs leading-5 text-slate-400">La caja puede continuar trabajando; el monitor volverá a intentarlo con la próxima señal.</p>
             </div></div>
           )}
-          {!query.isError && liveEvents.length === 0 && (
+          {!synchronizationEventsFailed && liveEvents.length === 0 && (
             <div className="grid h-full place-items-center text-center"><div className="relative">
               <div className="relative mx-auto grid h-16 w-16 place-items-center rounded-full border border-cyan-200/15 bg-cyan-200/[0.04]">
                 <Activity className="h-6 w-6 text-cyan-200/70" />
@@ -104,7 +119,7 @@ export function PosSynchronizationEventsDialog({ open, client, connected, inProg
               <p className="mt-1 text-xs text-slate-500">Aparecerán aquí y se desvanecerán automáticamente.</p>
             </div></div>
           )}
-          {!query.isError && liveEvents.length > 0 && (
+          {!synchronizationEventsFailed && liveEvents.length > 0 && (
             <div className="relative space-y-2.5">
               {liveEvents.map((event) => {
                 const fading = event.expiresAt - now <= fadeForMs;

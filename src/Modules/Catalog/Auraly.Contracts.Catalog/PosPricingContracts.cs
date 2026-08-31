@@ -20,7 +20,8 @@ public sealed record PosWithholdingRule(
 public sealed record PosPricingSnapshot(
     IReadOnlyCollection<PosPriceChannelItem> PriceChannelItems,
     IReadOnlyCollection<PosCustomerPricing> Customers,
-    IReadOnlyCollection<PosWithholdingRule>? WithholdingRules = null);
+    IReadOnlyCollection<PosWithholdingRule>? WithholdingRules = null,
+    bool? WarehouseAllowsNegativeStock = null);
 
 public sealed record PosResolvedPrice(
     Guid ProductId, decimal BaseAmount, decimal Amount, string CurrencyCode,

@@ -23,12 +23,6 @@ public interface IWorkSessionStore
         CloseWorkSessionRequest request,
         CancellationToken cancellationToken);
 
-    Task<WorkSessionClosureView?> CloseForAuthenticationAsync(
-        Guid userId,
-        Guid authenticationSessionId,
-        string reason,
-        CancellationToken cancellationToken);
-
     Task<WorkSessionClosureView?> GetClosureAsync(
         WorkSessionIdentity identity,
         Guid workSessionId,
@@ -86,12 +80,38 @@ public sealed class WorkSessionService(
         return store.CurrentAsync(identity, cancellationToken);
     }
 
-    public Task<WorkSessionView> OpenOrResumeAsync(
+    public async Task<WorkSessionView> OpenOrResumeAsync(
         WorkSessionIdentity identity,
         OpenWorkSessionRequest request,
         CancellationToken cancellationToken = default)
     {
         Demand(identity, WorkSessionPermissionCodes.Open);
+        ValidateOpen(request);
+        return await store.OpenOrResumeAsync(identity, request, cancellationToken);
+    }
+
+    public async Task<WorkSessionView> OpenOrResumeDeviceAsync(
+        WorkSessionIdentity identity,
+        DeviceOpenWorkSessionRequest request,
+        Guid deviceId,
+        CancellationToken cancellationToken = default)
+    {
+        if (request.UserId == Guid.Empty)
+            throw new WorkSessionValidationException(
+                "UserId is required.");
+        if (request.UserId != identity.UserId)
+            throw new WorkSessionForbiddenException(
+                "The local user does not match the requested work session.");
+        if (deviceId == Guid.Empty)
+            throw new WorkSessionValidationException("DeviceId is required.");
+        var open = new OpenWorkSessionRequest(
+            request.BusinessId, request.WarehouseId, deviceId);
+        ValidateOpen(open);
+        return await store.OpenOrResumeAsync(identity, open, cancellationToken);
+    }
+
+    private static void ValidateOpen(OpenWorkSessionRequest request)
+    {
         if (request.BusinessId == Guid.Empty || request.WarehouseId == Guid.Empty)
             throw new WorkSessionValidationException(
                 "BusinessId and WarehouseId are required.");
@@ -101,7 +121,6 @@ public sealed class WorkSessionService(
         if (request.OpeningCash < 0)
             throw new WorkSessionValidationException(
                 "Opening cash cannot be negative.");
-        return store.OpenOrResumeAsync(identity, request, cancellationToken);
     }
 
     public async Task<WorkSessionClosureView> CloseAsync(
@@ -148,40 +167,6 @@ public sealed class WorkSessionService(
                 WorkSessionAccountingDocumentTypes.CashDifference,
                 cancellationToken);
         return closure;
-    }
-
-    public Task<WorkSessionClosureView?> CloseForLoginAsync(
-        Guid userId,
-        Guid tenantId,
-        Guid authenticationSessionId,
-        CancellationToken cancellationToken = default)
-    {
-        if (userId == Guid.Empty || tenantId == Guid.Empty ||
-            authenticationSessionId == Guid.Empty)
-            throw new WorkSessionValidationException(
-                "The login context is incomplete.");
-        return store.CloseForAuthenticationAsync(
-            userId,
-            authenticationSessionId,
-            "login-replacement",
-            cancellationToken);
-    }
-
-    public Task<WorkSessionClosureView?> CloseForLogoutAsync(
-        Guid userId,
-        Guid tenantId,
-        Guid authenticationSessionId,
-        CancellationToken cancellationToken = default)
-    {
-        if (userId == Guid.Empty || tenantId == Guid.Empty ||
-            authenticationSessionId == Guid.Empty)
-            throw new WorkSessionValidationException(
-                "The logout context is incomplete.");
-        return store.CloseForAuthenticationAsync(
-            userId,
-            authenticationSessionId,
-            "logout",
-            cancellationToken);
     }
 
     public Task<WorkSessionClosureView?> GetClosureAsync(

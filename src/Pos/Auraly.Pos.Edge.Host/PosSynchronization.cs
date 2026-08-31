@@ -137,6 +137,27 @@ public sealed record PosSynchronizationNegotiation(
     DateTimeOffset ExpiresAt,
     IReadOnlyList<string>? Groups = null);
 
+public sealed class PosEnrollmentRevocationHandler(
+    PosEdgeEnrollmentStore enrollments,
+    IHostApplicationLifetime lifetime,
+    ILogger<PosEnrollmentRevocationHandler> logger)
+{
+    private int applied;
+
+    public Task ApplyAsync(Guid targetDeviceId, Guid currentDeviceId)
+    {
+        if (targetDeviceId != currentDeviceId ||
+            Interlocked.Exchange(ref applied, 1) != 0)
+            return Task.CompletedTask;
+        enrollments.Clear();
+        logger.LogInformation(
+            "Enrollment for device {DeviceId} was revoked remotely; restarting in online mode.",
+            currentDeviceId);
+        lifetime.StopApplication();
+        return Task.CompletedTask;
+    }
+}
+
 public sealed class PosWebPubSubConnection : IAsyncDisposable
 {
     private readonly HttpClient http;
@@ -146,6 +167,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
     private readonly PosPushConnectionState pushState;
     private readonly PosUiStateSignal uiState;
     private readonly PosSynchronizationEventLog events;
+    private readonly PosEnrollmentRevocationHandler enrollmentRevocation;
     private readonly Guid tenantId;
     private readonly Guid businessId;
     private readonly WebPubSubClient client;
@@ -166,6 +188,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
         PosPushConnectionState pushState,
         PosUiStateSignal uiState,
         PosSynchronizationEventLog events,
+        PosEnrollmentRevocationHandler enrollmentRevocation,
         Guid tenantId,
         Guid businessId)
     {
@@ -176,6 +199,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
         this.pushState = pushState;
         this.uiState = uiState;
         this.events = events;
+        this.enrollmentRevocation = enrollmentRevocation;
         this.tenantId = tenantId;
         this.businessId = businessId;
         var credential = new WebPubSubClientCredential(NegotiateAsync);
@@ -224,6 +248,13 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
             "X-Auraly-Device-Secret",
             credentials.Secret);
         using var response = await http.SendAsync(request, cancellationToken);
+        if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized)
+        {
+            await enrollmentRevocation.ApplyAsync(
+                credentials.DeviceId, credentials.DeviceId);
+            throw new UnauthorizedAccessException(
+                "The POS enrollment is no longer authorized by Auraly Server.");
+        }
         response.EnsureSuccessStatusCode();
         var negotiation = await response.Content
             .ReadFromJsonAsync<PosSynchronizationNegotiation>(
@@ -259,7 +290,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
         return Task.CompletedTask;
     }
 
-    private Task OnGroupMessageReceivedAsync(
+    private async Task OnGroupMessageReceivedAsync(
         WebPubSubGroupMessageEventArgs args)
     {
         try
@@ -269,14 +300,25 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
             if (invalidation is null ||
                 invalidation.TenantId != tenantId ||
                 invalidation.BusinessId != businessId)
-                return Task.CompletedTask;
+                return;
+            if (invalidation.Stream == PosSynchronizationStreams.DeviceEnrollment &&
+                invalidation.TargetDeviceId is { } targetDeviceId)
+            {
+                events.Record("Warning", "Enrollment", "El equipo fue desenrolado desde Auraly");
+                await enrollmentRevocation.ApplyAsync(targetDeviceId, credentials.DeviceId);
+                return;
+            }
             signal.Signal(ToTrigger(invalidation.Stream));
             events.Record("Info", "Push", "Evento recibido del servidor", invalidation.Stream);
         }
-        catch (System.Text.Json.JsonException)
+        catch (System.Text.Json.JsonException exception)
         {
+            events.Record(
+                "Warning",
+                "Push",
+                "Se ignoró un evento de sincronización inválido",
+                exception.Message);
         }
-        return Task.CompletedTask;
     }
 
     private static PosSynchronizationTrigger ToTrigger(string stream) =>
@@ -290,6 +332,7 @@ public sealed class PosWebPubSubConnection : IAsyncDisposable
             PosSynchronizationStreams.LocalOutbox => PosSynchronizationTrigger.LocalOutbox,
             PosSynchronizationStreams.Authentication => PosSynchronizationTrigger.Security,
             PosSynchronizationStreams.Approvals => PosSynchronizationTrigger.Approvals,
+            PosSynchronizationStreams.Configuration => PosSynchronizationTrigger.Catalog,
             _ => PosSynchronizationTrigger.None
         };
 }

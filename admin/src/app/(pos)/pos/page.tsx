@@ -62,6 +62,9 @@ import {
   rememberedSalesWorkspaceKey,
   selectSalesWorkspace,
   salesWorkspaceKey,
+  closePrintPreview,
+  openHalfLetterPrintPreview,
+  renderReceiptsReceipt,
 } from "@/services/pos/online-pos-client";
 import {
   authorizePosEnrollment,
@@ -216,10 +219,6 @@ export default function PosPage() {
     reason: string | null;
   } | null>(null);
   const [edgeLoginState, setEdgeLoginState] = useState<"preparing" | "required" | null>(null);
-  const [initialDownload, setInitialDownload] = useState({
-    identityReady: false,
-    catalogReady: false,
-  });
   const [edgeLoginError, setEdgeLoginError] = useState<string | null>(null);
   const [edgePermissions, setEdgePermissions] = useState<string[]>([]);
   const [setupLoading, setSetupLoading] = useState(true);
@@ -233,7 +232,6 @@ export default function PosPage() {
     phase: "idle" | "animating" | "latched";
     value: string;
   }>({ phase: "idle", value: "" });
-  const [inventoryNotice, setInventoryNotice] = useState<string | null>(null);
   const [quantityShortage, setQuantityShortage] = useState<PosQuantityShortage | null>(null);
   const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -251,6 +249,7 @@ export default function PosPage() {
   const [workstation, setWorkstation] = useState({
     deviceSeriesCode: "\u2014",
     businessId: "",
+    warehouseId: "",
     businessName: "",
     warehouseName: "",
     userDisplayName: "\u2014",
@@ -264,6 +263,8 @@ export default function PosPage() {
     cloudAuthenticated,
     permissions,
   );
+  const canChangeWorkspace = (client?.mode === "edge" ? edgePermissions : permissions)
+    .includes("pos.workspace.change");
   const [returnsOpen, setReturnsOpen] = useState(false);
   const [synchronizationEventsOpen, setSynchronizationEventsOpen] = useState(false);
   const [message, setMessage] = useState("Esperando producto");
@@ -429,6 +430,8 @@ export default function PosPage() {
   useEffect(() => {
     let active = true;
     const bootstrap = async () => {
+      const workspaceChangeRequested =
+        new URLSearchParams(window.location.search).get("workspace") === "change";
       setSetupLoading(true);
       setSetupError(null);
       try {
@@ -442,10 +445,6 @@ export default function PosPage() {
             const health = await edgeClient.health();
             if (active) {
               setEdgePermissions(health.permissions ?? []);
-              setInitialDownload({
-                identityReady: health.identityReady,
-                catalogReady: health.catalogStatus === "Ready",
-              });
               setSynchronization({
                 inProgress: health.synchronizationInProgress,
                 lastAt: health.lastSynchronizationAt,
@@ -459,6 +458,7 @@ export default function PosPage() {
               setWorkstation({
                 deviceSeriesCode: health.deviceSeriesCode,
                 businessId: health.businessId,
+                warehouseId: health.warehouseId,
                 businessName: health.businessName,
                 warehouseName: health.warehouseName,
                 userDisplayName: health.userDisplayName || "\u2014",
@@ -470,7 +470,7 @@ export default function PosPage() {
               });
             }
 
-            if (usesEnrolledPosRuntime(health)) {
+            if (usesEnrolledPosRuntime(health) && !workspaceChangeRequested) {
               if (active) {
                 setEdgeLoginState(
                   !health.identityReady || health.status === "IdentitySynchronizing" || health.status === "Synchronizing"
@@ -518,6 +518,10 @@ export default function PosPage() {
         setOnlineUserId(serverBootstrap.userId);
         const available = serverBootstrap.options;
         setOnlineOptions(available);
+        if (workspaceChangeRequested) {
+          setWorkspaceChanging(true);
+          return;
+        }
         const remembered = rememberedSalesWorkspaceKey();
         const selected = available.find(
           (option) => salesWorkspaceKey(option.businessId, option.warehouseId) === remembered,
@@ -563,12 +567,6 @@ export default function PosPage() {
         const health = await client.health();
         if (active) {
           if (client.mode === "edge") setEdgePermissions(health.permissions ?? []);
-          if (client.mode === "edge") {
-            setInitialDownload({
-              identityReady: health.identityReady,
-              catalogReady: health.catalogStatus === "Ready",
-            });
-          }
           setSynchronization({
             inProgress: health.synchronizationInProgress,
             lastAt: health.lastSynchronizationAt,
@@ -582,6 +580,7 @@ export default function PosPage() {
           setWorkstation({
             deviceSeriesCode: health.deviceSeriesCode,
             businessId: health.businessId,
+            warehouseId: health.warehouseId,
             businessName: health.businessName,
             warehouseName: health.warehouseName,
             userDisplayName: health.userDisplayName || "\u2014",
@@ -1160,9 +1159,21 @@ export default function PosPage() {
               return false;
             }
             if (failure) {
-              setError(failure.error);
+              setError(null);
               setMessage(failure.message);
-              if (changed.status === "InsufficientInventory") setInventoryNotice(failure.error);
+              if (changed.status === "InsufficientInventory" && changed.availability)
+                setQuantityShortage({
+                  lineId: null,
+                  captureValue: value,
+                  productName: capturedLine.description,
+                  requestedQuantity,
+                  availableQuantity: changed.availability.availableQuantity,
+                  maximumLineQuantity: Math.max(0, changed.availability.availableQuantity - (draft?.lines ?? [])
+                    .filter((line) => line.productId.value === capturedLine.productId.value)
+                    .reduce((total, line) => total + line.quantity, 0)),
+                  allowsFractionalSale: capturedLine.allowsFractionalSale,
+                  managesInventory: true,
+                });
             }
             return false;
           }
@@ -1184,9 +1195,21 @@ export default function PosPage() {
       } else {
         const failure = describeCaptureFailure(result);
         if (failure) {
-          setError(failure.error);
+          setError(null);
           setMessage(failure.message);
-          if (result.status === "InsufficientInventory") setInventoryNotice(failure.error);
+          if (result.status === "InsufficientInventory" && result.availability)
+            setQuantityShortage({
+              lineId: null,
+              captureValue: value,
+              productName: result.capturedProduct?.product.name ?? value,
+              requestedQuantity,
+              availableQuantity: result.availability.availableQuantity,
+              maximumLineQuantity: Math.max(0, result.availability.availableQuantity - (result.draft?.lines ?? [])
+                .filter((line) => line.productId.value === result.capturedProduct?.product.productId)
+                .reduce((total, line) => total + line.quantity, 0)),
+              allowsFractionalSale: result.capturedProduct?.product.allowsFractionalSale ?? false,
+              managesInventory: true,
+            });
         }
       }
       return false;
@@ -1222,7 +1245,7 @@ export default function PosPage() {
           }));
         const failure = describeCaptureFailure(result);
         if (failure) {
-          setError(failure.error);
+          setError(null);
           setMessage(failure.message);
           if (result.status === "InsufficientInventory" && result.availability && confirmed) {
             const otherQuantity = draft.lines
@@ -1340,8 +1363,10 @@ export default function PosPage() {
         // The API resolves current permissions from the authoritative store. The
         // browser token can lag behind a role/seed update until its next renewal.
         if (!approvalRequestConfirmsExistingPermission(caught)) {
-          setSensitiveApproval((current) => current?.operationId === operationId ? null : current);
-          throw caught;
+          setSensitiveApprovalError(caught instanceof Error
+            ? caught.message
+            : "No fue posible enviar la solicitud remota. Puedes autorizar con la clave del supervisor o reintentar.");
+          return;
         }
         setSensitiveApproval((current) => current?.operationId === operationId ? null : current);
         await execute({ operationId });
@@ -1860,6 +1885,9 @@ export default function PosPage() {
       setError(fiscalConfigurationRequiredMessage);
       return;
     }
+    const localPrintPreview = client.mode === "edge"
+      ? openHalfLetterPrintPreview()
+      : null;
     setBusy(true);
     setError(null);
     try {
@@ -1872,6 +1900,31 @@ export default function PosPage() {
         checkout.credit,
         habilitationMode,
       );
+      if (client.mode === "edge" && result.printedDirectly)
+        closePrintPreview(localPrintPreview);
+      let fallbackPrintError: string | null = null;
+      if (
+        client.mode === "edge" &&
+        result.printedDirectly === false &&
+        result.receipt
+      ) {
+        try {
+          await renderReceiptsReceipt(
+            localPrintPreview,
+            [result.receipt],
+            {
+              businessId: workstation.businessId,
+              warehouseId: workstation.warehouseId,
+              workSessionId: workstation.workSessionId ?? "",
+            },
+          );
+        } catch (printFailure) {
+          closePrintPreview(localPrintPreview);
+          fallbackPrintError = printFailure instanceof Error
+            ? printFailure.message
+            : "No fue posible mostrar el diálogo de impresión.";
+        }
+      }
       setDraft(result.nextDraft);
       setNextNumber(result.nextDocumentNumber);
       setLastSettlement({
@@ -1886,10 +1939,11 @@ export default function PosPage() {
       setError(null);
       setPaymentOpen(false);
       setSaleSettlement(null);
-      const issuedLabel =
-        result.printPreviewOpened === false
-          ? "emitida e impresa directamente"
-          : "emitida e impresa";
+      const issuedLabel = result.printedDirectly
+        ? "emitida e impresa directamente"
+        : fallbackPrintError
+          ? "emitida; quedó pendiente imprimirla"
+          : "emitida; se abrió el diálogo de impresión";
       setMessage(
         habilitationMode
           ? `${result.issuedSale.documentNumber} enviado únicamente a habilitación DIAN. No registró venta, inventario ni contabilidad.`
@@ -1904,7 +1958,10 @@ export default function PosPage() {
           router.push("/dashboard/settings/fiscal?habilitationSubmitted=1");
         }, 900);
       }
+      if (fallbackPrintError)
+        setError(`La venta quedó registrada. ${fallbackPrintError}`);
     } catch (caught) {
+      closePrintPreview(localPrintPreview);
       showError(caught);
       if (caught instanceof Error && caught.message.toLocaleLowerCase("es-CO").includes("inventario")) {
         setPaymentOpen(false);
@@ -2034,8 +2091,21 @@ export default function PosPage() {
       if (result.status !== "Added" || !result.draft) {
         const failure = describeCaptureFailure(result);
         if (failure) {
-          setError(failure.error);
+          setError(null);
           setMessage(failure.message);
+          if (result.status === "InsufficientInventory" && result.availability)
+            setQuantityShortage({
+              lineId: null,
+              captureValue: product.productCode,
+              productName: product.name,
+              requestedQuantity: result.availability.requestedQuantity,
+              availableQuantity: result.availability.availableQuantity,
+              maximumLineQuantity: Math.max(0, result.availability.availableQuantity - linesBeforeCapture
+                .filter((line) => line.productId.value === product.productId)
+                .reduce((total, line) => total + line.quantity, 0)),
+              allowsFractionalSale: product.allowsFractionalSale,
+              managesInventory: true,
+            });
         }
         return false;
       }
@@ -2048,9 +2118,20 @@ export default function PosPage() {
         if (changed.status !== "Added" || !changed.draft) {
           const failure = describeCaptureFailure(changed);
           if (failure) {
-            setError(failure.error);
+            setError(null);
             setMessage(failure.message);
-            if (changed.status === "InsufficientInventory") setInventoryNotice(failure.error);
+            if (changed.status === "InsufficientInventory" && changed.availability)
+              setQuantityShortage({
+                lineId: addedLine.lineId,
+                productName: product.name,
+                requestedQuantity: targetQuantity,
+                availableQuantity: changed.availability.availableQuantity,
+                maximumLineQuantity: Math.max(0, changed.availability.availableQuantity - confirmedDraft.lines
+                  .filter((line) => line.productId.value === addedLine.productId.value && line.lineId !== addedLine.lineId)
+                  .reduce((total, line) => total + line.quantity, 0)),
+                allowsFractionalSale: addedLine.allowsFractionalSale,
+                managesInventory: true,
+              });
           }
           return false;
         }
@@ -2155,6 +2236,7 @@ export default function PosPage() {
       setWorkstation({
         deviceSeriesCode: "\u2014",
         businessId: context.businessId,
+        warehouseId: context.warehouseId,
         businessName: context.businessName,
         warehouseName: context.warehouseName,
         userDisplayName: onlineUserName || "—",
@@ -2232,9 +2314,24 @@ export default function PosPage() {
     }
   }
 
-function changeOnlineWorkspace() {
-    if (client?.mode !== "online" || busy) return;
+  async function changeOnlineWorkspace() {
+    if (!client || busy) return;
     setSetupError(null);
+    if (client.mode === "edge") {
+      setSetupLoading(true);
+      try {
+        const serverBootstrap = await loadSalesWorkspaceBootstrap();
+        const displayName = serverBootstrap.userDisplayName.trim() || workstation.userDisplayName || "Usuario";
+        setOnlineOptions(serverBootstrap.options);
+        setOnlineTenantName(serverBootstrap.tenantName.trim());
+        setOnlineUserName(displayName);
+        setOnlineUserId(serverBootstrap.userId);
+      } catch (caught) {
+        setSetupError(describeWorkspaceBootstrapError(caught));
+      } finally {
+        setSetupLoading(false);
+      }
+    }
     setWorkspaceChanging(true);
   }
 
@@ -2283,6 +2380,7 @@ function changeOnlineWorkspace() {
         enrollmentCapacity={enrollmentAvailability}
         onEnroll={prepareInstalledPos}
         forcedDocumentType={habilitationMode ? "SalesInvoice" : undefined}
+        enrollmentState={client?.mode === "edge" ? "enrolled" : edgeEnrollmentRequired ? "available" : "web"}
       />
     );
   }
@@ -2372,20 +2470,19 @@ function changeOnlineWorkspace() {
           )}
         </div>
         <div className="flex min-w-0 items-center gap-3 text-sm">
-          <span className="min-w-0 truncate font-bold tracking-tight">{workstation.businessName || "Sede"} · {workstation.warehouseName || "Bodega"}</span>
-          {client.mode === "online" && permissions.includes("pos.workspace.change") && (
+          {canChangeWorkspace ? (
             <button
               type="button"
-              onClick={changeOnlineWorkspace}
+              onClick={() => void changeOnlineWorkspace()}
               disabled={busy}
-              title="Configuración del punto de venta"
-              className="flex h-8 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-xs font-semibold text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
-              aria-label="Configuración del punto de venta"
+              title="Cambiar sede, bodega o documento predeterminado"
+              className="flex min-w-0 h-8 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 text-sm font-bold tracking-tight text-auraly-secondary transition hover:bg-white/10 hover:text-white disabled:opacity-40"
+              aria-label="Cambiar ubicación del punto de venta"
             >
+              <span className="min-w-0 truncate">{workstation.businessName || "Sede"} · {workstation.warehouseName || "Bodega"}</span>
               <Settings2 className="h-4 w-4" />
-              <span className="hidden lg:inline">Configuración</span>
             </button>
-          )}
+          ) : <span className="min-w-0 truncate font-bold tracking-tight">{workstation.businessName || "Sede"} · {workstation.warehouseName || "Bodega"}</span>}
           {client && (
             <button
               type="button"
@@ -2542,7 +2639,7 @@ function changeOnlineWorkspace() {
                 </span>
               </div>
             )}
-            <p
+            {(scanRejection.phase === "idle" || error) && <p
               id="capture-state"
               className={`mt-2 flex min-h-5 items-center gap-2 text-sm ${
                 error ? "text-red-700" : "text-slate-500"
@@ -2551,7 +2648,7 @@ function changeOnlineWorkspace() {
             >
               {error ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4 text-teal-600" />}
               {error ?? message}
-            </p>
+            </p>}
           </form>
 
           <div
@@ -3288,30 +3385,23 @@ function changeOnlineWorkspace() {
       )}
       {synchronizationEventsOpen && client && canReadSynchronizationEvents && <PosSynchronizationEventsDialog open client={client} connected={client.mode === "online" ? serverConnected : pushConnected} inProgress={synchronization.inProgress} onClose={() => { setSynchronizationEventsOpen(false); focusScanner(); }} />}
 
-      {inventoryNotice && (
-        <PosConfirmDialog
-          title="Producto sin existencias"
-          description={`${inventoryNotice} El producto no fue agregado a la venta; confirma antes de continuar para evitar entregarlo por error.`}
-          confirmLabel="Entendido"
-          tone="primary"
-          busy={false}
-          onConfirm={async () => { setInventoryNotice(null); focusScanner(); }}
-          onCancel={() => { setInventoryNotice(null); focusScanner(); }}
-        />
-      )}
-
       {quantityShortage && <PosQuantityAvailabilityDialog
         value={quantityShortage}
         busy={busy}
         onConfirm={async (quantity) => {
-          const lineId = quantityShortage.lineId;
+          const { lineId, captureValue: capturedValue } = quantityShortage;
           setQuantityShortage(null);
-          await changeQuantity(lineId, quantity, false);
+          if (lineId) await changeQuantity(lineId, quantity, false);
+          else if (capturedValue) await captureValue(capturedValue, quantity);
           focusScanner();
         }}
         onCancel={() => {
           const lineId = quantityShortage.lineId;
           setQuantityShortage(null);
+          if (!lineId) {
+            window.setTimeout(focusScanner, 0);
+            return;
+          }
           window.requestAnimationFrame(() => {
             quantityInputs.current.get(lineId)?.focus();
             quantityInputs.current.get(lineId)?.select();

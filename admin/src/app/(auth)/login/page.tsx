@@ -39,6 +39,7 @@ function LoginForm() {
   const searchParams = useSearchParams();
   const setAuth = useAuthStore((state) => state.setAuth);
   const tenantFromUrl = searchParams.get("tenant")?.trim() ?? "";
+  const forceCloud = searchParams.get("cloud") === "1";
   const [tenantKey, setTenantKey] = useState(tenantFromUrl);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -99,7 +100,7 @@ function LoginForm() {
         router.push(redirect.startsWith("/") ? redirect : "/dashboard");
       };
 
-      if (edgeClient) {
+      if (edgeClient && !forceCloud) {
         try {
           const localSession = await edgeClient.login(username, password);
           if (requiresCloudWorkspace(localSession.permissions)) {
@@ -124,7 +125,7 @@ function LoginForm() {
       await loginToCloud();
     } catch (err) {
       const apiError = err as ApiError;
-      setError(apiError?.message || (edgeClient
+      setError(apiError?.message || (edgeClient && !forceCloud
         ? "No fue posible iniciar sesión en este equipo. Verifica tus credenciales."
         : "No fue posible conectar con Auraly. Este equipo debe estar enrolado para iniciar sesión sin Internet."));
     } finally {
@@ -141,14 +142,14 @@ function LoginForm() {
             Acceso seguro
           </span>
           <span className="text-xs text-[#77918f]">
-            {edgeClient ? "Equipo preparado" : "Auraly Cloud"}
+            {edgeClient && !forceCloud ? "Equipo preparado" : "Auraly Cloud"}
           </span>
         </div>
         <h2 className="text-3xl font-semibold tracking-[-0.035em] text-[#07161a]">
           Bienvenido de vuelta
         </h2>
         <p className="mt-2 text-sm leading-6 text-[#667f7d]">
-          {edgeClient
+          {edgeClient && !forceCloud
             ? `Acceso local seguro${preparedBusinessName ? ` · ${preparedBusinessName}` : ""}.`
             : "Ingresa a tu espacio de trabajo empresarial."}
         </p>
@@ -164,7 +165,7 @@ function LoginForm() {
             <span>{error}</span>
           </div>
         )}
-        {(!edgeClient || tenantKeyRequired) && <div className="space-y-2">
+        {(!edgeClient || forceCloud || tenantKeyRequired) && <div className="space-y-2">
           <div className="flex items-center justify-between gap-3">
             <Label htmlFor="tenantKey" className="font-medium text-[#17383c]">
               Empresa

@@ -45,8 +45,7 @@ public sealed partial class SqlWorkSessionStore(
             if (current is not null)
             {
                 if (current.BusinessId != request.BusinessId ||
-                    current.WarehouseId != request.WarehouseId ||
-                    current.DeviceId != request.DeviceId)
+                    current.WarehouseId != request.WarehouseId)
                     throw new WorkSessionConflictException(
                         "The user already has an open work session in another context.");
 
@@ -314,44 +313,6 @@ public sealed partial class SqlWorkSessionStore(
             metrics.CreditSalesCount,
             metrics.CreditSalesAmount,
             metrics.ReturnCount);
-    }
-
-    public async Task<WorkSessionClosureView?> CloseForAuthenticationAsync(
-        Guid userId,
-        Guid authenticationSessionId,
-        string reason,
-        CancellationToken cancellationToken)
-    {
-        Guid workSessionId;
-        Guid tenantId;
-        await using (var connection = connections.Create())
-        {
-            await connection.OpenAsync(cancellationToken);
-            await using var command = new SqlCommand(
-                """
-                SELECT TOP(1) ws.WorkSessionId,b.TenantId
-                FROM dbo.WorkSessions ws
-                JOIN dbo.Businesses b ON b.BusinessId=ws.BusinessId
-                WHERE ws.UserId=@UserId AND ws.Status=N'Open'
-                ORDER BY ws.OpenedAt DESC;
-                """, connection);
-            command.Parameters.AddWithValue("@UserId", userId);
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-            if (!await reader.ReadAsync(cancellationToken))
-                return null;
-            workSessionId = reader.GetGuid(0);
-            tenantId = reader.GetGuid(1);
-        }
-
-        return await CloseAsync(
-            new WorkSessionIdentity(
-                userId,
-                tenantId,
-                new HashSet<string>(StringComparer.Ordinal)),
-            workSessionId,
-            $"{reason}:{authenticationSessionId:N}",
-            new CloseWorkSessionRequest(null, null),
-            cancellationToken);
     }
 
     public async Task<WorkSessionClosureView?> GetClosureAsync(

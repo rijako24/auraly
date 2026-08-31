@@ -1,4 +1,5 @@
 using Auraly.Contracts.Inventory;
+using Auraly.BuildingBlocks.Application.Synchronization;
 
 namespace Auraly.Application.Inventory;
 
@@ -19,7 +20,9 @@ public interface IInventoryQueryStore
     Task<WarehouseTransferDetail?> GetTransferAsync(InventoryUserIdentity user, Guid transferId, CancellationToken token);
 }
 
-public sealed class InventoryQueryService(IInventoryQueryStore store)
+public sealed class InventoryQueryService(
+    IInventoryQueryStore store,
+    IPosSynchronizationOutboxDispatcher synchronization)
 {
     public Task<InventoryProductPage> GetProductsAsync(InventoryUserIdentity user, InventoryProductQuery query, CancellationToken token = default)
     {
@@ -48,14 +51,18 @@ public sealed class InventoryQueryService(IInventoryQueryStore store)
         return store.GetWarehouseMastersAsync(user, token);
     }
 
-    public Task<WarehouseMasterItem> SaveWarehouseAsync(InventoryUserIdentity user, Guid? warehouseId, SaveWarehouseRequest request, CancellationToken token = default)
+    public async Task<WarehouseMasterItem> SaveWarehouseAsync(InventoryUserIdentity user, Guid? warehouseId, SaveWarehouseRequest request, CancellationToken token = default)
     {
         RequireWarehouseManagement(user);
         if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Trim().Length > 160)
             throw new InventoryValidationException("Warehouse name is required and cannot exceed 160 characters.");
         if (request.PriceFormationCostBasis is not ("LatestReceiptCost" or "WeightedAverageCost"))
             throw new InventoryValidationException("Warehouse cost basis is invalid.");
-        return store.SaveWarehouseAsync(user, warehouseId, request with { Name = request.Name.Trim() }, token);
+        var saved = await store.SaveWarehouseAsync(
+            user, warehouseId, request with { Name = request.Name.Trim() }, token);
+        await synchronization.DispatchPendingAsync(
+            user.TenantId, user.BusinessId, CancellationToken.None);
+        return saved;
     }
 
     public Task<IReadOnlyList<InventoryReasonItem>> GetReasonsAsync(InventoryUserIdentity user, string? operationType, bool includeInactive, string? search, CancellationToken token = default)

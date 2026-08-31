@@ -66,6 +66,8 @@ public sealed class PosEnrollmentService(
         CommercePermissionCodes.SalesRemoveLine,
         CommercePermissionCodes.SalesRestartDraft,
         CatalogPermissionCodes.Sync,
+        "inventory.read",
+        "businesses.read",
         FiscalPermissionCodes.PosStatusSync,
         PartyPermissionCodes.PosCustomerCreate,
         CommercePermissionCodes.PosIdentitySync,

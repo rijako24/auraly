@@ -28,9 +28,16 @@ La política pertenece a la **bodega**. Todas las cajas asociadas la heredan y n
 - se descartan respuestas antiguas si el cajero cambia rápidamente la cantidad;
 - si la cantidad no está disponible, se informa inmediatamente;
 - el motor revalida dentro de la transacción final para cubrir concurrencia;
-- si no hay red, no se captura una línea que requiera validación.
+- si no hay red, la venta se captura sin validación de existencia y queda pendiente
+  de sincronización; el POS no inventa ni persiste un saldo local.
 
 La caja nunca descarga ni reconstruye inventario. Su almacenamiento local contiene catálogo, códigos, precios efectivos, canales, promociones aplicables y configuración, pero no existencias.
+
+`AllowNegativeStockSales` sí se conserva como configuración local de la bodega
+enrolada. Cambiarla guarda un outbox transaccional, envía una invalidación push y el
+Edge recupera la instantánea de configuración. Si permite negativos, capturar no hace
+una consulta remota; si los bloquea y hay conexión, se consulta disponibilidad al
+capturar y al cambiar cantidad.
 
 ## Configuración
 

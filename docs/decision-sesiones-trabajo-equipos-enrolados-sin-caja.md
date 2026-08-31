@@ -22,9 +22,11 @@ El contexto de facturación queda definido por:
 - operación: `WorkSessionId`;
 - equipo offline opcional: `DeviceId`.
 
-Una sesión de trabajo pertenece a un usuario, una sede y una bodega. Puede tener un
-equipo cuando la operación usa POS Edge. El mismo usuario no puede mantener dos
-sesiones abiertas. Un equipo enrolado tampoco puede mantener dos sesiones abiertas.
+Una sesión de trabajo pertenece a un usuario, una sede y una bodega. El equipo que
+originó una operación se conserva en el documento, pero no es propietario de la
+sesión. El mismo usuario no puede mantener dos sesiones abiertas y recupera la
+existente al autenticarse desde otro cliente. Un equipo enrolado tampoco puede
+mantener dos sesiones abiertas.
 
 ## Online y offline
 
@@ -33,6 +35,15 @@ sesiones abiertas. Un equipo enrolado tampoco puede mantener dos sesiones abiert
 - Edge: el equipo se enrola para un tenant, sincroniza su configuración y añade su
   `DeviceId` a la sesión. El login, catálogo, borradores, series, facturas y outbox
   necesarios permanecen disponibles localmente.
+
+La primera configuración muestra explícitamente si la instalación está enrolada y
+ofrece el enrolamiento solo cuando todavía no lo está. Al confirmar el enrolamiento,
+el Edge completa la descarga inicial antes de habilitar ventas y luego mantiene los
+cambios mediante invalidaciones push recuperables. El desenrolamiento solo se ejecuta
+desde la administración Athena con `tenants.devices.revoke`: se publica al grupo del
+dispositivo, el Edge elimina únicamente su credencial protegida, conserva los datos
+locales para auditoría y reinicia en modo online. Si el equipo estaba desconectado,
+el rechazo de sus credenciales al reconectar produce el mismo corte local.
 
 No existe un modo funcional distinto llamado caja. La diferencia es únicamente si la
 sesión utiliza o no un equipo enrolado.

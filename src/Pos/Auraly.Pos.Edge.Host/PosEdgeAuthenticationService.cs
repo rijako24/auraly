@@ -2,11 +2,38 @@ namespace Auraly.Pos.Edge.Host;
 
 public sealed class PosEdgeAuthenticationService(
     PosLocalIdentityStore identities,
-    PosIdentitySynchronizer identitySynchronization)
+    PosIdentitySynchronizer identitySynchronization,
+    PosWorkSessionOpenServerClient workSessions,
+    ILogger<PosEdgeAuthenticationService> logger)
 {
     public async Task<PosLocalUserSession> LoginAsync(
         PosLocalLoginRequest request,
         CancellationToken cancellationToken = default)
+    {
+        var session = await LoginLocalAsync(request, cancellationToken);
+        try
+        {
+            var active = await workSessions.OpenOrResumeAsync(
+                session, cancellationToken);
+            if (active.WorkSessionId != session.WorkSessionId)
+            {
+                await identities.AssignWorkSessionAsync(
+                    session.SessionId, active.WorkSessionId, cancellationToken);
+                session = session with { WorkSessionId = active.WorkSessionId };
+            }
+        }
+        catch (HttpRequestException error)
+        {
+            logger.LogWarning(
+                error,
+                "The server work session could not be activated; local offline login remains available.");
+        }
+        return session;
+    }
+
+    private async Task<PosLocalUserSession> LoginLocalAsync(
+        PosLocalLoginRequest request,
+        CancellationToken cancellationToken)
     {
         try
         {

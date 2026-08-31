@@ -159,4 +159,10 @@ BEGIN
     FROM CurrentRules
     WHERE rn=1 AND IsActive=1 AND Direction=N'Sale' AND Moment=N'Accrual'
     ORDER BY Kind,Code;
+
+    SELECT warehouseValue.AllowNegativeStockSales
+    FROM dbo.Warehouses warehouseValue
+    WHERE warehouseValue.WarehouseId = @WarehouseId
+      AND warehouseValue.BusinessId = @BusinessId
+      AND warehouseValue.IsActive = 1;
 END;

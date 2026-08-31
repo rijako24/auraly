@@ -334,6 +334,33 @@ public sealed class PosArchitectureTests
     }
 
     [Fact]
+    public void Enrolled_warehouse_policy_and_remote_unenrollment_use_the_canonical_push_outbox()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var streams = File.ReadAllText(Path.Combine(repositoryRoot,
+            "src", "BuildingBlocks", "Auraly.BuildingBlocks.Application", "PosSynchronization.cs"));
+        var warehouseStore = File.ReadAllText(Path.Combine(repositoryRoot,
+            "src", "Infrastructure", "Auraly.Infrastructure.Persistence", "SqlInventoryQueryStore.cs"));
+        var pricingSnapshot = File.ReadAllText(Path.Combine(repositoryRoot,
+            "database", "Auraly.Database", "StoredProcedures", "PosPricingSnapshotGet.sql"));
+        var edgeSynchronization = File.ReadAllText(Path.Combine(repositoryRoot,
+            "src", "Pos", "Auraly.Pos.Edge.Host", "PosSynchronization.cs"));
+        var deviceAdministration = File.ReadAllText(Path.Combine(repositoryRoot,
+            "src", "Infrastructure", "Auraly.Platform.Infrastructure", "Identity", "SqlTenantDeviceAdminStore.cs"));
+        var setup = File.ReadAllText(Path.Combine(repositoryRoot,
+            "admin", "src", "app", "(pos)", "pos", "pos-online-setup.tsx"));
+
+        Assert.Contains("const string Configuration", streams, StringComparison.Ordinal);
+        Assert.Contains("N'Configuration'", warehouseStore, StringComparison.Ordinal);
+        Assert.Contains("AllowNegativeStockSales", pricingSnapshot, StringComparison.Ordinal);
+        Assert.Contains("PosSynchronizationStreams.Configuration => PosSynchronizationTrigger.Catalog", edgeSynchronization, StringComparison.Ordinal);
+        Assert.Contains("PosSynchronizationStreams.DeviceEnrollment", edgeSynchronization, StringComparison.Ordinal);
+        Assert.Contains("TargetDeviceId", deviceAdministration, StringComparison.Ordinal);
+        Assert.Contains("Equipo enrolado", setup, StringComparison.Ordinal);
+        Assert.Contains("Preparar este equipo para trabajar sin conexión", setup, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Pos_search_loading_indicators_spin_without_moving_their_vertical_anchor()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -377,6 +404,12 @@ public sealed class PosArchitectureTests
             repositoryRoot, "admin", "src", "app", "(pos)", "pos", "page.tsx"));
         var edgeHost = File.ReadAllText(Path.Combine(
             repositoryRoot, "src", "Pos", "Auraly.Pos.Edge.Host", "Program.cs"));
+        var enrollment = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "Modules", "Organization",
+            "Auraly.Application.Organization", "PosEnrollmentService.cs"));
+        var migration = File.ReadAllText(Path.Combine(
+            repositoryRoot, "database", "Auraly.Database", "Scripts", "Migrations",
+            "20260831_GrantInventoryReadToPosDevices.sql"));
 
         Assert.Contains("const availabilityVersion = useRef(0)", dialog, StringComparison.Ordinal);
         Assert.Contains("El producto local sigue disponible", dialog, StringComparison.Ordinal);
@@ -385,6 +418,9 @@ public sealed class PosArchitectureTests
         Assert.Contains("client.productWarehouseAvailability(productId)", page, StringComparison.Ordinal);
         Assert.Contains("/catalog/products/{productId:guid}/warehouse-availability", edgeHost, StringComparison.Ordinal);
         Assert.Contains("const string inventoryRead = \"inventory.read\"", edgeHost, StringComparison.Ordinal);
+        Assert.Contains("\"inventory.read\"", enrollment, StringComparison.Ordinal);
+        Assert.Contains("\"businesses.read\"", enrollment, StringComparison.Ordinal);
+        Assert.Contains("dbo.PosDevicePermissions", migration, StringComparison.Ordinal);
     }
 
     [Fact]

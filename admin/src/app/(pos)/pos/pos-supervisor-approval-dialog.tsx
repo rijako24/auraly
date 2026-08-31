@@ -123,7 +123,7 @@ export function PosSupervisorApprovalDialog({
               </button>
             </form>
           {(channelError || error) && <p className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-medium text-red-700">{error || channelError}</p>}
-          {expired && (
+          {(expired || (error && !approval)) && (
             <button
               type="button"
               onClick={() => void onRetry()}
@@ -131,7 +131,7 @@ export function PosSupervisorApprovalDialog({
               className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-teal-700 font-bold text-white transition hover:bg-teal-800 disabled:opacity-50"
             >
               <RefreshCw className="h-4 w-4" />
-              {busy ? "Reenviando…" : "Reenviar solicitud"}
+              {busy ? "Reenviando…" : "Reintentar solicitud remota"}
             </button>
           )}
           <div className="mt-5 flex items-center justify-between gap-3">

@@ -10,12 +10,21 @@ using Auraly.Pos.Edge.Infrastructure;
 
 namespace Auraly.Pos.Edge.Host;
 
-public sealed record PosEdgeRuntimeContext(
-    BusinessId BusinessId,
-    WarehouseId WarehouseId,
-    DeviceId DeviceId,
-    bool WarehouseAllowsNegativeStock)
+public sealed class PosEdgeRuntimeContext(
+    BusinessId businessId,
+    WarehouseId warehouseId,
+    DeviceId deviceId,
+    bool warehouseAllowsNegativeStock)
 {
+    private int allowsNegativeStock = warehouseAllowsNegativeStock ? 1 : 0;
+    public BusinessId BusinessId { get; } = businessId;
+    public WarehouseId WarehouseId { get; } = warehouseId;
+    public DeviceId DeviceId { get; } = deviceId;
+    public bool WarehouseAllowsNegativeStock => Volatile.Read(ref allowsNegativeStock) == 1;
+
+    public void ApplyWarehousePolicy(bool value) =>
+        Volatile.Write(ref allowsNegativeStock, value ? 1 : 0);
+
     public PosDraftScope ScopeFor(PosLocalUserSession session) => new(
         BusinessId,
         WarehouseId,
@@ -147,8 +156,10 @@ public static class PosEdgeHostApplication
             sp.GetRequiredService<PosOfflineLeaseVerifier>(),
             sp.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton<PosOfflineLeaseClient>();
+        builder.Services.AddSingleton<PosWorkSessionOpenServerClient>();
         builder.Services.AddSingleton<PosEdgeAuthenticationService>();
         builder.Services.AddSingleton<PosEnrollmentSessionCompleter>();
+        builder.Services.AddSingleton<PosEnrollmentRevocationHandler>();
         builder.Services.AddSingleton(new PosWorkstationIdentity(
             Required(builder.Configuration, "PosEdge:Documents:SalesInvoice:SeriesCode"),
             OptionalLabel(builder.Configuration, "PosEdge:BusinessName", "Negocio sin nombre"),
@@ -175,6 +186,9 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton<PosSynchronizationEventLog>();
         builder.Services.AddSingleton<IPosSynchronizationEventSink>(sp =>
             sp.GetRequiredService<PosSynchronizationEventLog>());
+        builder.Services.AddSingleton<PosWarehousePolicySink>();
+        builder.Services.AddSingleton<IPosWarehousePolicySink>(sp =>
+            sp.GetRequiredService<PosWarehousePolicySink>());
         builder.Services.AddSingleton<PosCatalogSynchronizer>();
         builder.Services.AddSingleton<PosIdentitySynchronizer>();
         builder.Services.AddSingleton<PosCustomerServerClient>();
@@ -235,6 +249,7 @@ public static class PosEdgeHostApplication
             sp.GetRequiredService<PosPushConnectionState>(),
             sp.GetRequiredService<PosUiStateSignal>(),
             sp.GetRequiredService<PosSynchronizationEventLog>(),
+            sp.GetRequiredService<PosEnrollmentRevocationHandler>(),
             tenantId,
             runtime.BusinessId.Value));
         builder.Services.AddHostedService<PosEventDrivenSynchronizationHostedService>();
@@ -820,6 +835,7 @@ public static class PosEdgeHostApplication
             CaptureRequest request,
             PosCaptureService capture,
             PosEdgeRuntimeContext context,
+            PosServerConnectionState connection,
             IAuralyIdGenerator ids,
             PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
@@ -828,7 +844,7 @@ public static class PosEdgeHostApplication
                 request.Value,
                 context.ScopeFor(sessions.Required()),
                 null,
-                context.WarehouseAllowsNegativeStock,
+                context.WarehouseAllowsNegativeStock || !connection.IsConnected,
                 ids.NewId(),
                 ct);
             return result.Status switch
@@ -845,6 +861,7 @@ public static class PosEdgeHostApplication
             QuantityRequest request,
             PosCaptureService capture,
             PosEdgeRuntimeContext context,
+            PosServerConnectionState connection,
             IAuralyIdGenerator ids,
             CancellationToken ct) =>
         {
@@ -852,7 +869,7 @@ public static class PosEdgeHostApplication
                 new DraftId(draftId),
                 lineId,
                 request.Quantity,
-                context.WarehouseAllowsNegativeStock,
+                context.WarehouseAllowsNegativeStock || !connection.IsConnected,
                 ids.NewId(),
                 ct);
             return result.Status == PosCaptureStatus.Added
@@ -863,9 +880,11 @@ public static class PosEdgeHostApplication
             Guid draftId,
             PosCaptureService capture,
             PosEdgeRuntimeContext context,
+            PosServerConnectionState connection,
             IAuralyIdGenerator ids,
             CancellationToken ct) => Results.Ok(await capture.ValidateDraftInventoryAsync(
-                new DraftId(draftId), context.WarehouseAllowsNegativeStock,
+                new DraftId(draftId),
+                context.WarehouseAllowsNegativeStock || !connection.IsConnected,
                 ids.NewId(), ct)));
         edge.MapPut("/drafts/{draftId:guid}/lines/{lineId:guid}/discount", async (
             Guid draftId,

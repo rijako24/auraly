@@ -499,8 +499,8 @@ export function OrdersWorkspace({
 
       <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white">
         {!compact && (
-          <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/80 px-3 py-3 md:flex-row md:flex-wrap md:items-center md:px-4">
-            <label className="flex w-full items-center gap-2 text-sm font-medium text-slate-700 md:w-auto">
+          <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/80 px-3 py-3 md:flex-row md:flex-nowrap md:items-center md:px-4">
+            <label className="flex w-full shrink-0 items-center gap-2 text-sm font-medium text-slate-700 md:w-auto">
               <Checkbox
                 checked={allSelected}
                 onCheckedChange={() =>
@@ -515,9 +515,9 @@ export function OrdersWorkspace({
               Seleccionar disponibles
             </label>
             <span className="hidden h-7 w-px bg-slate-200 md:block" aria-hidden="true" />
-            <div className="flex min-w-0 flex-1 flex-col gap-3 md:flex-row md:flex-wrap md:items-center">
+            <div className="flex min-w-0 flex-1 flex-col gap-3 md:flex-row md:flex-nowrap md:items-center">
                 <div
-                  className="grid w-full min-w-0 grid-cols-1 rounded-xl border border-slate-200 bg-white p-1 sm:min-w-[20rem] sm:grid-cols-2 md:w-auto"
+                  className="grid w-full min-w-0 shrink-0 grid-cols-1 rounded-xl border border-slate-200 bg-white p-1 sm:min-w-[20rem] sm:grid-cols-2 md:w-auto"
                   aria-label="Tipo de documento para los pedidos seleccionados"
                 >
                   <button
@@ -545,10 +545,10 @@ export function OrdersWorkspace({
                     Comprobante de venta
                   </button>
                 </div>
-              <span className="hidden text-xs text-slate-500 xl:inline">
+              <span className="hidden min-w-0 flex-1 whitespace-nowrap text-xs text-slate-500 xl:inline">
                 Los clientes que exigen factura electrónica siempre se facturan.
               </span>
-              <div className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2 sm:ml-auto sm:flex sm:w-auto sm:flex-row">
+              <div className="grid w-full shrink-0 grid-cols-[auto_minmax(0,1fr)] gap-2 sm:ml-auto sm:flex sm:w-auto sm:flex-row">
               {onConfigurePrinting && (
                 <Button type="button" variant="outline" size="icon"
                   title="Configurar plantillas e impresoras"

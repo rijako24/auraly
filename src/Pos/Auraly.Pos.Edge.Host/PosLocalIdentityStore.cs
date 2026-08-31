@@ -466,6 +466,26 @@ public sealed partial class PosLocalIdentityStore(
             sessionId, workSessionId, userId, username, displayName, permissions, expires, null);
     }
 
+    public async Task AssignWorkSessionAsync(
+        Guid sessionId,
+        Guid workSessionId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE PosLocalUserSessions
+            SET WorkSessionId=$workSession
+            WHERE SessionId=$session AND EndedAt IS NULL;
+            """;
+        command.Parameters.AddWithValue("$session", sessionId.ToString("D"));
+        command.Parameters.AddWithValue("$workSession", workSessionId.ToString("D"));
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1)
+            throw new InvalidOperationException(
+                "La sesión local cambió mientras se vinculaba con Auraly Server.");
+    }
+
     public async Task LogoutAsync(
         string token,
         CancellationToken cancellationToken = default)

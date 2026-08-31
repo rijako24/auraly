@@ -1,7 +1,6 @@
 using Auraly.Application.Authentication;
 using Auraly.Application.Tenants;
 using Auraly.Contracts.Tenants;
-using Auraly.Application.WorkSessions;
 using Auraly.Contracts.Authentication;
 using Auraly.Infrastructure.Persistence;
 using Auraly.Platform.Application.Identity.DTOs;
@@ -71,7 +70,6 @@ public static class AuthenticationApi
             HttpContext context,
             AuthenticationRevokeRequest request,
             AuthenticationService service,
-            WorkSessionService workSessions,
             CancellationToken cancellationToken) =>
             await Handle(async () =>
             {
@@ -81,11 +79,6 @@ public static class AuthenticationApi
                     token.UserId,
                     token.TenantId,
                     RequiredClientId(context));
-                await workSessions.CloseForLogoutAsync(
-                    token.UserId,
-                    token.TenantId,
-                    token.AuthenticationSessionId,
-                    cancellationToken);
                 await service.RevokeAsync(
                     identity,
                     request.RefreshToken,

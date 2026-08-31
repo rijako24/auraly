@@ -41,9 +41,11 @@ public sealed class AzureWebPubSubSynchronizationGateway(
         PosSynchronizationInvalidation invalidation,
         CancellationToken cancellationToken = default) =>
         client.SendToGroupAsync(
-            PosSynchronizationGroups.Business(
-                invalidation.TenantId,
-                invalidation.BusinessId),
+            invalidation.TargetDeviceId is { } deviceId
+                ? PosSynchronizationGroups.Device(invalidation.TenantId, deviceId)
+                : PosSynchronizationGroups.Business(
+                    invalidation.TenantId,
+                    invalidation.BusinessId),
             RequestContent.Create(JsonSerializer.Serialize(invalidation)),
             ContentType.ApplicationJson,
             excluded: null,

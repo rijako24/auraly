@@ -184,6 +184,15 @@ export type PosDraft = {
 export type PosCaptureResult = {
   status: "Added" | "NotFound" | "InsufficientInventory";
   draft: PosDraft | null;
+  capturedProduct?: {
+    product: {
+      productId: string;
+      name: string;
+      productCode: string;
+      allowsFractionalSale: boolean;
+    };
+    quantity: number;
+  } | null;
   availability?: {
     requestedQuantity: number;
     availableQuantity: number;
@@ -304,6 +313,19 @@ export type PosCompleteSaleResult = {
   nextFiscalNumber: PosFiscalNumberPreview | null;
   receipt?: PosPrintableReceipt;
   printPreviewOpened?: boolean;
+  printedDirectly?: boolean;
+  printError?: string | null;
+};
+
+type PosEdgePrintableReceipt = Omit<PosPrintableReceipt,
+  "documentId" | "customerName" | "fiscalStatus"> & {
+  documentId: { value: string };
+  customerName?: string | null;
+  fiscalStatus?: string | null;
+};
+
+type PosEdgeCompleteSaleResult = Omit<PosCompleteSaleResult, "receipt"> & {
+  receipt: PosEdgePrintableReceipt;
 };
 
 export type PosCashMovementDirection = "In" | "Out";
@@ -448,6 +470,7 @@ export interface PosClient {
     pushConnected: boolean;
     deviceSeriesCode: string;
     businessId: string;
+    warehouseId: string;
     businessName: string;
     warehouseName: string;
     userDisplayName: string;
@@ -890,10 +913,10 @@ export class PosEdgeClient implements PosClient {
   }
 
   capture(value: string, customerId: string | null) {
-    return this.request<PosCaptureResult>("/edge/v1/capture", {
+    return this.requestDomainResult<PosCaptureResult>("/edge/v1/capture", {
       method: "POST",
       body: JSON.stringify({ value, customerId }),
-    });
+    }, [404, 409]);
   }
 
   captureSelectedProduct(
@@ -904,12 +927,13 @@ export class PosEdgeClient implements PosClient {
   }
 
   changeQuantity(draftId: string, lineId: string, quantity: number) {
-    return this.request<PosCaptureResult>(
+    return this.requestDomainResult<PosCaptureResult>(
       `/edge/v1/drafts/${draftId}/lines/${lineId}/quantity`,
       {
         method: "PUT",
         body: JSON.stringify({ quantity }),
       },
+      [409],
     );
   }
 
@@ -996,13 +1020,22 @@ export class PosEdgeClient implements PosClient {
     if (credit)
       return Promise.reject(new PosEdgeError(
         "La venta a crédito requiere conexión para validar el cupo actual del cliente.", 409));
-    return this.request<PosCompleteSaleResult>(
+    return this.request<PosEdgeCompleteSaleResult>(
       `/edge/v1/drafts/${draftId}/complete`,
       {
         method: "POST",
         body: JSON.stringify({ customerIdentification, payments, documentType }),
       },
-    );
+    ).then((result) => ({
+      ...result,
+      receipt: {
+        ...result.receipt,
+        documentId: result.receipt.documentId.value,
+        customerName: result.receipt.customerName || result.receipt.customerIdentification,
+        fiscalStatus: result.receipt.fiscalStatus || "LocallyIssuedPendingSync",
+      },
+      printPreviewOpened: result.printedDirectly === false,
+    } satisfies PosCompleteSaleResult));
   }
 
   searchIssuedSales(search = "", skip = 0, take = 50) {
@@ -1139,6 +1172,37 @@ export class PosEdgeClient implements PosClient {
       throw new PosEdgeError(detail, response.status);
     }
     return (await response.json()) as T;
+  }
+
+  private async requestDomainResult<T>(
+    path: string,
+    init: RequestInit,
+    acceptedStatuses: number[],
+  ): Promise<T> {
+    const response = await fetch(`${EDGE_BASE_URL}${path}`, {
+      ...init,
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Auraly-Edge-Session": this.sessionToken,
+        ...(this.userSessionToken
+          ? { "X-Auraly-User-Session": this.userSessionToken }
+          : {}),
+        ...init.headers,
+      },
+    });
+    if (response.ok || acceptedStatuses.includes(response.status))
+      return (await response.json()) as T;
+    const raw = await response.text();
+    let detail = raw || response.statusText;
+    try {
+      const problem = JSON.parse(raw) as { detail?: string; title?: string; code?: string };
+      detail = problem.detail || problem.title || detail;
+      throw new PosEdgeError(detail, response.status, problem.code || problem.title);
+    } catch (parsed) {
+      if (parsed instanceof PosEdgeError) throw parsed;
+    }
+    throw new PosEdgeError(detail, response.status);
   }
 
   private async requestVoid(path: string, init: RequestInit = {}): Promise<void> {

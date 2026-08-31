@@ -36,7 +36,10 @@ El cierre puede imprimir una tirilla denominada **Cierre de sesión**. Nunca se 
 
 El siguiente usuario abre una nueva sesión en el mismo equipo. Si la aplicación se interrumpe, la sesión abierta se recupera y no se reemplaza silenciosamente.
 
-Un Edge permite una sola sesión operativa activa en la instalación. La web puede mantener sesiones concurrentes identificadas por `WorkSessionId`; esto no afecta la numeración documental.
+Cada usuario mantiene exactamente una sesión operativa abierta. Navegadores,
+pestañas y equipos autorizados recuperan ese mismo `WorkSessionId`; cambiar la
+autenticación activa no abre ni cierra trabajo. Una nueva `WorkSession` solo puede
+comenzar después del cierre operativo explícito de la anterior.
 
 ## Eliminación
 

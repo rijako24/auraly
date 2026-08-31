@@ -78,23 +78,23 @@ public sealed class PosSaleCompletionServiceTests
     }
 
     [Fact]
-    public async Task Print_failure_keeps_the_sale_and_retry_reuses_document_and_number()
+    public async Task Print_failure_keeps_issued_sale_and_explicit_reprint_does_not_renumber()
     {
         await WithFixtureAsync(async fixture =>
         {
             var draft = await fixture.AddLineAsync();
             fixture.Printer.Fail = true;
 
-            await Assert.ThrowsAsync<IOException>(
-                () => fixture.CompleteAsync(draft.DraftId));
+            var issued = await fixture.CompleteAsync(draft.DraftId);
 
             var afterFailure = await fixture.Drafts.GetAsync(draft.DraftId);
-            Assert.Equal(PosDraftStatus.Active, afterFailure!.Status);
-            Assert.Single(afterFailure.Lines);
+            Assert.Equal(PosDraftStatus.Consumed, afterFailure!.Status);
+            Assert.False(issued.PrintedDirectly);
+            Assert.Contains("printer", issued.PrintError, StringComparison.OrdinalIgnoreCase);
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 fixture.Drafts.SetQuantityAsync(
                     draft.DraftId,
-                    afterFailure.Lines.Single().LineId,
+                    draft.Lines.Single().LineId,
                     2m));
             Assert.Single(await fixture.Sales.GetPendingOutboxAsync());
             Assert.Equal(
@@ -104,13 +104,13 @@ public sealed class PosSaleCompletionServiceTests
                     fixture.IssuedAt)).FullNumber);
 
             fixture.Printer.Fail = false;
-            var recovered = await fixture.CompleteAsync(draft.DraftId);
+            await new PosSaleCompletionService(
+                fixture.Drafts, fixture.Issuance, fixture.Sales, fixture.Printer)
+                .ReprintAsync(issued.IssuedSale.DocumentId, fixture.Scope.UserId, 80);
 
-            Assert.True(recovered.IssuedSale.WasAlreadyIssued);
-            Assert.Equal("VTA03-00000100", recovered.IssuedSale.DocumentNumber);
-            Assert.Equal("FV100", recovered.IssuedSale.FiscalNumber);
-            Assert.NotNull(recovered.NextFiscalNumber);
-            Assert.Equal("FV101", recovered.NextFiscalNumber.FullNumber);
+            Assert.Equal("VTA03-00000100", issued.IssuedSale.DocumentNumber);
+            Assert.Equal("FV100", issued.IssuedSale.FiscalNumber);
+            Assert.Single(fixture.Printer.Receipts);
             Assert.Single(await fixture.Sales.GetPendingOutboxAsync());
         });
     }

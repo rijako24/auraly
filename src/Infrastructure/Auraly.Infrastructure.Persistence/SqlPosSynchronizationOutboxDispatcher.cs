@@ -119,9 +119,10 @@ public sealed class SqlPosSynchronizationOutboxDispatcher(
                     o.Stream,
                     o.AvailableThroughCursor,
                     o.OccurredAt,
+                    o.TargetDeviceId,
                     ROW_NUMBER() OVER
                     (
-                        PARTITION BY o.Stream
+                        PARTITION BY o.Stream,o.TargetDeviceId
                         ORDER BY o.AvailableThroughCursor DESC
                     ) AS Position
                 FROM dbo.PosSynchronizationOutboxMessages o
@@ -131,7 +132,7 @@ public sealed class SqlPosSynchronizationOutboxDispatcher(
                   AND o.PublishedAt IS NULL
             )
             SELECT NotificationId,TenantId,BusinessId,Stream,
-                   AvailableThroughCursor,OccurredAt
+                   AvailableThroughCursor,OccurredAt,TargetDeviceId
             FROM Pending
             WHERE Position=1;
             """;
@@ -149,7 +150,8 @@ public sealed class SqlPosSynchronizationOutboxDispatcher(
                 reader.GetGuid(2),
                 reader.GetString(3),
                 reader.GetInt64(4),
-                reader.GetFieldValue<DateTimeOffset>(5)));
+                reader.GetFieldValue<DateTimeOffset>(5),
+                reader.IsDBNull(6) ? null : reader.GetGuid(6)));
         }
         return values;
     }
@@ -166,13 +168,17 @@ public sealed class SqlPosSynchronizationOutboxDispatcher(
             SET PublishedAt=@Now,LastAttemptAt=@Now,AttemptCount=AttemptCount+1,
                 LastError=NULL
             WHERE BusinessId=@BusinessId AND Stream=@Stream
-              AND AvailableThroughCursor<=@Cursor AND PublishedAt IS NULL;
+              AND AvailableThroughCursor<=@Cursor AND PublishedAt IS NULL
+              AND ((@TargetDeviceId IS NULL AND TargetDeviceId IS NULL)
+                   OR TargetDeviceId=@TargetDeviceId);
             """;
         command.Parameters.AddRange([
             Parameter("@Now", timeProvider.GetUtcNow()),
             Parameter("@BusinessId", invalidation.BusinessId),
             Parameter("@Stream", invalidation.Stream),
-            Parameter("@Cursor", invalidation.AvailableThroughCursor)
+            Parameter("@Cursor", invalidation.AvailableThroughCursor),
+            new SqlParameter("@TargetDeviceId",
+                (object?)invalidation.TargetDeviceId ?? DBNull.Value)
         ]);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

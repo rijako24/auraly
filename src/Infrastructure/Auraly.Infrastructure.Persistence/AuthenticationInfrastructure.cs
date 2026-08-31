@@ -235,16 +235,15 @@ public sealed class SqlAuthenticationSessionStore(
         await ExpireStaleOfflineLeaseAsync(
             connection, transaction, command.User.TenantId, command.User.UserId,
             command.Now, cancellationToken);
-        // An online login takes over only the previous session of this durable
-        // client. Other browsers/devices keep their own independently revocable
-        // session. The offline lease remains exclusive and is still revoked by
-        // an authenticated online takeover.
+        // Authentication is exclusive per user, while tabs from the same browser
+        // share the durable ClientId and therefore the newly issued session.
+        // WorkSession lifecycle is independent and is never closed here.
         await RevokeActiveOfflineLeaseAsync(
             connection, transaction, command.User.TenantId,
             command.User.UserId, command.Now, cancellationToken);
         await RevokeActiveSessionsAsync(
             connection, transaction, command.User.TenantId,
-            command.User.UserId, command.ClientId, command.Now, cancellationToken);
+            command.User.UserId, command.Now, cancellationToken);
         await RecordSuccessfulLoginAsync(connection, transaction, command, cancellationToken);
         var identity = new AuthenticationSessionIdentity(
             ids.NewId(), command.User.UserId, command.User.TenantId, command.ClientId);
@@ -588,7 +587,6 @@ public sealed class SqlAuthenticationSessionStore(
         SqlTransaction transaction,
         Guid tenantId,
         Guid userId,
-        Guid clientId,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
@@ -598,11 +596,10 @@ public sealed class SqlAuthenticationSessionStore(
                 RevocationReason=N'ReplacedByNewLogin',
                 LastSeenAt=@Now,UpdatedAt=@Now
             WHERE TenantId=@TenantId AND UserId=@UserId
-              AND ClientId=@ClientId AND Status=N'Active';
+              AND Status=N'Active';
             """, connection, transaction);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         command.Parameters.AddWithValue("@UserId", userId);
-        command.Parameters.AddWithValue("@ClientId", clientId);
         command.Parameters.AddWithValue("@Now", now);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

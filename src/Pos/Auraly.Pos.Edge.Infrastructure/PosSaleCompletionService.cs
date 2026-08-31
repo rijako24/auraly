@@ -69,7 +69,10 @@ public sealed record CompletePosSaleResult(
     PosEdgeIssueResult IssuedSale,
     PosDraft NextDraft,
     PosDocumentNumberPreview NextDocumentNumber,
-    PosFiscalNumberPreview? NextFiscalNumber);
+    PosFiscalNumberPreview? NextFiscalNumber,
+    PosReceipt Receipt,
+    bool PrintedDirectly,
+    string? PrintError);
 
 public sealed class PosDraftIssuanceStore(
     string connectionString,
@@ -151,7 +154,7 @@ public sealed class PosDraftIssuanceStore(
             UPDATE PosDraftDocuments SET CompletedAt=@Now
             WHERE DraftId=@DraftId AND DocumentId=@DocumentId;
             INSERT INTO PosDraftAudit(AuditId,DraftId,Action,RelatedDraftId,OccurredAt)
-            SELECT @AuditId,@DraftId,'IssuedAndPrinted',@DocumentId,@Now
+            SELECT @AuditId,@DraftId,'Issued',@DocumentId,@Now
             WHERE changes()>0;
             """;
         command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow().ToString("O"));
@@ -292,7 +295,8 @@ public sealed class PosSaleCompletionService(
             NetPayableAmount: immutable.CommercialSnapshot.NetPayableAmount,
             Withholdings: immutable.CommercialSnapshot.Withholding?.Lines);
 
-        await printer.PrintAsync(payload, ct);
+        // Issuance owns the sale lifecycle. Printing is a post-effect and must
+        // never keep an already issued sale or its next draft in limbo.
         await issuance.CompleteAsync(draftId, issued.DocumentId, ct);
         var nextDraft = await drafts.GetOrCreateActiveAsync(draft.Scope, ct);
         var nextDocumentNumber = await sales.PreviewNextDocumentNumberAsync(
@@ -305,11 +309,27 @@ public sealed class PosSaleCompletionService(
                 command.IssuedAt,
                 ct)
             : null;
+        var printedDirectly = false;
+        string? printError = null;
+        try
+        {
+            await printer.PrintAsync(payload, ct);
+            printedDirectly = true;
+        }
+        catch (Exception exception) when (
+            exception is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            printError = exception.Message;
+        }
+
         return new CompletePosSaleResult(
             issued,
             nextDraft,
             nextDocumentNumber,
-            nextFiscalNumber);
+            nextFiscalNumber,
+            payload,
+            printedDirectly,
+            printError);
     }
     private static decimal ExclusiveFromPublished(decimal amount, decimal taxRate) =>
         taxRate == 0m

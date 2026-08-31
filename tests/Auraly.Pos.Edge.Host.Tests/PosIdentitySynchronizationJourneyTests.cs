@@ -50,8 +50,7 @@ public sealed class PosIdentitySynchronizationJourneyTests
                 new PosOperationalScope(Guid.NewGuid(), Guid.NewGuid()),
                 identities,
                 new PosSynchronizationEventLog(TimeProvider.System));
-            var authentication = new PosEdgeAuthenticationService(
-                identities, synchronizer);
+            var authentication = CreateAuthentication(identities, synchronizer);
 
             var session = await authentication.LoginAsync(
                 new PosLocalLoginRequest("new.cashier", password));
@@ -175,7 +174,7 @@ public sealed class PosIdentitySynchronizationJourneyTests
                 new PosOperationalScope(Guid.NewGuid(), Guid.NewGuid()),
                 identities,
                 new PosSynchronizationEventLog(TimeProvider.System));
-            var authentication = new PosEdgeAuthenticationService(identities, synchronizer);
+            var authentication = CreateAuthentication(identities, synchronizer);
 
             var error = await Assert.ThrowsAsync<PosLocalLoginException>(() =>
                 authentication.LoginAsync(new PosLocalLoginRequest("admin", "password")));
@@ -203,6 +202,34 @@ public sealed class PosIdentitySynchronizationJourneyTests
         new(revision, issuedAt, issuedAt.AddDays(1),
         [new PosOfflineUserProjection(
             userId, username, displayName, permissions, verifier)]);
+
+    private static PosEdgeAuthenticationService CreateAuthentication(
+        PosLocalIdentityStore identities,
+        PosIdentitySynchronizer synchronizer)
+    {
+        var http = new HttpClient(new UnavailableWorkSessionHandler())
+        {
+            BaseAddress = new Uri("https://auraly.test")
+        };
+        var workSessions = new PosWorkSessionOpenServerClient(
+            http,
+            new PosDeviceCredentials(Guid.NewGuid(), "device-secret"),
+            new PosOperationalScope(Guid.NewGuid(), Guid.NewGuid()));
+        return new PosEdgeAuthenticationService(
+            identities,
+            synchronizer,
+            workSessions,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<PosEdgeAuthenticationService>.Instance);
+    }
+
+    private sealed class UnavailableWorkSessionHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            Task.FromException<HttpResponseMessage>(
+                new HttpRequestException("Auraly Server is unavailable."));
+    }
 
     private sealed class MutableIdentityServerHandler(
         PosOfflineIdentitySnapshot snapshot) : HttpMessageHandler

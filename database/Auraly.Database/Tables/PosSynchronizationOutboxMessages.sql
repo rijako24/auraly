@@ -5,6 +5,7 @@ CREATE TABLE [dbo].[PosSynchronizationOutboxMessages]
     [Stream] NVARCHAR(32) NOT NULL,
     [AvailableThroughCursor] BIGINT NOT NULL,
     [OccurredAt] DATETIMEOFFSET(7) NOT NULL,
+    [TargetDeviceId] UNIQUEIDENTIFIER NULL,
     [PublishedAt] DATETIMEOFFSET(7) NULL,
     [AttemptCount] INT NOT NULL CONSTRAINT [DF_PosSynchronizationOutboxMessages_AttemptCount] DEFAULT (0),
     [LastAttemptAt] DATETIMEOFFSET(7) NULL,
@@ -18,7 +19,7 @@ CREATE TABLE [dbo].[PosSynchronizationOutboxMessages]
         UNIQUE ([BusinessId], [Stream], [AvailableThroughCursor]),
     CONSTRAINT [CK_PosSynchronizationOutboxMessages_Stream]
         CHECK ([Stream] IN
-            (N'Catalog', N'Customers', N'Security', N'FiscalStatus', N'FiscalProvisioning', N'Approvals')),
+            (N'Catalog', N'Customers', N'Security', N'FiscalStatus', N'FiscalProvisioning', N'Approvals', N'Configuration', N'DeviceEnrollment')),
     CONSTRAINT [CK_PosSynchronizationOutboxMessages_Cursor]
         CHECK ([AvailableThroughCursor] >= 0)
 );

@@ -46,8 +46,10 @@ public sealed partial class SqlPosSaleDocumentHandler : IConfirmedDocumentHandle
             await MarkDocumentProcessedAsync(session, request, cancellationToken);
             return;
         }
-        await EnsureWorkSessionAsync(
+        var workSessionId = await EnsureWorkSessionAsync(
             session, request, cancellationToken);
+        if (request.WorkSessionId != workSessionId)
+            request = request with { WorkSessionId = workSessionId };
         foreach (var line in request.Lines.OrderBy(line => line.LineNumber))
         {
             await ValidateDocumentCostAsync(session, request.BusinessId, line, cancellationToken);

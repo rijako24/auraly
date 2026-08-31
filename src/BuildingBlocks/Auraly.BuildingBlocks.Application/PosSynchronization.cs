@@ -10,6 +10,8 @@ public static class PosSynchronizationStreams
     public const string Approvals = "Approvals";
     public const string LocalOutbox = "LocalOutbox";
     public const string Authentication = "Authentication";
+    public const string Configuration = "Configuration";
+    public const string DeviceEnrollment = "DeviceEnrollment";
 }
 
 public static class PosSynchronizationGroups
@@ -30,7 +32,8 @@ public sealed record PosSynchronizationInvalidation(
     Guid BusinessId,
     string Stream,
     long AvailableThroughCursor,
-    DateTimeOffset OccurredAt);
+    DateTimeOffset OccurredAt,
+    Guid? TargetDeviceId = null);
 
 public interface IPosSynchronizationPushGateway
 {

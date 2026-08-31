@@ -17,12 +17,18 @@ public interface IPosSynchronizationEventSink
         string? productName);
 }
 
+public interface IPosWarehousePolicySink
+{
+    Task ApplyAsync(bool allowsNegativeStock, CancellationToken cancellationToken = default);
+}
+
 public sealed class PosCatalogSynchronizer(
     HttpClient httpClient,
     PosCatalogStore store,
     PosDeviceCredentials credentials,
     PosOperationalScope scope,
-    IPosSynchronizationEventSink? events = null) : IPosInventoryAvailabilityClient
+    IPosSynchronizationEventSink? events = null,
+    IPosWarehousePolicySink? warehousePolicy = null) : IPosInventoryAvailabilityClient
 {
     private static readonly string[] OperationalReferenceCatalogs =
         ["payment-method", "card-franchise", "sales-document-type", "cash-denomination"];
@@ -97,6 +103,9 @@ public sealed class PosCatalogSynchronizer(
             }
         }
         await store.ApplyPricingSnapshotAsync(pricing, cancellationToken);
+        if (pricing.WarehouseAllowsNegativeStock is { } allowsNegativeStock
+            && warehousePolicy is not null)
+            await warehousePolicy.ApplyAsync(allowsNegativeStock, cancellationToken);
         foreach (var catalogCode in OperationalReferenceCatalogs)
         {
             var options = await SendAsync<IReadOnlyList<ReferenceOption>>(

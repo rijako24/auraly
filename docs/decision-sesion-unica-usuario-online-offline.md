@@ -1,59 +1,55 @@
-# Decisión: sesiones online por cliente y concesión offline exclusiva
+# Decisión: autenticación exclusiva y sesión de trabajo independiente
 
 Fecha: 2026-07-31  
-Estado: obligatoria; reemplaza la regla online de sesión única desde 2026-08-26
+Estado: obligatoria; actualizada el 2026-08-31
 Prevalencia: complementa `decision-sesiones-operativas-cierre-usuario.md`.
 
 ## Regla
 
-Puede existir una `AuthenticationSession` activa por `TenantId + UserId + ClientId`.
+Solo puede existir una `AuthenticationSession` activa por `TenantId + UserId`.
 Varias pestañas del mismo navegador reutilizan el `ClientId` durable y la misma
-sesión. Otro navegador o computador obtiene una sesión independiente: iniciar
-sesión allí no revoca tokens ni cierra trabajo del primero. Un nuevo login con el
-mismo `ClientId` reemplaza únicamente la sesión anterior de ese cliente.
+sesión. Iniciar sesión en otro navegador o computador revoca inmediatamente la
+autenticación anterior. Volver al primer cliente revoca a su vez la del segundo.
 
 La sesión de autenticación y la `WorkSession` son conceptos separados:
 
 - `AuthenticationSession` controla identidad, acceso único, renovación y revocación.
 - `WorkSession` registra la operación de facturación, sede, bodega y cierre financiero.
 
-El login no cierra una `WorkSession`: autenticarse y abrir/cerrar operación son
-responsabilidades distintas. El logout explícito sí cierra la operación abierta
-del usuario según el contrato operativo vigente. Cerrar solo una vista no termina
-ninguna sesión.
+Login y logout no cierran una `WorkSession`: autenticarse y abrir/cerrar operación
+son responsabilidades distintas. La única `WorkSession` abierta del usuario se
+recupera desde cualquier cliente autorizado y solo termina mediante el cierre
+operativo explícito.
 
 ## Online
 
-El servidor adquiere atómicamente una concesión por usuario y cliente. La sesión usa un
-identificador, hash del token de renovación, cliente, fechas de emisión,
+El servidor adquiere atómicamente una concesión exclusiva por usuario. La sesión usa un
+identificador, hash del token de renovación, cliente durable, fechas de emisión,
 expiración, último contacto, revocación y versión de concurrencia.
 
 Una sesión abandonada expira. Un supervisor autorizado puede revocarla. La
 revocación queda auditada y los tokens dejan de renovarse.
 La rotación del token de renovación es atómica. Una solicitud paralela que llegue
 con el secreto inmediatamente anterior recibe conflicto y no revoca la sesión que
-otra solicitud acaba de renovar; una pestaña atrasada no puede cerrar las demás.
+otra solicitud acaba de renovar; las pestañas del cliente ganador siguen operando.
 
 ## Edge offline
 
 La exclusividad global no puede comprobarse entre dos computadores totalmente
-desconectados sin una concesión previa. Por tanto, Edge solo permite login offline
-con una concesión exclusiva firmada por el servidor y asociada a `UserId +
-DeviceId`.
+desconectados. Edge conserva la autorización firmada que obtuvo al enrolarse o
+sincronizar identidades, asociada a `UserId + DeviceId`, para validar que esas
+credenciales sí fueron provisionadas por el servidor.
 
-Mientras la concesión está vigente, el servidor bloquea cualquier otro login del
-usuario. Edge valida firma, dispositivo, vigencia y continuidad temporal. No
-acepta retrocesos de reloj ni crea concesiones por sí mismo.
+Edge valida firma, dispositivo y continuidad temporal. La fecha histórica del
+paquete firmado no bloquea el acceso de un equipo ya enrolado: la autorización
+offline no vence por tiempo ni obliga a reconectar periódicamente. Edge no crea
+autorizaciones por sí mismo.
 
-Un logout offline cierra localmente la `WorkSession` y escribe en outbox la
-liberación. El bloqueo del servidor termina cuando recibe esa liberación o cuando
-vence la concesión. Un supervisor puede revocarla, pero un Edge desconectado solo
-conoce la revocación al reconectar; por eso nunca puede operar después del
-vencimiento firmado.
-
-La duración máxima de la concesión es una política de seguridad configurable con
-un límite del sistema. No se prometen sesiones offline indefinidas y exclusividad
-global simultáneamente.
+Un logout offline termina la autenticación local, pero no cierra la `WorkSession`.
+El cierre operativo explícito conserva su flujo durable y sincronizable. Un
+supervisor puede revocar el acceso, pero un Edge desconectado solo conoce esa
+revocación al reconectar. Esa limitación física se acepta expresamente para
+garantizar operación offline indefinida después del enrolamiento.
 
 ## Numeración
 
@@ -62,15 +58,15 @@ la serie central del servidor o a la serie técnica del dispositivo Edge.
 
 ## Pruebas obligatorias
 
-1. Dos clientes online del mismo usuario permanecen autorizados simultáneamente.
-2. Dos pestañas reutilizan una sesión sin crear otra.
-3. Un nuevo login del mismo cliente revoca solo la sesión anterior de ese cliente.
-4. Logout revoca únicamente la sesión autenticada y permite un nuevo login.
+1. Un login en otro cliente revoca inmediatamente la autenticación anterior.
+2. Dos pestañas del mismo navegador reutilizan el mismo `ClientId`.
+3. Alternar el login entre dos clientes deja exactamente uno autorizado.
+4. Login y logout no cierran ni reemplazan la `WorkSession` abierta.
 5. Expiración y revocación permiten recuperación auditada.
 6. Dos renovaciones paralelas dejan vigente el token rotado por la ganadora.
 7. Una concesión offline solo funciona en su dispositivo.
 8. Un login online autenticado revoca la concesión offline anterior.
 9. Reiniciar Edge recupera la misma sesión y `WorkSession`.
-10. Logout offline sobrevive al reinicio y se sincroniza una sola vez.
-11. Edge deja de operar al vencer la concesión.
-12. Manipular firma, fechas, usuario o dispositivo invalida la concesión.
+10. Logout offline sobrevive al reinicio sin cerrar la `WorkSession`.
+11. La fecha histórica de la autorización no bloquea un Edge ya enrolado.
+12. Manipular firma, fecha de inicio, usuario o dispositivo invalida la autorización.

@@ -238,6 +238,23 @@ public static class WorkSessionApi
                     acceptance);
             }));
 
+        var deviceOpenGroup = endpoints.MapGroup("/api/pos/v1")
+            .RequireAuthorization("pos.sales.upload");
+        deviceOpenGroup.MapPost("/work-sessions/current", async (
+            HttpContext context,
+            DeviceOpenWorkSessionRequest request,
+            WorkSessionService service,
+            CancellationToken cancellationToken) =>
+            await Handle(async () => Results.Ok(
+                await service.OpenOrResumeDeviceAsync(
+                    context.User.ToDeviceWorkSessionIdentity() with
+                    {
+                        UserId = request.UserId
+                    },
+                    request,
+                    context.User.ToDeviceId(),
+                    cancellationToken))));
+
         var deviceCloseGroup = endpoints.MapGroup("/api/pos/v1")
             .RequireAuthorization("pos.work-session.close");
         deviceCloseGroup.MapPost("/work-sessions/{workSessionId:guid}/close", async (
@@ -348,6 +365,9 @@ public static class WorkSessionClaimsPrincipalExtensions
             principal.FindAll(PosAuthenticationDefaults.PermissionClaim)
                 .Select(claim => claim.Value)
                 .ToHashSet(StringComparer.Ordinal));
+
+    public static Guid ToDeviceId(this ClaimsPrincipal principal) =>
+        RequiredGuid(principal, PosAuthenticationDefaults.DeviceIdClaim);
 
 
     private static Guid RequiredGuid(

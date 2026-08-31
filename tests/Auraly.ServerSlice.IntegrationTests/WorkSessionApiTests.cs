@@ -34,6 +34,56 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Opening_another_context_requires_explicitly_closing_the_active_work_session()
+    {
+        var userId = await CreateUserAsync("work-session-context-switch");
+        var otherWarehouseId = Guid.NewGuid();
+        await using (var connection = new SqlConnection(fixture.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var insert = connection.CreateCommand();
+            insert.CommandText = """
+                INSERT dbo.Warehouses
+                  (WarehouseId,BusinessId,Code,Name,AllowNegativeStockSales,IsActive,CreatedAt)
+                VALUES
+                  (@WarehouseId,@BusinessId,@Code,N'Bodega cambio de contexto',0,1,SYSDATETIMEOFFSET());
+                """;
+            insert.Parameters.AddWithValue("@WarehouseId", otherWarehouseId);
+            insert.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            insert.Parameters.AddWithValue("@Code", $"CTX-{otherWarehouseId:N}"[..16]);
+            await insert.ExecuteNonQueryAsync();
+        }
+        using var client = fixture.CreateUserClient(
+            userId,
+            WorkSessionPermissionCodes.Read,
+            WorkSessionPermissionCodes.Open);
+
+        var first = await OpenAsync(client, new OpenWorkSessionRequest(
+            fixture.BusinessId, fixture.WarehouseId, null));
+        using var conflict = await client.PostAsJsonAsync(
+            "/api/commerce/v1/work-sessions/current",
+            new OpenWorkSessionRequest(fixture.BusinessId, otherWarehouseId, null));
+
+        Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+        Assert.Equal(1, await CountOpenSessionsAsync(userId));
+        await using var verifyConnection = new SqlConnection(fixture.ConnectionString);
+        await verifyConnection.OpenAsync();
+        await using var verify = verifyConnection.CreateCommand();
+        verify.CommandText = """
+            SELECT s.Status,COUNT(c.WorkSessionClosureId)
+            FROM dbo.WorkSessions s
+            LEFT JOIN dbo.WorkSessionClosures c ON c.WorkSessionId=s.WorkSessionId
+            WHERE s.WorkSessionId=@WorkSessionId
+            GROUP BY s.Status;
+            """;
+        verify.Parameters.AddWithValue("@WorkSessionId", first.WorkSessionId);
+        await using var reader = await verify.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal("Open", reader.GetString(0));
+        Assert.Equal(0, reader.GetInt32(1));
+    }
+
+    [Fact]
     public async Task Work_session_rejects_scopes_outside_the_authenticated_context()
     {
         var userId = await CreateUserAsync("work-session-scope");

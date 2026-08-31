@@ -36,8 +36,8 @@ CREATE TABLE [dbo].[AuthenticationSessions]
 );
 GO
 
-CREATE UNIQUE INDEX [UX_AuthenticationSessions_User_Client_Active]
-    ON [dbo].[AuthenticationSessions] ([TenantId],[UserId],[ClientId])
+CREATE UNIQUE INDEX [UX_AuthenticationSessions_User_Active]
+    ON [dbo].[AuthenticationSessions] ([TenantId],[UserId])
     WHERE [Status]=N'Active';
 GO
 

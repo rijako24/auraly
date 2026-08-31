@@ -53,6 +53,13 @@ public sealed class PosEdgeEnrollmentStore(
         File.Move(temporaryPath, packagePath, overwrite: true);
     }
 
+    public void Clear()
+    {
+        if (File.Exists(packagePath)) File.Delete(packagePath);
+        var temporaryPath = packagePath + ".new";
+        if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+    }
+
     public static IReadOnlyDictionary<string, string?> ToConfiguration(
         PosEnrollmentPackage package,
         string keyDirectory,
@@ -137,6 +144,8 @@ public sealed class PosEdgeEnrollmentStore(
                 fiscal.ExpirationWarningDays.ToString();
             values["PosEdge:Fiscal:RemainingNumberWarningThreshold"] =
                 fiscal.RemainingNumberWarningThreshold.ToString();
+            values["PosEdge:Fiscal:ProductionActive"] =
+                fiscal.ProductionActive.ToString();
         }
 
         foreach (var key in package.OfflineLeaseTrustedPublicKeys ??

@@ -12,51 +12,48 @@ public sealed partial class SqlPosSaleDocumentHandler
         CancellationToken cancellationToken)
     {
         var workSessionId = request.WorkSessionId;
-        var requestedDeviceId = request.DeviceId == Guid.Empty ? (Guid?)null : request.DeviceId;
         var session = await FindWorkSessionAsync(
             processing, request.WorkSessionId, cancellationToken);
         var now = _timeProvider.GetUtcNow();
         if (session is null)
         {
             await using (var current = new SqlCommand("""
-                SELECT WorkSessionId,BusinessId,WarehouseId,DeviceId
+                SELECT TOP(1) WorkSessionId
                 FROM dbo.WorkSessions WITH (UPDLOCK,HOLDLOCK)
-                WHERE UserId=@UserId AND Status=N'Open';
+                WHERE UserId=@UserId AND Status=N'Open'
+                ORDER BY OpenedAt DESC;
                 """, processing.Connection, processing.Transaction))
             {
                 current.Parameters.AddWithValue("@UserId", request.SoldByUserId);
-                await using var reader = await current.ExecuteReaderAsync(cancellationToken);
-                if (await reader.ReadAsync(cancellationToken) &&
-                    (reader.GetGuid(0) != request.WorkSessionId ||
-                     reader.GetGuid(1) != request.BusinessId ||
-                     reader.GetGuid(2) != request.WarehouseId ||
-                     (reader.IsDBNull(3) ? (Guid?)null : reader.GetGuid(3)) != requestedDeviceId))
+                if (await current.ExecuteScalarAsync(cancellationToken) is Guid activeId)
                 {
-                    throw new InvalidOperationException(
-                        "The user already has an open work session in another context.");
+                    workSessionId = activeId;
+                    session = await FindWorkSessionAsync(
+                        processing, activeId, cancellationToken);
                 }
             }
 
-            await using var create = new SqlCommand("""
-                INSERT dbo.WorkSessions
-                  (WorkSessionId,BusinessId,WarehouseId,UserId,DeviceId,
-                   OpenedAt,LastActivityAt,Status)
-                VALUES
-                  (@WorkSessionId,@BusinessId,@WarehouseId,@UserId,@DeviceId,
-                   @Now,@Now,N'Open');
-                """, processing.Connection, processing.Transaction);
-            AddWorkSessionParameters(create, request, workSessionId, now);
-            await create.ExecuteNonQueryAsync(cancellationToken);
+            if (session is null)
+            {
+                await using var create = new SqlCommand("""
+                    INSERT dbo.WorkSessions
+                      (WorkSessionId,BusinessId,WarehouseId,UserId,DeviceId,
+                       OpenedAt,LastActivityAt,Status)
+                    VALUES
+                      (@WorkSessionId,@BusinessId,@WarehouseId,@UserId,@DeviceId,
+                       @Now,@Now,N'Open');
+                    """, processing.Connection, processing.Transaction);
+                AddWorkSessionParameters(create, request, workSessionId, now);
+                await create.ExecuteNonQueryAsync(cancellationToken);
+            }
         }
-        else
+
+        if (session is not null)
         {
-            if (session.BusinessId != request.BusinessId ||
-                session.WarehouseId != request.WarehouseId ||
-                session.UserId != request.SoldByUserId ||
-                session.DeviceId != requestedDeviceId)
+            if (session.UserId != request.SoldByUserId)
             {
                 throw new InvalidOperationException(
-                    "The work session does not match the accepted sale context.");
+                    "The work session does not belong to the sale user.");
             }
 
             if (string.Equals(session.Status, "Open", StringComparison.Ordinal))
@@ -71,12 +68,10 @@ public sealed partial class SqlPosSaleDocumentHandler
                     throw new DBConcurrencyException(
                         "The work session changed while the sale was being processed.");
             }
-            else if (!string.Equals(session.Status, "Closed", StringComparison.Ordinal) ||
-                     !await IsDocumentAlreadyLinkedAsync(
-                         processing, request, cancellationToken))
+            else if (!string.Equals(session.Status, "Closed", StringComparison.Ordinal))
             {
                 throw new DBConcurrencyException(
-                    "The sale is not linked to a valid open or historical work session.");
+                    "The sale references an invalid historical work session.");
             }
         }
 
@@ -116,29 +111,6 @@ public sealed partial class SqlPosSaleDocumentHandler
             reader.GetGuid(2),
             reader.IsDBNull(3) ? null : reader.GetGuid(3),
             reader.GetString(4));
-    }
-
-    private static async Task<bool> IsDocumentAlreadyLinkedAsync(
-        SqlDocumentProcessingSessionAccessor.Session processing,
-        PosSaleUploadRequest request,
-        CancellationToken cancellationToken)
-    {
-        await using var command = new SqlCommand("""
-            SELECT COUNT_BIG(1)
-            FROM dbo.SalesDocuments WITH (UPDLOCK,HOLDLOCK)
-            WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId
-              AND WarehouseId=@WarehouseId AND WorkSessionId=@WorkSessionId
-              AND SoldByUserId=@UserId
-              AND (DeviceId=@DeviceId OR (DeviceId IS NULL AND @DeviceId IS NULL));
-            """, processing.Connection, processing.Transaction);
-        command.Parameters.AddWithValue("@DocumentId", request.DocumentId);
-        command.Parameters.AddWithValue("@BusinessId", request.BusinessId);
-        command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
-        command.Parameters.AddWithValue("@WorkSessionId", request.WorkSessionId);
-        command.Parameters.AddWithValue("@UserId", request.SoldByUserId);
-        command.Parameters.AddWithValue(
-            "@DeviceId", request.DeviceId == Guid.Empty ? DBNull.Value : request.DeviceId);
-        return (long)(await command.ExecuteScalarAsync(cancellationToken) ?? 0L) == 1;
     }
 
     private sealed record WorkSessionState(

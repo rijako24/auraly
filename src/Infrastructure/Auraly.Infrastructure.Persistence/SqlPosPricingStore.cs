@@ -52,6 +52,10 @@ public sealed partial class SqlCatalogStore
                 DateOnly.FromDateTime(reader.GetDateTime(13)),
                 reader.IsDBNull(14) ? null : DateOnly.FromDateTime(reader.GetDateTime(14)),
                 reader.GetBoolean(15)));
-        return new PosPricingSnapshot(channels, customers, rules);
+        bool? warehouseAllowsNegativeStock = null;
+        if (await reader.NextResultAsync(ct) && await reader.ReadAsync(ct))
+            warehouseAllowsNegativeStock = reader.GetBoolean(0);
+        return new PosPricingSnapshot(
+            channels, customers, rules, warehouseAllowsNegativeStock);
     }
 }

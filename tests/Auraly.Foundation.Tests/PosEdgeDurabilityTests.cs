@@ -47,6 +47,56 @@ public sealed class PosEdgeDurabilityTests
     }
 
     [Fact]
+    public async Task Assigned_resolution_is_downloaded_before_production_and_replacement_becomes_active_locally()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"auraly-pos-fiscal-provision-{Guid.NewGuid():N}.db");
+        try
+        {
+            var tenantId = new TenantId(Guid.NewGuid());
+            var userId = new UserId(Guid.NewGuid());
+            var deviceId = new DeviceId(Guid.NewGuid());
+            var confirmation = new ConfirmOfflineSaleService(new PermissionAuthorizer(
+                new FixedPermissionProvider(new UserPermissionSet(tenantId, userId, []))));
+            var store = new PosEdgeSaleStore($"Data Source={databasePath}", confirmation);
+            await store.InitializeAsync();
+
+            var first = new PosEdgeSeriesProvision(
+                Guid.NewGuid(), deviceId, "FV", "AUTH-1", 1, 100,
+                new DateOnly(2027, 12, 31), EmissionEnabled: false);
+            await store.ProvisionSeriesAsync(first);
+
+            var beforeProduction = await store.PreviewNextFiscalNumberAsync(
+                deviceId, new DateTimeOffset(2026, 8, 31, 9, 0, 0, TimeSpan.FromHours(-5)));
+            var downloaded = await store.GetFiscalCursorStateAsync(deviceId);
+            Assert.NotNull(downloaded);
+            Assert.Equal(first.SeriesId, downloaded.SeriesId);
+            Assert.False(beforeProduction.IsAvailable);
+
+            var replacement = new PosEdgeSeriesProvision(
+                Guid.NewGuid(), deviceId, "FV2", "AUTH-2", 1001, 2000,
+                new DateOnly(2028, 12, 31), EmissionEnabled: false);
+            await store.ProvisionSeriesAsync(replacement);
+            var replaced = await store.GetFiscalCursorStateAsync(deviceId);
+            Assert.NotNull(replaced);
+            Assert.Equal(replacement.SeriesId, replaced.SeriesId);
+            Assert.Equal(1001, replaced.NextConsecutive);
+
+            await store.ProvisionSeriesAsync(replacement with { EmissionEnabled = true });
+            var afterProduction = await store.PreviewNextFiscalNumberAsync(
+                deviceId, new DateTimeOffset(2026, 8, 31, 9, 1, 0, TimeSpan.FromHours(-5)));
+            Assert.True(afterProduction.IsAvailable);
+            Assert.Equal("FV21001", afterProduction.FullNumber);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            DeleteIfPresent(databasePath);
+            DeleteIfPresent($"{databasePath}-wal");
+            DeleteIfPresent($"{databasePath}-shm");
+        }
+    }
+
+    [Fact]
     public async Task Exclusive_resolution_stops_at_authorized_end_and_preserves_cursor_after_restart()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"auraly-pos-blocks-{Guid.NewGuid():N}.db");

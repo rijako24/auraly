@@ -10,6 +10,50 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Accepted_sale_is_processed_even_when_another_work_session_is_open()
+    {
+        var request = fixture.CreateValidRequest(8_899) with
+        {
+            WorkSessionId = Guid.NewGuid(),
+            DocumentId = Guid.NewGuid()
+        };
+        using var client = fixture.CreateClient();
+        using var upload = fixture.CreateUploadMessage(request);
+        using var response = await client.SendAsync(upload);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var verify = connection.CreateCommand();
+        verify.CommandText = """
+            SELECT d.ProcessingStatus,j.Status,ws.Status,
+                   COUNT(DISTINCT reportJob.SalesReportingJobId),
+                   COUNT(DISTINCT movement.WorkSessionMovementId),
+                   MAX(posting.Status)
+            FROM dbo.SalesDocuments d
+            INNER JOIN dbo.DocumentProcessingJobs j ON j.DocumentId=d.DocumentId
+            INNER JOIN dbo.WorkSessions ws ON ws.WorkSessionId=d.WorkSessionId
+            LEFT JOIN reporting.SalesReportingJobs reportJob
+              ON reportJob.SourceDocumentId=d.DocumentId
+            LEFT JOIN dbo.WorkSessionMovements movement
+              ON movement.DocumentId=d.DocumentId AND movement.WorkSessionId=d.WorkSessionId
+            LEFT JOIN dbo.AccountingPostingJobs posting
+              ON posting.SourceDocumentId=d.DocumentId
+            WHERE d.DocumentId=@DocumentId
+            GROUP BY d.ProcessingStatus,j.Status,ws.Status;
+            """;
+        verify.Parameters.AddWithValue("@DocumentId", request.DocumentId);
+        await using var reader = await verify.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal("Completed", reader.GetString(0));
+        Assert.Equal("Completed", reader.GetString(1));
+        Assert.Equal("Open", reader.GetString(2));
+        Assert.Equal(1, reader.GetInt32(3));
+        Assert.Equal(request.Payments.Count, reader.GetInt32(4));
+        Assert.Equal("Posted", reader.GetString(5));
+    }
+
+    [Fact]
     public async Task Invoice_and_receipt_without_source_order_process_without_order_side_effects()
     {
         var receiptSeriesId = Guid.NewGuid();
