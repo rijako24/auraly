@@ -60,7 +60,11 @@ BEGIN
     ORDER BY ds.DocumentSeriesId;
     IF @SeriesId IS NULL THROW 51208,'La serie de órdenes de compra no está activa.',1;
     IF @Consecutive>@RangeEnd THROW 51208,'La numeración de órdenes de compra se agotó.',1;
-    DECLARE @DocumentNumber NVARCHAR(40)=CONCAT(@Prefix,RIGHT(REPLICATE('0',@Padding)+CONVERT(varchar(20),@Consecutive),@Padding));
+    SET @Prefix=UPPER(LTRIM(RTRIM(@Prefix)));
+    SET @SeriesCode=UPPER(LTRIM(RTRIM(@SeriesCode)));
+    IF @Prefix<>N'OCP' OR @Padding<>8 OR NULLIF(@SeriesCode,N'') IS NULL
+        THROW 51208,'La serie de órdenes de compra no cumple la numeración canónica.',1;
+    DECLARE @DocumentNumber NVARCHAR(40)=CONCAT(@Prefix,@SeriesCode,N'-',RIGHT(REPLICATE('0',@Padding)+CONVERT(varchar(20),@Consecutive),@Padding));
 
     MERGE dbo.DocumentSeriesCursors WITH(HOLDLOCK) AS target
     USING(SELECT @SeriesId DocumentSeriesId) source ON target.DocumentSeriesId=source.DocumentSeriesId

@@ -13,6 +13,7 @@ public sealed class PurchaseOrderReceiptTests(ServerSliceFixture fixture)
     {
         using var client = CreateClient();
         var order = await ConfirmOrderAsync(client, 10m);
+        Assert.Matches(@"^OCP[A-Z0-9]{1,16}-\d{8}$", order.DocumentNumber);
 
         var source = await client.GetFromJsonAsync<PurchaseOrderReceiptSource>(
             $"/api/commerce/v1/purchase-orders/{order.PurchaseOrderId:D}/receipt-source");
