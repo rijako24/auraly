@@ -479,6 +479,7 @@ export interface PosClient {
     deviceId?: string | null;
     fiscalReady: boolean;
     fiscalWarnings: string[];
+    dianQuotaAvailable: boolean | null;
     identityReady: boolean;
     catalogStatus: string;
     synchronizationInProgress: boolean;
@@ -685,6 +686,7 @@ export class PosEdgeClient implements PosClient {
       permissions: string[];
       fiscalReady: boolean;
       fiscalWarnings: string[];
+      dianQuotaAvailable: boolean | null;
       identityReady: boolean;
       catalogStatus: string;
       synchronizationInProgress: boolean;

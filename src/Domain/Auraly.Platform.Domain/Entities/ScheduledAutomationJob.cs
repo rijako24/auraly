@@ -5,9 +5,10 @@ namespace Auraly.Platform.Domain.Entities;
 public class ScheduledAutomationJob
 {
     public Guid ScheduledAutomationJobId { get; set; }
-    public Guid BusinessId { get; set; }
-    public Guid ReservationId { get; set; }
-    public Guid AgentId { get; set; }
+    public Guid? BusinessId { get; set; }
+    public Guid? ReservationId { get; set; }
+    public Guid? AgentId { get; set; }
+    public Guid? TenantSubscriptionId { get; set; }
     public ScheduledAutomationJobType JobType { get; set; }
     public DateTime ScheduledAtUtc { get; set; }
     public ScheduledAutomationJobStatus Status { get; set; } = ScheduledAutomationJobStatus.Pending;
@@ -21,7 +22,7 @@ public class ScheduledAutomationJob
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
 
-    public virtual Business Business { get; set; } = null!;
-    public virtual Reservation Reservation { get; set; } = null!;
-    public virtual Agent Agent { get; set; } = null!;
+    public virtual Business? Business { get; set; }
+    public virtual Reservation? Reservation { get; set; }
+    public virtual Agent? Agent { get; set; }
 }

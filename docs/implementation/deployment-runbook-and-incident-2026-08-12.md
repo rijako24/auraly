@@ -52,6 +52,7 @@ El preflight exige, sin imprimir valores:
 - `ServiceBusConnection__clientId`;
 - los nombres de las colas operacional, contable, fiscal y reporting;
 - `Auraly__Fiscal__SecretProtectionKey` (Base64, 32 bytes);
+- `Auraly__Integrations__SecretProtectionKey` (Base64, 32 bytes; cifra las credenciales Wompi almacenadas por ambiente);
 - `Authentication__Jwt__Issuer`;
 - `Authentication__Jwt__Audience`;
 - `Authentication__Jwt__SigningKey` (mínimo 32 bytes);

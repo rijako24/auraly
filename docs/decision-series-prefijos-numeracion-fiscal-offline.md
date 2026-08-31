@@ -90,6 +90,18 @@ bloquea nuevas facturas electrónicas; nunca solicita otro bloque, inventa una
 serie ni toma la resolución de otra caja. El administrador debe asignar una nueva
 resolución completa conforme al procedimiento auditado.
 
+La asignación y descarga no dependen de que la sede ya haya activado producción.
+El paquete de aprovisionamiento lleva por separado la resolución exclusiva y el
+estado productivo del emisor. POS Edge conserva la resolución inmediatamente,
+pero solo la habilita para emitir cuando producción está activa. La prueba de
+habilitación es exclusivamente online, usa el `TestSetId` y la configuración de
+ambiente 2; nunca consume la resolución productiva preparada para una caja.
+Activar producción no exige que todas las cajas tengan resolución y publica una
+invalidación `FiscalProvisioning` para que las que ya la tienen habiliten su
+cursor. Una asignación posterior, incluso de reemplazo, publica la misma señal;
+la caja desactiva localmente la serie anterior y adopta la nueva sin borrar el
+histórico ni renumerar documentos emitidos.
+
 ### Consumo del número
 
 Un borrador no consume numeración. Al confirmar una venta, POS Edge ejecuta en
@@ -193,6 +205,10 @@ No se permite `MAX(numero) + 1`.
 - el equipo recibe exactamente los límites completos del rango DIAN;
 - reiniciar POS Edge conserva el cursor local sin reasignar la resolución;
 - repetir la consulta de aprovisionamiento no crea autorizaciones ni series.
+- una resolución asignada durante habilitación se descarga pero no queda
+  disponible para emitir hasta activar producción;
+- reemplazar la resolución publica una nueva invalidación y deja una sola serie
+  activa tanto en servidor como en POS Edge.
 
 ## Decisiones desplazadas
 

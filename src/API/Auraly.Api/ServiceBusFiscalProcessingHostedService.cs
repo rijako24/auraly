@@ -1,44 +1,11 @@
 using System.Text.Json;
 using Auraly.Application.Fiscal;
+using Auraly.Platform.Infrastructure.Processing;
 using Azure.Messaging.ServiceBus;
 
 namespace Auraly.Api;
 
 public sealed record FiscalProcessingServiceBusOptions(string QueueName);
-
-public sealed class ServiceBusFiscalProcessingPublisher(
-    ServiceBusClient client,
-    FiscalProcessingServiceBusOptions options)
-    : IFiscalProcessingSignalPublisher, IAsyncDisposable
-{
-    private readonly ServiceBusSender sender = client.CreateSender(options.QueueName);
-
-    public async Task PublishAsync(
-        FiscalProcessingSignal signal,
-        DateTimeOffset? scheduledEnqueueTime = null,
-        CancellationToken cancellationToken = default)
-    {
-        FiscalProcessingSignalCodec.Validate(signal);
-        var message = new ServiceBusMessage(BinaryData.FromString(
-            FiscalProcessingSignalCodec.Serialize(signal)))
-        {
-            MessageId = signal.SignalId.ToString("D"),
-            SessionId = signal.BusinessId.ToString("D"),
-            Subject = signal.Stage.ToString(),
-            ContentType = "application/json"
-        };
-        message.ApplicationProperties["documentId"] = signal.DocumentId.ToString("D");
-        if (scheduledEnqueueTime is null)
-            await sender.SendMessageAsync(message, cancellationToken);
-        else
-            await sender.ScheduleMessageAsync(
-                message,
-                scheduledEnqueueTime.Value,
-                cancellationToken);
-    }
-
-    public ValueTask DisposeAsync() => sender.DisposeAsync();
-}
 
 public sealed class FiscalProcessingHostedService(
     ServiceBusClient client,
@@ -193,28 +160,5 @@ public sealed class FiscalProcessingHostedService(
             args.EntityPath,
             args.ErrorSource);
         return Task.CompletedTask;
-    }
-}
-
-internal static class FiscalProcessingSignalCodec
-{
-    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
-
-    public static string Serialize(FiscalProcessingSignal signal) =>
-        JsonSerializer.Serialize(signal, Options);
-
-    public static FiscalProcessingSignal Deserialize(string value) =>
-        JsonSerializer.Deserialize<FiscalProcessingSignal>(value, Options)
-        ?? throw new InvalidOperationException("The fiscal-processing signal is invalid.");
-
-    public static void Validate(FiscalProcessingSignal signal)
-    {
-        ArgumentNullException.ThrowIfNull(signal);
-        if (signal.SignalId == Guid.Empty ||
-            signal.BusinessId == Guid.Empty ||
-            signal.DocumentId == Guid.Empty ||
-            !Enum.IsDefined(signal.Stage))
-            throw new InvalidOperationException(
-                "The fiscal-processing signal has invalid identifiers or stage.");
     }
 }

@@ -13,6 +13,12 @@ public static class PlatformPermissions
     public const string TenantUsersManage = "tenants.users.manage";
     public const string TenantDevicesRead = "tenants.devices.read";
     public const string TenantDevicesRevoke = "tenants.devices.revoke";
+    public const string TenantBillingPolicyManage = "tenants.billing.policy.manage";
+    public const string TenantBillingPaymentConfirmManual = "tenants.billing.payment.confirm_manual";
+
+    public static bool IsNonDelegable(string resource) =>
+        string.Equals(resource, TenantBillingPolicyManage, StringComparison.Ordinal)
+        || string.Equals(resource, TenantBillingPaymentConfirmManual, StringComparison.Ordinal);
 
     public static bool IsPlatformPermission(string resource) =>
         resource.StartsWith("tenants.", StringComparison.Ordinal)

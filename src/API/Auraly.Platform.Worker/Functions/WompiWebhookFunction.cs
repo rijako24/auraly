@@ -6,6 +6,7 @@ using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
 using Auraly.Platform.Application.Configuration;
 using Auraly.Platform.Application.Services;
+using Auraly.Platform.Domain.Repositories;
 
 namespace Auraly.Platform.Worker.Functions;
 
@@ -21,6 +22,7 @@ public class WompiWebhookFunction
     private readonly IPaymentConfirmationHandler _paymentHandler;
     private readonly IWompiWebhookSignatureValidator _signatureValidator;
     private readonly IIntegrationsConfigProvider _integrationsProvider;
+    private readonly IUnitOfWork _unitOfWork;
     private readonly ILogger<WompiWebhookFunction> _logger;
 
     public WompiWebhookFunction(
@@ -28,12 +30,14 @@ public class WompiWebhookFunction
         IPaymentConfirmationHandler paymentHandler,
         IWompiWebhookSignatureValidator signatureValidator,
         IIntegrationsConfigProvider integrationsProvider,
+        IUnitOfWork unitOfWork,
         ILogger<WompiWebhookFunction> logger)
     {
         _paymentLinkService = paymentLinkService;
         _paymentHandler = paymentHandler;
         _signatureValidator = signatureValidator;
         _integrationsProvider = integrationsProvider;
+        _unitOfWork = unitOfWork;
         _logger = logger;
     }
 
@@ -50,18 +54,46 @@ public class WompiWebhookFunction
                 return req.CreateResponse(HttpStatusCode.BadRequest);
             }
 
-            var integrations = await _integrationsProvider.GetAsync(businessId);
-            var wompi = integrations?.Wompi;
-            if (wompi == null || string.IsNullOrWhiteSpace(wompi.EventsSecret))
-            {
-                _logger.LogWarning("Webhook Wompi: Wompi no configurado o EventsSecret vacío para BusinessId={BusinessId}", businessId);
-                return req.CreateResponse(HttpStatusCode.Unauthorized);
-            }
-
             var requestBody = await new StreamReader(req.Body).ReadToEndAsync();
 
             using var doc = JsonDocument.Parse(requestBody);
             var root = doc.RootElement;
+
+            if (!root.TryGetProperty("data", out var data) || !data.TryGetProperty("transaction", out var tx))
+            {
+                _logger.LogWarning("Webhook Wompi: estructura inválida (falta data.transaction)");
+                return req.CreateResponse(HttpStatusCode.BadRequest);
+            }
+
+            var untrustedReference = tx.TryGetProperty("payment_link_id", out var paymentLinkElement)
+                ? paymentLinkElement.GetString()
+                : null;
+            if (string.IsNullOrWhiteSpace(untrustedReference)
+                && tx.TryGetProperty("reference", out var referenceElement))
+                untrustedReference = referenceElement.GetString();
+            if (string.IsNullOrWhiteSpace(untrustedReference))
+                return req.CreateResponse(HttpStatusCode.BadRequest);
+
+            var payment = await _unitOfWork.PaymentTransactions
+                .GetByPaymentReferenceIdAsync(untrustedReference, CancellationToken.None);
+            if (payment is null || payment.BusinessId != businessId)
+            {
+                _logger.LogWarning("Webhook Wompi: la referencia no pertenece al comercio indicado");
+                return req.CreateResponse(HttpStatusCode.Unauthorized);
+            }
+
+            var wompi = await _integrationsProvider.GetWompiAsync(
+                businessId,
+                payment.MerchantConfigurationVersion,
+                CancellationToken.None);
+            if (wompi == null || string.IsNullOrWhiteSpace(wompi.EventsSecret))
+            {
+                _logger.LogWarning(
+                    "Webhook Wompi: no existe la versión de comercio BusinessId={BusinessId} Version={Version}",
+                    businessId,
+                    payment.MerchantConfigurationVersion);
+                return req.CreateResponse(HttpStatusCode.Unauthorized);
+            }
 
             if (!_signatureValidator.Validate(root, wompi.EventsSecret))
             {
@@ -74,12 +106,6 @@ public class WompiWebhookFunction
             {
                 _logger.LogDebug("Webhook Wompi: evento ignorado {Event}", eventType);
                 return req.CreateResponse(HttpStatusCode.OK);
-            }
-
-            if (!root.TryGetProperty("data", out var data) || !data.TryGetProperty("transaction", out var tx))
-            {
-                _logger.LogWarning("Webhook Wompi: estructura inválida (falta data.transaction)");
-                return req.CreateResponse(HttpStatusCode.BadRequest);
             }
 
             var status = tx.TryGetProperty("status", out var statusEl) ? statusEl.GetString() : null;
@@ -96,17 +122,26 @@ public class WompiWebhookFunction
                 return req.CreateResponse(HttpStatusCode.BadRequest);
             }
 
-            var verified = await _paymentLinkService.VerifyTransactionAsync(transactionId, businessId, CancellationToken.None);
+            var verified = await _paymentLinkService.VerifyTransactionAsync(
+                transactionId,
+                businessId,
+                CancellationToken.None,
+                payment.MerchantConfigurationVersion);
             if (!verified.IsApproved)
             {
                 _logger.LogWarning("Webhook Wompi: verificación API falló TxId={TxId} Error={Error}", transactionId, verified.ErrorMessage);
                 return req.CreateResponse(HttpStatusCode.OK);
             }
 
-            var paymentReferenceId = verified.PaymentLinkId;
+            // Payment links expose payment_link_id, while the embedded widget
+            // correlates the transaction through reference. Both are server-
+            // verified above and converge on the same idempotent confirmation.
+            var paymentReferenceId = !string.IsNullOrWhiteSpace(verified.PaymentLinkId)
+                ? verified.PaymentLinkId
+                : verified.Reference;
             if (string.IsNullOrWhiteSpace(paymentReferenceId))
             {
-                _logger.LogWarning("Webhook Wompi: transacción verificada sin payment_link_id TxId={TxId}", transactionId);
+                _logger.LogWarning("Webhook Wompi: transacción verificada sin payment_link_id ni reference TxId={TxId}", transactionId);
                 return req.CreateResponse(HttpStatusCode.BadRequest);
             }
 

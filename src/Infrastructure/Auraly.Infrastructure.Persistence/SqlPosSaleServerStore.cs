@@ -202,9 +202,19 @@ public sealed class SqlPosSaleServerStore(
             }
 
             var isFiscal = request.FiscalSnapshot is not null;
+            var hasDianQuota = !isFiscal || !command.Verification.IsVerified ||
+                await SqlDianDocumentQuota.TryReserveAsync(connection, transaction,
+                    request.BusinessId, request.DocumentId, "Invoice", command.ReceivedAt,
+                    cancellationToken);
+            if (isFiscal && command.Verification.IsVerified && !hasDianQuota
+                && request.SourceMode == SaleSourceModes.Online)
+                throw new InvalidOperationException(
+                    "No hay cupo de documentos DIAN. Cambia manualmente a comprobante o compra un paquete antes de emitir la factura electrónica.");
             var processingStatus = command.Verification.IsVerified ? "Received" : "Blocked";
             string? fiscalStatus = !isFiscal ? null : command.Verification.IsVerified
-                ? PosSaleRemoteStatuses.FiscalVerified
+                ? hasDianQuota
+                    ? PosSaleRemoteStatuses.FiscalVerified
+                    : FiscalDocumentStatusCodes.BlockedByQuota
                 : PosSaleRemoteStatuses.FiscalIntegrityConflict;
             await InsertDocumentAsync(
                 connection,
@@ -223,9 +233,11 @@ public sealed class SqlPosSaleServerStore(
                     fiscalStatus!, cancellationToken);
                 await InsertFiscalProcessAsync(
                     connection, transaction, command,
-                    command.Verification.IsVerified
+                    command.Verification.IsVerified && hasDianQuota
                         ? FiscalDocumentStatusCodes.PendingGeneration
-                        : FiscalDocumentStatusCodes.FiscalIntegrityConflict,
+                        : command.Verification.IsVerified
+                            ? FiscalDocumentStatusCodes.BlockedByQuota
+                            : FiscalDocumentStatusCodes.FiscalIntegrityConflict,
                     cancellationToken);
             }
 
@@ -440,12 +452,13 @@ public sealed class SqlPosSaleServerStore(
             INSERT INTO dbo.FiscalDocumentProcesses
             (
                 DocumentId, BusinessId, FiscalIssuerConfigurationId, Status,
-                AttemptCount, CreatedAt, UpdatedAt
+                AttemptCount, QuotaBlockedAt, CreatedAt, UpdatedAt
             )
             VALUES
             (
                 @DocumentId, @BusinessId, @FiscalIssuerConfigurationId, @Status,
-                0, @CreatedAt, @CreatedAt
+                0, CASE WHEN @Status=@BlockedByQuota THEN @CreatedAt END,
+                @CreatedAt, @CreatedAt
             );
             """;
         await using var sqlCommand = new SqlCommand(sql, connection, transaction);
@@ -455,6 +468,7 @@ public sealed class SqlPosSaleServerStore(
             "@FiscalIssuerConfigurationId",
             (object?)command.Request.UblSnapshot?.FiscalIssuerConfigurationId ?? DBNull.Value);
         sqlCommand.Parameters.AddWithValue("@Status", status);
+        sqlCommand.Parameters.AddWithValue("@BlockedByQuota", FiscalDocumentStatusCodes.BlockedByQuota);
         sqlCommand.Parameters.AddWithValue("@CreatedAt", command.ReceivedAt);
         await sqlCommand.ExecuteNonQueryAsync(cancellationToken);
     }

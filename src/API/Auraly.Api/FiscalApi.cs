@@ -22,11 +22,13 @@ public static class FiscalApi
             string? status, string? auralyNumber, string? dianNumber,
             string? uniqueCode, string? cufe,
             Guid? deviceId, DateTimeOffset? issuedFrom, DateTimeOffset? issuedTo,
+            bool? quotaOnly,
             CancellationToken ct) =>
             await Handle(async () => Results.Ok(await service.PageAsync(
                 context.User.ToFiscalUserIdentity(),
                 new FiscalDocumentQuery(page ?? 1, pageSize ?? 50, status, auralyNumber,
-                    dianNumber, uniqueCode ?? cufe, deviceId, issuedFrom, issuedTo), ct))));
+                    dianNumber, uniqueCode ?? cufe, deviceId, issuedFrom, issuedTo,
+                    quotaOnly ?? false), ct))));
         group.MapPost("/{documentId:guid}/retry", async (
             HttpContext context, FiscalDocumentService service, Guid documentId, CancellationToken ct) =>
             await Handle(async () =>

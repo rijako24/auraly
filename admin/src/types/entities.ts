@@ -273,8 +273,15 @@ export interface WompiIntegration {
   hasPublicKey: boolean;
   hasEventsSecret: boolean;
   hasIntegritySecret: boolean;
+  testCredentials: WompiEnvironmentCredentials;
+  productionCredentials: WompiEnvironmentCredentials;
   lastError: string | null;
   lastSyncAt: string | null;
+}
+
+export interface WompiEnvironmentCredentials {
+  hasPrivateKey: boolean; hasPublicKey: boolean; hasEventsSecret: boolean;
+  hasIntegritySecret: boolean; isComplete: boolean;
 }
 
 export interface MantisIntegration {

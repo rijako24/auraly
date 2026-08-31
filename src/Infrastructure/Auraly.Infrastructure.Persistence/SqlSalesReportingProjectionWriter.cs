@@ -23,6 +23,74 @@ public sealed class SqlSalesReportingProjectionWriter(
 {
     private const short ProjectionVersion = 2;
 
+    public async Task ProjectServiceInvoiceAsync(
+        SalesReportingSqlSession session,
+        ServiceInvoiceSnapshot value,
+        CancellationToken cancellationToken)
+    {
+        if (value.Lines.Count == 0 || value.DocumentId == Guid.Empty ||
+            value.CommercialSnapshot.DocumentType != ServiceInvoiceDocumentTypes.ServiceInvoice)
+            throw new InvalidOperationException("The service invoice reporting source is invalid.");
+        var localDate = await ResolveLocalDateAsync(
+            session, value.BusinessId, value.CommercialSnapshot.IssuedAt, cancellationToken);
+        var now = timeProvider.GetUtcNow();
+        var discount = value.Lines.Sum(line => line.DiscountAmount);
+        await using (var header = new SqlCommand("""
+            INSERT reporting.ServiceInvoiceFacts
+              (DocumentId,TenantId,BusinessId,CustomerId,DocumentNumber,FiscalNumber,
+               IssuedAt,BusinessLocalDate,CurrencyCode,UntaxedAmount,DiscountAmount,
+               TaxAmount,TotalAmount,SourcePayloadHash,ProjectionVersion,ProjectedAt)
+            VALUES(@DocumentId,@TenantId,@BusinessId,@CustomerId,@DocumentNumber,@FiscalNumber,
+               @IssuedAt,@LocalDate,@Currency,@Untaxed,@Discount,@Tax,@Total,@Hash,@Version,@Now);
+            """, session.Connection, session.Transaction))
+        {
+            header.Parameters.AddWithValue("@DocumentId", value.DocumentId);
+            header.Parameters.AddWithValue("@TenantId", value.TenantId);
+            header.Parameters.AddWithValue("@BusinessId", value.BusinessId);
+            header.Parameters.AddWithValue("@CustomerId", value.CustomerId);
+            header.Parameters.AddWithValue("@DocumentNumber", value.DocumentNumber.FullNumber);
+            header.Parameters.AddWithValue("@FiscalNumber", value.FiscalSnapshot.FiscalNumber);
+            header.Parameters.AddWithValue("@IssuedAt", value.CommercialSnapshot.IssuedAt);
+            header.Parameters.Add("@LocalDate", SqlDbType.Date).Value = localDate.Date.ToDateTime(TimeOnly.MinValue);
+            header.Parameters.AddWithValue("@Currency", value.UblSnapshot.CurrencyCode);
+            AddDecimal(header, "@Untaxed", value.CommercialSnapshot.UntaxedAmount, 19, 4);
+            AddDecimal(header, "@Discount", discount, 19, 4);
+            AddDecimal(header, "@Tax", value.CommercialSnapshot.TaxAmount, 19, 4);
+            AddDecimal(header, "@Total", value.CommercialSnapshot.PayableAmount, 19, 4);
+            header.Parameters.Add("@Hash", SqlDbType.Binary, 32).Value = ServiceInvoiceSnapshotSerializer.Hash(value);
+            header.Parameters.AddWithValue("@Version", ProjectionVersion);
+            header.Parameters.AddWithValue("@Now", now);
+            await header.ExecuteNonQueryAsync(cancellationToken);
+        }
+        foreach (var line in value.Lines.OrderBy(line => line.LineNumber))
+        {
+            await using var detail = new SqlCommand("""
+                INSERT reporting.ServiceInvoiceLineFacts
+                  (DocumentId,LineNumber,TenantId,BusinessId,CustomerId,BillableServiceId,
+                   ServiceCode,Description,Quantity,UntaxedAmount,DiscountAmount,TaxAmount,
+                   TotalAmount,BusinessLocalDate,ProjectedAt)
+                VALUES(@DocumentId,@Line,@TenantId,@BusinessId,@CustomerId,@ServiceId,
+                   @Code,@Description,@Quantity,@Untaxed,@Discount,@Tax,@Total,@LocalDate,@Now);
+                """, session.Connection, session.Transaction);
+            detail.Parameters.AddWithValue("@DocumentId", value.DocumentId);
+            detail.Parameters.AddWithValue("@Line", line.LineNumber);
+            detail.Parameters.AddWithValue("@TenantId", value.TenantId);
+            detail.Parameters.AddWithValue("@BusinessId", value.BusinessId);
+            detail.Parameters.AddWithValue("@CustomerId", value.CustomerId);
+            detail.Parameters.AddWithValue("@ServiceId", line.BillableServiceId);
+            detail.Parameters.AddWithValue("@Code", line.ServiceCode);
+            detail.Parameters.AddWithValue("@Description", line.Description);
+            AddDecimal(detail, "@Quantity", line.Quantity, 19, 6);
+            AddDecimal(detail, "@Untaxed", line.UntaxedAmount, 19, 4);
+            AddDecimal(detail, "@Discount", line.DiscountAmount, 19, 4);
+            AddDecimal(detail, "@Tax", line.TaxAmount, 19, 4);
+            AddDecimal(detail, "@Total", line.LineTotal, 19, 4);
+            detail.Parameters.Add("@LocalDate", SqlDbType.Date).Value = localDate.Date.ToDateTime(TimeOnly.MinValue);
+            detail.Parameters.AddWithValue("@Now", now);
+            await detail.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
     public async Task ProjectOrderAsync(SalesReportingSqlSession session,string payload,long sourceVersion,CancellationToken ct)
     {
         var v=JsonSerializer.Deserialize<CommercialOrderProjectionSource>(payload,new JsonSerializerOptions(JsonSerializerDefaults.Web))

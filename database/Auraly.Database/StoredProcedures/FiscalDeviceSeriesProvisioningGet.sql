@@ -26,7 +26,12 @@ BEGIN
            a.SupplierTaxId,a.TechnicalKeyVersion,a.QrValidationUrl,
            a.AuthorizedRangeStart,a.AuthorizedRangeEnd,
            COALESCE(alerts.ExpirationWarningDays,3),
-           COALESCE(alerts.RemainingNumberWarningThreshold,100)
+           COALESCE(alerts.RemainingNumberWarningThreshold,100),
+           CONVERT(bit,CASE WHEN EXISTS(
+               SELECT 1 FROM dbo.FiscalIssuerConfigurations configuration
+               WHERE configuration.BusinessId=@BusinessId
+                 AND configuration.Environment=1 AND configuration.IsActive=1
+           ) THEN 1 ELSE 0 END)
     FROM dbo.FiscalSeries s
     JOIN dbo.FiscalAuthorizations a ON a.FiscalAuthorizationId=s.FiscalAuthorizationId
     LEFT JOIN fiscal.FiscalResolutionAlertSettings alerts

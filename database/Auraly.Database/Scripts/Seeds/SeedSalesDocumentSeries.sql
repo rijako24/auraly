@@ -7,7 +7,8 @@ DECLARE @SalesDocumentSeries TABLE(
   Prefix NVARCHAR(8) NOT NULL);
 
 INSERT @SalesDocumentSeries(DocumentType,Prefix)
-VALUES (N'SalesInvoice',N'VTA'),(N'SalesReceipt',N'CVI'),(N'SalesDebitNote',N'NDB');
+VALUES (N'SalesInvoice',N'VTA'),(N'ServiceInvoice',N'FSV'),
+       (N'SalesReceipt',N'CVI'),(N'SalesDebitNote',N'NDB');
 
 INSERT dbo.DocumentSeries(
   DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,SeriesCode,

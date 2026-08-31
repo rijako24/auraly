@@ -6,6 +6,7 @@ public sealed class AccountingProcessingPolicyTests
 {
     [Theory]
     [InlineData("SalesInvoice")]
+    [InlineData("ServiceInvoice")]
     [InlineData("SalesReceipt")]
     [InlineData("SalesReturn")]
     [InlineData("GoodsReceipt")]

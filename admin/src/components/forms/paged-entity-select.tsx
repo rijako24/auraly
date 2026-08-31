@@ -34,6 +34,7 @@ export function PagedEntitySelect<T>({
   searchPlaceholder = "Buscar por nombre o identificación…",
   emptyMessage = "No hay resultados.",
   disabled = false,
+  preload = false,
   pageSize = 30,
   className,
 }: {
@@ -49,6 +50,7 @@ export function PagedEntitySelect<T>({
   searchPlaceholder?: string;
   emptyMessage?: string;
   disabled?: boolean;
+  preload?: boolean;
   pageSize?: number;
   className?: string;
 }) {
@@ -65,7 +67,8 @@ export function PagedEntitySelect<T>({
     queryFn: ({ pageParam }) => loadPage(debouncedSearch, pageParam, pageSize),
     initialPageParam: 1,
     getNextPageParam: page => page.page < page.totalPages ? page.page + 1 : undefined,
-    enabled: open && !disabled,
+    enabled: (open || preload) && !disabled,
+    staleTime: 5 * 60 * 1000,
   });
   const entries = useMemo(() => {
     const values = new Map<string, { option: PagedEntityOption; item?: T }>();

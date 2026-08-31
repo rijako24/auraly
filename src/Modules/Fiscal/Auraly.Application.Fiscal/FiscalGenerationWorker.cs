@@ -26,7 +26,8 @@ public sealed record FiscalGenerationWorkItem(
     SalesDebitNoteFiscalSnapshot? DebitNote,
     FiscalIssuerWorkConfiguration Issuer, FiscalAuthorizationWorkConfiguration? Authorization,
     PurchaseSupportFiscalSnapshot? SupportDocument = null,
-    ElectronicPayrollSnapshot? ElectronicPayroll = null);
+    ElectronicPayrollSnapshot? ElectronicPayroll = null,
+    ServiceInvoiceSnapshot? ServiceInvoice = null);
 
 public sealed record FiscalGeneratedArtifacts(
     byte[] UnsignedXml, string UnsignedSha256Hex, byte[] SignedXml, string SignedSha256Hex,
@@ -210,13 +211,92 @@ public sealed class FiscalGenerationWorker(
             sale.FiscalSnapshot.PayableAmount, sale.FiscalSnapshot.QrPayload);
     }
 
+    private async Task<DianInvoice> MapServiceInvoiceAsync(
+        FiscalGenerationWorkItem work,
+        CancellationToken cancellationToken)
+    {
+        var invoice = work.ServiceInvoice
+            ?? throw new FiscalSnapshotDataException("The service invoice fiscal payload is missing.");
+        var snapshot = invoice.FiscalSnapshot;
+        var ubl = invoice.UblSnapshot;
+        if (invoice.DocumentId != work.DocumentId || invoice.BusinessId != work.BusinessId ||
+            snapshot.FiscalNumber != work.FiscalNumber ||
+            ubl.FiscalIssuerConfigurationId != work.Issuer.Id ||
+            ubl.Customer.Identification != snapshot.CustomerIdentification ||
+            ubl.Supplier.Identification != snapshot.SupplierTaxId ||
+            ubl.Supplier.Identification != work.Issuer.SupplierTaxId ||
+            ubl.Lines.Count != invoice.Lines.Count || work.Issuer.Environment != snapshot.Environment)
+            throw new FiscalSnapshotDataException("The service invoice differs from its durable fiscal root.");
+        if (work.Authorization is null)
+            throw new FiscalSnapshotDataException(
+                "The service invoice fiscal authorization could not be loaded.");
+        if (ubl.Authorization.Number != snapshot.AuthorizationNumber ||
+            work.Authorization.Number != ubl.Authorization.Number)
+            throw new FiscalSnapshotDataException(
+                "The service invoice authorization number is inconsistent.");
+        if (ubl.Authorization.Prefix != snapshot.Prefix ||
+            work.Authorization.Prefix != ubl.Authorization.Prefix)
+            throw new FiscalSnapshotDataException(
+                "The service invoice authorization prefix is inconsistent.");
+        if (work.Authorization.ValidFrom != ubl.Authorization.ValidFrom ||
+            work.Authorization.ValidUntil != ubl.Authorization.ValidUntil)
+            throw new FiscalSnapshotDataException(
+                "The service invoice authorization validity is inconsistent.");
+        if (work.Authorization.RangeStart != ubl.Authorization.RangeStart ||
+            work.Authorization.RangeEnd != ubl.Authorization.RangeEnd)
+            throw new FiscalSnapshotDataException(
+                "The service invoice authorization range is inconsistent.");
+        if (ubl.SoftwareIdentificationCode != work.Issuer.SoftwareId)
+            throw new FiscalSnapshotDataException(
+                "The service invoice software identification is inconsistent.");
+
+        var pin = await pins.ResolveAsync(work.BusinessId,
+            work.Issuer.SoftwarePinSecretReference, cancellationToken);
+        if (string.IsNullOrWhiteSpace(pin))
+            throw new FiscalSnapshotDataException("The software PIN secret could not be resolved.");
+        var metadata = ubl.Lines.ToDictionary(line => line.LineNumber);
+        var lines = invoice.Lines.OrderBy(line => line.LineNumber).Select(line =>
+        {
+            if (!metadata.TryGetValue(line.LineNumber, out var item) ||
+                item.TaxPercent != line.TaxRate)
+                throw new FiscalSnapshotDataException(
+                    $"UBL metadata differs from service line {line.LineNumber}.");
+            return new DianInvoiceLine(line.LineNumber, line.ServiceCode, "999",
+                line.Description, line.UnitCode, line.Quantity, line.UnitPrice,
+                line.DiscountAmount, line.UntaxedAmount,
+                [new DianTax(line.TaxCode, line.TaxName, line.UntaxedAmount,
+                    line.TaxAmount, line.TaxRate)]);
+        }).ToArray();
+        var taxes = lines.SelectMany(line => line.Taxes)
+            .GroupBy(tax => new { tax.Code, tax.Name, tax.Percent })
+            .OrderBy(group => group.Key.Code, StringComparer.Ordinal)
+            .Select(group => new DianTax(group.Key.Code, group.Key.Name,
+                group.Sum(tax => tax.TaxableAmount), group.Sum(tax => tax.Amount),
+                group.Key.Percent)).ToArray();
+
+        return new DianInvoice(snapshot.FiscalNumber, snapshot.Cufe, snapshot.IssuedAt,
+            ubl.CurrencyCode, ubl.InvoiceTypeCode, snapshot.Environment,
+            new DianAuthorization(ubl.Authorization.Number, ubl.Authorization.ValidFrom,
+                ubl.Authorization.ValidUntil, ubl.Authorization.Prefix,
+                ubl.Authorization.RangeStart, ubl.Authorization.RangeEnd),
+            new DianSoftware(ubl.Supplier.Identification, ubl.Supplier.CheckDigit,
+                ubl.SoftwareIdentificationCode, pin), Party(ubl.Supplier), Party(ubl.Customer),
+            lines, taxes, new DianPayment(ubl.PaymentFormCode, ubl.PaymentMeansCode,
+                ubl.DueDate, ubl.PaymentReference), snapshot.UntaxedAmount,
+            snapshot.UntaxedAmount, snapshot.PayableAmount,
+            invoice.Lines.Sum(line => line.DiscountAmount), snapshot.PayableAmount,
+            snapshot.QrPayload);
+    }
+
     private async Task<FiscalUblBuildResult> BuildAsync(
         FiscalGenerationWorkItem work,
         CancellationToken cancellationToken)
     {
         if (work.FiscalDocumentType == FiscalDocumentTypeCodes.Invoice)
         {
-            var invoice = await MapInvoiceAsync(work, cancellationToken);
+            var invoice = work.ServiceInvoice is null
+                ? await MapInvoiceAsync(work, cancellationToken)
+                : await MapServiceInvoiceAsync(work, cancellationToken);
             return new FiscalUblBuildResult(
                 builder.Build(invoice), invoice.Cufe, invoice.QrPayload);
         }

@@ -21,6 +21,7 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
     private readonly IEventNotificationDispatcher _notificationDispatcher;
     private readonly IExternalEscalationService _externalEscalations;
     private readonly IPaidCheckoutFulfillmentRegistry _fulfillmentRegistry;
+    private readonly INonConversationalPaidCheckoutRegistry _nonConversationalFulfillmentRegistry;
     private readonly ILogger<PaymentConfirmationHandler> _logger;
 
     public PaymentConfirmationHandler(
@@ -34,6 +35,7 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         IEventNotificationDispatcher notificationDispatcher,
         IExternalEscalationService externalEscalations,
         IPaidCheckoutFulfillmentRegistry fulfillmentRegistry,
+        INonConversationalPaidCheckoutRegistry nonConversationalFulfillmentRegistry,
         ILogger<PaymentConfirmationHandler> logger)
     {
         _unitOfWork = unitOfWork;
@@ -46,6 +48,7 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         _notificationDispatcher = notificationDispatcher;
         _externalEscalations = externalEscalations;
         _fulfillmentRegistry = fulfillmentRegistry;
+        _nonConversationalFulfillmentRegistry = nonConversationalFulfillmentRegistry;
         _logger = logger;
     }
 
@@ -61,6 +64,8 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         PaymentTransaction? fulfilledPayment = null;
         AgentConfig? fulfilledConfig = null;
         PaidCheckoutFulfillmentResult? fulfilledResult = null;
+        PaymentTransaction? nonConversationalPayment = null;
+        INonConversationalPaidCheckoutHandler? nonConversationalHandler = null;
 
         await _unitOfWork.ExecuteInTransactionAsync(async () =>
         {
@@ -74,13 +79,16 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
                 return;
             }
 
-            var fulfillment = _fulfillmentRegistry.Resolve(payment.CheckoutKind);
-            if (payment.Status == PaymentTransactionStatus.Confirmed
-                && await fulfillment.IsFulfilledAsync(payment, ct))
+            if (payment.ConversationId is null)
             {
-                _logger.LogInformation("Webhook: pago ya procesado Ref={Ref}", paymentReferenceId);
-                outcome = PaymentConfirmationOutcome.Ok();
-                return;
+                nonConversationalHandler = _nonConversationalFulfillmentRegistry.Resolve(payment.CheckoutKind);
+                if (payment.Status == PaymentTransactionStatus.Confirmed
+                    && await nonConversationalHandler.IsFulfilledAsync(payment, ct))
+                {
+                    _logger.LogInformation("Webhook: pago no conversacional ya procesado Ref={Ref}", paymentReferenceId);
+                    outcome = PaymentConfirmationOutcome.Ok();
+                    return;
+                }
             }
 
             if (payment.Status is PaymentTransactionStatus.Superseded
@@ -107,6 +115,25 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
                 return;
             }
 
+            if (payment.ConversationId is null)
+            {
+                if (payment.Status != PaymentTransactionStatus.Confirmed)
+                    await _paymentLifecycle.MarkConfirmedAsync(payment, providerTransactionId, webhookPayload, ct, sourceOverride);
+                nonConversationalPayment = payment;
+                outcome = PaymentConfirmationOutcome.Ok();
+                return;
+            }
+
+            var conversationId = payment.ConversationId.Value;
+            var fulfillment = _fulfillmentRegistry.Resolve(payment.CheckoutKind);
+            if (payment.Status == PaymentTransactionStatus.Confirmed
+                && await fulfillment.IsFulfilledAsync(payment, ct))
+            {
+                _logger.LogInformation("Webhook: pago ya procesado Ref={Ref}", paymentReferenceId);
+                outcome = PaymentConfirmationOutcome.Ok();
+                return;
+            }
+
             var config = await _activeAgentConfig.GetActiveConfigAsync(payment.BusinessId, ct);
             if (config is null)
             {
@@ -117,7 +144,7 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
                 return;
             }
 
-            var state = await _stateManager.GetStateByConversationIdAsync(payment.ConversationId, ct);
+            var state = await _stateManager.GetStateByConversationIdAsync(conversationId, ct);
             if (state is null)
             {
                 _logger.LogWarning("Webhook: agent state not found ConvId={ConvId}", payment.ConversationId);
@@ -143,8 +170,8 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
             var result = await fulfillment.FulfillAsync(payment, state, config, ct);
 
             state.ConsecutiveDegradedTurns = 0;
-            await CompleteRequestContextAsync(payment.BusinessId, payment.ConversationId, config, state, result.CompletionReason, ct);
-            await _stateManager.SaveStateAsync(payment.ConversationId, state, ct);
+            await CompleteRequestContextAsync(payment.BusinessId, conversationId, config, state, result.CompletionReason, ct);
+            await _stateManager.SaveStateAsync(conversationId, state, ct);
 
             fulfilledPayment = payment;
             fulfilledConfig = config;
@@ -152,6 +179,13 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
 
             outcome = PaymentConfirmationOutcome.Ok();
         }, ct);
+
+        if (outcome?.Success == true && nonConversationalPayment is not null
+            && nonConversationalHandler is not null)
+        {
+            await nonConversationalHandler.FulfillAsync(nonConversationalPayment, ct);
+            return new PaymentConfirmationResult(true, null);
+        }
 
         if (outcome?.Success == true && fulfilledPayment is not null && fulfilledConfig is not null && fulfilledResult is not null)
         {
@@ -186,11 +220,14 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
 
         if (result.NotifyAdmin)
         {
+            if (payment.ConversationId is not Guid conversationId)
+                throw new InvalidOperationException("A conversational notification requires a conversation id.");
+
             var notificationCustom = new Dictionary<string, string>(
                 result.CustomPayload,
                 StringComparer.OrdinalIgnoreCase)
             {
-                ["source_conversation_id"] = payment.ConversationId.ToString()
+                ["source_conversation_id"] = conversationId.ToString()
             };
             await _notificationDispatcher.SendEventAsync(
                 payment.BusinessId, config, result.EventName, notificationCustom, ct);
@@ -212,7 +249,10 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
         PaidCheckoutFulfillmentResult result,
         CancellationToken ct)
     {
-        var conversation = await _unitOfWork.Conversations.GetByIdAsync(payment.ConversationId);
+        if (payment.ConversationId is not Guid conversationId)
+            throw new InvalidOperationException("A customer message sequence requires a conversation id.");
+
+        var conversation = await _unitOfWork.Conversations.GetByIdAsync(conversationId);
         var phone = !string.IsNullOrWhiteSpace(conversation?.UserNumber)
             ? conversation.UserNumber.Trim()
             : result.CustomerPhone?.Trim();
@@ -260,7 +300,7 @@ public class PaymentConfirmationHandler : IPaymentConfirmationHandler
             payment.BusinessId,
             phone,
             messages,
-            payment.ConversationId,
+            conversationId,
             ct);
     }
 

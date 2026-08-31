@@ -72,6 +72,10 @@ public sealed class SqlSalesReportingProcessor(
                     await projectionWriter.ProjectSaleAsync(
                         session, PosSaleContractSerializer.Deserialize(source.Payload),
                         cancellationToken);
+                else if (documentType == ServiceInvoiceDocumentTypes.ServiceInvoice)
+                    await projectionWriter.ProjectServiceInvoiceAsync(
+                        session, ServiceInvoiceSnapshotSerializer.Deserialize(source.Payload),
+                        cancellationToken);
                 else
                 if (documentType == "SalesReturn")
                     await projectionWriter.ProjectReturnAsync(session,

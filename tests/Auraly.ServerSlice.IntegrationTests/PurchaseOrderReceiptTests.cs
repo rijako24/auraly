@@ -150,7 +150,9 @@ public sealed class PurchaseOrderReceiptTests(ServerSliceFixture fixture)
             "/api/commerce/v1/purchase-orders/confirm") { Content = JsonContent.Create(request) };
         message.Headers.Add("Idempotency-Key", $"purchase-order-{request.PurchaseOrderId:N}");
         using var response = await client.SendAsync(message);
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var responseBody = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.Created,
+            $"Expected Created, got {response.StatusCode}: {responseBody}");
         return await response.Content.ReadFromJsonAsync<PurchaseOrderConfirmation>()
             ?? throw new InvalidOperationException("The purchase order response was empty.");
     }

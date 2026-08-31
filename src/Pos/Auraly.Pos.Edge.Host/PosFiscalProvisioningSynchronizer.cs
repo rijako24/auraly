@@ -45,7 +45,8 @@ internal sealed class PosFiscalProvisioningSynchronizer(
             active.FiscalAuthorizationId, active.ValidFrom,
             active.AuthorizationRangeStart, active.AuthorizationRangeEnd,
             active.ExpirationWarningDays,
-            active.RemainingNumberWarningThreshold);
+            active.RemainingNumberWarningThreshold,
+            active.ProductionActive);
         await sales.ProvisionSeriesAsync(activeEdge, cancellationToken);
         settings.Replace(new PosFiscalHostSettings(
             active.SupplierTaxId,
@@ -67,7 +68,8 @@ internal sealed class PosFiscalProvisioningSynchronizer(
                     active.ValidFrom, active.AuthorizationRangeStart,
                     active.AuthorizationRangeEnd,
                     active.ExpirationWarningDays,
-                    active.RemainingNumberWarningThreshold)
+                    active.RemainingNumberWarningThreshold,
+                    active.ProductionActive)
             });
         }
     }

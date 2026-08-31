@@ -165,7 +165,8 @@ public sealed class ReservationAutomationProcess : ITimedProcess
 
     private async Task SendJobAsync(ScheduledAutomationJob job, CancellationToken ct)
     {
-        var reservation = job.Reservation;
+        var reservation = job.Reservation ?? throw new InvalidOperationException(
+            "El trabajo programado de reserva no tiene una reserva asociada.");
         if (reservation.Status != ReservationStatus.Confirmed || !reservation.ReservationDateTime.HasValue)
         {
             await MarkSkippedAsync(job, "Reservation is no longer confirmed.", ct);
@@ -185,8 +186,8 @@ public sealed class ReservationAutomationProcess : ITimedProcess
             return;
         }
 
-        var config = await _configProvider.GetConfigAsync(job.AgentId, ct);
-        var clock = await _businessClock.GetSnapshotAsync(job.BusinessId, ct);
+        var config = await _configProvider.GetConfigAsync(job.AgentId!.Value, ct);
+        var clock = await _businessClock.GetSnapshotAsync(job.BusinessId!.Value, ct);
         if (!IsJobStillEligible(job, reservation.ReservationDateTime.Value, config, clock.TimeZone, clock.Now.UtcDateTime, out var skipReason, out var deferUntilUtc))
         {
             if (deferUntilUtc.HasValue)
@@ -207,7 +208,7 @@ public sealed class ReservationAutomationProcess : ITimedProcess
         }
 
         var messages = await _sequenceResolver.ResolveAsync(
-            job.BusinessId,
+            job.BusinessId!.Value,
             payload.SequenceName,
             config.MessageSequences,
             new MessageSequenceContext
@@ -227,7 +228,7 @@ public sealed class ReservationAutomationProcess : ITimedProcess
             return;
         }
 
-        await _dispatcher.SendAllAsync(job.BusinessId, phone, messages, reservation.ConversationId, ct, throwOnFailure: true);
+        await _dispatcher.SendAllAsync(job.BusinessId!.Value, phone, messages, reservation.ConversationId, ct, throwOnFailure: true);
         job.Status = ScheduledAutomationJobStatus.Sent;
         job.SentAtUtc = DateTime.UtcNow;
         job.LockedUntilUtc = null;

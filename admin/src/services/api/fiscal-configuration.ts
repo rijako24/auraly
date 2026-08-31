@@ -18,6 +18,7 @@ export type FiscalResolutionConfiguration = {
   expirationWarningDays: number;
   remainingNumberWarningThreshold: number;
   warningMessages: string[] | null;
+  hasDianDocumentQuota: boolean;
 };
 
 export type FiscalOnlineSeriesAssignment = {
@@ -172,10 +173,14 @@ export const fiscalConfigurationApi = {
     apiClient.post<FiscalOnboardingConfiguration>(
       `/commerce/v1/fiscal/configuration/onboarding/numbering-ranges/synchronize?businessId=${encodeURIComponent(businessId)}`,
     ),
-  activateProduction: (businessId: string, dianNumberingRangeId: string) =>
+  assignOnlineResolution: (businessId: string, dianNumberingRangeId: string) =>
+    apiClient.post<FiscalOnboardingConfiguration>(
+      `/commerce/v1/fiscal/configuration/onboarding/assign-online-resolution?businessId=${encodeURIComponent(businessId)}`,
+      { dianNumberingRangeId },
+    ),
+  activateProduction: (businessId: string) =>
     apiClient.post<FiscalOnboardingConfiguration>(
       `/commerce/v1/fiscal/configuration/onboarding/activate-production?businessId=${encodeURIComponent(businessId)}`,
-      { dianNumberingRangeId },
     ),
   activateSupportDocument: (businessId: string, dianNumberingRangeId: string) =>
     apiClient.post<FiscalOnboardingConfiguration>(

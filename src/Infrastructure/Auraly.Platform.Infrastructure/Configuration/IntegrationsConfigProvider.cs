@@ -11,12 +11,15 @@ public class IntegrationsConfigProvider : IIntegrationsConfigProvider
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly ILogger<IntegrationsConfigProvider> _logger;
+    private readonly IIntegrationSecretProtector _secretProtector;
 
     public IntegrationsConfigProvider(
         IUnitOfWork unitOfWork,
+        IIntegrationSecretProtector secretProtector,
         ILogger<IntegrationsConfigProvider> logger)
     {
         _unitOfWork = unitOfWork;
+        _secretProtector = secretProtector;
         _logger = logger;
     }
 
@@ -39,6 +42,20 @@ public class IntegrationsConfigProvider : IIntegrationsConfigProvider
                 c.Provider == (int)IntegrationProvider.Wompi &&
                 c.Capability == (int)IntegrationCapability.Payments))
         };
+    }
+
+    public async Task<WompiIntegration?> GetWompiAsync(
+        Guid businessId,
+        int? configurationVersion = null,
+        CancellationToken cancellationToken = default)
+    {
+        var connection = await _unitOfWork.IntegrationConnections
+            .GetByBusinessProviderCapabilityAsync(
+                businessId,
+                IntegrationProvider.Wompi,
+                IntegrationCapability.Payments,
+                cancellationToken);
+        return BuildWompi(connection, configurationVersion);
     }
 
     private async Task<GoogleCalendarIntegration?> BuildGoogleCalendarAsync(
@@ -99,28 +116,54 @@ public class IntegrationsConfigProvider : IIntegrationsConfigProvider
         }
     }
 
-    private WompiIntegration? BuildWompi(IntegrationConnection? connection)
+    private WompiIntegration? BuildWompi(
+        IntegrationConnection? connection,
+        int? requestedConfigurationVersion = null)
     {
-        if (connection is null)
+        if (connection is null || (!connection.IsEnabled && requestedConfigurationVersion is null))
             return null;
 
         var settings = ParseJson(connection.SettingsJson);
         var secrets = ParseJson(connection.SecretsJson);
-        var mode = NormalizeWompiMode(GetString(settings, "mode", "test"));
-        var modeSecrets = GetObject(secrets, mode);
+        var currentVersion = Math.Max(1, GetInt(settings, "configurationVersion", 1));
+        var configurationVersion = requestedConfigurationVersion ?? currentVersion;
+        var versions = GetObject(secrets, "versions");
+        var versionSecrets = GetObject(versions, configurationVersion.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        if (requestedConfigurationVersion.HasValue
+            && versionSecrets.Count == 0
+            && configurationVersion != currentVersion
+            && configurationVersion != 1)
+        {
+            return null;
+        }
+
+        var mode = versionSecrets.Count > 0
+            ? NormalizeWompiMode(GetString(versionSecrets, "mode", "test"))
+            : NormalizeWompiMode(GetString(settings, "mode", "test"));
+        var modeSecrets = versionSecrets.Count > 0 ? versionSecrets : GetObject(secrets, mode);
 
         return new WompiIntegration
         {
+            ConfigurationVersion = configurationVersion,
             Mode = mode,
-            PrivateKey = GetString(modeSecrets, "privateKey", GetString(secrets, "privateKey")),
-            PublicKey = GetString(modeSecrets, "publicKey", GetString(secrets, "publicKey")),
-            EventsSecret = GetString(modeSecrets, "eventsSecret", GetString(secrets, "eventsSecret")),
-            IntegritySecret = GetString(modeSecrets, "integritySecret", GetString(secrets, "integritySecret")),
+            PrivateKey = ResolveSecret(modeSecrets, secrets, "privateKey"),
+            PublicKey = ResolveSecret(modeSecrets, secrets, "publicKey"),
+            EventsSecret = ResolveSecret(modeSecrets, secrets, "eventsSecret"),
+            IntegritySecret = ResolveSecret(modeSecrets, secrets, "integritySecret"),
             SandboxBaseUrl = GetString(settings, "sandboxBaseUrl", "https://sandbox.wompi.co/v1"),
             ProductionBaseUrl = GetString(settings, "productionBaseUrl", "https://production.wompi.co/v1"),
             RequestTimeoutSeconds = GetInt(settings, "requestTimeoutSeconds", 30),
             CheckoutBaseUrl = GetString(settings, "checkoutBaseUrl", "https://checkout.wompi.co/l/")
         };
+    }
+
+    private string ResolveSecret(
+        Dictionary<string, JsonElement> environment,
+        Dictionary<string, JsonElement> legacy,
+        string key)
+    {
+        var value = GetString(environment, key, GetString(legacy, key));
+        return string.IsNullOrWhiteSpace(value) ? string.Empty : _secretProtector.Unprotect(value);
     }
 
     private Dictionary<string, JsonElement> ParseJson(string? json)

@@ -16,7 +16,8 @@ public sealed record FiscalDocumentView(
     string? TrackId,
     string? LastStatusCode,
     string? LastStatusDescription,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    DateTimeOffset? QuotaBlockedAt);
 
 public sealed record FiscalDocumentPage(
     IReadOnlyList<FiscalDocumentView> Items,
@@ -33,7 +34,8 @@ public sealed record FiscalDocumentQuery(
     string? UniqueCode,
     Guid? DeviceId,
     DateTimeOffset? IssuedFrom,
-    DateTimeOffset? IssuedTo);
+    DateTimeOffset? IssuedTo,
+    bool QuotaOnly);
 
 public sealed record PosFiscalStatusChange(
     Guid DocumentId,

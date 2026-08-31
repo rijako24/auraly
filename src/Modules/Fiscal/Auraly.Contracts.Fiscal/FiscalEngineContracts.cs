@@ -16,6 +16,7 @@ public static class FiscalDocumentStatusCodes
     public const string FiscalIntegrityConflict = "FiscalIntegrityConflict";
     public const string MissingMandatoryFiscalData = "MissingMandatoryFiscalData";
     public const string PendingGeneration = "PendingGeneration";
+    public const string BlockedByQuota = "BlockedByQuota";
     public const string XmlGenerated = "XmlGenerated";
     public const string SchemaValidationFailed = "SchemaValidationFailed";
     public const string Signed = "Signed";

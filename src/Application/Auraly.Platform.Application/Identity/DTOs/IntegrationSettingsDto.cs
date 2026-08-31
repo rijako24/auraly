@@ -80,8 +80,17 @@ public record WompiIntegrationDto(
     bool HasPublicKey,
     bool HasEventsSecret,
     bool HasIntegritySecret,
+    WompiEnvironmentCredentialsDto TestCredentials,
+    WompiEnvironmentCredentialsDto ProductionCredentials,
     string? LastError,
     DateTime? LastSyncAt);
+
+public sealed record WompiEnvironmentCredentialsDto(
+    bool HasPrivateKey,
+    bool HasPublicKey,
+    bool HasEventsSecret,
+    bool HasIntegritySecret,
+    bool IsComplete);
 
 public record UpdateGoogleCalendarIntegrationRequest(
     bool IsEnabled,

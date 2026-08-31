@@ -35,15 +35,10 @@ BEGIN
         RETURN;
     END;
 
-    IF EXISTS (
-        SELECT 1 FROM dbo.FiscalSeries WITH (UPDLOCK,HOLDLOCK)
-        WHERE BusinessId=@BusinessId AND DeviceId=@DeviceId
-          AND DocumentType=N'SalesInvoice' AND IsActive=1)
-        THROW 51027,N'El equipo ya tiene una resolución DIAN activa.',1;
-
     DECLARE @AuthorizationNumber NVARCHAR(64),@Prefix NVARCHAR(16),
             @RangeStart BIGINT,@RangeEnd BIGINT,@ValidFrom DATE,@ValidUntil DATE,
-            @ProtectedTechnicalKey VARBINARY(MAX),@SupplierTaxId NVARCHAR(32);
+            @ProtectedTechnicalKey VARBINARY(MAX),@SupplierTaxId NVARCHAR(32),
+            @PreviousAuthorizationId UNIQUEIDENTIFIER;
 
     SELECT @AuthorizationNumber=r.AuthorizationNumber,@Prefix=r.Prefix,
            @RangeStart=r.RangeStart,@RangeEnd=r.RangeEnd,
@@ -59,18 +54,40 @@ BEGIN
 
     SELECT TOP(1) @SupplierTaxId=configuration.SupplierTaxId
     FROM dbo.FiscalIssuerConfigurations configuration
-    WHERE configuration.BusinessId=@BusinessId AND configuration.Environment=1
+    JOIN dbo.Businesses configuredBusiness ON configuredBusiness.BusinessId=configuration.BusinessId
+    WHERE configuredBusiness.TenantId=@TenantId AND configuration.Environment IN(1,2)
       AND configuration.IsActive=1 AND configuration.ValidFrom<=@Now
       AND (configuration.ValidTo IS NULL OR configuration.ValidTo>@Now)
-    ORDER BY configuration.Version DESC,configuration.CreatedAt DESC;
+    ORDER BY CASE WHEN configuration.BusinessId=@BusinessId AND configuration.Environment=1 THEN 0 ELSE 1 END,
+             configuration.Version DESC,configuration.CreatedAt DESC;
     IF @SupplierTaxId IS NULL
-        THROW 51027,N'Activa primero la configuración DIAN de producción para esta sede.',1;
+        THROW 51027,N'Completa primero la configuración de habilitación DIAN.',1;
 
     UPDATE fiscal.DianNumberingRanges
     SET AssignedBusinessId=@BusinessId,AssignedAt=@Now,AssignedByUserId=@UserId
     WHERE DianNumberingRangeId=@DianNumberingRangeId AND AssignedBusinessId IS NULL;
     IF @@ROWCOUNT<>1
         THROW 51027,N'La resolución DIAN fue asignada simultáneamente a otro emisor.',1;
+
+    -- La asignación pertenece al equipo y puede reemplazarse sin depender del
+    -- estado global de producción. El histórico permanece inmutable.
+    SELECT TOP(1) @PreviousAuthorizationId=FiscalAuthorizationId
+    FROM dbo.FiscalSeries WITH(UPDLOCK,HOLDLOCK)
+    WHERE BusinessId=@BusinessId AND DeviceId=@DeviceId
+      AND DocumentType=N'SalesInvoice' AND IsActive=1;
+
+    UPDATE dbo.FiscalSeries
+    SET IsActive=0
+    WHERE BusinessId=@BusinessId AND DeviceId=@DeviceId
+      AND DocumentType=N'SalesInvoice' AND IsActive=1;
+
+    UPDATE dbo.FiscalAuthorizations
+    SET IsActive=0
+    WHERE FiscalAuthorizationId=@PreviousAuthorizationId AND IsActive=1
+      AND NOT EXISTS(
+          SELECT 1 FROM dbo.FiscalSeries activeSeries
+          WHERE activeSeries.FiscalAuthorizationId=@PreviousAuthorizationId
+            AND activeSeries.IsActive=1);
 
     INSERT dbo.FiscalAuthorizations(
         FiscalAuthorizationId,DianNumberingRangeId,BusinessId,AuthorizationNumber,SupplierTaxId,Environment,

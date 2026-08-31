@@ -165,7 +165,7 @@ public sealed class SqlFiscalDeviceSeriesStore(
                     DateOnly.FromDateTime(reader.GetDateTime(7)), reader.GetByte(8),
                     reader.GetString(9), reader.GetString(10), reader.GetString(11),
                     reader.GetInt64(12), reader.GetInt64(13),
-                    reader.GetInt32(14), reader.GetInt64(15)));
+                    reader.GetInt32(14), reader.GetInt64(15), reader.GetBoolean(16)));
         }
         catch (SqlException exception) when (exception.Number is 51023 or 51027)
         {
@@ -189,7 +189,8 @@ public sealed class SqlFiscalDeviceSeriesStore(
                 material.QrValidationUrl, row.ValidFrom,
                 row.AuthorizationRangeStart, row.AuthorizationRangeEnd,
                 row.ExpirationWarningDays,
-                row.RemainingNumberWarningThreshold));
+                row.RemainingNumberWarningThreshold,
+                row.ProductionActive));
         }
         return result;
     }
@@ -200,7 +201,8 @@ public sealed class SqlFiscalDeviceSeriesStore(
         DateOnly ValidFrom, DateOnly ValidUntil, byte Environment,
         string SupplierTaxId, string TechnicalKeyVersion, string QrValidationUrl,
         long AuthorizationRangeStart, long AuthorizationRangeEnd,
-        int ExpirationWarningDays, long RemainingNumberWarningThreshold);
+        int ExpirationWarningDays, long RemainingNumberWarningThreshold,
+        bool ProductionActive);
 
     private static SqlCommand StoredProcedure(
         string name, SqlConnection connection, SqlTransaction? transaction = null) =>

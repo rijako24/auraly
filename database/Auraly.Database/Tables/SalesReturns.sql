@@ -2,7 +2,7 @@ CREATE TABLE [dbo].[SalesReturns]
 (
     [ReturnId] UNIQUEIDENTIFIER NOT NULL,
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
-    [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
+    [WarehouseId] UNIQUEIDENTIFIER NULL,
     [WorkSessionId] UNIQUEIDENTIFIER NULL,
     [OriginalDocumentId] UNIQUEIDENTIFIER NOT NULL,
     [DocumentSeriesId] UNIQUEIDENTIFIER NOT NULL,
@@ -100,6 +100,32 @@ GO
 CREATE INDEX [IX_SalesReturnLines_Original]
   ON [dbo].[SalesReturnLines] ([OriginalDocumentId],[OriginalLineNumber])
   INCLUDE ([Quantity],[DiscountAmount],[UntaxedAmount],[TaxAmount],[LineTotal]);
+GO
+
+CREATE TABLE dbo.SalesServiceReturnLines
+(
+    ReturnId UNIQUEIDENTIFIER NOT NULL,
+    OriginalDocumentId UNIQUEIDENTIFIER NOT NULL,
+    LineNumber INT NOT NULL,
+    OriginalLineNumber INT NOT NULL,
+    BillableServiceId UNIQUEIDENTIFIER NOT NULL,
+    ServiceCode NVARCHAR(48) NOT NULL,
+    DescriptionSnapshot NVARCHAR(500) NOT NULL,
+    Quantity DECIMAL(19,6) NOT NULL,
+    UnitPrice DECIMAL(19,4) NOT NULL,
+    DiscountAmount DECIMAL(19,4) NOT NULL,
+    TaxCode NVARCHAR(16) NOT NULL,
+    TaxRate DECIMAL(9,6) NOT NULL,
+    UntaxedAmount DECIMAL(19,4) NOT NULL,
+    TaxAmount DECIMAL(19,4) NOT NULL,
+    LineTotal DECIMAL(19,4) NOT NULL,
+    CONSTRAINT PK_SalesServiceReturnLines PRIMARY KEY(ReturnId,LineNumber),
+    CONSTRAINT UQ_SalesServiceReturnLines_OriginalLine UNIQUE(ReturnId,OriginalLineNumber),
+    CONSTRAINT FK_SalesServiceReturnLines_Return FOREIGN KEY(ReturnId,OriginalDocumentId) REFERENCES dbo.SalesReturns(ReturnId,OriginalDocumentId),
+    CONSTRAINT FK_SalesServiceReturnLines_OriginalLine FOREIGN KEY(OriginalDocumentId,OriginalLineNumber) REFERENCES sales.SalesDocumentServiceLines(DocumentId,LineNumber),
+    CONSTRAINT FK_SalesServiceReturnLines_Service FOREIGN KEY(BillableServiceId) REFERENCES billing.BillableServices(BillableServiceId),
+    CONSTRAINT CK_SalesServiceReturnLines_Values CHECK(LineNumber>0 AND OriginalLineNumber>0 AND Quantity>0 AND UnitPrice>=0 AND DiscountAmount>=0 AND TaxRate BETWEEN 0 AND 100 AND UntaxedAmount>=0 AND TaxAmount>=0 AND LineTotal>0)
+);
 GO
 
 CREATE TABLE [dbo].[SalesReturnSettlements]

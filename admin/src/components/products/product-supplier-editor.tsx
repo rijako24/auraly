@@ -141,8 +141,10 @@ export const ProductSupplierEditor = forwardRef<ProductSupplierEditorHandle, {
       <div className="space-y-2">
         <Label>Proveedor <span className="text-destructive">*</span></Label>
         <PartyRoleSelect role="Supplier" value={supplierId} placeholder="Busca un proveedor"
+          preload
           selectedOption={selectedSupplier ? { value: supplierId, label: selectedSupplier.name, description: selectedSupplier.identification } : null}
-          onChange={(value, party) => { if (!party) return; setSupplierId(value); setSelectedSupplier({ name: party.displayName, identification: party.identification ?? "" }); setValidationError(undefined); }}/>
+          onResolved={(party) => setSelectedSupplier({ name: party.displayName, identification: party.identification ?? "" })}
+          onChange={(value, party) => { setSupplierId(value); if (party) setSelectedSupplier({ name: party.displayName, identification: party.identification ?? "" }); setValidationError(undefined); }}/>
         {validationError && !supplierId && <p className="text-sm text-destructive">{validationError}</p>}
         <p className="text-xs text-muted-foreground">Al guardar, este proveedor queda como el principal del producto.</p>
       </div>

@@ -43,6 +43,7 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
+import { useTenantCommercialCatalog } from "@/components/tenants/tenant-commercial-plan-step";
 import { cn } from "@/lib/utils";
 
 const PLANS = [
@@ -96,12 +97,15 @@ const PLANS = [
   },
 ];
 
-const OPERATIONS_PLANS = [
-  { name: "Esencial", price: "119.900", tagline: "Empieza con control", hint: "Para organizar y facturar una operación que empieza a crecer.", highlight: false, features: ["3 usuarios completos", "1 caja", "500 documentos DIAN / mes", "10 empleados de nómina", "POS, contabilidad y nómina"] },
-  { name: "Negocio", price: "299.900", tagline: "Más capacidad", hint: "La combinación recomendada para equipos con operación diaria.", highlight: true, features: ["8 usuarios completos", "3 cajas", "1.500 documentos DIAN / mes", "30 empleados de nómina", "Soporte prioritario"] },
-  { name: "Empresa", price: "449.900", tagline: "Opera a escala", hint: "Para varias áreas, más cajas y una operación exigente.", highlight: false, features: ["12 usuarios completos", "5 cajas", "3.000 documentos DIAN / mes", "100 empleados de nómina", "Soporte prioritario"] },
-  { name: "Corporativo a medida", price: "A medida", tagline: "Capacidad configurable", hint: "Paga exactamente por la capacidad de una operación de gran escala.", highlight: false, features: ["Usuarios y vendedores a medida", "Cajas y documentos a medida", "Sedes del mismo NIT sin costo", "Acompañamiento especializado"] },
-] as const;
+const OPERATIONS_PLAN_COPY: Record<string, { tagline: string; hint: string }> = {
+  starter: { tagline: "Todo lo esencial", hint: "Una persona, una caja y facturación electrónica para empezar con orden." },
+  essential: { tagline: "Empieza con control", hint: "Para organizar y facturar una operación que empieza a crecer." },
+  business: { tagline: "Más capacidad", hint: "La combinación recomendada para equipos con operación diaria." },
+  company: { tagline: "Opera a escala", hint: "Para varias áreas, más cajas y una operación exigente." },
+  corporate: { tagline: "Capacidad configurable", hint: "Capacidad superior a Empresa, ajustada a una operación de gran escala." },
+};
+
+const cop = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
 
 const PRODUCT_SCENES = [
   { icon: MonitorSmartphone, number: "01", kicker: "Punto de venta", title: "Vende rápido. Auraly mantiene el control.", text: "Caja online u offline, inventario, pedidos, devoluciones y cierres conectados con una sola operación.", metric: "Una venta, un inventario", accent: "from-[#69D9D0] to-[#1A5860]" },
@@ -210,6 +214,7 @@ const FAQ = [
 ];
 
 export default function LandingPage() {
+  const operationsCatalog = useTenantCommercialCatalog();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [form, setForm] = useState<DemoForm>({
     name: "",
@@ -553,39 +558,53 @@ export default function LandingPage() {
             </div>
             <p className="max-w-md text-sm leading-6 text-black/65">POS, facturación electrónica, contabilidad y nómina con capacidad visible y ampliaciones sin sorpresas.</p>
           </div>
-          <div className="mt-10 grid auto-rows-fr items-stretch gap-4 min-[560px]:grid-cols-2 xl:grid-cols-4">
-            {OPERATIONS_PLANS.map((plan) => (
-              <Card key={plan.name} className={cn("flex h-full flex-col rounded-lg border-black/10 bg-white text-[#151515]", plan.highlight && "border-[#69D9D0] bg-[#E6FFFD]")}>
+          {operationsCatalog.isLoading && <div className="mt-10 rounded-2xl border border-black/10 bg-white p-8 text-center text-black/60">Cargando planes vigentes…</div>}
+          {operationsCatalog.isError && <div role="alert" className="mt-10 rounded-2xl border border-red-200 bg-red-50 p-6 text-red-800">No fue posible consultar los planes en este momento.</div>}
+          <div className="mt-10 grid auto-rows-fr items-stretch gap-4 min-[560px]:grid-cols-2 xl:grid-cols-5">
+            {operationsCatalog.data?.plans.map((plan) => {
+              const copy = OPERATIONS_PLAN_COPY[plan.code] ?? { tagline: "Plan Auraly", hint: "Capacidad configurable para tu operación." };
+              const capacity = plan.isCustom ? ["Capacidad superior a Empresa"] : [
+                `${plan.includedFullUsers} ${plan.includedFullUsers === 1 ? "usuario completo" : "usuarios completos"}`,
+                `${plan.includedPosDevices} ${plan.includedPosDevices === 1 ? "caja" : "cajas"}`,
+                `${plan.includedDianDocuments.toLocaleString("es-CO")} documentos DIAN / mes`,
+                ...(plan.includedPayrollEmployees > 0 ? [`${plan.includedPayrollEmployees} empleados de nómina`] : []),
+              ];
+              const visibleFeatures = [...new Set([
+                ...capacity,
+                ...plan.features.filter(feature => !feature.toLocaleLowerCase("es-CO").includes("documentos dian")),
+              ])];
+              return <Card key={plan.planId} className={cn("flex h-full flex-col rounded-lg border-black/10 bg-white text-[#151515]", plan.isRecommended && "border-[#69D9D0] bg-[#E6FFFD]")}>
                 <CardHeader>
                   <div className="flex items-center justify-between">
                     <CardTitle>{plan.name}</CardTitle>
-                    {plan.highlight && <Badge className="bg-[#69D9D0] text-[#07161A] hover:bg-[#69D9D0]">Recomendado</Badge>}
+                    {plan.isRecommended && <Badge className="bg-[#69D9D0] text-[#07161A] hover:bg-[#69D9D0]">Recomendado</Badge>}
                   </div>
-                  <p className="mt-3 text-xs font-bold uppercase tracking-[.16em] text-[#1A5860]">{plan.tagline}</p>
+                  <p className="mt-3 text-xs font-bold uppercase tracking-[.16em] text-[#1A5860]">{copy.tagline}</p>
                   <div className="min-h-[84px] pt-4">
-                    <p className="text-4xl font-semibold">{plan.price === "A medida" ? plan.price : `$${plan.price}`}</p>
-                    {plan.price !== "A medida" && <p className="text-sm text-black/55">COP / mes</p>}
+                    <p className="text-4xl font-semibold">{plan.isCustom ? "A medida" : cop.format(plan.monthlyPriceCop)}</p>
+                    {!plan.isCustom && <p className="text-sm text-black/55">COP / mes antes de IVA</p>}
                   </div>
                 </CardHeader>
                 <CardContent className="flex flex-1 flex-col gap-5">
-                  <p className="min-h-12 text-sm leading-6 text-black/65">{plan.hint}</p>
+                  <p className="min-h-12 text-sm leading-6 text-black/65">{copy.hint}</p>
                   <Separator className="bg-black/10" />
                   <ul className="space-y-3 text-sm">
-                    {plan.features.map((feature) => (
+                    {visibleFeatures.map((feature) => (
                       <li key={feature} className="flex gap-2"><Check className="mt-0.5 h-4 w-4 shrink-0 text-[#1A5860]" />{feature}</li>
                     ))}
                   </ul>
-                  <Button className={cn("mt-auto w-full", plan.highlight ? "bg-[#69D9D0] text-[#07161A] hover:bg-[#7CE3DB]" : "bg-[#151515] text-white hover:bg-black")} asChild>
-                    <a href="#demo">Solicitar demo <ChevronRight className="ml-1 h-4 w-4" /></a>
+                  <Button className={cn("mt-auto w-full", plan.isRecommended ? "bg-[#69D9D0] text-[#07161A] hover:bg-[#7CE3DB]" : "bg-[#151515] text-white hover:bg-black")} asChild>
+                    <Link href="/register">Crear empresa <ChevronRight className="ml-1 h-4 w-4" /></Link>
                   </Button>
                 </CardContent>
-              </Card>
-            ))}
+              </Card>;
+            })}
           </div>
           <div className="mt-6 grid gap-5 rounded-[2rem] border border-[#1A5860]/15 bg-gradient-to-br from-white to-[#E6FFFD] p-6 lg:grid-cols-[.72fr_1.28fr] lg:p-8">
             <div><p className="text-xs font-bold uppercase tracking-[.2em] text-[#1A5860]">Amplía cuando lo necesites</p><h3 className="mt-2 text-2xl font-semibold">Tu plan no limita tu crecimiento.</h3><p className="mt-3 text-sm leading-6 text-black/60">Agrega capacidad al crear la empresa o desde tu suscripción. El total se recalcula antes del pago.</p></div>
             <div className="grid gap-2 sm:grid-cols-2">
-              {[["Usuario completo","$30.000 / mes"],["Usuario vendedor","$10.000 / mes"],["Caja adicional","$20.000 / mes"],["Paquete de 1.000 documentos DIAN","$20.000 / mes"],["Sedes dentro del mismo NIT","Sin costo"]].map(([label, price]) => <div key={label} className="flex items-center justify-between gap-4 rounded-xl border border-black/5 bg-white/80 px-4 py-3 text-sm"><span>{label}</span><strong className="whitespace-nowrap text-[#0F2C33]">{price}</strong></div>)}
+              {operationsCatalog.data?.addOns.map(addOn => <div key={addOn.addOnId} className="flex items-center justify-between gap-4 rounded-xl border border-black/5 bg-white/80 px-4 py-3 text-sm"><span>{addOn.name}<small className="block text-black/50">{addOn.unitLabel}</small></span><strong className="whitespace-nowrap text-[#0F2C33]">{cop.format(addOn.monthlyUnitPriceCop)} / mes</strong></div>)}
+              <div className="flex items-center justify-between gap-4 rounded-xl border border-black/5 bg-white/80 px-4 py-3 text-sm"><span>Sedes dentro del mismo NIT</span><strong className="whitespace-nowrap text-[#0F2C33]">Sin costo</strong></div>
             </div>
           </div>
         </div>

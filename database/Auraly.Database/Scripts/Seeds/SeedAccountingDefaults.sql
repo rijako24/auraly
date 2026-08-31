@@ -29,6 +29,7 @@ USING (VALUES
   (N'CustomerCreditsPayable',N'Saldos a favor de clientes',N'238095',N'Saldos a favor de clientes',N'Liability',1,18),
   (N'OwnerContributions',N'Aportes del propietario',N'311505',N'Aportes del propietario',N'Equity',0,19),
   (N'SalesRevenue',N'Ingresos por ventas',N'413595',N'Ingresos por venta de mercancías',N'Revenue',0,20),
+  (N'ServiceRevenue',N'Ingresos por servicios',N'415525',N'Ingresos por servicios de software',N'Revenue',0,52),
   (N'SalesReturns',N'Devoluciones en ventas',N'417595',N'Devoluciones en ventas',N'ContraRevenue',0,21),
   (N'OtherIncome',N'Otros ingresos de caja',N'429595',N'Otros ingresos',N'Revenue',0,22),
   (N'CashOverageIncome',N'Sobrantes de caja',N'429596',N'Sobrantes de caja',N'Revenue',0,23),

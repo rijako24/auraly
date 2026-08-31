@@ -407,6 +407,15 @@ public sealed class SqlPayrollStore(
                 END
                 ELSE
                 BEGIN
+                  DECLARE @PayrollLimit int=(
+                    SELECT PayrollEmployeeLimit FROM billing.TenantSubscriptions WITH(UPDLOCK,HOLDLOCK)
+                    WHERE TenantId=@TenantId AND Status IN(N'Active',N'PastDue'));
+                  IF @Active=1
+                     AND NOT EXISTS(SELECT 1 FROM payroll.Employments WHERE EmploymentId=@Id AND TenantId=@TenantId AND IsActive=1)
+                     AND @PayrollLimit IS NOT NULL
+                     AND (SELECT COUNT(*) FROM payroll.Employments WITH(UPDLOCK,HOLDLOCK)
+                          WHERE TenantId=@TenantId AND IsActive=1)>=@PayrollLimit
+                    THROW 51706,N'Se alcanzó el número de empleados de nómina contratado. Amplía la suscripción antes de activar otro empleado.',1;
                   IF NOT EXISTS(
                     SELECT 1 FROM dbo.Parties p
                     JOIN payroll.CatalogOptions idtype
@@ -471,7 +480,7 @@ public sealed class SqlPayrollStore(
             await command.ExecuteNonQueryAsync(ct);
             await tx.CommitAsync(ct);
         }
-        catch (SqlException error) when (error.Number is >= 51700 and <= 51705)
+        catch (SqlException error) when (error.Number is >= 51700 and <= 51706)
         { await tx.RollbackAsync(CancellationToken.None); throw new PayrollValidationException(error.Message); }
         catch (SqlException error) when (error.Number is 2601 or 2627)
         { await tx.RollbackAsync(CancellationToken.None); throw new PayrollConflictException("Ya existe un contrato o una relación activa para esa persona."); }
@@ -1492,6 +1501,10 @@ public sealed class SqlPayrollStore(
             foreach (var employee in employees.Values.OrderBy(value => value.PartyId))
             {
                 var documentId = ids.NewId();
+                if (!await TryReserveDianQuotaAsync(connection, tx,
+                    user.BusinessId, documentId, "ElectronicPayroll", now, ct))
+                    throw new PayrollValidationException(
+                        "La nómina no se enviará porque no hay cupo de documentos DIAN. Compra un paquete y vuelve a generar el envío.");
                 var consecutive = nextConsecutive++;
                 var fiscalNumber = fiscalPrefix + consecutive.ToString(CultureInfo.InvariantCulture);
                 var snapshot = new ElectronicPayrollSnapshot(
@@ -1878,6 +1891,22 @@ public sealed class SqlPayrollStore(
     private static void DecimalNullable(SqlCommand command, string name, decimal? value, byte scale) { var p = command.Parameters.Add(name, SqlDbType.Decimal); p.Precision = 19; p.Scale = scale; p.Value = (object?)value ?? DBNull.Value; }
     private static DateOnly Max(DateOnly left, DateOnly right) => left > right ? left : right;
     private static DateOnly Min(DateOnly left, DateOnly right) => left < right ? left : right;
+
+    private static async Task<bool> TryReserveDianQuotaAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid businessId,
+        Guid documentId, string documentKind, DateTimeOffset now, CancellationToken ct)
+    {
+        await using var command = new SqlCommand("dbo.TenantDianDocumentQuotaReserve", connection, transaction)
+        { CommandType = CommandType.StoredProcedure };
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        command.Parameters.AddWithValue("@DocumentKind", documentKind);
+        command.Parameters.AddWithValue("@Now", now);
+        var reserved = command.Parameters.Add("@Reserved", SqlDbType.Bit);
+        reserved.Direction = ParameterDirection.Output;
+        await command.ExecuteNonQueryAsync(ct);
+        return reserved.Value is true;
+    }
 
     private sealed record EmployeeSeed(Guid EmploymentId, Guid PartyId, decimal MonthlySalary, decimal WorkedDays, bool IsIntegral, decimal RiskRate);
     private sealed record RunHeader(Guid Id, Guid BusinessId, Guid RuleSetId, string Kind, Guid? OriginalId, DateOnly Start, DateOnly End, DateOnly Payment, string Status, int Version, decimal Earnings, decimal Deductions, decimal Employer, decimal Provisions, decimal Net, byte[] RowVersion);

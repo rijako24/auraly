@@ -52,7 +52,10 @@ import {
   readEdgeTokenFromLaunch,
   readEdgeUserSession,
 } from "@/services/pos/pos-edge-client";
-import { loadSalesWorkspaceBootstrap } from "@/services/pos/online-pos-bootstrap";
+import {
+  loadSalesWorkspaceBootstrap,
+  type SalesWorkspaceBootstrap,
+} from "@/services/pos/online-pos-bootstrap";
 import {
   forgetSalesWorkspace,
   recalledOnlinePosClient,
@@ -73,6 +76,7 @@ import {
 } from "@/services/pos/pos-enrollment";
 import {
   canIssuePosDocument,
+  dianQuotaExhaustedMessage,
   fiscalConfigurationRequiredMessage,
 } from "@/services/pos/pos-fiscal-guard";
 import { PosConfirmDialog } from "./pos-confirm-dialog";
@@ -224,6 +228,8 @@ export default function PosPage() {
   const [setupLoading, setSetupLoading] = useState(true);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [setupNotice, setSetupNotice] = useState<string | null>(null);
+  const [workspaceConfigurationOffline, setWorkspaceConfigurationOffline] =
+    useState(false);
   const [draft, setDraft] = useState<PosDraft | null>(null);
   const [temporaries, setTemporaries] = useState<PosDraft[]>([]);
   const [scan, setScan] = useState("");
@@ -258,6 +264,7 @@ export default function PosPage() {
     deviceId: null as string | null,
     fiscalReady: false,
     fiscalWarnings: [] as string[],
+    dianQuotaAvailable: null as boolean | null,
   });
   const canOpenAdministrativeMenu = canOpenPosAdministrativeMenu(
     cloudAuthenticated,
@@ -265,6 +272,25 @@ export default function PosPage() {
   );
   const canChangeWorkspace = (client?.mode === "edge" ? edgePermissions : permissions)
     .includes("pos.workspace.change");
+
+  function applyWorkspaceBootstrap(
+    bootstrap: SalesWorkspaceBootstrap,
+    fallbackDisplayName = "Cajero",
+  ) {
+    const displayName = bootstrap.userDisplayName.trim() || fallbackDisplayName;
+    window.localStorage.setItem("selected_tenant_id", bootstrap.tenantId);
+    setCanEnrollOffline(bootstrap.canEnrollPosDevice);
+    setEnrollmentAvailability({
+      active: bootstrap.activeEnrolledDeviceCount,
+      maximum: bootstrap.maximumEnrolledDevices,
+      reason: bootstrap.enrollmentUnavailableReason,
+    });
+    setOnlineOptions(bootstrap.options);
+    setOnlineTenantName(bootstrap.tenantName.trim());
+    setOnlineUserName(displayName);
+    setOnlineUserId(bootstrap.userId);
+    return { displayName, options: bootstrap.options };
+  }
   const [returnsOpen, setReturnsOpen] = useState(false);
   const [synchronizationEventsOpen, setSynchronizationEventsOpen] = useState(false);
   const [message, setMessage] = useState("Esperando producto");
@@ -292,6 +318,11 @@ export default function PosPage() {
   const [selectedCustomer, setSelectedCustomer] = useState<PosCustomer | null>(null);
   const [pricingTransition, setPricingTransition] = useState(false);
   const [documentType, setDocumentType] = useState<PosSaleDocumentType>("SalesReceipt");
+  const documentTypeRef = useRef<PosSaleDocumentType>(documentType);
+
+  useEffect(() => {
+    documentTypeRef.current = documentType;
+  }, [documentType]);
   const [habilitationMode, setHabilitationMode] = useState(false);
 
   const clearScanRejection = useCallback(() => {
@@ -467,7 +498,10 @@ export default function PosPage() {
                 deviceId: health.deviceId ?? null,
                 fiscalReady: health.fiscalReady,
                 fiscalWarnings: health.fiscalWarnings ?? [],
+                dianQuotaAvailable: health.dianQuotaAvailable ?? null,
               });
+              if (health.dianQuotaAvailable === false && documentTypeRef.current === "SalesInvoice")
+                setError(dianQuotaExhaustedMessage);
             }
 
             if (usesEnrolledPosRuntime(health) && !workspaceChangeRequested) {
@@ -505,19 +539,8 @@ export default function PosPage() {
         const serverBootstrap = await loadSalesWorkspaceBootstrap();
         if (!active) return;
         setEdgeEnrollmentRequired(Boolean(edgeToken));
-        setCanEnrollOffline(serverBootstrap.canEnrollPosDevice);
-        setEnrollmentAvailability({
-          active: serverBootstrap.activeEnrolledDeviceCount,
-          maximum: serverBootstrap.maximumEnrolledDevices,
-          reason: serverBootstrap.enrollmentUnavailableReason,
-        });
-        const displayName = serverBootstrap.userDisplayName.trim() || "Cajero";
-        window.localStorage.setItem("selected_tenant_id", serverBootstrap.tenantId);
-        setOnlineTenantName(serverBootstrap.tenantName.trim());
-        setOnlineUserName(displayName);
-        setOnlineUserId(serverBootstrap.userId);
-        const available = serverBootstrap.options;
-        setOnlineOptions(available);
+        const { displayName, options: available } =
+          applyWorkspaceBootstrap(serverBootstrap);
         if (workspaceChangeRequested) {
           setWorkspaceChanging(true);
           return;
@@ -589,7 +612,10 @@ export default function PosPage() {
             deviceId: health.deviceId ?? null,
             fiscalReady: health.fiscalReady,
             fiscalWarnings: health.fiscalWarnings ?? [],
+            dianQuotaAvailable: health.dianQuotaAvailable ?? null,
           });
+          if (health.dianQuotaAvailable === false && documentType === "SalesInvoice")
+            setError(dianQuotaExhaustedMessage);
         }
         if (
           client instanceof PosEdgeClient &&
@@ -1840,9 +1866,10 @@ export default function PosPage() {
   }
   async function changeDocumentType(value: PosSaleDocumentType) {
     if (!client || busy) return;
-    if (!canIssuePosDocument(value, workstation.fiscalReady)) {
+    if (!canIssuePosDocument(value, workstation.fiscalReady, workstation.dianQuotaAvailable !== false)) {
       setDocumentTypeOpen(false);
-      setError(fiscalConfigurationRequiredMessage);
+      setError(workstation.fiscalReady && workstation.dianQuotaAvailable === false
+        ? dianQuotaExhaustedMessage : fiscalConfigurationRequiredMessage);
       focusScanner();
       return;
     }
@@ -1881,8 +1908,10 @@ export default function PosPage() {
     const effectiveDocumentType = selectedCustomer?.requiresElectronicInvoice
       ? "SalesInvoice"
       : documentType;
-    if (!canIssuePosDocument(effectiveDocumentType, workstation.fiscalReady)) {
-      setError(fiscalConfigurationRequiredMessage);
+    if (!canIssuePosDocument(effectiveDocumentType, workstation.fiscalReady,
+      workstation.dianQuotaAvailable !== false)) {
+      setError(workstation.fiscalReady && workstation.dianQuotaAvailable === false
+        ? dianQuotaExhaustedMessage : fiscalConfigurationRequiredMessage);
       return;
     }
     const localPrintPreview = client.mode === "edge"
@@ -2233,6 +2262,7 @@ export default function PosPage() {
       setNextNumber(null);
       setLastSettlement(null);
       setScan("");
+      const health = await onlineClient.health();
       setWorkstation({
         deviceSeriesCode: "\u2014",
         businessId: context.businessId,
@@ -2243,8 +2273,9 @@ export default function PosPage() {
         userId: onlineUserId || null,
         workSessionId: null,
         deviceId: null,
-        fiscalReady: true,
-        fiscalWarnings: [],
+        fiscalReady: health.fiscalReady,
+        fiscalWarnings: health.fiscalWarnings,
+        dianQuotaAvailable: health.dianQuotaAvailable,
       });
       setServerConnected(true);
       setClient(onlineClient);
@@ -2317,22 +2348,36 @@ export default function PosPage() {
   async function changeOnlineWorkspace() {
     if (!client || busy) return;
     setSetupError(null);
-    if (client.mode === "edge") {
-      setSetupLoading(true);
-      try {
-        const serverBootstrap = await loadSalesWorkspaceBootstrap();
-        const displayName = serverBootstrap.userDisplayName.trim() || workstation.userDisplayName || "Usuario";
-        setOnlineOptions(serverBootstrap.options);
-        setOnlineTenantName(serverBootstrap.tenantName.trim());
-        setOnlineUserName(displayName);
-        setOnlineUserId(serverBootstrap.userId);
-      } catch (caught) {
-        setSetupError(describeWorkspaceBootstrapError(caught));
-      } finally {
-        setSetupLoading(false);
-      }
-    }
+    setWorkspaceConfigurationOffline(false);
     setWorkspaceChanging(true);
+    setSetupLoading(true);
+    try {
+      const serverBootstrap = await loadSalesWorkspaceBootstrap();
+      applyWorkspaceBootstrap(
+        serverBootstrap,
+        workstation.userDisplayName || "Usuario",
+      );
+    } catch (caught) {
+      const detail = describeWorkspaceBootstrapError(caught);
+      const message = `Sin conexión con Auraly. Puedes revisar la configuración actual, pero no cambiarla ni preparar este equipo. ${detail}`;
+      setWorkspaceConfigurationOffline(true);
+      setCanEnrollOffline(false);
+      setEnrollmentAvailability(null);
+      setOnlineOptions(!workstation.businessId || !workstation.warehouseId
+        ? []
+        : [{
+            businessId: workstation.businessId,
+            businessName: workstation.businessName,
+            warehouseId: workstation.warehouseId,
+            warehouseCode: "",
+            warehouseName: workstation.warehouseName,
+            warehouseAllowsNegativeStockSales: false,
+            hasActiveEdgeEnrollment: client.mode === "edge",
+          }]);
+      setSetupError(message);
+    } finally {
+      setSetupLoading(false);
+    }
   }
 
   if (client instanceof PosEdgeClient && edgeLoginState === "preparing") {
@@ -2373,7 +2418,10 @@ export default function PosPage() {
         tenantName={onlineTenantName || "Auraly"}
         userDisplayName={onlineUserName || "usuario"}
         onSelect={activateOnline}
-        onCancel={workspaceChanging ? () => setWorkspaceChanging(false) : undefined}
+        onCancel={workspaceChanging ? () => {
+          setWorkspaceConfigurationOffline(false);
+          setWorkspaceChanging(false);
+        } : undefined}
         edgeCapable={edgeEnrollmentRequired}
         canEnrollOffline={canEnrollOffline}
         enrollmentUnavailableReason={enrollmentAvailability?.reason}
@@ -2381,6 +2429,8 @@ export default function PosPage() {
         onEnroll={prepareInstalledPos}
         forcedDocumentType={habilitationMode ? "SalesInvoice" : undefined}
         enrollmentState={client?.mode === "edge" ? "enrolled" : edgeEnrollmentRequired ? "available" : "web"}
+        configurationOffline={workspaceConfigurationOffline}
+        configuredDocumentType={workspaceChanging ? documentType : undefined}
       />
     );
   }
@@ -3267,6 +3317,7 @@ export default function PosPage() {
           documentTypeReady={canIssuePosDocument(
             selectedCustomer?.requiresElectronicInvoice ? "SalesInvoice" : documentType,
             workstation.fiscalReady,
+            workstation.dianQuotaAvailable !== false,
           )}
           customer={selectedCustomer}
           onChangeDocumentType={() => setDocumentTypeOpen(true)}

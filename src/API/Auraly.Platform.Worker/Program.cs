@@ -14,6 +14,10 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 using Auraly.Platform.Application.Services;
+using Auraly.Platform.Application.Identity.DTOs;
+using Auraly.Platform.Application.Identity.Interfaces;
+using Auraly.Platform.Application.Identity.Services;
+using Auraly.Contracts.Tenants;
 
 using Auraly.Platform.Application.Promotions;
 
@@ -24,6 +28,7 @@ using Auraly.Platform.Infrastructure.Data;
 using Auraly.Platform.Infrastructure.Repositories;
 
 using Auraly.Platform.Infrastructure.Services;
+using Auraly.Platform.Infrastructure.Identity;
 
 using Auraly.Platform.Infrastructure.Configuration;
 
@@ -74,6 +79,12 @@ using Auraly.Platform.Infrastructure.Commerce;
 using Auraly.Platform.Infrastructure.LLM;
 using Auraly.Application.Parties;
 using Auraly.Infrastructure.Persistence;
+using Auraly.Application.Fiscal;
+using Auraly.Application.Sales;
+using Auraly.Commerce.Accounting.Application;
+using Auraly.Contracts.Fiscal;
+using Auraly.Platform.Infrastructure.Processing;
+using Azure.Messaging.ServiceBus;
 
 var host = new HostBuilder()
 
@@ -113,6 +124,33 @@ var host = new HostBuilder()
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
         services.AddSingleton<SqlServerConnectionFactory>();
+        services.AddSingleton<ConfigurationFiscalTechnicalKeyProvider>();
+        services.AddSingleton<SqlProtectedFiscalTechnicalKeyStore>();
+        services.AddSingleton<IFiscalTechnicalKeyProvider, CompositeFiscalTechnicalKeyProvider>();
+
+        var fiscalQueueName = configuration["Auraly:Fiscal:ServiceBus:QueueName"]
+            ?? throw new InvalidOperationException(
+                "Auraly:Fiscal:ServiceBus:QueueName is required.");
+        var accountingQueueName = configuration["Auraly:Accounting:ServiceBus:QueueName"]
+            ?? throw new InvalidOperationException(
+                "Auraly:Accounting:ServiceBus:QueueName is required.");
+        var reportingQueueName = configuration["Auraly:SalesReporting:ServiceBus:QueueName"]
+            ?? throw new InvalidOperationException(
+                "Auraly:SalesReporting:ServiceBus:QueueName is required.");
+        services.AddSingleton<ServiceBusClient>(_ =>
+            AzureManagedClientFactory.CreateServiceBusClient(configuration));
+        services.AddSingleton(new ServiceBusCommerceProcessingOptions(
+            fiscalQueueName, accountingQueueName, reportingQueueName));
+        services.AddSingleton<ServiceBusCommerceProcessingPublisher>();
+        services.AddSingleton<IFiscalProcessingSignalPublisher>(provider =>
+            provider.GetRequiredService<ServiceBusCommerceProcessingPublisher>());
+        services.AddSingleton<IAccountingProcessingSignalPublisher>(provider =>
+            provider.GetRequiredService<ServiceBusCommerceProcessingPublisher>());
+        services.AddSingleton<ISalesReportingProcessingSignalPublisher>(provider =>
+            provider.GetRequiredService<ServiceBusCommerceProcessingPublisher>());
+        services.AddSingleton<FiscalProcessingCoordinator>();
+        services.AddSingleton<AccountingProcessingCoordinator>();
+        services.AddSingleton<SalesReportingProcessingCoordinator>();
 
         // Repositories
 
@@ -337,6 +375,14 @@ services.AddScoped<ServiceSelectionResolver>();
         services.AddScoped<ICheckoutPaymentCoordinator, CheckoutPaymentCoordinator>();
 
         services.AddScoped<IPaidCheckoutFulfillmentRegistry, PaidCheckoutFulfillmentRegistry>();
+        services.AddScoped<INonConversationalPaidCheckoutRegistry, NonConversationalPaidCheckoutRegistry>();
+        services.AddScoped<INonConversationalPaidCheckoutHandler, TenantProvisioningPaidCheckoutHandler>();
+        services.AddScoped<INonConversationalPaidCheckoutHandler, TenantSubscriptionPaidCheckoutHandler>();
+        services.AddScoped<ITenantSubscriptionSettlementService, SqlTenantSubscriptionSettlementService>();
+        services.AddScoped<ITenantSubscriptionSettlementDispatcher, TenantSubscriptionSettlementDispatcher>();
+        services.AddScoped<ITenantProvisioningCheckoutStore, SqlTenantProvisioningCheckoutStore>();
+        services.AddScoped<ITenantProvisioningStore, SqlTenantProvisioningStore>();
+        services.AddScoped<ITenantService, TenantService>();
 
         services.AddScoped<IPaidCheckoutFulfillmentHandler, ReservationPaidCheckoutFulfillmentHandler>();
 
@@ -379,6 +425,12 @@ services.AddScoped<IExternalEscalationService, ExternalEscalationService>();
         services.AddScoped<ITimedProcess, ExternalEscalationExpirationProcess>();
 
         services.AddScoped<ITimedProcess, ReservationAutomationProcess>();
+        services.AddScoped<Auraly.Contracts.TenantBilling.ITenantCommercialCatalogStore,
+            SqlTenantCommercialCatalogStore>();
+        services.AddScoped<ITenantCommercialQuoteService, TenantCommercialQuoteService>();
+        services.AddScoped<Auraly.Contracts.TenantBilling.ITenantSubscriptionLifecycleStore,
+            SqlTenantSubscriptionLifecycleStore>();
+        services.AddScoped<ITimedProcess, TenantSubscriptionLifecycleProcess>();
         services.AddScoped<ITimedProcess>(sp =>
             sp.GetRequiredService<ConversationFollowUpService>());
 
@@ -564,6 +616,7 @@ services.AddScoped<Auraly.Platform.Application.Agents.Operations.IOperationPrese
 
         // Integrations Config Provider (Google Calendar, Wompi)
 
+        services.AddSingleton<IIntegrationSecretProtector, IntegrationSecretProtector>();
         services.AddScoped<IIntegrationsConfigProvider, IntegrationsConfigProvider>();
 
         services.AddScoped<ISchedulingPolicyProvider, SchedulingPolicyProvider>();

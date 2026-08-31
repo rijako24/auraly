@@ -37,6 +37,9 @@
     <ProjectReference Include="..\..\Domain\Auraly.Platform.Domain\Auraly.Platform.Domain.csproj" />
     <ProjectReference Include="..\..\Application\Auraly.Platform.Application\Auraly.Platform.Application.csproj" />
     <ProjectReference Include="..\..\BuildingBlocks\Auraly.BuildingBlocks.Domain\Auraly.BuildingBlocks.Domain.csproj" />
+    <ProjectReference Include="..\..\Modules\Accounting\Auraly.Commerce.Accounting.Application\Auraly.Commerce.Accounting.Application.csproj" />
+    <ProjectReference Include="..\..\Modules\Fiscal\Auraly.Application.Fiscal\Auraly.Application.Fiscal.csproj" />
+    <ProjectReference Include="..\..\Modules\Sales\Auraly.Application.Sales\Auraly.Application.Sales.csproj" />
   </ItemGroup>
 
 </Project>

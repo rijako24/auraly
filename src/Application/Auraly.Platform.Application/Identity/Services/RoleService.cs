@@ -146,6 +146,8 @@ public class RoleService : IRoleService
                     || !actorPermissions.Contains(PlatformPermissions.Assign))
                     throw new ForbiddenException("Los permisos de plataforma solo se pueden delegar dentro de @auraly por un usuario autorizado.");
             }
+            if (permissions.Any(permission => PlatformPermissions.IsNonDelegable(permission.Resource)))
+                throw new ForbiddenException("Este permiso es exclusivo del administrador general de Auraly y no se puede delegar.");
 
             var existingPermissions = await _unitOfWork.RolePermissions.GetByRoleIdAsync(roleId, ct);
             _unitOfWork.RolePermissions.DeleteRange(existingPermissions);

@@ -85,7 +85,8 @@ public sealed record PosEnrollmentFiscalSeries(
     long? AuthorizationRangeStart = null,
     long? AuthorizationRangeEnd = null,
     int ExpirationWarningDays = 3,
-    long RemainingNumberWarningThreshold = 100);
+    long RemainingNumberWarningThreshold = 100,
+    bool ProductionActive = false);
 
 public sealed record PosEnrollmentPackage(
     Guid DeviceId,

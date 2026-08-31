@@ -24,9 +24,10 @@ type PartyRoleSelectProps = {
   placeholder?: string;
   disabled?: boolean;
   includePartyId?: boolean;
+  preload?: boolean;
 };
 
-export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOption, leadingOptions, placeholder, disabled, includePartyId = false }: PartyRoleSelectProps) {
+export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOption, leadingOptions, placeholder, disabled, includePartyId = false, preload = false }: PartyRoleSelectProps) {
   const getOption = useCallback((item: PartyWorkspaceItem) => {
     const id = includePartyId || !role ? item.partyId : roleId(item, role);
     return id ? { value: id, label: item.displayName, description: item.identification ?? item.email ?? null } : null;
@@ -35,6 +36,7 @@ export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOpt
     queryKey: ["party-role-select-value", role ?? "Any", includePartyId, value],
     queryFn: async () => (await partiesApi.page({ page: 1, pageSize: 1, ...(role ? { role } : {}), isActive: true, ...((includePartyId || !role) ? { partyId: value } : { roleId: value }) })).items[0] ?? null,
     enabled: Boolean(value) && !selectedOption && !leadingOptions?.some(option => option.value === value),
+    staleTime: 5 * 60 * 1000,
   });
   const resolvedSelected = selectedOption ?? (selectedQuery.data ? getOption(selectedQuery.data) : null);
   const onResolvedRef = useRef(onResolved);
@@ -54,6 +56,7 @@ export function PartyRoleSelect({ role, value, onChange, onResolved, selectedOpt
     placeholder={placeholder}
     ariaLabel={role ? `Seleccionar ${role.toLocaleLowerCase("es-CO")}` : "Seleccionar tercero"}
     disabled={disabled}
+    preload={preload}
   />;
 }
 

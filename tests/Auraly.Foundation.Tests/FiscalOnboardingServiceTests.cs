@@ -135,11 +135,17 @@ public sealed class FiscalOnboardingServiceTests
             IReadOnlyList<ImportedDianNumberingRange> ranges,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
-        public Task ActivateProductionAsync(
+        public Task AssignOnlineResolutionAsync(
             Guid tenantId,
             Guid businessId,
             Guid userId,
             Guid dianNumberingRangeId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task ActivateProductionAsync(
+            Guid tenantId,
+            Guid businessId,
+            Guid userId,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task ActivateSupportDocumentAsync(

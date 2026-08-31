@@ -1,3 +1,5 @@
+using Auraly.Contracts.TenantBilling;
+
 namespace Auraly.Contracts.Tenants;
 
 public sealed record ProvisionTenantRequest(
@@ -74,6 +76,7 @@ public interface ITenantProvisioningStore
     Task<ProvisionTenantResult> ProvisionAsync(
         ProvisionTenantRequest request,
         Guid? actorUserId,
+        TenantQuoteDto commercialQuote,
         CancellationToken cancellationToken);
 
     Task<AcceptTenantInvitationResult> AcceptInvitationAsync(

@@ -1,17 +1,16 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
+import { useQuery } from "@tanstack/react-query";
 import {
-  ArchiveRestore, ChevronDown, CircleDollarSign, PackagePlus, Plus, Save,
+  ArchiveRestore, Barcode, ChevronDown, CircleDollarSign, PackagePlus, Plus, Save,
   Search, Trash2, Truck, Warehouse, X,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useQuery } from "@tanstack/react-query";
 import { DataTable } from "@/components/tables/data-table";
 import { PartyRoleSelect } from "@/components/parties/party-role-select";
-import { SupplierProductPicker } from "@/components/products/supplier-product-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -30,7 +29,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import {
   useAssociateGoodsReceiptProduct, useConfirmGoodsReceipt, useDeleteGoodsReceiptDraft,
-  useGoodsReceiptOptions, useGoodsReceipts,
+  useGoodsReceiptOptions, useGoodsReceiptProducts, useGoodsReceipts,
   useSaveGoodsReceiptDraft,
 } from "@/hooks/use-goods-receipts";
 import {
@@ -42,6 +41,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import type { PartyWorkspaceItem } from "@/services/api/parties";
+import { tenantCommercialApi } from "@/services/api/tenants";
 import { purchaseOrdersApi } from "@/services/api/purchase-orders";
 import {
   calculateBaseQuantity, calculateGoodsReceiptLine, calculateGoodsReceiptTotals, goodsReceiptUnitLabel,
@@ -167,7 +167,7 @@ export default function GoodsReceiptsPage() {
     <header className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
       <div>
         <p className="text-sm font-medium text-primary">Compras e inventario</p>
-        <h1 className="text-3xl font-semibold tracking-tight">Recepciones de compra</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">Recepción de mercancía</h1>
         <p className="mt-1 max-w-3xl text-muted-foreground">
           Recibe productos por proveedor. Al confirmar, el motor actualiza inventario,
           costo promedio, cuenta por pagar y propuesta de precio en el orden del negocio.
@@ -230,7 +230,7 @@ function ReceiptDetailDialog({
           <Truck className="h-5 w-5 text-primary" /> {detail.documentNumber}
         </DialogTitle>
         <DialogDescription>
-          Recepción de compra confirmada. Este documento es inmutable y conserva su trazabilidad completa.
+          Entrada de mercancía confirmada. Este documento es inmutable y conserva su trazabilidad completa.
         </DialogDescription>
       </DialogHeader>
       <div className="space-y-5 overflow-y-auto px-6 py-5">
@@ -319,15 +319,18 @@ function ReceiptEditor({
   const availableOrders = useQuery({
     queryKey: ["purchase-orders-receivable", businessId],
     queryFn: async () => {
-      const [open, partial] = await Promise.all([
+      const [openOrders, partialOrders] = await Promise.all([
         purchaseOrdersApi.list({ page: 1, pageSize: 100, status: "Open" }),
         purchaseOrdersApi.list({ page: 1, pageSize: 100, status: "PartiallyReceived" }),
       ]);
-      return [...open.items, ...partial.items];
+      return [...openOrders.items, ...partialOrders.items];
     },
     enabled: open && !!businessId,
   });
+  const subscription = useQuery({ queryKey: ["tenant-commercial", "subscription"], queryFn: tenantCommercialApi.subscription });
+  const [productSearch, setProductSearch] = useState("");
   const [includeUnassociated, setIncludeUnassociated] = useState(false);
+  const [productMenuOpen, setProductMenuOpen] = useState(false);
   const [pendingAssociation, setPendingAssociation] = useState<GoodsReceiptProduct>();
   const [supplierProductCode, setSupplierProductCode] = useState("");
   const [purchasePresentationName, setPurchasePresentationName] = useState("Unidad");
@@ -335,13 +338,32 @@ function ReceiptEditor({
   const [detailsExpanded, setDetailsExpanded] = useState(() => !draft?.lines.length);
   const [pendingSupplierChange, setPendingSupplierChange] = useState<PendingSupplierChange>();
   const [selectedSupplier, setSelectedSupplier] = useState<PartyWorkspaceItem | null>(null);
+  const products = useGoodsReceiptProducts(
+    draft?.supplierId || undefined, productSearch, includeUnassociated,
+  );
   const associateProduct = useAssociateGoodsReceiptProduct();
   const save = useSaveGoodsReceiptDraft();
   const remove = useDeleteGoodsReceiptDraft();
   const confirm = useConfirmGoodsReceipt();
   const router = useRouter();
   const scanRef = useRef<HTMLInputElement>(null);
+  const productListRef = useRef<HTMLDivElement>(null);
+  const productPickerRef = useRef<HTMLDivElement>(null);
+  const [activeProductIndex, setActiveProductIndex] = useState(0);
   const quantityRefs = useRef(new Map<string, HTMLInputElement>());
+  const productItems = useMemo(
+    () => products.data?.pages.flatMap((page) => page.items) ?? [], [products.data],
+  );
+  useEffect(() => {
+    if (!productMenuOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!productPickerRef.current?.contains(event.target as Node)) setProductMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer, true);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
+  }, [productMenuOpen]);
+
+  useEffect(() => setActiveProductIndex(0), [productSearch, includeUnassociated, draft?.supplierId]);
 
   if (!draft || !businessId) return null;
   const totals = calculateGoodsReceiptTotals(draft.lines);
@@ -359,6 +381,7 @@ function ReceiptEditor({
       supplierInvoiceNumber: "", supplierInvoiceDate: "" });
     setPendingSupplierChange(undefined);
     setIncludeUnassociated(false);
+    setProductSearch("");
   };
 
   const requestSupplierChange = (supplierId: string, supplier?: PartyWorkspaceItem) => {
@@ -425,6 +448,7 @@ function ReceiptEditor({
         averageUnitCost: product.averageUnitCost,
       } satisfies GoodsReceiptLine];
     change({ lines });
+    setProductSearch("");
     requestAnimationFrame(() => requestAnimationFrame(() => {
       const quantity = quantityRefs.current.get(lines[lineIndex].productId);
       quantity?.focus();
@@ -434,6 +458,7 @@ function ReceiptEditor({
   };
 
   const selectProduct = (product: GoodsReceiptProduct) => {
+    setProductMenuOpen(false);
     if (product.isAssociated) {
       addProduct(product);
       return;
@@ -477,6 +502,31 @@ function ReceiptEditor({
   const moveQuantityFocus = (productId: string, offset: number) => {
     const index = draft.lines.findIndex((line) => line.productId === productId);
     if (index >= 0) focusQuantity(index + offset);
+  };
+
+  const capture = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setProductMenuOpen(false);
+      return;
+    }
+    if (event.key === "ArrowDown" && productItems.length > 0) {
+      event.preventDefault();
+      setProductMenuOpen(true);
+      setActiveProductIndex((current) => Math.min(current + 1, productItems.length - 1));
+      return;
+    }
+    if (event.key === "ArrowUp" && productItems.length > 0) {
+      event.preventDefault();
+      setProductMenuOpen(true);
+      setActiveProductIndex((current) => Math.max(current - 1, 0));
+      return;
+    }
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    const selectedProduct = productItems[activeProductIndex] ?? productItems[0];
+    if (selectedProduct) selectProduct(selectedProduct);
   };
 
   const updateLine = (productId: string, values: Partial<GoodsReceiptLine>) =>
@@ -542,10 +592,10 @@ function ReceiptEditor({
   };
 
   return <Dialog open={open} onOpenChange={(value) => !value && onClose()}>
-    <DialogContent className="flex max-h-[96dvh] max-w-[96vw] flex-col overflow-hidden p-0">
+    <DialogContent onEscapeKeyDown={(event) => { if (productMenuOpen) { event.preventDefault(); setProductMenuOpen(false); } }} className="flex max-h-[96dvh] max-w-[96vw] flex-col overflow-hidden p-0">
       <DialogHeader className="border-b px-6 py-5">
         <DialogTitle className="flex items-center gap-2">
-          <Truck className="h-5 w-5 text-primary" /> Recepción de compra
+          <Truck className="h-5 w-5 text-primary" /> Entrada de mercancía
         </DialogTitle>
         <DialogDescription>
           {draft.concurrencyToken
@@ -556,34 +606,54 @@ function ReceiptEditor({
 
       <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
         <section className="rounded-2xl border border-primary/20 bg-primary/5 p-4">
-          <Field label="Recuperar orden de compra">
+          <Field label="Orden de compra (opcional)">
             <Select value={draft.purchaseOrderId || "__none"} onValueChange={async (value) => {
-              if (value === "__none") { change({ purchaseOrderId: "", lines: [] }); return; }
+              if (value === "__none") {
+                change({ purchaseOrderId: "", lines: [] });
+                return;
+              }
               try {
                 const order = await purchaseOrdersApi.receiptSource(value);
                 change({
-                  purchaseOrderId: order.purchaseOrderId, warehouseId: order.warehouseId,
-                  supplierId: order.supplierId, notes: order.notes ?? "",
+                  purchaseOrderId: order.purchaseOrderId,
+                  warehouseId: order.warehouseId,
+                  supplierId: order.supplierId,
+                  notes: order.notes ?? "",
                   lines: order.lines.map((line, index) => ({
-                    lineNumber: index + 1, productId: line.productId, description: line.description,
-                    quantity: line.remainingQuantity, unitCost: line.unitCost,
-                    discountAmount: 0, taxCode: line.taxCode, taxRate: line.taxRate,
+                    lineNumber: index + 1,
+                    productId: line.productId,
+                    description: line.description,
+                    quantity: line.remainingQuantity,
+                    unitCost: line.unitCost,
+                    discountAmount: 0,
+                    taxCode: line.taxCode,
+                    taxRate: line.taxRate,
                     taxTreatment: line.taxTreatment as GoodsReceiptLine["taxTreatment"],
-                    presentationName: line.presentationName, presentationQuantity: line.remainingQuantity / line.unitsPerPresentation,
-                    unitsPerPresentation: line.unitsPerPresentation, purchaseOrderLineId: line.lineId,
-                    overReceiptReason: null, orderedQuantity: line.orderedQuantity,
+                    presentationName: line.presentationName,
+                    presentationQuantity: line.remainingQuantity / line.unitsPerPresentation,
+                    unitsPerPresentation: line.unitsPerPresentation,
+                    purchaseOrderLineId: line.lineId,
+                    overReceiptReason: null,
+                    orderedQuantity: line.orderedQuantity,
                     remainingQuantity: line.remainingQuantity,
                   })),
                 });
-                toast.success(`${order.documentNumber} fue recuperada. Puedes cambiar las cantidades recibidas.`);
-              } catch { toast.error("No fue posible recuperar la orden de compra."); }
+                toast.success(`${order.documentNumber} fue recuperada. Puedes ajustar las cantidades realmente recibidas.`);
+              } catch {
+                toast.error("No fue posible recuperar la orden de compra.");
+              }
             }}>
-              <SelectTrigger><SelectValue placeholder="Seleccionar una orden abierta" /></SelectTrigger>
-              <SelectContent><SelectItem value="__none">Sin orden de compra</SelectItem>{(availableOrders.data ?? []).map(order =>
-                <SelectItem key={order.purchaseOrderId} value={order.purchaseOrderId}>{order.documentNumber} · {order.supplierName} · pendiente {Math.max(0,100-order.fulfillmentPercent).toFixed(1)} %</SelectItem>)}</SelectContent>
+              <SelectTrigger><SelectValue placeholder="Sin orden de compra" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none">Sin orden de compra</SelectItem>
+                {(availableOrders.data ?? []).map((order) =>
+                  <SelectItem key={order.purchaseOrderId} value={order.purchaseOrderId}>
+                    {order.documentNumber} · {order.supplierName} · pendiente {Math.max(0, 100 - order.fulfillmentPercent).toFixed(1)} %
+                  </SelectItem>)}
+              </SelectContent>
             </Select>
           </Field>
-          <p className="mt-2 text-xs text-muted-foreground">La orden propone el saldo pendiente. La recepción registra lo que realmente llegó.</p>
+          <p className="mt-2 text-xs text-muted-foreground">Puedes recibir directamente sin orden. Si eliges una, Auraly propone únicamente su saldo pendiente.</p>
         </section>
         <button type="button" onClick={() => setDetailsExpanded((current) => !current)}
           className="flex w-full items-center justify-between rounded-2xl border bg-muted/20 px-4 py-3 text-left"
@@ -610,15 +680,21 @@ function ReceiptEditor({
           </Field>
           <Field label="Tipo de soporte">
             <Select value={draft.purchaseEvidenceType} disabled={!draft.supplierId}
-              onValueChange={(value: PurchaseEvidenceType) => change({
-                purchaseEvidenceType: value,
+              onValueChange={(value: PurchaseEvidenceType) => {
+                if (value === "BuyerElectronicSupportDocument" && subscription.data
+                    && subscription.data.dianDocumentsUsed >= subscription.data.dianDocumentMonthlyLimit) {
+                  toast.error("No hay cupo de documentos DIAN", { description: "Compra un paquete antes de seleccionar documento soporte electrónico." });
+                  return;
+                }
+                change({ purchaseEvidenceType: value,
                 supplierInvoiceNumber: value === "SupplierElectronicInvoice" ? draft.supplierInvoiceNumber : "",
                 supplierInvoiceDate: value === "SupplierElectronicInvoice" ? draft.supplierInvoiceDate : "",
                 lines: value === "InternalReceiptVoucher"
                   ? draft.lines.map((line) => line.taxRate > 0 && line.taxTreatment === "DeductibleInputVat"
                     ? { ...line, taxTreatment: "CapitalizedCost" as const } : line)
                   : draft.lines,
-              })}>
+                });
+              }}>
               <SelectTrigger><SelectValue placeholder="Seleccionar soporte" /></SelectTrigger>
               <SelectContent>{visibleEvidenceTypes.map((item) =>
                 <SelectItem key={item.code} value={item.code}>{item.label}</SelectItem>)}</SelectContent>
@@ -664,10 +740,68 @@ function ReceiptEditor({
         </section>
         </>}
         <section className="rounded-2xl border">
-          <div className="border-b p-4"><SupplierProductPicker ref={scanRef}
-            supplierId={draft.supplierId || undefined} includeUnassociated={includeUnassociated}
-            disabled={!!draft.purchaseOrderId}
-            onIncludeUnassociatedChange={setIncludeUnassociated} onSelect={selectProduct} /></div>
+          <div ref={productPickerRef} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setProductMenuOpen(false); }}>
+          <div className="grid gap-3 border-b p-4 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
+            <div className="relative">
+              <Barcode className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-primary" />
+              <Input ref={scanRef} className="pl-9" value={productSearch}
+                disabled={!draft.supplierId || !!draft.purchaseOrderId}
+                onFocus={() => setProductMenuOpen(true)}
+                onClick={() => setProductMenuOpen(true)}
+                onChange={(event) => { setProductSearch(event.target.value); setProductMenuOpen(true); }}
+                onKeyDown={capture}
+                placeholder={draft.supplierId
+                  ? "Escanea o busca por código, referencia, nombre o código del proveedor"
+                  : "Selecciona primero el proveedor"} />
+            </div>
+            <Button type="button" variant={includeUnassociated ? "secondary" : "outline"}
+              disabled={!draft.supplierId || !!draft.purchaseOrderId}
+              onClick={() => { setIncludeUnassociated((current) => !current); setProductMenuOpen(true); }}>
+              <Search className="mr-2 h-4 w-4" />
+              {includeUnassociated ? "Ver productos del proveedor" : "Buscar en todo el catálogo"}
+            </Button>
+            <Button type="button" variant="outline"
+              disabled={!!draft.purchaseOrderId || !productItems[activeProductIndex]}
+              onClick={() => productItems[activeProductIndex] && selectProduct(productItems[activeProductIndex])}>
+              <Plus className="mr-2 h-4 w-4" /> Agregar
+            </Button>
+          </div>
+          {productMenuOpen && productItems.length > 0 &&
+            <div ref={productListRef} role="listbox" className="max-h-56 overflow-y-auto border-b bg-background p-2 [&_strong]:font-normal"
+              onScroll={(event) => {
+                const target = event.currentTarget;
+                if (target.scrollHeight - target.scrollTop - target.clientHeight < 80 && products.hasNextPage && !products.isFetchingNextPage) {
+                  void products.fetchNextPage();
+                }
+              }}>
+              {productItems.map((product, index) =>
+                <button key={product.productId} type="button" role="option" aria-selected={index === activeProductIndex}
+                  className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left ${index === activeProductIndex ? "bg-emerald-50" : "hover:bg-muted"}`}
+                  onMouseEnter={() => setActiveProductIndex(index)}
+                  onClick={() => selectProduct(product)}
+                  onMouseDown={(event) => event.preventDefault()}>
+                  <span>
+                    <span className="flex items-center gap-2">
+                      <strong>{product.name}</strong>
+                      {!product.isAssociated && <Badge variant="outline">Nuevo para este proveedor</Badge>}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {product.productCode}
+                      {product.supplierProductCode ? ` · Prov. ${product.supplierProductCode}` : ""}
+                    </span>
+                  </span>
+                  <span className="text-right text-xs">
+                    <span className="block font-medium">Último {product.latestUnitCost == null ? "—" : formatCurrency(product.latestUnitCost)}</span>
+                    <span className="block text-muted-foreground">Promedio {product.averageUnitCost == null ? "—" : formatCurrency(product.averageUnitCost)}</span>
+                  </span>
+                </button>)}
+              {products.hasNextPage && <Button type="button" variant="ghost" className="mt-2 w-full"
+                disabled={products.isFetchingNextPage} onClick={() => products.fetchNextPage()}>
+                {products.isFetchingNextPage ? "Cargando..." : "Cargar 50 más"}
+              </Button>}
+            </div>}
+          {productMenuOpen && draft.supplierId && !products.isLoading && productItems.length === 0 && <div role="listbox" className="border-b px-4 py-3 text-sm text-muted-foreground">Sin datos</div>}
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[900px] text-sm">
               <thead className="bg-muted/50 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -880,7 +1014,8 @@ function fromDraft(draft: GoodsReceiptDraft): EditorDraft {
       preferredUnitsPerPresentation: line.preferredUnitsPerPresentation,
       presentationQuantity: line.presentationQuantity, unitsPerPresentation: line.unitsPerPresentation,
     })),
-    withholdingConceptCode: "", withholdingJurisdictionCode: "", purchaseOrderId: draft.purchaseOrderId ?? "",
+    withholdingConceptCode: "", withholdingJurisdictionCode: "",
+    purchaseOrderId: draft.purchaseOrderId ?? "",
     concurrencyToken: draft.concurrencyToken,
   };
 }

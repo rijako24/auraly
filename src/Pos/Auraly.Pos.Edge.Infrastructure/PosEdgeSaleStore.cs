@@ -28,7 +28,8 @@ public sealed record PosEdgeSeriesProvision(
     long? AuthorizationRangeStart = null,
     long? AuthorizationRangeEnd = null,
     int ExpirationWarningDays = 3,
-    long RemainingNumberWarningThreshold = 100);
+    long RemainingNumberWarningThreshold = 100,
+    bool EmissionEnabled = true);
 
 public sealed record PosEdgeFiscalCursorState(
     Guid SeriesId, long NextConsecutive, long RangeEnd);
@@ -206,7 +207,8 @@ public sealed class PosEdgeSaleStore
                 AuthorizationRangeStart = provision.AuthorizationRangeStart ?? provision.RangeStart,
                 AuthorizationRangeEnd = provision.AuthorizationRangeEnd ?? provision.RangeEnd,
                 ExpirationWarningDays = provision.ExpirationWarningDays,
-                RemainingNumberWarningThreshold = provision.RemainingNumberWarningThreshold
+                RemainingNumberWarningThreshold = provision.RemainingNumberWarningThreshold,
+                IsEmissionEnabled = provision.EmissionEnabled
             };
             context.FiscalSeriesCursors.Add(current);
         }
@@ -227,15 +229,17 @@ public sealed class PosEdgeSaleStore
             current.ExpirationWarningDays = provision.ExpirationWarningDays;
             current.RemainingNumberWarningThreshold = provision.RemainingNumberWarningThreshold;
             current.IsActive = true;
+            current.IsEmissionEnabled = provision.EmissionEnabled;
         }
-        var conflicting = await context.FiscalSeriesCursors.AnyAsync(
+        var conflicting = await context.FiscalSeriesCursors
+            .Where(
             row => row.DeviceId == provision.DeviceId.Value &&
-                   row.SeriesId != provision.SeriesId && row.IsActive,
-            cancellationToken);
-        if (conflicting)
+                   row.SeriesId != provision.SeriesId && row.IsActive)
+            .ToListAsync(cancellationToken);
+        foreach (var previous in conflicting)
         {
-            throw new InvalidOperationException(
-                "El equipo ya conserva otra resolución DIAN activa. No se reemplazará silenciosamente.");
+            previous.IsActive = false;
+            previous.IsEmissionEnabled = false;
         }
         await context.SaveChangesAsync(cancellationToken);
     }
@@ -409,10 +413,12 @@ public sealed class PosEdgeSaleStore
             return new PosFiscalNumberPreview(Guid.Empty, string.Empty, 0, string.Empty, false);
         var cursor = cursors.FirstOrDefault(row =>
                          row.IsActive &&
+                         row.IsEmissionEnabled &&
                          issueDate >= row.ValidFrom && issueDate <= row.ValidUntil &&
                          row.NextConsecutive <= row.RangeEnd)
                      ?? cursors.First();
         var available = cursor.IsActive &&
+                        cursor.IsEmissionEnabled &&
                         issueDate >= cursor.ValidFrom && issueDate <= cursor.ValidUntil &&
                         cursor.NextConsecutive <= cursor.RangeEnd;
         return new PosFiscalNumberPreview(
@@ -499,7 +505,7 @@ public sealed class PosEdgeSaleStore
             var environment = command.Environment.Value;
             var qrValidationUrl = command.QrValidationUrl;
             var cursor = await context.FiscalSeriesCursors
-                .Where(row => row.DeviceId == deviceId && row.IsActive)
+                .Where(row => row.DeviceId == deviceId && row.IsActive && row.IsEmissionEnabled)
                 .OrderBy(row => row.RangeStart)
                 .FirstOrDefaultAsync(cancellationToken);
             var issueDate = DateOnly.FromDateTime(command.IssuedAt.Date);
@@ -1270,7 +1276,8 @@ public sealed class PosEdgeSaleStore
             ["AuthorizationRangeStart"] = "INTEGER NOT NULL DEFAULT 1",
             ["AuthorizationRangeEnd"] = "INTEGER NOT NULL DEFAULT 1",
             ["ExpirationWarningDays"] = "INTEGER NOT NULL DEFAULT 3",
-            ["RemainingNumberWarningThreshold"] = "INTEGER NOT NULL DEFAULT 100"
+            ["RemainingNumberWarningThreshold"] = "INTEGER NOT NULL DEFAULT 100",
+            ["IsEmissionEnabled"] = "INTEGER NOT NULL DEFAULT 0"
         };
         foreach (var addition in additions.Where(item => !columns.Contains(item.Key)))
         {

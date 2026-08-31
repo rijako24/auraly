@@ -29,9 +29,11 @@ type Props = {
   onEnroll?: (option: SalesWorkspaceOption, documentType: PosSaleDocumentType) => Promise<void>;
   forcedDocumentType?: PosSaleDocumentType;
   enrollmentState?: "web" | "available" | "enrolled";
+  configurationOffline?: boolean;
+  configuredDocumentType?: PosSaleDocumentType;
 };
 
-export function PosOnlineSetup({ options, loading, error, notice, tenantName, userDisplayName, onSelect, onCancel, edgeCapable = false, canEnrollOffline = false, enrollmentUnavailableReason, enrollmentCapacity, onEnroll, forcedDocumentType, enrollmentState = "web" }: Props) {
+export function PosOnlineSetup({ options, loading, error, notice, tenantName, userDisplayName, onSelect, onCancel, edgeCapable = false, canEnrollOffline = false, enrollmentUnavailableReason, enrollmentCapacity, onEnroll, forcedDocumentType, enrollmentState = "web", configurationOffline = false, configuredDocumentType }: Props) {
   const businesses = useMemo(() => Array.from(new Map(options.map((option) => [option.businessId, option.businessName]))), [options]);
   const [businessId, setBusinessId] = useState("");
   const [warehouseId, setWarehouseId] = useState("");
@@ -49,9 +51,13 @@ export function PosOnlineSetup({ options, loading, error, notice, tenantName, us
       setDocumentType(forcedDocumentType);
       return;
     }
+    if (configuredDocumentType) {
+      setDocumentType(configuredDocumentType);
+      return;
+    }
     const saved = window.localStorage.getItem("auraly.pos.document-type");
     if (saved === "SalesInvoice" || saved === "SalesReceipt") setDocumentType(saved);
-  }, [forcedDocumentType]);
+  }, [configuredDocumentType, forcedDocumentType]);
   useEffect(() => {
     if (!options.length) return;
     const remembered = rememberedSalesWorkspaceKey();
@@ -61,7 +67,7 @@ export function PosOnlineSetup({ options, loading, error, notice, tenantName, us
     if (value.warehouseId !== warehouseId) setWarehouseId(value.warehouseId);
   }, [options, businessId, warehouseId]);
   useEffect(() => {
-    if (!selected) { setFiscal(null); return; }
+    if (!selected || configurationOffline) { setFiscal(null); return; }
     let active = true;
     setFiscalLoading(true);
     setFiscalError(null);
@@ -70,8 +76,12 @@ export function PosOnlineSetup({ options, loading, error, notice, tenantName, us
       .catch((caught: unknown) => active && setFiscalError(caught instanceof Error ? caught.message : "No fue posible verificar la activación fiscal."))
       .finally(() => active && setFiscalLoading(false));
     return () => { active = false; };
-  }, [selected]);
+  }, [configurationOffline, selected]);
   async function choose(mode: "online" | "enroll") {
+    if (configurationOffline) {
+      onCancel?.();
+      return;
+    }
     if (!selected) return;
     setBusy(true);
     setFiscalError(null);
@@ -98,25 +108,26 @@ export function PosOnlineSetup({ options, loading, error, notice, tenantName, us
     <div className="mx-auto flex min-h-[calc(100vh-2rem)] max-w-5xl items-center py-14"><section className="grid w-full overflow-hidden rounded-[2rem] border border-white/10 bg-[#0b2428] shadow-2xl md:grid-cols-[.72fr_1.45fr]">
       <aside className="bg-gradient-to-br from-teal-400/20 to-transparent p-7"><span className="grid h-12 w-12 place-items-center rounded-2xl bg-teal-300 text-[#071a1d]"><MonitorSmartphone /></span><p className="mt-7 text-xs font-bold uppercase tracking-[.15em] text-teal-200">{tenantName || "Auraly"}</p><h1 className="mt-2 text-3xl font-black">Prepara facturación</h1><p className="mt-3 text-sm leading-6 text-slate-300">Hola, {userDisplayName}. Confirma ubicación y documento en una sola pantalla. La activación DIAN se administra únicamente desde Configuración fiscal.</p><ol className="mt-7 space-y-3 text-sm"><Step number="1" text="Sede y bodega" active={!!selected} /><Step number="2" text="Documento de venta" active /><Step number="3" text={invoice ? "Validación fiscal" : "Entrar a ventas"} active={!invoice || !!fiscal?.isReadyForOnlineSales} /></ol></aside>
       <div className="p-6 md:p-9">{loading ? <Loading /> : <div className="space-y-5">
-        <Combo title="Sede" icon={Building2} value={businessId} onChange={(value) => { setBusinessId(value); setWarehouseId(""); }} items={businesses.map(([id, name]) => ({ id, name }))} />
-        <Combo title="Bodega" icon={Warehouse} value={warehouseId} onChange={setWarehouseId} disabled={!businessId} items={warehouses.map((option) => ({ id: option.warehouseId, name: `${option.warehouseCode} · ${option.warehouseName}` }))} />
-        {selected && <div><p className="mb-2 text-sm font-semibold">{forcedDocumentType ? "Documento de habilitación" : "Documento predeterminado"}</p><div className="grid grid-cols-2 gap-2"><DocumentButton active={invoice} icon={FileKey2} title="Factura electrónica" onClick={() => setDocumentType("SalesInvoice")} /><DocumentButton active={!invoice} icon={Receipt} title="Comprobante de venta" disabled={Boolean(forcedDocumentType)} onClick={() => setDocumentType("SalesReceipt")} /></div><p className="mt-2 text-xs text-slate-400">{forcedDocumentType ? "El asistente mantiene la factura electrónica para enviar el documento al set de pruebas DIAN." : "Un cliente configurado para factura electrónica la fuerza automáticamente sin cambiar este predeterminado."}</p></div>}
+        <Combo title="Sede" icon={Building2} value={businessId} onChange={(value) => { setBusinessId(value); setWarehouseId(""); }} disabled={configurationOffline} items={businesses.map(([id, name]) => ({ id, name }))} />
+        <Combo title="Bodega" icon={Warehouse} value={warehouseId} onChange={setWarehouseId} disabled={configurationOffline || !businessId} items={warehouses.map((option) => ({ id: option.warehouseId, name: [option.warehouseCode, option.warehouseName].filter(Boolean).join(" · ") }))} />
+        {selected && <div><p className="mb-2 text-sm font-semibold">{forcedDocumentType ? "Documento de habilitación" : "Documento predeterminado"}</p><div className="grid grid-cols-2 gap-2"><DocumentButton active={invoice} icon={FileKey2} title="Factura electrónica" disabled={configurationOffline} onClick={() => setDocumentType("SalesInvoice")} /><DocumentButton active={!invoice} icon={Receipt} title="Comprobante de venta" disabled={Boolean(forcedDocumentType) || configurationOffline} onClick={() => setDocumentType("SalesReceipt")} /></div><p className="mt-2 text-xs text-slate-400">{forcedDocumentType ? "El asistente mantiene la factura electrónica para enviar el documento al set de pruebas DIAN." : "Un cliente configurado para factura electrónica la fuerza automáticamente sin cambiar este predeterminado."}</p></div>}
         {selected && invoice && fiscalLoading && <Loading text="Verificando activación fiscal…" />}
         {selected && invoice && !fiscalLoading && fiscal && !fiscal.isReadyForOnlineSales && <div className="rounded-2xl border border-amber-300/25 bg-amber-100/10 p-5 text-amber-100"><div className="flex gap-3"><FileKey2 className="h-6 w-6 shrink-0" /><div><p className="font-bold">Facturación electrónica pendiente</p><p className="mt-1 text-sm">El POS no configura certificados ni resoluciones. Un administrador debe completar la activación DIAN para esta sede.</p><Link href="/dashboard/settings/fiscal" className="mt-3 inline-block font-bold underline">Abrir configuración fiscal</Link></div></div></div>}
         {selected && invoice && fiscal?.isReadyForOnlineSales && <div className="flex items-center gap-2 rounded-xl border border-emerald-300/20 bg-emerald-300/10 p-3 text-sm text-emerald-100"><CheckCircle2 className="h-5 w-5" />Resolución {fiscal.authorizationNumber} activa para esta sede.</div>}
         {selected && (fiscal?.warningMessages?.length ?? 0) > 0 && <div role="alert" className="rounded-2xl border border-amber-300/30 bg-amber-100/10 p-4 text-sm text-amber-100"><p className="font-bold">Atención con la resolución DIAN</p><ul className="mt-2 list-disc space-y-1 pl-5">{fiscal?.warningMessages?.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
-        {(error || fiscalError) && <p className="rounded-xl border border-red-300/20 bg-red-400/10 p-3 text-sm text-red-100">{error || fiscalError}</p>}
+        {!configurationOffline && (error || fiscalError) && <p className="rounded-xl border border-red-300/20 bg-red-400/10 p-3 text-sm text-red-100">{error || fiscalError}</p>}
+        {configurationOffline && <p role="status" className="rounded-xl border border-amber-300/25 bg-amber-300/10 p-3 text-sm font-semibold text-amber-100">Sin conexión con Auraly. La configuración se muestra en modo de solo lectura.</p>}
         {notice && <p role="status" className="flex items-center gap-2 rounded-xl border border-teal-300/25 bg-teal-300/10 p-3 text-sm font-semibold text-teal-50"><Loader2 className="h-4 w-4 animate-spin" />{notice}</p>}
         {!options.length && !error && <p className="rounded-xl border border-amber-300/20 bg-amber-300/10 p-4 text-sm text-amber-100">No hay bodegas activas disponibles para este usuario.</p>}
         {enrollmentState === "enrolled" && <div role="status" className="flex items-start gap-3 rounded-2xl border border-emerald-300/30 bg-emerald-300/10 p-4 text-sm text-emerald-50">
           <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
           <span><strong className="block text-white">Equipo enrolado</strong><span className="mt-1 block leading-5 text-emerald-100">Esta instalación trabaja con el motor local y recibe los cambios por sincronización.</span></span>
         </div>}
-        {edgeCapable && <label className={`flex items-start gap-3 rounded-2xl border p-4 text-sm transition ${prepareInstalled ? "border-teal-300/50 bg-teal-300/15" : "border-white/15 bg-[#102e33]"} ${canEnrollOffline ? "cursor-pointer" : "opacity-70"}`}>
-          <Checkbox className="mt-0.5 border-teal-200 data-[state=checked]:bg-teal-300 data-[state=checked]:text-[#071a1d]" checked={prepareInstalled} disabled={!canEnrollOffline || busy} onCheckedChange={(checked) => setPrepareInstalled(checked === true)} />
+        {edgeCapable && <label className={`flex items-start gap-3 rounded-2xl border p-4 text-sm transition ${prepareInstalled ? "border-teal-300/50 bg-teal-300/15" : "border-white/15 bg-[#102e33]"} ${canEnrollOffline && !configurationOffline ? "cursor-pointer" : "opacity-70"}`}>
+          <Checkbox className="mt-0.5 border-teal-200 data-[state=checked]:bg-teal-300 data-[state=checked]:text-[#071a1d]" checked={prepareInstalled} disabled={configurationOffline || !canEnrollOffline || busy} onCheckedChange={(checked) => setPrepareInstalled(checked === true)} />
           <span><strong className="block text-white">Preparar este equipo para trabajar sin conexión</strong><span className="mt-1 block leading-5 text-slate-300">Descarga usuarios, permisos, productos, clientes y precios. Después del enrolamiento la caja usa siempre el motor local sincronizado.</span>{enrollmentCapacity && <span className="mt-2 block text-xs text-teal-100">Cajas enroladas: {enrollmentCapacity.active} de {enrollmentCapacity.maximum}</span>}{!canEnrollOffline && <span role="alert" className="mt-2 block font-semibold text-amber-100">{enrollmentUnavailableReason ?? "No es posible enrolar otra caja. Comunícate con el administrador."}</span>}</span>
         </label>}
-        <button onClick={() => void choose(edgeCapable && prepareInstalled ? "enroll" : "online")} disabled={!selected || busy || (invoice && fiscalLoading)} className="h-12 w-full rounded-xl bg-teal-300 font-bold text-[#071a1d] disabled:opacity-35">{busy ? (prepareInstalled ? "Preparando equipo…" : "Entrando…") : "Continuar a ventas"}</button>
+        <button onClick={() => void choose(edgeCapable && prepareInstalled ? "enroll" : "online")} disabled={(!selected && !configurationOffline) || (configurationOffline && !onCancel) || busy || (invoice && fiscalLoading)} className="h-12 w-full rounded-xl bg-teal-300 font-bold text-[#071a1d] disabled:opacity-35">{busy ? (prepareInstalled ? "Preparando equipo…" : "Entrando…") : "Continuar a ventas"}</button>
       </div>}</div>
     </section></div>
   </main>;

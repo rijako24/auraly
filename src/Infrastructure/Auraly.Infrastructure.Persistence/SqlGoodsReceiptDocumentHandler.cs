@@ -41,6 +41,8 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         await SqlAccountingPostingJobWriter.InsertAsync(
             session, document, receipt.ReceivedAt, ids, timeProvider,
             cancellationToken);
+        await SqlSalesReportingJobWriter.InsertAsync(
+            session, document, ids, timeProvider, cancellationToken);
         await InsertOutboxAsync(session, receipt, document.Payload, cancellationToken);
         await MarkProcessedAsync(session, receipt, cancellationToken);
     }

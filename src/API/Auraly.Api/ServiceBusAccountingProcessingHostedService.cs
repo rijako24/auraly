@@ -1,38 +1,12 @@
 using System.Text.Json;
 using Auraly.Commerce.Accounting.Application;
 using Auraly.Commerce.Accounting.Infrastructure;
+using Auraly.Platform.Infrastructure.Processing;
 using Azure.Messaging.ServiceBus;
 
 namespace Auraly.Api;
 
 public sealed record AccountingProcessingServiceBusOptions(string QueueName);
-
-public sealed class ServiceBusAccountingProcessingPublisher(
-    ServiceBusClient client,
-    AccountingProcessingServiceBusOptions options)
-    : IAccountingProcessingSignalPublisher, IAsyncDisposable
-{
-    private readonly ServiceBusSender sender = client.CreateSender(options.QueueName);
-
-    public async Task PublishAsync(
-        AccountingProcessingSignal signal,
-        CancellationToken cancellationToken = default)
-    {
-        AccountingProcessingSignalCodec.Validate(signal);
-        var message = new ServiceBusMessage(BinaryData.FromString(
-            AccountingProcessingSignalCodec.Serialize(signal)))
-        {
-            MessageId = signal.SignalId.ToString("D"),
-            SessionId = signal.BusinessId.ToString("D"),
-            Subject = signal.DocumentType,
-            ContentType = "application/json"
-        };
-        message.ApplicationProperties["documentId"] = signal.DocumentId.ToString("D");
-        await sender.SendMessageAsync(message, cancellationToken);
-    }
-
-    public ValueTask DisposeAsync() => sender.DisposeAsync();
-}
 
 public sealed class AccountingProcessingHostedService(
     ServiceBusClient client,
@@ -131,32 +105,5 @@ public sealed class AccountingProcessingHostedService(
             args.EntityPath,
             args.ErrorSource);
         return Task.CompletedTask;
-    }
-}
-
-internal static class AccountingProcessingSignalCodec
-{
-    private static readonly JsonSerializerOptions Options =
-        new(JsonSerializerDefaults.Web);
-
-    public static string Serialize(AccountingProcessingSignal signal) =>
-        JsonSerializer.Serialize(signal, Options);
-
-    public static AccountingProcessingSignal Deserialize(string value) =>
-        JsonSerializer.Deserialize<AccountingProcessingSignal>(value, Options)
-        ?? throw new InvalidOperationException(
-            "The accounting-processing signal is invalid.");
-
-    public static void Validate(AccountingProcessingSignal signal)
-    {
-        ArgumentNullException.ThrowIfNull(signal);
-        if (signal.SignalId == Guid.Empty ||
-            signal.BusinessId == Guid.Empty ||
-            signal.DocumentId == Guid.Empty ||
-            string.IsNullOrWhiteSpace(signal.DocumentType) ||
-            signal.DocumentType.Length > 64 ||
-            !AccountingProcessingPolicy.Supports(signal.DocumentType))
-            throw new InvalidOperationException(
-                "The accounting-processing signal has invalid identifiers or document type.");
     }
 }

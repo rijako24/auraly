@@ -63,10 +63,12 @@ export function FiscalDeviceResolutionCard({ businessId, canManage }: { business
     if (!selectedOnline) return;
     setSavingOnline(true);
     try {
-      setOnboarding(await fiscalConfigurationApi.activateProduction(businessId, selectedOnline));
+      setOnboarding(await fiscalConfigurationApi.assignOnlineResolution(businessId, selectedOnline));
       setWorkspace(await fiscalConfigurationApi.getDevices(businessId));
       setSelectedOnline("");
-      toast.success("Resolución online asignada. La caja web ya puede emitir facturas electrónicas.");
+      toast.success(onboarding?.productionActive
+        ? "Resolución online asignada. La caja web ya puede emitir facturas electrónicas."
+        : "Resolución online reservada. Quedará disponible en la caja web al activar producción.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "No fue posible asignar la resolución online.");
     } finally {
@@ -83,7 +85,7 @@ export function FiscalDeviceResolutionCard({ businessId, canManage }: { business
       setSelected((current) => Object.fromEntries(Object.entries(current).map(
         ([key, value]) => [key, value === dianNumberingRangeId ? "" : value],
       )));
-      toast.success("Resolución DIAN asignada. El equipo la descargará al sincronizar.");
+      toast.success("Resolución DIAN asignada. El equipo descargará siempre la nueva asignación al sincronizar.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "No fue posible asignar la resolución.");
     } finally {
@@ -143,8 +145,11 @@ export function FiscalDeviceResolutionCard({ businessId, canManage }: { business
       {!loading && workspace?.devices.length === 0 ? <p className="rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground">No hay equipos enrolados en esta sede.</p> : null}
       {workspace?.devices.map((device) => <div key={device.deviceId} className="grid items-center gap-4 rounded-2xl border p-4 lg:grid-cols-[minmax(14rem,1fr)_minmax(20rem,1.4fr)_auto]">
         <div className="min-w-0"><strong className="block truncate">{device.deviceName}</strong><small className="text-muted-foreground">{device.deviceIsActive ? "Equipo activo" : "Equipo inactivo"}{device.lastSeenAt ? ` · visto ${new Date(device.lastSeenAt).toLocaleString("es-CO")}` : ""}</small></div>
-        {device.isProvisioned ? <AssignedResolution authorizationNumber={device.authorizationNumber ?? ""} prefix={device.prefix ?? ""} rangeStart={device.rangeStart ?? 0} rangeEnd={device.rangeEnd ?? 0} /> : <ResolutionSelect value={selected[device.deviceId] ?? ""} onChange={(value) => setSelected((current) => ({ ...current, [device.deviceId]: value }))} available={available} disabled={!canManage || !canAssign || !device.deviceIsActive} />}
-        <Button className="justify-self-end" disabled={!canManage || !canAssign || device.isProvisioned || !selected[device.deviceId] || savingDeviceId === device.deviceId} onClick={() => void assignDevice(device.deviceId)}>{savingDeviceId === device.deviceId && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Asignar resolución</Button>
+        <div className="space-y-2">
+          {device.isProvisioned && <AssignedResolution authorizationNumber={device.authorizationNumber ?? ""} prefix={device.prefix ?? ""} rangeStart={device.rangeStart ?? 0} rangeEnd={device.rangeEnd ?? 0} />}
+          {(!device.isProvisioned || available.length > 0) && <ResolutionSelect value={selected[device.deviceId] ?? ""} onChange={(value) => setSelected((current) => ({ ...current, [device.deviceId]: value }))} available={available} disabled={!canManage || !canAssign || !device.deviceIsActive} />}
+        </div>
+        <Button className="justify-self-end" disabled={!canManage || !canAssign || !selected[device.deviceId] || savingDeviceId === device.deviceId} onClick={() => void assignDevice(device.deviceId)}>{savingDeviceId === device.deviceId && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{device.isProvisioned ? "Cambiar resolución" : "Asignar resolución"}</Button>
       </div>)}
       {!loading && available.length === 0 && <p className="text-sm text-muted-foreground">No hay resoluciones libres y vigentes. Consulta la DIAN después de asociar una nueva numeración al software.</p>}
     </CardContent>

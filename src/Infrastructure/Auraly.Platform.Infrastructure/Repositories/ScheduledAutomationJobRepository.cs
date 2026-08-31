@@ -34,11 +34,13 @@ public sealed class ScheduledAutomationJobRepository : IScheduledAutomationJobRe
     {
         return await _context.ScheduledAutomationJobs
             .Include(j => j.Reservation)
-                .ThenInclude(r => r.Service)
+                .ThenInclude(r => r!.Service)
             .Include(j => j.Reservation)
-                .ThenInclude(r => r.AddOns)
+                .ThenInclude(r => r!.AddOns)
                     .ThenInclude(a => a.AddOnService)
             .Where(j =>
+                (j.JobType == ScheduledAutomationJobType.ReservationConfirmation ||
+                 j.JobType == ScheduledAutomationJobType.ReservationReminder) &&
                 j.ScheduledAtUtc <= utcNow &&
                 (j.Status == ScheduledAutomationJobStatus.Pending ||
                  (j.Status == ScheduledAutomationJobStatus.Locked &&
@@ -52,7 +54,7 @@ public sealed class ScheduledAutomationJobRepository : IScheduledAutomationJobRe
     public Task<ScheduledAutomationJob?> GetByIdAsync(Guid jobId, CancellationToken ct = default) =>
         _context.ScheduledAutomationJobs
             .Include(j => j.Reservation)
-                .ThenInclude(r => r.Service)
+                .ThenInclude(r => r!.Service)
             .FirstOrDefaultAsync(j => j.ScheduledAutomationJobId == jobId, ct);
 
     public Task<ScheduledAutomationJob?> GetLatestByReservationAndTypeAsync(

@@ -401,6 +401,7 @@ export default function PricingPage() {
         </SelectContent>
       </Select>
       <PartyRoleSelect role="Supplier" value={supplierId}
+        preload
         leadingOptions={[{value:"all",label:"Todos los proveedores"}]}
         placeholder="Buscar proveedor" onChange={(value) => { setSupplierId(value); setPage(1); }}/>
     </section>

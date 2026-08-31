@@ -426,6 +426,7 @@ services.AddScoped<IBlobStorageService>(sp =>
 
     new ConsoleBlobStorageService(sp.GetRequiredService<ILogger<ConsoleBlobStorageService>>()));
 
+services.AddSingleton<IIntegrationSecretProtector, IntegrationSecretProtector>();
 services.AddScoped<IIntegrationsConfigProvider, IntegrationsConfigProvider>();
 
 services.AddScoped<ISchedulingPolicyProvider, SchedulingPolicyProvider>();

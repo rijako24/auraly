@@ -6,6 +6,7 @@ public sealed class CommercialReportingDesignTests
 {
     [Theory]
     [InlineData("SalesInvoice")]
+    [InlineData("ServiceInvoice")]
     [InlineData("SalesReceipt")]
     [InlineData("SalesReturn")]
     [InlineData("RouteVisit")]
@@ -16,6 +17,25 @@ public sealed class CommercialReportingDesignTests
     public void Reporting_policy_accepts_every_canonical_commercial_source(string sourceType)
     {
         Assert.True(SalesReportingProcessingPolicy.Supports(sourceType));
+    }
+
+    [Fact]
+    public void Service_invoice_reuses_the_sales_header_without_weakening_product_lines()
+    {
+        var root = FindRepositoryRoot();
+        var header = File.ReadAllText(Path.Combine(root, "database", "Auraly.Database",
+            "Tables", "SalesDocuments.sql"));
+        var serviceLines = File.ReadAllText(Path.Combine(root, "database", "Auraly.Database",
+            "Tables", "SalesDocumentServiceLines.sql"));
+        var productLines = File.ReadAllText(Path.Combine(root, "database", "Auraly.Database",
+            "Tables", "SalesDocumentLines.sql"));
+
+        Assert.Contains("N'ServiceInvoice'", header, StringComparison.Ordinal);
+        Assert.Contains("SalesDocumentServiceLines", serviceLines, StringComparison.Ordinal);
+        Assert.Contains("BillableServiceId", serviceLines, StringComparison.Ordinal);
+        Assert.DoesNotContain("ProductId", serviceLines, StringComparison.Ordinal);
+        Assert.Contains("ProductId", productLines, StringComparison.Ordinal);
+        Assert.DoesNotContain("BillableServiceId", productLines, StringComparison.Ordinal);
     }
 
     [Fact]

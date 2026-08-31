@@ -84,6 +84,88 @@ public sealed class FiscalDeviceSeriesApiTests(ServerSliceFixture fixture)
     }
 
     [Fact]
+    public async Task Manager_replaces_device_resolution_and_publishes_new_provisioning()
+    {
+        var firstRangeId = Guid.NewGuid();
+        var replacementRangeId = Guid.NewGuid();
+        var documentSeriesId = Guid.NewGuid();
+        await SeedAsync(firstRangeId, fixture.DeniedDeviceId, documentSeriesId,
+            "OLD", 83001, 83100);
+        await SeedRangeAsync(replacementRangeId, "NEW", 84001, 84100);
+        try
+        {
+            using var manager = fixture.CreateAdminClient(
+                FiscalPermissionCodes.ConfigurationRead,
+                FiscalPermissionCodes.ConfigurationManage);
+            using var first = await manager.PostAsJsonAsync(AssignmentUrl,
+                new AssignFiscalDeviceSeriesRequest(fixture.DeniedDeviceId, firstRangeId));
+            Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+            using var replacement = await manager.PostAsJsonAsync(AssignmentUrl,
+                new AssignFiscalDeviceSeriesRequest(fixture.DeniedDeviceId, replacementRangeId));
+            Assert.Equal(HttpStatusCode.OK, replacement.StatusCode);
+
+            Assert.Equal(1, await ScalarAsync("""
+                SELECT COUNT(*) FROM dbo.FiscalSeries series
+                JOIN dbo.FiscalAuthorizations fiscalAuthorization
+                  ON fiscalAuthorization.FiscalAuthorizationId=series.FiscalAuthorizationId
+                WHERE series.DeviceId=@DeviceId AND series.IsActive=1
+                  AND fiscalAuthorization.DianNumberingRangeId=@RangeId;
+                """, fixture.DeniedDeviceId, replacementRangeId));
+            Assert.Equal(2, await ScalarAsync("""
+                SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages
+                WHERE BusinessId=@BusinessId AND Stream=N'FiscalProvisioning';
+                """));
+        }
+        finally
+        {
+            await CleanupAsync(firstRangeId, [documentSeriesId], [fixture.DeniedDeviceId], false);
+            await CleanupAsync(replacementRangeId, [], [fixture.DeniedDeviceId], false);
+        }
+    }
+
+    [Fact]
+    public async Task Device_downloads_assigned_resolution_during_habilitation_without_enabling_production()
+    {
+        var rangeId = Guid.NewGuid();
+        var documentSeriesId = Guid.NewGuid();
+        await SeedAsync(rangeId, fixture.DeniedDeviceId, documentSeriesId,
+            "HAB", 81501, 81600, production: false);
+        await ExecuteAsync("""
+            INSERT dbo.PosDevicePermissions(DeviceId,PermissionCode,IsGranted,GrantedAt)
+            VALUES(@DeviceId,N'catalog.sync',1,SYSDATETIMEOFFSET());
+            """, fixture.DeniedDeviceId);
+        try
+        {
+            using var manager = fixture.CreateAdminClient(
+                FiscalPermissionCodes.ConfigurationRead,
+                FiscalPermissionCodes.ConfigurationManage);
+            using var assigned = await manager.PostAsJsonAsync(AssignmentUrl,
+                new AssignFiscalDeviceSeriesRequest(fixture.DeniedDeviceId, rangeId));
+            Assert.Equal(HttpStatusCode.OK, assigned.StatusCode);
+
+            using var device = fixture.CreateClient();
+            using var request = new HttpRequestMessage(HttpMethod.Get,
+                $"/api/pos/v1/fiscal/provisioning-bundle?businessId={fixture.BusinessId:D}");
+            request.Headers.Add("X-Auraly-Device-Id", fixture.DeniedDeviceId.ToString("D"));
+            request.Headers.Add("X-Auraly-Device-Secret", ServerSliceFixture.DeniedDeviceSecret);
+            using var response = await device.SendAsync(request);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var provision = Assert.Single((await response.Content
+                .ReadFromJsonAsync<IReadOnlyList<PosFiscalSeriesProvisioning>>())!);
+            Assert.Equal("HAB", provision.Prefix);
+            Assert.False(provision.ProductionActive);
+        }
+        finally
+        {
+            await ExecuteAsync("""
+                DELETE dbo.PosDevicePermissions
+                WHERE DeviceId=@DeviceId AND PermissionCode=N'catalog.sync';
+                """, fixture.DeniedDeviceId);
+            await CleanupAsync(rangeId, [documentSeriesId], [fixture.DeniedDeviceId], false);
+        }
+    }
+
+    [Fact]
     public async Task Resolution_alert_thresholds_are_tenant_scoped_validated_and_persisted()
     {
         using var readOnly = fixture.CreateAdminClient(FiscalPermissionCodes.ConfigurationRead);
@@ -135,14 +217,18 @@ public sealed class FiscalDeviceSeriesApiTests(ServerSliceFixture fixture)
     }
 
     private async Task SeedAsync(Guid rangeId, Guid deviceId, Guid documentSeriesId,
-        string prefix, long start, long end, bool createDevice = false)
+        string prefix, long start, long end, bool createDevice = false, bool production = true)
     {
         await ExecuteAsync("""
-            UPDATE dbo.FiscalIssuerConfigurations SET Environment=1
+            UPDATE dbo.FiscalIssuerConfigurations SET Environment=@Environment
             WHERE BusinessId=@BusinessId AND IsActive=1;
-            """, environment: 1);
+            """, environment: production ? 1 : 2);
         await SeedDeviceAsync(deviceId, documentSeriesId, createDevice);
-        await ExecuteAsync("""
+        await SeedRangeAsync(rangeId, prefix, start, end);
+    }
+
+    private Task SeedRangeAsync(Guid rangeId, string prefix, long start, long end) =>
+        ExecuteAsync("""
             INSERT fiscal.DianNumberingRanges(
                 DianNumberingRangeId,TenantId,AuthorizationNumber,ResolutionDate,Prefix,
                 RangeStart,RangeEnd,ValidFrom,ValidUntil,ProtectedTechnicalKey,ImportedAt,LastSeenAt)
@@ -150,8 +236,7 @@ public sealed class FiscalDeviceSeriesApiTests(ServerSliceFixture fixture)
                    @Prefix,@Start,@End,DATEADD(day,-1,CONVERT(date,SYSUTCDATETIME())),
                    DATEADD(year,1,CONVERT(date,SYSUTCDATETIME())),@ProtectedTechnicalKey,
                    SYSDATETIMEOFFSET(),SYSDATETIMEOFFSET();
-            """, deviceId, rangeId, prefix, start, end);
-    }
+            """, rangeId: rangeId, prefix: prefix, start: start, end: end);
 
     private Task SeedDeviceAsync(Guid deviceId, Guid documentSeriesId, bool createDevice) => ExecuteAsync("""
         IF @CreateDevice=1
@@ -161,7 +246,8 @@ public sealed class FiscalDeviceSeriesApiTests(ServerSliceFixture fixture)
         INSERT dbo.DocumentSeries(DocumentSeriesId,BusinessId,DeviceId,DocumentType,
             Prefix,SeriesCode,Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
         VALUES(@DocumentSeriesId,@BusinessId,@DeviceId,N'SalesInvoice',N'VTA',
-            RIGHT(CONCAT(N'00',ABS(CHECKSUM(@DocumentSeriesId))%100),2),8,1,99999999,1,1,SYSDATETIMEOFFSET());
+            RIGHT(REPLACE(CONVERT(nvarchar(36),@DocumentSeriesId),N'-',N''),8),
+            8,1,99999999,1,1,SYSDATETIMEOFFSET());
         """, deviceId, documentSeriesId: documentSeriesId, createDevice: createDevice);
 
     private async Task CleanupAsync(Guid rangeId, IReadOnlyCollection<Guid> documentSeriesIds,

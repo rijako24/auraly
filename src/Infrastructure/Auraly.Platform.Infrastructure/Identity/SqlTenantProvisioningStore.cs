@@ -7,6 +7,7 @@ using Microsoft.Data.SqlClient;
 using Auraly.BuildingBlocks.Domain.Identity;
 using Microsoft.EntityFrameworkCore;
 using Auraly.Contracts.Tenants;
+using Auraly.Contracts.TenantBilling;
 using Auraly.Platform.Infrastructure.Data;
 
 namespace Auraly.Platform.Infrastructure.Identity;
@@ -18,6 +19,7 @@ public sealed class SqlTenantProvisioningStore(
     public async Task<ProvisionTenantResult> ProvisionAsync(
         ProvisionTenantRequest request,
         Guid? actorUserId,
+        TenantQuoteDto commercialQuote,
         CancellationToken cancellationToken)
     {
         var connection = (SqlConnection)db.Database.GetDbConnection();
@@ -158,6 +160,7 @@ public sealed class SqlTenantProvisioningStore(
                      N'work-sessions.read',N'work-sessions.differences.read',N'work-sessions.cash-reasons.configure',
                      N'dispatches.read-all',N'dispatches.reports.view',N'dispatches.reports.export',
                      N'sales.reports.read',N'sales.reports.read-all',N'sales.returns.read',N'sales.debit-notes.read',
+                     N'service-invoices.read',
                      N'purchasing.goods-receipts.read',N'purchasing.purchase-returns.read');
                 INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
                 SELECT NEWID(),@SupervisorRoleId,PermissionId,@Now
@@ -167,6 +170,8 @@ public sealed class SqlTenantProvisioningStore(
                   N'pos.approvals.authorize',N'pos.approvals.read',N'pos.approvals.receive_notifications',N'pos.approvals.manage_credential',
                   N'pos.customer.create',N'pos.orders',N'orders.read',N'orders.invoice',
                   N'sales.returns.read',N'sales.returns.create',N'sales.returns.confirm',
+                  N'service-invoices.read',N'service-invoices.create',N'service-invoices.price.override',
+                  N'service-invoices.discount',N'service-invoices.issue',N'service-invoices.print',
                   N'work-sessions.read',N'work-sessions.open',N'work-sessions.close',N'work-sessions.cash.manage',N'work-sessions.cash.drawer.open',N'inventory.read');
                 INSERT dbo.RolePermissions(RolePermissionId,RoleId,PermissionId,AssignedAt)
                 SELECT NEWID(),@SellerRoleId,PermissionId,@Now
@@ -178,7 +183,8 @@ public sealed class SqlTenantProvisioningStore(
                 SELECT NEWID(),@CashierRoleId,PermissionId,@Now
                 FROM dbo.Permissions
                 WHERE Resource IN(
-                  N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read');
+                  N'sales.create',N'sales.reprint',N'pos.customer.create',N'pos.orders',N'orders.read',
+                  N'fiscal.configuration.read',N'pos.synchronization.events.read');
 
                 INSERT dbo.TenantUserInvitations
                   (InvitationId,TenantId,UserId,DeliveryEmail,TokenHash,ExpiresAt,Status,CreatedAt)
@@ -227,6 +233,8 @@ public sealed class SqlTenantProvisioningStore(
                 accounting.Parameters.AddWithValue("@Now", now);
                 await accounting.ExecuteNonQueryAsync(cancellationToken);
             }
+            await ProvisionCommercialSubscriptionAsync(connection, transaction, tenantId,
+                request, commercialQuote, now, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return new(request.ProvisioningRequestId, tenantId, businessId, tenantKey,
                 salesWarehouseId, ordersWarehouseId, customerId, null, "Completed");
@@ -236,6 +244,149 @@ public sealed class SqlTenantProvisioningStore(
             await transaction.RollbackAsync(CancellationToken.None);
             throw;
         }
+    }
+
+    private async Task ProvisionCommercialSubscriptionAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid tenantId,
+        ProvisionTenantRequest request,
+        TenantQuoteDto quote,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var partyId = ids.NewId();
+        var customerId = ids.NewId();
+        var subscriptionId = ids.NewId();
+        await using var command = new SqlCommand("""
+            DECLARE @BillingBusinessId uniqueidentifier,@PlatformTenantId uniqueidentifier,
+                    @BillingActorUserId uniqueidentifier,@PlanId uniqueidentifier,
+                    @ExistingPartyId uniqueidentifier,@ExistingCustomerId uniqueidentifier;
+
+            SELECT @BillingBusinessId=settings.BillingBusinessId,
+                   @PlatformTenantId=businessValue.TenantId,
+                   @BillingActorUserId=settings.UpdatedByUserId
+            FROM billing.PlatformBillingSettings settings WITH (UPDLOCK,HOLDLOCK)
+            INNER JOIN dbo.Businesses businessValue
+              ON businessValue.BusinessId=settings.BillingBusinessId
+            INNER JOIN dbo.Tenants platformTenant ON platformTenant.TenantId=businessValue.TenantId
+            WHERE settings.PlatformBillingSettingId=1
+              AND businessValue.IsActive=1 AND platformTenant.IsActive=1;
+            IF @BillingBusinessId IS NULL
+              THROW 51051,'Auraly no está configurada como empresa facturadora de plataforma.',1;
+
+            SELECT @PlanId=planValue.TenantCommercialPlanId
+            FROM billing.TenantCommercialPlans planValue WITH (UPDLOCK,HOLDLOCK)
+            INNER JOIN billing.BillableServices serviceValue
+              ON serviceValue.BillableServiceId=planValue.BillableServiceId
+            WHERE serviceValue.Code=@PlanCode AND planValue.IsActive=1 AND serviceValue.IsActive=1;
+            IF @PlanId IS NULL
+              THROW 51052,'El plan comercial aprobado ya no está disponible.',1;
+
+            SELECT @ExistingPartyId=PartyId
+            FROM dbo.Parties WITH (UPDLOCK,HOLDLOCK)
+            WHERE TenantId=@PlatformTenantId AND IdentificationTypeCode=N'NIT'
+              AND NormalizedIdentification=@NormalizedNit;
+            IF @ExistingPartyId IS NULL
+            BEGIN
+              SET @ExistingPartyId=@PartyId;
+              INSERT dbo.Parties
+                (PartyId,TenantId,PartyType,IdentificationCountryId,IdentificationTypeCode,
+                 Identification,NormalizedIdentification,VerificationDigit,DisplayName,LegalName,
+                 CompletionStatus,IsActive,CreatedBy,CreatedAt)
+              VALUES(@ExistingPartyId,@PlatformTenantId,N'Organization',@CountryId,N'NIT',@Nit,
+                 @NormalizedNit,@VerificationDigit,@TradeName,@LegalName,N'Complete',1,
+                 @BillingActorUserId,@Now);
+            END;
+
+            IF NOT EXISTS(SELECT 1 FROM dbo.PartyContacts
+                          WHERE PartyId=@ExistingPartyId AND ContactType=N'Email'
+                            AND NormalizedValue=UPPER(@Email))
+              INSERT dbo.PartyContacts
+                (PartyContactId,PartyId,ContactType,Value,NormalizedValue,IsPrimary,IsActive,CreatedAt)
+              VALUES(NEWID(),@ExistingPartyId,N'Email',@Email,UPPER(@Email),
+                CASE WHEN EXISTS(SELECT 1 FROM dbo.PartyContacts
+                                 WHERE PartyId=@ExistingPartyId AND ContactType=N'Email'
+                                   AND IsPrimary=1 AND IsActive=1) THEN 0 ELSE 1 END,1,@Now);
+
+            IF NOT EXISTS(SELECT 1 FROM dbo.PartySites
+                          WHERE PartyId=@ExistingPartyId AND Code=N'MAIN')
+              INSERT dbo.PartySites
+                (PartySiteId,PartyId,Code,Name,CountryId,AdministrativeDivisionId,CityId,
+                 AddressLine,Email,Phone,IsPrimary,IsActive,CreatedBy,CreatedAt)
+              VALUES(NEWID(),@ExistingPartyId,N'MAIN',N'Sede principal',@CountryId,@DivisionId,
+                 @CityId,@Address,@Email,@Phone,
+                 CASE WHEN EXISTS(SELECT 1 FROM dbo.PartySites
+                                  WHERE PartyId=@ExistingPartyId AND IsPrimary=1 AND IsActive=1)
+                      THEN 0 ELSE 1 END,1,@BillingActorUserId,@Now);
+
+            SELECT @ExistingCustomerId=CustomerId
+            FROM dbo.Customers WITH (UPDLOCK,HOLDLOCK)
+            WHERE PartyId=@ExistingPartyId AND BusinessId=@BillingBusinessId;
+            IF @ExistingCustomerId IS NULL
+            BEGIN
+              SET @ExistingCustomerId=@CustomerId;
+              INSERT dbo.Customers
+                (CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,IsActive,CreatedBy,CreatedAt)
+              VALUES(@ExistingCustomerId,@ExistingPartyId,@BillingBusinessId,1,1,
+                     @BillingActorUserId,@Now);
+            END;
+
+            IF EXISTS(SELECT 1 FROM billing.TenantSubscriptions WITH (UPDLOCK,HOLDLOCK)
+                      WHERE TenantId=@TenantId)
+              THROW 51053,'El tenant ya tiene una suscripción comercial.',1;
+
+            INSERT billing.TenantSubscriptions
+              (TenantSubscriptionId,TenantId,TenantCommercialPlanId,BillingCustomerId,
+               BillingPeriod,Status,CurrentPeriodStart,CurrentPeriodEnd,BillingAnchorDay,
+               FullUserLimit,SellerUserLimit,PosDeviceLimit,DianDocumentMonthlyLimit,
+               PayrollEmployeeLimit,CreatedAt,UpdatedAt)
+            VALUES(@SubscriptionId,@TenantId,@PlanId,@ExistingCustomerId,@BillingPeriod,N'Active',
+               @Now,@SubscriptionEnd,DAY(@Now),@FullUsers,@SellerUsers,@PosDevices,
+               @DianDocuments,@PayrollEmployees,@Now,@Now);
+            INSERT billing.TenantSubscriptionUsagePeriods
+              (TenantSubscriptionUsagePeriodId,TenantSubscriptionId,PeriodStart,PeriodEnd,
+               DianDocumentsUsed,CreatedAt,UpdatedAt)
+            VALUES(NEWID(),@SubscriptionId,@Now,DATEADD(month,1,@Now),0,@Now,@Now);
+            INSERT dbo.ScheduledAutomationJobs
+              (ScheduledAutomationJobId,BusinessId,ReservationId,AgentId,TenantSubscriptionId,
+               JobType,ScheduledAtUtc,Status,DeduplicationKey,Attempts,PayloadJson,CreatedAt)
+            SELECT NEWID(),NULL,NULL,NULL,@SubscriptionId,2,
+                   CONVERT(datetime2,SWITCHOFFSET(
+                     DATEADD(day,-settings.PreDueReminderDays,@SubscriptionEnd),'+00:00')),
+                   0,CONCAT(N'tenant-subscription-lifecycle:',
+                     LOWER(CONVERT(nvarchar(36),@SubscriptionId))),0,N'{}',@Now
+            FROM billing.PlatformBillingSettings settings
+            WHERE settings.PlatformBillingSettingId=1;
+            IF @@ROWCOUNT<>1 THROW 51054,'La política global de cobranza no está configurada.',1;
+            """, connection, transaction);
+        void Add(string name, object? value) =>
+            command.Parameters.AddWithValue(name, value ?? DBNull.Value);
+        Add("@PartyId", partyId);
+        Add("@CustomerId", customerId);
+        Add("@SubscriptionId", subscriptionId);
+        Add("@TenantId", tenantId);
+        Add("@PlanCode", quote.PlanCode);
+        Add("@CountryId", request.CountryId);
+        Add("@DivisionId", request.AdministrativeDivisionId);
+        Add("@CityId", request.CityId);
+        Add("@Nit", request.Nit.Trim());
+        Add("@NormalizedNit", NormalizeDigits(request.Nit));
+        Add("@VerificationDigit", request.VerificationDigit.Trim());
+        Add("@TradeName", request.TradeName.Trim());
+        Add("@LegalName", request.LegalName.Trim());
+        Add("@Email", request.Email.Trim());
+        Add("@Address", request.Address.Trim());
+        Add("@Phone", request.Phone.Trim());
+        Add("@Now", now);
+        Add("@BillingPeriod", quote.BillingPeriod);
+        Add("@SubscriptionEnd", quote.BillingPeriod == "Annual" ? now.AddYears(1) : now.AddMonths(1));
+        Add("@FullUsers", quote.FullUserLimit);
+        Add("@SellerUsers", quote.SellerUserLimit);
+        Add("@PosDevices", quote.PosDeviceLimit);
+        Add("@DianDocuments", quote.DianDocumentMonthlyLimit);
+        Add("@PayrollEmployees", quote.PayrollEmployeeLimit);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task<AcceptTenantInvitationResult> AcceptInvitationAsync(

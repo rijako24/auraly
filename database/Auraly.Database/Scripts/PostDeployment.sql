@@ -64,6 +64,7 @@ GO
 :r .\Migrations\MigrateBabySpaServiceKeywords2026.sql
 :r .\Seeds\SeedWorkSessionPermissions.sql
 :r .\Seeds\SeedSalesReturnPermissions.sql
+:r .\Seeds\SeedServiceInvoicePermissions.sql
 :r .\Seeds\SeedAccountingPermissions.sql
 :r .\Seeds\SeedTaxationPermissions.sql
 :r .\Seeds\SeedPayablesPermissions.sql
@@ -79,6 +80,9 @@ GO
 :r .\Seeds\SeedRadaConcept.sql
 :r .\Seeds\SeedAuraly.sql
 :r .\Seeds\SeedAuralyPlatformAdministration.sql
+:r .\Seeds\SeedAuralyBillingConfiguration.sql
+:r .\Seeds\SeedTenantCommercialPlans.sql
+:r .\Seeds\SeedPlatformBillingSettings.sql
 :r .\Seeds\SeedInmobiliariaDemo.sql
 :r .\Seeds\SeedLuisPetitBarber.sql
 :r .\Seeds\SeedPricingPermissions.sql
@@ -156,6 +160,7 @@ PRINT 'Post-deployment scripts executed successfully.';
 :r .\Seeds\EnsureFinalConsumer.sql
 :r .\Migrations\BackfillEngineOwnedSourcesAndReportingJobs.sql
 :r .\Seeds\SeedAccountingDefaults.sql
+:r .\Seeds\SeedAuralyBillingAccounting.sql
 :r .\Seeds\SeedComplianceReportDefinitions.sql
 :r .\Seeds\SeedDispatchReasons.sql
 :r .\Migrations\BackfillCanonicalInventoryBalances.sql

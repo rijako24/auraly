@@ -21,6 +21,7 @@ public static class AccountingCategories
     public const string CashClosureDifferencesPending = "CashClosureDifferencesPending";
     public const string AccountsReceivable = "AccountsReceivable";
     public const string SalesRevenue = "SalesRevenue";
+    public const string ServiceRevenue = "ServiceRevenue";
     public const string SalesReturns = "SalesReturns";
     public const string OutputVat = "OutputVat";
     public const string Inventory = "Inventory";

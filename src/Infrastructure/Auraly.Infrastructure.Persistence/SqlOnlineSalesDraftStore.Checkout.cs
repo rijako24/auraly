@@ -164,7 +164,9 @@ public sealed partial class SqlOnlineSalesDraftStore
 
         var now = settlement.Context.OccurredAt;
         var configuration = await ReadCheckoutConfigurationAsync(
-            connection, transaction, state, now, cancellationToken);
+            connection, transaction, state.BusinessId,
+            PosSaleDocumentTypes.Invoice, PosSaleDocumentTypes.Invoice,
+            now, cancellationToken);
         if (configuration.SupplierTaxId != fiscalMaterial.SupplierTaxId ||
             configuration.Environment != fiscalMaterial.Environment)
             throw new OnlineSalesDraftValidationException(
@@ -296,8 +298,8 @@ public sealed partial class SqlOnlineSalesDraftStore
                     configuration.ValidFrom,
                     configuration.ValidUntil,
                     configuration.FiscalPrefix,
-                    configuration.FiscalRangeStart,
-                    configuration.FiscalRangeEnd),
+                    configuration.AuthorizationRangeStart,
+                    configuration.AuthorizationRangeEnd),
                 configuration.SoftwareIdentificationCode,
                 draft.Lines.Select((line, index) =>
                     new PosSaleUblLineContract(
@@ -509,10 +511,12 @@ public sealed partial class SqlOnlineSalesDraftStore
             true);
     }
 
-    private static async Task<CheckoutConfiguration> ReadCheckoutConfigurationAsync(
+    internal static async Task<CheckoutConfiguration> ReadCheckoutConfigurationAsync(
         SqlConnection connection,
         SqlTransaction transaction,
-        DraftState state,
+        Guid businessId,
+        string documentType,
+        string fiscalSeriesDocumentType,
         DateTimeOffset now,
         CancellationToken ct)
     {
@@ -532,12 +536,13 @@ public sealed partial class SqlOnlineSalesDraftStore
               issuer.AddressLine,issuer.CityCode,issuer.CityName,
               issuer.DepartmentCode,issuer.DepartmentName,
               issuer.CountryCode,issuer.CountryName,
-              issuer.SoftwareIdentificationCode
+              issuer.SoftwareIdentificationCode,
+              a.AuthorizedRangeStart,a.AuthorizedRangeEnd
             FROM dbo.DocumentSeries ds WITH (UPDLOCK,HOLDLOCK)
             JOIN dbo.FiscalSeries fs WITH (UPDLOCK,HOLDLOCK)
               ON fs.BusinessId=ds.BusinessId AND fs.DeviceId IS NULL
              AND fs.EmitterKind=N'Server'
-             AND fs.DocumentType=ds.DocumentType AND fs.IsActive=1
+             AND fs.DocumentType=@FiscalSeriesDocumentType AND fs.IsActive=1
             JOIN dbo.FiscalAuthorizations a
               ON a.FiscalAuthorizationId=fs.FiscalAuthorizationId
              AND a.BusinessId=fs.BusinessId AND a.IsActive=1
@@ -551,8 +556,9 @@ public sealed partial class SqlOnlineSalesDraftStore
             ORDER BY ds.DocumentSeriesId,fs.SeriesId;
             """;
         command.Parameters.AddRange([
-            P("@BusinessId", state.BusinessId),
-            P("@DocumentType", PosSaleDocumentTypes.Invoice),
+            P("@BusinessId", businessId),
+            P("@DocumentType", documentType),
+            P("@FiscalSeriesDocumentType", fiscalSeriesDocumentType),
             P("@Now", now)
         ]);
         var rows = new List<CheckoutConfiguration>(2);
@@ -598,7 +604,9 @@ public sealed partial class SqlOnlineSalesDraftStore
                 DateOnly.FromDateTime(reader.GetDateTime(17)),
                 reader.GetGuid(18),
                 reader.GetString(33),
-                supplier));
+                supplier,
+                reader.GetInt64(34),
+                reader.GetInt64(35)));
         }
         if (rows.Count != 1)
             throw new OnlineSalesDraftValidationException(
@@ -608,7 +616,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         return rows[0];
     }
 
-    private static async Task<long> ConsumeDocumentNumberAsync(
+    internal static async Task<long> ConsumeDocumentNumberAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         CheckoutConfiguration configuration,
@@ -653,7 +661,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         return value;
     }
 
-    private static async Task<long> ConsumeFiscalNumberAsync(
+    internal static async Task<long> ConsumeFiscalNumberAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         CheckoutConfiguration configuration,
@@ -724,7 +732,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             ?? "222222222222";
     }
 
-    private static async Task<PosSaleUblPartyContract> ReadCustomerPartyAsync(
+    internal static async Task<PosSaleUblPartyContract> ReadCustomerPartyAsync(
         SqlConnection connection,
         SqlTransaction transaction,
         Guid businessId,
@@ -860,7 +868,7 @@ public sealed partial class SqlOnlineSalesDraftStore
             SHA256.HashData(Encoding.UTF8.GetBytes(value.ToString())));
     }
 
-    private sealed record CheckoutConfiguration(
+    internal sealed record CheckoutConfiguration(
         Guid DocumentSeriesId,
         string DocumentPrefix,
         string SeriesCode,
@@ -881,5 +889,7 @@ public sealed partial class SqlOnlineSalesDraftStore
         DateOnly ValidUntil,
         Guid FiscalIssuerConfigurationId,
         string SoftwareIdentificationCode,
-        PosSaleUblPartyContract Supplier);
+        PosSaleUblPartyContract Supplier,
+        long AuthorizationRangeStart,
+        long AuthorizationRangeEnd);
 }

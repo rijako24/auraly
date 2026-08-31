@@ -24,6 +24,8 @@
   </ItemGroup>
   <ItemGroup>
     <Build Include="Schemas\WorkSessions.sql" />
+    <Build Include="Schemas\Billing.sql" />
+    <Build Include="Schemas\Sales.sql" />
     <Build Include="Functions\PriceChannelAmountCalculate.sql" />
     <Build Include="Functions\CustomerProductPriceResolve.sql" />
     <Build Include="StoredProcedures\SellerOrderCatalogGet.sql" />
@@ -65,6 +67,9 @@
     <Build Include="StoredProcedures\AuthenticationPasswordRecoveryRecipientGet.sql" />
     <Build Include="StoredProcedures\AuthenticationEmailOutboxComplete.sql" />
     <Build Include="StoredProcedures\AuthenticationEmailOutboxRetry.sql" />
+    <Build Include="StoredProcedures\TenantSubscriptionSuspensionGet.sql" />
+    <Build Include="StoredProcedures\TenantBillingReminderRecipientGet.sql" />
+    <Build Include="StoredProcedures\FiscalInvoiceDeliveryRecipientGet.sql" />
     <Build Include="StoredProcedures\DispatchSettlementOperationClaimGet.sql" />
     <Build Include="StoredProcedures\DispatchSettlementOperationClaimMark.sql" />
     <Build Include="StoredProcedures\DispatchSettlementReturnsGet.sql" />
@@ -75,6 +80,7 @@
     <Build Include="StoredProcedures\DispatchCashDifferenceDocumentCreate.sql" />
     <Build Include="StoredProcedures\DispatchSettlementOperationComplete.sql" />
     <Build Include="StoredProcedures\PosSecuritySynchronizationEnqueue.sql" />
+    <Build Include="StoredProcedures\TenantDianDocumentQuotaReserve.sql" />
     <Build Include="StoredProcedures\PurchasingPurchaseOrdersList.sql" />
     <Build Include="StoredProcedures\PurchasingPurchaseOrderGet.sql" />
     <Build Include="StoredProcedures\PurchasingPurchaseOrderDraftSave.sql" />
@@ -98,6 +104,7 @@
     <Build Include="Tables\SystemConfigurations.sql" />
     <Build Include="Tables\Businesses.sql" />
     <Build Include="Tables\TenantProvisioning.sql" />
+    <Build Include="Tables\TenantBilling.sql" />
     <Build Include="Tables\SubscriptionPlans.sql" />
     <Build Include="Tables\UsageCostRates.sql" />
     <Build Include="Tables\AppUsers.sql" />
@@ -198,6 +205,7 @@
     <Build Include="Tables\PosApprovalRequests.sql" />
     <Build Include="Tables\PosApprovalPushSubscriptions.sql" />
     <Build Include="Tables\SalesDocuments.sql" />
+    <Build Include="Tables\SalesDocumentServiceLines.sql" />
     <Build Include="Tables\FiscalDocuments.sql" />
     <Build Include="Tables\OrderCommerce.sql" />
     <Build Include="Tables\SalesDrafts.sql" />

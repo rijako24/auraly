@@ -335,6 +335,7 @@ export class OnlinePosClient implements PosClient {
       deviceId: local?.deviceId ?? null,
       fiscalReady: fiscal?.isReadyForOnlineSales === true,
       fiscalWarnings: fiscal?.warningMessages ?? [],
+      dianQuotaAvailable: fiscal?.hasDianDocumentQuota ?? false,
       identityReady: true,
       catalogStatus: "Ready",
       synchronizationInProgress: false,

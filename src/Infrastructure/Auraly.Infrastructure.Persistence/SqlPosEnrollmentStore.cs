@@ -216,7 +216,8 @@ public sealed class SqlPosEnrollmentStore(
                 data.ValidUntil!.Value, data.Environment!.Value, data.SupplierTaxId!,
                 new string(material.TechnicalKey.Reveal()), data.TechnicalKeyVersion!,
                 data.QrValidationUrl!, data.ValidFrom,
-                data.FiscalRangeStart, data.FiscalRangeEnd),
+                data.FiscalRangeStart, data.FiscalRangeEnd,
+                ProductionActive: data.ProductionActive),
             receiptDocumentSeries,
             trustedPublicKeys,
             now);
@@ -377,7 +378,12 @@ public sealed class SqlPosEnrollmentStore(
               e.RedemptionCodeHash,e.ExpiresAt,e.RedeemedAt,
               fs.SeriesId,fs.FiscalAuthorizationId,fs.Prefix,fs.RangeStart,fs.RangeEnd,
               fa.AuthorizationNumber,fa.ValidFrom,fa.ValidUntil,fa.Environment,fa.SupplierTaxId,
-              fa.TechnicalKeyVersion,fa.QrValidationUrl
+              fa.TechnicalKeyVersion,fa.QrValidationUrl,
+              CONVERT(bit,CASE WHEN EXISTS(
+                  SELECT 1 FROM dbo.FiscalIssuerConfigurations production
+                  WHERE production.BusinessId=e.BusinessId AND production.Environment=1
+                    AND production.IsActive=1
+              ) THEN 1 ELSE 0 END)
             FROM dbo.PosEnrollmentSessions e WITH (UPDLOCK,HOLDLOCK)
             JOIN dbo.Businesses b ON b.BusinessId=e.BusinessId AND b.IsActive=1
             JOIN dbo.Warehouses w ON w.WarehouseId=e.WarehouseId AND w.IsActive=1
@@ -420,7 +426,8 @@ public sealed class SqlPosEnrollmentStore(
             reader.IsDBNull(20) ? null : reader.GetByte(20),
             reader.IsDBNull(21) ? null : reader.GetString(21),
             reader.IsDBNull(22) ? null : reader.GetString(22),
-            reader.IsDBNull(23) ? null : reader.GetString(23));
+            reader.IsDBNull(23) ? null : reader.GetString(23),
+            reader.GetBoolean(24));
     }
 
     private static async Task<string> AllocateSeriesCodeAsync(
@@ -608,5 +615,6 @@ public sealed class SqlPosEnrollmentStore(
         byte? Environment,
         string? SupplierTaxId,
         string? TechnicalKeyVersion,
-        string? QrValidationUrl);
+        string? QrValidationUrl,
+        bool ProductionActive);
 }

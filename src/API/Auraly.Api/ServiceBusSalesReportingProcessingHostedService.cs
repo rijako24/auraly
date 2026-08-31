@@ -1,38 +1,12 @@
 using System.Text.Json;
 using Auraly.Application.Sales;
 using Auraly.Infrastructure.Persistence;
+using Auraly.Platform.Infrastructure.Processing;
 using Azure.Messaging.ServiceBus;
 
 namespace Auraly.Api;
 
 public sealed record SalesReportingProcessingServiceBusOptions(string QueueName);
-
-public sealed class ServiceBusSalesReportingProcessingPublisher(
-    ServiceBusClient client,
-    SalesReportingProcessingServiceBusOptions options)
-    : ISalesReportingProcessingSignalPublisher, IAsyncDisposable
-{
-    private readonly ServiceBusSender sender = client.CreateSender(options.QueueName);
-
-    public async Task PublishAsync(
-        SalesReportingProcessingSignal signal,
-        CancellationToken cancellationToken = default)
-    {
-        SalesReportingProcessingSignalCodec.Validate(signal);
-        var message = new ServiceBusMessage(BinaryData.FromString(
-            SalesReportingProcessingSignalCodec.Serialize(signal)))
-        {
-            MessageId = signal.SignalId.ToString("D"),
-            SessionId = signal.BusinessId.ToString("D"),
-            Subject = signal.DocumentType,
-            ContentType = "application/json"
-        };
-        message.ApplicationProperties["documentId"] = signal.DocumentId.ToString("D");
-        await sender.SendMessageAsync(message, cancellationToken);
-    }
-
-    public ValueTask DisposeAsync() => sender.DisposeAsync();
-}
 
 public sealed class SalesReportingProcessingHostedService(
     ServiceBusClient client,
@@ -116,27 +90,5 @@ public sealed class SalesReportingProcessingHostedService(
             await args.AbandonMessageAsync(
                 args.Message, cancellationToken: args.CancellationToken);
         }
-    }
-}
-
-internal static class SalesReportingProcessingSignalCodec
-{
-    private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
-
-    public static string Serialize(SalesReportingProcessingSignal signal) =>
-        JsonSerializer.Serialize(signal, Options);
-
-    public static SalesReportingProcessingSignal Deserialize(string value) =>
-        JsonSerializer.Deserialize<SalesReportingProcessingSignal>(value, Options)
-        ?? throw new InvalidOperationException("The sales-reporting signal is invalid.");
-
-    public static void Validate(SalesReportingProcessingSignal signal)
-    {
-        ArgumentNullException.ThrowIfNull(signal);
-        if (signal.SignalId == Guid.Empty || signal.BusinessId == Guid.Empty ||
-            signal.DocumentId == Guid.Empty || signal.SourceVersion<=0 ||
-            !SalesReportingProcessingPolicy.Supports(signal.DocumentType))
-            throw new InvalidOperationException(
-                "The sales-reporting signal has invalid identifiers or document type.");
     }
 }

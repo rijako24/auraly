@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using Auraly.Platform.Application.Common.DTOs;
 using Auraly.Platform.Application.Common.Exceptions;
 using Auraly.Contracts.Tenants;
+using Auraly.Contracts.TenantBilling;
 using Auraly.Platform.Application.Identity.DTOs;
 using Auraly.Platform.Application.Identity.Interfaces;
 using Auraly.Platform.Application.Services;
@@ -38,10 +39,15 @@ public sealed class TenantService(
         return new(items.Select(MapToDto).ToList(), totalCount, request.Page, request.PageSize);
     }
 
-    public async Task<ProvisionTenantResult> ProvisionAsync(ProvisionTenantRequest request, Guid? actorUserId, CancellationToken ct)
+    public async Task<ProvisionTenantResult> ProvisionAsync(ProvisionTenantRequest request, Guid? actorUserId,
+        TenantQuoteDto commercialQuote, CancellationToken ct)
     {
-        Validate(request);
-        var result = await provisioning.ProvisionAsync(request, actorUserId, ct);
+        TenantProvisioningRequestValidator.Validate(request);
+        ArgumentNullException.ThrowIfNull(commercialQuote);
+        if (request.MaximumUsers != checked(commercialQuote.FullUserLimit + commercialQuote.SellerUserLimit)
+            || request.MaximumEnrolledDevices != commercialQuote.PosDeviceLimit)
+            throw new ArgumentException("Los cupos del tenant no coinciden con la cotización aprobada.");
+        var result = await provisioning.ProvisionAsync(request, actorUserId, commercialQuote, ct);
         logger.LogInformation("Tenant {TenantId} provisioned with business {BusinessId}", result.TenantId, result.BusinessId);
         return result;
     }
@@ -150,25 +156,6 @@ public sealed class TenantService(
         await unitOfWork.SaveChangesAsync(ct);
 
     }
-    private static void Validate(ProvisionTenantRequest request)
-    {
-        if (request.ProvisioningRequestId == Guid.Empty || request.CountryId == Guid.Empty || request.AdministrativeDivisionId == Guid.Empty || request.CityId == Guid.Empty)
-            throw new ArgumentException("La solicitud, país, departamento y ciudad son obligatorios.");
-        var required = new[] { request.LegalName, request.TradeName, request.Nit, request.VerificationDigit,
-            request.Address, request.Phone, request.Email, request.BusinessName, request.BusinessAddress,
-            request.BusinessPhone, request.BusinessEmail, request.InvitationEmail };
-        if (required.Any(string.IsNullOrWhiteSpace))
-            throw new ArgumentException("Completa todos los datos obligatorios de empresa, sede y administrador.");
-        if (request.InventoryCostBasis is not ("LatestReceiptCost" or "WeightedAverageCost"))
-            throw new ArgumentException("La base de costo de inventario no es válida.");
-        if (!request.Email.Contains('@') || !request.BusinessEmail.Contains('@') || !request.InvitationEmail.Contains('@'))
-            throw new ArgumentException("Los correos de empresa, sede e invitación no son válidos.");
-        if (request.MaximumUsers < 1)
-            throw new ArgumentException("El límite de usuarios debe ser al menos 1.");
-        if (request.MaximumEnrolledDevices < 0)
-            throw new ArgumentException("El límite de cajas no puede ser negativo.");
-    }
-
     private static TenantDto MapToDto(Tenant tenant) => new(
         tenant.TenantId, tenant.TenantKey, tenant.Name, tenant.Email, tenant.IsActive,
         tenant.CreatedAt, tenant.Businesses?.Count ?? 0,

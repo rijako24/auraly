@@ -35,6 +35,7 @@ public sealed class SqlFiscalDocumentStore(SqlServerConnectionFactory connection
               AND (@DeviceId IS NULL OR sale.DeviceId = @DeviceId)
               AND (@IssuedFrom IS NULL OR fd.IssuedAt >= @IssuedFrom)
               AND (@IssuedTo IS NULL OR fd.IssuedAt <= @IssuedTo)
+              AND (@QuotaOnly=0 OR p.QuotaBlockedAt IS NOT NULL)
             """;
         var offset = checked((query.Page - 1) * query.PageSize);
         var pageSql = SelectColumns + " " + filters + " ORDER BY fd.IssuedAt DESC,fd.DocumentId DESC OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;";
@@ -119,7 +120,7 @@ public sealed class SqlFiscalDocumentStore(SqlServerConnectionFactory connection
                fd.AuralyDocumentNumber,fd.FiscalNumber,fd.UniqueCodeType,fd.UniqueCode,
                p.Status,sale.DeviceId,fd.IssuedAt,
                p.AttemptCount, p.TrackId, p.LastStatusCode,
-               p.LastStatusDescription, p.UpdatedAt
+               p.LastStatusDescription, p.UpdatedAt,p.QuotaBlockedAt
         FROM dbo.FiscalDocuments fd
         INNER JOIN dbo.FiscalDocumentProcesses p ON p.DocumentId=fd.DocumentId
         LEFT JOIN dbo.SalesDocuments sale ON sale.DocumentId=fd.DocumentId
@@ -135,6 +136,7 @@ public sealed class SqlFiscalDocumentStore(SqlServerConnectionFactory connection
         command.Parameters.AddWithValue("@DeviceId", (object?)query.DeviceId ?? DBNull.Value);
         command.Parameters.AddWithValue("@IssuedFrom", (object?)query.IssuedFrom ?? DBNull.Value);
         command.Parameters.AddWithValue("@IssuedTo", (object?)query.IssuedTo ?? DBNull.Value);
+        command.Parameters.AddWithValue("@QuotaOnly", query.QuotaOnly);
     }
 
     private static object Db(string? value) => string.IsNullOrWhiteSpace(value) ? DBNull.Value : value.Trim();
@@ -146,5 +148,6 @@ public sealed class SqlFiscalDocumentStore(SqlServerConnectionFactory connection
         reader.IsDBNull(9) ? null : reader.GetGuid(9), reader.GetDateTimeOffset(10),
         reader.GetInt32(11), reader.IsDBNull(12) ? null : reader.GetString(12),
         reader.IsDBNull(13) ? null : reader.GetString(13),
-        reader.IsDBNull(14) ? null : reader.GetString(14), reader.GetDateTimeOffset(15));
+        reader.IsDBNull(14) ? null : reader.GetString(14), reader.GetDateTimeOffset(15),
+        reader.IsDBNull(16) ? null : reader.GetDateTimeOffset(16));
 }

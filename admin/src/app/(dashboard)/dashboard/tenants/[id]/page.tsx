@@ -14,6 +14,7 @@ import { PageLoading } from "@/components/ui/page-loading";
 import { TenantEditDialog } from "@/components/tenants/tenant-edit-dialog";
 import { TenantGovernancePanel } from "@/components/tenants/tenant-governance-panel";
 import { TenantProvisioningSummary } from "@/components/tenants/tenant-provisioning-summary";
+import { PlatformTenantSubscriptionCard } from "@/components/tenants/platform-tenant-subscription-card";
 import { useTenant } from "@/hooks/use-tenants";
 import { useAuthStore } from "@/stores/auth-store";
 
@@ -71,6 +72,7 @@ export default function TenantDetailPage() {
     </div>
 
     <TenantGovernancePanel tenant={tenant} />
+    <PlatformTenantSubscriptionCard tenantId={tenant.tenantId} />
     <TenantEditDialog tenant={tenant} open={editing} onOpenChange={setEditing} onSaved={refetch} />
   </div>;
 }

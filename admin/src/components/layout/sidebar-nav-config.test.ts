@@ -9,7 +9,7 @@ test("login permissions are the single visibility source for every navigation su
   assert.equal(items.some((item) => item.href === "/dashboard/settings/fiscal"), false);
   assert.deepEqual(
     authorizedNavigationGroups(["catalog.read"]),
-    [{ label: "Negocio", items }],
+    [{ label: "Catálogo", items }],
   );
 });
 

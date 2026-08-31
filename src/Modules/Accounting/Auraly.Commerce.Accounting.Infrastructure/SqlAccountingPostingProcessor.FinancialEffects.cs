@@ -142,6 +142,17 @@ public sealed partial class SqlAccountingPostingProcessor
         SqlConnection connection, SqlTransaction transaction,
         PosSaleUploadRequest sale, CancellationToken token)
     {
+        await using var sessionCommand = new SqlCommand("""
+            SELECT WorkSessionId
+            FROM dbo.SalesDocuments WITH(UPDLOCK,HOLDLOCK)
+            WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId;
+            """, connection, transaction);
+        sessionCommand.Parameters.AddWithValue("@DocumentId", sale.DocumentId);
+        sessionCommand.Parameters.AddWithValue("@BusinessId", sale.BusinessId);
+        var canonicalWorkSessionId = await sessionCommand.ExecuteScalarAsync(token) as Guid?
+            ?? throw new InvalidOperationException(
+                "The processed sale has no canonical work session.");
+
         if (sale.Credit is not null)
         {
             await using var receivable = new SqlCommand("""
@@ -181,7 +192,7 @@ public sealed partial class SqlAccountingPostingProcessor
                    @Amount,@Reference,@SourceKey,@OccurredAt,@UserId);
                 """, connection, transaction);
             movement.Parameters.AddWithValue("@Id", ids.NewId());
-            movement.Parameters.AddWithValue("@SessionId", sale.WorkSessionId);
+            movement.Parameters.AddWithValue("@SessionId", canonicalWorkSessionId);
             movement.Parameters.AddWithValue("@DocumentId", sale.DocumentId);
             movement.Parameters.AddWithValue("@Number", payment.PaymentNumber);
             movement.Parameters.AddWithValue("@Date", sale.CommercialSnapshot.IssuedAt.Date);

@@ -19,6 +19,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useSubscriptionDetails } from "@/hooks/use-dashboard";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { useBusinessContextStore } from "@/stores/business-context-store";
+import { TenantCommercialSubscriptionCard } from "@/components/subscriptions/tenant-commercial-subscription-card";
+import { TenantRenewalOrderCard } from "@/components/subscriptions/tenant-renewal-order-card";
+import { PlatformTenantSubscriptions } from "@/components/subscriptions/platform-tenant-subscriptions";
+import { useAuthStore } from "@/stores/auth-store";
 
 const operationLabels: Record<string, string> = {
   "1": "Turno del agente",
@@ -61,7 +65,11 @@ function isExceeded(status: string | number) {
 
 export default function SubscriptionPage() {
   const businessId = useBusinessContextStore((state) => state.selectedBusinessId);
+  const canReadAllTenants = useAuthStore((state) =>
+    Boolean(state.user?.permissions.includes("tenants.read")));
   const subscriptionQuery = useSubscriptionDetails();
+
+  if (canReadAllTenants) return <PlatformTenantSubscriptions />;
 
   if (!businessId) {
     return (
@@ -73,6 +81,7 @@ export default function SubscriptionPage() {
             Selecciona un negocio para consultar su suscripcion y consumo.
           </p>
         </div>
+        <TenantCommercialSubscriptionCard />
       </div>
     );
   }
@@ -89,6 +98,7 @@ export default function SubscriptionPage() {
           <h1 className="text-3xl font-semibold tracking-tight">Suscripcion</h1>
           <p className="mt-1 text-muted-foreground">Plan, vigencia y consumo de creditos.</p>
         </div>
+        <TenantCommercialSubscriptionCard />
         <Card>
           <CardContent className="flex min-h-56 flex-col items-center justify-center text-center">
             <CreditCard className="mb-4 h-10 w-10 text-muted-foreground" />
@@ -120,6 +130,9 @@ export default function SubscriptionPage() {
           {statusActive ? "Suscripcion activa" : "Suscripcion inactiva"}
         </Badge>
       </div>
+
+      <TenantCommercialSubscriptionCard />
+      <TenantRenewalOrderCard />
 
       <div className="grid gap-5 xl:grid-cols-[1.15fr_1.85fr]">
         <Card className="overflow-hidden">

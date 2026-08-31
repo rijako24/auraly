@@ -6,6 +6,7 @@ public sealed class AuralyDocumentNumberTests
 {
     [Theory]
     [InlineData(AuralyDocumentTypes.SalesInvoice, "VTA")]
+    [InlineData(AuralyDocumentTypes.ServiceInvoice, "FSV")]
     [InlineData(AuralyDocumentTypes.SalesOrder, "PED")]
     [InlineData(AuralyDocumentTypes.SalesReturn, "DVT")]
     [InlineData(AuralyDocumentTypes.GoodsReceipt, "EMC")]

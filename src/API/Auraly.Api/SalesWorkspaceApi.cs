@@ -16,6 +16,9 @@ public static class SalesWorkspaceApi
             HttpContext context, SalesWorkspaceService service, CancellationToken ct) =>
             await Handle(async () =>
             {
+                context.Response.Headers.CacheControl =
+                    "no-store, no-cache, must-revalidate";
+                context.Response.Headers.Pragma = "no-cache";
                 var identity = context.User.ToSalesWorkspaceUserIdentity();
                 var hasPermission = context.User.FindAll("permission").Any(claim =>
                     StringComparer.Ordinal.Equals(

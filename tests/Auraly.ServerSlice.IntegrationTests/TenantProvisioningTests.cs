@@ -4,6 +4,18 @@ using System.Text.Json;
 using Auraly.Contracts.Authentication;
 using Microsoft.Data.SqlClient;
 using Auraly.Contracts.Tenants;
+using Auraly.Contracts.TenantBilling;
+using Auraly.Platform.Application.Identity.Services;
+using Microsoft.Extensions.DependencyInjection;
+using Auraly.BuildingBlocks.Domain.Identifiers;
+using Auraly.BuildingBlocks.Infrastructure.Identifiers;
+using Auraly.BuildingBlocks.Infrastructure.Persistence;
+using Auraly.Contracts.Fiscal;
+using Auraly.Fiscal.Core;
+using Auraly.Infrastructure.Persistence;
+using Auraly.Platform.Application.Identity.DTOs;
+using Auraly.Platform.Domain.Entities;
+using Auraly.Platform.Domain.Enums;
 
 namespace Auraly.ServerSlice.IntegrationTests;
 
@@ -11,6 +23,100 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
 {
     private const string Password = "Auraly-New-Tenant-2026!";
+
+    [Fact]
+    public async Task Paid_renewal_creates_one_shared_service_invoice_and_no_operational_work()
+    {
+        await UseCanonicalAuralyBillingBusinessAsync();
+        var geography = await ReadGeographyAsync();
+        var suffix = Guid.NewGuid().ToString("N")[..10];
+        var request = new ProvisionTenantRequest(
+            Guid.NewGuid(), $"Suscriptor {suffix} SAS", $"Suscriptor {suffix}",
+            $"89{Random.Shared.Next(10000000, 99999999)}", "1",
+            geography.CountryId, geography.DivisionId, geography.CityId,
+            "Calle 10", "3001234567", $"billing-{suffix}@auraly.test", "R-99-PN",
+            "Sede principal", "Calle 10", "3001234567", $"site-{suffix}@auraly.test",
+            "America/Bogota", "LatestReceiptCost", $"owner-{suffix}@auraly.test", 1, 1);
+        using var admin = fixture.CreateAdminClient(
+            "tenants.create", "tenants.update", "tenants.provisioning.payment.waive");
+        using var response = await admin.PostAsJsonAsync("/api/v1/tenants", Waived(request));
+        var responseBody = await response.Content.ReadAsStringAsync();
+        Assert.True(response.IsSuccessStatusCode,
+            $"Expected tenant provisioning success, got {response.StatusCode}: {responseBody}");
+        var tenant = (await response.Content.ReadFromJsonAsync<ProvisionTenantResult>())!;
+
+        TenantRenewalOrderDto order;
+        using (var scope = fixture.CreateScope())
+        {
+            order = await scope.ServiceProvider.GetRequiredService<TenantRenewalOrderService>()
+                .ReviseAsync(tenant.TenantId, fixture.UserId,
+                    new("starter", "Monthly", 0, 0, 0, 3), default);
+        }
+        var paymentId = Guid.NewGuid();
+        var reference = $"TS-{order.RenewalOrderId:N}";
+        var cents = checked((long)(order.Quote.PayableAmountCop * 100m));
+        Guid billingBusinessId;
+        using (var scope = fixture.CreateScope())
+        {
+            var checkout = scope.ServiceProvider.GetRequiredService<ITenantSubscriptionCheckoutStore>();
+            billingBusinessId = await checkout.GetBillingBusinessIdAsync(default);
+            await checkout.CreatePaymentAsync(tenant.TenantId, paymentId,
+                order.RenewalOrderId, reference, cents,
+                DateTimeOffset.UtcNow.AddHours(1), 1, default);
+        }
+        var fiscal = await ConfigurePlatformBillingFiscalAsync(billingBusinessId);
+        await ConfirmPaymentAsync(paymentId, "wompi-renewal-test");
+        var payment = new PaymentTransaction
+        {
+            PaymentTransactionId = paymentId,
+            BusinessId = billingBusinessId,
+            PaymentReferenceId = reference,
+            ProviderTransactionId = "wompi-renewal-test",
+            AmountInCents = cents,
+            Currency = "COP",
+            Status = PaymentTransactionStatus.Confirmed,
+            CheckoutKind = CheckoutKind.TenantSubscription,
+            SubjectType = "TenantSubscription",
+            SubjectId = order.RenewalOrderId
+        };
+        var settlement = new SqlTenantSubscriptionSettlementService(
+            new SqlServerConnectionFactory(new AuralySqlConnectionSource(fixture.ConnectionString)),
+            new Uuid7AuralyIdGenerator(TimeProvider.System), TimeProvider.System,
+            new FixedFiscalTechnicalKeyProvider(fiscal));
+
+        var first = await settlement.SettleAsync(payment, default);
+        var replay = await settlement.SettleAsync(payment, default);
+
+        Assert.Equal(first.DocumentId, replay.DocumentId);
+        Assert.True(replay.IsReplay);
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT
+              (SELECT COUNT(*) FROM dbo.SalesDocuments WHERE DocumentId=@DocumentId AND DocumentType=N'ServiceInvoice' AND WarehouseId IS NULL AND DeviceId IS NULL),
+              (SELECT COUNT(*) FROM sales.SalesDocumentServiceLines WHERE DocumentId=@DocumentId),
+              (SELECT COUNT(*) FROM dbo.SalesDocumentLines WHERE DocumentId=@DocumentId),
+              (SELECT COUNT(*) FROM dbo.DocumentProcessingJobs WHERE DocumentId=@DocumentId),
+              (SELECT COUNT(*) FROM dbo.InventoryMovements WHERE DocumentId=@DocumentId),
+              (SELECT COUNT(*) FROM dbo.AccountingPostingJobs WHERE SourceDocumentId=@DocumentId),
+              (SELECT COUNT(*) FROM reporting.SalesReportingJobs WHERE SourceDocumentId=@DocumentId),
+              (SELECT COUNT(*) FROM dbo.FiscalDocumentProcesses WHERE DocumentId=@DocumentId),
+              (SELECT DianDocumentMonthlyLimit FROM billing.TenantSubscriptions WHERE TenantId=@TenantId);
+            """, connection);
+        command.Parameters.AddWithValue("@DocumentId", first.DocumentId);
+        command.Parameters.AddWithValue("@TenantId", tenant.TenantId);
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(1, reader.GetInt32(0));
+        Assert.Equal(2, reader.GetInt32(1));
+        Assert.Equal(0, reader.GetInt32(2));
+        Assert.Equal(0, reader.GetInt32(3));
+        Assert.Equal(0, reader.GetInt32(4));
+        Assert.Equal(1, reader.GetInt32(5));
+        Assert.Equal(1, reader.GetInt32(6));
+        Assert.Equal(1, reader.GetInt32(7));
+        Assert.Equal(3_100, reader.GetInt32(8));
+    }
 
     [Fact]
     public async Task Provision_and_accept_invitation_creates_a_complete_usable_tenant()
@@ -26,8 +132,8 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             "Sede principal", "Calle 1 # 2-3", "3001234567", $"sede-{suffix}@auraly.test",
             "America/Bogota", "LatestReceiptCost", email, 10, 3);
 
-        using var admin = fixture.CreateAdminClient("tenants.create", "tenants.update");
-        using var created = await admin.PostAsJsonAsync("/api/v1/tenants", request);
+        using var admin = fixture.CreateAdminClient("tenants.create", "tenants.update", "tenants.provisioning.payment.waive");
+        using var created = await admin.PostAsJsonAsync("/api/v1/tenants", Waived(request));
         var creationBody = await created.Content.ReadAsStringAsync();
         Assert.True(created.StatusCode == HttpStatusCode.Created, $"Expected Created but received {created.StatusCode}: {creationBody}");
         var result = await created.Content.ReadFromJsonAsync<ProvisionTenantResult>();
@@ -40,8 +146,8 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.True(state.InventoryReasons >= 12);
         Assert.Equal(4, state.ProductUnits);
         Assert.Equal(1, state.DefaultCustomers);
-        Assert.Equal(51, state.AccountingAccounts);
-        Assert.Equal(51, state.AccountingMappings);
+        Assert.Equal(52, state.AccountingAccounts);
+        Assert.Equal(52, state.AccountingMappings);
         Assert.Equal(0, state.UnmappedPosPaymentMethods);
         Assert.Equal(1, state.OpenAccountingPeriods);
         Assert.Equal(1, state.DefaultCostCenters);
@@ -75,6 +181,16 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.Null(state.UserActive);
         Assert.Null(state.PasswordHash);
         Assert.Equal("Pending", state.InvitationStatus);
+        var commercial = await ReadCommercialSubscriptionAsync(result.TenantId);
+        Assert.Equal("business", commercial.PlanCode);
+        Assert.Equal("Annual", commercial.BillingPeriod);
+        Assert.Equal("Active", commercial.Status);
+        Assert.Equal(8, commercial.FullUsers);
+        Assert.Equal(0, commercial.SellerUsers);
+        Assert.Equal(3, commercial.PosDevices);
+        Assert.Equal(1_500, commercial.DianDocuments);
+        Assert.Equal(30, commercial.PayrollEmployees);
+        Assert.Equal(1, commercial.UsagePeriods);
 
         using var attemptedKeyChange = await admin.PutAsJsonAsync(
             $"/api/v1/tenants/{result.TenantId:D}",
@@ -133,6 +249,38 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.NotNull(acceptedState.PasswordHash);
         Assert.Equal("Accepted", acceptedState.InvitationStatus);
 
+        using (var scope = fixture.CreateScope())
+        {
+            var renewal = scope.ServiceProvider.GetRequiredService<TenantRenewalOrderService>();
+            var firstOrder = await renewal.ReviseAsync(
+                result.TenantId, acceptedResult.UserId,
+                new TenantQuoteRequest("business", "Annual", 0, 0, 0, 0), default);
+            Assert.Equal(1, firstOrder.Revision);
+            Assert.Equal("Draft", firstOrder.Status);
+            Assert.Equal(8, firstOrder.Quote.FullUserLimit);
+            Assert.Equal(1, firstOrder.Usage.FullUsers);
+
+            var revisedOrder = await renewal.ReviseAsync(
+                result.TenantId, acceptedResult.UserId,
+                new TenantQuoteRequest("corporate", "Annual", 1, 1, 1, 1, 1), default);
+            Assert.Equal(2, revisedOrder.Revision);
+            Assert.Equal("corporate", revisedOrder.Quote.PlanCode);
+            Assert.Equal(13, revisedOrder.Quote.FullUserLimit);
+            Assert.Equal(6, revisedOrder.Quote.PosDeviceLimit);
+            Assert.Equal(4_000, revisedOrder.Quote.DianDocumentMonthlyLimit);
+            Assert.Equal(110, revisedOrder.Quote.PayrollEmployeeLimit);
+            Assert.Equal(1, await CountCurrentRenewalOrdersAsync(result.TenantId));
+            Assert.Equal(0, await CountRenewalOrderSideEffectsAsync(result.TenantId));
+
+            await AddActiveUsersAsync(result.TenantId, 3);
+            var invalidReduction = () => renewal.ReviseAsync(
+                result.TenantId, acceptedResult.UserId,
+                new TenantQuoteRequest("essential", "Monthly", 0, 0, 0, 0), default);
+            var reductionError = await Assert.ThrowsAsync<ArgumentException>(invalidReduction);
+            Assert.Contains("usuarios completos", reductionError.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(2, (await renewal.GetCurrentAsync(result.TenantId, default))!.Revision);
+        }
+
         using var reused = await publicClient.PostAsJsonAsync(
             "/api/v1/auth/invitations/accept",
             new AcceptTenantInvitationRequest(
@@ -168,7 +316,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         var geography = await ReadGeographyAsync();
         var sharedEmail = $"shared-admin-{Guid.NewGuid():N}@auraly.test";
         var sharedIdentification = $"10{Random.Shared.NextInt64(100000000, 999999999)}";
-        using var admin = fixture.CreateAdminClient("tenants.create", "tenants.update");
+        using var admin = fixture.CreateAdminClient("tenants.create", "tenants.update", "tenants.provisioning.payment.waive");
 
         async Task<(ProvisionTenantResult Result, string Token)> ProvisionAsync(string suffix)
         {
@@ -179,7 +327,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
                 "Calle 1 # 2-3", "3001234567", $"empresa-{suffix}@auraly.test", "R-99-PN",
                 "Sede principal", "Calle 1 # 2-3", "3001234567", $"sede-{suffix}@auraly.test",
                 "America/Bogota", "LatestReceiptCost", sharedEmail, 10, 3);
-            using var response = await admin.PostAsJsonAsync("/api/v1/tenants", request);
+            using var response = await admin.PostAsJsonAsync("/api/v1/tenants", Waived(request));
             var body = await response.Content.ReadAsStringAsync();
             Assert.True(
                 response.StatusCode == HttpStatusCode.Created,
@@ -216,6 +364,9 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         Assert.True((await ReadProvisionedStateAsync(
             second.Result.TenantId, secondAccepted.UserId)).UserActive);
     }
+
+    private static WaivedTenantProvisioningRequest Waived(ProvisionTenantRequest request) =>
+        new(request, new TenantQuoteRequest("business", "Annual", 0, 0, 0, 0));
     [Fact]
     public async Task Creating_any_later_business_also_provisions_sales_and_orders_warehouses()
     {
@@ -322,6 +473,33 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         using var json = JsonDocument.Parse(payload!);
         return json.RootElement.GetProperty("activationToken").GetString()
             ?? throw new InvalidOperationException("Invitation token is missing.");
+    }
+
+    private async Task<CommercialSubscriptionState> ReadCommercialSubscriptionAsync(Guid tenantId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT serviceValue.Code,subscription.BillingPeriod,subscription.Status,
+                   subscription.FullUserLimit,subscription.SellerUserLimit,
+                   subscription.PosDeviceLimit,subscription.DianDocumentMonthlyLimit,
+                   subscription.PayrollEmployeeLimit,
+                   (SELECT COUNT(*) FROM billing.TenantSubscriptionUsagePeriods periodValue
+                    WHERE periodValue.TenantSubscriptionId=subscription.TenantSubscriptionId)
+            FROM billing.TenantSubscriptions subscription
+            INNER JOIN billing.TenantCommercialPlans planValue
+              ON planValue.TenantCommercialPlanId=subscription.TenantCommercialPlanId
+            INNER JOIN billing.BillableServices serviceValue
+              ON serviceValue.BillableServiceId=planValue.BillableServiceId
+            WHERE subscription.TenantId=@TenantId;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        return new CommercialSubscriptionState(
+            reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetInt32(3),
+            reader.GetInt32(4), reader.GetInt32(5), reader.GetInt32(6), reader.GetInt32(7),
+            reader.GetInt32(8));
     }
 
 
@@ -441,6 +619,7 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
                    N'work-sessions.read',N'work-sessions.differences.read',N'work-sessions.cash-reasons.configure',
                    N'dispatches.read-all',N'dispatches.reports.view',N'dispatches.reports.export',
                    N'sales.reports.read',N'sales.reports.read-all',N'sales.returns.read',N'sales.debit-notes.read',
+                   N'service-invoices.read',
                    N'purchasing.goods-receipts.read',N'purchasing.purchase-returns.read')
             ), Actual AS
             (
@@ -475,6 +654,147 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
+    private async Task<int> CountCurrentRenewalOrdersAsync(Guid tenantId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT COUNT(*)
+            FROM billing.TenantSubscriptionRenewalOrders renewal
+            JOIN billing.TenantSubscriptions subscription
+              ON subscription.TenantSubscriptionId=renewal.TenantSubscriptionId
+            WHERE subscription.TenantId=@TenantId AND renewal.IsCurrent=1;
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private async Task AddActiveUsersAsync(Guid tenantId, int count)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        for (var index = 0; index < count; index++)
+        {
+            var value = $"renewal-{Guid.NewGuid():N}";
+            await using var command = new SqlCommand("""
+                INSERT dbo.AppUsers
+                  (UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,
+                   FirstName,LastName,EmailConfirmed,IsActive,CreatedAt)
+                VALUES(NEWID(),@TenantId,@Value,UPPER(@Value),@Email,UPPER(@Email),
+                       N'Prueba',N'Renovación',1,1,SYSUTCDATETIME());
+                """, connection);
+            command.Parameters.AddWithValue("@TenantId", tenantId);
+            command.Parameters.AddWithValue("@Value", value);
+            command.Parameters.AddWithValue("@Email", $"{value}@auraly.test");
+            await command.ExecuteNonQueryAsync();
+        }
+    }
+
+    private async Task<int> CountRenewalOrderSideEffectsAsync(Guid tenantId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            SELECT
+              (SELECT COUNT(*) FROM dbo.Receivables receivable
+               JOIN dbo.Customers customerValue ON customerValue.CustomerId=receivable.CustomerId
+               JOIN billing.TenantSubscriptions subscription ON subscription.BillingCustomerId=customerValue.CustomerId
+               WHERE subscription.TenantId=@TenantId)
+              +
+              (SELECT COUNT(*) FROM dbo.PaymentTransactions paymentValue
+               JOIN billing.TenantSubscriptions subscription ON subscription.TenantSubscriptionId=paymentValue.SubjectId
+               WHERE subscription.TenantId=@TenantId AND paymentValue.SubjectType=N'TenantSubscription');
+            """, connection);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private async Task<FiscalVerificationMaterial> ConfigurePlatformBillingFiscalAsync(
+        Guid businessId)
+    {
+        var authorizationId = Guid.NewGuid();
+        var issuerId = Guid.NewGuid();
+        var seriesId = Guid.NewGuid();
+        const string supplierTaxId = "901777333";
+        const string authorizationNumber = "18769999999";
+        const string technicalVersion = "billing-test-v1";
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            INSERT dbo.FiscalAuthorizations
+              (FiscalAuthorizationId,BusinessId,AuthorizationNumber,SupplierTaxId,
+               Environment,QrValidationUrl,TechnicalKeyVersion,ValidFrom,ValidUntil,
+               AuthorizedRangeStart,AuthorizedRangeEnd,IsActive,CreatedAt)
+            VALUES(@AuthorizationId,@BusinessId,@AuthorizationNumber,@SupplierTaxId,2,
+               @Qr,@Version,'2026-01-01','2028-12-31',1,100000,1,SYSDATETIMEOFFSET());
+            INSERT dbo.FiscalIssuerConfigurations
+              (FiscalIssuerConfigurationId,BusinessId,Version,SupplierTaxId,SupplierCheckDigit,
+               LegalName,TradeName,TaxLevelCode,TaxSchemeId,TaxSchemeName,IdentificationTypeCode,
+               AddressLine,CityCode,CityName,DepartmentCode,DepartmentName,CountryCode,CountryName,
+               SoftwareIdentificationCode,SoftwarePinSecretReference,Environment,TestSetId,
+               CertificateProvider,CertificateKeyReference,CertificateThumbprint,DianEndpoint,
+               TechnicalAnnexVersion,GeneratorVersion,ValidFrom,IsActive,CreatedAt)
+            VALUES(@IssuerId,@BusinessId,1,@SupplierTaxId,N'1',N'Auraly',N'Auraly',
+               N'R-99-PN',N'01',N'IVA',N'31',N'Calle 1',N'11001',N'Bogotá',N'11',
+               N'Bogotá D.C.',N'CO',N'Colombia',N'auraly-billing-test',N'test',2,
+               '11111111-1111-1111-1111-111111111111',N'Test',N'Test',N'TEST',
+               N'https://vpfe-hab.dian.gov.co/WcfDianCustomerServices.svc',N'1.9',
+               N'Auraly.Tests','2026-01-01',1,SYSDATETIMEOFFSET());
+            INSERT dbo.FiscalSeries
+              (SeriesId,BusinessId,DeviceId,EmitterKind,FiscalAuthorizationId,
+               DocumentType,Prefix,RangeStart,RangeEnd,IsActive,CreatedAt)
+            VALUES(@SeriesId,@BusinessId,NULL,N'Server',@AuthorizationId,
+               N'SalesInvoice',N'FSV',1,100000,1,SYSDATETIMEOFFSET());
+            """, connection);
+        command.Parameters.AddWithValue("@AuthorizationId", authorizationId);
+        command.Parameters.AddWithValue("@IssuerId", issuerId);
+        command.Parameters.AddWithValue("@SeriesId", seriesId);
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@AuthorizationNumber", authorizationNumber);
+        command.Parameters.AddWithValue("@SupplierTaxId", supplierTaxId);
+        command.Parameters.AddWithValue("@Qr", ServerSliceFixture.QrValidationUrl);
+        command.Parameters.AddWithValue("@Version", technicalVersion);
+        await command.ExecuteNonQueryAsync();
+        return new(new FiscalTechnicalKey("billing-test-technical-key", technicalVersion),
+            supplierTaxId, FiscalEnvironment.Test, ServerSliceFixture.QrValidationUrl);
+    }
+
+    private async Task UseCanonicalAuralyBillingBusinessAsync()
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            UPDATE billing.PlatformBillingSettings
+            SET BillingBusinessId='A0A10000-0000-0000-0000-000000000001',
+                UpdatedAt=SYSDATETIMEOFFSET()
+            WHERE PlatformBillingSettingId=1;
+            """, connection);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync());
+    }
+
+    private async Task ConfirmPaymentAsync(Guid paymentId, string providerTransactionId)
+    {
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand("""
+            UPDATE dbo.PaymentTransactions
+            SET Status=@Status,ProviderTransactionId=@Provider,ConfirmedAt=SYSUTCDATETIME()
+            WHERE PaymentTransactionId=@PaymentId;
+            """, connection);
+        command.Parameters.AddWithValue("@PaymentId", paymentId);
+        command.Parameters.AddWithValue("@Provider", providerTransactionId);
+        command.Parameters.AddWithValue("@Status", (int)PaymentTransactionStatus.Confirmed);
+        Assert.Equal(1, await command.ExecuteNonQueryAsync());
+    }
+
+    private sealed class FixedFiscalTechnicalKeyProvider(FiscalVerificationMaterial value)
+        : IFiscalTechnicalKeyProvider
+    {
+        public Task<FiscalVerificationMaterial?> ResolveAsync(
+            FiscalKeyReference reference, CancellationToken cancellationToken) =>
+            Task.FromResult<FiscalVerificationMaterial?>(value);
+    }
+
     private sealed record BusinessCreatedResponse(Guid BusinessId);
 
     private sealed record ProvisionedState(
@@ -483,4 +803,9 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
         int OpenAccountingPeriods, int DefaultCostCenters, int AccountingVoucherCursors,
         int UnmappedPosPaymentMethods, int Roles, int OnlineSalesDocumentSeries, int UserRoles,
         bool? UserActive, string? PasswordHash, string InvitationStatus);
+
+    private sealed record CommercialSubscriptionState(
+        string PlanCode, string BillingPeriod, string Status, int FullUsers,
+        int SellerUsers, int PosDevices, int DianDocuments, int PayrollEmployees,
+        int UsagePeriods);
 }

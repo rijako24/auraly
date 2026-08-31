@@ -379,6 +379,9 @@ public sealed class SqlFiscalSubmissionWorkStore(
 
         if (status is FiscalDocumentStatusCodes.DianAccepted or FiscalDocumentStatusCodes.DianRejected)
             await InsertStatusEventAsync(connection, transaction, work, status, result, completedAt, cancellationToken);
+        if (status == FiscalDocumentStatusCodes.DianAccepted)
+            await QueueInvoiceDeliveryAsync(
+                connection, transaction, work, completedAt, cancellationToken);
         if (terminal)
             await SqlFiscalStatusSynchronizationOutbox.InsertAsync(
                 connection, transaction, ids, work.BusinessId, completedAt, cancellationToken);
@@ -564,6 +567,9 @@ public sealed class SqlFiscalSubmissionWorkStore(
             (MessageId,DocumentId,DocumentType,Type,Payload,OccurredAt)
             SELECT @MessageId,@DocumentId,f.SourceDocumentType,@Type,@Payload,@OccurredAt
             FROM dbo.FiscalDocuments f
+            INNER JOIN dbo.DocumentProcessingJobs processing
+              ON processing.DocumentId=f.DocumentId
+             AND processing.DocumentType=f.SourceDocumentType
             WHERE f.DocumentId=@DocumentId AND f.BusinessId=@BusinessId
               AND NOT EXISTS(
               SELECT 1 FROM dbo.ServerOutboxMessages
@@ -586,6 +592,69 @@ public sealed class SqlFiscalSubmissionWorkStore(
         command.Parameters.AddWithValue("@BusinessId", work.BusinessId);
         command.Parameters.AddWithValue("@Type", $"FiscalDocument.{status}");
         command.Parameters.AddWithValue("@Payload", payload);
+        command.Parameters.AddWithValue("@OccurredAt", occurredAt);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async Task QueueInvoiceDeliveryAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        FiscalSubmissionWorkItem work,
+        DateTimeOffset occurredAt,
+        CancellationToken cancellationToken)
+    {
+        const string recipientSql = """
+            SELECT TOP(1) business.TenantId,LTRIM(RTRIM(contact.Value))
+            FROM dbo.FiscalDocuments fiscal WITH(UPDLOCK,HOLDLOCK)
+            JOIN dbo.SalesDocuments sale ON sale.DocumentId=fiscal.DocumentId
+             AND sale.BusinessId=fiscal.BusinessId
+             AND sale.DocumentType IN(N'SalesInvoice',N'ServiceInvoice')
+            JOIN dbo.Businesses business ON business.BusinessId=fiscal.BusinessId
+            JOIN dbo.Customers customer ON customer.CustomerId=sale.CustomerId
+            JOIN dbo.Parties party ON party.PartyId=customer.PartyId
+            JOIN dbo.PartyContacts contact ON contact.PartyId=party.PartyId
+             AND contact.ContactType=N'Email' AND contact.IsActive=1
+             AND NULLIF(LTRIM(RTRIM(contact.Value)),N'') IS NOT NULL
+            WHERE fiscal.DocumentId=@DocumentId AND fiscal.BusinessId=@BusinessId
+              AND fiscal.FiscalStatus=N'DianAccepted'
+              AND fiscal.DeliveryOutboxMessageId IS NULL
+            ORDER BY contact.IsPrimary DESC,contact.CreatedAt,contact.PartyContactId;
+            """;
+        await using var recipientCommand = new SqlCommand(
+            recipientSql, connection, transaction);
+        recipientCommand.Parameters.AddWithValue("@DocumentId", work.DocumentId);
+        recipientCommand.Parameters.AddWithValue("@BusinessId", work.BusinessId);
+        await using var reader = await recipientCommand.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return;
+        var tenantId = reader.GetGuid(0);
+        var email = reader.GetString(1);
+        await reader.DisposeAsync();
+
+        var messageId = ids.NewId();
+        const string insertSql = """
+            INSERT dbo.TenantProvisioningOutboxMessages
+              (MessageId,TenantId,Type,Payload,OccurredAt,AvailableAt)
+            VALUES(@MessageId,@TenantId,N'FiscalInvoiceDelivery',@Payload,@OccurredAt,@OccurredAt);
+
+            UPDATE dbo.FiscalDocuments
+            SET DeliveryEmail=@Email,DeliveryOutboxMessageId=@MessageId
+            WHERE DocumentId=@DocumentId AND BusinessId=@BusinessId
+              AND FiscalStatus=N'DianAccepted' AND DeliveryOutboxMessageId IS NULL;
+
+            IF @@ROWCOUNT<>1
+              THROW 51272,'Fiscal invoice delivery was already queued.',1;
+            """;
+        await using var command = new SqlCommand(insertSql, connection, transaction);
+        command.Parameters.AddWithValue("@Email", email);
+        command.Parameters.AddWithValue("@MessageId", messageId);
+        command.Parameters.AddWithValue("@DocumentId", work.DocumentId);
+        command.Parameters.AddWithValue("@BusinessId", work.BusinessId);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        command.Parameters.AddWithValue("@Payload", JsonSerializer.Serialize(new
+        {
+            work.DocumentId,
+            work.BusinessId
+        }));
         command.Parameters.AddWithValue("@OccurredAt", occurredAt);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

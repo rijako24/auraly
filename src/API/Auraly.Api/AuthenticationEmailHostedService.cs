@@ -1,4 +1,5 @@
 using System.Data;
+using System.IO.Compression;
 using System.Net;
 using System.Text.Json;
 using Azure;
@@ -8,17 +9,17 @@ using Microsoft.Data.SqlClient;
 
 namespace Auraly.Api;
 
-public sealed record AuthenticationEmailOptions(
+public sealed record PlatformEmailOptions(
     string? ConnectionString,
     string SenderAddress,
     string PublicAppUrl,
     string LogoUrl,
     string SupportEmail);
 
-public sealed class AuthenticationEmailHostedService(
+public sealed class PlatformEmailOutboxHostedService(
     SqlServerConnectionFactory connections,
-    AuthenticationEmailOptions options,
-    ILogger<AuthenticationEmailHostedService> logger) : BackgroundService
+    PlatformEmailOptions options,
+    ILogger<PlatformEmailOutboxHostedService> logger) : BackgroundService
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static readonly int[] RetrySeconds = [15, 60, 300, 900, 3600];
@@ -29,7 +30,7 @@ public sealed class AuthenticationEmailHostedService(
     {
         if (string.IsNullOrWhiteSpace(options.ConnectionString))
         {
-            logger.LogWarning("Tenant invitation email delivery is disabled because Auraly:Email:ConnectionString is missing.");
+            logger.LogWarning("Platform email delivery is disabled because Auraly:Email:ConnectionString is missing.");
             return;
         }
 
@@ -53,7 +54,7 @@ public sealed class AuthenticationEmailHostedService(
             }
             catch (Exception exception)
             {
-                logger.LogError(exception, "Tenant invitation outbox loop failed.");
+                logger.LogError(exception, "Platform email outbox loop failed.");
                 await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
             }
         }
@@ -71,16 +72,22 @@ public sealed class AuthenticationEmailHostedService(
                 case "PasswordRecoveryEmail":
                     await DeliverPasswordRecoveryAsync(client, message, cancellationToken);
                     break;
+                case "SubscriptionPaymentReminder":
+                    await DeliverSubscriptionReminderAsync(client, message, cancellationToken);
+                    break;
+                case "FiscalInvoiceDelivery":
+                    await DeliverFiscalInvoiceAsync(client, message, cancellationToken);
+                    break;
                 default:
                     throw new InvalidOperationException($"Unsupported authentication email type '{message.Type}'.");
             }
             await CompleteAsync(message, cancellationToken);
-            logger.LogInformation("Authentication email {Type}/{MessageId} delivered.", message.Type, message.MessageId);
+            logger.LogInformation("Platform email {Type}/{MessageId} delivered.", message.Type, message.MessageId);
         }
         catch (Exception exception)
         {
             await RetryAsync(message, exception, cancellationToken);
-            logger.LogError(exception, "Authentication email {Type}/{MessageId} failed.", message.Type, message.MessageId);
+            logger.LogError(exception, "Platform email {Type}/{MessageId} failed.", message.Type, message.MessageId);
         }
     }
 
@@ -102,11 +109,46 @@ public sealed class AuthenticationEmailHostedService(
         await SendAsync(client, recipient.Email, "Recupera tu acceso a Auraly", BuildPasswordRecoveryHtml(recipient, resetUrl), BuildPasswordRecoveryPlain(recipient, resetUrl), cancellationToken);
     }
 
-    private async Task SendAsync(EmailClient client, string recipient, string subject, string html, string plain, CancellationToken cancellationToken)
+    private async Task DeliverSubscriptionReminderAsync(
+        EmailClient client, ClaimedMessage message, CancellationToken cancellationToken)
+    {
+        var payload = JsonSerializer.Deserialize<SubscriptionReminderPayload>(message.Payload, Json)
+            ?? throw new InvalidOperationException("The subscription reminder payload is empty.");
+        var recipient = await LoadSubscriptionReminderAsync(
+            payload.NotificationId, message.MessageId, message.TenantId, cancellationToken);
+        if (recipient is null) return;
+        var paymentUrl = $"{options.PublicAppUrl.TrimEnd('/')}/dashboard/subscription?order={recipient.RenewalOrderId:D}";
+        await SendAsync(client, recipient.Email, recipient.Title,
+            BuildSubscriptionReminderHtml(recipient, paymentUrl),
+            BuildSubscriptionReminderPlain(recipient, paymentUrl), cancellationToken);
+    }
+
+    private async Task DeliverFiscalInvoiceAsync(
+        EmailClient client, ClaimedMessage message, CancellationToken cancellationToken)
+    {
+        var payload = JsonSerializer.Deserialize<FiscalInvoicePayload>(message.Payload, Json)
+            ?? throw new InvalidOperationException("The fiscal invoice payload is empty.");
+        var invoice = await LoadFiscalInvoiceAsync(
+            payload.DocumentId, message.MessageId, message.TenantId, cancellationToken);
+        if (invoice is null) return;
+        var container = BuildFiscalContainer(invoice);
+        await SendAsync(client, invoice.Email,
+            $"Factura electrónica {invoice.FiscalNumber} · {invoice.BusinessName}",
+            BuildFiscalInvoiceHtml(invoice), BuildFiscalInvoicePlain(invoice),
+            cancellationToken,
+            [new($"FacturaElectronica-{SafeFileName(invoice.FiscalNumber)}.zip",
+                "application/zip", new BinaryData(container))]);
+    }
+
+    private async Task SendAsync(EmailClient client, string recipient, string subject,
+        string html, string plain, CancellationToken cancellationToken,
+        IReadOnlyList<EmailAttachment>? attachments = null)
     {
         var content = new EmailContent(subject) { Html = html, PlainText = plain };
         var email = new EmailMessage(options.SenderAddress, recipient, content);
         email.Attachments.Add(new EmailAttachment("auraly-mark.png", "image/png", LogoContent.Value) { ContentId = LogoContentId });
+        if (attachments is not null)
+            foreach (var attachment in attachments) email.Attachments.Add(attachment);
         await client.SendAsync(WaitUntil.Completed, email, cancellationToken);
     }
     private async Task<ClaimedMessage?> ClaimAsync(CancellationToken cancellationToken)
@@ -144,14 +186,56 @@ public sealed class AuthenticationEmailHostedService(
         if (!await reader.ReadAsync(cancellationToken)) throw new InvalidOperationException("The password recovery request is no longer available.");
         return new PasswordRecoveryRecipient(reader.GetString(0), reader.GetString(1), reader.GetString(2));
     }
+
+    private async Task<SubscriptionReminderRecipient?> LoadSubscriptionReminderAsync(
+        Guid notificationId, Guid messageId, Guid tenantId, CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = Procedure("dbo.TenantBillingReminderRecipientGet", connection);
+        command.Parameters.AddWithValue("@NotificationId", notificationId);
+        command.Parameters.AddWithValue("@MessageId", messageId);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
+                reader.GetString(4), reader.GetGuid(5), reader.GetFieldValue<DateTimeOffset>(6), reader.GetDecimal(7))
+            : null;
+    }
+
+    private async Task<FiscalInvoiceRecipient?> LoadFiscalInvoiceAsync(
+        Guid documentId, Guid messageId, Guid tenantId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var command = Procedure("dbo.FiscalInvoiceDeliveryRecipientGet", connection);
+        command.Parameters.AddWithValue("@DocumentId", documentId);
+        command.Parameters.AddWithValue("@MessageId", messageId);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        await using var reader = await command.ExecuteReaderAsync(
+            CommandBehavior.SingleRow, cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new(reader.GetString(0), reader.GetString(1), reader.GetString(2),
+                reader.GetString(3), reader.GetFieldValue<DateTimeOffset>(4),
+                reader.GetString(5), reader.GetDecimal(6), reader.GetString(7),
+                reader.GetString(8), (byte[])reader[9],
+                reader.IsDBNull(10) ? "invoice.xml" : reader.GetString(10),
+                (byte[])reader[11],
+                reader.IsDBNull(12) ? "application-response.xml" : reader.GetString(12))
+            : null;
+    }
     private async Task CompleteAsync(ClaimedMessage message, CancellationToken cancellationToken)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        await using var command = Procedure("dbo.AuthenticationEmailOutboxComplete", connection);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        await using var command = Procedure(
+            "dbo.AuthenticationEmailOutboxComplete", connection, transaction);
         command.Parameters.AddWithValue("@MessageId", message.MessageId);
         command.Parameters.AddWithValue("@LeaseId", message.LeaseId);
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     private async Task RetryAsync(ClaimedMessage message, Exception exception, CancellationToken cancellationToken)
@@ -169,6 +253,10 @@ public sealed class AuthenticationEmailHostedService(
 
     private static SqlCommand Procedure(string name, SqlConnection connection) =>
         new(name, connection) { CommandType = CommandType.StoredProcedure };
+
+    private static SqlCommand Procedure(
+        string name, SqlConnection connection, SqlTransaction transaction) =>
+        new(name, connection, transaction) { CommandType = CommandType.StoredProcedure };
 
     private string BuildHtml(RecipientContext recipient, string activationUrl)
     {
@@ -270,9 +358,105 @@ public sealed class AuthenticationEmailHostedService(
         El enlace vence en 30 minutos y solo funciona una vez.
         Si no solicitaste el cambio, ignora este correo. Soporte: {options.SupportEmail}
         """;
+
+    private string BuildSubscriptionReminderHtml(SubscriptionReminderRecipient recipient, string paymentUrl)
+    {
+        var name = WebUtility.HtmlEncode(recipient.Name);
+        var tenant = WebUtility.HtmlEncode(recipient.TenantName);
+        var title = WebUtility.HtmlEncode(recipient.Title);
+        var message = WebUtility.HtmlEncode(recipient.Message);
+        var url = WebUtility.HtmlEncode(paymentUrl);
+        var amount = WebUtility.HtmlEncode(recipient.Amount.ToString("C0", new System.Globalization.CultureInfo("es-CO")));
+        var due = WebUtility.HtmlEncode(recipient.DueAt.ToString("dd/MM/yyyy"));
+        var support = WebUtility.HtmlEncode(options.SupportEmail);
+        return $$"""
+            <!doctype html><html lang="es"><body style="margin:0;background:#eef3f5;font-family:Inter,Segoe UI,Arial,sans-serif;color:#13202b">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:32px 12px"><tr><td align="center">
+            <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width:600px;width:100%;background:#fff;border:1px solid #dce5e9;border-radius:22px;overflow:hidden">
+            <tr><td style="height:7px;background:#14b8a6"></td></tr><tr><td style="padding:30px 32px">
+            <img src="cid:{{LogoContentId}}" width="44" height="44" alt="Auraly" style="display:block"><h1 style="margin:24px 0 12px;font-size:28px">{{title}}</h1>
+            <p style="font-size:16px;line-height:1.6">Hola, <strong>{{name}}</strong>. {{message}}</p>
+            <table role="presentation" width="100%" style="margin:20px 0;background:#f6f9fa;border:1px solid #dce5e9;border-radius:14px"><tr><td style="padding:16px;line-height:1.7"><strong>{{tenant}}</strong><br>Total: <strong>{{amount}}</strong><br>Vencimiento: {{due}}</td></tr></table>
+            <p style="margin:26px 0"><a href="{{url}}" style="display:inline-block;padding:14px 24px;border-radius:12px;background:#0f766e;color:#fff;text-decoration:none;font-weight:800">Revisar y pagar en Auraly</a></p>
+            <p style="font-size:12px;color:#64748b">Por seguridad, Auraly validará nuevamente tu organización, el estado y el valor antes de abrir Wompi.</p>
+            </td></tr><tr><td style="padding:20px 32px;border-top:1px solid #e2e8f0;color:#64748b;font-size:12px">Soporte: <a href="mailto:{{support}}">{{support}}</a></td></tr>
+            </table></td></tr></table></body></html>
+            """;
+    }
+
+    private static string BuildSubscriptionReminderPlain(
+        SubscriptionReminderRecipient recipient, string paymentUrl) =>
+        $"""
+        Hola, {recipient.Name}.
+        {recipient.Title}: {recipient.Message}
+        Organización: {recipient.TenantName}
+        Total: {recipient.Amount:C0} COP. Vencimiento: {recipient.DueAt:dd/MM/yyyy}.
+        Revisa y paga de forma segura en Auraly: {paymentUrl}
+        """;
+
+    private static byte[] BuildFiscalContainer(FiscalInvoiceRecipient invoice)
+    {
+        using var output = new MemoryStream();
+        using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            WriteEntry(archive, SafeFileName(invoice.SignedXmlFileName), invoice.SignedXml);
+            WriteEntry(archive, SafeFileName(invoice.ApplicationResponseFileName),
+                invoice.ApplicationResponse);
+        }
+        return output.ToArray();
+    }
+
+    private static void WriteEntry(ZipArchive archive, string fileName, byte[] content)
+    {
+        var entry = archive.CreateEntry(fileName, CompressionLevel.Optimal);
+        using var stream = entry.Open();
+        stream.Write(content);
+    }
+
+    private static string SafeFileName(string value)
+    {
+        var result = string.Concat(value.Select(character =>
+            Path.GetInvalidFileNameChars().Contains(character) ? '_' : character));
+        return string.IsNullOrWhiteSpace(result) ? "documento" : result;
+    }
+
+    private string BuildFiscalInvoiceHtml(FiscalInvoiceRecipient invoice)
+    {
+        var business = WebUtility.HtmlEncode(invoice.BusinessName);
+        var customer = WebUtility.HtmlEncode(invoice.CustomerName);
+        var document = WebUtility.HtmlEncode(invoice.DocumentNumber);
+        var fiscal = WebUtility.HtmlEncode(invoice.FiscalNumber);
+        var amount = WebUtility.HtmlEncode(invoice.Amount.ToString(
+            "C0", new System.Globalization.CultureInfo("es-CO")));
+        var support = WebUtility.HtmlEncode(options.SupportEmail);
+        return $$"""
+            <!doctype html><html lang="es"><body style="margin:0;background:#eef3f5;font-family:Inter,Segoe UI,Arial,sans-serif;color:#13202b">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:32px 12px"><tr><td align="center">
+            <table role="presentation" width="620" cellspacing="0" cellpadding="0" style="max-width:620px;width:100%;background:#fff;border:1px solid #dce5e9;border-radius:22px;overflow:hidden">
+            <tr><td style="height:7px;background:#14b8a6"></td></tr><tr><td style="padding:30px 32px">
+            <img src="cid:{{LogoContentId}}" width="44" height="44" alt="Auraly" style="display:block"><p style="margin:20px 0 5px;color:#0f766e;font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase">Documento validado por la DIAN</p>
+            <h1 style="margin:0 0 14px;font-size:28px">Tu factura electrónica está lista</h1>
+            <p style="font-size:16px;line-height:1.6">Hola, <strong>{{customer}}</strong>. <strong>{{business}}</strong> emitió la factura electrónica de venta que encontrarás adjunta a este correo.</p>
+            <table role="presentation" width="100%" style="margin:22px 0;background:#f0fdfa;border:1px solid #99f6e4;border-radius:14px"><tr><td style="padding:17px;line-height:1.8">Documento Auraly: <strong>{{document}}</strong><br>Número DIAN: <strong>{{fiscal}}</strong><br>Fecha: {{invoice.IssuedAt:dd/MM/yyyy HH:mm}}<br>Total: <strong>{{amount}}</strong></td></tr></table>
+            <p style="font-size:14px;line-height:1.6;color:#526170">El archivo ZIP adjunto conserva la factura XML firmada y la respuesta electrónica de validación recibida de la DIAN. Guárdalo como soporte del documento.</p>
+            <p style="padding:14px;border-radius:12px;background:#f6f9fa;border:1px solid #dce5e9;font-size:12px;color:#64748b">Este mensaje es informativo. No respondas con claves, contraseñas ni datos de pago.</p>
+            </td></tr><tr><td style="padding:20px 32px;border-top:1px solid #e2e8f0;color:#64748b;font-size:12px">Soporte: <a href="mailto:{{support}}">{{support}}</a> · Enviado de forma segura por Auraly.</td></tr>
+            </table></td></tr></table></body></html>
+            """;
+    }
+
+    private static string BuildFiscalInvoicePlain(FiscalInvoiceRecipient invoice) =>
+        $"""
+        Hola, {invoice.CustomerName}.
+        {invoice.BusinessName} emitió la factura electrónica {invoice.FiscalNumber}.
+        Documento Auraly: {invoice.DocumentNumber}. Fecha: {invoice.IssuedAt:dd/MM/yyyy HH:mm}.
+        Total: {invoice.Amount:C0} COP.
+        El ZIP adjunto contiene la factura XML firmada y la respuesta de validación de la DIAN.
+        """;
+
     private static BinaryData LoadLogoContent()
     {
-        using var stream = typeof(AuthenticationEmailHostedService).Assembly
+        using var stream = typeof(PlatformEmailOutboxHostedService).Assembly
             .GetManifestResourceStream("Auraly.Api.Assets.auraly-mark.png")
             ?? throw new InvalidOperationException("The embedded Auraly email logo is missing.");
         using var memory = new MemoryStream();
@@ -294,6 +478,25 @@ public sealed class AuthenticationEmailHostedService(
     private sealed record ClaimedMessage(Guid MessageId, Guid TenantId, string Type, string Payload, int AttemptCount, Guid LeaseId);
     private sealed record InvitationPayload(Guid InvitationId, Guid TenantId, string Email, string ActivationToken);
     private sealed record PasswordRecoveryPayload(Guid RequestId, string Email, string ResetToken);
+    private sealed record SubscriptionReminderPayload(Guid NotificationId);
+    private sealed record FiscalInvoicePayload(Guid DocumentId, Guid BusinessId);
     private sealed record PasswordRecoveryRecipient(string Email, string Name, string TenantName);
+    private sealed record SubscriptionReminderRecipient(
+        string Email, string Name, string TenantName, string Title, string Message,
+        Guid RenewalOrderId, DateTimeOffset DueAt, decimal Amount);
+    private sealed record FiscalInvoiceRecipient(
+        string Email,
+        string BusinessName,
+        string DocumentNumber,
+        string FiscalNumber,
+        DateTimeOffset IssuedAt,
+        string CustomerName,
+        decimal Amount,
+        string CustomerIdentification,
+        string DocumentType,
+        byte[] SignedXml,
+        string SignedXmlFileName,
+        byte[] ApplicationResponse,
+        string ApplicationResponseFileName);
     private sealed record RecipientContext(string TenantName, string Name);
 }

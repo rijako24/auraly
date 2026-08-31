@@ -13,6 +13,7 @@ DECLARE @PlatformPermissions TABLE(Module NVARCHAR(50), Action NVARCHAR(50), Res
 INSERT INTO @PlatformPermissions VALUES
 (N'Tenants',N'Read',N'tenants.read',N'Ver tenants'),
 (N'Tenants',N'Create',N'tenants.create',N'Crear tenants'),
+(N'Tenants',N'WaiveProvisioningPayment',N'tenants.provisioning.payment.waive',N'Omitir el pago inicial al aprovisionar un tenant'),
 (N'Tenants',N'Update',N'tenants.update',N'Actualizar datos de tenants'),
 (N'Tenants',N'UpdateCapacity',N'tenants.capacity.update',N'Modificar cupos de usuarios y cajas'),
 (N'Tenants',N'UpdateStatus',N'tenants.status.update',N'Activar o inactivar tenants'),
@@ -20,6 +21,8 @@ INSERT INTO @PlatformPermissions VALUES
 (N'Tenants',N'ManageUsers',N'tenants.users.manage',N'Administrar usuarios de otros tenants'),
 (N'Tenants',N'ReadDevices',N'tenants.devices.read',N'Consultar cajas enroladas de otros tenants'),
 (N'Tenants',N'RevokeDevices',N'tenants.devices.revoke',N'Desenrolar cajas de otros tenants'),
+(N'Tenants',N'ManageBillingPolicy',N'tenants.billing.policy.manage',N'Configurar la política global de cobranza'),
+(N'Tenants',N'ConfirmManualBillingPayment',N'tenants.billing.payment.confirm_manual',N'Confirmar recaudos externos de suscripciones'),
 (N'Platform',N'AssignPermissions',N'platform.permissions.assign',N'Delegar permisos de plataforma');
 
 INSERT dbo.Permissions(PermissionId,Module,Action,Resource,Description,CreatedAt)

@@ -13,11 +13,14 @@ import type { Tenant } from "@/types/entities";
 import { formatDate } from "@/lib/utils";
 import { useTenants } from "@/hooks/use-tenants";
 import { useAuthStore } from "@/stores/auth-store";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PlatformBillingPolicyCard } from "@/components/tenants/platform-billing-policy-card";
 
 export default function TenantsPage() {
   const { data, isLoading, isError, refetch } = useTenants();
   const router = useRouter();
   const canCreateTenant = useAuthStore((state) => state.user?.permissions.includes("tenants.create") ?? false);
+  const canManageBillingPolicy = useAuthStore((state) => state.user?.permissions.includes("tenants.billing.policy.manage") ?? false);
   const tenants = data?.items ?? [];
   const columns: ColumnDef<Tenant>[] = useMemo(() => [
     { accessorKey: "name", header: "Nombre", cell: ({ row }) => <div className="font-medium">{row.original.name}</div> },
@@ -38,7 +41,7 @@ export default function TenantsPage() {
         <div><h1 className="text-2xl font-semibold tracking-tight">Tenants</h1><p className="text-muted-foreground">Gestiona las organizaciones que usan la plataforma</p></div>
         {canCreateTenant && <Button asChild><Link href="/dashboard/tenants/new"><Plus className="mr-2 h-4 w-4" />Nuevo Tenant</Link></Button>}
       </div>
-      <DataTable columns={columns} data={tenants} searchKey="name" searchPlaceholder="Buscar por nombre..." enableRowSelection={false} onRowClick={(tenant)=>router.push(`/dashboard/tenants/${tenant.tenantId}`)} />
+      {canManageBillingPolicy ? <Tabs defaultValue="tenants" className="space-y-5"><TabsList><TabsTrigger value="tenants">Organizaciones</TabsTrigger><TabsTrigger value="billing">Política de cobranza</TabsTrigger></TabsList><TabsContent value="tenants"><DataTable columns={columns} data={tenants} searchKey="name" searchPlaceholder="Buscar por nombre..." enableRowSelection={false} onRowClick={(tenant)=>router.push(`/dashboard/tenants/${tenant.tenantId}`)} /></TabsContent><TabsContent value="billing"><PlatformBillingPolicyCard/></TabsContent></Tabs> : <DataTable columns={columns} data={tenants} searchKey="name" searchPlaceholder="Buscar por nombre..." enableRowSelection={false} onRowClick={(tenant)=>router.push(`/dashboard/tenants/${tenant.tenantId}`)} />}
     </div>
   );
 }

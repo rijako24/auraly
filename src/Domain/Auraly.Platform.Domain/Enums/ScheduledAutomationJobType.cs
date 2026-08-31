@@ -3,5 +3,6 @@ namespace Auraly.Platform.Domain.Enums;
 public enum ScheduledAutomationJobType
 {
     ReservationConfirmation = 0,
-    ReservationReminder = 1
+    ReservationReminder = 1,
+    TenantSubscriptionLifecycle = 2
 }

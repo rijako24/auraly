@@ -4,7 +4,10 @@
 # Si falla por política de ejecución: powershell -ExecutionPolicy Bypass -File .\scripts\TestWompiTransactions.ps1
 
 $baseUrl = "https://sandbox.wompi.co/v1"
-$privateKey = "prv_test_RJKAG9S0lm8tJTuFCmdao8FhXqmXrm0t"
+$privateKey = $env:WOMPI_TEST_PRIVATE_KEY
+if ([string]::IsNullOrWhiteSpace($privateKey) -or -not $privateKey.StartsWith('prv_test_')) {
+    throw 'Configura WOMPI_TEST_PRIVATE_KEY con una llave privada sandbox vigente. No guardes llaves en el repositorio.'
+}
 
 $paymentLinkId = if ($args[0]) { $args[0] } else { "test_Co6eaT" }
 

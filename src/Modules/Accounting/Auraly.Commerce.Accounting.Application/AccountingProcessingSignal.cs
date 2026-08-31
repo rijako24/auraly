@@ -79,6 +79,7 @@ public static class AccountingProcessingPolicy
     private static readonly HashSet<string> AccountableDocumentTypes =
     [
         "SalesInvoice",
+        "ServiceInvoice",
         "SalesReceipt",
         "SalesReturn",
         "SalesDebitNote",

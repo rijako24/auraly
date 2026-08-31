@@ -68,6 +68,10 @@ public sealed partial class SqlAccountingPostingProcessor(
                 "SalesInvoice" => FinancialFactsResult.Ready(
                     await LoadInvoiceFactsAsync(
                         connection, transaction, source, cancellationToken)),
+                "ServiceInvoice" => FinancialFactsResult.Ready(
+                    await LoadInvoiceFactsAsync(
+                        connection, transaction, source, cancellationToken,
+                        AccountingCategories.ServiceRevenue)),
                 "SalesReceipt" => FinancialFactsResult.Ready(
                     await LoadInvoiceFactsAsync(
                         connection, transaction, source, cancellationToken)),
@@ -440,7 +444,8 @@ public sealed partial class SqlAccountingPostingProcessor(
         SqlConnection connection,
         SqlTransaction transaction,
         SourceEnvelope source,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string revenueCategory = AccountingCategories.SalesRevenue)
     {
         Guid? partyId;
         decimal untaxed;
@@ -496,7 +501,8 @@ public sealed partial class SqlAccountingPostingProcessor(
         if (paid > total) throw new InvalidOperationException("Payments exceed the immutable invoice total.");
         if (paid < total) payments.Add((AccountingCategories.AccountsReceivable, total - paid));
         var cost = await InventoryCostAsync(connection, transaction, source.DocumentId, source.DocumentType, cancellationToken);
-        return FinancialFacts.Invoice(number, partyId, untaxed, tax, total, cost, payments);
+        return FinancialFacts.Invoice(number, partyId, untaxed, tax, total, cost,
+            payments, revenueCategory);
     }
 
     private static async Task<FinancialFacts> LoadReturnFactsAsync(
@@ -1142,7 +1148,8 @@ public sealed partial class SqlAccountingPostingProcessor(
         bool IsCashMovement = false, bool CashIsIn = false, Guid? PreferredCostCenterId = null,
         Guid? DirectExpenseAccountId = null,
         IReadOnlyList<ManualLineSpec>? DirectLines = null,
-        IReadOnlyList<CategoryLineSpec>? DirectCategoryLines = null)
+        IReadOnlyList<CategoryLineSpec>? DirectCategoryLines = null,
+        string RevenueCategory = AccountingCategories.SalesRevenue)
     {
         public IReadOnlySet<string> RequiredCategories
         {
@@ -1177,7 +1184,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                     foreach (var settlement in Settlements) values.Add(settlement.Category);
                     return values;
                 }
-                values.Add(IsReturn ? AccountingCategories.SalesReturns : AccountingCategories.SalesRevenue);
+                values.Add(IsReturn ? AccountingCategories.SalesReturns : RevenueCategory);
                 if (Tax > 0) values.Add(AccountingCategories.OutputVat);
                 if (Cost > 0) { values.Add(AccountingCategories.Inventory); values.Add(AccountingCategories.CostOfGoodsSold); }
                 return values;
@@ -1259,7 +1266,7 @@ public sealed partial class SqlAccountingPostingProcessor(
             if (!IsReturn)
             {
                 foreach (var settlement in Settlements) yield return new(accounts[settlement.Category], settlement.Amount, 0, PartyId, costCenter, Description);
-                yield return new(accounts[AccountingCategories.SalesRevenue], 0, Untaxed, PartyId, costCenter, Description);
+                yield return new(accounts[RevenueCategory], 0, Untaxed, PartyId, costCenter, Description);
                 if (Tax > 0) yield return new(accounts[AccountingCategories.OutputVat], 0, Tax, PartyId, costCenter, Description);
                 if (Cost > 0) { yield return new(accounts[AccountingCategories.CostOfGoodsSold], Cost, 0, PartyId, costCenter, Description); yield return new(accounts[AccountingCategories.Inventory], 0, Cost, PartyId, costCenter, Description); }
             }
@@ -1271,7 +1278,7 @@ public sealed partial class SqlAccountingPostingProcessor(
                 if (Cost > 0) { yield return new(accounts[AccountingCategories.Inventory], Cost, 0, PartyId, costCenter, Description); yield return new(accounts[AccountingCategories.CostOfGoodsSold], 0, Cost, PartyId, costCenter, Description); }
             }
         }
-        public static FinancialFacts Invoice(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Factura de venta {number}", party, untaxed, tax, total, cost, settlements, false, false, false, false);
+        public static FinancialFacts Invoice(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, IReadOnlyList<(string Category, decimal Amount)> settlements, string revenueCategory = AccountingCategories.SalesRevenue) => new($"Factura de venta {number}", party, untaxed, tax, total, cost, settlements, false, false, false, false, RevenueCategory: revenueCategory);
         public static FinancialFacts Return(string number, Guid? party, decimal untaxed, decimal tax, decimal total, decimal cost, IReadOnlyList<(string Category, decimal Amount)> settlements) => new($"Devolucion de venta {number}", party, untaxed, tax, total, cost, settlements, true, false, false, false);
         public static FinancialFacts DebitNote(string number, Guid party, decimal untaxed, decimal tax, decimal total) =>
             new($"Nota débito de venta {number}", party, untaxed, tax, total, 0,

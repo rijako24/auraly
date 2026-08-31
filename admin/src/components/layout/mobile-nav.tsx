@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { ChevronRight } from "lucide-react";
 
 import { AuralyLogo } from "@/components/brand/auraly-logo";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Sheet,
@@ -57,11 +59,12 @@ export function MobileNav() {
         <ScrollArea className="flex-1 py-3">
           <nav className="px-3 space-y-4">
             {filteredGroups.map((group) => (
-              <div key={group.label}>
-                <p className="px-2 mb-2 text-xs font-medium text-muted-foreground">
+              <Collapsible key={group.label} defaultOpen className="group">
+                <CollapsibleTrigger className="mb-2 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+                  <ChevronRight className="h-3.5 w-3.5 transition-transform group-data-[state=open]:rotate-90" />
                   {group.label}
-                </p>
-                <div className="space-y-0.5 pl-4 pr-1">
+                </CollapsibleTrigger>
+                <CollapsibleContent className="space-y-0.5 pl-4 pr-1">
                   {group.items.map((item) => {
                     const Icon = item.icon;
                     const isActive =
@@ -85,8 +88,8 @@ export function MobileNav() {
                       </Link>
                     );
                   })}
-                </div>
-              </div>
+                </CollapsibleContent>
+              </Collapsible>
             ))}
           </nav>
         </ScrollArea>

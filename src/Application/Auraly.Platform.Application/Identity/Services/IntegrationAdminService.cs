@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Auraly.Platform.Application.Common.Exceptions;
+using Auraly.Platform.Application.Configuration;
 using Auraly.Platform.Application.Identity.DTOs;
 using Auraly.Platform.Application.Identity.Interfaces;
 using Auraly.Platform.Domain.Entities;
@@ -11,11 +12,13 @@ namespace Auraly.Platform.Application.Identity.Services;
 public class IntegrationAdminService : IIntegrationAdminService
 {
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IIntegrationSecretProtector _secretProtector;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    public IntegrationAdminService(IUnitOfWork unitOfWork)
+    public IntegrationAdminService(IUnitOfWork unitOfWork, IIntegrationSecretProtector secretProtector)
     {
         _unitOfWork = unitOfWork;
+        _secretProtector = secretProtector;
     }
 
     public async Task<IntegrationSettingsDto> GetSettingsAsync(Guid tenantId, Guid businessId, CancellationToken ct = default)
@@ -80,11 +83,13 @@ public class IntegrationAdminService : IIntegrationAdminService
             ct);
 
         var settings = ReadJson(connection.SettingsJson);
+        var currentMode = NormalizeWompiMode(Get(settings, "mode", "test"));
+        var currentVersion = Math.Max(1, GetInt(settings, "configurationVersion", 1));
         var mode = NormalizeWompiMode(string.IsNullOrWhiteSpace(request.Mode)
             ? Get(settings, "mode", "test")
             : request.Mode);
-        var existingSecrets = ReadJson(connection.SecretsJson);
-        var existingModeSecrets = ReadNested(connection.SecretsJson, mode);
+        var existingSecrets = Unprotect(ReadJson(connection.SecretsJson));
+        var existingModeSecrets = Unprotect(ReadNested(connection.SecretsJson, mode));
         var secrets = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
         {
             ["privateKey"] = UseNewOrExisting(request.PrivateKey, existingModeSecrets, "privateKey") ?? GetNullable(existingSecrets, "privateKey"),
@@ -94,24 +99,46 @@ public class IntegrationAdminService : IIntegrationAdminService
         };
         var allSecrets = new Dictionary<string, Dictionary<string, string?>>(StringComparer.OrdinalIgnoreCase)
         {
-            ["test"] = ReadNested(connection.SecretsJson, "test"),
-            ["production"] = ReadNested(connection.SecretsJson, "production")
+            ["test"] = Unprotect(ReadNested(connection.SecretsJson, "test")),
+            ["production"] = Unprotect(ReadNested(connection.SecretsJson, "production"))
         };
         allSecrets[mode] = secrets;
 
         ValidateWompiConfiguration(request, mode, secrets);
+        var currentModeSecrets = Unprotect(ReadNested(connection.SecretsJson, currentMode));
+        if (currentModeSecrets.Count == 0)
+            currentModeSecrets = existingSecrets;
+        var hasCurrentIdentity = HasWompiIdentity(currentModeSecrets);
+        var identityChanged = !string.Equals(currentMode, mode, StringComparison.Ordinal)
+            || WompiIdentityChanged(currentModeSecrets, secrets);
+        var configurationVersion = hasCurrentIdentity && identityChanged
+            ? checked(currentVersion + 1)
+            : currentVersion;
+        var versions = ReadWompiVersions(connection.SecretsJson);
+        if (hasCurrentIdentity && !versions.ContainsKey(currentVersion))
+            versions[currentVersion] = CreateWompiVersion(currentMode, currentModeSecrets);
+        versions[configurationVersion] = CreateWompiVersion(mode, secrets);
 
         connection.Name = "Wompi";
         connection.AccountIdentifier = null;
         connection.SettingsJson = Serialize(new
         {
             mode,
+            configurationVersion,
             sandboxBaseUrl = NormalizeOfficialWompiUrl(request.SandboxBaseUrl, "https://sandbox.wompi.co/v1", "sandboxBaseUrl"),
             productionBaseUrl = NormalizeOfficialWompiUrl(request.ProductionBaseUrl, "https://production.wompi.co/v1", "productionBaseUrl"),
             requestTimeoutSeconds = request.RequestTimeoutSeconds <= 0 ? 30 : request.RequestTimeoutSeconds,
             checkoutBaseUrl = NormalizeOfficialWompiUrl(request.CheckoutBaseUrl, "https://checkout.wompi.co/l/", "checkoutBaseUrl")
         });
-        connection.SecretsJson = Serialize(allSecrets);
+        connection.SecretsJson = Serialize(new
+        {
+            test = ProtectWompiValues(allSecrets["test"]),
+            production = ProtectWompiValues(allSecrets["production"]),
+            versions = versions.ToDictionary(
+                version => version.Key.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                version => ProtectWompiValues(version.Value),
+                StringComparer.Ordinal)
+        });
         connection.IsEnabled = request.IsEnabled;
         connection.UpdatedAt = DateTime.UtcNow;
 
@@ -137,16 +164,44 @@ public class IntegrationAdminService : IIntegrationAdminService
             ct);
 
         var settings = ReadJson(connection.SettingsJson);
+        var currentMode = NormalizeWompiMode(Get(settings, "mode", "test"));
+        var currentVersion = Math.Max(1, GetInt(settings, "configurationVersion", 1));
+        var targetSecrets = Unprotect(ReadNested(connection.SecretsJson, mode));
+        if (targetSecrets.Count == 0)
+            targetSecrets = Unprotect(ReadJson(connection.SecretsJson));
+        ValidateWompiSecrets(connection.IsEnabled, mode, targetSecrets);
+        var currentSecrets = Unprotect(ReadNested(connection.SecretsJson, currentMode));
+        if (currentSecrets.Count == 0)
+            currentSecrets = Unprotect(ReadJson(connection.SecretsJson));
+        var configurationVersion = string.Equals(currentMode, mode, StringComparison.Ordinal)
+            ? currentVersion
+            : checked(currentVersion + 1);
+        var versions = ReadWompiVersions(connection.SecretsJson);
+        if (HasWompiIdentity(currentSecrets) && !versions.ContainsKey(currentVersion))
+            versions[currentVersion] = CreateWompiVersion(currentMode, currentSecrets);
+        versions[configurationVersion] = CreateWompiVersion(mode, targetSecrets);
 
         connection.Name = "Wompi";
         connection.AccountIdentifier = null;
         connection.SettingsJson = Serialize(new
         {
             mode,
+            configurationVersion,
             sandboxBaseUrl = Get(settings, "sandboxBaseUrl", "https://sandbox.wompi.co/v1"),
             productionBaseUrl = Get(settings, "productionBaseUrl", "https://production.wompi.co/v1"),
             requestTimeoutSeconds = GetInt(settings, "requestTimeoutSeconds", 30),
             checkoutBaseUrl = Get(settings, "checkoutBaseUrl", "https://checkout.wompi.co/l/")
+        });
+        var testSecrets = Unprotect(ReadNested(connection.SecretsJson, "test"));
+        var productionSecrets = Unprotect(ReadNested(connection.SecretsJson, "production"));
+        connection.SecretsJson = Serialize(new
+        {
+            test = ProtectWompiValues(testSecrets),
+            production = ProtectWompiValues(productionSecrets),
+            versions = versions.ToDictionary(
+                version => version.Key.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                version => ProtectWompiValues(version.Value),
+                StringComparer.Ordinal)
         });
         connection.UpdatedAt = DateTime.UtcNow;
 
@@ -512,7 +567,7 @@ public class IntegrationAdminService : IIntegrationAdminService
             throw new NotFoundException(nameof(Business), businessId);
     }
 
-    private static IntegrationSettingsDto MapSettings(IReadOnlyList<IntegrationConnection> connections)
+    private IntegrationSettingsDto MapSettings(IReadOnlyList<IntegrationConnection> connections)
     {
         var google = connections.FirstOrDefault(c =>
             c.ConnectionType == ConnectionType.Integration &&
@@ -596,12 +651,16 @@ public class IntegrationAdminService : IIntegrationAdminService
             connection?.LastSyncAt);
     }
 
-    private static WompiIntegrationDto MapWompi(IntegrationConnection? connection)
+    private WompiIntegrationDto MapWompi(IntegrationConnection? connection)
     {
         var settings = ReadJson(connection?.SettingsJson);
         var mode = NormalizeWompiMode(Get(settings, "mode", "test"));
-        var rootSecrets = ReadJson(connection?.SecretsJson);
-        var secrets = ReadNested(connection?.SecretsJson, mode);
+        var rootSecrets = Unprotect(ReadJson(connection?.SecretsJson));
+        var testCredentials = MapWompiCredentials(
+            Unprotect(ReadNested(connection?.SecretsJson, "test")), rootSecrets, "test");
+        var productionCredentials = MapWompiCredentials(
+            Unprotect(ReadNested(connection?.SecretsJson, "production")), rootSecrets, "production");
+        var activeCredentials = mode == "production" ? productionCredentials : testCredentials;
         return new WompiIntegrationDto(
             connection?.IsEnabled ?? false,
             mode,
@@ -609,10 +668,12 @@ public class IntegrationAdminService : IIntegrationAdminService
             Get(settings, "productionBaseUrl", "https://production.wompi.co/v1"),
             GetInt(settings, "requestTimeoutSeconds", 30),
             Get(settings, "checkoutBaseUrl", "https://checkout.wompi.co/l/"),
-            Has(secrets, "privateKey") || Has(rootSecrets, "privateKey"),
-            Has(secrets, "publicKey") || Has(rootSecrets, "publicKey"),
-            Has(secrets, "eventsSecret") || Has(rootSecrets, "eventsSecret"),
-            Has(secrets, "integritySecret") || Has(rootSecrets, "integritySecret"),
+            activeCredentials.HasPrivateKey,
+            activeCredentials.HasPublicKey,
+            activeCredentials.HasEventsSecret,
+            activeCredentials.HasIntegritySecret,
+            testCredentials,
+            productionCredentials,
             connection?.LastError,
             connection?.LastSyncAt);
     }
@@ -664,8 +725,15 @@ public class IntegrationAdminService : IIntegrationAdminService
         if (request.RequestTimeoutSeconds is < 0 or > 120)
             throw new DomainValidationException("requestTimeoutSeconds", "El timeout de Wompi debe estar entre 1 y 120 segundos.");
 
-        if (!request.IsEnabled)
-            return;
+        ValidateWompiSecrets(request.IsEnabled, mode, secrets);
+    }
+
+    private static void ValidateWompiSecrets(
+        bool isEnabled,
+        string mode,
+        IReadOnlyDictionary<string, string?> secrets)
+    {
+        if (!isEnabled) return;
 
         foreach (var key in new[] { "privateKey", "publicKey", "eventsSecret", "integritySecret" })
         {
@@ -678,7 +746,106 @@ public class IntegrationAdminService : IIntegrationAdminService
             throw new DomainValidationException("privateKey", $"La llave privada no corresponde al modo {mode}.");
         if (!secrets["publicKey"]!.StartsWith($"pub_{prefix}_", StringComparison.Ordinal))
             throw new DomainValidationException("publicKey", $"La llave pública no corresponde al modo {mode}.");
+        if (!secrets["eventsSecret"]!.StartsWith($"{prefix}_events_", StringComparison.Ordinal))
+            throw new DomainValidationException("eventsSecret", $"El secreto de eventos no corresponde al modo {mode}.");
+        if (!secrets["integritySecret"]!.StartsWith($"{prefix}_integrity_", StringComparison.Ordinal))
+            throw new DomainValidationException("integritySecret", $"El secreto de integridad no corresponde al modo {mode}.");
     }
+
+    private static bool HasWompiIdentity(IReadOnlyDictionary<string, string?> secrets) =>
+        new[] { "privateKey", "publicKey", "eventsSecret", "integritySecret" }
+            .Any(key => secrets.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value));
+
+    private static bool WompiIdentityChanged(
+        IReadOnlyDictionary<string, string?> current,
+        IReadOnlyDictionary<string, string?> requested) =>
+        new[] { "privateKey", "publicKey", "eventsSecret", "integritySecret" }
+            .Any(key => WompiSecretChanged(current, requested, key));
+
+    private static Dictionary<string, string?> CreateWompiVersion(
+        string mode,
+        IReadOnlyDictionary<string, string?> secrets)
+    {
+        var result = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["mode"] = mode
+        };
+        foreach (var key in new[] { "privateKey", "publicKey", "eventsSecret", "integritySecret" })
+            result[key] = secrets.TryGetValue(key, out var value) ? value : null;
+        return result;
+    }
+
+    private Dictionary<int, Dictionary<string, string?>> ReadWompiVersions(string? json)
+    {
+        var versions = new Dictionary<int, Dictionary<string, string?>>();
+        if (string.IsNullOrWhiteSpace(json)) return versions;
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty("versions", out var root)
+                || root.ValueKind != JsonValueKind.Object)
+                return versions;
+            foreach (var version in root.EnumerateObject())
+            {
+                if (!int.TryParse(version.Name, out var number) || number <= 0
+                    || version.Value.ValueKind != JsonValueKind.Object)
+                    continue;
+                var values = version.Value.EnumerateObject().ToDictionary(
+                    value => value.Name,
+                    value => value.Value.ValueKind == JsonValueKind.String
+                        ? value.Value.GetString() : value.Value.ToString(),
+                    StringComparer.OrdinalIgnoreCase);
+                versions[number] = Unprotect(values);
+            }
+        }
+        catch (JsonException)
+        {
+            return new Dictionary<int, Dictionary<string, string?>>();
+        }
+        return versions;
+    }
+
+    private Dictionary<string, string?> ProtectWompiValues(
+        IReadOnlyDictionary<string, string?> values) =>
+        values.ToDictionary(
+            value => value.Key,
+            value => string.Equals(value.Key, "mode", StringComparison.OrdinalIgnoreCase)
+                || string.IsNullOrWhiteSpace(value.Value)
+                    ? value.Value
+                    : _secretProtector.Protect(value.Value),
+            StringComparer.OrdinalIgnoreCase);
+
+    private static bool WompiSecretChanged(
+        IReadOnlyDictionary<string, string?> current,
+        IReadOnlyDictionary<string, string?> requested,
+        string key) =>
+        !string.Equals(
+            current.TryGetValue(key, out var currentValue) ? currentValue : null,
+            requested.TryGetValue(key, out var requestedValue) ? requestedValue : null,
+            StringComparison.Ordinal);
+
+    private static WompiEnvironmentCredentialsDto MapWompiCredentials(
+        IReadOnlyDictionary<string, string?> environment,
+        IReadOnlyDictionary<string, string?> legacy,
+        string mode)
+    {
+        string? Value(string key) => environment.TryGetValue(key, out var scoped) && !string.IsNullOrWhiteSpace(scoped)
+            ? scoped : legacy.TryGetValue(key, out var root) ? root : null;
+        var prefix = mode == "production" ? "prod" : "test";
+        var privateKey = Value("privateKey")?.StartsWith($"prv_{prefix}_", StringComparison.Ordinal) == true;
+        var publicKey = Value("publicKey")?.StartsWith($"pub_{prefix}_", StringComparison.Ordinal) == true;
+        var events = Value("eventsSecret")?.StartsWith($"{prefix}_events_", StringComparison.Ordinal) == true;
+        var integrity = Value("integritySecret")?.StartsWith($"{prefix}_integrity_", StringComparison.Ordinal) == true;
+        return new(privateKey, publicKey, events, integrity,
+            privateKey && publicKey && events && integrity);
+    }
+
+    private Dictionary<string, string?> Unprotect(Dictionary<string, string?> values) =>
+        values.ToDictionary(
+            value => value.Key,
+            value => string.IsNullOrWhiteSpace(value.Value)
+                ? value.Value : _secretProtector.Unprotect(value.Value),
+            StringComparer.OrdinalIgnoreCase);
 
     private static string NormalizeOfficialWompiUrl(string? candidate, string expected, string field)
     {

@@ -27,11 +27,17 @@ public interface IFiscalOnboardingStore
         IReadOnlyList<ImportedDianNumberingRange> ranges,
         CancellationToken cancellationToken);
 
-    Task ActivateProductionAsync(
+    Task AssignOnlineResolutionAsync(
         Guid tenantId,
         Guid businessId,
         Guid userId,
         Guid dianNumberingRangeId,
+        CancellationToken cancellationToken);
+
+    Task ActivateProductionAsync(
+        Guid tenantId,
+        Guid businessId,
+        Guid userId,
         CancellationToken cancellationToken);
 
     Task ActivateSupportDocumentAsync(
@@ -149,7 +155,7 @@ public sealed class FiscalOnboardingService(
         return await store.GetAsync(user.TenantId, businessId, cancellationToken);
     }
 
-    public async Task<FiscalOnboardingConfiguration> ActivateProductionAsync(
+    public async Task<FiscalOnboardingConfiguration> AssignOnlineResolutionAsync(
         FiscalConfigurationUser user,
         Guid businessId,
         Guid dianNumberingRangeId,
@@ -159,8 +165,24 @@ public sealed class FiscalOnboardingService(
         ValidateBusiness(businessId);
         if (dianNumberingRangeId == Guid.Empty)
             throw new FiscalConfigurationValidationException("Selecciona una resolución DIAN disponible.");
-        await store.ActivateProductionAsync(
+        await store.AssignOnlineResolutionAsync(
             user.TenantId, businessId, user.UserId, dianNumberingRangeId, cancellationToken);
+        return await store.GetAsync(user.TenantId, businessId, cancellationToken);
+    }
+
+    public async Task<FiscalOnboardingConfiguration> ActivateProductionAsync(
+        FiscalConfigurationUser user,
+        Guid businessId,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, FiscalPermissionCodes.ConfigurationManage);
+        ValidateBusiness(businessId);
+        var current = await store.GetAsync(user.TenantId, businessId, cancellationToken);
+        if (!current.HabilitationAccepted)
+            throw new FiscalConfigurationValidationException(
+                "La DIAN debe aceptar primero el set de pruebas de habilitación.");
+        await store.ActivateProductionAsync(
+            user.TenantId, businessId, user.UserId, cancellationToken);
         return await store.GetAsync(user.TenantId, businessId, cancellationToken);
     }
 

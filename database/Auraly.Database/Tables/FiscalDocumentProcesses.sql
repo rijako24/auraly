@@ -18,6 +18,7 @@ CREATE TABLE [dbo].[FiscalDocumentProcesses]
     [SignedAt] DATETIMEOFFSET(7) NULL,
     [SubmittedAt] DATETIMEOFFSET(7) NULL,
     [CompletedAt] DATETIMEOFFSET(7) NULL,
+    [QuotaBlockedAt] DATETIMEOFFSET(7) NULL,
     [CreatedAt] DATETIMEOFFSET(7) NOT NULL,
     [UpdatedAt] DATETIMEOFFSET(7) NOT NULL,
     [RowVersion] ROWVERSION NOT NULL,

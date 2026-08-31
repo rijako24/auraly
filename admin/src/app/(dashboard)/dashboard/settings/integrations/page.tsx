@@ -12,13 +12,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PageError } from "@/components/ui/page-error";
 import { PageLoading } from "@/components/ui/page-loading";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import {
   useIntegrationSettings,
@@ -162,6 +155,8 @@ export default function IntegrationsSettingsPage() {
 
   if (isLoading) return <PageLoading />;
   if (isError || !data) return <PageError onRetry={() => refetch()} />;
+  const activeWompiCredentials = wompi.mode === "production"
+    ? data.wompi.productionCredentials : data.wompi.testCredentials;
 
   return (
     <div className="space-y-6">
@@ -257,7 +252,7 @@ export default function IntegrationsSettingsPage() {
                   Wompi
                 </CardTitle>
                 <CardDescription>
-                  Genera links de pago y verifica transacciones.
+                  Cobra con el Widget oficial y verifica cada transacción en el servidor.
                 </CardDescription>
               </div>
               <StatusBadge active={data.wompi.isEnabled} />
@@ -269,41 +264,12 @@ export default function IntegrationsSettingsPage() {
               checked={wompi.isEnabled}
               onCheckedChange={(isEnabled) => setWompi({ ...wompi, isEnabled })}
             />
-            <Field label="Modo">
-              <Select
-                value={wompi.mode}
-                onValueChange={(mode) =>
-                  setWompi({ ...wompi, mode: mode as "test" | "production" })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="test">Pruebas</SelectItem>
-                  <SelectItem value="production">Producción</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label="Pruebas API">
-              <Input
-                value={wompi.sandboxBaseUrl}
-                onChange={(event) => setWompi({ ...wompi, sandboxBaseUrl: event.target.value })}
-              />
-            </Field>
-            <Field label="Producción API">
-              <Input
-                value={wompi.productionBaseUrl}
-                onChange={(event) => setWompi({ ...wompi, productionBaseUrl: event.target.value })}
-              />
-            </Field>
-            <Field label="Checkout base">
-              <Input
-                value={wompi.checkoutBaseUrl}
-                onChange={(event) => setWompi({ ...wompi, checkoutBaseUrl: event.target.value })}
-              />
-            </Field>
-            <Field label="Timeout">
+            <div className="space-y-2"><Label>Ambiente que recibirá los próximos pagos</Label><div className="grid grid-cols-2 gap-2">
+              <Button type="button" variant={wompi.mode === "test" ? "default" : "outline"} className="h-auto justify-start py-3" onClick={() => setWompi({ ...wompi, mode: "test", privateKey: "", publicKey: "", eventsSecret: "", integritySecret: "" })}><span className="text-left"><strong className="block">Pruebas</strong><small className="font-normal opacity-80">Dinero simulado · {data.wompi.testCredentials.isComplete ? "llaves listas" : "por configurar"}</small></span></Button>
+              <Button type="button" variant={wompi.mode === "production" ? "destructive" : "outline"} className="h-auto justify-start py-3" onClick={() => setWompi({ ...wompi, mode: "production", privateKey: "", publicKey: "", eventsSecret: "", integritySecret: "" })}><span className="text-left"><strong className="block">Producción</strong><small className="font-normal opacity-80">Dinero real · {data.wompi.productionCredentials.isComplete ? "llaves listas" : "por configurar"}</small></span></Button>
+            </div></div>
+            <div className={`rounded-xl border p-4 text-sm ${wompi.mode === "test" ? "border-sky-200 bg-sky-50 text-sky-950" : "border-amber-300 bg-amber-50 text-amber-950"}`}><strong>{wompi.mode === "test" ? "Modo seguro de pruebas" : "Atención: cobros con dinero real"}</strong><p className="mt-1">{wompi.mode === "test" ? "Usa únicamente llaves pub_test_, prv_test_, test_events_ y test_integrity_." : "Al guardar activo, los nuevos checkouts usarán exclusivamente las llaves productivas."}</p></div>
+            <Field label="Timeout de verificación (segundos)">
               <Input
                 type="number"
                 min={1}
@@ -317,26 +283,26 @@ export default function IntegrationsSettingsPage() {
               />
             </Field>
             <SecretField
-              label="Private Key"
-              configured={data.wompi.hasPrivateKey}
+              label={`Llave privada ${wompi.mode === "test" ? "de pruebas" : "productiva"}`}
+              configured={activeWompiCredentials.hasPrivateKey}
               value={wompi.privateKey}
               onChange={(privateKey) => setWompi({ ...wompi, privateKey })}
             />
             <SecretField
-              label="Public Key"
-              configured={data.wompi.hasPublicKey}
+              label={`Llave pública ${wompi.mode === "test" ? "de pruebas" : "productiva"}`}
+              configured={activeWompiCredentials.hasPublicKey}
               value={wompi.publicKey}
               onChange={(publicKey) => setWompi({ ...wompi, publicKey })}
             />
             <SecretField
-              label="Events Secret"
-              configured={data.wompi.hasEventsSecret}
+              label="Secreto de eventos (webhook)"
+              configured={activeWompiCredentials.hasEventsSecret}
               value={wompi.eventsSecret}
               onChange={(eventsSecret) => setWompi({ ...wompi, eventsSecret })}
             />
             <SecretField
-              label="Integrity Secret"
-              configured={data.wompi.hasIntegritySecret}
+              label="Secreto de integridad (Widget)"
+              configured={activeWompiCredentials.hasIntegritySecret}
               value={wompi.integritySecret}
               onChange={(integritySecret) => setWompi({ ...wompi, integritySecret })}
             />

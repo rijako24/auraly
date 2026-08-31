@@ -131,15 +131,23 @@ public static class FiscalConfigurationApi
             await Handle(() => service.SynchronizeNumberingRangesAsync(
                 context.User.ToFiscalConfigurationUser(), businessId, ct)));
 
-        group.MapPost("/onboarding/activate-production", async (
+        group.MapPost("/onboarding/assign-online-resolution", async (
             HttpContext context,
             Guid businessId,
             ActivateFiscalProductionRequest request,
             FiscalOnboardingService service,
             CancellationToken ct) =>
-            await Handle(() => service.ActivateProductionAsync(
+            await Handle(() => service.AssignOnlineResolutionAsync(
                 context.User.ToFiscalConfigurationUser(), businessId,
                 request.DianNumberingRangeId, ct)));
+
+        group.MapPost("/onboarding/activate-production", async (
+            HttpContext context,
+            Guid businessId,
+            FiscalOnboardingService service,
+            CancellationToken ct) =>
+            await Handle(() => service.ActivateProductionAsync(
+                context.User.ToFiscalConfigurationUser(), businessId, ct)));
 
         group.MapPost("/onboarding/activate-support-document", async (
             HttpContext context,

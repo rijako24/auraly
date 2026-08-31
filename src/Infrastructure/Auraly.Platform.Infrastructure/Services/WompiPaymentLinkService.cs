@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -43,7 +44,7 @@ public class WompiPaymentLinkService : IPaymentLinkService
     {
         ct.ThrowIfCancellationRequested();
 
-        var wompi = (await _integrationsProvider.GetAsync(request.BusinessId, ct))?.Wompi;
+        var wompi = await _integrationsProvider.GetWompiAsync(request.BusinessId, cancellationToken: ct);
         if (wompi == null || string.IsNullOrWhiteSpace(wompi.PrivateKey))
         {
             _logger.LogWarning("Link de pago solicitado pero Wompi no configurado (PrivateKey vacío) para BusinessId={BusinessId}", request.BusinessId);
@@ -58,6 +59,56 @@ public class WompiPaymentLinkService : IPaymentLinkService
         var expiresAt = DateTime.UtcNow.AddMinutes(request.ExpirationMinutes);
         return await CreatePaymentLinkAsync(request, wompi, expiresAt, ct).ConfigureAwait(false);
     }
+
+    public async Task<WompiWidgetCheckoutResult> PrepareWidgetCheckoutAsync(
+        WompiWidgetCheckoutRequest request,
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        if (string.IsNullOrWhiteSpace(request.Reference) || request.AmountInCents <= 0)
+            return WidgetFailure("La referencia y el valor del pago son obligatorios.");
+
+        var currency = request.Currency.Trim().ToUpperInvariant();
+        if (!string.Equals(currency, "COP", StringComparison.Ordinal))
+            return WidgetFailure("El checkout de Wompi solo admite COP.");
+
+        var wompi = await _integrationsProvider.GetWompiAsync(request.BusinessId, cancellationToken: ct);
+        if (wompi is null
+            || string.IsNullOrWhiteSpace(wompi.PublicKey)
+            || string.IsNullOrWhiteSpace(wompi.IntegritySecret))
+        {
+            _logger.LogWarning(
+                "Widget Wompi no configurado para BusinessId={BusinessId}: faltan PublicKey o IntegritySecret",
+                request.BusinessId);
+            return WidgetFailure("Pagos no configurados. Configure la clave publica y el secreto de integridad de Wompi.");
+        }
+
+        var expiration = request.ExpiresAt?.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+        var integrityInput = string.Concat(
+            request.Reference.Trim(),
+            request.AmountInCents.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            currency,
+            expiration,
+            wompi.IntegritySecret);
+        var signature = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(integrityInput)))
+            .ToLowerInvariant();
+
+        return new WompiWidgetCheckoutResult(
+            true,
+            wompi.PublicKey,
+            request.Reference.Trim(),
+            request.AmountInCents,
+            currency,
+            signature,
+            expiration,
+            request.RedirectUrl,
+            null,
+            wompi.ConfigurationVersion);
+    }
+
+    private static WompiWidgetCheckoutResult WidgetFailure(string error) =>
+        new(false, null, null, null, null, null, null, null, error);
 
     private async Task<PaymentLinkResult> CreatePaymentLinkAsync(
         PaymentLinkRequest request,
@@ -141,7 +192,8 @@ public class WompiPaymentLinkService : IPaymentLinkService
                 PaymentLinkUrl: paymentUrl,
                 PaymentReferenceId: paymentLinkId,
                 ExpiresAt: expiresAt,
-                ErrorMessage: null);
+                ErrorMessage: null,
+                MerchantConfigurationVersion: wompi.ConfigurationVersion);
         }
         catch (HttpRequestException ex)
         {
@@ -183,15 +235,16 @@ public class WompiPaymentLinkService : IPaymentLinkService
     public async Task<PaymentStatusResult> CheckPaymentStatusAsync(
         string paymentReferenceId,
         Guid businessId,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        int? merchantConfigurationVersion = null)
     {
         ct.ThrowIfCancellationRequested();
 
         if (string.IsNullOrWhiteSpace(paymentReferenceId))
             return new PaymentStatusResult(false, null, null, "PaymentReferenceId vacío");
 
-        var integrations = await _integrationsProvider.GetAsync(businessId, ct);
-        var wompi = integrations?.Wompi;
+        var wompi = await _integrationsProvider.GetWompiAsync(
+            businessId, merchantConfigurationVersion, ct);
         if (wompi == null || string.IsNullOrWhiteSpace(wompi.PrivateKey))
         {
             _logger.LogDebug("CheckPaymentStatus: Wompi no configurado para BusinessId={BusinessId}", businessId);
@@ -252,19 +305,20 @@ public class WompiPaymentLinkService : IPaymentLinkService
     public async Task<VerifiedTransactionResult> VerifyTransactionAsync(
         string transactionId,
         Guid businessId,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        int? merchantConfigurationVersion = null)
     {
         ct.ThrowIfCancellationRequested();
 
         if (string.IsNullOrWhiteSpace(transactionId))
-            return new VerifiedTransactionResult(false, null, null, null, "TransactionId vacío");
+            return new VerifiedTransactionResult(false, null, null, null, null, "TransactionId vacío");
 
-        var integrations = await _integrationsProvider.GetAsync(businessId, ct);
-        var wompi = integrations?.Wompi;
+        var wompi = await _integrationsProvider.GetWompiAsync(
+            businessId, merchantConfigurationVersion, ct);
         if (wompi == null || string.IsNullOrWhiteSpace(wompi.PrivateKey))
         {
             _logger.LogDebug("VerifyTransaction: Wompi no configurado para BusinessId={BusinessId}", businessId);
-            return new VerifiedTransactionResult(false, null, null, null, "Pagos no configurados");
+            return new VerifiedTransactionResult(false, null, null, null, null, "Pagos no configurados");
         }
 
         var baseUrl = wompi.GetBaseUrl();
@@ -283,10 +337,10 @@ public class WompiPaymentLinkService : IPaymentLinkService
                 if (response.StatusCode == HttpStatusCode.NotFound)
                 {
                     _logger.LogDebug("VerifyTransaction: transacción no encontrada TxId={TxId}", transactionId);
-                    return new VerifiedTransactionResult(false, null, null, null, null);
+                    return new VerifiedTransactionResult(false, null, null, null, null, null);
                 }
                 _logger.LogWarning("VerifyTransaction: Wompi API error Status={Status} TxId={TxId}", response.StatusCode, transactionId);
-                return new VerifiedTransactionResult(false, null, null, null, $"Wompi: {(int)response.StatusCode}");
+                return new VerifiedTransactionResult(false, null, null, null, null, $"Wompi: {(int)response.StatusCode}");
             }
 
             return ParseVerifiedTransactionResponse(responseBody, transactionId);
@@ -294,7 +348,7 @@ public class WompiPaymentLinkService : IPaymentLinkService
         catch (HttpRequestException ex)
         {
             _logger.LogError(ex, "VerifyTransaction: error de red TxId={TxId}", transactionId);
-            return new VerifiedTransactionResult(false, null, null, null, "Error de conexión");
+            return new VerifiedTransactionResult(false, null, null, null, null, "Error de conexión");
         }
         catch (TaskCanceledException) when (ct.IsCancellationRequested)
         {
@@ -303,12 +357,12 @@ public class WompiPaymentLinkService : IPaymentLinkService
         catch (TaskCanceledException ex)
         {
             _logger.LogError(ex, "VerifyTransaction: timeout TxId={TxId}", transactionId);
-            return new VerifiedTransactionResult(false, null, null, null, "Timeout");
+            return new VerifiedTransactionResult(false, null, null, null, null, "Timeout");
         }
         catch (JsonException ex)
         {
             _logger.LogError(ex, "VerifyTransaction: JSON inválido TxId={TxId}", transactionId);
-            return new VerifiedTransactionResult(false, null, null, null, "Respuesta inválida");
+            return new VerifiedTransactionResult(false, null, null, null, null, "Respuesta inválida");
         }
     }
 
@@ -325,7 +379,11 @@ public class WompiPaymentLinkService : IPaymentLinkService
             foreach (var tx in data.EnumerateArray())
             {
                 var txLinkId = tx.TryGetProperty("payment_link_id", out var pl) ? pl.GetString() : null;
-                if (!string.Equals(txLinkId, paymentReferenceId, StringComparison.OrdinalIgnoreCase))
+                var txReference = tx.TryGetProperty("reference", out var referenceElement)
+                    ? referenceElement.GetString()
+                    : null;
+                if (!string.Equals(txLinkId, paymentReferenceId, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(txReference, paymentReferenceId, StringComparison.OrdinalIgnoreCase))
                     continue;
 
                 var (approved, txId, amount) = ParseTransactionStatus(tx);
@@ -349,8 +407,9 @@ public class WompiPaymentLinkService : IPaymentLinkService
         var txId = data.TryGetProperty("id", out var id) ? id.GetString() : transactionId;
         var amount = data.TryGetProperty("amount_in_cents", out var amt) ? amt.GetInt64() : (long?)null;
         var paymentLinkId = data.TryGetProperty("payment_link_id", out var pl) ? pl.GetString() : null;
+        var reference = data.TryGetProperty("reference", out var referenceElement) ? referenceElement.GetString() : null;
 
-        return new VerifiedTransactionResult(isApproved, txId, amount, paymentLinkId, null);
+        return new VerifiedTransactionResult(isApproved, txId, amount, paymentLinkId, reference, null);
     }
 
     private static (bool Approved, string? TxId, long? Amount) ParseTransactionStatus(JsonElement tx)

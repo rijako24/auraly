@@ -166,7 +166,9 @@ public sealed class ServerSliceFixture : IAsyncLifetime
                         $"Endpoint=https://push.auraly.test;" +
                         $"AccessKey={Convert.ToBase64String(new byte[32])};" +
                         "Version=1.0;",
-                    ["Auraly:PosSynchronization:WebPubSub:Hub"] = "auraly_pos"
+                    ["Auraly:PosSynchronization:WebPubSub:Hub"] = "auraly_pos",
+                    ["WhatsApp:Webhook:ApiBaseUrl"] = "https://graph.facebook.test/v25.0/",
+                    ["WhatsApp:Webhook:VerifyToken"] = "auraly-integration-test"
                 });
             });
             builder.ConfigureTestServices(services =>
@@ -775,6 +777,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
             "Version=1.0;");
         SetHostEnvironment("Auraly__PosSynchronization__WebPubSub__Hub", "auraly_pos");
         SetHostEnvironment("Auraly__DocumentProcessing__Worker__Enabled", "false");
+        SetHostEnvironment("WhatsApp__Webhook__ApiBaseUrl", "https://graph.facebook.test/v25.0/");
+        SetHostEnvironment("WhatsApp__Webhook__VerifyToken", "auraly-integration-test");
     }
 
     private void SetHostEnvironment(string name, string value)
@@ -798,13 +802,19 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         var allowedCredential = PosDeviceCredentialHasher.Create(DeviceSecret);
         var deniedCredential = PosDeviceCredentialHasher.Create(DeniedDeviceSecret);
         const string sql = """
+            DECLARE @BillingCustomerPartyId UNIQUEIDENTIFIER=NEWID(),
+                    @BillingCustomerId UNIQUEIDENTIFIER=NEWID(),
+                    @TenantSubscriptionId UNIQUEIDENTIFIER=NEWID(),
+                    @TenantUsagePeriodId UNIQUEIDENTIFIER=NEWID(),
+                    @Now DATETIMEOFFSET(7)=SYSDATETIMEOFFSET();
+
             INSERT INTO dbo.Tenants (TenantId, TenantKey, Name, Email, IsActive, MaximumUsers, MaximumEnrolledDevices, CreatedAt)
-            VALUES (@TenantId, N'@auraly-e2e', N'Auraly E2E', @TenantEmail, 1, 512, 4, SYSUTCDATETIME());
+            VALUES (@TenantId, N'@auraly-e2e', N'Auraly E2E', @TenantEmail, 1, 512, 512, SYSUTCDATETIME());
 
             INSERT INTO dbo.Businesses
             (BusinessId, TenantId, Name, Description, Address, Phone, Email, Website, IsActive, CreatedAt)
             VALUES
-            (@BusinessId, @TenantId, N'Auraly Commerce E2E', N'Integration test',
+            (@BusinessId, @TenantId, N'Auraly', N'Integration test billing business',
              N'Bogota', N'3000000000', @BusinessEmail, N'https://auraly.test', 1, SYSUTCDATETIME());
 
             INSERT dbo.AppUsers
@@ -814,6 +824,34 @@ public sealed class ServerSliceFixture : IAsyncLifetime
               (@UserId,@TenantId,@Username,@NormalizedUsername,@UserEmail,@NormalizedUserEmail,
                N'Cajero',N'E2E',1,SYSUTCDATETIME());
 
+            INSERT dbo.Parties
+              (PartyId,TenantId,PartyType,IdentificationCountryId,IdentificationTypeCode,
+               Identification,NormalizedIdentification,VerificationDigit,DisplayName,LegalName,
+               CompletionStatus,IsActive,CreatedBy,CreatedAt)
+            SELECT @BillingCustomerPartyId,@TenantId,N'Organization',CountryId,N'31',
+                   N'900000000',N'900000000',N'1',N'Auraly E2E',N'Auraly E2E SAS',
+                   N'Complete',1,@UserId,@Now
+            FROM dbo.Countries WHERE Code=N'CO';
+
+            INSERT dbo.Customers
+              (CustomerId,PartyId,BusinessId,RequiresElectronicInvoice,IsActive,CreatedBy,CreatedAt)
+            VALUES(@BillingCustomerId,@BillingCustomerPartyId,@BusinessId,1,1,@UserId,@Now);
+
+            INSERT billing.TenantSubscriptions
+              (TenantSubscriptionId,TenantId,TenantCommercialPlanId,BillingCustomerId,
+               BillingPeriod,Status,CurrentPeriodStart,CurrentPeriodEnd,BillingAnchorDay,
+               FullUserLimit,SellerUserLimit,PosDeviceLimit,DianDocumentMonthlyLimit,
+               PayrollEmployeeLimit,CreatedAt,UpdatedAt)
+            VALUES(@TenantSubscriptionId,@TenantId,'11000000-0000-0000-0000-000000000000',
+                   @BillingCustomerId,N'Monthly',N'Active',DATEADD(day,-1,@Now),DATEADD(year,1,@Now),
+                   DAY(@Now),512,512,512,1000000,1000000,@Now,@Now);
+
+            INSERT billing.TenantSubscriptionUsagePeriods
+              (TenantSubscriptionUsagePeriodId,TenantSubscriptionId,PeriodStart,PeriodEnd,
+               DianDocumentsUsed,CreatedAt,UpdatedAt)
+            VALUES(@TenantUsagePeriodId,@TenantSubscriptionId,DATEADD(day,-1,@Now),
+                   DATEADD(year,1,@Now),0,@Now,@Now);
+
             INSERT dbo.AppRoles
               (RoleId,TenantId,Name,NormalizedName,Description,IsActive,IsSystemRole,CreatedAt)
             VALUES
@@ -822,6 +860,13 @@ public sealed class ServerSliceFixture : IAsyncLifetime
               (UserRoleId,UserId,RoleId,BusinessId,AssignedAt)
             VALUES
               (NEWID(),@UserId,@RoleId,@BusinessId,SYSUTCDATETIME());
+
+            IF NOT EXISTS(SELECT 1 FROM billing.PlatformBillingSettings WHERE PlatformBillingSettingId=1)
+              INSERT billing.PlatformBillingSettings
+                (PlatformBillingSettingId,BillingBusinessId,EmailRemindersEnabled,
+                 PreDueReminderDays,OverdueReminderIntervalDays,GracePeriodDays,
+                 UpdatedByUserId,UpdatedAt)
+              VALUES(1,@BusinessId,1,5,3,10,@UserId,SYSDATETIMEOFFSET());
 
             INSERT INTO dbo.Warehouses
             (WarehouseId, BusinessId, Code, Name, AllowNegativeStockSales, IsActive, CreatedAt)

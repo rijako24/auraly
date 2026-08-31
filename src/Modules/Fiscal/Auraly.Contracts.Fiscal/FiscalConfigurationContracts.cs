@@ -23,7 +23,10 @@ public sealed record FiscalResolutionConfiguration(
     long? RemainingConsecutives = null,
     int ExpirationWarningDays = 3,
     long RemainingNumberWarningThreshold = 100,
-    IReadOnlyList<string>? WarningMessages = null);
+    IReadOnlyList<string>? WarningMessages = null,
+    int DianDocumentMonthlyLimit = 0,
+    int DianDocumentsUsed = 0,
+    bool HasDianDocumentQuota = false);
 
 public sealed record FiscalOnlineSeriesAssignment(
     Guid SeriesId,
@@ -95,7 +98,8 @@ public sealed record PosFiscalSeriesProvisioning(
     long? AuthorizationRangeStart = null,
     long? AuthorizationRangeEnd = null,
     int ExpirationWarningDays = 3,
-    long RemainingNumberWarningThreshold = 100);
+    long RemainingNumberWarningThreshold = 100,
+    bool ProductionActive = false);
 
 public interface IFiscalTechnicalKeySecretWriter
 {

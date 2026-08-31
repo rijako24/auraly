@@ -233,7 +233,7 @@ public sealed class SqlFiscalGenerationWorkStore(
                    a.AuthorizationNumber, a.ValidFrom, a.ValidUntil,
                    fs.Prefix, a.AuthorizedRangeStart, a.AuthorizedRangeEnd,
                    debit.SnapshotJson,support.SnapshotJson,
-                   payrollDocument.SourceSnapshotJson
+                   payrollDocument.SourceSnapshotJson,serviceSnapshot.SnapshotJson
             FROM dbo.FiscalDocumentProcesses p
             INNER JOIN dbo.FiscalDocuments fd ON fd.DocumentId=p.DocumentId
             LEFT JOIN dbo.FiscalSnapshots s ON s.DocumentId=p.DocumentId
@@ -242,6 +242,8 @@ public sealed class SqlFiscalGenerationWorkStore(
             LEFT JOIN fiscal.PurchaseSupportFiscalSnapshots support ON support.DocumentId=p.DocumentId
             LEFT JOIN payroll.ElectronicDocuments payrollDocument
               ON payrollDocument.FiscalDocumentId=p.DocumentId
+            LEFT JOIN sales.SalesDocumentServiceFiscalSnapshots serviceSnapshot
+              ON serviceSnapshot.DocumentId=p.DocumentId
             LEFT JOIN dbo.SalesDocuments d ON d.DocumentId=p.DocumentId
             INNER JOIN dbo.FiscalIssuerConfigurations c
                 ON c.FiscalIssuerConfigurationId=p.FiscalIssuerConfigurationId
@@ -278,6 +280,9 @@ public sealed class SqlFiscalGenerationWorkStore(
         var electronicPayroll = reader.IsDBNull(37)
             ? null
             : PayrollContractSerializer.DeserializeElectronic(reader.GetString(37));
+        var serviceInvoice = reader.IsDBNull(38)
+            ? null
+            : ServiceInvoiceSnapshotSerializer.Deserialize(reader.GetString(38));
         var issuer = new FiscalIssuerWorkConfiguration(
             reader.GetGuid(5), businessId, reader.GetString(6), reader.GetString(7),
             reader.GetString(8), reader.GetString(9), reader.GetString(10),
@@ -301,7 +306,7 @@ public sealed class SqlFiscalGenerationWorkStore(
                 supportDocument.Authorization.Number, supportDocument.Authorization.ValidFrom,
                 supportDocument.Authorization.ValidUntil, supportDocument.Authorization.Prefix,
                 supportDocument.Authorization.RangeStart, supportDocument.Authorization.RangeEnd)),
-            supportDocument, electronicPayroll);
+            supportDocument, electronicPayroll, serviceInvoice);
     }
 
     private async Task InsertArtifactAsync(SqlConnection connection, SqlTransaction transaction,

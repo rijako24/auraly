@@ -102,6 +102,7 @@ internal sealed class FiscalSeriesCursorRow
     public long AuthorizationRangeEnd { get; set; }
     public int ExpirationWarningDays { get; set; }
     public long RemainingNumberWarningThreshold { get; set; }
+    public bool IsEmissionEnabled { get; set; }
 }
 
 internal sealed class IssuedSaleRow

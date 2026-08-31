@@ -98,6 +98,9 @@ public sealed class ReservationPaidCheckoutFulfillmentHandler : IPaidCheckoutFul
         AgentConfig config,
         CancellationToken ct = default)
     {
+        var conversationId = payment.ConversationId
+            ?? throw new InvalidOperationException("Reservation checkout requires a conversation id.");
+
         var snapshot = PaymentTransactionSnapshotMapper.ToIntentSnapshot(payment);
         if (snapshot is null)
             throw new InvalidOperationException("Intent de reserva incompleto.");
@@ -117,7 +120,7 @@ public sealed class ReservationPaidCheckoutFulfillmentHandler : IPaidCheckoutFul
             payment.PaymentTransactionId,
             payment.PaymentReferenceId,
             businessId,
-            payment.ConversationId,
+            conversationId,
             payment.Status,
             payment.Source,
             snapshot.ServiceId,
@@ -127,7 +130,7 @@ public sealed class ReservationPaidCheckoutFulfillmentHandler : IPaidCheckoutFul
 
         var existingReservation = await FindExistingReservationForPaymentAsync(
             businessId,
-            payment.ConversationId,
+            conversationId,
             snapshot.ServiceId,
             snapshot.ReservationDateTime,
             ct);
@@ -142,7 +145,7 @@ public sealed class ReservationPaidCheckoutFulfillmentHandler : IPaidCheckoutFul
                 payment.PaymentReferenceId,
                 existingReservation.ReservationId,
                 businessId,
-                payment.ConversationId,
+                conversationId,
                 snapshot.ServiceId,
                 snapshot.ReservationDateTime);
 
@@ -179,7 +182,7 @@ public sealed class ReservationPaidCheckoutFulfillmentHandler : IPaidCheckoutFul
                 payment.PaymentTransactionId,
                 payment.PaymentReferenceId,
                 businessId,
-                payment.ConversationId,
+                conversationId,
                 snapshot.ServiceId,
                 service.ServiceName,
                 snapshot.ReservationDateTime,
@@ -222,7 +225,7 @@ public sealed class ReservationPaidCheckoutFulfillmentHandler : IPaidCheckoutFul
 
             var created = await _reservationService.CreateFromIntentSnapshotAsync(
                 businessId,
-                payment.ConversationId,
+                conversationId,
                 snapshot,
                 snapshot.ReservationDateTime,
                 ct);
@@ -396,7 +399,8 @@ public sealed class EnrollmentPaidCheckoutFulfillmentHandler : IPaidCheckoutFulf
             {
                 EnrollmentId = Guid.NewGuid(),
                 BusinessId = payment.BusinessId,
-                ConversationId = payment.ConversationId,
+                ConversationId = payment.ConversationId
+                    ?? throw new InvalidOperationException("Enrollment checkout requires a conversation id."),
                 ServiceId = snapshot.ServiceId,
                 PaymentTransactionId = payment.PaymentTransactionId,
                 CustomerName = snapshot.PayerName ?? string.Empty,

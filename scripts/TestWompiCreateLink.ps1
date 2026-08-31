@@ -3,7 +3,10 @@
 # Si falla por política de ejecución: powershell -ExecutionPolicy Bypass -File .\scripts\TestWompiCreateLink.ps1
 
 $baseUrl = "https://sandbox.wompi.co/v1"
-$privateKey = "prv_test_RJKAG9S0lm8tJTuFCmdao8FhXqmXrm0t"
+$privateKey = $env:WOMPI_TEST_PRIVATE_KEY
+if ([string]::IsNullOrWhiteSpace($privateKey) -or -not $privateKey.StartsWith('prv_test_')) {
+    throw 'Configura WOMPI_TEST_PRIVATE_KEY con una llave privada sandbox vigente. No guardes llaves en el repositorio.'
+}
 $sku = "86ea4bec64084668b24dbff118949ef7"
 
 $body = @{
@@ -33,4 +36,5 @@ try {
     if ($_.ErrorDetails.Message) {
         Write-Host $_.ErrorDetails.Message
     }
+    exit 1
 }

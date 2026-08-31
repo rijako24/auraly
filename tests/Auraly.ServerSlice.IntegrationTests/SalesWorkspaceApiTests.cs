@@ -46,8 +46,11 @@ public sealed class SalesWorkspaceApiTests(ServerSliceFixture fixture)
         using var client = fixture.CreateAdminClient(
             CommercePermissionCodes.SalesCreate);
 
-        var bootstrap = await client.GetFromJsonAsync<SalesWorkspaceBootstrap>(
+        using var response = await client.GetAsync(
             "/api/commerce/v1/pos/workspace/bootstrap");
+        response.EnsureSuccessStatusCode();
+        Assert.True(response.Headers.CacheControl?.NoStore);
+        var bootstrap = await response.Content.ReadFromJsonAsync<SalesWorkspaceBootstrap>();
 
         Assert.NotNull(bootstrap);
         Assert.Equal("Cajero de pruebas", bootstrap.UserDisplayName);

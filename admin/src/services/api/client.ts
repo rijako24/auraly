@@ -176,12 +176,18 @@ class ApiClient {
     if (!response.ok) {
       let message = "An error occurred";
       let errors: Record<string, string[]> | undefined;
+      let actionUrl: string | undefined;
       try {
         const body = await response.json();
         message = body.detail || body.message || body.title || message;
         errors = body.errors;
+        actionUrl = body.actionUrl;
       } catch {
         message = response.statusText || message;
+      }
+      if (response.status === 402 && actionUrl && typeof window !== "undefined"
+          && !window.location.pathname.startsWith("/dashboard/subscription")) {
+        window.location.assign(actionUrl);
       }
       throw new ApiClientError(message, response.status, errors);
     }
@@ -191,11 +197,13 @@ class ApiClient {
 
   async get<T>(
     path: string,
-    params?: Record<string, string | number | boolean | undefined>
+    params?: Record<string, string | number | boolean | undefined>,
+    options?: Pick<RequestInit, "cache">,
   ): Promise<T> {
     const url = this.buildUrl(path, params);
     const response = await fetchWithSessionRetry(url, {
       method: "GET",
+      cache: options?.cache,
       headers: buildJsonHeaders(shouldIncludeExecutionContext(path)),
     });
     return this.handleResponse<T>(response);

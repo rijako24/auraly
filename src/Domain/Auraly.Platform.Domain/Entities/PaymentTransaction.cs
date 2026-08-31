@@ -6,7 +6,7 @@ public class PaymentTransaction
 {
     public Guid PaymentTransactionId { get; set; }
     public Guid BusinessId { get; set; }
-    public Guid ConversationId { get; set; }
+    public Guid? ConversationId { get; set; }
     public Guid? ReservationId { get; set; }
     public string PaymentReferenceId { get; set; } = string.Empty;
     public string? ProviderTransactionId { get; set; }
@@ -21,6 +21,7 @@ public class PaymentTransaction
     public string? WebhookPayloadJson { get; set; }
     public CheckoutKind CheckoutKind { get; set; } = CheckoutKind.Reservation;
     public string? CheckoutSnapshotJson { get; set; }
+    public int MerchantConfigurationVersion { get; set; } = 1;
     public string? QuoteHash { get; set; }
     public string? ConfirmationOutcome { get; set; }
 
@@ -28,8 +29,10 @@ public class PaymentTransaction
     public bool RequiresRefund { get; set; }
     public DateTime? SupersededAt { get; set; }
     public Guid? SupersededByPaymentTransactionId { get; set; }
+    public string? SubjectType { get; set; }
+    public Guid? SubjectId { get; set; }
 
     public virtual Business Business { get; set; } = null!;
-    public virtual Conversation Conversation { get; set; } = null!;
+    public virtual Conversation? Conversation { get; set; }
     public virtual Reservation? Reservation { get; set; }
 }

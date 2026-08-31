@@ -10,7 +10,8 @@ BEGIN
         SELECT TOP (1) *
         FROM dbo.TenantProvisioningOutboxMessages WITH (UPDLOCK, READPAST, ROWLOCK)
         WHERE ProcessedAt IS NULL
-          AND Type IN (N'TenantAdministratorInvitation', N'PasswordRecoveryEmail')
+          AND Type IN (N'TenantAdministratorInvitation', N'PasswordRecoveryEmail',
+                       N'SubscriptionPaymentReminder', N'FiscalInvoiceDelivery')
           AND AttemptCount < 10
           AND AvailableAt <= @Now
           AND (LeaseExpiresAt IS NULL OR LeaseExpiresAt <= @Now)

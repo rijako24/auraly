@@ -482,15 +482,18 @@ public class ApplicationDbContext : DbContext
             entity.HasOne(e => e.Business)
                 .WithMany()
                 .HasForeignKey(e => e.BusinessId)
-                .OnDelete(DeleteBehavior.Restrict);
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
             entity.HasOne(e => e.Reservation)
                 .WithMany()
                 .HasForeignKey(e => e.ReservationId)
-                .OnDelete(DeleteBehavior.Cascade);
+                .OnDelete(DeleteBehavior.Cascade)
+                .IsRequired(false);
             entity.HasOne(e => e.Agent)
                 .WithMany()
                 .HasForeignKey(e => e.AgentId)
-                .OnDelete(DeleteBehavior.Restrict);
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
             entity.HasIndex(e => e.DeduplicationKey).IsUnique();
             entity.HasIndex(e => new { e.Status, e.ScheduledAtUtc });
             entity.HasIndex(e => new { e.BusinessId, e.ReservationId, e.JobType });
@@ -1325,6 +1328,7 @@ public class ApplicationDbContext : DbContext
             entity.HasKey(e => e.PaymentTransactionId);
             entity.Property(e => e.PaymentReferenceId).IsRequired().HasMaxLength(200);
             entity.Property(e => e.ProviderTransactionId).HasMaxLength(200);
+            entity.Property(e => e.MerchantConfigurationVersion).IsRequired().HasDefaultValue(1);
             entity.Property(e => e.Currency).IsRequired().HasMaxLength(10);
             entity.Property(e => e.Source).HasConversion<int>();
             entity.Property(e => e.Source).HasConversion<int>().HasDefaultValue(Domain.Enums.PaymentTransactionSource.Automated);
@@ -1334,6 +1338,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.QuoteHash).HasMaxLength(128);
             entity.Property(e => e.ConfirmationOutcome).HasMaxLength(100);
             entity.Property(e => e.LinkUrl).HasMaxLength(1000);
+            entity.Property(e => e.SubjectType).HasMaxLength(40);
             entity.Property(e => e.SupersededAt);
             entity.HasOne<PaymentTransaction>()
                 .WithMany()
@@ -1347,7 +1352,8 @@ public class ApplicationDbContext : DbContext
             entity.HasOne(e => e.Conversation)
                 .WithMany()
                 .HasForeignKey(e => e.ConversationId)
-                .OnDelete(DeleteBehavior.Restrict);
+                .OnDelete(DeleteBehavior.Restrict)
+                .IsRequired(false);
             entity.HasOne(e => e.Reservation)
                 .WithMany()
                 .HasForeignKey(e => e.ReservationId)
@@ -1357,6 +1363,7 @@ public class ApplicationDbContext : DbContext
             entity.HasIndex(e => e.ConversationId);
             entity.HasIndex(e => e.BusinessId);
             entity.HasIndex(e => e.ReservationId);
+            entity.HasIndex(e => new { e.SubjectType, e.SubjectId });
         });
 
         // InboundMessageReceipt configuration

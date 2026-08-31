@@ -42,6 +42,6 @@ public sealed class SalesReportingProcessingCoordinator(
 public static class SalesReportingProcessingPolicy
 {
     public static bool Supports(string? documentType) =>
-        documentType is "SalesInvoice" or "SalesReceipt" or "SalesReturn" or "RouteVisit" or
+        documentType is "SalesInvoice" or "SalesReceipt" or "ServiceInvoice" or "SalesReturn" or "RouteVisit" or
             "SellerOrder" or "CommercialCoveragePlan" or "GoodsReceipt" or "PurchaseReturn";
 }

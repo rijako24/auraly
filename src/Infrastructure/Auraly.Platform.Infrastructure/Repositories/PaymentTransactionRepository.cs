@@ -63,6 +63,7 @@ public class PaymentTransactionRepository : IPaymentTransactionRepository
             existing.WebhookPayloadJson = transaction.WebhookPayloadJson;
             existing.CheckoutKind = transaction.CheckoutKind;
             existing.CheckoutSnapshotJson = transaction.CheckoutSnapshotJson;
+            existing.MerchantConfigurationVersion = transaction.MerchantConfigurationVersion;
             existing.QuoteHash = transaction.QuoteHash;
             existing.ConfirmationOutcome = transaction.ConfirmationOutcome;
             existing.LinkUrl = transaction.LinkUrl;
@@ -74,6 +75,8 @@ public class PaymentTransactionRepository : IPaymentTransactionRepository
             existing.RequiresRefund = transaction.RequiresRefund;
             existing.SupersededAt = transaction.SupersededAt;
             existing.SupersededByPaymentTransactionId = transaction.SupersededByPaymentTransactionId;
+            existing.SubjectType = transaction.SubjectType;
+            existing.SubjectId = transaction.SubjectId;
             _context.PaymentTransactions.Update(existing);
         }
         else

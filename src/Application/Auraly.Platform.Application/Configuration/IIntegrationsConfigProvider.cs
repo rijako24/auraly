@@ -12,5 +12,10 @@ public interface IIntegrationsConfigProvider
     /// Retorna null si no existe o el JSON es invÃ¡lido.
     /// </summary>
     Task<IntegrationsConfiguration?> GetAsync(Guid businessId, CancellationToken cancellationToken = default);
+
+    Task<WompiIntegration?> GetWompiAsync(
+        Guid businessId,
+        int? configurationVersion = null,
+        CancellationToken cancellationToken = default);
 }
 

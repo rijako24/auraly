@@ -46,6 +46,7 @@ using Auraly.Contracts.Sales;
 using Auraly.Fiscal.Ubl;
 using Auraly.Infrastructure.Fiscal;
 using Auraly.Infrastructure.Persistence;
+using Auraly.Platform.Infrastructure.Processing;
 using Auraly.Infrastructure.Pricing;
 using Auraly.Infrastructure.Routes;
 using Auraly.Infrastructure.Dispatching;
@@ -81,6 +82,7 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
 builder.Services.AddScoped<SellerUserAccessService>();
 builder.Services.AddScoped<SqlExecutionContextDirectory>();
+builder.Services.AddScoped<SqlTenantSubscriptionAccessStore>();
 builder.Services.AddScoped<IExecutionAccessResolver>(services =>
     services.GetRequiredService<SqlExecutionContextDirectory>());
 builder.Services.AddScoped<IAuralyExecutionContextAccessor, AuralyExecutionContextAccessorAdapter>();
@@ -301,12 +303,15 @@ else
             new AccountingProcessingServiceBusOptions(accountingQueueName));
         builder.Services.AddSingleton(
             new SalesReportingProcessingServiceBusOptions(salesReportingQueueName));
-        builder.Services.AddSingleton<IFiscalProcessingSignalPublisher,
-            ServiceBusFiscalProcessingPublisher>();
-        builder.Services.AddSingleton<IAccountingProcessingSignalPublisher,
-            ServiceBusAccountingProcessingPublisher>();
-        builder.Services.AddSingleton<ISalesReportingProcessingSignalPublisher,
-            ServiceBusSalesReportingProcessingPublisher>();
+        builder.Services.AddSingleton(new ServiceBusCommerceProcessingOptions(
+            fiscalQueueName, accountingQueueName, salesReportingQueueName));
+        builder.Services.AddSingleton<ServiceBusCommerceProcessingPublisher>();
+        builder.Services.AddSingleton<IFiscalProcessingSignalPublisher>(provider =>
+            provider.GetRequiredService<ServiceBusCommerceProcessingPublisher>());
+        builder.Services.AddSingleton<IAccountingProcessingSignalPublisher>(provider =>
+            provider.GetRequiredService<ServiceBusCommerceProcessingPublisher>());
+        builder.Services.AddSingleton<ISalesReportingProcessingSignalPublisher>(provider =>
+            provider.GetRequiredService<ServiceBusCommerceProcessingPublisher>());
         if (builder.Configuration.GetValue("Auraly:Fiscal:Worker:Enabled", true))
             builder.Services.AddHostedService<FiscalProcessingHostedService>();
         if (builder.Configuration.GetValue("Auraly:Accounting:Worker:Enabled", true))
@@ -379,6 +384,8 @@ builder.Services.AddScoped<IOnlineSaleWithholdingCalculator, OnlineSaleWithholdi
 builder.Services.AddScoped<OnlineSalesCheckoutService>();
 builder.Services.AddScoped<IOnlineSalesHistoryStore, SqlOnlineSalesDraftStore>();
 builder.Services.AddScoped<OnlineSalesHistoryService>();
+builder.Services.AddScoped<IServiceInvoiceStore, SqlServiceInvoiceStore>();
+builder.Services.AddScoped<ServiceInvoiceWorkspaceService>();
 builder.Services.AddScoped<IOnlineSalesOrderImportStore, SqlOnlineSalesDraftStore>();
 builder.Services.AddScoped<OnlineSalesOrderImportService>();
 
@@ -417,12 +424,12 @@ builder.Services.AddScoped<OrderRecoveryService>();
 builder.Services.AddScoped<IOrderBatchStore, SqlOrderBatchStore>();
 builder.Services.AddScoped<OrderBatchService>();
 builder.Services.AddScoped<AzureBlobObjectStorage>();
+builder.Services.AddScoped<IPurchaseOrderStore, SqlPurchaseOrderStore>();
+builder.Services.AddScoped<PurchaseOrderService>();
 builder.Services.AddScoped<IGoodsReceiptStore, SqlGoodsReceiptStore>();
 builder.Services.AddScoped<IGoodsReceiptWorkspaceStore, SqlGoodsReceiptWorkspaceStore>();
 builder.Services.AddScoped<GoodsReceiptWorkspaceService>();
 builder.Services.AddScoped<GoodsReceiptService>();
-builder.Services.AddScoped<IPurchaseOrderStore, SqlPurchaseOrderStore>();
-builder.Services.AddScoped<PurchaseOrderService>();
 builder.Services.AddScoped<IPurchaseReturnStore, SqlPurchaseReturnStore>();
 builder.Services.AddScoped<PurchaseReturnService>();
 builder.Services.AddScoped<IPayablesStore, SqlPayablesStore>();
@@ -463,13 +470,13 @@ builder.Services.AddScoped<SalesDebitNoteService>();
 builder.Services.AddScoped<ISalesReturnQueryStore, SqlSalesReturnQueryStore>();
 builder.Services.AddScoped<SalesReturnQueryService>();
 builder.Services.AddResponseCompression(options => options.EnableForHttps = true);
-builder.Services.AddSingleton(new AuthenticationEmailOptions(
+builder.Services.AddSingleton(new PlatformEmailOptions(
     builder.Configuration["Auraly:Email:ConnectionString"],
     builder.Configuration["Auraly:Email:SenderAddress"] ?? "DoNotReply@auralyapp.co",
     builder.Configuration["Auraly:Email:PublicAppUrl"] ?? "https://auralyapp.co",
     builder.Configuration["Auraly:Email:LogoUrl"] ?? "https://auralyapp.co/brand/auraly-mark.png",
     builder.Configuration["Auraly:Email:SupportEmail"] ?? "soporte@auralyapp.co"));
-builder.Services.AddHostedService<AuthenticationEmailHostedService>();
+builder.Services.AddHostedService<PlatformEmailOutboxHostedService>();
 
 
 var jwtIssuer = builder.Configuration["Authentication:Jwt:Issuer"];
@@ -700,6 +707,7 @@ app.UseResponseCompression();
 app.UseAuralyPlatformBeforeAuthentication();
 app.UseAuthentication();
 app.UseAuralyExecutionContext();
+app.UseMiddleware<TenantSubscriptionAccessMiddleware>();
 app.UseAuthorization();
 
 app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }));
@@ -719,6 +727,7 @@ app.MapPosEnrollmentApi();
 app.MapPosInstallerApi();
 app.MapPosApprovalApi();
 app.MapOnlineSalesDraftApi();
+app.MapServiceInvoiceApi();
 
 app.MapWorkSessionApi();
 app.MapPosIdentityApi();

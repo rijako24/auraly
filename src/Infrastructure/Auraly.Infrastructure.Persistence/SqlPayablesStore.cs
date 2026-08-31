@@ -192,6 +192,8 @@ public sealed class SqlPayablesStore(
             IsolationLevel.Serializable, cancellationToken);
         try
         {
+            await AcquireAcceptanceLockAsync(
+                connection, transaction, user.BusinessId, cancellationToken);
             var replay = await FindReplayAsync(
                 connection, transaction, user.BusinessId, request.PaymentId,
                 idempotencyKey, requestHash, cancellationToken);
@@ -236,6 +238,30 @@ public sealed class SqlPayablesStore(
             await transaction.RollbackAsync(CancellationToken.None);
             throw;
         }
+    }
+
+    private static async Task AcquireAcceptanceLockAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid businessId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            DECLARE @Result INT;
+            EXEC @Result=sys.sp_getapplock
+              @Resource=@Resource,
+              @LockMode=N'Exclusive',
+              @LockOwner=N'Transaction',
+              @LockTimeout=30000;
+            SELECT @Result;
+            """, connection, transaction);
+        command.Parameters.AddWithValue(
+            "@Resource", $"Auraly:PayablePayment:{businessId:D}");
+        var result = Convert.ToInt32(
+            await command.ExecuteScalarAsync(cancellationToken));
+        if (result < 0)
+            throw new PayablesConflictException(
+                "Another supplier payment is being confirmed. Try again.");
     }
 
     private static void AddQueryParameters(

@@ -56,6 +56,8 @@ public sealed class SqlCommercialPartyRoleStore(SqlServerConnectionFactory conne
             }
 
             await ValidateScopeAsync(connection, transaction, actor, businessId, site, ct);
+            if (role == "Seller")
+                await EnsureSellerCapacityAsync(connection, transaction, actor.TenantId, ct);
             var resolution = await FindPartyAsync(connection, transaction, actor.TenantId, party, normalized, ct);
             var resolvedPartyId = resolution?.PartyId ?? partyId;
             if (resolvedPartyId == partyId)
@@ -117,7 +119,28 @@ public sealed class SqlCommercialPartyRoleStore(SqlServerConnectionFactory conne
         }
         catch (SqlException ex) when (ex.Number is 2601 or 2627)
         { await transaction.RollbackAsync(ct); throw new PartyConflictException("The role code, identity or site is already in use."); }
+        catch (SqlException ex) when (ex.Number == 51064)
+        { await transaction.RollbackAsync(ct); throw new PartyConflictException(ex.Message); }
         catch { await transaction.RollbackAsync(ct); throw; }
+    }
+
+    private static async Task EnsureSellerCapacityAsync(
+        SqlConnection connection, SqlTransaction transaction, Guid tenantId, CancellationToken ct)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            DECLARE @Limit int=(
+              SELECT SellerUserLimit FROM billing.TenantSubscriptions WITH(UPDLOCK,HOLDLOCK)
+              WHERE TenantId=@TenantId AND Status IN(N'Active',N'PastDue'));
+            IF @Limit IS NOT NULL AND (
+              SELECT COUNT(*) FROM dbo.CommerceSellers seller WITH(UPDLOCK,HOLDLOCK)
+              INNER JOIN dbo.Businesses businessValue ON businessValue.BusinessId=seller.BusinessId
+              WHERE businessValue.TenantId=@TenantId AND seller.IsActive=1)>=@Limit
+              THROW 51064,N'Se alcanzó el número de usuarios vendedor contratado. Amplía la suscripción antes de crear otro vendedor.',1;
+            """;
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        await command.ExecuteNonQueryAsync(ct);
     }
 
     private static async Task<CommercialRoleAcceptance?> ReadReceiptAsync(SqlConnection c, SqlTransaction t, Guid business, Guid operation, string role, CancellationToken ct)

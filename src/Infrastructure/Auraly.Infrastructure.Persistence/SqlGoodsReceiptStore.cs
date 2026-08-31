@@ -53,6 +53,11 @@ public sealed class SqlGoodsReceiptStore(
                 connection, transaction, user, request, cancellationToken);
             var number = await AllocateNumberAsync(connection, transaction, user.BusinessId, cancellationToken);
             var now = timeProvider.GetUtcNow();
+            if (request.PurchaseEvidenceType == PurchaseEvidenceTypes.BuyerElectronicSupportDocument
+                && !await SqlDianDocumentQuota.TryReserveAsync(connection, transaction,
+                    user.BusinessId, request.DocumentId, "SupportDocument", now, cancellationToken))
+                throw new PurchasingValidationException(
+                    "No hay cupo de documentos DIAN. Compra un paquete antes de seleccionar documento soporte electrónico.");
             var support = request.PurchaseEvidenceType == PurchaseEvidenceTypes.BuyerElectronicSupportDocument
                 ? await AllocateSupportFiscalAsync(connection, transaction, user.BusinessId,
                     request.SupplierId, request.ReceivedAt, now, cancellationToken)
@@ -399,6 +404,7 @@ public sealed class SqlGoodsReceiptStore(
                 throw new PurchasingValidationException("Receipt lines cannot reference a purchase order without PurchaseOrderId.");
             return result;
         }
+
         await using var command = new SqlCommand(
             "purchasing.ReceiptOrderValidate", connection, transaction)
         {

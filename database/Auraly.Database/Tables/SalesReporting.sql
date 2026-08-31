@@ -297,6 +297,56 @@ CREATE INDEX [IX_SalesReportingJobs_Dispatch]
     INCLUDE([SourceDocumentId],[SourceDocumentType],[AttemptCount]);
 GO
 
+CREATE TABLE [reporting].[ServiceInvoiceFacts]
+(
+    [DocumentId] UNIQUEIDENTIFIER NOT NULL CONSTRAINT [PK_ServiceInvoiceFacts] PRIMARY KEY,
+    [TenantId] UNIQUEIDENTIFIER NOT NULL,
+    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [CustomerId] UNIQUEIDENTIFIER NOT NULL,
+    [DocumentNumber] NVARCHAR(64) NOT NULL,
+    [FiscalNumber] NVARCHAR(64) NOT NULL,
+    [IssuedAt] DATETIMEOFFSET(7) NOT NULL,
+    [BusinessLocalDate] DATE NOT NULL,
+    [CurrencyCode] CHAR(3) NOT NULL,
+    [UntaxedAmount] DECIMAL(19,4) NOT NULL,
+    [DiscountAmount] DECIMAL(19,4) NOT NULL,
+    [TaxAmount] DECIMAL(19,4) NOT NULL,
+    [TotalAmount] DECIMAL(19,4) NOT NULL,
+    [SourcePayloadHash] BINARY(32) NOT NULL,
+    [ProjectionVersion] SMALLINT NOT NULL,
+    [ProjectedAt] DATETIMEOFFSET(7) NOT NULL,
+    CONSTRAINT [FK_ServiceInvoiceFacts_Tenant] FOREIGN KEY([TenantId]) REFERENCES dbo.Tenants(TenantId),
+    CONSTRAINT [FK_ServiceInvoiceFacts_Business] FOREIGN KEY([BusinessId]) REFERENCES dbo.Businesses(BusinessId),
+    CONSTRAINT [FK_ServiceInvoiceFacts_Customer] FOREIGN KEY([CustomerId]) REFERENCES dbo.Customers(CustomerId),
+    CONSTRAINT [CK_ServiceInvoiceFacts_Amounts] CHECK([UntaxedAmount]>=0 AND [DiscountAmount]>=0 AND [TaxAmount]>=0 AND [TotalAmount]>0),
+    CONSTRAINT [CK_ServiceInvoiceFacts_Version] CHECK([ProjectionVersion]>0)
+);
+GO
+
+CREATE TABLE [reporting].[ServiceInvoiceLineFacts]
+(
+    [DocumentId] UNIQUEIDENTIFIER NOT NULL,
+    [LineNumber] INT NOT NULL,
+    [TenantId] UNIQUEIDENTIFIER NOT NULL,
+    [BusinessId] UNIQUEIDENTIFIER NOT NULL,
+    [CustomerId] UNIQUEIDENTIFIER NOT NULL,
+    [BillableServiceId] UNIQUEIDENTIFIER NOT NULL,
+    [ServiceCode] NVARCHAR(48) NOT NULL,
+    [Description] NVARCHAR(500) NOT NULL,
+    [Quantity] DECIMAL(19,6) NOT NULL,
+    [UntaxedAmount] DECIMAL(19,4) NOT NULL,
+    [DiscountAmount] DECIMAL(19,4) NOT NULL,
+    [TaxAmount] DECIMAL(19,4) NOT NULL,
+    [TotalAmount] DECIMAL(19,4) NOT NULL,
+    [BusinessLocalDate] DATE NOT NULL,
+    [ProjectedAt] DATETIMEOFFSET(7) NOT NULL,
+    CONSTRAINT [PK_ServiceInvoiceLineFacts] PRIMARY KEY([DocumentId],[LineNumber]),
+    CONSTRAINT [FK_ServiceInvoiceLineFacts_Document] FOREIGN KEY([DocumentId]) REFERENCES reporting.ServiceInvoiceFacts(DocumentId),
+    CONSTRAINT [FK_ServiceInvoiceLineFacts_Service] FOREIGN KEY([BillableServiceId]) REFERENCES billing.BillableServices(BillableServiceId),
+    CONSTRAINT [CK_ServiceInvoiceLineFacts_Amounts] CHECK([LineNumber]>0 AND [Quantity]>0 AND [UntaxedAmount]>=0 AND [DiscountAmount]>=0 AND [TaxAmount]>=0 AND [TotalAmount]>0)
+);
+GO
+
 CREATE TABLE [reporting].[CommercialReportVisitFacts]
 (
     [RouteVisitId] UNIQUEIDENTIFIER NOT NULL,

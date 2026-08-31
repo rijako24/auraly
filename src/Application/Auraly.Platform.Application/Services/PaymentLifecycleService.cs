@@ -29,7 +29,8 @@ public sealed class PaymentLifecycleService : IPaymentLifecycleService
         long amountInCents,
         string currency,
         DateTime expiresAt,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        int merchantConfigurationVersion = 1)
     {
         var tx = new PaymentTransaction
         {
@@ -47,6 +48,7 @@ public sealed class PaymentLifecycleService : IPaymentLifecycleService
             CreatedAt = DateTime.UtcNow,
             CheckoutKind = checkoutKind,
             CheckoutSnapshotJson = checkoutSnapshotJson,
+            MerchantConfigurationVersion = merchantConfigurationVersion,
             QuoteHash = quoteHash,
             ConfirmationOutcome = confirmationOutcome
         };

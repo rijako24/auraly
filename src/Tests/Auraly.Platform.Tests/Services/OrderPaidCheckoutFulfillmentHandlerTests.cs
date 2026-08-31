@@ -82,6 +82,7 @@ public sealed class PaymentConfirmationHandlerTests
             Mock.Of<IEventNotificationDispatcher>(),
             Mock.Of<IExternalEscalationService>(),
             Mock.Of<IPaidCheckoutFulfillmentRegistry>(),
+            Mock.Of<INonConversationalPaidCheckoutRegistry>(),
             NullLogger<PaymentConfirmationHandler>.Instance);
 
         var method = typeof(PaymentConfirmationHandler).GetMethod(

@@ -26,6 +26,7 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
   const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [activatingProduction, setActivatingProduction] = useState(false);
   const [activatingSupport, setActivatingSupport] = useState(false);
   const [softwareId, setSoftwareId] = useState("");
   const [softwarePin, setSoftwarePin] = useState("");
@@ -128,6 +129,19 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
     }
   }
 
+  async function activateProduction() {
+    setActivatingProduction(true);
+    try {
+      const result = await fiscalConfigurationApi.activateProduction(businessId);
+      setValue(result);
+      toast.success("Producción DIAN activada. Cada caja habilitará factura electrónica cuando tenga su propia resolución.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "No fue posible activar producción.");
+    } finally {
+      setActivatingProduction(false);
+    }
+  }
+
   function startHabilitationInvoice() {
     router.push("/pos?fiscalHabilitation=1");
   }
@@ -154,8 +168,8 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
           <div className="grid gap-3 md:grid-cols-4">
             <Stage number="1" label="Certificado y software" active={value.stage !== "NotConfigured"} />
             <Stage number="2" label="Habilitación DIAN" active={value.habilitationAccepted} />
-            <Stage number="3" label="Asignar resoluciones" active={value.stage === "ProductionReady" || value.productionActive} />
-            <Stage number="4" label="Producción" active={value.productionActive} />
+            <Stage number="3" label="Preparar resoluciones" active={value.stage === "ProductionReady" || value.productionActive} />
+            <Stage number="4" label="Activar producción" active={value.productionActive} />
           </div>
         </CardContent>
       </Card>
@@ -163,10 +177,10 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
       <Card className="overflow-hidden border-slate-200 bg-white">
         <CardContent className="p-5 md:p-6">
           <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-center">
-            <div><p className="text-xs font-bold uppercase tracking-[.18em] text-teal-700">Ambiente fiscal</p><h2 className="mt-1 text-xl font-black text-slate-950">De pruebas reales a producción, sin atajos</h2><p className="mt-1 max-w-2xl text-sm text-slate-600">Auraly cambia el transporte únicamente cuando la DIAN acepta el set y queda asignada una resolución productiva.</p></div>
+            <div><p className="text-xs font-bold uppercase tracking-[.18em] text-teal-700">Ambiente fiscal</p><h2 className="mt-1 text-xl font-black text-slate-950">De pruebas reales a producción, sin atajos</h2><p className="mt-1 max-w-2xl text-sm text-slate-600">La habilitación usa únicamente el TestSetId y siempre está conectada. Tras la aceptación, el operador activa producción; las resoluciones de cada caja se preparan y sincronizan por separado.</p></div>
             <div className="grid min-w-[min(100%,32rem)] grid-cols-2 rounded-2xl border border-slate-200 bg-slate-50 p-1.5">
               <EnvironmentMode icon={FlaskConical} title="Habilitación" subtitle={value.habilitationAccepted ? "Set aceptado" : "Pruebas DIAN"} active={!value.productionActive} complete={value.habilitationAccepted} />
-              <EnvironmentMode icon={value.productionActive ? Rocket : LockKeyhole} title="Producción" subtitle={value.productionActive ? "Emisión activa" : value.habilitationAccepted ? "Asigna resolución" : "Bloqueada"} active={value.productionActive} complete={value.productionActive} />
+              <EnvironmentMode icon={value.productionActive ? Rocket : LockKeyhole} title="Producción" subtitle={value.productionActive ? "Emisión activa" : value.habilitationAccepted ? "Lista para activar" : "Bloqueada"} active={value.productionActive} complete={value.productionActive} />
             </div>
           </div>
         </CardContent>
@@ -223,10 +237,17 @@ export function FiscalOnboardingCard({ businessId, canManage }: Props) {
         </CardContent>
       </Card>
 
-      {value.productionActive && value.assignedRange && (
+      {value.habilitationAccepted && !value.productionActive && (
+        <Card className="border-teal-200 bg-teal-50/40">
+          <CardHeader><CardTitle className="flex items-center gap-2"><Rocket className="h-5 w-5 text-teal-700"/>4. Activar producción</CardTitle><CardDescription>Este cambio habilita el ambiente productivo de la sede. No exige resoluciones en todas las cajas: cada emisor habilitará factura electrónica únicamente cuando tenga una resolución propia.</CardDescription></CardHeader>
+          <CardContent><Button disabled={!canManage || activatingProduction} onClick={() => void activateProduction()}>{activatingProduction ? <Loader2 className="mr-2 h-4 w-4 animate-spin"/> : <Rocket className="mr-2 h-4 w-4"/>}Activar producción DIAN</Button></CardContent>
+        </Card>
+      )}
+
+      {value.productionActive && (
         <Card className="border-emerald-200 bg-emerald-50/50">
           <CardHeader><CardTitle className="flex items-center gap-2 text-emerald-950"><CheckCircle2 className="h-5 w-5" /> Producción DIAN activa</CardTitle></CardHeader>
-          <CardContent className="grid gap-3 text-sm md:grid-cols-3"><Detail label="Resolución" value={value.assignedRange.authorizationNumber} /><Detail label="Prefijo y rango" value={`${value.assignedRange.prefix}${value.assignedRange.rangeStart}–${value.assignedRange.rangeEnd}`} /><Detail label="Vigencia" value={`${value.assignedRange.validFrom} a ${value.assignedRange.validUntil}`} /></CardContent>
+          <CardContent>{value.assignedRange ? <div className="grid gap-3 text-sm md:grid-cols-3"><Detail label="Resolución online" value={value.assignedRange.authorizationNumber} /><Detail label="Prefijo y rango" value={`${value.assignedRange.prefix}${value.assignedRange.rangeStart}–${value.assignedRange.rangeEnd}`} /><Detail label="Vigencia" value={`${value.assignedRange.validFrom} a ${value.assignedRange.validUntil}`} /></div> : <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-950">Producción está activa, pero la caja online todavía no tiene resolución. Solo podrá usar comprobantes hasta asignarle una.</p>}</CardContent>
         </Card>
       )}
 

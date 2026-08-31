@@ -17,7 +17,8 @@ public interface IPaymentLinkService
     Task<PaymentStatusResult> CheckPaymentStatusAsync(
         string paymentReferenceId,
         Guid businessId,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        int? merchantConfigurationVersion = null);
 
     /// <summary>
     /// Verifica una transacción directamente en el proveedor por su ID.
@@ -27,6 +28,15 @@ public interface IPaymentLinkService
     Task<VerifiedTransactionResult> VerifyTransactionAsync(
         string transactionId,
         Guid businessId,
+        CancellationToken ct = default,
+        int? merchantConfigurationVersion = null);
+
+    /// <summary>
+    /// Prepara los datos firmados que el frontend entrega al widget oficial de Wompi.
+    /// La clave de integridad nunca sale del servidor.
+    /// </summary>
+    Task<WompiWidgetCheckoutResult> PrepareWidgetCheckoutAsync(
+        WompiWidgetCheckoutRequest request,
         CancellationToken ct = default);
 }
 
@@ -39,7 +49,28 @@ public record VerifiedTransactionResult(
     string? TransactionId,
     long? AmountInCents,
     string? PaymentLinkId,
+    string? Reference,
     string? ErrorMessage);
+
+public sealed record WompiWidgetCheckoutRequest(
+    Guid BusinessId,
+    string Reference,
+    long AmountInCents,
+    string Currency,
+    DateTimeOffset? ExpiresAt = null,
+    string? RedirectUrl = null);
+
+public sealed record WompiWidgetCheckoutResult(
+    bool Success,
+    string? PublicKey,
+    string? Reference,
+    long? AmountInCents,
+    string? Currency,
+    string? IntegritySignature,
+    string? ExpirationTime,
+    string? RedirectUrl,
+    string? ErrorMessage,
+    int MerchantConfigurationVersion = 1);
 
 /// <summary>
 /// Resultado de la consulta de estado de pago.
@@ -70,4 +101,5 @@ public record PaymentLinkResult(
     string? PaymentLinkUrl,
     string? PaymentReferenceId,
     DateTime? ExpiresAt,
-    string? ErrorMessage);
+    string? ErrorMessage,
+    int MerchantConfigurationVersion = 1);

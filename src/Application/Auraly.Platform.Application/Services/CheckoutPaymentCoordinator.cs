@@ -170,7 +170,8 @@ public sealed class CheckoutPaymentCoordinator : ICheckoutPaymentCoordinator
             quote.PayableCents,
             quote.Currency,
             result.ExpiresAt ?? DateTime.UtcNow.AddHours(1),
-            ct);
+            ct,
+            result.MerchantConfigurationVersion);
 
         if (supersededPayment is not null)
             await _paymentLifecycle.MarkSupersededAsync(supersededPayment, payment.PaymentTransactionId, ct);

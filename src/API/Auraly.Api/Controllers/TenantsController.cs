@@ -5,15 +5,24 @@ using Microsoft.AspNetCore.Mvc;
 using Auraly.Platform.Application.Common.DTOs;
 using Auraly.Platform.Application.Common.Exceptions;
 using Auraly.Contracts.Tenants;
+using Auraly.Contracts.TenantBilling;
 using Auraly.Platform.Application.Identity.DTOs;
 using Auraly.Platform.Application.Identity.Interfaces;
+using Auraly.Platform.Application.Identity.Services;
 
 namespace Auraly.Api.Controllers;
 
 [ApiController]
 [Route("api/v1/tenants")]
 [Authorize]
-public sealed class TenantsController(ITenantService tenantService, ITenantDeviceAdminStore deviceAdmin) : ControllerBase
+public sealed class TenantsController(
+    ITenantService tenantService,
+    ITenantDeviceAdminStore deviceAdmin,
+    ITenantCommercialQuoteService commercialQuotes,
+    IPlatformBillingPolicyStore billingPolicy,
+    ITenantCommercialSubscriptionStore commercialSubscriptions,
+    TenantRenewalOrderService tenantRenewalOrders,
+    TenantSubscriptionCheckoutService subscriptionCheckout) : ControllerBase
 {
     private const long MaxLogoBytes = 4 * 1024 * 1024;
     private const long MaxLogoRequestBytes = MaxLogoBytes + 64 * 1024;
@@ -32,9 +41,18 @@ public sealed class TenantsController(ITenantService tenantService, ITenantDevic
 
     [HttpPost]
     [PermissionAuthorize("tenants.create")]
-    public async Task<ActionResult<ProvisionTenantResult>> Create([FromBody] ProvisionTenantRequest request, CancellationToken ct)
+    public async Task<ActionResult<ProvisionTenantResult>> Create(
+        [FromBody] WaivedTenantProvisioningRequest request,
+        CancellationToken ct)
     {
-        var result = await tenantService.ProvisionAsync(request, User.GetUserId(), ct);
+        EnsurePermission("tenants.provisioning.payment.waive");
+        var quote = await commercialQuotes.QuoteAsync(request.Quote, ct);
+        var tenant = request.Tenant with
+        {
+            MaximumUsers = checked(quote.FullUserLimit + quote.SellerUserLimit),
+            MaximumEnrolledDevices = quote.PosDeviceLimit
+        };
+        var result = await tenantService.ProvisionAsync(tenant, User.GetUserId(), quote, ct);
         return CreatedAtAction(nameof(GetById), new { tenantId = result.TenantId }, result);
     }
 
@@ -93,6 +111,50 @@ public sealed class TenantsController(ITenantService tenantService, ITenantDevic
         await tenantService.DeactivateAsync(tenantId, ct);
         return NoContent();
     }
+
+    [HttpGet("billing-policy")]
+    [PermissionAuthorize("tenants.billing.policy.manage")]
+    public async Task<ActionResult<PlatformBillingPolicyDto>> GetBillingPolicy(CancellationToken ct) =>
+        Ok(await billingPolicy.GetAsync(ct));
+
+    [HttpPut("billing-policy")]
+    [PermissionAuthorize("tenants.billing.policy.manage")]
+    public async Task<ActionResult<PlatformBillingPolicyDto>> UpdateBillingPolicy(
+        UpdatePlatformBillingPolicyRequest request, CancellationToken ct) =>
+        Ok(await billingPolicy.UpdateAsync(User.GetTenantId(), User.GetUserId(), request, ct));
+
+    [HttpGet("{tenantId:guid}/subscription")]
+    [PermissionAuthorize("tenants.read")]
+    public async Task<ActionResult<TenantCommercialSubscriptionDto?>> GetSubscription(
+        Guid tenantId, CancellationToken ct) =>
+        Ok(await commercialSubscriptions.GetAsync(tenantId, ct));
+
+    [HttpGet("subscriptions")]
+    [PermissionAuthorize("tenants.read")]
+    public async Task<ActionResult<PlatformTenantSubscriptionPageDto>> GetSubscriptions(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] string? search = null,
+        [FromQuery] string? status = null,
+        CancellationToken ct = default) =>
+        Ok(await commercialSubscriptions.ListPlatformAsync(
+            Math.Max(1, page), Math.Clamp(pageSize, 1, 100), search, status, ct));
+
+    [HttpGet("{tenantId:guid}/subscription/renewal-order")]
+    [PermissionAuthorize("tenants.read")]
+    public async Task<ActionResult<TenantRenewalOrderDto?>> GetRenewalOrder(
+        Guid tenantId, CancellationToken ct) =>
+        Ok(await tenantRenewalOrders.GetCurrentAsync(tenantId, ct));
+
+    [HttpPost("{tenantId:guid}/subscription/renewal-orders/{renewalOrderId:guid}/record-payment")]
+    [PermissionAuthorize("tenants.billing.payment.confirm_manual")]
+    public async Task<ActionResult<TenantSubscriptionReceiptDto>> RecordSubscriptionPayment(
+        Guid tenantId,
+        Guid renewalOrderId,
+        RecordTenantSubscriptionPaymentRequest request,
+        CancellationToken ct) =>
+        Ok(await subscriptionCheckout.RecordManualPaymentAsync(
+            tenantId, User.GetUserId(), renewalOrderId, request, ct));
 
     private void EnsurePermission(string permission)
     {

@@ -24,6 +24,14 @@ DECLARE @BackgroundJobsValue NVARCHAR(MAX) = N'{
 
     "intervalMinutes": 15
 
+  },
+
+  "tenant_subscription_lifecycle": {
+
+    "enabled": true,
+
+    "intervalMinutes": 60
+
   }
 
 }';

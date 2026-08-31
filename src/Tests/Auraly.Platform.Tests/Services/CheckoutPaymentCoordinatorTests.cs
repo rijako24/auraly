@@ -163,7 +163,8 @@ public sealed class CheckoutPaymentCoordinatorTests
                 quote.PayableCents,
                 quote.Currency,
                 It.IsAny<DateTime>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<CancellationToken>(),
+                It.IsAny<int>()))
             .ReturnsAsync(newPayment);
 
         var paymentLinks = new Mock<IPaymentLinkService>();
@@ -228,7 +229,8 @@ public sealed class CheckoutPaymentCoordinatorTests
                 quote.PayableCents,
                 quote.Currency,
                 It.IsAny<DateTime>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<CancellationToken>(),
+                It.IsAny<int>()))
             .ReturnsAsync(newPayment);
 
         var paymentLinks = new Mock<IPaymentLinkService>();

@@ -16,5 +16,7 @@ export type SalesWorkspaceBootstrap = {
 export async function loadSalesWorkspaceBootstrap(): Promise<SalesWorkspaceBootstrap> {
   return apiClient.get<SalesWorkspaceBootstrap>(
     "/commerce/v1/pos/workspace/bootstrap",
+    undefined,
+    { cache: "no-store" },
   );
 }

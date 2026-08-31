@@ -1,5 +1,11 @@
-$transactionId = "12040200-1771985403-85800"
-$privateKey = "prv_test_RJKAG9S0lm8tJTuFCmdao8FhXqmXrm0t"
+$transactionId = $args[0]
+$privateKey = $env:WOMPI_TEST_PRIVATE_KEY
+if ([string]::IsNullOrWhiteSpace($transactionId)) {
+    throw 'Uso: .\scripts\QueryWompiTransaction.ps1 <transaction-id>'
+}
+if ([string]::IsNullOrWhiteSpace($privateKey) -or -not $privateKey.StartsWith('prv_test_')) {
+    throw 'Configura WOMPI_TEST_PRIVATE_KEY con una llave privada sandbox vigente. No guardes llaves en el repositorio.'
+}
 $urls = @(
     "https://sandbox.wompi.co/v1/transactions/$transactionId",
     "https://production.wompi.co/v1/transactions/$transactionId"

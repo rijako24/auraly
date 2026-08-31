@@ -20,7 +20,8 @@ public interface IPaymentLifecycleService
         long amountInCents,
         string currency,
         DateTime expiresAt,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        int merchantConfigurationVersion = 1);
     Task MarkConfirmedAsync(PaymentTransaction payment, string? providerTransactionId, string? webhookPayload, CancellationToken ct = default, PaymentTransactionSource? sourceOverride = null);
     Task RefreshPendingCheckoutAsync(
         PaymentTransaction payment,

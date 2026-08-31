@@ -45,7 +45,11 @@ public sealed class PaymentLinkPollingProcess : ITimedProcess
         {
             try
             {
-                var status = await _paymentLinkService.CheckPaymentStatusAsync(tx.PaymentReferenceId, tx.BusinessId, ct);
+                var status = await _paymentLinkService.CheckPaymentStatusAsync(
+                    tx.PaymentReferenceId,
+                    tx.BusinessId,
+                    ct,
+                    tx.MerchantConfigurationVersion);
                 if (!status.IsApproved)
                     continue;
 

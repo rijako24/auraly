@@ -1437,7 +1437,10 @@
       "auraly.platform.infrastructure": {
         "type": "Project",
         "dependencies": {
+          "Auraly.Application.Fiscal": "[1.0.0, )",
+          "Auraly.Application.Sales": "[1.0.0, )",
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Commerce.Accounting.Application": "[1.0.0, )",
           "Auraly.Platform.Application": "[1.0.0, )",
           "Auraly.Platform.Domain": "[1.0.0, )",
           "Azure.AI.OpenAI": "[2.1.0, )",

@@ -1,5 +1,11 @@
 namespace Auraly.Platform.Application.Configuration;
 
+public interface IIntegrationSecretProtector
+{
+    string Protect(string plaintext);
+    string Unprotect(string protectedOrLegacyValue);
+}
+
 /// <summary>
 /// ConfiguraciÃ³n de integraciones externas por negocio (Google Calendar, Wompi, Blob Storage, etc.).
 /// Fuente Ãºnica: IIntegrationsConfigProvider lee desde IntegrationConnections.
@@ -40,6 +46,7 @@ public class GoogleCalendarIntegration
 /// </summary>
 public class WompiIntegration
 {
+    public int ConfigurationVersion { get; set; } = 1;
     public string Mode { get; set; } = "test";
     public string PrivateKey { get; set; } = string.Empty;
     public string PublicKey { get; set; } = string.Empty;

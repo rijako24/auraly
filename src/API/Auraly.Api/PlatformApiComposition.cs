@@ -323,6 +323,7 @@ public static class PlatformApiComposition
 
         builder.Services.AddScoped<IAddOnCatalogService, AddOnCatalogService>();
 
+        builder.Services.AddSingleton<IIntegrationSecretProtector, IntegrationSecretProtector>();
         builder.Services.AddScoped<IIntegrationsConfigProvider, IntegrationsConfigProvider>();
 
         builder.Services.AddScoped<ISchedulingPolicyProvider, SchedulingPolicyProvider>();
@@ -332,6 +333,13 @@ public static class PlatformApiComposition
         builder.Services.AddScoped<IPaymentConfirmationHandler, PaymentConfirmationHandler>();
 
         builder.Services.AddScoped<IPaidCheckoutFulfillmentRegistry, PaidCheckoutFulfillmentRegistry>();
+        builder.Services.AddScoped<INonConversationalPaidCheckoutRegistry, NonConversationalPaidCheckoutRegistry>();
+        builder.Services.AddScoped<INonConversationalPaidCheckoutHandler, TenantProvisioningPaidCheckoutHandler>();
+        builder.Services.AddScoped<INonConversationalPaidCheckoutHandler, TenantSubscriptionPaidCheckoutHandler>();
+        builder.Services.AddScoped<ITenantSubscriptionSettlementService, SqlTenantSubscriptionSettlementService>();
+        builder.Services.AddScoped<ITenantSubscriptionSettlementDispatcher, TenantSubscriptionSettlementDispatcher>();
+        builder.Services.AddScoped<TenantSubscriptionCheckoutService>();
+        builder.Services.AddScoped<ITenantSubscriptionCheckoutStore, SqlTenantSubscriptionCheckoutStore>();
 
         builder.Services.AddScoped<IPaidCheckoutFulfillmentHandler, ReservationPaidCheckoutFulfillmentHandler>();
 
@@ -441,6 +449,20 @@ public static class PlatformApiComposition
         builder.Services.AddScoped<IAuditService, AuditService>();
 
         builder.Services.AddScoped<ITenantProvisioningStore, SqlTenantProvisioningStore>();
+        builder.Services.AddScoped<ITenantProvisioningCheckoutStore, SqlTenantProvisioningCheckoutStore>();
+        builder.Services.AddScoped<TenantProvisioningCheckoutService>();
+        builder.Services.AddScoped<Auraly.Contracts.TenantBilling.ITenantCommercialCatalogStore,
+            SqlTenantCommercialCatalogStore>();
+        builder.Services.AddScoped<Auraly.Contracts.TenantBilling.ITenantCommercialSubscriptionStore,
+            SqlTenantCommercialSubscriptionStore>();
+        builder.Services.AddScoped<ITenantCommercialQuoteService, TenantCommercialQuoteService>();
+        builder.Services.AddScoped<Auraly.Contracts.TenantBilling.ITenantRenewalOrderStore,
+            SqlTenantRenewalOrderStore>();
+        builder.Services.AddScoped<Auraly.Contracts.TenantBilling.ITenantBillingNotificationStore,
+            SqlTenantBillingNotificationStore>();
+        builder.Services.AddScoped<Auraly.Contracts.TenantBilling.IPlatformBillingPolicyStore,
+            SqlPlatformBillingPolicyStore>();
+        builder.Services.AddScoped<TenantRenewalOrderService>();
         builder.Services.AddScoped<IPasswordRecoveryStore, SqlPasswordRecoveryStore>();
         builder.Services.AddScoped<PasswordRecoveryService>();
         builder.Services.AddScoped<IBusinessDefaultsProvisioner, SqlBusinessDefaultsProvisioner>();
