@@ -4,6 +4,7 @@ CREATE TABLE [dbo].[GoodsReceipts]
     [BusinessId] UNIQUEIDENTIFIER NOT NULL,
     [WarehouseId] UNIQUEIDENTIFIER NOT NULL,
     [SupplierId] UNIQUEIDENTIFIER NOT NULL,
+    [PurchaseOrderId] UNIQUEIDENTIFIER NULL,
     [DocumentSeriesId] UNIQUEIDENTIFIER NOT NULL,
     [DocumentNumber] NVARCHAR(40) NOT NULL,
     [DocumentPrefix] NVARCHAR(8) NOT NULL,
@@ -34,6 +35,7 @@ CREATE TABLE [dbo].[GoodsReceipts]
     CONSTRAINT [FK_GoodsReceipts_Businesses] FOREIGN KEY ([BusinessId]) REFERENCES [dbo].[Businesses] ([BusinessId]),
     CONSTRAINT [FK_GoodsReceipts_Warehouses] FOREIGN KEY ([WarehouseId]) REFERENCES [dbo].[Warehouses] ([WarehouseId]),
     CONSTRAINT [FK_GoodsReceipts_Suppliers] FOREIGN KEY ([SupplierId]) REFERENCES [dbo].[Suppliers] ([SupplierId]),
+    CONSTRAINT [FK_GoodsReceipts_PurchaseOrder] FOREIGN KEY ([PurchaseOrderId]) REFERENCES [purchasing].[PurchaseOrders] ([PurchaseOrderId]),
     CONSTRAINT [FK_GoodsReceipts_DocumentSeries] FOREIGN KEY ([DocumentSeriesId]) REFERENCES [dbo].[DocumentSeries] ([DocumentSeriesId]),
     CONSTRAINT [FK_GoodsReceipts_SupportFiscalSeries] FOREIGN KEY ([SupportFiscalSeriesId]) REFERENCES [dbo].[FiscalSeries] ([SeriesId]),
     CONSTRAINT [FK_GoodsReceipts_SupportFiscalAuthorization] FOREIGN KEY ([SupportFiscalAuthorizationId]) REFERENCES [dbo].[FiscalAuthorizations] ([FiscalAuthorizationId]),
@@ -53,6 +55,11 @@ CREATE INDEX [IX_GoodsReceipts_Business_Received]
     ON [dbo].[GoodsReceipts] ([BusinessId], [ReceivedAt] DESC)
     INCLUDE ([SupplierId], [WarehouseId], [Status], [GrandTotal]);
 GO
+CREATE INDEX [IX_GoodsReceipts_PurchaseOrder_Status]
+    ON [dbo].[GoodsReceipts] ([PurchaseOrderId], [Status])
+    INCLUDE ([GoodsReceiptId])
+    WHERE [PurchaseOrderId] IS NOT NULL;
+GO
 CREATE UNIQUE INDEX [UX_GoodsReceipts_Supplier_Invoice]
     ON [dbo].[GoodsReceipts] ([BusinessId], [SupplierId], [SupplierInvoiceNumber])
     WHERE [SupplierInvoiceNumber] IS NOT NULL;
@@ -63,6 +70,9 @@ CREATE TABLE [dbo].[GoodsReceiptLines]
     [GoodsReceiptId] UNIQUEIDENTIFIER NOT NULL,
     [LineNumber] INT NOT NULL,
     [ProductId] UNIQUEIDENTIFIER NOT NULL,
+    [PurchaseOrderLineId] UNIQUEIDENTIFIER NULL,
+    [OverReceiptReason] NVARCHAR(500) NULL,
+    [OverReceiptAuthorized] BIT NOT NULL CONSTRAINT [DF_GoodsReceiptLines_OverReceiptAuthorized] DEFAULT 0,
     [DescriptionSnapshot] NVARCHAR(250) NOT NULL,
     [PresentationNameSnapshot] NVARCHAR(80) NOT NULL CONSTRAINT [DF_GoodsReceiptLines_PresentationName] DEFAULT N'Unidad',
     [PresentationQuantity] DECIMAL(19,6) NOT NULL CONSTRAINT [DF_GoodsReceiptLines_PresentationQuantity] DEFAULT 1,
@@ -80,11 +90,18 @@ CREATE TABLE [dbo].[GoodsReceiptLines]
     CONSTRAINT [PK_GoodsReceiptLines] PRIMARY KEY CLUSTERED ([GoodsReceiptId], [LineNumber]),
     CONSTRAINT [FK_GoodsReceiptLines_Receipts] FOREIGN KEY ([GoodsReceiptId]) REFERENCES [dbo].[GoodsReceipts] ([GoodsReceiptId]),
     CONSTRAINT [FK_GoodsReceiptLines_Products] FOREIGN KEY ([ProductId]) REFERENCES [dbo].[Products] ([ProductId]),
+    CONSTRAINT [FK_GoodsReceiptLines_PurchaseOrderLine] FOREIGN KEY ([PurchaseOrderLineId]) REFERENCES [purchasing].[PurchaseOrderLines] ([LineId]),
+    CONSTRAINT [CK_GoodsReceiptLines_OverReceipt] CHECK (([OverReceiptAuthorized]=0 AND [OverReceiptReason] IS NULL) OR ([OverReceiptAuthorized]=1 AND [PurchaseOrderLineId] IS NOT NULL AND [OverReceiptReason] IS NOT NULL)),
     CONSTRAINT [CK_GoodsReceiptLines_Amounts] CHECK ([LineNumber] > 0 AND [Quantity] > 0 AND [PresentationQuantity] > 0 AND [UnitsPerPresentation] > 0 AND [Quantity] = [PresentationQuantity] * [UnitsPerPresentation] AND [UnitCost] >= 0 AND [DiscountAmount] >= 0 AND [TaxRate] BETWEEN 0 AND 100 AND [LineTotal] = [NetAmount] + [TaxAmount]),
     CONSTRAINT [CK_GoodsReceiptLines_TaxTreatment] CHECK ([TaxTreatment] IN (N'DeductibleInputVat', N'CapitalizedCost', N'NotApplicable'))
 );
 GO
 CREATE INDEX [IX_GoodsReceiptLines_Product] ON [dbo].[GoodsReceiptLines] ([ProductId], [GoodsReceiptId]);
+GO
+CREATE INDEX [IX_GoodsReceiptLines_PurchaseOrderLine]
+    ON [dbo].[GoodsReceiptLines] ([PurchaseOrderLineId], [GoodsReceiptId])
+    INCLUDE ([Quantity])
+    WHERE [PurchaseOrderLineId] IS NOT NULL;
 GO
 
 CREATE TABLE [dbo].[SupplierCostObservations]

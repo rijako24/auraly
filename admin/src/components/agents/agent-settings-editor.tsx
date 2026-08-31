@@ -679,7 +679,7 @@ function ExternalEscalationsEditor({
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label>Contactos inbound</Label>
+                  <Label>Contactos entrantes</Label>
                   <Button
                     type="button"
                     variant="outline"

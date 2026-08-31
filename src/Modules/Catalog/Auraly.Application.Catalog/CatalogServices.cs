@@ -11,6 +11,7 @@ public interface ICatalogStore
     Task<ProductDetail> UpdateAsync(CatalogUserIdentity user, Guid productId, SaveProductRequest request, DateTimeOffset now, CancellationToken ct);
     Task<ProductDetail?> GetAsync(Guid tenantId, Guid businessId, Guid productId, bool includeCosts, CancellationToken ct);
     Task<ProductPage> PageAsync(Guid tenantId, Guid businessId, ProductPageRequest request, bool includeCosts, CancellationToken ct);
+    Task<IReadOnlyList<ProductRotationDetail>> ProductRotationAsync(Guid tenantId, Guid businessId, Guid productId, CancellationToken ct);
     Task SetStatusAsync(CatalogUserIdentity user, Guid productId, bool isActive, DateTimeOffset now, CancellationToken ct);
     Task<CatalogSyncSessionResponse> StartSyncAsync(Guid deviceId, Guid tenantId, Guid businessId, Guid warehouseId, DateTimeOffset now, CancellationToken ct);
     Task<CatalogBootstrapPage> BootstrapPageAsync(Guid deviceId, Guid sessionId, string? cursor, int pageSize, CancellationToken ct);
@@ -88,6 +89,14 @@ public sealed class CatalogService(
     {
         Require(user, CatalogPermissionCodes.Read);
         return store.GetAsync(user.TenantId, user.BusinessId, productId, user.Permissions.Contains(CatalogPermissionCodes.ReadCosts), ct);
+    }
+
+    public Task<IReadOnlyList<ProductRotationDetail>> ProductRotationAsync(
+        CatalogUserIdentity user, Guid productId, CancellationToken ct)
+    {
+        Require(user, CatalogPermissionCodes.Read);
+        if (productId == Guid.Empty) throw new CatalogValidationException("ProductId is required.");
+        return store.ProductRotationAsync(user.TenantId, user.BusinessId, productId, ct);
     }
 
     public Task<IReadOnlyList<ProductWarehouseAvailabilityItem>> WarehouseAvailabilityAsync(

@@ -421,6 +421,8 @@ builder.Services.AddScoped<IGoodsReceiptStore, SqlGoodsReceiptStore>();
 builder.Services.AddScoped<IGoodsReceiptWorkspaceStore, SqlGoodsReceiptWorkspaceStore>();
 builder.Services.AddScoped<GoodsReceiptWorkspaceService>();
 builder.Services.AddScoped<GoodsReceiptService>();
+builder.Services.AddScoped<IPurchaseOrderStore, SqlPurchaseOrderStore>();
+builder.Services.AddScoped<PurchaseOrderService>();
 builder.Services.AddScoped<IPurchaseReturnStore, SqlPurchaseReturnStore>();
 builder.Services.AddScoped<PurchaseReturnService>();
 builder.Services.AddScoped<IPayablesStore, SqlPayablesStore>();

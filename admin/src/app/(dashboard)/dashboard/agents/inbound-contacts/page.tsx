@@ -270,7 +270,7 @@ export default function InboundContactsPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Contactos inbound</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Bandeja de contactos</h1>
           <p className="text-muted-foreground">Numeros internos que enrutan a agentes de operaciones o domicilios</p>
         </div>
         <Button onClick={openCreate} disabled={!selectedBusinessId || agentsQuery.isLoading}>

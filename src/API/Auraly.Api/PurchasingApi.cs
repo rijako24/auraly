@@ -8,6 +8,53 @@ public static class PurchasingApi
 {
     public static IEndpointRouteBuilder MapPurchasingApi(this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapGet("/api/commerce/v1/purchase-orders",
+            (HttpContext context, string? search, string? status, int? page, int? pageSize,
+                PurchaseOrderService service, CancellationToken cancellationToken) =>
+                ExecuteAsync(() => service.ListAsync(context.User.ToPurchasingIdentity(), search,
+                    status, page ?? 1, pageSize ?? 25, cancellationToken)))
+            .RequireAuthorization("purchasing.user");
+        endpoints.MapGet("/api/commerce/v1/purchase-orders/{purchaseOrderId:guid}",
+            (HttpContext context, Guid purchaseOrderId, PurchaseOrderService service,
+                CancellationToken cancellationToken) => ExecuteAsync(() => service.GetAsync(
+                    context.User.ToPurchasingIdentity(), purchaseOrderId, cancellationToken)))
+            .RequireAuthorization("purchasing.user");
+        endpoints.MapGet("/api/commerce/v1/purchase-orders/{purchaseOrderId:guid}/receipt-source",
+            (HttpContext context, Guid purchaseOrderId, PurchaseOrderService service,
+                CancellationToken cancellationToken) => ExecuteAsync(() => service.GetReceiptSourceAsync(
+                    context.User.ToPurchasingIdentity(), purchaseOrderId, cancellationToken)))
+            .RequireAuthorization("purchasing.user");
+        endpoints.MapPut("/api/commerce/v1/purchase-orders/{purchaseOrderId:guid}/draft",
+            (HttpContext context, Guid purchaseOrderId, SavePurchaseOrderDraftRequest request,
+                PurchaseOrderService service, CancellationToken cancellationToken) =>
+                purchaseOrderId != request.PurchaseOrderId
+                    ? Task.FromResult<IResult>(Results.BadRequest("The route and request identifiers differ."))
+                    : ExecuteAsync(() => service.SaveDraftAsync(context.User.ToPurchasingIdentity(),
+                        request, cancellationToken)))
+            .RequireAuthorization("purchasing.user");
+        endpoints.MapPost("/api/commerce/v1/purchase-orders/confirm",
+            async (HttpContext context, ConfirmPurchaseOrderRequest request,
+                PurchaseOrderService service, CancellationToken cancellationToken) =>
+            {
+                try
+                {
+                    var result = await service.ConfirmAsync(context.User.ToPurchasingIdentity(),
+                        context.Request.Headers["Idempotency-Key"].ToString(), request, cancellationToken);
+                    return Results.Created($"/api/commerce/v1/purchase-orders/{result.PurchaseOrderId:D}", result);
+                }
+                catch (PurchasingForbiddenException exception) { return Results.Problem(exception.Message, statusCode: 403); }
+                catch (PurchasingValidationException exception) { return Results.Problem(exception.Message, statusCode: 400); }
+                catch (PurchasingConflictException exception) { return Results.Problem(exception.Message, statusCode: 409); }
+            }).RequireAuthorization("purchasing.user");
+        endpoints.MapPost("/api/commerce/v1/purchase-orders/{purchaseOrderId:guid}/close",
+            (HttpContext context, Guid purchaseOrderId, ClosePurchaseOrderRequest request,
+                PurchaseOrderService service, CancellationToken cancellationToken) => ExecuteAsync(async () =>
+                {
+                    await service.CloseAsync(context.User.ToPurchasingIdentity(), purchaseOrderId,
+                        request, cancellationToken);
+                    return new { Closed = true };
+                }))
+            .RequireAuthorization("purchasing.user");
         endpoints.MapPost(
                 "/api/commerce/v1/goods-receipts/confirm",
                 async (HttpContext context, ConfirmGoodsReceiptRequest request,

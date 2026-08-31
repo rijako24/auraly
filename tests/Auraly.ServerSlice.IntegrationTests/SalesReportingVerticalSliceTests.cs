@@ -92,6 +92,24 @@ public sealed class SalesReportingVerticalSliceTests(ServerSliceFixture fixture)
             Assert.Equal(1L, Convert.ToInt64(await command.ExecuteScalarAsync()));
 
             command.CommandText = """
+                SELECT WindowEndDate,NetUnitsSold30Days,NetUnitsSold90Days,DailyDemand90Days
+                FROM reporting.ProductRotationSnapshots
+                WHERE BusinessId=@BusinessId AND WarehouseId=@WarehouseId AND ProductId=@ProductId;
+                """;
+            command.Parameters.AddWithValue("@BusinessId", fixture.BusinessId);
+            command.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
+            command.Parameters.AddWithValue("@ProductId", fixture.ProductId);
+            await using (var rotation = await command.ExecuteReaderAsync())
+            {
+                Assert.True(await rotation.ReadAsync());
+                var soldQuantity = sale.Lines.Sum(line => line.Quantity);
+                Assert.Equal(new DateTime(2026, 7, 27), rotation.GetDateTime(0));
+                Assert.Equal(soldQuantity, rotation.GetDecimal(1));
+                Assert.Equal(soldQuantity, rotation.GetDecimal(2));
+                Assert.Equal(decimal.Round(soldQuantity / 90m, 6), rotation.GetDecimal(3));
+            }
+
+            command.CommandText = """
                 SELECT AttributionSnapshotVersion,SupplierIdSnapshot,UnitCostSnapshot
                 FROM dbo.SalesDocumentLines
                 WHERE DocumentId=@DocumentId AND LineNumber=1;

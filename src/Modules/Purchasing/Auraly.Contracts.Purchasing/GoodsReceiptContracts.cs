@@ -7,6 +7,11 @@ namespace Auraly.Contracts.Purchasing;
 
 public static class PurchasingPermissionCodes
 {
+    public const string ReadPurchaseOrders = "purchasing.purchase-orders.read";
+    public const string CreatePurchaseOrders = "purchasing.purchase-orders.create";
+    public const string ConfirmPurchaseOrders = "purchasing.purchase-orders.confirm";
+    public const string ClosePurchaseOrders = "purchasing.purchase-orders.close";
+    public const string AuthorizeOverReceipt = "purchasing.goods-receipts.over-receive";
     public const string ReadGoodsReceipts = "purchasing.goods-receipts.read";
     public const string CreateGoodsReceipts = "purchasing.goods-receipts.create";
     public const string ConfirmGoodsReceipts = "purchasing.goods-receipts.confirm";
@@ -59,7 +64,9 @@ public sealed record GoodsReceiptLineRequest(
     string TaxTreatment,
     string PresentationName = "Unidad",
     decimal PresentationQuantity = 1,
-    decimal UnitsPerPresentation = 1);
+    decimal UnitsPerPresentation = 1,
+    Guid? PurchaseOrderLineId = null,
+    string? OverReceiptReason = null);
 
 public sealed record ConfirmGoodsReceiptRequest(
     Guid DocumentId,
@@ -77,7 +84,8 @@ public sealed record ConfirmGoodsReceiptRequest(
     string? DraftConcurrencyToken = null,
     string? WithholdingConceptCode = null,
     string? WithholdingJurisdictionCode = null,
-    string PurchaseEvidenceType = PurchaseEvidenceTypes.SupplierElectronicInvoice);
+    string PurchaseEvidenceType = PurchaseEvidenceTypes.SupplierElectronicInvoice,
+    Guid? PurchaseOrderId = null);
 
 public sealed record GoodsReceiptLineSnapshot(
     int LineNumber,
@@ -94,7 +102,10 @@ public sealed record GoodsReceiptLineSnapshot(
     decimal LineTotal,
     string PresentationName = "Unidad",
     decimal PresentationQuantity = 1,
-    decimal UnitsPerPresentation = 1);
+    decimal UnitsPerPresentation = 1,
+    Guid? PurchaseOrderLineId = null,
+    string? OverReceiptReason = null,
+    bool OverReceiptAuthorized = false);
 
 public sealed record GoodsReceiptDocumentPayload(
     Guid TenantId,
@@ -122,7 +133,8 @@ public sealed record GoodsReceiptDocumentPayload(
     WithholdingCalculationSnapshot Withholding,
     string? SupplierNameSnapshot = null,
     string? WarehouseNameSnapshot = null,
-    string PurchaseEvidenceType = PurchaseEvidenceTypes.SupplierElectronicInvoice);
+    string PurchaseEvidenceType = PurchaseEvidenceTypes.SupplierElectronicInvoice,
+    Guid? PurchaseOrderId = null);
 
 public sealed record GoodsReceiptAcceptance(
     Guid DocumentId,
@@ -146,7 +158,8 @@ public sealed record SaveGoodsReceiptDraftRequest(
     string? Notes,
     IReadOnlyCollection<GoodsReceiptLineRequest> Lines,
     string? ConcurrencyToken,
-    string? PurchaseEvidenceType = null);
+    string? PurchaseEvidenceType = null,
+    Guid? PurchaseOrderId = null);
 
 public sealed record GoodsReceiptDraft(
     Guid DraftId, Guid BusinessId, Guid? WarehouseId, Guid? SupplierId,
@@ -155,7 +168,8 @@ public sealed record GoodsReceiptDraft(
     string CurrencyCode, string? Notes, decimal NetAmount, decimal TaxAmount,
     decimal GrandTotal, IReadOnlyList<GoodsReceiptLineSnapshot> Lines,
     DateTimeOffset UpdatedAt, string ConcurrencyToken,
-    string? PurchaseEvidenceType = null);
+    string? PurchaseEvidenceType = null,
+    Guid? PurchaseOrderId = null);
 
 public sealed record GoodsReceiptDetail(
     Guid DocumentId, string DocumentNumber, string Status,
@@ -165,7 +179,8 @@ public sealed record GoodsReceiptDetail(
     string CurrencyCode, string? Notes, decimal NetAmount, decimal TaxAmount,
     decimal GrandTotal, DateTimeOffset AcceptedAt, DateTimeOffset? ProcessedAt,
     IReadOnlyList<GoodsReceiptLineSnapshot> Lines,
-    string PurchaseEvidenceType = PurchaseEvidenceTypes.SupplierElectronicInvoice);
+    string PurchaseEvidenceType = PurchaseEvidenceTypes.SupplierElectronicInvoice,
+    Guid? PurchaseOrderId = null);
 
 public sealed record GoodsReceiptListItem(
     Guid DocumentId, string? DocumentNumber, string Status,

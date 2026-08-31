@@ -103,6 +103,10 @@ public sealed class GoodsReceiptWorkspaceService(IGoodsReceiptWorkspaceStore sto
 
         GoodsReceiptCalculation? calculation = null;
         var normalizedLines = GoodsReceiptLineNormalizer.Normalize(request.Lines);
+        if (request.PurchaseOrderId is null && normalizedLines.Any(line => line.PurchaseOrderLineId is not null))
+            throw new PurchasingValidationException("PurchaseOrderId is required when draft lines reference an order.");
+        if (request.PurchaseOrderId is not null && normalizedLines.Any(line => line.PurchaseOrderLineId is null))
+            throw new PurchasingValidationException("Every recovered draft line must retain its order-line reference.");
         if (request.PurchaseEvidenceType == PurchaseEvidenceTypes.InternalReceiptVoucher &&
             normalizedLines.Any(line => line.TaxRate > 0 &&
                 line.TaxTreatment == PurchasingTaxTreatments.DeductibleInputVat))
@@ -130,7 +134,8 @@ public sealed class GoodsReceiptWorkspaceService(IGoodsReceiptWorkspaceStore sto
             CurrencyCode = currency,
             SupplierInvoiceNumber = Normalize(request.SupplierInvoiceNumber, 80),
             Notes = Normalize(request.Notes, 1000),
-            Lines = normalizedLines
+            Lines = normalizedLines.Select(line => line with
+            { OverReceiptReason = Normalize(line.OverReceiptReason, 500) }).ToArray()
         }, calculation, cancellationToken);
     }
 

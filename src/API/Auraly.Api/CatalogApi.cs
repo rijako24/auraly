@@ -52,6 +52,11 @@ public static class CatalogApi
                 return result is null ? Results.NotFound() : Results.Ok(result);
             }));
 
+        administration.MapGet("/{productId:guid}/rotation", async (
+            HttpContext context, CatalogService service, Guid productId, CancellationToken ct) =>
+            await Handle(async () => Results.Ok(await service.ProductRotationAsync(
+                context.User.ToCatalogUserIdentity(), productId, ct))));
+
         administration.MapPut("/{productId:guid}/tax-configuration", async (
             HttpContext context, CatalogService service, Guid productId,
             SaveProductTaxConfigurationRequest request, CancellationToken ct) =>

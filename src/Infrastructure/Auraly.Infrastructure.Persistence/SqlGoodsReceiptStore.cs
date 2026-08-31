@@ -49,6 +49,8 @@ public sealed class SqlGoodsReceiptStore(
                 connection, transaction, user.BusinessId, request.DocumentId,
                 request.DraftConcurrencyToken, cancellationToken);
             await ValidateScopeAsync(connection, transaction, user, request, cancellationToken);
+            var overReceiptLines = await ValidatePurchaseOrderAsync(
+                connection, transaction, user, request, cancellationToken);
             var number = await AllocateNumberAsync(connection, transaction, user.BusinessId, cancellationToken);
             var now = timeProvider.GetUtcNow();
             var support = request.PurchaseEvidenceType == PurchaseEvidenceTypes.BuyerElectronicSupportDocument
@@ -86,10 +88,13 @@ public sealed class SqlGoodsReceiptStore(
                         line.LineNumber, line.ProductId, line.Description, line.Quantity,
                         line.UnitCost, line.DiscountAmount, line.TaxCode, line.TaxRate,
                         line.TaxTreatment.ToString(), line.NetAmount, line.TaxAmount, line.LineTotal,
-                        source.PresentationName, source.PresentationQuantity, source.UnitsPerPresentation);
+                        source.PresentationName, source.PresentationQuantity, source.UnitsPerPresentation,
+                        source.PurchaseOrderLineId, source.OverReceiptReason,
+                        source.PurchaseOrderLineId is Guid lineId && overReceiptLines.Contains(lineId));
                 }).ToArray(),
                 withholding,
-                PurchaseEvidenceType: request.PurchaseEvidenceType);
+                PurchaseEvidenceType: request.PurchaseEvidenceType,
+                PurchaseOrderId: request.PurchaseOrderId);
             var payloadJson = GoodsReceiptContractSerializer.Serialize(payload);
             var payloadHash = SHA256.HashData(Encoding.UTF8.GetBytes(payloadJson));
 
@@ -302,12 +307,12 @@ public sealed class SqlGoodsReceiptStore(
             INSERT dbo.GoodsReceipts
               (GoodsReceiptId,BusinessId,WarehouseId,SupplierId,DocumentSeriesId,DocumentNumber,
                DocumentPrefix,DocumentSeriesCode,DocumentConsecutive,IdempotencyKey,PayloadHash,
-               PurchaseEvidenceType,SupportFiscalSeriesId,SupportFiscalAuthorizationId,SupportFiscalNumber,
+               PurchaseOrderId,PurchaseEvidenceType,SupportFiscalSeriesId,SupportFiscalAuthorizationId,SupportFiscalNumber,
                SupplierInvoiceNumber,SupplierInvoiceDate,ReceivedAt,CreatesPayable,DueDate,CurrencyCode,
                Notes,NetAmount,TaxAmount,GrandTotal,Status,ConfirmedByUserId,AcceptedAt)
             VALUES
               (@Id,@BusinessId,@WarehouseId,@SupplierId,@SeriesId,@Number,@Prefix,@SeriesCode,@Consecutive,
-               @IdempotencyKey,@PayloadHash,@PurchaseEvidenceType,@SupportFiscalSeriesId,@SupportFiscalAuthorizationId,@SupportFiscalNumber,
+               @IdempotencyKey,@PayloadHash,@PurchaseOrderId,@PurchaseEvidenceType,@SupportFiscalSeriesId,@SupportFiscalAuthorizationId,@SupportFiscalNumber,
                @SupplierInvoiceNumber,@SupplierInvoiceDate,@ReceivedAt,
                @CreatesPayable,@DueDate,@CurrencyCode,@Notes,@NetAmount,@TaxAmount,@GrandTotal,N'Accepted',@UserId,@Now);
             """;
@@ -323,6 +328,7 @@ public sealed class SqlGoodsReceiptStore(
         command.Parameters.AddWithValue("@Consecutive", number.Consecutive);
         command.Parameters.AddWithValue("@IdempotencyKey", idempotencyKey);
         command.Parameters.Add("@PayloadHash", SqlDbType.Binary, 32).Value = requestHash;
+        command.Parameters.AddWithValue("@PurchaseOrderId", (object?)request.PurchaseOrderId ?? DBNull.Value);
         command.Parameters.AddWithValue("@PurchaseEvidenceType", request.PurchaseEvidenceType);
         command.Parameters.AddWithValue("@SupportFiscalSeriesId", (object?)support?.SeriesId ?? DBNull.Value);
         command.Parameters.AddWithValue("@SupportFiscalAuthorizationId", (object?)support?.AuthorizationId ?? DBNull.Value);
@@ -348,9 +354,11 @@ public sealed class SqlGoodsReceiptStore(
         const string sql = """
             INSERT dbo.GoodsReceiptLines
               (GoodsReceiptId,LineNumber,ProductId,DescriptionSnapshot,Quantity,UnitCost,DiscountAmount,
-               TaxCode,TaxRate,TaxTreatment,NetAmount,TaxAmount,LineTotal,PresentationNameSnapshot,PresentationQuantity,UnitsPerPresentation)
+               TaxCode,TaxRate,TaxTreatment,NetAmount,TaxAmount,LineTotal,PresentationNameSnapshot,PresentationQuantity,UnitsPerPresentation,
+               PurchaseOrderLineId,OverReceiptReason,OverReceiptAuthorized)
             VALUES(@Id,@Line,@ProductId,@Description,@Quantity,@UnitCost,@Discount,@TaxCode,
-                   @TaxRate,@TaxTreatment,@Net,@Tax,@Total,@PresentationName,@PresentationQuantity,@UnitsPerPresentation);
+                   @TaxRate,@TaxTreatment,@Net,@Tax,@Total,@PresentationName,@PresentationQuantity,@UnitsPerPresentation,
+                   @PurchaseOrderLineId,@OverReceiptReason,@OverReceiptAuthorized);
             """;
         foreach (var line in calculation.Lines)
         {
@@ -372,8 +380,57 @@ public sealed class SqlGoodsReceiptStore(
             command.Parameters.AddWithValue("@PresentationName", source.PresentationName);
             AddDecimal(command, "@PresentationQuantity", source.PresentationQuantity, 19, 6);
             AddDecimal(command, "@UnitsPerPresentation", source.UnitsPerPresentation, 19, 6);
+            command.Parameters.AddWithValue("@PurchaseOrderLineId", (object?)source.PurchaseOrderLineId ?? DBNull.Value);
+            command.Parameters.AddWithValue("@OverReceiptReason", (object?)source.OverReceiptReason ?? DBNull.Value);
+            command.Parameters.AddWithValue("@OverReceiptAuthorized", source.PurchaseOrderLineId is not null &&
+                source.OverReceiptReason is not null);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
+    }
+
+    private static async Task<HashSet<Guid>> ValidatePurchaseOrderAsync(
+        SqlConnection connection, SqlTransaction transaction, PurchasingUserIdentity user,
+        ConfirmGoodsReceiptRequest request, CancellationToken cancellationToken)
+    {
+        var result = new HashSet<Guid>();
+        if (request.PurchaseOrderId is null)
+        {
+            if (request.Lines.Any(line => line.PurchaseOrderLineId is not null || line.OverReceiptReason is not null))
+                throw new PurchasingValidationException("Receipt lines cannot reference a purchase order without PurchaseOrderId.");
+            return result;
+        }
+        await using var command = new SqlCommand(
+            "purchasing.ReceiptOrderValidate", connection, transaction)
+        {
+            CommandType = CommandType.StoredProcedure
+        };
+        command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
+        command.Parameters.AddWithValue("@PurchaseOrderId", request.PurchaseOrderId.Value);
+        command.Parameters.AddWithValue("@WarehouseId", request.WarehouseId);
+        command.Parameters.AddWithValue("@SupplierId", request.SupplierId);
+        command.Parameters.AddWithValue("@CanAuthorizeOverReceipt",
+            user.Permissions.Contains(PurchasingPermissionCodes.AuthorizeOverReceipt));
+        command.Parameters.AddWithValue("@LinesJson", JsonSerializer.Serialize(request.Lines.Select(line => new
+        {
+            line.PurchaseOrderLineId,
+            line.ProductId,
+            line.Quantity,
+            line.OverReceiptReason
+        })));
+        try
+        {
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken)) result.Add(reader.GetGuid(0));
+        }
+        catch (SqlException exception) when (exception.Number == 51211)
+        {
+            throw new PurchasingForbiddenException(exception.Message);
+        }
+        catch (SqlException exception) when (exception.Number == 51209)
+        {
+            throw new PurchasingValidationException(exception.Message);
+        }
+        return result;
     }
 
     private static async Task<SupportFiscalAllocation> AllocateSupportFiscalAsync(
@@ -607,6 +664,7 @@ public sealed class SqlGoodsReceiptStore(
             Currency = request.CurrencyCode.ToUpperInvariant(),
             request.Notes,
             request.PurchaseEvidenceType,
+            request.PurchaseOrderId,
             calculation.NetAmount,
             calculation.TaxAmount,
             calculation.GrandTotal,

@@ -180,18 +180,19 @@ SPedido
 
 ---
 
-## 8. Compras y entradas de mercancía
+## 8. Compras y recepciones
 
 | Xion | Interfaz | Código | Tabla |
 |---|---|---|---|
-| Entrada de mercancía | Entradas de mercancía | `GoodsReceipt` | `GoodsReceipts` |
+| Orden de pedido | Órdenes de compra | `PurchaseOrder` | `PurchaseOrders` |
+| Entrada de mercancía | Recepciones de compra | `GoodsReceipt` | `GoodsReceipts` |
 | Entrada detalle | Productos recibidos | `GoodsReceiptLine` | `GoodsReceiptLines` |
 | Factura proveedor | Factura del proveedor | `SupplierInvoiceReference` | parte de `GoodsReceipts` en MVP |
 | Diferencia | Diferencia de recepción | `ReceiptDifference` | `GoodsReceiptLines` |
 | Devolución entrada | Devolución a proveedor | `PurchaseReturn` | `PurchaseReturns` |
 | Devolución detalle | Productos devueltos | `PurchaseReturnLine` | `PurchaseReturnLines` |
 
-Se conserva “Entrada de mercancía” en la interfaz porque es claro para el cliente. En código se usa `GoodsReceipt`, no `MerchandiseEntry`.
+La interfaz distingue el compromiso (**Orden de compra**) de la llegada física (**Recepción de compra**). En código se conservan `PurchaseOrder` y `GoodsReceipt`; no se introducen traducciones técnicas paralelas.
 
 ---
 
@@ -651,7 +652,7 @@ Se conservan en interfaz términos útiles como:
 
 ```text
 Bodega
-Entrada de mercancía
+Recepción de compra
 Kardex
 Arqueo
 Avería
