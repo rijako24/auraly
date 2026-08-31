@@ -924,6 +924,7 @@
         "type": "Project",
         "dependencies": {
           "Auraly.Application.DocumentProcessing": "[1.0.0, )",
+          "Auraly.BuildingBlocks.Application": "[1.0.0, )",
           "Auraly.Contracts.Inventory": "[1.0.0, )",
           "Auraly.Domain.Inventory": "[1.0.0, )"
         }

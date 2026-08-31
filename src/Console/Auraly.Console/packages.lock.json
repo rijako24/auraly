@@ -659,6 +659,42 @@
           "System.Drawing.Common": "6.0.0"
         }
       },
+      "auraly.application.documentprocessing": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.Contracts.DocumentProcessing": "[1.0.0, )"
+        }
+      },
+      "auraly.application.fiscal": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Commerce.Payroll.Contracts": "[1.0.0, )",
+          "Auraly.Contracts.Fiscal": "[1.0.0, )",
+          "Auraly.Contracts.Purchasing": "[1.0.0, )",
+          "Auraly.Contracts.Returns": "[1.0.0, )",
+          "Auraly.Contracts.Sales": "[1.0.0, )",
+          "Auraly.Domain.Fiscal": "[1.0.0, )",
+          "Auraly.Fiscal.Core": "[1.0.0, )",
+          "Auraly.Fiscal.Ubl": "[1.0.0, )"
+        }
+      },
+      "auraly.application.sales": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.Application.DocumentProcessing": "[1.0.0, )",
+          "Auraly.BuildingBlocks.Application": "[1.0.0, )",
+          "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )",
+          "Auraly.Contracts.Authorization": "[1.0.0, )",
+          "Auraly.Contracts.Catalog": "[1.0.0, )",
+          "Auraly.Contracts.DocumentProcessing": "[1.0.0, )",
+          "Auraly.Contracts.Fiscal": "[1.0.0, )",
+          "Auraly.Contracts.Organization": "[1.0.0, )",
+          "Auraly.Contracts.Sales": "[1.0.0, )",
+          "Auraly.Domain.Sales": "[1.0.0, )",
+          "Auraly.Fiscal.Core": "[1.0.0, )"
+        }
+      },
       "auraly.buildingblocks.application": {
         "type": "Project",
         "dependencies": {
@@ -674,20 +710,128 @@
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
         }
       },
+      "auraly.commerce.accounting.application": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Commerce.Accounting.Contracts": "[1.0.0, )",
+          "Auraly.Commerce.Accounting.Domain": "[1.0.0, )",
+          "Auraly.Commerce.Payroll.Contracts": "[1.0.0, )",
+          "Auraly.Contracts.Dispatching": "[1.0.0, )",
+          "Auraly.Contracts.Inventory": "[1.0.0, )",
+          "Auraly.Contracts.WorkSessions": "[1.0.0, )"
+        }
+      },
+      "auraly.commerce.accounting.contracts": {
+        "type": "Project"
+      },
+      "auraly.commerce.accounting.domain": {
+        "type": "Project"
+      },
+      "auraly.commerce.payroll.contracts": {
+        "type": "Project"
+      },
+      "auraly.commerce.taxation.contracts": {
+        "type": "Project"
+      },
+      "auraly.contracts.authentication": {
+        "type": "Project"
+      },
       "auraly.contracts.authorization": {
         "type": "Project",
         "dependencies": {
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
         }
       },
+      "auraly.contracts.catalog": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "auraly.contracts.dispatching": {
+        "type": "Project"
+      },
+      "auraly.contracts.documentprocessing": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "auraly.contracts.fiscal": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.Contracts.Purchasing": "[1.0.0, )",
+          "Auraly.Contracts.Returns": "[1.0.0, )",
+          "Auraly.Contracts.Sales": "[1.0.0, )",
+          "Auraly.Fiscal.Core": "[1.0.0, )"
+        }
+      },
+      "auraly.contracts.inventory": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "auraly.contracts.organization": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Contracts.Authentication": "[1.0.0, )"
+        }
+      },
       "auraly.contracts.parties": {
         "type": "Project"
+      },
+      "auraly.contracts.purchasing": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )"
+        }
+      },
+      "auraly.contracts.returns": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "auraly.contracts.sales": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Commerce.Taxation.Contracts": "[1.0.0, )"
+        }
+      },
+      "auraly.contracts.worksessions": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
+        }
       },
       "auraly.domain.catalog": {
         "type": "Project",
         "dependencies": {
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
         }
+      },
+      "auraly.domain.fiscal": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "auraly.domain.sales": {
+        "type": "Project",
+        "dependencies": {
+          "Auraly.BuildingBlocks.Domain": "[1.0.0, )"
+        }
+      },
+      "auraly.fiscal.core": {
+        "type": "Project"
+      },
+      "auraly.fiscal.ubl": {
+        "type": "Project"
       },
       "auraly.platform.application": {
         "type": "Project",
@@ -711,7 +855,10 @@
       "auraly.platform.infrastructure": {
         "type": "Project",
         "dependencies": {
+          "Auraly.Application.Fiscal": "[1.0.0, )",
+          "Auraly.Application.Sales": "[1.0.0, )",
           "Auraly.BuildingBlocks.Domain": "[1.0.0, )",
+          "Auraly.Commerce.Accounting.Application": "[1.0.0, )",
           "Auraly.Platform.Application": "[1.0.0, )",
           "Auraly.Platform.Domain": "[1.0.0, )",
           "Azure.AI.OpenAI": "[2.1.0, )",
