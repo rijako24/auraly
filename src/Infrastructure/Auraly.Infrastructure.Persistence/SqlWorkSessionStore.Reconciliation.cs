@@ -59,13 +59,23 @@ public sealed partial class SqlWorkSessionStore
                 reader.GetInt32(11), reader.GetInt64(12), reader.GetDecimal(13), reader.GetDecimal(14),
                 reader.GetDecimal(15), reader.GetString(16), reader.GetString(17), []));
         await reader.CloseAsync();
+        var totalsByClosure = await ReadClosurePaymentTotalsAsync(
+            connection, items.Select(item => item.WorkSessionClosureId).ToArray(), cancellationToken);
         for (var index = 0; index < items.Count; index++)
             items[index] = items[index] with
             {
-                PaymentTotals = await ReadClosurePaymentTotalsAsync(
-                    connection, items[index].WorkSessionClosureId, cancellationToken)
+                PaymentTotals = totalsByClosure.GetValueOrDefault(items[index].WorkSessionClosureId) ?? []
             };
         return new(items, page, pageSize, total);
+    }
+
+    public async Task<IReadOnlyList<WorkSessionPaymentVerificationItem>> ListClosurePaymentVerificationsAsync(
+        WorkSessionIdentity identity, Guid closureId, CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await EnsureClosureScopeAsync(connection, null, identity.TenantId, closureId, cancellationToken);
+        return await ReadPaymentVerificationsAsync(connection, null, closureId, cancellationToken);
     }
 
     public async Task<WorkSessionClosureReconciliationView> ReconcileClosureAsync(
@@ -98,6 +108,33 @@ public sealed partial class SqlWorkSessionStore
             if (lines.Count != request.Lines.Count || countable.Any(value => !lines.ContainsKey(value.PaymentMethodCode)) ||
                 lines.Keys.Any(code => countable.All(value => !value.PaymentMethodCode.Equals(code, StringComparison.OrdinalIgnoreCase))))
                 throw new WorkSessionValidationException("La conciliación debe incluir cada medio contado exactamente una vez.");
+            var expectedVerifications = await ReadPaymentVerificationsAsync(
+                connection, transaction, closureId, cancellationToken);
+            var requestedVerifications = request.PaymentVerifications ?? [];
+            var verificationDecisions = requestedVerifications
+                .GroupBy(value => value.VerificationKey.Trim(), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.OrdinalIgnoreCase);
+            if (verificationDecisions.Any(group => group.Value.Length != 1) ||
+                verificationDecisions.Count != expectedVerifications.Count ||
+                expectedVerifications.Any(item => !verificationDecisions.ContainsKey(item.VerificationKey)) ||
+                verificationDecisions.Keys.Any(key => expectedVerifications.All(item =>
+                    !item.VerificationKey.Equals(key, StringComparison.OrdinalIgnoreCase))))
+                throw new WorkSessionValidationException(
+                    "Debe verificar cada comprobante de tarjeta y transferencia exactamente una vez.");
+            var verifiedAmounts = expectedVerifications
+                .Where(item => verificationDecisions[item.VerificationKey][0].Status == "Verified")
+                .GroupBy(item => item.PaymentMethodCode, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.Sum(item => item.Amount),
+                    StringComparer.OrdinalIgnoreCase);
+            foreach (var method in expectedVerifications.Select(item => item.PaymentMethodCode)
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var verified = verifiedAmounts.GetValueOrDefault(method);
+                if (!lines.TryGetValue(method, out var line) ||
+                    decimal.Round(line.VerifiedAmount, 4) != decimal.Round(verified, 4))
+                    throw new WorkSessionValidationException(
+                        "El valor verificado debe corresponder a los comprobantes confirmados.");
+            }
             var differences = countable.ToDictionary(value => value.PaymentMethodCode,
                 value => decimal.Round(lines[value.PaymentMethodCode].VerifiedAmount-value.NetAmount,4),
                 StringComparer.OrdinalIgnoreCase);
@@ -135,7 +172,12 @@ public sealed partial class SqlWorkSessionStore
                 if (Convert.ToInt32(await validateReason.ExecuteScalarAsync(cancellationToken)) != 1)
                     throw new WorkSessionValidationException("El motivo de conciliación no pertenece al catálogo vigente.");
             }
-            var snapshotObject = new { reconciliationId, closureId, status, reconciledAt, lines=normalizedLines, reclassifications=request.Reclassifications, note=request.Note };
+            var snapshotObject = new
+            {
+                reconciliationId, closureId, status, reconciledAt, lines=normalizedLines,
+                paymentVerifications=requestedVerifications,
+                reclassifications=request.Reclassifications, note=request.Note
+            };
             var snapshot = JsonSerializer.Serialize(snapshotObject, Json);
             var hash = SHA256.HashData(Encoding.UTF8.GetBytes(snapshot));
             await using (var insert = new SqlCommand("""
@@ -245,6 +287,125 @@ public sealed partial class SqlWorkSessionStore
         command.Parameters.AddWithValue("@ClosureId",closureId); await using var reader=await command.ExecuteReaderAsync(cancellationToken);
         while(await reader.ReadAsync(cancellationToken)) result.Add(new(reader.GetString(0),reader.GetDecimal(1),reader.GetDecimal(2),reader.GetDecimal(3),reader.GetDecimal(4),
             reader.IsDBNull(5)?null:reader.GetDecimal(5),reader.IsDBNull(6)?null:reader.GetDecimal(6),reader.GetBoolean(7)));
+        return result;
+    }
+
+    private static async Task<IReadOnlyDictionary<Guid, IReadOnlyList<WorkSessionPaymentTotal>>> ReadClosurePaymentTotalsAsync(
+        SqlConnection connection, IReadOnlyList<Guid> closureIds, CancellationToken cancellationToken)
+    {
+        if (closureIds.Count == 0)
+            return new Dictionary<Guid, IReadOnlyList<WorkSessionPaymentTotal>>();
+        var parameterNames = closureIds.Select((_, index) => $"@ClosureId{index}").ToArray();
+        await using var command = new SqlCommand($"""
+            SELECT total.WorkSessionClosureId,total.PaymentMethodCode,total.SalesAmount,total.RefundAmount,
+              total.OtherAmount,total.NetAmount,total.CountedAmount,total.Difference,
+              CAST(CASE WHEN closureOption.OptionId IS NULL THEN 0 ELSE 1 END AS bit),
+              COALESCE(closureOption.SortOrder,1000)
+            FROM dbo.WorkSessionClosurePaymentTotals total
+            LEFT JOIN reference.Options closureOption ON closureOption.CatalogCode=N'cash-closure-method'
+              AND closureOption.Code=total.PaymentMethodCode AND closureOption.IsActive=1
+            WHERE total.WorkSessionClosureId IN ({string.Join(',', parameterNames)})
+            ORDER BY total.WorkSessionClosureId,COALESCE(closureOption.SortOrder,1000),total.PaymentMethodCode;
+            """, connection);
+        for (var index = 0; index < closureIds.Count; index++)
+            command.Parameters.AddWithValue(parameterNames[index], closureIds[index]);
+        var grouped = new Dictionary<Guid, List<WorkSessionPaymentTotal>>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var closureId = reader.GetGuid(0);
+            if (!grouped.TryGetValue(closureId, out var totals))
+                grouped[closureId] = totals = [];
+            totals.Add(new WorkSessionPaymentTotal(
+                reader.GetString(1), reader.GetDecimal(2), reader.GetDecimal(3), reader.GetDecimal(4),
+                reader.GetDecimal(5), reader.IsDBNull(6) ? null : reader.GetDecimal(6),
+                reader.IsDBNull(7) ? null : reader.GetDecimal(7), reader.GetBoolean(8)));
+        }
+        return grouped.ToDictionary(pair => pair.Key,
+            pair => (IReadOnlyList<WorkSessionPaymentTotal>)pair.Value);
+    }
+
+    private static async Task EnsureClosureScopeAsync(
+        SqlConnection connection, SqlTransaction? transaction, Guid tenantId, Guid closureId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand("""
+            SELECT COUNT(*)
+            FROM dbo.WorkSessionClosures closure
+            INNER JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId
+            INNER JOIN dbo.Businesses business ON business.BusinessId=session.BusinessId
+            WHERE closure.WorkSessionClosureId=@ClosureId AND business.TenantId=@TenantId;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@ClosureId", closureId);
+        command.Parameters.AddWithValue("@TenantId", tenantId);
+        if (Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken)) != 1)
+            throw new WorkSessionNotFoundException("El cierre no existe en la empresa autenticada.");
+    }
+
+    private static async Task<IReadOnlyList<WorkSessionPaymentVerificationItem>> ReadPaymentVerificationsAsync(
+        SqlConnection connection, SqlTransaction? transaction, Guid closureId,
+        CancellationToken cancellationToken)
+    {
+        var result = new List<WorkSessionPaymentVerificationItem>();
+        await using var command = new SqlCommand("""
+            WITH ClosureContext AS
+            (
+                SELECT session.WorkSessionId,session.UserId,session.OpenedAt,closure.ClosedAt
+                FROM dbo.WorkSessionClosures closure
+                INNER JOIN dbo.WorkSessions session ON session.WorkSessionId=closure.WorkSessionId
+                WHERE closure.WorkSessionClosureId=@ClosureId
+            ),
+            VerificationMovements AS
+            (
+                SELECT CONCAT(N'Sale:',CONVERT(nvarchar(36),payment.DocumentId),N':',payment.PaymentNumber) VerificationKey,
+                  COALESCE(mapping.ClosureMethodCode,payment.MethodCode) PaymentMethodCode,N'Sale' MovementType,
+                  payment.DocumentId SourceId,document.DocumentNumber,payment.PaymentNumber SourceNumber,
+                  payment.Amount,payment.Reference,payment.CardFranchiseCode,payment.ApprovalNumber,payment.RegisteredAt OccurredAt
+                FROM dbo.SalesPayments payment
+                INNER JOIN dbo.SalesDocuments document ON document.DocumentId=payment.DocumentId
+                INNER JOIN ClosureContext context ON context.WorkSessionId=document.WorkSessionId
+                LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping ON mapping.PaymentMethodCode=payment.MethodCode
+                UNION ALL
+                SELECT CONCAT(N'Refund:',CONVERT(nvarchar(36),settlement.ReturnId),N':',settlement.SettlementNumber),
+                  COALESCE(mapping.ClosureMethodCode,settlement.MethodCode),N'Refund',settlement.ReturnId,
+                  saleReturn.DocumentNumber,settlement.SettlementNumber,-settlement.Amount,settlement.Reference,
+                  originalPayment.CardFranchiseCode,originalPayment.ApprovalNumber,settlement.OccurredAt
+                FROM dbo.SalesReturnSettlements settlement
+                INNER JOIN dbo.SalesReturns saleReturn ON saleReturn.ReturnId=settlement.ReturnId
+                INNER JOIN ClosureContext context ON saleReturn.CreatedByUserId=context.UserId
+                  AND saleReturn.ReturnedAt>=context.OpenedAt AND saleReturn.ReturnedAt<=context.ClosedAt
+                LEFT JOIN dbo.SalesPayments originalPayment ON originalPayment.DocumentId=settlement.OriginalDocumentId
+                  AND originalPayment.PaymentNumber=settlement.OriginalPaymentNumber
+                LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping ON mapping.PaymentMethodCode=settlement.MethodCode
+                WHERE settlement.SettlementType=N'Refund'
+                UNION ALL
+                SELECT CONCAT(N'Movement:',CONVERT(nvarchar(36),movement.WorkSessionMovementId)),
+                  COALESCE(mapping.ClosureMethodCode,movement.PaymentMethodCode),N'Movement',movement.WorkSessionMovementId,
+                  COALESCE(NULLIF(movement.Reference,N''),movement.SourceKey),0,movement.Amount,movement.Reference,
+                  NULL,NULL,movement.OccurredAt
+                FROM dbo.WorkSessionMovements movement
+                INNER JOIN ClosureContext context ON context.WorkSessionId=movement.WorkSessionId
+                LEFT JOIN worksessions.CashClosurePaymentMethodMappings mapping ON mapping.PaymentMethodCode=movement.PaymentMethodCode
+                WHERE movement.MovementType NOT IN(N'SalePayment',N'Refund')
+            )
+            SELECT movement.VerificationKey,movement.PaymentMethodCode,movement.MovementType,movement.SourceId,
+              movement.DocumentNumber,movement.SourceNumber,movement.Amount,movement.Reference,
+              movement.CardFranchiseCode,movement.ApprovalNumber,movement.OccurredAt
+            FROM VerificationMovements movement
+            INNER JOIN reference.Options closureOption ON closureOption.CatalogCode=N'cash-closure-method'
+              AND closureOption.Code=movement.PaymentMethodCode AND closureOption.IsActive=1
+            WHERE movement.PaymentMethodCode<>N'Cash'
+            ORDER BY closureOption.SortOrder,movement.OccurredAt,movement.VerificationKey;
+            """, connection, transaction);
+        command.Parameters.AddWithValue("@ClosureId", closureId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            result.Add(new WorkSessionPaymentVerificationItem(
+                reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetGuid(3),
+                reader.GetString(4), reader.GetInt32(5), reader.GetDecimal(6),
+                reader.IsDBNull(7) ? null : reader.GetString(7),
+                reader.IsDBNull(8) ? null : reader.GetString(8),
+                reader.IsDBNull(9) ? null : reader.GetString(9), reader.GetDateTimeOffset(10)));
         return result;
     }
 

@@ -35,7 +35,7 @@ export function PagedEntitySelect<T>({
   emptyMessage = "No hay resultados.",
   disabled = false,
   preload = false,
-  pageSize = 30,
+  pageSize = 10,
   className,
 }: {
   queryKey: readonly unknown[];
@@ -89,7 +89,7 @@ export function PagedEntitySelect<T>({
       void query.fetchNextPage();
   }
 
-  return <Popover open={open} onOpenChange={setOpen}>
+  return <Popover modal open={open} onOpenChange={setOpen}>
     <PopoverTrigger asChild>
       <Button type="button" variant="outline" role="combobox" aria-label={ariaLabel} aria-expanded={open} disabled={disabled} className={cn("w-full justify-between font-normal", className)}>
         <span className="truncate">{selected?.label ?? placeholder}</span>

@@ -365,6 +365,33 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
         Assert.Equal(20_000m, listed.PaymentTotals.Single(item => item.PaymentMethodCode == "Cash").Difference);
         Assert.Equal(-20_000m, listed.PaymentTotals.Single(item => item.PaymentMethodCode == "Transfer").Difference);
 
+        var verificationItems = await client.GetFromJsonAsync<WorkSessionPaymentVerificationItem[]>(
+            $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/payment-verifications");
+        Assert.NotNull(verificationItems);
+        Assert.Equal(4, verificationItems.Length);
+        Assert.Equal(2, verificationItems.Count(item => item.PaymentMethodCode == "Card"));
+        Assert.Equal(2, verificationItems.Count(item => item.PaymentMethodCode == "Transfer"));
+
+        using (var incomplete = new HttpRequestMessage(HttpMethod.Post,
+                   $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/reconcile")
+               {
+                   Content = JsonContent.Create(new ReconcileWorkSessionClosureRequest(
+                   [
+                       new("Cash", 100_000m, true, null),
+                       new("Card", 50_000m, true, null),
+                       new("Transfer", 10_000m, true, null)
+                   ], [new("Transfer", "Cash", 20_000m)], "Sin detalle de comprobantes"))
+               })
+        {
+            incomplete.Headers.Add("Idempotency-Key", $"reconcile-incomplete-{Guid.NewGuid():N}");
+            using var incompleteResponse = await client.SendAsync(incomplete);
+            Assert.Equal(HttpStatusCode.BadRequest, incompleteResponse.StatusCode);
+        }
+
+        var verificationDecisions = verificationItems.Select(item =>
+            new WorkSessionPaymentVerificationDecision(item.VerificationKey,
+                item.PaymentMethodCode == "Transfer" && item.Amount == 20_000m ? "Missing" : "Verified")).ToArray();
+
         using var message = new HttpRequestMessage(HttpMethod.Post,
             $"/api/commerce/v1/work-sessions/closures/{closure.WorkSessionClosureId:D}/reconcile")
         {
@@ -373,7 +400,8 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
                 new("Cash", 100_000m, true, null),
                 new("Card", 50_000m, true, null),
                 new("Transfer", 10_000m, true, null)
-            ], [new("Transfer", "Cash", 20_000m)], "Transferencia registrada como efectivo"))
+            ], [new("Transfer", "Cash", 20_000m)], "Transferencia registrada como efectivo",
+                verificationDecisions))
         };
         message.Headers.Add("Idempotency-Key", $"reconcile-{Guid.NewGuid():N}");
         using var response = await client.SendAsync(message);
@@ -473,7 +501,9 @@ public sealed class WorkSessionApiTests(ServerSliceFixture fixture)
               (NEWID(),@SessionId,NULL,NULL,CAST(SYSUTCDATETIME() AS date),
                N'CashIn',N'CreditCard',20000,NULL,N'test:credit-card',SYSUTCDATETIME(),@UserId),
               (NEWID(),@SessionId,NULL,NULL,CAST(SYSUTCDATETIME() AS date),
-               N'CashIn',N'Transfer',30000,NULL,N'test:transfer',SYSUTCDATETIME(),@UserId);
+               N'CashIn',N'Transfer',10000,N'Comprobante 10.000',N'test:transfer-10',SYSUTCDATETIME(),@UserId),
+              (NEWID(),@SessionId,NULL,NULL,CAST(SYSUTCDATETIME() AS date),
+               N'CashIn',N'Transfer',20000,N'Comprobante 20.000',N'test:transfer-20',SYSUTCDATETIME(),@UserId);
             """;
         command.Parameters.AddWithValue("@SessionId", workSessionId);
         command.Parameters.AddWithValue("@UserId", userId);

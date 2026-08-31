@@ -160,6 +160,8 @@ public sealed class TenantProvisioningTests(ServerSliceFixture fixture)
             result.TenantId, "CASHIER", "pos.approvals.receive_notifications"));
         Assert.True(await RoleHasPermissionAsync(
             result.TenantId, "CASHIER", "pos.synchronization.events.read"));
+        Assert.True(await RoleHasPermissionAsync(
+            result.TenantId, "CASHIER", "inventory.read"));
         foreach (var permission in new[]
                  {
                      "accounting.configure", "accounting.manual.create",

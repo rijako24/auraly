@@ -54,7 +54,7 @@ public sealed class SqlFiscalConfigurationStore(
             """;
         await using var connection = connections.Create();
         await connection.OpenAsync(cancellationToken);
-        var (dianLimit, dianUsed) = await ReadDianQuotaAsync(
+        var (dianLimit, dianUsed, hasDianQuota) = await ReadDianQuotaAsync(
             connection, tenantId, cancellationToken);
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@TenantId", tenantId);
@@ -64,7 +64,7 @@ public sealed class SqlFiscalConfigurationStore(
             return new FiscalResolutionConfiguration(
                 businessId, null, null, null, null, null, null, null, false, false, false,
                 DianDocumentMonthlyLimit: dianLimit, DianDocumentsUsed: dianUsed,
-                HasDianDocumentQuota: dianUsed < dianLimit);
+                HasDianDocumentQuota: hasDianQuota);
 
         var validFrom = DateOnly.FromDateTime(reader.GetDateTime(2));
         var validUntil = DateOnly.FromDateTime(reader.GetDateTime(3));
@@ -110,26 +110,35 @@ public sealed class SqlFiscalConfigurationStore(
             warnings,
             dianLimit,
             dianUsed,
-            dianUsed < dianLimit);
+            hasDianQuota);
     }
 
-    private static async Task<(int Limit, int Used)> ReadDianQuotaAsync(
+    private static async Task<(int Limit, int Used, bool Available)> ReadDianQuotaAsync(
         SqlConnection connection, Guid tenantId, CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand("""
-            SELECT subscription.DianDocumentMonthlyLimit,periodValue.DianDocumentsUsed
+            SELECT subscription.DianDocumentMonthlyLimit,periodValue.DianDocumentsUsed,
+              subscription.Status,periodValue.TenantSubscriptionUsagePeriodId
             FROM billing.TenantSubscriptions subscription
-            JOIN billing.TenantSubscriptionUsagePeriods periodValue
-              ON periodValue.TenantSubscriptionId=subscription.TenantSubscriptionId
-             AND periodValue.PeriodStart<=SYSDATETIMEOFFSET()
-             AND periodValue.PeriodEnd>SYSDATETIMEOFFSET()
-            WHERE subscription.TenantId=@TenantId
-              AND subscription.Status IN(N'Active',N'PastDue');
+            OUTER APPLY
+            (
+              SELECT TOP(1) usageValue.TenantSubscriptionUsagePeriodId,usageValue.DianDocumentsUsed
+              FROM billing.TenantSubscriptionUsagePeriods usageValue
+              WHERE usageValue.TenantSubscriptionId=subscription.TenantSubscriptionId
+                AND usageValue.PeriodStart<=SYSDATETIMEOFFSET()
+                AND usageValue.PeriodEnd>SYSDATETIMEOFFSET()
+              ORDER BY usageValue.PeriodStart DESC
+            ) periodValue
+            WHERE subscription.TenantId=@TenantId;
             """, connection);
         command.Parameters.AddWithValue("@TenantId", tenantId);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        return await reader.ReadAsync(cancellationToken)
-            ? (reader.GetInt32(0), reader.GetInt32(1))
-            : (0, 0);
+        if (!await reader.ReadAsync(cancellationToken))
+            return (0, 0, true);
+        var limit = reader.GetInt32(0);
+        var used = reader.IsDBNull(1) ? 0 : reader.GetInt32(1);
+        var enabled = reader.GetString(2) is "Active" or "PastDue";
+        var hasCurrentPeriod = !reader.IsDBNull(3);
+        return (limit, used, enabled && hasCurrentPeriod && used < limit);
     }
 }

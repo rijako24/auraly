@@ -77,6 +77,8 @@ public sealed record AssignFiscalDeviceSeriesRequest(
     Guid DeviceId,
     Guid DianNumberingRangeId);
 
+public sealed record UnassignFiscalDeviceSeriesRequest(Guid DeviceId);
+
 public sealed record SaveFiscalResolutionAlertSettingsRequest(
     int ExpirationWarningDays,
     long RemainingNumberWarningThreshold);

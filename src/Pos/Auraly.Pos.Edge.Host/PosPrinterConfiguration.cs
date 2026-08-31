@@ -288,7 +288,8 @@ public static class PosPrinterConfigurationExtensions
 
 public sealed class ConfigurableOrderDocumentPrinter(
     PosPrinterConfigurationStore settings,
-    HalfLetterDocumentRenderer renderer)
+    HalfLetterDocumentRenderer renderer,
+    IWindowsRenderedPrintJob renderedPrintJob)
 {
     public async Task PrintAsync(
         IReadOnlyCollection<Auraly.Contracts.Sales.OnlineSalesReceipt> receipts,
@@ -320,25 +321,33 @@ public sealed class ConfigurableOrderDocumentPrinter(
             : receipts.GroupBy(_ => (string?)null);
         foreach (var batch in batches)
         {
+            var rendered = renderer.Render(batch.ToArray(), format);
+            if (configuration.OrderMode == OrderPrinterModes.WindowsPrint)
+            {
+                var printerName = batch.Key
+                    ?? throw new InvalidOperationException(
+                        "La impresora para este formato no está configurada.");
+                await renderedPrintJob.PrintAsync(
+                    printerName,
+                    $"Auraly-{format}",
+                    rendered,
+                    directory,
+                    cancellationToken);
+                continue;
+            }
+
             var target = Path.Combine(directory, $"{format}-{Guid.NewGuid():N}.html");
             await File.WriteAllTextAsync(
-                target, renderer.Render(batch.ToArray(), format),
-                new System.Text.UTF8Encoding(false), cancellationToken);
+                target, rendered, new System.Text.UTF8Encoding(false), cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (!OperatingSystem.IsWindows())
                 throw new PlatformNotSupportedException(
-                    "La impresion local de media carta requiere Windows.");
-            var start = new System.Diagnostics.ProcessStartInfo
+                    "La vista previa local de documentos requiere Windows.");
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
                 FileName = Path.GetFullPath(target),
                 UseShellExecute = true
-            };
-            if (configuration.OrderMode == OrderPrinterModes.WindowsPrint)
-            {
-                start.Verb = "printto";
-                start.Arguments = $"\"{batch.Key}\"";
-            }
-            System.Diagnostics.Process.Start(start);
+            });
         }
     }
 
@@ -383,6 +392,8 @@ public sealed class ConfigurablePosReceiptPrinter(
     HtmlReceiptPreviewRenderer html,
     IReceiptPreviewLauncher preview,
     IWindowsRawPrintJob rawPrintJob,
+    IWindowsRenderedPrintJob renderedPrintJob,
+    ConfigurableOrderDocumentPrinter orderDocumentPrinter,
     PosWorkstationIdentity? workstation = null) : IPosReceiptPrinter
 {
     public Task PrintAsync(
@@ -391,8 +402,11 @@ public sealed class ConfigurablePosReceiptPrinter(
     {
         var configuration = settings.Load();
         if (configuration.PosOutputFormat != PrintTemplateFormats.Receipt)
-            throw new InvalidOperationException(
-                "El formato configurado requiere el diálogo de impresión.");
+            return orderDocumentPrinter.PrintAsync(
+                receipt,
+                configuration.PosPrinterName,
+                configuration.PosOutputFormat,
+                cancellationToken);
         return PrintReceiptAsync(receipt, cancellationToken);
     }
 
@@ -418,6 +432,18 @@ public sealed class ConfigurablePosReceiptPrinter(
                 : receipt.CompanyLogoSource
         };
         var configuration = settings.Load();
+        var printerName = workflowPrinterName ?? configuration.PrinterFor(
+            receipt.DocumentType, PrintTemplateFormats.Receipt);
+        if (configuration.ReceiptMode == PosPrinterModes.WindowsRaw &&
+            WindowsPrinterOutput.RequiresRenderedDocument(printerName))
+        {
+            return renderedPrintJob.PrintAsync(
+                printerName!,
+                $"Auraly-{receipt.DocumentNumber}",
+                html.Render(receipt with { PaperWidthMillimeters = paperWidthMillimeters }),
+                settings.ReceiptOutputDirectory,
+                cancellationToken);
+        }
         var printer = configuration.ReceiptMode switch
         {
             PosPrinterModes.BrowserPreview => (IPosReceiptPrinter)
@@ -426,8 +452,7 @@ public sealed class ConfigurablePosReceiptPrinter(
             PosPrinterModes.File => new FileReceiptPrinter(
                 settings.ReceiptOutputDirectory, escPos),
             PosPrinterModes.WindowsRaw => ReceiptPrinterForWindows(
-                workflowPrinterName ?? configuration.PrinterFor(
-                    receipt.DocumentType, PrintTemplateFormats.Receipt)
+                printerName
                     ?? throw new InvalidOperationException(
                         "La impresora de tirilla no esta configurada.")),
             _ => throw new InvalidOperationException(
@@ -444,9 +469,6 @@ public sealed class ConfigurablePosReceiptPrinter(
 
     private IPosReceiptPrinter ReceiptPrinterForWindows(string printerName)
     {
-        if (WindowsPrinterOutput.RequiresRenderedDocument(printerName))
-            throw new InvalidOperationException(
-                "La impresora configurada requiere el diálogo de impresión.");
         return new WindowsRawReceiptPrinter(printerName, escPos, rawPrintJob);
     }
 

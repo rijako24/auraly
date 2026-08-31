@@ -30,13 +30,17 @@ public sealed class PosConfigurationTests
                 new WarehouseId(enrollment.WarehouseId),
                 new DeviceId(enrollment.DeviceId),
                 warehouseAllowsNegativeStock: false);
+            var events = new PosSynchronizationEventLog(TimeProvider.System);
             var sink = new PosWarehousePolicySink(
-                runtime, store, NullLogger<PosWarehousePolicySink>.Instance);
+                runtime, store, events, NullLogger<PosWarehousePolicySink>.Instance);
 
             await sink.ApplyAsync(true);
 
             Assert.True(runtime.WarehouseAllowsNegativeStock);
             Assert.True(store.Load()!.WarehouseAllowsNegativeStock);
+            var policyEvent = Assert.Single(events.Read());
+            Assert.Equal("Bodega", policyEvent.Category);
+            Assert.Contains("permite", policyEvent.Detail, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {
@@ -104,7 +108,7 @@ public sealed class PosConfigurationTests
     }
 
     [Fact]
-    public async Task Pdf_printer_defers_receipts_to_the_browser_dialog_instead_of_opening_html()
+    public async Task Virtual_document_printer_receives_rendered_receipt_without_browser_dialog()
     {
         var directory = Path.Combine(
             Path.GetTempPath(), "auraly-pdf-printer-" + Guid.NewGuid().ToString("N"));
@@ -122,16 +126,23 @@ public sealed class PosConfigurationTests
                 OrdersPrinterName: "Microsoft Print to PDF"));
             var raw = new RecordingRawPrintJob();
             var rendered = new RecordingRenderedPrintJob();
+            var documents = new ConfigurableOrderDocumentPrinter(
+                store, new HalfLetterDocumentRenderer(), rendered);
             var printer = new ConfigurablePosReceiptPrinter(
                 store,
                 new EscPosReceiptRenderer(),
                 new HtmlReceiptPreviewRenderer(),
                 new NoopPreviewLauncher(),
-                raw);
+                raw,
+                rendered,
+                documents);
 
-            var error = await Assert.ThrowsAsync<InvalidOperationException>(
-                () => printer.PrintAsync(Receipt()));
-            Assert.Contains("diálogo de impresión", error.Message,
+            var receipt = Receipt();
+            await printer.PrintAsync(receipt);
+            Assert.Empty(raw.PrinterNames);
+            Assert.Single(rendered.PrinterNames);
+            Assert.Equal("Microsoft Print to PDF", rendered.PrinterNames[0]);
+            Assert.Contains("<!doctype html>", rendered.Documents[0],
                 StringComparison.OrdinalIgnoreCase);
             var now = DateTimeOffset.UtcNow;
             await new PosWorkSessionClosurePrinter(store, raw, rendered).PrintAsync(
@@ -142,10 +153,8 @@ public sealed class PosConfigurationTests
                     [new WorkSessionPaymentTotal("Cash", 10m, 0, 0, 10m, 10m, 0)]),
                 CancellationToken.None);
 
-            Assert.Empty(raw.PrinterNames);
-            Assert.Single(rendered.PrinterNames);
-            Assert.Equal("Microsoft Print to PDF", rendered.PrinterNames[0]);
-            Assert.Contains("ARQUEO DE CAJA", rendered.Documents[0],
+            Assert.Equal(2, rendered.PrinterNames.Count);
+            Assert.Contains("ARQUEO DE CAJA", rendered.Documents[1],
                 StringComparison.Ordinal);
         }
         finally
@@ -195,6 +204,50 @@ public sealed class PosConfigurationTests
             configuration.Keys,
             key => key.StartsWith("PosEdge:Fiscal:", StringComparison.Ordinal));
         Assert.DoesNotContain("PosEdge:SupplierTaxId", configuration.Keys);
+    }
+
+    [Fact]
+    public async Task Configured_sheet_format_is_sent_to_the_local_printer_without_browser_dialog()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(), "auraly-sheet-printer-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new PosPrinterConfigurationStore(
+                Path.Combine(directory, "settings.json"),
+                Path.Combine(directory, "receipts"));
+            store.Save(new PosPrinterConfiguration(
+                PosPrinterModes.WindowsRaw,
+                "Microsoft XPS Document Writer",
+                80,
+                "Microsoft XPS Document Writer",
+                OrderPrinterModes.WindowsPrint,
+                PosOutputFormat: PrintTemplateFormats.HalfLetter,
+                PosPrinterName: "Microsoft XPS Document Writer"));
+            var rendered = new RecordingRenderedPrintJob();
+            var documents = new ConfigurableOrderDocumentPrinter(
+                store, new HalfLetterDocumentRenderer(), rendered);
+            var printer = new ConfigurablePosReceiptPrinter(
+                store,
+                new EscPosReceiptRenderer(),
+                new HtmlReceiptPreviewRenderer(),
+                new NoopPreviewLauncher(),
+                new RecordingRawPrintJob(),
+                rendered,
+                documents);
+
+            var receipt = Receipt();
+            await printer.PrintAsync(receipt);
+
+            Assert.Single(rendered.PrinterNames);
+            Assert.Equal("Microsoft XPS Document Writer", rendered.PrinterNames[0]);
+            Assert.Contains(receipt.DocumentNumber, rendered.Documents[0],
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
     }
 
     private static PosEnrollmentPackage EnrollmentPackage(bool allowsNegativeStock) =>
@@ -388,12 +441,16 @@ public sealed class PosConfigurationTests
                 OrdersReceiptPaperWidthMillimeters: 58));
             var raw = new RecordingRawPrintJob();
             var rendered = new RecordingRenderedPrintJob();
+            var documents = new ConfigurableOrderDocumentPrinter(
+                store, new HalfLetterDocumentRenderer(), rendered);
             var receiptPrinter = new ConfigurablePosReceiptPrinter(
                 store,
                 new EscPosReceiptRenderer(),
                 new HtmlReceiptPreviewRenderer(),
                 new NoopPreviewLauncher(),
-                raw);
+                raw,
+                rendered,
+                documents);
             var receipt = Receipt();
 
             await receiptPrinter.PrintAsync(receipt);

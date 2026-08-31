@@ -363,6 +363,16 @@ export type PosCashMovementAcceptance = {
   documentNumber?: string;
 };
 
+export type PosCashMovementTicket = {
+  documentId: string;
+  direction: PosCashMovementDirection;
+  reasonName: string;
+  amount: number;
+  occurredAt: string;
+  reference: string | null;
+  notes: string | null;
+};
+
 export type PosWorkSessionPaymentTotal = {
   paymentMethodCode: string;
   salesAmount: number;
@@ -473,6 +483,7 @@ export interface PosClient {
     warehouseId: string;
     businessName: string;
     warehouseName: string;
+    warehouseAllowsNegativeStockSales: boolean;
     userDisplayName: string;
     userId: string | null;
     workSessionId?: string | null;
@@ -553,6 +564,7 @@ export interface PosClient {
   ): Promise<InvoiceOrdersResponse>;
   cashMovementReasons(direction: PosCashMovementDirection): Promise<PosCashMovementReason[]>;
   confirmCashMovement(input: PosCashMovementInput): Promise<PosCashMovementAcceptance>;
+  printCashMovement(ticket: PosCashMovementTicket): Promise<void>;
   previewWorkSessionClosure(draftId: string, authorization?: PosSensitiveAuthorization): Promise<PosAuthorizedClosurePreview>;
   closeWorkSession(input: PosCloseWorkSessionInput): Promise<PosWorkSessionClosure>;
 }
@@ -679,6 +691,7 @@ export class PosEdgeClient implements PosClient {
       warehouseId: string;
       businessName: string;
       warehouseName: string;
+      warehouseAllowsNegativeStockSales: boolean;
       userDisplayName: string;
       userId: string | null;
       workSessionId: string | null;
@@ -1174,6 +1187,12 @@ export class PosEdgeClient implements PosClient {
       throw new PosEdgeError(detail, response.status);
     }
     return (await response.json()) as T;
+  }
+
+  printCashMovement(ticket: PosCashMovementTicket) {
+    return this.requestVoid("/edge/v1/print/cash-movement", {
+      method: "POST", body: JSON.stringify(ticket),
+    });
   }
 
   private async requestDomainResult<T>(

@@ -22,7 +22,9 @@ public sealed class TenantService(
     {
         var tenant = await unitOfWork.Tenants.GetByIdAsync(tenantId, ct)
             ?? throw new NotFoundException(nameof(Tenant), tenantId);
-        return await MapToDtoWithBrandingAsync(tenant, ct);
+        var expiration = (await unitOfWork.Tenants.GetFiscalCertificateExpirationsAsync(null, ct))
+            .FirstOrDefault(value => value.TenantId == tenantId)?.ValidTo;
+        return await MapToDtoWithBrandingAsync(tenant, expiration, ct);
     }
 
     public async Task<TenantBrandingDto> GetBrandingAsync(Guid tenantId, CancellationToken ct)
@@ -36,7 +38,26 @@ public sealed class TenantService(
     public async Task<PagedResponse<TenantDto>> GetPagedAsync(PagedRequest request, CancellationToken ct)
     {
         var (items, totalCount) = await unitOfWork.Tenants.GetPagedAsync(request.Page, request.PageSize, request.Search, ct);
-        return new(items.Select(MapToDto).ToList(), totalCount, request.Page, request.PageSize);
+        var expirations = (await unitOfWork.Tenants.GetFiscalCertificateExpirationsAsync(null, ct))
+            .ToDictionary(value => value.TenantId, value => value.ValidTo);
+        return new(items.Select(tenant => MapToDto(tenant,
+            expirations.GetValueOrDefault(tenant.TenantId))).ToList(),
+            totalCount, request.Page, request.PageSize);
+    }
+
+    public async Task<IReadOnlyList<FiscalCertificateExpiryAlertDto>> GetFiscalCertificateExpiryAlertsAsync(
+        Guid actorTenantId, CancellationToken ct = default)
+    {
+        var actorTenant = await unitOfWork.Tenants.GetByIdAsync(actorTenantId, ct)
+            ?? throw new NotFoundException(nameof(Tenant), actorTenantId);
+        if (!string.Equals(actorTenant.TenantKey, PlatformPermissions.PlatformTenantKey,
+                StringComparison.OrdinalIgnoreCase))
+            throw new ForbiddenException("Las alertas de certificados DIAN pertenecen a la administración de plataforma Auraly.");
+        var now = DateTimeOffset.UtcNow;
+        var expirations = await unitOfWork.Tenants.GetFiscalCertificateExpirationsAsync(
+            now.AddDays(30), ct);
+        return expirations.Select(value => new FiscalCertificateExpiryAlertDto(
+            value.TenantId, value.TenantName, value.ValidTo, value.ValidTo <= now)).ToList();
     }
 
     public async Task<ProvisionTenantResult> ProvisionAsync(ProvisionTenantRequest request, Guid? actorUserId,
@@ -116,7 +137,9 @@ public sealed class TenantService(
             tenant.IdentificationTypeCode = nextIdentificationType;
         }
         await unitOfWork.SaveChangesAsync(ct);
-        return await MapToDtoWithBrandingAsync(tenant, ct);
+        var expiration = (await unitOfWork.Tenants.GetFiscalCertificateExpirationsAsync(null, ct))
+            .FirstOrDefault(value => value.TenantId == tenantId)?.ValidTo;
+        return await MapToDtoWithBrandingAsync(tenant, expiration, ct);
     }
 
     public async Task<TenantDto> UploadLogoAsync(Guid tenantId, Stream stream, string fileName,
@@ -134,7 +157,9 @@ public sealed class TenantService(
         if (!await unitOfWork.Tenants.UpdateLogoAsync(tenantId, mediaRef, DateTimeOffset.UtcNow, ct))
             throw new ConflictException("El tenant no tiene un perfil legal editable.");
         tenant.LogoMediaRef = mediaRef;
-        return await MapToDtoWithBrandingAsync(tenant, ct);
+        var expiration = (await unitOfWork.Tenants.GetFiscalCertificateExpirationsAsync(null, ct))
+            .FirstOrDefault(value => value.TenantId == tenantId)?.ValidTo;
+        return await MapToDtoWithBrandingAsync(tenant, expiration, ct);
     }
 
     public async Task DeactivateAsync(Guid tenantId, CancellationToken ct)
@@ -156,17 +181,18 @@ public sealed class TenantService(
         await unitOfWork.SaveChangesAsync(ct);
 
     }
-    private static TenantDto MapToDto(Tenant tenant) => new(
+    private static TenantDto MapToDto(Tenant tenant, DateTimeOffset? fiscalCertificateValidTo = null) => new(
         tenant.TenantId, tenant.TenantKey, tenant.Name, tenant.Email, tenant.IsActive,
         tenant.CreatedAt, tenant.Businesses?.Count ?? 0,
         tenant.MaximumUsers, tenant.MaximumEnrolledDevices, tenant.InventoryCostBasis,
         tenant.ActiveUserCount, tenant.ActiveEnrolledDeviceCount,
         tenant.LegalName, tenant.Nit, tenant.VerificationDigit,
-        tenant.EntityType, tenant.IdentificationTypeCode, null);
+        tenant.EntityType, tenant.IdentificationTypeCode, null, fiscalCertificateValidTo);
 
-    private async Task<TenantDto> MapToDtoWithBrandingAsync(Tenant tenant, CancellationToken ct)
+    private async Task<TenantDto> MapToDtoWithBrandingAsync(
+        Tenant tenant, DateTimeOffset? fiscalCertificateValidTo, CancellationToken ct)
     {
-        var value = MapToDto(tenant);
+        var value = MapToDto(tenant, fiscalCertificateValidTo);
         return value with { LogoUrl = await ResolveLogoUrlAsync(tenant, ct) };
     }
 

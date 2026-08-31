@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Building2, CheckCircle2, FileKey2, Loader2, MonitorSmartphone, Receipt, Warehouse } from "lucide-react";
+import { ArrowLeft, Building2, CheckCircle2, FileKey2, Loader2, MonitorSmartphone, PackageCheck, PackageOpen, Receipt, Warehouse } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { fiscalConfigurationApi, type FiscalResolutionConfiguration } from "@/services/api/fiscal-configuration";
@@ -12,6 +12,7 @@ import { rememberedSalesWorkspaceKey, salesWorkspaceKey, type SalesWorkspaceOpti
 import { resolvePosWorkspaceSelection } from "@/services/pos/pos-workspace-selection";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { posInventoryPolicyPresentation } from "./pos-inventory-policy";
 
 type Props = {
   options: SalesWorkspaceOption[];
@@ -110,6 +111,7 @@ export function PosOnlineSetup({ options, loading, error, notice, tenantName, us
       <div className="p-6 md:p-9">{loading ? <Loading /> : <div className="space-y-5">
         <Combo title="Sede" icon={Building2} value={businessId} onChange={(value) => { setBusinessId(value); setWarehouseId(""); }} disabled={configurationOffline} items={businesses.map(([id, name]) => ({ id, name }))} />
         <Combo title="Bodega" icon={Warehouse} value={warehouseId} onChange={setWarehouseId} disabled={configurationOffline || !businessId} items={warehouses.map((option) => ({ id: option.warehouseId, name: [option.warehouseCode, option.warehouseName].filter(Boolean).join(" · ") }))} />
+        {selected && <InventoryPolicyNotice allowsNegativeStock={selected.warehouseAllowsNegativeStockSales}/>}
         {selected && <div><p className="mb-2 text-sm font-semibold">{forcedDocumentType ? "Documento de habilitación" : "Documento predeterminado"}</p><div className="grid grid-cols-2 gap-2"><DocumentButton active={invoice} icon={FileKey2} title="Factura electrónica" disabled={configurationOffline} onClick={() => setDocumentType("SalesInvoice")} /><DocumentButton active={!invoice} icon={Receipt} title="Comprobante de venta" disabled={Boolean(forcedDocumentType) || configurationOffline} onClick={() => setDocumentType("SalesReceipt")} /></div><p className="mt-2 text-xs text-slate-400">{forcedDocumentType ? "El asistente mantiene la factura electrónica para enviar el documento al set de pruebas DIAN." : "Un cliente configurado para factura electrónica la fuerza automáticamente sin cambiar este predeterminado."}</p></div>}
         {selected && invoice && fiscalLoading && <Loading text="Verificando activación fiscal…" />}
         {selected && invoice && !fiscalLoading && fiscal && !fiscal.isReadyForOnlineSales && <div className="rounded-2xl border border-amber-300/25 bg-amber-100/10 p-5 text-amber-100"><div className="flex gap-3"><FileKey2 className="h-6 w-6 shrink-0" /><div><p className="font-bold">Facturación electrónica pendiente</p><p className="mt-1 text-sm">El POS no configura certificados ni resoluciones. Un administrador debe completar la activación DIAN para esta sede.</p><Link href="/dashboard/settings/fiscal" className="mt-3 inline-block font-bold underline">Abrir configuración fiscal</Link></div></div></div>}
@@ -136,6 +138,14 @@ export function PosOnlineSetup({ options, loading, error, notice, tenantName, us
 function Combo({ title, icon: Icon, items, value, onChange, disabled = false }: { title: string; icon: typeof Building2; items: { id: string; name: string }[]; value: string; onChange: (value: string) => void; disabled?: boolean }) {
   const only = items.length === 1 ? items[0] : null;
   return <div className="block"><span className="mb-2 flex items-center gap-2 text-sm font-semibold"><Icon className="h-4 w-4 text-teal-200" />{title}</span>{only ? <div className="flex h-12 items-center rounded-xl border border-teal-300/30 bg-[#102e33] px-4 font-semibold text-white">{only.name}</div> : <Select value={value} onValueChange={onChange} disabled={disabled}><SelectTrigger className="h-12 rounded-xl border-teal-300/30 bg-[#102e33] px-4 font-semibold text-white focus:ring-teal-300"><SelectValue placeholder={`Selecciona ${title.toLocaleLowerCase("es")}`} /></SelectTrigger><SelectContent>{items.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select>}</div>;
+}
+function InventoryPolicyNotice({ allowsNegativeStock }: { allowsNegativeStock: boolean }) {
+  const presentation = posInventoryPolicyPresentation(allowsNegativeStock);
+  const Icon = allowsNegativeStock ? PackageOpen : PackageCheck;
+  return <div className={`flex items-start gap-3 rounded-xl border p-3 text-sm ${allowsNegativeStock ? "border-amber-300/25 bg-amber-300/10 text-amber-100" : "border-emerald-300/25 bg-emerald-300/10 text-emerald-100"}`}>
+    <Icon className="mt-0.5 h-5 w-5 shrink-0" />
+    <span><strong className="block">{presentation.setupLabel}</strong><span className="mt-0.5 block text-xs opacity-80">{presentation.detail}</span></span>
+  </div>;
 }
 function DocumentButton({ active, icon: Icon, title, onClick, disabled = false }: { active: boolean; icon: typeof Receipt; title: string; onClick: () => void; disabled?: boolean }) { return <button type="button" onClick={onClick} disabled={disabled} className={`flex min-h-16 items-center gap-3 rounded-2xl border p-3 text-left text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-35 ${active ? "border-teal-300 bg-teal-300/15" : "border-white/15 bg-[#102e33]"}`}><Icon className="h-5 w-5 shrink-0 text-teal-200" />{title}{active && <CheckCircle2 className="ml-auto h-4 w-4 text-teal-200" />}</button>; }
 function Loading({ text = "Cargando sedes y bodegas…" }: { text?: string }) {

@@ -11,6 +11,7 @@
     "test:navigation": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/components/layout/sidebar-nav-config.test.js\" \".pos-test-dist/lib/default-start-route.test.js\"",
     "test:pos-enrollment": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/services/pos/pos-enrollment.test.js\"",
     "test:pos-sync-monitor": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/app/(pos)/pos/pos-synchronization-event-feed.test.js\"",
+    "test:pos-inventory-policy": "tsc -p tsconfig.pos-tests.json && node --test \".pos-test-dist/app/(pos)/pos/pos-inventory-policy.test.js\"",
     "prebuild": "npm run check:encoding",
     "dev": "next dev",
     "dev:pos": "next dev --hostname 127.0.0.1 --port 47830",

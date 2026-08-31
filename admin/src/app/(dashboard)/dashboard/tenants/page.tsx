@@ -29,6 +29,12 @@ export default function TenantsPage() {
     { accessorKey: "businessCount", header: "Negocios" },
     { id: "users", header: "Usuarios", cell: ({ row }) => `${row.original.activeUserCount} / ${row.original.maximumUsers}` },
     { id: "devices", header: "Cajas", cell: ({ row }) => `${row.original.activeEnrolledDeviceCount} / ${row.original.maximumEnrolledDevices}` },
+    { accessorKey: "fiscalCertificateValidTo", header: "Vencimiento certificado DIAN", cell: ({ row }) => {
+      const validTo = row.original.fiscalCertificateValidTo;
+      if (!validTo) return <span className="text-muted-foreground">Sin certificado</span>;
+      const expiring = new Date(validTo).getTime() <= Date.now() + 30 * 24 * 60 * 60 * 1000;
+      return <span className={expiring ? "font-semibold text-red-700" : undefined}>{formatDate(validTo)}</span>;
+    } },
     { accessorKey: "createdAt", header: "Creado", cell: ({ row }) => formatDate(row.original.createdAt) },
   ], []);
 

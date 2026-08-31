@@ -31,7 +31,7 @@
     <Content Include="Assets\Auraly.ico"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="..\..\..\admin\public\brand\auraly-app-icon-512-v4.png"
+    <Content Include="Assets\AuralyIcon-v5.png"
              Link="auraly-pos-icon.png"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />

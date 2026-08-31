@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Activity, AlertTriangle, RefreshCw, Wifi, WifiOff } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PosEdgeClient } from "@/services/pos/pos-edge-client";
 import type { PosClient, PosSynchronizationEvent } from "@/services/pos/pos-edge-client";
@@ -17,10 +18,12 @@ const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP
 type LiveEvent = PosSynchronizationEvent & { expiresAt: number };
 type Props = {
   open: boolean; client: PosClient; connected: boolean;
-  inProgress: boolean; onClose: () => void;
+  canSynchronize: boolean;
+  inProgress: boolean; pendingCount: number; failed: boolean; error: string | null;
+  onSynchronize: () => Promise<void>; onClose: () => void;
 };
 
-export function PosSynchronizationEventsDialog({ open, client, connected, inProgress, onClose }: Props) {
+export function PosSynchronizationEventsDialog({ open, client, connected, canSynchronize, inProgress, pendingCount, failed, error, onSynchronize, onClose }: Props) {
   const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const seen = useRef(new Set<number>());
@@ -96,13 +99,17 @@ export function PosSynchronizationEventsDialog({ open, client, connected, inProg
                 <Badge className="ml-auto border-white/10 bg-white/5 text-white/70" variant="outline">Ctrl+L</Badge>
               </div>
               <DialogTitle className="text-[1.35rem] font-black tracking-tight">Sincronización</DialogTitle>
-              <DialogDescription className="mt-1 text-sm text-slate-300">Cambios recibidos y aplicados por esta caja.</DialogDescription>
+              <DialogDescription className="mt-1 text-sm text-slate-300">Sube pendientes, descarga cambios y muestra la actividad de esta caja.</DialogDescription>
             </div>
           </div>
         </DialogHeader>
 
         <section className="relative h-[21rem] overflow-hidden px-5 py-5">
           <div className="pointer-events-none absolute inset-x-8 top-0 h-20 bg-cyan-300/[0.035] blur-3xl" />
+          {(pendingCount > 0 || failed) && <div className="relative mb-3 flex items-center gap-3 rounded-2xl border border-amber-300/20 bg-amber-300/[0.07] px-4 py-3">
+            <AlertTriangle className="h-5 w-5 shrink-0 text-amber-300" />
+            <div className="min-w-0"><p className="text-sm font-bold text-amber-100">{pendingCount > 0 ? `${pendingCount} ${pendingCount === 1 ? "comprobante pendiente" : "comprobantes pendientes"} por subir` : "Actualización manual pendiente"}</p>{error && <p className="truncate text-xs text-amber-100/60">{error}</p>}</div>
+          </div>}
           {synchronizationEventsFailed && (
             <div className="grid h-full place-items-center text-center"><div className="max-w-xs">
               <AlertTriangle className="mx-auto h-7 w-7 text-amber-300" />
@@ -145,6 +152,10 @@ export function PosSynchronizationEventsDialog({ open, client, connected, inProg
             </div>
           )}
         </section>
+        <div className="flex items-center justify-between border-t border-cyan-200/10 px-6 py-4">
+          <p className="text-xs text-slate-400">{pendingCount === 0 && !failed ? "Todo está sincronizado" : "Al sincronizar se sube y se descarga todo"}</p>
+          {(pendingCount > 0 || failed) && <Button className="rounded-xl bg-cyan-300 font-black text-slate-950 hover:bg-cyan-200" disabled={inProgress || !canSynchronize} onClick={() => void onSynchronize()}>{inProgress ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}Sincronizar ahora</Button>}
+        </div>
       </DialogContent>
     </Dialog>
   );

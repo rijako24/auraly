@@ -244,6 +244,22 @@ public sealed class PosEdgeSaleStore
         await context.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task DeactivateFiscalSeriesAsync(
+        DeviceId deviceId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var context = new PosEdgeDbContext(_options);
+        var active = await context.FiscalSeriesCursors
+            .Where(row => row.DeviceId == deviceId.Value && row.IsActive)
+            .ToListAsync(cancellationToken);
+        foreach (var cursor in active)
+        {
+            cursor.IsActive = false;
+            cursor.IsEmissionEnabled = false;
+        }
+        await context.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task<PosEdgeFiscalCursorState?> GetFiscalCursorStateAsync(
         DeviceId deviceId, CancellationToken cancellationToken = default)
     {

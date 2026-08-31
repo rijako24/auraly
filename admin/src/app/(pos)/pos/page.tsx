@@ -11,6 +11,8 @@ import {
   ClipboardList,
   Loader2,
   LogOut,
+  PackageCheck,
+  PackageOpen,
   PencilLine,
   Printer,
   RotateCcw,
@@ -115,6 +117,7 @@ import { parsePosBarcodeCapture, submitPosCaptureOnEnter } from "./pos-barcode-c
 import { acceptsPosQuantityDraft, blocksPosQuantityKey, validatePosQuantity } from "./pos-quantity-validation";
 import { useAuthStore } from "@/stores/auth-store";
 import { usesEnrolledPosRuntime } from "@/services/pos/pos-launch-session";
+import { posInventoryPolicyPresentation } from "./pos-inventory-policy";
 
 
 const money = new Intl.NumberFormat("es-CO", {
@@ -258,6 +261,7 @@ export default function PosPage() {
     warehouseId: "",
     businessName: "",
     warehouseName: "",
+    warehouseAllowsNegativeStockSales: false,
     userDisplayName: "\u2014",
     userId: null as string | null,
     workSessionId: null as string | null,
@@ -492,6 +496,7 @@ export default function PosPage() {
                 warehouseId: health.warehouseId,
                 businessName: health.businessName,
                 warehouseName: health.warehouseName,
+                warehouseAllowsNegativeStockSales: health.warehouseAllowsNegativeStockSales,
                 userDisplayName: health.userDisplayName || "\u2014",
                 userId: health.userId,
                 workSessionId: health.workSessionId ?? null,
@@ -606,6 +611,7 @@ export default function PosPage() {
             warehouseId: health.warehouseId,
             businessName: health.businessName,
             warehouseName: health.warehouseName,
+            warehouseAllowsNegativeStockSales: health.warehouseAllowsNegativeStockSales,
             userDisplayName: health.userDisplayName || "\u2014",
             userId: health.userId,
             workSessionId: health.workSessionId ?? null,
@@ -695,9 +701,14 @@ export default function PosPage() {
     };
 
     void connect();
-    const stopLiveState =
-      client instanceof PosEdgeClient
-        ? client.watchLocalState(() => void connect())
+    const stopLiveState = client instanceof PosEdgeClient
+      ? client.watchLocalState(() => void connect())
+      : client instanceof OnlinePosClient
+        ? client.watchWarehousePolicy((allowsNegativeStock) =>
+            setWorkstation((current) => ({
+              ...current,
+              warehouseAllowsNegativeStockSales: allowsNegativeStock,
+            })))
         : null;
     const handleOnline = () => void connect();
     const handleOffline = () => {
@@ -1455,10 +1466,16 @@ export default function PosPage() {
   }
 
   async function closeSalesSession() {
-    if (!client || !draft || !workstation.workSessionId || busy) return;
+    if (!client || busy) return;
+    if (!workstation.workSessionId) {
+      setError("No hay una sesión de venta abierta para cerrar.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
+      const activeDraft = draft ?? await client.activeDraft();
+      if (!draft) setDraft(activeDraft);
       await authorizeSensitiveEntry(
         "work-sessions.close",
         null,
@@ -1470,7 +1487,7 @@ export default function PosPage() {
         },
         async (authorization) => {
           const preview = await client.previewWorkSessionClosure(
-            draft.draftId.value,
+            activeDraft.draftId.value,
             authorization,
           );
           closureOperationId.current = authorization.operationId ?? crypto.randomUUID();
@@ -2069,7 +2086,7 @@ export default function PosPage() {
     setSynchronization((current) => ({ ...current, inProgress: true, failed: false }));
     try {
       await client.synchronizeNow();
-      setMessage("Auraly está actualizando los datos de esta estación.");
+      setMessage("Auraly está subiendo los pendientes y descargando los cambios de esta estación.");
     } catch {
       setSynchronization((current) => ({ ...current, inProgress: false, failed: true }));
       setMessage("No fue posible iniciar la actualización. Puedes seguir facturando con los datos locales.");
@@ -2079,7 +2096,7 @@ export default function PosPage() {
   const synchronizationTitle = synchronization.inProgress
     ? synchronization.pendingCount > 0
       ? `Subiendo ${synchronization.pendingCount} documento${synchronization.pendingCount === 1 ? "" : "s"} pendiente${synchronization.pendingCount === 1 ? "" : "s"}`
-      : "Descargando cambios para la caja"
+      : "Subiendo pendientes y descargando cambios"
     : synchronization.failed
       ? synchronization.pendingCount > 0
         ? `${synchronization.pendingCount} documento${synchronization.pendingCount === 1 ? "" : "s"} sin sincronizar. ${synchronization.error ?? "Haz clic para reintentar."}`
@@ -2269,6 +2286,7 @@ export default function PosPage() {
         warehouseId: context.warehouseId,
         businessName: context.businessName,
         warehouseName: context.warehouseName,
+        warehouseAllowsNegativeStockSales: context.warehouseAllowsNegativeStockSales,
         userDisplayName: onlineUserName || "—",
         userId: onlineUserId || null,
         workSessionId: null,
@@ -2371,7 +2389,7 @@ export default function PosPage() {
             warehouseId: workstation.warehouseId,
             warehouseCode: "",
             warehouseName: workstation.warehouseName,
-            warehouseAllowsNegativeStockSales: false,
+            warehouseAllowsNegativeStockSales: workstation.warehouseAllowsNegativeStockSales,
             hasActiveEdgeEnrollment: client.mode === "edge",
           }]);
       setSetupError(message);
@@ -2446,6 +2464,7 @@ export default function PosPage() {
             label={serverConnected ? "Conectado con Auraly" : "Modo sin conexión"}
             network
           />
+          <InventoryPolicyChip allowsNegativeStock={workstation.warehouseAllowsNegativeStockSales} />
           <div className="flex items-center gap-1" aria-label="Atajos de caja">
             <button
               type="button"
@@ -2488,8 +2507,7 @@ export default function PosPage() {
           {client.mode === "edge" && (
             <button
               type="button"
-              onClick={() => void synchronizeNow()}
-              disabled={synchronization.inProgress}
+              onClick={() => setSynchronizationEventsOpen(true)}
               title={synchronizationTitle}
               aria-label={synchronizationTitle}
               className={`flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition ${synchronization.failed || synchronization.pendingCount > 0 ? "border-amber-300/40 text-amber-200" : "border-white/10 text-auraly-secondary hover:bg-white/10 hover:text-white"}`}
@@ -2595,11 +2613,10 @@ export default function PosPage() {
           </span>
           <button
             type="button"
-            onClick={() => void synchronizeNow()}
-            disabled={synchronization.inProgress}
+            onClick={() => setSynchronizationEventsOpen(true)}
             className="shrink-0 rounded-lg border border-amber-900/20 bg-white/60 px-3 py-1 font-bold hover:bg-white disabled:opacity-50"
           >
-            Reintentar
+            Ver sincronización
           </button>
         </div>
       )}
@@ -3434,7 +3451,7 @@ export default function PosPage() {
           }}
         />
       )}
-      {synchronizationEventsOpen && client && canReadSynchronizationEvents && <PosSynchronizationEventsDialog open client={client} connected={client.mode === "online" ? serverConnected : pushConnected} inProgress={synchronization.inProgress} onClose={() => { setSynchronizationEventsOpen(false); focusScanner(); }} />}
+      {synchronizationEventsOpen && client && canReadSynchronizationEvents && <PosSynchronizationEventsDialog open client={client} connected={client.mode === "online" ? serverConnected : pushConnected} canSynchronize={serverConnected} inProgress={synchronization.inProgress} pendingCount={synchronization.pendingCount} failed={synchronization.failed} error={synchronization.error} onSynchronize={synchronizeNow} onClose={() => { setSynchronizationEventsOpen(false); focusScanner(); }} />}
 
       {quantityShortage && <PosQuantityAvailabilityDialog
         value={quantityShortage}
@@ -3515,6 +3532,19 @@ export default function PosPage() {
       {pricingTransition && <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-950/45 p-4" role="status" aria-live="assertive"><div className="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-2xl"><Loader2 className="mx-auto h-8 w-8 animate-spin text-teal-700"/><h2 className="mt-4 text-lg font-semibold">Actualizando precios</h2><p className="mt-1 text-sm text-slate-500">Aplicando la lista o el canal del cliente a todos los productos de la venta.</p></div></div>}
     </main>
   );
+}
+
+function InventoryPolicyChip({ allowsNegativeStock }: { allowsNegativeStock: boolean }) {
+  const presentation = posInventoryPolicyPresentation(allowsNegativeStock);
+  const Icon = allowsNegativeStock ? PackageOpen : PackageCheck;
+  return <span
+    title={presentation.detail}
+    aria-label={presentation.label}
+    className={`flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-xs font-semibold ${allowsNegativeStock ? "border-amber-300/35 text-amber-200" : "border-emerald-300/30 text-emerald-200"}`}
+  >
+    <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+    <span className="hidden xl:inline">{presentation.label}</span>
+  </span>;
 }
 
 function StatusChip({

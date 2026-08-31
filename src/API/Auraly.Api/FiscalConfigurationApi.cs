@@ -28,6 +28,12 @@ public static class FiscalConfigurationApi
             await Handle(() => service.AssignAsync(
                 context.User.ToFiscalConfigurationUser(), businessId, request, ct)));
 
+        group.MapPost("/devices/unassign", async (HttpContext context, Guid businessId,
+            UnassignFiscalDeviceSeriesRequest request,
+            FiscalDeviceSeriesService service, CancellationToken ct) =>
+            await Handle(() => service.UnassignAsync(
+                context.User.ToFiscalConfigurationUser(), businessId, request, ct)));
+
         group.MapPut("/resolutions/alerts", async (HttpContext context, Guid businessId,
             SaveFiscalResolutionAlertSettingsRequest request,
             FiscalDeviceSeriesService service, CancellationToken ct) =>

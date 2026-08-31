@@ -304,12 +304,11 @@ export function PosProductSearchDialog({
                 setSelected(index);
                 if (index === results.length - 1) void loadMore();
               }}
-              onMouseEnter={() => setSelected(index)}
               onClick={() => void choose(product)}
               onKeyDown={handleListNavigation}
               disabled={busy}
               className={`grid w-full grid-cols-[minmax(0,1fr)_130px] items-center gap-4 border-b border-slate-100 px-3 py-3 text-left outline-none transition sm:grid-cols-[minmax(0,1fr)_150px_130px] ${
-                selected === index ? "bg-teal-50 ring-2 ring-inset ring-teal-600/25" : "hover:bg-slate-50"
+                selected === index ? "bg-teal-50 ring-2 ring-inset ring-teal-600/25" : ""
               }`}
             >
               <span className="min-w-0">

@@ -118,7 +118,10 @@ public sealed class PosApprovalWebPushService(
             var message = new PushMessage(payload)
             {
                 TimeToLive = 600,
-                Topic = $"pos-{approvalRequestId:N}",
+                // RFC 8030 limits Topic to 32 URL-safe characters. The previous
+                // "pos-" prefix made the GUID 36 characters and push services
+                // could reject the notification while realtime still worked.
+                Topic = approvalRequestId.ToString("N"),
                 Urgency = PushMessageUrgency.High
             };
             using var authentication = new VapidAuthentication(publicKey!, privateKey!)

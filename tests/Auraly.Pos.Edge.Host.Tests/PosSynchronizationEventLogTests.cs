@@ -29,6 +29,16 @@ public sealed class PosSynchronizationEventLogTests
     }
 
     [Fact]
+    public void Initial_catalog_download_is_not_presented_as_a_live_change()
+    {
+        var log = new PosSynchronizationEventLog(TimeProvider.System);
+
+        log.ProductReceived(Product(Guid.NewGuid(), 10_000m), null, bootstrap: true);
+
+        Assert.Empty(log.Read());
+    }
+
+    [Fact]
     public void Customer_event_identifies_the_customer_that_was_received()
     {
         var log = new PosSynchronizationEventLog(TimeProvider.System);

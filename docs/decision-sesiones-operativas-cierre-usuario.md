@@ -55,6 +55,15 @@ Se eliminan del modelo canónico:
 
 La conciliación de efectivo se conserva como parte del cierre de sesión del usuario.
 
+La conciliación posterior reutiliza el mismo `WorkSessionClosure` y su snapshot
+inmutable. El efectivo se verifica como un total contado. Tarjeta y transferencia se
+verifican comprobante por comprobante desde los pagos, devoluciones y movimientos que
+ya pertenecen a la sesión; cada uno queda marcado como verificado o no encontrado. El
+servidor vuelve a obtener esas fuentes dentro de la transacción, exige una decisión
+exactamente una vez por comprobante y calcula el valor verificado, por lo que el cliente
+no puede omitir comprobantes ni alterar sus importes. Un faltante y un sobrante se pueden
+cruzar mediante la reclasificación existente, sin crear otro motor ni otra conciliación.
+
 ## Pruebas obligatorias
 
 1. Dos usuarios consecutivos en el mismo Edge crean sesiones diferentes.
@@ -63,3 +72,5 @@ La conciliación de efectivo se conserva como parte del cierre de sesión del us
 4. El cierre totaliza por medio de pago sin mezclar sesiones.
 5. La tirilla identifica usuario, sede y bodega, y no contiene “caja”.
 6. No existen tablas, APIs ni componentes canónicos de arqueo o cierre de caja.
+7. Tarjeta y transferencia no se concilian sin decidir cada comprobante individual y
+   el total verificado coincide con los importes canónicos del servidor.

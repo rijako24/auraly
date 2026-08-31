@@ -45,8 +45,9 @@ public sealed class FiscalDeviceSeriesApiTests(ServerSliceFixture fixture)
             Assert.Equal(HttpStatusCode.OK, repeated.StatusCode);
             Assert.Equal(1, await ScalarAsync("""
                 SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages
-                WHERE BusinessId=@BusinessId AND Stream=N'FiscalProvisioning';
-                """));
+                WHERE BusinessId=@BusinessId AND Stream=N'FiscalProvisioning'
+                  AND TargetDeviceId=@DeviceId;
+                """, fixture.DeniedDeviceId));
             Assert.Equal(1, await ScalarAsync("""
                 SELECT COUNT(*) FROM dbo.FiscalSeries s
                 JOIN dbo.FiscalAuthorizations a ON a.FiscalAuthorizationId=s.FiscalAuthorizationId
@@ -81,6 +82,62 @@ public sealed class FiscalDeviceSeriesApiTests(ServerSliceFixture fixture)
                 """, rangeId: rangeId));
         }
         finally { await CleanupAsync(rangeId, series, devices, true); }
+    }
+
+    [Fact]
+    public async Task Manager_unassigns_device_resolution_and_only_target_device_is_notified()
+    {
+        var rangeId = Guid.NewGuid();
+        var documentSeriesId = Guid.NewGuid();
+        await SeedAsync(rangeId, fixture.DeniedDeviceId, documentSeriesId,
+            "OFF", 81201, 81300);
+        await ExecuteAsync("""
+            INSERT dbo.PosDevicePermissions(DeviceId,PermissionCode,IsGranted,GrantedAt)
+            VALUES(@DeviceId,N'catalog.sync',1,SYSDATETIMEOFFSET());
+            """, fixture.DeniedDeviceId);
+        try
+        {
+            using var manager = fixture.CreateAdminClient(
+                FiscalPermissionCodes.ConfigurationRead,
+                FiscalPermissionCodes.ConfigurationManage);
+            using var assigned = await manager.PostAsJsonAsync(AssignmentUrl,
+                new AssignFiscalDeviceSeriesRequest(fixture.DeniedDeviceId, rangeId));
+            Assert.Equal(HttpStatusCode.OK, assigned.StatusCode);
+
+            using var removed = await manager.PostAsJsonAsync(UnassignmentUrl,
+                new UnassignFiscalDeviceSeriesRequest(fixture.DeniedDeviceId));
+            Assert.Equal(HttpStatusCode.OK, removed.StatusCode);
+            var workspace = (await removed.Content
+                .ReadFromJsonAsync<FiscalDeviceSeriesWorkspace>())!;
+            Assert.False(Assert.Single(workspace.Devices,
+                item => item.DeviceId == fixture.DeniedDeviceId).IsProvisioned);
+            Assert.Equal(0, await ScalarAsync("""
+                SELECT COUNT(*) FROM dbo.FiscalSeries
+                WHERE BusinessId=@BusinessId AND DeviceId=@DeviceId
+                  AND DocumentType=N'SalesInvoice' AND IsActive=1;
+                """, fixture.DeniedDeviceId));
+            Assert.Equal(2, await ScalarAsync("""
+                SELECT COUNT(*) FROM dbo.PosSynchronizationOutboxMessages
+                WHERE BusinessId=@BusinessId AND Stream=N'FiscalProvisioning'
+                  AND TargetDeviceId=@DeviceId;
+                """, fixture.DeniedDeviceId));
+
+            using var device = fixture.CreateClient();
+            using var request = new HttpRequestMessage(HttpMethod.Get,
+                $"/api/pos/v1/fiscal/provisioning-bundle?businessId={fixture.BusinessId:D}");
+            request.Headers.Add("X-Auraly-Device-Id", fixture.DeniedDeviceId.ToString("D"));
+            request.Headers.Add("X-Auraly-Device-Secret", ServerSliceFixture.DeniedDeviceSecret);
+            using var provisioning = await device.SendAsync(request);
+            Assert.Equal(HttpStatusCode.NoContent, provisioning.StatusCode);
+        }
+        finally
+        {
+            await ExecuteAsync("""
+                DELETE dbo.PosDevicePermissions
+                WHERE DeviceId=@DeviceId AND PermissionCode=N'catalog.sync';
+                """, fixture.DeniedDeviceId);
+            await CleanupAsync(rangeId, [documentSeriesId], [fixture.DeniedDeviceId], false);
+        }
     }
 
     [Fact]
@@ -202,8 +259,79 @@ public sealed class FiscalDeviceSeriesApiTests(ServerSliceFixture fixture)
         }
     }
 
+    [Fact]
+    public async Task Tenant_without_commercial_subscription_is_not_reported_as_zero_dian_quota()
+    {
+        var tenantId = Guid.NewGuid();
+        var businessId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        await using var connection = new SqlConnection(fixture.ConnectionString);
+        await connection.OpenAsync();
+        await using (var seed = new SqlCommand("""
+            INSERT dbo.Tenants
+              (TenantId,TenantKey,Name,Email,IsActive,MaximumUsers,MaximumEnrolledDevices,CreatedAt)
+            VALUES(@TenantId,@TenantKey,N'Tenant anterior a suscripciones',@Email,1,10,10,SYSUTCDATETIME());
+            INSERT dbo.Businesses
+              (BusinessId,TenantId,Name,Description,Address,Phone,Email,Website,IsActive,CreatedAt)
+            VALUES(@BusinessId,@TenantId,N'Sede legado',NULL,NULL,NULL,@Email,NULL,1,SYSUTCDATETIME());
+            INSERT dbo.AppUsers
+              (UserId,TenantId,Username,NormalizedUsername,Email,NormalizedEmail,
+               FirstName,LastName,IsActive,CreatedAt)
+            VALUES(@UserId,@TenantId,@Username,UPPER(@Username),@Email,UPPER(@Email),
+                   N'Administrador',N'Legado',1,SYSUTCDATETIME());
+            """, connection))
+        {
+            seed.Parameters.AddWithValue("@TenantId", tenantId);
+            seed.Parameters.AddWithValue("@BusinessId", businessId);
+            seed.Parameters.AddWithValue("@UserId", userId);
+            seed.Parameters.AddWithValue("@TenantKey", $"@legacy-{tenantId:N}");
+            seed.Parameters.AddWithValue("@Username", $"legacy-{userId:N}");
+            seed.Parameters.AddWithValue("@Email", $"legacy-{userId:N}@test.local");
+            await seed.ExecuteNonQueryAsync();
+        }
+        try
+        {
+            using var client = fixture.CreateTenantUserClient(
+                tenantId, userId, FiscalPermissionCodes.ConfigurationRead);
+            using var response = await client.GetAsync(
+                $"/api/commerce/v1/fiscal/configuration/?businessId={businessId:D}");
+            response.EnsureSuccessStatusCode();
+            var configuration = await response.Content.ReadFromJsonAsync<FiscalResolutionConfiguration>();
+            Assert.NotNull(configuration);
+            Assert.True(configuration.HasDianDocumentQuota);
+            Assert.Equal(0, configuration.DianDocumentMonthlyLimit);
+
+            await using var reserve = new SqlCommand("""
+                DECLARE @Reserved bit;
+                EXEC dbo.TenantDianDocumentQuotaReserve
+                  @BusinessId=@BusinessId,@DocumentId=@DocumentId,
+                  @DocumentKind=N'SalesInvoice',@Now=SYSDATETIMEOFFSET(),@Reserved=@Reserved OUTPUT;
+                SELECT @Reserved;
+                """, connection);
+            reserve.Parameters.AddWithValue("@BusinessId", businessId);
+            reserve.Parameters.AddWithValue("@DocumentId", Guid.NewGuid());
+            Assert.True(Convert.ToBoolean(await reserve.ExecuteScalarAsync()));
+        }
+        finally
+        {
+            await using var cleanup = new SqlCommand("""
+                DELETE dbo.AuthenticationSessions WHERE UserId=@UserId;
+                DELETE dbo.AppUsers WHERE UserId=@UserId;
+                DELETE dbo.Businesses WHERE BusinessId=@BusinessId;
+                DELETE dbo.Tenants WHERE TenantId=@TenantId;
+                """, connection);
+            cleanup.Parameters.AddWithValue("@UserId", userId);
+            cleanup.Parameters.AddWithValue("@BusinessId", businessId);
+            cleanup.Parameters.AddWithValue("@TenantId", tenantId);
+            await cleanup.ExecuteNonQueryAsync();
+        }
+    }
+
     private string AssignmentUrl =>
         $"/api/commerce/v1/fiscal/configuration/devices/assign?businessId={fixture.BusinessId:D}";
+
+    private string UnassignmentUrl =>
+        $"/api/commerce/v1/fiscal/configuration/devices/unassign?businessId={fixture.BusinessId:D}";
 
     private string AlertSettingsUrl =>
         $"/api/commerce/v1/fiscal/configuration/resolutions/alerts?businessId={fixture.BusinessId:D}";

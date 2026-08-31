@@ -10,6 +10,8 @@ public interface ITenantService
     Task<TenantDto> GetByIdAsync(Guid tenantId, CancellationToken ct = default);
     Task<TenantBrandingDto> GetBrandingAsync(Guid tenantId, CancellationToken ct = default);
     Task<PagedResponse<TenantDto>> GetPagedAsync(PagedRequest request, CancellationToken ct = default);
+    Task<IReadOnlyList<FiscalCertificateExpiryAlertDto>> GetFiscalCertificateExpiryAlertsAsync(
+        Guid actorTenantId, CancellationToken ct = default);
     Task<ProvisionTenantResult> ProvisionAsync(ProvisionTenantRequest request, Guid? actorUserId,
         TenantQuoteDto commercialQuote, CancellationToken ct = default);
     Task<TenantDto> UpdateAsync(Guid tenantId, string? name, string? email, int? maximumUsers,

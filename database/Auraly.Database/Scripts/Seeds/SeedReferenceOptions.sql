@@ -94,6 +94,14 @@ VALUES
 ('69000000-0000-0000-0000-000000000002',N'purchase-evidence-type',N'BuyerElectronicSupportDocument',N'Documento soporte electrónico',N'Auraly genera, firma y envía el documento soporte a la DIAN.',20),
 ('69000000-0000-0000-0000-000000000003',N'purchase-evidence-type',N'InternalReceiptVoucher',N'Comprobante interno',N'Registra la entrada y sus efectos contables sin emitir un documento fiscal.',30);
 
+INSERT @Source(OptionId,CatalogCode,Code,Label,Description,SortOrder)
+VALUES
+('6A000000-0000-0000-0000-000000000001',N'tax-responsibility',N'O-13',N'Gran contribuyente',N'Responsabilidad fiscal DIAN O-13.',10),
+('6A000000-0000-0000-0000-000000000002',N'tax-responsibility',N'O-15',N'Autorretenedor',N'Responsabilidad fiscal DIAN O-15.',20),
+('6A000000-0000-0000-0000-000000000003',N'tax-responsibility',N'O-23',N'Agente de retención de IVA',N'Responsabilidad fiscal DIAN O-23.',30),
+('6A000000-0000-0000-0000-000000000004',N'tax-responsibility',N'O-47',N'Régimen Simple de Tributación',N'Responsabilidad fiscal DIAN O-47.',40),
+('6A000000-0000-0000-0000-000000000005',N'tax-responsibility',N'R-99-PN',N'No aplica · Otros',N'Responsabilidad fiscal DIAN R-99-PN.',50);
+
 MERGE [reference].[Options] AS target
 USING @Source AS source
 ON target.CatalogCode=source.CatalogCode AND target.Code=source.Code
@@ -111,7 +119,7 @@ WHEN NOT MATCHED BY SOURCE
         N'accounting-subledger-kind',N'accounting-adjustment-direction',
         N'accounting-manual-concept',N'accounting-report-type',
         N'accounting-withholding-kind',N'accounting-opening-balance-mode',
-        N'tenant-entity-type',N'tenant-identification-type',N'purchase-evidence-type')
+        N'tenant-entity-type',N'tenant-identification-type',N'purchase-evidence-type',N'tax-responsibility')
 THEN UPDATE SET target.IsActive=0,target.UpdatedAt=@Now;
 
 MERGE worksessions.CashClosurePaymentMethodMappings AS target

@@ -36,6 +36,7 @@ export interface Tenant {
     entityType: "NaturalPerson" | "Organization" | null;
     identificationTypeCode: "CC" | "NIT" | null;
     logoUrl: string | null;
+    fiscalCertificateValidTo: string | null;
   businesses?: Business[];
 }
 

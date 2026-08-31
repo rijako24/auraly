@@ -42,6 +42,7 @@ import {
   type PosCashMovementAcceptance,
   type PosCashMovementDirection,
   type PosCashMovementInput,
+  type PosCashMovementTicket,
   type PosCashMovementReason,
   type PosCloseWorkSessionInput,
   type PosWorkSessionClosure,
@@ -59,6 +60,7 @@ import { tenantsApi } from "@/services/api/tenants";
 import { referenceOptionsApi } from "@/services/api/reference-options";
 import { printWorkSessionClosure, workSessionCloseRequest, workSessionClosureHtml, workSessionClosurePreviewRequest } from "./pos-work-session-close";
 import { receiptBrandMarkup } from "./pos-receipt-brand";
+import { isWorkspacePolicySynchronizationMessage } from "./pos-workspace-synchronization";
 
 export type SalesWorkspaceOption = {
   businessId: string;
@@ -279,6 +281,51 @@ export class OnlinePosClient implements PosClient {
     private readonly edgeSessionToken: string | null = null,
   ) {}
 
+  watchWarehousePolicy(onChanged: (allowsNegativeStock: boolean) => void) {
+    let stopped = false;
+    let socket: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+    const refresh = async () => {
+      const options = await request<SalesWorkspaceOption[]>(
+        "/api/commerce/v1/pos/workspace/options");
+      const current = options.find((option) =>
+        option.businessId === this.context.businessId &&
+        option.warehouseId === this.context.warehouseId);
+      if (!stopped && current)
+        onChanged(current.warehouseAllowsNegativeStockSales);
+    };
+    const connect = async () => {
+      try {
+        const negotiation = await request<{ clientAccessUri: string }>(
+          `/api/commerce/v1/pos/workspace/synchronization/negotiate?businessId=${encodeURIComponent(this.context.businessId)}`,
+          { method: "POST" });
+        if (stopped) return;
+        const current = new WebSocket(
+          negotiation.clientAccessUri, "json.webpubsub.azure.v1");
+        socket = current;
+        current.addEventListener("message", (event: MessageEvent<string>) => {
+          if (isWorkspacePolicySynchronizationMessage(event.data))
+            void refresh();
+        });
+        current.addEventListener("close", () => {
+          if (stopped || socket !== current) return;
+          reconnectTimer = window.setTimeout(() => void connect(), 1_000);
+        });
+      } catch {
+        socket?.close();
+        socket = null;
+        if (!stopped)
+          reconnectTimer = window.setTimeout(() => void connect(), 2_000);
+      }
+    };
+    void connect();
+    return () => {
+      stopped = true;
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      socket?.close();
+    };
+  }
+
   private localEdge() {
     if (!this.edgeSessionToken)
       throw new PosEdgeError("Esta operación requiere configurar este equipo como caja Auraly.", 409);
@@ -329,6 +376,7 @@ export class OnlinePosClient implements PosClient {
       warehouseId: this.context.warehouseId,
       businessName: this.context.businessName,
       warehouseName: this.context.warehouseName,
+      warehouseAllowsNegativeStockSales: this.context.warehouseAllowsNegativeStockSales,
       userDisplayName: this.userDisplayName,
       userId: this.userId,
       workSessionId: this.context.workSessionId,
@@ -384,6 +432,12 @@ export class OnlinePosClient implements PosClient {
         }),
       },
     );
+  }
+  printCashMovement(ticket: PosCashMovementTicket) {
+    if (!this.edgeSessionToken)
+      return Promise.reject(new Error(
+        "La impresión de movimientos requiere una caja instalada con impresora de facturación en tirilla."));
+    return this.localEdge().printCashMovement(ticket);
   }
 
 

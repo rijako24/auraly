@@ -44,8 +44,9 @@ public sealed class PosCustomerServerClientTests
             var credentials = new PosDeviceCredentials(deviceId, "device-secret");
             var scope = new PosOperationalScope(businessId, warehouseId);
             var warehousePolicy = new RecordingWarehousePolicySink();
+            var events = new PosSynchronizationEventLog(TimeProvider.System);
             var synchronization = new PosCatalogSynchronizer(
-                http, store, credentials, scope, warehousePolicy: warehousePolicy);
+                http, store, credentials, scope, events, warehousePolicy);
             var client = new PosCustomerServerClient(http, credentials, scope, synchronization, store);
 
             var countries = await client.CountriesAsync(default);
@@ -67,6 +68,10 @@ public sealed class PosCustomerServerClientTests
             Assert.Equal(created, await store.GetCustomerAsync(customerId));
             Assert.True(handler.CustomerCreated);
             Assert.True(warehousePolicy.Applied);
+            var receivedEvents = events.Read();
+            Assert.Single(receivedEvents, item => item.Category == "Cliente");
+            await synchronization.SynchronizeAsync();
+            Assert.Single(events.Read(), item => item.Category == "Cliente");
             Assert.All(handler.DeviceRequests, request =>
             {
                 Assert.Equal(deviceId.ToString("D"), request.DeviceId);

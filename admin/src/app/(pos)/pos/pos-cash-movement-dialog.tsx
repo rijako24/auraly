@@ -65,21 +65,36 @@ export function PosCashMovementDialog({
     setSaving(true);
     setError(null);
     try {
+      const occurredAt = new Date().toISOString();
       const result = await client.confirmCashMovement({
         documentId: crypto.randomUUID(),
         reasonId: reason.reasonId,
         amount: numericAmount,
-        occurredAt: new Date().toISOString(),
+        occurredAt,
         reference: reference.trim() || null,
         notes: notes.trim() || null,
         costCenterId: reason.defaultCostCenterId,
       });
+      let printWarning = "";
+      try {
+        await client.printCashMovement({
+          documentId: result.documentId,
+          direction,
+          reasonName: reason.name,
+          amount: numericAmount,
+          occurredAt,
+          reference: reference.trim() || null,
+          notes: notes.trim() || null,
+        });
+      } catch (caught) {
+        printWarning = `. Movimiento guardado; ${caught instanceof Error ? caught.message : "no fue posible imprimir el ticket"}`;
+      }
       onCompleted(
         direction === "In"
           ? "Entrada de dinero registrada" +
-            (result.documentNumber ? " / " + result.documentNumber : " y pendiente de sincronizacion")
+            (result.documentNumber ? " / " + result.documentNumber : " y pendiente de sincronizacion") + printWarning
           : "Salida de dinero registrada" +
-            (result.documentNumber ? " / " + result.documentNumber : " y pendiente de sincronizacion"),
+            (result.documentNumber ? " / " + result.documentNumber : " y pendiente de sincronizacion") + printWarning,
       );
     } catch (caught) {
       setError(caught instanceof Error

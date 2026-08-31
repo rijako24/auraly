@@ -139,6 +139,34 @@ public sealed class SqlFiscalDeviceSeriesStore(
         return await ListAsync(tenantId, businessId, cancellationToken);
     }
 
+    public async Task<FiscalDeviceSeriesWorkspace> UnassignAsync(
+        Guid tenantId, Guid businessId,
+        UnassignFiscalDeviceSeriesRequest request,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = connections.Create();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        await using var command = StoredProcedure(
+            "fiscal.FiscalDeviceSeriesUnassign", connection, transaction);
+        Add(command, "@TenantId", tenantId);
+        Add(command, "@BusinessId", businessId);
+        Add(command, "@DeviceId", request.DeviceId);
+        Add(command, "@NotificationId", ids.NewId());
+        Add(command, "@Now", timeProvider.GetUtcNow());
+        try
+        {
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch (SqlException exception) when (exception.Number is 51023 or 51027)
+        {
+            throw new FiscalConfigurationValidationException(exception.Message);
+        }
+        return await ListAsync(tenantId, businessId, cancellationToken);
+    }
+
     public async Task<IReadOnlyList<PosFiscalSeriesProvisioning>> GetProvisioningAsync(
         Guid tenantId, Guid businessId, Guid deviceId, Guid? currentSeriesId,
         long? nextConsecutive, CancellationToken cancellationToken)

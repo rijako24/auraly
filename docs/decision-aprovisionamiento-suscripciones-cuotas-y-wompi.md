@@ -95,6 +95,17 @@ Capacidad efectiva = incluida en plan + ampliaciones pagadas + ajustes vigentes.
 
 `DianDocument` se renueva en cada fecha de corte de la suscripción: el consumo del nuevo periodo empieza en cero y la capacidad contratada se conserva; el saldo no usado no se acumula. Cada emisión reserva una unidad antes de numerar o enviar a DIAN y confirma el consumo con el resultado autoritativo. Borradores, consultas, reintentos técnicos y reenvíos del mismo documento conservan la misma reserva y no consumen otra unidad. Cuando no hay saldo, factura electrónica, documento soporte y nómina electrónica quedan bloqueados antes de emitir.
 
+Durante el corte incremental, el tenant facturador de plataforma Auraly y los tenants
+creados antes del modelo comercial pueden no tener todavía una fila en
+`TenantSubscriptions`. La ausencia total de suscripción significa temporalmente
+**cupo no administrado** y no equivale a límite cero; el preflight y la reserva permiten
+emitir sin crear consumos ficticios. Esta compatibilidad solo aplica cuando la fila no
+existe. Si existe una suscripción, sus estados, periodo mensual y límite se aplican de
+forma estricta: `Suspended`, `Cancelled`, periodo ausente o saldo agotado bloquean. La
+condición de retiro es completar la migración de límites actuales indicada en Rollout;
+entonces todos los tenants comerciales tendrán suscripción y la excepción quedará sin
+usuarios, sin cambiar el contrato de reserva.
+
 La validación tiene dos niveles y ambos son obligatorios. El preflight de experiencia consulta el saldo al abrir cada flujo y evita que el usuario invierta trabajo en un documento que no podrá emitir: facturación electrónica muestra un modal bloqueante y deja únicamente comprobantes no electrónicos; recepción de mercancía deshabilita la selección de documento soporte y explica cómo ampliar; nómina marca desde el periodo que el envío DIAN de fin de mes no se programará por falta de saldo. El segundo nivel reserva atómicamente al confirmar la emisión para cubrir consumo concurrente entre pestañas, sedes y cajas. Un preflight exitoso nunca sustituye esa reserva final.
 
 Para cajas desconectadas, el servidor entrega una concesión de cupo (`offline lease`) por dispositivo, con identificador y saldo monotónico, tomada de la misma bolsa mensual. La caja puede emitir offline solamente contra ese saldo reservado. Al sincronizar reporta los documentos e intercambia la concesión por un saldo actualizado. Si el servidor confirma agotamiento, se persiste localmente el bloqueo y ninguna pérdida posterior de conexión vuelve a habilitar la emisión. Una caja que aún no recibió esa confirmación puede continuar únicamente con su concesión ya reservada; nunca inventa saldo ni duplica el concedido a otra caja.

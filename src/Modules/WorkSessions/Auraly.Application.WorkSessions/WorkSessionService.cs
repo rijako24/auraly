@@ -40,6 +40,8 @@ public interface IWorkSessionStore
     Task<WorkSessionClosurePage> ListClosuresAsync(
         WorkSessionIdentity identity, DateOnly from, DateOnly to, string? status,
         int page, int pageSize, CancellationToken cancellationToken);
+    Task<IReadOnlyList<WorkSessionPaymentVerificationItem>> ListClosurePaymentVerificationsAsync(
+        WorkSessionIdentity identity, Guid closureId, CancellationToken cancellationToken);
     Task<WorkSessionClosureReconciliationView> ReconcileClosureAsync(
         WorkSessionIdentity identity, Guid closureId, string idempotencyKey,
         ReconcileWorkSessionClosureRequest request, CancellationToken cancellationToken);
@@ -221,6 +223,15 @@ public sealed class WorkSessionService(
         return store.ListClosuresAsync(identity,from,to,status,page,pageSize,cancellationToken);
     }
 
+    public Task<IReadOnlyList<WorkSessionPaymentVerificationItem>> ListClosurePaymentVerificationsAsync(
+        WorkSessionIdentity identity, Guid closureId, CancellationToken cancellationToken = default)
+    {
+        Demand(identity, WorkSessionPermissionCodes.ReadCashDifferences);
+        if (closureId == Guid.Empty)
+            throw new WorkSessionValidationException("El cierre es obligatorio.");
+        return store.ListClosurePaymentVerificationsAsync(identity, closureId, cancellationToken);
+    }
+
     public async Task<WorkSessionClosureReconciliationView> ReconcileClosureAsync(
         WorkSessionIdentity identity, Guid closureId, string idempotencyKey,
         ReconcileWorkSessionClosureRequest request, CancellationToken cancellationToken = default)
@@ -231,6 +242,9 @@ public sealed class WorkSessionService(
         if (request.Lines.Count==0 || request.Lines.Any(line=>string.IsNullOrWhiteSpace(line.PaymentMethodCode) || line.VerifiedAmount<0) ||
             request.Reclassifications.Any(line=>line.Amount<=0) || request.Note?.Trim().Length>500)
             throw new WorkSessionValidationException("Los valores de conciliación no son válidos.");
+        if (request.PaymentVerifications?.Any(item => string.IsNullOrWhiteSpace(item.VerificationKey) ||
+                item.Status is not ("Verified" or "Missing")) == true)
+            throw new WorkSessionValidationException("La verificación individual de pagos no es válida.");
         var result=await store.ReconcileClosureAsync(identity,closureId,idempotencyKey.Trim(),request with { Note=NullIfWhiteSpace(request.Note) },cancellationToken);
         if (result.AccountingStatus == "Pending")
             await accountingProcessing.RequestPostingAsync(result.BusinessId,result.ReconciliationId,

@@ -21,6 +21,10 @@ public interface IFiscalDeviceSeriesStore
         Guid tenantId, Guid businessId, Guid userId,
         AssignFiscalDeviceSeriesRequest request,
         CancellationToken cancellationToken);
+    Task<FiscalDeviceSeriesWorkspace> UnassignAsync(
+        Guid tenantId, Guid businessId,
+        UnassignFiscalDeviceSeriesRequest request,
+        CancellationToken cancellationToken);
     Task<FiscalDeviceSeriesWorkspace> SaveAlertSettingsAsync(
         Guid tenantId, Guid businessId, Guid userId,
         SaveFiscalResolutionAlertSettingsRequest request,
@@ -72,6 +76,20 @@ public sealed class FiscalDeviceSeriesService(IFiscalDeviceSeriesStore store)
         return store.GetProvisioningAsync(
             tenantId, businessId, deviceId, currentSeriesId, nextConsecutive,
             cancellationToken);
+    }
+
+    public Task<FiscalDeviceSeriesWorkspace> UnassignAsync(
+        FiscalConfigurationUser user, Guid businessId,
+        UnassignFiscalDeviceSeriesRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        Demand(user, FiscalPermissionCodes.ConfigurationManage);
+        ValidateBusiness(businessId);
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.DeviceId == Guid.Empty)
+            throw new FiscalConfigurationValidationException("El equipo enrolado es obligatorio.");
+        return store.UnassignAsync(
+            user.TenantId, businessId, request, cancellationToken);
     }
 
     public Task<FiscalDeviceSeriesWorkspace> SaveAlertSettingsAsync(

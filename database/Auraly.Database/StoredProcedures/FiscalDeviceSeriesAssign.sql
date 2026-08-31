@@ -114,7 +114,7 @@ BEGIN
     FROM dbo.PosSynchronizationOutboxMessages WITH(UPDLOCK,HOLDLOCK)
     WHERE BusinessId=@BusinessId AND Stream=N'FiscalProvisioning';
     INSERT dbo.PosSynchronizationOutboxMessages(
-        NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt)
-    VALUES(@NotificationId,@BusinessId,N'FiscalProvisioning',@Cursor,@Now);
+        NotificationId,BusinessId,Stream,AvailableThroughCursor,OccurredAt,TargetDeviceId)
+    VALUES(@NotificationId,@BusinessId,N'FiscalProvisioning',@Cursor,@Now,@DeviceId);
 END;
 GO

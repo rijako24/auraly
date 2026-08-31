@@ -28,7 +28,15 @@ internal sealed class PosFiscalProvisioningSynchronizer(
         request.Headers.Add("X-Auraly-Device-Id", credentials.DeviceId.ToString("D"));
         request.Headers.Add("X-Auraly-Device-Secret", credentials.Secret);
         using var response = await http.SendAsync(request, cancellationToken);
-        if (response.StatusCode == System.Net.HttpStatusCode.NoContent) return;
+        if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
+        {
+            await sales.DeactivateFiscalSeriesAsync(
+                new DeviceId(credentials.DeviceId), cancellationToken);
+            settings.Clear();
+            if (enrollmentStore.Load() is { } packageWithNoAssignment)
+                enrollmentStore.Save(packageWithNoAssignment with { FiscalSeries = null });
+            return;
+        }
         response.EnsureSuccessStatusCode();
         var provisions = await response.Content
             .ReadFromJsonAsync<IReadOnlyList<PosFiscalSeriesProvisioning>>(cancellationToken)

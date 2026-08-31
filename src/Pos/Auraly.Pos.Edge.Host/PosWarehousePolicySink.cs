@@ -5,6 +5,7 @@ namespace Auraly.Pos.Edge.Host;
 public sealed class PosWarehousePolicySink(
     PosEdgeRuntimeContext runtime,
     PosEdgeEnrollmentStore enrollmentStore,
+    PosSynchronizationEventLog events,
     ILogger<PosWarehousePolicySink> logger) : IPosWarehousePolicySink
 {
     private readonly SemaphoreSlim gate = new(1, 1);
@@ -27,6 +28,13 @@ public sealed class PosWarehousePolicySink(
                 WarehouseAllowsNegativeStock = allowsNegativeStock
             });
             runtime.ApplyWarehousePolicy(allowsNegativeStock);
+            events.Record(
+                "Success",
+                "Bodega",
+                "Regla de inventario actualizada",
+                allowsNegativeStock
+                    ? "La bodega permite vender con existencias negativas."
+                    : "La bodega exige existencias disponibles para vender.");
             logger.LogInformation(
                 "Warehouse negative-stock policy updated locally to {AllowsNegativeStock}.",
                 allowsNegativeStock);

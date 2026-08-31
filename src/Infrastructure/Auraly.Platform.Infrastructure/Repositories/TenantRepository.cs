@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Data.SqlClient;
 using Auraly.Platform.Domain.Entities;
 using Auraly.Platform.Domain.Repositories;
 using Auraly.Platform.Infrastructure.Data;
@@ -93,6 +94,33 @@ public class TenantRepository : ITenantRepository
             UPDATE dbo.TenantLegalProfiles SET LogoMediaRef={logoMediaRef},UpdatedAt={now}
             WHERE TenantId={tenantId};
             """, ct) == 1;
+
+    public async Task<IReadOnlyList<TenantFiscalCertificateExpiry>> GetFiscalCertificateExpirationsAsync(
+        DateTimeOffset? expiresOnOrBefore = null, CancellationToken ct = default)
+    {
+        var connection = (SqlConnection)_context.Database.GetDbConnection();
+        if (connection.State != System.Data.ConnectionState.Open)
+            await connection.OpenAsync(ct);
+        await using var command = new SqlCommand("""
+            SELECT tenantValue.TenantId,tenantValue.Name,MIN(configuration.ValidTo) AS ValidTo
+            FROM dbo.Tenants tenantValue
+            JOIN dbo.Businesses businessValue ON businessValue.TenantId=tenantValue.TenantId
+            JOIN dbo.FiscalIssuerConfigurations configuration
+              ON configuration.BusinessId=businessValue.BusinessId AND configuration.IsActive=1
+            WHERE configuration.ValidTo IS NOT NULL
+            GROUP BY tenantValue.TenantId,tenantValue.Name
+            HAVING @ExpiresOnOrBefore IS NULL OR MIN(configuration.ValidTo)<=@ExpiresOnOrBefore
+            ORDER BY ValidTo,tenantValue.Name;
+            """, connection);
+        command.Parameters.AddWithValue("@ExpiresOnOrBefore",
+            (object?)expiresOnOrBefore ?? DBNull.Value);
+        var values = new List<TenantFiscalCertificateExpiry>();
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            values.Add(new(reader.GetGuid(0), reader.GetString(1),
+                reader.GetFieldValue<DateTimeOffset>(2)));
+        return values;
+    }
 
     public Task<bool> IsReferenceOptionActiveAsync(string catalogCode, string code,
         CancellationToken ct = default) => _context.Database

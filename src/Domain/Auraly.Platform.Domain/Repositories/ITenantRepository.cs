@@ -15,4 +15,9 @@ public interface ITenantRepository
         DateTimeOffset now, CancellationToken ct = default);
     Task<bool> UpdateLogoAsync(Guid tenantId, string logoMediaRef, DateTimeOffset now, CancellationToken ct = default);
     Task<bool> IsReferenceOptionActiveAsync(string catalogCode, string code, CancellationToken ct = default);
+    Task<IReadOnlyList<TenantFiscalCertificateExpiry>> GetFiscalCertificateExpirationsAsync(
+        DateTimeOffset? expiresOnOrBefore = null, CancellationToken ct = default);
 }
+
+public sealed record TenantFiscalCertificateExpiry(
+    Guid TenantId, string TenantName, DateTimeOffset ValidTo);

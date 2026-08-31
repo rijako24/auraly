@@ -201,6 +201,23 @@ public sealed record WorkSessionClosurePage(
     int PageSize,
     int TotalItems);
 
+public sealed record WorkSessionPaymentVerificationItem(
+    string VerificationKey,
+    string PaymentMethodCode,
+    string MovementType,
+    Guid SourceId,
+    string DocumentNumber,
+    int SourceNumber,
+    decimal Amount,
+    string? Reference,
+    string? CardFranchiseCode,
+    string? ApprovalNumber,
+    DateTimeOffset OccurredAt);
+
+public sealed record WorkSessionPaymentVerificationDecision(
+    string VerificationKey,
+    string Status);
+
 public sealed record ReconcileWorkSessionClosureLine(
     string PaymentMethodCode,
     decimal VerifiedAmount,
@@ -215,7 +232,8 @@ public sealed record WorkSessionPaymentReclassification(
 public sealed record ReconcileWorkSessionClosureRequest(
     IReadOnlyList<ReconcileWorkSessionClosureLine> Lines,
     IReadOnlyList<WorkSessionPaymentReclassification> Reclassifications,
-    string? Note);
+    string? Note,
+    IReadOnlyList<WorkSessionPaymentVerificationDecision>? PaymentVerifications = null);
 
 public sealed record WorkSessionClosureReconciliationView(
     Guid ReconciliationId,

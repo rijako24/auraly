@@ -15,10 +15,11 @@ import { Switch } from "@/components/ui/switch";
 import { useRoles } from "@/hooks/use-roles";
 import { useServices } from "@/hooks/use-services";
 import { useCities } from "@/hooks/use-parties";
+import { useReferenceOptions } from "@/hooks/use-reference-options";
 import { employeesApi, usersApi } from "@/services/api";
 import type { PartySiteDetail, UserRoleDetail } from "@/services/api/parties";
 import { configuredPasswordMask, effectiveUserRoleAssignments } from "@/lib/party-user-role-selection";
-import { taxationApi } from "@/services/api/taxation";
+import { taxationApi, type WithholdingRule } from "@/services/api/taxation";
 import { receivablesApi } from "@/services/api/receivables";
 import { payrollApi } from "@/services/api/payroll";
 import { posApprovalClient } from "@/services/pos/pos-approval-client";
@@ -99,6 +100,7 @@ function PartyCounterpartyTaxRolePanel({ counterpartyId, role, editing, primaryS
   const queryClient = useQueryClient();
   const profile = useQuery({ queryKey: ["withholding-profile", businessId, counterpartyId], queryFn: () => taxationApi.getProfile(counterpartyId), enabled: Boolean(businessId && counterpartyId), retry: false });
   const rules = useQuery({ queryKey: ["withholding-rules", businessId, `${role}-profile-options`], queryFn: () => taxationApi.listRules(false), enabled: Boolean(businessId) });
+  const responsibilityOptions = useReferenceOptions("tax-responsibility", Boolean(businessId));
   const cities = useCities(primarySite?.administrativeDivisionId ?? "");
   const [appliesWithholding, setAppliesWithholding] = useState(false);
   const [responsibilities, setResponsibilities] = useState<Set<string>>(new Set());
@@ -117,7 +119,12 @@ function PartyCounterpartyTaxRolePanel({ counterpartyId, role, editing, primaryS
   };
   useEffect(() => registerSave(`${role}-tax-${counterpartyId}`, save), [registerSave, role, counterpartyId, businessId, appliesWithholding, responsibilities, cities.data, primarySite?.cityId, profile.data?.jurisdictionCode]);
 
-  const catalog = [...new Set((rules.data ?? []).flatMap((rule) => rule.requiredResponsibilities))].sort();
+  const responsibilityLabels = new Map((responsibilityOptions.data ?? [])
+    .map((option) => [option.code, option.label] as const));
+  const catalog = [...new Set([
+    ...(responsibilityOptions.data ?? []).map((option) => option.code),
+    ...(rules.data ?? []).flatMap((rule) => rule.requiredResponsibilities),
+  ])].sort();
   const available = catalog.filter((code) => !responsibilities.has(code));
   const city = cities.data?.find((item) => item.cityId === primarySite?.cityId);
 
@@ -125,10 +132,24 @@ function PartyCounterpartyTaxRolePanel({ counterpartyId, role, editing, primaryS
     <PanelHeader icon={ReceiptText} title="Retenciones y perfil tributario" description={`Define las responsabilidades de este ${role === "customer" ? "cliente" : "proveedor"} para que el motor canónico aplique las reglas vigentes.`}><div className="flex items-center gap-3"><span className="text-sm">Aplicar retenciones</span><Switch checked={appliesWithholding} onCheckedChange={setAppliesWithholding} disabled={!editing}/></div></PanelHeader>
     {profile.isLoading ? <PanelLoading /> : <section className="space-y-4 rounded-2xl border p-5">
       <div className="grid gap-4 md:grid-cols-2">
-        <div className={editing ? "space-y-2" : "grid content-start grid-rows-[auto_3rem_auto] gap-2"}><Label>Responsabilidades tributarias</Label>{editing&&<Select value={responsibilityToAdd} disabled={rules.isLoading||rules.isError||available.length===0} onValueChange={(value) => { setResponsibilityToAdd(""); setResponsibilities((current) => new Set(current).add(value)); }}><SelectTrigger><SelectValue placeholder={rules.isLoading?"Cargando catálogo...":rules.isError?"No fue posible cargar el catálogo":catalog.length===0?"No hay responsabilidades configuradas":"Agregar responsabilidad"}/></SelectTrigger><SelectContent>{available.map((code) => <SelectItem key={code} value={code}>{code}</SelectItem>)}</SelectContent></Select>}<div className="flex min-h-12 flex-wrap items-center gap-2 rounded-xl border bg-muted/10 p-3">{[...responsibilities].map((code) => <Badge key={code} variant="secondary" className="gap-1">{code}{editing&&<button type="button" aria-label={`Quitar ${code}`} onClick={() => setResponsibilities((current) => { const next = new Set(current); next.delete(code); return next; })}><X className="h-3 w-3"/></button>}</Badge>)}{responsibilities.size===0&&<span className="text-sm text-muted-foreground">Sin responsabilidades seleccionadas</span>}</div><p className="text-xs text-muted-foreground">Se obtienen de las reglas activas. <Link className="font-medium text-primary underline underline-offset-2" href="/dashboard/accounting/withholdings" target="_blank">Abrir Retenciones</Link></p></div>
+        <div className={editing ? "space-y-2" : "grid content-start grid-rows-[auto_3rem_auto] gap-2"}><Label>Responsabilidades tributarias</Label>{editing&&<Select value={responsibilityToAdd} disabled={responsibilityOptions.isLoading||responsibilityOptions.isError||available.length===0} onValueChange={(value) => { setResponsibilityToAdd(""); setResponsibilities((current) => new Set(current).add(value)); }}><SelectTrigger><SelectValue placeholder={responsibilityOptions.isLoading?"Cargando catálogo...":responsibilityOptions.isError?"No fue posible cargar el catálogo":catalog.length===0?"No hay responsabilidades configuradas":"Agregar responsabilidad"}/></SelectTrigger><SelectContent>{available.map((code) => <SelectItem key={code} value={code}>{code} · {responsibilityLabels.get(code) ?? "Responsabilidad configurada"}</SelectItem>)}</SelectContent></Select>}<div className="flex min-h-12 flex-wrap items-center gap-2 rounded-xl border bg-muted/10 p-3">{[...responsibilities].map((code) => <Badge key={code} variant="secondary" className="gap-1">{code} · {responsibilityLabels.get(code) ?? "Responsabilidad configurada"}{editing&&<button type="button" aria-label={`Quitar ${code}`} onClick={() => setResponsibilities((current) => { const next = new Set(current); next.delete(code); return next; })}><X className="h-3 w-3"/></button>}</Badge>)}{responsibilities.size===0&&<span className="text-sm text-muted-foreground">Sin responsabilidades seleccionadas</span>}</div><p className="text-xs text-muted-foreground">Catálogo tributario DIAN aprovisionado por Auraly. <Link className="font-medium text-primary underline underline-offset-2" href="/dashboard/accounting/withholdings" target="_blank">Abrir Retenciones</Link></p></div>
         <div className="grid content-start grid-rows-[auto_3rem_auto] gap-2"><Label>Ciudad o jurisdicción tributaria</Label><Input className="h-12" value={city?`${city.name} (${city.code})`:cities.isError?"No fue posible cargar la ciudad":primarySite?"Ciudad de la sede no disponible":"Sin sede principal"} readOnly/><p className="text-xs text-muted-foreground">Se sincroniza automáticamente con la ciudad de la sede principal.</p></div>
       </div>
+      <CounterpartyWithholdingRules rules={rules.data ?? []} loading={rules.isLoading} error={rules.isError} role={role}/>
     </section>}
+  </div>;
+}
+
+export function CounterpartyWithholdingRules({ rules, loading, error, role }: { rules: WithholdingRule[]; loading: boolean; error: boolean; role: "customer" | "supplier" }) {
+  const direction = role === "customer" ? "Sale" : "Purchase";
+  const applicable = rules.filter((rule) => rule.isActive && rule.direction === direction);
+  return <div className="space-y-2 border-t pt-4">
+    <Label>Reglas de retención vigentes</Label>
+    {loading ? <p className="text-sm text-muted-foreground">Cargando reglas…</p>
+      : error ? <p className="text-sm text-destructive">No fue posible cargar las reglas de retención.</p>
+      : applicable.length ? <div className="flex flex-wrap gap-2">{applicable.map((rule) => <Badge key={rule.ruleId} variant="outline">{rule.name} · {rule.rate}%</Badge>)}</div>
+      : <p className="text-sm text-muted-foreground">No hay reglas activas para {role === "customer" ? "ventas" : "compras"}.</p>}
+    <p className="text-xs text-muted-foreground">El motor evalúa estas reglas; las responsabilidades solo se seleccionan cuando alguna regla las exige.</p>
   </div>;
 }
 

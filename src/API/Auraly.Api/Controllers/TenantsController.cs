@@ -31,6 +31,12 @@ public sealed class TenantsController(
     [PermissionAuthorize("tenants.read")]
     public async Task<ActionResult<PagedResponse<TenantDto>>> GetAll([FromQuery] PagedRequest request, CancellationToken ct) => Ok(await tenantService.GetPagedAsync(request, ct));
 
+    [HttpGet("fiscal-certificate-expiry-alerts")]
+    [PermissionAuthorize("platform.fiscal_certificates.expiry.read")]
+    public async Task<ActionResult<IReadOnlyList<FiscalCertificateExpiryAlertDto>>> FiscalCertificateExpiryAlerts(
+        CancellationToken ct) => Ok(await tenantService.GetFiscalCertificateExpiryAlertsAsync(
+            User.GetTenantId(), ct));
+
     [HttpGet("{tenantId:guid}")]
     [PermissionAuthorize("tenants.read")]
     public async Task<ActionResult<TenantDto>> GetById(Guid tenantId, CancellationToken ct) => Ok(await tenantService.GetByIdAsync(tenantId, ct));

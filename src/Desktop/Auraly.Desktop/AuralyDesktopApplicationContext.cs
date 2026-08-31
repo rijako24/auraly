@@ -151,6 +151,7 @@ internal sealed class AuralyPosForm : Form
     private readonly string data;
     private readonly WebView2 browser = new() { Dock = DockStyle.Fill };
     private readonly AuralyDesktopUpdater updater;
+    private bool posPresentation;
 
     public AuralyPosForm(
         string root,
@@ -195,8 +196,29 @@ internal sealed class AuralyPosForm : Form
         browser.CoreWebView2.Settings.AreDevToolsEnabled = false;
         browser.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = false;
         browser.CoreWebView2.Settings.IsStatusBarEnabled = false;
+        browser.CoreWebView2.SourceChanged += (_, _) =>
+            ApplyPresentation(browser.Source);
         updater.Start();
         browser.CoreWebView2.Navigate(target);
+    }
+
+    private void ApplyPresentation(Uri? source)
+    {
+        var isPos = source is not null &&
+                    string.Equals(source.AbsolutePath.TrimEnd('/'), "/pos",
+                        StringComparison.OrdinalIgnoreCase);
+        if (isPos == posPresentation) return;
+        posPresentation = isPos;
+        if (isPos)
+        {
+            WindowState = FormWindowState.Normal;
+            Bounds = Screen.FromControl(this).Bounds;
+            TopMost = true;
+            return;
+        }
+
+        TopMost = false;
+        WindowState = FormWindowState.Maximized;
     }
 
     protected override void Dispose(bool disposing)

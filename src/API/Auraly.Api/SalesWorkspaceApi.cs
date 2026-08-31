@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Auraly.Application.Organization;
 using Auraly.Contracts.Authorization;
 using Auraly.Contracts.Organization;
+using Auraly.BuildingBlocks.Application.Synchronization;
 
 namespace Auraly.Api;
 
@@ -45,6 +46,23 @@ public static class SalesWorkspaceApi
             HttpContext context, SalesWorkspaceService service, CancellationToken ct) =>
             await Handle(async () => Results.Ok(await service.ListAsync(
                 context.User.ToSalesWorkspaceUserIdentity(), ct))));
+
+        group.MapPost("/synchronization/negotiate", async (
+            HttpContext context, Guid businessId, SalesWorkspaceService service,
+            IPosSynchronizationPushGateway gateway, CancellationToken ct) =>
+            await Handle(async () =>
+            {
+                var identity = context.User.ToSalesWorkspaceUserIdentity();
+                var authorized = (await service.ListAsync(identity, ct))
+                    .Any(option => option.BusinessId == businessId);
+                if (!authorized)
+                    throw new SalesWorkspaceForbiddenException(
+                        "La sede no pertenece a la empresa autenticada o no está disponible para ventas.");
+                var uri = gateway.CreateUserClientAccessUri(
+                    identity.TenantId, businessId, identity.UserId, ct);
+                return Results.Ok(new PosSynchronizationNegotiationResponse(
+                    uri, DateTimeOffset.UtcNow.AddMinutes(15)));
+            }));
 
         group.MapPost("/select", async (
             HttpContext context, SalesWorkspaceService service,

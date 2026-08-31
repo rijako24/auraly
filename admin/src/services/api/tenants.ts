@@ -102,6 +102,9 @@ export interface TenantBillingNotification {
   title: string; message: string; actionUrl: string;
   createdAt: string; readAt: string | null;
 }
+export interface FiscalCertificateExpiryAlert {
+  tenantId: string; tenantName: string; validTo: string; isExpired: boolean;
+}
 export interface PlatformBillingPolicy {
   emailRemindersEnabled: boolean; preDueReminderDays: number;
   overdueReminderIntervalDays: number; gracePeriodDays: number;
@@ -115,6 +118,8 @@ export interface RecordTenantSubscriptionPayment {
 
 export const tenantsApi = {
   list: (params?: Partial<PagedRequest>) => apiClient.get<PagedResponse<Tenant>>("/tenants", withPagedDefaults(params)),
+  fiscalCertificateExpiryAlerts: () =>
+    apiClient.get<FiscalCertificateExpiryAlert[]>("/tenants/fiscal-certificate-expiry-alerts"),
   getById: (id: string) => apiClient.get<Tenant>(`/tenants/${id}`),
   getBranding: () => apiClient.get<TenantBranding>("/tenants/branding"),
   create: (tenant: ProvisionTenantRequest, quote: TenantQuoteRequest) =>

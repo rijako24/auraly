@@ -23,6 +23,10 @@ public sealed class PosApprovalWebPushServiceTests
         await service.NotifyAsync(Approval(), CancellationToken.None);
 
         Assert.Equal(1, delivery.RequestCount);
+        Assert.NotNull(delivery.Topic);
+        Assert.Equal(32, delivery.Topic.Length);
+        Assert.All(delivery.Topic, character => Assert.True(
+            char.IsAsciiLetterOrDigit(character) || character is '-' or '_'));
     }
 
     [Fact]
@@ -141,11 +145,15 @@ public sealed class PosApprovalWebPushServiceTests
 
         public int RequestCount => Volatile.Read(ref requestCount);
         public int MaximumConcurrency => Volatile.Read(ref maximumConcurrency);
+        public string? Topic { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
+            Topic = request.Headers.TryGetValues("Topic", out var topics)
+                ? topics.Single()
+                : null;
             var active = Interlocked.Increment(ref activeRequests);
             InterlockedExtensions.Max(ref maximumConcurrency, active);
             if (Interlocked.Increment(ref requestCount) == expectedRequests)

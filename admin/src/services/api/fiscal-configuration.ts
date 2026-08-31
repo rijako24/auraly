@@ -200,6 +200,11 @@ export const fiscalConfigurationApi = {
       `/commerce/v1/fiscal/configuration/devices/assign?businessId=${encodeURIComponent(businessId)}`,
       { deviceId, dianNumberingRangeId },
     ),
+  unassignDeviceSeries: (businessId: string, deviceId: string) =>
+    apiClient.post<FiscalDeviceSeriesWorkspace>(
+      `/commerce/v1/fiscal/configuration/devices/unassign?businessId=${encodeURIComponent(businessId)}`,
+      { deviceId },
+    ),
   saveResolutionAlerts: (
     businessId: string,
     expirationWarningDays: number,

@@ -18,7 +18,14 @@ public record TenantDto(
     string? VerificationDigit,
     string? EntityType,
     string? IdentificationTypeCode,
-    string? LogoUrl);
+    string? LogoUrl,
+    DateTimeOffset? FiscalCertificateValidTo);
+
+public sealed record FiscalCertificateExpiryAlertDto(
+    Guid TenantId,
+    string TenantName,
+    DateTimeOffset ValidTo,
+    bool IsExpired);
 
 public sealed record TenantBrandingDto(
     Guid TenantId,

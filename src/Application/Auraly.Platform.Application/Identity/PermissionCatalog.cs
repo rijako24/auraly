@@ -29,6 +29,7 @@ public static class PermissionCatalog
         ("Tenants", "ManageBillingPolicy", "tenants.billing.policy.manage", "Configurar la política global de cobranza"),
         ("Tenants", "ConfirmManualBillingPayment", "tenants.billing.payment.confirm_manual", "Confirmar recaudos externos de suscripciones"),
         ("Platform", "AssignPermissions", "platform.permissions.assign", "Delegar permisos de plataforma"),
+        ("Platform", "ReadFiscalCertificateExpiry", "platform.fiscal_certificates.expiry.read", "Ver alertas de vencimiento de certificados DIAN"),
         ("Businesses", "Read", "businesses.read", "Ver negocios"),
         ("Businesses", "Create", "businesses.create", "Crear negocios"),
         ("Businesses", "Update", "businesses.update", "Actualizar negocios"),

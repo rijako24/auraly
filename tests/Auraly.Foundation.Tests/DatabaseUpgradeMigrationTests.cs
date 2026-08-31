@@ -3,6 +3,22 @@ namespace Auraly.Foundation.Tests;
 public sealed class DatabaseUpgradeMigrationTests
 {
     [Fact]
+    public void Tax_responsibilities_and_certificate_alert_permission_are_seeded_canonically()
+    {
+        var root = FindRepositoryRoot();
+        var options = File.ReadAllText(Path.Combine(root, "database", "Auraly.Database",
+            "Scripts", "Seeds", "SeedReferenceOptions.sql"));
+        var platform = File.ReadAllText(Path.Combine(root, "database", "Auraly.Database",
+            "Scripts", "Seeds", "SeedAuralyPlatformAdministration.sql"));
+
+        Assert.Contains("N'tax-responsibility'", options, StringComparison.Ordinal);
+        Assert.Contains("N'R-99-PN'", options, StringComparison.Ordinal);
+        Assert.Contains("N'O-13'", options, StringComparison.Ordinal);
+        Assert.Contains("platform.fiscal_certificates.expiry.read", platform,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Fiscal_document_backfill_only_migrates_complete_sales_invoices()
     {
         var migration = File.ReadAllText(Path.Combine(
@@ -220,12 +236,17 @@ public sealed class DatabaseUpgradeMigrationTests
             "AuthenticationSessions.sql"));
         var preDeployment = File.ReadAllText(Path.Combine(
             root, "database", "Auraly.Database", "Scripts", "PreDeployment.sql"));
+        var migration = File.ReadAllText(Path.Combine(
+            root, "database", "Auraly.Database", "Scripts", "Migrations",
+            "20260831_EnforceExclusiveUserSessions.sql"));
 
         Assert.Contains("UX_AuthenticationSessions_User_Active", table,
             StringComparison.Ordinal);
         Assert.DoesNotContain("UX_AuthenticationSessions_User_Client_Active", table,
             StringComparison.Ordinal);
         Assert.Contains("20260831_EnforceExclusiveUserSessions.sql", preDeployment,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("DROP INDEX [UX_WorkSessions_User_Open]", migration,
             StringComparison.Ordinal);
     }
 

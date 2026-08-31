@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Check, CreditCard, KeyRound, Loader2, ShieldCheck, X } from "lucide-react";
+import { AlertTriangle, Bell, Check, CreditCard, KeyRound, Loader2, ShieldCheck, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -22,7 +22,7 @@ import { ensurePosApprovalPushSubscription } from "@/lib/pos-approval-push";
 import { posApprovalClient, type PosApprovalRequest, type SupervisorCredentialStatus } from "@/services/pos/pos-approval-client";
 import { useAuthStore } from "@/stores/auth-store";
 import { useBusinessContextStore } from "@/stores/business-context-store";
-import { tenantCommercialApi, type TenantBillingNotification } from "@/services/api/tenants";
+import { tenantCommercialApi, tenantsApi, type FiscalCertificateExpiryAlert, type TenantBillingNotification } from "@/services/api/tenants";
 
 export function NotificationsDropdown({ className }: { className?: string }) {
   const user = useAuthStore((state) => state.user);
@@ -33,9 +33,11 @@ export function NotificationsDropdown({ className }: { className?: string }) {
   );
   const canReceivePush = Boolean(user?.permissions.includes("pos.approvals.receive_notifications"));
   const canManageSubscription = Boolean(user?.permissions.includes("subscription.manage"));
+  const canReadFiscalCertificateExpiry = Boolean(user?.permissions.includes("platform.fiscal_certificates.expiry.read"));
   const [dropdownOpen,setDropdownOpen]=useState(false);
   const [requests, setRequests] = useState<PosApprovalRequest[]>([]);
   const [billing, setBilling] = useState<TenantBillingNotification[]>([]);
+  const [fiscalCertificates, setFiscalCertificates] = useState<FiscalCertificateExpiryAlert[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [credentialOpen, setCredentialOpen] = useState(false);
@@ -88,6 +90,20 @@ export function NotificationsDropdown({ className }: { className?: string }) {
     try { setBilling(await tenantCommercialApi.billingNotifications()); }
     catch (caught) { setError(caught instanceof Error ? caught.message : "No fue posible cargar los avisos de suscripción."); }
   }, [canManageSubscription]);
+
+  const refreshFiscalCertificates = useCallback(async () => {
+    if (!canReadFiscalCertificateExpiry) { setFiscalCertificates([]); return; }
+    try { setFiscalCertificates(await tenantsApi.fiscalCertificateExpiryAlerts()); }
+    catch (caught) { setError(caught instanceof Error ? caught.message : "No fue posible cargar los vencimientos de certificados DIAN."); }
+  }, [canReadFiscalCertificateExpiry]);
+
+  useEffect(() => {
+    if (!canReadFiscalCertificateExpiry) { setFiscalCertificates([]); return; }
+    void refreshFiscalCertificates();
+    const onFocus = () => void refreshFiscalCertificates();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [canReadFiscalCertificateExpiry, refreshFiscalCertificates]);
 
   useEffect(() => {
     if (!canManageSubscription) { setBilling([]); return; }
@@ -224,9 +240,9 @@ export function NotificationsDropdown({ className }: { className?: string }) {
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="icon" className={cn("relative h-9 w-9", className)} aria-label="Notificaciones">
             <Bell className="h-4 w-4" />
-            {requests.length + billing.filter((item) => !item.readAt).length > 0 && (
+            {requests.length + billing.filter((item) => !item.readAt).length + fiscalCertificates.length > 0 && (
               <Badge variant="destructive" className="absolute -right-1 -top-1 h-5 min-w-5 rounded-full px-1.5 text-[10px]">
-                {requests.length + billing.filter((item) => !item.readAt).length > 99 ? "99+" : requests.length + billing.filter((item) => !item.readAt).length}
+                {requests.length + billing.filter((item) => !item.readAt).length + fiscalCertificates.length > 99 ? "99+" : requests.length + billing.filter((item) => !item.readAt).length + fiscalCertificates.length}
               </Badge>
             )}
           </Button>
@@ -247,15 +263,21 @@ export function NotificationsDropdown({ className }: { className?: string }) {
           {canApprove && canReceivePush && notificationPermission === "granted" && backgroundPushState === "active" && <p className="border-b bg-emerald-50 p-3 text-xs font-semibold text-emerald-800"><ShieldCheck className="mr-2 inline h-3.5 w-3.5"/>Alertas con Auraly cerrada: activas</p>}
           {canApprove && canReceivePush && notificationPermission === "granted" && backgroundPushState === "error" && <div className="border-b p-2"><Button variant="outline" size="sm" className="w-full" disabled={activatingNotifications} onClick={()=>void activateNotifications()}><Bell className="mr-2 h-4 w-4"/>Reactivar alertas en segundo plano</Button></div>}
           <ScrollArea className="max-h-[22rem]">
-            {!canApprove && billing.length === 0 ? (
+            {!canApprove && billing.length === 0 && fiscalCertificates.length === 0 ? (
               <div className="py-8 text-center text-sm text-muted-foreground">No hay notificaciones nuevas</div>
-            ) : requests.length === 0 && billing.length === 0 ? (
+            ) : requests.length === 0 && billing.length === 0 && fiscalCertificates.length === 0 ? (
               <div className="py-8 text-center text-sm text-muted-foreground">
                 <ShieldCheck className="mx-auto mb-2 h-6 w-6 text-emerald-600" />
                 No hay autorizaciones pendientes
               </div>
             ) : (
               <div className="space-y-2 p-2">
+                {fiscalCertificates.map((item) => (
+                  <button key={item.tenantId} type="button" onClick={() => { setDropdownOpen(false); window.location.assign(`/dashboard/tenants/${item.tenantId}`); }}
+                    className="w-full rounded-xl border border-red-200 bg-red-50/80 p-3 text-left shadow-sm transition hover:border-red-300 hover:bg-red-50">
+                    <div className="flex items-start gap-3"><span className="mt-0.5 rounded-lg bg-red-100 p-2 text-red-700"><AlertTriangle className="h-4 w-4"/></span><span className="min-w-0 flex-1"><span className="block font-semibold text-red-950">{item.isExpired ? "Certificado DIAN vencido" : "Certificado DIAN próximo a vencer"}</span><span className="mt-1 block text-xs leading-relaxed text-red-900">{item.tenantName} · vence {new Date(item.validTo).toLocaleDateString("es-CO")}</span><span className="mt-2 block text-xs font-semibold text-red-700">Revisar tenant</span></span></div>
+                  </button>
+                ))}
                 {billing.map((item) => (
                   <button key={item.notificationId} type="button" onClick={() => void openBillingNotification(item)}
                     className={cn("w-full rounded-xl border p-3 text-left shadow-sm transition hover:border-teal-300 hover:bg-teal-50/50", item.readAt ? "bg-card" : "border-teal-200 bg-teal-50/70")}>

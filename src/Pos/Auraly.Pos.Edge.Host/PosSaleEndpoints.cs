@@ -37,6 +37,7 @@ internal sealed class PosFiscalRuntimeSettings(PosFiscalHostSettings? initial)
     public PosFiscalHostSettings? Current => Volatile.Read(ref current);
     public void Replace(PosFiscalHostSettings value) =>
         Volatile.Write(ref current, value ?? throw new ArgumentNullException(nameof(value)));
+    public void Clear() => Volatile.Write(ref current, null);
 }
 
 internal sealed record PosSaleHostSettings(

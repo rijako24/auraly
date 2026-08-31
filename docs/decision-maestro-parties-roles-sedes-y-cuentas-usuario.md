@@ -80,7 +80,12 @@ Colección con PartyAddressId, PartyId, PartySiteId opcional, propósito, direcc
 
 ### PartyTaxResponsibilities
 
-Responsabilidades fiscales vigentes. Los documentos conservan snapshot y no dependen del valor actual.
+Responsabilidades fiscales vigentes. El catálogo canónico de códigos se aprovisiona en
+`reference.Options` bajo `tax-responsibility`; el perfil tributario del tercero conserva
+la selección vigente en `CounterpartyWithholdingProfiles.Responsibilities`. Las reglas
+de retención no se asignan manualmente al tercero: el motor las resuelve por dirección,
+concepto, jurisdicción, base y responsabilidades requeridas. Los documentos conservan
+snapshot y no dependen del valor actual.
 
 ### PartySites
 

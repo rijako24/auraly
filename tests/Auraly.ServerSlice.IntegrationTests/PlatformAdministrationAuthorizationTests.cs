@@ -25,7 +25,8 @@ public sealed class PlatformAdministrationAuthorizationTests(ServerSliceFixture 
             "users.read", "users.create", "users.update", "users.delete", "users.assign_role",
             "tenants.read", "tenants.capacity.update", "tenants.status.update",
             "tenants.users.read", "tenants.users.manage", "tenants.devices.read",
-            "tenants.devices.revoke", "platform.permissions.assign"
+            "tenants.devices.revoke", "platform.permissions.assign",
+            "platform.fiscal_certificates.expiry.read"
         };
         using var root = fixture.CreateTenantUserClient(AuralyTenantId, rootUserId, rootPermissions);
 
@@ -64,6 +65,9 @@ public sealed class PlatformAdministrationAuthorizationTests(ServerSliceFixture 
 
         using var allowedDevices = await root.GetAsync($"/api/v1/tenants/{fixture.TenantId:D}/devices");
         Assert.Equal(HttpStatusCode.OK, allowedDevices.StatusCode);
+        using var allowedCertificateAlerts = await root.GetAsync(
+            "/api/v1/tenants/fiscal-certificate-expiry-alerts");
+        Assert.Equal(HttpStatusCode.OK, allowedCertificateAlerts.StatusCode);
         using var allowedCapacity = await root.PutAsJsonAsync($"/api/v1/tenants/{fixture.TenantId:D}", new { maximumUsers = 513 });
         var allowedCapacityBody = await allowedCapacity.Content.ReadAsStringAsync();
         Assert.True(allowedCapacity.StatusCode == HttpStatusCode.OK,
@@ -74,7 +78,11 @@ public sealed class PlatformAdministrationAuthorizationTests(ServerSliceFixture 
             customerUserId,
             "roles.assign_permissions",
             "platform.permissions.assign",
-            "tenants.users.read");
+            "tenants.users.read",
+            "platform.fiscal_certificates.expiry.read");
+        using var forbiddenCertificateAlerts = await customer.GetAsync(
+            "/api/v1/tenants/fiscal-certificate-expiry-alerts");
+        Assert.Equal(HttpStatusCode.Forbidden, forbiddenCertificateAlerts.StatusCode);
         await AssignPermissionsAsync(
             customer,
             customerRoleId,

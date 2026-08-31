@@ -218,6 +218,7 @@ public static class PosEdgeHostApplication
         builder.Services.AddSingleton<PosWorkSessionClosurePrinter>();
         builder.Services.AddSingleton<IPosWorkSessionClosurePrinter>(sp =>
             sp.GetRequiredService<PosWorkSessionClosurePrinter>());
+        builder.Services.AddSingleton<PosCashMovementTicketPrinter>();
         builder.Services.AddSingleton(sp => new PosOfflineWorkSessionClosureStore(
             connectionString,
             sp.GetRequiredService<TimeProvider>()));
@@ -556,16 +557,63 @@ public static class PosEdgeHostApplication
             if(request.BusinessId!=runtime.BusinessId.Value || request.DeviceId!=runtime.DeviceId.Value ||
                request.WorkSessionId!=user.WorkSessionId)
                 return Results.BadRequest(new { code="InvalidScope", detail="La solicitud no coincide con el contexto local." });
-            return Results.Ok(await approvals.CreateAsync(
-                user, request.DraftId, request.LineId, request.PermissionResource, request.ContextJson, ct));
+            try
+            {
+                return Results.Ok(await approvals.CreateAsync(
+                    user, request.DraftId, request.LineId, request.PermissionResource, request.ContextJson, ct));
+            }
+            catch (PosRemoteApprovalException exception)
+            {
+                return Results.Problem(
+                    exception.Message,
+                    statusCode: StatusCodes.Status409Conflict,
+                    title: exception.Code);
+            }
+        });
+        edge.MapPost("/print/cash-movement", async (
+            PosCashMovementTicket request,
+            PosCashMovementTicketPrinter printer,
+            PosLocalSessionAccessor sessions,
+            CancellationToken ct) =>
+        {
+            try
+            {
+                await printer.PrintAsync(request, sessions.Required(), ct);
+                return Results.NoContent();
+            }
+            catch (ArgumentException exception)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    [nameof(request)] = [exception.Message]
+                });
+            }
+            catch (Exception exception) when (exception is IOException or InvalidOperationException)
+            {
+                return Results.Problem(
+                    exception.Message,
+                    statusCode: StatusCodes.Status409Conflict);
+            }
         });
         edge.MapGet("/approvals/{approvalRequestId:guid}", async (
             Guid approvalRequestId,
             PosRemoteApprovalClient approvals,
             PosLocalSessionAccessor sessions,
             CancellationToken ct) =>
-            Results.Ok(await approvals.GetAsync(
-                approvalRequestId, sessions.Required(), ct)));
+        {
+            try
+            {
+                return Results.Ok(await approvals.GetAsync(
+                    approvalRequestId, sessions.Required(), ct));
+            }
+            catch (PosRemoteApprovalException exception)
+            {
+                return Results.Problem(
+                    exception.Message,
+                    statusCode: StatusCodes.Status409Conflict,
+                    title: exception.Code);
+            }
+        });
         edge.MapGet("/auth/session", (
             PosLocalSessionAccessor sessions) =>
             Results.Ok(sessions.Required()));
@@ -667,6 +715,7 @@ public static class PosEdgeHostApplication
                 warehouseId = runtime.WarehouseId.Value,
                 businessName = workstation.BusinessName,
                 warehouseName = workstation.WarehouseName,
+                warehouseAllowsNegativeStockSales = runtime.WarehouseAllowsNegativeStock,
                 userDisplayName = user?.DisplayName ?? string.Empty,
                 userId = user?.UserId,
                 workSessionId = user?.WorkSessionId,
@@ -1160,6 +1209,7 @@ public static class PosEdgeHostApplication
             businessId = "",
             businessName = "",
             warehouseName = "",
+            warehouseAllowsNegativeStockSales = false,
             userDisplayName = "",
             fiscalReady = false
         }));

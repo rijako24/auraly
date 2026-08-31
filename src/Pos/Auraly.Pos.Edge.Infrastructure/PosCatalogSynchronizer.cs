@@ -37,6 +37,7 @@ public sealed class PosCatalogSynchronizer(
     {
         await store.InitializeAsync(cancellationToken);
         var status = await store.StatusAsync(cancellationToken);
+        var initialSynchronization = status.Status is "Empty" or "Invalid" or "Bootstrapping";
         if (status.Status is "Empty" or "Invalid")
         {
             var session = await SendAsync<CatalogSyncSessionResponse>(
@@ -63,8 +64,6 @@ public sealed class PosCatalogSynchronizer(
                     path,
                     content: null,
                     cancellationToken);
-                foreach (var item in page.Items)
-                    events?.ProductReceived(item, null, bootstrap: true);
                 await store.ApplyBootstrapPageAsync(page, cancellationToken);
                 if (!page.HasMore)
                 {
@@ -75,7 +74,7 @@ public sealed class PosCatalogSynchronizer(
             }
         }
 
-        var previousPricing = events is null
+        var previousPricing = events is null || initialSynchronization
             ? null
             : await store.ReadPricingSnapshotAsync(cancellationToken);
         var pricing = await SendAsync<PosPricingSnapshot>(
@@ -89,7 +88,7 @@ public sealed class PosCatalogSynchronizer(
             foreach (var customer in pricing.Customers)
             {
                 previousCustomers.TryGetValue(customer.CustomerId, out var previous);
-                if (previous != customer)
+                if (!CustomerEquals(previous, customer))
                     events!.CustomerReceived(customer, previous);
             }
 
@@ -148,6 +147,21 @@ public sealed class PosCatalogSynchronizer(
     private static (Guid PriceChannelId, Guid ProductId, decimal MinimumQuantity) PriceKey(
         PosPriceChannelItem item) =>
         (item.PriceChannelId, item.ProductId, item.MinimumQuantity);
+
+    private static bool CustomerEquals(
+        PosCustomerPricing? previous,
+        PosCustomerPricing current) =>
+        previous is not null &&
+        previous.CustomerId == current.CustomerId &&
+        previous.Identification == current.Identification &&
+        previous.Name == current.Name &&
+        previous.PriceChannelId == current.PriceChannelId &&
+        previous.IsActive == current.IsActive &&
+        previous.RequiresElectronicInvoice == current.RequiresElectronicInvoice &&
+        previous.AppliesWithholding == current.AppliesWithholding &&
+        previous.TaxJurisdictionCode == current.TaxJurisdictionCode &&
+        (previous.TaxResponsibilities ?? []).SequenceEqual(
+            current.TaxResponsibilities ?? [], StringComparer.Ordinal);
 
     private async Task<T> SendAsync<T>(
         HttpMethod method,

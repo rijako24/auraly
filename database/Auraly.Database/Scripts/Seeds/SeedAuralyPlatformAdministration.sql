@@ -23,7 +23,8 @@ INSERT INTO @PlatformPermissions VALUES
 (N'Tenants',N'RevokeDevices',N'tenants.devices.revoke',N'Desenrolar cajas de otros tenants'),
 (N'Tenants',N'ManageBillingPolicy',N'tenants.billing.policy.manage',N'Configurar la política global de cobranza'),
 (N'Tenants',N'ConfirmManualBillingPayment',N'tenants.billing.payment.confirm_manual',N'Confirmar recaudos externos de suscripciones'),
-(N'Platform',N'AssignPermissions',N'platform.permissions.assign',N'Delegar permisos de plataforma');
+(N'Platform',N'AssignPermissions',N'platform.permissions.assign',N'Delegar permisos de plataforma'),
+(N'Platform',N'ReadFiscalCertificateExpiry',N'platform.fiscal_certificates.expiry.read',N'Ver alertas de vencimiento de certificados DIAN');
 
 INSERT dbo.Permissions(PermissionId,Module,Action,Resource,Description,CreatedAt)
 SELECT NEWID(),source.Module,source.Action,source.Resource,source.Description,SYSUTCDATETIME()

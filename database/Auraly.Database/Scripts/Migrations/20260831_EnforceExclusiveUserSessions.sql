@@ -43,11 +43,6 @@ BEGIN
     )
         THROW 51000,N'Hay usuarios con más de una WorkSession abierta; deben cerrarse operativamente antes del despliegue.',1;
 
-    IF EXISTS
-    (
-        SELECT 1 FROM sys.indexes
-        WHERE object_id=OBJECT_ID(N'dbo.WorkSessions')
-          AND name=N'UX_WorkSessions_User_Open'
-    )
-        DROP INDEX [UX_WorkSessions_User_Open] ON dbo.WorkSessions;
+    /* El índice pertenece al modelo del DACPAC. Aquí solo se valida el dato;
+       SQLPackage reemplaza la definición antigua sin una segunda eliminación. */
 END

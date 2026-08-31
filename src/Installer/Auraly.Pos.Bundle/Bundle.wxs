@@ -12,7 +12,7 @@
                                                LicenseUrl=""
                                                ThemeFile="AuralyTheme.xml"
                                                LocalizationFile="AuralyTheme.wxl"
-                                               LogoFile="..\..\..\admin\public\brand\auraly-app-icon-512-v4.png"
+                                               LogoFile="..\..\Desktop\Auraly.Desktop\Assets\AuralyIcon-v5.png"
                                                LogoSideFile="..\..\..\admin\public\brand\launch\auraly-828x1792-v4.png"
                                                ShowVersion="yes"
                                                SuppressOptionsUI="yes"

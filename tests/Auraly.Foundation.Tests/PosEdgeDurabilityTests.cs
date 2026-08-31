@@ -86,6 +86,12 @@ public sealed class PosEdgeDurabilityTests
                 deviceId, new DateTimeOffset(2026, 8, 31, 9, 1, 0, TimeSpan.FromHours(-5)));
             Assert.True(afterProduction.IsAvailable);
             Assert.Equal("FV21001", afterProduction.FullNumber);
+
+            await store.DeactivateFiscalSeriesAsync(deviceId);
+            Assert.Null(await store.GetFiscalCursorStateAsync(deviceId));
+            var afterUnassignment = await store.PreviewNextFiscalNumberAsync(
+                deviceId, new DateTimeOffset(2026, 8, 31, 9, 2, 0, TimeSpan.FromHours(-5)));
+            Assert.False(afterUnassignment.IsAvailable);
         }
         finally
         {

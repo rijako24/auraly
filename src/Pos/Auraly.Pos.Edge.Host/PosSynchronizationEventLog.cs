@@ -39,15 +39,14 @@ public sealed class PosSynchronizationEventLog(
 
     public void ProductReceived(PosCatalogItem product, PosCatalogItem? previous, bool bootstrap)
     {
+        if (bootstrap) return;
         var changedPrice = previous is not null && previous.UnitPrice != product.UnitPrice;
         var title = previous is null
             ? $"Producto descargado: {product.Name}"
             : changedPrice
                 ? $"Precio actualizado: {product.Name}"
                 : $"Producto actualizado: {product.Name}";
-        var detail = bootstrap
-            ? $"Catálogo inicial · {product.ProductCode}"
-            : changedPrice
+        var detail = changedPrice
                 ? $"{product.CurrencyCode} {previous!.UnitPrice:N2} → {product.UnitPrice:N2} · {product.ProductCode}"
                 : product.ProductCode;
         Add(new(Interlocked.Increment(ref sequence), timeProvider.GetUtcNow(),

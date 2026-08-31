@@ -15,6 +15,7 @@ public static class PlatformPermissions
     public const string TenantDevicesRevoke = "tenants.devices.revoke";
     public const string TenantBillingPolicyManage = "tenants.billing.policy.manage";
     public const string TenantBillingPaymentConfirmManual = "tenants.billing.payment.confirm_manual";
+    public const string FiscalCertificateExpiryRead = "platform.fiscal_certificates.expiry.read";
 
     public static bool IsNonDelegable(string resource) =>
         string.Equals(resource, TenantBillingPolicyManage, StringComparison.Ordinal)
