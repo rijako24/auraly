@@ -1,59 +1,90 @@
-# Entradas de mercanc?a: dise?o implementado
+# Órdenes y recepciones de compra
 
-Fecha: 2026-08-02
-Rama: `feature/auraly-commerce-goods-receipts`
+Fecha de actualización: 2026-08-30
 
-## Alcance de esta entrega
+## Lenguaje de producto
 
-Esta rebanada conecta la bandeja y captura web de entradas de mercanc?a con el flujo de servidor que ya procesaba documentos confirmados.
+- **Orden de compra**: compromiso planificado con un proveedor. Antes se había denominado “orden de pedido”.
+- **Recepción de compra**: registro de lo que físicamente llegó. Reemplaza en la interfaz “entrada/recepción de mercancía”.
+- Los nombres técnicos `PurchaseOrder` y `GoodsReceipt` permanecen estables en contratos y persistencia para evitar una ruptura artificial.
+
+## Propietarios y flujo
 
 ```text
-Auraly Admin
-  -> API Purchasing autenticada
-  -> GoodsReceiptDrafts (recuperable, mutable y concurrente)
-  -> confirmaci?n inmutable GoodsReceipts
-  -> DocumentProcessingJobs (orden estricto por Business)
-  -> inventario y costo promedio
-  -> costo observado del proveedor
-  -> propuesta separada de precio de venta
-  -> cuenta por pagar o contrapartida de contado
-  -> contabilidad y outbox
+Orden de compra (Purchasing, sin efecto físico)
+  -> borrador recuperable
+  -> confirmación inmutable OCP
+  -> cumplimiento acumulado por línea
+
+Recepción de compra (Purchasing)
+  -> puede recuperar una OCP abierta o parcial
+  -> el usuario registra la cantidad real
+  -> confirmación inmutable EMC
+  -> DocumentProcessingEngine / handler GoodsReceipt
+  -> inventario, costo, cuentas por pagar, contabilidad y cumplimiento OCP
+
+Venta/devolución procesada
+  -> SalesReportingProcessingCoordinator
+  -> hechos de reporting
+  -> ProductRotationSnapshots por negocio, bodega y producto
 ```
 
-No se cre? un segundo cat?logo ni una segunda tabla de productos. Bodegas, proveedores, productos, c?digos de barras, perfiles tributarios y costos observados se leen desde sus propietarios can?nicos existentes.
+Purchasing es el propietario de la orden y su cumplimiento. Inventario sólo cambia dentro del handler canónico de `GoodsReceipt`. Reporting es el único propietario del cálculo persistido de rotación; compras y catálogo sólo leen su snapshot.
 
-## Separaci?n borrador/documento
+Las tablas de órdenes pertenecen al esquema `purchasing`. Las consultas y mutaciones nuevas se versionan en el proyecto de base de datos mediante procedimientos de los esquemas `purchasing` y `reporting`; los stores y handlers de C# sólo hacen invocaciones parametrizadas y no contienen SQL embebido.
 
-`GoodsReceiptDrafts` y `GoodsReceiptDraftLines` almacenan trabajo incompleto. Admiten encabezado parcial, l?neas v?lidas y recuperaci?n.
+## Ciclo de vida de la orden
 
-`GoodsReceipts` y `GoodsReceiptLines` siguen siendo el documento confirmado e inmutable. El n?mero `EMC` solo se asigna al confirmar. El borrador conserva su UUID como identificador del documento y se elimina dentro de la misma transacci?n que persiste el confirmado y su trabajo del motor.
+`Draft -> Open -> PartiallyReceived -> Received`
 
-La confirmaci?n de un borrador exige su `DraftConcurrencyToken`. Tanto guardar como confirmar comparan el `rowversion`; una pesta?a obsoleta recibe conflicto 409 y no consume consecutivo.
+Una orden abierta o parcial también puede pasar a `Closed` cuando un usuario autorizado cierra explícitamente el saldo con un motivo. No se permite cerrar si una recepción aceptada aún espera procesamiento. Una orden confirmada no se edita: la realidad se registra en recepciones separadas y auditables.
 
-## Contratos
+## Cantidades reales
 
-- `GET /api/commerce/v1/goods-receipts/options`
-- `GET /api/commerce/v1/goods-receipts/products`
-- `GET /api/commerce/v1/goods-receipts`
-- `GET /api/commerce/v1/goods-receipts/drafts/{draftId}`
-- `PUT /api/commerce/v1/goods-receipts/drafts/{draftId}`
-- `DELETE /api/commerce/v1/goods-receipts/drafts/{draftId}`
-- `POST /api/commerce/v1/goods-receipts/confirm`
+Recuperar una orden propone el saldo pendiente, pero no bloquea la cantidad:
 
-Todos usan el Business autenticado; no aceptan otro negocio por confiar en el body. Los permisos son lectura, creaci?n y confirmaci?n de entradas.
+- orden 10, llegan 8: la recepción registra 8 y quedan 2;
+- luego llegan 2: la orden queda recibida;
+- orden 10, llegan 12: se conservan las 12 reales, pero el excedente exige motivo y el permiso `purchasing.goods-receipts.over-receive`;
+- sin motivo o permiso, el servidor rechaza el excedente;
+- el cumplimiento puede superar 100 %, mientras el pendiente nunca es negativo.
+
+La recepción congela `PurchaseOrderId`, `PurchaseOrderLineId`, motivo y autorización del excedente. El handler bloquea orden y líneas, acumula lo recibido y deriva el estado en la misma transacción que aplica inventario. Esto evita dobles aplicaciones por reintentos.
+
+Una recepción confirmada en estado `Accepted` cuenta como cantidad pendiente de aplicar mientras espera el motor. La recuperación descuenta ese pendiente y una confirmación concurrente lo valida bajo aislamiento serializable. Esto no reserva ni modifica inventario: evita que dos capturas consuman silenciosamente el mismo saldo documental de la orden.
+
+## Rotación persistida
+
+`reporting.ProductRotationSnapshots` guarda ventanas móviles de 30 y 90 días, ventas brutas, devoluciones, venta neta y demanda diaria de 90 días. La clave es `BusinessId + WarehouseId + ProductId`; por tanto, “Ver producto” muestra la rotación de cada bodega/sede del negocio y no mezcla existencias.
+
+El writer canónico de reporting recalcula sólo los productos afectados al proyectar una venta o devolución. Una transacción histórica no puede hacer retroceder `WindowEndDate`. Las órdenes leen el snapshot para apoyar abastecimiento junto con stock actual y cantidades en camino; nunca recalculan ventas desde la pantalla ni desde Purchasing.
 
 ## Experiencia web
 
-La ruta es `/dashboard/purchasing/goods-receipts`.
+Las bandejas usan la grilla compartida, paginación de servidor y filtros por estado. Órdenes y recepciones usan el mismo selector paginado de productos del proveedor:
 
-La bandeja pagina en servidor y combina b?squeda y estado. El editor permite seleccionar proveedor, bodega, factura, fechas y condici?n de pago; capturar por lector o buscar por c?digo interno, referencia, nombre, c?digo de proveedor y c?digo de barras; repetir una lectura para incrementar cantidad; editar cantidad, costo y descuento con rec?lculo inmediato; eliminar l?neas; guardar, recuperar y eliminar borradores; y confirmar con permiso.
+1. buscar o escanear por nombre, códigos, referencia o código del proveedor;
+2. seleccionar agrega la línea y enfoca su cantidad;
+3. flechas arriba/abajo recorren cantidades;
+4. Enter en cantidad devuelve el foco al buscador.
 
-Los costos observados alimentan la propuesta de precios, pero la entrada nunca publica un precio de venta autom?ticamente.
+El detalle de producto presenta rotación sólo como información de lectura. La edición del producto no puede escribirla.
 
-Cada producto de la grilla muestra informativamente último costo recibido y costo promedio vigente antes de capturar el nuevo costo. El concepto de retención y el municipio para reteICA son selectores provenientes de reglas tributarias activas de compra; no aceptan texto libre que el motor no pueda resolver.
+## Contratos principales
 
-Cuando la sede comparte precios, confirmar mantiene la cantidad física exclusivamente en la bodega receptora y recalcula costo/promedio/precio preparado para todas las sedes compartidas. Las sedes independientes conservan el flujo aislado existente.
+- `GET /api/commerce/v1/purchase-orders`
+- `GET /api/commerce/v1/purchase-orders/{id}`
+- `GET /api/commerce/v1/purchase-orders/{id}/receipt-source`
+- `PUT /api/commerce/v1/purchase-orders/{id}/draft`
+- `POST /api/commerce/v1/purchase-orders/confirm`
+- `POST /api/commerce/v1/purchase-orders/{id}/close`
+- `GET /api/commerce/v1/goods-receipts/products`
+- `PUT /api/commerce/v1/goods-receipts/drafts/{id}`
+- `POST /api/commerce/v1/goods-receipts/confirm`
+- `GET /api/commerce/v1/products/{id}/rotation`
 
-## Decisiones a?n no implementadas
+Todos derivan tenant y negocio de la identidad autenticada y validan que bodega, proveedor, producto y orden pertenezcan al mismo alcance.
 
-La reversi?n de una entrada confirmada y la devoluci?n de compra deben construirse como documentos compensatorios procesados por el motor. No se incluyeron aqu? porque necesitan preservar costo original, comprobar cantidades a?n retornables y compensar inventario, cuentas por pagar y contabilidad en una sola operaci?n. No se simulan mediante eliminaci?n ni edici?n del documento confirmado.
+## Rollback y compatibilidad
+
+Las columnas nuevas de recepción son opcionales; las recepciones sin orden conservan el comportamiento anterior. El despliegue puede revertir código sin perder documentos: las tablas y columnas agregadas son compatibles. No se eliminan ni reescriben recepciones confirmadas; cualquier reversión económica o física se realiza mediante los documentos compensatorios canónicos.

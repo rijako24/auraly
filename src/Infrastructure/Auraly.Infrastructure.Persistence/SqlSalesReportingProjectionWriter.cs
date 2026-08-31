@@ -161,6 +161,8 @@ public sealed class SqlSalesReportingProjectionWriter(
             collected: value.Payments.Sum(payment => payment.Amount),
             refunded: 0,
             now, cancellationToken);
+        await RefreshProductRotationAsync(session, value.BusinessId, value.DocumentId,
+            value.CommercialSnapshot.DocumentType, localDate.Date, now, cancellationToken);
         await UpdateCheckpointAsync(
             session, value.BusinessId, value.DocumentId,
             value.CommercialSnapshot.DocumentType, now, cancellationToken);
@@ -213,6 +215,8 @@ public sealed class SqlSalesReportingProjectionWriter(
             refunded: value.EconomicResolution == ReturnEconomicResolutions.Refund
                 ? value.TotalAmount : 0,
             now, cancellationToken);
+        await RefreshProductRotationAsync(session, value.BusinessId, value.ReturnId,
+            SalesReturnDocumentTypes.SalesReturn, localDate.Date, now, cancellationToken);
         await UpdateCheckpointAsync(
             session, value.BusinessId, value.ReturnId,
             SalesReturnDocumentTypes.SalesReturn, now, cancellationToken);
@@ -944,6 +948,25 @@ public sealed class SqlSalesReportingProjectionWriter(
         command.Parameters.AddWithValue("@Version", ProjectionVersion);
         command.Parameters.AddWithValue("@DocumentId", documentId);
         command.Parameters.AddWithValue("@DocumentType", documentType);
+        command.Parameters.AddWithValue("@Now", now);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task RefreshProductRotationAsync(
+        SalesReportingSqlSession session, Guid businessId, Guid sourceDocumentId,
+        string sourceDocumentType, DateOnly windowEndDate, DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand(
+            "reporting.ProductRotationRefresh", session.Connection, session.Transaction)
+        {
+            CommandType = CommandType.StoredProcedure
+        };
+        command.Parameters.AddWithValue("@BusinessId", businessId);
+        command.Parameters.AddWithValue("@SourceDocumentId", sourceDocumentId);
+        command.Parameters.AddWithValue("@SourceDocumentType", sourceDocumentType);
+        command.Parameters.Add("@EndDate", SqlDbType.Date).Value = windowEndDate.ToDateTime(TimeOnly.MinValue);
+        command.Parameters.AddWithValue("@ProjectionVersion", ProjectionVersion);
         command.Parameters.AddWithValue("@Now", now);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

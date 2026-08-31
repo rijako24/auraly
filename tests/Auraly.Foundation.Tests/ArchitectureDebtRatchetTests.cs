@@ -339,6 +339,39 @@ public sealed class ArchitectureDebtRatchetTests
         Assert.Contains("ElapsedMilliseconds", source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void PurchaseOrdersAndRotation_DoNotEmbedSqlInApplicationCode()
+    {
+        var paths = new[]
+        {
+            "src/Infrastructure/Auraly.Infrastructure.Persistence/SqlPurchaseOrderStore.cs",
+            "src/Infrastructure/Auraly.Infrastructure.Persistence/SqlCatalogStore.Rotation.cs",
+            "src/Infrastructure/Auraly.Infrastructure.Persistence/SqlGoodsReceiptStore.cs",
+            "src/Infrastructure/Auraly.Infrastructure.Persistence/SqlGoodsReceiptDocumentHandler.cs",
+            "src/Infrastructure/Auraly.Infrastructure.Persistence/SqlSalesReportingProjectionWriter.cs"
+        };
+
+        foreach (var path in paths)
+        {
+            var source = File.ReadAllText(Path.Combine(RepositoryRoot, path));
+            Assert.DoesNotContain("purchasing.PurchaseOrders ", source, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("purchasing.PurchaseOrderLines ", source, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("reporting.ProductRotationSnapshots ", source, StringComparison.OrdinalIgnoreCase);
+        }
+
+        var procedures = new[]
+        {
+            "PurchasingPurchaseOrdersList.sql", "PurchasingPurchaseOrderGet.sql",
+            "PurchasingPurchaseOrderDraftSave.sql", "PurchasingPurchaseOrderConfirm.sql",
+            "PurchasingPurchaseOrderClose.sql", "PurchasingReceiptOrderValidate.sql",
+            "PurchasingReceiptOrderFulfillmentApply.sql", "ReportingProductRotationRefresh.sql",
+            "CatalogProductRotationGet.sql"
+        };
+        foreach (var procedure in procedures)
+            Assert.True(File.Exists(Path.Combine(RepositoryRoot, "database", "Auraly.Database",
+                "StoredProcedures", procedure)), $"Missing procedure {procedure}.");
+    }
+
     private static void AssertSingleClass(string className)
     {
         var matches = CSharpFiles("src")

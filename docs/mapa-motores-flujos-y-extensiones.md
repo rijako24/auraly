@@ -88,6 +88,10 @@ Documento comercial completado → `SalesReportingProcessingCoordinator` → col
   Reporting cercano al módulo propietario; no consulta desde la página, no
   recalcula nómina y no crea una cola o proyección paralela sin benchmark.
 - Ventas usa proyección física por su volumen, costo y agregaciones.
+- La rotación de producto es una proyección persistida de esos hechos en
+  `reporting.ProductRotationSnapshots`, con clave negocio + bodega + producto.
+  `SqlSalesReportingProjectionWriter` es su único writer; Purchasing, Catalog y
+  las pantallas sólo leen el snapshot.
 - Reportes pequeños consultan tablas propietarias indexadas.
 - Una nueva proyección exige métrica versionada, benchmark, idempotencia,
   reconciliación y rebuild; no crea automáticamente otra tabla de jobs.

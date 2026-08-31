@@ -381,7 +381,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             SELECT r.DocumentNumber,r.Status,r.WarehouseId,w.Name,r.SupplierId,s.Name,
                    r.SupplierInvoiceNumber,r.SupplierInvoiceDate,r.ReceivedAt,r.CreatesPayable,
                    r.DueDate,r.CurrencyCode,r.Notes,r.NetAmount,r.TaxAmount,r.GrandTotal,
-                   r.AcceptedAt,r.ProcessedAt,r.PurchaseEvidenceType
+                   r.AcceptedAt,r.ProcessedAt,r.PurchaseEvidenceType,r.PurchaseOrderId
             FROM dbo.GoodsReceipts r
             INNER JOIN dbo.Businesses b
               ON b.BusinessId=r.BusinessId AND b.TenantId=@TenantId
@@ -392,7 +392,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             SELECT l.LineNumber,l.ProductId,l.DescriptionSnapshot,l.Quantity,l.UnitCost,
                    l.DiscountAmount,l.TaxCode,l.TaxRate,l.TaxTreatment,l.NetAmount,
                    l.TaxAmount,l.LineTotal,l.PresentationNameSnapshot,
-                   l.PresentationQuantity,l.UnitsPerPresentation
+                   l.PresentationQuantity,l.UnitsPerPresentation,l.PurchaseOrderLineId,l.OverReceiptReason,l.OverReceiptAuthorized
             FROM dbo.GoodsReceiptLines l
             WHERE l.GoodsReceiptId=@DocumentId
             ORDER BY l.LineNumber;
@@ -423,6 +423,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         var acceptedAt = reader.GetDateTimeOffset(16);
         DateTimeOffset? processedAt = reader.IsDBNull(17) ? null : reader.GetDateTimeOffset(17);
         var purchaseEvidenceType = reader.GetString(18);
+        var purchaseOrderId = reader.IsDBNull(19) ? (Guid?)null : reader.GetGuid(19);
 
         await reader.NextResultAsync(cancellationToken);
         var lines = new List<GoodsReceiptLineSnapshot>();
@@ -432,13 +433,15 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                 reader.GetDecimal(3), reader.GetDecimal(4), reader.GetDecimal(5),
                 reader.GetString(6), reader.GetDecimal(7), reader.GetString(8),
                 reader.GetDecimal(9), reader.GetDecimal(10), reader.GetDecimal(11),
-                reader.GetString(12), reader.GetDecimal(13), reader.GetDecimal(14)));
+                reader.GetString(12), reader.GetDecimal(13), reader.GetDecimal(14),
+                reader.IsDBNull(15) ? null : reader.GetGuid(15),
+                reader.IsDBNull(16) ? null : reader.GetString(16), reader.GetBoolean(17)));
 
         return new GoodsReceiptDetail(
             documentId, number, status, warehouseId, warehouseName, supplierId,
             supplierName, supplierInvoiceNumber, supplierInvoiceDate, receivedAt,
             createsPayable, dueDate, currencyCode, notes, netAmount, taxAmount,
-            grandTotal, acceptedAt, processedAt, lines, purchaseEvidenceType);
+            grandTotal, acceptedAt, processedAt, lines, purchaseEvidenceType, purchaseOrderId);
     }
     public async Task<GoodsReceiptDraft?> GetDraftAsync(
         PurchasingUserIdentity user, Guid draftId, CancellationToken cancellationToken)
@@ -574,10 +577,10 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
     {
         const string sql = """
             INSERT dbo.GoodsReceiptDrafts
-              (GoodsReceiptDraftId,BusinessId,WarehouseId,SupplierId,PurchaseEvidenceType,SupplierInvoiceNumber,
+              (GoodsReceiptDraftId,BusinessId,WarehouseId,SupplierId,PurchaseOrderId,PurchaseEvidenceType,SupplierInvoiceNumber,
                SupplierInvoiceDate,ReceivedAt,CreatesPayable,DueDate,CurrencyCode,Notes,
                NetAmount,TaxAmount,GrandTotal,CreatedByUserId,UpdatedByUserId,CreatedAt,UpdatedAt)
-            VALUES(@Id,@BusinessId,@WarehouseId,@SupplierId,@PurchaseEvidenceType,@InvoiceNumber,@InvoiceDate,@ReceivedAt,
+            VALUES(@Id,@BusinessId,@WarehouseId,@SupplierId,@PurchaseOrderId,@PurchaseEvidenceType,@InvoiceNumber,@InvoiceDate,@ReceivedAt,
                    @CreatesPayable,@DueDate,@Currency,@Notes,@Net,@Tax,@Total,@UserId,@UserId,@Now,@Now);
             """;
         await using var command = DraftCommand(sql, connection, transaction, user, request, calculation, now);
@@ -591,7 +594,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
     {
         const string sql = """
             UPDATE dbo.GoodsReceiptDrafts
-            SET WarehouseId=@WarehouseId,SupplierId=@SupplierId,PurchaseEvidenceType=@PurchaseEvidenceType,SupplierInvoiceNumber=@InvoiceNumber,
+            SET WarehouseId=@WarehouseId,SupplierId=@SupplierId,PurchaseOrderId=@PurchaseOrderId,PurchaseEvidenceType=@PurchaseEvidenceType,SupplierInvoiceNumber=@InvoiceNumber,
                 SupplierInvoiceDate=@InvoiceDate,ReceivedAt=@ReceivedAt,CreatesPayable=@CreatesPayable,
                 DueDate=@DueDate,CurrencyCode=@Currency,Notes=@Notes,NetAmount=@Net,TaxAmount=@Tax,
                 GrandTotal=@Total,UpdatedByUserId=@UserId,UpdatedAt=@Now
@@ -613,6 +616,7 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         command.Parameters.AddWithValue("@BusinessId", user.BusinessId);
         command.Parameters.AddWithValue("@WarehouseId", (object?)request.WarehouseId ?? DBNull.Value);
         command.Parameters.AddWithValue("@SupplierId", (object?)request.SupplierId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@PurchaseOrderId", (object?)request.PurchaseOrderId ?? DBNull.Value);
         command.Parameters.AddWithValue("@PurchaseEvidenceType", (object?)request.PurchaseEvidenceType ?? DBNull.Value);
         command.Parameters.AddWithValue("@InvoiceNumber", (object?)request.SupplierInvoiceNumber ?? DBNull.Value);
         command.Parameters.AddWithValue("@InvoiceDate", (object?)request.SupplierInvoiceDate ?? DBNull.Value);
@@ -647,9 +651,11 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         const string sql = """
             INSERT dbo.GoodsReceiptDraftLines
               (GoodsReceiptDraftId,LineNumber,ProductId,DescriptionSnapshot,Quantity,UnitCost,
-               DiscountAmount,TaxCode,TaxRate,TaxTreatment,NetAmount,TaxAmount,LineTotal,PresentationNameSnapshot,PresentationQuantity,UnitsPerPresentation)
+               DiscountAmount,TaxCode,TaxRate,TaxTreatment,NetAmount,TaxAmount,LineTotal,PresentationNameSnapshot,PresentationQuantity,UnitsPerPresentation,
+               PurchaseOrderLineId,OverReceiptReason)
             VALUES(@Id,@Line,@ProductId,@Description,@Quantity,@UnitCost,@Discount,@TaxCode,
-                   @TaxRate,@TaxTreatment,@Net,@Tax,@Total,@PresentationName,@PresentationQuantity,@UnitsPerPresentation);
+                   @TaxRate,@TaxTreatment,@Net,@Tax,@Total,@PresentationName,@PresentationQuantity,@UnitsPerPresentation,
+                   @PurchaseOrderLineId,@OverReceiptReason);
             """;
         foreach (var line in calculation.Lines)
         {
@@ -671,6 +677,8 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             command.Parameters.AddWithValue("@PresentationName", source.PresentationName);
             AddDecimal(command, "@PresentationQuantity", source.PresentationQuantity, 19, 6);
             AddDecimal(command, "@UnitsPerPresentation", source.UnitsPerPresentation, 19, 6);
+            command.Parameters.AddWithValue("@PurchaseOrderLineId", (object?)source.PurchaseOrderLineId ?? DBNull.Value);
+            command.Parameters.AddWithValue("@OverReceiptReason", (object?)source.OverReceiptReason ?? DBNull.Value);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
     }
@@ -682,12 +690,12 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
         const string sql = """
             SELECT GoodsReceiptDraftId,BusinessId,WarehouseId,SupplierId,SupplierInvoiceNumber,
                    SupplierInvoiceDate,ReceivedAt,CreatesPayable,DueDate,CurrencyCode,Notes,
-                   NetAmount,TaxAmount,GrandTotal,UpdatedAt,RowVersion,PurchaseEvidenceType
+                   NetAmount,TaxAmount,GrandTotal,UpdatedAt,RowVersion,PurchaseEvidenceType,PurchaseOrderId
             FROM dbo.GoodsReceiptDrafts
             WHERE GoodsReceiptDraftId=@Id AND BusinessId=@BusinessId;
             SELECT LineNumber,ProductId,DescriptionSnapshot,Quantity,UnitCost,DiscountAmount,
                    TaxCode,TaxRate,TaxTreatment,NetAmount,TaxAmount,LineTotal,
-                   PresentationNameSnapshot,PresentationQuantity,UnitsPerPresentation
+                   PresentationNameSnapshot,PresentationQuantity,UnitsPerPresentation,PurchaseOrderLineId,OverReceiptReason
             FROM dbo.GoodsReceiptDraftLines
             WHERE GoodsReceiptDraftId=@Id ORDER BY LineNumber;
             """;
@@ -708,7 +716,8 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
             Currency = reader.GetString(9), Notes = reader.IsDBNull(10) ? null : reader.GetString(10),
             Net = reader.GetDecimal(11), Tax = reader.GetDecimal(12), Total = reader.GetDecimal(13),
             Updated = reader.GetDateTimeOffset(14), Token = Convert.ToBase64String(reader.GetFieldValue<byte[]>(15)),
-            EvidenceType = reader.IsDBNull(16) ? null : reader.GetString(16)
+            EvidenceType = reader.IsDBNull(16) ? null : reader.GetString(16),
+            OrderId = reader.IsDBNull(17) ? (Guid?)null : reader.GetGuid(17)
         };
         await reader.NextResultAsync(cancellationToken);
         var lines = new List<GoodsReceiptLineSnapshot>();
@@ -717,11 +726,13 @@ public sealed class SqlGoodsReceiptWorkspaceStore(
                 reader.GetInt32(0), reader.GetGuid(1), reader.GetString(2), reader.GetDecimal(3),
                 reader.GetDecimal(4), reader.GetDecimal(5), reader.GetString(6), reader.GetDecimal(7),
                 reader.GetString(8), reader.GetDecimal(9), reader.GetDecimal(10), reader.GetDecimal(11),
-                reader.GetString(12), reader.GetDecimal(13), reader.GetDecimal(14)));
+                reader.GetString(12), reader.GetDecimal(13), reader.GetDecimal(14),
+                reader.IsDBNull(15) ? null : reader.GetGuid(15),
+                reader.IsDBNull(16) ? null : reader.GetString(16)));
         return new(header.Id, header.Business, header.Warehouse, header.Supplier, header.Invoice,
             header.InvoiceDate, header.Received, header.Payable, header.Due, header.Currency,
             header.Notes, header.Net, header.Tax, header.Total, lines, header.Updated, header.Token,
-            header.EvidenceType);
+            header.EvidenceType, header.OrderId);
     }
 
     private static byte[] ParseToken(string value)

@@ -25,6 +25,10 @@ export interface GoodsReceiptLine {
   unitsPerPresentation: number;
   latestUnitCost?: number | null;
   averageUnitCost?: number | null;
+  purchaseOrderLineId?: string | null;
+  overReceiptReason?: string | null;
+  orderedQuantity?: number | null;
+  remainingQuantity?: number | null;
 }
 
 export interface GoodsReceiptLineSnapshot extends GoodsReceiptLine {
@@ -52,6 +56,7 @@ export interface GoodsReceiptDraft {
   updatedAt: string;
   concurrencyToken: string;
   purchaseEvidenceType: PurchaseEvidenceType | null;
+  purchaseOrderId: string | null;
 }
 
 export interface GoodsReceiptDetail {
@@ -76,6 +81,7 @@ export interface GoodsReceiptDetail {
   processedAt: string | null;
   lines: GoodsReceiptLineSnapshot[];
   purchaseEvidenceType: PurchaseEvidenceType;
+  purchaseOrderId: string | null;
 }
 
 export interface SaveGoodsReceiptDraftRequest {
@@ -93,6 +99,7 @@ export interface SaveGoodsReceiptDraftRequest {
   lines: GoodsReceiptLine[];
   concurrencyToken: string | null;
   purchaseEvidenceType: PurchaseEvidenceType | null;
+  purchaseOrderId: string | null;
 }
 
 export interface GoodsReceiptListItem {
@@ -198,6 +205,7 @@ export const goodsReceiptsApi = {
     draftConcurrencyToken: string | null;
     withholdingConceptCode: string | null; withholdingJurisdictionCode: string | null;
     purchaseEvidenceType: PurchaseEvidenceType;
+    purchaseOrderId: string | null;
   }) => apiClient.postIdempotent<GoodsReceiptAcceptance>(
     "/commerce/v1/goods-receipts/confirm", request, `goods-receipt-${request.documentId}`,
   ),

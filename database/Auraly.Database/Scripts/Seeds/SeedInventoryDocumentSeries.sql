@@ -2,7 +2,7 @@ SET QUOTED_IDENTIFIER ON;
 SET ANSI_NULLS ON;
 SET NOCOUNT ON;
 DECLARE @Series TABLE(DocumentType NVARCHAR(64),Prefix NVARCHAR(8));
-INSERT @Series VALUES (N'GoodsReceipt',N'EMC'),(N'StockCount',N'CTI'),
+INSERT @Series VALUES (N'GoodsReceipt',N'EMC'),(N'PurchaseOrder',N'OCP'),(N'StockCount',N'CTI'),
   (N'InventoryAdjustment',N'AJI'),(N'WarehouseTransfer',N'TRB'),(N'ProductConversion',N'CNV'),(N'Damage',N'AVE'),
   (N'SalesReturn',N'DVT'),(N'PurchaseReturn',N'DCP'),
   (N'ReceivablePayment',N'RCC'),(N'PayablePayment',N'PGP');

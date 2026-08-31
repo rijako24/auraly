@@ -107,6 +107,13 @@ public sealed record ProductPageRequest(
 
 public sealed record ProductPage(IReadOnlyCollection<ProductDetail> Items, string? NextCursor);
 
+public sealed record ProductRotationDetail(
+    Guid WarehouseId, string WarehouseCode, string WarehouseName,
+    decimal GrossUnitsSold30Days, decimal ReturnedUnits30Days, decimal NetUnitsSold30Days,
+    decimal GrossUnitsSold90Days, decimal ReturnedUnits90Days, decimal NetUnitsSold90Days,
+    decimal DailyDemand90Days, decimal QuantityOnHand, decimal IncomingQuantity,
+    decimal? CoverageDays, DateOnly WindowEndDate, DateTimeOffset CalculatedAt);
+
 public sealed record CatalogUserIdentity(
     Guid UserId,
     Guid TenantId,

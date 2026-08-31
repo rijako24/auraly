@@ -2,7 +2,7 @@
 
 import { KeyboardEvent, useRef, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BarChart3, CircleDollarSign, Images, PackagePlus, Pencil, Power, Search, Truck } from "lucide-react";
 import { toast } from "sonner";
 
@@ -37,7 +37,7 @@ import {
   useProducts,
   useUpdateProductStatus,
 } from "@/hooks/use-products";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, formatDateTime } from "@/lib/utils";
 import {
   ProductAliasResolutionMode,
   ProductAliasReviewAction,
@@ -89,6 +89,11 @@ export default function ProductsPage() {
     includeInactive,
   });
   const configurationQuery = useProductConfiguration(selectedProduct?.productId);
+  const rotationQuery = useQuery({
+    queryKey: ["product-rotation", businessId, selectedProduct?.productId],
+    queryFn: () => productsApi.rotation(selectedProduct!.productId),
+    enabled: !!businessId && !!selectedProduct && modalMode === "details",
+  });
   const reviewAlias = useReviewProductAlias();
   const promoteAlias = usePromoteProductAlias();
   const updateStatus = useUpdateProductStatus();
@@ -475,7 +480,12 @@ export default function ProductsPage() {
               </DialogHeader>
 
               <div className="min-h-0 flex-1 overflow-y-auto scroll-smooth p-4 sm:p-6">
-              {modalMode !== "edit" && <div className="mx-auto w-full max-w-5xl space-y-5"><ProductOverview product={selectedProduct} /><details id="product-recognition" className="group scroll-mt-5 rounded-xl border bg-background"><summary className="cursor-pointer list-none p-5 font-semibold">Reconocimiento, alias y aprendizaje <span className="ml-2 text-xs font-normal text-muted-foreground">Información avanzada</span></summary><div className="space-y-5 border-t p-5"><ProductRecognitionSections productId={selectedProduct.productId} aliases={configurationQuery.data?.aliases ?? []} searchTerms={configurationQuery.data?.searchTerms ?? []} isLoading={configurationQuery.isLoading} isError={configurationQuery.isError} /><ProductLearningSection aliases={configurationQuery.data?.aliases ?? []} isLoading={configurationQuery.isLoading} isError={configurationQuery.isError} isPending={reviewAlias.isPending || promoteAlias.isPending} onReview={handleReviewLearning} onPromote={handlePromoteLearning} /></div></details></div>}
+              {modalMode !== "edit" && <div className="mx-auto w-full max-w-5xl space-y-5"><ProductOverview product={selectedProduct} />
+                <section className="rounded-xl border bg-background p-5"><div className="flex items-start justify-between gap-3"><div><h3 className="font-semibold">Rotación por bodega</h3><p className="text-sm text-muted-foreground">Información calculada y almacenada por Reportes; no se edita manualmente.</p></div><BarChart3 className="h-5 w-5 text-primary"/></div>
+                  {rotationQuery.isLoading&&<p className="mt-4 text-sm text-muted-foreground">Cargando rotación…</p>}
+                  {!rotationQuery.isLoading&&(rotationQuery.data?.length??0)===0&&<p className="mt-4 rounded-lg bg-muted/40 p-4 text-sm text-muted-foreground">Todavía no hay ventas proyectadas para este producto en la sede.</p>}
+                  <div className="mt-4 grid gap-3 md:grid-cols-2">{rotationQuery.data?.map(item=><article key={item.warehouseId} className="rounded-xl border p-4"><h4 className="font-medium">{item.warehouseName} · {item.warehouseCode}</h4><dl className="mt-3 grid grid-cols-2 gap-3 text-sm"><div><dt className="text-muted-foreground">Rotación neta 30 días</dt><dd className="text-lg font-semibold">{item.netUnitsSold30Days}</dd></div><div><dt className="text-muted-foreground">Rotación neta 90 días</dt><dd className="text-lg font-semibold">{item.netUnitsSold90Days}</dd></div><div><dt className="text-muted-foreground">Demanda diaria</dt><dd>{item.dailyDemand90Days.toFixed(3)}</dd></div><div><dt className="text-muted-foreground">Cobertura</dt><dd>{item.coverageDays==null?"Sin demanda":`${item.coverageDays.toFixed(1)} días`}</dd></div><div><dt className="text-muted-foreground">Disponible</dt><dd>{item.quantityOnHand}</dd></div><div><dt className="text-muted-foreground">En órdenes abiertas</dt><dd>{item.incomingQuantity}</dd></div></dl><p className="mt-3 text-xs text-muted-foreground">Corte {item.windowEndDate} · actualizado {formatDateTime(item.calculatedAt)}</p></article>)}</div>
+                </section><details id="product-recognition" className="group scroll-mt-5 rounded-xl border bg-background"><summary className="cursor-pointer list-none p-5 font-semibold">Reconocimiento, alias y aprendizaje <span className="ml-2 text-xs font-normal text-muted-foreground">Información avanzada</span></summary><div className="space-y-5 border-t p-5"><ProductRecognitionSections productId={selectedProduct.productId} aliases={configurationQuery.data?.aliases ?? []} searchTerms={configurationQuery.data?.searchTerms ?? []} isLoading={configurationQuery.isLoading} isError={configurationQuery.isError} /><ProductLearningSection aliases={configurationQuery.data?.aliases ?? []} isLoading={configurationQuery.isLoading} isError={configurationQuery.isError} isPending={reviewAlias.isPending || promoteAlias.isPending} onReview={handleReviewLearning} onPromote={handlePromoteLearning} /></div></details></div>}
 
               {modalMode === "edit" && <div className="mx-auto w-full max-w-5xl space-y-5">
                 {productValidationError && <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"><strong>No se puede guardar todavía.</strong> {productValidationError}</div>}

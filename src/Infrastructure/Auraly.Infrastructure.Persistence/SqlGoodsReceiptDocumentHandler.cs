@@ -1,4 +1,5 @@
 using System.Data;
+using System.Text.Json;
 using Auraly.Application.DocumentProcessing;
 using Auraly.BuildingBlocks.Domain.Identifiers;
 using Auraly.Contracts.DocumentProcessing;
@@ -35,12 +36,48 @@ public sealed class SqlGoodsReceiptDocumentHandler(
         var session = sessions.Current;
         foreach (var line in receipt.Lines.OrderBy(line => line.LineNumber))
             await ProcessLineAsync(session, receipt, line, cancellationToken);
+        await ApplyPurchaseOrderFulfillmentAsync(session, receipt, cancellationToken);
         await PersistWithholdingSnapshotAsync(session, receipt, cancellationToken);
         await SqlAccountingPostingJobWriter.InsertAsync(
             session, document, receipt.ReceivedAt, ids, timeProvider,
             cancellationToken);
         await InsertOutboxAsync(session, receipt, document.Payload, cancellationToken);
         await MarkProcessedAsync(session, receipt, cancellationToken);
+    }
+
+    private async Task ApplyPurchaseOrderFulfillmentAsync(
+        SqlDocumentProcessingSessionAccessor.Session session,
+        GoodsReceiptDocumentPayload receipt,
+        CancellationToken cancellationToken)
+    {
+        if (receipt.PurchaseOrderId is null)
+        {
+            if (receipt.Lines.Any(line => line.PurchaseOrderLineId is not null))
+                throw new InvalidOperationException("A receipt line references an order without an order header.");
+            return;
+        }
+
+        if (receipt.Lines.Any(line => line.PurchaseOrderLineId is null))
+            throw new InvalidOperationException("Every recovered receipt line requires an order-line reference.");
+
+        await using var command = new SqlCommand(
+            "purchasing.ReceiptOrderFulfillmentApply", session.Connection, session.Transaction)
+        {
+            CommandType = CommandType.StoredProcedure
+        };
+        command.Parameters.AddWithValue("@BusinessId", receipt.BusinessId);
+        command.Parameters.AddWithValue("@PurchaseOrderId", receipt.PurchaseOrderId.Value);
+        command.Parameters.AddWithValue("@WarehouseId", receipt.WarehouseId);
+        command.Parameters.AddWithValue("@SupplierId", receipt.SupplierId);
+        command.Parameters.AddWithValue("@LinesJson", JsonSerializer.Serialize(receipt.Lines.Select(line => new
+        {
+            line.PurchaseOrderLineId,
+            line.ProductId,
+            line.Quantity,
+            line.OverReceiptAuthorized
+        })));
+        command.Parameters.AddWithValue("@Now", timeProvider.GetUtcNow());
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private async Task PersistWithholdingSnapshotAsync(

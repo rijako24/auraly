@@ -72,6 +72,13 @@ export interface ProductAlias {
 }
 
 export interface ProductConfiguration { aliases: ProductAlias[]; searchTerms: string[] }
+export interface ProductRotationDetail {
+  warehouseId: string; warehouseCode: string; warehouseName: string;
+  grossUnitsSold30Days: number; returnedUnits30Days: number; netUnitsSold30Days: number;
+  grossUnitsSold90Days: number; returnedUnits90Days: number; netUnitsSold90Days: number;
+  dailyDemand90Days: number; quantityOnHand: number; incomingQuantity: number;
+  coverageDays: number | null; windowEndDate: string; calculatedAt: string;
+}
 
 export interface CreateCatalogProductRequest {
   businessId: string;
@@ -152,6 +159,7 @@ export const productsApi = {
     salesTaxProfileId: string; purchaseTaxProfileId: string; purchaseTaxTreatment: string; description: string | null;
     baseUnitCode: string; manageInventory: boolean; isWeighable: boolean;
   }>(`/commerce/v1/products/${productId}`),
+  rotation: (productId: string) => apiClient.get<ProductRotationDetail[]>(`/commerce/v1/products/${productId}/rotation`),
   listCategories: (businessId: string, includeInactive = false) => apiClient.get<ProductCategory[]>(`/businesses/${businessId}/product-categories`, { includeInactive }),
   createCategory: (businessId: string, request: ProductCategoryPayload) => apiClient.post<ProductCategory>(`/businesses/${businessId}/product-categories`, request),
   updateCategory: (businessId: string, categoryId: string, request: ProductCategoryPayload) => apiClient.put<ProductCategory>(`/businesses/${businessId}/product-categories/${categoryId}`, request),

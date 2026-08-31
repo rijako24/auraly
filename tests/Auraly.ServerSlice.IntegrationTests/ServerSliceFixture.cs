@@ -94,6 +94,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
     public Guid SupplierId { get; } = Guid.NewGuid();
     public Guid SupplierPartyId { get; } = Guid.NewGuid();
     public Guid GoodsReceiptSeriesId { get; } = Guid.NewGuid();
+    public Guid PurchaseOrderSeriesId { get; } = Guid.NewGuid();
     public Guid PurchaseReturnSeriesId { get; } = Guid.NewGuid();
     public Guid OnlineDocumentSeriesId { get; } = Guid.NewGuid();
     public Guid OnlineSalesReceiptSeriesId { get; } = Guid.NewGuid();
@@ -908,6 +909,8 @@ public sealed class ServerSliceFixture : IAsyncLifetime
              N'CVI', N'00', 8, 1, 99999999, 0, 1, SYSDATETIMEOFFSET()),
             (@GoodsReceiptSeriesId, @BusinessId, NULL, N'GoodsReceipt',
              N'EMC', N'00', 8, 1, 99999999, 0, 1, SYSDATETIMEOFFSET()),
+            (@PurchaseOrderSeriesId, @BusinessId, NULL, N'PurchaseOrder',
+             N'OCP', N'00', 8, 1, 99999999, 0, 1, SYSDATETIMEOFFSET()),
             (@PurchaseReturnSeriesId, @BusinessId, NULL, N'PurchaseReturn',
              N'DCP', N'00', 8, 1, 99999999, 0, 1, SYSDATETIMEOFFSET()),
             (@SalesReturnSeriesId, @BusinessId, NULL, N'SalesReturn',
@@ -993,6 +996,7 @@ public sealed class ServerSliceFixture : IAsyncLifetime
         command.Parameters.AddWithValue("@OnlineSeriesId", OnlineSeriesId);
         command.Parameters.AddWithValue("@DocumentType", PosSaleDocumentTypes.Invoice);
         command.Parameters.AddWithValue("@GoodsReceiptSeriesId", GoodsReceiptSeriesId);
+        command.Parameters.AddWithValue("@PurchaseOrderSeriesId", PurchaseOrderSeriesId);
         command.Parameters.AddWithValue("@PurchaseReturnSeriesId", PurchaseReturnSeriesId);
         command.Parameters.AddWithValue("@SalesReturnSeriesId", SalesReturnSeriesId);
         command.Parameters.AddWithValue("@SalesDebitNoteSeriesId", SalesDebitNoteSeriesId);
