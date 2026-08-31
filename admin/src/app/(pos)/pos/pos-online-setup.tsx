@@ -149,8 +149,8 @@ function Loading({ text = "Cargando sedes y bodegas…" }: { text?: string }) {
     <p className="mt-7 text-lg font-bold text-white">{text}</p>
     <div aria-hidden className="relative mt-3 h-6 w-full max-w-sm text-sm text-slate-300">
       <span className="auraly-setup-loader-stage">Conectando con Auraly</span>
-      <span className="auraly-setup-loader-stage [animation-delay:1.6s]">Verificando tus sedes</span>
-      <span className="auraly-setup-loader-stage [animation-delay:3.2s]">Preparando la caja</span>
+      <span className="auraly-setup-loader-stage">Verificando tus sedes</span>
+      <span className="auraly-setup-loader-stage">Preparando la caja</span>
     </div>
     <span className="sr-only">Espera mientras Auraly prepara la configuración del punto de venta.</span>
   </div>;

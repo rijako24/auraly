@@ -8,7 +8,7 @@ public sealed class PosLocalDeviceIdentityRecovery(string databasePath)
     {
         if (!File.Exists(databasePath)) return null;
         using var connection = new SqliteConnection(
-            $"Data Source={databasePath};Mode=ReadOnly;Cache=Shared");
+            $"Data Source={databasePath};Mode=ReadOnly;Cache=Private;Pooling=False");
         connection.Open();
         using var tableCommand = connection.CreateCommand();
         tableCommand.CommandText = """
@@ -39,5 +39,29 @@ public sealed class PosLocalDeviceIdentityRecovery(string databasePath)
             recovered = candidate;
         }
         return recovered;
+    }
+
+    public void Retire(Guid deviceId)
+    {
+        if (deviceId == Guid.Empty || !File.Exists(databasePath)) return;
+        using var connection = new SqliteConnection(
+            $"Data Source={databasePath};Mode=ReadWrite;Cache=Private;Pooling=False");
+        connection.Open();
+        using var tableCommand = connection.CreateCommand();
+        tableCommand.CommandText = """
+            SELECT COUNT(1)
+            FROM sqlite_master
+            WHERE type='table' AND name='DocumentSeriesCursors';
+            """;
+        if (Convert.ToInt64(tableCommand.ExecuteScalar()) == 0) return;
+
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE DocumentSeriesCursors
+            SET IsActive=0
+            WHERE DeviceId=$deviceId AND IsActive=1;
+            """;
+        command.Parameters.AddWithValue("$deviceId", deviceId.ToString("D"));
+        command.ExecuteNonQuery();
     }
 }

@@ -206,6 +206,34 @@ public sealed class PosEdgeEnrollmentClient(
         var installationId = $"{Environment.MachineName}:{Environment.UserName}";
         var existingDeviceId = store.Load()?.DeviceId ??
                                identityRecovery.ReadSingleDeviceId();
+        PosEnrollmentPackage package;
+        try
+        {
+            package = await RedeemFromServerAsync(
+                request, installationId, existingDeviceId, cancellationToken);
+        }
+        catch (PosEnrollmentServerException exception) when (
+            existingDeviceId.HasValue && IsRetiredDevice(exception))
+        {
+            package = await RedeemFromServerAsync(
+                request, installationId, null, cancellationToken);
+            identityRecovery.Retire(existingDeviceId.Value);
+        }
+        package = await CacheCompanyLogoAsync(package, cancellationToken);
+        store.Save(package);
+        return new LocalPosEnrollmentResult(
+            "Enrolled",
+            package.DeviceId,
+            package.DocumentSeries.SeriesCode,
+            RestartRequired: true);
+    }
+
+    private async Task<PosEnrollmentPackage> RedeemFromServerAsync(
+        LocalPosEnrollmentRequest request,
+        string installationId,
+        Guid? existingDeviceId,
+        CancellationToken cancellationToken)
+    {
         using var response = await httpClient.PostAsJsonAsync(
             "api/pos/v1/enrollments/redeem",
             new RedeemPosEnrollmentRequest(
@@ -216,18 +244,19 @@ public sealed class PosEdgeEnrollmentClient(
             cancellationToken);
         if (!response.IsSuccessStatusCode)
             throw await ReadServerExceptionAsync(response, cancellationToken);
-        var package = await response.Content.ReadFromJsonAsync<PosEnrollmentPackage>(
+        return await response.Content.ReadFromJsonAsync<PosEnrollmentPackage>(
             cancellationToken: cancellationToken)
             ?? throw new InvalidDataException(
                 "The Auraly server returned an empty enrollment package.");
-        package = await CacheCompanyLogoAsync(package, cancellationToken);
-        store.Save(package);
-        return new LocalPosEnrollmentResult(
-            "Enrolled",
-            package.DeviceId,
-            package.DocumentSeries.SeriesCode,
-            RestartRequired: true);
     }
+
+    private static bool IsRetiredDevice(PosEnrollmentServerException exception) =>
+        exception.StatusCode == StatusCodes.Status410Gone ||
+        (exception.StatusCode == StatusCodes.Status400BadRequest &&
+         string.Equals(
+             exception.Message,
+             "El equipo indicado no está enrolado o su serie operativa ya no está activa.",
+             StringComparison.Ordinal));
 
     private static async Task<PosEnrollmentServerException> ReadServerExceptionAsync(
         HttpResponseMessage response,

@@ -139,6 +139,13 @@ public static class PosEnrollmentApi
         {
             return Results.Problem(exception.Message, statusCode: 400);
         }
+        catch (PosEnrollmentDeviceUnavailableException exception)
+        {
+            return Results.Problem(
+                exception.Message,
+                statusCode: StatusCodes.Status410Gone,
+                title: "PosEnrollmentDeviceUnavailable");
+        }
         catch (PosEnrollmentConflictException exception)
         {
             return Results.Problem(

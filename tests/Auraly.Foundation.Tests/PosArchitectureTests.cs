@@ -334,6 +334,36 @@ public sealed class PosArchitectureTests
     }
 
     [Fact]
+    public void Workspace_configuration_refreshes_without_cache_and_keeps_current_values_read_only_offline()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var page = File.ReadAllText(Path.Combine(
+            repositoryRoot, "admin", "src", "app", "(pos)", "pos", "page.tsx"));
+        var setup = File.ReadAllText(Path.Combine(
+            repositoryRoot, "admin", "src", "app", "(pos)", "pos", "pos-online-setup.tsx"));
+        var bootstrap = File.ReadAllText(Path.Combine(
+            repositoryRoot, "admin", "src", "services", "pos", "online-pos-bootstrap.ts"));
+
+        var changeWorkspaceStart = page.IndexOf(
+            "async function changeOnlineWorkspace()", StringComparison.Ordinal);
+        var changeWorkspaceEnd = page.IndexOf(
+            "if (client instanceof PosEdgeClient", changeWorkspaceStart, StringComparison.Ordinal);
+        Assert.True(changeWorkspaceStart >= 0 && changeWorkspaceEnd > changeWorkspaceStart);
+        var changeWorkspace = page[changeWorkspaceStart..changeWorkspaceEnd];
+
+        Assert.Contains("await loadSalesWorkspaceBootstrap()", changeWorkspace, StringComparison.Ordinal);
+        Assert.DoesNotContain("if (client.mode === \"edge\")", changeWorkspace, StringComparison.Ordinal);
+        Assert.Contains("setWorkspaceConfigurationOffline(true)", changeWorkspace, StringComparison.Ordinal);
+        Assert.Contains("workstation.businessId", changeWorkspace, StringComparison.Ordinal);
+        Assert.Contains("workstation.warehouseId", changeWorkspace, StringComparison.Ordinal);
+        Assert.Contains("{ cache: \"no-store\" }", bootstrap, StringComparison.Ordinal);
+        Assert.Contains("disabled={configurationOffline}", setup, StringComparison.Ordinal);
+        Assert.Contains("configurationOffline || !canEnrollOffline", setup, StringComparison.Ordinal);
+        Assert.Contains("if (configurationOffline)", setup, StringComparison.Ordinal);
+        Assert.Contains("onCancel?.()", setup, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Enrolled_warehouse_policy_and_remote_unenrollment_use_the_canonical_push_outbox()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -410,6 +440,9 @@ public sealed class PosArchitectureTests
         var migration = File.ReadAllText(Path.Combine(
             repositoryRoot, "database", "Auraly.Database", "Scripts", "Migrations",
             "20260831_GrantInventoryReadToPosDevices.sql"));
+        var postDeployment = File.ReadAllText(Path.Combine(
+            repositoryRoot, "database", "Auraly.Database", "Scripts",
+            "PostDeployment.sql"));
 
         Assert.Contains("const availabilityVersion = useRef(0)", dialog, StringComparison.Ordinal);
         Assert.Contains("El producto local sigue disponible", dialog, StringComparison.Ordinal);
@@ -421,6 +454,10 @@ public sealed class PosArchitectureTests
         Assert.Contains("\"inventory.read\"", enrollment, StringComparison.Ordinal);
         Assert.Contains("\"businesses.read\"", enrollment, StringComparison.Ordinal);
         Assert.Contains("dbo.PosDevicePermissions", migration, StringComparison.Ordinal);
+        Assert.Contains(
+            @":r .\Migrations\20260831_GrantInventoryReadToPosDevices.sql",
+            postDeployment,
+            StringComparison.Ordinal);
     }
 
     [Fact]

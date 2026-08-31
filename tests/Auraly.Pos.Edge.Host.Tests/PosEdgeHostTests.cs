@@ -93,6 +93,60 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Enrollment_client_retires_revoked_local_identity_and_enrolls_as_new_device()
+    {
+        var path = Path.Combine(
+            Path.GetTempPath(), $"auraly-retired-device-{Guid.NewGuid():N}.db");
+        var oldDeviceId = Guid.NewGuid();
+        var newDeviceId = Guid.NewGuid();
+        var package = CreateEnrollmentPackage(newDeviceId);
+        try
+        {
+            await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection(
+                $"Data Source={path}"))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE DocumentSeriesCursors(
+                        SeriesId TEXT PRIMARY KEY,
+                        DeviceId TEXT NOT NULL,
+                        IsActive INTEGER NOT NULL);
+                    INSERT INTO DocumentSeriesCursors(SeriesId,DeviceId,IsActive)
+                    VALUES($series,$device,1);
+                    """;
+                command.Parameters.AddWithValue("$series", Guid.NewGuid().ToString("D"));
+                command.Parameters.AddWithValue("$device", oldDeviceId.ToString("D"));
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var handler = new RetiredEnrollmentHandler(oldDeviceId, package);
+            using var http = new HttpClient(handler)
+            {
+                BaseAddress = new Uri("https://api.example.test/")
+            };
+            var recovery = new PosLocalDeviceIdentityRecovery(path);
+            var client = new PosEdgeEnrollmentClient(
+                http,
+                new PosEdgeEnrollmentStore(path + ".enrollment", _secretPath),
+                recovery);
+
+            var result = await client.RedeemAsync(
+                new LocalPosEnrollmentRequest(Guid.NewGuid(), "code"));
+
+            Assert.Equal(newDeviceId, result.DeviceId);
+            Assert.Equal(new Guid?[] { oldDeviceId, null }, handler.ExistingDeviceIds);
+            Assert.Null(recovery.ReadSingleDeviceId());
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+            if (File.Exists(path + ".enrollment")) File.Delete(path + ".enrollment");
+        }
+    }
+
+    [Fact]
     public void Enrollment_package_created_before_offline_leases_still_loads()
     {
         var deviceId = Guid.NewGuid();
@@ -1062,5 +1116,66 @@ public sealed class PosEdgeHostTests : IAsyncLifetime
                     Encoding.UTF8,
                     "application/problem+json")
             });
+    }
+
+    private sealed class RetiredEnrollmentHandler(
+        Guid retiredDeviceId,
+        PosEnrollmentPackage package) : HttpMessageHandler
+    {
+        public List<Guid?> ExistingDeviceIds { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var payload = await request.Content!.ReadFromJsonAsync<RedeemPosEnrollmentRequest>(
+                cancellationToken: cancellationToken);
+            Assert.NotNull(payload);
+            ExistingDeviceIds.Add(payload.ExistingDeviceId);
+            if (ExistingDeviceIds.Count == 1)
+            {
+                Assert.Equal(retiredDeviceId, payload.ExistingDeviceId);
+                return new HttpResponseMessage(HttpStatusCode.BadRequest)
+                {
+                    Content = new StringContent(
+                        """
+                        {"title":"Bad Request","detail":"El equipo indicado no está enrolado o su serie operativa ya no está activa."}
+                        """,
+                        Encoding.UTF8,
+                        "application/problem+json")
+                };
+            }
+
+            Assert.Null(payload.ExistingDeviceId);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(package)
+            };
+        }
+    }
+
+    private static PosEnrollmentPackage CreateEnrollmentPackage(Guid deviceId)
+    {
+        var seriesCode = "07";
+        return new PosEnrollmentPackage(
+            deviceId,
+            "device-secret",
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            "Negocio principal",
+            "01",
+            "Bodega principal",
+            false,
+            Guid.NewGuid(),
+            "Administrador",
+            ["sales.create"],
+            new PosEnrollmentDocumentSeries(
+                Guid.NewGuid(), "SalesInvoice", "VTA", seriesCode, 8, 1, 99_999_999),
+            null,
+            new PosEnrollmentDocumentSeries(
+                Guid.NewGuid(), "SalesReceipt", "CVI", seriesCode, 8, 1, 99_999_999),
+            null,
+            DateTimeOffset.UtcNow);
     }
 }

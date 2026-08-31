@@ -126,7 +126,7 @@ public sealed class SqlPosEnrollmentStore(
                 connection, transaction, existingDeviceId, cancellationToken)
             : null;
         if (request.ExistingDeviceId.HasValue && existing is null)
-            throw new PosEnrollmentValidationException(
+            throw new PosEnrollmentDeviceUnavailableException(
                 "El equipo indicado no está enrolado o su serie operativa ya no está activa.");
         if (existing is null)
         {

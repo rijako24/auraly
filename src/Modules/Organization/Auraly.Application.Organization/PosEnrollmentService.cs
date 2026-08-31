@@ -50,6 +50,7 @@ public interface IPosEnrollmentStore
 public sealed class PosEnrollmentForbiddenException(string message) : Exception(message);
 public sealed class PosEnrollmentValidationException(string message) : Exception(message);
 public sealed class PosEnrollmentConflictException(string message) : Exception(message);
+public sealed class PosEnrollmentDeviceUnavailableException(string message) : Exception(message);
 
 public sealed class PosEnrollmentService(
     IPosEnrollmentStore store,

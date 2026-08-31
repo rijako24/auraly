@@ -133,6 +133,7 @@ GO
 :r .\Seeds\SeedPosEnrollmentPermission.sql
 :r .\Seeds\SeedPosIdentityPermission.sql
 :r .\Seeds\SeedPosSupervisionPermissions.sql
+:r .\Migrations\20260831_GrantInventoryReadToPosDevices.sql
 :r .\Seeds\SeedOrderPermissions.sql
 :r .\Seeds\SeedSolorzanoAgentConfiguration.sql
 GO
