@@ -684,7 +684,25 @@ app.UseAuralyExecutionContext();
 app.UseMiddleware<TenantSubscriptionAccessMiddleware>();
 app.UseAuthorization();
 
-app.MapGet("/health", () => Results.Ok(new { status = "Healthy" }));
+app.MapGet("/health", async (
+    SqlDatabaseConnectivityProbe database,
+    ILoggerFactory loggerFactory,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        await database.CheckAsync(cancellationToken);
+        return Results.Ok(new { status = "Healthy", database = "Reachable" });
+    }
+    catch (Exception exception)
+    {
+        loggerFactory.CreateLogger("Auraly.Api.Health")
+            .LogError(exception, "The API cannot reach its canonical database.");
+        return Results.Json(
+            new { status = "Unhealthy", database = "Unreachable" },
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
 app.MapControllers();
 app.MapAuthenticationApi();
 app.MapExecutionContextApi();

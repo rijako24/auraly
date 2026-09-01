@@ -494,6 +494,18 @@ resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' = {
   }
 }
 
+// API and Function authenticate with the environment's user-assigned managed
+// identity. Flex Consumption has dynamic egress, so enumerating its reported
+// outbound IPs is not a complete or stable network rule.
+resource azureServicesSqlFirewallRule 'Microsoft.Sql/servers/firewallRules@2023-08-01-preview' = {
+  parent: sqlServer
+  name: 'AllowAllWindowsAzureIps'
+  properties: {
+    startIpAddress: '0.0.0.0'
+    endIpAddress: '0.0.0.0'
+  }
+}
+
 resource database 'Microsoft.Sql/servers/databases@2023-08-01-preview' = {
   parent: sqlServer
   name: databaseName

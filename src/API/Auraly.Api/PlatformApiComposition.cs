@@ -164,6 +164,7 @@ public static class PlatformApiComposition
         builder.Services.AddSingleton(TimeProvider.System);
         builder.Services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
         builder.Services.AddSingleton<SqlServerConnectionFactory>();
+        builder.Services.AddSingleton<SqlDatabaseConnectivityProbe>();
         builder.Services.AddScoped<IAuthenticationSessionStore, SqlAuthenticationSessionStore>();
         builder.Services.AddScoped<IAuthenticationSessionValidator, AuthenticationSessionValidator>();
         builder.Services.AddScoped<AuthenticationSessionJwtBearerEvents>();

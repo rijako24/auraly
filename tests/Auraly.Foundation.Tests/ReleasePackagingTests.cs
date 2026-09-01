@@ -310,6 +310,33 @@ public sealed class ReleasePackagingTests
     }
 
     [Fact]
+    public void Release_keeps_runtime_sql_access_and_probes_the_database()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var deployment = File.ReadAllText(Path.Combine(
+            repositoryRoot, "infrastructure", "azure", "Publish-AuralyReleasePipeline.ps1"));
+        var firewall = File.ReadAllText(Path.Combine(
+            repositoryRoot, "infrastructure", "azure", "sql-app-firewall.bicep"));
+        var infrastructure = File.ReadAllText(Path.Combine(
+            repositoryRoot, "infrastructure", "azure", "main.bicep"));
+        var api = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "API", "Auraly.Api", "Program.cs"));
+        var workerHealth = File.ReadAllText(Path.Combine(
+            repositoryRoot, "src", "API", "Auraly.Platform.Worker", "Functions", "HealthFunction.cs"));
+
+        Assert.Contains("Sync-AuralySqlFirewall.ps1", deployment, StringComparison.Ordinal);
+        Assert.Contains("AllowAllWindowsAzureIps", firewall, StringComparison.Ordinal);
+        Assert.Contains("startIpAddress: '0.0.0.0'", firewall, StringComparison.Ordinal);
+        Assert.Contains("AllowAllWindowsAzureIps", infrastructure, StringComparison.Ordinal);
+        Assert.Contains("github-$Environment-*", File.ReadAllText(Path.Combine(
+            repositoryRoot, "infrastructure", "azure", "Sync-AuralySqlFirewall.ps1")),
+            StringComparison.Ordinal);
+        Assert.Contains("database.CheckAsync", api, StringComparison.Ordinal);
+        Assert.Contains("database.CheckAsync", workerHealth, StringComparison.Ordinal);
+        Assert.Contains("ServiceUnavailable", workerHealth, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Release_rejects_a_truncated_offline_signing_key_before_deployment()
     {
         var repositoryRoot = FindRepositoryRoot();

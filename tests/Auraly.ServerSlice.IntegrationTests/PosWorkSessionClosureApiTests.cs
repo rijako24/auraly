@@ -12,6 +12,28 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class PosWorkSessionClosureApiTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Enrolled_device_can_download_cash_reasons_without_user_permissions()
+    {
+        using var client = fixture.CreateClient();
+        using var request = DeviceRequest(
+            HttpMethod.Get,
+            $"/api/pos/v1/cash-movement-reasons?businessId={fixture.BusinessId:D}",
+            fixture.DeviceId,
+            ServerSliceFixture.DeviceSecret);
+
+        using var response = await client.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.True(
+            response.StatusCode == HttpStatusCode.OK,
+            $"Expected 200 but received {(int)response.StatusCode}: {body}");
+        var reasons = await response.Content.ReadFromJsonAsync<CashMovementReasonView[]>();
+        Assert.NotNull(reasons);
+        Assert.Contains(reasons, reason => reason.Direction == "In");
+        Assert.Contains(reasons, reason => reason.Direction == "Out");
+    }
+
+    [Fact]
     public async Task Inactive_device_cannot_negotiate_push_or_synchronize()
     {
         var deviceId = Guid.NewGuid();

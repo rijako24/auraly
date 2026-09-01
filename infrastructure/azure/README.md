@@ -69,7 +69,7 @@ Install-Module SqlServer -Scope CurrentUser
 
 Después del bootstrap, configurar en GitHub la aprobación obligatoria del environment `prod`. El runtime de API/Function conserva su propia Managed Identity; la identidad `id-auraly-github-<ambiente>` solo puede autenticarse desde el environment correspondiente del repositorio y se usa exclusivamente para desplegar.
 
-El pipeline usa `SqlPackage 170.4.83`, genera primero un DeployReport, rechaza eliminaciones de tablas/columnas, publica con `BlockOnPossibleDataLoss=True` y `DropObjectsNotInSource=False`, y siempre retira la regla de firewall y el blob de OneDeploy. Un timeout de seguimiento de App Service se contrasta con el log de Kudu antes de decidir si falló.
+El pipeline usa `SqlPackage 170.4.83`, genera primero un DeployReport, rechaza eliminaciones de tablas/columnas, publica con `BlockOnPossibleDataLoss=True` y `DropObjectsNotInSource=False`, y siempre retira la regla temporal del runner y el blob de OneDeploy. API y Function se autentican en SQL con la Managed Identity del ambiente. La ruta de red se habilita mediante `AllowAllWindowsAzureIps`, porque Flex Consumption no expone un conjunto completo y estable de IP de salida; enumerar `possibleOutboundIpAddresses` no cubre todas sus instancias. Los health checks abren la conexión SQL y un timeout de seguimiento de App Service se contrasta con el log de Kudu antes de decidir si falló.
 
 Los apartados manuales siguientes son procedimiento de contingencia y bootstrap, no la ruta ordinaria.
 
@@ -389,6 +389,6 @@ Además:
 - `Publish-AuralyReleasePipeline.ps1`: publicación idempotente de DB, Function, API e instalador opcional desde GitHub Actions.
 - `Initialize-AuralyGitHubOidc.ps1`: bootstrap único de identidad federada, RBAC, SQL y variables de GitHub.
 - `function-onedeploy-v2.bicep`: publicación de Function Flex mediante OneDeploy.
-- `Sync-AuralySqlFirewall.ps1`: sincroniza IP salientes estables de API/Function cuando aplique.
+- `Sync-AuralySqlFirewall.ps1`: declara y verifica la ruta de servicios Azure hacia SQL; la autenticación continúa siendo Managed Identity.
 
 Los scripts no eliminan el ambiente legado. Cualquier tarea de retiro debe documentarse y aprobarse como operación independiente.

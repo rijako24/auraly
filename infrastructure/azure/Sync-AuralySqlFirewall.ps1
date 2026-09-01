@@ -1,105 +1,72 @@
-#Requires -Version 5.1
+#Requires -Version 7.2
 
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
     [ValidateSet('dev', 'prod')]
-    [string]$Environment,
-
-    [switch]$RemoveTemporaryRules
+    [string]$Environment
 )
 
 $ErrorActionPreference = 'Stop'
 $bicepFile = Join-Path $PSScriptRoot 'sql-app-firewall.bicep'
-$templateFile = Join-Path ([IO.Path]::GetTempPath()) "auraly-sql-firewall-$PID.json"
-
 $resourceGroup = "RG-AURALY-$($Environment.ToUpperInvariant())"
-$webApps = @(Get-AzWebApp -ResourceGroupName $resourceGroup)
-$apiApps = @($webApps | Where-Object Name -Like "api-auraly-$Environment-*")
-$functionApps = @($webApps | Where-Object Name -Like "func-auraly-$Environment-*")
-$sqlServers = @(Get-AzSqlServer -ResourceGroupName $resourceGroup |
-    Where-Object ServerName -Like "sql-auraly-$Environment-*")
+$sqlServers = @(& az sql server list --resource-group $resourceGroup --output json |
+    ConvertFrom-Json | Where-Object name -Like "sql-auraly-$Environment-*")
+if ($LASTEXITCODE -ne 0 -or $sqlServers.Count -ne 1) {
+    throw "Expected exactly one Auraly SQL server for $Environment in $resourceGroup."
+}
+$sqlServerName = $sqlServers[0].name
 
-if ($apiApps.Count -ne 1 -or $functionApps.Count -ne 1 -or $sqlServers.Count -ne 1) {
-    throw "Expected exactly one API, Function and SQL server tagged for $Environment in $resourceGroup."
+& az deployment group create `
+    --name "auraly-$Environment-sql-firewall" `
+    --resource-group $resourceGroup `
+    --template-file $bicepFile `
+    --parameters "sqlServerName=$sqlServerName" `
+    --mode Incremental `
+    --output none
+if ($LASTEXITCODE -ne 0) {
+    throw 'SQL firewall deployment failed.'
 }
 
-$configuration = @{
-    ResourceGroup = $resourceGroup
-    Api = $apiApps[0].Name
-    Function = $functionApps[0].Name
-    Sql = $sqlServers[0].ServerName
+$rule = & az sql server firewall-rule show `
+    --resource-group $resourceGroup `
+    --server $sqlServerName `
+    --name AllowAllWindowsAzureIps `
+    --output json | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or $rule.startIpAddress -ne '0.0.0.0' -or
+    $rule.endIpAddress -ne '0.0.0.0') {
+    throw 'The Azure-services SQL firewall rule was not applied correctly.'
 }
 
-$addresses = foreach ($appName in @($configuration.Api, $configuration.Function)) {
-    $app = Get-AzWebApp -ResourceGroupName $configuration.ResourceGroup -Name $appName
-    $app.OutboundIpAddresses -split ','
-    $app.PossibleOutboundIpAddresses -split ','
+# These rules were owned by earlier Auraly deployment strategies. At this
+# point the replacement rule has been verified, and Publish-Database has
+# already finished with (and attempted to remove) its current runner rule.
+$obsoleteRules = @(& az sql server firewall-rule list `
+    --resource-group $resourceGroup `
+    --server $sqlServerName `
+    --output json | ConvertFrom-Json | Where-Object {
+        $_.name -Like 'auraly-app-*' -or
+        $_.name -Like 'AuralyApp*' -or
+        $_.name -Like "github-$Environment-*"
+    })
+if ($LASTEXITCODE -ne 0) {
+    throw 'Could not inspect obsolete Auraly SQL firewall rules.'
 }
-
-$addresses = @($addresses |
-    Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-    ForEach-Object { $_.Trim() } |
-    Sort-Object -Unique)
-
-if ($addresses.Count -eq 0) {
-    throw "No outbound IP addresses were reported for $Environment."
-}
-
-try {
-    & az bicep build --file $bicepFile --outfile $templateFile
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $templateFile)) {
-        throw 'Bicep compilation failed.'
-    }
-
-    $deployment = New-AzResourceGroupDeployment `
-    -Name "auraly-$Environment-sql-firewall" `
-    -ResourceGroupName $configuration.ResourceGroup `
-    -TemplateFile $templateFile `
-    -TemplateParameterObject @{
-        sqlServerName = $configuration.Sql
-        outboundIpAddressesCsv = $addresses -join ','
-    } `
-    -Mode Incremental
-}
-finally {
-    if (Test-Path -LiteralPath $templateFile) {
-        Remove-Item -LiteralPath $templateFile -Force
-    }
-}
-
-if ($deployment.ProvisioningState -ne 'Succeeded') {
-    throw "SQL firewall deployment failed: $($deployment.ProvisioningState)"
-}
-
-$stableRules = @(Get-AzSqlServerFirewallRule `
-    -ResourceGroupName $configuration.ResourceGroup `
-    -ServerName $configuration.Sql |
-    Where-Object FirewallRuleName -like 'auraly-app-*')
-
-if ($stableRules.Count -ne $addresses.Count) {
-    throw "Expected $($addresses.Count) stable rules, found $($stableRules.Count)."
-}
-
-if ($RemoveTemporaryRules) {
-    $temporaryRules = @(Get-AzSqlServerFirewallRule `
-        -ResourceGroupName $configuration.ResourceGroup `
-        -ServerName $configuration.Sql |
-        Where-Object FirewallRuleName -like 'AuralyApp*')
-
-    foreach ($rule in $temporaryRules) {
-        Remove-AzSqlServerFirewallRule `
-            -ResourceGroupName $configuration.ResourceGroup `
-            -ServerName $configuration.Sql `
-            -FirewallRuleName $rule.FirewallRuleName `
-            -Force
+foreach ($obsoleteRule in $obsoleteRules) {
+    & az sql server firewall-rule delete `
+        --resource-group $resourceGroup `
+        --server $sqlServerName `
+        --name $obsoleteRule.name `
+        --output none
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not remove obsolete SQL firewall rule '$($obsoleteRule.name)'."
     }
 }
 
 [pscustomobject]@{
     environment = $Environment
-    sqlServer = $configuration.Sql
-    allowedOutboundIps = $addresses.Count
-    stableRules = $stableRules.Count
-    temporaryRulesRemoved = [bool]$RemoveTemporaryRules
+    sqlServer = $sqlServerName
+    rule = $rule.name
+    authentication = 'ManagedIdentity'
+    obsoleteRulesRemoved = $obsoleteRules.Count
 }

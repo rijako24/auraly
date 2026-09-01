@@ -124,6 +124,7 @@ var host = new HostBuilder()
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<IAuralyIdGenerator, Uuid7AuralyIdGenerator>();
         services.AddSingleton<SqlServerConnectionFactory>();
+        services.AddSingleton<SqlDatabaseConnectivityProbe>();
         services.AddSingleton<ConfigurationFiscalTechnicalKeyProvider>();
         services.AddSingleton<SqlProtectedFiscalTechnicalKeyStore>();
         services.AddSingleton<IFiscalTechnicalKeyProvider, CompositeFiscalTechnicalKeyProvider>();

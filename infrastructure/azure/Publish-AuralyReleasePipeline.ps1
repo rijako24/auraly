@@ -502,6 +502,8 @@ $manifest = Test-Release
 Write-Information "Release $ReleaseVersion verificado; commit $($manifest.commit)." -InformationAction Continue
 Assert-OfflineLeaseSigningConfiguration
 Publish-Database
+& (Join-Path $PSScriptRoot 'Sync-AuralySqlFirewall.ps1') -Environment $Environment
+if ($LASTEXITCODE -ne 0) { throw 'No se pudo habilitar el acceso administrado del runtime a Azure SQL.' }
 Publish-Function
 Publish-Api
 $installerMetadata = Publish-PosInstallerIfPresent

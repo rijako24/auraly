@@ -3,22 +3,20 @@ targetScope = 'resourceGroup'
 @description('Existing Azure SQL logical server name.')
 param sqlServerName string
 
-@description('Comma-separated exact outbound IPv4 addresses allowed to reach the SQL server.')
-param outboundIpAddressesCsv string
-
-var outboundIpAddresses = split(outboundIpAddressesCsv, ',')
-
 resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' existing = {
   name: sqlServerName
 }
 
-resource appFirewallRules 'Microsoft.Sql/servers/firewallRules@2023-08-01-preview' = [for ipAddress in outboundIpAddresses: {
+// Flex Consumption does not expose a complete stable outbound-IP set. SQL
+// still authenticates every runtime connection with the environment's managed
+// identity; this rule only permits the network path from Azure services.
+resource azureServicesFirewallRule 'Microsoft.Sql/servers/firewallRules@2023-08-01-preview' = {
   parent: sqlServer
-  name: 'auraly-app-${uniqueString(sqlServer.id, ipAddress)}'
+  name: 'AllowAllWindowsAzureIps'
   properties: {
-    startIpAddress: ipAddress
-    endIpAddress: ipAddress
+    startIpAddress: '0.0.0.0'
+    endIpAddress: '0.0.0.0'
   }
-}]
+}
 
-output ruleCount int = length(outboundIpAddresses)
+output ruleName string = azureServicesFirewallRule.name
