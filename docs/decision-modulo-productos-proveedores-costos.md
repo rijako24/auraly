@@ -397,6 +397,18 @@ El proveedor principal sirve para:
 
 No obliga a comprarle ni determina por sí solo el costo promedio.
 
+La cantidad sugerida de una orden de compra no es un valor fijo ni se persiste
+como una segunda rotación. Purchasing lee la proyección canónica
+`reporting.ProductRotationSnapshots`, combina 70 % de la demanda diaria de los
+últimos 30 días con 30 % de la ventana estable de 90 días. El comprador elige los
+días de cobertura; la pantalla inicia en una semana (7 días) y recalcula al
+cambiarlos. Al objetivo se restan existencia y cantidades de órdenes abiertas;
+el resultado se redondea hacia arriba a presentaciones completas del proveedor.
+Al agregar un producto, la cantidad toma el primer sugerido disponible. La
+pantalla muestra la fórmula y sus insumos; después de cambiar la cobertura el
+comprador puede aplicar uno o todos los sugeridos, y conserva la decisión final
+antes de confirmar la orden.
+
 ---
 
 ## 6. Flujos web

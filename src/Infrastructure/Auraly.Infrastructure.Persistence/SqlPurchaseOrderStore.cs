@@ -79,6 +79,29 @@ public sealed class SqlPurchaseOrderStore(SqlServerConnectionFactory connections
         catch{await transaction.RollbackAsync(CancellationToken.None);throw;}
     }
 
+    public async Task<IReadOnlyList<PurchaseOrderSuggestionInput>> SuggestionInputsAsync(
+        PurchasingUserIdentity user, Guid warehouseId, Guid supplierId,
+        IReadOnlyCollection<Guid> productIds, CancellationToken ct)
+    {
+        await using var connection=connections.Create();await connection.OpenAsync(ct);
+        await using var command=Procedure("purchasing.PurchaseOrderSuggestionsGet",connection);
+        command.Parameters.AddWithValue("@BusinessId",user.BusinessId);
+        command.Parameters.AddWithValue("@WarehouseId",warehouseId);
+        command.Parameters.AddWithValue("@SupplierId",supplierId);
+        command.Parameters.AddWithValue("@ProductIdsJson",JsonSerializer.Serialize(productIds));
+        try
+        {
+            await using var reader=await command.ExecuteReaderAsync(ct);
+            var values=new List<PurchaseOrderSuggestionInput>();
+            while(await reader.ReadAsync(ct))values.Add(new(reader.GetGuid(0),reader.GetDecimal(1),
+                reader.GetDecimal(2),reader.GetDecimal(3),reader.GetDecimal(4),reader.GetDecimal(5),
+                reader.GetString(6),reader.GetDecimal(7),reader.IsDBNull(8)?null:reader.GetFieldValue<DateTimeOffset>(8)));
+            return values;
+        }
+        catch(SqlException exception) when(exception.Number==51220)
+        {throw new PurchasingValidationException(exception.Message);}
+    }
+
     private static async Task<PurchaseOrderDetail?> ReadAsync(SqlConnection connection,Guid businessId,Guid id,bool receiptOnly,CancellationToken ct)
     {
         await using var command=Procedure("purchasing.PurchaseOrderGet",connection);command.Parameters.AddWithValue("@BusinessId",businessId);command.Parameters.AddWithValue("@PurchaseOrderId",id);command.Parameters.AddWithValue("@ReceiptOnly",receiptOnly);

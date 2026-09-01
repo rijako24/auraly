@@ -9,6 +9,28 @@ namespace Auraly.ServerSlice.IntegrationTests;
 public sealed class PurchaseOrderReceiptTests(ServerSliceFixture fixture)
 {
     [Fact]
+    public async Task Purchase_order_suggestion_is_scoped_and_returns_the_requested_horizon()
+    {
+        using var client = CreateClient();
+        var request = new PurchaseOrderSuggestionRequest(
+            fixture.BusinessId, fixture.WarehouseId, fixture.SupplierId,
+            [fixture.ProductId], 14);
+        using var response = await client.PostAsJsonAsync(
+            "/api/commerce/v1/purchase-orders/suggestions", request);
+        response.EnsureSuccessStatusCode();
+        var suggestion = Assert.Single(await response.Content
+            .ReadFromJsonAsync<PurchaseOrderSuggestion[]>() ?? []);
+        Assert.Equal(fixture.ProductId, suggestion.ProductId);
+        Assert.Equal(14, suggestion.TargetCoverageDays);
+        Assert.True(suggestion.UnitsPerPresentation > 0);
+
+        using var denied = await client.PostAsJsonAsync(
+            "/api/commerce/v1/purchase-orders/suggestions",
+            request with { BusinessId = Guid.NewGuid() });
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+    }
+
+    [Fact]
     public async Task Order_can_be_recovered_and_received_in_changed_partial_quantities()
     {
         using var client = CreateClient();

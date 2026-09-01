@@ -23,6 +23,12 @@ export interface PurchaseOrderListItem {
   expectedAt: string | null; grandTotal: number; fulfillmentPercent: number; updatedAt: string;
 }
 export interface PurchaseOrderPage { items: PurchaseOrderListItem[]; page: number; pageSize: number; totalCount: number; totalPages: number }
+export interface PurchaseOrderSuggestion {
+  productId: string; targetCoverageDays: number; rotation30Days: number; rotation90Days: number;
+  dailyDemand90Days: number; forecastDailyDemand: number; currentStock: number; incomingQuantity: number;
+  presentationName: string; unitsPerPresentation: number; suggestedQuantity: number;
+  suggestedPresentationQuantity: number; rotationCalculatedAt: string | null;
+}
 export type PurchaseOrderLineRequest = Pick<PurchaseOrderLine,"lineId"|"lineNumber"|"productId"|"description"|"orderedQuantity"|"unitCost"|"discountAmount"|"taxCode"|"taxRate"|"taxTreatment"|"presentationName"|"presentationQuantity"|"unitsPerPresentation">;
 export interface SavePurchaseOrderRequest {
   purchaseOrderId: string; businessId: string; warehouseId: string | null; supplierId: string | null;
@@ -37,6 +43,8 @@ export const purchaseOrdersApi = {
     apiClient.get<PurchaseOrderPage>("/commerce/v1/purchase-orders", withPagedDefaults(params)),
   get: (id: string) => apiClient.get<PurchaseOrderDetail>(`/commerce/v1/purchase-orders/${id}`),
   receiptSource: (id: string) => apiClient.get<PurchaseOrderReceiptSource>(`/commerce/v1/purchase-orders/${id}/receipt-source`),
+  suggestions: (request: { businessId: string; warehouseId: string; supplierId: string; productIds: string[]; targetCoverageDays?: number }) =>
+    apiClient.post<PurchaseOrderSuggestion[]>("/commerce/v1/purchase-orders/suggestions", request),
   saveDraft: (request: SavePurchaseOrderRequest) => apiClient.put<PurchaseOrderDetail>(`/commerce/v1/purchase-orders/${request.purchaseOrderId}/draft`, request),
   confirm: (request: Omit<SavePurchaseOrderRequest,"warehouseId"|"supplierId"|"concurrencyToken"> & { warehouseId: string; supplierId: string; draftConcurrencyToken: string | null }) =>
     apiClient.postIdempotent<{ purchaseOrderId: string; documentNumber: string; status: string }>("/commerce/v1/purchase-orders/confirm", request, `purchase-order-${request.purchaseOrderId}`),

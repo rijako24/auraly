@@ -14,7 +14,15 @@ public interface IPurchaseOrderStore
     Task<PurchaseOrderConfirmation> ConfirmAsync(PurchasingUserIdentity user, string idempotencyKey,
         ConfirmPurchaseOrderRequest request, PurchaseOrderCalculation calculation, CancellationToken cancellationToken);
     Task CloseAsync(PurchasingUserIdentity user, Guid id, ClosePurchaseOrderRequest request, CancellationToken cancellationToken);
+    Task<IReadOnlyList<PurchaseOrderSuggestionInput>> SuggestionInputsAsync(
+        PurchasingUserIdentity user, Guid warehouseId, Guid supplierId,
+        IReadOnlyCollection<Guid> productIds, CancellationToken cancellationToken);
 }
+
+public sealed record PurchaseOrderSuggestionInput(
+    Guid ProductId, decimal Rotation30Days, decimal Rotation90Days,
+    decimal DailyDemand90Days, decimal CurrentStock, decimal IncomingQuantity,
+    string PresentationName, decimal UnitsPerPresentation, DateTimeOffset? RotationCalculatedAt);
 
 public sealed class PurchaseOrderService(IPurchaseOrderStore store)
 {
@@ -90,6 +98,34 @@ public sealed class PurchaseOrderService(IPurchaseOrderStore store)
             string.IsNullOrWhiteSpace(request.ConcurrencyToken))
             throw new PurchasingValidationException("A purchase order, reason and concurrency token are required.");
         return store.CloseAsync(user, id, request with { Reason = Normalize(request.Reason, 500)! }, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<PurchaseOrderSuggestion>> SuggestionsAsync(
+        PurchasingUserIdentity user, PurchaseOrderSuggestionRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        Require(user, PurchasingPermissionCodes.CreatePurchaseOrders);
+        Scope(user, request.BusinessId);
+        if (request.WarehouseId == Guid.Empty || request.SupplierId == Guid.Empty ||
+            request.ProductIds.Count is < 1 or > 100 || request.ProductIds.Any(x => x == Guid.Empty) ||
+            request.ProductIds.Distinct().Count() != request.ProductIds.Count ||
+            request.TargetCoverageDays is < 1 or > 90)
+            throw new PurchasingValidationException("The purchase-order suggestion request is invalid.");
+        var inputs = await store.SuggestionInputsAsync(user, request.WarehouseId,
+            request.SupplierId, request.ProductIds, cancellationToken);
+        return inputs.Select(input =>
+        {
+            var forecast = PurchaseOrderCalculator.ForecastDailyDemand(
+                input.Rotation30Days, input.Rotation90Days);
+            var suggested = PurchaseOrderCalculator.Suggest(forecast,
+                input.CurrentStock, input.IncomingQuantity, input.UnitsPerPresentation,
+                request.TargetCoverageDays);
+            return new PurchaseOrderSuggestion(input.ProductId, request.TargetCoverageDays,
+                input.Rotation30Days, input.Rotation90Days, input.DailyDemand90Days,
+                forecast, input.CurrentStock, input.IncomingQuantity, input.PresentationName,
+                input.UnitsPerPresentation, suggested.Quantity,
+                suggested.PresentationQuantity, input.RotationCalculatedAt);
+        }).ToArray();
     }
 
     private static PurchaseOrderLineRequest[] Normalize(IReadOnlyCollection<PurchaseOrderLineRequest> lines) =>

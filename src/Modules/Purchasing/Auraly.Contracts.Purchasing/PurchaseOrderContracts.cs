@@ -60,6 +60,18 @@ public sealed record PurchaseOrderPage(
 public sealed record PurchaseOrderConfirmation(
     Guid PurchaseOrderId, string DocumentNumber, string Status, bool IdempotentReplay);
 
+public sealed record PurchaseOrderSuggestionRequest(
+    Guid BusinessId, Guid WarehouseId, Guid SupplierId,
+    IReadOnlyCollection<Guid> ProductIds, int TargetCoverageDays = 7);
+
+public sealed record PurchaseOrderSuggestion(
+    Guid ProductId, int TargetCoverageDays, decimal Rotation30Days,
+    decimal Rotation90Days, decimal DailyDemand90Days, decimal ForecastDailyDemand,
+    decimal CurrentStock,
+    decimal IncomingQuantity, string PresentationName, decimal UnitsPerPresentation,
+    decimal SuggestedQuantity, decimal SuggestedPresentationQuantity,
+    DateTimeOffset? RotationCalculatedAt);
+
 public sealed record ClosePurchaseOrderRequest(string Reason, string ConcurrencyToken);
 
 public sealed record PurchaseOrderReceiptSource(

@@ -12,6 +12,29 @@ public sealed record PurchaseOrderCalculation(
 
 public static class PurchaseOrderCalculator
 {
+    public static decimal ForecastDailyDemand(decimal rotation30Days, decimal rotation90Days)
+    {
+        // Net rotation can be negative when returns exceed sales. That is a valid
+        // reporting result, but it must never turn a purchase suggestion negative.
+        var recent = Math.Max(0, rotation30Days) / 30m;
+        var stable = Math.Max(0, rotation90Days) / 90m;
+        return decimal.Round(recent * .7m + stable * .3m, 6, MidpointRounding.AwayFromZero);
+    }
+
+    public static (decimal Quantity, decimal PresentationQuantity) Suggest(
+        decimal dailyDemand, decimal currentStock, decimal incomingQuantity,
+        decimal unitsPerPresentation, int targetCoverageDays)
+    {
+        if (dailyDemand < 0 || unitsPerPresentation <= 0 || targetCoverageDays is < 1 or > 90)
+            throw new ArgumentException("Suggestion inputs are invalid.");
+        if (dailyDemand == 0) return (0, 0);
+        var available = Math.Max(0, currentStock) + Math.Max(0, incomingQuantity);
+        var required = Math.Max(0, decimal.Ceiling(dailyDemand * targetCoverageDays - available));
+        if (required == 0) return (0, 0);
+        var presentations = decimal.Ceiling(required / unitsPerPresentation);
+        return (presentations * unitsPerPresentation, presentations);
+    }
+
     public static PurchaseOrderCalculation Calculate(IEnumerable<(
         Guid LineId, int LineNumber, Guid ProductId, string Description,
         decimal Quantity, decimal UnitCost, decimal DiscountAmount,

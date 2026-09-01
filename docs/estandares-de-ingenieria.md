@@ -189,6 +189,9 @@ Las reglas concretas del motor conversacional viven exclusivamente en `docs/agen
 ## 14. Frontend y contratos de UI
 
 - Reutilizar componentes y convenciones existentes antes de crear variantes visuales o de estado.
+- Toda captura de fecha u hora usa `DatePicker`, `TimePicker` o `DateTimePicker`
+  de `admin/src/components/ui`; no se presentan controles HTML nativos
+  `date`, `time` o `datetime-local` en pantallas de Auraly.
 - Toda página consultable aplica el contrato visual, los estados obligatorios y la paginación de servidor definidos en `docs/decision-reportes-consultas-filtros-y-paginacion.md`; las grillas de un documento activo usan desplazamiento o virtualización y no dividen la captura en páginas.
 - Mantener accesibilidad: HTML semantico, labels, teclado, foco, contraste y estados de carga/error/vacio.
 - Evitar duplicar server state en stores globales. Usar la herramienta de estado segun su propietario y ciclo de vida.

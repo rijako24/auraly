@@ -24,6 +24,12 @@ public static class PurchasingApi
                 CancellationToken cancellationToken) => ExecuteAsync(() => service.GetReceiptSourceAsync(
                     context.User.ToPurchasingIdentity(), purchaseOrderId, cancellationToken)))
             .RequireAuthorization("purchasing.user");
+        endpoints.MapPost("/api/commerce/v1/purchase-orders/suggestions",
+            (HttpContext context, PurchaseOrderSuggestionRequest request,
+                PurchaseOrderService service, CancellationToken cancellationToken) =>
+                ExecuteAsync(() => service.SuggestionsAsync(
+                    context.User.ToPurchasingIdentity(), request, cancellationToken)))
+            .RequireAuthorization("purchasing.user");
         endpoints.MapPut("/api/commerce/v1/purchase-orders/{purchaseOrderId:guid}/draft",
             (HttpContext context, Guid purchaseOrderId, SavePurchaseOrderDraftRequest request,
                 PurchaseOrderService service, CancellationToken cancellationToken) =>
