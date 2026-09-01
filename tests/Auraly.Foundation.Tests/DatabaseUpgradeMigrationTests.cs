@@ -228,6 +228,25 @@ public sealed class DatabaseUpgradeMigrationTests
     }
 
     [Fact]
+    public void Release_pipeline_syncs_and_verifies_all_function_triggers()
+    {
+        var pipeline = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "infrastructure", "azure",
+            "Publish-AuralyReleasePipeline.ps1"));
+
+        Assert.Contains("syncfunctiontriggers?api-version=2024-04-01", pipeline,
+            StringComparison.Ordinal);
+        Assert.Contains("Sync-AndAssertFunctionTriggers", pipeline,
+            StringComparison.Ordinal);
+        Assert.Contains("functions.metadata", pipeline,
+            StringComparison.Ordinal);
+        Assert.Contains("az functionapp function list", pipeline,
+            StringComparison.Ordinal);
+        Assert.Contains("Sync-AndAssertFunctionTriggers -PackagePath $zip", pipeline,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Authentication_session_schema_enforces_one_active_login_per_user()
     {
         var root = FindRepositoryRoot();

@@ -150,6 +150,68 @@ function Set-AppConfigurationValueWithRetry {
     }
 }
 
+function Sync-AndAssertFunctionTriggers {
+    param(
+        [Parameter(Mandatory)][string]$PackagePath,
+        [int]$Attempts = 18,
+        [int]$DelaySeconds = 10
+    )
+    $subscriptionId = "$(& az account show --query id --output tsv)".Trim()
+    Assert-LastExitCode 'No se pudo resolver la suscripción para sincronizar los triggers'
+    if ([string]::IsNullOrWhiteSpace($subscriptionId)) {
+        throw 'Azure no devolvió la suscripción para sincronizar los triggers.'
+    }
+
+    $syncUri = 'https://management.azure.com/subscriptions/{0}/resourceGroups/{1}/providers/Microsoft.Web/sites/{2}/syncfunctiontriggers?api-version=2024-04-01' -f `
+        [Uri]::EscapeDataString($subscriptionId),
+        [Uri]::EscapeDataString($configuration.ResourceGroup),
+        [Uri]::EscapeDataString($configuration.Function)
+    $archive = [IO.Compression.ZipFile]::OpenRead($PackagePath)
+    try {
+        $metadataEntry = $archive.GetEntry('functions.metadata')
+        if ($null -eq $metadataEntry) {
+            throw 'El paquete Function no contiene functions.metadata.'
+        }
+        $reader = [IO.StreamReader]::new($metadataEntry.Open())
+        try {
+            $requiredTriggers = @(
+                ($reader.ReadToEnd() | ConvertFrom-Json) |
+                    ForEach-Object { "$($_.name)" } |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        }
+        finally {
+            $reader.Dispose()
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
+    if ($requiredTriggers.Count -eq 0) {
+        throw 'El paquete Function no declaró triggers para verificar.'
+    }
+
+    $missing = @($requiredTriggers)
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        $null = & az rest --method post --url $syncUri --only-show-errors --output none 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $registered = @(& az functionapp function list `
+                --resource-group $configuration.ResourceGroup `
+                --name $configuration.Function `
+                --query '[].name' `
+                --output tsv 2>$null | ForEach-Object { ($_ -split '/')[-1] })
+            if ($LASTEXITCODE -eq 0) {
+                $missing = @($requiredTriggers | Where-Object { $_ -notin $registered })
+                if ($missing.Count -eq 0) { return }
+            }
+        }
+        if ($attempt -eq $Attempts) {
+            throw "Function no registró todos los triggers requeridos: $($missing -join ', ')."
+        }
+        Write-Warning "Function todavía no registra todos sus triggers; reintento $attempt de $Attempts."
+        Start-Sleep -Seconds $DelaySeconds
+    }
+}
+
 function Sync-FunctionRuntimeSettingsFromApi {
     $requiredNames = @(
         'Auraly__Accounting__ServiceBus__QueueName',
@@ -422,6 +484,7 @@ function Publish-Function {
             --output none
         Assert-LastExitCode 'OneDeploy de Function fallo'
         Sync-FunctionRuntimeSettingsFromApi
+        Sync-AndAssertFunctionTriggers -PackagePath $zip
 
         if ($Environment -eq 'dev' -and
             -not [string]::IsNullOrWhiteSpace($env:CJ_WHATSAPP_FUNCTION_KEY) -and
@@ -442,6 +505,9 @@ function Publish-Function {
             Set-AppConfigurationValueWithRetry `
                 -Key 'WhatsApp:Webhook:VerifyToken' `
                 -Value $env:CJ_WHATSAPP_VERIFY_TOKEN
+            # El cambio de app settings reinicia el host; se vuelve a registrar
+            # el mismo paquete canónico y se verifica antes de continuar.
+            Sync-AndAssertFunctionTriggers -PackagePath $zip
         }
     }
     finally {
