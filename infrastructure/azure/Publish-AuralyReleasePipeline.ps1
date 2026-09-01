@@ -110,6 +110,36 @@ function Set-FunctionKeyWithRetry {
     }
 }
 
+function Sync-FunctionRuntimeSettingsFromApi {
+    $requiredNames = @(
+        'Auraly__Accounting__ServiceBus__QueueName',
+        'Auraly__Fiscal__ServiceBus__QueueName',
+        'Auraly__SalesReporting__ServiceBus__QueueName'
+    )
+    $apiSettings = Invoke-AzJson -Arguments @(
+        'webapp', 'config', 'appsettings', 'list',
+        '--resource-group', $configuration.ResourceGroup,
+        '--name', $configuration.Api,
+        '--output', 'json'
+    )
+    $settings = @("Release__Version=$ReleaseVersion")
+    foreach ($name in $requiredNames) {
+        $value = @($apiSettings | Where-Object name -EQ $name)[0].value
+        if ([string]::IsNullOrWhiteSpace("$value")) {
+            throw "La API no contiene la configuración canónica '$name' requerida por Function."
+        }
+        $settings += "$name=$value"
+    }
+    $arguments = @(
+        'functionapp', 'config', 'appsettings', 'set',
+        '--resource-group', $configuration.ResourceGroup,
+        '--name', $configuration.Function,
+        '--settings'
+    ) + $settings + @('--output', 'none')
+    $null = & az @arguments
+    Assert-LastExitCode 'No se pudo sincronizar la configuración de procesamiento en Function'
+}
+
 function Assert-OfflineLeaseSigningConfiguration {
     $settings = & az webapp config appsettings list `
         --resource-group $configuration.ResourceGroup `
@@ -351,12 +381,7 @@ function Publish-Function {
             --parameters "@$parameterFile" `
             --output none
         Assert-LastExitCode 'OneDeploy de Function fallo'
-        & az functionapp config appsettings set `
-            --resource-group $configuration.ResourceGroup `
-            --name $configuration.Function `
-            --settings "Release__Version=$ReleaseVersion" `
-            --output none
-        Assert-LastExitCode 'No se pudo registrar Release__Version en Function'
+        Sync-FunctionRuntimeSettingsFromApi
 
         if ($Environment -eq 'dev' -and
             -not [string]::IsNullOrWhiteSpace($env:CJ_WHATSAPP_FUNCTION_KEY) -and

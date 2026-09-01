@@ -587,6 +587,9 @@ resource functionSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     AzureWebJobsStorage__clientId: identity.properties.clientId
     ServiceBusConnection__fullyQualifiedNamespace: '${serviceBus.name}.servicebus.windows.net'
     ServiceBusConnection__clientId: identity.properties.clientId
+    Auraly__Accounting__ServiceBus__QueueName: accountingProcessingQueue.name
+    Auraly__Fiscal__ServiceBus__QueueName: fiscalProcessingQueue.name
+    Auraly__SalesReporting__ServiceBus__QueueName: salesReportingQueue.name
     AppConfiguration__Endpoint: appConfiguration.properties.endpoint
     AZURE_CLIENT_ID: identity.properties.clientId
     APPLICATIONINSIGHTS_CONNECTION_STRING: applicationInsights.properties.ConnectionString

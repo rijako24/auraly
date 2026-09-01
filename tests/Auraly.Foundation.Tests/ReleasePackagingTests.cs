@@ -279,6 +279,37 @@ public sealed class ReleasePackagingTests
     }
 
     [Fact]
+    public void Function_receives_the_same_processing_queue_settings_owned_by_the_api()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var deployment = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "infrastructure",
+            "azure",
+            "Publish-AuralyReleasePipeline.ps1"));
+        var infrastructure = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "infrastructure",
+            "azure",
+            "main.bicep"));
+
+        Assert.Contains("function Sync-FunctionRuntimeSettingsFromApi", deployment,
+            StringComparison.Ordinal);
+        Assert.Contains("'webapp', 'config', 'appsettings', 'list'", deployment,
+            StringComparison.Ordinal);
+        foreach (var name in new[]
+                 {
+                     "Auraly__Accounting__ServiceBus__QueueName",
+                     "Auraly__Fiscal__ServiceBus__QueueName",
+                     "Auraly__SalesReporting__ServiceBus__QueueName",
+                 })
+        {
+            Assert.Contains(name, deployment, StringComparison.Ordinal);
+            Assert.Contains(name, infrastructure, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public void Release_rejects_a_truncated_offline_signing_key_before_deployment()
     {
         var repositoryRoot = FindRepositoryRoot();
