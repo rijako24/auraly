@@ -63,12 +63,16 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
             await connection.OpenAsync();
             await using var seed = connection.CreateCommand();
             seed.CommandText = """
-                INSERT dbo.DocumentSeries(
-                  DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,
-                  SeriesCode,Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
-                VALUES(
-                  @SeriesId,@BusinessId,@DeviceId,N'SalesReceipt',N'CVI',
-                  N'04',8,1,99999999,1,1,SYSDATETIMEOFFSET());
+                IF NOT EXISTS (
+                    SELECT 1 FROM dbo.DocumentSeries
+                    WHERE BusinessId=@BusinessId AND DocumentType=N'SalesReceipt'
+                      AND Prefix=N'CVI' AND SeriesCode=N'04')
+                  INSERT dbo.DocumentSeries(
+                    DocumentSeriesId,BusinessId,DeviceId,DocumentType,Prefix,
+                    SeriesCode,Padding,RangeStart,RangeEnd,IsOfflineCapable,IsActive,CreatedAt)
+                  VALUES(
+                    @SeriesId,@BusinessId,@DeviceId,N'SalesReceipt',N'CVI',
+                    N'04',8,1,99999999,1,1,SYSDATETIMEOFFSET());
 
                 INSERT dbo.Products(
                   ProductId,TenantId,BusinessId,Source,Sku,Name,Currency,
@@ -81,6 +85,10 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
                   BusinessId,WarehouseId,ProductId,QuantityOnHand,AverageUnitCost,
                   InventoryValue,LastProcessingSequence,UpdatedAt)
                 VALUES(@BusinessId,@WarehouseId,@ProductId,10,5000,50000,1,SYSDATETIMEOFFSET());
+
+                SELECT DocumentSeriesId FROM dbo.DocumentSeries
+                WHERE BusinessId=@BusinessId AND DocumentType=N'SalesReceipt'
+                  AND Prefix=N'CVI' AND SeriesCode=N'04';
                 """;
             seed.Parameters.AddWithValue("@SeriesId", receiptSeriesId);
             seed.Parameters.AddWithValue("@TenantId", fixture.TenantId);
@@ -89,7 +97,7 @@ public sealed class SourceOrderPosUploadTests(ServerSliceFixture fixture)
             seed.Parameters.AddWithValue("@WarehouseId", fixture.WarehouseId);
             seed.Parameters.AddWithValue("@ProductId", productId);
             seed.Parameters.AddWithValue("@Sku", $"NO-ORDER-{productId:N}");
-            await seed.ExecuteNonQueryAsync();
+            receiptSeriesId = (Guid)(await seed.ExecuteScalarAsync())!;
         }
 
         var invoiceBase = fixture.CreateValidRequest(182);
