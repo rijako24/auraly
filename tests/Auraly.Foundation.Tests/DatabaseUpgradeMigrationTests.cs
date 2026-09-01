@@ -244,6 +244,8 @@ public sealed class DatabaseUpgradeMigrationTests
             StringComparison.Ordinal);
         Assert.DoesNotContain("UX_AuthenticationSessions_User_Client_Active", table,
             StringComparison.Ordinal);
+        Assert.DoesNotContain("DROP INDEX [UX_AuthenticationSessions_User_Client_Active]", migration,
+            StringComparison.OrdinalIgnoreCase);
         Assert.Contains("20260831_EnforceExclusiveUserSessions.sql", preDeployment,
             StringComparison.Ordinal);
         Assert.DoesNotContain("DROP INDEX [UX_WorkSessions_User_Open]", migration,

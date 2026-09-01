@@ -21,14 +21,9 @@ BEGIN
       ON active.AuthenticationSessionId=session.AuthenticationSessionId
     WHERE active.Position>1;
 
-    IF EXISTS
-    (
-        SELECT 1 FROM sys.indexes
-        WHERE object_id=OBJECT_ID(N'dbo.AuthenticationSessions')
-          AND name=N'UX_AuthenticationSessions_User_Client_Active'
-    )
-        DROP INDEX [UX_AuthenticationSessions_User_Client_Active]
-        ON dbo.AuthenticationSessions;
+    /* El índice pertenece al modelo del DACPAC. Aquí solo se normalizan los
+       datos para la nueva unicidad; SQLPackage reemplaza la definición
+       anterior sin una segunda eliminación durante el predeployment. */
 END
 
 IF OBJECT_ID(N'dbo.WorkSessions', N'U') IS NOT NULL
